@@ -4,6 +4,71 @@ use crate::app::{FoxFlareApp, ViewMode, SelectionMode};
 use crate::fs_ops::directory::FileEntry;
 use crate::theme::{BRAND_GOLD, BRAND_ROSE, BRAND_PURPLE};
 
+// ── File name truncation ─────────────────────────────────────────────────────
+
+/// Truncate a file name with a middle ellipsis so that the beginning and the
+/// file extension stay visible.  Example: `my_super_long_file.rs` → `my_super…file.rs`
+fn truncate_middle(ui: &egui::Ui, name: &str, font: &egui::FontId, max_width: f32) -> String {
+    // Measure the full name first
+    let full_galley = ui.painter().layout_no_wrap(
+        name.to_string(),
+        font.clone(),
+        egui::Color32::WHITE,
+    );
+    if full_galley.size().x <= max_width {
+        return name.to_string();
+    }
+
+    // Split into stem and extension
+    let (stem, ext) = match name.rfind('.') {
+        Some(dot) if dot > 0 => (&name[..dot], &name[dot..]),
+        _ => (name, ""),
+    };
+
+    let ellipsis = "\u{2026}"; // "…"
+
+    // Binary search for the longest prefix of the stem that fits
+    let mut lo: usize = 1;
+    let mut hi: usize = stem.len();
+    let mut best = format!("{}{}", ellipsis, ext);
+
+    while lo <= hi {
+        let mid = (lo + hi) / 2;
+        // Find a valid char boundary at or before `mid`
+        let boundary = match stem.get(..mid) {
+            Some(_) => mid,
+            None => {
+                let mut b = mid;
+                while b > 0 && !stem.is_char_boundary(b) {
+                    b -= 1;
+                }
+                b
+            }
+        };
+        if boundary == 0 {
+            break;
+        }
+
+        let candidate = format!("{}{}{}", &stem[..boundary], ellipsis, ext);
+        let g = ui.painter().layout_no_wrap(
+            candidate.clone(),
+            font.clone(),
+            egui::Color32::WHITE,
+        );
+        if g.size().x <= max_width {
+            best = candidate;
+            lo = mid + 1;
+        } else {
+            if mid == 0 {
+                break;
+            }
+            hi = mid - 1;
+        }
+    }
+
+    best
+}
+
 // ── Content area panel ───────────────────────────────────────────────────────
 
 pub fn render(ctx: &egui::Context, app: &mut FoxFlareApp) {
@@ -458,20 +523,40 @@ pub fn render(ctx: &egui::Context, app: &mut FoxFlareApp) {
                                 }
                             } else {
                                 let ctrl = ctx.input(|i| i.modifiers.ctrl);
-                                let mut count = 0;
-                                for source in &sources {
-                                    let result = if ctrl {
-                                        crate::fs_ops::operations::copy_entry(source, &target)
-                                    } else {
-                                        crate::fs_ops::operations::move_entry(source, &target)
-                                    };
-                                    if result.is_ok() {
-                                        count += 1;
+                                let is_copy = ctrl;
+
+                                // Check for conflicts
+                                let conflicts = crate::fs_ops::operations::check_conflicts(
+                                    &sources,
+                                    &target,
+                                    !is_copy, // Only skip same-path for moves
+                                );
+
+                                if conflicts.is_empty() {
+                                    // No conflicts — perform immediately
+                                    let mut count = 0;
+                                    for source in &sources {
+                                        let result = if is_copy {
+                                            crate::fs_ops::operations::copy_entry(source, &target)
+                                        } else {
+                                            crate::fs_ops::operations::move_entry(source, &target)
+                                        };
+                                        if result.is_ok() {
+                                            count += 1;
+                                        }
                                     }
-                                }
-                                if count > 0 {
-                                    let current = app.current_path.clone();
-                                    app.load_directory(&current);
+                                    if count > 0 {
+                                        let current = app.current_path.clone();
+                                        app.load_directory(&current);
+                                    }
+                                } else {
+                                    // Conflicts detected — show dialog
+                                    app.conflict_dialog = Some(crate::app::ConflictDialog {
+                                        sources,
+                                        dest_dir: target,
+                                        conflicts,
+                                        is_copy,
+                                    });
                                 }
                             }
                         }
@@ -765,10 +850,13 @@ fn render_grid_item(
         } else {
             let name_color = if is_selected { text_color } else { muted_color };
 
-            // Use a layout job for text wrapping and ellipsis
+            // Truncate with middle ellipsis to fit label area
+            let font = egui::FontId::proportional(15.0);
+            let display_name = truncate_middle(ui, &entry.name, &font, label_rect.width());
+
             let galley = ui.painter().layout(
-                entry.name.clone(),
-                egui::FontId::proportional(15.0),
+                display_name,
+                font,
                 name_color,
                 label_rect.width(),
             );
@@ -1047,11 +1135,18 @@ fn render_list_item(
             }
         } else {
             let name_color = if is_selected { text_color } else { muted_color };
+
+            // Truncate with middle ellipsis for list view
+            let font = egui::FontId::proportional(16.0);
+            // Available width: from name_x to (right - size_column_space)
+            let available = rect.right() - 80.0 - name_x;
+            let display_name = truncate_middle(ui, &entry.name, &font, available);
+
             ui.painter().text(
                 egui::pos2(name_x, rect.center().y),
                 egui::Align2::LEFT_CENTER,
-                &entry.name,
-                egui::FontId::proportional(16.0),
+                &display_name,
+                font,
                 name_color,
             );
         }

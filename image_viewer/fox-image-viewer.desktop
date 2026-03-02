@@ -1,0 +1,14 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=FOX Image Viewer
+GenericName=Image Viewer
+Comment=A simple, fast image viewer for KDE Plasma
+Exec=/usr/local/bin/fox-image-viewer %f
+Icon=fox-image-viewer
+Terminal=false
+Categories=Graphics;Viewer;
+MimeType=image/png;image/jpeg;image/gif;image/bmp;image/webp;image/svg+xml;image/tiff;image/x-icon;image/x-portable-bitmap;image/x-portable-graymap;image/x-portable-pixmap;image/x-xbitmap;image/x-xpixmap;
+Keywords=image;photo;picture;viewer;
+StartupNotify=true
+StartupWMClass=fox-image-viewer

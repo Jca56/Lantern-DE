@@ -1,5 +1,6 @@
 mod app;
 mod cloud;
+mod dnd;
 mod fs_ops;
 mod theme;
 mod ui;

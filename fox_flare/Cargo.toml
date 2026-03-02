@@ -18,6 +18,7 @@ sha2 = "0.10"
 md-5 = "0.10"
 reqwest = { version = "0.12", features = ["blocking", "json"] }
 urlencoding = "2"
+x11rb = { version = "0.13", features = ["allow-unsafe-code"] }
 
 [profile.release]
 opt-level = 2

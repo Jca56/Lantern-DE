@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
+    "appbar",
     "fox_flare",
     "menu",
+    "terminal",
 ]

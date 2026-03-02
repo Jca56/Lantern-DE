@@ -117,6 +117,18 @@ enum ThumbResult {
     Err(String),
 }
 
+/// Pending file operation that needs conflict resolution from the user.
+pub struct ConflictDialog {
+    /// Source file paths.
+    pub sources: Vec<String>,
+    /// Destination directory.
+    pub dest_dir: String,
+    /// File names that conflict.
+    pub conflicts: Vec<String>,
+    /// Whether this is a copy (true) or move (false) operation.
+    pub is_copy: bool,
+}
+
 // ── Main application state ───────────────────────────────────────────────────
 
 pub struct FoxFlareApp {
@@ -190,6 +202,9 @@ pub struct FoxFlareApp {
     // Delete confirmation dialog
     pub delete_confirm_paths: Option<Vec<String>>,
 
+    // File conflict dialog (shown when copy/move would overwrite existing files)
+    pub conflict_dialog: Option<ConflictDialog>,
+
     // Tabs
     pub tabs: Vec<Tab>,
     pub active_tab: usize,
@@ -251,6 +266,11 @@ pub struct FoxFlareApp {
 
     // Fox Den (cloud sync)
     pub fox_den_state: FoxDenState,
+
+    // External drag-and-drop (X11 XDND)
+    pub external_drag_active: bool,
+    dnd_result_sender: mpsc::Sender<crate::dnd::DndResult>,
+    dnd_result_receiver: mpsc::Receiver<crate::dnd::DndResult>,
 }
 
 // ── Tab state ────────────────────────────────────────────────────────────────
@@ -273,6 +293,7 @@ impl FoxFlareApp {
 
         let (dir_sender, dir_receiver) = mpsc::channel();
         let (thumb_sender, thumb_receiver) = mpsc::channel();
+        let (dnd_result_sender, dnd_result_receiver) = mpsc::channel();
 
         let home = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
 
@@ -324,6 +345,7 @@ impl FoxFlareApp {
             rename_buffer: String::new(),
             rename_just_started: false,
             delete_confirm_paths: None,
+            conflict_dialog: None,
             tabs: vec![Tab {
                 label: dir_label(&home),
                 path: home.clone(),
@@ -364,6 +386,9 @@ impl FoxFlareApp {
             dir_receiver,
             fox_theme,
             fox_den_state: FoxDenState::new(),
+            external_drag_active: false,
+            dnd_result_sender,
+            dnd_result_receiver,
         };
 
         app.load_directory(&home);
@@ -663,48 +688,83 @@ impl FoxFlareApp {
 
         if let Some(content) = content {
             let dest = self.current_path.clone();
-            let mut success_count = 0;
-            let mut last_error: Option<String> = None;
+            let is_copy = content.op == ClipboardOp::Copy;
 
-            for source in &content.paths {
-                let result = match content.op {
-                    ClipboardOp::Copy => {
-                        crate::fs_ops::operations::copy_entry(source, &dest)
-                    }
-                    ClipboardOp::Cut => {
-                        crate::fs_ops::operations::move_entry(source, &dest)
-                    }
-                };
-                match result {
-                    Ok(_) => success_count += 1,
-                    Err(e) => last_error = Some(e),
-                }
+            // Check for conflicts first
+            let conflicts = crate::fs_ops::operations::check_conflicts(
+                &content.paths,
+                &dest,
+                !is_copy, // Only skip same-path for moves
+            );
+
+            if !conflicts.is_empty() {
+                self.conflict_dialog = Some(ConflictDialog {
+                    sources: content.paths.clone(),
+                    dest_dir: dest,
+                    conflicts,
+                    is_copy,
+                });
+                return;
             }
 
-            // Clear clipboard after cut (not after copy)
-            if content.op == ClipboardOp::Cut {
-                self.clipboard = None;
-            }
-
-            if let Some(err) = last_error {
-                self.set_status(&format!("Error: {}", err));
-            } else {
-                let op_name = match content.op {
-                    ClipboardOp::Copy => "Copied",
-                    ClipboardOp::Cut => "Moved",
-                };
-                self.set_status(&format!(
-                    "{} {} item{}",
-                    op_name,
-                    success_count,
-                    if success_count == 1 { "" } else { "s" }
-                ));
-            }
-
-            // Reload directory
-            let current = self.current_path.clone();
-            self.load_directory(&current);
+            self.execute_paste(content);
         }
+    }
+
+    /// Execute a paste operation (no conflict check — called after resolution).
+    pub fn execute_paste_resolved(
+        &mut self,
+        sources: Vec<String>,
+        dest_dir: String,
+        is_copy: bool,
+        resolution: crate::fs_ops::operations::ConflictResolution,
+    ) {
+        let mut success_count = 0;
+        let mut last_error: Option<String> = None;
+
+        for source in &sources {
+            let result = if is_copy {
+                crate::fs_ops::operations::copy_entry_resolved(source, &dest_dir, resolution)
+            } else {
+                crate::fs_ops::operations::move_entry_resolved(source, &dest_dir, resolution)
+            };
+            match result {
+                Ok(_) => success_count += 1,
+                Err(e) => last_error = Some(e),
+            }
+        }
+
+        // Clear internal clipboard after cut
+        if !is_copy {
+            self.clipboard = None;
+        }
+
+        if let Some(err) = last_error {
+            self.set_status(&format!("Error: {}", err));
+        } else {
+            let op_name = if is_copy { "Copied" } else { "Moved" };
+            self.set_status(&format!(
+                "{} {} item{}",
+                op_name,
+                success_count,
+                if success_count == 1 { "" } else { "s" }
+            ));
+        }
+
+        let current = self.current_path.clone();
+        self.load_directory(&current);
+    }
+
+    /// Execute paste with no conflict resolution (legacy keep-both behavior).
+    fn execute_paste(&mut self, content: ClipboardContent) {
+        let dest = self.current_path.clone();
+        let is_copy = content.op == ClipboardOp::Copy;
+        self.execute_paste_resolved(
+            content.paths,
+            dest,
+            is_copy,
+            crate::fs_ops::operations::ConflictResolution::KeepBoth,
+        );
     }
 
     // ── Rename ───────────────────────────────────────────────────────────────
@@ -972,35 +1032,39 @@ impl eframe::App for FoxFlareApp {
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Edge resize detection for custom-decorated window
+        // Skip resize when dragging files so XDND can grab the pointer instead
+        let has_active_drag = self.drag_paths.is_some() || self.external_drag_active;
         let screen = ctx.input(|i| i.screen_rect());
         let mouse_pos = ctx.input(|i| i.pointer.hover_pos());
         let edge_margin = 8.0;
-        if let Some(pos) = mouse_pos {
-            let on_left = pos.x <= screen.min.x + edge_margin;
-            let on_right = pos.x >= screen.max.x - edge_margin;
-            let on_top = pos.y <= screen.min.y + edge_margin;
-            let on_bottom = pos.y >= screen.max.y - edge_margin;
-            let resize_dir = match (on_left, on_right, on_top, on_bottom) {
-                (true, _, true, _) => Some(egui::ResizeDirection::NorthWest),
-                (_, true, true, _) => Some(egui::ResizeDirection::NorthEast),
-                (true, _, _, true) => Some(egui::ResizeDirection::SouthWest),
-                (_, true, _, true) => Some(egui::ResizeDirection::SouthEast),
-                (true, _, _, _) => Some(egui::ResizeDirection::West),
-                (_, true, _, _) => Some(egui::ResizeDirection::East),
-                (_, _, true, _) => Some(egui::ResizeDirection::North),
-                (_, _, _, true) => Some(egui::ResizeDirection::South),
-                _ => None,
-            };
-            if let Some(dir) = resize_dir {
-                let cursor = match dir {
-                    egui::ResizeDirection::North | egui::ResizeDirection::South => egui::CursorIcon::ResizeVertical,
-                    egui::ResizeDirection::West | egui::ResizeDirection::East => egui::CursorIcon::ResizeHorizontal,
-                    egui::ResizeDirection::NorthWest | egui::ResizeDirection::SouthEast => egui::CursorIcon::ResizeNwSe,
-                    egui::ResizeDirection::NorthEast | egui::ResizeDirection::SouthWest => egui::CursorIcon::ResizeNeSw,
+        if !has_active_drag {
+            if let Some(pos) = mouse_pos {
+                let on_left = pos.x <= screen.min.x + edge_margin;
+                let on_right = pos.x >= screen.max.x - edge_margin;
+                let on_top = pos.y <= screen.min.y + edge_margin;
+                let on_bottom = pos.y >= screen.max.y - edge_margin;
+                let resize_dir = match (on_left, on_right, on_top, on_bottom) {
+                    (true, _, true, _) => Some(egui::ResizeDirection::NorthWest),
+                    (_, true, true, _) => Some(egui::ResizeDirection::NorthEast),
+                    (true, _, _, true) => Some(egui::ResizeDirection::SouthWest),
+                    (_, true, _, true) => Some(egui::ResizeDirection::SouthEast),
+                    (true, _, _, _) => Some(egui::ResizeDirection::West),
+                    (_, true, _, _) => Some(egui::ResizeDirection::East),
+                    (_, _, true, _) => Some(egui::ResizeDirection::North),
+                    (_, _, _, true) => Some(egui::ResizeDirection::South),
+                    _ => None,
                 };
-                ctx.set_cursor_icon(cursor);
-                if ctx.input(|i| i.pointer.primary_pressed()) {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(dir));
+                if let Some(dir) = resize_dir {
+                    let cursor = match dir {
+                        egui::ResizeDirection::North | egui::ResizeDirection::South => egui::CursorIcon::ResizeVertical,
+                        egui::ResizeDirection::West | egui::ResizeDirection::East => egui::CursorIcon::ResizeHorizontal,
+                        egui::ResizeDirection::NorthWest | egui::ResizeDirection::SouthEast => egui::CursorIcon::ResizeNwSe,
+                        egui::ResizeDirection::NorthEast | egui::ResizeDirection::SouthWest => egui::CursorIcon::ResizeNeSw,
+                    };
+                    ctx.set_cursor_icon(cursor);
+                    if ctx.input(|i| i.pointer.primary_pressed()) {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(dir));
+                    }
                 }
             }
         }
@@ -1014,23 +1078,95 @@ impl eframe::App for FoxFlareApp {
         // Handle files dropped from external applications
         let dropped: Vec<_> = ctx.input(|i| i.raw.dropped_files.clone());
         if !dropped.is_empty() {
-            let mut count = 0;
-            for file in &dropped {
-                if let Some(ref path) = file.path {
-                    let source = path.to_string_lossy().to_string();
-                    if crate::fs_ops::operations::copy_entry(&source, &self.current_path).is_ok() {
+            let sources: Vec<String> = dropped
+                .iter()
+                .filter_map(|f| f.path.as_ref().map(|p| p.to_string_lossy().to_string()))
+                .collect();
+
+            let conflicts = crate::fs_ops::operations::check_conflicts(
+                &sources,
+                &self.current_path,
+                false, // External drops are always copies
+            );
+
+            if conflicts.is_empty() {
+                // No conflicts — copy immediately
+                let mut count = 0;
+                for source in &sources {
+                    if crate::fs_ops::operations::copy_entry(source, &self.current_path).is_ok() {
                         count += 1;
                     }
                 }
+                if count > 0 {
+                    self.set_status(&format!(
+                        "Dropped {} file{}",
+                        count,
+                        if count == 1 { "" } else { "s" }
+                    ));
+                    let current = self.current_path.clone();
+                    self.load_directory(&current);
+                }
+            } else {
+                // Conflicts detected — show dialog
+                self.conflict_dialog = Some(ConflictDialog {
+                    sources,
+                    dest_dir: self.current_path.clone(),
+                    conflicts,
+                    is_copy: true,
+                });
             }
-            if count > 0 {
-                self.set_status(&format!(
-                    "Dropped {} file{}",
-                    count,
-                    if count == 1 { "" } else { "s" }
-                ));
-                let current = self.current_path.clone();
-                self.load_directory(&current);
+        }
+
+        // Poll external DnD results from X11 thread
+        if let Ok(result) = self.dnd_result_receiver.try_recv() {
+            self.external_drag_active = false;
+            match result {
+                crate::dnd::DndResult::Dropped => {
+                    self.set_status("Dropped file(s) successfully");
+                }
+                crate::dnd::DndResult::Cancelled => {}
+                crate::dnd::DndResult::Error(e) => {
+                    self.set_status(&format!("Drag failed: {}", e));
+                }
+            }
+        }
+
+        // Detect when an internal drag reaches the window edge → start X11 XDND
+        if self.drag_paths.is_some() && !self.external_drag_active {
+            let should_start_external = match ctx.input(|i| i.pointer.hover_pos()) {
+                None => {
+                    // Pointer left the window while dragging
+                    ctx.input(|i| i.pointer.primary_down())
+                }
+                Some(pos) => {
+                    let screen = ctx.screen_rect();
+                    let margin = 12.0;
+                    pos.x <= screen.min.x + margin
+                        || pos.x >= screen.max.x - margin
+                        || pos.y <= screen.min.y + margin
+                        || pos.y >= screen.max.y - margin
+                }
+            };
+
+            if should_start_external {
+                let paths = self.drag_paths.take().unwrap();
+                self.external_drag_active = true;
+                self.drag_target = None;
+
+                // Build drag icon from the first selected entry
+                let drag_icon = self.entries.iter()
+                    .find(|e| paths.contains(&e.path))
+                    .map(|entry| crate::dnd::DragIcon {
+                        icon_path: entry.icon_path.clone(),
+                        is_dir: entry.is_dir,
+                        count: paths.len(),
+                    });
+
+                crate::dnd::start_drag_out(
+                    paths,
+                    drag_icon,
+                    self.dnd_result_sender.clone(),
+                );
             }
         }
 
@@ -1151,6 +1287,11 @@ impl eframe::App for FoxFlareApp {
         // Delete confirmation dialog
         if self.delete_confirm_paths.is_some() {
             render_delete_dialog(ctx, self);
+        }
+
+        // File conflict dialog
+        if self.conflict_dialog.is_some() {
+            render_conflict_dialog(ctx, self);
         }
 
         // Properties panel
@@ -1506,6 +1647,146 @@ fn render_delete_dialog(ctx: &egui::Context, app: &mut FoxFlareApp) {
 
     if !open {
         app.delete_confirm_paths = None;
+    }
+}
+
+// ── File conflict resolution dialog ──────────────────────────────────────────
+
+fn render_conflict_dialog(ctx: &egui::Context, app: &mut FoxFlareApp) {
+    let (title_text, detail_text, conflict_list) = match &app.conflict_dialog {
+        Some(dialog) => {
+            let op = if dialog.is_copy { "Copying" } else { "Moving" };
+            let count = dialog.conflicts.len();
+            let title = if count == 1 {
+                format!("{} would overwrite \"{}\"", op, dialog.conflicts[0])
+            } else {
+                format!("{} would overwrite {} files", op, count)
+            };
+            let detail = "Choose how to handle existing files:".to_string();
+            let list: Vec<String> = dialog.conflicts.iter().take(8).cloned().collect();
+            (title, detail, list)
+        }
+        None => return,
+    };
+
+    let mut open = true;
+    egui::Window::new("File Conflict")
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .fixed_size(egui::vec2(420.0, 0.0))
+        .show(ctx, |ui| {
+            ui.add_space(8.0);
+            ui.label(
+                egui::RichText::new(&title_text)
+                    .size(16.0)
+                    .color(app.fox_theme.text),
+            );
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new(&detail_text)
+                    .size(15.0)
+                    .color(app.fox_theme.muted),
+            );
+
+            // Show conflicting file names
+            if !conflict_list.is_empty() {
+                ui.add_space(4.0);
+                for name in &conflict_list {
+                    ui.label(
+                        egui::RichText::new(format!("  \u{2022} {}", name))
+                            .size(14.0)
+                            .color(app.fox_theme.muted),
+                    );
+                }
+                if let Some(ref dialog) = app.conflict_dialog {
+                    if dialog.conflicts.len() > 8 {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "  ...and {} more",
+                                dialog.conflicts.len() - 8
+                            ))
+                            .size(14.0)
+                            .color(app.fox_theme.muted),
+                        );
+                    }
+                }
+            }
+
+            ui.add_space(12.0);
+
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let overwrite_clicked = ui
+                        .add(egui::Button::new(
+                            egui::RichText::new("Overwrite")
+                                .size(16.0)
+                                .color(egui::Color32::from_rgb(239, 68, 68)),
+                        ))
+                        .clicked();
+
+                    let keep_both_clicked = ui
+                        .add(egui::Button::new(
+                            egui::RichText::new("Keep Both").size(16.0),
+                        ))
+                        .clicked();
+
+                    let skip_clicked = ui
+                        .add(egui::Button::new(
+                            egui::RichText::new("Skip").size(16.0),
+                        ))
+                        .clicked();
+
+                    let cancel_clicked = ui
+                        .add(egui::Button::new(
+                            egui::RichText::new("Cancel").size(16.0),
+                        ))
+                        .clicked();
+
+                    let escape_pressed = ui.input(|i| i.key_pressed(egui::Key::Escape));
+
+                    if overwrite_clicked {
+                        if let Some(dialog) = app.conflict_dialog.take() {
+                            app.execute_paste_resolved(
+                                dialog.sources,
+                                dialog.dest_dir,
+                                dialog.is_copy,
+                                crate::fs_ops::operations::ConflictResolution::Overwrite,
+                            );
+                        }
+                    }
+                    if keep_both_clicked {
+                        if let Some(dialog) = app.conflict_dialog.take() {
+                            app.execute_paste_resolved(
+                                dialog.sources,
+                                dialog.dest_dir,
+                                dialog.is_copy,
+                                crate::fs_ops::operations::ConflictResolution::KeepBoth,
+                            );
+                        }
+                    }
+                    if skip_clicked {
+                        if let Some(dialog) = app.conflict_dialog.take() {
+                            app.execute_paste_resolved(
+                                dialog.sources,
+                                dialog.dest_dir,
+                                dialog.is_copy,
+                                crate::fs_ops::operations::ConflictResolution::Skip,
+                            );
+                        }
+                    }
+                    if cancel_clicked || escape_pressed {
+                        app.conflict_dialog = None;
+                    }
+                });
+            });
+
+            ui.add_space(4.0);
+        });
+
+    if !open {
+        app.conflict_dialog = None;
     }
 }
 

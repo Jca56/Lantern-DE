@@ -2,6 +2,41 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+// ── Conflict resolution ──────────────────────────────────────────────────────
+
+/// How to handle a name collision during copy/move.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictResolution {
+    /// Replace the existing file.
+    Overwrite,
+    /// Keep both by auto-renaming the new entry.
+    KeepBoth,
+    /// Skip this entry entirely.
+    Skip,
+}
+
+/// Check which source paths would conflict at `dest_dir`.
+/// When `is_move` is true, a file being "moved" to its own directory is
+/// not considered a conflict (it would be a no-op).
+pub fn check_conflicts(sources: &[String], dest_dir: &str, is_move: bool) -> Vec<String> {
+    sources
+        .iter()
+        .filter_map(|source| {
+            let src_path = Path::new(source);
+            let name = src_path.file_name()?.to_string_lossy().to_string();
+            let dest = PathBuf::from(dest_dir).join(&name);
+            if !dest.exists() {
+                return None;
+            }
+            // For moves, skip if source and dest are the same file (no-op)
+            if is_move && dest == src_path {
+                return None;
+            }
+            Some(name)
+        })
+        .collect()
+}
+
 // ── File copy ────────────────────────────────────────────────────────────────
 
 /// Duplicate a file or directory in the same folder.
@@ -19,6 +54,15 @@ pub fn duplicate_entry(source: &str) -> Result<String, String> {
 /// Copy a file or directory to a destination folder.
 /// Returns the path of the new copy.
 pub fn copy_entry(source: &str, dest_dir: &str) -> Result<String, String> {
+    copy_entry_resolved(source, dest_dir, ConflictResolution::KeepBoth)
+}
+
+/// Copy a file or directory with explicit conflict resolution.
+pub fn copy_entry_resolved(
+    source: &str,
+    dest_dir: &str,
+    resolution: ConflictResolution,
+) -> Result<String, String> {
     let src_path = Path::new(source);
     let file_name = src_path
         .file_name()
@@ -28,9 +72,26 @@ pub fn copy_entry(source: &str, dest_dir: &str) -> Result<String, String> {
 
     let mut dest_path = PathBuf::from(dest_dir).join(&file_name);
 
-    // Handle name collisions: append "(Copy)", "(Copy 2)", etc.
+    // Handle name collisions based on resolution strategy
     if dest_path.exists() {
-        dest_path = find_unique_name(&dest_path);
+        match resolution {
+            ConflictResolution::Overwrite => {
+                // Remove existing before copy
+                if dest_path.is_dir() {
+                    fs::remove_dir_all(&dest_path)
+                        .map_err(|e| format!("Failed to remove existing: {}", e))?;
+                } else {
+                    fs::remove_file(&dest_path)
+                        .map_err(|e| format!("Failed to remove existing: {}", e))?;
+                }
+            }
+            ConflictResolution::KeepBoth => {
+                dest_path = find_unique_name(&dest_path);
+            }
+            ConflictResolution::Skip => {
+                return Ok(dest_path.to_string_lossy().to_string());
+            }
+        }
     }
 
     if src_path.is_dir() {
@@ -47,6 +108,15 @@ pub fn copy_entry(source: &str, dest_dir: &str) -> Result<String, String> {
 /// Copy a file or directory, then remove the original (move operation).
 /// Returns the path of the moved entry.
 pub fn move_entry(source: &str, dest_dir: &str) -> Result<String, String> {
+    move_entry_resolved(source, dest_dir, ConflictResolution::KeepBoth)
+}
+
+/// Move a file or directory with explicit conflict resolution.
+pub fn move_entry_resolved(
+    source: &str,
+    dest_dir: &str,
+    resolution: ConflictResolution,
+) -> Result<String, String> {
     let src_path = Path::new(source);
     let file_name = src_path
         .file_name()
@@ -56,9 +126,25 @@ pub fn move_entry(source: &str, dest_dir: &str) -> Result<String, String> {
 
     let mut dest_path = PathBuf::from(dest_dir).join(&file_name);
 
-    // Handle name collisions
+    // Handle name collisions based on resolution strategy
     if dest_path.exists() && dest_path != src_path {
-        dest_path = find_unique_name(&dest_path);
+        match resolution {
+            ConflictResolution::Overwrite => {
+                if dest_path.is_dir() {
+                    fs::remove_dir_all(&dest_path)
+                        .map_err(|e| format!("Failed to remove existing: {}", e))?;
+                } else {
+                    fs::remove_file(&dest_path)
+                        .map_err(|e| format!("Failed to remove existing: {}", e))?;
+                }
+            }
+            ConflictResolution::KeepBoth => {
+                dest_path = find_unique_name(&dest_path);
+            }
+            ConflictResolution::Skip => {
+                return Ok(dest_path.to_string_lossy().to_string());
+            }
+        }
     }
 
     // Skip if source and destination are the same
