@@ -1,0 +1,9 @@
+pub mod batch_rename;
+pub mod content;
+pub mod fox_den;
+pub mod nav_bar;
+pub mod properties;
+pub mod sidebar;
+pub mod status_bar;
+pub mod tab_bar;
+pub mod title_bar;

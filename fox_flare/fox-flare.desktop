@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Fox Flare
+Comment=Feeling foxy
+Exec=/home/alva/.local/bin/fox-flare %U
+Icon=/home/alva/Documents/Projects/fox_flare/assets/icons/icon.png
+Type=Application
+Categories=System;FileManager;Utility;
+MimeType=inode/directory;
+StartupWMClass=fox-flare
+StartupNotify=true

@@ -1,0 +1,9 @@
+[package]
+name = "fox-menu"
+version = "0.1.0"
+description = "Application launcher for Fox DE"
+authors = ["Jca56"]
+edition = "2021"
+
+[dependencies]
+eframe = "0.33"
