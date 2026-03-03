@@ -12,7 +12,7 @@
 	url = https://github.com/Jca56/lntrn-menu.git
 [submodule "terminal"]
 	path = lntrn-terminal
-	url = https://github.com/Jca56/terminal.git
+	url = https://github.com/Jca56/lntrn-terminal.git
 [submodule "video_player"]
 	path = lntrn-video-player
 	url = https://github.com/Jca56/lntrn-video-player.git
