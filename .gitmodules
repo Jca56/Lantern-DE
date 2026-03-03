@@ -1,0 +1,21 @@
+[submodule "appbar"]
+	path = lntrn-bar
+	url = https://github.com/Jca56/lntrn-bar.git
+[submodule "fox_flare"]
+	path = fox-flare
+	url = https://github.com/Jca56/fox-flare.git
+[submodule "image_viewer"]
+	path = lntrn-image-viewer
+	url = https://github.com/Jca56/lntrn-image-viewer.git
+[submodule "menu"]
+	path = lntrn-menu
+	url = https://github.com/Jca56/lntrn-menu.git
+[submodule "terminal"]
+	path = lntrn-terminal
+	url = https://github.com/Jca56/terminal.git
+[submodule "video_player"]
+	path = lntrn-video-player
+	url = https://github.com/Jca56/lntrn-video-player.git
+[submodule "music_player"]
+	path = lntrn-music-player
+	url = https://github.com/Jca56/lntrn-music-player.git
