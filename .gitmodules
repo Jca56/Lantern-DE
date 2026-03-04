@@ -2,8 +2,8 @@
 	path = lntrn-bar
 	url = https://github.com/Jca56/lntrn-bar.git
 [submodule "fox_flare"]
-	path = fox-flare
-	url = https://github.com/Jca56/fox-flare.git
+	path = lntrn-fox-file-manager
+	url = https://github.com/Jca56/lntrn-fox-file-manager.git
 [submodule "image_viewer"]
 	path = lntrn-image-viewer
 	url = https://github.com/Jca56/lntrn-image-viewer.git
