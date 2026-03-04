@@ -1,0 +1,27 @@
+{
+    // --- File Watcher: stop VS Code from watching build artifacts & git internals ---
+    "files.watcherExclude": {
+        "**/target/**": true,
+        "**/.git/objects/**": true,
+        "**/.git/subtree-cache/**": true,
+        "**/.git/worktrees/**": true
+    },
+
+    // --- Search: skip build artifacts ---
+    "search.exclude": {
+        "**/target/**": true,
+        "**/.git/**": true
+    },
+
+    // --- Explorer: hide noisy build dirs ---
+    "files.exclude": {
+        "**/target": true
+    },
+
+    // --- Git: limit repo scanning to top-level only ---
+    "git.repositoryScanMaxDepth": 1,
+    "git.autoRepositoryDetection": "openEditors",
+
+    // --- Reduce background CPU usage ---
+    "search.followSymlinks": false
+}

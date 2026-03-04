@@ -2620,6 +2620,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "lntrn-context-menu"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+]
+
+[[package]]
 name = "lntrn-file-manager"
 version = "0.1.0"
 dependencies = [
@@ -2666,6 +2673,13 @@ dependencies = [
  "eframe",
  "serde",
  "toml 0.8.23",
+]
+
+[[package]]
+name = "lntrn-ui"
+version = "0.1.0"
+dependencies = [
+ "eframe",
 ]
 
 [[package]]

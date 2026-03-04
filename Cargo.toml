@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
+    "lntrn-context-menu",
+    "lntrn-ui",
     "lntrn-fox-file-manager",
     "lntrn-bar",
     "lntrn-terminal",
