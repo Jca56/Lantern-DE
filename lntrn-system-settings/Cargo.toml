@@ -1,0 +1,11 @@
+[package]
+name = "lntrn-system-settings"
+version = "0.1.0"
+description = "Lantern DE - System Settings"
+authors = ["Jca56"]
+edition = "2021"
+
+[dependencies]
+eframe = "0.33"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
