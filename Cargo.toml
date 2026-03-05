@@ -12,4 +12,5 @@ members = [
     "lntrn-window-manager",
     "lntrn-session-manager",
     "lntrn-system-settings",
+    "lntrn-test-window",
 ]

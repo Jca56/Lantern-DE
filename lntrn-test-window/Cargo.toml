@@ -1,0 +1,10 @@
+[package]
+name = "lntrn-test-window"
+version = "0.1.0"
+description = "Test window for verifying Lantern WM behavior"
+authors = ["Jca56"]
+edition = "2021"
+
+[dependencies]
+eframe = "0.33"
+lntrn-ui = { path = "../lntrn-ui" }
