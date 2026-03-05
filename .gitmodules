@@ -19,3 +19,6 @@
 [submodule "music_player"]
 	path = lntrn-music-player
 	url = https://github.com/Jca56/lntrn-music-player.git
+[submodule "window_manager"]
+	path = lntrn-window-manager
+	url = https://github.com/Jca56/lntrn-window-manager.git
