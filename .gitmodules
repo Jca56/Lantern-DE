@@ -22,3 +22,6 @@
 [submodule "window_manager"]
 	path = lntrn-window-manager
 	url = https://github.com/Jca56/lntrn-window-manager.git
+[submodule "session_manager"]
+	path = lntrn-session-manager
+	url = https://github.com/Jca56/lntrn-session-manager.git
