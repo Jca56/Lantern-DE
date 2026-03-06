@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../mushroom_friend"
+		}
+	],
+	"settings": {
+		"git.autoRepositoryDetection": "openEditors",
+		"search.followSymlinks": false
+	}
+}
