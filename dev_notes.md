@@ -7,6 +7,8 @@ Get Appbar functional
 [?]Compositor?
 
 
+Doesn't work for VSCode or Konsole. And for Lantern Terminal when I open an app I can't use that terminal anymore, it doesn't return [alva@archbook ~]$ so I can do other things. the only way it works the way I expect it to is by doing `appname & disown` but I don't have to do all that in KDE Plasma it just happens naturally?
+
 
 Cool Terminal Stuff for Arch 🎉
 Here are some bangers:

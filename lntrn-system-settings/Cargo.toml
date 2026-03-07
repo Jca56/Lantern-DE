@@ -9,3 +9,4 @@ edition = "2021"
 eframe = "0.33"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
+libc = "0.2"

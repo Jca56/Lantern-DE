@@ -2,6 +2,7 @@
     // --- File Watcher: stop VS Code from watching build artifacts & git internals ---
     "files.watcherExclude": {
         "**/target/**": true,
+        "**/target": true,
         "**/.git/objects/**": true,
         "**/.git/subtree-cache/**": true,
         "**/.git/worktrees/**": true
@@ -10,6 +11,7 @@
     // --- Search: skip build artifacts ---
     "search.exclude": {
         "**/target/**": true,
+        "**/target": true,
         "**/.git/**": true
     },
 
@@ -23,5 +25,14 @@
     "git.autoRepositoryDetection": "openEditors",
 
     // --- Reduce background CPU usage ---
-    "search.followSymlinks": false
+    "search.followSymlinks": false,
+    "files.maxMemoryForLargeFilesMB": 256,
+
+    // --- Rust Analyzer: reduce indexing load ---
+    "rust-analyzer.checkOnSave": true,
+    "rust-analyzer.cargo.buildScripts.rebuildOnSave": false,
+
+    // --- Reduce file watcher overhead ---
+    "files.enableTrash": false,
+    "extensions.autoUpdate": false
 }

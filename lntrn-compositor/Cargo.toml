@@ -1,0 +1,30 @@
+[package]
+name = "lntrn-compositor"
+version = "0.1.0"
+description = "Wayland compositor for Lantern DE"
+authors = ["Jca56"]
+edition = "2021"
+
+[[bin]]
+name = "lntrn-compositor"
+path = "src/main.rs"
+
+[dependencies]
+smithay = { version = "0.7", default-features = false, features = [
+    "backend_winit",
+    "backend_drm",
+    "backend_gbm",
+    "backend_egl",
+    "backend_libinput",
+    "backend_session_libseat",
+    "backend_udev",
+    "renderer_gl",
+    "wayland_frontend",
+    "desktop",
+] }
+smithay-drm-extras = { version = "0.1", default-features = false }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+bitflags = "2"
+xcursor = "0.3"
+libc = "0.2"

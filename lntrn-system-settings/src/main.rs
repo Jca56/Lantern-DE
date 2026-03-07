@@ -6,7 +6,25 @@ mod ui;
 use config::LanternConfig;
 use eframe::egui;
 
+fn detach_from_terminal() {
+    unsafe {
+        let pid = libc::fork();
+        if pid < 0 { return; }
+        if pid > 0 { libc::_exit(0); }
+        libc::setsid();
+        let devnull = libc::open(b"/dev/null\0".as_ptr() as *const _, libc::O_RDWR);
+        if devnull >= 0 {
+            libc::dup2(devnull, 0);
+            libc::dup2(devnull, 1);
+            libc::dup2(devnull, 2);
+            if devnull > 2 { libc::close(devnull); }
+        }
+    }
+}
+
 fn main() -> eframe::Result<()> {
+    detach_from_terminal();
+
     let config = LanternConfig::load();
 
     let options = eframe::NativeOptions {

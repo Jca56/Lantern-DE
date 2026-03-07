@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "lntrn-compositor",
     "lntrn-context-menu",
     "lntrn-ui",
     "lntrn-render",
@@ -10,8 +11,15 @@ members = [
     "lntrn-image-viewer",
     "lntrn-video-player",
     "lntrn-music-player",
-    "lntrn-window-manager",
     "lntrn-session-manager",
     "lntrn-system-settings",
     "lntrn-test-window",
 ]
+
+[profile.release]
+opt-level = 2
+strip = true
+incremental = false
+
+[profile.release.package.lntrn-music-player]
+opt-level = 3
