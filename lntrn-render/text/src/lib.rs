@@ -22,8 +22,8 @@ struct QueuedText {
     key: TextLayoutKey,
     x: f32,
     y: f32,
+    line_height: f32,
     bounds_right: i32,
-    bounds_bottom: i32,
     default_color: GlyphonColor,
 }
 
@@ -102,7 +102,7 @@ impl TextRenderer {
         color: Color,
         max_width: f32,
         screen_w: u32,
-        screen_h: u32,
+        _screen_h: u32,
     ) {
         let srgb = color.to_srgb8();
         let glyph_color = GlyphonColor::rgba(srgb[0], srgb[1], srgb[2], srgb[3]);
@@ -143,8 +143,8 @@ impl TextRenderer {
             key,
             x,
             y,
+            line_height: font_size * 1.2,
             bounds_right: screen_w as i32,
-            bounds_bottom: screen_h as i32,
             default_color: GlyphonColor::rgb(255, 255, 255),
         });
     }
@@ -189,7 +189,7 @@ impl TextRenderer {
                         left: 0,
                         top: 0,
                         right: queued.bounds_right,
-                        bottom: queued.bounds_bottom,
+                        bottom: (queued.y + queued.line_height).ceil() as i32,
                     },
                     default_color: queued.default_color,
                     custom_glyphs: &[],
@@ -269,8 +269,9 @@ fn create_layout_buffer(
     monospace: bool,
 ) -> Buffer {
     let family = if monospace { Family::Monospace } else { Family::SansSerif };
-    let mut buffer = Buffer::new(font_system, Metrics::new(font_size, font_size * 1.2));
-    buffer.set_size(font_system, Some(max_width), None);
+    let line_height = font_size * 1.2;
+    let mut buffer = Buffer::new(font_system, Metrics::new(font_size, line_height));
+    buffer.set_size(font_system, Some(max_width), Some(line_height));
     buffer.set_text(
         font_system,
         text,
