@@ -1,0 +1,12 @@
+[package]
+name = "lntrn-gfx"
+version = "0.1.0"
+description = "GPU and frame lifecycle for Lantern DE"
+authors = ["Jca56"]
+edition = "2021"
+
+[dependencies]
+pollster = "0.4"
+raw-window-handle = "0.6"
+wgpu = "28"
+x11 = { version = "2.21", features = ["xlib"] }

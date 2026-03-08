@@ -1,0 +1,12 @@
+[package]
+name = "lntrn-text"
+version = "0.1.0"
+description = "Text rendering and layout for Lantern DE"
+authors = ["Jca56"]
+edition = "2021"
+
+[dependencies]
+glyphon = "0.10"
+lntrn-draw = { path = "../draw" }
+lntrn-gfx = { path = "../gfx" }
+wgpu = "28"

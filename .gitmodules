@@ -25,3 +25,6 @@
 [submodule "session_manager"]
 	path = lntrn-session-manager
 	url = https://github.com/Jca56/lntrn-session-manager.git
+[submodule "lntrn-compositor"]
+	path = lntrn-compositor
+	url = https://github.com/Jca56/lntrn-compositor.git

@@ -6,9 +6,8 @@ authors = ["Jca56"]
 edition = "2021"
 
 [dependencies]
+lntrn-draw = { path = "./draw" }
+lntrn-gfx = { path = "./gfx" }
+lntrn-tex = { path = "./tex" }
+lntrn-text = { path = "./text" }
 wgpu = "28"
-bytemuck = { version = "1", features = ["derive"] }
-glyphon = "0.10"
-raw-window-handle = "0.6"
-pollster = "0.4"
-x11 = { version = "2.21", features = ["xlib"] }

@@ -1,0 +1,11 @@
+[package]
+name = "lntrn-tex"
+version = "0.1.0"
+description = "Texture rendering for Lantern DE"
+authors = ["Jca56"]
+edition = "2021"
+
+[dependencies]
+bytemuck = { version = "1", features = ["derive"] }
+lntrn-gfx = { path = "../gfx" }
+wgpu = "28"

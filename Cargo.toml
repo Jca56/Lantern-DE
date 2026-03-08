@@ -1,8 +1,11 @@
 [workspace]
 resolver = "2"
 members = [
+    "lntrn-render/draw",
+    "lntrn-render/gfx",
+    "lntrn-render/lab",
+    "lntrn-render/text",
     "lntrn-compositor",
-    "lntrn-context-menu",
     "lntrn-ui",
     "lntrn-render",
     "lntrn-fox-file-manager",
@@ -11,9 +14,9 @@ members = [
     "lntrn-image-viewer",
     "lntrn-video-player",
     "lntrn-music-player",
+    "lntrn-screenshot",
     "lntrn-session-manager",
     "lntrn-system-settings",
-    "lntrn-test-window",
 ]
 
 [profile.release]
@@ -21,5 +24,5 @@ opt-level = 2
 strip = true
 incremental = false
 
-[profile.release.package.lntrn-music-player]
+[profile.release.package.lantern-music-player]
 opt-level = 3

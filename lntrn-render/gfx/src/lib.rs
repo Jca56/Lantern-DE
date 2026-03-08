@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
@@ -5,8 +7,6 @@ use raw_window_handle::{
     HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle,
     XlibDisplayHandle, XlibWindowHandle,
 };
-
-// ── X11 surface wrapper ──────────────────────────────────────────────────────
 
 struct X11Surface {
     display: *mut c_void,
@@ -34,15 +34,34 @@ impl HasWindowHandle for X11Surface {
     }
 }
 
-// ── GPU Context ──────────────────────────────────────────────────────────────
-
 pub struct GpuContext {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub surface: wgpu::Surface<'static>,
     pub config: wgpu::SurfaceConfiguration,
     pub format: wgpu::TextureFormat,
+    timing: Arc<Mutex<FrameTimingSnapshot>>,
     xlib_display: *mut c_void,
+}
+
+pub struct Frame {
+    output: wgpu::SurfaceTexture,
+    view: wgpu::TextureView,
+    encoder: wgpu::CommandEncoder,
+    label: &'static str,
+    started_at: Instant,
+    acquire_micros: u128,
+    timing: Arc<Mutex<FrameTimingSnapshot>>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct FrameTimingSnapshot {
+    pub label: &'static str,
+    pub acquire_micros: u128,
+    pub encode_micros: u128,
+    pub submit_micros: u128,
+    pub present_micros: u128,
+    pub total_micros: u128,
 }
 
 unsafe impl Send for GpuContext {}
@@ -59,7 +78,8 @@ impl GpuContext {
             window: x11_window as u64,
         };
 
-        let (device, queue, surface, config, format) = create_surface_context(&x11_surface, width, height)?;
+        let (device, queue, surface, config, format) =
+            create_surface_context(&x11_surface, width, height)?;
 
         Ok(Self {
             device,
@@ -67,6 +87,7 @@ impl GpuContext {
             surface,
             config,
             format,
+            timing: Arc::new(Mutex::new(FrameTimingSnapshot::default())),
             xlib_display: xlib_display as *mut c_void,
         })
     }
@@ -83,6 +104,7 @@ impl GpuContext {
             surface,
             config,
             format,
+            timing: Arc::new(Mutex::new(FrameTimingSnapshot::default())),
             xlib_display: std::ptr::null_mut(),
         })
     }
@@ -99,12 +121,93 @@ impl GpuContext {
         self.surface.configure(&self.device, &self.config);
     }
 
+    pub fn begin_frame(&self, label: &'static str) -> Result<Frame, wgpu::SurfaceError> {
+        let acquire_started = Instant::now();
+        let output = self.surface.get_current_texture()?;
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
+        let acquire_micros = acquire_started.elapsed().as_micros();
+
+        if timing_enabled() {
+            eprintln!(
+                "[lntrn-gfx] frame={} acquire_us={} size={}x{}",
+                label,
+                acquire_micros,
+                self.width(),
+                self.height()
+            );
+        }
+
+        Ok(Frame {
+            output,
+            view,
+            encoder,
+            label,
+            started_at: Instant::now(),
+            acquire_micros,
+            timing: Arc::clone(&self.timing),
+        })
+    }
+
+    pub fn timing_snapshot(&self) -> FrameTimingSnapshot {
+        self.timing.lock().map(|snapshot| snapshot.clone()).unwrap_or_default()
+    }
+
     pub fn width(&self) -> u32 {
         self.config.width
     }
 
     pub fn height(&self) -> u32 {
         self.config.height
+    }
+}
+
+impl Frame {
+    pub fn view(&self) -> &wgpu::TextureView {
+        &self.view
+    }
+
+    pub fn encoder_mut(&mut self) -> &mut wgpu::CommandEncoder {
+        &mut self.encoder
+    }
+
+    pub fn submit(self, queue: &wgpu::Queue) {
+        let submit_started = Instant::now();
+        queue.submit(std::iter::once(self.encoder.finish()));
+        let submit_micros = submit_started.elapsed().as_micros();
+
+        let present_started = Instant::now();
+        self.output.present();
+        let present_micros = present_started.elapsed().as_micros();
+        let encode_micros = self.started_at.elapsed().as_micros();
+        let total_micros = encode_micros + self.acquire_micros;
+
+        if let Ok(mut snapshot) = self.timing.lock() {
+            *snapshot = FrameTimingSnapshot {
+                label: self.label,
+                acquire_micros: self.acquire_micros,
+                encode_micros,
+                submit_micros,
+                present_micros,
+                total_micros,
+            };
+        }
+
+        if timing_enabled() {
+            eprintln!(
+                "[lntrn-gfx] frame={} encode_us={} submit_us={} present_us={} total_us={} acquire_us={}",
+                self.label,
+                encode_micros,
+                submit_micros,
+                present_micros,
+                total_micros,
+                self.acquire_micros,
+            );
+        }
     }
 }
 
@@ -134,7 +237,7 @@ where
     W: HasDisplayHandle + HasWindowHandle,
 {
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::PRIMARY | wgpu::Backends::GL,
+        backends: wgpu::Backends::VULKAN,
         ..Default::default()
     });
 
@@ -150,7 +253,7 @@ where
 
     let (device, queue) = pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
-            label: Some("Lantern Render"),
+            label: Some("Lantern Gfx"),
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::default(),
             ..Default::default()
@@ -161,7 +264,7 @@ where
     let format = caps
         .formats
         .iter()
-        .find(|f| f.is_srgb())
+        .find(|candidate| candidate.is_srgb())
         .copied()
         .unwrap_or(caps.formats[0]);
 
@@ -180,7 +283,7 @@ where
     } else {
         caps.alpha_modes[0]
     };
-    tracing::info!("wgpu alpha_mode: {:?} (available: {:?})", alpha_mode, caps.alpha_modes);
+    eprintln!("[lntrn-gfx] alpha_mode={:?} available={:?} format={:?}", alpha_mode, caps.alpha_modes, format);
 
     let config = wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -195,4 +298,13 @@ where
     surface.configure(&device, &config);
 
     Ok((device, queue, surface, config, format))
+}
+
+fn timing_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("LNTRN_GFX_TIMING")
+            .map(|value| value != "0")
+            .unwrap_or(false)
+    })
 }

@@ -5,5 +5,11 @@ description = "Unified UI theming and component styles for Lantern DE"
 authors = ["Jca56"]
 edition = "2021"
 
+[features]
+default = ["egui"]
+egui = ["dep:eframe"]
+gpu = ["dep:lntrn-render"]
+
 [dependencies]
-eframe = "0.33"
+eframe = { version = "0.33", optional = true }
+lntrn-render = { path = "../lntrn-render", optional = true }

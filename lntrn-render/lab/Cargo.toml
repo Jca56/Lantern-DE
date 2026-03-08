@@ -1,0 +1,16 @@
+[package]
+name = "lntrn-lab"
+version = "0.1.0"
+description = "Renderer lab — widget showcase and interaction testbed for Lantern DE"
+authors = ["Jca56"]
+edition = "2021"
+
+[[bin]]
+name = "lntrn-lab"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+lntrn-render = { path = ".." }
+lntrn-ui = { path = "../../lntrn-ui", default-features = false, features = ["gpu"] }
+winit = { version = "0.30", default-features = false, features = ["rwh_06", "wayland", "x11"] }
