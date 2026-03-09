@@ -2874,7 +2874,6 @@ dependencies = [
 name = "lntrn-terminal"
 version = "0.1.0"
 dependencies = [
- "arboard",
  "image",
  "libc",
  "lntrn-render",
@@ -2882,6 +2881,8 @@ dependencies = [
  "serde",
  "toml 0.8.23",
  "vte",
+ "wayland-client",
+ "wayland-protocols-wlr",
  "winit",
 ]
 
@@ -5610,6 +5611,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8e6faa537fbb6c186cb9f1d41f2f811a4120d1b57ec61f50da451a0c5122bec"
 dependencies = [
  "bitflags 2.11.0",
+ "log",
  "rustix 1.1.4",
  "wayland-backend",
  "wayland-scanner",

@@ -13,6 +13,8 @@ pub struct FoxPalette {
     pub accent: Color,
     pub danger: Color,
     pub success: Color,
+    pub warning: Color,
+    pub info: Color,
 }
 
 /// Convert a theme `Rgba` to a render `Color`.
@@ -34,6 +36,8 @@ impl FoxPalette {
             accent: to_color(variant.accent()),
             danger: to_color(lntrn_theme::DANGER_RED),
             success: to_color(lntrn_theme::SUCCESS_GREEN),
+            warning: to_color(lntrn_theme::WARNING_YELLOW),
+            info: to_color(lntrn_theme::INFO_BLUE),
         }
     }
 

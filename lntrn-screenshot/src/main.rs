@@ -1,5 +1,5 @@
-use std::io::Write;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::Result;
 use lntrn_render::{Color, GpuContext, Painter, Rect, SurfaceError, TextRenderer, TexturePass, TextureDraw};
@@ -9,10 +9,11 @@ use winit::{
     event::{ElementState, MouseButton, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::{KeyCode, ModifiersState, PhysicalKey},
-    window::{Fullscreen, Window, WindowAttributes, WindowId},
+    window::{CursorIcon, Fullscreen, Window, WindowAttributes, WindowId},
 };
 
 mod capture;
+mod clipboard;
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -44,8 +45,19 @@ fn main() -> Result<()> {
         state: None,
         capture: Some(cap),
         output_path,
+        clipboard_data: None,
     };
     event_loop.run_app(&mut app)?;
+
+    // After the window closes, serve clipboard on the main thread (blocking).
+    // The process stays alive until another client takes the clipboard.
+    if let Some(png_data) = app.clipboard_data.take() {
+        eprintln!("Serving clipboard...");
+        if let Err(e) = clipboard::serve_clipboard(png_data) {
+            eprintln!("Clipboard error: {e}");
+        }
+    }
+
     Ok(())
 }
 
@@ -53,6 +65,7 @@ struct ScreenshotApp {
     state: Option<AppState>,
     capture: Option<capture::ScreenCapture>,
     output_path: Option<PathBuf>,
+    clipboard_data: Option<Arc<Vec<u8>>>,
 }
 
 struct AppState {
@@ -86,8 +99,8 @@ struct Selection {
     h: f32,
 }
 
-const HANDLE_SIZE: f32 = 10.0;
-const HANDLE_HIT: f32 = 14.0; // hit area slightly larger than visual
+const HANDLE_SIZE: f32 = 16.0;
+const HANDLE_HIT: f32 = 22.0; // hit area slightly larger than visual
 
 /// Which part of the selection is being dragged.
 #[derive(Clone, Copy, PartialEq)]
@@ -229,15 +242,15 @@ impl AppState {
         } else {
             "Drag to select  \u{00b7}  Enter = full screen  \u{00b7}  Esc = cancel"
         };
-        let hint_w = 560.0;
+        let hint_w = 860.0;
         self.painter.rect_filled(
-            Rect::new(sw / 2.0 - hint_w / 2.0 - 12.0, sh - 44.0, hint_w + 24.0, 32.0),
-            8.0,
+            Rect::new(sw / 2.0 - hint_w / 2.0 - 16.0, sh - 56.0, hint_w + 32.0, 44.0),
+            10.0,
             Color::from_rgba8(0, 0, 0, 200),
         );
         self.text.queue(
-            hint, 14.0,
-            sw / 2.0 - hint_w / 2.0, sh - 38.0,
+            hint, 22.0,
+            sw / 2.0 - hint_w / 2.0, sh - 48.0,
             self.palette.text, hint_w,
             sw as u32, sh as u32,
         );
@@ -315,7 +328,26 @@ impl AppState {
                     self.window.request_redraw();
                 }
             }
-            DragMode::None => {}
+            DragMode::None => {
+                // Update cursor icon based on what we're hovering
+                let icon = if let Some(ref sel) = self.selection {
+                    if let Some(edge) = sel.hit_handle(cx, cy) {
+                        match edge {
+                            HandleEdge::TopLeft | HandleEdge::BottomRight => CursorIcon::NwseResize,
+                            HandleEdge::TopRight | HandleEdge::BottomLeft => CursorIcon::NeswResize,
+                            HandleEdge::Top | HandleEdge::Bottom => CursorIcon::NsResize,
+                            HandleEdge::Left | HandleEdge::Right => CursorIcon::EwResize,
+                        }
+                    } else if sel.contains(cx, cy) {
+                        CursorIcon::Move
+                    } else {
+                        CursorIcon::Crosshair
+                    }
+                } else {
+                    CursorIcon::Crosshair
+                };
+                self.window.set_cursor(icon);
+            }
         }
     }
 
@@ -354,7 +386,7 @@ impl AppState {
         self.drag_mode = DragMode::None;
     }
 
-    fn export(&self, copy: bool, save: bool) {
+    fn export(&self, copy: bool, save: bool) -> Option<Arc<Vec<u8>>> {
         let sel = self.selection.as_ref();
         let (crop_x, crop_y, crop_w, crop_h) = if let Some(sel) = sel {
             let (sx, sy, sw, sh) = sel.normalized();
@@ -380,7 +412,7 @@ impl AppState {
             Some(img) => img,
             None => {
                 eprintln!("Failed to create image from capture data");
-                return;
+                return None;
             }
         };
         let cropped =
@@ -401,45 +433,23 @@ impl AppState {
         }
 
         if copy {
-            // Write PNG to a temp file, then feed to wl-copy via stdin.
-            // This avoids any pipe/EOF edge cases.
-            let tmp_path = std::env::temp_dir().join("lntrn-screenshot-clip.png");
-            if let Err(e) = cropped.save(&tmp_path) {
-                eprintln!("Failed to save temp PNG: {e}");
-                return;
+            use image::ImageEncoder;
+            let mut png_data = Vec::new();
+            let encoder = image::codecs::png::PngEncoder::new(&mut png_data);
+            if let Err(e) = encoder.write_image(
+                cropped.as_raw(),
+                crop_w,
+                crop_h,
+                image::ExtendedColorType::Rgba8,
+            ) {
+                eprintln!("Failed to encode PNG: {e}");
+                return None;
             }
-            let png_data = match std::fs::read(&tmp_path) {
-                Ok(d) => d,
-                Err(e) => {
-                    eprintln!("Failed to read temp PNG: {e}");
-                    return;
-                }
-            };
-            eprintln!("Clipboard: {} bytes PNG, WAYLAND_DISPLAY={}", png_data.len(),
-                std::env::var("WAYLAND_DISPLAY").unwrap_or_default());
-            match std::process::Command::new("wl-copy")
-                .arg("--type")
-                .arg("image/png")
-                .stdin(std::process::Stdio::piped())
-                .spawn()
-            {
-                Ok(mut child) => {
-                    if let Some(mut stdin) = child.stdin.take() {
-                        if let Err(e) = stdin.write_all(&png_data) {
-                            eprintln!("Failed to write to wl-copy stdin: {e}");
-                        }
-                        drop(stdin); // close stdin so wl-copy gets EOF
-                    }
-                    match child.wait() {
-                        Ok(status) if status.success() => eprintln!("Copied to clipboard"),
-                        Ok(status) => eprintln!("wl-copy exited with: {status}"),
-                        Err(e) => eprintln!("wl-copy wait error: {e}"),
-                    }
-                }
-                Err(e) => eprintln!("wl-copy not found or failed to spawn: {e}"),
-            }
-            let _ = std::fs::remove_file(&tmp_path);
+            eprintln!("Clipboard: {} bytes PNG", png_data.len());
+            return Some(Arc::new(png_data));
         }
+
+        None
     }
 }
 
@@ -589,14 +599,14 @@ impl ApplicationHandler for ScreenshotApp {
                         return;
                     }
                     PhysicalKey::Code(KeyCode::Enter | KeyCode::NumpadEnter) => {
-                        state.export(true, true);
+                        self.clipboard_data = state.export(true, true);
                         self.shutdown(event_loop);
                         return;
                     }
                     PhysicalKey::Code(KeyCode::KeyC)
                         if state.modifiers.control_key() =>
                     {
-                        state.export(true, false);
+                        self.clipboard_data = state.export(true, false);
                         self.shutdown(event_loop);
                         return;
                     }

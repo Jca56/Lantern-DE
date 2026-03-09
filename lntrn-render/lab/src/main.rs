@@ -7,12 +7,12 @@ use winit::{
     event::{ElementState, MouseButton, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
-    window::{Window, WindowAttributes, WindowId},
+    window::{ResizeDirection, Window, WindowAttributes, WindowId},
 };
 
 fn main() -> Result<()> {
     let event_loop = EventLoop::new()?;
-    event_loop.set_control_flow(ControlFlow::Wait);
+    event_loop.set_control_flow(ControlFlow::Poll);
 
     let mut app = LabApp::default();
     event_loop.run_app(&mut app)?;
@@ -31,6 +31,7 @@ struct LabState {
     painter: Painter,
     text: TextRenderer,
     lab: RendererLab,
+    cursor_pos: Option<(f32, f32)>,
 }
 
 impl LabState {
@@ -49,6 +50,7 @@ impl LabState {
             painter,
             text,
             lab: RendererLab::new(),
+            cursor_pos: None,
         }
     }
 
@@ -57,6 +59,39 @@ impl LabState {
         self.lab
             .render((size.width, size.height), &self.gpu, &mut self.painter, &mut self.text)
     }
+}
+
+const EDGE: f32 = 10.0;
+const TITLE_BAR_H: f32 = 52.0;
+const PANEL_INSET: f32 = 28.0;
+/// 3 buttons * 46px each
+const TITLE_BTN_ZONE: f32 = 138.0;
+
+fn edge_resize(x: f32, y: f32, w: f32, h: f32) -> Option<ResizeDirection> {
+    let top = y < EDGE;
+    let bottom = y > h - EDGE;
+    let left = x < EDGE;
+    let right = x > w - EDGE;
+
+    match (top, bottom, left, right) {
+        (true, _, true, _) => Some(ResizeDirection::NorthWest),
+        (true, _, _, true) => Some(ResizeDirection::NorthEast),
+        (_, true, true, _) => Some(ResizeDirection::SouthWest),
+        (_, true, _, true) => Some(ResizeDirection::SouthEast),
+        (true, _, _, _) => Some(ResizeDirection::North),
+        (_, true, _, _) => Some(ResizeDirection::South),
+        (_, _, true, _) => Some(ResizeDirection::West),
+        (_, _, _, true) => Some(ResizeDirection::East),
+        _ => None,
+    }
+}
+
+fn is_title_drag(x: f32, y: f32, w: f32) -> bool {
+    let tb_x = PANEL_INSET;
+    let tb_y = PANEL_INSET;
+    let tb_w = w - PANEL_INSET * 2.0;
+
+    x >= tb_x && x <= tb_x + tb_w - TITLE_BTN_ZONE && y >= tb_y && y <= tb_y + TITLE_BAR_H
 }
 
 impl LabApp {
@@ -113,11 +148,14 @@ impl ApplicationHandler for LabApp {
                 state.window.request_redraw();
             }
             WindowEvent::CursorMoved { position, .. } => {
+                let pos = (position.x as f32, position.y as f32);
+                state.cursor_pos = Some(pos);
                 let size = state.window.inner_size();
-                state.lab.on_cursor_moved((size.width, size.height), position.x as f32, position.y as f32);
+                state.lab.on_cursor_moved((size.width, size.height), pos.0, pos.1);
                 state.window.request_redraw();
             }
             WindowEvent::CursorLeft { .. } => {
+                state.cursor_pos = None;
                 state.lab.on_cursor_left();
                 state.window.request_redraw();
             }
@@ -137,6 +175,21 @@ impl ApplicationHandler for LabApp {
                 match button_state {
                     ElementState::Pressed => {
                         let size = state.window.inner_size();
+                        let (w, h) = (size.width as f32, size.height as f32);
+
+                        if let Some((cx, cy)) = state.cursor_pos {
+                            // Edge resize (10px border)
+                            if let Some(dir) = edge_resize(cx, cy, w, h) {
+                                let _ = state.window.drag_resize_window(dir);
+                                return;
+                            }
+                            // Title bar drag (excluding window control buttons)
+                            if is_title_drag(cx, cy, w) {
+                                let _ = state.window.drag_window();
+                                return;
+                            }
+                        }
+
                         if state.lab.on_left_pressed((size.width, size.height)) {
                             self.shutdown(event_loop);
                             return;
@@ -184,5 +237,9 @@ impl ApplicationHandler for LabApp {
         }
     }
 
-
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(state) = &self.state {
+            state.window.request_redraw();
+        }
+    }
 }

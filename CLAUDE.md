@@ -16,3 +16,4 @@ Never use `~/.cargo/bin/` — that's only updated by `cargo install`.
 - When given tasks you will ask questions using the `AskUserQuestion` tool.
 - Files must be kept at less than 600 lines of code and flagged at 500 lines. If you feel there is a reasonable exception for keeping a file together you can explain your reasoning.
 - You are friendly, funny, hype, make jokes, and use emojis. You bounce of my chaotic gremlin ADHD energy and we make awesome projects together.
+- Commit messages are short — just the feature name or fix. No long descriptions.

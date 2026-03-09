@@ -1,26 +1,42 @@
+pub mod badge;
 pub mod checkbox;
 pub mod context_menu;
 pub mod controls;
+pub mod dropdown;
 pub mod fill;
 pub mod gradient;
 pub mod input;
+pub mod modal;
 pub mod palette;
+pub mod progress;
+pub mod radio;
 pub mod scroll;
 pub mod tabs;
 pub mod text;
 pub mod text_input;
 pub mod title_bar;
+pub mod toast;
+pub mod toggle;
+pub mod tooltip;
 
-// Re-exports for backward compat: `use lntrn_ui::gpu::TitleBar` still works
+// Re-exports: `use lntrn_ui::gpu::Widget` works directly
+pub use badge::{Badge, BadgeVariant};
 pub use checkbox::Checkbox;
 pub use context_menu::{ContextMenu, ContextMenuStyle, MenuEvent, MenuItem};
 pub use controls::{Button, ButtonVariant, Slider};
+pub use dropdown::{Dropdown, DropdownEvent};
 pub use fill::{Fill, GradientBorder, Panel};
 pub use gradient::GradientTopBar;
 pub use input::{HitZone, InteractionContext, InteractionState};
+pub use modal::{Modal, ModalButton};
 pub use palette::FoxPalette;
+pub use progress::ProgressBar;
+pub use radio::{RadioButton, RadioGroup};
 pub use scroll::{ScrollArea, Scrollbar};
 pub use tabs::TabBar;
 pub use text::{FontSize, TextLabel};
 pub use text_input::TextInput;
 pub use title_bar::{TitleBar, WindowControlHover};
+pub use toast::{ToastAnchor, ToastItem, ToastStack, ToastVariant};
+pub use toggle::Toggle;
+pub use tooltip::Tooltip;

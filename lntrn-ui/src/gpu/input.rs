@@ -123,6 +123,15 @@ impl InteractionContext {
 
     // ── Helpers ──────────────────────────────────────────────────────
 
+    /// Find the zone (from previous frame) that contains the given point.
+    pub fn zone_at(&self, x: f32, y: f32) -> Option<u32> {
+        self.zones
+            .iter()
+            .rev()
+            .find(|z| z.rect.contains(x, y))
+            .map(|z| z.id)
+    }
+
     /// Check if cursor is inside `rect` right now.
     pub fn is_hovered(&self, rect: &Rect) -> bool {
         self.cursor
