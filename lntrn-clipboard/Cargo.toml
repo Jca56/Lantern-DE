@@ -1,0 +1,20 @@
+[package]
+name = "lntrn-clipboard"
+version = "0.1.0"
+description = "Wayland clipboard utilities for Lantern DE"
+authors = ["Jca56"]
+edition = "2021"
+
+[[bin]]
+name = "lntrn-paste"
+path = "src/paste.rs"
+
+[[bin]]
+name = "lntrn-copy"
+path = "src/copy.rs"
+
+[dependencies]
+anyhow = "1"
+libc = "0.2"
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }

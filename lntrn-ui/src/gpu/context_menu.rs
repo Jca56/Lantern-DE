@@ -18,6 +18,8 @@ pub struct ContextMenuStyle {
     pub font_size: f32,
     pub min_width: f32,
     pub border_width: f32,
+    /// Scale factor applied to all dimensions during rendering.
+    pub scale: f32,
 }
 
 impl ContextMenuStyle {
@@ -36,7 +38,13 @@ impl ContextMenuStyle {
             font_size: 22.0,
             min_width: 180.0,
             border_width: 1.0,
+            scale: 1.0,
         }
+    }
+
+    pub fn with_scale(mut self, scale: f32) -> Self {
+        self.scale = scale;
+        self
     }
 }
 
@@ -132,6 +140,10 @@ impl ContextMenu {
         }
     }
 
+    pub fn set_scale(&mut self, scale: f32) {
+        self.style.scale = scale;
+    }
+
     pub fn is_open(&self) -> bool {
         self.open
     }
@@ -154,6 +166,18 @@ impl ContextMenu {
         }
         if self.y + total_h > screen_h {
             self.y = (screen_h - total_h - 4.0).max(0.0);
+        }
+    }
+
+    /// Reposition for a bottom bar: menu grows upward from the cursor position
+    /// and stays within the surface bounds.
+    pub fn clamp_bottom_bar(&mut self, surface_w: f32, _surface_h: f32) {
+        let total_h = items_height(&self.items, &self.style);
+        // Grow upward: place menu so its bottom edge is at cursor Y
+        self.y = (self.y - total_h).max(0.0);
+        // Clamp horizontally
+        if self.x + self.width > surface_w {
+            self.x = (surface_w - self.width - 4.0).max(0.0);
         }
     }
 
@@ -190,6 +214,7 @@ impl ContextMenu {
         let mut parent_x = self.x;
         let mut parent_width = self.width;
         let mut path = Vec::new();
+        let sc = self.style.scale;
 
         for &sub_id in &self.open_submenu_ids {
             // Find which item index matches this submenu id
@@ -200,7 +225,7 @@ impl ContextMenu {
 
             let sub_y_offset = item_y_offset(current_items, idx, &self.style);
             let sub_w = compute_width(children, &self.style);
-            let sub_x = parent_x + parent_width - 4.0; // slight overlap
+            let sub_x = parent_x + parent_width - 4.0 * sc;
             let sub_y = panels.last().unwrap().y + sub_y_offset;
 
             panels.push(MenuPanel {
@@ -244,11 +269,19 @@ impl ContextMenu {
         event
     }
 
+    /// Returns the bounding rect of the root menu panel, or None if closed.
+    pub fn bounds(&self) -> Option<Rect> {
+        if !self.open { return None; }
+        let h = items_height(&self.items, &self.style);
+        Some(Rect::new(self.x, self.y, self.width, h))
+    }
+
     /// Check if a point is inside any open menu panel.
     pub fn contains(&self, x: f32, y: f32) -> bool {
         if !self.open {
             return false;
         }
+        let sc = self.style.scale;
         // Check root
         let root_h = items_height(&self.items, &self.style);
         if contains_rect(x, y, self.x, self.y, self.width, root_h) {
@@ -265,7 +298,7 @@ impl ContextMenu {
                 break;
             };
             let sub_y_offset = item_y_offset(current_items, idx, &self.style);
-            let sub_x = parent_x + parent_width - 4.0;
+            let sub_x = parent_x + parent_width - 4.0 * sc;
             let sub_y = parent_y + sub_y_offset;
             let sub_w = compute_width(children, &self.style);
             let sub_h = items_height(children, &self.style);
@@ -299,89 +332,99 @@ fn draw_panel(
     screen_h: u32,
     open_submenu_ids: &mut Vec<u32>,
 ) -> Option<MenuEvent> {
+    let s = style.scale;
     let total_h = items_height_slice(items, style);
     let menu_rect = Rect::new(px, py, width, total_h);
+    let cr = style.corner_radius * s;
 
     // Shadow
-    let shadow = menu_rect.expand(3.0);
-    painter.rect_filled(shadow, style.corner_radius + 2.0, Color::BLACK.with_alpha(0.2));
+    let shadow = menu_rect.expand(3.0 * s);
+    painter.rect_filled(shadow, cr + 2.0 * s, Color::BLACK.with_alpha(0.2));
 
-    painter.rect_filled(menu_rect, style.corner_radius, style.bg);
-    painter.rect_stroke(menu_rect, style.corner_radius, style.border_width, style.border);
+    painter.rect_filled(menu_rect, cr, style.bg);
+    painter.rect_stroke(menu_rect, cr, style.border_width * s, style.border);
 
     let mut event = None;
-    let mut cy = py + style.padding;
-    let inner_w = width - style.padding * 2.0;
-    let inner_x = px + style.padding;
+    let mut cy = py + style.padding * s;
+    let inner_w = width - style.padding * 2.0 * s;
+    let inner_x = px + style.padding * s;
     let zone_base = CONTEXT_MENU_ZONE_BASE + (depth as u32) * 0x1000;
+    let item_h = style.item_height * s;
+    let font = style.font_size * s;
+    let pad = style.padding * s;
 
     for item in items.iter_mut() {
         match item {
             MenuItem::Action { id, label } => {
-                let item_rect = Rect::new(inner_x, cy, inner_w, style.item_height);
+                let item_rect = Rect::new(inner_x, cy, inner_w, item_h);
                 let zone_id = zone_base + *id;
                 let state = interaction.add_zone(zone_id, item_rect);
 
                 if state == InteractionState::Hovered || state == InteractionState::Pressed {
-                    painter.rect_filled(item_rect, style.corner_radius - 2.0, style.bg_hover);
+                    painter.rect_filled(item_rect, cr - 2.0 * s, style.bg_hover);
                 }
                 if state == InteractionState::Pressed {
                     event = Some(MenuEvent::Action(*id));
                 }
 
-                let text_x = inner_x + style.padding * 2.0;
-                let text_y = cy + (style.item_height - style.font_size) * 0.5;
+                let text_x = inner_x + pad * 2.0;
+                let text_y = cy + (item_h - font) * 0.5;
                 text.queue(
-                    label, style.font_size, text_x, text_y, style.text,
-                    inner_w - style.padding * 4.0, screen_w, screen_h,
+                    label, font, text_x, text_y, style.text,
+                    inner_w - pad * 4.0, screen_w, screen_h,
                 );
-                cy += style.item_height;
+                cy += item_h;
             }
             MenuItem::Separator => {
-                let sep_y = cy + SEPARATOR_HEIGHT * 0.5;
-                let sep_x = inner_x + style.padding;
-                let sep_w = inner_w - style.padding * 2.0;
-                painter.rect_filled(Rect::new(sep_x, sep_y, sep_w, 1.0), 0.0, style.separator);
-                cy += SEPARATOR_HEIGHT;
+                let sep_h = SEPARATOR_HEIGHT * s;
+                let sep_y = cy + sep_h * 0.5;
+                let sep_x = inner_x + pad;
+                let sep_w = inner_w - pad * 2.0;
+                painter.rect_filled(Rect::new(sep_x, sep_y, sep_w, 1.0 * s), 0.0, style.separator);
+                cy += sep_h;
             }
             MenuItem::Slider { id, label, value } => {
-                let item_rect = Rect::new(inner_x, cy, inner_w, SLIDER_ITEM_HEIGHT);
+                let slider_h = SLIDER_ITEM_HEIGHT * s;
+                let label_size = SLIDER_LABEL_SIZE * s;
+                let track_h = SLIDER_TRACK_H * s;
+
+                let item_rect = Rect::new(inner_x, cy, inner_w, slider_h);
                 let zone_id = zone_base + *id;
                 let zone_state = interaction.add_zone(zone_id, item_rect);
 
-                let label_x = inner_x + style.padding * 2.0;
-                let label_y = cy + 6.0;
+                let label_x = inner_x + pad * 2.0;
+                let label_y = cy + 6.0 * s;
                 text.queue(
-                    label, SLIDER_LABEL_SIZE, label_x, label_y, style.text_muted,
+                    label, label_size, label_x, label_y, style.text_muted,
                     inner_w * 0.6, screen_w, screen_h,
                 );
                 let pct = format!("{}%", (*value * 100.0).round() as u32);
-                let pct_w = pct.len() as f32 * SLIDER_LABEL_SIZE * 0.55;
-                let pct_x = inner_x + inner_w - style.padding * 2.0 - pct_w;
+                let pct_w = pct.len() as f32 * label_size * 0.55;
+                let pct_x = inner_x + inner_w - pad * 2.0 - pct_w;
                 text.queue(
-                    &pct, SLIDER_LABEL_SIZE, pct_x, label_y, style.text_muted,
-                    pct_w + 4.0, screen_w, screen_h,
+                    &pct, label_size, pct_x, label_y, style.text_muted,
+                    pct_w + 4.0 * s, screen_w, screen_h,
                 );
 
-                let track_pad = style.padding * 2.0;
-                let track_y = label_y + SLIDER_LABEL_SIZE + 8.0;
+                let track_pad = pad * 2.0;
+                let track_y = label_y + label_size + 8.0 * s;
                 let track_w = inner_w - track_pad * 2.0;
-                let track = Rect::new(inner_x + track_pad, track_y, track_w, SLIDER_TRACK_H);
+                let track = Rect::new(inner_x + track_pad, track_y, track_w, track_h);
 
-                painter.rect_filled(track, SLIDER_TRACK_H * 0.5, style.bg_hover);
-                let fill_w = (track_w * *value).max(SLIDER_TRACK_H);
+                painter.rect_filled(track, track_h * 0.5, style.bg_hover);
+                let fill_w = (track_w * *value).max(track_h);
                 painter.rect_filled(
-                    Rect::new(track.x, track.y, fill_w, SLIDER_TRACK_H),
-                    SLIDER_TRACK_H * 0.5, style.accent,
+                    Rect::new(track.x, track.y, fill_w, track_h),
+                    track_h * 0.5, style.accent,
                 );
 
                 let thumb_x = track.x + track_w * *value;
-                let thumb_cy = track.y + SLIDER_TRACK_H * 0.5;
-                let thumb_r = if zone_state.is_active() { 8.0 }
-                    else if zone_state.is_hovered() { 7.0 }
-                    else { 6.0 };
+                let thumb_cy = track.y + track_h * 0.5;
+                let thumb_r = if zone_state.is_active() { 8.0 * s }
+                    else if zone_state.is_hovered() { 7.0 * s }
+                    else { 6.0 * s };
                 painter.circle_filled(thumb_x, thumb_cy, thumb_r, Color::WHITE);
-                painter.circle_stroke(thumb_x, thumb_cy, thumb_r, 1.0, Color::rgba(0.0, 0.0, 0.0, 0.2));
+                painter.circle_stroke(thumb_x, thumb_cy, thumb_r, 1.0 * s, Color::rgba(0.0, 0.0, 0.0, 0.2));
 
                 if zone_state.is_active() {
                     if let Some(frac) = interaction.drag_fraction_x(&track) {
@@ -389,39 +432,38 @@ fn draw_panel(
                         event = Some(MenuEvent::SliderChanged { id: *id, value: frac });
                     }
                 }
-                cy += SLIDER_ITEM_HEIGHT;
+                cy += slider_h;
             }
             MenuItem::SubMenu { id, label, .. } => {
-                let item_rect = Rect::new(inner_x, cy, inner_w, style.item_height);
+                let item_rect = Rect::new(inner_x, cy, inner_w, item_h);
                 let zone_id = zone_base + *id;
                 let state = interaction.add_zone(zone_id, item_rect);
 
                 let is_open = open_submenu_ids.get(depth) == Some(id);
 
                 if state.is_hovered() || is_open {
-                    painter.rect_filled(item_rect, style.corner_radius - 2.0, style.bg_hover);
-                    // Open this submenu (trim deeper levels if switching)
+                    painter.rect_filled(item_rect, cr - 2.0 * s, style.bg_hover);
                     if !is_open {
                         open_submenu_ids.truncate(depth);
                         open_submenu_ids.push(*id);
                     }
                 }
 
-                let text_x = inner_x + style.padding * 2.0;
-                let text_y = cy + (style.item_height - style.font_size) * 0.5;
+                let text_x = inner_x + pad * 2.0;
+                let text_y = cy + (item_h - font) * 0.5;
                 text.queue(
-                    label, style.font_size, text_x, text_y, style.text,
-                    inner_w - style.padding * 6.0, screen_w, screen_h,
+                    label, font, text_x, text_y, style.text,
+                    inner_w - pad * 6.0, screen_w, screen_h,
                 );
 
                 // Arrow chevron ›
-                let arrow_x = inner_x + inner_w - style.padding * 2.0 - 6.0;
-                let arrow_cy = cy + style.item_height * 0.5;
+                let arrow_x = inner_x + inner_w - pad * 2.0 - 6.0 * s;
+                let arrow_cy = cy + item_h * 0.5;
                 let arrow_color = if is_open { style.accent } else { style.text_muted };
-                painter.line(arrow_x, arrow_cy - 5.0, arrow_x + 5.0, arrow_cy, 1.5, arrow_color);
-                painter.line(arrow_x + 5.0, arrow_cy, arrow_x, arrow_cy + 5.0, 1.5, arrow_color);
+                painter.line(arrow_x, arrow_cy - 5.0 * s, arrow_x + 5.0 * s, arrow_cy, 1.5 * s, arrow_color);
+                painter.line(arrow_x + 5.0 * s, arrow_cy, arrow_x, arrow_cy + 5.0 * s, 1.5 * s, arrow_color);
 
-                cy += style.item_height;
+                cy += item_h;
             }
         }
     }
@@ -432,27 +474,29 @@ fn draw_panel(
 // ── Item tree helpers ────────────────────────────────────────────────────────
 
 fn compute_width(items: &[MenuItem], style: &ContextMenuStyle) -> f32 {
+    let s = style.scale;
     let max_label_w = items
         .iter()
         .filter_map(|item| match item {
-            MenuItem::Action { label, .. } => Some(label.len() as f32 * style.font_size * 0.55),
+            MenuItem::Action { label, .. } => Some(label.len() as f32 * style.font_size * s * 0.55),
             MenuItem::SubMenu { label, .. } => {
-                Some(label.len() as f32 * style.font_size * 0.55 + 20.0) // extra for arrow
+                Some(label.len() as f32 * style.font_size * s * 0.55 + 20.0 * s)
             }
             MenuItem::Slider { label, .. } => {
-                Some(label.len() as f32 * SLIDER_LABEL_SIZE * 0.55 + 60.0)
+                Some(label.len() as f32 * SLIDER_LABEL_SIZE * s * 0.55 + 60.0 * s)
             }
             MenuItem::Separator => None,
         })
         .fold(0.0f32, f32::max);
-    (max_label_w + style.padding * 4.0).max(style.min_width)
+    (max_label_w + style.padding * s * 4.0).max(style.min_width * s)
 }
 
 fn item_height(item: &MenuItem, style: &ContextMenuStyle) -> f32 {
+    let s = style.scale;
     match item {
-        MenuItem::Action { .. } | MenuItem::SubMenu { .. } => style.item_height,
-        MenuItem::Separator => SEPARATOR_HEIGHT,
-        MenuItem::Slider { .. } => SLIDER_ITEM_HEIGHT,
+        MenuItem::Action { .. } | MenuItem::SubMenu { .. } => style.item_height * s,
+        MenuItem::Separator => SEPARATOR_HEIGHT * s,
+        MenuItem::Slider { .. } => SLIDER_ITEM_HEIGHT * s,
     }
 }
 
@@ -461,11 +505,11 @@ fn items_height(items: &[MenuItem], style: &ContextMenuStyle) -> f32 {
 }
 
 fn items_height_slice(items: &[MenuItem], style: &ContextMenuStyle) -> f32 {
-    items.iter().map(|i| item_height(i, style)).sum::<f32>() + style.padding * 2.0
+    items.iter().map(|i| item_height(i, style)).sum::<f32>() + style.padding * style.scale * 2.0
 }
 
 fn item_y_offset(items: &[MenuItem], index: usize, style: &ContextMenuStyle) -> f32 {
-    let mut offset = style.padding;
+    let mut offset = style.padding * style.scale;
     for item in items.iter().take(index) {
         offset += item_height(item, style);
     }

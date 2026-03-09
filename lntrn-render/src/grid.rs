@@ -69,6 +69,14 @@ impl CellMetrics {
     }
 }
 
+/// Cursor shape requested by the application via DECSCUSR.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CursorShape {
+    Block,
+    Beam,
+    Underline,
+}
+
 /// Cursor state.
 #[derive(Clone, Copy, Debug)]
 pub struct CursorState {
@@ -76,6 +84,7 @@ pub struct CursorState {
     pub col: usize,
     pub visible: bool,
     pub color: Color,
+    pub shape: CursorShape,
 }
 
 /// Selection range (row/col in visible coordinates).
@@ -213,7 +222,7 @@ impl TerminalGridRenderer {
         }
     }
 
-    /// Draw the cursor block.
+    /// Draw the cursor in its current shape (block, beam, or underline).
     pub fn draw_cursor(
         &self,
         painter: &mut Painter,
@@ -223,11 +232,33 @@ impl TerminalGridRenderer {
         if !cursor.visible {
             return;
         }
-        let rect = self.cell_rect(origin, cursor.row, cursor.col);
-        painter.rect_filled(rect, 0.0, cursor.color);
+        let cell = self.cell_rect(origin, cursor.row, cursor.col);
+        match cursor.shape {
+            CursorShape::Block => {
+                painter.rect_filled(cell, 0.0, cursor.color);
+            }
+            CursorShape::Beam => {
+                let beam_w = 2.0;
+                painter.rect_filled(
+                    Rect::new(cell.x, cell.y, beam_w, cell.h),
+                    0.0,
+                    cursor.color,
+                );
+            }
+            CursorShape::Underline => {
+                let underline_h = 3.0;
+                painter.rect_filled(
+                    Rect::new(cell.x, cell.y + cell.h - underline_h, cell.w, underline_h),
+                    0.0,
+                    cursor.color,
+                );
+            }
+        }
     }
 
     /// Draw cursor with the character underneath rendered in a contrasting color.
+    /// For block cursors, the char is drawn on top in a contrasting color.
+    /// For beam/underline, the char doesn't need re-drawing (glyph pass handles it).
     pub fn draw_cursor_with_char(
         &self,
         painter: &mut Painter,
@@ -241,7 +272,12 @@ impl TerminalGridRenderer {
         screen_h: u32,
     ) {
         self.draw_cursor(painter, origin, cursor);
-        if cursor.visible && cell_char != ' ' && cell_char != '\0' {
+        // Only block cursor needs the character re-drawn in contrasting color
+        if cursor.shape == CursorShape::Block
+            && cursor.visible
+            && cell_char != ' '
+            && cell_char != '\0'
+        {
             let rect = self.cell_rect(origin, cursor.row, cursor.col);
             let s = cell_char.to_string();
             text.queue(

@@ -353,12 +353,14 @@ impl TexturePass {
     /// Render textured quads in a single render pass.
     /// Consecutive draws sharing the same texture are batched into one draw call.
     /// The pass loads (does not clear) the target, so call after Painter's render_pass.
+    /// Optional scissor rect `[x, y, w, h]` in physical pixels clips all draws.
     pub fn render_pass(
         &self,
         gpu: &GpuContext,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         draws: &[TextureDraw],
+        scissor: Option<[u32; 4]>,
     ) {
         if draws.is_empty() {
             return;
@@ -406,6 +408,9 @@ impl TexturePass {
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.globals_bind_group, &[]);
         pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
+        if let Some([x, y, w, h]) = scissor {
+            pass.set_scissor_rect(x, y, w.max(1), h.max(1));
+        }
 
         // Batch consecutive same-texture draws
         let mut batch_start = 0usize;

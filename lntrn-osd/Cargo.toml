@@ -1,0 +1,19 @@
+[package]
+name = "lntrn-osd"
+version = "0.1.0"
+description = "On-screen display overlay for Lantern DE"
+authors = ["Jca56"]
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+libc = "0.2"
+lntrn-render = { path = "../lntrn-render" }
+lntrn-ui = { path = "../lntrn-ui" }
+raw-window-handle = "0.6"
+resvg = "0.45"
+wayland-backend = { version = "0.3", features = ["client_system"] }
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+wgpu = "28"

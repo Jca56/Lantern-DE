@@ -18,6 +18,8 @@ members = [
     "lntrn-session-manager",
     "lntrn-system-settings",
     "lntrn-theme",
+    "lntrn-clipboard",
+    "lntrn-osd",
 ]
 
 [profile.release]

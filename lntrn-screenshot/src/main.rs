@@ -279,7 +279,7 @@ impl AppState {
 
         // 2. Screenshot texture
         let tex_draw = TextureDraw::new(&self.screenshot_tex, 0.0, 0.0, sw, sh);
-        self.tex_pass.render_pass(&self.gpu, frame.encoder_mut(), &view, &[tex_draw]);
+        self.tex_pass.render_pass(&self.gpu, frame.encoder_mut(), &view, &[tex_draw], None);
 
         // 3. Overlay shapes
         self.painter.render_pass_overlay(&self.gpu, frame.encoder_mut(), &view);
