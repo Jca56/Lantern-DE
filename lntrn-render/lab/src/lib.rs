@@ -1,3 +1,4 @@
+mod containers;
 mod layout;
 mod sections;
 
@@ -7,51 +8,72 @@ use lntrn_render::{
 };
 use lntrn_ui::gpu::{
     ContextMenu, ContextMenuStyle, Fill, FontSize, FoxPalette, GradientTopBar, InteractionContext,
-    MenuItem, Panel, ScrollArea, Scrollbar, TextLabel, TitleBar,
+    MenuEvent, MenuItem, Panel, TabBar, TextLabel, TitleBar,
 };
 
-use layout::{
-    generate_checkerboard, panel_rect, scroll_demo_rect, slider_control_rect, slider_panel_rect,
-    slider_value_for_x, swatch_rect, swatches_origin_y, tex_demo_rect, text_reference_rect,
-    ORB_RADIUS, SCROLL_DEMO_ITEMS, SCROLL_DEMO_ITEM_H,
-};
-use sections::{draw_scroll_demo, draw_slider_section, draw_text_reference, draw_texture_demo};
+use containers::*;
+use layout::*;
+use sections::*;
+
+// ── Tab names ────────────────────────────────────────────────────────────────
+
+const TAB_LABELS: &[&str] = &["Typography", "Controls", "Inputs", "Containers"];
+
+// ── Zone IDs ─────────────────────────────────────────────────────────────────
+// 1-9:   title bar
+// 10-19: tab bar
+// 20-49: controls tab
+// 50-79: inputs tab
+// 80-99: containers tab
+// 100+:  reserved
+
+const ZONE_CLOSE: u32 = 1;
+const ZONE_MINIMIZE: u32 = 2;
+const ZONE_MAXIMIZE: u32 = 3;
+const ZONE_TAB_BASE: u32 = 10; // 10, 11, 12, 13 for four tabs
+const ZONE_NESTED_TAB_BASE: u32 = 60; // 60, 61, 62 for nested tabs
 
 pub enum LabCommand {
-    ResetOrb,
+    ResetSlider,
 }
 
 pub struct RendererLab {
     ix: InteractionContext,
-    hovered_swatch: Option<usize>,
-    selected_swatch: usize,
-    drag_grab_offset: (f32, f32),
-    orb_offset: (f32, f32),
+    selected_tab: usize,
+    hovered_tab: Option<usize>,
+
+    // Controls tab state
     slider_value: f32,
+    checkbox_states: [bool; 3],
+
+    // Inputs tab state
+    text_input_value: String,
+    focused_input: Option<u32>,
+    nested_tab: usize,
+    nested_tab_hovered: Option<usize>,
+
+    // Containers tab state
     scroll_offset: f32,
     tex_pass: Option<TexturePass>,
     test_texture: Option<GpuTexture>,
+
+    // Global
     context_menu: ContextMenu,
 }
-
-// Zone IDs for the interaction context
-const ZONE_CLOSE: u32 = 1;
-const ZONE_MINIMIZE: u32 = 2;
-const ZONE_MAXIMIZE: u32 = 3;
-const ZONE_SLIDER: u32 = 4;
-const ZONE_ORB: u32 = 5;
-const ZONE_SCROLLBAR: u32 = 6;
 
 impl RendererLab {
     pub fn new() -> Self {
         let style = ContextMenuStyle::from_palette(&FoxPalette::dark());
         Self {
             ix: InteractionContext::new(),
-            hovered_swatch: None,
-            selected_swatch: 0,
-            drag_grab_offset: (0.0, 0.0),
-            orb_offset: (0.0, 0.0),
+            selected_tab: 0,
+            hovered_tab: None,
             slider_value: 0.62,
+            checkbox_states: [true, false, false],
+            text_input_value: String::from("Hello Lantern"),
+            focused_input: None,
+            nested_tab: 0,
+            nested_tab_hovered: None,
             scroll_offset: 0.0,
             tex_pass: None,
             test_texture: None,
@@ -74,206 +96,187 @@ impl RendererLab {
 
         let width = size.0 as f32;
         let height = size.1 as f32;
-
-        let bg = Color::from_rgb8(24, 24, 24);
         let fox = FoxPalette::dark();
-        let border = Color::from_rgb8(62, 62, 62);
-        let text = fox.text;
-        let muted = fox.muted;
-        let palette = self.palette();
-        let accent = palette[self.selected_swatch];
+        let border = fox.muted.with_alpha(0.3);
         let panel = panel_rect(size);
 
         painter.clear();
 
         // Full-window background
-        painter.rect_filled(Rect::new(0.0, 0.0, width, height), 0.0, bg);
+        painter.rect_filled(Rect::new(0.0, 0.0, width, height), 0.0, fox.bg);
 
-        // Multicolor accent strip across the top
-        GradientTopBar::new(0.0, 0.0, width).draw(painter);
+        // Multicolor accent strip at the very top of the panel
+        let strip_y = panel.y + TITLE_BAR_H;
+        GradientTopBar::new(panel.x, strip_y, panel.w).draw(painter);
 
-        // Main panel
+        // Main panel background
         Panel::new(panel)
             .fill(Fill::vertical(fox.surface, fox.bg))
             .radius(18.0)
             .draw(painter);
         painter.rect_stroke(panel, 18.0, 1.0, border);
 
-        // Title bar — register zones for hit testing
-        let title_bar_rect = Rect::new(panel.x, panel.y, panel.w, 52.0);
-        let tb = TitleBar::new(title_bar_rect, "");
+        // ── Title bar ────────────────────────────────────────────────────
+        let tb_rect = title_bar_rect(panel);
+        let tb = TitleBar::new(tb_rect, "");
         let min_state = self.ix.add_zone(ZONE_MINIMIZE, tb.minimize_button_rect());
         let max_state = self.ix.add_zone(ZONE_MAXIMIZE, tb.maximize_button_rect());
         let close_state = self.ix.add_zone(ZONE_CLOSE, tb.close_button_rect());
 
-        TitleBar::new(title_bar_rect, "Lantern Renderer Lab")
+        TitleBar::new(tb_rect, "Lantern Lab")
             .minimize_hovered(min_state.is_hovered())
             .maximize_hovered(max_state.is_hovered())
             .close_hovered(close_state.is_hovered())
             .draw(painter, text_renderer, &fox, size.0, size.1);
 
-        // Subtitle
+        // Re-draw gradient strip on top of panel (after panel background)
+        GradientTopBar::new(panel.x, strip_y, panel.w).draw(painter);
+
+        // ── Tab bar ──────────────────────────────────────────────────────
+        let tab_rect = tab_bar_rect(panel);
+        self.update_tab_hover(&tab_rect);
+
+        // Register tab zones for hit testing
+        let tab_bar_widget = TabBar::new(tab_rect).tabs(TAB_LABELS).selected(self.selected_tab);
+        let tab_rects = tab_bar_widget.tab_rects();
+        for (i, tr) in tab_rects.iter().enumerate() {
+            self.ix.add_zone(ZONE_TAB_BASE + i as u32, *tr);
+        }
+
+        TabBar::new(tab_rect)
+            .tabs(TAB_LABELS)
+            .selected(self.selected_tab)
+            .hovered(self.hovered_tab)
+            .draw(painter, text_renderer, &fox, size.0, size.1);
+
+        // ── Content area ─────────────────────────────────────────────────
+        let content = content_rect(panel);
+        let mut tex_clip: Option<Rect> = None;
+
+        match self.selected_tab {
+            0 => draw_typography_tab(painter, text_renderer, &fox, content, size),
+            1 => draw_controls_tab(
+                painter,
+                text_renderer,
+                &fox,
+                &mut self.ix,
+                content,
+                self.slider_value,
+                self.checkbox_states,
+                size,
+            ),
+            2 => {
+                // Register nested tab zones
+                let nested_area = inputs_nested_tabs_rect(content);
+                let nested_bar = Rect::new(
+                    nested_area.x + 18.0,
+                    nested_area.y + 48.0,
+                    nested_area.w - 36.0,
+                    38.0,
+                );
+                let nested_labels: &[&str] = &["Alpha", "Beta", "Gamma"];
+                let nested_widget = TabBar::new(nested_bar).tabs(nested_labels);
+                let nested_rects = nested_widget.tab_rects();
+                for (i, tr) in nested_rects.iter().enumerate() {
+                    self.ix.add_zone(ZONE_NESTED_TAB_BASE + i as u32, *tr);
+                }
+
+                draw_inputs_tab(
+                    painter,
+                    text_renderer,
+                    &fox,
+                    &mut self.ix,
+                    content,
+                    &self.text_input_value,
+                    self.focused_input,
+                    self.nested_tab,
+                    self.nested_tab_hovered,
+                    size,
+                );
+            }
+            3 => {
+                // Ensure texture pass is created
+                if self.tex_pass.is_none() {
+                    let tp = TexturePass::new(gpu);
+                    let checker = generate_checkerboard(64, 8);
+                    self.test_texture = Some(tp.upload(gpu, &checker, 64, 64));
+                    self.tex_pass = Some(tp);
+                }
+                tex_clip = draw_containers_tab(
+                    painter,
+                    text_renderer,
+                    &fox,
+                    &mut self.ix,
+                    content,
+                    &mut self.scroll_offset,
+                    size,
+                );
+            }
+            _ => {}
+        }
+
+        // ── Footer ──────────────────────────────────────────────────────
+        let footer_text = match self.selected_tab {
+            0 => "Font sizes and palette colors from the theme",
+            1 => "Click buttons \u{2022} Drag slider \u{2022} Toggle checkboxes",
+            2 => "Click inputs to focus \u{2022} Nested tabs switch independently",
+            3 => "Scroll list \u{2022} Drag scrollbar \u{2022} Texture clipping demo",
+            _ => "",
+        };
         TextLabel::new(
-            "Gradients \u{2022} Widgets \u{2022} Interactions",
-            panel.x + 28.0,
-            panel.y + 58.0,
-        )
-            .size(FontSize::Small)
-            .color(muted)
-            .draw(text_renderer, size.0, size.1);
-
-        // Separator
-        painter.line(
-            panel.x + 28.0,
-            panel.y + 92.0,
-            panel.x + panel.w - 28.0,
-            panel.y + 92.0,
-            1.0,
-            border,
-        );
-
-        let text_rect = text_reference_rect(panel);
-        draw_text_reference(painter, text_renderer, &fox, border, text_rect, size);
-
-        let slider_panel = slider_panel_rect(panel);
-        let slider_rect = slider_control_rect(panel);
-        let slider_state = self.ix.add_zone(ZONE_SLIDER, slider_rect);
-        draw_slider_section(
-            painter,
-            text_renderer,
-            &fox,
-            border,
-            slider_panel,
-            slider_rect,
-            self.slider_value,
-            slider_state.is_hovered(),
-            slider_state.is_active(),
-            size,
-        );
-
-        // ── Color swatches ───────────────────────────────────────────────
-        let swatch_y = swatches_origin_y(panel);
-        let swatch_x = panel.x + 28.0;
-        for (index, color) in palette.into_iter().enumerate() {
-            let rect = swatch_rect(swatch_x, swatch_y, index);
-            painter.rect_filled(rect, 10.0, color);
-
-            if self.hovered_swatch == Some(index) {
-                painter.rect_stroke(rect.expand(3.0), 13.0, 2.0, Color::WHITE.with_alpha(0.55));
-            }
-            if self.selected_swatch == index {
-                painter.rect_stroke(rect.expand(6.0), 16.0, 2.0, accent.with_alpha(0.95));
-            }
-        }
-
-        // Orb
-        let orb_rect = self.orb_rect(size);
-        let orb_state = self.ix.add_zone(ZONE_ORB, orb_rect);
-        let orb_center = (orb_rect.center_x(), orb_rect.center_y());
-        painter.circle_filled(
-            orb_center.0,
-            orb_center.1,
-            ORB_RADIUS,
-            accent.with_alpha(if orb_state.is_active() { 0.95 } else { 0.82 }),
-        );
-        painter.circle_stroke(
-            orb_center.0,
-            orb_center.1,
-            ORB_RADIUS + 14.0,
-            3.0,
-            accent.with_alpha(0.35),
-        );
-
-        // ── Texture + Clipping demo ────────────────────────────────────────
-        if self.tex_pass.is_none() {
-            let tp = TexturePass::new(gpu);
-            let checker = generate_checkerboard(64, 8);
-            self.test_texture = Some(tp.upload(gpu, &checker, 64, 64));
-            self.tex_pass = Some(tp);
-        }
-
-        let tex_panel = tex_demo_rect(panel);
-        let clip = draw_texture_demo(painter, text_renderer, border, text, tex_panel, size);
-
-        let scroll_panel = scroll_demo_rect(panel);
-
-        let scroll_viewport = Rect::new(
-            scroll_panel.x + 8.0,
-            scroll_panel.y + 40.0,
-            scroll_panel.w - 16.0,
-            scroll_panel.h - 48.0,
-        );
-        let content_height = SCROLL_DEMO_ITEMS as f32 * SCROLL_DEMO_ITEM_H;
-
-        // Apply wheel scroll if cursor is inside viewport
-        if self.ix.is_hovered(&scroll_viewport) {
-            let delta = self.ix.scroll_delta() * 40.0;
-            ScrollArea::apply_scroll(&mut self.scroll_offset, delta, content_height, scroll_viewport.h);
-        }
-
-        let area = ScrollArea::new(scroll_viewport, content_height, &mut self.scroll_offset);
-        let scrollbar = Scrollbar::new(&scroll_viewport, content_height, self.scroll_offset);
-        let sb_state = self.ix.add_zone(ZONE_SCROLLBAR, scrollbar.thumb);
-
-        // Handle scrollbar thumb drag
-        if sb_state.is_active() {
-            if let Some((_, y)) = self.ix.cursor() {
-                self.scroll_offset = scrollbar.offset_for_thumb_y(y, content_height, scroll_viewport.h);
-            }
-        }
-
-        draw_scroll_demo(
-            painter,
-            text_renderer,
-            &fox,
-            border,
-            scroll_panel,
-            &area,
-            &scrollbar,
-            sb_state,
-            size,
-        );
-
-        // ── Footer ────────────────────────────────────────────────────────
-        TextLabel::new(
-            "Click swatches \u{2022} Drag slider \u{2022} Drag orb \u{2022} Scroll list \u{2022} R: reset",
-            panel.x + 28.0,
-            panel.y + panel.h - 42.0,
+            footer_text,
+            panel.x + CONTENT_PAD,
+            panel.y + panel.h - FOOTER_H + 8.0,
         )
             .size(FontSize::Caption)
-            .color(muted)
-            .max_width(panel.w - 56.0)
+            .color(fox.muted)
+            .max_width(panel.w - CONTENT_PAD * 2.0)
             .draw(text_renderer, size.0, size.1);
 
-        // Context menu (drawn last so it's on top of everything)
-        if let Some(clicked_id) = self.context_menu.draw(
+        // ── Context menu (drawn last, on top) ────────────────────────────
+        if let Some(clicked) = self.context_menu.draw(
             painter,
             text_renderer,
             &mut self.ix,
             size.0,
             size.1,
         ) {
-            match clicked_id {
-                1 => self.orb_offset = (0.0, 0.0),
-                2 => self.slider_value = 0.5,
-                3 => self.selected_swatch = 0,
-                _ => {}
+            match clicked {
+                MenuEvent::Action(1) => {
+                    self.slider_value = 0.5;
+                    self.context_menu.close();
+                }
+                MenuEvent::Action(2) => {
+                    self.checkbox_states = [false, false, false];
+                    self.context_menu.close();
+                }
+                MenuEvent::Action(3) => {
+                    self.selected_tab = 0;
+                    self.context_menu.close();
+                }
+                _ => {
+                    self.context_menu.close();
+                }
             }
-            self.context_menu.close();
         }
 
-        // Manual frame management: shapes → textures → text
+        // ── GPU frame: shapes -> textures -> text ────────────────────────
         let mut frame = gpu.begin_frame("Lab")?;
         let view = frame.view().clone();
         painter.render_pass(gpu, frame.encoder_mut(), &view, Color::TRANSPARENT);
 
-        if let (Some(tp), Some(tex)) = (&self.tex_pass, &self.test_texture) {
-            tp.render_pass(
-                gpu,
-                frame.encoder_mut(),
-                &view,
-                &[TextureDraw::new(tex, clip.x + 10.0, clip.y + 10.0, 120.0, 120.0)],
-            );
+        // Render checkerboard texture if on containers tab
+        if self.selected_tab == 3 {
+            if let (Some(tp), Some(tex), Some(clip)) =
+                (&self.tex_pass, &self.test_texture, tex_clip)
+            {
+                tp.render_pass(
+                    gpu,
+                    frame.encoder_mut(),
+                    &view,
+                    &[TextureDraw::new(tex, clip.x + 10.0, clip.y + 10.0, 120.0, 120.0)],
+                );
+            }
         }
 
         text_renderer.render_queued(gpu, frame.encoder_mut(), &view);
@@ -281,36 +284,47 @@ impl RendererLab {
         Ok(())
     }
 
+    // ── Event handlers ───────────────────────────────────────────────────
+
     pub fn on_cursor_moved(&mut self, size: (u32, u32), x: f32, y: f32) {
         self.ix.on_cursor_moved(x, y);
 
-        // Orb dragging
-        if self.ix.active_zone_id() == Some(ZONE_ORB) {
-            let panel = panel_rect(size);
-            let base_x = panel.x + panel.w - 110.0;
-            let base_y = swatches_origin_y(panel) + 104.0;
-            self.orb_offset = (x - self.drag_grab_offset.0 - base_x, y - self.drag_grab_offset.1 - base_y);
-        }
-
-        // Slider dragging
+        // Slider dragging (controls tab)
         if self.ix.active_zone_id() == Some(ZONE_SLIDER) {
-            self.slider_value = slider_value_for_x(size, x);
+            let content = content_rect(panel_rect(size));
+            self.slider_value = slider_value_for_x(content, x);
         }
 
-        self.update_swatch_hover(size);
+        // Scrollbar dragging handled in render via InteractionContext
+
+        // Update tab hover
+        let panel = panel_rect(size);
+        let tab_rect = tab_bar_rect(panel);
+        self.update_tab_hover(&tab_rect);
+
+        // Update nested tab hover
+        if self.selected_tab == 2 {
+            let content = content_rect(panel);
+            self.update_nested_tab_hover(content);
+        }
     }
 
     pub fn on_right_pressed(&mut self, size: (u32, u32)) {
         if let Some((x, y)) = self.ix.cursor() {
-            self.context_menu.open(x, y, vec![
-                MenuItem::action(1, "Reset Orb"),
-                MenuItem::action(2, "Reset Slider"),
-                MenuItem::separator(),
-                MenuItem::action(3, "Default Swatch"),
-                MenuItem::separator(),
-                MenuItem::action(99, "Close Menu"),
-            ]);
-            self.context_menu.clamp_to_screen(size.0 as f32, size.1 as f32);
+            self.context_menu.open(
+                x,
+                y,
+                vec![
+                    MenuItem::action(1, "Reset Slider"),
+                    MenuItem::action(2, "Reset Checkboxes"),
+                    MenuItem::separator(),
+                    MenuItem::action(3, "Go to Typography"),
+                    MenuItem::separator(),
+                    MenuItem::action(99, "Close Menu"),
+                ],
+            );
+            self.context_menu
+                .clamp_to_screen(size.0 as f32, size.1 as f32);
         }
     }
 
@@ -327,36 +341,76 @@ impl RendererLab {
 
         let hit = self.ix.on_left_pressed();
 
-        // Handle context menu item clicks
+        // Context menu item clicks handled in render()
         if self.context_menu.is_open() {
-            // The draw() call already handles returning clicked IDs,
-            // but we need the press event to register in InteractionContext first.
-            // The actual click handling happens in render() via draw().
             return false;
         }
 
+        // Close button
         if hit == Some(ZONE_CLOSE) {
             return true;
         }
 
+        // Tab switching
+        if let Some(id) = hit {
+            if id >= ZONE_TAB_BASE && id < ZONE_TAB_BASE + TAB_LABELS.len() as u32 {
+                self.selected_tab = (id - ZONE_TAB_BASE) as usize;
+                self.ix.on_left_released(); // Don't capture tabs
+                return false;
+            }
+        }
+
+        // Nested tab switching (inputs tab)
+        if let Some(id) = hit {
+            if id >= ZONE_NESTED_TAB_BASE && id < ZONE_NESTED_TAB_BASE + 3 {
+                self.nested_tab = (id - ZONE_NESTED_TAB_BASE) as usize;
+                self.ix.on_left_released();
+                return false;
+            }
+        }
+
+        // Slider click (controls tab)
         if hit == Some(ZONE_SLIDER) {
             if let Some((x, _)) = self.ix.cursor() {
-                self.slider_value = slider_value_for_x(size, x);
+                let content = content_rect(panel_rect(size));
+                self.slider_value = slider_value_for_x(content, x);
             }
             return false;
         }
 
-        if hit == Some(ZONE_ORB) {
-            if let Some((x, y)) = self.ix.cursor() {
-                let orb = self.orb_rect(size);
-                self.drag_grab_offset = (x - orb.center_x(), y - orb.center_y());
-            }
+        // Checkbox clicks (controls tab)
+        if hit == Some(ZONE_CB_ONE) {
+            self.checkbox_states[0] = !self.checkbox_states[0];
+            self.ix.on_left_released();
+            return false;
+        }
+        if hit == Some(ZONE_CB_TWO) {
+            self.checkbox_states[1] = !self.checkbox_states[1];
+            self.ix.on_left_released();
+            return false;
+        }
+        // CB_THREE is disabled, don't toggle
+
+        // Text input focus (inputs tab)
+        if hit == Some(ZONE_INPUT_EMPTY) || hit == Some(ZONE_INPUT_FILLED) {
+            self.focused_input = hit;
+            self.ix.on_left_released();
+            return false;
+        }
+        // Click on focused input (always focused) -- no-op
+        if hit == Some(ZONE_INPUT_FOCUSED) {
+            self.ix.on_left_released();
             return false;
         }
 
-        // Check swatch click (not in zone system — simple index-based)
-        if let Some(index) = self.hovered_swatch {
-            self.selected_swatch = index;
+        // Click outside inputs clears focus
+        if self.selected_tab == 2 && self.focused_input.is_some() {
+            if hit != Some(ZONE_INPUT_EMPTY)
+                && hit != Some(ZONE_INPUT_FILLED)
+                && hit != Some(ZONE_INPUT_FOCUSED)
+            {
+                self.focused_input = None;
+            }
         }
 
         false
@@ -372,51 +426,48 @@ impl RendererLab {
 
     pub fn on_cursor_left(&mut self) {
         self.ix.on_cursor_left();
-        self.hovered_swatch = None;
+        self.hovered_tab = None;
+        self.nested_tab_hovered = None;
     }
 
     pub fn on_command(&mut self, command: LabCommand) {
         match command {
-            LabCommand::ResetOrb => {
-                self.orb_offset = (0.0, 0.0);
-                self.ix.on_left_released();
+            LabCommand::ResetSlider => {
+                self.slider_value = 0.5;
             }
         }
     }
 
-    fn update_swatch_hover(&mut self, size: (u32, u32)) {
+    // ── Helpers ──────────────────────────────────────────────────────────
+
+    fn update_tab_hover(&mut self, tab_rect: &Rect) {
         let Some((x, y)) = self.ix.cursor() else {
-            self.hovered_swatch = None;
+            self.hovered_tab = None;
             return;
         };
 
-        let panel = panel_rect(size);
-        let swatch_y = swatches_origin_y(panel);
-        let swatch_x = panel.x + 28.0;
-        self.hovered_swatch = (0..4).find(|index| swatch_rect(swatch_x, swatch_y, *index).contains(x, y));
+        let widget = TabBar::new(*tab_rect).tabs(TAB_LABELS).selected(self.selected_tab);
+        let rects = widget.tab_rects();
+        self.hovered_tab = rects.iter().position(|r| r.contains(x, y));
     }
 
-    fn orb_rect(&self, size: (u32, u32)) -> Rect {
-        let panel = panel_rect(size);
-        let base_x = panel.x + panel.w - 110.0;
-        let base_y = swatches_origin_y(panel) + 104.0;
-        let min_x = panel.x + 72.0;
-        let max_x = panel.x + panel.w - 72.0;
-        let min_y = swatches_origin_y(panel) + 72.0;
-        let max_y = panel.y + panel.h - 120.0;
+    fn update_nested_tab_hover(&mut self, content: Rect) {
+        let Some((x, y)) = self.ix.cursor() else {
+            self.nested_tab_hovered = None;
+            return;
+        };
 
-        let cx = (base_x + self.orb_offset.0).clamp(min_x, max_x);
-        let cy = (base_y + self.orb_offset.1).clamp(min_y, max_y);
-        Rect::new(cx - ORB_RADIUS, cy - ORB_RADIUS, ORB_RADIUS * 2.0, ORB_RADIUS * 2.0)
-    }
-
-    fn palette(&self) -> [Color; 4] {
-        [
-            Color::from_rgb8(200, 134, 10),
-            Color::from_rgb8(88, 166, 255),
-            Color::from_rgb8(46, 160, 67),
-            Color::from_rgb8(218, 54, 51),
-        ]
+        let nested_area = inputs_nested_tabs_rect(content);
+        let nested_bar = Rect::new(
+            nested_area.x + 18.0,
+            nested_area.y + 48.0,
+            nested_area.w - 36.0,
+            38.0,
+        );
+        let labels: &[&str] = &["Alpha", "Beta", "Gamma"];
+        let widget = TabBar::new(nested_bar).tabs(labels);
+        let rects = widget.tab_rects();
+        self.nested_tab_hovered = rects.iter().position(|r| r.contains(x, y));
     }
 }
 

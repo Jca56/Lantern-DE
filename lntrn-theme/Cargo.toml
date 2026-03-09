@@ -1,0 +1,6 @@
+[package]
+name = "lntrn-theme"
+version = "0.1.0"
+description = "Unified theme system for Lantern DE — colors, typography, icons"
+authors = ["Jca56"]
+edition = "2021"

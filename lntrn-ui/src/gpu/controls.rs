@@ -144,11 +144,11 @@ impl<'a> Button<'a> {
         match self.variant {
             ButtonVariant::Default => {
                 let bg = if self.pressed {
-                    p.surface_2
+                    p.bg
                 } else if self.hovered {
-                    p.surface_2
-                } else {
                     p.surface
+                } else {
+                    p.bg.with_alpha(0.8)
                 };
                 let alpha = if self.hovered { 1.0 } else { 0.9 };
                 (bg, p.text.with_alpha(alpha))
@@ -167,9 +167,9 @@ impl<'a> Button<'a> {
                 let bg = if self.pressed {
                     p.surface.with_alpha(0.5)
                 } else if self.hovered {
-                    p.surface.with_alpha(0.3)
+                    p.surface.with_alpha(0.35)
                 } else {
-                    Color::TRANSPARENT
+                    p.surface.with_alpha(0.12)
                 };
                 (bg, p.text)
             }

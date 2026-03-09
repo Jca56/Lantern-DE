@@ -12,5 +12,5 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 lntrn-render = { path = ".." }
-lntrn-ui = { path = "../../lntrn-ui", default-features = false, features = ["gpu"] }
+lntrn-ui = { path = "../../lntrn-ui" }
 winit = { version = "0.30", default-features = false, features = ["rwh_06", "wayland", "x11"] }

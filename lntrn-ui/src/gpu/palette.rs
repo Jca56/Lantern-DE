@@ -1,6 +1,7 @@
 use lntrn_render::Color;
+use lntrn_theme::{self, Rgba, palette::Palette};
 
-/// Fox Dark palette expressed as linear-space `Color` values.
+/// Fox palette expressed as linear-space `Color` values for GPU rendering.
 pub struct FoxPalette {
     pub bg: Color,
     pub surface: Color,
@@ -14,53 +15,43 @@ pub struct FoxPalette {
     pub success: Color,
 }
 
+/// Convert a theme `Rgba` to a render `Color`.
+fn to_color(c: Rgba) -> Color {
+    Color::from_rgba8(c.r, c.g, c.b, c.a)
+}
+
 impl FoxPalette {
-    pub fn dark() -> Self {
+    /// Build a palette from any `lntrn_theme` palette + variant.
+    pub fn from_theme(palette: &Palette, variant: lntrn_theme::ThemeVariant) -> Self {
         Self {
-            bg: Color::from_rgb8(24, 24, 24),
-            surface: Color::from_rgb8(39, 39, 39),
-            surface_2: Color::from_rgb8(51, 51, 51),
-            sidebar: Color::from_rgb8(52, 52, 58),
-            text: Color::from_rgb8(236, 236, 236),
-            text_secondary: Color::from_rgb8(200, 200, 200),
-            muted: Color::from_rgb8(144, 144, 144),
-            accent: Color::from_rgb8(200, 134, 10),
-            danger: Color::from_rgb8(239, 68, 68),
-            success: Color::from_rgb8(34, 197, 94),
+            bg: to_color(palette.bg),
+            surface: to_color(palette.surface),
+            surface_2: to_color(palette.surface_2),
+            sidebar: to_color(palette.sidebar),
+            text: to_color(palette.text),
+            text_secondary: to_color(palette.text_secondary),
+            muted: to_color(palette.muted),
+            accent: to_color(variant.accent()),
+            danger: to_color(lntrn_theme::DANGER_RED),
+            success: to_color(lntrn_theme::SUCCESS_GREEN),
         }
+    }
+
+    pub fn dark() -> Self {
+        Self::from_theme(&lntrn_theme::FOX_DARK, lntrn_theme::ThemeVariant::FoxDark)
     }
 
     pub fn light() -> Self {
-        Self {
-            bg: Color::from_rgb8(245, 245, 245),
-            surface: Color::from_rgb8(234, 234, 234),
-            surface_2: Color::from_rgb8(218, 218, 218),
-            sidebar: Color::from_rgb8(238, 238, 242),
-            text: Color::from_rgb8(30, 30, 30),
-            text_secondary: Color::from_rgb8(80, 80, 80),
-            muted: Color::from_rgb8(110, 110, 110),
-            accent: Color::from_rgb8(200, 134, 10),
-            danger: Color::from_rgb8(239, 68, 68),
-            success: Color::from_rgb8(34, 197, 94),
-        }
+        Self::from_theme(&lntrn_theme::FOX_LIGHT, lntrn_theme::ThemeVariant::FoxLight)
     }
 
     pub fn gradient_border_colors(&self) -> [Color; 4] {
-        [
-            Color::from_rgb8(170, 110, 8),
-            Color::from_rgb8(200, 134, 10),
-            Color::from_rgb8(220, 150, 15),
-            Color::from_rgb8(250, 204, 21),
-        ]
+        let gb = lntrn_theme::GRADIENT_BORDER;
+        [to_color(gb[0]), to_color(gb[1]), to_color(gb[2]), to_color(gb[3])]
     }
 
     pub fn file_manager_gradient_stops(&self) -> [Color; 5] {
-        [
-            Color::from_rgb8(255, 105, 180),
-            Color::from_rgb8(59, 130, 246),
-            Color::from_rgb8(34, 197, 94),
-            Color::from_rgb8(250, 204, 21),
-            Color::from_rgb8(239, 68, 68),
-        ]
+        let gs = lntrn_theme::GRADIENT_STRIP;
+        [to_color(gs[0]), to_color(gs[1]), to_color(gs[2]), to_color(gs[3]), to_color(gs[4])]
     }
 }

@@ -60,18 +60,3 @@ pub fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
 
-/// Interpolate between two colors using a progress (0.0 to 1.0).
-#[cfg(feature = "egui")]
-pub fn lerp_color(
-    a: eframe::egui::Color32,
-    b: eframe::egui::Color32,
-    t: f32,
-) -> eframe::egui::Color32 {
-    let t = t.clamp(0.0, 1.0);
-    eframe::egui::Color32::from_rgba_premultiplied(
-        lerp(a.r() as f32, b.r() as f32, t) as u8,
-        lerp(a.g() as f32, b.g() as f32, t) as u8,
-        lerp(a.b() as f32, b.b() as f32, t) as u8,
-        lerp(a.a() as f32, b.a() as f32, t) as u8,
-    )
-}

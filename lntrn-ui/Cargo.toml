@@ -1,15 +1,10 @@
 [package]
 name = "lntrn-ui"
 version = "0.1.0"
-description = "Unified UI theming and component styles for Lantern DE"
+description = "Unified UI widget kit for Lantern DE"
 authors = ["Jca56"]
 edition = "2021"
 
-[features]
-default = ["egui"]
-egui = ["dep:eframe"]
-gpu = ["dep:lntrn-render"]
-
 [dependencies]
-eframe = { version = "0.33", optional = true }
-lntrn-render = { path = "../lntrn-render", optional = true }
+lntrn-render = { path = "../lntrn-render" }
+lntrn-theme = { path = "../lntrn-theme" }

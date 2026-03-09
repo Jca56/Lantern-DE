@@ -1,4 +1,5 @@
 use lntrn_render::{Color, TextRenderer};
+use lntrn_theme::{FONT_HEADING, FONT_SUBHEADING, FONT_BODY, FONT_SMALL, FONT_CAPTION, FONT_LABEL};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum FontSize {
@@ -7,17 +8,19 @@ pub enum FontSize {
     Body,
     Small,
     Caption,
+    Label,
     Custom(f32),
 }
 
 impl FontSize {
     pub fn px(self) -> f32 {
         match self {
-            Self::Heading => 32.0,
-            Self::Subheading => 28.0,
-            Self::Body => 24.0,
-            Self::Small => 22.0,
-            Self::Caption => 20.0,
+            Self::Heading => FONT_HEADING,
+            Self::Subheading => FONT_SUBHEADING,
+            Self::Body => FONT_BODY,
+            Self::Small => FONT_SMALL,
+            Self::Caption => FONT_CAPTION,
+            Self::Label => FONT_LABEL,
             Self::Custom(s) => s,
         }
     }

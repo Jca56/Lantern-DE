@@ -17,6 +17,7 @@ members = [
     "lntrn-screenshot",
     "lntrn-session-manager",
     "lntrn-system-settings",
+    "lntrn-theme",
 ]
 
 [profile.release]

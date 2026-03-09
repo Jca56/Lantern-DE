@@ -1,12 +1,15 @@
-// ── Font size presets ─────────────────────────────────────────────────────────
+use std::sync::atomic::{AtomicU32, Ordering};
 
-pub const FONT_HEADING: f32 = 24.0;
-pub const FONT_SUBHEADING: f32 = 20.0;
-pub const FONT_TAB: f32 = 18.0;
-pub const FONT_BODY: f32 = 16.0;
-pub const FONT_SMALL: f32 = 14.0;
-pub const FONT_ICON: f32 = 22.0;
-pub const FONT_STATUS: f32 = 13.5;
+// ── Font size presets ────────────────────────────────────────────────────────
+
+pub const FONT_HEADING: f32 = 38.0;
+pub const FONT_SUBHEADING: f32 = 32.0;
+pub const FONT_TAB: f32 = 28.0;
+pub const FONT_BODY: f32 = 28.0;
+pub const FONT_SMALL: f32 = 26.0;
+pub const FONT_ICON: f32 = 28.0;
+pub const FONT_CAPTION: f32 = 24.0;
+pub const FONT_LABEL: f32 = 22.0;
 
 // ── Font families ────────────────────────────────────────────────────────────
 
@@ -14,8 +17,6 @@ pub const FAMILY_PROPORTIONAL: &str = "Ubuntu";
 pub const FAMILY_MONOSPACE: &str = "JetBrains Mono";
 
 // ── Text scale ───────────────────────────────────────────────────────────────
-
-use std::sync::atomic::{AtomicU32, Ordering};
 
 static TEXT_SCALE: AtomicU32 = AtomicU32::new(0x3F80_0000); // 1.0f32 as bits
 

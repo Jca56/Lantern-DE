@@ -163,7 +163,7 @@ impl ApplicationHandler for LabApp {
                         self.shutdown(event_loop);
                         return;
                     }
-                    PhysicalKey::Code(KeyCode::KeyR) => state.lab.on_command(LabCommand::ResetOrb),
+                    PhysicalKey::Code(KeyCode::KeyR) => state.lab.on_command(LabCommand::ResetSlider),
                     _ => {}
                 }
                 state.window.request_redraw();
