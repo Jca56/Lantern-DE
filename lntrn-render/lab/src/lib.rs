@@ -3,50 +3,39 @@ mod sections;
 
 use std::time::Instant;
 
-use lntrn_render::{Color, GpuContext, Painter, Rect, SurfaceError, TextRenderer};
+use lntrn_render::{GpuContext, Painter, Rect, SurfaceError, TextRenderer};
 use lntrn_ui::gpu::{
-    ContextMenu, ContextMenuStyle, Fill, FoxPalette, GradientTopBar, InteractionContext,
-    MenuEvent, MenuItem, Modal, ModalButton, Panel, ScrollArea, Scrollbar, TextLabel, FontSize,
-    TitleBar, ToastAnchor, ToastItem, ToastStack,
+    ContextMenu, ContextMenuStyle, FoxPalette, InteractionContext,
+    MenuEvent, MenuItem, Modal, ModalButton, ScrollArea, Scrollbar, TitleBar,
 };
 
 use layout::*;
 use sections::*;
 
-pub enum LabCommand {
-    ResetSlider,
-}
-
 pub struct RendererLab {
     ix: InteractionContext,
     scroll_offset: f32,
 
-    // Global controls
-    bg_alpha: f32,
-    font_scale: f32,
-
     // Widget state
-    slider_value: f32,
-    checkbox_states: [bool; 3],
-    toggle_states: [bool; 2],
-    radio_selected: usize,
     text_input_value: String,
-    focused_input: Option<u32>,
+    input_focused: bool,
     dropdown_open: bool,
     dropdown_selected: usize,
+    toggles: [bool; 2],
+    checkboxes: [bool; 2],
+    radio_selected: u32,
+    slider_value: f32,
 
     // Overlays
     show_modal: bool,
-    toasts: Vec<ToastItem>,
     context_menu: ContextMenu,
 
-    // Scroll demo (inner)
+    // Scroll demo
     scroll_demo_offset: f32,
 
     // Animation
     start_time: Instant,
     last_frame: Instant,
-    toast_auto_timer: f32,
 }
 
 impl RendererLab {
@@ -56,23 +45,19 @@ impl RendererLab {
         Self {
             ix: InteractionContext::new(),
             scroll_offset: 0.0,
-            bg_alpha: 1.0,
-            font_scale: 1.0,
-            slider_value: 0.62,
-            checkbox_states: [true, false, false],
-            toggle_states: [true, false],
-            radio_selected: 1,
             text_input_value: String::from("Hello Lantern"),
-            focused_input: None,
+            input_focused: false,
             dropdown_open: false,
             dropdown_selected: 0,
+            toggles: [true, false],
+            checkboxes: [false, false],
+            radio_selected: 1,
+            slider_value: 0.65,
             show_modal: false,
-            toasts: Vec::new(),
             context_menu: ContextMenu::new(style),
             scroll_demo_offset: 0.0,
             start_time: now,
             last_frame: now,
-            toast_auto_timer: 0.0,
         }
     }
 
@@ -83,153 +68,108 @@ impl RendererLab {
         painter: &mut Painter,
         text: &mut TextRenderer,
     ) -> Result<(), SurfaceError> {
-        if size.0 == 0 || size.1 == 0 {
-            return Ok(());
-        }
+        if size.0 == 0 || size.1 == 0 { return Ok(()); }
 
-        // ── Timing ─────────────────────────────────────────────────────
         let now = Instant::now();
         let dt = (now - self.last_frame).as_secs_f32().min(0.1);
         self.last_frame = now;
         let anim_time = self.start_time.elapsed().as_secs_f32();
 
-        // Update toasts
-        self.toasts.retain_mut(|t| {
-            t.progress -= dt / 3.0; // 3 second lifetime
-            t.progress > 0.0
-        });
-
-        // Auto-spawn toast every 5s
-        self.toast_auto_timer += dt;
-        if self.toast_auto_timer > 5.0 {
-            self.toast_auto_timer = 0.0;
-            if self.toasts.len() < 4 {
-                let msgs = ["File saved!", "Connection OK", "Build complete", "Synced"];
-                let variants = [
-                    ToastItem::success, ToastItem::info,
-                    ToastItem::success, ToastItem::info,
-                ];
-                let idx = (anim_time as usize / 5) % msgs.len();
-                self.toasts.push(variants[idx](msgs[idx]));
-            }
-        }
-
-        // ── Setup ──────────────────────────────────────────────────────
         self.ix.begin_frame();
         let (sw, sh) = size;
+        let w = sw as f32;
+        let h = sh as f32;
         let fox = FoxPalette::dark();
-        let panel = panel_rect(size);
-        let viewport = viewport_rect(panel);
-        let cw = panel.w - CONTENT_PAD * 2.0;
-        let cx = panel.x + CONTENT_PAD;
+        let viewport = viewport_rect(w, h);
 
         painter.clear();
+        painter.rect_filled(Rect::new(0.0, 0.0, w, h), 0.0, fox.bg);
 
-        // Window background (transparency!)
-        painter.rect_filled(
-            Rect::new(0.0, 0.0, sw as f32, sh as f32),
-            0.0,
-            fox.bg.with_alpha(self.bg_alpha),
-        );
-
-        // Panel
-        Panel::new(panel)
-            .fill(Fill::Solid(fox.surface.with_alpha(self.bg_alpha * 0.85)))
-            .radius(18.0)
-            .draw(painter);
-        painter.rect_stroke(panel, 18.0, 1.0, fox.muted.with_alpha(0.3));
-
-        // Accent strip
-        GradientTopBar::new(panel.x, panel.y + TITLE_BAR_H, panel.w).draw(painter);
-
-        // Title bar
-        let tb = TitleBar::new(title_bar_rect(panel), "");
-        let min_s = self.ix.add_zone(Z_MINIMIZE, tb.minimize_button_rect());
-        let max_s = self.ix.add_zone(Z_MAXIMIZE, tb.maximize_button_rect());
-        let cls_s = self.ix.add_zone(Z_CLOSE, tb.close_button_rect());
-        TitleBar::new(title_bar_rect(panel), "Lantern Lab")
-            .minimize_hovered(min_s.is_hovered())
-            .maximize_hovered(max_s.is_hovered())
-            .close_hovered(cls_s.is_hovered())
+        // ── Title bar ────────────────────────────────────────────────────
+        let tb_rect = Rect::new(0.0, 0.0, w, layout::TITLE_BAR_H);
+        let tb_close = self.ix.add_zone(Z_TB_CLOSE, TitleBar::new(tb_rect, "").close_button_rect());
+        let tb_max = self.ix.add_zone(Z_TB_MAXIMIZE, TitleBar::new(tb_rect, "").maximize_button_rect());
+        let tb_min = self.ix.add_zone(Z_TB_MINIMIZE, TitleBar::new(tb_rect, "").minimize_button_rect());
+        TitleBar::new(tb_rect, "Lantern Lab")
+            .close_hovered(tb_close.is_hovered())
+            .maximize_hovered(tb_max.is_hovered())
+            .minimize_hovered(tb_min.is_hovered())
             .draw(painter, text, &fox, sw, sh);
 
-        // Re-draw strip on top
-        GradientTopBar::new(panel.x, panel.y + TITLE_BAR_H, panel.w).draw(painter);
-
-        // ── Scrollable content ─────────────────────────────────────────
-        let total_h = total_content_height();
-        let vp_top = viewport.y;
-        let vp_bot = viewport.y + viewport.h;
-
-        // Main scroll from wheel
+        // ── Scroll ─────────────────────────────────────────────────────
+        let total_h = self.total_content_height(w);
         let scroll_delta = self.ix.scroll_delta();
-        // Only scroll main if cursor is NOT in scroll demo area
-        let in_scroll_demo = false; // simplified - scroll demo uses its own zone
-        if scroll_delta != 0.0 && !in_scroll_demo {
+        if scroll_delta != 0.0 {
             ScrollArea::apply_scroll(
                 &mut self.scroll_offset, scroll_delta * 40.0,
                 total_h, viewport.h,
             );
         }
 
+        let vt = viewport.y;
+        let vb = viewport.y + viewport.h;
+
         painter.push_clip(viewport);
 
+        // ── Grid layout ────────────────────────────────────────────────
+        let lx = col_left();
+        let rx = col_right(w);
+        let cw = col_w(w);
+        let fw = full_w(w);
         let mut y = viewport.y + CONTENT_PAD - self.scroll_offset;
 
-        y += draw_global_controls(
-            painter, text, &fox, &mut self.ix,
-            cx, y, cw, self.bg_alpha, self.font_scale,
-            sw, sh, vp_top, vp_bot,
+        // Row 1: Buttons | Controls
+        let row1_h = CARD_BUTTONS_H.max(CARD_CONTROLS_H);
+        draw_buttons(painter, text, &fox, &mut self.ix, lx, y, cw, sw, sh, vt, vb);
+        draw_controls(
+            painter, text, &fox, &mut self.ix, rx, y, cw,
+            self.toggles, self.checkboxes, self.radio_selected,
+            sw, sh, vt, vb,
         );
-        y += SECTION_GAP;
+        y += row1_h + CARD_GAP;
 
-        y += draw_typography(painter, text, &fox, cx, y, cw, sw, sh, vp_top, vp_bot);
-        y += SECTION_GAP;
-
-        y += draw_buttons(painter, text, &fox, &mut self.ix, cx, y, cw, sw, sh, vp_top, vp_bot);
-        y += SECTION_GAP;
-
-        y += draw_slider(
-            painter, text, &fox, &mut self.ix,
-            cx, y, cw, self.slider_value, sw, sh, vp_top, vp_bot,
+        // Row 2: Text Input | Dropdown
+        let row2_h = CARD_INPUT_H.max(CARD_DROPDOWN_H);
+        draw_text_input(
+            painter, text, &fox, &mut self.ix, lx, y, cw,
+            &self.text_input_value, self.input_focused,
+            sw, sh, vt, vb,
         );
-        y += SECTION_GAP;
-
-        y += draw_selection(
-            painter, text, &fox, &mut self.ix,
-            cx, y, cw,
-            self.checkbox_states, self.toggle_states, self.radio_selected,
-            sw, sh, vp_top, vp_bot,
-        );
-        y += SECTION_GAP;
-
-        y += draw_inputs(
-            painter, text, &fox, &mut self.ix,
-            cx, y, cw,
-            &self.text_input_value, self.focused_input,
+        draw_dropdown(
+            painter, text, &fox, &mut self.ix, rx, y, cw,
             self.dropdown_open, self.dropdown_selected,
-            sw, sh, vp_top, vp_bot,
+            sw, sh, vt, vb,
         );
-        y += SECTION_GAP;
+        y += row2_h + CARD_GAP;
 
-        y += draw_badges_progress(painter, text, &fox, cx, y, cw, sw, sh, vp_top, vp_bot);
-        y += SECTION_GAP;
+        // Row 3: Slider & Progress | Swatches
+        let row3_h = CARD_SLIDER_H.max(CARD_SWATCHES_H);
+        draw_slider_progress(
+            painter, text, &fox, &mut self.ix, lx, y, cw,
+            self.slider_value, anim_time,
+            sw, sh, vt, vb,
+        );
+        draw_swatches(painter, text, &fox, rx, y, cw, sw, sh, vt, vb);
+        y += row3_h + CARD_GAP;
 
-        y += draw_scroll_demo(
+        // Row 4: Badges | Scroll Area
+        let row4_h = CARD_BADGES_H.max(CARD_SCROLL_H);
+        draw_badges(painter, text, &fox, lx, y, cw, sw, sh, vt, vb);
+        draw_scroll_demo(
+            painter, text, &fox, &mut self.ix, rx, y, cw,
+            &mut self.scroll_demo_offset, sw, sh, vt, vb,
+        );
+        y += row4_h + CARD_GAP;
+
+        // Row 5: Modal (full width)
+        draw_modal_trigger(
             painter, text, &fox, &mut self.ix,
-            cx, y, cw, &mut self.scroll_demo_offset,
-            sw, sh, vp_top, vp_bot,
+            lx, y, fw, sw, sh, vt, vb,
         );
-        y += SECTION_GAP;
-
-        y += draw_actions(painter, text, &fox, &mut self.ix, cx, y, cw, sw, sh, vp_top, vp_bot);
-        y += SECTION_GAP;
-
-        draw_animations(painter, text, &fox, cx, y, cw, anim_time, sw, sh, vp_top, vp_bot);
 
         painter.pop_clip();
 
-        // ── Main scrollbar ─────────────────────────────────────────────
+        // ── Scrollbar ──────────────────────────────────────────────────
         let scrollbar = Scrollbar::new(&viewport, total_h, self.scroll_offset);
         let sb_state = self.ix.add_zone(Z_MAIN_SCROLL, scrollbar.thumb);
         if sb_state.is_active() {
@@ -240,35 +180,29 @@ impl RendererLab {
         }
         scrollbar.draw(painter, sb_state, &fox);
 
-        // ── Footer hint ────────────────────────────────────────────────
-        TextLabel::new(
-            "Right-click for context menu · Scroll to explore · ESC to quit",
-            panel.x + CONTENT_PAD,
-            panel.y + panel.h - 30.0,
-        )
-            .size(FontSize::Label)
-            .color(fox.muted.with_alpha(0.5))
-            .max_width(panel.w - CONTENT_PAD * 2.0)
-            .draw(text, sw, sh);
+        // ── Base render pass ───────────────────────────────────────────
+        let mut frame = gpu.begin_frame("Lab")?;
+        let view = frame.view().clone();
+        painter.render_pass(gpu, frame.encoder_mut(), &view, fox.bg);
+        text.render_queued(gpu, frame.encoder_mut(), &view);
 
-        // ── Context menu (overlay) ─────────────────────────────────────
+        // ── Overlays ───────────────────────────────────────────────────
+        painter.clear();
+
+        self.context_menu.update(dt);
         if let Some(evt) = self.context_menu.draw(painter, text, &mut self.ix, sw, sh) {
-            match evt {
-                MenuEvent::Action(1) => { self.slider_value = 0.5; self.context_menu.close(); }
-                MenuEvent::Action(2) => { self.bg_alpha = 1.0; self.context_menu.close(); }
-                _ => self.context_menu.close(),
+            if let MenuEvent::Action(_) = evt {
+                self.context_menu.close();
             }
         }
 
-        // ── Modal (overlay) ────────────────────────────────────────────
         if self.show_modal {
-            let m = Modal::new(sw as f32, sh as f32)
+            let m = Modal::new(w, h)
                 .title("Delete file?")
-                .body("This action cannot be undone. The file will be permanently removed.")
+                .body("This action cannot be undone.")
                 .button(ModalButton::new(Z_MODAL_CANCEL, "Cancel"))
                 .button(ModalButton::new(Z_MODAL_CONFIRM, "Delete").primary());
 
-            // Register button zones
             let cancel_s = m.button_rect(Z_MODAL_CANCEL)
                 .map(|r| self.ix.add_zone(Z_MODAL_CANCEL, r));
             let confirm_s = m.button_rect(Z_MODAL_CONFIRM)
@@ -278,95 +212,75 @@ impl RendererLab {
                 Some(Z_MODAL_CONFIRM)
             } else if cancel_s.map_or(false, |s| s.is_hovered()) {
                 Some(Z_MODAL_CANCEL)
-            } else {
-                None
-            };
+            } else { None };
 
-            Modal::new(sw as f32, sh as f32)
+            Modal::new(w, h)
                 .title("Delete file?")
-                .body("This action cannot be undone. The file will be permanently removed.")
+                .body("This action cannot be undone.")
                 .button(ModalButton::new(Z_MODAL_CANCEL, "Cancel"))
                 .button(ModalButton::new(Z_MODAL_CONFIRM, "Delete").primary())
                 .hovered_button(hovered)
                 .draw(painter, text, &fox, sw, sh);
         }
 
-        // ── Toasts (overlay) ──────────────────────────────────────────
-        if !self.toasts.is_empty() {
-            ToastStack::new(&self.toasts)
-                .anchor(ToastAnchor::BottomRight)
-                .margin(40.0)
-                .draw(painter, text, &fox, sw, sh);
-        }
-
-        // ── GPU frame ──────────────────────────────────────────────────
-        let mut frame = gpu.begin_frame("Lab")?;
-        let view = frame.view().clone();
-        painter.render_pass(gpu, frame.encoder_mut(), &view, Color::TRANSPARENT);
+        painter.render_pass_overlay(gpu, frame.encoder_mut(), &view);
         text.render_queued(gpu, frame.encoder_mut(), &view);
         frame.submit(&gpu.queue);
+        self.ix.clear_scroll();
         Ok(())
     }
 
-    // ── Event handlers ───────────────────────────────────────────────────
+    fn total_content_height(&self, _w: f32) -> f32 {
+        let row1 = CARD_BUTTONS_H.max(CARD_CONTROLS_H);
+        let row2 = CARD_INPUT_H.max(CARD_DROPDOWN_H);
+        let row3 = CARD_SLIDER_H.max(CARD_SWATCHES_H);
+        let row4 = CARD_BADGES_H.max(CARD_SCROLL_H);
+        let row5 = CARD_MODAL_H;
+        row1 + row2 + row3 + row4 + row5
+            + CARD_GAP * 4.0
+            + CONTENT_PAD * 2.0
+    }
+
+    // ── Events ─────────────────────────────────────────────────────────
 
     pub fn on_cursor_moved(&mut self, size: (u32, u32), x: f32, y: f32) {
         self.ix.on_cursor_moved(x, y);
 
-        // Slider drags
         if self.ix.active_zone_id() == Some(Z_SLIDER) {
-            let panel = panel_rect(size);
-            let cx = panel.x + CONTENT_PAD;
-            let cw = panel.w - CONTENT_PAD * 2.0;
-            self.slider_value = slider_value_for_x(x, cx, cw);
-        }
-        if self.ix.active_zone_id() == Some(Z_TRANSPARENCY) {
-            let panel = panel_rect(size);
-            let pad = SECTION_PAD;
-            let slider_w = (panel.w - CONTENT_PAD * 2.0 - pad * 2.0) * 0.45;
-            let sr_x = panel.x + CONTENT_PAD + pad;
-            self.bg_alpha = ((x - sr_x) / slider_w.max(1.0)).clamp(0.0, 1.0);
-        }
-        if self.ix.active_zone_id() == Some(Z_TEXT_SIZE) {
-            let panel = panel_rect(size);
-            let pad = SECTION_PAD;
-            let slider_w = (panel.w - CONTENT_PAD * 2.0 - pad * 2.0) * 0.45;
-            let col_offset = slider_w + 40.0;
-            let sr_x = panel.x + CONTENT_PAD + pad + col_offset;
-            let frac = ((x - sr_x) / slider_w.max(1.0)).clamp(0.0, 1.0);
-            self.font_scale = 0.5 + frac * 1.5; // 0.5x to 2.0x
+            let w = size.0 as f32;
+            let lx = col_left();
+            let cw = col_w(w);
+            let pad = CARD_PAD;
+            let track_w = cw - pad * 2.0;
+            let sr_x = lx + pad;
+            self.slider_value = ((x - sr_x) / track_w.max(1.0)).clamp(0.0, 1.0);
         }
     }
 
     pub fn on_right_pressed(&mut self, size: (u32, u32)) {
         if let Some((x, y)) = self.ix.cursor() {
             self.context_menu.open(x, y, vec![
-                MenuItem::action(1, "Reset Slider"),
-                MenuItem::action(2, "Reset Transparency"),
+                MenuItem::header("Actions"),
+                MenuItem::action(1, "Reset All"),
                 MenuItem::separator(),
-                MenuItem::submenu(100, "View", vec![
-                    MenuItem::action(101, "Zoom In"),
-                    MenuItem::action(102, "Zoom Out"),
-                    MenuItem::action(103, "Reset Zoom"),
-                ]),
-                MenuItem::submenu(200, "Theme", vec![
-                    MenuItem::action(201, "Dark"),
-                    MenuItem::action(202, "Light"),
-                    MenuItem::submenu(210, "Accent", vec![
-                        MenuItem::action(211, "Gold"),
-                        MenuItem::action(212, "Blue"),
-                        MenuItem::action(213, "Red"),
-                    ]),
+                MenuItem::submenu(100, "Theme", vec![
+                    MenuItem::action(101, "Dark"),
+                    MenuItem::action(102, "Light"),
                 ]),
                 MenuItem::separator(),
-                MenuItem::action(99, "Close"),
+                MenuItem::toggle(10, "Auto-save", true),
+                MenuItem::checkbox(11, "Show Grid", false),
+                MenuItem::separator(),
+                MenuItem::radio(20, 1, "Normal", true),
+                MenuItem::radio(21, 1, "Compact", false),
+                MenuItem::separator(),
+                MenuItem::slider(30, "Opacity", 0.8),
             ]);
             self.context_menu.clamp_to_screen(size.0 as f32, size.1 as f32);
         }
     }
 
-    pub fn on_left_pressed(&mut self, size: (u32, u32)) -> bool {
-        // Dismiss context menu on click outside
+    pub fn on_left_pressed(&mut self, _size: (u32, u32)) -> bool {
         if self.context_menu.is_open() {
             if let Some((x, y)) = self.ix.cursor() {
                 if !self.context_menu.contains(x, y) {
@@ -376,142 +290,64 @@ impl RendererLab {
             }
         }
 
-        // Dismiss dropdown on click outside
         if self.dropdown_open {
-            if let Some((_px, _py)) = self.ix.cursor() {
-                let panel = panel_rect(size);
-                let _cx = panel.x + CONTENT_PAD;
-                // Simple: clicking anywhere that's not a dropdown zone closes it
-                let hit = self.ix.on_left_pressed();
-                if let Some(id) = hit {
-                    if id == Z_DROPDOWN {
-                        self.dropdown_open = !self.dropdown_open;
-                        self.ix.on_left_released();
-                        return false;
-                    }
-                    let opt_count = dropdown_option_count();
-                    if id >= Z_DROPDOWN_OPT && id < Z_DROPDOWN_OPT + opt_count as u32 {
-                        self.dropdown_selected = (id - Z_DROPDOWN_OPT) as usize;
-                        self.dropdown_open = false;
-                        self.ix.on_left_released();
-                        return false;
-                    }
+            let hit = self.ix.on_left_pressed();
+            if let Some(id) = hit {
+                if id == Z_DROPDOWN {
+                    self.dropdown_open = !self.dropdown_open;
+                    self.ix.on_left_released();
+                    return false;
                 }
-                // Click outside dropdown — close it
-                self.dropdown_open = false;
-                // Fall through to handle other clicks
-                // (hit was already computed above)
-                return self.handle_hit(hit, size);
+                let n = dropdown_option_count();
+                if id >= Z_DROPDOWN_OPT && id < Z_DROPDOWN_OPT + n as u32 {
+                    self.dropdown_selected = (id - Z_DROPDOWN_OPT) as usize;
+                    self.dropdown_open = false;
+                    self.ix.on_left_released();
+                    return false;
+                }
             }
+            self.dropdown_open = false;
+            return self.handle_hit(hit);
         }
 
         let hit = self.ix.on_left_pressed();
-
-        if self.context_menu.is_open() {
-            return false;
-        }
-
-        self.handle_hit(hit, size)
+        if self.context_menu.is_open() { return false; }
+        self.handle_hit(hit)
     }
 
-    fn handle_hit(&mut self, hit: Option<u32>, _size: (u32, u32)) -> bool {
-        // Modal interactions
+    fn handle_hit(&mut self, hit: Option<u32>) -> bool {
         if self.show_modal {
-            if hit == Some(Z_MODAL_CANCEL) || hit == Some(Z_MODAL_CONFIRM) {
-                self.show_modal = false;
-                self.ix.on_left_released();
-                return false;
-            }
-            // Click on backdrop dismisses modal
             self.show_modal = false;
             self.ix.on_left_released();
             return false;
         }
 
-        if hit == Some(Z_CLOSE) { return true; }
-
-        // Dropdown toggle
-        if hit == Some(Z_DROPDOWN) {
-            self.dropdown_open = !self.dropdown_open;
-            self.ix.on_left_released();
-            return false;
-        }
-
-        // Dropdown option
-        let opt_count = dropdown_option_count();
-        if let Some(id) = hit {
-            if id >= Z_DROPDOWN_OPT && id < Z_DROPDOWN_OPT + opt_count as u32 {
+        match hit {
+            Some(Z_TB_CLOSE) => { self.ix.on_left_released(); return true; }
+            Some(Z_DROPDOWN) => {
+                self.dropdown_open = !self.dropdown_open;
+                self.ix.on_left_released();
+            }
+            Some(id) if id >= Z_DROPDOWN_OPT
+                && id < Z_DROPDOWN_OPT + dropdown_option_count() as u32 =>
+            {
                 self.dropdown_selected = (id - Z_DROPDOWN_OPT) as usize;
                 self.dropdown_open = false;
                 self.ix.on_left_released();
-                return false;
+            }
+            Some(Z_TOGGLE_A) => { self.toggles[0] = !self.toggles[0]; self.ix.on_left_released(); }
+            Some(Z_TOGGLE_B) => { self.toggles[1] = !self.toggles[1]; self.ix.on_left_released(); }
+            Some(Z_CHECKBOX_A) => { self.checkboxes[0] = !self.checkboxes[0]; self.ix.on_left_released(); }
+            Some(Z_CHECKBOX_B) => { self.checkboxes[1] = !self.checkboxes[1]; self.ix.on_left_released(); }
+            Some(Z_RADIO_A) => { self.radio_selected = 0; self.ix.on_left_released(); }
+            Some(Z_RADIO_B) => { self.radio_selected = 1; self.ix.on_left_released(); }
+            Some(Z_RADIO_C) => { self.radio_selected = 2; self.ix.on_left_released(); }
+            Some(Z_INPUT) => { self.input_focused = true; self.ix.on_left_released(); }
+            Some(Z_MODAL_OPEN) => { self.show_modal = true; self.ix.on_left_released(); }
+            _ => {
+                if self.input_focused { self.input_focused = false; }
             }
         }
-
-        // Checkboxes
-        for i in 0..3u32 {
-            if hit == Some(Z_CB_BASE + i) && i < 2 {
-                self.checkbox_states[i as usize] = !self.checkbox_states[i as usize];
-                self.ix.on_left_released();
-                return false;
-            }
-        }
-
-        // Toggles
-        for i in 0..2u32 {
-            if hit == Some(Z_TOGGLE_BASE + i) {
-                self.toggle_states[i as usize] = !self.toggle_states[i as usize];
-                self.ix.on_left_released();
-                return false;
-            }
-        }
-
-        // Radio buttons
-        for i in 0..3u32 {
-            if hit == Some(Z_RADIO_BASE + i) {
-                self.radio_selected = i as usize;
-                self.ix.on_left_released();
-                return false;
-            }
-        }
-
-        // Text input focus
-        for i in 0..3u32 {
-            if hit == Some(Z_INPUT_BASE + i) {
-                self.focused_input = hit;
-                self.ix.on_left_released();
-                return false;
-            }
-        }
-
-        // Modal open
-        if hit == Some(Z_MODAL_OPEN) {
-            self.show_modal = true;
-            self.ix.on_left_released();
-            return false;
-        }
-
-        // Toast spawn
-        if hit == Some(Z_TOAST_SPAWN) {
-            let variants = [
-                ToastItem::success("Manually spawned!"),
-                ToastItem::warning("Watch out!"),
-                ToastItem::error("Something broke!"),
-                ToastItem::info("Did you know?"),
-            ];
-            let idx = self.toasts.len() % variants.len();
-            if self.toasts.len() < 5 {
-                self.toasts.push(variants[idx].clone());
-            }
-            self.ix.on_left_released();
-            return false;
-        }
-
-        // Clear input focus on click elsewhere
-        if self.focused_input.is_some() {
-            self.focused_input = None;
-        }
-
         false
     }
 
@@ -520,6 +356,9 @@ impl RendererLab {
     }
 
     pub fn on_scroll(&mut self, delta: f32) {
+        if self.context_menu.is_open() {
+            self.context_menu.on_scroll(delta * 40.0);
+        }
         self.ix.on_scroll(delta);
     }
 
@@ -527,23 +366,18 @@ impl RendererLab {
         self.ix.on_cursor_left();
     }
 
-    pub fn on_command(&mut self, command: LabCommand) {
-        match command {
-            LabCommand::ResetSlider => self.slider_value = 0.5,
+    pub fn on_key_input(&mut self, key_text: Option<&str>, backspace: bool) {
+        if !self.input_focused { return; }
+        if backspace {
+            self.text_input_value.pop();
+            return;
+        }
+        if let Some(txt) = key_text {
+            self.text_input_value.push_str(txt);
         }
     }
 }
 
-fn total_content_height() -> f32 {
-    SEC_GLOBAL_H + SEC_TYPO_H + SEC_BUTTONS_H + SEC_SLIDER_H
-        + SEC_SELECTION_H + SEC_INPUTS_H + SEC_BADGES_H
-        + SEC_SCROLL_H + SEC_ACTIONS_H + SEC_ANIMS_H
-        + SECTION_GAP * 9.0
-        + CONTENT_PAD * 2.0
-}
-
 impl Default for RendererLab {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }

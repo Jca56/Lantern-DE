@@ -2,6 +2,7 @@ use lntrn_render::Color;
 use lntrn_theme::{self, Rgba, palette::Palette};
 
 /// Fox palette expressed as linear-space `Color` values for GPU rendering.
+#[derive(Clone, Copy)]
 pub struct FoxPalette {
     pub bg: Color,
     pub surface: Color,

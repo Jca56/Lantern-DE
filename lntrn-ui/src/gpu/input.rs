@@ -54,7 +54,6 @@ impl InteractionContext {
     /// Active capture is preserved across frames until released.
     pub fn begin_frame(&mut self) {
         self.zones.clear();
-        self.scroll_delta = 0.0;
     }
 
     /// Register a hit zone. Returns the current `InteractionState` for it.
@@ -84,6 +83,12 @@ impl InteractionContext {
     /// Accumulated scroll delta this frame (positive = down/forward).
     pub fn scroll_delta(&self) -> f32 {
         self.scroll_delta
+    }
+
+    /// Clear the scroll delta. Call at the end of the frame after all
+    /// consumers have read it.
+    pub fn clear_scroll(&mut self) {
+        self.scroll_delta = 0.0;
     }
 
     /// The id of the zone that currently owns capture (press/drag), if any.

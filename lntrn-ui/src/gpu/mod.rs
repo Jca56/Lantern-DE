@@ -1,7 +1,9 @@
 pub mod badge;
 pub mod checkbox;
 pub mod context_menu;
+mod context_menu_draw;
 pub mod controls;
+pub mod decoration;
 pub mod dropdown;
 pub mod fill;
 pub mod gradient;
@@ -24,6 +26,7 @@ pub use badge::{Badge, BadgeVariant};
 pub use checkbox::Checkbox;
 pub use context_menu::{ContextMenu, ContextMenuStyle, MenuEvent, MenuItem};
 pub use controls::{Button, ButtonVariant, Slider};
+pub use decoration::{ControlHover, DecorationStyle, ResizeEdge, WindowDecoration};
 pub use dropdown::{Dropdown, DropdownEvent};
 pub use fill::{Fill, GradientBorder, Panel};
 pub use gradient::GradientTopBar;

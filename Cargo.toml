@@ -20,6 +20,8 @@ members = [
     "lntrn-theme",
     "lntrn-clipboard",
     "lntrn-osd",
+    "lntrn-notifyd",
+    "lntrn-menu",
 ]
 
 [profile.release]

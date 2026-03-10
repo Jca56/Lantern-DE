@@ -1,372 +1,190 @@
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{
     Badge, BadgeVariant, Button, ButtonVariant, Checkbox, Dropdown, Fill, FontSize, FoxPalette,
-    InteractionContext, Panel, ProgressBar, RadioGroup, ScrollArea, Scrollbar, Slider, TextInput,
-    TextLabel, Toggle, Tooltip,
+    InteractionContext, Panel, ProgressBar, RadioButton, ScrollArea, Scrollbar, Slider, TextInput,
+    TextLabel, Toggle,
 };
 
 use crate::layout::*;
 
-// ── Section background helper ───────────────────────────────────────────────
+// ── Card background ─────────────────────────────────────────────────────────
 
-fn sec(
-    p: &mut Painter,
-    r: Rect,
-    title: &str,
-    t: &mut TextRenderer,
-    f: &FoxPalette,
-    sw: u32,
-    sh: u32,
+fn card(
+    p: &mut Painter, r: Rect, title: &str,
+    t: &mut TextRenderer, f: &FoxPalette, sw: u32, sh: u32,
 ) {
-    let border = f.muted.with_alpha(0.3);
     Panel::new(r)
         .fill(Fill::vertical(f.surface_2, f.surface))
-        .radius(SUB_RADIUS)
+        .radius(CARD_RADIUS)
         .draw(p);
-    p.rect_stroke(r, SUB_RADIUS, 1.0, border);
-    TextLabel::new(title, r.x + SECTION_PAD, r.y + 14.0)
-        .size(FontSize::Small)
-        .color(f.text)
+    p.rect_stroke(r, CARD_RADIUS, 1.0, f.muted.with_alpha(0.2));
+    TextLabel::new(title, r.x + CARD_PAD, r.y + 12.0)
+        .size(FontSize::Caption).color(f.accent)
         .draw(t, sw, sh);
 }
 
-/// Returns true if section rect is at least partially on screen.
-fn visible(y: f32, h: f32, vp_top: f32, vp_bot: f32) -> bool {
-    y + h > vp_top && y < vp_bot
+fn visible(y: f32, h: f32, vt: f32, vb: f32) -> bool {
+    y + h > vt && y < vb
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 1. Global Controls — transparency + text size sliders
+// Row 1 left: Buttons
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-pub const SEC_GLOBAL_H: f32 = 170.0;
-
-pub fn draw_global_controls(
-    p: &mut Painter,
-    t: &mut TextRenderer,
-    f: &FoxPalette,
-    ix: &mut InteractionContext,
-    x: f32, y: f32, w: f32,
-    bg_alpha: f32, font_scale: f32,
-    sw: u32, sh: u32,
-    vt: f32, vb: f32,
-) -> f32 {
-    if !visible(y, SEC_GLOBAL_H, vt, vb) { return SEC_GLOBAL_H; }
-    let r = Rect::new(x, y, w, SEC_GLOBAL_H);
-    sec(p, r, "Global Controls", t, f, sw, sh);
-
-    let pad = SECTION_PAD;
-    let slider_w = (w - pad * 2.0) * 0.45;
-    let slider_h = 28.0;
-
-    // Transparency slider
-    let ty = y + 48.0;
-    TextLabel::new("Transparency", x + pad, ty)
-        .size(FontSize::Label).color(f.text_secondary).draw(t, sw, sh);
-    let sr = Rect::new(x + pad, ty + 26.0, slider_w, slider_h);
-    let ss = ix.add_zone(Z_TRANSPARENCY, sr);
-    Slider::new(sr).value(bg_alpha).hovered(ss.is_hovered()).active(ss.is_active()).draw(p, f);
-    let pct = format!("{:.0}%", bg_alpha * 100.0);
-    TextLabel::new(&pct, sr.x + sr.w + 14.0, ty + 26.0)
-        .size(FontSize::Caption).color(f.accent).draw(t, sw, sh);
-
-    // Text size slider
-    let tx2 = x + pad + slider_w + 40.0;
-    TextLabel::new("Text Scale", tx2, ty)
-        .size(FontSize::Label).color(f.text_secondary).draw(t, sw, sh);
-    let sr2 = Rect::new(tx2, ty + 26.0, slider_w, slider_h);
-    let ss2 = ix.add_zone(Z_TEXT_SIZE, sr2);
-    Slider::new(sr2).value((font_scale - 0.5) / 1.5).hovered(ss2.is_hovered()).active(ss2.is_active()).draw(p, f);
-    let scale_text = format!("{:.1}x", font_scale);
-    TextLabel::new(&scale_text, sr2.x + sr2.w + 14.0, ty + 26.0)
-        .size(FontSize::Caption).color(f.accent).draw(t, sw, sh);
-
-    // Demo text
-    let demo_y = ty + 66.0;
-    let demo_size = 24.0 * font_scale;
-    TextLabel::new("The quick brown fox jumps over the lazy dog", x + pad, demo_y)
-        .size(FontSize::Custom(demo_size))
-        .color(f.text)
-        .max_width(w - pad * 2.0)
-        .draw(t, sw, sh);
-
-    SEC_GLOBAL_H
-}
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 2. Typography — font sizes + color palette
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-pub const SEC_TYPO_H: f32 = 340.0;
-
-pub fn draw_typography(
-    p: &mut Painter,
-    t: &mut TextRenderer,
-    f: &FoxPalette,
-    x: f32, y: f32, w: f32,
-    sw: u32, sh: u32,
-    vt: f32, vb: f32,
-) -> f32 {
-    if !visible(y, SEC_TYPO_H, vt, vb) { return SEC_TYPO_H; }
-    let r = Rect::new(x, y, w, SEC_TYPO_H);
-    sec(p, r, "Typography", t, f, sw, sh);
-
-    let pad = SECTION_PAD;
-    let col_w = (w - pad * 3.0) * 0.5;
-
-    // Left: font size samples
-    let samples: &[(&str, FontSize)] = &[
-        ("Heading 38px", FontSize::Heading),
-        ("Subheading 32px", FontSize::Subheading),
-        ("Body 28px", FontSize::Body),
-        ("Small 26px", FontSize::Small),
-        ("Caption 24px", FontSize::Caption),
-        ("Label 22px", FontSize::Label),
-    ];
-    let mut sy = y + 48.0;
-    for (label, size) in samples {
-        TextLabel::new(label, x + pad, sy)
-            .size(*size).color(f.text).max_width(col_w)
-            .draw(t, sw, sh);
-        sy += size.px() + 12.0;
-    }
-
-    // Right: color swatches
-    let cx = x + pad + col_w + pad;
-    let colors: &[(&str, Color)] = &[
-        ("text", f.text), ("text_secondary", f.text_secondary),
-        ("muted", f.muted), ("accent", f.accent),
-        ("danger", f.danger), ("success", f.success),
-        ("warning", f.warning), ("info", f.info),
-        ("surface", f.surface), ("bg", f.bg),
-    ];
-    let swatch_w = 36.0;
-    let row_h = 28.0;
-    let mut sy = y + 48.0;
-    for (label, color) in colors {
-        let sw_r = Rect::new(cx, sy, swatch_w, row_h);
-        p.rect_filled(sw_r, 6.0, *color);
-        p.rect_stroke(sw_r, 6.0, 1.0, f.text.with_alpha(0.15));
-        TextLabel::new(label, cx + swatch_w + 10.0, sy + 4.0)
-            .size(FontSize::Label).color(f.text_secondary)
-            .draw(t, sw, sh);
-        sy += row_h + 2.0;
-    }
-
-    SEC_TYPO_H
-}
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 3. Buttons
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-pub const SEC_BUTTONS_H: f32 = 110.0;
+pub const CARD_BUTTONS_H: f32 = 180.0;
 
 pub fn draw_buttons(
-    p: &mut Painter,
-    t: &mut TextRenderer,
-    f: &FoxPalette,
+    p: &mut Painter, t: &mut TextRenderer, f: &FoxPalette,
     ix: &mut InteractionContext,
-    x: f32, y: f32, w: f32,
-    sw: u32, sh: u32,
-    vt: f32, vb: f32,
+    x: f32, y: f32, w: f32, sw: u32, sh: u32, vt: f32, vb: f32,
 ) -> f32 {
-    if !visible(y, SEC_BUTTONS_H, vt, vb) { return SEC_BUTTONS_H; }
-    sec(p, Rect::new(x, y, w, SEC_BUTTONS_H), "Buttons", t, f, sw, sh);
+    if !visible(y, CARD_BUTTONS_H, vt, vb) { return CARD_BUTTONS_H; }
+    let r = Rect::new(x, y, w, CARD_BUTTONS_H);
+    card(p, r, "Buttons", t, f, sw, sh);
 
-    let pad = SECTION_PAD;
-    let btn_y = y + 52.0;
-    let btn_w = 140.0;
+    let pad = CARD_PAD;
     let btn_h = 38.0;
-    let gap = 18.0;
+    let gap = 12.0;
+    let btn_w = ((w - pad * 2.0 - gap) * 0.5).min(160.0);
 
     let variants = [
         (Z_BTN_DEFAULT, "Default", ButtonVariant::Default),
         (Z_BTN_PRIMARY, "Primary", ButtonVariant::Primary),
         (Z_BTN_GHOST, "Ghost", ButtonVariant::Ghost),
+        (Z_BTN_DANGER, "Danger", ButtonVariant::Default),
     ];
+
     for (i, (zid, label, variant)) in variants.iter().enumerate() {
-        let bx = x + pad + i as f32 * (btn_w + gap);
-        let br = Rect::new(bx, btn_y, btn_w, btn_h);
+        let col = i % 2;
+        let row = i / 2;
+        let bx = x + pad + col as f32 * (btn_w + gap);
+        let by = y + 44.0 + row as f32 * (btn_h + gap);
+        let br = Rect::new(bx, by, btn_w, btn_h);
         let st = ix.add_zone(*zid, br);
-        Button::new(br, label).variant(*variant)
-            .hovered(st.is_hovered()).pressed(st.is_active())
-            .draw(p, t, f, sw, sh);
+        let mut btn = Button::new(br, label).variant(*variant)
+            .hovered(st.is_hovered()).pressed(st.is_active());
+        // Danger button: use default variant but we'll note it visually
+        if *zid == Z_BTN_DANGER {
+            btn = Button::new(br, label).variant(ButtonVariant::Default)
+                .hovered(st.is_hovered()).pressed(st.is_active());
+        }
+        btn.draw(p, t, f, sw, sh);
     }
-    SEC_BUTTONS_H
+    CARD_BUTTONS_H
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 4. Slider
+// Row 1 right: Controls (Toggle, Checkbox, Radio)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-pub const SEC_SLIDER_H: f32 = 100.0;
+pub const CARD_CONTROLS_H: f32 = 180.0;
 
-pub fn draw_slider(
-    p: &mut Painter,
-    t: &mut TextRenderer,
-    f: &FoxPalette,
+pub fn draw_controls(
+    p: &mut Painter, t: &mut TextRenderer, f: &FoxPalette,
     ix: &mut InteractionContext,
     x: f32, y: f32, w: f32,
-    slider_value: f32,
-    sw: u32, sh: u32,
-    vt: f32, vb: f32,
+    toggles: [bool; 2], checkboxes: [bool; 2], radio_sel: u32,
+    sw: u32, sh: u32, vt: f32, vb: f32,
 ) -> f32 {
-    if !visible(y, SEC_SLIDER_H, vt, vb) { return SEC_SLIDER_H; }
-    sec(p, Rect::new(x, y, w, SEC_SLIDER_H), "Slider", t, f, sw, sh);
+    if !visible(y, CARD_CONTROLS_H, vt, vb) { return CARD_CONTROLS_H; }
+    let r = Rect::new(x, y, w, CARD_CONTROLS_H);
+    card(p, r, "Controls", t, f, sw, sh);
 
-    let pad = SECTION_PAD;
-    let sr = Rect::new(x + pad, y + 52.0, (w - pad * 2.0) * 0.6, 28.0);
-    let ss = ix.add_zone(Z_SLIDER, sr);
-    Slider::new(sr).value(slider_value).hovered(ss.is_hovered()).active(ss.is_active()).draw(p, f);
+    let pad = CARD_PAD;
+    let row_h = 36.0;
+    let half_w = (w - pad * 3.0) * 0.5;
+    let cy = y + 44.0;
 
-    let pct = format!("{:.0}%", slider_value * 100.0);
-    TextLabel::new(&pct, sr.x + sr.w + 14.0, y + 52.0)
-        .size(FontSize::Caption).color(f.accent).draw(t, sw, sh);
-    SEC_SLIDER_H
-}
+    // Toggles — left column
+    let t1r = Rect::new(x + pad, cy, half_w, row_h);
+    let t1s = ix.add_zone(Z_TOGGLE_A, t1r);
+    Toggle::new(t1r, toggles[0]).label("Dark Mode")
+        .hovered(t1s.is_hovered()).draw(p, t, f, sw, sh);
 
-/// Compute slider value from cursor X.
-pub fn slider_value_for_x(x: f32, sec_x: f32, sec_w: f32) -> f32 {
-    let pad = SECTION_PAD;
-    let sr_x = sec_x + pad;
-    let sr_w = (sec_w - pad * 2.0) * 0.6;
-    ((x - sr_x) / sr_w.max(1.0)).clamp(0.0, 1.0)
+    let t2r = Rect::new(x + pad, cy + row_h + 8.0, half_w, row_h);
+    let t2s = ix.add_zone(Z_TOGGLE_B, t2r);
+    Toggle::new(t2r, toggles[1]).label("Animations")
+        .hovered(t2s.is_hovered()).draw(p, t, f, sw, sh);
+
+    // Checkboxes — right column
+    let cx2 = x + pad + half_w + pad;
+    let c1r = Rect::new(cx2, cy, half_w, row_h);
+    let c1s = ix.add_zone(Z_CHECKBOX_A, c1r);
+    Checkbox::new(c1r, checkboxes[0]).label("Show Grid")
+        .hovered(c1s.is_hovered()).draw(p, t, f, sw, sh);
+
+    let c2r = Rect::new(cx2, cy + row_h + 8.0, half_w, row_h);
+    let c2s = ix.add_zone(Z_CHECKBOX_B, c2r);
+    Checkbox::new(c2r, checkboxes[1]).label("Snap to Grid")
+        .hovered(c2s.is_hovered()).draw(p, t, f, sw, sh);
+
+    // Radio buttons — full width row
+    let ry = cy + (row_h + 8.0) * 2.0;
+    let labels = ["Small", "Medium", "Large"];
+    let zones = [Z_RADIO_A, Z_RADIO_B, Z_RADIO_C];
+    let radio_w = (w - pad * 2.0) / 3.0;
+    for (i, (label, zid)) in labels.iter().zip(zones.iter()).enumerate() {
+        let rr = Rect::new(x + pad + i as f32 * radio_w, ry, radio_w, row_h);
+        let rs = ix.add_zone(*zid, rr);
+        RadioButton::new(rr, radio_sel == i as u32)
+            .label(label).hovered(rs.is_hovered())
+            .draw(p, t, f, sw, sh);
+    }
+
+    CARD_CONTROLS_H
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 5. Selection Controls — Checkboxes, Toggles, Radios
+// Row 2 left: Text Input
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-pub const SEC_SELECTION_H: f32 = 240.0;
+pub const CARD_INPUT_H: f32 = 120.0;
 
-pub fn draw_selection(
-    p: &mut Painter,
-    t: &mut TextRenderer,
-    f: &FoxPalette,
+pub fn draw_text_input(
+    p: &mut Painter, t: &mut TextRenderer, f: &FoxPalette,
     ix: &mut InteractionContext,
     x: f32, y: f32, w: f32,
-    checkbox_states: [bool; 3],
-    toggle_states: [bool; 2],
-    radio_selected: usize,
-    sw: u32, sh: u32,
-    vt: f32, vb: f32,
+    text_value: &str, focused: bool,
+    sw: u32, sh: u32, vt: f32, vb: f32,
 ) -> f32 {
-    if !visible(y, SEC_SELECTION_H, vt, vb) { return SEC_SELECTION_H; }
-    sec(p, Rect::new(x, y, w, SEC_SELECTION_H), "Selection Controls", t, f, sw, sh);
+    if !visible(y, CARD_INPUT_H, vt, vb) { return CARD_INPUT_H; }
+    let r = Rect::new(x, y, w, CARD_INPUT_H);
+    card(p, r, "Text Input", t, f, sw, sh);
 
-    let pad = SECTION_PAD;
-    let col_w = (w - pad * 4.0) / 3.0;
-    let top = y + 48.0;
-    let row_h = 48.0;
-
-    // Column 1: Checkboxes
-    TextLabel::new("Checkboxes", x + pad, top)
-        .size(FontSize::Label).color(f.muted).draw(t, sw, sh);
-    let cbs = [
-        (Z_CB_BASE, "Enable feature", checkbox_states[0], false),
-        (Z_CB_BASE + 1, "Dark mode", checkbox_states[1], false),
-        (Z_CB_BASE + 2, "Disabled", checkbox_states[2], true),
-    ];
-    for (i, (zid, label, checked, disabled)) in cbs.iter().enumerate() {
-        let cr = Rect::new(x + pad, top + 28.0 + i as f32 * row_h, col_w, row_h);
-        let st = ix.add_zone(*zid, cr);
-        Checkbox::new(cr, *checked).label(label)
-            .hovered(st.is_hovered()).disabled(*disabled)
-            .draw(p, t, f, sw, sh);
-    }
-
-    // Column 2: Toggles
-    let tx = x + pad + col_w + pad;
-    TextLabel::new("Toggles", tx, top)
-        .size(FontSize::Label).color(f.muted).draw(t, sw, sh);
-    let tgs = [
-        (Z_TOGGLE_BASE, "Wi-Fi", toggle_states[0]),
-        (Z_TOGGLE_BASE + 1, "Bluetooth", toggle_states[1]),
-    ];
-    for (i, (zid, label, on)) in tgs.iter().enumerate() {
-        let tr = Rect::new(tx, top + 28.0 + i as f32 * row_h, col_w, row_h);
-        let st = ix.add_zone(*zid, tr);
-        Toggle::new(tr, *on).label(label)
-            .hovered(st.is_hovered())
-            .draw(p, t, f, sw, sh);
-    }
-
-    // Column 3: Radio buttons
-    let rx = tx + col_w + pad;
-    TextLabel::new("Radio Group", rx, top)
-        .size(FontSize::Label).color(f.muted).draw(t, sw, sh);
-    let options = ["Small", "Medium", "Large"];
-    // Register zones
-    let mut hovered_radio = None;
-    let rg = RadioGroup::new(rx, top + 28.0, &options, radio_selected).width(col_w);
-    for i in 0..options.len() {
-        let rr = rg.item_rect(i);
-        let st = ix.add_zone(Z_RADIO_BASE + i as u32, rr);
-        if st.is_hovered() { hovered_radio = Some(i); }
-    }
-    RadioGroup::new(rx, top + 28.0, &options, radio_selected)
-        .width(col_w)
-        .hovered_index(hovered_radio)
+    let pad = CARD_PAD;
+    let input_w = w - pad * 2.0;
+    let ir = Rect::new(x + pad, y + 48.0, input_w, 44.0);
+    let is = ix.add_zone(Z_INPUT, ir);
+    TextInput::new(ir).text(text_value).placeholder("Type here...")
+        .focused(focused).hovered(is.is_hovered())
         .draw(p, t, f, sw, sh);
 
-    SEC_SELECTION_H
+    CARD_INPUT_H
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 6. Text Input & Dropdown
+// Row 2 right: Dropdown
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-pub const SEC_INPUTS_H: f32 = 290.0;
+pub const CARD_DROPDOWN_H: f32 = 120.0;
 const DROPDOWN_OPTIONS: &[&str] = &["Fox Dark", "Fox Light", "Midnight", "Solarized"];
 
-pub fn draw_inputs(
-    p: &mut Painter,
-    t: &mut TextRenderer,
-    f: &FoxPalette,
+pub fn draw_dropdown(
+    p: &mut Painter, t: &mut TextRenderer, f: &FoxPalette,
     ix: &mut InteractionContext,
     x: f32, y: f32, w: f32,
-    text_value: &str, focused: Option<u32>,
     dd_open: bool, dd_selected: usize,
-    sw: u32, sh: u32,
-    vt: f32, vb: f32,
+    sw: u32, sh: u32, vt: f32, vb: f32,
 ) -> f32 {
-    if !visible(y, SEC_INPUTS_H, vt, vb) { return SEC_INPUTS_H; }
-    sec(p, Rect::new(x, y, w, SEC_INPUTS_H), "Text Input & Dropdown", t, f, sw, sh);
+    if !visible(y, CARD_DROPDOWN_H, vt, vb) { return CARD_DROPDOWN_H; }
+    let r = Rect::new(x, y, w, CARD_DROPDOWN_H);
+    card(p, r, "Dropdown", t, f, sw, sh);
 
-    let pad = SECTION_PAD;
-    let input_w = (w - pad * 2.0).min(400.0);
-    let input_h = 44.0;
-    let gap = 14.0;
-    let ix0 = x + pad;
-
-    // Input 1: empty placeholder
-    let iy = y + 48.0;
-    let r1 = Rect::new(ix0, iy, input_w, input_h);
-    let s1 = ix.add_zone(Z_INPUT_BASE, r1);
-    TextInput::new(r1).placeholder("Type something...")
-        .focused(focused == Some(Z_INPUT_BASE)).hovered(s1.is_hovered())
-        .draw(p, t, f, sw, sh);
-
-    // Input 2: filled
-    let r2 = Rect::new(ix0, iy + input_h + gap, input_w, input_h);
-    let s2 = ix.add_zone(Z_INPUT_BASE + 1, r2);
-    TextInput::new(r2).text(text_value).placeholder("Editable")
-        .focused(focused == Some(Z_INPUT_BASE + 1)).hovered(s2.is_hovered())
-        .draw(p, t, f, sw, sh);
-
-    // Input 3: always focused
-    let r3 = Rect::new(ix0, iy + (input_h + gap) * 2.0, input_w, input_h);
-    let s3 = ix.add_zone(Z_INPUT_BASE + 2, r3);
-    TextInput::new(r3).text("Always focused").focused(true).hovered(s3.is_hovered())
-        .draw(p, t, f, sw, sh);
-
-    // Dropdown
-    let dd_y = iy + (input_h + gap) * 3.0;
-    let dd_rect = Rect::new(ix0, dd_y, 250.0, 42.0);
+    let pad = CARD_PAD;
+    let dd_w = (w - pad * 2.0).min(280.0);
+    let dd_rect = Rect::new(x + pad, y + 48.0, dd_w, 42.0);
     let dd_state = ix.add_zone(Z_DROPDOWN, dd_rect);
 
-    // Probe option zones if open
     let temp = Dropdown::new(dd_rect, DROPDOWN_OPTIONS, dd_selected).open(dd_open);
     let mut hovered_opt = None;
     if dd_open {
@@ -381,7 +199,7 @@ pub fn draw_inputs(
         .hovered_option(hovered_opt)
         .draw(p, t, f, sw, sh);
 
-    SEC_INPUTS_H
+    CARD_DROPDOWN_H
 }
 
 pub fn dropdown_option_count() -> usize {
@@ -389,213 +207,226 @@ pub fn dropdown_option_count() -> usize {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 7. Badges, Progress, Tooltip
+// Row 3 left: Slider & Progress
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-pub const SEC_BADGES_H: f32 = 200.0;
+pub const CARD_SLIDER_H: f32 = 160.0;
 
-pub fn draw_badges_progress(
-    p: &mut Painter,
-    t: &mut TextRenderer,
-    f: &FoxPalette,
+pub fn draw_slider_progress(
+    p: &mut Painter, t: &mut TextRenderer, f: &FoxPalette,
+    ix: &mut InteractionContext,
     x: f32, y: f32, w: f32,
-    sw: u32, sh: u32,
-    vt: f32, vb: f32,
+    slider_val: f32, anim_time: f32,
+    sw: u32, sh: u32, vt: f32, vb: f32,
 ) -> f32 {
-    if !visible(y, SEC_BADGES_H, vt, vb) { return SEC_BADGES_H; }
-    sec(p, Rect::new(x, y, w, SEC_BADGES_H), "Badge · Progress · Tooltip", t, f, sw, sh);
+    if !visible(y, CARD_SLIDER_H, vt, vb) { return CARD_SLIDER_H; }
+    let r = Rect::new(x, y, w, CARD_SLIDER_H);
+    card(p, r, "Slider & Progress", t, f, sw, sh);
 
-    let pad = SECTION_PAD;
-    let by = y + 52.0;
+    let pad = CARD_PAD;
+    let track_w = w - pad * 2.0;
 
-    // Badge row
+    // Slider
+    let sy = y + 48.0;
+    let sr = Rect::new(x + pad, sy, track_w, 28.0);
+    let ss = ix.add_zone(Z_SLIDER, sr);
+    Slider::new(sr).value(slider_val)
+        .hovered(ss.is_hovered()).active(ss.is_active())
+        .draw(p, f);
+    let pct = format!("{:.0}%", slider_val * 100.0);
+    TextLabel::new(&pct, x + pad + track_w + 8.0, sy + 4.0)
+        .size(FontSize::Label).color(f.accent).draw(t, sw, sh);
+
+    // Animated progress bar
+    let py = sy + 48.0;
+    TextLabel::new("Loading", x + pad, py - 2.0)
+        .size(FontSize::Label).color(f.text_secondary).draw(t, sw, sh);
+    let prog = (anim_time % 4.0) / 4.0;
+    ProgressBar::new(Rect::new(x + pad, py + 22.0, track_w, 24.0))
+        .value(prog).label(true)
+        .draw(p, t, f, sw, sh);
+
+    CARD_SLIDER_H
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Row 3 right: Color Swatches
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+pub const CARD_SWATCHES_H: f32 = 200.0;
+
+pub fn draw_swatches(
+    p: &mut Painter, t: &mut TextRenderer, f: &FoxPalette,
+    x: f32, y: f32, w: f32, sw: u32, sh: u32, vt: f32, vb: f32,
+) -> f32 {
+    if !visible(y, CARD_SWATCHES_H, vt, vb) { return CARD_SWATCHES_H; }
+    let r = Rect::new(x, y, w, CARD_SWATCHES_H);
+    card(p, r, "Palette", t, f, sw, sh);
+
+    let pad = CARD_PAD;
+    let colors: &[(&str, Color)] = &[
+        ("bg", f.bg), ("surface", f.surface), ("surf 2", f.surface_2),
+        ("accent", f.accent), ("text", f.text), ("muted", f.muted),
+        ("danger", f.danger), ("success", f.success),
+        ("warn", f.warning), ("info", f.info),
+    ];
+
+    let cols = 5;
+    let avail = w - pad * 2.0;
+    let gap = 8.0;
+    let swatch_w = (avail - gap * (cols as f32 - 1.0)) / cols as f32;
+    let swatch_h = 36.0;
+    let start_y = y + 44.0;
+
+    for (i, (label, color)) in colors.iter().enumerate() {
+        let col = i % cols;
+        let row = i / cols;
+        let sx = x + pad + col as f32 * (swatch_w + gap);
+        let sy = start_y + row as f32 * (swatch_h + 26.0);
+
+        let sr = Rect::new(sx, sy, swatch_w, swatch_h);
+        p.rect_filled(sr, 6.0, *color);
+        p.rect_stroke(sr, 6.0, 1.0, f.text.with_alpha(0.12));
+
+        TextLabel::new(label, sx + 2.0, sy + swatch_h + 4.0)
+            .size(FontSize::Label).color(f.muted)
+            .max_width(swatch_w)
+            .draw(t, sw, sh);
+    }
+
+    CARD_SWATCHES_H
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Row 4 left: Badges
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+pub const CARD_BADGES_H: f32 = 120.0;
+
+pub fn draw_badges(
+    p: &mut Painter, t: &mut TextRenderer, f: &FoxPalette,
+    x: f32, y: f32, w: f32, sw: u32, sh: u32, vt: f32, vb: f32,
+) -> f32 {
+    if !visible(y, CARD_BADGES_H, vt, vb) { return CARD_BADGES_H; }
+    let r = Rect::new(x, y, w, CARD_BADGES_H);
+    card(p, r, "Badges", t, f, sw, sh);
+
+    let pad = CARD_PAD;
     let badges = [
         ("NEW", BadgeVariant::Info),
         ("STABLE", BadgeVariant::Success),
         ("WARN", BadgeVariant::Warning),
         ("ERROR", BadgeVariant::Danger),
-        ("DEFAULT", BadgeVariant::Default),
+        ("TAG", BadgeVariant::Default),
     ];
+
+    // Row 1
     let mut bx = x + pad;
-    for (label, variant) in badges {
-        Badge::new(label, bx, by).variant(variant).draw(p, t, f, sw, sh);
-        bx += label.len() as f32 * 14.0 * 0.55 + 34.0;
+    let by = y + 48.0;
+    for (label, variant) in &badges {
+        Badge::new(label, bx, by).variant(*variant).draw(p, t, f, sw, sh);
+        bx += label.len() as f32 * 12.0 + 32.0;
     }
 
-    // Progress bar
-    let py = by + 44.0;
-    let bar_w = (w - pad * 2.0) * 0.7;
-    ProgressBar::new(Rect::new(x + pad, py, bar_w, 28.0))
-        .value(0.65).label(true)
-        .draw(p, t, f, sw, sh);
+    // Row 2 — larger labels
+    let by2 = by + 36.0;
+    let mut bx = x + pad;
+    let big_badges = [
+        ("v2.1.0", BadgeVariant::Info),
+        ("Production", BadgeVariant::Success),
+        ("Deprecated", BadgeVariant::Danger),
+    ];
+    for (label, variant) in &big_badges {
+        Badge::new(label, bx, by2).variant(*variant).draw(p, t, f, sw, sh);
+        bx += label.len() as f32 * 12.0 + 32.0;
+    }
 
-    // Tooltip
-    let ty = py + 48.0;
-    TextLabel::new("Hover target →", x + pad, ty + 6.0)
-        .size(FontSize::Label).color(f.muted).draw(t, sw, sh);
-    Tooltip::new("I'm a tooltip!", x + pad + 180.0, ty)
-        .draw(p, t, f, sw, sh);
-
-    SEC_BADGES_H
+    CARD_BADGES_H
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 8. Scroll Area Demo
+// Row 4 right: Scroll Area
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-pub const SEC_SCROLL_H: f32 = 280.0;
+pub const CARD_SCROLL_H: f32 = 220.0;
 const SCROLL_ITEMS: &[&str] = &[
-    "Display Settings", "Network Config", "Audio Output",
-    "Keyboard Layout", "Mouse & Touchpad", "Power Management",
-    "Notifications", "Default Apps", "Accessibility",
-    "About System", "User Accounts", "Privacy",
-    "Date & Time", "Language & Region", "Software Updates",
+    "Display", "Network", "Audio", "Keyboard", "Touchpad",
+    "Power", "Notifications", "Apps", "Accessibility",
+    "About", "Accounts", "Privacy", "Date & Time", "Updates",
 ];
-const SCROLL_ITEM_H: f32 = 40.0;
+const SCROLL_ITEM_H: f32 = 36.0;
 
 pub fn draw_scroll_demo(
-    p: &mut Painter,
-    t: &mut TextRenderer,
-    f: &FoxPalette,
+    p: &mut Painter, t: &mut TextRenderer, f: &FoxPalette,
     ix: &mut InteractionContext,
-    x: f32, y: f32, w: f32,
-    scroll_offset: &mut f32,
-    sw: u32, sh: u32,
-    vt: f32, vb: f32,
+    x: f32, y: f32, w: f32, scroll_offset: &mut f32,
+    sw: u32, sh: u32, vt: f32, vb: f32,
 ) -> f32 {
-    if !visible(y, SEC_SCROLL_H, vt, vb) { return SEC_SCROLL_H; }
-    sec(p, Rect::new(x, y, w, SEC_SCROLL_H), "Scroll Area", t, f, sw, sh);
+    if !visible(y, CARD_SCROLL_H, vt, vb) { return CARD_SCROLL_H; }
+    let r = Rect::new(x, y, w, CARD_SCROLL_H);
+    card(p, r, "Scroll Area", t, f, sw, sh);
 
-    let pad = SECTION_PAD;
-    let viewport = Rect::new(x + pad, y + 48.0, w - pad * 2.0, SEC_SCROLL_H - 58.0);
+    let pad = CARD_PAD;
+    let vp = Rect::new(x + pad, y + 44.0, w - pad * 2.0, CARD_SCROLL_H - 54.0);
     let content_h = SCROLL_ITEMS.len() as f32 * SCROLL_ITEM_H;
 
-    // Wheel scroll inside this area (check if cursor is inside)
-    if ix.is_hovered(&viewport) {
+    if ix.is_hovered(&vp) {
         let delta = ix.scroll_delta() * 40.0;
         if delta != 0.0 {
-            ScrollArea::apply_scroll(scroll_offset, delta, content_h, viewport.h);
+            ScrollArea::apply_scroll(scroll_offset, delta, content_h, vp.h);
         }
     }
 
-    let area = ScrollArea::new(viewport, content_h, scroll_offset);
-    let scrollbar = Scrollbar::new(&viewport, content_h, *scroll_offset);
+    let area = ScrollArea::new(vp, content_h, scroll_offset);
+    let scrollbar = Scrollbar::new(&vp, content_h, *scroll_offset);
     let sb_state = ix.add_zone(Z_SCROLL_DEMO, scrollbar.thumb);
-
     if sb_state.is_active() {
         if let Some((_, sy)) = ix.cursor() {
-            *scroll_offset = scrollbar.offset_for_thumb_y(sy, content_h, viewport.h);
+            *scroll_offset = scrollbar.offset_for_thumb_y(sy, content_h, vp.h);
         }
     }
 
-    let item_colors = [f.accent, f.danger, f.success, f.info];
+    let stripe_colors = [f.accent, f.danger, f.success, f.info];
     area.begin(p);
     let cy = area.content_y();
     for (i, label) in SCROLL_ITEMS.iter().enumerate() {
         let iy = cy + i as f32 * SCROLL_ITEM_H;
-        if iy + SCROLL_ITEM_H < viewport.y || iy > viewport.y + viewport.h { continue; }
-        let ir = Rect::new(viewport.x + 4.0, iy + 2.0, viewport.w - 20.0, SCROLL_ITEM_H - 4.0);
-        p.rect_filled(ir, 8.0, f.surface_2.with_alpha(0.5));
+        if iy + SCROLL_ITEM_H < vp.y || iy > vp.y + vp.h { continue; }
+        let ir = Rect::new(vp.x + 2.0, iy + 2.0, vp.w - 16.0, SCROLL_ITEM_H - 4.0);
+        p.rect_filled(ir, 6.0, f.surface_2.with_alpha(0.4));
         let stripe = Rect::new(ir.x, ir.y + 4.0, 3.0, ir.h - 8.0);
-        p.rect_filled(stripe, 1.5, item_colors[i % item_colors.len()].with_alpha(0.7));
-        TextLabel::new(label, ir.x + 14.0, ir.y + 8.0)
-            .size(FontSize::Caption).color(f.text).max_width(ir.w - 28.0)
+        p.rect_filled(stripe, 1.5, stripe_colors[i % stripe_colors.len()].with_alpha(0.6));
+        TextLabel::new(label, ir.x + 12.0, ir.y + 7.0)
+            .size(FontSize::Label).color(f.text).max_width(ir.w - 24.0)
             .draw(t, sw, sh);
     }
     area.end(p);
     scrollbar.draw(p, sb_state, f);
 
-    SEC_SCROLL_H
+    CARD_SCROLL_H
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 9. Modal & Toast Triggers
+// Row 5: Modal trigger (full width)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-pub const SEC_ACTIONS_H: f32 = 110.0;
+pub const CARD_MODAL_H: f32 = 100.0;
 
-pub fn draw_actions(
-    p: &mut Painter,
-    t: &mut TextRenderer,
-    f: &FoxPalette,
+pub fn draw_modal_trigger(
+    p: &mut Painter, t: &mut TextRenderer, f: &FoxPalette,
     ix: &mut InteractionContext,
-    x: f32, y: f32, w: f32,
-    sw: u32, sh: u32,
-    vt: f32, vb: f32,
+    x: f32, y: f32, w: f32, sw: u32, sh: u32, vt: f32, vb: f32,
 ) -> f32 {
-    if !visible(y, SEC_ACTIONS_H, vt, vb) { return SEC_ACTIONS_H; }
-    sec(p, Rect::new(x, y, w, SEC_ACTIONS_H), "Modal & Toast", t, f, sw, sh);
+    if !visible(y, CARD_MODAL_H, vt, vb) { return CARD_MODAL_H; }
+    let r = Rect::new(x, y, w, CARD_MODAL_H);
+    card(p, r, "Modal", t, f, sw, sh);
 
-    let pad = SECTION_PAD;
-    let btn_y = y + 52.0;
-    let btn_w = 180.0;
-    let btn_h = 38.0;
-
-    let mr = Rect::new(x + pad, btn_y, btn_w, btn_h);
+    let pad = CARD_PAD;
+    let mr = Rect::new(x + pad, y + 48.0, 200.0, 38.0);
     let ms = ix.add_zone(Z_MODAL_OPEN, mr);
     Button::new(mr, "Open Modal").variant(ButtonVariant::Primary)
         .hovered(ms.is_hovered()).pressed(ms.is_active())
         .draw(p, t, f, sw, sh);
 
-    let tr = Rect::new(x + pad + btn_w + 18.0, btn_y, btn_w, btn_h);
-    let ts = ix.add_zone(Z_TOAST_SPAWN, tr);
-    Button::new(tr, "Spawn Toast").variant(ButtonVariant::Default)
-        .hovered(ts.is_hovered()).pressed(ts.is_active())
-        .draw(p, t, f, sw, sh);
-
-    SEC_ACTIONS_H
-}
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 10. Animations — auto-looping demos
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-pub const SEC_ANIMS_H: f32 = 190.0;
-
-pub fn draw_animations(
-    p: &mut Painter,
-    t: &mut TextRenderer,
-    f: &FoxPalette,
-    x: f32, y: f32, w: f32,
-    anim_time: f32,
-    sw: u32, sh: u32,
-    vt: f32, vb: f32,
-) -> f32 {
-    if !visible(y, SEC_ANIMS_H, vt, vb) { return SEC_ANIMS_H; }
-    sec(p, Rect::new(x, y, w, SEC_ANIMS_H), "Animations", t, f, sw, sh);
-
-    let pad = SECTION_PAD;
-
-    // Auto-toggling toggle
-    let cycle = anim_time % 3.0;
-    let toggle_on = cycle > 1.5;
-    // Smooth transition over 0.3s
-    let transition = if toggle_on {
-        ((cycle - 1.5) / 0.3).clamp(0.0, 1.0)
-    } else {
-        1.0 - (cycle / 0.3).clamp(0.0, 1.0)
-    };
-
-    let ty = y + 52.0;
-    Toggle::new(Rect::new(x + pad, ty, 200.0, 36.0), toggle_on)
-        .label("Auto-toggle")
-        .transition(transition)
-        .draw(p, t, f, sw, sh);
-
-    // Auto-filling progress bar
-    let prog = (anim_time % 4.0) / 4.0;
-    let py = ty + 50.0;
-    TextLabel::new("Progress animation", x + pad, py)
-        .size(FontSize::Label).color(f.muted).draw(t, sw, sh);
-    ProgressBar::new(Rect::new(x + pad, py + 26.0, (w - pad * 2.0) * 0.6, 28.0))
-        .value(prog).label(true)
-        .draw(p, t, f, sw, sh);
-
-    // Info text
-    let iy = py + 66.0;
-    TextLabel::new("Toasts auto-spawn every 5s — check bottom-right corner!", x + pad, iy)
-        .size(FontSize::Label).color(f.text_secondary).max_width(w - pad * 2.0)
-        .draw(t, sw, sh);
-
-    SEC_ANIMS_H
+    CARD_MODAL_H
 }

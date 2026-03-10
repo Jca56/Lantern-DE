@@ -6,6 +6,7 @@ pub mod gpu;
 
 pub use gpu::context_menu::{ContextMenu, ContextMenuStyle, MenuEvent, MenuItem};
 pub use gpu::controls::{Button, ButtonVariant, Slider};
+pub use gpu::decoration::{ControlHover, DecorationStyle, ResizeEdge, WindowDecoration};
 pub use gpu::fill::{Fill, GradientBorder, Panel};
 pub use gpu::gradient::GradientTopBar;
 pub use gpu::input::{HitZone, InteractionContext, InteractionState};

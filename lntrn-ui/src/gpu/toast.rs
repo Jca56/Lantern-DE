@@ -2,19 +2,22 @@ use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
 use super::palette::FoxPalette;
 
-const TOAST_W: f32 = 340.0;
-const TOAST_H: f32 = 60.0;
-const TOAST_RADIUS: f32 = 10.0;
-const TOAST_BORDER: f32 = 1.0;
-const FONT_SIZE: f32 = 18.0;
-const PADDING_H: f32 = 16.0;
-const ICON_SIZE: f32 = 8.0;
-const ICON_GAP: f32 = 12.0;
-const TOAST_GAP: f32 = 8.0;
-const SHADOW_ALPHA: f32 = 0.2;
-const PROGRESS_H: f32 = 3.0;
+// Matches the OSD pill aesthetic
+const TOAST_W: f32 = 400.0;
+const TOAST_H: f32 = 140.0;
+const TOAST_RADIUS: f32 = 16.0;
+const TITLE_SIZE: f32 = 24.0;
+const BODY_SIZE: f32 = 20.0;
+const PADDING: f32 = 20.0;
+const TOAST_GAP: f32 = 14.0;
+const PROGRESS_H: f32 = 4.0;
+const SLIDE_DISTANCE: f32 = 460.0;
 
-/// Variant determines the accent color and icon style.
+// OSD gold — use from_rgb8 which handles sRGB→linear conversion
+fn amber() -> Color { Color::from_rgb8(250, 204, 21) }
+fn amber_dim() -> Color { Color::from_rgb8(170, 110, 8) }
+
+/// Variant determines the accent color.
 #[derive(Clone, Copy, PartialEq)]
 pub enum ToastVariant {
     Info,
@@ -38,61 +41,60 @@ pub enum ToastAnchor {
 /// When it reaches 0.0 the caller should remove the toast.
 #[derive(Clone)]
 pub struct ToastItem {
-    pub message: String,
+    pub title: String,
+    pub body: String,
     pub variant: ToastVariant,
     /// 1.0 = just appeared, 0.0 = about to dismiss.
     pub progress: f32,
+    /// 0.0 = off-screen, 1.0 = fully in position. Drives slide-in/out animation.
+    pub slide: f32,
 }
 
 impl ToastItem {
-    pub fn new(message: impl Into<String>, variant: ToastVariant) -> Self {
+    pub fn new(title: impl Into<String>, body: impl Into<String>, variant: ToastVariant) -> Self {
         Self {
-            message: message.into(),
+            title: title.into(),
+            body: body.into(),
             variant,
             progress: 1.0,
+            slide: 1.0,
         }
     }
 
-    pub fn info(message: impl Into<String>) -> Self {
-        Self::new(message, ToastVariant::Info)
+    pub fn info(title: impl Into<String>, body: impl Into<String>) -> Self {
+        Self::new(title, body, ToastVariant::Info)
     }
 
-    pub fn success(message: impl Into<String>) -> Self {
-        Self::new(message, ToastVariant::Success)
+    pub fn success(title: impl Into<String>, body: impl Into<String>) -> Self {
+        Self::new(title, body, ToastVariant::Success)
     }
 
-    pub fn warning(message: impl Into<String>) -> Self {
-        Self::new(message, ToastVariant::Warning)
+    pub fn warning(title: impl Into<String>, body: impl Into<String>) -> Self {
+        Self::new(title, body, ToastVariant::Warning)
     }
 
-    pub fn error(message: impl Into<String>) -> Self {
-        Self::new(message, ToastVariant::Error)
+    pub fn error(title: impl Into<String>, body: impl Into<String>) -> Self {
+        Self::new(title, body, ToastVariant::Error)
     }
 }
 
 /// Draws a stack of toast notifications anchored to a screen corner.
 ///
-/// ```ignore
-/// let toasts = vec![
-///     ToastItem::success("File saved"),
-///     ToastItem::error("Connection lost"),
-/// ];
-/// ToastStack::new(&toasts)
-///     .anchor(ToastAnchor::BottomRight)
-///     .draw(painter, text_renderer, palette, screen_w, screen_h);
-/// ```
+/// Pass a `scale` factor (e.g. 1.25) for physical pixel rendering.
 pub struct ToastStack<'a> {
     toasts: &'a [ToastItem],
     anchor: ToastAnchor,
     margin: f32,
+    scale: f32,
 }
 
 impl<'a> ToastStack<'a> {
     pub fn new(toasts: &'a [ToastItem]) -> Self {
         Self {
             toasts,
-            anchor: ToastAnchor::BottomRight,
+            anchor: ToastAnchor::TopRight,
             margin: 20.0,
+            scale: 1.0,
         }
     }
 
@@ -106,10 +108,17 @@ impl<'a> ToastStack<'a> {
         self
     }
 
+    pub fn scale(mut self, scale: f32) -> Self {
+        self.scale = scale;
+        self
+    }
+
+    fn s(&self, v: f32) -> f32 { v * self.scale }
+
     /// Returns the rect for a specific toast index (for hit-testing / dismiss).
     pub fn toast_rect(&self, index: usize, screen_w: f32, screen_h: f32) -> Rect {
         let (x, y) = self.toast_pos(index, screen_w, screen_h);
-        Rect::new(x, y, TOAST_W, TOAST_H)
+        Rect::new(x, y, self.s(TOAST_W), self.s(TOAST_H))
     }
 
     pub fn draw(
@@ -124,27 +133,34 @@ impl<'a> ToastStack<'a> {
         let sh = screen_h as f32;
 
         for (i, toast) in self.toasts.iter().enumerate() {
-            let (x, y) = self.toast_pos(i, sw, sh);
+            let (base_x, y) = self.toast_pos(i, sw, sh);
+
+            // Ease-out slide: cubic deceleration
+            let t = toast.slide.clamp(0.0, 1.0);
+            let eased = 1.0 - (1.0 - t).powi(3);
+            let slide_offset = self.s(SLIDE_DISTANCE) * (1.0 - eased);
+
+            // Offset direction based on anchor side
+            let x = match self.anchor {
+                ToastAnchor::TopRight | ToastAnchor::BottomRight => base_x + slide_offset,
+                ToastAnchor::TopLeft | ToastAnchor::BottomLeft => base_x - slide_offset,
+            };
+
             self.draw_single(toast, x, y, painter, text_renderer, palette, screen_w, screen_h);
         }
     }
 
     fn toast_pos(&self, index: usize, screen_w: f32, screen_h: f32) -> (f32, f32) {
-        let offset = index as f32 * (TOAST_H + TOAST_GAP);
+        let w = self.s(TOAST_W);
+        let h = self.s(TOAST_H);
+        let gap = self.s(TOAST_GAP);
+        let margin = self.s(self.margin);
+        let offset = index as f32 * (h + gap);
         match self.anchor {
-            ToastAnchor::TopRight => (
-                screen_w - TOAST_W - self.margin,
-                self.margin + offset,
-            ),
-            ToastAnchor::TopLeft => (self.margin, self.margin + offset),
-            ToastAnchor::BottomRight => (
-                screen_w - TOAST_W - self.margin,
-                screen_h - TOAST_H - self.margin - offset,
-            ),
-            ToastAnchor::BottomLeft => (
-                self.margin,
-                screen_h - TOAST_H - self.margin - offset,
-            ),
+            ToastAnchor::TopRight => (screen_w - w - margin, margin + offset),
+            ToastAnchor::TopLeft => (margin, margin + offset),
+            ToastAnchor::BottomRight => (screen_w - w - margin, screen_h - h - margin - offset),
+            ToastAnchor::BottomLeft => (margin, screen_h - h - margin - offset),
         }
     }
 
@@ -159,56 +175,72 @@ impl<'a> ToastStack<'a> {
         screen_w: u32,
         screen_h: u32,
     ) {
-        let accent = variant_color(toast.variant, palette);
-        let rect = Rect::new(x, y, TOAST_W, TOAST_H);
+        let w = self.s(TOAST_W);
+        let h = self.s(TOAST_H);
+        let r = self.s(TOAST_RADIUS);
+        let pad = self.s(PADDING);
+        let accent = variant_color(toast.variant);
 
-        // Shadow
-        let shadow = rect.expand(4.0);
-        painter.rect_filled(shadow, TOAST_RADIUS + 2.0, Color::BLACK.with_alpha(SHADOW_ALPHA));
+        // Background pill — same semi-transparent dark as OSD
+        let bg = Color::rgba(palette.surface.r, palette.surface.g, palette.surface.b, 0.92);
+        painter.rect_filled(Rect::new(x, y, w, h), r, bg);
 
-        // Background
-        painter.rect_filled(rect, TOAST_RADIUS, palette.surface.with_alpha(0.97));
-        painter.rect_stroke(rect, TOAST_RADIUS, TOAST_BORDER, palette.muted.with_alpha(0.15));
+        // Thin amber top accent line
+        let line_h = self.s(3.0);
+        painter.rect_gradient_linear(
+            Rect::new(x + r, y, w - r * 2.0, line_h),
+            0.0, 0.0, amber_dim(), accent,
+        );
 
-        // Left accent stripe
-        let stripe = Rect::new(x, y, 4.0, TOAST_H);
-        painter.rect_filled(stripe, 2.0, accent);
-
-        // Icon dot (simple colored circle)
-        let icon_x = x + PADDING_H + 4.0;
-        let icon_y = y + TOAST_H * 0.5;
-        painter.circle_filled(icon_x, icon_y, ICON_SIZE * 0.5, accent);
-
-        // Message text
-        let text_x = icon_x + ICON_SIZE * 0.5 + ICON_GAP;
-        let text_y = y + (TOAST_H - FONT_SIZE) * 0.5;
-        let max_w = TOAST_W - (text_x - x) - PADDING_H;
+        // Title text (amber)
+        let title_font = self.s(TITLE_SIZE);
+        let title_y = y + pad;
+        let max_w = w - pad * 2.0;
         text_renderer.queue(
-            &toast.message,
-            FONT_SIZE,
-            text_x,
-            text_y,
-            palette.text,
+            &toast.title,
+            title_font,
+            x + pad,
+            title_y,
+            accent,
             max_w,
             screen_w,
             screen_h,
         );
 
-        // Progress bar at the bottom (dismissal timer)
-        if toast.progress < 1.0 {
-            let bar_y = y + TOAST_H - PROGRESS_H;
-            let bar_w = TOAST_W * toast.progress;
-            let bar = Rect::new(x, bar_y, bar_w, PROGRESS_H);
-            painter.rect_filled(bar, 0.0, accent.with_alpha(0.5));
+        // Body text (lighter)
+        if !toast.body.is_empty() {
+            let body_font = self.s(BODY_SIZE);
+            let body_y = title_y + title_font + self.s(6.0);
+            text_renderer.queue(
+                &toast.body,
+                body_font,
+                x + pad,
+                body_y,
+                palette.text_secondary,
+                max_w,
+                screen_w,
+                screen_h,
+            );
+        }
+
+        // Progress bar at bottom — amber gradient like OSD slider
+        if toast.progress <= 1.0 {
+            let bar_h = self.s(PROGRESS_H);
+            let bar_y = y + h - bar_h;
+            let bar_w = w * toast.progress;
+            painter.rect_gradient_linear(
+                Rect::new(x, bar_y, bar_w, bar_h),
+                0.0, 0.0, amber_dim(), accent,
+            );
         }
     }
 }
 
-fn variant_color(variant: ToastVariant, palette: &FoxPalette) -> Color {
+fn variant_color(variant: ToastVariant) -> Color {
     match variant {
-        ToastVariant::Info => palette.info,
-        ToastVariant::Success => palette.success,
-        ToastVariant::Warning => palette.warning,
-        ToastVariant::Error => palette.danger,
+        ToastVariant::Info => amber(),
+        ToastVariant::Success => Color { r: 0.30, g: 0.85, b: 0.40, a: 1.0 },
+        ToastVariant::Warning => amber(),
+        ToastVariant::Error => Color { r: 0.95, g: 0.30, b: 0.25, a: 1.0 },
     }
 }

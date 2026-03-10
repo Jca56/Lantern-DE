@@ -1,136 +1,9 @@
 use bytemuck::{Pod, Zeroable};
 use lntrn_gfx::{Frame, GpuContext};
 
+use crate::color::Color;
+use crate::rect::Rect;
 use crate::shader::SHADER_2D;
-
-#[derive(Debug, Clone, Copy)]
-pub struct Color {
-    pub r: f32,
-    pub g: f32,
-    pub b: f32,
-    pub a: f32,
-}
-
-impl Color {
-    pub const fn rgba(r: f32, g: f32, b: f32, a: f32) -> Self {
-        Self { r, g, b, a }
-    }
-
-    pub const fn rgb(r: f32, g: f32, b: f32) -> Self {
-        Self { r, g, b, a: 1.0 }
-    }
-
-    pub fn from_rgba8(r: u8, g: u8, b: u8, a: u8) -> Self {
-        Self {
-            r: srgb_to_linear(r as f32 / 255.0),
-            g: srgb_to_linear(g as f32 / 255.0),
-            b: srgb_to_linear(b as f32 / 255.0),
-            a: a as f32 / 255.0,
-        }
-    }
-
-    pub fn from_rgb8(r: u8, g: u8, b: u8) -> Self {
-        Self::from_rgba8(r, g, b, 255)
-    }
-
-    pub fn from_srgb(r: f32, g: f32, b: f32, a: f32) -> Self {
-        Self {
-            r: srgb_to_linear(r),
-            g: srgb_to_linear(g),
-            b: srgb_to_linear(b),
-            a,
-        }
-    }
-
-    pub fn with_alpha(self, a: f32) -> Self {
-        Self { a, ..self }
-    }
-
-    /// Convert from linear float back to sRGB 8-bit [r, g, b, a].
-    pub fn to_srgb8(self) -> [u8; 4] {
-        [
-            (linear_to_srgb(self.r.clamp(0.0, 1.0)) * 255.0 + 0.5) as u8,
-            (linear_to_srgb(self.g.clamp(0.0, 1.0)) * 255.0 + 0.5) as u8,
-            (linear_to_srgb(self.b.clamp(0.0, 1.0)) * 255.0 + 0.5) as u8,
-            (self.a.clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
-        ]
-    }
-
-    pub const BLACK: Self = Self::rgb(0.0, 0.0, 0.0);
-    pub const WHITE: Self = Self::rgb(1.0, 1.0, 1.0);
-    pub const TRANSPARENT: Self = Self::rgba(0.0, 0.0, 0.0, 0.0);
-}
-
-fn srgb_to_linear(s: f32) -> f32 {
-    if s <= 0.04045 {
-        s / 12.92
-    } else {
-        ((s + 0.055) / 1.055).powf(2.4)
-    }
-}
-
-fn linear_to_srgb(l: f32) -> f32 {
-    if l <= 0.0031308 {
-        l * 12.92
-    } else {
-        1.055 * l.powf(1.0 / 2.4) - 0.055
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct Rect {
-    pub x: f32,
-    pub y: f32,
-    pub w: f32,
-    pub h: f32,
-}
-
-impl Rect {
-    pub fn new(x: f32, y: f32, w: f32, h: f32) -> Self {
-        Self { x, y, w, h }
-    }
-
-    pub fn center_x(&self) -> f32 {
-        self.x + self.w * 0.5
-    }
-
-    pub fn center_y(&self) -> f32 {
-        self.y + self.h * 0.5
-    }
-
-    pub fn contains(&self, px: f32, py: f32) -> bool {
-        px >= self.x && px <= self.x + self.w && py >= self.y && py <= self.y + self.h
-    }
-
-    pub fn expand(&self, amount: f32) -> Self {
-        Self {
-            x: self.x - amount,
-            y: self.y - amount,
-            w: self.w + amount * 2.0,
-            h: self.h + amount * 2.0,
-        }
-    }
-
-    pub fn translate(&self, dx: f32, dy: f32) -> Self {
-        Self {
-            x: self.x + dx,
-            y: self.y + dy,
-            ..*self
-        }
-    }
-
-    pub fn intersect(&self, other: &Rect) -> Option<Rect> {
-        let x = self.x.max(other.x);
-        let y = self.y.max(other.y);
-        let r = (self.x + self.w).min(other.x + other.w);
-        let b = (self.y + self.h).min(other.y + other.h);
-        if r > x && b > y {
-            Some(Rect::new(x, y, r - x, b - y))
-        } else {
-            None
-        }
-    }
-}
 
 const SHAPE_RECT: f32 = 0.0;
 const SHAPE_CIRCLE: f32 = 1.0;
@@ -138,6 +11,12 @@ const SHAPE_LINE: f32 = 2.0;
 const SHAPE_RING: f32 = 3.0;
 const SHAPE_GRADIENT_LINEAR: f32 = 4.0;
 const SHAPE_GRADIENT_RADIAL: f32 = 5.0;
+const SHAPE_RECT_STROKE: f32 = 6.0;
+const SHAPE_RECT_4CORNER: f32 = 7.0;
+const SHAPE_TRIANGLE: f32 = 8.0;
+const SHAPE_SHADOW: f32 = 9.0;
+const SHAPE_ARC: f32 = 10.0;
+const SHAPE_DASHED_LINE: f32 = 11.0;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -347,6 +226,7 @@ impl Painter {
     }
 
     pub fn rect_filled(&mut self, rect: Rect, corner_radius: f32, color: Color) {
+        if color.a < 0.004 { return; }
         self.instances.push(Instance {
             bounds: [rect.x, rect.y, rect.w, rect.h],
             color: [color.r, color.g, color.b, color.a],
@@ -356,6 +236,7 @@ impl Painter {
     }
 
     pub fn circle_filled(&mut self, cx: f32, cy: f32, radius: f32, color: Color) {
+        if color.a < 0.004 { return; }
         let size = radius * 2.0;
         self.instances.push(Instance {
             bounds: [cx - radius, cy - radius, size, size],
@@ -366,6 +247,7 @@ impl Painter {
     }
 
     pub fn line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, width: f32, color: Color) {
+        if color.a < 0.004 { return; }
         self.instances.push(Instance {
             bounds: [x1, y1, 0.0, 0.0],
             color: [color.r, color.g, color.b, color.a],
@@ -375,6 +257,7 @@ impl Painter {
     }
 
     pub fn circle_stroke(&mut self, cx: f32, cy: f32, radius: f32, stroke_width: f32, color: Color) {
+        if color.a < 0.004 { return; }
         let expand = stroke_width * 0.5 + 3.0;
         let size = (radius + expand) * 2.0;
         self.instances.push(Instance {
@@ -419,6 +302,97 @@ impl Painter {
         });
     }
 
+    /// Proper SDF-based rounded rect outline. Unlike `rect_stroke` which draws
+    /// 4 separate rects, this produces smooth continuous corners.
+    pub fn rect_stroke_sdf(&mut self, rect: Rect, corner_radius: f32, width: f32, color: Color) {
+        if color.a < 0.004 { return; }
+        let expand = width * 0.5 + 2.0;
+        let expanded = rect.expand(expand);
+        self.instances.push(Instance {
+            bounds: [expanded.x, expanded.y, expanded.w, expanded.h],
+            color: [color.r, color.g, color.b, color.a],
+            params: [corner_radius, width, 0.0, SHAPE_RECT_STROKE],
+            color_b: [0.0; 4],
+        });
+    }
+
+    /// Rounded rect with different radius per corner.
+    /// Order: top-left, top-right, bottom-left, bottom-right.
+    pub fn rect_4corner(&mut self, rect: Rect, radii: [f32; 4], color: Color) {
+        if color.a < 0.004 { return; }
+        self.instances.push(Instance {
+            bounds: [rect.x, rect.y, rect.w, rect.h],
+            color: [color.r, color.g, color.b, color.a],
+            params: [radii[0], radii[1], 0.0, SHAPE_RECT_4CORNER],
+            color_b: [radii[2], radii[3], 0.0, 0.0],
+        });
+    }
+
+    /// Filled triangle from 3 points.
+    pub fn triangle(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x3: f32, y3: f32, color: Color) {
+        if color.a < 0.004 { return; }
+        self.instances.push(Instance {
+            bounds: [x1, y1, x2, y2],
+            color: [color.r, color.g, color.b, color.a],
+            params: [x3, y3, 0.0, SHAPE_TRIANGLE],
+            color_b: [0.0; 4],
+        });
+    }
+
+    /// Soft drop shadow for a rounded rect. `sigma` controls blur spread.
+    /// Typically drawn behind the actual rect with a slight offset.
+    pub fn shadow(&mut self, rect: Rect, corner_radius: f32, sigma: f32, color: Color) {
+        if color.a < 0.004 { return; }
+        let expand = sigma * 3.0;
+        let expanded = rect.expand(expand);
+        self.instances.push(Instance {
+            bounds: [expanded.x, expanded.y, expanded.w, expanded.h],
+            color: [color.r, color.g, color.b, color.a],
+            params: [corner_radius, sigma, 0.0, SHAPE_SHADOW],
+            color_b: [0.0; 4],
+        });
+    }
+
+    /// Arc stroke or filled pie slice.
+    /// `start_angle` and `sweep_angle` in radians (0 = right, π/2 = down).
+    /// If `stroke_width` > 0, draws an arc stroke. Otherwise draws a filled pie.
+    /// `inner_radius` creates a donut shape (0 for full pie).
+    pub fn arc(
+        &mut self,
+        cx: f32, cy: f32, outer_radius: f32,
+        start_angle: f32, sweep_angle: f32,
+        stroke_width: f32, inner_radius: f32,
+        color: Color,
+    ) {
+        if color.a < 0.004 { return; }
+        let expand = if stroke_width > 0.0 { stroke_width * 0.5 + 2.0 } else { 2.0 };
+        let size = (outer_radius + expand) * 2.0;
+        self.instances.push(Instance {
+            bounds: [cx - outer_radius - expand, cy - outer_radius - expand, size, size],
+            color: [color.r, color.g, color.b, color.a],
+            params: [stroke_width, start_angle, sweep_angle, SHAPE_ARC],
+            color_b: [inner_radius, 0.0, 0.0, 0.0],
+        });
+    }
+
+    /// Dashed line between two points.
+    pub fn line_dashed(
+        &mut self,
+        x1: f32, y1: f32, x2: f32, y2: f32,
+        width: f32, dash: f32, gap: f32,
+        color: Color,
+    ) {
+        if color.a < 0.004 { return; }
+        self.instances.push(Instance {
+            bounds: [x1, y1, 0.0, 0.0],
+            color: [color.r, color.g, color.b, color.a],
+            params: [width, x2, y2, SHAPE_DASHED_LINE],
+            color_b: [dash, gap, 0.0, 0.0],
+        });
+    }
+
+    /// Legacy rounded rect stroke using 4 filled rects. Prefer `rect_stroke_sdf` for
+    /// proper rounded corners.
     pub fn rect_stroke(&mut self, rect: Rect, corner_radius: f32, width: f32, color: Color) {
         self.rect_filled(Rect::new(rect.x, rect.y, rect.w, width), corner_radius.min(width), color);
         self.rect_filled(Rect::new(rect.x, rect.y + rect.h - width, rect.w, width), corner_radius.min(width), color);
@@ -433,79 +407,11 @@ impl Painter {
         view: &wgpu::TextureView,
         clear_color: Color,
     ) {
-        if self.instances.len() > MAX_INSTANCES {
-            self.instances.truncate(MAX_INSTANCES);
-        }
-
-        let globals = Globals {
-            screen_size: [gpu.width() as f32, gpu.height() as f32],
-            _pad: [0.0; 2],
-        };
-        gpu.queue.write_buffer(&self.globals_buffer, 0, bytemuck::bytes_of(&globals));
-
-        if !self.instances.is_empty() {
-            gpu.queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&self.instances));
-        }
-
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Lantern 2D Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: clear_color.r as f64,
-                        g: clear_color.g as f64,
-                        b: clear_color.b as f64,
-                        a: clear_color.a as f64,
-                    }),
-                    store: wgpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
-            depth_stencil_attachment: None,
-            ..Default::default()
+        let load = wgpu::LoadOp::Clear(wgpu::Color {
+            r: clear_color.r as f64, g: clear_color.g as f64,
+            b: clear_color.b as f64, a: clear_color.a as f64,
         });
-
-        if !self.instances.is_empty() {
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &self.globals_bind_group, &[]);
-            pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
-
-            let total = self.instances.len() as u32;
-            let span_count = self.clip_spans.len();
-
-            for i in 0..span_count {
-                let span = &self.clip_spans[i];
-                let end = if i + 1 < span_count {
-                    self.clip_spans[i + 1].start
-                } else {
-                    total
-                };
-
-                if end <= span.start {
-                    continue;
-                }
-
-                match span.clip {
-                    Some(rect) => {
-                        let sx = rect.x.max(0.0) as u32;
-                        let sy = rect.y.max(0.0) as u32;
-                        let sw = (rect.w.max(0.0) as u32).min(gpu.width().saturating_sub(sx));
-                        let sh = (rect.h.max(0.0) as u32).min(gpu.height().saturating_sub(sy));
-                        if sw == 0 || sh == 0 {
-                            continue;
-                        }
-                        pass.set_scissor_rect(sx, sy, sw, sh);
-                    }
-                    None => {
-                        pass.set_scissor_rect(0, 0, gpu.width(), gpu.height());
-                    }
-                }
-
-                pass.draw(0..4, span.start..end);
-            }
-        }
+        self.execute_pass(gpu, encoder, view, load, "Lantern 2D Pass");
     }
 
     /// Like render_pass, but uses LoadOp::Load instead of Clear.
@@ -515,6 +421,17 @@ impl Painter {
         gpu: &GpuContext,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
+    ) {
+        self.execute_pass(gpu, encoder, view, wgpu::LoadOp::Load, "Lantern 2D Overlay");
+    }
+
+    fn execute_pass(
+        &mut self,
+        gpu: &GpuContext,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        load: wgpu::LoadOp<wgpu::Color>,
+        label: &str,
     ) {
         if self.instances.len() > MAX_INSTANCES {
             self.instances.truncate(MAX_INSTANCES);
@@ -531,14 +448,11 @@ impl Painter {
         }
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Lantern 2D Overlay"),
+            label: Some(label),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view,
                 resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
+                ops: wgpu::Operations { load, store: wgpu::StoreOp::Store },
                 depth_slice: None,
             })],
             depth_stencil_attachment: None,
@@ -561,9 +475,7 @@ impl Painter {
                     total
                 };
 
-                if end <= span.start {
-                    continue;
-                }
+                if end <= span.start { continue; }
 
                 match span.clip {
                     Some(rect) => {
@@ -571,9 +483,7 @@ impl Painter {
                         let sy = rect.y.max(0.0) as u32;
                         let sw = (rect.w.max(0.0) as u32).min(gpu.width().saturating_sub(sx));
                         let sh = (rect.h.max(0.0) as u32).min(gpu.height().saturating_sub(sy));
-                        if sw == 0 || sh == 0 {
-                            continue;
-                        }
+                        if sw == 0 || sh == 0 { continue; }
                         pass.set_scissor_rect(sx, sy, sw, sh);
                     }
                     None => {
@@ -612,3 +522,5 @@ impl Painter {
         Ok(())
     }
 }
+
+

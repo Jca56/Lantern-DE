@@ -22,8 +22,8 @@ fn main() -> anyhow::Result<()> {
     let sock = UnixDatagram::bind(SOCK_PATH)?;
     sock.set_nonblocking(true)?;
 
-    let (volume, muted) = parse_message(&msg);
-    layershell::run(volume, muted, sock)
+    let osd = parse_message(&msg);
+    layershell::run(osd, sock)
 }
 
 fn build_message(args: &[String]) -> String {
@@ -36,18 +36,34 @@ fn build_message(args: &[String]) -> String {
                 .min(100);
             format!("volume {vol}")
         }
+        Some("brightness") => {
+            let val = args.get(2)
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(50)
+                .min(100);
+            format!("brightness {val}")
+        }
         _ => "volume 50".to_string(),
     }
 }
 
-pub fn parse_message(msg: &str) -> (u32, bool) {
+#[derive(Clone, Copy)]
+pub enum OsdMode {
+    Volume { level: u32, muted: bool },
+    Brightness { level: u32 },
+}
+
+pub fn parse_message(msg: &str) -> OsdMode {
     let msg = msg.trim();
     if msg == "mute" {
-        (0, true)
+        OsdMode::Volume { level: 0, muted: true }
     } else if let Some(rest) = msg.strip_prefix("volume ") {
         let vol = rest.parse::<u32>().unwrap_or(0).min(100);
-        (vol, false)
+        OsdMode::Volume { level: vol, muted: false }
+    } else if let Some(rest) = msg.strip_prefix("brightness ") {
+        let val = rest.parse::<u32>().unwrap_or(50).min(100);
+        OsdMode::Brightness { level: val }
     } else {
-        (50, false)
+        OsdMode::Volume { level: 50, muted: false }
     }
 }

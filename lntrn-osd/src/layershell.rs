@@ -20,6 +20,7 @@ use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
 use crate::svg_icon;
+use crate::OsdMode;
 
 const ICON_DIR: &str = "/home/alva/.config/lntrn-bar/icons";
 
@@ -167,24 +168,127 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for State {
 
 // ── Icon helpers ────────────────────────────────────────────────────────────
 
-fn icon_key(volume: u32, muted: bool) -> &'static str {
+fn volume_icon_key(volume: u32, muted: bool) -> &'static str {
     if muted || volume == 0 { "snd-muted" }
     else if volume <= 33 { "snd-low" }
     else if volume <= 89 { "snd-medium" }
     else { "snd-high" }
 }
 
+fn brightness_icon_key(level: u32) -> &'static str {
+    if level <= 40 { "bright-low" }
+    else { "bright-high" }
+}
+
 const ICON_FILES: &[(&str, &str)] = &[
-    ("snd-muted",  "spark-sound-muted.svg"),
-    ("snd-low",    "spark-sound-low.svg"),
-    ("snd-medium", "spark-sound-medium.svg"),
-    ("snd-high",   "spark-sound-high.svg"),
+    ("snd-muted",    "spark-sound-muted.svg"),
+    ("snd-low",      "spark-sound-low.svg"),
+    ("snd-medium",   "spark-sound-medium.svg"),
+    ("snd-high",     "spark-sound-high.svg"),
+    ("bright-low",   "spark-brightness-low.svg"),
+    ("bright-high",  "spark-brightness-high.svg"),
 ];
 
+// ── Shared rendering ────────────────────────────────────────────────────────
+
+fn draw_osd<'a>(
+    painter: &mut Painter,
+    text: &mut TextRenderer,
+    icons: &'a HashMap<&str, GpuTexture>,
+    palette: &FoxPalette,
+    mode: OsdMode,
+    alpha: f32,
+    pw: f32,
+    ph: f32,
+    scale_f: f32,
+    icon_sz: f32,
+) -> Vec<TextureDraw<'a>> {
+    painter.clear();
+
+    // Background pill
+    let bg = Color::rgba(
+        palette.surface.r, palette.surface.g, palette.surface.b,
+        0.92 * alpha,
+    );
+    let radius = CORNER_RADIUS * scale_f;
+    painter.rect_filled(Rect::new(0.0, 0.0, pw, ph), radius, bg);
+
+    // Extract level, label, icon key
+    let (level, label, icon_key) = match mode {
+        OsdMode::Volume { level, muted } => {
+            let label = if muted { "MUTE".to_string() } else { format!("{}%", level) };
+            let key = volume_icon_key(level, muted);
+            let effective = if muted { 0.0 } else { level as f32 / 100.0 };
+            (effective, label, key)
+        }
+        OsdMode::Brightness { level } => {
+            let label = format!("{}%", level);
+            let key = brightness_icon_key(level);
+            (level as f32 / 100.0, label, key)
+        }
+    };
+
+    // Layout: [pad] [icon] [gap] [bar] [gap] [text] [pad]
+    let pad = 16.0 * scale_f;
+    let gap = 12.0 * scale_f;
+    let icon_x = pad;
+    let icon_y = (ph - icon_sz) / 2.0;
+
+    let bar_x = icon_x + icon_sz + gap;
+    let track_h = 6.0 * scale_f;
+    let bar_y = (ph - track_h) / 2.0;
+    let text_w = 60.0 * scale_f;
+    let bar_w = pw - bar_x - gap - text_w - pad;
+
+    let fill_frac = level.clamp(0.0, 1.0);
+
+    // Slider track background
+    let track_bg = palette.surface_2.with_alpha(0.95 * alpha);
+    let track_border = palette.text_secondary.with_alpha(0.16 * alpha);
+    let track_rect = Rect::new(bar_x, bar_y, bar_w, track_h);
+    let track_r = track_h * 0.5;
+    painter.rect_filled(track_rect, track_r, track_bg);
+    painter.rect_stroke(track_rect, track_r, 1.0, track_border);
+
+    // Slider fill gradient (same gold for both volume and brightness)
+    if fill_frac > 0.0 {
+        let fill_w = (bar_w * fill_frac).clamp(track_h, bar_w.max(track_h));
+        let fill_start = Color::from_rgb8(170, 110, 8).with_alpha(alpha);
+        let fill_end = Color::from_rgb8(250, 204, 21).with_alpha(alpha);
+        painter.rect_gradient_linear(
+            Rect::new(bar_x, bar_y, fill_w, track_h),
+            track_r, 0.0, fill_start, fill_end,
+        );
+    }
+
+    // Thumb circle
+    let thumb_x = bar_x + bar_w * fill_frac;
+    let thumb_cy = ph / 2.0;
+    let thumb_r = 7.0 * scale_f;
+    let thumb_glow = Color::from_rgb8(250, 204, 21).with_alpha(0.22 * alpha);
+    painter.circle_filled(thumb_x, thumb_cy, thumb_r, Color::WHITE.with_alpha(alpha));
+    painter.circle_stroke(thumb_x, thumb_cy, thumb_r + 3.0 * scale_f, 2.0, thumb_glow);
+    painter.circle_stroke(thumb_x, thumb_cy, thumb_r, 1.0, Color::BLACK.with_alpha(0.12 * alpha));
+
+    // Percentage text
+    let font_size = 22.0 * scale_f;
+    let text_x = bar_x + bar_w + gap;
+    let text_y = (ph - font_size) / 2.0;
+    let text_color = Color::rgba(palette.text.r, palette.text.g, palette.text.b, alpha);
+    text.queue(&label, font_size, text_x, text_y, text_color, pw, pw as u32, ph as u32);
+
+    // Icon texture
+    let mut tex_draws = Vec::new();
+    if let Some(tex) = icons.get(icon_key) {
+        tex_draws.push(TextureDraw::new(tex, icon_x, icon_y, icon_sz, icon_sz));
+    }
+
+    tex_draws
+}
 
 // ── Entry point ─────────────────────────────────────────────────────────────
 
-pub fn run(mut volume: u32, mut muted: bool, sock: UnixDatagram) -> Result<()> {
+pub fn run(mut mode: OsdMode, sock: UnixDatagram) -> Result<()> {
     let conn = Connection::connect_to_env()?;
     let display = conn.display();
     let mut event_queue: EventQueue<State> = conn.new_event_queue();
@@ -270,9 +374,7 @@ pub fn run(mut volume: u32, mut muted: bool, sock: UnixDatagram) -> Result<()> {
         // Poll socket for updates (non-blocking)
         while let Ok(n) = sock.recv(&mut recv_buf) {
             if let Ok(msg) = std::str::from_utf8(&recv_buf[..n]) {
-                let (v, m) = crate::parse_message(msg);
-                volume = v;
-                muted = m;
+                mode = crate::parse_message(msg);
                 last_update = Instant::now();
             }
         }
@@ -302,73 +404,10 @@ pub fn run(mut volume: u32, mut muted: bool, sock: UnixDatagram) -> Result<()> {
         let pw = state.phys_w() as f32;
         let ph = state.phys_h() as f32;
 
-        painter.clear();
-
-        // Background pill
-        let bg = Color::rgba(
-            palette.surface.r, palette.surface.g, palette.surface.b,
-            0.92 * alpha,
+        let tex_draws = draw_osd(
+            &mut painter, &mut text, &icons, &palette,
+            mode, alpha, pw, ph, scale_f, icon_sz as f32,
         );
-        let radius = CORNER_RADIUS * scale_f;
-        painter.rect_filled(Rect::new(0.0, 0.0, pw, ph), radius, bg);
-
-        // Layout: [pad] [icon] [gap] [bar] [gap] [text] [pad]
-        let pad = 16.0 * scale_f;
-        let gap = 12.0 * scale_f;
-        let icon_f = icon_sz as f32;
-        let icon_x = pad;
-        let icon_y = (ph - icon_f) / 2.0;
-
-        let bar_x = icon_x + icon_f + gap;
-        let track_h = 6.0 * scale_f;
-        let bar_y = (ph - track_h) / 2.0;
-        let text_w = 60.0 * scale_f;
-        let bar_w = pw - bar_x - gap - text_w - pad;
-
-        let fill_frac = if muted { 0.0 } else { (volume as f32 / 100.0).clamp(0.0, 1.0) };
-
-        // Slider track background
-        let track_bg = palette.surface_2.with_alpha(0.95 * alpha);
-        let track_border = palette.text_secondary.with_alpha(0.16 * alpha);
-        let track_rect = Rect::new(bar_x, bar_y, bar_w, track_h);
-        let track_r = track_h * 0.5;
-        painter.rect_filled(track_rect, track_r, track_bg);
-        painter.rect_stroke(track_rect, track_r, 1.0, track_border);
-
-        // Slider fill gradient
-        if fill_frac > 0.0 {
-            let fill_w = (bar_w * fill_frac).clamp(track_h, bar_w.max(track_h));
-            let fill_start = Color::from_rgb8(170, 110, 8).with_alpha(alpha);
-            let fill_end = Color::from_rgb8(250, 204, 21).with_alpha(alpha);
-            painter.rect_gradient_linear(
-                Rect::new(bar_x, bar_y, fill_w, track_h),
-                track_r, 0.0, fill_start, fill_end,
-            );
-        }
-
-        // Thumb circle
-        let thumb_x = bar_x + bar_w * fill_frac;
-        let thumb_cy = ph / 2.0;
-        let thumb_r = 7.0 * scale_f;
-        let thumb_glow = Color::from_rgb8(250, 204, 21).with_alpha(0.22 * alpha);
-        painter.circle_filled(thumb_x, thumb_cy, thumb_r, Color::WHITE.with_alpha(alpha));
-        painter.circle_stroke(thumb_x, thumb_cy, thumb_r + 3.0 * scale_f, 2.0, thumb_glow);
-        painter.circle_stroke(thumb_x, thumb_cy, thumb_r, 1.0, Color::BLACK.with_alpha(0.12 * alpha));
-
-        // Percentage text
-        let font_size = 22.0 * scale_f;
-        let label = if muted { "MUTE".to_string() } else { format!("{}%", volume) };
-        let text_x = bar_x + bar_w + gap;
-        let text_y = (ph - font_size) / 2.0;
-        let text_color = Color::rgba(palette.text.r, palette.text.g, palette.text.b, alpha);
-        text.queue(&label, font_size, text_x, text_y, text_color, pw, pw as u32, ph as u32);
-
-        // Icon texture
-        let mut tex_draws = Vec::new();
-        let key = icon_key(volume, muted);
-        if let Some(tex) = icons.get(key) {
-            tex_draws.push(TextureDraw::new(tex, icon_x, icon_y, icon_f, icon_f));
-        }
 
         // Render
         match gpu.begin_frame("OSD") {
