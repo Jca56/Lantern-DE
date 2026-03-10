@@ -181,14 +181,6 @@ const ICON_FILES: &[(&str, &str)] = &[
     ("snd-high",   "spark-sound-high.svg"),
 ];
 
-fn bar_color(volume: u32, muted: bool) -> Color {
-    if muted { return Color::rgba(0.4, 0.4, 0.4, 0.6); }
-    let t = (volume as f32 / 100.0).clamp(0.0, 1.0);
-    let r = 0.31 + t * 0.40;
-    let g = 0.20 + t * 0.27;
-    let b = 0.02 + t * 0.01;
-    Color::rgba(r, g, b, 1.0)
-}
 
 // ── Entry point ─────────────────────────────────────────────────────────────
 
@@ -328,23 +320,40 @@ pub fn run(mut volume: u32, mut muted: bool, sock: UnixDatagram) -> Result<()> {
         let icon_y = (ph - icon_f) / 2.0;
 
         let bar_x = icon_x + icon_f + gap;
-        let bar_h = 8.0 * scale_f;
-        let bar_y = (ph - bar_h) / 2.0;
+        let track_h = 6.0 * scale_f;
+        let bar_y = (ph - track_h) / 2.0;
         let text_w = 60.0 * scale_f;
         let bar_w = pw - bar_x - gap - text_w - pad;
 
-        // Bar background
-        let bar_bg = Color::rgba(1.0, 1.0, 1.0, 0.12 * alpha);
-        painter.rect_filled(Rect::new(bar_x, bar_y, bar_w, bar_h), bar_h / 2.0, bar_bg);
-
-        // Bar fill
         let fill_frac = if muted { 0.0 } else { (volume as f32 / 100.0).clamp(0.0, 1.0) };
+
+        // Slider track background
+        let track_bg = palette.surface_2.with_alpha(0.95 * alpha);
+        let track_border = palette.text_secondary.with_alpha(0.16 * alpha);
+        let track_rect = Rect::new(bar_x, bar_y, bar_w, track_h);
+        let track_r = track_h * 0.5;
+        painter.rect_filled(track_rect, track_r, track_bg);
+        painter.rect_stroke(track_rect, track_r, 1.0, track_border);
+
+        // Slider fill gradient
         if fill_frac > 0.0 {
-            let fill_w = bar_w * fill_frac;
-            let fill_color = bar_color(volume, muted);
-            let fc = Color::rgba(fill_color.r, fill_color.g, fill_color.b, alpha);
-            painter.rect_filled(Rect::new(bar_x, bar_y, fill_w, bar_h), bar_h / 2.0, fc);
+            let fill_w = (bar_w * fill_frac).clamp(track_h, bar_w.max(track_h));
+            let fill_start = Color::from_rgb8(170, 110, 8).with_alpha(alpha);
+            let fill_end = Color::from_rgb8(250, 204, 21).with_alpha(alpha);
+            painter.rect_gradient_linear(
+                Rect::new(bar_x, bar_y, fill_w, track_h),
+                track_r, 0.0, fill_start, fill_end,
+            );
         }
+
+        // Thumb circle
+        let thumb_x = bar_x + bar_w * fill_frac;
+        let thumb_cy = ph / 2.0;
+        let thumb_r = 7.0 * scale_f;
+        let thumb_glow = Color::from_rgb8(250, 204, 21).with_alpha(0.22 * alpha);
+        painter.circle_filled(thumb_x, thumb_cy, thumb_r, Color::WHITE.with_alpha(alpha));
+        painter.circle_stroke(thumb_x, thumb_cy, thumb_r + 3.0 * scale_f, 2.0, thumb_glow);
+        painter.circle_stroke(thumb_x, thumb_cy, thumb_r, 1.0, Color::BLACK.with_alpha(0.12 * alpha));
 
         // Percentage text
         let font_size = 22.0 * scale_f;

@@ -296,8 +296,8 @@ impl TerminalGridRenderer {
     fn cell_rect(&self, origin: (f32, f32), row: usize, col: usize) -> Rect {
         let x = (origin.0 + col as f32 * self.metrics.cell_w).floor();
         let y = (origin.1 + row as f32 * self.metrics.cell_h).floor();
-        let nx = (origin.0 + (col + 1) as f32 * self.metrics.cell_w).floor();
-        let ny = (origin.1 + (row + 1) as f32 * self.metrics.cell_h).floor();
+        let nx = (origin.0 + (col + 1) as f32 * self.metrics.cell_w).ceil();
+        let ny = (origin.1 + (row + 1) as f32 * self.metrics.cell_h).ceil();
         Rect::new(x, y, nx - x, ny - y)
     }
 

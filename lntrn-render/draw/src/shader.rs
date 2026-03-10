@@ -86,10 +86,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     if in.params.w == SHAPE_RECT {
         let radius = in.params.x;
-        let center = in.bounds.xy + in.bounds.zw * 0.5;
-        let half_size = in.bounds.zw * 0.5;
-        let dist = sdf_rounded_rect(in.local_px, center, half_size, radius);
-        mask = 1.0 - smoothstep(-1.0, 1.0, dist);
+        if radius < 0.5 {
+            mask = 1.0;
+        } else {
+            let center = in.bounds.xy + in.bounds.zw * 0.5;
+            let half_size = in.bounds.zw * 0.5;
+            let dist = sdf_rounded_rect(in.local_px, center, half_size, radius);
+            mask = 1.0 - smoothstep(-1.0, 1.0, dist);
+        }
     } else if in.params.w == SHAPE_CIRCLE {
         let center = in.bounds.xy + in.bounds.zw * 0.5;
         let radius = min(in.bounds.z, in.bounds.w) * 0.5;
