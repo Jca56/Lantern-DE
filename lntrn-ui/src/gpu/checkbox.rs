@@ -1,4 +1,5 @@
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
+use lntrn_theme::FONT_BODY;
 
 use super::palette::FoxPalette;
 
@@ -8,8 +9,6 @@ const BOX_SIZE: f32 = 28.0;
 const BOX_RADIUS: f32 = 6.0;
 /// Gap between the checkbox box and the label text.
 const LABEL_GAP: f32 = 12.0;
-/// Font size for the label (Caption = 20px — big enough to read comfortably).
-const LABEL_FONT_SIZE: f32 = 20.0;
 /// Border width at rest.
 const BORDER_WIDTH: f32 = 2.0;
 /// Checkmark line thickness.
@@ -135,7 +134,7 @@ impl<'a> Checkbox<'a> {
         // -- Label text --
         if let Some(label) = self.label {
             let text_x = box_rect.x + BOX_SIZE + LABEL_GAP;
-            let text_y = self.rect.y + (self.rect.h - LABEL_FONT_SIZE) * 0.5;
+            let text_y = self.rect.y + (self.rect.h - FONT_BODY) * 0.5;
             let text_color = if self.disabled {
                 palette.muted
             } else {
@@ -144,7 +143,7 @@ impl<'a> Checkbox<'a> {
             let max_w = (self.rect.w - BOX_SIZE - LABEL_GAP).max(20.0);
             text_renderer.queue(
                 label,
-                LABEL_FONT_SIZE,
+                FONT_BODY,
                 text_x,
                 text_y,
                 text_color.with_alpha(opacity),

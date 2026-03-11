@@ -136,7 +136,7 @@ impl Scrollbar {
         let thumb_color = match state {
             InteractionState::Pressed | InteractionState::Dragging => palette.accent,
             InteractionState::Hovered => palette.text_secondary.with_alpha(0.6),
-            InteractionState::Idle => palette.muted.with_alpha(0.4),
+            InteractionState::Idle => palette.accent.with_alpha(0.5),
         };
         painter.rect_filled(self.thumb, SCROLLBAR_W * 0.5, thumb_color);
     }

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use lntrn_render::{Color, Rect, Painter, TextRenderer};
-use lntrn_theme::FONT_BODY;
+use lntrn_theme::{FONT_BODY, FONT_CAPTION, FONT_LABEL};
 
 use crate::animation::{self};
 
@@ -9,8 +9,8 @@ use super::context_menu_draw::draw_panel;
 use super::input::InteractionContext;
 use super::palette::FoxPalette;
 
-// Darker, slightly transparent amber hover
-const HOVER_COLOR: Color = Color::rgba(0.75, 0.55, 0.10, 0.22);
+// Dark golden amber hover
+const HOVER_COLOR: Color = Color::rgba(0.45, 0.30, 0.05, 0.35);
 
 /// Visual style for the context menu.
 pub struct ContextMenuStyle {
@@ -432,21 +432,23 @@ fn item_y_offset(items: &[MenuItem], index: usize, style: &ContextMenuStyle) -> 
 
 fn compute_width(items: &[MenuItem], style: &ContextMenuStyle) -> f32 {
     let s = style.scale;
-    let fw = style.font_size * s * 0.55;
+    let fw = FONT_BODY * s * 0.55;
+    let sc_fw = FONT_LABEL * s * 0.55;
+    let cap_fw = FONT_CAPTION * s * 0.55;
     let max_w = items.iter().filter_map(|item| match item {
         MenuItem::Action { label, shortcut, .. } => {
             let sc_w = shortcut.as_ref()
-                .map_or(0.0, |sc| sc.len() as f32 * fw * 0.75 + 16.0 * s);
+                .map_or(0.0, |sc| sc.len() as f32 * sc_fw + 16.0 * s);
             Some(label.len() as f32 * fw + sc_w)
         }
         MenuItem::Toggle { label, .. } | MenuItem::Checkbox { label, .. }
         | MenuItem::Radio { label, .. } => Some(label.len() as f32 * fw + 40.0 * s),
         MenuItem::SubMenu { label, .. } => Some(label.len() as f32 * fw + 20.0 * s),
         MenuItem::Slider { label, .. } | MenuItem::Progress { label, .. } => {
-            Some(label.len() as f32 * SLIDER_LABEL_SIZE * s * 0.55 + 60.0 * s)
+            Some(label.len() as f32 * cap_fw + 60.0 * s)
         }
         MenuItem::Button { label, .. } => Some(label.len() as f32 * fw + 32.0 * s),
-        MenuItem::Header { label } => Some(label.len() as f32 * fw * 0.7),
+        MenuItem::Header { label } => Some(label.len() as f32 * sc_fw),
         MenuItem::Separator => None,
     }).fold(0.0f32, f32::max);
     (max_w + style.padding * s * 4.0).max(style.min_width * s)
@@ -501,7 +503,7 @@ fn move_toward(current: f32, target: f32, step: f32) -> f32 {
 pub(super) const SEPARATOR_HEIGHT: f32 = 9.0;
 pub(super) const SLIDER_ITEM_HEIGHT: f32 = 50.0;
 pub(super) const SLIDER_LABEL_SIZE: f32 = 16.0;
-pub(super) const SLIDER_TRACK_H: f32 = 6.0;
+pub(super) const SLIDER_TRACK_H: f32 = 10.0;
 pub(super) const HEADER_HEIGHT: f32 = 24.0;
 pub(super) const PROGRESS_ITEM_HEIGHT: f32 = 40.0;
 pub(super) const CONTEXT_MENU_ZONE_BASE: u32 = 0xCE_0000;

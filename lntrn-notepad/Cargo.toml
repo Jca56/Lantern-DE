@@ -1,0 +1,15 @@
+[package]
+name = "lntrn-notepad"
+version = "0.1.0"
+description = "Simple notepad for Lantern DE"
+authors = ["Jca56"]
+edition = "2021"
+
+[[bin]]
+name = "lntrn-notepad"
+path = "src/main.rs"
+
+[dependencies]
+lntrn-render = { path = "../lntrn-render" }
+lntrn-ui = { path = "../lntrn-ui" }
+winit = { version = "0.30", features = ["wayland"] }

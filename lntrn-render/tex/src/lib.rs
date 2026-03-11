@@ -86,6 +86,8 @@ pub struct TextureDraw<'a> {
     pub h: f32,
     pub opacity: f32,
     pub uv: [f32; 4],
+    /// Optional clip rectangle `[x, y, w, h]` in physical pixels.
+    pub clip: Option<[f32; 4]>,
 }
 
 impl<'a> TextureDraw<'a> {
@@ -99,6 +101,7 @@ impl<'a> TextureDraw<'a> {
             h,
             opacity: 1.0,
             uv: [0.0, 0.0, 1.0, 1.0],
+            clip: None,
         }
     }
 
@@ -354,6 +357,7 @@ impl TexturePass {
     /// Consecutive draws sharing the same texture are batched into one draw call.
     /// The pass loads (does not clear) the target, so call after Painter's render_pass.
     /// Optional scissor rect `[x, y, w, h]` in physical pixels clips all draws.
+    /// Per-draw clipping is also supported via `TextureDraw::clip`.
     pub fn render_pass(
         &self,
         gpu: &GpuContext,
@@ -367,9 +371,11 @@ impl TexturePass {
         }
 
         let count = draws.len().min(MAX_TEX_INSTANCES);
+        let sw = gpu.width();
+        let sh = gpu.height();
 
         let globals = Globals {
-            screen_size: [gpu.width() as f32, gpu.height() as f32],
+            screen_size: [sw as f32, sh as f32],
             _pad: [0.0; 2],
         };
         gpu.queue
@@ -408,18 +414,59 @@ impl TexturePass {
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.globals_bind_group, &[]);
         pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
-        if let Some([x, y, w, h]) = scissor {
-            pass.set_scissor_rect(x, y, w.max(1), h.max(1));
-        }
 
-        // Batch consecutive same-texture draws
+        // Resolve effective clip for a draw: per-draw clip intersected with pass-level scissor.
+        let effective_clip = |draw: &TextureDraw| -> [u32; 4] {
+            let base = if let Some(c) = draw.clip {
+                [c[0] as u32, c[1] as u32, c[2].max(1.0) as u32, c[3].max(1.0) as u32]
+            } else if let Some(s) = scissor {
+                s
+            } else {
+                return [0, 0, sw, sh];
+            };
+            // Intersect with pass-level scissor if both exist
+            if let (Some(c), Some(s)) = (draw.clip, scissor) {
+                let x0 = (c[0] as u32).max(s[0]);
+                let y0 = (c[1] as u32).max(s[1]);
+                let x1 = ((c[0] + c[2]) as u32).min(s[0] + s[2]);
+                let y1 = ((c[1] + c[3]) as u32).min(s[1] + s[3]);
+                if x1 > x0 && y1 > y0 {
+                    [x0, y0, x1 - x0, y1 - y0]
+                } else {
+                    [0, 0, 0, 0]
+                }
+            } else {
+                base
+            }
+        };
+
+        // Draw with per-draw scissor support — break batches on clip or texture change
+        let mut cur_clip = effective_clip(&draws[0]);
+        pass.set_scissor_rect(cur_clip[0], cur_clip[1], cur_clip[2].max(1), cur_clip[3].max(1));
+
         let mut batch_start = 0usize;
         for i in 1..=count {
-            let same = i < count
-                && std::ptr::eq(
+            let same = if i < count {
+                let clip = effective_clip(&draws[i]);
+                let same_tex = std::ptr::eq(
                     draws[i].texture as *const GpuTexture,
                     draws[batch_start].texture as *const GpuTexture,
                 );
+                let same_clip = clip == cur_clip;
+                if !same_clip {
+                    // Flush current batch before changing scissor
+                    pass.set_bind_group(1, &draws[batch_start].texture.bind_group, &[]);
+                    pass.draw(0..4, batch_start as u32..i as u32);
+                    batch_start = i;
+                    cur_clip = clip;
+                    pass.set_scissor_rect(cur_clip[0], cur_clip[1], cur_clip[2].max(1), cur_clip[3].max(1));
+                    true // we already flushed
+                } else {
+                    same_tex
+                }
+            } else {
+                false
+            };
             if !same {
                 pass.set_bind_group(1, &draws[batch_start].texture.bind_group, &[]);
                 pass.draw(0..4, batch_start as u32..i as u32);

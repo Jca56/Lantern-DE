@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
+use lntrn_theme::{FONT_BODY, FONT_CAPTION, FONT_LABEL};
 
 use crate::animation;
 
@@ -55,9 +56,9 @@ pub(super) fn draw_panel(
     let inner_x = px + style.padding * s;
     let zone_base = CONTEXT_MENU_ZONE_BASE + (depth as u32) * 0x1000;
     let item_h = style.item_height * s;
-    let font = style.font_size * s;
+    let font = FONT_BODY * s;
     let pad = style.padding * s;
-    let shortcut_font = font * 0.75;
+    let shortcut_font = FONT_LABEL * s;
 
     for item in items.iter_mut() {
         match item {
@@ -170,7 +171,7 @@ pub(super) fn draw_panel(
             }
             MenuItem::Progress { id: _, label, value } => {
                 let prog_h = PROGRESS_ITEM_HEIGHT * s;
-                let label_size = SLIDER_LABEL_SIZE * s;
+                let label_size = FONT_CAPTION * s;
 
                 // Label + percentage
                 let label_x = inner_x + pad * 2.0;
@@ -201,7 +202,7 @@ pub(super) fn draw_panel(
             }
             MenuItem::Header { label } => {
                 let header_h = HEADER_HEIGHT * s;
-                let header_font = font * 0.7;
+                let header_font = FONT_LABEL * s;
                 let text_x = inner_x + pad * 2.0;
                 let text_y = cy + (header_h - header_font) * 0.5 + 2.0 * s;
                 text.queue(
@@ -222,7 +223,7 @@ pub(super) fn draw_panel(
             }
             MenuItem::Slider { id, label, value } => {
                 let slider_h = SLIDER_ITEM_HEIGHT * s;
-                let label_size = SLIDER_LABEL_SIZE * s;
+                let label_size = FONT_CAPTION * s;
                 let track_h = SLIDER_TRACK_H * s;
 
                 let item_rect = Rect::new(inner_x, cy, inner_w, slider_h);

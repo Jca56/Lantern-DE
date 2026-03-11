@@ -24,6 +24,9 @@ struct QueuedText {
     y: f32,
     line_height: f32,
     bounds_right: i32,
+    bounds_bottom: i32,
+    bounds_left: i32,
+    bounds_top: i32,
     default_color: GlyphonColor,
 }
 
@@ -93,6 +96,32 @@ impl TextRenderer {
         }
     }
 
+    /// Measure the pixel width of a string at the given font size.
+    pub fn measure_width(&mut self, text: &str, font_size: f32) -> f32 {
+        let color = GlyphonColor::rgba(0, 0, 0, 0);
+        let key = TextLayoutKey {
+            text: text.to_string(),
+            font_size_bits: font_size.to_bits(),
+            max_width_bits: 10000.0_f32.to_bits(),
+            color: [0, 0, 0, 0],
+        };
+
+        self.use_tick = self.use_tick.wrapping_add(1).max(1);
+
+        if let Some(layout) = self.layouts.get_mut(&key) {
+            layout.last_used = self.use_tick;
+            return layout_width(&layout.buffer);
+        }
+
+        self.evict_one_if_needed();
+        let buffer = create_layout_buffer(
+            &mut self.font_system, text, font_size, 10000.0, color, self.monospace,
+        );
+        let w = layout_width(&buffer);
+        self.layouts.insert(key, CachedLayout { buffer, last_used: self.use_tick });
+        w
+    }
+
     pub fn queue(
         &mut self,
         text: &str,
@@ -144,7 +173,70 @@ impl TextRenderer {
             x,
             y,
             line_height: font_size * 1.2,
+            bounds_left: 0,
+            bounds_top: 0,
             bounds_right: screen_w as i32,
+            bounds_bottom: (y + font_size * 1.2).ceil() as i32,
+            default_color: GlyphonColor::rgb(255, 255, 255),
+        });
+    }
+
+    /// Queue text with a clip rectangle `[x, y, w, h]` in physical pixels.
+    /// Text outside the clip rect will not be rendered.
+    pub fn queue_clipped(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        x: f32,
+        y: f32,
+        color: Color,
+        max_width: f32,
+        clip: [f32; 4],
+    ) {
+        let srgb = color.to_srgb8();
+        let glyph_color = GlyphonColor::rgba(srgb[0], srgb[1], srgb[2], srgb[3]);
+        let key = TextLayoutKey {
+            text: text.to_string(),
+            font_size_bits: font_size.to_bits(),
+            max_width_bits: max_width.max(1.0).to_bits(),
+            color: [glyph_color.r(), glyph_color.g(), glyph_color.b(), glyph_color.a()],
+        };
+
+        self.use_tick = self.use_tick.wrapping_add(1).max(1);
+
+        if let Some(layout) = self.layouts.get_mut(&key) {
+            layout.last_used = self.use_tick;
+            self.cache_hits = self.cache_hits.saturating_add(1);
+        } else {
+            self.cache_misses = self.cache_misses.saturating_add(1);
+            self.evict_one_if_needed();
+
+            let buffer = create_layout_buffer(
+                &mut self.font_system,
+                text,
+                font_size,
+                max_width,
+                glyph_color,
+                self.monospace,
+            );
+            self.layouts.insert(
+                key.clone(),
+                CachedLayout {
+                    buffer,
+                    last_used: self.use_tick,
+                },
+            );
+        }
+
+        self.queued.push(QueuedText {
+            key,
+            x,
+            y,
+            line_height: font_size * 1.2,
+            bounds_left: clip[0] as i32,
+            bounds_top: clip[1] as i32,
+            bounds_right: (clip[0] + clip[2]) as i32,
+            bounds_bottom: (clip[1] + clip[3]) as i32,
             default_color: GlyphonColor::rgb(255, 255, 255),
         });
     }
@@ -186,10 +278,10 @@ impl TextRenderer {
                     top: queued.y,
                     scale: 1.0,
                     bounds: TextBounds {
-                        left: 0,
-                        top: 0,
+                        left: queued.bounds_left,
+                        top: queued.bounds_top,
                         right: queued.bounds_right,
-                        bottom: (queued.y + queued.line_height).ceil() as i32,
+                        bottom: queued.bounds_bottom,
                     },
                     default_color: queued.default_color,
                     custom_glyphs: &[],
@@ -281,4 +373,12 @@ fn create_layout_buffer(
     );
     buffer.shape_until_scroll(font_system, false);
     buffer
+}
+
+/// Get the pixel width of laid-out text in a buffer.
+fn layout_width(buffer: &Buffer) -> f32 {
+    buffer
+        .layout_runs()
+        .map(|run| run.line_w)
+        .fold(0.0_f32, f32::max)
 }

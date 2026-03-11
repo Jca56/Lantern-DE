@@ -22,6 +22,8 @@ members = [
     "lntrn-osd",
     "lntrn-notifyd",
     "lntrn-menu",
+    "lntrn-notepad",
+    "lntrn-browser",
 ]
 
 [profile.release]

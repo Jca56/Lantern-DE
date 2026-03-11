@@ -41,13 +41,13 @@ impl Slider {
     }
 
     pub fn draw(&self, painter: &mut Painter, palette: &FoxPalette) {
-        let track_h = 6.0;
+        let track_h = 10.0;
         let track_y = self.rect.y + (self.rect.h - track_h) * 0.5;
         let track = Rect::new(self.rect.x, track_y, self.rect.w, track_h);
         let fill_w = (track.w * self.value).clamp(track_h, track.w.max(track_h));
         let fill = Rect::new(track.x, track.y, fill_w, track.h);
         let thumb_x = track.x + track.w * self.value;
-        let thumb_r = if self.active { 9.0 } else if self.hovered { 8.0 } else { 7.0 };
+        let thumb_r = if self.active { 11.0 } else if self.hovered { 10.0 } else { 9.0 };
 
         painter.rect_filled(track, track_h * 0.5, palette.surface_2.with_alpha(0.95));
         painter.rect_stroke(track, track_h * 0.5, 1.0, palette.text_secondary.with_alpha(0.16));
