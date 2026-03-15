@@ -1,9 +1,6 @@
 [submodule "appbar"]
 	path = lntrn-bar
 	url = https://github.com/Jca56/lntrn-bar.git
-[submodule "fox_flare"]
-	path = lntrn-fox-file-manager
-	url = https://github.com/Jca56/lntrn-fox-file-manager.git
 [submodule "image_viewer"]
 	path = lntrn-image-viewer
 	url = https://github.com/Jca56/lntrn-image-viewer.git
@@ -28,3 +25,6 @@
 [submodule "lntrn-compositor"]
 	path = lntrn-compositor
 	url = https://github.com/Jca56/lntrn-compositor.git
+[submodule "lntrn-file-manager"]
+	path = lntrn-file-manager
+	url = https://github.com/Jca56/lntrn-file-manager.git

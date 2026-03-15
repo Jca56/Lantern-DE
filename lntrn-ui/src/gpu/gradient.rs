@@ -5,7 +5,7 @@ use super::palette::FoxPalette;
 /// A single 4px gradient accent strip drawn across the top of a region.
 ///
 /// Matches the Fox File Manager multicolor accent strip by default.
-pub struct GradientTopBar {
+pub struct GradientStrip {
     pub x: f32,
     pub y: f32,
     pub width: f32,
@@ -13,7 +13,7 @@ pub struct GradientTopBar {
     pub colors: [Color; 5],
 }
 
-impl GradientTopBar {
+impl GradientStrip {
     pub fn new(x: f32, y: f32, width: f32) -> Self {
         let p = FoxPalette::dark();
         let c = p.file_manager_gradient_stops();

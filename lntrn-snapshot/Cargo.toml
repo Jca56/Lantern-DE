@@ -1,0 +1,18 @@
+[package]
+name = "lntrn-snapshot"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "lntrn-snapshot"
+path = "src/main.rs"
+
+[[bin]]
+name = "lntrn-snapshot-gui"
+path = "src/gui/main.rs"
+
+[dependencies]
+libc = "0.2"
+lntrn-render = { path = "../lntrn-render" }
+lntrn-ui = { path = "../lntrn-ui" }
+winit = { version = "0.30", features = ["wayland"] }

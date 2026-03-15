@@ -3,12 +3,12 @@ resolver = "2"
 members = [
     "lntrn-render/draw",
     "lntrn-render/gfx",
-    "lntrn-render/lab",
+    "lntrn-ui/test",
     "lntrn-render/text",
     "lntrn-compositor",
     "lntrn-ui",
     "lntrn-render",
-    "lntrn-fox-file-manager",
+    "lntrn-file-manager",
     "lntrn-bar",
     "lntrn-terminal",
     "lntrn-image-viewer",
@@ -24,6 +24,7 @@ members = [
     "lntrn-menu",
     "lntrn-notepad",
     "lntrn-browser",
+    "lntrn-snapshot",
 ]
 
 [profile.release]

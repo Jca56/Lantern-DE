@@ -36,6 +36,14 @@ impl AnsiPalette {
     }
 }
 
+/// Whether a cell is part of a wide character.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GridCellWide {
+    No,
+    Head,
+    Tail,
+}
+
 /// Cell data for one grid position, framework-agnostic.
 #[derive(Clone, Debug)]
 pub struct GridCell {
@@ -43,6 +51,7 @@ pub struct GridCell {
     pub fg: Color,
     pub bg: Color,
     pub bold: bool,
+    pub wide: GridCellWide,
 }
 
 impl Default for GridCell {
@@ -52,6 +61,7 @@ impl Default for GridCell {
             fg: Color::from_rgb8(236, 236, 236),
             bg: Color::TRANSPARENT,
             bold: false,
+            wide: GridCellWide::No,
         }
     }
 }
@@ -180,6 +190,7 @@ impl TerminalGridRenderer {
     ) {
         // Build contiguous runs of same-colored text per row to reduce
         // text renderer queue calls.
+        // Wide characters are rendered individually since they span 2 cells.
         let mut run = String::with_capacity(visible_cols);
 
         for row in 0..visible_rows.min(rows.len()) {
@@ -192,12 +203,34 @@ impl TerminalGridRenderer {
 
             for col in 0..visible_cols.min(line.len()) {
                 let cell = &line[col];
+
+                // Skip tail cells — the head cell handles rendering
+                if cell.wide == GridCellWide::Tail {
+                    if !run.is_empty() {
+                        self.flush_run(text, origin, y, run_start_col, &run, run_color, font_size, screen_w, screen_h);
+                        run.clear();
+                    }
+                    run_start_col = col + 1;
+                    continue;
+                }
+
                 if cell.c == ' ' || cell.c == '\0' {
                     if !run.is_empty() {
                         self.flush_run(text, origin, y, run_start_col, &run, run_color, font_size, screen_w, screen_h);
                         run.clear();
                     }
                     run_start_col = col + 1;
+                    continue;
+                }
+
+                // Wide head cell — flush any pending run, render wide char solo
+                if cell.wide == GridCellWide::Head {
+                    if !run.is_empty() {
+                        self.flush_run(text, origin, y, run_start_col, &run, run_color, font_size, screen_w, screen_h);
+                        run.clear();
+                    }
+                    self.flush_wide_char(text, origin, y, col, cell.c, cell.fg, font_size, screen_w, screen_h);
+                    run_start_col = col + 2; // skip past both head + tail
                     continue;
                 }
 
@@ -314,8 +347,29 @@ impl TerminalGridRenderer {
         screen_h: u32,
     ) {
         let x = (origin.0 + start_col as f32 * self.metrics.cell_w).floor();
-        let max_w = run.len() as f32 * self.metrics.cell_w + 2.0;
+        // Use char count, not byte count, for max width
+        let char_count = run.chars().count();
+        let max_w = char_count as f32 * self.metrics.cell_w + 2.0;
         text.queue(run, font_size, x, y, color, max_w, screen_w, screen_h);
+    }
+
+    /// Render a single wide character spanning 2 cells.
+    fn flush_wide_char(
+        &self,
+        text: &mut TextRenderer,
+        origin: (f32, f32),
+        y: f32,
+        col: usize,
+        c: char,
+        color: Color,
+        font_size: f32,
+        screen_w: u32,
+        screen_h: u32,
+    ) {
+        let x = (origin.0 + col as f32 * self.metrics.cell_w).floor();
+        let max_w = 2.0 * self.metrics.cell_w + 2.0;
+        let s: String = c.to_string();
+        text.queue(&s, font_size, x, y, color, max_w, screen_w, screen_h);
     }
 }
 

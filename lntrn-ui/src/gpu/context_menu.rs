@@ -1,16 +1,10 @@
-use std::collections::HashMap;
-
 use lntrn_render::{Color, Rect, Painter, TextRenderer};
-use lntrn_theme::{FONT_BODY, FONT_CAPTION, FONT_LABEL};
-
-use crate::animation::{self};
+use lntrn_theme::{FONT_CAPTION, FONT_LABEL};
 
 use super::context_menu_draw::draw_panel;
 use super::input::InteractionContext;
 use super::palette::FoxPalette;
-
-// Dark golden amber hover
-const HOVER_COLOR: Color = Color::rgba(0.45, 0.30, 0.05, 0.35);
+use super::popup::PopupSurface;
 
 /// Visual style for the context menu.
 pub struct ContextMenuStyle {
@@ -30,27 +24,29 @@ pub struct ContextMenuStyle {
     pub min_width: f32,
     pub border_width: f32,
     pub scale: f32,
+    pub no_shadow: bool,
 }
 
 impl ContextMenuStyle {
     pub fn from_palette(palette: &FoxPalette) -> Self {
         Self {
             palette: palette.clone(),
-            bg: palette.surface,
-            bg_hover: HOVER_COLOR,
-            text: palette.text_secondary,
-            text_muted: palette.muted,
-            text_disabled: Color::rgba(1.0, 1.0, 1.0, 0.25),
-            separator: Color::rgba(1.0, 1.0, 1.0, 0.08),
-            border: Color::rgba(1.0, 1.0, 1.0, 0.1),
+            bg: palette.surface_2,
+            bg_hover: Color::from_rgb8(255, 200, 50).with_alpha(0.18),
+            text: palette.text,
+            text_muted: palette.text_secondary,
+            text_disabled: palette.muted.with_alpha(0.4),
+            separator: palette.muted.with_alpha(0.15),
+            border: palette.muted.with_alpha(0.2),
             accent: palette.accent,
-            corner_radius: 8.0,
-            padding: 4.0,
-            item_height: 36.0,
-            font_size: FONT_BODY,
+            corner_radius: 10.0,
+            padding: 5.0,
+            item_height: 38.0,
+            font_size: FONT_LABEL,
             min_width: 200.0,
             border_width: 1.0,
             scale: 1.0,
+            no_shadow: false,
         }
     }
 
@@ -130,55 +126,48 @@ pub enum MenuEvent {
 
 struct MenuPanel { x: f32, y: f32, width: f32, path: Vec<usize> }
 
-#[derive(Clone, Copy, PartialEq)]
-enum MenuState { Closed, Opening, Open, Closing }
-
-const OPEN_DURATION: f32 = 0.75;
-const CLOSE_DURATION: f32 = 1.0;
-
-/// A right-click context menu with nested submenu support and animations.
+/// A right-click context menu with nested submenu support.
 ///
 /// 1. Create with `ContextMenu::new(style)`
 /// 2. On right-click: `open(x, y, items)`
 /// 3. Each frame: `update(dt)` then `draw(...)` — returns `Some(MenuEvent)`
-/// 4. `close()` to begin close animation (auto-finishes)
+/// 4. `close()` to dismiss
 pub struct ContextMenu {
     style: ContextMenuStyle,
     items: Vec<MenuItem>,
     x: f32,
     y: f32,
     width: f32,
-    state: MenuState,
-    open_t: f32,
+    open: bool,
     open_submenu_ids: Vec<u32>,
-    hover_t: HashMap<u32, f32>,
-    hovered_zones: Vec<u32>,
     /// Zones that already fired a press event this click — prevents rapid toggling.
     pressed_zones: Vec<u32>,
     /// Scroll offset for menus taller than available screen space.
     scroll_offset: f32,
     /// Maximum visible height before scrolling kicks in.
     max_height: f32,
+    /// Popup IDs for each panel level (root = index 0, submenus = 1+).
+    popup_ids: Vec<u32>,
+    /// Whether this menu is using popup surfaces.
+    uses_popups: bool,
 }
 
 impl ContextMenu {
     pub fn new(style: ContextMenuStyle) -> Self {
         Self {
             style, items: Vec::new(), x: 0.0, y: 0.0, width: 0.0,
-            state: MenuState::Closed, open_t: 0.0,
+            open: false,
             open_submenu_ids: Vec::new(),
-            hover_t: HashMap::new(), hovered_zones: Vec::new(),
             pressed_zones: Vec::new(),
             scroll_offset: 0.0,
             max_height: 0.0,
+            popup_ids: Vec::new(),
+            uses_popups: false,
         }
     }
 
     pub fn set_scale(&mut self, scale: f32) { self.style.scale = scale; }
-    pub fn is_open(&self) -> bool { self.state != MenuState::Closed }
-    fn is_interactive(&self) -> bool {
-        self.state == MenuState::Open || self.state == MenuState::Opening
-    }
+    pub fn is_open(&self) -> bool { self.open }
 
     /// Access items mutably (e.g. to update a Progress value from outside).
     pub fn items_mut(&mut self) -> &mut [MenuItem] { &mut self.items }
@@ -188,11 +177,8 @@ impl ContextMenu {
         self.items = items;
         self.x = x;
         self.y = y;
-        self.state = MenuState::Opening;
-        self.open_t = 0.0;
+        self.open = true;
         self.open_submenu_ids.clear();
-        self.hover_t.clear();
-        self.hovered_zones.clear();
         self.pressed_zones.clear();
         self.scroll_offset = 0.0;
     }
@@ -202,15 +188,33 @@ impl ContextMenu {
         if self.x + self.width > screen_w {
             self.x = (screen_w - self.width - 4.0).max(0.0);
         }
-        // If menu is taller than screen, cap visible height and enable scrolling
-        let available_h = screen_h - self.y - 8.0;
-        if total_h > available_h && available_h > 100.0 {
-            self.max_height = available_h;
-        } else {
-            if self.y + total_h > screen_h {
-                self.y = (screen_h - total_h - 4.0).max(0.0);
-            }
+        let margin = 4.0;
+        let room_below = screen_h - self.y - margin;
+
+        if total_h <= room_below {
             self.max_height = 0.0;
+        } else {
+            let flipped_y = self.y - total_h;
+            if flipped_y >= margin {
+                self.y = flipped_y;
+                self.max_height = 0.0;
+            } else if self.y > screen_h * 0.5 {
+                let clamped_y = margin;
+                let visible = self.y - clamped_y;
+                self.y = clamped_y;
+                if visible > 100.0 && total_h > visible {
+                    self.max_height = visible;
+                } else {
+                    self.max_height = 0.0;
+                }
+            } else {
+                if total_h > room_below && room_below > 100.0 {
+                    self.max_height = room_below;
+                } else {
+                    self.y = (screen_h - total_h - margin).max(0.0);
+                    self.max_height = 0.0;
+                }
+            }
         }
     }
 
@@ -223,56 +227,177 @@ impl ContextMenu {
     }
 
     /// Apply scroll delta (from trackpad/mouse wheel) to the context menu.
-    /// `delta` is in pixels (positive = scroll up / content moves down).
     pub fn on_scroll(&mut self, delta: f32) {
-        if self.state == MenuState::Closed || self.max_height <= 0.0 { return; }
+        if !self.open || self.max_height <= 0.0 { return; }
         let total_h = items_height(&self.items, &self.style);
         let max_scroll = (total_h - self.max_height).max(0.0);
         self.scroll_offset = (self.scroll_offset - delta).clamp(0.0, max_scroll);
     }
 
     pub fn close(&mut self) {
-        if self.state == MenuState::Closed { return; }
-        self.state = MenuState::Closing;
+        self.open = false;
+        self.items.clear();
         self.open_submenu_ids.clear();
+        self.pressed_zones.clear();
+        self.popup_ids.clear();
+        self.uses_popups = false;
     }
 
-    /// Advance all animations by `dt` seconds. Call once per frame before `draw`.
-    pub fn update(&mut self, dt: f32) {
-        match self.state {
-            MenuState::Closed => return,
-            MenuState::Opening => {
-                self.open_t += dt / OPEN_DURATION;
-                if self.open_t >= 1.0 {
-                    self.open_t = 1.0;
-                    self.state = MenuState::Open;
-                }
-            }
-            MenuState::Open => {}
-            MenuState::Closing => {
-                self.open_t -= dt / CLOSE_DURATION;
-                if self.open_t <= 0.0 {
-                    self.open_t = 0.0;
-                    self.state = MenuState::Closed;
-                    self.items.clear();
-                    self.hover_t.clear();
-                    self.hovered_zones.clear();
-                    return;
-                }
+    pub fn close_popups(&mut self, backend: &mut dyn PopupSurface) {
+        for &pid in &self.popup_ids {
+            backend.destroy_popup(pid);
+        }
+        self.close();
+    }
+
+    pub fn open_popup(
+        &mut self,
+        x: f32, y: f32,
+        items: Vec<MenuItem>,
+        backend: &mut dyn PopupSurface,
+    ) {
+        self.width = compute_width(&items, &self.style);
+        self.items = items;
+        self.x = x;
+        self.y = y;
+        self.open = true;
+        self.uses_popups = true;
+        self.open_submenu_ids.clear();
+        self.pressed_zones.clear();
+        self.scroll_offset = 0.0;
+
+        let total_h = items_height(&self.items, &self.style);
+        let sc = self.style.scale;
+        // Positioner wants logical size, divide physical by scale
+        let log_w = (self.width / sc).ceil() as u32;
+        let log_h = (total_h / sc).ceil() as u32;
+        let pid = backend.create_popup(None, x as i32, y as i32, log_w, log_h);
+        self.popup_ids.clear();
+        self.popup_ids.push(pid);
+    }
+
+    pub fn draw_popups(
+        &mut self,
+        backend: &mut dyn PopupSurface,
+    ) -> Option<MenuEvent> {
+        if !self.open || !self.uses_popups { return None; }
+        if self.popup_ids.is_empty() { return None; }
+
+        // Popup surfaces don't need shadows — compositor handles that
+        self.style.no_shadow = true;
+
+        // Collect submenu panels that need popup surfaces
+        let sc = self.style.scale;
+        let mut needed_popups: Vec<(i32, i32, u32, u32, Vec<usize>)> = Vec::new();
+        {
+            let mut current_items: &[MenuItem] = &self.items;
+            let mut parent_x = 0.0f32;
+            let mut parent_width = self.width;
+            let mut parent_y = 0.0f32;
+            let mut path = Vec::new();
+
+            for &sub_id in &self.open_submenu_ids {
+                let Some((idx, children)) = find_submenu(current_items, sub_id) else { break; };
+                path.push(idx);
+                let sub_y_offset = item_y_offset(current_items, idx, &self.style);
+                let sub_w = compute_width(children, &self.style);
+                let sub_h = items_height_slice(children, &self.style);
+                // For popups: position relative to parent popup surface (no overlap)
+                let sub_x = parent_x + parent_width;
+                let sub_y = parent_y + sub_y_offset;
+
+                // Convert physical → logical for positioner
+                needed_popups.push((
+                    (sub_x / sc) as i32, (sub_y / sc) as i32,
+                    (sub_w / sc).ceil() as u32, (sub_h / sc).ceil() as u32,
+                    path.clone(),
+                ));
+
+                parent_x = sub_x;
+                parent_y = sub_y;
+                parent_width = sub_w;
+                current_items = children;
             }
         }
 
-        let hover_speed = dt / HOVER_DURATION;
-        let hovered = &self.hovered_zones;
-        self.hover_t.retain(|id, t| {
-            let target = if hovered.contains(id) { 1.0 } else { 0.0 };
-            *t = move_toward(*t, target, hover_speed);
-            *t > 0.001
-        });
-        for &id in &self.hovered_zones {
-            self.hover_t.entry(id).or_insert(0.0);
+        // Create/destroy popup surfaces to match submenu state
+        let target_count = 1 + needed_popups.len();
+        // Destroy excess popups
+        while self.popup_ids.len() > target_count {
+            let pid = self.popup_ids.pop().unwrap();
+            backend.destroy_popup(pid);
         }
+        // Create missing popups (logical coordinates for positioner)
+        for i in self.popup_ids.len()..target_count {
+            let (sx, sy, sw, sh) = if i == 0 {
+                (self.x as i32, self.y as i32,
+                 (self.width / sc).ceil() as u32,
+                 (items_height(&self.items, &self.style) / sc).ceil() as u32)
+            } else {
+                let p = &needed_popups[i - 1];
+                (p.0, p.1, p.2, p.3)
+            };
+            // Root popup (i==0) is parented to the window, submenus to the parent popup
+            let parent = if i == 0 { None } else { Some(self.popup_ids[i - 1]) };
+            let pid = backend.create_popup(parent, sx, sy, sw, sh);
+            self.popup_ids.push(pid);
+        }
+
+        // Resize existing submenu popups if needed
+        for (i, np) in needed_popups.iter().enumerate() {
+            let pid = self.popup_ids[i + 1];
+            backend.resize_popup(pid, np.2, np.3);
+        }
+
+        // Draw each panel into its popup surface
+        let mut event = None;
+        let mut new_submenu_ids = self.open_submenu_ids.clone();
+
+        // Build panel paths
+        let mut panel_paths: Vec<Vec<usize>> = vec![vec![]];
+        for np in &needed_popups {
+            panel_paths.push(np.4.clone());
+        }
+
+        // Clear consumed presses (check root popup interaction)
+        if let Some(ctx) = backend.popup_render(self.popup_ids[0]) {
+            if ctx.interaction.active_zone_id().is_none() {
+                self.pressed_zones.clear();
+            }
+        }
+
+        for (depth, path) in panel_paths.iter().enumerate() {
+            let pid = self.popup_ids[depth];
+            let items = resolve_items(&mut self.items, path);
+            let panel_w = if depth == 0 {
+                self.width
+            } else {
+                needed_popups[depth - 1].2 as f32
+            };
+
+            if let Some(ctx) = backend.popup_render(pid) {
+                let sw = ctx.gpu.width();
+                let sh = ctx.gpu.height();
+                let e = draw_panel(
+                    items, 0.0, 0.0, panel_w, depth,
+                    &self.style, &mut ctx.painter, &mut ctx.text,
+                    &mut ctx.interaction, sw, sh,
+                    &mut new_submenu_ids, &mut self.pressed_zones,
+                );
+                if e.is_some() { event = e; }
+            }
+        }
+
+        if let Some(MenuEvent::RadioSelected { group, id }) = &event {
+            deselect_radio_group(&mut self.items, *group, *id);
+        }
+
+        self.open_submenu_ids = new_submenu_ids;
+        event
     }
+
+    /// No-op kept for API compat — no animations to advance.
+    pub fn update(&mut self, _dt: f32) {}
 
     pub fn draw(
         &mut self,
@@ -282,39 +407,13 @@ impl ContextMenu {
         screen_w: u32,
         screen_h: u32,
     ) -> Option<MenuEvent> {
-        if self.state == MenuState::Closed { return None; }
-
-        self.hovered_zones.clear();
+        if !self.open { return None; }
 
         // Clear consumed presses once mouse is released
         if interaction.active_zone_id().is_none() {
             self.pressed_zones.clear();
         }
 
-        let ease_t = animation::ease_out(self.open_t);
-        // Menu background is fully opaque — only shadow/border fade
-        let alpha = ease_t;
-
-        // Clip-reveal: menu unrolls from top to bottom
-        let total_h = items_height(&self.items, &self.style);
-        let visible_h = if self.max_height > 0.0 { self.max_height } else { total_h };
-        let clip_h = visible_h * ease_t;
-        // Clip covers full screen so submenus aren't cut off.
-        // The open animation uses clip_h only during opening/closing.
-        let sc = self.style.scale;
-        let clip_y = self.y;
-        let clip_total_h = if self.state == MenuState::Open {
-            screen_h as f32 - clip_y
-        } else {
-            clip_h + 8.0 * sc
-        };
-        let clip_rect = Rect::new(
-            0.0, clip_y - 8.0 * sc,
-            screen_w as f32, clip_total_h + 8.0 * sc,
-        );
-        painter.push_clip(clip_rect);
-
-        // Apply scroll offset — shift the root panel up
         let scroll_y = self.y - self.scroll_offset;
 
         let mut panels: Vec<MenuPanel> = Vec::with_capacity(self.open_submenu_ids.len() + 1);
@@ -343,7 +442,6 @@ impl ContextMenu {
 
         let mut event = None;
         let mut new_submenu_ids = self.open_submenu_ids.clone();
-        let interactive = self.is_interactive();
 
         for (depth, panel) in panels.iter().enumerate() {
             let items = resolve_items(&mut self.items, &panel.path);
@@ -351,13 +449,10 @@ impl ContextMenu {
                 items, panel.x, panel.y, panel.width, depth,
                 &self.style, painter, text, interaction,
                 screen_w, screen_h, &mut new_submenu_ids,
-                &self.hover_t, &mut self.hovered_zones,
-                &mut self.pressed_zones, alpha, interactive,
+                &mut self.pressed_zones,
             );
             if e.is_some() { event = e; }
         }
-
-        painter.pop_clip();
 
         // Handle radio group deselection
         if let Some(MenuEvent::RadioSelected { group, id }) = &event {
@@ -369,14 +464,14 @@ impl ContextMenu {
     }
 
     pub fn bounds(&self) -> Option<Rect> {
-        if self.state == MenuState::Closed { return None; }
+        if !self.open { return None; }
         let h = items_height(&self.items, &self.style);
         let visible_h = if self.max_height > 0.0 { self.max_height.min(h) } else { h };
         Some(Rect::new(self.x, self.y, self.width, visible_h))
     }
 
     pub fn contains(&self, x: f32, y: f32) -> bool {
-        if self.state == MenuState::Closed { return false; }
+        if !self.open { return false; }
         let sc = self.style.scale;
         let root_h = items_height(&self.items, &self.style);
         let visible_h = if self.max_height > 0.0 { self.max_height.min(root_h) } else { root_h };
@@ -432,26 +527,26 @@ fn item_y_offset(items: &[MenuItem], index: usize, style: &ContextMenuStyle) -> 
 
 fn compute_width(items: &[MenuItem], style: &ContextMenuStyle) -> f32 {
     let s = style.scale;
-    let fw = FONT_BODY * s * 0.55;
+    let fw = style.font_size * s * 0.55;
     let sc_fw = FONT_LABEL * s * 0.55;
     let cap_fw = FONT_CAPTION * s * 0.55;
     let max_w = items.iter().filter_map(|item| match item {
         MenuItem::Action { label, shortcut, .. } => {
             let sc_w = shortcut.as_ref()
-                .map_or(0.0, |sc| sc.len() as f32 * sc_fw + 16.0 * s);
+                .map_or(0.0, |sc| sc.len() as f32 * sc_fw + 24.0 * s);
             Some(label.len() as f32 * fw + sc_w)
         }
         MenuItem::Toggle { label, .. } | MenuItem::Checkbox { label, .. }
-        | MenuItem::Radio { label, .. } => Some(label.len() as f32 * fw + 40.0 * s),
-        MenuItem::SubMenu { label, .. } => Some(label.len() as f32 * fw + 20.0 * s),
+        | MenuItem::Radio { label, .. } => Some(label.len() as f32 * fw + 48.0 * s),
+        MenuItem::SubMenu { label, .. } => Some(label.len() as f32 * fw + 28.0 * s),
         MenuItem::Slider { label, .. } | MenuItem::Progress { label, .. } => {
-            Some(label.len() as f32 * cap_fw + 60.0 * s)
+            Some(label.len() as f32 * cap_fw + 80.0 * s)
         }
-        MenuItem::Button { label, .. } => Some(label.len() as f32 * fw + 32.0 * s),
+        MenuItem::Button { label, .. } => Some(label.len() as f32 * fw + 40.0 * s),
         MenuItem::Header { label } => Some(label.len() as f32 * sc_fw),
         MenuItem::Separator => None,
     }).fold(0.0f32, f32::max);
-    (max_w + style.padding * s * 4.0).max(style.min_width * s)
+    (max_w + style.padding * s * 6.0).max(style.min_width * s)
 }
 
 fn find_submenu(items: &[MenuItem], id: u32) -> Option<(usize, &[MenuItem])> {
@@ -474,7 +569,6 @@ fn resolve_items<'a>(items: &'a mut [MenuItem], path: &[usize]) -> &'a mut [Menu
     current
 }
 
-/// Deselect all radios in the same group except the one with `selected_id`.
 fn deselect_radio_group(items: &mut [MenuItem], group: u32, selected_id: u32) {
     for item in items.iter_mut() {
         match item {
@@ -493,19 +587,11 @@ fn contains_rect(px: f32, py: f32, x: f32, y: f32, w: f32, h: f32) -> bool {
     px >= x && px <= x + w && py >= y && py <= y + h
 }
 
-fn move_toward(current: f32, target: f32, step: f32) -> f32 {
-    if (target - current).abs() <= step { target }
-    else if target > current { current + step }
-    else { current - step }
-}
-
 // Constants (pub(super) for draw module)
-pub(super) const SEPARATOR_HEIGHT: f32 = 9.0;
-pub(super) const SLIDER_ITEM_HEIGHT: f32 = 50.0;
-pub(super) const SLIDER_LABEL_SIZE: f32 = 16.0;
-pub(super) const SLIDER_TRACK_H: f32 = 10.0;
-pub(super) const HEADER_HEIGHT: f32 = 24.0;
-pub(super) const PROGRESS_ITEM_HEIGHT: f32 = 40.0;
+pub(super) const SEPARATOR_HEIGHT: f32 = 12.0;
+pub(super) const SLIDER_ITEM_HEIGHT: f32 = 60.0;
+pub(super) const SLIDER_TRACK_H: f32 = 12.0;
+pub(super) const HEADER_HEIGHT: f32 = 32.0;
+pub(super) const PROGRESS_ITEM_HEIGHT: f32 = 50.0;
 pub(super) const CONTEXT_MENU_ZONE_BASE: u32 = 0xCE_0000;
-
-const HOVER_DURATION: f32 = 0.12;
+pub(super) const ACCENT_BAR_WIDTH: f32 = 3.5;

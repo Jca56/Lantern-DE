@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
@@ -37,8 +38,8 @@ impl HasWindowHandle for X11Surface {
 // ── GPU Context ──────────────────────────────────────────────────────────────
 
 pub struct GpuContext {
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
+    pub device: Arc<wgpu::Device>,
+    pub queue: Arc<wgpu::Queue>,
     pub surface: wgpu::Surface<'static>,
     pub config: wgpu::SurfaceConfiguration,
     pub format: wgpu::TextureFormat,
@@ -62,8 +63,8 @@ impl GpuContext {
         let (device, queue, surface, config, format) = create_surface_context(&x11_surface, width, height)?;
 
         Ok(Self {
-            device,
-            queue,
+            device: Arc::new(device),
+            queue: Arc::new(queue),
             surface,
             config,
             format,
@@ -78,8 +79,8 @@ impl GpuContext {
         let (device, queue, surface, config, format) = create_surface_context(window, width, height)?;
 
         Ok(Self {
-            device,
-            queue,
+            device: Arc::new(device),
+            queue: Arc::new(queue),
             surface,
             config,
             format,

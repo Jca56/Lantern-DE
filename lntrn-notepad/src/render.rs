@@ -41,17 +41,17 @@ pub fn render_frame(
 
     // ── Title bar ─────────────────────────────────────────────────────
     let title_rect = Rect::new(0.0, 0.0, wf, TITLE_BAR_H * s);
-    let tb = TitleBar::new(title_rect, "");
+    let tb = TitleBar::new(title_rect);
     let close_state = input.add_zone(ZONE_CLOSE, tb.close_button_rect());
     let max_state = input.add_zone(ZONE_MAXIMIZE, tb.maximize_button_rect());
     let min_state = input.add_zone(ZONE_MINIMIZE, tb.minimize_button_rect());
 
-    TitleBar::new(title_rect, &editor.title())
+    TitleBar::new(title_rect)
         .scale(s)
         .close_hovered(close_state.is_hovered())
         .maximize_hovered(max_state.is_hovered())
         .minimize_hovered(min_state.is_hovered())
-        .draw(painter, text, pal, w, h);
+        .draw(painter, pal);
 
     // ── Toolbar ───────────────────────────────────────────────────────
     let toolbar_y = TITLE_BAR_H * s;

@@ -35,11 +35,12 @@ impl HasWindowHandle for X11Surface {
 }
 
 pub struct GpuContext {
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
+    pub device: Arc<wgpu::Device>,
+    pub queue: Arc<wgpu::Queue>,
     pub surface: wgpu::Surface<'static>,
     pub config: wgpu::SurfaceConfiguration,
     pub format: wgpu::TextureFormat,
+    instance: Arc<wgpu::Instance>,
     timing: Arc<Mutex<FrameTimingSnapshot>>,
     xlib_display: *mut c_void,
 }
@@ -78,15 +79,16 @@ impl GpuContext {
             window: x11_window as u64,
         };
 
-        let (device, queue, surface, config, format) =
+        let (instance, device, queue, surface, config, format) =
             create_surface_context(&x11_surface, width, height)?;
 
         Ok(Self {
-            device,
-            queue,
+            device: Arc::new(device),
+            queue: Arc::new(queue),
             surface,
             config,
             format,
+            instance: Arc::new(instance),
             timing: Arc::new(Mutex::new(FrameTimingSnapshot::default())),
             xlib_display: xlib_display as *mut c_void,
         })
@@ -96,7 +98,84 @@ impl GpuContext {
     where
         W: HasDisplayHandle + HasWindowHandle,
     {
-        let (device, queue, surface, config, format) = create_surface_context(window, width, height)?;
+        let (instance, device, queue, surface, config, format) = create_surface_context(window, width, height)?;
+
+        Ok(Self {
+            device: Arc::new(device),
+            queue: Arc::new(queue),
+            surface,
+            config,
+            format,
+            instance: Arc::new(instance),
+            timing: Arc::new(Mutex::new(FrameTimingSnapshot::default())),
+            xlib_display: std::ptr::null_mut(),
+        })
+    }
+
+    pub fn from_parent<W>(
+        parent: &GpuContext,
+        window: &W,
+        width: u32,
+        height: u32,
+    ) -> Result<Self, Box<dyn std::error::Error>>
+    where
+        W: HasDisplayHandle + HasWindowHandle,
+    {
+        let surface = unsafe {
+            parent.instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::from_window(window)?)
+        }?;
+
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: parent.format,
+            width,
+            height,
+            present_mode: wgpu::PresentMode::Mailbox,
+            alpha_mode: wgpu::CompositeAlphaMode::PreMultiplied,
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        };
+        surface.configure(&parent.device, &config);
+
+        Ok(Self {
+            device: Arc::clone(&parent.device),
+            queue: Arc::clone(&parent.queue),
+            surface,
+            config,
+            format: parent.format,
+            instance: Arc::clone(&parent.instance),
+            timing: Arc::new(Mutex::new(FrameTimingSnapshot::default())),
+            xlib_display: std::ptr::null_mut(),
+        })
+    }
+
+    pub fn from_parent_shared<W>(
+        instance: Arc<wgpu::Instance>,
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
+        format: wgpu::TextureFormat,
+        window: &W,
+        width: u32,
+        height: u32,
+    ) -> Result<Self, Box<dyn std::error::Error>>
+    where
+        W: HasDisplayHandle + HasWindowHandle,
+    {
+        let surface = unsafe {
+            instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::from_window(window)?)
+        }?;
+
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            width,
+            height,
+            present_mode: wgpu::PresentMode::Mailbox,
+            alpha_mode: wgpu::CompositeAlphaMode::PreMultiplied,
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        };
+        surface.configure(&device, &config);
 
         Ok(Self {
             device,
@@ -104,10 +183,15 @@ impl GpuContext {
             surface,
             config,
             format,
+            instance,
             timing: Arc::new(Mutex::new(FrameTimingSnapshot::default())),
             xlib_display: std::ptr::null_mut(),
         })
     }
+
+    pub fn instance_arc(&self) -> Arc<wgpu::Instance> { Arc::clone(&self.instance) }
+    pub fn device_arc(&self) -> Arc<wgpu::Device> { Arc::clone(&self.device) }
+    pub fn queue_arc(&self) -> Arc<wgpu::Queue> { Arc::clone(&self.queue) }
 
     pub fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 {
@@ -225,6 +309,7 @@ fn create_surface_context<W>(
     height: u32,
 ) -> Result<
     (
+        wgpu::Instance,
         wgpu::Device,
         wgpu::Queue,
         wgpu::Surface<'static>,
@@ -297,7 +382,7 @@ where
     };
     surface.configure(&device, &config);
 
-    Ok((device, queue, surface, config, format))
+    Ok((instance, device, queue, surface, config, format))
 }
 
 fn timing_enabled() -> bool {
