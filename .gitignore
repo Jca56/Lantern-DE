@@ -2,6 +2,7 @@
 /target/
 fox_flare/target/
 menu/target/
+lntrn-app-template/target/
 
 # Environment & secrets
 .env
