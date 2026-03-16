@@ -387,7 +387,7 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>) -> Result<()> {
         match gpu.begin_frame("Notifications") {
             Ok(mut frame) => {
                 let view = frame.view().clone();
-                painter.render_pass(&gpu, frame.encoder_mut(), &view, Color::TRANSPARENT);
+                painter.render_pass(&gpu, frame.encoder_mut(), &view, palette.surface.with_alpha(0.0));
                 text.render_queued(&gpu, frame.encoder_mut(), &view);
                 frame.submit(&gpu.queue);
             }

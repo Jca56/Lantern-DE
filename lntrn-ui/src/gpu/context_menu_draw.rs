@@ -4,8 +4,8 @@ use lntrn_theme::{FONT_CAPTION, FONT_LABEL};
 use super::checkbox::Checkbox;
 use super::context_menu::{
     ContextMenuStyle, MenuEvent, MenuItem,
-    ACCENT_BAR_WIDTH, CONTEXT_MENU_ZONE_BASE, HEADER_HEIGHT, PROGRESS_ITEM_HEIGHT,
-    SEPARATOR_HEIGHT, SLIDER_ITEM_HEIGHT, SLIDER_TRACK_H,
+    ACCENT_BAR_WIDTH, COLOR_SWATCH_HEIGHT, CONTEXT_MENU_ZONE_BASE, HEADER_HEIGHT,
+    PROGRESS_ITEM_HEIGHT, SEPARATOR_HEIGHT, SLIDER_ITEM_HEIGHT, SLIDER_TRACK_H,
     items_height_slice,
 };
 use super::controls::{Button, ButtonVariant};
@@ -13,6 +13,15 @@ use super::input::{InteractionContext, InteractionState};
 use super::progress::ProgressBar;
 use super::radio::RadioButton;
 use super::toggle::Toggle;
+
+/// Result returned by `draw_panel` so the caller can process submenu hover.
+pub(super) struct DrawPanelResult {
+    pub event: Option<MenuEvent>,
+    /// If the cursor is hovering a SubMenu trigger, its id.
+    pub hovered_submenu: Option<u32>,
+    /// Whether any non-submenu item is hovered on this panel.
+    pub non_submenu_hovered: bool,
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn draw_panel(
@@ -29,7 +38,7 @@ pub(super) fn draw_panel(
     screen_h: u32,
     open_submenu_ids: &mut Vec<u32>,
     pressed_zones: &mut Vec<u32>,
-) -> Option<MenuEvent> {
+) -> DrawPanelResult {
     let s = style.scale;
     let total_h = items_height_slice(items, style);
     let menu_rect = Rect::new(px, py, width, total_h);
@@ -54,6 +63,8 @@ pub(super) fn draw_panel(
     painter.rect_stroke(menu_rect, cr, style.border_width * s, style.border);
 
     let mut event = None;
+    let mut hovered_submenu: Option<u32> = None;
+    let mut non_submenu_hovered = false;
     let mut cy = py + style.padding * s;
     let inner_w = width - style.padding * 2.0 * s;
     let inner_x = px + style.padding * s;
@@ -69,11 +80,12 @@ pub(super) fn draw_panel(
 
     for item in items.iter_mut() {
         match item {
-            MenuItem::Action { id, label, shortcut, enabled } => {
+            MenuItem::Action { id, label, shortcut, enabled, .. } => {
                 let item_rect = Rect::new(inner_x, cy, inner_w, item_h);
                 let zone_id = zone_base + *id;
                 let state = zone_state(interaction, zone_id, item_rect);
                 let hovered = *enabled && state.is_hovered();
+                if hovered { non_submenu_hovered = true; }
 
                 draw_hover_bg(hovered, item_rect, cr, s, style, painter);
 
@@ -108,6 +120,7 @@ pub(super) fn draw_panel(
                 let item_rect = Rect::new(inner_x, cy, inner_w, item_h);
                 let zone_id = zone_base + *id;
                 let state = zone_state(interaction, zone_id, item_rect);
+                if state.is_hovered() && *enabled { non_submenu_hovered = true; }
 
                 draw_hover_bg(state.is_hovered() && *enabled, item_rect, cr, s, style, painter);
 
@@ -132,6 +145,7 @@ pub(super) fn draw_panel(
                 let item_rect = Rect::new(inner_x, cy, inner_w, item_h);
                 let zone_id = zone_base + *id;
                 let state = zone_state(interaction, zone_id, item_rect);
+                if state.is_hovered() { non_submenu_hovered = true; }
 
                 draw_hover_bg(state.is_hovered(), item_rect, cr, s, style, painter);
 
@@ -155,6 +169,7 @@ pub(super) fn draw_panel(
                 let item_rect = Rect::new(inner_x, cy, inner_w, item_h);
                 let zone_id = zone_base + *id;
                 let state = zone_state(interaction, zone_id, item_rect);
+                if state.is_hovered() { non_submenu_hovered = true; }
 
                 draw_hover_bg(state.is_hovered(), item_rect, cr, s, style, painter);
 
@@ -300,6 +315,51 @@ pub(super) fn draw_panel(
                 }
                 cy += slider_h;
             }
+            MenuItem::ColorSwatches { label, swatches } => {
+                let row_h = COLOR_SWATCH_HEIGHT * s;
+                let label_size = FONT_CAPTION * s;
+
+                // Draw label
+                let label_x = content_x;
+                let label_y = cy + 6.0 * s;
+                text.queue(
+                    label, label_size, label_x, label_y, style.text_muted,
+                    content_w * 0.8, screen_w, screen_h,
+                );
+
+                // Draw mini folder icons
+                let icon_sz = 40.0 * s;
+                let icon_gap = 6.0 * s;
+                let total_sw = swatches.len() as f32 * icon_sz
+                    + (swatches.len().saturating_sub(1)) as f32 * icon_gap;
+                let start_x = content_x + (content_w - pad - total_sw) * 0.5;
+                let icon_top = cy + label_size + 12.0 * s;
+
+                for (i, (sid, _color)) in swatches.iter().enumerate() {
+                    let ix = start_x + i as f32 * (icon_sz + icon_gap);
+                    let hit_rect = Rect::new(ix, icon_top, icon_sz, icon_sz);
+                    let zone_id = zone_base + *sid;
+                    let state = zone_state(interaction, zone_id, hit_rect);
+                    let hovered = state.is_hovered();
+
+                    // Hover highlight
+                    if hovered {
+                        painter.rect_filled(hit_rect, 4.0 * s, style.bg_hover);
+                        painter.rect_stroke(hit_rect, 4.0 * s, 1.5 * s, style.accent.with_alpha(0.5));
+                    }
+
+                    // Actual folder icon textures are rendered by the app via swatch_rects()
+
+                    if state == InteractionState::Pressed
+                        && !pressed_zones.contains(&zone_id)
+                    {
+                        pressed_zones.push(zone_id);
+                        event = Some(MenuEvent::Action(*sid));
+                    }
+                }
+
+                cy += row_h;
+            }
             MenuItem::SubMenu { id, label, .. } => {
                 let item_rect = Rect::new(inner_x, cy, inner_w, item_h);
                 let zone_id = zone_base + *id;
@@ -308,9 +368,8 @@ pub(super) fn draw_panel(
                 let is_open = open_submenu_ids.get(depth) == Some(id);
                 draw_hover_bg(state.is_hovered() || is_open, item_rect, cr, s, style, painter);
 
-                if state.is_hovered() && !is_open {
-                    open_submenu_ids.truncate(depth);
-                    open_submenu_ids.push(*id);
+                if state.is_hovered() {
+                    hovered_submenu = Some(*id);
                 }
 
                 let text_x = content_x;
@@ -338,7 +397,7 @@ pub(super) fn draw_panel(
         }
     }
 
-    event
+    DrawPanelResult { event, hovered_submenu, non_submenu_hovered }
 }
 
 // ── Shared helpers ───────────────────────────────────────────────────────────

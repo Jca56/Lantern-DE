@@ -34,7 +34,7 @@ pub use input::{HitZone, InteractionContext, InteractionState};
 pub use menu_bar::MenuBar;
 pub use modal::{Modal, ModalButton};
 pub use palette::FoxPalette;
-pub use popup::{PopupRenderContext, PopupSurface};
+pub use popup::{PopupRenderContext, PopupSurface, WaylandPopupBackend};
 pub use progress::ProgressBar;
 pub use radio::{RadioButton, RadioGroup};
 pub use scroll::{ScrollArea, Scrollbar};

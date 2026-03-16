@@ -59,7 +59,7 @@ impl ContextMenuStyle {
 /// A single entry in a context menu.
 #[derive(Clone, Debug)]
 pub enum MenuItem {
-    Action { id: u32, label: String, shortcut: Option<String>, enabled: bool },
+    Action { id: u32, label: String, shortcut: Option<String>, enabled: bool, danger: bool },
     Separator,
     Slider { id: u32, label: String, value: f32 },
     SubMenu { id: u32, label: String, children: Vec<MenuItem> },
@@ -69,17 +69,22 @@ pub enum MenuItem {
     Button { id: u32, label: String, primary: bool },
     Progress { id: u32, label: String, value: f32 },
     Header { label: String },
+    /// A row of color swatches. Each swatch has an id and a color.
+    ColorSwatches { label: String, swatches: Vec<(u32, Color)> },
 }
 
 impl MenuItem {
     pub fn action(id: u32, label: impl Into<String>) -> Self {
-        Self::Action { id, label: label.into(), shortcut: None, enabled: true }
+        Self::Action { id, label: label.into(), shortcut: None, enabled: true, danger: false }
     }
     pub fn action_with(id: u32, label: impl Into<String>, shortcut: impl Into<String>) -> Self {
-        Self::Action { id, label: label.into(), shortcut: Some(shortcut.into()), enabled: true }
+        Self::Action { id, label: label.into(), shortcut: Some(shortcut.into()), enabled: true, danger: false }
     }
     pub fn action_disabled(id: u32, label: impl Into<String>) -> Self {
-        Self::Action { id, label: label.into(), shortcut: None, enabled: false }
+        Self::Action { id, label: label.into(), shortcut: None, enabled: false, danger: false }
+    }
+    pub fn action_danger(id: u32, label: impl Into<String>) -> Self {
+        Self::Action { id, label: label.into(), shortcut: None, enabled: true, danger: true }
     }
     pub fn separator() -> Self { Self::Separator }
     pub fn slider(id: u32, label: impl Into<String>, value: f32) -> Self {
@@ -109,6 +114,9 @@ impl MenuItem {
     pub fn progress(id: u32, label: impl Into<String>, value: f32) -> Self {
         Self::Progress { id, label: label.into(), value }
     }
+    pub fn color_swatches(label: impl Into<String>, swatches: Vec<(u32, Color)>) -> Self {
+        Self::ColorSwatches { label: label.into(), swatches }
+    }
     pub fn header(label: impl Into<String>) -> Self {
         Self::Header { label: label.into() }
     }
@@ -132,6 +140,12 @@ struct MenuPanel { x: f32, y: f32, width: f32, path: Vec<usize> }
 /// 2. On right-click: `open(x, y, items)`
 /// 3. Each frame: `update(dt)` then `draw(...)` — returns `Some(MenuEvent)`
 /// 4. `close()` to dismiss
+/// Delay before a submenu opens on hover (seconds).
+const SUBMENU_OPEN_DELAY: f32 = 0.2;
+/// Grace period before closing a submenu when cursor moves to a different item (seconds).
+/// Allows cursor to travel from trigger to submenu popup without instant close.
+const SUBMENU_CLOSE_DELAY: f32 = 0.3;
+
 pub struct ContextMenu {
     style: ContextMenuStyle,
     items: Vec<MenuItem>,
@@ -150,6 +164,18 @@ pub struct ContextMenu {
     popup_ids: Vec<u32>,
     /// Whether this menu is using popup surfaces.
     uses_popups: bool,
+    /// Submenu item ID being hovered (pending open).
+    submenu_hover_id: Option<u32>,
+    /// How long the submenu item has been hovered (seconds).
+    submenu_hover_timer: f32,
+    /// Depth at which the pending submenu would open.
+    submenu_hover_depth: usize,
+    /// Which popup depth currently has the pointer (set by the app).
+    pointer_depth: Option<usize>,
+    /// Timer for submenu close grace period (seconds).
+    submenu_close_timer: f32,
+    /// Whether the close timer is running.
+    submenu_close_pending: bool,
 }
 
 impl ContextMenu {
@@ -163,14 +189,73 @@ impl ContextMenu {
             max_height: 0.0,
             popup_ids: Vec::new(),
             uses_popups: false,
+            submenu_hover_id: None,
+            submenu_hover_timer: 0.0,
+            submenu_hover_depth: 0,
+            pointer_depth: None,
+            submenu_close_timer: 0.0,
+            submenu_close_pending: false,
         }
     }
 
     pub fn set_scale(&mut self, scale: f32) { self.style.scale = scale; }
     pub fn is_open(&self) -> bool { self.open }
 
+    /// Tell the menu which popup depth the pointer is currently on.
+    /// `None` = pointer not on any popup. `Some(0)` = root, `Some(1)` = first submenu, etc.
+    pub fn set_pointer_depth(&mut self, depth: Option<usize>) {
+        self.pointer_depth = depth;
+    }
+
+    /// Get the popup ID at a given depth (for the app to match wl_surface → depth).
+    pub fn popup_id_at_depth(&self, depth: usize) -> Option<u32> {
+        self.popup_ids.get(depth).copied()
+    }
+
+    /// Number of active popup surfaces.
+    pub fn popup_count(&self) -> usize { self.popup_ids.len() }
+
     /// Access items mutably (e.g. to update a Progress value from outside).
     pub fn items_mut(&mut self) -> &mut [MenuItem] { &mut self.items }
+
+    /// Root popup ID (for blitting textures onto the context menu surface).
+    pub fn root_popup_id(&self) -> Option<u32> { self.popup_ids.first().copied() }
+
+    /// Returns (id, x, y, size) for each swatch in any `ColorSwatches` items on the root panel.
+    /// Coordinates are relative to the popup surface (physical pixels).
+    pub fn swatch_rects(&self) -> Vec<(u32, f32, f32, f32)> {
+        if !self.open { return Vec::new(); }
+        let s = self.style.scale;
+        let pad = self.style.padding * s;
+        let accent_inset = (ACCENT_BAR_WIDTH + 6.0) * s;
+        let inner_w = self.width - pad * 2.0;
+        let content_x = pad + pad + accent_inset;
+        let content_w = inner_w - pad - accent_inset;
+
+        let label_size = FONT_CAPTION * s;
+        let icon_sz = 40.0 * s;
+        let icon_gap = 6.0 * s;
+
+        let mut cy = pad;
+        let mut result = Vec::new();
+        for item in &self.items {
+            match item {
+                MenuItem::ColorSwatches { swatches, .. } => {
+                    let total_sw = swatches.len() as f32 * icon_sz
+                        + (swatches.len().saturating_sub(1)) as f32 * icon_gap;
+                    let start_x = content_x + (content_w - pad - total_sw) * 0.5;
+                    let icon_top = cy + label_size + 12.0 * s;
+                    for (i, (sid, _)) in swatches.iter().enumerate() {
+                        let ix = start_x + i as f32 * (icon_sz + icon_gap);
+                        result.push((*sid, ix, icon_top, icon_sz));
+                    }
+                    cy += COLOR_SWATCH_HEIGHT * s;
+                }
+                _ => { cy += item_height(item, &self.style); }
+            }
+        }
+        result
+    }
 
     pub fn open(&mut self, x: f32, y: f32, items: Vec<MenuItem>) {
         self.width = compute_width(&items, &self.style);
@@ -351,7 +436,8 @@ impl ContextMenu {
 
         // Draw each panel into its popup surface
         let mut event = None;
-        let mut new_submenu_ids = self.open_submenu_ids.clone();
+        let mut any_submenu_hovered: Option<(u32, usize)> = None;
+        let mut any_non_submenu_hovered = false;
 
         // Build panel paths
         let mut panel_paths: Vec<Vec<usize>> = vec![vec![]];
@@ -376,28 +462,67 @@ impl ContextMenu {
             };
 
             if let Some(ctx) = backend.popup_render(pid) {
+                // Set clear color to menu bg with alpha=0 so SDF edges
+                // blend against the correct RGB instead of black.
+                ctx.clear_color = self.style.bg.with_alpha(0.0);
                 let sw = ctx.gpu.width();
                 let sh = ctx.gpu.height();
-                let e = draw_panel(
+                let result = draw_panel(
                     items, 0.0, 0.0, panel_w, depth,
                     &self.style, &mut ctx.painter, &mut ctx.text,
                     &mut ctx.interaction, sw, sh,
-                    &mut new_submenu_ids, &mut self.pressed_zones,
+                    &mut self.open_submenu_ids, &mut self.pressed_zones,
                 );
-                if e.is_some() { event = e; }
+                if result.event.is_some() { event = result.event; }
+                if let Some(sub_id) = result.hovered_submenu {
+                    any_submenu_hovered = Some((sub_id, depth));
+                }
+                if result.non_submenu_hovered {
+                    any_non_submenu_hovered = true;
+                }
             }
         }
+
+        self.process_submenu_hover(any_submenu_hovered, any_non_submenu_hovered);
 
         if let Some(MenuEvent::RadioSelected { group, id }) = &event {
             deselect_radio_group(&mut self.items, *group, *id);
         }
 
-        self.open_submenu_ids = new_submenu_ids;
         event
     }
 
-    /// No-op kept for API compat — no animations to advance.
-    pub fn update(&mut self, _dt: f32) {}
+    /// Advance submenu open/close delay timers.
+    pub fn update(&mut self, dt: f32) {
+        if !self.open { return; }
+        if let Some(pending_id) = self.submenu_hover_id {
+            self.submenu_hover_timer += dt;
+            if self.submenu_hover_timer >= SUBMENU_OPEN_DELAY {
+                // Timer expired — open the submenu
+                let depth = self.submenu_hover_depth;
+                self.open_submenu_ids.truncate(depth);
+                self.open_submenu_ids.push(pending_id);
+                self.submenu_hover_id = None;
+                self.submenu_hover_timer = 0.0;
+                // Cancel any pending close since we just opened
+                self.submenu_close_pending = false;
+                self.submenu_close_timer = 0.0;
+            }
+        }
+        // Submenu close delay
+        if self.submenu_close_pending {
+            self.submenu_close_timer += dt;
+            if self.submenu_close_timer >= SUBMENU_CLOSE_DELAY {
+                self.submenu_close_pending = false;
+                self.submenu_close_timer = 0.0;
+                if let Some(depth) = self.pointer_depth {
+                    if depth < self.open_submenu_ids.len() {
+                        self.open_submenu_ids.truncate(depth);
+                    }
+                }
+            }
+        }
+    }
 
     pub fn draw(
         &mut self,
@@ -441,26 +566,92 @@ impl ContextMenu {
         }
 
         let mut event = None;
-        let mut new_submenu_ids = self.open_submenu_ids.clone();
+        let mut any_submenu_hovered: Option<(u32, usize)> = None;
+        let mut any_non_submenu_hovered = false;
 
         for (depth, panel) in panels.iter().enumerate() {
             let items = resolve_items(&mut self.items, &panel.path);
-            let e = draw_panel(
+            let result = draw_panel(
                 items, panel.x, panel.y, panel.width, depth,
                 &self.style, painter, text, interaction,
-                screen_w, screen_h, &mut new_submenu_ids,
+                screen_w, screen_h, &mut self.open_submenu_ids,
                 &mut self.pressed_zones,
             );
-            if e.is_some() { event = e; }
+            if result.event.is_some() { event = result.event; }
+            if let Some(sub_id) = result.hovered_submenu {
+                any_submenu_hovered = Some((sub_id, depth));
+            }
+            if result.non_submenu_hovered {
+                any_non_submenu_hovered = true;
+            }
         }
+
+        self.process_submenu_hover(any_submenu_hovered, any_non_submenu_hovered);
 
         // Handle radio group deselection
         if let Some(MenuEvent::RadioSelected { group, id }) = &event {
             deselect_radio_group(&mut self.items, *group, *id);
         }
 
-        self.open_submenu_ids = new_submenu_ids;
         event
+    }
+
+    /// Process submenu hover state: start/reset timer, close stale submenus.
+    fn process_submenu_hover(
+        &mut self,
+        hovered_submenu: Option<(u32, usize)>,
+        non_submenu_hovered: bool,
+    ) {
+        match hovered_submenu {
+            Some((id, depth)) => {
+                // Cancel any pending close — user is on a submenu trigger
+                self.submenu_close_pending = false;
+                self.submenu_close_timer = 0.0;
+
+                // Already open at this depth — nothing to do
+                if self.open_submenu_ids.get(depth) == Some(&id) {
+                    self.submenu_hover_id = None;
+                    self.submenu_hover_timer = 0.0;
+                    return;
+                }
+                // Start or continue timer for this submenu
+                if self.submenu_hover_id == Some(id) && self.submenu_hover_depth == depth {
+                    // Timer continues in update()
+                } else {
+                    self.submenu_hover_id = Some(id);
+                    self.submenu_hover_timer = 0.0;
+                    self.submenu_hover_depth = depth;
+                }
+            }
+            None => {
+                // Cancel any pending open
+                self.submenu_hover_id = None;
+                self.submenu_hover_timer = 0.0;
+
+                // If cursor is on the submenu popup itself, cancel close
+                if let Some(depth) = self.pointer_depth {
+                    if depth >= self.open_submenu_ids.len() || depth > 0 {
+                        // Pointer is on a submenu surface — keep it open
+                        self.submenu_close_pending = false;
+                        self.submenu_close_timer = 0.0;
+                        return;
+                    }
+                }
+
+                // Start close delay when cursor is on a parent panel
+                // hovering a non-submenu item. Grace period allows cursor
+                // to travel from trigger to the submenu popup.
+                if non_submenu_hovered && !self.open_submenu_ids.is_empty() {
+                    if !self.submenu_close_pending {
+                        self.submenu_close_pending = true;
+                        self.submenu_close_timer = 0.0;
+                    }
+                } else {
+                    self.submenu_close_pending = false;
+                    self.submenu_close_timer = 0.0;
+                }
+            }
+        }
     }
 
     pub fn bounds(&self) -> Option<Rect> {
@@ -512,6 +703,7 @@ pub(super) fn item_height(item: &MenuItem, style: &ContextMenuStyle) -> f32 {
         MenuItem::Slider { .. } => SLIDER_ITEM_HEIGHT * s,
         MenuItem::Progress { .. } => PROGRESS_ITEM_HEIGHT * s,
         MenuItem::Header { .. } => HEADER_HEIGHT * s,
+        MenuItem::ColorSwatches { .. } => COLOR_SWATCH_HEIGHT * s,
     }
 }
 
@@ -544,6 +736,11 @@ fn compute_width(items: &[MenuItem], style: &ContextMenuStyle) -> f32 {
         }
         MenuItem::Button { label, .. } => Some(label.len() as f32 * fw + 40.0 * s),
         MenuItem::Header { label } => Some(label.len() as f32 * sc_fw),
+        MenuItem::ColorSwatches { swatches, .. } => {
+            let icon = 40.0 * s;
+            let gap = 6.0 * s;
+            Some(swatches.len() as f32 * icon + (swatches.len().saturating_sub(1)) as f32 * gap)
+        }
         MenuItem::Separator => None,
     }).fold(0.0f32, f32::max);
     (max_w + style.padding * s * 6.0).max(style.min_width * s)
@@ -594,4 +791,5 @@ pub(super) const SLIDER_TRACK_H: f32 = 12.0;
 pub(super) const HEADER_HEIGHT: f32 = 32.0;
 pub(super) const PROGRESS_ITEM_HEIGHT: f32 = 50.0;
 pub(super) const CONTEXT_MENU_ZONE_BASE: u32 = 0xCE_0000;
+pub(super) const COLOR_SWATCH_HEIGHT: f32 = 80.0;
 pub(super) const ACCENT_BAR_WIDTH: f32 = 3.5;

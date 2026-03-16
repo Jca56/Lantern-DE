@@ -1,0 +1,19 @@
+[package]
+name = "lntrn-app-template"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "lntrn-app-template"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+lntrn-render = { path = "../lntrn-render" }
+lntrn-ui = { path = "../lntrn-ui" }
+lntrn-theme = { path = "../lntrn-theme" }
+raw-window-handle = "0.6"
+wayland-backend = { version = "0.3", features = ["client_system"] }
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
+wgpu = "28"

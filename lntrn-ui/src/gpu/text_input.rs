@@ -34,6 +34,8 @@ pub struct TextInput<'a> {
     placeholder: &'a str,
     focused: bool,
     hovered: bool,
+    cursor_pos: Option<usize>,
+    scale: f32,
 }
 
 impl<'a> TextInput<'a> {
@@ -46,6 +48,8 @@ impl<'a> TextInput<'a> {
             placeholder: "",
             focused: false,
             hovered: false,
+            cursor_pos: None,
+            scale: 1.0,
         }
     }
 
@@ -69,6 +73,16 @@ impl<'a> TextInput<'a> {
         self
     }
 
+    pub fn cursor_pos(mut self, pos: usize) -> Self {
+        self.cursor_pos = Some(pos);
+        self
+    }
+
+    pub fn scale(mut self, scale: f32) -> Self {
+        self.scale = scale;
+        self
+    }
+
     pub fn draw(
         &self,
         painter: &mut Painter,
@@ -77,33 +91,39 @@ impl<'a> TextInput<'a> {
         screen_w: u32,
         screen_h: u32,
     ) {
+        let s = self.scale;
+        let radius = INPUT_RADIUS * s;
+        let border_rest = BORDER_REST * s;
+        let border_focus = BORDER_FOCUS * s;
+        let text_pad_x = TEXT_PAD_X * s;
+        let font_size = TEXT_FONT_SIZE * s;
+        let ph_font_size = PLACEHOLDER_FONT_SIZE * s;
+        let caret_w = CARET_WIDTH * s;
+
         // -- Background --
         let bg = if self.focused {
-            // Slightly brighter when focused for depth
             palette.surface_2
         } else if self.hovered {
             palette.surface_2
         } else {
             palette.surface
         };
-        painter.rect_filled(self.rect, INPUT_RADIUS, bg);
+        painter.rect_filled(self.rect, radius, bg);
 
         // -- Border --
         if self.focused {
-            // Accent glow border
-            painter.rect_stroke(self.rect, INPUT_RADIUS, BORDER_FOCUS, palette.accent);
+            painter.rect_stroke(self.rect, radius, border_focus, palette.accent);
 
-            // Subtle outer glow ring
             let glow = Rect::new(
-                self.rect.x - 1.5,
-                self.rect.y - 1.5,
-                self.rect.w + 3.0,
-                self.rect.h + 3.0,
+                self.rect.x - 1.5 * s,
+                self.rect.y - 1.5 * s,
+                self.rect.w + 3.0 * s,
+                self.rect.h + 3.0 * s,
             );
             painter.rect_stroke(
                 glow,
-                INPUT_RADIUS + 1.5,
-                1.0,
+                radius + 1.5 * s,
+                1.0 * s,
                 palette.accent.with_alpha(0.2),
             );
         } else {
@@ -112,19 +132,25 @@ impl<'a> TextInput<'a> {
             } else {
                 palette.muted.with_alpha(0.35)
             };
-            painter.rect_stroke(self.rect, INPUT_RADIUS, BORDER_REST, border_color);
+            painter.rect_stroke(self.rect, radius, border_rest, border_color);
         }
 
         // -- Text or placeholder --
-        let text_x = self.rect.x + TEXT_PAD_X;
-        let max_text_w = (self.rect.w - TEXT_PAD_X * 2.0).max(10.0);
+        let text_x = self.rect.x + text_pad_x;
+        let max_text_w = (self.rect.w - text_pad_x * 2.0).max(10.0);
+
+        // Determine caret character position
+        let caret_char = if self.focused {
+            self.cursor_pos.unwrap_or(self.text.len())
+        } else {
+            0
+        };
 
         if self.text.is_empty() {
-            // Placeholder
-            let ph_y = self.rect.y + (self.rect.h - PLACEHOLDER_FONT_SIZE) * 0.5;
+            let ph_y = self.rect.y + (self.rect.h - ph_font_size) * 0.5;
             text_renderer.queue(
                 self.placeholder,
-                PLACEHOLDER_FONT_SIZE,
+                ph_font_size,
                 text_x,
                 ph_y,
                 palette.muted,
@@ -133,11 +159,10 @@ impl<'a> TextInput<'a> {
                 screen_h,
             );
         } else {
-            // Actual text content
-            let text_y = self.rect.y + (self.rect.h - TEXT_FONT_SIZE) * 0.5;
+            let text_y = self.rect.y + (self.rect.h - font_size) * 0.5;
             text_renderer.queue(
                 self.text,
-                TEXT_FONT_SIZE,
+                font_size,
                 text_x,
                 text_y,
                 palette.text,
@@ -145,28 +170,16 @@ impl<'a> TextInput<'a> {
                 screen_w,
                 screen_h,
             );
-
-            // -- Caret (drawn after text when focused) --
-            if self.focused {
-                // Approximate caret position at end of text
-                let caret_x = text_x + self.text.len() as f32 * TEXT_FONT_SIZE * 0.52;
-                let caret_x = caret_x.min(self.rect.x + self.rect.w - TEXT_PAD_X);
-                let caret_y = self.rect.y + (self.rect.h - TEXT_FONT_SIZE) * 0.5;
-                let caret_h = TEXT_FONT_SIZE + 2.0;
-                painter.rect_filled(
-                    Rect::new(caret_x, caret_y, CARET_WIDTH, caret_h),
-                    0.0,
-                    palette.text.with_alpha(0.85),
-                );
-            }
         }
 
-        // -- Caret for empty + focused --
-        if self.text.is_empty() && self.focused {
-            let caret_y = self.rect.y + (self.rect.h - TEXT_FONT_SIZE) * 0.5;
-            let caret_h = TEXT_FONT_SIZE + 2.0;
+        // -- Caret --
+        if self.focused {
+            let caret_x = text_x + caret_char as f32 * font_size * 0.52;
+            let caret_x = caret_x.min(self.rect.x + self.rect.w - text_pad_x);
+            let caret_y = self.rect.y + (self.rect.h - font_size) * 0.5;
+            let caret_h = font_size + 2.0 * s;
             painter.rect_filled(
-                Rect::new(text_x, caret_y, CARET_WIDTH, caret_h),
+                Rect::new(caret_x, caret_y, caret_w, caret_h),
                 0.0,
                 palette.text.with_alpha(0.85),
             );

@@ -3007,6 +3007,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "image",
+ "libc",
  "lntrn-render",
  "lntrn-ui",
  "raw-window-handle",
@@ -3067,6 +3068,9 @@ version = "0.1.0"
 dependencies = [
  "lntrn-render",
  "lntrn-ui",
+ "nix",
+ "wayland-client",
+ "wayland-protocols-wlr",
  "winit",
 ]
 
@@ -3206,6 +3210,11 @@ version = "0.1.0"
 dependencies = [
  "lntrn-render",
  "lntrn-theme",
+ "raw-window-handle",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
+ "wgpu 28.0.0",
 ]
 
 [[package]]

@@ -8,3 +8,8 @@ edition = "2021"
 [dependencies]
 lntrn-render = { path = "../lntrn-render" }
 lntrn-theme = { path = "../lntrn-theme" }
+raw-window-handle = "0.6"
+wayland-backend = { version = "0.3", features = ["client_system"] }
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
+wgpu = "28"

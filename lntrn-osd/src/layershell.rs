@@ -413,7 +413,7 @@ pub fn run(mut mode: OsdMode, sock: UnixDatagram) -> Result<()> {
         match gpu.begin_frame("OSD") {
             Ok(mut frame) => {
                 let view = frame.view().clone();
-                painter.render_pass(&gpu, frame.encoder_mut(), &view, Color::TRANSPARENT);
+                painter.render_pass(&gpu, frame.encoder_mut(), &view, palette.surface.with_alpha(0.0));
                 if !tex_draws.is_empty() {
                     tex_pass.render_pass(&gpu, frame.encoder_mut(), &view, &tex_draws, None);
                 }

@@ -1,0 +1,12 @@
+/home/alva/Documents/Projects/Lantern-DE/lntrn-app-template/target/debug/deps/glyphon-6b3740f44aeafbee.d: /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.10.0/src/lib.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.10.0/src/cache.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.10.0/src/custom_glyph.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.10.0/src/error.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.10.0/src/text_atlas.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.10.0/src/text_render.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.10.0/src/viewport.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.10.0/src/shader.wgsl
+
+/home/alva/Documents/Projects/Lantern-DE/lntrn-app-template/target/debug/deps/libglyphon-6b3740f44aeafbee.rmeta: /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.10.0/src/lib.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.10.0/src/cache.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.10.0/src/custom_glyph.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.10.0/src/error.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.10.0/src/text_atlas.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.10.0/src/text_render.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.10.0/src/viewport.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.10.0/src/shader.wgsl
+
+/home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.10.0/src/lib.rs:
+/home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.10.0/src/cache.rs:
+/home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.10.0/src/custom_glyph.rs:
+/home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.10.0/src/error.rs:
+/home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.10.0/src/text_atlas.rs:
+/home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.10.0/src/text_render.rs:
+/home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.10.0/src/viewport.rs:
+/home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/glyphon-0.10.0/src/shader.wgsl:

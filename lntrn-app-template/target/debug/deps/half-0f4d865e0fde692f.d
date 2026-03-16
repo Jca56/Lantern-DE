@@ -1,0 +1,13 @@
+/home/alva/Documents/Projects/Lantern-DE/lntrn-app-template/target/debug/deps/half-0f4d865e0fde692f.d: /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/lib.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/bfloat.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/bfloat/convert.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/binary16.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/binary16/arch.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/binary16/arch/x86.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/leading_zeros.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/num_traits.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/slice.rs
+
+/home/alva/Documents/Projects/Lantern-DE/lntrn-app-template/target/debug/deps/libhalf-0f4d865e0fde692f.rmeta: /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/lib.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/bfloat.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/bfloat/convert.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/binary16.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/binary16/arch.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/binary16/arch/x86.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/leading_zeros.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/num_traits.rs /home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/slice.rs
+
+/home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/lib.rs:
+/home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/bfloat.rs:
+/home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/bfloat/convert.rs:
+/home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/binary16.rs:
+/home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/binary16/arch.rs:
+/home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/binary16/arch/x86.rs:
+/home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/leading_zeros.rs:
+/home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/num_traits.rs:
+/home/alva/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/half-2.7.1/src/slice.rs:

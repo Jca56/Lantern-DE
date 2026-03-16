@@ -1,5 +1,8 @@
+mod clipboard;
 mod editor;
 mod render;
+
+use std::time::Instant;
 
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
@@ -8,8 +11,9 @@ use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{CursorIcon, ResizeDirection, Window, WindowAttributes, WindowId};
 
 use lntrn_render::{GpuContext, Painter, TextRenderer};
-use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea};
+use lntrn_ui::gpu::{FoxPalette, InteractionContext, MenuBar, MenuEvent, ScrollArea};
 
+use clipboard::WaylandClipboard;
 use editor::Editor;
 
 // ── Hit zone IDs ────────────────────────────────────────────────────────────
@@ -18,16 +22,17 @@ const ZONE_CLOSE: u32 = 1;
 const ZONE_MAXIMIZE: u32 = 2;
 const ZONE_MINIMIZE: u32 = 3;
 const ZONE_EDITOR: u32 = 10;
-const ZONE_SAVE: u32 = 20;
-const ZONE_OPEN: u32 = 21;
-const ZONE_NEW: u32 = 22;
+
+// ── Menu item IDs ───────────────────────────────────────────────────────────
+
+const MENU_NEW: u32 = 100;
+const MENU_OPEN: u32 = 101;
+const MENU_SAVE: u32 = 102;
 
 // ── Main ────────────────────────────────────────────────────────────────────
 
 fn main() {
-    // Accept optional file path argument
     let file_path = std::env::args().nth(1);
-
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     let mut handler = TextHandler::new(file_path);
     event_loop.run_app(&mut handler).expect("Event loop failed");
@@ -43,15 +48,22 @@ struct Gpu {
 
 // ── Handler ─────────────────────────────────────────────────────────────────
 
+/// Cursor blink: 530ms on, 530ms off.
+const BLINK_INTERVAL_MS: u128 = 530;
+
 struct TextHandler {
     window: Option<Window>,
     gpu: Option<Gpu>,
     editor: Editor,
     input: InteractionContext,
+    menu_bar: MenuBar,
+    clipboard: Option<WaylandClipboard>,
     palette: FoxPalette,
     scale: f32,
     needs_redraw: bool,
     modifiers: ModifiersState,
+    cursor_blink_time: Instant,
+    dragging: bool,
 }
 
 impl TextHandler {
@@ -60,15 +72,20 @@ impl TextHandler {
         if let Some(path) = file_path {
             let _ = editor.load_file(std::path::PathBuf::from(path));
         }
+        let palette = FoxPalette::dark();
         Self {
             window: None,
             gpu: None,
             editor,
             input: InteractionContext::new(),
-            palette: FoxPalette::dark(),
+            menu_bar: MenuBar::new(&palette),
+            clipboard: WaylandClipboard::new(),
+            palette,
             scale: 1.0,
             needs_redraw: true,
             modifiers: ModifiersState::empty(),
+            cursor_blink_time: Instant::now(),
+            dragging: false,
         }
     }
 
@@ -113,8 +130,16 @@ impl TextHandler {
         event_loop.exit();
     }
 
+    fn reset_blink(&mut self) {
+        self.cursor_blink_time = Instant::now();
+    }
+
+    fn cursor_visible(&self) -> bool {
+        let elapsed = self.cursor_blink_time.elapsed().as_millis();
+        (elapsed / BLINK_INTERVAL_MS) % 2 == 0
+    }
+
     fn open_file_dialog(&mut self) {
-        // Simple: read path from stdin replacement — use zenity if available
         let output = std::process::Command::new("zenity")
             .args(["--file-selection", "--title=Open File"])
             .output();
@@ -143,6 +168,31 @@ impl TextHandler {
                     self.editor.file_path = Some(std::path::PathBuf::from(path));
                     let _ = self.editor.save_file();
                 }
+            }
+        }
+    }
+
+    fn do_copy(&mut self) {
+        if let Some(text) = self.editor.selected_text() {
+            if let Some(cb) = &self.clipboard {
+                cb.set_text(&text);
+            }
+        }
+    }
+
+    fn do_cut(&mut self) {
+        if let Some(text) = self.editor.selected_text() {
+            if let Some(cb) = &self.clipboard {
+                cb.set_text(&text);
+            }
+            self.editor.delete_selection();
+        }
+    }
+
+    fn do_paste(&mut self) {
+        if let Some(cb) = &self.clipboard {
+            if let Some(text) = cb.get_text() {
+                self.editor.insert_str(&text);
             }
         }
     }
@@ -203,8 +253,13 @@ impl ApplicationHandler for TextHandler {
             WindowEvent::CursorMoved { position, .. } => {
                 let (cx, cy) = (position.x as f32, position.y as f32);
                 self.input.on_cursor_moved(cx, cy);
-                // Update cursor icon for resize edges
-                if let Some(dir) = self.edge_resize_direction() {
+
+                if self.dragging {
+                    let s = self.scale;
+                    let (wf, hf) = self.window_size();
+                    self.editor.click_to_position(cx, cy, wf, hf, s);
+                    self.reset_blink();
+                } else if let Some(dir) = self.edge_resize_direction() {
                     if let Some(w) = &self.window {
                         w.set_cursor(CursorIcon::from(dir));
                     }
@@ -233,6 +288,13 @@ impl ApplicationHandler for TextHandler {
                             return;
                         }
 
+                        // Let menu bar handle clicks first
+                        let menus = render::file_menu_items();
+                        if self.menu_bar.on_click(&mut self.input, &menus, self.scale) {
+                            self.needs_redraw = true;
+                            return;
+                        }
+
                         if let Some(zone_id) = self.input.on_left_pressed() {
                             match zone_id {
                                 ZONE_CLOSE => {
@@ -249,19 +311,16 @@ impl ApplicationHandler for TextHandler {
                                         w.set_maximized(!w.is_maximized());
                                     }
                                 }
-                                ZONE_SAVE => self.save_file_dialog(),
-                                ZONE_OPEN => self.open_file_dialog(),
-                                ZONE_NEW => {
-                                    self.editor = Editor::new();
-                                }
                                 ZONE_EDITOR => {
-                                    // Click in editor — place cursor
+                                    self.editor.clear_selection();
                                     if let Some((cx, cy)) = self.input.cursor() {
                                         let s = self.scale;
                                         let (wf, hf) = self.window_size();
                                         self.editor.click_to_position(
                                             cx, cy, wf, hf, s,
                                         );
+                                        self.editor.begin_selection();
+                                        self.dragging = true;
                                     }
                                 }
                                 _ => {}
@@ -276,6 +335,13 @@ impl ApplicationHandler for TextHandler {
                     }
                     (MouseButton::Left, ElementState::Released) => {
                         self.input.on_left_released();
+                        if self.dragging {
+                            self.dragging = false;
+                            // If anchor == cursor, it was just a click — clear selection
+                            if !self.editor.has_selection() {
+                                self.editor.clear_selection();
+                            }
+                        }
                         self.needs_redraw = true;
                     }
                     _ => {}
@@ -305,27 +371,47 @@ impl ApplicationHandler for TextHandler {
                     return;
                 }
 
+                // Close menu on Escape
+                if event.logical_key == Key::Named(NamedKey::Escape) {
+                    if self.menu_bar.is_open() {
+                        self.menu_bar.close();
+                        self.needs_redraw = true;
+                        return;
+                    }
+                }
+
                 let ctrl = self.modifiers.contains(ModifiersState::CONTROL);
+                let shift = self.modifiers.contains(ModifiersState::SHIFT);
 
                 match &event.logical_key {
+                    Key::Character(s) if ctrl && shift => {
+                        match s.as_str() {
+                            "Z" | "z" => self.editor.redo(),
+                            _ => {}
+                        }
+                    }
                     Key::Character(s) if ctrl => {
                         match s.as_str() {
                             "s" => self.save_file_dialog(),
                             "o" => self.open_file_dialog(),
                             "n" => self.editor = Editor::new(),
                             "a" => self.editor.select_all(),
+                            "c" => self.do_copy(),
+                            "x" => self.do_cut(),
+                            "v" => self.do_paste(),
+                            "z" => self.editor.undo(),
                             _ => {}
                         }
                     }
                     Key::Named(NamedKey::Enter) => self.editor.insert_char('\n'),
                     Key::Named(NamedKey::Backspace) => self.editor.backspace(),
                     Key::Named(NamedKey::Delete) => self.editor.delete(),
-                    Key::Named(NamedKey::ArrowLeft) => self.editor.move_left(),
-                    Key::Named(NamedKey::ArrowRight) => self.editor.move_right(),
-                    Key::Named(NamedKey::ArrowUp) => self.editor.move_up(),
-                    Key::Named(NamedKey::ArrowDown) => self.editor.move_down(),
-                    Key::Named(NamedKey::Home) => self.editor.home(),
-                    Key::Named(NamedKey::End) => self.editor.end(),
+                    Key::Named(NamedKey::ArrowLeft) => self.editor.move_left(shift),
+                    Key::Named(NamedKey::ArrowRight) => self.editor.move_right(shift),
+                    Key::Named(NamedKey::ArrowUp) => self.editor.move_up(shift),
+                    Key::Named(NamedKey::ArrowDown) => self.editor.move_down(shift),
+                    Key::Named(NamedKey::Home) => self.editor.home(shift),
+                    Key::Named(NamedKey::End) => self.editor.end(shift),
                     Key::Named(NamedKey::Space) => self.editor.insert_char(' '),
                     Key::Named(NamedKey::Tab) => self.editor.insert_str("    "),
                     Key::Character(s) if !ctrl => {
@@ -335,18 +421,40 @@ impl ApplicationHandler for TextHandler {
                     }
                     _ => {}
                 }
+                self.reset_blink();
                 self.needs_redraw = true;
             }
 
             WindowEvent::RedrawRequested => {
+                let cursor_vis = self.cursor_visible();
                 if let Some(gpu) = &mut self.gpu {
-                    render::render_frame(
+                    let event = render::render_frame(
                         gpu,
                         &mut self.editor,
                         &mut self.input,
+                        &mut self.menu_bar,
                         &self.palette,
                         self.scale,
+                        cursor_vis,
                     );
+                    if let Some(evt) = event {
+                        match evt {
+                            MenuEvent::Action(MENU_NEW) => {
+                                self.editor = Editor::new();
+                                self.menu_bar.close();
+                            }
+                            MenuEvent::Action(MENU_OPEN) => {
+                                self.menu_bar.close();
+                                self.open_file_dialog();
+                            }
+                            MenuEvent::Action(MENU_SAVE) => {
+                                self.menu_bar.close();
+                                self.save_file_dialog();
+                            }
+                            _ => {}
+                        }
+                        self.needs_redraw = true;
+                    }
                 }
                 self.needs_redraw = false;
             }
@@ -354,10 +462,9 @@ impl ApplicationHandler for TextHandler {
             _ => {}
         }
 
-        if self.needs_redraw {
-            if let Some(window) = &self.window {
-                window.request_redraw();
-            }
+        // Always request redraws for cursor blink
+        if let Some(window) = &self.window {
+            window.request_redraw();
         }
     }
 }
