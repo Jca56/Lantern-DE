@@ -25,6 +25,7 @@ members = [
     "lntrn-notepad",
     "lntrn-browser",
     "lntrn-snapshot",
+    "lntrn-portal",
 ]
 
 [profile.release]

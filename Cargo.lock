@@ -3111,6 +3111,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lntrn-portal"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "libc",
+ "tokio",
+ "zbus",
+]
+
+[[package]]
 name = "lntrn-render"
 version = "0.1.0"
 dependencies = [
