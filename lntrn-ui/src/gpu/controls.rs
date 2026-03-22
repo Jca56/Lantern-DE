@@ -41,13 +41,13 @@ impl Slider {
     }
 
     pub fn draw(&self, painter: &mut Painter, palette: &FoxPalette) {
-        let track_h = 10.0;
+        let track_h = 14.0;
         let track_y = self.rect.y + (self.rect.h - track_h) * 0.5;
         let track = Rect::new(self.rect.x, track_y, self.rect.w, track_h);
         let fill_w = (track.w * self.value).clamp(track_h, track.w.max(track_h));
         let fill = Rect::new(track.x, track.y, fill_w, track.h);
         let thumb_x = track.x + track.w * self.value;
-        let thumb_r = if self.active { 11.0 } else if self.hovered { 10.0 } else { 9.0 };
+        let thumb_r = if self.active { 12.0 } else if self.hovered { 11.0 } else { 10.0 };
 
         painter.rect_filled(track, track_h * 0.5, palette.surface_2.with_alpha(0.95));
         painter.rect_stroke(track, track_h * 0.5, 1.0, palette.text_secondary.with_alpha(0.16));
@@ -84,6 +84,7 @@ pub struct Button<'a> {
     pub variant: ButtonVariant,
     pub hovered: bool,
     pub pressed: bool,
+    pub scale: f32,
 }
 
 impl<'a> Button<'a> {
@@ -94,6 +95,7 @@ impl<'a> Button<'a> {
             variant: ButtonVariant::Default,
             hovered: false,
             pressed: false,
+            scale: 1.0,
         }
     }
 
@@ -112,6 +114,11 @@ impl<'a> Button<'a> {
         self
     }
 
+    pub fn scale(mut self, s: f32) -> Self {
+        self.scale = s;
+        self
+    }
+
     pub fn draw(
         &self,
         painter: &mut Painter,
@@ -120,12 +127,13 @@ impl<'a> Button<'a> {
         screen_w: u32,
         screen_h: u32,
     ) {
+        let s = self.scale;
         let (bg, text_color) = self.resolve_colors(palette);
-        let radius = 6.0;
+        let radius = 6.0 * s;
 
         painter.rect_filled(self.rect, radius, bg);
 
-        let font_size = 20.0;
+        let font_size = 20.0 * s;
         let text_x = self.rect.x + self.rect.w * 0.5 - (self.label.len() as f32 * font_size * 0.3);
         let text_y = self.rect.y + (self.rect.h - font_size) * 0.5;
         text.queue(

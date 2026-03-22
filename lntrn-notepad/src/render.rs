@@ -1,26 +1,74 @@
-use lntrn_render::{Color, Rect};
+use lntrn_render::{Color, FontStyle, FontWeight, Rect, TextRenderer};
 use lntrn_ui::gpu::{
     FontSize, FoxPalette, InteractionContext, MenuBar, MenuEvent, MenuItem, TextLabel, TitleBar,
 };
 
 use crate::editor::{self, Editor};
-use crate::{Gpu, MENU_NEW, MENU_OPEN, MENU_SAVE, ZONE_CLOSE, ZONE_EDITOR, ZONE_MAXIMIZE, ZONE_MINIMIZE};
+use crate::format::FormatSpan;
+use crate::toolbar::{self, FormatToolbar};
+use crate::{
+    Gpu, MENU_NEW, MENU_OPEN, MENU_SAVE, MENU_SAVE_DOCX, ZONE_CLOSE, ZONE_EDITOR, ZONE_MAXIMIZE,
+    ZONE_MINIMIZE,
+};
 
 pub const TITLE_BAR_H: f32 = 52.0;
+pub const TOOLBAR_H: f32 = 40.0;
 
 pub fn editor_rect(wf: f32, hf: f32, s: f32) -> Rect {
-    let top = TITLE_BAR_H * s;
+    let top = (TITLE_BAR_H + TOOLBAR_H) * s;
     Rect::new(0.0, top, wf, hf - top)
 }
 
 pub fn file_menu_items() -> Vec<(&'static str, Vec<MenuItem>)> {
-    vec![
-        ("File", vec![
+    vec![(
+        "File",
+        vec![
             MenuItem::action_with(MENU_NEW, "New", "Ctrl+N"),
             MenuItem::action_with(MENU_OPEN, "Open", "Ctrl+O"),
             MenuItem::action_with(MENU_SAVE, "Save", "Ctrl+S"),
-        ]),
-    ]
+            MenuItem::action_with(MENU_SAVE_DOCX, "Export .docx", ""),
+        ],
+    )]
+}
+
+/// Measure the x-offset from content_x to a byte offset within a line,
+/// accounting for per-span font size and weight/style.
+fn measure_to_offset(
+    text: &mut TextRenderer,
+    editor: &Editor,
+    line: usize,
+    byte_offset: usize,
+    default_font_size: f32,
+) -> f32 {
+    if byte_offset == 0 {
+        return 0.0;
+    }
+    let line_str = &editor.lines[line];
+    let spans = editor.formats.get(line).iter_spans(line_str.len());
+    let mut x = 0.0;
+    for span in &spans {
+        if span.start >= byte_offset {
+            break;
+        }
+        let end = span.end.min(byte_offset);
+        let span_text = &line_str[span.start..end];
+        if !span_text.is_empty() {
+            let (fs, weight, style) = span_rendering(&span, default_font_size);
+            x += text.measure_width_styled(span_text, fs, weight, style);
+        }
+        if span.end >= byte_offset {
+            break;
+        }
+    }
+    x
+}
+
+/// Convert a FormatSpan's attrs into (font_size, FontWeight, FontStyle).
+fn span_rendering(span: &FormatSpan, default_font_size: f32) -> (f32, FontWeight, FontStyle) {
+    let fs = span.attrs.font_size.unwrap_or(default_font_size);
+    let weight = if span.attrs.bold { FontWeight::Bold } else { FontWeight::Normal };
+    let style = if span.attrs.italic { FontStyle::Italic } else { FontStyle::Normal };
+    (fs, weight, style)
 }
 
 pub fn render_frame(
@@ -28,6 +76,7 @@ pub fn render_frame(
     editor: &mut Editor,
     input: &mut InteractionContext,
     menu_bar: &mut MenuBar,
+    fmt_toolbar: &mut FormatToolbar,
     palette: &FoxPalette,
     scale: f32,
     cursor_visible: bool,
@@ -66,11 +115,14 @@ pub fn render_frame(
     let labels: Vec<&str> = menus.iter().map(|(l, _)| *l).collect();
     menu_bar.draw_with_labels(painter, text, pal, &labels, w, h, s);
 
+    // ── Formatting toolbar ────────────────────────────────────────────
+    let fmt_state = editor.selection_format_state();
+    toolbar::draw_toolbar(fmt_toolbar, &fmt_state, painter, text, input, pal, wf, s, w, h);
+
     // ── Editor area ───────────────────────────────────────────────────
     let er = editor_rect(wf, hf, s);
     input.add_zone(ZONE_EDITOR, er);
 
-    // Editor background (lightened for readability)
     let editor_bg = Color::from_rgb8(70, 70, 74);
     painter.rect_filled(er, 0.0, editor_bg);
 
@@ -81,7 +133,6 @@ pub fn render_frame(
     let text_y_start = er.y + pad - editor.scroll_offset;
     let max_text_w = (er.w - pad * 2.0).max(10.0);
 
-    // Draw line numbers and text lines
     let first_visible = ((editor.scroll_offset - pad) / line_h).floor().max(0.0) as usize;
     let visible_lines = ((er.h + line_h) / line_h).ceil() as usize + 1;
     let last_visible = (first_visible + visible_lines).min(editor.lines.len());
@@ -96,9 +147,10 @@ pub fn render_frame(
     if let Some((sel_start, sel_end)) = editor.selection_range() {
         for i in first_visible..last_visible {
             let y = text_y_start + i as f32 * line_h;
-            if y + line_h < er.y || y > er.y + er.h { continue; }
+            if y + line_h < er.y || y > er.y + er.h {
+                continue;
+            }
 
-            // Determine selection span on this line
             let line_len = editor.lines[i].len();
             let (sel_begin, sel_finish) = if i < sel_start.line || i > sel_end.line {
                 continue;
@@ -112,13 +164,8 @@ pub fn render_frame(
                 (0, line_len)
             };
 
-            let x1 = content_x + text.measure_width(
-                &editor.lines[i][..sel_begin], font_size,
-            );
-            let x2 = content_x + text.measure_width(
-                &editor.lines[i][..sel_finish], font_size,
-            );
-            // For lines that are fully selected, extend highlight to show newline
+            let x1 = content_x + measure_to_offset(text, editor, i, sel_begin, font_size);
+            let x2 = content_x + measure_to_offset(text, editor, i, sel_finish, font_size);
             let extra = if i != sel_end.line && sel_finish == line_len {
                 font_size * 0.4
             } else {
@@ -134,9 +181,9 @@ pub fn render_frame(
         }
     }
 
+    // ── Draw text lines with formatting spans ─────────────────────────
     for i in first_visible..last_visible {
         let y = text_y_start + i as f32 * line_h;
-
         if y + line_h < er.y || y > er.y + er.h {
             continue;
         }
@@ -148,29 +195,41 @@ pub fn render_frame(
             .color(pal.muted)
             .draw(text, w, h);
 
-        // Line content
-        if !editor.lines[i].is_empty() {
-            text.queue(
-                &editor.lines[i],
-                font_size,
-                content_x,
-                y,
-                pal.text,
-                content_max_w,
-                w,
-                h,
-            );
+        // Line content — iterate format spans
+        let line_str = &editor.lines[i];
+        if line_str.is_empty() {
+            continue;
+        }
+        let spans = editor.formats.get(i).iter_spans(line_str.len());
+        let mut x = content_x;
+        for span in &spans {
+            let span_text = &line_str[span.start..span.end];
+            if span_text.is_empty() {
+                continue;
+            }
+            let (fs, weight, style) = span_rendering(span, font_size);
+            text.queue_styled(span_text, fs, x, y, pal.text, content_max_w, weight, style, w, h);
+            let span_w = text.measure_width_styled(span_text, fs, weight, style);
+
+            // Underline
+            if span.attrs.underline {
+                let ul_y = y + fs + 2.0;
+                painter.line(x, ul_y, x + span_w, ul_y, 1.5 * s, pal.text);
+            }
+            // Strikethrough
+            if span.attrs.strikethrough {
+                let st_y = y + fs * 0.55;
+                painter.line(x, st_y, x + span_w, st_y, 1.5 * s, pal.text);
+            }
+
+            x += span_w;
         }
     }
 
     // ── Status bar ────────────────────────────────────────────────────
     let status_h = 28.0 * s;
     let status_y = hf - status_h;
-    painter.rect_filled(
-        Rect::new(0.0, status_y, wf, status_h),
-        0.0,
-        pal.surface_2,
-    );
+    painter.rect_filled(Rect::new(0.0, status_y, wf, status_h), 0.0, pal.surface_2);
 
     let status_text = format!(
         "Ln {}, Col {}  |  {} lines",
@@ -191,18 +250,16 @@ pub fn render_frame(
     // ── Submit frame ──────────────────────────────────────────────────
     match ctx.begin_frame("lntrn-notepad") {
         Ok(mut frame) => {
-            // Pass 1: background, UI chrome, context menu shapes
             painter.render_into(ctx, &mut frame, pal.bg);
 
-            // Pass 2: text (labels + editor + context menu text)
             let view = frame.view().clone();
             text.render_queued(ctx, frame.encoder_mut(), &view);
 
-            // Pass 3: cursor overlay (on top of text)
+            // Cursor overlay (on top of text)
             if cursor_visible {
                 let cursor_y = text_y_start + editor.cursor_line as f32 * line_h;
-                let before_cursor = &editor.lines[editor.cursor_line][..editor.cursor_col];
-                let cursor_x = content_x + text.measure_width(before_cursor, font_size);
+                let cursor_x = content_x
+                    + measure_to_offset(text, editor, editor.cursor_line, editor.cursor_col, font_size);
 
                 if cursor_y + line_h > er.y && cursor_y < er.y + er.h {
                     painter.clear();
@@ -211,11 +268,7 @@ pub fn render_frame(
                         0.0,
                         pal.accent,
                     );
-                    painter.render_pass_overlay(
-                        ctx,
-                        frame.encoder_mut(),
-                        &view,
-                    );
+                    painter.render_pass_overlay(ctx, frame.encoder_mut(), &view);
                 }
             }
 

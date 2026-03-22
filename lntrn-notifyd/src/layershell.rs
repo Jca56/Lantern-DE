@@ -26,6 +26,29 @@ const SLIDE_IN_SECS: f32 = 0.35;
 const SLIDE_OUT_SECS: f32 = 0.25;
 const CRITICAL_DISPLAY_SECS: f32 = 10.0;
 
+fn notification_sound_path() -> Option<std::path::PathBuf> {
+    let xdg_data = std::env::var("XDG_DATA_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+            std::path::PathBuf::from(home).join(".local/share")
+        });
+    let path = xdg_data.join("lantern/notification.mp3");
+    if path.exists() { Some(path) } else { None }
+}
+
+fn play_notification_sound() {
+    if let Some(path) = notification_sound_path() {
+        std::thread::spawn(move || {
+            let _ = std::process::Command::new("pw-play")
+                .arg(&path)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        });
+    }
+}
+
 struct WaylandHandle {
     display: NonNull<c_void>,
     surface: NonNull<c_void>,
@@ -302,7 +325,7 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>) -> Result<()> {
     let palette = FoxPalette::dark();
 
     let mut active: Vec<ActiveNotification> = Vec::new();
-    let mut needs_clear = false;
+    let mut needs_clear = true; // Force an initial transparent frame on first loop iteration
 
     // Set wayland fd to non-blocking for poll-based dispatch
     let wl_fd = conn.as_fd().as_raw_fd();
@@ -320,10 +343,14 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>) -> Result<()> {
         while let Ok(event) = rx.try_recv() {
             match event {
                 NotifyEvent::Show(notif) => {
+                    let is_new = !active.iter().any(|a| a.id == notif.id);
                     if let Some(existing) = active.iter_mut().find(|a| a.id == notif.id) {
                         *existing = ActiveNotification::from_notification(&notif);
                     } else {
                         active.push(ActiveNotification::from_notification(&notif));
+                    }
+                    if is_new {
+                        play_notification_sound();
                     }
                 }
                 NotifyEvent::Close(id) => {
@@ -387,7 +414,7 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>) -> Result<()> {
         match gpu.begin_frame("Notifications") {
             Ok(mut frame) => {
                 let view = frame.view().clone();
-                painter.render_pass(&gpu, frame.encoder_mut(), &view, palette.surface.with_alpha(0.0));
+                painter.render_pass(&gpu, frame.encoder_mut(), &view, Color::rgba(0.0, 0.0, 0.0, 0.0));
                 text.render_queued(&gpu, frame.encoder_mut(), &view);
                 frame.submit(&gpu.queue);
             }

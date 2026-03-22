@@ -2,11 +2,15 @@ use std::ffi::c_void;
 use std::ptr::NonNull;
 
 use anyhow::{anyhow, Result};
-use lntrn_render::{GpuContext, Painter, Rect, TextRenderer};
+use lntrn_render::{Color, GpuContext, GpuTexture, Painter, Rect, TextureDraw, TexturePass, TextRenderer};
 use lntrn_ui::gpu::{
-    FoxPalette, GradientStrip, InteractionContext, MenuBar, MenuItem, PopupSurface, TitleBar,
+    FoxPalette, GradientStrip, InteractionContext, PopupSurface, TitleBar,
     WaylandPopupBackend,
 };
+
+use crate::config::LanternConfig;
+use crate::icons;
+use crate::panels::{self, PanelState};
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
     RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle, WindowHandle,
@@ -31,6 +35,24 @@ const ZONE_MINIMIZE: u32 = 102;
 const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
 const KEY_ESC: u32 = 1;
+
+const SIDEBAR_W: f32 = 220.0;
+const SIDEBAR_ITEM_H: f32 = 48.0;
+const ICON_SIZE: u32 = 48; // rasterized icon size in pixels
+const SIDEBAR_ICON_DRAW: f32 = 24.0; // logical draw size for icons
+
+const ZONE_SIDEBAR_BASE: u32 = 200;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Panel { Appearance, WindowManager, Input, Display, Power }
+
+const PANELS: &[(Panel, &str)] = &[
+    (Panel::Appearance, "Appearance"),
+    (Panel::WindowManager, "Window Manager"),
+    (Panel::Input, "Input"),
+    (Panel::Display, "Display"),
+    (Panel::Power, "Power"),
+];
 
 // ── WaylandHandle for wgpu ──────────────────────────────────────────────────
 
@@ -90,7 +112,6 @@ pub(crate) struct State {
     // Popup
     pub(crate) popup_backend: Option<WaylandPopupBackend<State>>,
     pub(crate) popup_closed: bool,
-    /// Which wl_surface the pointer is currently in (for routing to popups)
     pointer_surface: Option<wl_surface::WlSurface>,
 }
 
@@ -230,7 +251,6 @@ impl Dispatch<wl_seat::WlSeat, ()> for State {
         if let wl_seat::Event::Capabilities { capabilities: WEnum::Value(cap) } = event {
             if cap.contains(wl_seat::Capability::Pointer) {
                 let ptr = seat.get_pointer(qh, ());
-                // Create cursor shape device if manager is available
                 if let Some(mgr) = &state.cursor_shape_mgr {
                     state.cursor_shape_device = Some(mgr.get_pointer(&ptr, qh, ()));
                 }
@@ -291,14 +311,11 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
         state: &mut Self, _: &wl_keyboard::WlKeyboard,
         event: wl_keyboard::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
     ) {
-        match event {
-            wl_keyboard::Event::Key { key, state: key_state, .. } => {
-                if key_state == WEnum::Value(wl_keyboard::KeyState::Pressed) {
-                    state.key_pressed = Some(key);
-                }
-                state.frame_done = true;
+        if let wl_keyboard::Event::Key { key, state: key_state, .. } = event {
+            if key_state == WEnum::Value(wl_keyboard::KeyState::Pressed) {
+                state.key_pressed = Some(key);
             }
-            _ => {}
+            state.frame_done = true;
         }
     }
 }
@@ -362,14 +379,14 @@ pub fn run() -> Result<()> {
     let wm_base = state.wm_base.clone()
         .ok_or_else(|| anyhow!("xdg_wm_base not available"))?;
 
-    if state.width == 0 { state.width = 960; }
-    if state.height == 0 { state.height = 640; }
+    if state.width == 0 { state.width = 860; }
+    if state.height == 0 { state.height = 620; }
 
     let surface = compositor.create_surface(&qh, ());
     let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
     let toplevel = xdg_surface.get_toplevel(&qh, ());
-    toplevel.set_title("lntrn-ui-test".into());
-    toplevel.set_app_id("lntrn-ui-test".into());
+    toplevel.set_title("System Settings".into());
+    toplevel.set_app_id("lntrn-system-settings".into());
     toplevel.set_min_size(640, 480);
     surface.commit();
 
@@ -406,12 +423,8 @@ pub fn run() -> Result<()> {
     let mut text = TextRenderer::new(&gpu);
     let mut ix = InteractionContext::new();
     let fox = FoxPalette::dark();
-    let mut menu_bar = MenuBar::new(&fox);
-    let mut right_click_menu = lntrn_ui::gpu::ContextMenu::new(
-        lntrn_ui::gpu::ContextMenuStyle::from_palette(&fox),
-    );
 
-    // Initialize popup backend (clone xdg_surface to avoid borrow conflict)
+    // Initialize popup backend
     {
         let xdg_surf = state.xdg_surface.as_ref().unwrap().clone();
         let vp = state.viewporter.as_ref();
@@ -421,37 +434,28 @@ pub fn run() -> Result<()> {
         ));
     }
 
-    let menus: Vec<(&str, Vec<MenuItem>)> = vec![
-        ("File", vec![
-            MenuItem::action(1, "New"),
-            MenuItem::action_with(2, "Open", "Ctrl+O"),
-            MenuItem::action_with(3, "Save", "Ctrl+S"),
-            MenuItem::separator(),
-            MenuItem::action_with(4, "Quit", "Ctrl+Q"),
-        ]),
-        ("Edit", vec![
-            MenuItem::action_with(10, "Undo", "Ctrl+Z"),
-            MenuItem::action_with(11, "Redo", "Ctrl+Shift+Z"),
-            MenuItem::separator(),
-            MenuItem::action_with(12, "Cut", "Ctrl+X"),
-            MenuItem::action_with(13, "Copy", "Ctrl+C"),
-            MenuItem::action_with(14, "Paste", "Ctrl+V"),
-        ]),
-        ("View", vec![
-            MenuItem::toggle(20, "Dark Mode", true),
-            MenuItem::toggle(21, "Show Sidebar", true),
-            MenuItem::separator(),
-            MenuItem::action(22, "Zoom In"),
-            MenuItem::action(23, "Zoom Out"),
-        ]),
-        ("Help", vec![
-            MenuItem::action(30, "About"),
-        ]),
+    // Rasterize sidebar icons into GPU textures
+    let tex_pass = TexturePass::new(&gpu);
+    let icon_defs: [(Vec<icons::PathCmd>, Color); 5] = [
+        (icons::icon_appearance(),     Color::from_rgb8(229, 165, 75)),  // warm amber
+        (icons::icon_window_manager(), Color::from_rgb8(130, 170, 255)), // soft blue
+        (icons::icon_input(),          Color::from_rgb8(180, 140, 220)), // lavender
+        (icons::icon_display(),        Color::from_rgb8(100, 200, 180)), // teal
+        (icons::icon_power(),          Color::from_rgb8(120, 210, 120)), // green
     ];
+    let icon_textures: Vec<GpuTexture> = icon_defs.iter().map(|(cmds, color)| {
+        let rgba = icons::rasterize_path(cmds, 24.0, 24.0, ICON_SIZE, ICON_SIZE, *color);
+        tex_pass.upload(&gpu, &rgba, ICON_SIZE, ICON_SIZE)
+    }).collect();
+
+    let mut active_panel = Panel::Appearance;
+    let mut config = LanternConfig::load();
+    let mut saved_config = config.clone();
+    let mut panel_state = PanelState::new(&fox);
 
     while state.running {
         if let Err(e) = event_queue.blocking_dispatch(&mut state) {
-            eprintln!("[ui-test] dispatch error: {e}");
+            eprintln!("[system-settings] dispatch error: {e}");
             break;
         }
         if !state.frame_done { continue; }
@@ -472,35 +476,32 @@ pub fn run() -> Result<()> {
         let wf = gpu.width() as f32;
         let hf = gpu.height() as f32;
 
-        // Determine if pointer is on main surface or popup
+        // Pre-compute content area layout (needed for both click handling and rendering)
+        let title_h = TITLE_BAR_H * s;
+        let body_y = title_h + 4.0 * s; // strip height
+        let sidebar_w = SIDEBAR_W * s;
+        let content_x = sidebar_w + 1.0 * s;
+        let content_w = wf - content_x;
+        // header_size + padding
+        let panel_y = body_y + 22.0 * s + 16.0 * s + 12.0 * s + 1.0 * s + 16.0 * s;
+
+        // Pointer routing
         let pointer_on_popup = state.pointer_surface.as_ref().and_then(|ps| {
             state.popup_backend.as_ref()?.find_popup_id_by_wl_surface(ps)
         });
 
-        // Cursor — route to main or popup InteractionContext
         let cx = (state.cursor_x as f32) * s;
         let cy = (state.cursor_y as f32) * s;
         if pointer_on_popup.is_some() {
-            // Pointer is on a popup — don't send to main ix
             ix.on_cursor_left();
         } else if state.pointer_in_surface {
             ix.on_cursor_moved(cx, cy);
         } else {
             ix.on_cursor_left();
         }
-        // Route cursor to the active popup, clear it from all others
         if let Some(backend) = &mut state.popup_backend {
             let active = if state.pointer_in_surface { pointer_on_popup } else { None };
             backend.route_cursor(active, cx, cy);
-        }
-
-        // Tell the right-click menu which popup depth has the pointer
-        {
-            let depth = pointer_on_popup.and_then(|pid| {
-                (0..right_click_menu.popup_count())
-                    .find(|&d| right_click_menu.popup_id_at_depth(d) == Some(pid))
-            });
-            right_click_menu.set_pointer_depth(depth);
         }
 
         // Keyboard
@@ -511,7 +512,6 @@ pub fn run() -> Result<()> {
         // Left press
         if state.left_pressed {
             state.left_pressed = false;
-            // Route click to popup if pointer is on a popup
             if let Some(pid) = pointer_on_popup {
                 if let Some(backend) = &mut state.popup_backend {
                     if let Some(ctx) = backend.popup_render(pid) {
@@ -519,39 +519,62 @@ pub fn run() -> Result<()> {
                     }
                 }
             } else {
-            // Close right-click popup menu on any left click outside
-            if right_click_menu.is_open() {
-                if let Some(backend) = &mut state.popup_backend {
-                    right_click_menu.close_popups(backend);
-                }
-            }
-            let border = 10.0 * s;
-            if let Some(edge) = edge_resize(cx, cy, wf, hf, border) {
-                if let Some(seat) = &state.seat {
-                    toplevel.resize(seat, state.pointer_serial, edge);
-                }
-            } else if menu_bar.on_click(&mut ix, &menus, s) {
-                // Menu bar consumed the click
-            } else if let Some(zone_id) = ix.on_left_pressed() {
-                match zone_id {
-                    ZONE_CLOSE => { state.running = false; }
-                    ZONE_MINIMIZE => { toplevel.set_minimized(); }
-                    ZONE_MAXIMIZE => {
-                        if state.maximized { toplevel.unset_maximized(); }
-                        else { toplevel.set_maximized(); }
-                    }
-                    _ => {}
-                }
-            } else {
-                // Title bar drag (only if menu bar isn't open)
-                let title_h = TITLE_BAR_H * s;
-                if cy < title_h && !menu_bar.is_open() {
+                let border = 10.0 * s;
+                if let Some(edge) = edge_resize(cx, cy, wf, hf, border) {
                     if let Some(seat) = &state.seat {
-                        toplevel._move(seat, state.pointer_serial);
+                        toplevel.resize(seat, state.pointer_serial, edge);
+                    }
+                } else if let Some(zone_id) = ix.on_left_pressed() {
+                    match zone_id {
+                        ZONE_CLOSE => { state.running = false; }
+                        ZONE_MINIMIZE => { toplevel.set_minimized(); }
+                        ZONE_MAXIMIZE => {
+                            if state.maximized { toplevel.unset_maximized(); }
+                            else { toplevel.set_maximized(); }
+                        }
+                        id if id >= ZONE_SIDEBAR_BASE && id < ZONE_SIDEBAR_BASE + PANELS.len() as u32 => {
+                            active_panel = PANELS[(id - ZONE_SIDEBAR_BASE) as usize].0;
+                            panel_state.close_dropdown();
+                        }
+                        panels::ZONE_SAVE => {
+                            config.save();
+                            saved_config = config.clone();
+                        }
+                        panels::ZONE_CANCEL => {
+                            config = saved_config.clone();
+                        }
+                        id => {
+                            // If a context menu is open, let it handle its own clicks
+                            let menu_consumed = panel_state.dropdown_menu.is_open()
+                                && panel_state.dropdown_menu.contains(cx, cy);
+                            if !menu_consumed {
+                                match active_panel {
+                                    Panel::WindowManager => panels::handle_wm_click(&mut config, id),
+                                    Panel::Power => {
+                                        let pad_r = 32.0 * s;
+                                        let btn_w = 200.0 * s;
+                                        let btn_x = content_x + content_w - pad_r - btn_w;
+                                        let btn_h = 42.0 * s;
+                                        let row_h = 48.0 * s;
+                                        panels::handle_power_click(
+                                            &config, &mut panel_state, id,
+                                            btn_x, btn_w, btn_h, row_h, panel_y, s,
+                                        );
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    let title_h = TITLE_BAR_H * s;
+                    if cy < title_h {
+                        if let Some(seat) = &state.seat {
+                            toplevel._move(seat, state.pointer_serial);
+                        }
                     }
                 }
             }
-            } // end else (not on popup)
         }
 
         // Left release
@@ -568,52 +591,14 @@ pub fn run() -> Result<()> {
             }
         }
 
-        // Right press — open context menu via popup surface
+        // Right press (no context menu yet, just consume)
         if state.right_pressed {
             state.right_pressed = false;
-            menu_bar.close();
-            // Close any existing popup menu
-            if right_click_menu.is_open() {
-                if let Some(backend) = &mut state.popup_backend {
-                    right_click_menu.close_popups(backend);
-                }
-            }
-            right_click_menu.set_scale(s);
-            let items = vec![
-                MenuItem::action_with(50, "Cut", "Ctrl+X"),
-                MenuItem::action_with(51, "Copy", "Ctrl+C"),
-                MenuItem::action_with(52, "Paste", "Ctrl+V"),
-                MenuItem::separator(),
-                MenuItem::action(53, "Select All"),
-                MenuItem::separator(),
-                MenuItem::submenu(60, "Transform", vec![
-                    MenuItem::action(61, "Uppercase"),
-                    MenuItem::action(62, "Lowercase"),
-                    MenuItem::action(63, "Title Case"),
-                    MenuItem::separator(),
-                    MenuItem::action(64, "Sort Lines"),
-                    MenuItem::action(65, "Reverse Lines"),
-                ]),
-                MenuItem::separator(),
-                MenuItem::toggle(54, "Word Wrap", true),
-                MenuItem::checkbox(55, "Show Line Numbers", false),
-                MenuItem::separator(),
-                MenuItem::action(56, "Inspect Element"),
-            ];
-            // Use logical coordinates for popup positioning
-            let lx = state.cursor_x as i32;
-            let ly = state.cursor_y as i32;
-            if let Some(backend) = &mut state.popup_backend {
-                right_click_menu.open_popup(lx as f32, ly as f32, items, backend);
-            }
         }
 
-        // Handle popup_done (compositor dismissed popup)
+        // Handle popup_done
         if state.popup_closed {
             state.popup_closed = false;
-            if let Some(backend) = &mut state.popup_backend {
-                right_click_menu.close_popups(backend);
-            }
         }
 
         // Reset scroll
@@ -638,7 +623,7 @@ pub fn run() -> Result<()> {
         ix.begin_frame();
         painter.clear();
 
-        // Background — all corners rounded
+        // Background
         let win_r = if state.maximized { 0.0 } else { 10.0 * s };
         painter.rect_filled(Rect::new(0.0, 0.0, wf, hf), win_r, fox.bg);
 
@@ -659,49 +644,129 @@ pub fn run() -> Result<()> {
             .minimize_hovered(min_s.is_hovered())
             .draw(&mut painter, &fox);
 
-        // Menu bar in title bar content area
+        // Title text
+        let font_size = 18.0 * s;
+        let tb_content = TitleBar::new(tb_rect).scale(s).content_rect();
         let sw = gpu.width();
         let sh = gpu.height();
-        let content = TitleBar::new(tb_rect).scale(s).content_rect();
-        menu_bar.update(&mut ix, &menus, content, s);
-        let labels: Vec<&str> = menus.iter().map(|(l, _)| *l).collect();
-        menu_bar.draw_with_labels(&mut painter, &mut text, &fox, &labels, sw, sh, s);
+        text.queue(
+            "System Settings",
+            font_size,
+            tb_content.x + 8.0 * s,
+            tb_content.y + (tb_content.h - font_size) / 2.0,
+            fox.text,
+            wf,
+            sw,
+            sh,
+        );
 
         // Gradient strip below title bar
-        let strip_y = TITLE_BAR_H * s;
+        let strip_y = title_h;
         let mut strip = GradientStrip::new(0.0, strip_y, wf);
         strip.height = 4.0 * s;
         strip.draw(&mut painter);
 
-        // Context menus (drawn into painter on top of other shapes)
-        menu_bar.context_menu.update(0.016);
-        if let Some(evt) = menu_bar.context_menu.draw(
-            &mut painter, &mut text, &mut ix, sw, sh,
-        ) {
-            use lntrn_ui::gpu::MenuEvent;
-            if matches!(evt, MenuEvent::Action(_)) {
-                menu_bar.close();
+        // ── Sidebar ────────────────────────────────────────────────────
+        let item_h = SIDEBAR_ITEM_H * s;
+        let label_size = 16.0 * s;
+        let icon_draw = SIDEBAR_ICON_DRAW * s;
+        let mut tex_draws: Vec<TextureDraw> = Vec::new();
+
+        // Sidebar background (slightly lighter than window bg)
+        // Bottom-left corner must match the window radius so it doesn't cover the rounded corner
+        let sidebar_bl_r = if state.maximized { 0.0 } else { win_r };
+        painter.rect_4corner(
+            Rect::new(0.0, body_y, sidebar_w, hf - body_y),
+            [0.0, 0.0, sidebar_bl_r, 0.0], // only bottom-left rounded
+            fox.surface,
+        );
+        // Divider line between sidebar and content
+        painter.rect_filled(
+            Rect::new(sidebar_w, body_y, 1.0 * s, hf - body_y),
+            0.0,
+            fox.muted,
+        );
+
+        for (i, (panel, label)) in PANELS.iter().enumerate() {
+            let y = body_y + i as f32 * item_h;
+            let zone_id = ZONE_SIDEBAR_BASE + i as u32;
+            let rect = Rect::new(0.0, y, sidebar_w, item_h);
+            let zone_state = ix.add_zone(zone_id, rect);
+            let is_active = *panel == active_panel;
+
+            // Highlight active or hovered item
+            if is_active {
+                painter.rect_filled(rect, 0.0, fox.accent.with_alpha(0.2));
+                // Active indicator bar on the left
+                painter.rect_filled(
+                    Rect::new(0.0, y + 4.0 * s, 3.0 * s, item_h - 8.0 * s),
+                    2.0 * s,
+                    fox.accent,
+                );
+            } else if zone_state.is_hovered() {
+                painter.rect_filled(rect, 0.0, fox.text.with_alpha(0.06));
             }
+
+            // Icon
+            let icon_x = 16.0 * s;
+            let icon_y = y + (item_h - icon_draw) / 2.0;
+            let draw = TextureDraw::new(&icon_textures[i], icon_x, icon_y, icon_draw, icon_draw);
+            tex_draws.push(draw);
+
+            // Label text
+            let text_x = icon_x + icon_draw + 12.0 * s;
+            let text_y = y + (item_h - label_size) / 2.0;
+            let text_color = if is_active { fox.accent } else { fox.text };
+            text.queue(label, label_size, text_x, text_y, text_color, sidebar_w - text_x, sw, sh);
         }
 
-        // Right-click menu draws into popup surfaces
-        right_click_menu.update(0.016);
-        if let Some(backend) = &mut state.popup_backend {
-            backend.begin_frame_all();
-        }
-        if let Some(backend) = &mut state.popup_backend {
-            if let Some(evt) = right_click_menu.draw_popups(backend) {
-                use lntrn_ui::gpu::MenuEvent;
-                if matches!(evt, MenuEvent::Action(_)) {
-                    right_click_menu.close_popups(backend);
-                }
+        // ── Content area header ────────────────────────────────────────
+        let header_label = PANELS.iter().find(|(p, _)| *p == active_panel).map(|(_, l)| *l).unwrap_or("");
+        let header_size = 22.0 * s;
+        let header_y = body_y + 16.0 * s;
+        text.queue(header_label, header_size, content_x + 24.0 * s, header_y, fox.text, content_w, sw, sh);
+
+        // Separator under content header
+        let sep_y = header_y + header_size + 12.0 * s;
+        painter.rect_filled(
+            Rect::new(content_x + 16.0 * s, sep_y, content_w - 32.0 * s, 1.0 * s),
+            0.0,
+            fox.muted,
+        );
+
+        // ── Panel content ───────────────────────────────────────────────
+        match active_panel {
+            Panel::WindowManager => {
+                panels::draw_wm_panel(
+                    &mut config, &mut painter, &mut text, &mut ix, &fox,
+                    content_x, panel_y, content_w, s, sw, sh,
+                );
             }
+            Panel::Power => {
+                panels::draw_power_panel(
+                    &mut config, &mut panel_state, &mut painter, &mut text, &mut ix, &fox,
+                    content_x, panel_y, content_w, s, sw, sh,
+                );
+            }
+            _ => {}
         }
 
-        // Render pass — main window
-        if let Ok(mut frame) = gpu.begin_frame("ui-test") {
+        // Save/Cancel bar (only when config has unsaved changes)
+        let dirty = config != saved_config;
+        if dirty {
+            panels::draw_save_cancel_bar(
+                &mut painter, &mut text, &mut ix, &fox,
+                content_x, content_w, hf, s, sw, sh,
+            );
+        }
+
+        // ── Render pass ─────────────────────────────────────────────────
+        if let Ok(mut frame) = gpu.begin_frame("system-settings") {
             let view = frame.view().clone();
-            painter.render_pass(&gpu, frame.encoder_mut(), &view, fox.bg.with_alpha(0.0));
+            painter.render_pass(&gpu, frame.encoder_mut(), &view, Color::rgba(0.0, 0.0, 0.0, 0.0));
+            if !tex_draws.is_empty() {
+                tex_pass.render_pass(&gpu, frame.encoder_mut(), &view, &tex_draws, None);
+            }
             text.render_queued(&gpu, frame.encoder_mut(), &view);
             frame.submit(&gpu.queue);
         }

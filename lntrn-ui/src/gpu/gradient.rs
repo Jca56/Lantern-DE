@@ -9,7 +9,7 @@ pub struct GradientStrip {
     pub x: f32,
     pub y: f32,
     pub width: f32,
-    pub line_height: f32,
+    pub height: f32,
     pub colors: [Color; 5],
 }
 
@@ -21,7 +21,7 @@ impl GradientStrip {
             x,
             y,
             width,
-            line_height: 4.0,
+            height: 4.0,
             colors: c,
         }
     }
@@ -32,10 +32,10 @@ impl GradientStrip {
     }
 
     pub fn draw(&self, painter: &mut Painter) {
-        let rect = Rect::new(self.x, self.y, self.width, self.line_height);
+        let rect = Rect::new(self.x, self.y, self.width, self.height);
         let stops: Vec<(f32, Color)> = self.colors.iter().enumerate()
             .map(|(i, &c)| (i as f32 / (self.colors.len() - 1) as f32, c))
             .collect();
-        painter.rect_gradient_multi(rect, self.line_height * 0.5, 0.0, &stops);
+        painter.rect_gradient_multi(rect, self.height * 0.5, 0.0, &stops);
     }
 }

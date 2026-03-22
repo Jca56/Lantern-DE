@@ -3,18 +3,19 @@ use std::path::PathBuf;
 
 // ── Top-level Lantern config ─────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LanternConfig {
     pub appearance: AppearanceConfig,
     pub window_manager: WmConfig,
     pub input: InputConfig,
     pub display: DisplayConfig,
+    pub power: PowerConfig,
 }
 
 // ── Appearance ───────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppearanceConfig {
     pub theme: String,
@@ -38,7 +39,7 @@ impl Default for AppearanceConfig {
 
 // ── Window manager ───────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WmConfig {
     pub border_width: u32,
@@ -62,7 +63,7 @@ impl Default for WmConfig {
 
 // ── Input ────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct InputConfig {
     pub mouse_speed: f32,
@@ -88,7 +89,7 @@ impl Default for InputConfig {
 
 // ── Display ──────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DisplayConfig {
     pub resolution: String,
@@ -106,6 +107,36 @@ impl Default for DisplayConfig {
     }
 }
 
+// ── Power ───────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PowerConfig {
+    pub lid_close_action: String,       // "suspend", "hibernate", "lock", "nothing"
+    pub lid_close_on_ac: String,        // same options, when plugged in
+    pub dim_after: u32,                 // seconds before screen dims (0 = never)
+    pub idle_timeout: u32,              // seconds before idle action
+    pub idle_action: String,            // "suspend", "lock", "nothing"
+    pub low_battery_threshold: u32,     // percentage for warning
+    pub critical_battery_threshold: u32, // percentage for critical action
+    pub critical_battery_action: String, // "suspend", "hibernate", "shutdown", "nothing"
+}
+
+impl Default for PowerConfig {
+    fn default() -> Self {
+        Self {
+            lid_close_action: "suspend".into(),
+            lid_close_on_ac: "lock".into(),
+            dim_after: 120,
+            idle_timeout: 300,
+            idle_action: "suspend".into(),
+            low_battery_threshold: 15,
+            critical_battery_threshold: 5,
+            critical_battery_action: "hibernate".into(),
+        }
+    }
+}
+
 // ── Top-level default ────────────────────────────────────────────────────────
 
 impl Default for LanternConfig {
@@ -115,6 +146,7 @@ impl Default for LanternConfig {
             window_manager: WmConfig::default(),
             input: InputConfig::default(),
             display: DisplayConfig::default(),
+            power: PowerConfig::default(),
         }
     }
 }

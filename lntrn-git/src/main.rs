@@ -1,12 +1,11 @@
-mod config;
-mod icons;
-mod panels;
+mod app;
+mod git;
 mod popup_backend;
 mod wayland;
 
 fn main() {
     if let Err(e) = wayland::run() {
-        eprintln!("[system-settings] fatal: {e}");
+        eprintln!("[lntrn-git] fatal: {e}");
         std::process::exit(1);
     }
 }

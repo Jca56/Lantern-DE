@@ -136,7 +136,7 @@ impl<'a> TextInput<'a> {
         }
 
         // -- Text or placeholder --
-        let text_x = self.rect.x + text_pad_x;
+        let text_x_base = self.rect.x + text_pad_x;
         let max_text_w = (self.rect.w - text_pad_x * 2.0).max(10.0);
 
         // Determine caret character position
@@ -146,6 +146,32 @@ impl<'a> TextInput<'a> {
             0
         };
 
+        // Calculate scroll offset so cursor is always visible
+        let scroll_offset = if self.focused && !self.text.is_empty() {
+            let text_before_cursor = &self.text[..caret_char.min(self.text.len())];
+            let cursor_x = text_renderer.measure_width(text_before_cursor, font_size);
+            if cursor_x > max_text_w {
+                cursor_x - max_text_w + text_pad_x
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+
+        let text_x = text_x_base - scroll_offset;
+
+        // Clip text to input bounds
+        let clip_rect = Rect::new(
+            self.rect.x + text_pad_x, self.rect.y,
+            max_text_w, self.rect.h,
+        );
+        painter.push_clip(clip_rect);
+        text_renderer.push_clip([clip_rect.x, clip_rect.y, clip_rect.w, clip_rect.h]);
+
+        // Use a large max_width so glyphon never wraps — clipping handles overflow
+        let layout_w = 10000.0_f32;
+
         if self.text.is_empty() {
             let ph_y = self.rect.y + (self.rect.h - ph_font_size) * 0.5;
             text_renderer.queue(
@@ -154,7 +180,7 @@ impl<'a> TextInput<'a> {
                 text_x,
                 ph_y,
                 palette.muted,
-                max_text_w,
+                layout_w,
                 screen_w,
                 screen_h,
             );
@@ -166,7 +192,7 @@ impl<'a> TextInput<'a> {
                 text_x,
                 text_y,
                 palette.text,
-                max_text_w,
+                layout_w,
                 screen_w,
                 screen_h,
             );
@@ -174,8 +200,9 @@ impl<'a> TextInput<'a> {
 
         // -- Caret --
         if self.focused {
-            let caret_x = text_x + caret_char as f32 * font_size * 0.52;
-            let caret_x = caret_x.min(self.rect.x + self.rect.w - text_pad_x);
+            let text_before_cursor = &self.text[..caret_char.min(self.text.len())];
+            let caret_offset = text_renderer.measure_width(text_before_cursor, font_size);
+            let caret_x = text_x + caret_offset;
             let caret_y = self.rect.y + (self.rect.h - font_size) * 0.5;
             let caret_h = font_size + 2.0 * s;
             painter.rect_filled(
@@ -184,5 +211,8 @@ impl<'a> TextInput<'a> {
                 palette.text.with_alpha(0.85),
             );
         }
+
+        painter.pop_clip();
+        text_renderer.pop_clip();
     }
 }

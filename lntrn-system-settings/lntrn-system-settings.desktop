@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=System Settings
+GenericName=System Settings
+Comment=System settings for Lantern DE
+Exec=lntrn-system-settings
+Icon=lntrn-system-settings
+Terminal=false
+Categories=System;Settings;
+StartupNotify=true
+StartupWMClass=lntrn-system-settings

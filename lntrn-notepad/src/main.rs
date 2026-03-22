@@ -1,6 +1,8 @@
 mod clipboard;
 mod editor;
+mod format;
 mod render;
+mod toolbar;
 
 use std::time::Instant;
 
@@ -15,6 +17,10 @@ use lntrn_ui::gpu::{FoxPalette, InteractionContext, MenuBar, MenuEvent, ScrollAr
 
 use clipboard::WaylandClipboard;
 use editor::Editor;
+use toolbar::{
+    FormatToolbar, FONT_SIZES, ZONE_FMT_BOLD, ZONE_FMT_ITALIC, ZONE_FMT_SIZE_BTN,
+    ZONE_FMT_SIZE_OPT_BASE, ZONE_FMT_STRIKE, ZONE_FMT_UNDERLINE,
+};
 
 // ── Hit zone IDs ────────────────────────────────────────────────────────────
 
@@ -28,6 +34,7 @@ const ZONE_EDITOR: u32 = 10;
 const MENU_NEW: u32 = 100;
 const MENU_OPEN: u32 = 101;
 const MENU_SAVE: u32 = 102;
+const MENU_SAVE_DOCX: u32 = 103;
 
 // ── Main ────────────────────────────────────────────────────────────────────
 
@@ -57,6 +64,7 @@ struct TextHandler {
     editor: Editor,
     input: InteractionContext,
     menu_bar: MenuBar,
+    fmt_toolbar: FormatToolbar,
     clipboard: Option<WaylandClipboard>,
     palette: FoxPalette,
     scale: f32,
@@ -79,6 +87,7 @@ impl TextHandler {
             editor,
             input: InteractionContext::new(),
             menu_bar: MenuBar::new(&palette),
+            fmt_toolbar: FormatToolbar::new(),
             clipboard: WaylandClipboard::new(),
             palette,
             scale: 1.0,
@@ -167,6 +176,29 @@ impl TextHandler {
                 if !path.is_empty() {
                     self.editor.file_path = Some(std::path::PathBuf::from(path));
                     let _ = self.editor.save_file();
+                }
+            }
+        }
+    }
+
+    fn export_docx_dialog(&mut self) {
+        let default_name = self.editor.filename.replace(".txt", "").to_string() + ".docx";
+        let output = std::process::Command::new("zenity")
+            .args([
+                "--file-selection",
+                "--save",
+                "--title=Export as .docx",
+                "--confirm-overwrite",
+                &format!("--filename={default_name}"),
+            ])
+            .output();
+        if let Ok(out) = output {
+            if out.status.success() {
+                let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !path.is_empty() {
+                    if let Err(e) = self.editor.export_docx(std::path::Path::new(&path)) {
+                        eprintln!("[lntrn-notepad] docx export error: {e}");
+                    }
                 }
             }
         }
@@ -311,7 +343,23 @@ impl ApplicationHandler for TextHandler {
                                         w.set_maximized(!w.is_maximized());
                                     }
                                 }
+                                // Formatting toolbar buttons
+                                ZONE_FMT_BOLD => self.editor.toggle_format(|a| a.bold = !a.bold),
+                                ZONE_FMT_ITALIC => self.editor.toggle_format(|a| a.italic = !a.italic),
+                                ZONE_FMT_UNDERLINE => self.editor.toggle_format(|a| a.underline = !a.underline),
+                                ZONE_FMT_STRIKE => self.editor.toggle_format(|a| a.strikethrough = !a.strikethrough),
+                                ZONE_FMT_SIZE_BTN => {
+                                    self.fmt_toolbar.size_dropdown_open = !self.fmt_toolbar.size_dropdown_open;
+                                }
+                                z if z >= ZONE_FMT_SIZE_OPT_BASE
+                                    && z < ZONE_FMT_SIZE_OPT_BASE + FONT_SIZES.len() as u32 =>
+                                {
+                                    let idx = (z - ZONE_FMT_SIZE_OPT_BASE) as usize;
+                                    self.editor.set_font_size(FONT_SIZES[idx]);
+                                    self.fmt_toolbar.size_dropdown_open = false;
+                                }
                                 ZONE_EDITOR => {
+                                    self.fmt_toolbar.size_dropdown_open = false;
                                     self.editor.clear_selection();
                                     if let Some((cx, cy)) = self.input.cursor() {
                                         let s = self.scale;
@@ -323,7 +371,9 @@ impl ApplicationHandler for TextHandler {
                                         self.dragging = true;
                                     }
                                 }
-                                _ => {}
+                                _ => {
+                                    self.fmt_toolbar.size_dropdown_open = false;
+                                }
                             }
                         } else if self.is_on_title_bar() {
                             if let Some(w) = &self.window {
@@ -387,6 +437,7 @@ impl ApplicationHandler for TextHandler {
                     Key::Character(s) if ctrl && shift => {
                         match s.as_str() {
                             "Z" | "z" => self.editor.redo(),
+                            "X" | "x" => self.editor.toggle_format(|a| a.strikethrough = !a.strikethrough),
                             _ => {}
                         }
                     }
@@ -400,6 +451,9 @@ impl ApplicationHandler for TextHandler {
                             "x" => self.do_cut(),
                             "v" => self.do_paste(),
                             "z" => self.editor.undo(),
+                            "b" => self.editor.toggle_format(|a| a.bold = !a.bold),
+                            "i" => self.editor.toggle_format(|a| a.italic = !a.italic),
+                            "u" => self.editor.toggle_format(|a| a.underline = !a.underline),
                             _ => {}
                         }
                     }
@@ -433,6 +487,7 @@ impl ApplicationHandler for TextHandler {
                         &mut self.editor,
                         &mut self.input,
                         &mut self.menu_bar,
+                        &mut self.fmt_toolbar,
                         &self.palette,
                         self.scale,
                         cursor_vis,
@@ -450,6 +505,10 @@ impl ApplicationHandler for TextHandler {
                             MenuEvent::Action(MENU_SAVE) => {
                                 self.menu_bar.close();
                                 self.save_file_dialog();
+                            }
+                            MenuEvent::Action(MENU_SAVE_DOCX) => {
+                                self.menu_bar.close();
+                                self.export_docx_dialog();
                             }
                             _ => {}
                         }

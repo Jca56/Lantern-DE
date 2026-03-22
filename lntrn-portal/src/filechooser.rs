@@ -164,15 +164,16 @@ impl FileChooserService {
                     .map(|path| format!("file://{}", percent_encode_path(path.trim())))
                     .collect();
 
-                eprintln!("[lntrn-portal] picked {} URIs", uris.len());
+                eprintln!("[lntrn-portal] picked {} URIs: {:?}", uris.len(), uris);
 
                 let mut results = HashMap::new();
-                let uri_values: Vec<Value<'_>> =
-                    uris.iter().map(|s| Value::from(s.as_str())).collect();
+                // Build as OwnedValue directly from Vec<String> for correct D-Bus 'as' type
+                let uris_val = zbus::zvariant::Array::from(uris);
                 results.insert(
                     "uris".to_string(),
-                    OwnedValue::try_from(Value::Array(uri_values.into())).unwrap(),
+                    OwnedValue::try_from(Value::from(uris_val)).unwrap(),
                 );
+                eprintln!("[lntrn-portal] returning response=0 with results");
                 (0, results)
             }
             Ok(out) => {

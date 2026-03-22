@@ -670,7 +670,7 @@ pub fn run() -> Result<()> {
         // Gradient strip below title bar
         let strip_y = TITLE_BAR_H * s;
         let mut strip = GradientStrip::new(0.0, strip_y, wf);
-        strip.line_height = 4.0 * s;
+        strip.height = 4.0 * s;
         strip.draw(&mut painter);
 
         // Context menus (drawn into painter on top of other shapes)

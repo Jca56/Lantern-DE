@@ -4,8 +4,7 @@ use std::ptr::NonNull;
 use anyhow::{anyhow, Result};
 use lntrn_render::{GpuContext, Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{
-    FoxPalette, GradientStrip, InteractionContext, MenuBar, MenuItem, PopupSurface, TitleBar,
-    WaylandPopupBackend,
+    FoxPalette, GradientStrip, InteractionContext, TitleBar, WaylandPopupBackend,
 };
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
@@ -87,10 +86,14 @@ pub(crate) struct State {
     pointer: Option<wl_pointer::WlPointer>,
     // Keyboard
     key_pressed: Option<u32>,
+    held_key: Option<u32>,
+    repeat_deadline: std::time::Instant,
+    repeat_started: bool,
+    ctrl: bool,
+    shift: bool,
     // Popup
     pub(crate) popup_backend: Option<WaylandPopupBackend<State>>,
     pub(crate) popup_closed: bool,
-    /// Which wl_surface the pointer is currently in (for routing to popups)
     pointer_surface: Option<wl_surface::WlSurface>,
 }
 
@@ -107,6 +110,11 @@ impl State {
             cursor_shape_mgr: None, cursor_shape_device: None,
             current_cursor_shape: None, pointer: None,
             key_pressed: None,
+            held_key: None,
+            repeat_deadline: std::time::Instant::now(),
+            repeat_started: false,
+            ctrl: false,
+            shift: false,
             popup_backend: None,
             popup_closed: false,
             pointer_surface: None,
@@ -230,7 +238,6 @@ impl Dispatch<wl_seat::WlSeat, ()> for State {
         if let wl_seat::Event::Capabilities { capabilities: WEnum::Value(cap) } = event {
             if cap.contains(wl_seat::Capability::Pointer) {
                 let ptr = seat.get_pointer(qh, ());
-                // Create cursor shape device if manager is available
                 if let Some(mgr) = &state.cursor_shape_mgr {
                     state.cursor_shape_device = Some(mgr.get_pointer(&ptr, qh, ()));
                 }
@@ -295,8 +302,18 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
             wl_keyboard::Event::Key { key, state: key_state, .. } => {
                 if key_state == WEnum::Value(wl_keyboard::KeyState::Pressed) {
                     state.key_pressed = Some(key);
+                    state.held_key = Some(key);
+                    state.repeat_started = false;
+                    state.repeat_deadline = std::time::Instant::now()
+                        + std::time::Duration::from_millis(300);
+                } else if key_state == WEnum::Value(wl_keyboard::KeyState::Released) {
+                    if state.held_key == Some(key) { state.held_key = None; }
                 }
                 state.frame_done = true;
+            }
+            wl_keyboard::Event::Modifiers { mods_depressed, .. } => {
+                state.ctrl = mods_depressed & 4 != 0;
+                state.shift = mods_depressed & 1 != 0;
             }
             _ => {}
         }
@@ -362,14 +379,14 @@ pub fn run() -> Result<()> {
     let wm_base = state.wm_base.clone()
         .ok_or_else(|| anyhow!("xdg_wm_base not available"))?;
 
-    if state.width == 0 { state.width = 960; }
-    if state.height == 0 { state.height = 640; }
+    if state.width == 0 { state.width = 1024; }
+    if state.height == 0 { state.height = 720; }
 
     let surface = compositor.create_surface(&qh, ());
     let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
     let toplevel = xdg_surface.get_toplevel(&qh, ());
-    toplevel.set_title("lntrn-ui-test".into());
-    toplevel.set_app_id("lntrn-ui-test".into());
+    toplevel.set_title("Lantern Git".into());
+    toplevel.set_app_id("lntrn-git".into());
     toplevel.set_min_size(640, 480);
     surface.commit();
 
@@ -377,7 +394,6 @@ pub fn run() -> Result<()> {
     state.xdg_surface = Some(xdg_surface);
     state.toplevel = Some(toplevel.clone());
 
-    // Wait for initial configure
     while !state.configured {
         event_queue.blocking_dispatch(&mut state)?;
     }
@@ -390,7 +406,6 @@ pub fn run() -> Result<()> {
         vp
     });
 
-    // wgpu setup
     let display_ptr = conn.backend().display_ptr() as *mut c_void;
     let surface_ptr = Proxy::id(&surface).as_ptr() as *mut c_void;
     let wl_handle = WaylandHandle {
@@ -406,12 +421,8 @@ pub fn run() -> Result<()> {
     let mut text = TextRenderer::new(&gpu);
     let mut ix = InteractionContext::new();
     let fox = FoxPalette::dark();
-    let mut menu_bar = MenuBar::new(&fox);
-    let mut right_click_menu = lntrn_ui::gpu::ContextMenu::new(
-        lntrn_ui::gpu::ContextMenuStyle::from_palette(&fox),
-    );
 
-    // Initialize popup backend (clone xdg_surface to avoid borrow conflict)
+    // Popup backend
     {
         let xdg_surf = state.xdg_surface.as_ref().unwrap().clone();
         let vp = state.viewporter.as_ref();
@@ -421,45 +432,27 @@ pub fn run() -> Result<()> {
         ));
     }
 
-    let menus: Vec<(&str, Vec<MenuItem>)> = vec![
-        ("File", vec![
-            MenuItem::action(1, "New"),
-            MenuItem::action_with(2, "Open", "Ctrl+O"),
-            MenuItem::action_with(3, "Save", "Ctrl+S"),
-            MenuItem::separator(),
-            MenuItem::action_with(4, "Quit", "Ctrl+Q"),
-        ]),
-        ("Edit", vec![
-            MenuItem::action_with(10, "Undo", "Ctrl+Z"),
-            MenuItem::action_with(11, "Redo", "Ctrl+Shift+Z"),
-            MenuItem::separator(),
-            MenuItem::action_with(12, "Cut", "Ctrl+X"),
-            MenuItem::action_with(13, "Copy", "Ctrl+C"),
-            MenuItem::action_with(14, "Paste", "Ctrl+V"),
-        ]),
-        ("View", vec![
-            MenuItem::toggle(20, "Dark Mode", true),
-            MenuItem::toggle(21, "Show Sidebar", true),
-            MenuItem::separator(),
-            MenuItem::action(22, "Zoom In"),
-            MenuItem::action(23, "Zoom Out"),
-        ]),
-        ("Help", vec![
-            MenuItem::action(30, "About"),
-        ]),
-    ];
+    let mut app = crate::app::App::new();
+    let mut needs_anim = false;
 
     while state.running {
-        if let Err(e) = event_queue.blocking_dispatch(&mut state) {
-            eprintln!("[ui-test] dispatch error: {e}");
-            break;
+        // Non-blocking dispatch so app.tick() can process background events
+        if needs_anim {
+            event_queue.flush()?;
+            if let Some(guard) = event_queue.prepare_read() {
+                let _ = guard.read();
+            }
+            event_queue.dispatch_pending(&mut state)?;
+            std::thread::sleep(std::time::Duration::from_millis(16));
+            state.frame_done = true;
+        } else {
+            event_queue.blocking_dispatch(&mut state)?;
         }
         if !state.frame_done { continue; }
         state.frame_done = false;
 
         let s = state.fractional_scale() as f32;
 
-        // Handle resize
         if state.configured {
             state.configured = false;
             gpu.resize(state.phys_width().max(1), state.phys_height().max(1));
@@ -471,155 +464,104 @@ pub fn run() -> Result<()> {
 
         let wf = gpu.width() as f32;
         let hf = gpu.height() as f32;
+        let sw = gpu.width();
+        let sh = gpu.height();
 
-        // Determine if pointer is on main surface or popup
         let pointer_on_popup = state.pointer_surface.as_ref().and_then(|ps| {
             state.popup_backend.as_ref()?.find_popup_id_by_wl_surface(ps)
         });
 
-        // Cursor — route to main or popup InteractionContext
         let cx = (state.cursor_x as f32) * s;
         let cy = (state.cursor_y as f32) * s;
         if pointer_on_popup.is_some() {
-            // Pointer is on a popup — don't send to main ix
             ix.on_cursor_left();
         } else if state.pointer_in_surface {
             ix.on_cursor_moved(cx, cy);
         } else {
             ix.on_cursor_left();
         }
-        // Route cursor to the active popup, clear it from all others
         if let Some(backend) = &mut state.popup_backend {
             let active = if state.pointer_in_surface { pointer_on_popup } else { None };
             backend.route_cursor(active, cx, cy);
         }
 
-        // Tell the right-click menu which popup depth has the pointer
-        {
-            let depth = pointer_on_popup.and_then(|pid| {
-                (0..right_click_menu.popup_count())
-                    .find(|&d| right_click_menu.popup_id_at_depth(d) == Some(pid))
-            });
-            right_click_menu.set_pointer_depth(depth);
-        }
+        // Tick app (drain background git events)
+        app.tick();
 
         // Keyboard
         if let Some(key) = state.key_pressed.take() {
-            if key == KEY_ESC { state.running = false; }
+            if app.wants_keyboard() {
+                app.on_key(key, state.shift);
+            } else if key == KEY_ESC {
+                state.running = false;
+            }
+        }
+        // Key repeat
+        if let Some(held) = state.held_key {
+            if app.wants_keyboard() && state.repeat_deadline <= std::time::Instant::now() {
+                app.on_key(held, state.shift);
+                let interval = if state.repeat_started { 30 } else { 300 };
+                state.repeat_deadline = std::time::Instant::now()
+                    + std::time::Duration::from_millis(interval);
+                state.repeat_started = true;
+                state.frame_done = true;
+            }
         }
 
         // Left press
         if state.left_pressed {
             state.left_pressed = false;
-            // Route click to popup if pointer is on a popup
-            if let Some(pid) = pointer_on_popup {
-                if let Some(backend) = &mut state.popup_backend {
-                    if let Some(ctx) = backend.popup_render(pid) {
-                        ctx.interaction.on_left_pressed();
-                    }
-                }
+            if pointer_on_popup.is_some() {
+                // Route to popup
             } else {
-            // Close right-click popup menu on any left click outside
-            if right_click_menu.is_open() {
-                if let Some(backend) = &mut state.popup_backend {
-                    right_click_menu.close_popups(backend);
-                }
-            }
-            let border = 10.0 * s;
-            if let Some(edge) = edge_resize(cx, cy, wf, hf, border) {
-                if let Some(seat) = &state.seat {
-                    toplevel.resize(seat, state.pointer_serial, edge);
-                }
-            } else if menu_bar.on_click(&mut ix, &menus, s) {
-                // Menu bar consumed the click
-            } else if let Some(zone_id) = ix.on_left_pressed() {
-                match zone_id {
-                    ZONE_CLOSE => { state.running = false; }
-                    ZONE_MINIMIZE => { toplevel.set_minimized(); }
-                    ZONE_MAXIMIZE => {
-                        if state.maximized { toplevel.unset_maximized(); }
-                        else { toplevel.set_maximized(); }
-                    }
-                    _ => {}
-                }
-            } else {
-                // Title bar drag (only if menu bar isn't open)
-                let title_h = TITLE_BAR_H * s;
-                if cy < title_h && !menu_bar.is_open() {
+                let border = 10.0 * s;
+                if let Some(edge) = edge_resize(cx, cy, wf, hf, border) {
                     if let Some(seat) = &state.seat {
-                        toplevel._move(seat, state.pointer_serial);
+                        toplevel.resize(seat, state.pointer_serial, edge);
+                    }
+                } else if let Some(zone_id) = ix.on_left_pressed() {
+                    match zone_id {
+                        ZONE_CLOSE => { state.running = false; }
+                        ZONE_MINIMIZE => { toplevel.set_minimized(); }
+                        ZONE_MAXIMIZE => {
+                            if state.maximized { toplevel.unset_maximized(); }
+                            else { toplevel.set_maximized(); }
+                        }
+                        _ => {
+                            app.on_click(&ix, cx, cy);
+                        }
+                    }
+                } else {
+                    let title_h = TITLE_BAR_H * s;
+                    if cy < title_h {
+                        if let Some(seat) = &state.seat {
+                            toplevel._move(seat, state.pointer_serial);
+                        }
+                    } else {
+                        app.on_click(&ix, cx, cy);
                     }
                 }
             }
-            } // end else (not on popup)
         }
 
         // Left release
         if state.left_released {
             state.left_released = false;
-            if let Some(pid) = pointer_on_popup {
-                if let Some(backend) = &mut state.popup_backend {
-                    if let Some(ctx) = backend.popup_render(pid) {
-                        ctx.interaction.on_left_released();
-                    }
-                }
-            } else {
-                ix.on_left_released();
-            }
+            ix.on_left_released();
         }
 
-        // Right press — open context menu via popup surface
-        if state.right_pressed {
-            state.right_pressed = false;
-            menu_bar.close();
-            // Close any existing popup menu
-            if right_click_menu.is_open() {
-                if let Some(backend) = &mut state.popup_backend {
-                    right_click_menu.close_popups(backend);
-                }
-            }
-            right_click_menu.set_scale(s);
-            let items = vec![
-                MenuItem::action_with(50, "Cut", "Ctrl+X"),
-                MenuItem::action_with(51, "Copy", "Ctrl+C"),
-                MenuItem::action_with(52, "Paste", "Ctrl+V"),
-                MenuItem::separator(),
-                MenuItem::action(53, "Select All"),
-                MenuItem::separator(),
-                MenuItem::submenu(60, "Transform", vec![
-                    MenuItem::action(61, "Uppercase"),
-                    MenuItem::action(62, "Lowercase"),
-                    MenuItem::action(63, "Title Case"),
-                    MenuItem::separator(),
-                    MenuItem::action(64, "Sort Lines"),
-                    MenuItem::action(65, "Reverse Lines"),
-                ]),
-                MenuItem::separator(),
-                MenuItem::toggle(54, "Word Wrap", true),
-                MenuItem::checkbox(55, "Show Line Numbers", false),
-                MenuItem::separator(),
-                MenuItem::action(56, "Inspect Element"),
-            ];
-            // Use logical coordinates for popup positioning
-            let lx = state.cursor_x as i32;
-            let ly = state.cursor_y as i32;
-            if let Some(backend) = &mut state.popup_backend {
-                right_click_menu.open_popup(lx as f32, ly as f32, items, backend);
-            }
+        // Scroll
+        if state.scroll_delta != 0.0 {
+            app.on_scroll(state.scroll_delta);
+            state.scroll_delta = 0.0;
         }
 
-        // Handle popup_done (compositor dismissed popup)
+        // Handle popup_done
         if state.popup_closed {
             state.popup_closed = false;
-            if let Some(backend) = &mut state.popup_backend {
-                right_click_menu.close_popups(backend);
-            }
         }
 
-        // Reset scroll
-        state.scroll_delta = 0.0;
-
-        // ── Cursor shape ────────────────────────────────────────────────
+        // Cursor shape
         if state.pointer_in_surface {
             let border = 10.0 * s;
             let desired = match edge_resize(cx, cy, wf, hf, border) {
@@ -638,8 +580,12 @@ pub fn run() -> Result<()> {
         ix.begin_frame();
         painter.clear();
 
-        // Background — all corners rounded
         let win_r = if state.maximized { 0.0 } else { 10.0 * s };
+        if win_r > 0.0 {
+            let r = win_r;
+            painter.rect_filled(Rect::new(r, 1.0, wf - r * 2.0, hf - 2.0), 0.0, fox.bg);
+            painter.rect_filled(Rect::new(1.0, r, wf - 2.0, hf - r * 2.0), 0.0, fox.bg);
+        }
         painter.rect_filled(Rect::new(0.0, 0.0, wf, hf), win_r, fox.bg);
 
         // Title bar
@@ -659,57 +605,35 @@ pub fn run() -> Result<()> {
             .minimize_hovered(min_s.is_hovered())
             .draw(&mut painter, &fox);
 
-        // Menu bar in title bar content area
-        let sw = gpu.width();
-        let sh = gpu.height();
-        let content = TitleBar::new(tb_rect).scale(s).content_rect();
-        menu_bar.update(&mut ix, &menus, content, s);
-        let labels: Vec<&str> = menus.iter().map(|(l, _)| *l).collect();
-        menu_bar.draw_with_labels(&mut painter, &mut text, &fox, &labels, sw, sh, s);
-
-        // Gradient strip below title bar
+        // Gradient strip
         let strip_y = TITLE_BAR_H * s;
         let mut strip = GradientStrip::new(0.0, strip_y, wf);
         strip.height = 4.0 * s;
         strip.draw(&mut painter);
 
-        // Context menus (drawn into painter on top of other shapes)
-        menu_bar.context_menu.update(0.016);
-        if let Some(evt) = menu_bar.context_menu.draw(
-            &mut painter, &mut text, &mut ix, sw, sh,
-        ) {
-            use lntrn_ui::gpu::MenuEvent;
-            if matches!(evt, MenuEvent::Action(_)) {
-                menu_bar.close();
-            }
-        }
+        // App content
+        let content_y = strip_y + strip.height;
+        let content_h = hf - content_y;
+        app.draw(
+            &mut painter, &mut text, &mut ix, &fox,
+            0.0, content_y, wf, content_h,
+            s, sw, sh,
+        );
 
-        // Right-click menu draws into popup surfaces
-        right_click_menu.update(0.016);
-        if let Some(backend) = &mut state.popup_backend {
-            backend.begin_frame_all();
-        }
-        if let Some(backend) = &mut state.popup_backend {
-            if let Some(evt) = right_click_menu.draw_popups(backend) {
-                use lntrn_ui::gpu::MenuEvent;
-                if matches!(evt, MenuEvent::Action(_)) {
-                    right_click_menu.close_popups(backend);
-                }
-            }
-        }
-
-        // Render pass — main window
-        if let Ok(mut frame) = gpu.begin_frame("ui-test") {
+        // Render
+        if let Ok(mut frame) = gpu.begin_frame("lntrn-git") {
             let view = frame.view().clone();
             painter.render_pass(&gpu, frame.encoder_mut(), &view, fox.bg.with_alpha(0.0));
             text.render_queued(&gpu, frame.encoder_mut(), &view);
             frame.submit(&gpu.queue);
         }
 
-        // Render popup surfaces
         if let Some(backend) = &mut state.popup_backend {
             backend.render_all();
         }
+
+        // Keep animating if app has pending work
+        needs_anim = app.wants_keyboard();
 
         ix.clear_scroll();
         surface.frame(&qh, ());

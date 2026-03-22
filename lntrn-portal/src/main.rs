@@ -10,7 +10,7 @@ async fn main() -> anyhow::Result<()> {
     let service = FileChooserService::new();
     let conn = zbus::connection::Builder::session()?
         .name("org.freedesktop.impl.portal.desktop.lantern")?
-        .serve_at("/org/freedesktop/impl/portal", service)?
+        .serve_at("/org/freedesktop/portal/desktop", service)?
         .build()
         .await?;
 

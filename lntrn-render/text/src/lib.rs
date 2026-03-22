@@ -2,13 +2,27 @@ use std::collections::HashMap;
 
 use glyphon::{
     Attrs, Buffer, Cache, Color as GlyphonColor, Family, FontSystem, Metrics,
-    Resolution, Shaping, SwashCache, TextArea, TextAtlas, TextBounds,
-    TextRenderer as GlyphonRenderer, Viewport,
+    Resolution, Shaping, SwashCache, Style, TextArea, TextAtlas, TextBounds,
+    TextRenderer as GlyphonRenderer, Viewport, Weight,
 };
 use lntrn_draw::{Color, TextPass};
 use lntrn_gfx::GpuContext;
 
 const MAX_CACHED_LAYOUTS: usize = 512;
+
+/// Font weight for styled text rendering.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FontWeight {
+    Normal,
+    Bold,
+}
+
+/// Font style for styled text rendering.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FontStyle {
+    Normal,
+    Italic,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct TextLayoutKey {
@@ -16,6 +30,8 @@ struct TextLayoutKey {
     font_size_bits: u32,
     max_width_bits: u32,
     color: [u8; 4],
+    weight: u8,
+    style: u8,
 }
 
 struct QueuedText {
@@ -43,6 +59,8 @@ pub struct TextRenderer {
     cache_hits: u64,
     cache_misses: u64,
     monospace: bool,
+    /// Clip stack for text bounds. When non-empty, `queue()` uses the top clip.
+    clip_stack: Vec<[f32; 4]>,
 }
 
 struct CachedLayout {
@@ -93,17 +111,52 @@ impl TextRenderer {
             cache_hits: 0,
             cache_misses: 0,
             monospace,
+            clip_stack: Vec::new(),
         }
+    }
+
+    /// Push a clip rectangle `[x, y, w, h]` in physical pixels.
+    /// All subsequent `queue()` calls will clip text to this rect.
+    pub fn push_clip(&mut self, clip: [f32; 4]) {
+        // Intersect with current clip if any
+        let effective = if let Some(current) = self.clip_stack.last() {
+            let cx0 = clip[0].max(current[0]);
+            let cy0 = clip[1].max(current[1]);
+            let cx1 = (clip[0] + clip[2]).min(current[0] + current[2]);
+            let cy1 = (clip[1] + clip[3]).min(current[1] + current[3]);
+            [cx0, cy0, (cx1 - cx0).max(0.0), (cy1 - cy0).max(0.0)]
+        } else {
+            clip
+        };
+        self.clip_stack.push(effective);
+    }
+
+    /// Pop the most recent clip rectangle.
+    pub fn pop_clip(&mut self) {
+        self.clip_stack.pop();
     }
 
     /// Measure the pixel width of a string at the given font size.
     pub fn measure_width(&mut self, text: &str, font_size: f32) -> f32 {
+        self.measure_width_styled(text, font_size, FontWeight::Normal, FontStyle::Normal)
+    }
+
+    /// Measure the pixel width of a styled string.
+    pub fn measure_width_styled(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        weight: FontWeight,
+        style: FontStyle,
+    ) -> f32 {
         let color = GlyphonColor::rgba(0, 0, 0, 0);
         let key = TextLayoutKey {
             text: text.to_string(),
             font_size_bits: font_size.to_bits(),
             max_width_bits: 10000.0_f32.to_bits(),
             color: [0, 0, 0, 0],
+            weight: weight as u8,
+            style: style as u8,
         };
 
         self.use_tick = self.use_tick.wrapping_add(1).max(1);
@@ -114,8 +167,9 @@ impl TextRenderer {
         }
 
         self.evict_one_if_needed();
-        let buffer = create_layout_buffer(
-            &mut self.font_system, text, font_size, 10000.0, color, self.monospace,
+        let buffer = create_styled_layout(
+            &mut self.font_system, text, font_size, 10000.0, color,
+            self.monospace, weight, style,
         );
         let w = layout_width(&buffer);
         self.layouts.insert(key, CachedLayout { buffer, last_used: self.use_tick });
@@ -133,6 +187,27 @@ impl TextRenderer {
         screen_w: u32,
         _screen_h: u32,
     ) {
+        self.queue_styled(
+            text, font_size, x, y, color, max_width,
+            FontWeight::Normal, FontStyle::Normal,
+            screen_w, _screen_h,
+        );
+    }
+
+    /// Queue styled text for rendering. Like `queue()` but with weight and style.
+    pub fn queue_styled(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        x: f32,
+        y: f32,
+        color: Color,
+        max_width: f32,
+        weight: FontWeight,
+        style: FontStyle,
+        screen_w: u32,
+        _screen_h: u32,
+    ) {
         let srgb = color.to_srgb8();
         let glyph_color = GlyphonColor::rgba(srgb[0], srgb[1], srgb[2], srgb[3]);
         let key = TextLayoutKey {
@@ -140,6 +215,8 @@ impl TextRenderer {
             font_size_bits: font_size.to_bits(),
             max_width_bits: max_width.max(1.0).to_bits(),
             color: [glyph_color.r(), glyph_color.g(), glyph_color.b(), glyph_color.a()],
+            weight: weight as u8,
+            style: style as u8,
         };
 
         self.use_tick = self.use_tick.wrapping_add(1).max(1);
@@ -151,13 +228,10 @@ impl TextRenderer {
             self.cache_misses = self.cache_misses.saturating_add(1);
             self.evict_one_if_needed();
 
-            let buffer = create_layout_buffer(
+            let buffer = create_styled_layout(
                 &mut self.font_system,
-                text,
-                font_size,
-                max_width,
-                glyph_color,
-                self.monospace,
+                text, font_size, max_width, glyph_color,
+                self.monospace, weight, style,
             );
             self.layouts.insert(
                 key.clone(),
@@ -168,15 +242,21 @@ impl TextRenderer {
             );
         }
 
+        let (bl, bt, br, bb) = if let Some(clip) = self.clip_stack.last() {
+            (clip[0] as i32, clip[1] as i32, (clip[0] + clip[2]) as i32, (clip[1] + clip[3]) as i32)
+        } else {
+            (0, 0, screen_w as i32, (y + font_size * 1.2).ceil() as i32)
+        };
+
         self.queued.push(QueuedText {
             key,
             x,
             y,
             line_height: font_size * 1.2,
-            bounds_left: 0,
-            bounds_top: 0,
-            bounds_right: screen_w as i32,
-            bounds_bottom: (y + font_size * 1.2).ceil() as i32,
+            bounds_left: bl,
+            bounds_top: bt,
+            bounds_right: br,
+            bounds_bottom: bb,
             default_color: GlyphonColor::rgb(255, 255, 255),
         });
     }
@@ -200,6 +280,8 @@ impl TextRenderer {
             font_size_bits: font_size.to_bits(),
             max_width_bits: max_width.max(1.0).to_bits(),
             color: [glyph_color.r(), glyph_color.g(), glyph_color.b(), glyph_color.a()],
+            weight: 0,
+            style: 0,
         };
 
         self.use_tick = self.use_tick.wrapping_add(1).max(1);
@@ -360,14 +442,38 @@ fn create_layout_buffer(
     color: GlyphonColor,
     monospace: bool,
 ) -> Buffer {
+    create_styled_layout(
+        font_system, text, font_size, max_width, color,
+        monospace, FontWeight::Normal, FontStyle::Normal,
+    )
+}
+
+fn create_styled_layout(
+    font_system: &mut FontSystem,
+    text: &str,
+    font_size: f32,
+    max_width: f32,
+    color: GlyphonColor,
+    monospace: bool,
+    weight: FontWeight,
+    style: FontStyle,
+) -> Buffer {
     let family = if monospace { Family::Monospace } else { Family::SansSerif };
+    let w = match weight {
+        FontWeight::Normal => Weight::NORMAL,
+        FontWeight::Bold => Weight::BOLD,
+    };
+    let s = match style {
+        FontStyle::Normal => Style::Normal,
+        FontStyle::Italic => Style::Italic,
+    };
     let line_height = font_size * 1.2;
     let mut buffer = Buffer::new(font_system, Metrics::new(font_size, line_height));
     buffer.set_size(font_system, Some(max_width), Some(line_height));
     buffer.set_text(
         font_system,
         text,
-        &Attrs::new().family(family).color(color),
+        &Attrs::new().family(family).color(color).weight(w).style(s),
         Shaping::Advanced,
         None,
     );
