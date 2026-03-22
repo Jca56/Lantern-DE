@@ -23,16 +23,19 @@ pub struct AppearanceConfig {
     pub font_family: String,
     pub font_size: f32,
     pub wallpaper: String,
+    pub wallpaper_directory: String,
 }
 
 impl Default for AppearanceConfig {
     fn default() -> Self {
+        let home = std::env::var("HOME").unwrap_or_default();
         Self {
             theme: "fox".into(),
             accent_color: "#C8860A".into(),
             font_family: "sans-serif".into(),
             font_size: 16.0,
             wallpaper: String::new(),
+            wallpaper_directory: format!("{}/Pictures/Wallpapers", home),
         }
     }
 }

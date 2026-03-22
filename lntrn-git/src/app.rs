@@ -57,6 +57,7 @@ pub struct App {
     repos: Vec<PathBuf>,
     // Main view
     repo_path: Option<PathBuf>,
+    repo_stack: Vec<PathBuf>, // for navigating into submodules
     status: Option<git::RepoStatus>,
     // Commit message
     pub commit_msg: String,
@@ -87,6 +88,7 @@ impl App {
             view: View::RepoPicker,
             repos: Vec::new(),
             repo_path: None,
+            repo_stack: Vec::new(),
             status: None,
             commit_msg: String::new(),
             commit_focused: false,
@@ -137,20 +139,30 @@ impl App {
                         self.repo_path = Some(repo.clone());
                         self.view = View::Main;
                         self.busy = true;
+                        self.scroll_offset = 0.0;
                         let _ = self.cmd_tx.send(GitCmd::OpenRepo(repo.clone()));
                     }
                 }
             }
             View::Main => {
                 if zone == ZONE_BACK_BTN {
-                    self.view = View::RepoPicker;
-                    self.status = None;
                     self.commit_msg.clear();
                     self.cursor_pos = 0;
                     self.commit_focused = false;
                     self.message = None;
                     self.error = None;
                     self.scroll_offset = 0.0;
+                    if let Some(parent) = self.repo_stack.pop() {
+                        // Go back to parent repo
+                        self.repo_path = Some(parent.clone());
+                        self.busy = true;
+                        let _ = self.cmd_tx.send(GitCmd::OpenRepo(parent));
+                    } else {
+                        // No parent — go to repo picker
+                        self.view = View::RepoPicker;
+                        self.status = None;
+                        self.repo_path = None;
+                    }
                 } else if zone == ZONE_REFRESH_BTN {
                     self.busy = true;
                     let _ = self.cmd_tx.send(GitCmd::Refresh);
@@ -177,11 +189,31 @@ impl App {
                     let idx = (zone - ZONE_FILE_BASE) as usize;
                     if let Some(status) = &self.status {
                         if let Some(file) = status.files.get(idx) {
-                            let path = file.path.clone();
-                            if file.staged {
-                                let _ = self.cmd_tx.send(GitCmd::Unstage(path));
+                            if file.is_submodule {
+                                // Navigate into submodule
+                                if let Some(current) = &self.repo_path {
+                                    let sub_path = current.join(&file.path);
+                                    if sub_path.join(".git").exists() || sub_path.join(".git").is_file() {
+                                        self.repo_stack.push(current.clone());
+                                        self.repo_path = Some(sub_path.clone());
+                                        self.status = None;
+                                        self.busy = true;
+                                        self.commit_msg.clear();
+                                        self.cursor_pos = 0;
+                                        self.commit_focused = false;
+                                        self.message = None;
+                                        self.error = None;
+                                        self.scroll_offset = 0.0;
+                                        let _ = self.cmd_tx.send(GitCmd::OpenRepo(sub_path));
+                                    }
+                                }
                             } else {
-                                let _ = self.cmd_tx.send(GitCmd::Stage(path));
+                                let path = file.path.clone();
+                                if file.staged {
+                                    let _ = self.cmd_tx.send(GitCmd::Unstage(path));
+                                } else {
+                                    let _ = self.cmd_tx.send(GitCmd::Stage(path));
+                                }
                             }
                         }
                     }
@@ -229,6 +261,63 @@ impl App {
         self.view == View::Main && self.commit_focused
     }
 
+    /// Draw into the title bar content area (between left edge and window buttons).
+    pub fn draw_title_bar(
+        &self, text: &mut TextRenderer, ix: &mut InteractionContext, palette: &FoxPalette,
+        tb_content: lntrn_render::Rect, painter: &mut Painter,
+        scale: f32, screen_w: u32, screen_h: u32,
+    ) {
+        let s = scale;
+        let font = 20.0 * s;
+        let small = 16.0 * s;
+        let tx = tb_content.x + 8.0 * s;
+        let ty = tb_content.y + (tb_content.h - font) / 2.0;
+
+        match self.view {
+            View::RepoPicker => {
+                text.queue("Lantern Git", font, tx, ty, palette.text,
+                    tb_content.w, screen_w, screen_h);
+            }
+            View::Main => {
+                // Back button
+                let back_label = if self.repo_stack.is_empty() { "←" } else { "←" };
+                let back_w = 32.0 * s;
+                let back_rect = lntrn_render::Rect::new(tx, tb_content.y, back_w, tb_content.h);
+                let back_state = ix.add_zone(ZONE_BACK_BTN, back_rect);
+                if back_state.is_hovered() {
+                    painter.rect_filled(back_rect, 6.0 * s, palette.muted.with_alpha(0.2));
+                }
+                text.queue(back_label, font, tx + 6.0 * s, ty, palette.accent,
+                    back_w, screen_w, screen_h);
+
+                let mut lx = tx + back_w + 8.0 * s;
+
+                // Repo name
+                if let Some(repo) = &self.repo_path {
+                    let name = git::repo_name(repo);
+                    text.queue(&name, font, lx, ty, palette.text,
+                        200.0 * s, screen_w, screen_h);
+                    lx += name.len() as f32 * font * 0.5 + 12.0 * s;
+                }
+
+                // Branch
+                if let Some(status) = &self.status {
+                    let branch_text = format!(" {}", status.branch);
+                    text.queue(&branch_text, small, lx, ty + 2.0 * s, palette.accent,
+                        200.0 * s, screen_w, screen_h);
+                    lx += branch_text.len() as f32 * small * 0.5 + 12.0 * s;
+
+                    // Ahead/behind
+                    if status.ahead > 0 || status.behind > 0 {
+                        let sync = format!("↑{} ↓{}", status.ahead, status.behind);
+                        text.queue(&sync, small, lx, ty + 2.0 * s, palette.warning,
+                            100.0 * s, screen_w, screen_h);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn draw(
         &self, painter: &mut Painter, text: &mut TextRenderer,
         ix: &mut InteractionContext, palette: &FoxPalette,
@@ -252,7 +341,7 @@ impl App {
     fn draw_picker(
         &self, painter: &mut Painter, text: &mut TextRenderer,
         ix: &mut InteractionContext, palette: &FoxPalette,
-        cx: f32, cy: f32, cw: f32, _ch: f32,
+        cx: f32, cy: f32, cw: f32, ch: f32,
         s: f32, sw: u32, sh: u32,
     ) {
         let title_font = 28.0 * s;
@@ -270,7 +359,10 @@ impl App {
             return;
         }
 
-        for (idx, repo) in self.repos.iter().enumerate() {
+        let scroll = self.scroll_offset as usize;
+        let max_visible = ((ch - (y - cy)) / row_h).max(1.0) as usize;
+
+        for (idx, repo) in self.repos.iter().enumerate().skip(scroll).take(max_visible) {
             let row_rect = Rect::new(cx, y, cw, row_h);
             let zone_id = ZONE_REPO_BASE + idx as u32;
             let state = ix.add_zone(zone_id, row_rect);
@@ -308,35 +400,7 @@ impl App {
         let pad = 20.0 * s;
         let gap = 12.0 * s;
 
-        let mut y = cy;
-
-        // Header: back button + repo name + branch
-        let back_rect = Rect::new(cx + pad, y, 60.0 * s, title_font + 4.0 * s);
-        let back_state = ix.add_zone(ZONE_BACK_BTN, back_rect);
-        if back_state.is_hovered() {
-            painter.rect_filled(back_rect, 6.0 * s, palette.muted.with_alpha(0.2));
-        }
-        text.queue("← Back", body_font, cx + pad + 4.0 * s, y + 2.0 * s,
-            palette.accent, 60.0 * s, sw, sh);
-
-        if let Some(repo) = &self.repo_path {
-            let name = git::repo_name(repo);
-            text.queue(&name, title_font, cx + pad + 80.0 * s, y, palette.text, cw * 0.5, sw, sh);
-        }
-
-        if let Some(status) = &self.status {
-            let branch_text = format!("  {}", status.branch);
-            text.queue(&branch_text, body_font, cx + cw * 0.5, y + 4.0 * s,
-                palette.accent, cw * 0.4, sw, sh);
-
-            if status.ahead > 0 || status.behind > 0 {
-                let sync_text = format!("↑{} ↓{}", status.ahead, status.behind);
-                text.queue(&sync_text, small_font, cx + cw - 100.0 * s, y + 6.0 * s,
-                    palette.warning, 90.0 * s, sw, sh);
-            }
-        }
-
-        y += title_font + gap;
+        let mut y = cy + 8.0 * s;
 
         // Action buttons row: [Refresh] [Push] [Pull]
         let btn_w = 100.0 * s;
@@ -408,25 +472,34 @@ impl App {
 
                     let ty = y + (row_h - body_font) / 2.0;
 
-                    // Staged indicator
-                    let stage_color = if file.staged { palette.accent } else { palette.muted };
-                    let indicator = if file.staged { "●" } else { "○" };
-                    text.queue(indicator, body_font, cx + pad, ty, stage_color, 20.0 * s, sw, sh);
+                    if file.is_submodule {
+                        // Submodule row — show as navigable
+                        text.queue("📦", body_font, cx + pad, ty, palette.accent, 24.0 * s, sw, sh);
+                        text.queue(&file.path, body_font,
+                            cx + pad + 28.0 * s, ty, palette.accent,
+                            cw * 0.5, sw, sh);
+                        text.queue("click to open →", small_font,
+                            cx + cw - pad - 120.0 * s, ty + 2.0 * s,
+                            palette.muted, 120.0 * s, sw, sh);
+                    } else {
+                        // Regular file row
+                        let stage_color = if file.staged { palette.accent } else { palette.muted };
+                        let indicator = if file.staged { "●" } else { "○" };
+                        text.queue(indicator, body_font, cx + pad, ty, stage_color, 20.0 * s, sw, sh);
 
-                    // Status label
-                    let status_color = match file.status {
-                        git::FileState::Added | git::FileState::Untracked => palette.accent,
-                        git::FileState::Modified => palette.warning,
-                        git::FileState::Deleted => palette.danger,
-                        git::FileState::Renamed => palette.text_secondary,
-                    };
-                    text.queue(file.status.label(), body_font,
-                        cx + pad + 24.0 * s, ty, status_color, 20.0 * s, sw, sh);
+                        let status_color = match file.status {
+                            git::FileState::Added | git::FileState::Untracked => palette.accent,
+                            git::FileState::Modified => palette.warning,
+                            git::FileState::Deleted => palette.danger,
+                            git::FileState::Renamed => palette.text_secondary,
+                        };
+                        text.queue(file.status.label(), body_font,
+                            cx + pad + 24.0 * s, ty, status_color, 20.0 * s, sw, sh);
 
-                    // File path
-                    text.queue(&file.path, body_font,
-                        cx + pad + 50.0 * s, ty, palette.text_secondary,
-                        cw - pad * 2.0 - 60.0 * s, sw, sh);
+                        text.queue(&file.path, body_font,
+                            cx + pad + 50.0 * s, ty, palette.text_secondary,
+                            cw - pad * 2.0 - 60.0 * s, sw, sh);
+                    }
 
                     y += row_h;
                 }

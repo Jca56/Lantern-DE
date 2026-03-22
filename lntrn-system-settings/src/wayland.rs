@@ -9,8 +9,10 @@ use lntrn_ui::gpu::{
 };
 
 use crate::config::LanternConfig;
+use crate::display_panel::{self, DisplayPanelState};
 use crate::icons;
 use crate::panels::{self, PanelState};
+use crate::text_edit::KeyboardState;
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
     RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle, WindowHandle,
@@ -109,6 +111,8 @@ pub(crate) struct State {
     pointer: Option<wl_pointer::WlPointer>,
     // Keyboard
     key_pressed: Option<u32>,
+    keymap_pending: Option<(std::os::fd::RawFd, u32)>,
+    modifiers_pending: Option<(u32, u32, u32, u32)>,
     // Popup
     pub(crate) popup_backend: Option<WaylandPopupBackend<State>>,
     pub(crate) popup_closed: bool,
@@ -128,6 +132,8 @@ impl State {
             cursor_shape_mgr: None, cursor_shape_device: None,
             current_cursor_shape: None, pointer: None,
             key_pressed: None,
+            keymap_pending: None,
+            modifiers_pending: None,
             popup_backend: None,
             popup_closed: false,
             pointer_surface: None,
@@ -311,11 +317,26 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
         state: &mut Self, _: &wl_keyboard::WlKeyboard,
         event: wl_keyboard::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
     ) {
-        if let wl_keyboard::Event::Key { key, state: key_state, .. } = event {
-            if key_state == WEnum::Value(wl_keyboard::KeyState::Pressed) {
-                state.key_pressed = Some(key);
+        match event {
+            wl_keyboard::Event::Keymap { format, fd, size } => {
+                if format == WEnum::Value(wl_keyboard::KeymapFormat::XkbV1) {
+                    use std::os::fd::AsRawFd;
+                    state.keymap_pending = Some((fd.as_raw_fd(), size));
+                    // Leak the fd so it isn't closed when OwnedFd drops — we read it later
+                    std::mem::forget(fd);
+                }
             }
-            state.frame_done = true;
+            wl_keyboard::Event::Key { key, state: key_state, .. } => {
+                if key_state == WEnum::Value(wl_keyboard::KeyState::Pressed) {
+                    state.key_pressed = Some(key);
+                }
+                state.frame_done = true;
+            }
+            wl_keyboard::Event::Modifiers { mods_depressed, mods_latched, mods_locked, group, .. } => {
+                state.modifiers_pending = Some((mods_depressed, mods_latched, mods_locked, group));
+                state.frame_done = true;
+            }
+            _ => {}
         }
     }
 }
@@ -452,6 +473,8 @@ pub fn run() -> Result<()> {
     let mut config = LanternConfig::load();
     let mut saved_config = config.clone();
     let mut panel_state = PanelState::new(&fox);
+    let mut display_state = DisplayPanelState::new(&config);
+    let mut kbd = KeyboardState::new();
 
     while state.running {
         if let Err(e) = event_queue.blocking_dispatch(&mut state) {
@@ -504,9 +527,26 @@ pub fn run() -> Result<()> {
             backend.route_cursor(active, cx, cy);
         }
 
+        // Process pending keymap/modifiers
+        if let Some((fd, size)) = state.keymap_pending.take() {
+            kbd.update_keymap(fd, size);
+        }
+        if let Some((dep, lat, lock, grp)) = state.modifiers_pending.take() {
+            kbd.update_modifiers(dep, lat, lock, grp);
+        }
+
         // Keyboard
         if let Some(key) = state.key_pressed.take() {
-            if key == KEY_ESC { state.running = false; }
+            let sym = kbd.key_get_sym(key);
+            let utf8 = kbd.key_to_utf8(key);
+
+            // Let focused text inputs consume the key first
+            let consumed = display_panel::handle_display_key(
+                &mut config, &mut display_state, sym, utf8,
+            );
+            if !consumed && key == KEY_ESC {
+                state.running = false;
+            }
         }
 
         // Left press
@@ -561,6 +601,11 @@ pub fn run() -> Result<()> {
                                             btn_x, btn_w, btn_h, row_h, panel_y, s,
                                         );
                                     }
+                                    Panel::Display | Panel::Appearance => {
+                                        display_panel::handle_display_click(
+                                            &mut config, &mut display_state, id,
+                                        );
+                                    }
                                     _ => {}
                                 }
                             }
@@ -601,7 +646,8 @@ pub fn run() -> Result<()> {
             state.popup_closed = false;
         }
 
-        // Reset scroll
+        // Capture scroll before reset
+        let frame_scroll = state.scroll_delta;
         state.scroll_delta = 0.0;
 
         // ── Cursor shape ────────────────────────────────────────────────
@@ -747,6 +793,20 @@ pub fn run() -> Result<()> {
                     &mut config, &mut panel_state, &mut painter, &mut text, &mut ix, &fox,
                     content_x, panel_y, content_w, s, sw, sh,
                 );
+            }
+            Panel::Display | Panel::Appearance => {
+                display_state.sync_from_config(&config);
+                let panel_h = hf - panel_y;
+                display_panel::draw_display_panel(
+                    &mut config, &mut display_state,
+                    &mut painter, &mut text, &mut ix, &tex_pass, &fox, &gpu,
+                    content_x, panel_y, content_w, panel_h, s, sw, sh,
+                    frame_scroll,
+                );
+                let thumb_draws = display_panel::collect_thumb_draws(&display_state, s);
+                for td in thumb_draws {
+                    tex_draws.push(td);
+                }
             }
             _ => {}
         }

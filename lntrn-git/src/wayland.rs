@@ -597,13 +597,16 @@ pub fn run() -> Result<()> {
         let max_s = ix.add_zone(ZONE_MAXIMIZE, max_rect);
         let min_s = ix.add_zone(ZONE_MINIMIZE, min_rect);
 
-        TitleBar::new(tb_rect)
-            .scale(s)
-            .maximized(state.maximized)
+        let tb = TitleBar::new(tb_rect).scale(s);
+        let tb_content = tb.content_rect();
+        tb.maximized(state.maximized)
             .close_hovered(close_s.is_hovered())
             .maximize_hovered(max_s.is_hovered())
             .minimize_hovered(min_s.is_hovered())
             .draw(&mut painter, &fox);
+
+        // App title bar content (back button, repo name, branch)
+        app.draw_title_bar(&mut text, &mut ix, &fox, tb_content, &mut painter, s, sw, sh);
 
         // Gradient strip
         let strip_y = TITLE_BAR_H * s;

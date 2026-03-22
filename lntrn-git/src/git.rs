@@ -9,6 +9,7 @@ pub struct FileStatus {
     pub path: String,
     pub status: FileState,
     pub staged: bool,
+    pub is_submodule: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,13 +111,38 @@ pub fn ahead_behind(repo: &Path) -> (u32, u32) {
     }
 }
 
+/// Detect submodule paths by checking which entries in the repo are
+/// themselves git repos (have .git file or directory). More robust than
+/// `git submodule status` which can fail on stale .gitmodules entries.
+pub fn submodule_paths(repo: &Path) -> Vec<String> {
+    let output = Command::new("git")
+        .args(["ls-files", "--stage"])
+        .current_dir(repo)
+        .output();
+    let Ok(output) = output else { return Vec::new() };
+    // Submodules show as mode 160000 in the index
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            if line.starts_with("160000 ") {
+                // Format: "160000 <hash> <stage>\t<path>"
+                line.split('\t').nth(1).map(|s| s.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 /// Get full repo status.
 pub fn status(repo: &Path) -> RepoStatus {
     let branch = current_branch(repo);
     let (ahead, behind) = ahead_behind(repo);
 
+    let submodules = submodule_paths(repo);
+
     let output = Command::new("git")
-        .args(["status", "--porcelain=v1", "--ignore-submodules=dirty"])
+        .args(["status", "--porcelain=v1"])
         .current_dir(repo)
         .output();
 
@@ -128,6 +154,7 @@ pub fn status(repo: &Path) -> RepoStatus {
             let index = line.as_bytes()[0];
             let worktree = line.as_bytes()[1];
             let path = line[3..].to_string();
+            let is_sub = submodules.iter().any(|s| s == &path);
 
             // Staged changes (index column)
             if index != b' ' && index != b'?' {
@@ -138,23 +165,18 @@ pub fn status(repo: &Path) -> RepoStatus {
                     b'R' => FileState::Renamed,
                     _ => FileState::Modified,
                 };
-                files.push(FileStatus { path: path.clone(), status: state, staged: true });
+                files.push(FileStatus { path: path.clone(), status: state, staged: true, is_submodule: is_sub });
             }
 
             // Unstaged changes (worktree column)
             if worktree == b'M' || worktree == b'D' {
                 let state = if worktree == b'D' { FileState::Deleted } else { FileState::Modified };
-                // Don't duplicate if already added as staged
-                if index == b' ' || index == b'?' {
-                    files.push(FileStatus { path: path.clone(), status: state, staged: false });
-                } else {
-                    files.push(FileStatus { path: path.clone(), status: state, staged: false });
-                }
+                files.push(FileStatus { path: path.clone(), status: state, staged: false, is_submodule: is_sub });
             }
 
             // Untracked
             if index == b'?' {
-                files.push(FileStatus { path, status: FileState::Untracked, staged: false });
+                files.push(FileStatus { path, status: FileState::Untracked, staged: false, is_submodule: is_sub });
             }
         }
     }

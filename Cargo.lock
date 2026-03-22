@@ -3199,6 +3199,7 @@ name = "lntrn-system-settings"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "image",
  "lntrn-render",
  "lntrn-theme",
  "lntrn-ui",
@@ -3209,6 +3210,7 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
  "wgpu 28.0.0",
+ "xkbcommon 0.9.0",
 ]
 
 [[package]]
@@ -4926,7 +4928,7 @@ dependencies = [
  "wayland-server",
  "winit",
  "x11rb",
- "xkbcommon",
+ "xkbcommon 0.8.0",
 ]
 
 [[package]]
@@ -7440,6 +7442,17 @@ name = "xkbcommon"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d66ca9352cbd4eecbbc40871d8a11b4ac8107cfc528a6e14d7c19c69d0e1ac9"
+dependencies = [
+ "libc",
+ "memmap2",
+ "xkeysym",
+]
+
+[[package]]
+name = "xkbcommon"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7a974f48060a14e95705c01f24ad9c3345022f4d97441b8a36beb7ed5c4a02d"
 dependencies = [
  "libc",
  "memmap2",

@@ -1,7 +1,10 @@
 mod config;
+mod display_panel;
 mod icons;
 mod panels;
 mod popup_backend;
+mod text_edit;
+mod wallpaper_picker;
 mod wayland;
 
 fn main() {

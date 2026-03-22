@@ -1,0 +1,333 @@
+use lntrn_render::{Painter, Rect, TextureDraw, TexturePass, TextRenderer};
+use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea, TextInput};
+
+use crate::config::LanternConfig;
+use crate::text_edit::TextBuffer;
+use crate::wallpaper_picker::WallpaperPicker;
+
+// ── Zone IDs ────────────────────────────────────────────────────────────────
+
+pub const ZONE_DIR_INPUT: u32 = 600;
+const ZONE_THUMB_BASE: u32 = 610;
+const MAX_THUMBS: u32 = 200;
+
+// ── Layout constants ────────────────────────────────────────────────────────
+
+const PAD: f32 = 24.0;
+const ROW_H: f32 = 48.0;
+const LABEL_SIZE: f32 = 18.0;
+const THUMB_GAP: f32 = 12.0;
+const THUMB_W: f32 = 192.0;
+const THUMB_H: f32 = 120.0;
+const INPUT_H: f32 = 44.0;
+const SELECTED_BORDER: f32 = 3.0;
+
+/// Display panel state (persists across frames).
+pub struct DisplayPanelState {
+    pub picker: WallpaperPicker,
+    pub dir_buffer: TextBuffer,
+    pub dir_focused: bool,
+    pub scroll_offset: f32,
+    pub needs_reload: bool,
+    /// Grid origin Y, set during draw for collect_thumb_draws.
+    grid_y: f32,
+    grid_h: f32,
+    grid_x: f32,
+    grid_w: f32,
+}
+
+impl DisplayPanelState {
+    pub fn new(config: &LanternConfig) -> Self {
+        Self {
+            picker: WallpaperPicker::new(),
+            dir_buffer: TextBuffer::new(&config.appearance.wallpaper_directory),
+            dir_focused: false,
+            scroll_offset: 0.0,
+            needs_reload: true,
+            grid_y: 0.0,
+            grid_h: 0.0,
+            grid_x: 0.0,
+            grid_w: 0.0,
+        }
+    }
+
+    /// Sync the text buffer if config changed externally (e.g. cancel/load).
+    pub fn sync_from_config(&mut self, config: &LanternConfig) {
+        if self.dir_buffer.text != config.appearance.wallpaper_directory {
+            self.dir_buffer.set(&config.appearance.wallpaper_directory);
+            self.needs_reload = true;
+        }
+    }
+}
+
+// ── Grid layout helper ──────────────────────────────────────────────────────
+
+fn grid_cols(grid_w: f32, thumb_w: f32, gap: f32) -> usize {
+    ((grid_w + gap) / (thumb_w + gap)).floor().max(1.0) as usize
+}
+
+// ── Draw ────────────────────────────────────────────────────────────────────
+
+pub fn draw_display_panel(
+    config: &mut LanternConfig,
+    dps: &mut DisplayPanelState,
+    painter: &mut Painter,
+    text: &mut TextRenderer,
+    ix: &mut InteractionContext,
+    tex_pass: &TexturePass,
+    fox: &FoxPalette,
+    gpu: &lntrn_render::GpuContext,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    s: f32,
+    sw: u32,
+    sh: u32,
+    scroll_delta: f32,
+) {
+    let pad = PAD * s;
+    let lsz = LABEL_SIZE * s;
+
+    // Load thumbnails if needed
+    if dps.needs_reload {
+        dps.needs_reload = false;
+        dps.picker.load_directory(&dps.dir_buffer.text, tex_pass, gpu, true);
+    }
+
+    let mut cy = y;
+
+    // ── Current wallpaper label ────────────────────────────────────
+    {
+        let label_y = cy + (ROW_H * s - lsz) / 2.0;
+        text.queue("Wallpaper", lsz, x + pad, label_y, fox.text, 140.0 * s, sw, sh);
+        let val = if config.appearance.wallpaper.is_empty() {
+            "(default)"
+        } else {
+            std::path::Path::new(&config.appearance.wallpaper)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(&config.appearance.wallpaper)
+        };
+        let val_x = x + pad + 140.0 * s;
+        text.queue(val, lsz, val_x, label_y, fox.text_secondary, w - pad - 140.0 * s, sw, sh);
+        cy += ROW_H * s;
+    }
+
+    // ── Directory path input ───────────────────────────────────────
+    {
+        let label_y = cy + (ROW_H * s - lsz) / 2.0;
+        text.queue("Directory", lsz, x + pad, label_y, fox.text, 140.0 * s, sw, sh);
+
+        let input_x = x + pad + 140.0 * s;
+        let input_w = w - pad * 2.0 - 140.0 * s;
+        let input_h = INPUT_H * s;
+        let input_y = cy + (ROW_H * s - input_h) / 2.0;
+        let input_rect = Rect::new(input_x, input_y, input_w, input_h);
+        let zone = ix.add_zone(ZONE_DIR_INPUT, input_rect);
+
+        let mut ti = TextInput::new(input_rect)
+            .text(&dps.dir_buffer.text)
+            .placeholder("~/Pictures/Wallpapers")
+            .focused(dps.dir_focused)
+            .hovered(zone.is_hovered());
+        if dps.dir_focused {
+            ti = ti.cursor_pos(dps.dir_buffer.cursor);
+        }
+        ti.scale(s).draw(painter, text, fox, sw, sh);
+
+        cy += ROW_H * s + 8.0 * s;
+    }
+
+    // ── Thumbnail grid (scrollable) ────────────────────────────────
+    let grid_x = x + pad;
+    let grid_y = cy;
+    let grid_w = w - pad * 2.0;
+    let grid_h = (h - (cy - y)).max(0.0);
+
+    // Store for collect_thumb_draws
+    dps.grid_x = grid_x;
+    dps.grid_y = grid_y;
+    dps.grid_w = grid_w;
+    dps.grid_h = grid_h;
+
+    let thumb_w = THUMB_W * s;
+    let thumb_h = THUMB_H * s;
+    let gap = THUMB_GAP * s;
+    let cols = grid_cols(grid_w, thumb_w, gap);
+    let entry_count = dps.picker.entries.len();
+    let rows = if entry_count > 0 { (entry_count + cols - 1) / cols } else { 0 };
+    let content_height = rows as f32 * (thumb_h + gap);
+
+    // Handle scrolling
+    if scroll_delta != 0.0 {
+        ScrollArea::apply_scroll(&mut dps.scroll_offset, scroll_delta * 40.0, content_height, grid_h);
+    }
+
+    let scroll_area = ScrollArea::new(
+        Rect::new(grid_x, grid_y, grid_w, grid_h),
+        content_height,
+        &mut dps.scroll_offset,
+    );
+
+    // Empty state
+    if entry_count == 0 {
+        let msg = if !std::path::Path::new(&dps.dir_buffer.text).is_dir() {
+            "Directory not found"
+        } else {
+            "No images found"
+        };
+        let msg_y = grid_y + 40.0 * s;
+        text.queue(msg, lsz, grid_x, msg_y, fox.text_secondary, grid_w, sw, sh);
+        return;
+    }
+
+    // Draw scrollable thumbnail grid — painter shapes (borders/highlights)
+    scroll_area.begin(painter);
+    let base_y = scroll_area.content_y();
+
+    for (i, entry) in dps.picker.entries.iter().enumerate() {
+        if i as u32 >= MAX_THUMBS { break; }
+        let col = i % cols;
+        let row = i / cols;
+        let tx = grid_x + col as f32 * (thumb_w + gap);
+        let ty = base_y + row as f32 * (thumb_h + gap);
+
+        // Skip if outside visible area
+        if ty + thumb_h < grid_y || ty > grid_y + grid_h { continue; }
+
+        let zone_id = ZONE_THUMB_BASE + i as u32;
+        let rect = Rect::new(tx, ty, thumb_w, thumb_h);
+        let zone = ix.add_zone(zone_id, rect);
+
+        let is_selected = !config.appearance.wallpaper.is_empty()
+            && entry.path.to_str().map(|p| p == config.appearance.wallpaper).unwrap_or(false);
+
+        let corner = 6.0 * s;
+
+        if is_selected {
+            let b = SELECTED_BORDER * s;
+            let outer = Rect::new(tx - b, ty - b, thumb_w + b * 2.0, thumb_h + b * 2.0);
+            painter.rect_filled(outer, corner + b, fox.accent);
+        } else if zone.is_hovered() {
+            let b = 2.0 * s;
+            let outer = Rect::new(tx - b, ty - b, thumb_w + b * 2.0, thumb_h + b * 2.0);
+            painter.rect_filled(outer, corner + b, fox.text.with_alpha(0.3));
+        }
+
+        // Draw filename below thumbnail
+        if let Some(name) = entry.path.file_stem().and_then(|n| n.to_str()) {
+            let name_y = ty + thumb_h + 2.0 * s;
+            if name_y + 14.0 * s < grid_y + grid_h {
+                text.queue(name, 14.0 * s, tx, name_y, fox.text_secondary, thumb_w, sw, sh);
+            }
+        }
+    }
+
+    scroll_area.end(painter);
+}
+
+/// Collect texture draws for thumbnail images. Call after draw_display_panel.
+pub fn collect_thumb_draws<'a>(
+    dps: &'a DisplayPanelState,
+    s: f32,
+) -> Vec<TextureDraw<'a>> {
+    let thumb_w = THUMB_W * s;
+    let thumb_h = THUMB_H * s;
+    let gap = THUMB_GAP * s;
+    let cols = grid_cols(dps.grid_w, thumb_w, gap);
+
+    let base_y = dps.grid_y - dps.scroll_offset;
+    let clip = [dps.grid_x, dps.grid_y, dps.grid_w, dps.grid_h];
+
+    let mut draws = Vec::new();
+    for (i, entry) in dps.picker.entries.iter().enumerate() {
+        if i as u32 >= MAX_THUMBS { break; }
+        let col = i % cols;
+        let row = i / cols;
+        let tx = dps.grid_x + col as f32 * (thumb_w + gap);
+        let ty = base_y + row as f32 * (thumb_h + gap);
+
+        if ty + thumb_h < dps.grid_y || ty > dps.grid_y + dps.grid_h { continue; }
+
+        let mut draw = TextureDraw::new(&entry.texture, tx, ty, thumb_w, thumb_h);
+        draw.clip = Some(clip);
+        draws.push(draw);
+    }
+    draws
+}
+
+// ── Click handling ──────────────────────────────────────────────────────────
+
+pub fn handle_display_click(
+    config: &mut LanternConfig,
+    dps: &mut DisplayPanelState,
+    zone_id: u32,
+) {
+    if zone_id == ZONE_DIR_INPUT {
+        dps.dir_focused = true;
+        return;
+    }
+
+    // Clicking anywhere else unfocuses the text input
+    if dps.dir_focused {
+        dps.dir_focused = false;
+        if dps.dir_buffer.text != config.appearance.wallpaper_directory {
+            config.appearance.wallpaper_directory = dps.dir_buffer.text.clone();
+            dps.needs_reload = true;
+        }
+    }
+
+    // Thumbnail click
+    if zone_id >= ZONE_THUMB_BASE && zone_id < ZONE_THUMB_BASE + MAX_THUMBS {
+        let idx = (zone_id - ZONE_THUMB_BASE) as usize;
+        if let Some(entry) = dps.picker.entries.get(idx) {
+            config.appearance.wallpaper = entry.path.to_string_lossy().to_string();
+        }
+    }
+}
+
+/// Handle keyboard input when the directory text input is focused.
+/// Returns true if the key was consumed.
+pub fn handle_display_key(
+    config: &mut LanternConfig,
+    dps: &mut DisplayPanelState,
+    sym: xkbcommon::xkb::Keysym,
+    utf8: Option<String>,
+) -> bool {
+    if !dps.dir_focused {
+        return false;
+    }
+
+    match sym.raw() {
+        0xff0d | 0xff8d => {
+            // Return/Enter — apply directory change
+            dps.dir_focused = false;
+            if dps.dir_buffer.text != config.appearance.wallpaper_directory {
+                config.appearance.wallpaper_directory = dps.dir_buffer.text.clone();
+                dps.needs_reload = true;
+            }
+            true
+        }
+        0xff1b => {
+            // Escape — cancel editing, revert
+            dps.dir_focused = false;
+            dps.dir_buffer.set(&config.appearance.wallpaper_directory);
+            true
+        }
+        0xff08 => { dps.dir_buffer.backspace(); true }
+        0xffff => { dps.dir_buffer.delete(); true }
+        0xff51 => { dps.dir_buffer.left(); true }
+        0xff53 => { dps.dir_buffer.right(); true }
+        0xff50 => { dps.dir_buffer.home(); true }
+        0xff57 => { dps.dir_buffer.end(); true }
+        _ => {
+            if let Some(ch) = utf8 {
+                dps.dir_buffer.insert(&ch);
+                true
+            } else {
+                false
+            }
+        }
+    }
+}

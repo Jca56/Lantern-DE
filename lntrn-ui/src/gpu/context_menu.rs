@@ -373,7 +373,8 @@ impl ContextMenu {
 
         // Collect submenu panels that need popup surfaces
         let sc = self.style.scale;
-        let mut needed_popups: Vec<(i32, i32, u32, u32, Vec<usize>)> = Vec::new();
+        // (log_x, log_y, log_w, log_h, path, phys_w)
+        let mut needed_popups: Vec<(i32, i32, u32, u32, Vec<usize>, f32)> = Vec::new();
         {
             let mut current_items: &[MenuItem] = &self.items;
             let mut parent_x = 0.0f32;
@@ -391,11 +392,11 @@ impl ContextMenu {
                 let sub_x = parent_x + parent_width;
                 let sub_y = parent_y + sub_y_offset;
 
-                // Convert physical → logical for positioner
+                // Convert physical → logical for positioner, keep physical width for drawing
                 needed_popups.push((
                     (sub_x / sc) as i32, (sub_y / sc) as i32,
                     (sub_w / sc).ceil() as u32, (sub_h / sc).ceil() as u32,
-                    path.clone(),
+                    path.clone(), sub_w,
                 ));
 
                 parent_x = sub_x;
@@ -458,7 +459,7 @@ impl ContextMenu {
             let panel_w = if depth == 0 {
                 self.width
             } else {
-                needed_popups[depth - 1].2 as f32
+                needed_popups[depth - 1].5
             };
 
             if let Some(ctx) = backend.popup_render(pid) {
