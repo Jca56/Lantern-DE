@@ -23,3 +23,4 @@ wayland-protocols = { version = "0.32", features = ["client", "staging", "unstab
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 xkbcommon = "0.9"
 wgpu = "28"
+resvg = "0.47"

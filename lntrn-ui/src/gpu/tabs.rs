@@ -177,16 +177,19 @@ impl<'a> TabBar<'a> {
 
         for (i, (label, tab_rect)) in self.tabs.iter().zip(&tab_rects).enumerate() {
             let is_selected = i == self.selected;
-            let is_tab_hovered = self.hovered_tab == Some(i) && !is_selected;
+            let is_tab_hovered = self.hovered_tab == Some(i);
             let is_close_hovered = self.closable && self.hovered_close == Some(i);
 
             // Hover highlight background
             if is_tab_hovered {
-                painter.rect_filled(
-                    *tab_rect,
-                    0.0,
-                    palette.text.with_alpha(0.04),
+                let hr = 6.0 * s;
+                let inset = Rect::new(
+                    tab_rect.x + 2.0 * s,
+                    tab_rect.y + 3.0 * s,
+                    tab_rect.w - 4.0 * s,
+                    tab_rect.h - 6.0 * s,
                 );
+                painter.rect_filled(inset, hr, palette.accent.with_alpha(0.12));
             }
 
             // Label text

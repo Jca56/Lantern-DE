@@ -1,7 +1,7 @@
 use lntrn_render::{Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{
     Button, ButtonVariant, ContextMenu, ContextMenuStyle, FoxPalette, InteractionContext,
-    MenuEvent, MenuItem, Slider, Toggle,
+    MenuEvent, MenuItem, ScrollArea, Scrollbar, Slider, Toggle,
 };
 
 use crate::config::LanternConfig;
@@ -23,11 +23,14 @@ const ZONE_PWR_IDLE_ACT_BTN: u32 = 404;
 const ZONE_PWR_LOW_BAT_SLIDER: u32 = 405;
 const ZONE_PWR_CRIT_BAT_SLIDER: u32 = 406;
 const ZONE_PWR_CRIT_BTN: u32 = 407;
+const ZONE_PWR_WIFI_PS: u32 = 408;
+const ZONE_PWR_WIFI_SCHEME_BTN: u32 = 409;
 
 const ACT_LID: u32 = 500;
 const ACT_LID_AC: u32 = 510;
 const ACT_IDLE: u32 = 520;
 const ACT_CRIT: u32 = 530;
+const ACT_WIFI_SCHEME: u32 = 540;
 
 const ROW_H: f32 = 48.0;
 const LABEL_SIZE: f32 = 18.0;
@@ -43,12 +46,14 @@ const VALUE_W: f32 = 60.0;
 const LID_OPTIONS: &[&str] = &["Suspend", "Hibernate", "Lock", "Nothing"];
 const IDLE_ACTION_OPTIONS: &[&str] = &["Suspend", "Lock", "Nothing"];
 const CRIT_OPTIONS: &[&str] = &["Suspend", "Hibernate", "Shutdown", "Nothing"];
+const WIFI_SCHEME_OPTIONS: &[&str] = &["Active", "Balanced", "Battery"];
 
 // ── Panel state ─────────────────────────────────────────────────────────────
 
 pub struct PanelState {
     pub dropdown_menu: ContextMenu,
     pub active_dropdown: Option<u32>,
+    pub scroll_offset: f32,
 }
 
 impl PanelState {
@@ -56,6 +61,7 @@ impl PanelState {
         Self {
             dropdown_menu: ContextMenu::new(ContextMenuStyle::from_palette(fox)),
             active_dropdown: None,
+            scroll_offset: 0.0,
         }
     }
 
@@ -242,19 +248,36 @@ pub fn draw_power_panel(
     config: &mut LanternConfig,
     panel_state: &mut PanelState,
     painter: &mut Painter, text: &mut TextRenderer, ix: &mut InteractionContext,
-    fox: &FoxPalette, x: f32, y: f32, w: f32, s: f32, sw: u32, sh: u32,
+    fox: &FoxPalette, x: f32, y: f32, w: f32, panel_h: f32,
+    s: f32, sw: u32, sh: u32, scroll_delta: f32,
 ) {
     let pad_l = PAD_LEFT * s;
     let pad_r = PAD_RIGHT * s;
+    let btn_w = 200.0 * s;
+    let btn_h = BTN_H * s;
+    let row = ROW_H * s;
+
+    // Total content height: 8 rows + section separator + section header
+    let content_height = row * 10.0 + 8.0 * s + 16.0 * s + 18.0 * s + 8.0 * s;
+
+    // Handle scroll
+    if scroll_delta != 0.0 {
+        ScrollArea::apply_scroll(
+            &mut panel_state.scroll_offset, scroll_delta * 40.0,
+            content_height, panel_h,
+        );
+    }
+
+    let viewport = Rect::new(x, y, w, panel_h);
+    let scroll_area = ScrollArea::new(viewport, content_height, &mut panel_state.scroll_offset);
+    scroll_area.begin(painter);
+
     let label_x = x + pad_l;
     let label_w = LABEL_W * s;
-    let btn_w = 200.0 * s;
     let btn_x = x + w - pad_r - btn_w;
-    let btn_h = BTN_H * s;
     let (_, slider_cx, slider_cw, slider_vx) = layout(x, w, s);
 
-    let mut cy = y;
-    let row = ROW_H * s;
+    let mut cy = scroll_area.content_y();
     let lsz = LABEL_SIZE * s;
     let vsz = VALUE_SIZE * s;
     let slider_h = SLIDER_H * s;
@@ -381,6 +404,40 @@ pub fn draw_power_panel(
         ZONE_PWR_CRIT_BTN, active == Some(ZONE_PWR_CRIT_BTN),
         painter, text, ix, fox, label_x, label_w, btn_x, btn_w, btn_h, row, lsz, s, sw, sh, &mut cy, menu);
 
+    // ── Section separator: WiFi Power ───────────────────────────────
+    cy += 8.0 * s;
+    painter.rect_filled(
+        Rect::new(label_x, cy, w - PAD_LEFT * s - PAD_RIGHT * s, 1.0 * s),
+        0.0, fox.muted.with_alpha(0.2),
+    );
+    cy += 16.0 * s;
+    text.queue("WiFi Power", lsz, label_x, cy, fox.text_secondary, label_w, sw, sh);
+    cy += lsz + 8.0 * s;
+
+    // Row 7: WiFi Power Save toggle
+    {
+        let rect = Rect::new(label_x, cy, w - PAD_LEFT * s - PAD_RIGHT * s, TOGGLE_H * s);
+        let toggle = Toggle::new(rect, config.power.wifi_power_save)
+            .label("WiFi Power Save").scale(s);
+        let track = toggle.track_rect();
+        let zone = ix.add_zone(ZONE_PWR_WIFI_PS, track);
+        toggle.hovered(zone.is_hovered()).draw(painter, text, fox, sw, sh);
+        cy += row;
+    }
+
+    // Row 8: WiFi Power Scheme dropdown
+    draw_select_button("Power Scheme", &config.power.wifi_power_scheme,
+        ZONE_PWR_WIFI_SCHEME_BTN, active == Some(ZONE_PWR_WIFI_SCHEME_BTN),
+        painter, text, ix, fox, label_x, label_w, btn_x, btn_w, btn_h, row, lsz, s, sw, sh, &mut cy, menu);
+
+    scroll_area.end(painter);
+
+    // Draw scrollbar outside the clip region
+    if scroll_area.is_scrollable() {
+        let sb = Scrollbar::new(&viewport, content_height, panel_state.scroll_offset);
+        sb.draw(painter, lntrn_ui::gpu::InteractionState::Idle, fox);
+    }
+
     // ── Draw context menu LAST so it's on top ───────────────────────
     panel_state.dropdown_menu.set_scale(s);
     panel_state.dropdown_menu.update(0.016);
@@ -399,6 +456,9 @@ pub fn draw_power_panel(
                 id if id >= ACT_CRIT && id < ACT_CRIT + CRIT_OPTIONS.len() as u32 => {
                     config.power.critical_battery_action = CRIT_OPTIONS[(id - ACT_CRIT) as usize].to_lowercase();
                 }
+                id if id >= ACT_WIFI_SCHEME && id < ACT_WIFI_SCHEME + WIFI_SCHEME_OPTIONS.len() as u32 => {
+                    config.power.wifi_power_scheme = WIFI_SCHEME_OPTIONS[(id - ACT_WIFI_SCHEME) as usize].to_lowercase();
+                }
                 _ => {}
             }
             panel_state.close_dropdown();
@@ -409,14 +469,21 @@ pub fn draw_power_panel(
 // ── Click handling ──────────────────────────────────────────────────────────
 
 pub fn handle_power_click(
-    config: &LanternConfig, panel_state: &mut PanelState, zone_id: u32,
+    config: &mut LanternConfig, panel_state: &mut PanelState, zone_id: u32,
     btn_x: f32, _btn_w: f32, btn_h: f32, row: f32, panel_y: f32, _s: f32,
 ) {
+    if zone_id == ZONE_PWR_WIFI_PS {
+        config.power.wifi_power_save = !config.power.wifi_power_save;
+        return;
+    }
+
+    let scroll = panel_state.scroll_offset;
     let dropdown_defs: &[(u32, &[&str], &str, u32, usize)] = &[
-        (ZONE_PWR_LID_BTN,      LID_OPTIONS,          &config.power.lid_close_action,       ACT_LID,    0),
-        (ZONE_PWR_LID_AC_BTN,   LID_OPTIONS,          &config.power.lid_close_on_ac,        ACT_LID_AC, 1),
-        (ZONE_PWR_IDLE_ACT_BTN, IDLE_ACTION_OPTIONS,   &config.power.idle_action,            ACT_IDLE,   4),
-        (ZONE_PWR_CRIT_BTN,     CRIT_OPTIONS,          &config.power.critical_battery_action, ACT_CRIT,  7),
+        (ZONE_PWR_LID_BTN,          LID_OPTIONS,          &config.power.lid_close_action,        ACT_LID,         0),
+        (ZONE_PWR_LID_AC_BTN,       LID_OPTIONS,          &config.power.lid_close_on_ac,         ACT_LID_AC,      1),
+        (ZONE_PWR_IDLE_ACT_BTN,     IDLE_ACTION_OPTIONS,  &config.power.idle_action,             ACT_IDLE,        4),
+        (ZONE_PWR_CRIT_BTN,         CRIT_OPTIONS,         &config.power.critical_battery_action, ACT_CRIT,        7),
+        (ZONE_PWR_WIFI_SCHEME_BTN,  WIFI_SCHEME_OPTIONS,  &config.power.wifi_power_scheme,       ACT_WIFI_SCHEME, 10),
     ];
 
     for (btn_zone, options, current, base_id, row_idx) in dropdown_defs {
@@ -424,7 +491,7 @@ pub fn handle_power_click(
             if panel_state.active_dropdown == Some(*btn_zone) {
                 panel_state.close_dropdown();
             } else {
-                let menu_y = panel_y + *row_idx as f32 * row + (row + btn_h) / 2.0;
+                let menu_y = panel_y + *row_idx as f32 * row + (row + btn_h) / 2.0 - scroll;
                 let items = make_menu_items(options, *base_id, current);
                 panel_state.dropdown_menu.open(btn_x, menu_y, items);
                 panel_state.active_dropdown = Some(*btn_zone);

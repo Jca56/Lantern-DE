@@ -10,9 +10,10 @@ use lntrn_ui::gpu::{
 
 use crate::config::LanternConfig;
 use crate::display_panel::{self, DisplayPanelState};
+use crate::icon_panel;
 use crate::icons;
 use crate::panels::{self, PanelState};
-use crate::text_edit::KeyboardState;
+use crate::text_edit::{KeyboardState, keycode_to_char};
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
     RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle, WindowHandle,
@@ -45,8 +46,8 @@ const SIDEBAR_ICON_DRAW: f32 = 24.0; // logical draw size for icons
 
 const ZONE_SIDEBAR_BASE: u32 = 200;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Panel { Appearance, WindowManager, Input, Display, Power }
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Panel { Appearance, WindowManager, Input, Display, Power, AppIcons }
 
 const PANELS: &[(Panel, &str)] = &[
     (Panel::Appearance, "Appearance"),
@@ -54,6 +55,7 @@ const PANELS: &[(Panel, &str)] = &[
     (Panel::Input, "Input"),
     (Panel::Display, "Display"),
     (Panel::Power, "Power"),
+    (Panel::AppIcons, "App Icons"),
 ];
 
 // ── WaylandHandle for wgpu ──────────────────────────────────────────────────
@@ -113,6 +115,7 @@ pub(crate) struct State {
     key_pressed: Option<u32>,
     keymap_pending: Option<(std::os::fd::RawFd, u32)>,
     modifiers_pending: Option<(u32, u32, u32, u32)>,
+    shift: bool,
     // Popup
     pub(crate) popup_backend: Option<WaylandPopupBackend<State>>,
     pub(crate) popup_closed: bool,
@@ -134,6 +137,7 @@ impl State {
             key_pressed: None,
             keymap_pending: None,
             modifiers_pending: None,
+            shift: false,
             popup_backend: None,
             popup_closed: false,
             pointer_surface: None,
@@ -457,12 +461,13 @@ pub fn run() -> Result<()> {
 
     // Rasterize sidebar icons into GPU textures
     let tex_pass = TexturePass::new(&gpu);
-    let icon_defs: [(Vec<icons::PathCmd>, Color); 5] = [
+    let icon_defs: [(Vec<icons::PathCmd>, Color); 6] = [
         (icons::icon_appearance(),     Color::from_rgb8(229, 165, 75)),  // warm amber
         (icons::icon_window_manager(), Color::from_rgb8(130, 170, 255)), // soft blue
         (icons::icon_input(),          Color::from_rgb8(180, 140, 220)), // lavender
         (icons::icon_display(),        Color::from_rgb8(100, 200, 180)), // teal
         (icons::icon_power(),          Color::from_rgb8(120, 210, 120)), // green
+        (icons::icon_app_icons(),      Color::from_rgb8(230, 130, 180)), // pink
     ];
     let icon_textures: Vec<GpuTexture> = icon_defs.iter().map(|(cmds, color)| {
         let rgba = icons::rasterize_path(cmds, 24.0, 24.0, ICON_SIZE, ICON_SIZE, *color);
@@ -474,6 +479,7 @@ pub fn run() -> Result<()> {
     let mut saved_config = config.clone();
     let mut panel_state = PanelState::new(&fox);
     let mut display_state = DisplayPanelState::new(&config);
+    let mut icon_panel_state = icon_panel::IconPanelState::new();
     let mut kbd = KeyboardState::new();
 
     while state.running {
@@ -533,6 +539,7 @@ pub fn run() -> Result<()> {
         }
         if let Some((dep, lat, lock, grp)) = state.modifiers_pending.take() {
             kbd.update_modifiers(dep, lat, lock, grp);
+            state.shift = dep & 1 != 0;
         }
 
         // Keyboard
@@ -540,10 +547,25 @@ pub fn run() -> Result<()> {
             let sym = kbd.key_get_sym(key);
             let utf8 = kbd.key_to_utf8(key);
 
+            // Fallback: if xkb didn't produce a keysym, use raw keycode mapping
+            let (sym, utf8) = if sym.raw() == 0 {
+                let fallback_sym = match key {
+                    1 => xkbcommon::xkb::Keysym::new(0xff1b),  // Escape
+                    14 => xkbcommon::xkb::Keysym::new(0xff08), // Backspace
+                    28 => xkbcommon::xkb::Keysym::new(0xff0d), // Return
+                    _ => sym,
+                };
+                let fallback_utf8 = utf8.or_else(|| keycode_to_char(key, state.shift).map(|c| c.to_string()));
+                (fallback_sym, fallback_utf8)
+            } else {
+                (sym, utf8)
+            };
+
             // Let focused text inputs consume the key first
             let consumed = display_panel::handle_display_key(
-                &mut config, &mut display_state, sym, utf8,
+                &mut config, &mut display_state, sym, utf8.clone(),
             );
+            let consumed = consumed || icon_panel_state.handle_key(sym, utf8);
             if !consumed && key == KEY_ESC {
                 state.running = false;
             }
@@ -577,7 +599,13 @@ pub fn run() -> Result<()> {
                             panel_state.close_dropdown();
                         }
                         panels::ZONE_SAVE => {
+                            let wifi_changed =
+                                config.power.wifi_power_save != saved_config.power.wifi_power_save
+                                || config.power.wifi_power_scheme != saved_config.power.wifi_power_scheme;
                             config.save();
+                            if wifi_changed {
+                                config.apply_wifi_power();
+                            }
                             saved_config = config.clone();
                         }
                         panels::ZONE_CANCEL => {
@@ -597,7 +625,7 @@ pub fn run() -> Result<()> {
                                         let btn_h = 42.0 * s;
                                         let row_h = 48.0 * s;
                                         panels::handle_power_click(
-                                            &config, &mut panel_state, id,
+                                            &mut config, &mut panel_state, id,
                                             btn_x, btn_w, btn_h, row_h, panel_y, s,
                                         );
                                     }
@@ -605,6 +633,9 @@ pub fn run() -> Result<()> {
                                         display_panel::handle_display_click(
                                             &mut config, &mut display_state, id,
                                         );
+                                    }
+                                    Panel::AppIcons => {
+                                        icon_panel_state.on_click(id);
                                     }
                                     _ => {}
                                 }
@@ -789,9 +820,10 @@ pub fn run() -> Result<()> {
                 );
             }
             Panel::Power => {
+                let panel_h = hf - panel_y;
                 panels::draw_power_panel(
                     &mut config, &mut panel_state, &mut painter, &mut text, &mut ix, &fox,
-                    content_x, panel_y, content_w, s, sw, sh,
+                    content_x, panel_y, content_w, panel_h, s, sw, sh, frame_scroll,
                 );
             }
             Panel::Display | Panel::Appearance => {
@@ -807,6 +839,15 @@ pub fn run() -> Result<()> {
                 for td in thumb_draws {
                     tex_draws.push(td);
                 }
+            }
+            Panel::AppIcons => {
+                let panel_h = hf - panel_y;
+                icon_panel::draw_icon_panel(
+                    &mut icon_panel_state,
+                    &mut painter, &mut text, &mut ix, &tex_pass, &fox, &gpu,
+                    content_x, panel_y, content_w, panel_h, s, sw, sh,
+                    frame_scroll, &mut tex_draws,
+                );
             }
             _ => {}
         }

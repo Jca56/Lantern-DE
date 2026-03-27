@@ -3,13 +3,16 @@
 use std::path::PathBuf;
 use std::sync::mpsc;
 
-use lntrn_render::{Color, Painter, Rect, TextRenderer};
-use lntrn_ui::gpu::{FoxPalette, InteractionContext};
+use lntrn_render::{Painter, Rect, TextRenderer};
+use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea, Scrollbar};
 
+use crate::clone::{CloneView, CloneAction};
 use crate::git;
 
 // Zone IDs
 const ZONE_REPO_BASE: u32 = 200;
+const ZONE_SCROLLBAR: u32 = 199;
+const ZONE_CLONE_BTN: u32 = 198;
 const ZONE_FILE_BASE: u32 = 1000;
 const ZONE_COMMIT_BTN: u32 = 2000;
 const ZONE_PUSH_BTN: u32 = 2001;
@@ -29,6 +32,7 @@ enum GitEvent {
     Status(git::RepoStatus),
     Message(String),
     Error(String),
+    RemoteRepos(Result<Vec<git::RemoteRepo>, String>),
 }
 
 /// Commands to the background git thread.
@@ -43,12 +47,14 @@ enum GitCmd {
     Commit(String),
     Push,
     Pull,
+    FetchGitHubRepos,
 }
 
 #[derive(PartialEq)]
 enum View {
     RepoPicker,
     Main,
+    Clone,
 }
 
 pub struct App {
@@ -67,8 +73,14 @@ pub struct App {
     message: Option<String>,
     error: Option<String>,
     busy: bool,
+    // Clone view
+    clone_view: CloneView,
     // Scroll
     scroll_offset: f32,
+    picker_content_height: f32,
+    picker_viewport_h: f32,
+    main_content_height: f32,
+    main_viewport_h: f32,
     // Channels
     cmd_tx: mpsc::Sender<GitCmd>,
     event_rx: mpsc::Receiver<GitEvent>,
@@ -96,7 +108,12 @@ impl App {
             message: None,
             error: None,
             busy: false,
+            clone_view: CloneView::new(),
             scroll_offset: 0.0,
+            picker_content_height: 0.0,
+            picker_viewport_h: 0.0,
+            main_content_height: 0.0,
+            main_viewport_h: 0.0,
             cmd_tx,
             event_rx,
         };
@@ -124,15 +141,50 @@ impl App {
                     self.message = None;
                     self.busy = false;
                 }
+                GitEvent::RemoteRepos(result) => {
+                    self.clone_view.loading = false;
+                    match result {
+                        Ok(repos) => { self.clone_view.repos = repos; }
+                        Err(e) => { self.clone_view.error = Some(e); }
+                    }
+                }
             }
         }
     }
 
     pub fn on_click(&mut self, ix: &InteractionContext, phys_cx: f32, phys_cy: f32) {
+        // Clone view handles its own clicks
+        if self.view == View::Clone {
+            match self.clone_view.on_click(ix, phys_cx, phys_cy) {
+                CloneAction::GoBack => {
+                    self.view = View::RepoPicker;
+                    self.scroll_offset = 0.0;
+                }
+                CloneAction::OpenRepo(path) => {
+                    self.repo_path = Some(path.clone());
+                    self.view = View::Main;
+                    self.busy = true;
+                    self.scroll_offset = 0.0;
+                    let _ = self.cmd_tx.send(GitCmd::OpenRepo(path));
+                }
+                CloneAction::None => {}
+            }
+            return;
+        }
+
         let Some(zone) = ix.zone_at(phys_cx, phys_cy) else { return };
 
         match self.view {
             View::RepoPicker => {
+                if zone == ZONE_CLONE_BTN {
+                    self.view = View::Clone;
+                    self.scroll_offset = 0.0;
+                    if self.clone_view.repos.is_empty() {
+                        self.clone_view.loading = true;
+                        let _ = self.cmd_tx.send(GitCmd::FetchGitHubRepos);
+                    }
+                    return;
+                }
                 if zone >= ZONE_REPO_BASE && zone < ZONE_REPO_BASE + 256 {
                     let idx = (zone - ZONE_REPO_BASE) as usize;
                     if let Some(repo) = self.repos.get(idx) {
@@ -221,10 +273,15 @@ impl App {
                 // Focus commit input if clicked
                 self.commit_focused = zone == ZONE_COMMIT_BTN + 100;
             }
+            View::Clone => {} // handled above
         }
     }
 
     pub fn on_key(&mut self, key: u32, shift: bool) {
+        if self.view == View::Clone {
+            self.clone_view.on_key(key, shift);
+            return;
+        }
         if !self.commit_focused { return; }
         match key {
             1 => { // ESC
@@ -254,11 +311,30 @@ impl App {
     }
 
     pub fn on_scroll(&mut self, delta: f32) {
-        self.scroll_offset = (self.scroll_offset + delta * 0.5).max(0.0);
+        if self.view == View::Clone {
+            self.clone_view.on_scroll(delta);
+            return;
+        }
+        match self.view {
+            View::RepoPicker => {
+                ScrollArea::apply_scroll(
+                    &mut self.scroll_offset, delta,
+                    self.picker_content_height, self.picker_viewport_h,
+                );
+            }
+            View::Main => {
+                ScrollArea::apply_scroll(
+                    &mut self.scroll_offset, delta,
+                    self.main_content_height, self.main_viewport_h,
+                );
+            }
+            View::Clone => {} // handled above
+        }
     }
 
     pub fn wants_keyboard(&self) -> bool {
-        self.view == View::Main && self.commit_focused
+        (self.view == View::Main && self.commit_focused)
+            || (self.view == View::Clone && self.clone_view.wants_keyboard())
     }
 
     /// Draw into the title bar content area (between left edge and window buttons).
@@ -274,7 +350,7 @@ impl App {
         let ty = tb_content.y + (tb_content.h - font) / 2.0;
 
         match self.view {
-            View::RepoPicker => {
+            View::RepoPicker | View::Clone => {
                 text.queue("Lantern Git", font, tx, ty, palette.text,
                     tb_content.w, screen_w, screen_h);
             }
@@ -319,13 +395,18 @@ impl App {
     }
 
     pub fn draw(
-        &self, painter: &mut Painter, text: &mut TextRenderer,
+        &mut self, painter: &mut Painter, text: &mut TextRenderer,
         ix: &mut InteractionContext, palette: &FoxPalette,
         content_x: f32, content_y: f32, content_w: f32, content_h: f32,
         scale: f32, screen_w: u32, screen_h: u32,
     ) {
         match self.view {
             View::RepoPicker => self.draw_picker(
+                painter, text, ix, palette,
+                content_x, content_y, content_w, content_h,
+                scale, screen_w, screen_h,
+            ),
+            View::Clone => self.clone_view.draw(
                 painter, text, ix, palette,
                 content_x, content_y, content_w, content_h,
                 scale, screen_w, screen_h,
@@ -339,7 +420,7 @@ impl App {
     }
 
     fn draw_picker(
-        &self, painter: &mut Painter, text: &mut TextRenderer,
+        &mut self, painter: &mut Painter, text: &mut TextRenderer,
         ix: &mut InteractionContext, palette: &FoxPalette,
         cx: f32, cy: f32, cw: f32, ch: f32,
         s: f32, sw: u32, sh: u32,
@@ -348,27 +429,59 @@ impl App {
         let body_font = 22.0 * s;
         let small_font = 16.0 * s;
         let row_h = 56.0 * s;
+        let divider_h = 1.0 * s;
         let pad = 20.0 * s;
 
-        let mut y = cy;
-        text.queue("Open Repository", title_font, cx + pad, y, palette.text, cw, sw, sh);
-        y += title_font + 20.0 * s;
+        // Title + Clone button (fixed, above scroll area)
+        let mut header_y = cy;
+        text.queue("Open Repository", title_font, cx + pad, header_y, palette.text, cw, sw, sh);
+
+        // "Clone from GitHub" button — right-aligned in header
+        let clone_label = "Clone from GitHub";
+        let clone_w = 180.0 * s;
+        let clone_h = 36.0 * s;
+        let clone_rect = Rect::new(cx + cw - pad - clone_w, header_y, clone_w, clone_h);
+        let clone_state = ix.add_zone(ZONE_CLONE_BTN, clone_rect);
+        let clone_color = if clone_state.is_hovered() { palette.accent } else { palette.accent.with_alpha(0.7) };
+        painter.rect_filled(clone_rect, 8.0 * s, clone_color);
+        let ct_y = header_y + (clone_h - small_font) / 2.0;
+        let tw = small_font * 0.5 * clone_label.len() as f32;
+        text.queue(clone_label, small_font, clone_rect.x + (clone_w - tw) / 2.0, ct_y,
+            palette.text, clone_w, sw, sh);
+
+        header_y += title_font + 20.0 * s;
 
         if self.repos.is_empty() {
-            text.queue("Scanning for repos…", body_font, cx + pad, y, palette.muted, cw, sw, sh);
+            text.queue("Scanning for repos…", body_font, cx + pad, header_y, palette.muted, cw, sw, sh);
             return;
         }
 
-        let scroll = self.scroll_offset as usize;
-        let max_visible = ((ch - (y - cy)) / row_h).max(1.0) as usize;
+        // Compute total content height for all repos
+        let total_content_h = self.repos.len() as f32 * row_h;
+        let viewport_h = ch - (header_y - cy);
 
-        for (idx, repo) in self.repos.iter().enumerate().skip(scroll).take(max_visible) {
+        self.picker_content_height = total_content_h;
+        self.picker_viewport_h = viewport_h;
+
+        let viewport = Rect::new(cx, header_y, cw, viewport_h);
+        let scroll = ScrollArea::new(viewport, total_content_h, &mut self.scroll_offset);
+
+        scroll.begin(painter);
+
+        let base_y = scroll.content_y();
+        for (idx, repo) in self.repos.iter().enumerate() {
+            let y = base_y + idx as f32 * row_h;
+
+            // Skip rows entirely outside the viewport
+            if y + row_h < header_y || y > header_y + viewport_h {
+                continue;
+            }
+
             let row_rect = Rect::new(cx, y, cw, row_h);
             let zone_id = ZONE_REPO_BASE + idx as u32;
             let state = ix.add_zone(zone_id, row_rect);
-            let hovered = state.is_hovered();
 
-            if hovered {
+            if state.is_hovered() {
                 painter.rect_filled(row_rect, 8.0 * s, palette.muted.with_alpha(0.15));
             }
 
@@ -382,20 +495,35 @@ impl App {
                 palette.muted, cw - pad * 2.0, sw, sh,
             );
 
-            y += row_h;
+            // Divider line after each repo (except the last)
+            if idx < self.repos.len() - 1 {
+                let div_y = y + row_h - divider_h;
+                painter.rect_filled(
+                    Rect::new(cx + pad, div_y, cw - pad * 2.0, divider_h),
+                    0.0,
+                    palette.muted.with_alpha(0.15),
+                );
+            }
         }
+
+        scroll.end(painter);
+
+        // Scrollbar
+        let scrollbar = Scrollbar::new(&viewport, total_content_h, self.scroll_offset);
+        let sb_state = ix.add_zone(ZONE_SCROLLBAR, scrollbar.thumb);
+        scrollbar.draw(painter, sb_state, palette);
     }
 
     fn draw_main(
-        &self, painter: &mut Painter, text: &mut TextRenderer,
+        &mut self, painter: &mut Painter, text: &mut TextRenderer,
         ix: &mut InteractionContext, palette: &FoxPalette,
         cx: f32, cy: f32, cw: f32, ch: f32,
         s: f32, sw: u32, sh: u32,
     ) {
-        let title_font = 24.0 * s;
         let body_font = 20.0 * s;
         let small_font = 16.0 * s;
         let row_h = 40.0 * s;
+        let divider_h = 1.0 * s;
         let btn_h = 38.0 * s;
         let pad = 20.0 * s;
         let gap = 12.0 * s;
@@ -450,30 +578,52 @@ impl App {
 
         y += btn_h + gap * 0.5;
 
-        // File list
+        // Bottom area reserved for commit input
+        let bottom_reserve = 70.0 * s;
+        let list_top = y;
+        let list_h = ch - (y - cy) - bottom_reserve;
+
+        // File list with ScrollArea
         if let Some(status) = &self.status {
-            let scroll = self.scroll_offset as usize;
-            let max_visible = ((ch - (y - cy) - 120.0 * s) / row_h).max(1.0) as usize;
+            let file_count = status.files.len();
+            let total_content_h = if file_count == 0 {
+                body_font + gap
+            } else {
+                file_count as f32 * row_h
+            };
+
+            self.main_content_height = total_content_h;
+            self.main_viewport_h = list_h;
+
+            let viewport = Rect::new(cx, list_top, cw, list_h);
+            let scroll = ScrollArea::new(viewport, total_content_h, &mut self.scroll_offset);
 
             if status.files.is_empty() {
-                text.queue("Working tree clean ✓", body_font, cx + pad, y,
+                text.queue("Working tree clean ✓", body_font, cx + pad, list_top,
                     palette.accent, cw, sw, sh);
-                y += body_font + gap;
             } else {
-                for (i, file) in status.files.iter().enumerate().skip(scroll).take(max_visible) {
-                    let row_rect = Rect::new(cx, y, cw, row_h);
+                scroll.begin(painter);
+
+                let base_y = scroll.content_y();
+                for (i, file) in status.files.iter().enumerate() {
+                    let fy = base_y + i as f32 * row_h;
+
+                    // Skip rows outside viewport
+                    if fy + row_h < list_top || fy > list_top + list_h {
+                        continue;
+                    }
+
+                    let row_rect = Rect::new(cx, fy, cw, row_h);
                     let zone_id = ZONE_FILE_BASE + i as u32;
                     let state = ix.add_zone(zone_id, row_rect);
-                    let hovered = state.is_hovered();
 
-                    if hovered {
+                    if state.is_hovered() {
                         painter.rect_filled(row_rect, 4.0 * s, palette.muted.with_alpha(0.12));
                     }
 
-                    let ty = y + (row_h - body_font) / 2.0;
+                    let ty = fy + (row_h - body_font) / 2.0;
 
                     if file.is_submodule {
-                        // Submodule row — show as navigable
                         text.queue("📦", body_font, cx + pad, ty, palette.accent, 24.0 * s, sw, sh);
                         text.queue(&file.path, body_font,
                             cx + pad + 28.0 * s, ty, palette.accent,
@@ -482,7 +632,6 @@ impl App {
                             cx + cw - pad - 120.0 * s, ty + 2.0 * s,
                             palette.muted, 120.0 * s, sw, sh);
                     } else {
-                        // Regular file row
                         let stage_color = if file.staged { palette.accent } else { palette.muted };
                         let indicator = if file.staged { "●" } else { "○" };
                         text.queue(indicator, body_font, cx + pad, ty, stage_color, 20.0 * s, sw, sh);
@@ -501,20 +650,26 @@ impl App {
                             cw - pad * 2.0 - 60.0 * s, sw, sh);
                     }
 
-                    y += row_h;
+                    // Divider line between files
+                    if i < file_count - 1 {
+                        let div_y = fy + row_h - divider_h;
+                        painter.rect_filled(
+                            Rect::new(cx + pad, div_y, cw - pad * 2.0, divider_h),
+                            0.0,
+                            palette.muted.with_alpha(0.15),
+                        );
+                    }
                 }
 
-                if status.files.len() > max_visible {
-                    text.queue(
-                        &format!("{} more files…", status.files.len() - max_visible),
-                        small_font, cx + pad, y, palette.muted, cw, sw, sh,
-                    );
-                    y += small_font + gap;
-                }
+                scroll.end(painter);
+
+                // Scrollbar
+                let scrollbar = Scrollbar::new(&viewport, total_content_h, self.scroll_offset);
+                let sb_state = ix.add_zone(ZONE_SCROLLBAR, scrollbar.thumb);
+                scrollbar.draw(painter, sb_state, palette);
             }
         } else if self.busy {
-            text.queue("Loading…", body_font, cx + pad, y, palette.muted, cw, sw, sh);
-            y += body_font + gap;
+            text.queue("Loading…", body_font, cx + pad, list_top, palette.muted, cw, sw, sh);
         }
 
         // Commit message input (bottom area)
@@ -652,6 +807,10 @@ fn worker_thread(tx: mpsc::Sender<GitEvent>, rx: mpsc::Receiver<GitCmd>) {
                         Err(err) => { let _ = tx.send(GitEvent::Error(err)); }
                     }
                 }
+            }
+            GitCmd::FetchGitHubRepos => {
+                let result = git::fetch_github_repos();
+                let _ = tx.send(GitEvent::RemoteRepos(result));
             }
         }
     }

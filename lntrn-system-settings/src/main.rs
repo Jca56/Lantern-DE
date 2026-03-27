@@ -1,5 +1,6 @@
 mod config;
 mod display_panel;
+mod icon_panel;
 mod icons;
 mod panels;
 mod popup_backend;

@@ -329,32 +329,53 @@ pub fn icon_display() -> Vec<PathCmd> {
 /// Power — battery with lightning bolt icon
 pub fn icon_power() -> Vec<PathCmd> {
     use PathCmd::*;
+    // Battery scaled up to fill more of the 24x24 viewbox.
+    // Original Y: 5.5–18.5 (13px). Scaled to Y: 3.0–21.0 (18px).
+    // Scale: 18/13 ≈ 1.385, offset to center vertically.
     vec![
         // Battery body (rounded rectangle, horizontal)
-        Move(3.0, 7.0),
-        Cubic(3.0, 6.0, 3.8, 5.5, 5.0, 5.5),
-        Line(17.0, 5.5),
-        Cubic(18.2, 5.5, 19.0, 6.0, 19.0, 7.0),
-        Line(19.0, 17.0),
-        Cubic(19.0, 18.0, 18.2, 18.5, 17.0, 18.5),
-        Line(5.0, 18.5),
-        Cubic(3.8, 18.5, 3.0, 18.0, 3.0, 17.0),
+        Move(2.0, 5.1),
+        Cubic(2.0, 3.7, 3.1, 3.0, 4.7, 3.0),
+        Line(17.3, 3.0),
+        Cubic(18.9, 3.0, 19.5, 3.7, 19.5, 5.1),
+        Line(19.5, 18.9),
+        Cubic(19.5, 20.3, 18.9, 21.0, 17.3, 21.0),
+        Line(4.7, 21.0),
+        Cubic(3.1, 21.0, 2.0, 20.3, 2.0, 18.9),
         Close,
         // Battery terminal (right nub)
-        Move(19.0, 9.0),
-        Line(20.5, 9.0),
-        Cubic(21.0, 9.0, 21.5, 9.5, 21.5, 10.0),
-        Line(21.5, 14.0),
-        Cubic(21.5, 14.5, 21.0, 15.0, 20.5, 15.0),
-        Line(19.0, 15.0),
+        Move(19.5, 7.8),
+        Line(21.0, 7.8),
+        Cubic(21.7, 7.8, 22.0, 8.5, 22.0, 9.2),
+        Line(22.0, 14.8),
+        Cubic(22.0, 15.5, 21.7, 16.2, 21.0, 16.2),
+        Line(19.5, 16.2),
         Close,
         // Lightning bolt
-        Move(12.5, 6.5),
-        Line(8.5, 12.5),
-        Line(11.0, 12.5),
-        Line(9.5, 17.5),
-        Line(13.5, 11.5),
-        Line(11.0, 11.5),
+        Move(12.8, 4.4),
+        Line(7.2, 12.7),
+        Line(10.7, 12.7),
+        Line(8.6, 19.6),
+        Line(14.2, 11.3),
+        Line(10.7, 11.3),
         Close,
     ]
+}
+
+/// App Icons panel icon — a grid of squares representing app icons.
+pub fn icon_app_icons() -> Vec<PathCmd> {
+    use PathCmd::*;
+    // 2x2 grid of rounded squares in a 24x24 viewbox
+    let mut cmds = Vec::new();
+    for &(x, y) in &[(2.0, 2.0), (13.0, 2.0), (2.0, 13.0), (13.0, 13.0)] {
+        let (w, h) = (9.0, 9.0);
+        cmds.extend([
+            Move(x, y + 1.0), Cubic(x, y, x + 1.0, y, x + 1.0, y),
+            Line(x + w - 1.0, y), Cubic(x + w, y, x + w, y + 1.0, x + w, y + 1.0),
+            Line(x + w, y + h - 1.0), Cubic(x + w, y + h, x + w - 1.0, y + h, x + w - 1.0, y + h),
+            Line(x + 1.0, y + h), Cubic(x, y + h, x, y + h - 1.0, x, y + h - 1.0),
+            Close,
+        ]);
+    }
+    cmds
 }

@@ -151,7 +151,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let center = in.bounds.xy + in.bounds.zw * 0.5;
             let half_size = in.bounds.zw * 0.5;
             let dist = sdf_rounded_rect(in.local_px, center, half_size, radius);
-            mask = 1.0 - smoothstep(-1.0, 1.0, dist);
+            mask = 1.0 - smoothstep(-0.5, 0.5, dist);
         }
 
     } else if in.params.w == SHAPE_CIRCLE {
@@ -250,10 +250,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let d = length(rel);
         let angle = atan2(rel.y, rel.x);
 
-        // Normalize angle relative to start
+        // Normalize angle relative to start, wrap to [0, 2*PI)
         var a = angle - start_a;
-        // Wrap to [-PI, PI]
-        a = a - round(a / 6.2831853) * 6.2831853;
+        a = a - floor(a / 6.2831853) * 6.2831853;
         // Check if within sweep
         let in_sweep = a >= 0.0 && a <= sweep;
 

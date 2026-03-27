@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::process::Command;
 
 // ── Top-level Lantern config ─────────────────────────────────────────────────
 
@@ -123,6 +124,8 @@ pub struct PowerConfig {
     pub low_battery_threshold: u32,     // percentage for warning
     pub critical_battery_threshold: u32, // percentage for critical action
     pub critical_battery_action: String, // "suspend", "hibernate", "shutdown", "nothing"
+    pub wifi_power_save: bool,          // true = power saving on, false = always active
+    pub wifi_power_scheme: String,      // "active", "balanced", "battery"
 }
 
 impl Default for PowerConfig {
@@ -136,6 +139,8 @@ impl Default for PowerConfig {
             low_battery_threshold: 15,
             critical_battery_threshold: 5,
             critical_battery_action: "hibernate".into(),
+            wifi_power_save: true,
+            wifi_power_scheme: "balanced".into(),
         }
     }
 }
@@ -186,6 +191,42 @@ impl LanternConfig {
         }
     }
 
+    /// Apply WiFi power settings immediately and persist to /etc/modprobe.d/.
+    /// Spawns a background thread so pkexec dialogs don't block the Wayland event loop.
+    pub fn apply_wifi_power(&self) {
+        let power_save = self.power.wifi_power_save;
+        let scheme = self.power.wifi_power_scheme.clone();
+
+        std::thread::spawn(move || {
+            let power_save_val = if power_save { 1 } else { 0 };
+            let scheme_val = match scheme.as_str() {
+                "active" => 1,
+                "balanced" => 2,
+                "battery" => 3,
+                _ => 2,
+            };
+
+            // Write modprobe.d config via pkexec sh -c (pkexec doesn't pipe stdin)
+            let conf = format!(
+                "options iwlwifi power_save={}\noptions iwlmvm power_scheme={}\n",
+                power_save_val, scheme_val,
+            );
+            let script = format!(
+                "printf '{}' > /etc/modprobe.d/iwlwifi.conf",
+                conf.replace('\'', "'\\''"),
+            );
+            let _ = Command::new("pkexec")
+                .args(["sh", "-c", &script])
+                .status();
+
+            // Apply power save immediately via iw
+            let ps_arg = if power_save { "on" } else { "off" };
+            let _ = Command::new("pkexec")
+                .args(["iw", "dev", "wlan0", "set", "power_save", ps_arg])
+                .status();
+        });
+    }
+
     fn sanitize(&mut self) {
         self.appearance.font_size = self.appearance.font_size.clamp(10.0, 32.0);
         self.window_manager.border_width = self.window_manager.border_width.clamp(0, 10);
@@ -196,5 +237,8 @@ impl LanternConfig {
         self.input.keyboard_repeat_delay = self.input.keyboard_repeat_delay.clamp(100, 2000);
         self.input.keyboard_repeat_rate = self.input.keyboard_repeat_rate.clamp(1, 100);
         self.display.scale = self.display.scale.clamp(0.5, 3.0);
+        if !["active", "balanced", "battery"].contains(&self.power.wifi_power_scheme.as_str()) {
+            self.power.wifi_power_scheme = "balanced".into();
+        }
     }
 }
