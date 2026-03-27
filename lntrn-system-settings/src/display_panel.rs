@@ -1,5 +1,5 @@
 use lntrn_render::{Painter, Rect, TextureDraw, TexturePass, TextRenderer};
-use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea, TextInput};
+use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea, Scrollbar, TextInput};
 
 use crate::config::LanternConfig;
 use crate::text_edit::TextBuffer;
@@ -21,6 +21,7 @@ const THUMB_W: f32 = 192.0;
 const THUMB_H: f32 = 120.0;
 const INPUT_H: f32 = 44.0;
 const SELECTED_BORDER: f32 = 3.0;
+const NAME_FONT: f32 = 14.0;
 
 /// Display panel state (persists across frames).
 pub struct DisplayPanelState {
@@ -29,11 +30,16 @@ pub struct DisplayPanelState {
     pub dir_focused: bool,
     pub scroll_offset: f32,
     pub needs_reload: bool,
-    /// Grid origin Y, set during draw for collect_thumb_draws.
-    grid_y: f32,
-    grid_h: f32,
+    /// Viewport for the whole panel (set during draw, used by collect_thumb_draws).
+    viewport_x: f32,
+    viewport_y: f32,
+    viewport_w: f32,
+    viewport_h: f32,
+    /// Grid origin within scrollable content.
+    grid_content_y_offset: f32,
     grid_x: f32,
     grid_w: f32,
+    content_height: f32,
 }
 
 impl DisplayPanelState {
@@ -44,10 +50,14 @@ impl DisplayPanelState {
             dir_focused: false,
             scroll_offset: 0.0,
             needs_reload: true,
-            grid_y: 0.0,
-            grid_h: 0.0,
+            viewport_x: 0.0,
+            viewport_y: 0.0,
+            viewport_w: 0.0,
+            viewport_h: 0.0,
+            grid_content_y_offset: 0.0,
             grid_x: 0.0,
             grid_w: 0.0,
+            content_height: 0.0,
         }
     }
 
@@ -95,9 +105,79 @@ pub fn draw_display_panel(
         dps.picker.load_directory(&dps.dir_buffer.text, tex_pass, gpu, true);
     }
 
-    let mut cy = y;
+    // ── Compute total content height ────────────────────────────────
+    // Row 1: "Wallpaper" label row
+    // Row 2: "Directory" input row + gap
+    // Then the thumbnail grid
+    let header_h = ROW_H * s;          // wallpaper label
+    let input_row_h = ROW_H * s + 8.0 * s; // directory input + gap
 
-    // ── Current wallpaper label ────────────────────────────────────
+    let grid_x = x + pad;
+    let grid_w = w - pad * 2.0;
+    let thumb_w = THUMB_W * s;
+    let thumb_h = THUMB_H * s;
+    let gap = THUMB_GAP * s;
+    let cols = grid_cols(grid_w, thumb_w, gap);
+    let entry_count = dps.picker.entries.len();
+    let rows = if entry_count > 0 { (entry_count + cols - 1) / cols } else { 0 };
+    let grid_content_h = rows as f32 * (thumb_h + gap);
+
+    let content_height = header_h + input_row_h + grid_content_h;
+    let viewport = Rect::new(x, y, w, h);
+
+    // Store for collect_thumb_draws
+    dps.viewport_x = x;
+    dps.viewport_y = y;
+    dps.viewport_w = w;
+    dps.viewport_h = h;
+    dps.grid_x = grid_x;
+    dps.grid_w = grid_w;
+    dps.grid_content_y_offset = header_h + input_row_h;
+    dps.content_height = content_height;
+
+    // Handle scrolling
+    if scroll_delta != 0.0 {
+        ScrollArea::apply_scroll(&mut dps.scroll_offset, scroll_delta * 40.0, content_height, h);
+    }
+
+    let scroll_area = ScrollArea::new(viewport, content_height, &mut dps.scroll_offset);
+
+    // Empty state (show before scroll area so it's not clipped weirdly)
+    if entry_count == 0 {
+        scroll_area.begin(painter);
+        let cy = scroll_area.content_y();
+
+        // Still draw headers inside scroll
+        let label_y = cy + (ROW_H * s - lsz) / 2.0;
+        text.queue("Wallpaper", lsz, x + pad, label_y, fox.text, 140.0 * s, sw, sh);
+        let val = if config.appearance.wallpaper.is_empty() { "(default)" } else {
+            std::path::Path::new(&config.appearance.wallpaper)
+                .file_name().and_then(|n| n.to_str())
+                .unwrap_or(&config.appearance.wallpaper)
+        };
+        text.queue(val, lsz, x + pad + 140.0 * s, label_y, fox.text_secondary, w - pad - 140.0 * s, sw, sh);
+
+        let input_cy = cy + header_h;
+        draw_dir_input(config, dps, painter, text, ix, fox, x, input_cy, w, s, sw, sh);
+
+        let msg_cy = cy + header_h + input_row_h;
+        let msg = if !std::path::Path::new(&dps.dir_buffer.text).is_dir() {
+            "Directory not found"
+        } else {
+            "No images found"
+        };
+        text.queue(msg, lsz, grid_x, msg_cy + 40.0 * s, fox.text_secondary, grid_w, sw, sh);
+
+        scroll_area.end(painter);
+        return;
+    }
+
+    // ── Draw everything inside the scroll area ──────────────────────
+    scroll_area.begin(painter);
+    let base_y = scroll_area.content_y();
+    let mut cy = base_y;
+
+    // Row 1: Current wallpaper label
     {
         let label_y = cy + (ROW_H * s - lsz) / 2.0;
         text.queue("Wallpaper", lsz, x + pad, label_y, fox.text, 140.0 * s, sw, sh);
@@ -114,87 +194,23 @@ pub fn draw_display_panel(
         cy += ROW_H * s;
     }
 
-    // ── Directory path input ───────────────────────────────────────
-    {
-        let label_y = cy + (ROW_H * s - lsz) / 2.0;
-        text.queue("Directory", lsz, x + pad, label_y, fox.text, 140.0 * s, sw, sh);
+    // Row 2: Directory input
+    draw_dir_input(config, dps, painter, text, ix, fox, x, cy, w, s, sw, sh);
+    cy += ROW_H * s + 8.0 * s;
 
-        let input_x = x + pad + 140.0 * s;
-        let input_w = w - pad * 2.0 - 140.0 * s;
-        let input_h = INPUT_H * s;
-        let input_y = cy + (ROW_H * s - input_h) / 2.0;
-        let input_rect = Rect::new(input_x, input_y, input_w, input_h);
-        let zone = ix.add_zone(ZONE_DIR_INPUT, input_rect);
-
-        let mut ti = TextInput::new(input_rect)
-            .text(&dps.dir_buffer.text)
-            .placeholder("~/Pictures/Wallpapers")
-            .focused(dps.dir_focused)
-            .hovered(zone.is_hovered());
-        if dps.dir_focused {
-            ti = ti.cursor_pos(dps.dir_buffer.cursor);
-        }
-        ti.scale(s).draw(painter, text, fox, sw, sh);
-
-        cy += ROW_H * s + 8.0 * s;
-    }
-
-    // ── Thumbnail grid (scrollable) ────────────────────────────────
-    let grid_x = x + pad;
-    let grid_y = cy;
-    let grid_w = w - pad * 2.0;
-    let grid_h = (h - (cy - y)).max(0.0);
-
-    // Store for collect_thumb_draws
-    dps.grid_x = grid_x;
-    dps.grid_y = grid_y;
-    dps.grid_w = grid_w;
-    dps.grid_h = grid_h;
-
-    let thumb_w = THUMB_W * s;
-    let thumb_h = THUMB_H * s;
-    let gap = THUMB_GAP * s;
-    let cols = grid_cols(grid_w, thumb_w, gap);
-    let entry_count = dps.picker.entries.len();
-    let rows = if entry_count > 0 { (entry_count + cols - 1) / cols } else { 0 };
-    let content_height = rows as f32 * (thumb_h + gap);
-
-    // Handle scrolling
-    if scroll_delta != 0.0 {
-        ScrollArea::apply_scroll(&mut dps.scroll_offset, scroll_delta * 40.0, content_height, grid_h);
-    }
-
-    let scroll_area = ScrollArea::new(
-        Rect::new(grid_x, grid_y, grid_w, grid_h),
-        content_height,
-        &mut dps.scroll_offset,
-    );
-
-    // Empty state
-    if entry_count == 0 {
-        let msg = if !std::path::Path::new(&dps.dir_buffer.text).is_dir() {
-            "Directory not found"
-        } else {
-            "No images found"
-        };
-        let msg_y = grid_y + 40.0 * s;
-        text.queue(msg, lsz, grid_x, msg_y, fox.text_secondary, grid_w, sw, sh);
-        return;
-    }
-
-    // Draw scrollable thumbnail grid — painter shapes (borders/highlights)
-    scroll_area.begin(painter);
-    let base_y = scroll_area.content_y();
+    // ── Thumbnail grid ──────────────────────────────────────────────
+    let name_sz = NAME_FONT * s;
+    let name_pad = 4.0 * s;
 
     for (i, entry) in dps.picker.entries.iter().enumerate() {
         if i as u32 >= MAX_THUMBS { break; }
         let col = i % cols;
         let row = i / cols;
         let tx = grid_x + col as f32 * (thumb_w + gap);
-        let ty = base_y + row as f32 * (thumb_h + gap);
+        let ty = cy + row as f32 * (thumb_h + gap);
 
         // Skip if outside visible area
-        if ty + thumb_h < grid_y || ty > grid_y + grid_h { continue; }
+        if ty + thumb_h < y || ty > y + h { continue; }
 
         let zone_id = ZONE_THUMB_BASE + i as u32;
         let rect = Rect::new(tx, ty, thumb_w, thumb_h);
@@ -215,16 +231,55 @@ pub fn draw_display_panel(
             painter.rect_filled(outer, corner + b, fox.text.with_alpha(0.3));
         }
 
-        // Draw filename below thumbnail
+        // Draw filename at top-left of thumbnail with a dark scrim behind it
         if let Some(name) = entry.path.file_stem().and_then(|n| n.to_str()) {
-            let name_y = ty + thumb_h + 2.0 * s;
-            if name_y + 14.0 * s < grid_y + grid_h {
-                text.queue(name, 14.0 * s, tx, name_y, fox.text_secondary, thumb_w, sw, sh);
-            }
+            let scrim_h = name_sz + name_pad * 2.0;
+            let scrim_rect = Rect::new(tx, ty, thumb_w, scrim_h);
+            painter.rect_4corner(scrim_rect, [corner, corner, 0.0, 0.0], fox.bg.with_alpha(0.6));
+            text.queue(name, name_sz, tx + name_pad, ty + name_pad, fox.text, thumb_w - name_pad * 2.0, sw, sh);
         }
     }
 
     scroll_area.end(painter);
+
+    // Scrollbar outside the clip region
+    if scroll_area.is_scrollable() {
+        let sb = Scrollbar::new(&viewport, content_height, dps.scroll_offset);
+        sb.draw(painter, lntrn_ui::gpu::InteractionState::Idle, fox);
+    }
+}
+
+/// Draw the directory text input row.
+fn draw_dir_input(
+    config: &LanternConfig,
+    dps: &mut DisplayPanelState,
+    painter: &mut Painter,
+    text: &mut TextRenderer,
+    ix: &mut InteractionContext,
+    fox: &FoxPalette,
+    x: f32, cy: f32, w: f32, s: f32, sw: u32, sh: u32,
+) {
+    let pad = PAD * s;
+    let lsz = LABEL_SIZE * s;
+    let label_y = cy + (ROW_H * s - lsz) / 2.0;
+    text.queue("Directory", lsz, x + pad, label_y, fox.text, 140.0 * s, sw, sh);
+
+    let input_x = x + pad + 140.0 * s;
+    let input_w = w - pad * 2.0 - 140.0 * s;
+    let input_h = INPUT_H * s;
+    let input_y = cy + (ROW_H * s - input_h) / 2.0;
+    let input_rect = Rect::new(input_x, input_y, input_w, input_h);
+    let zone = ix.add_zone(ZONE_DIR_INPUT, input_rect);
+
+    let mut ti = TextInput::new(input_rect)
+        .text(&dps.dir_buffer.text)
+        .placeholder("~/Pictures/Wallpapers")
+        .focused(dps.dir_focused)
+        .hovered(zone.is_hovered());
+    if dps.dir_focused {
+        ti = ti.cursor_pos(dps.dir_buffer.cursor);
+    }
+    ti.scale(s).draw(painter, text, fox, sw, sh);
 }
 
 /// Collect texture draws for thumbnail images. Call after draw_display_panel.
@@ -237,8 +292,9 @@ pub fn collect_thumb_draws<'a>(
     let gap = THUMB_GAP * s;
     let cols = grid_cols(dps.grid_w, thumb_w, gap);
 
-    let base_y = dps.grid_y - dps.scroll_offset;
-    let clip = [dps.grid_x, dps.grid_y, dps.grid_w, dps.grid_h];
+    // Grid starts at viewport_y - scroll_offset + grid_content_y_offset
+    let base_y = dps.viewport_y - dps.scroll_offset + dps.grid_content_y_offset;
+    let clip = [dps.viewport_x, dps.viewport_y, dps.viewport_w, dps.viewport_h];
 
     let mut draws = Vec::new();
     for (i, entry) in dps.picker.entries.iter().enumerate() {
@@ -248,7 +304,7 @@ pub fn collect_thumb_draws<'a>(
         let tx = dps.grid_x + col as f32 * (thumb_w + gap);
         let ty = base_y + row as f32 * (thumb_h + gap);
 
-        if ty + thumb_h < dps.grid_y || ty > dps.grid_y + dps.grid_h { continue; }
+        if ty + thumb_h < dps.viewport_y || ty > dps.viewport_y + dps.viewport_h { continue; }
 
         let mut draw = TextureDraw::new(&entry.texture, tx, ty, thumb_w, thumb_h);
         draw.clip = Some(clip);

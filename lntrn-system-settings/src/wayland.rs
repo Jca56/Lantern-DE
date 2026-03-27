@@ -12,6 +12,7 @@ use crate::config::LanternConfig;
 use crate::display_panel::{self, DisplayPanelState};
 use crate::icon_panel;
 use crate::icons;
+use crate::input_panel;
 use crate::panels::{self, PanelState};
 use crate::text_edit::{KeyboardState, keycode_to_char};
 use raw_window_handle::{
@@ -404,8 +405,8 @@ pub fn run() -> Result<()> {
     let wm_base = state.wm_base.clone()
         .ok_or_else(|| anyhow!("xdg_wm_base not available"))?;
 
-    if state.width == 0 { state.width = 860; }
-    if state.height == 0 { state.height = 620; }
+    if state.width == 0 { state.width = 960; }
+    if state.height == 0 { state.height = 700; }
 
     let surface = compositor.create_surface(&qh, ());
     let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
@@ -634,6 +635,9 @@ pub fn run() -> Result<()> {
                                             &mut config, &mut display_state, id,
                                         );
                                     }
+                                    Panel::Input => {
+                                        input_panel::handle_input_click(&mut config, id);
+                                    }
                                     Panel::AppIcons => {
                                         icon_panel_state.on_click(id);
                                     }
@@ -840,6 +844,12 @@ pub fn run() -> Result<()> {
                     tex_draws.push(td);
                 }
             }
+            Panel::Input => {
+                input_panel::draw_input_panel(
+                    &mut config, &mut painter, &mut text, &mut ix, &fox,
+                    content_x, panel_y, content_w, s, sw, sh,
+                );
+            }
             Panel::AppIcons => {
                 let panel_h = hf - panel_y;
                 icon_panel::draw_icon_panel(
@@ -849,7 +859,6 @@ pub fn run() -> Result<()> {
                     frame_scroll, &mut tex_draws,
                 );
             }
-            _ => {}
         }
 
         // Save/Cancel bar (only when config has unsaved changes)

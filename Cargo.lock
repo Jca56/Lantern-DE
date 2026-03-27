@@ -2939,6 +2939,7 @@ dependencies = [
  "image",
  "libc",
  "rand 0.8.5",
+ "resvg 0.47.0",
  "smithay",
  "smithay-drm-extras",
  "tracing",

@@ -76,6 +76,7 @@ pub struct InputConfig {
     pub tap_to_click: bool,
     pub keyboard_repeat_delay: u32,
     pub keyboard_repeat_rate: u32,
+    pub cursor_theme: String,
 }
 
 impl Default for InputConfig {
@@ -87,6 +88,7 @@ impl Default for InputConfig {
             tap_to_click: true,
             keyboard_repeat_delay: 300,
             keyboard_repeat_rate: 25,
+            cursor_theme: "default".into(),
         }
     }
 }

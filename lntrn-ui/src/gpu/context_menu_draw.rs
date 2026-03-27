@@ -80,7 +80,7 @@ pub(super) fn draw_panel(
 
     for item in items.iter_mut() {
         match item {
-            MenuItem::Action { id, label, shortcut, enabled, .. } => {
+            MenuItem::Action { id, label, shortcut, enabled, danger } => {
                 let item_rect = Rect::new(inner_x, cy, inner_w, item_h);
                 let zone_id = zone_base + *id;
                 let state = zone_state(interaction, zone_id, item_rect);
@@ -89,7 +89,7 @@ pub(super) fn draw_panel(
 
                 draw_hover_bg(hovered, item_rect, cr, s, style, painter);
 
-                let text_color = if *enabled { style.text } else { style.text_disabled };
+                let text_color = if !*enabled { style.text_disabled } else if *danger { pal.danger } else { style.text };
                 let text_x = content_x;
                 let text_y = cy + (item_h - font) * 0.5;
                 text.queue(
