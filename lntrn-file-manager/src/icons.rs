@@ -8,7 +8,10 @@ use crate::fs::FileEntry;
 
 const ICON_RENDER_SIZE: u32 = 192;
 
-const ICON_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/assets/icons/Folder Icons");
+fn icon_dir() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    PathBuf::from(home).join(".lantern/icons/folders")
+}
 
 /// RGBA image data produced by a background ffmpeg thread.
 struct VideoThumbResult {
@@ -116,7 +119,7 @@ impl IconCache {
     ) -> Option<&GpuTexture> {
         let key = format!("folder_color:{color}");
         if !self.cache.contains_key(&key) {
-            let base = Path::new(ICON_DIR);
+            let base = icon_dir();
             let svg_path = if color.is_empty() {
                 base.join("Colors").join("lntrn-folder-yellow.svg")
             } else {
@@ -178,7 +181,7 @@ fn load_icon(entry: &FileEntry, gpu: &GpuContext, tex: &TexturePass) -> Option<G
 }
 
 fn folder_icon_path(entry: &FileEntry) -> PathBuf {
-    let base = Path::new(ICON_DIR);
+    let base = icon_dir();
 
     // Check xattr for custom icon path first (any image/SVG)
     if let Some(icon_path) = get_folder_icon(&entry.path) {
@@ -300,7 +303,10 @@ fn load_image_thumbnail(path: &Path, gpu: &GpuContext, tex: &TexturePass) -> Opt
 
 // ── Video thumbnails ─────────────────────────────────────────────────────────
 
-const VIDEO_THUMB_DIR: &str = "/home/alva/.cache/lntrn-file-manager/video-thumbs";
+fn video_thumb_dir() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    PathBuf::from(home).join(".cache/lntrn-file-manager/video-thumbs")
+}
 
 /// Simple hash of a path string for use as a cache filename.
 fn path_hash(path: &Path) -> u64 {
@@ -315,8 +321,8 @@ fn path_hash(path: &Path) -> u64 {
 fn extract_video_frame(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     use std::process::Command;
 
-    let cache_dir = Path::new(VIDEO_THUMB_DIR);
-    let _ = std::fs::create_dir_all(cache_dir);
+    let cache_dir = video_thumb_dir();
+    let _ = std::fs::create_dir_all(&cache_dir);
     let cached = cache_dir.join(format!("{:016x}.png", path_hash(path)));
 
     // Check disk cache first

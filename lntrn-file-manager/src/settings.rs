@@ -32,7 +32,12 @@ impl Default for Settings {
 impl Settings {
     fn config_path() -> PathBuf {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
-        PathBuf::from(home).join(".config/lantern/fox.json")
+        let new = PathBuf::from(&home).join(".lantern/config/file-manager.json");
+        if new.exists() { return new; }
+        // Old path fallback for migration
+        let old = PathBuf::from(&home).join(".config/lantern/fox.json");
+        if old.exists() { return old; }
+        new
     }
 
     pub fn load() -> Self {
