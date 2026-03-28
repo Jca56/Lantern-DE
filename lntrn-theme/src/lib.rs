@@ -1,4 +1,5 @@
 pub mod colors;
+pub mod config;
 pub mod palette;
 pub mod typography;
 pub mod variant;
@@ -17,3 +18,4 @@ pub use typography::{
     FONT_ICON, FONT_CAPTION, FONT_LABEL, FAMILY_PROPORTIONAL, FAMILY_MONOSPACE,
 };
 pub use variant::ThemeVariant;
+pub use config::{active_variant, parse_variant};

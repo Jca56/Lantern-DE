@@ -5,9 +5,7 @@ use crate::config::LanternConfig;
 
 const ZONE_MOUSE_SPEED: u32 = 800;
 const ZONE_MOUSE_ACCEL: u32 = 801;
-const ZONE_CURSOR_DEFAULT: u32 = 810;
-const ZONE_CURSOR_CUSTOM1: u32 = 811;
-const ZONE_CURSOR_CUSTOM2: u32 = 812;
+const ZONE_CURSOR_BASE: u32 = 810;
 
 const ROW_H: f32 = 48.0;
 const LABEL_SIZE: f32 = 18.0;
@@ -19,11 +17,66 @@ const PAD_RIGHT: f32 = 32.0;
 const LABEL_W: f32 = 200.0;
 const VALUE_W: f32 = 60.0;
 
-const CURSOR_THEMES: &[(&str, &str)] = &[
-    ("default", "Default"),
-    ("custom1", "Cursor 1"),
-    ("custom2", "Cursor 2"),
-];
+/// A cursor SVG/PNG found in ~/.config/lantern/cursors/.
+struct CursorEntry {
+    /// Filename without extension (e.g. "custom1") — stored in config.
+    id: String,
+    /// Display name: filename with dashes/underscores replaced by spaces, title-cased.
+    display_name: String,
+}
+
+// ── State ──────────────────────────────────────────────────────────────────
+
+pub struct InputPanelState {
+    cursors: Vec<CursorEntry>,
+    scanned: bool,
+}
+
+impl InputPanelState {
+    pub fn new() -> Self {
+        Self { cursors: Vec::new(), scanned: false }
+    }
+
+    fn scan(&mut self) {
+        if self.scanned { return; }
+        self.scanned = true;
+
+        let base = std::env::var("XDG_CONFIG_HOME")
+            .unwrap_or_else(|_| format!("{}/.config", std::env::var("HOME").unwrap_or_default()));
+        let cursor_dir = format!("{}/lantern/cursors", base);
+
+        let Ok(entries) = std::fs::read_dir(&cursor_dir) else { return };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if ext != "svg" && ext != "png" { continue; }
+
+            let stem = match path.file_stem().and_then(|s| s.to_str()) {
+                Some(s) => s.to_string(),
+                None => continue,
+            };
+
+            let display_name = stem.replace(['-', '_'], " ")
+                .split_whitespace()
+                .map(|w| {
+                    let mut c = w.chars();
+                    match c.next() {
+                        Some(first) => {
+                            let upper: String = first.to_uppercase().collect();
+                            format!("{}{}", upper, c.as_str())
+                        }
+                        None => String::new(),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            self.cursors.push(CursorEntry { id: stem, display_name });
+        }
+
+        self.cursors.sort_by(|a, b| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()));
+    }
+}
 
 fn layout(x: f32, w: f32, s: f32) -> (f32, f32, f32, f32) {
     let pad_l = PAD_LEFT * s;
@@ -53,9 +106,12 @@ fn slider_value_from_cursor(
 
 pub fn draw_input_panel(
     config: &mut LanternConfig,
+    state: &mut InputPanelState,
     painter: &mut Painter, text: &mut TextRenderer, ix: &mut InteractionContext,
     fox: &FoxPalette, x: f32, y: f32, w: f32, s: f32, sw: u32, sh: u32,
 ) {
+    state.scan();
+
     let (label_x, ctrl_x, ctrl_w, value_x) = layout(x, w, s);
     let mut cy = y;
     let row = ROW_H * s;
@@ -124,14 +180,20 @@ pub fn draw_input_panel(
     let card_size = 100.0 * s;
     let card_gap = 16.0 * s;
     let card_r = 8.0 * s;
-    let zone_ids = [ZONE_CURSOR_DEFAULT, ZONE_CURSOR_CUSTOM1, ZONE_CURSOR_CUSTOM2];
+    let avail_w = w - PAD_LEFT * s - PAD_RIGHT * s;
+    let cols = ((avail_w + card_gap) / (card_size + card_gap)).floor().max(1.0) as usize;
 
-    for (i, (theme_id, theme_label)) in CURSOR_THEMES.iter().enumerate() {
-        let card_x = label_x + i as f32 * (card_size + card_gap);
-        let card_rect = Rect::new(card_x, cy, card_size, card_size);
-        let zone = ix.add_zone(zone_ids[i], card_rect);
+    for (i, cursor) in state.cursors.iter().enumerate() {
+        let col = i % cols;
+        let row_idx = i / cols;
+        let card_x = label_x + col as f32 * (card_size + card_gap);
+        let card_y = cy + row_idx as f32 * (card_size + card_gap);
+        let card_rect = Rect::new(card_x, card_y, card_size, card_size);
 
-        let is_selected = config.input.cursor_theme == *theme_id;
+        let zone_id = ZONE_CURSOR_BASE + i as u32;
+        let zone = ix.add_zone(zone_id, card_rect);
+
+        let is_selected = config.input.cursor_theme == cursor.id;
 
         // Card background
         let bg = if is_selected {
@@ -152,31 +214,29 @@ pub fn draw_input_panel(
         let border_w = if is_selected { 2.0 * s } else { 1.0 * s };
         painter.rect_stroke_sdf(card_rect, card_r, border_w, border_color);
 
-        // Draw a simple cursor icon placeholder in the card
+        // Draw a cursor arrow preview in the card
         let icon_size = 32.0 * s;
         let icon_x = card_x + (card_size - icon_size) / 2.0;
-        let icon_y = cy + (card_size - icon_size) / 2.0 - 8.0 * s;
-        draw_cursor_preview(painter, icon_x, icon_y, icon_size, fox, i);
+        let icon_y = card_y + (card_size - icon_size) / 2.0 - 8.0 * s;
+        let color = if is_selected { fox.accent } else { fox.text };
+        draw_cursor_preview(painter, icon_x, icon_y, icon_size, color);
 
         // Label below the icon
         let label_font = 14.0 * s;
-        let label_y = cy + card_size - label_font - 8.0 * s;
+        let label_y = card_y + card_size - label_font - 8.0 * s;
         let label_color = if is_selected { fox.accent } else { fox.text };
-        text.queue(theme_label, label_font, card_x + 4.0 * s, label_y, label_color,
+        let display = if cursor.display_name.len() > 12 {
+            format!("{}...", &cursor.display_name[..10])
+        } else {
+            cursor.display_name.clone()
+        };
+        text.queue(&display, label_font, card_x + 4.0 * s, label_y, label_color,
             card_size - 8.0 * s, sw, sh);
     }
 }
 
-/// Draw a simple cursor arrow preview shape in each card.
-fn draw_cursor_preview(painter: &mut Painter, x: f32, y: f32, size: f32, fox: &FoxPalette, variant: usize) {
-    let color = match variant {
-        0 => fox.text,              // Default: white arrow
-        1 => fox.accent,            // Custom 1: accent colored
-        2 => fox.text_secondary,    // Custom 2: muted color
-        _ => fox.text,
-    };
-
-    // Simple arrow shape using lines
+/// Draw a simple cursor arrow preview shape.
+fn draw_cursor_preview(painter: &mut Painter, x: f32, y: f32, size: f32, color: lntrn_render::Color) {
     let tip_x = x + size * 0.3;
     let tip_y = y;
     let bottom_y = y + size * 0.85;
@@ -184,35 +244,26 @@ fn draw_cursor_preview(painter: &mut Painter, x: f32, y: f32, size: f32, fox: &F
     let mid_y = y + size * 0.55;
     let lw = 2.0;
 
-    // Left edge
     painter.line(tip_x, tip_y, tip_x, bottom_y, lw, color);
-    // Bottom-left to middle
     painter.line(tip_x, bottom_y, tip_x + size * 0.15, mid_y, lw, color);
-    // Diagonal handle
     painter.line(tip_x + size * 0.15, mid_y, right_x, y + size * 0.85, lw, color);
-    // Handle right edge
     painter.line(right_x, y + size * 0.85, right_x - size * 0.1, mid_y + size * 0.05, lw, color);
-    // Back to top-right
     painter.line(right_x - size * 0.1, mid_y + size * 0.05, tip_x + size * 0.25, mid_y, lw, color);
-    // Top-right back to tip
     painter.line(tip_x + size * 0.25, mid_y, tip_x, tip_y, lw, color);
 }
 
 // ── Click handling ──────────────────────────────────────────────────────────
 
-pub fn handle_input_click(config: &mut LanternConfig, zone_id: u32) {
+pub fn handle_input_click(config: &mut LanternConfig, state: &InputPanelState, zone_id: u32) {
     match zone_id {
         ZONE_MOUSE_ACCEL => {
             config.input.mouse_acceleration = !config.input.mouse_acceleration;
         }
-        ZONE_CURSOR_DEFAULT => {
-            config.input.cursor_theme = "default".into();
-        }
-        ZONE_CURSOR_CUSTOM1 => {
-            config.input.cursor_theme = "custom1".into();
-        }
-        ZONE_CURSOR_CUSTOM2 => {
-            config.input.cursor_theme = "custom2".into();
+        id if id >= ZONE_CURSOR_BASE => {
+            let idx = (id - ZONE_CURSOR_BASE) as usize;
+            if let Some(cursor) = state.cursors.get(idx) {
+                config.input.cursor_theme = cursor.id.clone();
+            }
         }
         _ => {}
     }

@@ -481,6 +481,7 @@ pub fn run() -> Result<()> {
     let mut panel_state = PanelState::new(&fox);
     let mut display_state = DisplayPanelState::new(&config);
     let mut icon_panel_state = icon_panel::IconPanelState::new();
+    let mut input_state = input_panel::InputPanelState::new();
     let mut kbd = KeyboardState::new();
 
     while state.running {
@@ -636,7 +637,7 @@ pub fn run() -> Result<()> {
                                         );
                                     }
                                     Panel::Input => {
-                                        input_panel::handle_input_click(&mut config, id);
+                                        input_panel::handle_input_click(&mut config, &input_state, id);
                                     }
                                     Panel::AppIcons => {
                                         icon_panel_state.on_click(id);
@@ -846,7 +847,8 @@ pub fn run() -> Result<()> {
             }
             Panel::Input => {
                 input_panel::draw_input_panel(
-                    &mut config, &mut painter, &mut text, &mut ix, &fox,
+                    &mut config, &mut input_state,
+                    &mut painter, &mut text, &mut ix, &fox,
                     content_x, panel_y, content_w, s, sw, sh,
                 );
             }

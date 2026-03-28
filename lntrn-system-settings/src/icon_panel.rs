@@ -12,6 +12,8 @@ use crate::text_edit::TextBuffer;
 
 const CUSTOM_ICON_DIR: &str = "/home/alva/.config/lntrn-bar/icons";
 const ICON_DIRS: &[&str] = &[
+    "/home/alva/.local/share/icons/Tela/scalable/apps",
+    "/home/alva/.local/share/icons/hicolor/scalable/apps",
     "/usr/share/icons/Tela/scalable/apps",
     "/usr/share/icons/Tela/128/apps",
     "/usr/share/icons/hicolor/scalable/apps",

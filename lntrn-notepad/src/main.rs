@@ -4,11 +4,11 @@ mod format;
 mod render;
 mod toolbar;
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{CursorIcon, ResizeDirection, Window, WindowAttributes, WindowId};
 
@@ -55,8 +55,8 @@ struct Gpu {
 
 // ── Handler ─────────────────────────────────────────────────────────────────
 
-/// Cursor blink: 530ms on, 530ms off.
-const BLINK_INTERVAL_MS: u128 = 530;
+/// Cursor blink interval.
+const BLINK_INTERVAL: Duration = Duration::from_millis(530);
 
 struct TextHandler {
     window: Option<Window>,
@@ -70,7 +70,8 @@ struct TextHandler {
     scale: f32,
     needs_redraw: bool,
     modifiers: ModifiersState,
-    cursor_blink_time: Instant,
+    cursor_visible: bool,
+    cursor_blink_deadline: Instant,
     dragging: bool,
 }
 
@@ -93,7 +94,8 @@ impl TextHandler {
             scale: 1.0,
             needs_redraw: true,
             modifiers: ModifiersState::empty(),
-            cursor_blink_time: Instant::now(),
+            cursor_visible: true,
+            cursor_blink_deadline: Instant::now() + BLINK_INTERVAL,
             dragging: false,
         }
     }
@@ -139,18 +141,31 @@ impl TextHandler {
         event_loop.exit();
     }
 
-    fn reset_blink(&mut self) {
-        self.cursor_blink_time = Instant::now();
+    /// Set cursor from a click at physical (cx, cy), using real text measurement.
+    fn click_to_cursor(&mut self, cx: f32, cy: f32) {
+        let s = self.scale;
+        let (wf, hf) = self.window_size();
+        let font_size = editor::FONT_SIZE * s;
+
+        let line_idx = self.editor.line_at_y(cy, wf, hf, s);
+        self.editor.cursor_line = line_idx;
+
+        if let Some(gpu) = &mut self.gpu {
+            let col = self.editor.col_at_x(cx, line_idx, wf, hf, s, |byte_off| {
+                render::measure_to_offset(&mut gpu.text, &self.editor, line_idx, byte_off, font_size)
+            });
+            self.editor.cursor_col = col;
+        }
     }
 
-    fn cursor_visible(&self) -> bool {
-        let elapsed = self.cursor_blink_time.elapsed().as_millis();
-        (elapsed / BLINK_INTERVAL_MS) % 2 == 0
+    fn reset_blink(&mut self) {
+        self.cursor_visible = true;
+        self.cursor_blink_deadline = Instant::now() + BLINK_INTERVAL;
     }
 
     fn open_file_dialog(&mut self) {
-        let output = std::process::Command::new("zenity")
-            .args(["--file-selection", "--title=Open File"])
+        let output = std::process::Command::new("lntrn-file-manager")
+            .args(["--pick", "--title", "Open File"])
             .output();
         if let Ok(out) = output {
             if out.status.success() {
@@ -167,8 +182,8 @@ impl TextHandler {
             let _ = self.editor.save_file();
             return;
         }
-        let output = std::process::Command::new("zenity")
-            .args(["--file-selection", "--save", "--title=Save File", "--confirm-overwrite"])
+        let output = std::process::Command::new("lntrn-file-manager")
+            .args(["--pick-save", "--title", "Save File"])
             .output();
         if let Ok(out) = output {
             if out.status.success() {
@@ -183,14 +198,8 @@ impl TextHandler {
 
     fn export_docx_dialog(&mut self) {
         let default_name = self.editor.filename.replace(".txt", "").to_string() + ".docx";
-        let output = std::process::Command::new("zenity")
-            .args([
-                "--file-selection",
-                "--save",
-                "--title=Export as .docx",
-                "--confirm-overwrite",
-                &format!("--filename={default_name}"),
-            ])
+        let output = std::process::Command::new("lntrn-file-manager")
+            .args(["--pick-save", "--title", "Export as .docx", "--save-name", &default_name])
             .output();
         if let Ok(out) = output {
             if out.status.success() {
@@ -239,7 +248,7 @@ impl ApplicationHandler for TextHandler {
         }
 
         let attrs = WindowAttributes::default()
-            .with_title("lntrn-text")
+            .with_title("lntrn-notepad")
             .with_inner_size(winit::dpi::LogicalSize::new(900.0, 700.0))
             .with_decorations(false)
             .with_transparent(true);
@@ -287,9 +296,7 @@ impl ApplicationHandler for TextHandler {
                 self.input.on_cursor_moved(cx, cy);
 
                 if self.dragging {
-                    let s = self.scale;
-                    let (wf, hf) = self.window_size();
-                    self.editor.click_to_position(cx, cy, wf, hf, s);
+                    self.click_to_cursor(cx, cy);
                     self.reset_blink();
                 } else if let Some(dir) = self.edge_resize_direction() {
                     if let Some(w) = &self.window {
@@ -362,11 +369,7 @@ impl ApplicationHandler for TextHandler {
                                     self.fmt_toolbar.size_dropdown_open = false;
                                     self.editor.clear_selection();
                                     if let Some((cx, cy)) = self.input.cursor() {
-                                        let s = self.scale;
-                                        let (wf, hf) = self.window_size();
-                                        self.editor.click_to_position(
-                                            cx, cy, wf, hf, s,
-                                        );
+                                        self.click_to_cursor(cx, cy);
                                         self.editor.begin_selection();
                                         self.dragging = true;
                                     }
@@ -480,7 +483,10 @@ impl ApplicationHandler for TextHandler {
             }
 
             WindowEvent::RedrawRequested => {
-                let cursor_vis = self.cursor_visible();
+                if !self.needs_redraw {
+                    return;
+                }
+                let cursor_vis = self.cursor_visible;
                 if let Some(gpu) = &mut self.gpu {
                     let event = render::render_frame(
                         gpu,
@@ -521,9 +527,23 @@ impl ApplicationHandler for TextHandler {
             _ => {}
         }
 
-        // Always request redraws for cursor blink
-        if let Some(window) = &self.window {
-            window.request_redraw();
+        if self.needs_redraw {
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
         }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let now = Instant::now();
+        if now >= self.cursor_blink_deadline {
+            self.cursor_visible = !self.cursor_visible;
+            self.cursor_blink_deadline = now + BLINK_INTERVAL;
+            self.needs_redraw = true;
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
+        }
+        event_loop.set_control_flow(ControlFlow::WaitUntil(self.cursor_blink_deadline));
     }
 }

@@ -1,6 +1,7 @@
 use lntrn_render::{Color, FontStyle, FontWeight, Rect, TextRenderer};
 use lntrn_ui::gpu::{
-    FontSize, FoxPalette, InteractionContext, MenuBar, MenuEvent, MenuItem, TextLabel, TitleBar,
+    FontSize, FoxPalette, GradientStrip, InteractionContext, MenuBar, MenuEvent, MenuItem,
+    TextLabel, TitleBar,
 };
 
 use crate::editor::{self, Editor};
@@ -33,7 +34,7 @@ pub fn file_menu_items() -> Vec<(&'static str, Vec<MenuItem>)> {
 
 /// Measure the x-offset from content_x to a byte offset within a line,
 /// accounting for per-span font size and weight/style.
-fn measure_to_offset(
+pub fn measure_to_offset(
     text: &mut TextRenderer,
     editor: &Editor,
     line: usize,
@@ -119,11 +120,17 @@ pub fn render_frame(
     let fmt_state = editor.selection_format_state();
     toolbar::draw_toolbar(fmt_toolbar, &fmt_state, painter, text, input, pal, wf, s, w, h);
 
+    // ── Gradient strip below title bar (on top of toolbar) ───────────
+    let strip_y = TITLE_BAR_H * s;
+    let mut strip = GradientStrip::new(0.0, strip_y, wf);
+    strip.height = 4.0 * s;
+    strip.draw(painter);
+
     // ── Editor area ───────────────────────────────────────────────────
     let er = editor_rect(wf, hf, s);
     input.add_zone(ZONE_EDITOR, er);
 
-    let editor_bg = Color::from_rgb8(70, 70, 74);
+    let editor_bg = Color::from_rgb8(90, 90, 96);
     painter.rect_filled(er, 0.0, editor_bg);
 
     let font_size = editor::FONT_SIZE * s;

@@ -1,8 +1,12 @@
 # Build artifacts
 /target/
-fox_flare/target/
-menu/target/
 lntrn-app-template/target/
+
+# Generated docs
+/doc/
+
+# Misc
+nohup.out
 
 # Environment & secrets
 .env

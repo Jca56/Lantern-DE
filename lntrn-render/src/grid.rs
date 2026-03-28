@@ -177,6 +177,9 @@ impl TerminalGridRenderer {
     }
 
     /// Queue visible glyphs through the text renderer.
+    ///
+    /// Each character is rendered individually at its exact grid cell position
+    /// so that font shaping/advance widths never cause drift from the grid.
     pub fn draw_glyphs(
         &self,
         text: &mut TextRenderer,
@@ -188,69 +191,29 @@ impl TerminalGridRenderer {
         screen_w: u32,
         screen_h: u32,
     ) {
-        // Build contiguous runs of same-colored text per row to reduce
-        // text renderer queue calls.
-        // Wide characters are rendered individually since they span 2 cells.
-        let mut run = String::with_capacity(visible_cols);
+        let mut char_buf = [0u8; 4];
 
         for row in 0..visible_rows.min(rows.len()) {
             let line = rows[row];
             let y = (origin.1 + row as f32 * self.metrics.cell_h).floor();
 
-            let mut run_start_col = 0usize;
-            let mut run_color = Color::TRANSPARENT;
-            run.clear();
-
             for col in 0..visible_cols.min(line.len()) {
                 let cell = &line[col];
 
-                // Skip tail cells — the head cell handles rendering
-                if cell.wide == GridCellWide::Tail {
-                    if !run.is_empty() {
-                        self.flush_run(text, origin, y, run_start_col, &run, run_color, font_size, screen_w, screen_h);
-                        run.clear();
-                    }
-                    run_start_col = col + 1;
+                // Skip tail cells and blanks — nothing to render
+                if cell.wide == GridCellWide::Tail || cell.c == ' ' || cell.c == '\0' {
                     continue;
                 }
 
-                if cell.c == ' ' || cell.c == '\0' {
-                    if !run.is_empty() {
-                        self.flush_run(text, origin, y, run_start_col, &run, run_color, font_size, screen_w, screen_h);
-                        run.clear();
-                    }
-                    run_start_col = col + 1;
-                    continue;
-                }
+                let x = (origin.0 + col as f32 * self.metrics.cell_w).floor();
+                let max_w = if cell.wide == GridCellWide::Head {
+                    2.0 * self.metrics.cell_w + 2.0
+                } else {
+                    self.metrics.cell_w + 2.0
+                };
 
-                // Wide head cell — flush any pending run, render wide char solo
-                if cell.wide == GridCellWide::Head {
-                    if !run.is_empty() {
-                        self.flush_run(text, origin, y, run_start_col, &run, run_color, font_size, screen_w, screen_h);
-                        run.clear();
-                    }
-                    self.flush_wide_char(text, origin, y, col, cell.c, cell.fg, font_size, screen_w, screen_h);
-                    run_start_col = col + 2; // skip past both head + tail
-                    continue;
-                }
-
-                // Color changed — flush previous run
-                if !run.is_empty() && !colors_equal(cell.fg, run_color) {
-                    self.flush_run(text, origin, y, run_start_col, &run, run_color, font_size, screen_w, screen_h);
-                    run.clear();
-                    run_start_col = col;
-                }
-
-                if run.is_empty() {
-                    run_start_col = col;
-                    run_color = cell.fg;
-                }
-                run.push(cell.c);
-            }
-
-            if !run.is_empty() {
-                self.flush_run(text, origin, y, run_start_col, &run, run_color, font_size, screen_w, screen_h);
-                run.clear();
+                let s = cell.c.encode_utf8(&mut char_buf);
+                text.queue(s, font_size, x, y, cell.fg, max_w, screen_w, screen_h);
             }
         }
     }
@@ -334,48 +297,4 @@ impl TerminalGridRenderer {
         Rect::new(x, y, nx - x, ny - y)
     }
 
-    fn flush_run(
-        &self,
-        text: &mut TextRenderer,
-        origin: (f32, f32),
-        y: f32,
-        start_col: usize,
-        run: &str,
-        color: Color,
-        font_size: f32,
-        screen_w: u32,
-        screen_h: u32,
-    ) {
-        let x = (origin.0 + start_col as f32 * self.metrics.cell_w).floor();
-        // Use char count, not byte count, for max width
-        let char_count = run.chars().count();
-        let max_w = char_count as f32 * self.metrics.cell_w + 2.0;
-        text.queue(run, font_size, x, y, color, max_w, screen_w, screen_h);
-    }
-
-    /// Render a single wide character spanning 2 cells.
-    fn flush_wide_char(
-        &self,
-        text: &mut TextRenderer,
-        origin: (f32, f32),
-        y: f32,
-        col: usize,
-        c: char,
-        color: Color,
-        font_size: f32,
-        screen_w: u32,
-        screen_h: u32,
-    ) {
-        let x = (origin.0 + col as f32 * self.metrics.cell_w).floor();
-        let max_w = 2.0 * self.metrics.cell_w + 2.0;
-        let s: String = c.to_string();
-        text.queue(&s, font_size, x, y, color, max_w, screen_w, screen_h);
-    }
-}
-
-fn colors_equal(a: Color, b: Color) -> bool {
-    (a.r - b.r).abs() < 0.001
-        && (a.g - b.g).abs() < 0.001
-        && (a.b - b.b).abs() < 0.001
-        && (a.a - b.a).abs() < 0.001
 }

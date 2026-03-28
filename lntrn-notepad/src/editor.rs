@@ -502,26 +502,50 @@ impl Editor {
         self.lines.len() as f32 * line_h + PAD * scale * 2.0
     }
 
-    /// Convert a click position (physical px) to a line/col in the editor.
-    pub fn click_to_position(&mut self, cx: f32, cy: f32, wf: f32, hf: f32, scale: f32) {
+    /// Resolve which line a click y-coordinate falls on.
+    pub fn line_at_y(&self, cy: f32, wf: f32, hf: f32, scale: f32) -> usize {
         let editor_rect = crate::render::editor_rect(wf, hf, scale);
-        let s = scale;
-        let line_h = FONT_SIZE * LINE_HEIGHT * s;
-        let text_y_start = editor_rect.y + PAD * s - self.scroll_offset;
-
+        let line_h = FONT_SIZE * LINE_HEIGHT * scale;
+        let text_y_start = editor_rect.y + PAD * scale - self.scroll_offset;
         let rel_y = cy - text_y_start;
         let line_idx = (rel_y / line_h).floor().max(0.0) as usize;
-        self.cursor_line = line_idx.min(self.lines.len() - 1);
+        line_idx.min(self.lines.len() - 1)
+    }
 
-        let text_x = editor_rect.x + PAD * s;
-        let rel_x = (cx - text_x).max(0.0);
-        let char_w = FONT_SIZE * s * 0.60;
-        let col = (rel_x / char_w).round() as usize;
-        let line = &self.lines[self.cursor_line];
-        let byte_col = line.char_indices()
-            .nth(col)
+    /// Find the byte column closest to click x using real text measurement.
+    ///
+    /// `measure_fn(byte_offset)` returns the x-width from the start of the
+    /// line content to that byte offset on `line_idx`.
+    pub fn col_at_x(
+        &self,
+        cx: f32,
+        line_idx: usize,
+        wf: f32,
+        hf: f32,
+        scale: f32,
+        mut measure_fn: impl FnMut(usize) -> f32,
+    ) -> usize {
+        let editor_rect = crate::render::editor_rect(wf, hf, scale);
+        let line_num_w = 50.0 * scale;
+        let content_x = editor_rect.x + PAD * scale + line_num_w;
+        let rel_x = (cx - content_x).max(0.0);
+
+        let line = &self.lines[line_idx];
+        let char_offsets: Vec<usize> = line
+            .char_indices()
             .map(|(i, _)| i)
-            .unwrap_or(line.len());
-        self.cursor_col = byte_col;
+            .chain(std::iter::once(line.len()))
+            .collect();
+
+        let mut best_col = 0;
+        let mut best_dist = f32::MAX;
+        for &byte_off in &char_offsets {
+            let dist = (measure_fn(byte_off) - rel_x).abs();
+            if dist < best_dist {
+                best_dist = dist;
+                best_col = byte_off;
+            }
+        }
+        best_col
     }
 }
