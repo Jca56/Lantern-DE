@@ -7,7 +7,7 @@ use lntrn_ui::gpu::input::InteractionState;
 use lntrn_ui::gpu::scroll::{ScrollArea, Scrollbar};
 use lntrn_ui::gpu::{FoxPalette, InteractionContext};
 
-const NOTES_DIR: &str = "/home/alva/.config/lntrn-bar/notes";
+fn notes_dir() -> std::path::PathBuf { crate::bar_config_dir().join("notes") }
 const NOTE_FONT: f32 = 18.0;
 const TITLE_FONT: f32 = 20.0;
 const LIST_ITEM_H: f32 = 36.0;
@@ -44,7 +44,7 @@ impl Notes {
     pub fn load(&mut self) {
         if self.loaded { return; }
         self.loaded = true;
-        let dir = Path::new(NOTES_DIR);
+        let dir = &notes_dir();
         let _ = std::fs::create_dir_all(dir);
         self.entries.clear();
 
@@ -66,7 +66,7 @@ impl Notes {
     }
 
     fn create_note(&mut self, name: &str) {
-        let dir = Path::new(NOTES_DIR);
+        let dir = &notes_dir();
         let _ = std::fs::create_dir_all(dir);
         let mut fname = format!("{name}.txt");
         let mut i = 1;
@@ -98,7 +98,8 @@ impl Notes {
 
     fn rename_note(&mut self, idx: usize) {
         if let Some(entry) = self.entries.get_mut(idx) {
-            let dir = entry.path.parent().unwrap_or(Path::new(NOTES_DIR));
+            let fallback = notes_dir();
+            let dir = entry.path.parent().unwrap_or(&fallback);
             let new_path = dir.join(format!("{}.txt", entry.name));
             if new_path != entry.path {
                 let _ = std::fs::rename(&entry.path, &new_path);

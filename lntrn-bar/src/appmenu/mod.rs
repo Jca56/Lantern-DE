@@ -44,9 +44,9 @@ const MIN_HEIGHT: f32 = 360.0;
 const MAX_WIDTH: f32 = 1400.0;
 const MAX_HEIGHT: f32 = 900.0;
 
-const FAVORITES_PATH: &str = "/home/alva/.config/lntrn-bar/favorites.txt";
-const SIZE_PATH: &str = "/home/alva/.config/lntrn-bar/menu_size.txt";
-pub(crate) const ASSETS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets");
+fn favorites_path() -> std::path::PathBuf { crate::bar_config_dir().join("favorites.txt") }
+fn size_path() -> std::path::PathBuf { crate::bar_config_dir().join("menu_size.txt") }
+pub(crate) fn assets_dir() -> std::path::PathBuf { crate::lantern_icons_dir() }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuTab {
@@ -306,7 +306,7 @@ impl AppMenu {
     // -- Favorites --
 
     fn load_favorites(&mut self) {
-        if let Ok(content) = std::fs::read_to_string(FAVORITES_PATH) {
+        if let Ok(content) = std::fs::read_to_string(favorites_path()) {
             self.favorites = content.lines()
                 .map(|l| l.trim().to_string())
                 .filter(|l| !l.is_empty())
@@ -315,12 +315,11 @@ impl AppMenu {
     }
 
     fn save_favorites(&self) {
-        let dir = Path::new(FAVORITES_PATH).parent().unwrap();
-        let _ = std::fs::create_dir_all(dir);
+        let _ = std::fs::create_dir_all(crate::bar_config_dir());
         let content: String = self.favorites.iter()
             .map(|s| format!("{s}\n"))
             .collect();
-        let _ = std::fs::write(FAVORITES_PATH, content);
+        let _ = std::fs::write(favorites_path(), content);
     }
 
     pub(crate) fn toggle_favorite(&mut self, app_id: &str) {
@@ -361,7 +360,7 @@ impl AppMenu {
         }
 
         let icon_sz = (ICON_SIZE * scale) as u32;
-        let custom_dir = std::path::Path::new("/home/alva/.config/lntrn-bar/icons");
+        let custom_dir = crate::lantern_icons_dir();
         for entry in &self.entries {
             let key = format!("appmenu_{}", entry.app_id);
             // Check custom icon by app_id first
@@ -383,7 +382,7 @@ impl AppMenu {
         for (key_name, _label, svg_file) in draw::POWER_ICONS {
             let key = format!("power_{key_name}");
             if icon_cache.get(&key).is_some() { continue; }
-            let path = std::path::PathBuf::from(ASSETS_DIR).join(svg_file);
+            let path = assets_dir().join(svg_file);
             if path.exists() {
                 icon_cache.load(tex_pass, gpu, &key, &path, pwr_sz, pwr_sz);
             }
@@ -392,7 +391,7 @@ impl AppMenu {
 }
 
 fn load_size() -> (f32, f32) {
-    std::fs::read_to_string(SIZE_PATH).ok().and_then(|s| {
+    std::fs::read_to_string(size_path()).ok().and_then(|s| {
         let mut parts = s.trim().split('x');
         let w: f32 = parts.next()?.parse().ok()?;
         let h: f32 = parts.next()?.parse().ok()?;
@@ -401,9 +400,8 @@ fn load_size() -> (f32, f32) {
 }
 
 fn save_size(w: f32, h: f32) {
-    let dir = Path::new(SIZE_PATH).parent().unwrap();
-    let _ = std::fs::create_dir_all(dir);
-    let _ = std::fs::write(SIZE_PATH, format!("{}x{}", w as u32, h as u32));
+    let _ = std::fs::create_dir_all(crate::bar_config_dir());
+    let _ = std::fs::write(size_path(), format!("{}x{}", w as u32, h as u32));
 }
 
 pub(crate) fn launch_app(exec: &str) {

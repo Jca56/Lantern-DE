@@ -8,7 +8,7 @@ use lntrn_ui::gpu::{FoxPalette, InteractionContext, Toggle};
 
 use crate::svg_icon::IconCache;
 
-const ICON_DIR: &str = "/home/alva/.config/lntrn-bar/icons";
+fn icon_dir() -> std::path::PathBuf { crate::lantern_icons_dir() }
 
 const POLL_INTERVAL_MS: u64 = 15_000; // read sysfs every 15s
 
@@ -199,7 +199,7 @@ impl Battery {
         icon_h: u32,
     ) {
         if self.icons_loaded { return; }
-        let dir = Path::new(ICON_DIR);
+        let dir = icon_dir();
         let pairs = [
             ("battery-high", "spark-battery-high.svg"),
             ("battery-medium", "spark-battery-medium.svg"),

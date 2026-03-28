@@ -10,7 +10,7 @@ use lntrn_ui::gpu::{FoxPalette, InteractionContext, TextInput};
 
 use crate::svg_icon::IconCache;
 
-const ICON_DIR: &str = "/home/alva/.config/lntrn-bar/icons";
+fn icon_dir() -> std::path::PathBuf { crate::lantern_icons_dir() }
 const POLL_INTERVAL_MS: u64 = 10_000;
 
 // Zone IDs (unique range 0xFF_xxxx)
@@ -224,7 +224,7 @@ impl Wifi {
         &mut self, icons: &mut IconCache, tex_pass: &TexturePass, gpu: &GpuContext, size: u32,
     ) {
         if self.icons_loaded { return; }
-        let dir = Path::new(ICON_DIR);
+        let dir = icon_dir();
         for (key, file) in [
             ("wifi-high", "spark-wifi-high.svg"),
             ("wifi-medium", "spark-wifi-medium.svg"),

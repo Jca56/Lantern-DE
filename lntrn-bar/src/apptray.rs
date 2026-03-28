@@ -11,7 +11,9 @@ use crate::toplevel::ToplevelInfo;
 
 const ZONE_BASE: u32 = 0xAA_0000;
 pub const ICON_GAP: f32 = 8.0;
-const CONFIG_PATH: &str = "/home/alva/.config/lntrn-bar/apptray.toml";
+fn config_path() -> PathBuf {
+    crate::bar_config_dir().join("apptray.toml")
+}
 /// Minimum pixels the cursor must move before a drag starts.
 const DRAG_THRESHOLD: f32 = 6.0;
 /// Animation duration for icons sliding into position.
@@ -79,10 +81,10 @@ impl AppTray {
     }
 
     fn load_config(&mut self) {
-        let path = Path::new(CONFIG_PATH);
+        let path = config_path();
 
         // Check if file changed
-        let modified = std::fs::metadata(path)
+        let modified = std::fs::metadata(&path)
             .and_then(|m| m.modified())
             .ok();
         if modified == self.config_modified && self.config_modified.is_some() {
@@ -90,13 +92,13 @@ impl AppTray {
         }
         self.config_modified = modified;
 
-        let content = match std::fs::read_to_string(path) {
+        let content = match std::fs::read_to_string(&path) {
             Ok(c) => c,
             Err(_) => {
                 // Create default config
                 let default = "# Pinned apps (by app_id)\npinned = []\n";
-                let _ = std::fs::create_dir_all(Path::new(CONFIG_PATH).parent().unwrap());
-                let _ = std::fs::write(path, default);
+                let _ = std::fs::create_dir_all(path.parent().unwrap());
+                let _ = std::fs::write(&path, default);
                 return;
             }
         };
@@ -130,7 +132,8 @@ impl AppTray {
             "# Pinned apps (by app_id)\npinned = [{}]\n",
             ids.join(", ")
         );
-        let _ = std::fs::write(CONFIG_PATH, content);
+        let _ = std::fs::create_dir_all(crate::bar_config_dir());
+        let _ = std::fs::write(config_path(), content);
     }
 
     /// Pin an app_id (persists to config).
@@ -605,7 +608,7 @@ fn visual_index(i: usize, src: usize, dst: usize) -> usize {
 /// Search for an icon by app_id in standard locations.
 pub(crate) fn find_icon(app_id: &str) -> Option<PathBuf> {
     // 1. Check custom icons dir
-    let custom_dir = Path::new("/home/alva/.config/lntrn-bar/icons");
+    let custom_dir = crate::lantern_icons_dir();
     let custom_names = [
         format!("{}.svg", app_id),
         format!("{}.png", app_id),
@@ -618,10 +621,14 @@ pub(crate) fn find_icon(app_id: &str) -> Option<PathBuf> {
     }
 
     // 2. Freedesktop icon theme lookup
+    let home = std::env::var("HOME").unwrap_or_default();
+    let user_tela = format!("{home}/.local/share/icons/Tela/scalable/apps");
+    let user_hicolor = format!("{home}/.local/share/icons/hicolor/scalable/apps");
+    let user_apps = format!("{home}/.local/share/applications");
     let search_dirs = [
         // User-local icons first
-        "/home/alva/.local/share/icons/Tela/scalable/apps",
-        "/home/alva/.local/share/icons/hicolor/scalable/apps",
+        user_tela.as_str(),
+        user_hicolor.as_str(),
         // System icons
         "/usr/share/icons/Tela/scalable/apps",
         "/usr/share/icons/Tela/128/apps",
@@ -664,9 +671,11 @@ pub(crate) fn find_icon(app_id: &str) -> Option<PathBuf> {
 
 /// Try to find icon by reading .desktop files.
 fn find_icon_from_desktop(app_id: &str) -> Option<PathBuf> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let user_apps = format!("{home}/.local/share/applications");
     let desktop_dirs = [
         "/usr/share/applications",
-        "/home/alva/.local/share/applications",
+        user_apps.as_str(),
         "/usr/local/share/applications",
     ];
 
