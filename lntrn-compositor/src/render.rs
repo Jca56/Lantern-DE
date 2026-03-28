@@ -152,7 +152,11 @@ pub fn render_surface(
         let toplevel_ids = state.foreign_toplevel_state.surface_app_ids();
         state.hover_preview.find_surface(&toplevel_ids).and_then(|surf| {
             let slot = state.hover_preview.thumbnail_slot(&surf, output_pos.size);
-            state.find_mapped_window(&surf).map(|w| (slot, w))
+            state.find_mapped_window(&surf)
+                .or_else(|| state.minimized_windows.iter()
+                    .find(|m| m.surface == surf)
+                    .map(|m| m.window.clone()))
+                .map(|w| (slot, w))
         })
     } else {
         None

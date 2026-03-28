@@ -19,15 +19,18 @@ fn custom_icon_dir() -> std::path::PathBuf {
             std::path::PathBuf::from(home).join(".lantern/icons")
         })
 }
-const ICON_DIRS: &[&str] = &[
-    "/home/alva/.local/share/icons/Tela/scalable/apps",
-    "/home/alva/.local/share/icons/hicolor/scalable/apps",
-    "/usr/share/icons/Tela/scalable/apps",
-    "/usr/share/icons/Tela/128/apps",
-    "/usr/share/icons/hicolor/scalable/apps",
-    "/usr/share/icons/hicolor/128x128/apps",
-    "/usr/share/pixmaps",
-];
+fn icon_dirs() -> Vec<PathBuf> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    vec![
+        PathBuf::from(&home).join(".local/share/icons/Tela/scalable/apps"),
+        PathBuf::from(&home).join(".local/share/icons/hicolor/scalable/apps"),
+        PathBuf::from("/usr/share/icons/Tela/scalable/apps"),
+        PathBuf::from("/usr/share/icons/Tela/128/apps"),
+        PathBuf::from("/usr/share/icons/hicolor/scalable/apps"),
+        PathBuf::from("/usr/share/icons/hicolor/128x128/apps"),
+        PathBuf::from("/usr/share/pixmaps"),
+    ]
+}
 
 const CELL_SIZE: f32 = 100.0;
 const ICON_SZ: f32 = 48.0;
@@ -413,9 +416,9 @@ fn find_icon_path(icon_name: &str, app_id: &str) -> Option<PathBuf> {
         if p.exists() { return Some(p); }
     }
     // Freedesktop search
-    for dir in ICON_DIRS {
+    for dir in icon_dirs() {
         for ext in &["svg", "png"] {
-            let p = Path::new(dir).join(format!("{icon_name}.{ext}"));
+            let p = dir.join(format!("{icon_name}.{ext}"));
             if p.exists() { return Some(p); }
         }
     }

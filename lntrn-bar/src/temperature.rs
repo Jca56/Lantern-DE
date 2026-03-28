@@ -229,8 +229,8 @@ impl Temperature {
         let text_w = num_w + sym_gap + sym_w;
         let total_w = icon_w.max(text_w);
 
-        // Center text horizontally
-        let text_x = x + (total_w - text_w) / 4.0;
+        // Nudge text right to visually center over icon
+        let text_x = x + 8.0 * scale;
         let text_y = stack_y;
 
         let text_color = if self.cpu_temp > WARM_THRESH {

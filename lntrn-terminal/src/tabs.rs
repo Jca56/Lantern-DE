@@ -19,9 +19,7 @@ impl App {
         });
 
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
-        let process_cwd = std::env::current_dir()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| std::env::var("HOME").unwrap_or_else(|_| "/".to_string()));
+        let process_cwd = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
         let dir = cwd.unwrap_or(&process_cwd);
         let pty = Pty::spawn(&shell, Some(dir), repaint).expect("Failed to spawn PTY");
 

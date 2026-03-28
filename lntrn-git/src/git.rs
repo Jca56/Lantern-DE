@@ -46,11 +46,7 @@ pub struct RepoStatus {
 pub fn find_repos() -> Vec<PathBuf> {
     let home = std::env::var("HOME").unwrap_or_default();
     let search_dirs = [
-        format!("{home}/Documents/Projects"),
         format!("{home}/Projects"),
-        format!("{home}/src"),
-        format!("{home}/dev"),
-        format!("{home}/.config"),
     ];
 
     let mut repos = Vec::new();

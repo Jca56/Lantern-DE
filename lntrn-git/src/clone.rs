@@ -380,7 +380,7 @@ impl CloneView {
 
 fn default_clone_path() -> String {
     let home = std::env::var("HOME").unwrap_or_default();
-    format!("{home}/Documents/Projects")
+    format!("{home}/Projects")
 }
 
 // Same keycode mapper as app.rs — TODO: extract shared util

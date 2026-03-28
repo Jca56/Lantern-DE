@@ -139,16 +139,20 @@ impl<'a> TextInput<'a> {
         let text_x_base = self.rect.x + text_pad_x;
         let max_text_w = (self.rect.w - text_pad_x * 2.0).max(10.0);
 
-        // Determine caret character position
-        let caret_char = if self.focused {
-            self.cursor_pos.unwrap_or(self.text.len())
+        // Determine caret byte offset (cursor_pos is in characters, strings need bytes)
+        let caret_byte = if self.focused {
+            let char_pos = self.cursor_pos.unwrap_or(self.text.chars().count());
+            self.text.char_indices()
+                .nth(char_pos)
+                .map(|(i, _)| i)
+                .unwrap_or(self.text.len())
         } else {
             0
         };
 
         // Calculate scroll offset so cursor is always visible
         let scroll_offset = if self.focused && !self.text.is_empty() {
-            let text_before_cursor = &self.text[..caret_char.min(self.text.len())];
+            let text_before_cursor = &self.text[..caret_byte];
             let cursor_x = text_renderer.measure_width(text_before_cursor, font_size);
             if cursor_x > max_text_w {
                 cursor_x - max_text_w + text_pad_x
@@ -200,7 +204,7 @@ impl<'a> TextInput<'a> {
 
         // -- Caret --
         if self.focused {
-            let text_before_cursor = &self.text[..caret_char.min(self.text.len())];
+            let text_before_cursor = &self.text[..caret_byte];
             let caret_offset = text_renderer.measure_width(text_before_cursor, font_size);
             let caret_x = text_x + caret_offset;
             let caret_y = self.rect.y + (self.rect.h - font_size) * 0.5;

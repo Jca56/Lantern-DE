@@ -265,8 +265,8 @@ impl Battery {
         let text_w = num_w + sym_gap + sym_w;
         let total_w = icon_w.max(text_w);
 
-        // Center text horizontally over total_w (half-step to compensate for glyph metrics)
-        let text_x = x + (total_w - text_w) / 4.0;
+        // Nudge text left to visually center over icon
+        let text_x = x - 4.0 * scale;
         let text_y = stack_y;
 
         let text_color = if self.capacity <= LOW_THRESH && self.status == BatteryStatus::Discharging {
