@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="256" height="256">
+  <defs>
+    
+    <linearGradient id="vaporBack" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1a0033"/><stop offset="50%" stop-color="#330055"/><stop offset="100%" stop-color="#000011"/>
+    </linearGradient>
+    <linearGradient id="sunVapor" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ff6ec7"/><stop offset="50%" stop-color="#ff3399"/><stop offset="100%" stop-color="#ffaa00"/>
+    </linearGradient>
+    <linearGradient id="stripG" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ff6ec7"/><stop offset="50%" stop-color="#aa44ff"/><stop offset="100%" stop-color="#44aaff"/>
+    </linearGradient>
+    <filter id="vaporGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="#ff44cc" flood-opacity="0.8"/>
+    </filter>
+    <linearGradient id="page1grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f0ece0"/><stop offset="100%" stop-color="#d8d4c8"/>
+    </linearGradient>
+    <linearGradient id="page2grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#e4e0d4"/><stop offset="100%" stop-color="#c8c4b8"/>
+    </linearGradient>
+    <filter id="fShadow">
+      <feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#000" flood-opacity="0.7"/>
+    </filter>
+    <filter id="pShadow">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <g filter="url(#fShadow)">
+    <path d="M7,22 Q7,17 12,17 L40,17 Q45,17 47,22 L53,30 L93,30 L93,93 Q93,98 88,98 L12,98 Q7,98 7,93 Z"
+          fill="#1a0033"/>
+  </g>
+  <g filter="url(#pShadow)">
+    <rect x="14" y="27" width="72" height="5" rx="1.5" fill="url(#page2grad)"/>
+  </g>
+  <g filter="url(#pShadow)">
+    <rect x="14" y="31" width="72" height="5" rx="1.5" fill="url(#page1grad)"/>
+  </g>
+  <rect x="7" y="36" width="86" height="12" fill="url(#stripG)"/><rect x="7" y="36" width="86" height="4.5" fill="#fff" opacity="0.1"/>
+  <clipPath id="bodyClip"><rect x="7" y="48" width="86" height="50" rx="5"/></clipPath>
+  <rect x="7" y="48" width="86" height="50" rx="5" fill="#0d0022"/>
+  
+  <g clip-path="url(#bodyClip)">
+    <rect x="7" y="48" width="86" height="50" fill="url(#vaporBack)"/>
+    <!-- Retro sun with slices -->
+    <g filter="url(#vaporGlow)">
+      <clipPath id="sunClip"><rect x="20" y="48" width="60" height="22"/></clipPath>
+      <circle cx="50" cy="68" r="20" fill="url(#sunVapor)" clip-path="url(#sunClip)"/>
+      <!-- Sun slices -->
+      <line x1="30" y1="71" x2="70" y2="71" stroke="#1a0033" stroke-width="2"/>
+      <line x1="30" y1="74" x2="70" y2="74" stroke="#1a0033" stroke-width="2.5"/>
+      <line x1="30" y1="78" x2="70" y2="78" stroke="#1a0033" stroke-width="1.5"/>
+    </g>
+    <!-- Perspective grid -->
+    <g opacity="0.7">
+      <!-- Horizontal lines converging -->
+      <line x1="7"  y1="75" x2="93" y2="75" stroke="#ff44cc" stroke-width="0.8"/>
+      <line x1="7"  y1="80" x2="93" y2="80" stroke="#ff44cc" stroke-width="0.8"/>
+      <line x1="7"  y1="86" x2="93" y2="86" stroke="#aa44ff" stroke-width="0.8"/>
+      <line x1="7"  y1="93" x2="93" y2="93" stroke="#aa44ff" stroke-width="1"/>
+      <!-- Vertical vanishing lines -->
+      <line x1="50" y1="70" x2="7"  y2="98" stroke="#ff44cc" stroke-width="0.8"/>
+      <line x1="50" y1="70" x2="93" y2="98" stroke="#ff44cc" stroke-width="0.8"/>
+      <line x1="50" y1="70" x2="28" y2="98" stroke="#aa44ff" stroke-width="0.7"/>
+      <line x1="50" y1="70" x2="72" y2="98" stroke="#aa44ff" stroke-width="0.7"/>
+      <line x1="50" y1="70" x2="16" y2="98" stroke="#7733cc" stroke-width="0.6"/>
+      <line x1="50" y1="70" x2="84" y2="98" stroke="#7733cc" stroke-width="0.6"/>
+    </g>
+    <!-- Palm tree left -->
+    <g filter="url(#vaporGlow)" opacity="0.7">
+      <line x1="15" y1="98" x2="18" y2="70" stroke="#ff6ec7" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M18,70 Q10,62 8,58" fill="none" stroke="#ff6ec7" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M18,70 Q22,61 25,58" fill="none" stroke="#ff6ec7" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M18,70 Q14,63 16,60" fill="none" stroke="#ff6ec7" stroke-width="1.2" stroke-linecap="round"/>
+    </g>
+    <!-- Palm tree right -->
+    <g filter="url(#vaporGlow)" opacity="0.7">
+      <line x1="85" y1="98" x2="82" y2="70" stroke="#aa44ff" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M82,70 Q90,62 92,58" fill="none" stroke="#aa44ff" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M82,70 Q78,61 75,58" fill="none" stroke="#aa44ff" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M82,70 Q86,63 84,60" fill="none" stroke="#aa44ff" stroke-width="1.2" stroke-linecap="round"/>
+    </g>
+  </g>
+  <rect x="7" y="48" width="86" height="50" rx="5" fill="none" stroke="#ff6ec7" stroke-width="1.2" opacity="0.3"/>
+  <rect x="7" y="48" width="86" height="12" rx="5" fill="#fff" opacity="0.04"/>
+  <rect x="7" y="90" width="86" height="8" rx="5" fill="#000" opacity="0.2"/>
+</svg>

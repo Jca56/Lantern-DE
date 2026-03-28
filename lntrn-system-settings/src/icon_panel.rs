@@ -10,7 +10,15 @@ use lntrn_ui::gpu::{FoxPalette, InteractionContext};
 
 use crate::text_edit::TextBuffer;
 
-const CUSTOM_ICON_DIR: &str = "/home/alva/.config/lntrn-bar/icons";
+/// Custom icon directory — resolved at runtime from ~/.lantern/icons/
+fn custom_icon_dir() -> std::path::PathBuf {
+    lntrn_theme::lantern_home()
+        .map(|h| h.join("icons"))
+        .unwrap_or_else(|| {
+            let home = std::env::var("HOME").unwrap_or_default();
+            std::path::PathBuf::from(home).join(".lantern/icons")
+        })
+}
 const ICON_DIRS: &[&str] = &[
     "/home/alva/.local/share/icons/Tela/scalable/apps",
     "/home/alva/.local/share/icons/hicolor/scalable/apps",
@@ -111,8 +119,9 @@ impl IconPanelState {
         if !src.exists() { return; }
 
         let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("png");
-        let dst = Path::new(CUSTOM_ICON_DIR).join(format!("{}.{ext}", app.app_id));
-        let _ = std::fs::create_dir_all(CUSTOM_ICON_DIR);
+        let icon_dir = custom_icon_dir();
+        let dst = icon_dir.join(format!("{}.{ext}", app.app_id));
+        let _ = std::fs::create_dir_all(&icon_dir);
         if std::fs::copy(src, &dst).is_ok() {
             app.has_custom = true;
             self.icons_loaded = false; // reload icons
@@ -121,7 +130,7 @@ impl IconPanelState {
 
     fn clear_custom_icon(&mut self, idx: usize) {
         let Some(app) = self.apps.get_mut(idx) else { return };
-        let dir = Path::new(CUSTOM_ICON_DIR);
+        let dir = custom_icon_dir();
         for ext in &["svg", "png"] {
             let p = dir.join(format!("{}.{ext}", app.app_id));
             let _ = std::fs::remove_file(&p);
@@ -331,7 +340,7 @@ fn draw_editor<'a>(
     // Instructions
     text.queue("Press Enter to apply. The icon will be copied to:", 16.0 * s, gx, cy, fox.muted, gw, sw, sh);
     cy += 18.0 * s;
-    let dest = format!("{}/{}.svg/png", CUSTOM_ICON_DIR, app.app_id);
+    let dest = format!("{}/{}.svg/png", custom_icon_dir().display(), app.app_id);
     text.queue(&dest, 14.0 * s, gx, cy, fox.muted, gw, sw, sh);
     cy += 20.0 * s + pad;
 
@@ -358,7 +367,7 @@ fn scan_desktop_apps() -> Vec<AppEntry> {
         "/usr/share/applications",
         &format!("{}/.local/share/applications", std::env::var("HOME").unwrap_or_default()),
     ];
-    let custom_dir = Path::new(CUSTOM_ICON_DIR);
+    let custom_dir = custom_icon_dir();
     let mut seen = std::collections::HashSet::new();
     let mut apps = Vec::new();
 
@@ -398,7 +407,7 @@ fn scan_desktop_apps() -> Vec<AppEntry> {
 
 fn find_icon_path(icon_name: &str, app_id: &str) -> Option<PathBuf> {
     // Custom first
-    let custom = Path::new(CUSTOM_ICON_DIR);
+    let custom = custom_icon_dir();
     for ext in &["svg", "png"] {
         let p = custom.join(format!("{app_id}.{ext}"));
         if p.exists() { return Some(p); }

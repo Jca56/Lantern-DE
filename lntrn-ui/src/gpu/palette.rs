@@ -47,7 +47,7 @@ impl FoxPalette {
         Self::from_theme(variant.palette(), variant)
     }
 
-    /// Build a palette from the user's active theme in `~/.config/lantern/lantern.toml`.
+    /// Build a palette from the user's active theme in the Lantern config.
     pub fn current() -> Self {
         Self::from_variant(lntrn_theme::active_variant())
     }

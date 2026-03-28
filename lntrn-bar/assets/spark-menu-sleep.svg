@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <defs>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="#8888ff" flood-opacity="0.8"/>
+    </filter>
+  </defs>
+  <g filter="url(#glow)">
+    <!-- Outline pass -->
+    <path d="M21,12.8 A9,9 0 1,1 11.2,3 A7,7 0 0,0 21,12.8 Z" fill="#0a0a0a" opacity="0.35"/>
+    <!-- Moon -->
+    <path d="M21,12.8 A9,9 0 1,1 11.2,3 A7,7 0 0,0 21,12.8 Z" fill="#8888ff" stroke="#0a0a0a" stroke-width="1.5" stroke-linejoin="round"/>
+    <!-- Z's -->
+    <text x="13" y="10" font-size="4" fill="#0a0a0a" font-weight="bold" font-family="sans-serif" opacity="0.5">Z</text>
+    <text x="15.5" y="7" font-size="3" fill="#0a0a0a" font-weight="bold" font-family="sans-serif" opacity="0.4">Z</text>
+  </g>
+</svg>

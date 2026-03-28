@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <defs>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="#ffaa00" flood-opacity="0.8"/>
+    </filter>
+  </defs>
+  <g filter="url(#glow)">
+    <!-- Outline pass -->
+    <path d="M20,12 A8,8 0 1,1 16,5.5" fill="none" stroke="#0a0a0a" stroke-width="4" stroke-linecap="round" opacity="0.35"/>
+    <!-- Arrow head outline -->
+    <polyline points="13,2 17,5.5 13,9" fill="none" stroke="#0a0a0a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" opacity="0.35"/>
+    <!-- Arc -->
+    <path d="M20,12 A8,8 0 1,1 16,5.5" fill="none" stroke="#ffaa00" stroke-width="2.2" stroke-linecap="round"/>
+    <!-- Arrow head -->
+    <polyline points="13,2 17,5.5 13,9" fill="none" stroke="#ffaa00" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

@@ -1,0 +1,14 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Lantern Image Viewer
+GenericName=Image Viewer
+Comment=A native image viewer for the Lantern desktop
+Exec=/home/alva/.local/bin/lntrn-image-viewer %f
+Icon=lntrn-image-viewer
+Terminal=false
+Categories=Graphics;Viewer;
+MimeType=image/png;image/jpeg;image/gif;image/bmp;image/webp;image/svg+xml;image/tiff;image/x-icon;image/x-portable-bitmap;image/x-portable-graymap;image/x-portable-pixmap;image/x-xbitmap;image/x-xpixmap;
+Keywords=image;photo;picture;viewer;lantern;
+StartupNotify=true
+StartupWMClass=lntrn-image-viewer

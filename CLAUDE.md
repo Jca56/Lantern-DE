@@ -5,9 +5,9 @@ Custom Linux Arch btw Wayland desktop environment built with Smithay 0.7 in Rust
 ## Build & Deploy
 ```bash
 cargo build --release -p lntrn-compositor
-cp target/release/lntrn-compositor /tmp/lntrn-compositor-new && mv -f /tmp/lntrn-compositor-new ~/.local/bin/lntrn-compositor
+cp target/release/lntrn-compositor /tmp/lntrn-compositor-new && mv -f /tmp/lntrn-compositor-new ~/.lantern/bin/lntrn-compositor
 ```
-Never use `~/.cargo/bin/` — that's only updated by `cargo install`.
+All binaries go to `~/.lantern/bin/`. All config lives in `~/.lantern/config/`. Logs go to `~/.lantern/log/`.
 
 ## UI & Theming
 All window applications in the workspace must use `lntrn-ui` for widgets and `lntrn-theme` for colors/typography to keep a consistent look across the DE.

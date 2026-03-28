@@ -1,0 +1,14 @@
+[package]
+name = "lantern-music-player"
+version = "0.1.0"
+description = "Lantern DE - Music Player"
+authors = ["Jca56"]
+edition = "2021"
+
+[dependencies]
+eframe = "0.33"
+lofty = "0.21"
+rodio = { version = "0.19", features = ["symphonia-all"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+libc = "0.2"

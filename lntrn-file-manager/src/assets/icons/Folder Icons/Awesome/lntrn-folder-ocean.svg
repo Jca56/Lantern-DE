@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="256" height="256">
+  <defs>
+    
+    <linearGradient id="seaGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#001a3a"/><stop offset="100%" stop-color="#000810"/>
+    </linearGradient>
+    <linearGradient id="stripG" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0088ff"/><stop offset="100%" stop-color="#00ddcc"/>
+    </linearGradient>
+    <filter id="bioGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#00ffcc" flood-opacity="0.9"/>
+    </filter>
+    <linearGradient id="page1grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f0ece0"/><stop offset="100%" stop-color="#d8d4c8"/>
+    </linearGradient>
+    <linearGradient id="page2grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#e4e0d4"/><stop offset="100%" stop-color="#c8c4b8"/>
+    </linearGradient>
+    <filter id="fShadow">
+      <feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#000" flood-opacity="0.7"/>
+    </filter>
+    <filter id="pShadow">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  
+  <g filter="url(#fShadow)">
+    <path d="M7,22 Q7,17 12,17 L40,17 Q45,17 47,22 L53,30 L93,30 L93,93 Q93,98 88,98 L12,98 Q7,98 7,93 Z"
+          fill="#001020"/>
+  </g>
+  <g filter="url(#pShadow)">
+    <rect x="14" y="27" width="72" height="5" rx="1.5" fill="url(#page2grad)"/>
+  </g>
+  <g filter="url(#pShadow)">
+    <rect x="14" y="31" width="72" height="5" rx="1.5" fill="url(#page1grad)"/>
+  </g>
+  <rect x="7" y="36" width="86" height="12" fill="url(#stripG)"/><rect x="7" y="36" width="86" height="4.5" fill="#fff" opacity="0.15"/>
+  <clipPath id="bodyClip"><rect x="7" y="48" width="86" height="50" rx="5"/></clipPath>
+  <rect x="7" y="48" width="86" height="50" rx="5" fill="#000810"/>
+  
+  <g clip-path="url(#bodyClip)">
+    <rect x="7" y="48" width="86" height="50" fill="url(#seaGrad)"/>
+    <g filter="url(#bioGlow)">
+      <!-- Jellyfish -->
+      <path d="M50,52 Q62,52 62,60 Q62,66 50,66 Q38,66 38,60 Q38,52 50,52 Z" fill="#00ffcc" opacity="0.25" stroke="#00ffcc" stroke-width="1"/>
+      <line x1="44" y1="66" x2="42" y2="80" stroke="#00ffcc" stroke-width="1" opacity="0.6" stroke-dasharray="2,2"/>
+      <line x1="48" y1="66" x2="47" y2="82" stroke="#00ffcc" stroke-width="1" opacity="0.5" stroke-dasharray="2,3"/>
+      <line x1="52" y1="66" x2="53" y2="82" stroke="#00ffcc" stroke-width="1" opacity="0.5" stroke-dasharray="2,3"/>
+      <line x1="56" y1="66" x2="58" y2="80" stroke="#00ffcc" stroke-width="1" opacity="0.6" stroke-dasharray="2,2"/>
+      <!-- Bubbles -->
+      <circle cx="20" cy="60" r="2.5" fill="none" stroke="#0088ff" stroke-width="1" opacity="0.6"/>
+      <circle cx="22" cy="72" r="1.5" fill="none" stroke="#0088ff" stroke-width="1" opacity="0.5"/>
+      <circle cx="80" cy="65" r="2"   fill="none" stroke="#00ccff" stroke-width="1" opacity="0.6"/>
+      <circle cx="77" cy="78" r="1.5" fill="none" stroke="#00ccff" stroke-width="1" opacity="0.4"/>
+      <!-- Bioluminescent dots -->
+      <circle cx="18" cy="80" r="1.5" fill="#00ffaa" opacity="0.8"/>
+      <circle cx="28" cy="88" r="1"   fill="#00ffcc" opacity="0.7"/>
+      <circle cx="72" cy="85" r="1.5" fill="#00aaff" opacity="0.8"/>
+      <circle cx="83" cy="78" r="1"   fill="#00ffcc" opacity="0.6"/>
+      <circle cx="35" cy="75" r="1"   fill="#00ffaa" opacity="0.5"/>
+      <!-- Fish silhouette -->
+      <path d="M68,73 Q76,70 80,73 Q76,76 68,73 Z" fill="#0055aa" opacity="0.7"/>
+      <path d="M68,73 L63,70 L63,76 Z" fill="#0055aa" opacity="0.7"/>
+    </g>
+  </g>
+  <rect x="7" y="48" width="86" height="50" rx="5" fill="none" stroke="#00aaff" stroke-width="1.2" opacity="0.3"/>
+  <rect x="7" y="48" width="86" height="12" rx="5" fill="#fff" opacity="0.04"/>
+  <rect x="7" y="90" width="86" height="8" rx="5" fill="#000" opacity="0.2"/>
+</svg>

@@ -1,0 +1,21 @@
+[package]
+name = "lntrn-image-viewer"
+version = "0.1.0"
+description = "Lantern Image Viewer — wgpu + lntrn-ui"
+authors = ["Jca56"]
+edition = "2021"
+
+[[bin]]
+name = "lntrn-image-viewer"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+lntrn-render = { path = "../lntrn-render" }
+lntrn-ui = { path = "../lntrn-ui" }
+raw-window-handle = "0.6"
+wayland-backend = { version = "0.3", features = ["client_system"] }
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp", "ico", "tiff"] }
+resvg = "0.47"

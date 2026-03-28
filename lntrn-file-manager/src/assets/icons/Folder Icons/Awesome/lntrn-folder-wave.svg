@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="256" height="256">
+  <defs>
+    
+    <linearGradient id="waveBack" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f5f0e8"/><stop offset="40%" stop-color="#d4e8f5"/><stop offset="100%" stop-color="#5588cc"/>
+    </linearGradient>
+    <linearGradient id="waveG1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1a3a6a"/><stop offset="100%" stop-color="#0a1a3a"/>
+    </linearGradient>
+    <linearGradient id="stripG" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#2255aa"/><stop offset="100%" stop-color="#4488cc"/>
+    </linearGradient>
+    <filter id="waveGlow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="#2255aa" flood-opacity="0.6"/>
+    </filter>
+    <linearGradient id="page1grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f0ece0"/><stop offset="100%" stop-color="#d8d4c8"/>
+    </linearGradient>
+    <linearGradient id="page2grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#e4e0d4"/><stop offset="100%" stop-color="#c8c4b8"/>
+    </linearGradient>
+    <filter id="fShadow">
+      <feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#000" flood-opacity="0.7"/>
+    </filter>
+    <filter id="pShadow">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <g filter="url(#fShadow)">
+    <path d="M7,22 Q7,17 12,17 L40,17 Q45,17 47,22 L53,30 L93,30 L93,93 Q93,98 88,98 L12,98 Q7,98 7,93 Z" fill="#1a2a3a"/>
+  </g>
+  <g filter="url(#pShadow)">
+    <rect x="14" y="27" width="72" height="5" rx="1.5" fill="url(#page2grad)"/>
+  </g>
+  <g filter="url(#pShadow)">
+    <rect x="14" y="31" width="72" height="5" rx="1.5" fill="url(#page1grad)"/>
+  </g>
+  <rect x="7" y="36" width="86" height="12" fill="url(#stripG)"/><rect x="7" y="36" width="86" height="4.5" fill="#fff" opacity="0.15"/>
+  <clipPath id="bodyClip"><rect x="7" y="48" width="86" height="50" rx="5"/></clipPath>
+  <rect x="7" y="48" width="86" height="50" rx="5" fill="#0f1822"/>
+  
+  <g clip-path="url(#bodyClip)">
+    <!-- Sky -->
+    <rect x="7" y="48" width="86" height="50" fill="#f0ece0"/>
+    <!-- Mt Fuji -->
+    <polygon points="50,52 38,78 62,78" fill="#ddd8cc"/>
+    <polygon points="50,52 46,62 54,62" fill="#f5f5f5"/>
+    <!-- Horizon water -->
+    <rect x="7" y="78" width="86" height="20" fill="#4477aa"/>
+    <!-- Wave body -->
+    <g filter="url(#waveGlow)">
+      <path d="M7,70 Q15,55 25,60 Q32,63 35,58 Q40,50 50,55 Q55,58 58,54 Q64,48 72,53 Q78,57 82,52 Q88,47 93,53 L93,72 Q80,65 72,70 Q62,75 55,68 Q48,62 40,68 Q30,74 22,68 Q14,62 7,68 Z" fill="url(#waveG1)"/>
+      <!-- Wave crest white caps -->
+      <path d="M25,60 Q30,55 35,58" fill="none" stroke="#f0ece0" stroke-width="2" stroke-linecap="round"/>
+      <path d="M55,56 Q60,51 65,54" fill="none" stroke="#f0ece0" stroke-width="2" stroke-linecap="round"/>
+      <path d="M80,53 Q85,48 90,52" fill="none" stroke="#f0ece0" stroke-width="2" stroke-linecap="round"/>
+      <!-- Foam fingers at top of wave -->
+      <path d="M22,62 Q18,56 22,54 Q24,58 26,54 Q28,58 30,56 Q28,62 22,62 Z" fill="#f0ece0" opacity="0.9"/>
+      <path d="M52,58 Q48,52 52,50 Q54,54 56,50 Q58,54 60,52 Q58,58 52,58 Z" fill="#f0ece0" opacity="0.9"/>
+    </g>
+    <!-- Small boat in distance -->
+    <path d="M60,76 L56,76 L57,72 L63,72 L64,76 Z" fill="#1a0a00" opacity="0.6"/>
+    <line x1="60" y1="72" x2="60" y2="68" stroke="#1a0a00" stroke-width="0.8" opacity="0.5"/>
+    <path d="M60,68 L57,72" fill="none" stroke="#1a0a00" stroke-width="0.6" opacity="0.4"/>
+    <!-- Stippled water texture -->
+    <g fill="#2255aa" opacity="0.3">
+      <circle cx="15" cy="84" r="0.8"/><circle cx="22" cy="87" r="0.8"/>
+      <circle cx="30" cy="83" r="0.8"/><circle cx="40" cy="86" r="0.8"/>
+      <circle cx="50" cy="82" r="0.8"/><circle cx="62" cy="85" r="0.8"/>
+      <circle cx="72" cy="81" r="0.8"/><circle cx="82" cy="84" r="0.8"/>
+      <circle cx="90" cy="88" r="0.8"/>
+    </g>
+  </g>
+  <rect x="7" y="48" width="86" height="50" rx="5" fill="none" stroke="#4488cc" stroke-width="1.2" opacity="0.3"/>
+  <rect x="7" y="48" width="86" height="12" rx="5" fill="#fff" opacity="0.04"/>
+  <rect x="7" y="90" width="86" height="8" rx="5" fill="#000" opacity="0.2"/>
+</svg>

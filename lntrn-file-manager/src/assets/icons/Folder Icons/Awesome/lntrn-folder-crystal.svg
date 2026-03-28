@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="256" height="256">
+  <defs>
+    
+    <linearGradient id="crystalBack" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0a1a2a"/><stop offset="100%" stop-color="#050a15"/>
+    </linearGradient>
+    <linearGradient id="stripG" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#44ddff"/><stop offset="100%" stop-color="#aa88ff"/>
+    </linearGradient>
+    <linearGradient id="gem1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#88eeff"/><stop offset="100%" stop-color="#2244aa"/>
+    </linearGradient>
+    <linearGradient id="gem2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#cc88ff"/><stop offset="100%" stop-color="#440088"/>
+    </linearGradient>
+    <linearGradient id="gem3" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#88ffcc"/><stop offset="100%" stop-color="#004433"/>
+    </linearGradient>
+    <filter id="crystalGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#88eeff" flood-opacity="0.8"/>
+    </filter>
+    <linearGradient id="page1grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f0ece0"/><stop offset="100%" stop-color="#d8d4c8"/>
+    </linearGradient>
+    <linearGradient id="page2grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#e4e0d4"/><stop offset="100%" stop-color="#c8c4b8"/>
+    </linearGradient>
+    <filter id="fShadow">
+      <feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#000" flood-opacity="0.7"/>
+    </filter>
+    <filter id="pShadow">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  
+  <g filter="url(#fShadow)">
+    <path d="M7,22 Q7,17 12,17 L40,17 Q45,17 47,22 L53,30 L93,30 L93,93 Q93,98 88,98 L12,98 Q7,98 7,93 Z"
+          fill="#0a1a2a"/>
+  </g>
+  <g filter="url(#pShadow)">
+    <rect x="14" y="27" width="72" height="5" rx="1.5" fill="url(#page2grad)"/>
+  </g>
+  <g filter="url(#pShadow)">
+    <rect x="14" y="31" width="72" height="5" rx="1.5" fill="url(#page1grad)"/>
+  </g>
+  <rect x="7" y="36" width="86" height="12" fill="url(#stripG)"/><rect x="7" y="36" width="86" height="4.5" fill="#fff" opacity="0.15"/>
+  <clipPath id="bodyClip"><rect x="7" y="48" width="86" height="50" rx="5"/></clipPath>
+  <rect x="7" y="48" width="86" height="50" rx="5" fill="#060e1a"/>
+  
+  <g clip-path="url(#bodyClip)">
+    <rect x="7" y="48" width="86" height="50" fill="url(#crystalBack)"/>
+    <g filter="url(#crystalGlow)">
+      <!-- Big center gem diamond -->
+      <polygon points="50,52 62,65 50,78 38,65" fill="url(#gem1)" stroke="#88eeff" stroke-width="1" opacity="0.95"/>
+      <polygon points="50,52 62,65 50,60" fill="#ccf8ff" opacity="0.4"/>
+      <polygon points="50,78 62,65 50,70" fill="#0033aa" opacity="0.4"/>
+      <!-- Left gem -->
+      <polygon points="22,62 30,70 22,78 14,70" fill="url(#gem2)" stroke="#cc88ff" stroke-width="1" opacity="0.85"/>
+      <polygon points="22,62 30,70 22,67" fill="#eeccff" opacity="0.4"/>
+      <!-- Right gem -->
+      <polygon points="78,62 86,70 78,78 70,70" fill="url(#gem3)" stroke="#88ffcc" stroke-width="1" opacity="0.85"/>
+      <polygon points="78,62 86,70 78,67" fill="#ccffee" opacity="0.4"/>
+      <!-- Small gems -->
+      <polygon points="50,82 55,88 50,94 45,88" fill="url(#gem2)" stroke="#cc88ff" stroke-width="0.8" opacity="0.7"/>
+      <polygon points="32,52 36,57 32,62 28,57" fill="url(#gem3)" stroke="#88ffcc" stroke-width="0.8" opacity="0.7"/>
+      <polygon points="68,52 72,57 68,62 64,57" fill="url(#gem1)" stroke="#88eeff" stroke-width="0.8" opacity="0.7"/>
+      <!-- Sparkle lines -->
+      <line x1="50" y1="48" x2="50" y2="52" stroke="#fff" stroke-width="1.5" stroke-linecap="round" opacity="0.8"/>
+      <line x1="46" y1="50" x2="54" y2="50" stroke="#fff" stroke-width="1.5" stroke-linecap="round" opacity="0.8"/>
+    </g>
+  </g>
+  <rect x="7" y="48" width="86" height="50" rx="5" fill="none" stroke="#44ddff" stroke-width="1.2" opacity="0.3"/>
+  <rect x="7" y="48" width="86" height="12" rx="5" fill="#fff" opacity="0.04"/>
+  <rect x="7" y="90" width="86" height="8" rx="5" fill="#000" opacity="0.2"/>
+</svg>

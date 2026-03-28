@@ -1,0 +1,9 @@
+[package]
+name = "lntrn-session-manager"
+version = "0.1.0"
+description = "Session manager for Lantern DE"
+authors = ["Jca56"]
+edition = "2021"
+
+[dependencies]
+nix = { version = "0.29", features = ["signal", "process"] }

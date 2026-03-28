@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <defs>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="0" stdDeviation="1.5" flood-color="#ffcc44" flood-opacity="0.9"/>
+    </filter>
+  </defs>
+  <g filter="url(#glow)" fill="none" stroke="#ffcc44" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8">
+    <circle cx="12" cy="12" r="3.5"/>
+    <!-- Gear teeth via path -->
+    <path d="M12,2 L13.5,5 L15.5,4 L16,7 L19,7.5 L18,10 L21,12 L18,14 L19,16.5 L16,17 L15.5,20 L13.5,19 L12,22 L10.5,19 L8.5,20 L8,17 L5,16.5 L6,14 L3,12 L6,10 L5,7.5 L8,7 L8.5,4 L10.5,5 Z"/>
+  </g>
+</svg>

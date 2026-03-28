@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="256" height="256">
+  <defs>
+    
+    <linearGradient id="forestBack" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#03100a"/><stop offset="100%" stop-color="#010805"/>
+    </linearGradient>
+    <linearGradient id="stripG" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#44ff88"/><stop offset="100%" stop-color="#aa44ff"/>
+    </linearGradient>
+    <radialGradient id="shroomR" cx="50%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#ff4444"/><stop offset="100%" stop-color="#880000"/>
+    </radialGradient>
+    <filter id="magicGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="0" stdDeviation="2.5" flood-color="#44ff88" flood-opacity="0.9"/>
+    </filter>
+    <filter id="shroomGlow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#ff4444" flood-opacity="0.8"/>
+    </filter>
+    <filter id="firefly" x="-80%" y="-80%" width="260%" height="260%">
+      <feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="#ffffaa" flood-opacity="1"/>
+    </filter>
+    <linearGradient id="page1grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f0ece0"/><stop offset="100%" stop-color="#d8d4c8"/>
+    </linearGradient>
+    <linearGradient id="page2grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#e4e0d4"/><stop offset="100%" stop-color="#c8c4b8"/>
+    </linearGradient>
+    <filter id="fShadow">
+      <feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#000" flood-opacity="0.7"/>
+    </filter>
+    <filter id="pShadow">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <g filter="url(#fShadow)">
+    <path d="M7,22 Q7,17 12,17 L40,17 Q45,17 47,22 L53,30 L93,30 L93,93 Q93,98 88,98 L12,98 Q7,98 7,93 Z" fill="#03100a"/>
+  </g>
+  <g filter="url(#pShadow)">
+    <rect x="14" y="27" width="72" height="5" rx="1.5" fill="url(#page2grad)"/>
+  </g>
+  <g filter="url(#pShadow)">
+    <rect x="14" y="31" width="72" height="5" rx="1.5" fill="url(#page1grad)"/>
+  </g>
+  <rect x="7" y="36" width="86" height="12" fill="url(#stripG)"/><rect x="7" y="36" width="86" height="4.5" fill="#fff" opacity="0.1"/>
+  <clipPath id="bodyClip"><rect x="7" y="48" width="86" height="50" rx="5"/></clipPath>
+  <rect x="7" y="48" width="86" height="50" rx="5" fill="#010805"/>
+  
+  <g clip-path="url(#bodyClip)">
+    <rect x="7" y="48" width="86" height="50" fill="url(#forestBack)"/>
+    <!-- Tree trunks background -->
+    <rect x="12" y="48" width="5" height="50" rx="2" fill="#0d1a0a" opacity="0.8"/>
+    <rect x="28" y="48" width="4" height="50" rx="2" fill="#0a1408" opacity="0.7"/>
+    <rect x="60" y="48" width="5" height="50" rx="2" fill="#0d1a0a" opacity="0.8"/>
+    <rect x="78" y="48" width="4" height="50" rx="2" fill="#0a1408" opacity="0.7"/>
+    <!-- Glowing ground -->
+    <g filter="url(#magicGlow)" opacity="0.4">
+      <ellipse cx="50" cy="96" rx="40" ry="4" fill="#33ff88"/>
+    </g>
+    <!-- Mushrooms -->
+    <g filter="url(#shroomGlow)">
+      <!-- Big center mushroom -->
+      <ellipse cx="50" cy="74" rx="12" ry="7" fill="url(#shroomR)"/>
+      <ellipse cx="46" cy="72" rx="4" ry="2.5" fill="#ff8888" opacity="0.5"/>
+      <circle cx="48" cy="73" r="1.5" fill="#fff" opacity="0.8"/>
+      <circle cx="54" cy="71" r="1.2" fill="#fff" opacity="0.7"/>
+      <circle cx="44" cy="75" r="1"   fill="#fff" opacity="0.6"/>
+      <rect x="48" y="74" width="4" height="10" rx="2" fill="#f0ece0"/>
+      <!-- Left mushroom -->
+      <ellipse cx="30" cy="82" rx="7" ry="4.5" fill="#cc2222"/>
+      <circle cx="28" cy="81" r="1" fill="#fff" opacity="0.8"/>
+      <circle cx="32" cy="80" r="1" fill="#fff" opacity="0.7"/>
+      <rect x="28.5" y="82" width="3" height="7" rx="1.5" fill="#e8e4d8"/>
+      <!-- Right small mushroom -->
+      <ellipse cx="70" cy="85" rx="5" ry="3.5" fill="#aa1111"/>
+      <circle cx="69" cy="84" r="0.8" fill="#fff" opacity="0.7"/>
+      <rect x="69" y="85" width="2.5" height="5" rx="1" fill="#e8e4d8"/>
+    </g>
+    <!-- Fairy ring of dots -->
+    <g filter="url(#magicGlow)">
+      <circle cx="38" cy="92" r="1.2" fill="#44ff88" opacity="0.9"/>
+      <circle cx="42" cy="94" r="1"   fill="#66ffaa" opacity="0.8"/>
+      <circle cx="50" cy="96" r="1.2" fill="#44ff88" opacity="0.9"/>
+      <circle cx="58" cy="94" r="1"   fill="#66ffaa" opacity="0.8"/>
+      <circle cx="63" cy="91" r="1.2" fill="#44ff88" opacity="0.9"/>
+    </g>
+    <!-- Fireflies -->
+    <g filter="url(#firefly)">
+      <circle cx="20" cy="62" r="1.2" fill="#ffffaa"/>
+      <circle cx="72" cy="60" r="1"   fill="#ffffcc"/>
+      <circle cx="85" cy="68" r="1.2" fill="#ffffaa"/>
+      <circle cx="38" cy="58" r="1"   fill="#ffffcc"/>
+      <circle cx="65" cy="72" r="1.2" fill="#ffffaa"/>
+      <circle cx="15" cy="78" r="1"   fill="#ffffcc"/>
+    </g>
+    <!-- Fern leaves -->
+    <g fill="none" stroke="#1a5a2a" stroke-width="1.2" stroke-linecap="round" opacity="0.7">
+      <path d="M7,90 Q12,84 10,78"/>
+      <path d="M10,87 Q8,82 12,79"/>
+      <path d="M88,88 Q84,82 86,76"/>
+      <path d="M85,85 Q88,80 84,77"/>
+    </g>
+  </g>
+  <rect x="7" y="48" width="86" height="50" rx="5" fill="none" stroke="#44ff88" stroke-width="1.2" opacity="0.3"/>
+  <rect x="7" y="48" width="86" height="12" rx="5" fill="#fff" opacity="0.04"/>
+  <rect x="7" y="90" width="86" height="8" rx="5" fill="#000" opacity="0.2"/>
+</svg>

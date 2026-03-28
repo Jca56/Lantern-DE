@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="256" height="256">
+  <defs>
+    
+    <linearGradient id="hauntBack" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#0d0a15"/><stop offset="100%" stop-color="#05040a"/>
+    </linearGradient>
+    <linearGradient id="stripG" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#553388"/><stop offset="100%" stop-color="#220a44"/>
+    </linearGradient>
+    <radialGradient id="moonGrad" cx="40%" cy="35%" r="60%">
+      <stop offset="0%" stop-color="#ffffcc"/><stop offset="100%" stop-color="#cccc88"/>
+    </radialGradient>
+    <filter id="spookyGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#8833ff" flood-opacity="0.7"/>
+    </filter>
+    <filter id="moonGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="0" stdDeviation="4" flood-color="#ffffaa" flood-opacity="0.7"/>
+    </filter>
+    <linearGradient id="page1grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f0ece0"/><stop offset="100%" stop-color="#d8d4c8"/>
+    </linearGradient>
+    <linearGradient id="page2grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#e4e0d4"/><stop offset="100%" stop-color="#c8c4b8"/>
+    </linearGradient>
+    <filter id="fShadow">
+      <feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#000" flood-opacity="0.7"/>
+    </filter>
+    <filter id="pShadow">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  
+  <g filter="url(#fShadow)">
+    <path d="M7,22 Q7,17 12,17 L40,17 Q45,17 47,22 L53,30 L93,30 L93,93 Q93,98 88,98 L12,98 Q7,98 7,93 Z"
+          fill="#0d0a15"/>
+  </g>
+  <g filter="url(#pShadow)">
+    <rect x="14" y="27" width="72" height="5" rx="1.5" fill="url(#page2grad)"/>
+  </g>
+  <g filter="url(#pShadow)">
+    <rect x="14" y="31" width="72" height="5" rx="1.5" fill="url(#page1grad)"/>
+  </g>
+  <rect x="7" y="36" width="86" height="12" fill="url(#stripG)"/><rect x="7" y="36" width="86" height="4.5" fill="#fff" opacity="0.08"/>
+  <clipPath id="bodyClip"><rect x="7" y="48" width="86" height="50" rx="5"/></clipPath>
+  <rect x="7" y="48" width="86" height="50" rx="5" fill="#07050f"/>
+  
+  <g clip-path="url(#bodyClip)">
+    <rect x="7" y="48" width="86" height="50" fill="url(#hauntBack)"/>
+    <!-- Moon -->
+    <g filter="url(#moonGlow)">
+      <circle cx="72" cy="58" r="10" fill="url(#moonGrad)"/>
+      <circle cx="76" cy="55" r="8" fill="#07050f"/>
+    </g>
+    <!-- Stars -->
+    <circle cx="18" cy="54" r="1" fill="#ffffaa" opacity="0.7"/>
+    <circle cx="30" cy="50" r="0.8" fill="#ffffcc" opacity="0.6"/>
+    <circle cx="45" cy="55" r="1" fill="#ffffaa" opacity="0.5"/>
+    <circle cx="58" cy="50" r="0.8" fill="#ffffcc" opacity="0.6"/>
+    <!-- Dead tree -->
+    <g filter="url(#spookyGlow)">
+      <line x1="22" y1="98" x2="22" y2="68" stroke="#2a1a3a" stroke-width="3" stroke-linecap="round"/>
+      <line x1="22" y1="72" x2="13" y2="62" stroke="#2a1a3a" stroke-width="2" stroke-linecap="round"/>
+      <line x1="22" y1="76" x2="32" y2="68" stroke="#2a1a3a" stroke-width="2" stroke-linecap="round"/>
+      <line x1="22" y1="80" x2="15" y2="75" stroke="#2a1a3a" stroke-width="1.5" stroke-linecap="round"/>
+    </g>
+    <!-- Ghost -->
+    <g filter="url(#spookyGlow)">
+      <path d="M50,58 Q58,54 64,58 L64,76 Q61,74 58,76 Q55,78 52,76 Q49,74 47,76 L47,58 Q48,56 50,58 Z"
+            fill="#cc99ff" opacity="0.25" stroke="#aa66ff" stroke-width="1.2"/>
+      <!-- Ghost eyes -->
+      <circle cx="54" cy="65" r="2" fill="#330055"/>
+      <circle cx="60" cy="65" r="2" fill="#330055"/>
+      <circle cx="54.7" cy="64.3" r="0.7" fill="#aa66ff" opacity="0.8"/>
+      <circle cx="60.7" cy="64.3" r="0.7" fill="#aa66ff" opacity="0.8"/>
+    </g>
+    <!-- Cobweb corner -->
+    <g opacity="0.5">
+      <line x1="7"  y1="48" x2="20" y2="55" stroke="#998899" stroke-width="0.8"/>
+      <line x1="7"  y1="48" x2="7"  y2="62" stroke="#998899" stroke-width="0.8"/>
+      <line x1="20" y1="55" x2="7"  y2="62" stroke="#998899" stroke-width="0.8"/>
+      <line x1="13" y1="51" x2="13" y2="62" stroke="#998899" stroke-width="0.6"/>
+      <line x1="7"  y1="55" x2="20" y2="55" stroke="#998899" stroke-width="0.6"/>
+    </g>
+  </g>
+  <rect x="7" y="48" width="86" height="50" rx="5" fill="none" stroke="#6622aa" stroke-width="1.2" opacity="0.3"/>
+  <rect x="7" y="48" width="86" height="12" rx="5" fill="#fff" opacity="0.04"/>
+  <rect x="7" y="90" width="86" height="8" rx="5" fill="#000" opacity="0.2"/>
+</svg>

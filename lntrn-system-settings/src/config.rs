@@ -165,9 +165,10 @@ impl Default for LanternConfig {
 
 impl LanternConfig {
     pub fn path() -> PathBuf {
-        let base = std::env::var("XDG_CONFIG_HOME")
-            .unwrap_or_else(|_| format!("{}/.config", std::env::var("HOME").unwrap_or_default()));
-        PathBuf::from(base).join("lantern").join("lantern.toml")
+        lntrn_theme::lantern_config_path().unwrap_or_else(|| {
+            let home = std::env::var("HOME").unwrap_or_default();
+            PathBuf::from(home).join(".lantern/config/lantern.toml")
+        })
     }
 
     pub fn load() -> Self {

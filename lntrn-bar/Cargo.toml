@@ -1,0 +1,23 @@
+[package]
+name = "lntrn-bar"
+version = "0.4.0"
+description = "Desktop bar for Lantern DE"
+authors = ["Jca56"]
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+libc = "0.2"
+lntrn-render = { path = "../lntrn-render" }
+lntrn-ui = { path = "../lntrn-ui" }
+raw-window-handle = "0.6"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+wayland-backend = { version = "0.3", features = ["client_system"] }
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+flate2 = "1"
+png = "0.17"
+resvg = "0.45"
+wgpu = "28"

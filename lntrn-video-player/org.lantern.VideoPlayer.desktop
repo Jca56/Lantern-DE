@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Lantern Video Player
+Comment=Simple video player for Lantern DE
+Exec=lntrn-video-player %F
+Icon=multimedia-video-player
+Terminal=false
+Type=Application
+Categories=AudioVideo;Video;Player;GTK;
+MimeType=video/mp4;video/x-matroska;video/webm;video/avi;video/x-flv;video/quicktime;video/x-msvideo;video/ogg;video/mpeg;
+StartupNotify=true

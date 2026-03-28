@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <defs>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="#ff3030" flood-opacity="0.8"/>
+    </filter>
+  </defs>
+  <g filter="url(#glow)">
+    <!-- Power circle with gap at top -->
+    <path d="M8,6 A7,7 0 1,0 16,6" fill="none" stroke="#ff3030" stroke-width="2.2" stroke-linecap="round"/>
+    <!-- Power stem -->
+    <line x1="12" y1="2" x2="12" y2="9" stroke="#ff3030" stroke-width="2.2" stroke-linecap="round"/>
+    <!-- Dark outline pass -->
+    <path d="M8,6 A7,7 0 1,0 16,6" fill="none" stroke="#0a0a0a" stroke-width="3.8" stroke-linecap="round" opacity="0.35"/>
+    <line x1="12" y1="2" x2="12" y2="9" stroke="#0a0a0a" stroke-width="3.8" stroke-linecap="round" opacity="0.35"/>
+    <!-- Redraw on top -->
+    <path d="M8,6 A7,7 0 1,0 16,6" fill="none" stroke="#ff3030" stroke-width="2.2" stroke-linecap="round"/>
+    <line x1="12" y1="2" x2="12" y2="9" stroke="#ff3030" stroke-width="2.2" stroke-linecap="round"/>
+  </g>
+</svg>

@@ -1,0 +1,157 @@
+#![allow(irrefutable_let_patterns)]
+
+mod animation;
+mod canvas;
+mod cursor;
+mod gestures;
+mod grabs;
+mod handlers;
+mod hot_corners;
+pub mod hover_preview;
+mod input;
+mod layer_position;
+mod render;
+mod screencopy_render;
+mod shaders;
+mod snap;
+pub mod ssd;
+mod state;
+mod switcher;
+pub mod udev;
+mod udev_device;
+mod wallpaper;
+mod window_ext;
+mod window_management;
+mod winit;
+mod xwayland;
+
+use smithay::reexports::{calloop::EventLoop, wayland_server::Display};
+pub use state::Lantern;
+
+/// Returns `~/.lantern`, the root of the Lantern home directory.
+pub(crate) fn lantern_home() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    std::path::PathBuf::from(home).join(".lantern")
+}
+
+/// Returns the path to the shared DE config, with old-path fallback.
+pub(crate) fn lantern_config_path() -> std::path::PathBuf {
+    let new_path = lantern_home().join("config/lantern.toml");
+    if new_path.exists() { return new_path; }
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    let old_path = std::path::PathBuf::from(home).join(".config/lantern/lantern.toml");
+    if old_path.exists() { return old_path; }
+    new_path
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    install_child_reaper();
+    let log_file = setup_persistent_log();
+    init_logging(log_file);
+    setup_panic_hook();
+
+    let backend = parse_backend();
+    tracing::info!("Starting Lantern compositor with {:?} backend", backend);
+
+    let mut event_loop: EventLoop<Lantern> = EventLoop::try_new()?;
+    let display: Display<Lantern> = Display::new()?;
+    let mut state = Lantern::new(&mut event_loop, display);
+
+    match backend {
+        Backend::Winit => {
+            crate::winit::init_winit(&mut event_loop, &mut state)?;
+
+            std::env::set_var("WAYLAND_DISPLAY", &state.socket_name);
+            crate::xwayland::start_xwayland(&mut state);
+            // Daemons/clients are spawned from handle_xwayland_ready()
+            // so DISPLAY is guaranteed to be set for X11 apps.
+
+            event_loop.run(None, &mut state, move |_| {})?;
+        }
+        Backend::Udev => {
+            std::env::set_var("WAYLAND_DISPLAY", &state.socket_name);
+            crate::xwayland::start_xwayland(&mut state);
+            // Daemons/clients are spawned from handle_xwayland_ready()
+            // so DISPLAY is guaranteed to be set for X11 apps.
+
+            crate::udev::init_udev(&mut event_loop, &mut state)?;
+        }
+    }
+
+    Ok(())
+}
+
+#[derive(Debug)]
+enum Backend {
+    Winit,
+    Udev,
+}
+
+fn parse_backend() -> Backend {
+    for arg in std::env::args().skip(1) {
+        match arg.as_str() {
+            "--winit" => return Backend::Winit,
+            "--udev" => return Backend::Udev,
+            _ => {}
+        }
+    }
+    // Default: udev when running standalone, winit when WAYLAND_DISPLAY is set
+    if std::env::var("WAYLAND_DISPLAY").is_ok() || std::env::var("DISPLAY").is_ok() {
+        Backend::Winit
+    } else {
+        Backend::Udev
+    }
+}
+
+fn setup_persistent_log() -> Option<std::fs::File> {
+    let log_dir = lantern_home().join("log");
+    if std::fs::create_dir_all(&log_dir).is_err() {
+        return None;
+    }
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_dir.join("compositor.log"))
+        .ok()
+}
+
+fn init_logging(log_file: Option<std::fs::File>) {
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+    if let Some(file) = log_file {
+        // Use LineWriter to flush after every log line, so we don't lose
+        // the last breadcrumb if the compositor freezes on a blocking call.
+        let writer = std::io::LineWriter::new(file);
+        tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .with_writer(std::sync::Mutex::new(writer))
+            .with_ansi(false)
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .init();
+    }
+}
+
+/// Tell the kernel to automatically reap child processes so they never become
+/// zombies. Without this, every `Command::new(...).spawn()` that isn't
+/// explicitly `wait()`-ed on leaves a zombie in the process table.
+fn install_child_reaper() {
+    unsafe {
+        let mut sa: libc::sigaction = std::mem::zeroed();
+        sa.sa_sigaction = libc::SIG_DFL;
+        sa.sa_flags = libc::SA_NOCLDWAIT;
+        libc::sigaction(libc::SIGCHLD, &sa, std::ptr::null_mut());
+    }
+}
+
+fn setup_panic_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        tracing::error!("PANIC: {}", info);
+        default_hook(info);
+    }));
+}
+

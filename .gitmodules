@@ -1,30 +1,6 @@
-[submodule "appbar"]
-	path = lntrn-bar
-	url = https://github.com/Jca56/lntrn-bar.git
-[submodule "image_viewer"]
-	path = lntrn-image-viewer
-	url = https://github.com/Jca56/lntrn-image-viewer.git
 [submodule "menu"]
 	path = lntrn-menu
 	url = https://github.com/Jca56/lntrn-menu.git
-[submodule "terminal"]
-	path = lntrn-terminal
-	url = https://github.com/Jca56/lntrn-terminal.git
-[submodule "video_player"]
-	path = lntrn-video-player
-	url = https://github.com/Jca56/lntrn-video-player.git
-[submodule "music_player"]
-	path = lntrn-music-player
-	url = https://github.com/Jca56/lntrn-music-player.git
 [submodule "window_manager"]
 	path = lntrn-window-manager
 	url = https://github.com/Jca56/lntrn-window-manager.git
-[submodule "session_manager"]
-	path = lntrn-session-manager
-	url = https://github.com/Jca56/lntrn-session-manager.git
-[submodule "lntrn-compositor"]
-	path = lntrn-compositor
-	url = https://github.com/Jca56/lntrn-compositor.git
-[submodule "lntrn-file-manager"]
-	path = lntrn-file-manager
-	url = https://github.com/Jca56/lntrn-file-manager.git

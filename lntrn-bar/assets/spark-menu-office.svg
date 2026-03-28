@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <defs>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="0" stdDeviation="1.5" flood-color="#44bbff" flood-opacity="0.9"/>
+    </filter>
+  </defs>
+  <g filter="url(#glow)" fill="none" stroke="#44bbff" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Document page -->
+    <path d="M6,2 L14,2 L19,7 L19,22 L6,22 Z" stroke-width="1.8"/>
+    <!-- Folded corner -->
+    <path d="M14,2 L14,7 L19,7" stroke-width="1.6"/>
+    <!-- Text lines -->
+    <line x1="9" y1="12" x2="16" y2="12" stroke-width="1.6"/>
+    <line x1="9" y1="15.5" x2="16" y2="15.5" stroke-width="1.6"/>
+    <line x1="9" y1="19" x2="13" y2="19" stroke-width="1.6"/>
+  </g>
+</svg>

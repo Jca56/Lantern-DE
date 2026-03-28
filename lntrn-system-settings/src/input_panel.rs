@@ -17,7 +17,7 @@ const PAD_RIGHT: f32 = 32.0;
 const LABEL_W: f32 = 200.0;
 const VALUE_W: f32 = 60.0;
 
-/// A cursor SVG/PNG found in ~/.config/lantern/cursors/.
+/// A cursor SVG/PNG found in ~/.lantern/config/cursors/.
 struct CursorEntry {
     /// Filename without extension (e.g. "custom1") — stored in config.
     id: String,
@@ -41,9 +41,12 @@ impl InputPanelState {
         if self.scanned { return; }
         self.scanned = true;
 
-        let base = std::env::var("XDG_CONFIG_HOME")
-            .unwrap_or_else(|_| format!("{}/.config", std::env::var("HOME").unwrap_or_default()));
-        let cursor_dir = format!("{}/lantern/cursors", base);
+        let cursor_dir = lntrn_theme::lantern_home()
+            .map(|h| h.join("config/cursors"))
+            .unwrap_or_else(|| {
+                let home = std::env::var("HOME").unwrap_or_default();
+                std::path::PathBuf::from(home).join(".lantern/config/cursors")
+            });
 
         let Ok(entries) = std::fs::read_dir(&cursor_dir) else { return };
         for entry in entries.flatten() {
