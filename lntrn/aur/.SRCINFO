@@ -1,0 +1,14 @@
+pkgbase = lntrn
+	pkgdesc = Displays system information alongside an ANSI Lantern
+	pkgver = 1.1
+	pkgrel = 1
+	url = https://github.com/Jca56/lntrn
+	arch = any
+	license = GPL-3.0-only
+	depends = bash
+	depends = python
+	depends = python-pillow
+	source = lntrn-1.1.tar.gz::https://github.com/Jca56/lntrn/archive/refs/tags/v1.1.tar.gz
+	sha256sums = 1b69447b709080aa265c6c237b86fc2adac8680224fc67d1083c231f2dd46973
+
+pkgname = lntrn

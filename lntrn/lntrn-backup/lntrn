@@ -1,0 +1,444 @@
+#!/usr/bin/env bash
+# ── lntrn ─────────────────────────────────────────────────────────────────────
+# Displays system information alongside an ANSI Lantern - For Lantern DE
+# Dependencies: python3, python-pillow
+# Install: ln -sf "$(pwd)/lntrn" ~/.local/bin/lntrn
+
+set -euo pipefail
+
+# ── System monitor mode ──────────────────────────────────────────────────────
+if [[ "${1:-}" == "--sysmon" ]]; then
+    O=$'\033[38;2;212;160;32m'
+    D=$'\033[38;2;120;90;55m'
+    R=$'\033[0m'
+    B=$'\033[1m'
+
+    # Read all /proc/stat cpu fields, return "total idle"
+    read_cpu() {
+        read -r _ user nice sys idle iowait irq sirq steal _ < <(head -1 /proc/stat)
+        local total=$((user + nice + sys + idle + iowait + irq + sirq + steal))
+        echo "$total $idle"
+    }
+
+    get_cpu_usage() {
+        read -r t1 i1 <<< "$(read_cpu)"
+        sleep 0.5
+        read -r t2 i2 <<< "$(read_cpu)"
+        local dt=$((t2 - t1))
+        local di=$((i2 - i1))
+        [[ "$dt" -gt 0 ]] && echo $(( 100 * (dt - di) / dt )) || echo 0
+    }
+
+    get_gpu_usage() {
+        if command -v nvidia-smi &>/dev/null; then
+            nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' '
+        elif [[ -f /sys/class/drm/card0/device/gpu_busy_percent ]]; then
+            cat /sys/class/drm/card0/device/gpu_busy_percent 2>/dev/null
+        elif [[ -f /sys/class/drm/card1/device/gpu_busy_percent ]]; then
+            cat /sys/class/drm/card1/device/gpu_busy_percent 2>/dev/null
+        else
+            for card in /sys/class/drm/card*/; do
+                if [[ -f "${card}gt_act_freq_mhz" && -f "${card}gt_max_freq_mhz" ]]; then
+                    local act max
+                    act=$(cat "${card}gt_act_freq_mhz" 2>/dev/null)
+                    max=$(cat "${card}gt_max_freq_mhz" 2>/dev/null)
+                    [[ -n "$act" && -n "$max" && "$max" -gt 0 ]] && echo $((act * 100 / max)) && return
+                fi
+            done
+            echo "?"
+        fi
+    }
+
+    get_mem() {
+        awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} END{used=(t-a)/1048576; total=t/1048576; pct=100*(1-a/t); printf "%.0f %.1f %.1f", pct, used, total}' /proc/meminfo
+    }
+
+    get_temp() {
+        for tz in /sys/class/thermal/thermal_zone*/temp; do
+            [[ -f "$tz" ]] || continue
+            local mc
+            mc=$(cat "$tz" 2>/dev/null)
+            [[ -n "$mc" && "$mc" -gt 0 ]] || continue
+            awk "BEGIN {printf \"%.0f\", ($mc/1000)*9/5+32}"
+            return
+        done
+        echo "?"
+    }
+
+    bar() {
+        local pct=$1 width=25 label=$2
+        [[ "$pct" == "?" ]] && { printf "  ${O}%-4s${R}  %-25s %4s" "$label" "?" ""; return; }
+        local filled=$(( pct * width / 100 ))
+        local empty=$(( width - filled ))
+        local bar_str=""
+        for ((i=0; i<filled; i++)); do bar_str+="█"; done
+        for ((i=0; i<empty; i++)); do bar_str+="░"; done
+        printf "  ${O}%-4s${R}  %s %3d%%" "$label" "$bar_str" "$pct"
+    }
+
+    trap 'tput cnorm 2>/dev/null; exit' INT TERM
+    tput civis 2>/dev/null || true
+    while true; do
+        cpu=$(get_cpu_usage)
+        gpu=$(get_gpu_usage)
+        mem_raw=$(get_mem)
+        mem_pct=${mem_raw%% *}; mem_rest=${mem_raw#* }
+        mem_used=${mem_rest%% *}; mem_total=${mem_rest#* }
+        temp=$(get_temp)
+
+        CL=$'\033[K'
+        printf '\033[H'
+        echo "${CL}"
+        echo "  ${B}${O}⚡ lntrn sysmon${R}${CL}"
+        echo "  ${D}──────────────────────────────────────${R}${CL}"
+        echo "${CL}"
+        bar "$cpu" "CPU"
+        echo "${CL}"
+        bar "$gpu" "GPU"
+        echo "${CL}"
+        bar "$mem_pct" "MEM"
+        printf "  %.1fG / %.1fG${CL}\n" "$mem_used" "$mem_total"
+        echo "  ${O}TEMP${R}  ${temp}°F${CL}"
+        echo "${CL}"
+        echo "  ${D}──────────────────────────────────────${R}${CL}"
+        printf "  ${B}${O}%7s  %6s  %6s  %-s${R}${CL}\n" "PID" "CPU%" "MEM%" "COMMAND"
+        echo "  ${D}──────────────────────────────────────${R}${CL}"
+        ps -eo pid,pcpu,pmem,comm --sort=-pcpu --no-headers | head -15 | while read -r pid pcpu pmem comm; do
+            printf "  %7s  %5s%%  %5s%%  %-s${CL}\n" "$pid" "$pcpu" "$pmem" "$comm"
+        done
+        echo "${CL}"
+        echo "  ${D}q to quit${R}${CL}"
+        printf '\033[J'
+
+        read -rsn1 -t 0.3 key 2>/dev/null || true
+        [[ "${key:-}" == "q" ]] && break
+    done
+    tput cnorm 2>/dev/null || true
+    exit 0
+fi
+
+# ── Resolve icon path ─────────────────────────────────────────────────────────
+# Check installed location first, then dev tree
+if [[ -f /usr/share/lntrn/lntrn.png ]]; then
+    ICON="/usr/share/lntrn/lntrn.png"
+else
+    SCRIPT_PATH="$(readlink -f "$0")"
+    SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+    ICON="$SCRIPT_DIR/assets/lntrn.png"
+fi
+
+if [[ ! -f "$ICON" ]]; then
+    echo "Error: Icon not found at $ICON"
+    exit 1
+fi
+
+# ── System info gathering ─────────────────────────────────────────────────────
+USER_NAME="${USER:-$(whoami)}"
+HOST_NAME="${HOSTNAME:-$(hostname)}"
+DISTRO=$(grep -m1 "^PRETTY_NAME=" /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"')
+KERNEL=$(uname -sr)
+SHELL_NAME=$(basename "${SHELL:-unknown}")
+UPTIME=$(uptime -p 2>/dev/null | sed 's/up //' || echo "unknown")
+TERMINAL="${TERM_PROGRAM:-${TERMINAL:-unknown}}"
+[[ "$TERMINAL" == "unknown" ]] && TERMINAL=$(ps -o comm= -p "$(ps -o ppid= -p $$)" 2>/dev/null || echo "unknown")
+
+CPU=$(grep -m1 "model name" /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^ //' | sed 's/(R)//g; s/(TM)//g; s/CPU //g')
+CPU=${CPU:-"unknown"}
+
+if [[ -f /proc/meminfo ]]; then
+    MEM_TOTAL=$(awk '/MemTotal/ {printf "%.0f", $2/1024}' /proc/meminfo)
+    MEM_AVAIL=$(awk '/MemAvailable/ {printf "%.0f", $2/1024}' /proc/meminfo)
+    MEM_USED=$((MEM_TOTAL - MEM_AVAIL))
+    MEMORY="${MEM_USED}MiB / ${MEM_TOTAL}MiB"
+else
+    MEMORY="unknown"
+fi
+
+if command -v pacman &>/dev/null; then
+    PKG_COUNT=$(pacman -Q 2>/dev/null | wc -l)
+    PACKAGES="${PKG_COUNT} (pacman)"
+elif command -v dpkg &>/dev/null; then
+    PKG_COUNT=$(dpkg -l 2>/dev/null | grep -c '^ii')
+    PACKAGES="${PKG_COUNT} (dpkg)"
+elif command -v rpm &>/dev/null; then
+    PKG_COUNT=$(rpm -qa 2>/dev/null | wc -l)
+    PACKAGES="${PKG_COUNT} (rpm)"
+else
+    PACKAGES="unknown"
+fi
+
+if [[ -n "${XDG_CURRENT_DESKTOP:-}" ]]; then
+    DE_WM="$XDG_CURRENT_DESKTOP"
+elif [[ -n "${DESKTOP_SESSION:-}" ]]; then
+    DE_WM="$DESKTOP_SESSION"
+else
+    DE_WM="unknown"
+fi
+
+# Only append version for non-Lantern DEs
+if [[ "$DE_WM" != "Lantern" ]]; then
+    DE_VERSION=""
+    if command -v plasmashell &>/dev/null; then
+        DE_VERSION=$(plasmashell --version 2>/dev/null | awk '{print $2}')
+    elif command -v gnome-shell &>/dev/null; then
+        DE_VERSION=$(gnome-shell --version 2>/dev/null | awk '{print $3}')
+    elif command -v xfce4-session &>/dev/null; then
+        DE_VERSION=$(xfce4-session --version 2>/dev/null | head -1 | awk '{print $2}')
+    elif command -v cinnamon &>/dev/null; then
+        DE_VERSION=$(cinnamon --version 2>/dev/null | awk '{print $2}')
+    fi
+    [[ -n "$DE_VERSION" ]] && DE_WM="$DE_WM $DE_VERSION"
+fi
+
+GPU=$(lspci 2>/dev/null | grep -i 'vga\|3d\|display' | head -1 | sed 's/.*: //' | sed 's/ Corporation//;s/ \[.*//;s/ (.*//;s/Intel /Intel /' | cut -c1-40)
+GPU=${GPU:-"unknown"}
+
+# ── Display server ────────────────────────────────────────────────────────────
+if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+    DISPLAY_SERVER="Wayland"
+elif [[ -n "${DISPLAY:-}" ]]; then
+    DISPLAY_SERVER="X11"
+else
+    DISPLAY_SERVER="tty"
+fi
+
+# ── Monitor detection ─────────────────────────────────────────────────────────
+MONITORS=""
+for drm_dir in /sys/class/drm/card*-*/; do
+    [[ -f "$drm_dir/status" ]] || continue
+    [[ "$(cat "$drm_dir/status" 2>/dev/null)" == "connected" ]] || continue
+
+    output=$(basename "$drm_dir")
+    # Strip card prefix → DP-1, HDMI-A-1, eDP-1 etc
+    output=${output#card*-}
+
+    res=$(head -1 "$drm_dir/modes" 2>/dev/null)
+    res=${res:-"?"}
+
+    # Parse EDID for monitor model name
+    mon_name=""
+    if [[ -f "$drm_dir/edid" ]]; then
+        mon_name=$(python3 -c "
+import sys
+try:
+    with open(sys.argv[1], 'rb') as f:
+        edid = f.read()
+    if len(edid) >= 128:
+        for i in range(4):
+            off = 54 + i * 18
+            if edid[off+3] == 0xFC:
+                print(edid[off+5:off+18].decode('ascii', errors='ignore').strip())
+                sys.exit()
+        # Fallback: manufacturer code
+        m = (edid[8] << 8) | edid[9]
+        mfg = chr(((m>>10)&0x1F)+64) + chr(((m>>5)&0x1F)+64) + chr((m&0x1F)+64)
+        print(mfg)
+except: pass
+" "$drm_dir/edid" 2>/dev/null)
+    fi
+
+    if [[ -n "$mon_name" ]]; then
+        entry="$mon_name ($output) $res"
+    else
+        entry="$output $res"
+    fi
+
+    if [[ -z "$MONITORS" ]]; then
+        MONITORS="$entry"
+    else
+        MONITORS="$MONITORS|$entry"
+    fi
+done
+MONITORS=${MONITORS:-"unknown"}
+
+# ── Battery (laptop only) ────────────────────────────────────────────────────
+BATTERY=""
+for bat in /sys/class/power_supply/BAT*; do
+    [[ -f "$bat/capacity" ]] || continue
+    pct=$(cat "$bat/capacity" 2>/dev/null)
+    status=$(cat "$bat/status" 2>/dev/null)
+    BATTERY="${pct}% (${status})"
+    break
+done
+
+# ── Render icon + system info ─────────────────────────────────────────────────
+export LNTRN_USER="$USER_NAME"
+export LNTRN_HOST="$HOST_NAME"
+export LNTRN_DISTRO="$DISTRO"
+export LNTRN_KERNEL="$KERNEL"
+export LNTRN_SHELL="$SHELL_NAME"
+export LNTRN_TERMINAL="$TERMINAL"
+export LNTRN_UPTIME="$UPTIME"
+export LNTRN_PACKAGES="$PACKAGES"
+export LNTRN_DE="$DE_WM"
+export LNTRN_CPU="$CPU"
+export LNTRN_GPU="$GPU"
+export LNTRN_MEMORY="$MEMORY"
+export LNTRN_DISPLAY="$DISPLAY_SERVER"
+export LNTRN_MONITORS="$MONITORS"
+export LNTRN_BATTERY="$BATTERY"
+
+python3 - "$ICON" << 'PYEOF'
+import sys, os
+from PIL import Image
+
+img = Image.open(sys.argv[1]).convert('RGBA')
+W = 24
+H = int(W * img.height / img.width / 2 + 0.5) * 2
+img = img.resize((W, H), Image.LANCZOS)
+
+# Fix LANCZOS resampling artifacts at high-contrast boundaries
+import math
+pixels = img.load()
+fixes = []
+for y in range(H):
+    for x in range(W):
+        r, g, b, a = pixels[x, y]
+        if a < 80:
+            continue
+        neighbors = []
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                if dx == 0 and dy == 0:
+                    continue
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < W and 0 <= ny < H:
+                    nr, ng, nb, na = pixels[nx, ny]
+                    if na > 80:
+                        neighbors.append((nr, ng, nb))
+        if len(neighbors) < 3:
+            continue
+        avg = tuple(sum(c[i] for c in neighbors) // len(neighbors) for i in range(3))
+        dist = math.sqrt(sum((a - b) ** 2 for a, b in zip((r, g, b), avg)))
+        if dist > 70:
+            fixes.append((x, y, (*avg, 255)))
+for x, y, color in fixes:
+    pixels[x, y] = color
+
+raw = img.tobytes()
+
+def px(x, y):
+    i = (y * W + x) * 4
+    return (raw[i], raw[i+1], raw[i+2], raw[i+3])
+
+art_lines = []
+for y in range(0, H, 2):
+    parts = []
+    for x in range(W):
+        top = px(x, y)
+        bot = px(x, y + 1) if y + 1 < H else (0, 0, 0, 0)
+        ta, ba = top[3], bot[3]
+        if ta > 80 and ba > 80:
+            parts.append(f"\033[48;2;{top[0]};{top[1]};{top[2]}m\033[38;2;{bot[0]};{bot[1]};{bot[2]}m▄")
+        elif ta > 80:
+            parts.append(f"\033[0m\033[38;2;{top[0]};{top[1]};{top[2]}m▀")
+        elif ba > 80:
+            parts.append(f"\033[0m\033[38;2;{bot[0]};{bot[1]};{bot[2]}m▄")
+        else:
+            parts.append("\033[0m ")
+    art_lines.append("".join(parts) + "\033[0m")
+
+O = "\033[38;2;212;160;32m"
+B = "\033[1m"
+R = "\033[0m"
+D = "\033[38;2;120;90;55m"
+user = os.environ.get('LNTRN_USER', '?')
+host = os.environ.get('LNTRN_HOST', '?')
+
+def lerp(a, b, t):
+    return int(round(a + (b - a) * t))
+
+def sample_gradient(colors, t):
+    if t <= 0:
+        return colors[0]
+    if t >= 1:
+        return colors[-1]
+    pos = t * (len(colors) - 1)
+    idx = int(pos)
+    frac = pos - idx
+    c1 = colors[idx]
+    c2 = colors[min(idx + 1, len(colors) - 1)]
+    return tuple(lerp(c1[i], c2[i], frac) for i in range(3))
+
+def strip_ansi(text):
+    out = []
+    i = 0
+    while i < len(text):
+        if text[i] == "\033":
+            i += 1
+            if i < len(text) and text[i] == "[":
+                i += 1
+                while i < len(text) and text[i] != "m":
+                    i += 1
+                if i < len(text):
+                    i += 1
+            continue
+        out.append(text[i])
+        i += 1
+    return "".join(out)
+
+def dot_row(colors):
+    return "  " + " ".join(f"\033[38;2;{r};{g};{b}m⬤" for r, g, b in colors) + R
+
+info = [
+    f"  {B}{O}{user}{R}{D}@{R}{B}{O}{host}{R}",
+    f"  {D}──────────────────────────{R}",
+    f"  {O}OS{R}        {os.environ.get('LNTRN_DISTRO', '?')}",
+    f"  {O}Kernel{R}    {os.environ.get('LNTRN_KERNEL', '?')}",
+    f"  {O}Shell{R}     {os.environ.get('LNTRN_SHELL', '?')}",
+    f"  {O}Terminal{R}  {os.environ.get('LNTRN_TERMINAL', '?')}",
+    f"  {O}Uptime{R}    {os.environ.get('LNTRN_UPTIME', '?')}",
+    f"  {O}Packages{R}  {os.environ.get('LNTRN_PACKAGES', '?')}",
+    f"  {O}DE/WM{R}     {os.environ.get('LNTRN_DE', '?')}",
+    f"  {O}Display{R}   {os.environ.get('LNTRN_DISPLAY', '?')}",
+]
+
+# Add monitors right after Display
+monitors = os.environ.get('LNTRN_MONITORS', '')
+if monitors:
+    mons = monitors.split('|')
+    info.append(f"  {O}Monitor{R}   {mons[0]}")
+    for m in mons[1:]:
+        info.append(f"            {m}")
+
+info.extend([
+    f"  {O}CPU{R}       {os.environ.get('LNTRN_CPU', '?')}",
+    f"  {O}GPU{R}       {os.environ.get('LNTRN_GPU', '?')}",
+    f"  {O}Memory{R}    {os.environ.get('LNTRN_MEMORY', '?')}",
+])
+
+# Battery — only shown on laptops
+battery = os.environ.get('LNTRN_BATTERY', '')
+if battery:
+    info.append(f"  {O}Battery{R}   {battery}")
+
+info.append("")
+info.append(dot_row([
+    (180, 130, 70),
+    (150, 110, 65),
+    (120, 90, 55),
+    (95, 75, 50),
+    (75, 60, 40),
+    (95, 75, 50),
+    (120, 90, 55),
+    (150, 110, 65),
+]))
+gradient_stops = [
+    (255, 105, 180),
+    (59, 130, 246),
+    (34, 197, 94),
+    (250, 204, 21),
+    (239, 68, 68),
+]
+info.append(dot_row([sample_gradient(gradient_stops, i / 7) for i in range(8)]))
+
+print()
+COL = W + 8
+total_lines = max(len(art_lines), len(info))
+for i in range(total_lines):
+    art = art_lines[i] if i < len(art_lines) else ""
+    inf = info[i] if i < len(info) else ""
+    print(f"  {art}\033[{COL}G{inf}")
+print()
+PYEOF
+
