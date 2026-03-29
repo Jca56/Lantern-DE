@@ -512,7 +512,7 @@ pub fn draw_content_grid(
     let pad = 8.0 * s;
 
     painter.rect_filled(content_rect, 0.0, palette.bg);
-    area.begin(painter);
+    area.begin(painter, text);
 
     let base_y = area.content_y();
     let content_top = content_rect.y;
@@ -596,7 +596,7 @@ pub fn draw_content_grid(
 
     }
 
-    area.end(painter);
+    area.end(painter, text);
 }
 
 // ── Rubber band selection ────────────────────────────────────────────────────

@@ -270,7 +270,7 @@ pub fn draw_power_panel(
 
     let viewport = Rect::new(x, y, w, panel_h);
     let scroll_area = ScrollArea::new(viewport, content_height, &mut panel_state.scroll_offset);
-    scroll_area.begin(painter);
+    scroll_area.begin(painter, text);
 
     let label_x = x + pad_l;
     let label_w = LABEL_W * s;
@@ -430,7 +430,7 @@ pub fn draw_power_panel(
         ZONE_PWR_WIFI_SCHEME_BTN, active == Some(ZONE_PWR_WIFI_SCHEME_BTN),
         painter, text, ix, fox, label_x, label_w, btn_x, btn_w, btn_h, row, lsz, s, sw, sh, &mut cy, menu);
 
-    scroll_area.end(painter);
+    scroll_area.end(painter, text);
 
     // Draw scrollbar outside the clip region
     if scroll_area.is_scrollable() {

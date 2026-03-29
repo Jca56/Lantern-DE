@@ -195,7 +195,10 @@ impl BranchDropdown {
         painter.rect_filled(panel_rect, 8.0 * s, palette.surface);
         painter.rect_stroke(panel_rect, 8.0 * s, 1.0 * s, palette.muted.with_alpha(0.3));
 
-        // Clip all dropdown text to the panel
+        // Punch a hole in any already-queued text so it doesn't bleed through
+        text.occlude_rect([dx, dy, dropdown_w, total_h]);
+
+        // Clip dropdown text to the panel
         text.push_clip([dx, dy, dropdown_w, total_h]);
 
         // ── New branch input ────────────────────────────────────────────────
@@ -238,7 +241,7 @@ impl BranchDropdown {
         let viewport = Rect::new(dx, list_top, dropdown_w, list_h);
         let scroll = ScrollArea::new(viewport, list_content_h, &mut self.scroll_offset);
 
-        scroll.begin(painter);
+        scroll.begin(painter, text);
 
         let base_y = scroll.content_y();
         for (i, branch) in self.branches.iter().enumerate() {
@@ -271,7 +274,7 @@ impl BranchDropdown {
                 dropdown_w - pad * 2.0 - 22.0 * s, sw, sh);
         }
 
-        scroll.end(painter);
+        scroll.end(painter, text);
 
         // Scrollbar if needed
         if list_content_h > list_h {

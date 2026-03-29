@@ -364,7 +364,7 @@ impl AppMenu {
 
         let grid_rect = Rect::new(mx + pad, grid_top, grid_w, grid_h);
         let scroll_area = ScrollArea::new(grid_rect, total_content_h, &mut self.scroll_offset);
-        scroll_area.begin(painter);
+        scroll_area.begin(painter, text);
 
         let icon_sz = ICON_SIZE * scale;
         let label_font = LABEL_FONT * scale;
@@ -445,7 +445,7 @@ impl AppMenu {
             }
         }
 
-        scroll_area.end(painter);
+        scroll_area.end(painter, text);
 
         if scroll_area.is_scrollable() {
             let sb = Scrollbar::new(&grid_rect, total_content_h, self.scroll_offset);

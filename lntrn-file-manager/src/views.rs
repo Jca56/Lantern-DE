@@ -49,7 +49,7 @@ pub fn draw_content_list(
         .size(FontSize::Custom(20.0 * s)).color(palette.text_secondary)
         .draw(text, screen.0, screen.1);
 
-    area.begin(painter);
+    area.begin(painter, text);
     let base_y = area.content_y();
     let content_top = content_rect.y + hdr_h;
     let content_bottom = content_rect.y + content_rect.h;
@@ -117,7 +117,7 @@ pub fn draw_content_list(
             0.0, Color::WHITE.with_alpha(0.05),
         );
     }
-    area.end(painter);
+    area.end(painter, text);
 }
 
 // ── Tree view ───────────────────────────────────────────────────────────────
@@ -139,7 +139,7 @@ pub fn draw_content_tree(
     let font = FontSize::Custom(24.0 * s);
 
     painter.rect_filled(content_rect, 0.0, palette.bg);
-    area.begin(painter);
+    area.begin(painter, text);
     let base_y = area.content_y();
     let content_top = content_rect.y;
     let content_bottom = content_rect.y + content_rect.h;
@@ -203,7 +203,7 @@ pub fn draw_content_tree(
             .size(font).color(name_color).max_width(max_w)
             .draw(text, screen.0, screen.1);
     }
-    area.end(painter);
+    area.end(painter, text);
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

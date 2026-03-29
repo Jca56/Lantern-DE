@@ -1,17 +1,18 @@
-use lntrn_render::{Painter, Rect};
+use lntrn_render::{Painter, Rect, TextRenderer};
 
 use super::input::InteractionState;
 use super::palette::FoxPalette;
 
 /// Vertical scroll area — a clip container with offset.
 ///
-/// Wraps `Painter::push_clip` / `pop_clip` and offsets content by translate.
+/// Wraps `Painter::push_clip` / `pop_clip` and `TextRenderer::push_clip` / `pop_clip`
+/// so both shapes and text are clipped to the viewport.
 /// Usage:
 /// ```ignore
 /// let area = ScrollArea::new(visible_rect, content_height, &mut scroll_offset);
-/// area.begin(painter);
+/// area.begin(painter, text);
 /// // draw content at (x, visible_rect.y - offset) ...
-/// area.end(painter);
+/// area.end(painter, text);
 /// ```
 pub struct ScrollArea {
     pub viewport: Rect,
@@ -46,14 +47,17 @@ impl ScrollArea {
         self.viewport.y - self.offset
     }
 
-    /// Push the clip rect onto the painter.
-    pub fn begin(&self, painter: &mut Painter) {
+    /// Push the clip rect onto the painter and text renderer.
+    pub fn begin(&self, painter: &mut Painter, text: &mut TextRenderer) {
         painter.push_clip(self.viewport);
+        let v = self.viewport;
+        text.push_clip([v.x, v.y, v.w, v.h]);
     }
 
-    /// Pop the clip rect.
-    pub fn end(&self, painter: &mut Painter) {
+    /// Pop the clip rect from both painter and text renderer.
+    pub fn end(&self, painter: &mut Painter, text: &mut TextRenderer) {
         painter.pop_clip();
+        text.pop_clip();
     }
 
     /// Apply scroll-wheel delta (positive = scroll down).

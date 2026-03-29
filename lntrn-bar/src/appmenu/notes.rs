@@ -256,7 +256,7 @@ impl Notes {
         // (list is short enough usually). For proper scroll we'd need &mut self.
         let mut scroll_off = 0.0f32;
         let scroll = ScrollArea::new(list_rect, content_h, &mut scroll_off);
-        scroll.begin(painter);
+        scroll.begin(painter, text);
         let list_clip = [list_rect.x, list_rect.y, list_rect.w, list_rect.h];
 
         for (i, entry) in self.entries.iter().enumerate() {
@@ -286,7 +286,7 @@ impl Notes {
             painter.rect_filled(Rect::new(gr.x, iy + item_h - 1.0, gr.w, 1.0), 0.0, palette.muted.with_alpha(0.15));
         }
 
-        scroll.end(painter);
+        scroll.end(painter, text);
         if scroll.is_scrollable() {
             let sb = Scrollbar::new(&list_rect, content_h, scroll_off);
             sb.draw(painter, InteractionState::Idle, palette);
@@ -356,7 +356,7 @@ impl Notes {
 
         let mut scroll_off = 0.0f32;
         let scroll = ScrollArea::new(editor_rect, content_h, &mut scroll_off);
-        scroll.begin(painter);
+        scroll.begin(painter, text);
         let editor_clip = [editor_rect.x, editor_rect.y, editor_rect.w, editor_rect.h];
 
         for (i, line) in lines.iter().enumerate() {
@@ -373,7 +373,7 @@ impl Notes {
             painter.rect_filled(Rect::new(cursor_x, cursor_y, 2.0 * scale, nf), 0.0, palette.accent);
         }
 
-        scroll.end(painter);
+        scroll.end(painter, text);
         if scroll.is_scrollable() {
             let sb = Scrollbar::new(&editor_rect, content_h, scroll_off);
             sb.draw(painter, InteractionState::Idle, palette);

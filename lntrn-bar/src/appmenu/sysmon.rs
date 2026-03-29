@@ -240,7 +240,7 @@ impl SystemMonitor {
         let content_h = self.content_height(scale);
         let gr = Rect::new(area.x + pad, area.y + pad, area.w - pad * 2.0, area.h - pad * 2.0);
         let scroll = ScrollArea::new(gr, content_h, &mut self.scroll_offset);
-        scroll.begin(painter);
+        scroll.begin(painter, text);
 
         let x = gr.x; let w = gr.w;
         let mut y = scroll.content_y();
@@ -373,7 +373,7 @@ impl SystemMonitor {
         }
         let _ = y;
 
-        scroll.end(painter);
+        scroll.end(painter, text);
         if scroll.is_scrollable() {
             let sb = Scrollbar::new(&gr, content_h, self.scroll_offset);
             sb.draw(painter, InteractionState::Idle, palette);

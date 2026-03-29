@@ -512,7 +512,7 @@ impl App {
         let viewport = Rect::new(cx, header_y, cw, viewport_h);
         let scroll = ScrollArea::new(viewport, total_content_h, &mut self.scroll_offset);
 
-        scroll.begin(painter);
+        scroll.begin(painter, text);
 
         let base_y = scroll.content_y();
         for (idx, repo) in self.repos.iter().enumerate() {
@@ -550,7 +550,7 @@ impl App {
             }
         }
 
-        scroll.end(painter);
+        scroll.end(painter, text);
 
         let scrollbar = Scrollbar::new(&viewport, total_content_h, self.scroll_offset);
         let sb_state = ix.add_zone(ZONE_SCROLLBAR, scrollbar.thumb);
@@ -563,15 +563,6 @@ impl App {
         cx: f32, cy: f32, cw: f32, ch: f32,
         s: f32, sw: u32, sh: u32,
     ) {
-        // When the branch dropdown is open, clip main text so it doesn't
-        // bleed through the dropdown panel.
-        if let Some(panel) = self.branch_dropdown.panel_rect {
-            if self.branch_dropdown.open {
-                let clip_y = panel.y + panel.h;
-                text.push_clip([cx, clip_y, cw, ch - (clip_y - cy)]);
-            }
-        }
-
         let body_font = 20.0 * s;
         let small_font = 16.0 * s;
         let row_h = 40.0 * s;
@@ -654,7 +645,7 @@ impl App {
                 text.queue("Working tree clean", body_font, cx + pad, list_top,
                     palette.accent, cw, sw, sh);
             } else {
-                scroll.begin(painter);
+                scroll.begin(painter, text);
 
                 let base_y = scroll.content_y();
                 for (i, file) in status.files.iter().enumerate() {
@@ -711,7 +702,7 @@ impl App {
                     }
                 }
 
-                scroll.end(painter);
+                scroll.end(painter, text);
 
                 let scrollbar = Scrollbar::new(&viewport, total_content_h, self.scroll_offset);
                 let sb_state = ix.add_zone(ZONE_SCROLLBAR, scrollbar.thumb);
@@ -770,8 +761,5 @@ impl App {
                 palette.danger, cw - pad * 2.0, sw, sh);
         }
 
-        if self.branch_dropdown.open && self.branch_dropdown.panel_rect.is_some() {
-            text.pop_clip();
-        }
     }
 }

@@ -205,7 +205,7 @@ pub fn render_frame(
     let total_h = content_height(snapshots.len(), s);
     let area = ScrollArea::new(viewport, total_h, scroll_offset);
 
-    area.begin(painter);
+    area.begin(painter, text);
     let base_y = area.content_y();
     let row_h = ROW_H * s;
     let row_font = FontSize::Custom(20.0 * s);
@@ -262,7 +262,7 @@ pub fn render_frame(
         );
     }
 
-    area.end(painter);
+    area.end(painter, text);
 
     // ── Scrollbar ─────────────────────────────────────────────────
     if area.is_scrollable() {

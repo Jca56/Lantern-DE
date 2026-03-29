@@ -225,7 +225,7 @@ fn draw_grid<'a>(
 
     let grid_rect = Rect::new(grid_x, y, grid_w, h);
     let scroll = ScrollArea::new(grid_rect, content_h, &mut state.scroll_offset);
-    scroll.begin(painter);
+    scroll.begin(painter, text);
     let clip = [grid_rect.x, grid_rect.y, grid_rect.w, grid_rect.h];
 
     for (i, app) in state.apps.iter().enumerate() {
@@ -277,7 +277,7 @@ fn draw_grid<'a>(
             fox.text_secondary, cell - 4.0 * s, clip);
     }
 
-    scroll.end(painter);
+    scroll.end(painter, text);
     if scroll.is_scrollable() {
         let sb = Scrollbar::new(&grid_rect, content_h, state.scroll_offset);
         sb.draw(painter, InteractionState::Idle, fox);

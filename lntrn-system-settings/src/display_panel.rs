@@ -144,7 +144,7 @@ pub fn draw_display_panel(
 
     // Empty state (show before scroll area so it's not clipped weirdly)
     if entry_count == 0 {
-        scroll_area.begin(painter);
+        scroll_area.begin(painter, text);
         let cy = scroll_area.content_y();
 
         // Still draw headers inside scroll
@@ -168,12 +168,12 @@ pub fn draw_display_panel(
         };
         text.queue(msg, lsz, grid_x, msg_cy + 40.0 * s, fox.text_secondary, grid_w, sw, sh);
 
-        scroll_area.end(painter);
+        scroll_area.end(painter, text);
         return;
     }
 
     // ── Draw everything inside the scroll area ──────────────────────
-    scroll_area.begin(painter);
+    scroll_area.begin(painter, text);
     let base_y = scroll_area.content_y();
     let mut cy = base_y;
 
@@ -240,7 +240,7 @@ pub fn draw_display_panel(
         }
     }
 
-    scroll_area.end(painter);
+    scroll_area.end(painter, text);
 
     // Scrollbar outside the clip region
     if scroll_area.is_scrollable() {

@@ -254,7 +254,7 @@ impl CloneView {
         let viewport = Rect::new(cx, top_y, cw, available_h);
         let scroll = ScrollArea::new(viewport, total_h, &mut self.scroll_offset);
 
-        scroll.begin(painter);
+        scroll.begin(painter, text);
 
         let base_y = scroll.content_y();
         for (idx, repo) in self.repos.iter().enumerate() {
@@ -299,7 +299,7 @@ impl CloneView {
             }
         }
 
-        scroll.end(painter);
+        scroll.end(painter, text);
 
         let scrollbar = Scrollbar::new(&viewport, total_h, self.scroll_offset);
         let sb_state = ix.add_zone(ZONE_SCROLLBAR, scrollbar.thumb);
