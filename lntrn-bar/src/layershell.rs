@@ -1321,7 +1321,18 @@ pub fn run() -> Result<()> {
                 all_tex_draws.extend(bt_tex_draws);
                 all_tex_draws.extend(audio_tex_draws);
                 all_tex_draws.extend(app_tray_tex_draws);
+                let ctx_rect = app_menu.ctx_menu_rect(scale_f);
                 for (key, x, y, w, h, clip) in &menu_icon_draws {
+                    // Skip icons that overlap the context menu
+                    if let Some(cr) = ctx_rect {
+                        let ir = *x + *w;
+                        let ib = *y + *h;
+                        let cr_r = cr[0] + cr[2];
+                        let cr_b = cr[1] + cr[3];
+                        if *x < cr_r && ir > cr[0] && *y < cr_b && ib > cr[1] {
+                            continue;
+                        }
+                    }
                     if let Some(tex) = icon_cache.get(key) {
                         all_tex_draws.push(TextureDraw {
                             texture: tex, x: *x, y: *y, w: *w, h: *h,

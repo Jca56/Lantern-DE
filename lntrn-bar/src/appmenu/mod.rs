@@ -141,6 +141,18 @@ impl AppMenu {
         self.notes.save_all();
     }
 
+    /// Returns the context menu rect if it's open, for texture occlusion.
+    pub fn ctx_menu_rect(&self, scale: f32) -> Option<[f32; 4]> {
+        if !self.ctx_open { return None; }
+        let item_h = 40.0 * scale;
+        let menu_w = 200.0 * scale;
+        let menu_h = item_h * 2.0 + 8.0 * scale;
+        let pad = 4.0 * scale;
+        let ctx_x = self.ctx_pos.0.min(self.bounds.x + self.bounds.w - menu_w - pad);
+        let ctx_y = self.ctx_pos.1.min(self.bounds.y + self.bounds.h - menu_h - pad);
+        Some([ctx_x, ctx_y, menu_w, menu_h])
+    }
+
     /// Hit-test: checks main panel, floating search bar, and floating tabs.
     pub fn contains(&self, x: f32, y: f32) -> bool {
         if !self.open { return false; }

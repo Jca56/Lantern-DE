@@ -477,6 +477,9 @@ impl AppMenu {
         painter.rect_filled(Rect::new(ctx_x, ctx_y, menu_w, menu_h), 0.0, palette.surface_2);
         painter.rect_stroke(Rect::new(ctx_x, ctx_y, menu_w, menu_h), 0.0, 2.0 * scale, Color::BLACK);
 
+        // Punch a hole in underlying text so it doesn't bleed through
+        text.occlude_rect([ctx_x, ctx_y, menu_w, menu_h]);
+
         let font = 20.0 * scale;
         let items: [(&str, u32); 2] = [
             (if is_fav { "Remove Favorite" } else { "Add to Favorites" }, ZONE_CTX),
