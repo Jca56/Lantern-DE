@@ -137,6 +137,7 @@ pub fn draw_terminal_ex(
 
     let row_refs: Vec<&[GridCell]> = row_data.iter().map(|r| r.as_slice()).collect();
     grid_renderer.draw_glyphs(
+        painter,
         text,
         origin,
         &row_refs,

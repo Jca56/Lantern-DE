@@ -297,7 +297,7 @@ impl Lantern {
             pointer_gestures_state,
             popups,
             seat,
-            cursor: CursorState::new(),
+            cursor: CursorState::new(&crate::input::read_input_setting("cursor_theme", "default")),
             udev: None,
             winit_redraw_requested: Arc::new(AtomicBool::new(false)),
             pending_client_frame_callbacks: false,

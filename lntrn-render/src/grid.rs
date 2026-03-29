@@ -123,7 +123,7 @@ impl SelectionRange {
 /// let grid = TerminalGridRenderer::new(metrics);
 /// grid.draw_backgrounds(painter, origin, &rows, visible_rows, visible_cols);
 /// grid.draw_selection(painter, origin, &selection);
-/// grid.draw_glyphs(text, origin, &rows, visible_rows, visible_cols, screen_w, screen_h);
+/// grid.draw_glyphs(painter, text, origin, &rows, visible_rows, visible_cols, font_size, screen_w, screen_h);
 /// grid.draw_cursor(painter, origin, &cursor);
 /// ```
 pub struct TerminalGridRenderer {
@@ -180,8 +180,12 @@ impl TerminalGridRenderer {
     ///
     /// Each character is rendered individually at its exact grid cell position
     /// so that font shaping/advance widths never cause drift from the grid.
+    ///
+    /// Block drawing characters (U+2580–U+259F) are drawn as filled rects
+    /// via `painter` so they perfectly fill cells with no gaps.
     pub fn draw_glyphs(
         &self,
+        painter: &mut Painter,
         text: &mut TextRenderer,
         origin: (f32, f32),
         rows: &[&[GridCell]],
@@ -205,6 +209,13 @@ impl TerminalGridRenderer {
                     continue;
                 }
 
+                let rect = self.cell_rect(origin, row, col);
+
+                // Block drawing characters — render as pixel-perfect rects
+                if let Some(drawn) = self.draw_block_char(painter, cell.c, rect, cell.fg, cell.bg) {
+                    if drawn { continue; }
+                }
+
                 let x = (origin.0 + col as f32 * self.metrics.cell_w).floor();
                 let max_w = if cell.wide == GridCellWide::Head {
                     2.0 * self.metrics.cell_w + 2.0
@@ -215,6 +226,126 @@ impl TerminalGridRenderer {
                 let s = cell.c.encode_utf8(&mut char_buf);
                 text.queue(s, font_size, x, y, cell.fg, max_w, screen_w, screen_h);
             }
+        }
+    }
+
+    /// Draw a Unicode block drawing character as a filled rect.
+    /// Returns `Some(true)` if the char was handled, `Some(false)` if not a block char.
+    fn draw_block_char(
+        &self,
+        painter: &mut Painter,
+        c: char,
+        rect: Rect,
+        fg: Color,
+        bg: Color,
+    ) -> Option<bool> {
+        let w = rect.w;
+        let h = rect.h;
+        match c {
+            // ▀ Upper half block
+            '\u{2580}' => {
+                painter.rect_filled(Rect::new(rect.x, rect.y, w, (h / 2.0).ceil()), 0.0, fg);
+                Some(true)
+            }
+            // ▄ Lower half block
+            '\u{2584}' => {
+                let half = (h / 2.0).floor();
+                painter.rect_filled(Rect::new(rect.x, rect.y + half, w, h - half), 0.0, fg);
+                Some(true)
+            }
+            // █ Full block
+            '\u{2588}' => {
+                painter.rect_filled(rect, 0.0, fg);
+                Some(true)
+            }
+            // ▌ Left half block
+            '\u{258C}' => {
+                painter.rect_filled(Rect::new(rect.x, rect.y, (w / 2.0).ceil(), h), 0.0, fg);
+                Some(true)
+            }
+            // ▐ Right half block
+            '\u{2590}' => {
+                let half = (w / 2.0).floor();
+                painter.rect_filled(Rect::new(rect.x + half, rect.y, w - half, h), 0.0, fg);
+                Some(true)
+            }
+            // ▖ Quadrant lower left
+            '\u{2596}' => {
+                let hw = (w / 2.0).ceil();
+                let hh = (h / 2.0).floor();
+                painter.rect_filled(Rect::new(rect.x, rect.y + hh, hw, h - hh), 0.0, fg);
+                Some(true)
+            }
+            // ▗ Quadrant lower right
+            '\u{2597}' => {
+                let hw = (w / 2.0).floor();
+                let hh = (h / 2.0).floor();
+                painter.rect_filled(Rect::new(rect.x + hw, rect.y + hh, w - hw, h - hh), 0.0, fg);
+                Some(true)
+            }
+            // ▘ Quadrant upper left
+            '\u{2598}' => {
+                let hw = (w / 2.0).ceil();
+                let hh = (h / 2.0).ceil();
+                painter.rect_filled(Rect::new(rect.x, rect.y, hw, hh), 0.0, fg);
+                Some(true)
+            }
+            // ▝ Quadrant upper right
+            '\u{259D}' => {
+                let hw = (w / 2.0).floor();
+                let hh = (h / 2.0).ceil();
+                painter.rect_filled(Rect::new(rect.x + hw, rect.y, w - hw, hh), 0.0, fg);
+                Some(true)
+            }
+            // ▟ Quadrant upper right and lower left and lower right (all but upper left)
+            '\u{259F}' => {
+                let hw = (w / 2.0).ceil();
+                let hh = (h / 2.0).ceil();
+                // Right column full height
+                painter.rect_filled(Rect::new(rect.x + hw, rect.y, w - hw, h), 0.0, fg);
+                // Bottom left
+                painter.rect_filled(Rect::new(rect.x, rect.y + hh, hw, h - hh), 0.0, fg);
+                Some(true)
+            }
+            // ░ Light shade
+            '\u{2591}' => {
+                let shade = Color::rgba(fg.r, fg.g, fg.b, 0.25);
+                painter.rect_filled(rect, 0.0, shade);
+                Some(true)
+            }
+            // ▒ Medium shade
+            '\u{2592}' => {
+                let shade = Color::rgba(fg.r, fg.g, fg.b, 0.50);
+                painter.rect_filled(rect, 0.0, shade);
+                Some(true)
+            }
+            // ▓ Dark shade
+            '\u{2593}' => {
+                let shade = Color::rgba(fg.r, fg.g, fg.b, 0.75);
+                painter.rect_filled(rect, 0.0, shade);
+                Some(true)
+            }
+            // ▁ through ▇ — lower N/8 blocks
+            '\u{2581}'..='\u{2587}' => {
+                let eighths = (c as u32 - 0x2580) as f32;
+                let block_h = (h * eighths / 8.0).ceil();
+                painter.rect_filled(
+                    Rect::new(rect.x, rect.y + h - block_h, w, block_h),
+                    0.0, fg,
+                );
+                Some(true)
+            }
+            // ▉ through ▏ — left N/8 blocks
+            '\u{2589}'..='\u{258F}' => {
+                let eighths = (8 - (c as u32 - 0x2588)) as f32;
+                let block_w = (w * eighths / 8.0).ceil();
+                painter.rect_filled(
+                    Rect::new(rect.x, rect.y, block_w, h),
+                    0.0, fg,
+                );
+                Some(true)
+            }
+            _ => None,
         }
     }
 

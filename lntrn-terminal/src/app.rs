@@ -60,6 +60,7 @@ pub struct App {
     pub(crate) painter: Option<Painter>,
     pub(crate) overlay_painter: Option<Painter>,
     pub(crate) text: Option<TextRenderer>,
+    pub(crate) overlay_text: Option<TextRenderer>,
 
     // Tabs
     pub tabs: Vec<Tab>,
@@ -115,6 +116,7 @@ impl App {
             painter: None,
             overlay_painter: None,
             text: None,
+            overlay_text: None,
             tabs: Vec::new(),
             active_tab: 0,
             modifiers: ModifiersState::empty(),
@@ -152,11 +154,13 @@ impl App {
         let painter = Painter::new(&gpu);
         let overlay_painter = Painter::new(&gpu);
         let text = TextRenderer::new_monospace(&gpu);
+        let overlay_text = TextRenderer::new_monospace(&gpu);
 
         self.gpu = Some(gpu);
         self.painter = Some(painter);
         self.overlay_painter = Some(overlay_painter);
         self.text = Some(text);
+        self.overlay_text = Some(overlay_text);
     }
 
     pub(crate) fn sidebar_offset(&self) -> f32 {

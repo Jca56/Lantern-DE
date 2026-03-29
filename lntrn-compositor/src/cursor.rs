@@ -29,7 +29,7 @@ pub struct CursorState {
 }
 
 impl CursorState {
-    pub fn new() -> Self {
+    pub fn new(initial_theme: &str) -> Self {
         let cursor_size = std::env::var("XCURSOR_SIZE")
             .ok()
             .and_then(|s| s.parse::<u32>().ok())
@@ -50,7 +50,13 @@ impl CursorState {
             custom_theme: "default".into(),
             custom_loaded: false,
         };
-        state.load_xcursor(CursorIcon::Default);
+        tracing::info!("CursorState::new with initial_theme='{}'", initial_theme);
+        if initial_theme != "default" {
+            state.set_custom_theme(initial_theme);
+        }
+        if !state.custom_loaded {
+            state.load_xcursor(CursorIcon::Default);
+        }
         state
     }
 

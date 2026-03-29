@@ -197,55 +197,64 @@ impl App {
             };
             overlay_painter.clear();
 
+            let overlay_text = match self.overlay_text.as_mut() {
+                Some(t) => t,
+                None => {
+                    if let Err(e) = painter.render_with_text(gpu, text, bg) {
+                        Self::handle_render_error(e, &mut self.gpu);
+                    }
+                    return;
+                }
+            };
+
+            // Queue overlay geometry + text into separate painter/text
+            let menu_event = ui_chrome::draw_overlay(
+                overlay_painter,
+                overlay_text,
+                &mut self.chrome,
+                &mut self.input,
+                screen_w,
+                screen_h,
+            );
+
+            // Process menu events from overlay
+            if let Some(ref event) = menu_event {
+                self.pending_menu_event = Some(ui_chrome::menu_event_to_action(event));
+                if let MenuEvent::SliderChanged { id, value } = event {
+                    match *id {
+                        ui_chrome::MENU_FONT_SLIDER => {
+                            self.config.font.size = ui_chrome::font_size_from_slider(*value);
+                        }
+                        ui_chrome::MENU_OPACITY_SLIDER => {
+                            self.config.window.opacity = ui_chrome::opacity_from_slider(*value);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            // Tab context menu overlay
+            tab_bar::draw_tab_context_menu(
+                overlay_painter,
+                overlay_text,
+                &self.tab_bar,
+                &tab_displays,
+                screen_w,
+                screen_h,
+                self.cursor_pos,
+            );
+
             let result: Result<(), lntrn_render::SurfaceError> = (|| {
                 let mut frame: Frame = gpu.begin_frame("Lantern 2D+Text+Overlay")?;
                 let view = frame.view().clone();
 
-                // Pass 1: base content (own buffer)
+                // Pass 1: base shapes + base text
                 painter.render_pass(gpu, frame.encoder_mut(), &view, bg);
                 text.render_queued(gpu, frame.encoder_mut(), &view);
 
-                // Queue overlay text AFTER pass 1 drains the text queue
-                let menu_event = ui_chrome::draw_overlay(
-                    overlay_painter,
-                    text,
-                    &mut self.chrome,
-                    &mut self.input,
-                    screen_w,
-                    screen_h,
-                );
-
-                // Process menu events from overlay
-                if let Some(ref event) = menu_event {
-                    self.pending_menu_event = Some(ui_chrome::menu_event_to_action(event));
-                    // Handle slider value changes immediately
-                    if let MenuEvent::SliderChanged { id, value } = event {
-                        match *id {
-                            ui_chrome::MENU_FONT_SLIDER => {
-                                self.config.font.size = ui_chrome::font_size_from_slider(*value);
-                            }
-                            ui_chrome::MENU_OPACITY_SLIDER => {
-                                self.config.window.opacity = ui_chrome::opacity_from_slider(*value);
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-
-                // Tab context menu overlay
-                tab_bar::draw_tab_context_menu(
-                    overlay_painter,
-                    text,
-                    &self.tab_bar,
-                    &tab_displays,
-                    screen_w,
-                    screen_h,
-                    self.cursor_pos,
-                );
-
-                // Pass 2: menu overlay (separate buffer — no conflict)
+                // Pass 2: overlay shapes + overlay text
                 overlay_painter.render_pass_overlay(gpu, frame.encoder_mut(), &view);
-                text.render_queued(gpu, frame.encoder_mut(), &view);
+                overlay_text.render_queued(gpu, frame.encoder_mut(), &view);
 
                 frame.submit(&gpu.queue);
                 Ok(())

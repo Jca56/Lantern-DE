@@ -57,11 +57,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let display: Display<Lantern> = Display::new()?;
     let mut state = Lantern::new(&mut event_loop, display);
 
-    // Apply saved cursor theme from config
-    if state.cursor_theme_name != "default" {
-        state.cursor.set_custom_theme(&state.cursor_theme_name.clone());
-    }
-
     match backend {
         Backend::Winit => {
             crate::winit::init_winit(&mut event_loop, &mut state)?;

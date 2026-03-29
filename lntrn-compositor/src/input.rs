@@ -62,22 +62,29 @@ fn read_power_setting(key: &str, default: &str) -> String {
 /// Read a string setting from the [input] section of the Lantern config.
 pub fn read_input_setting(key: &str, default: &str) -> String {
     let path = crate::lantern_config_path();
-    if let Ok(contents) = std::fs::read_to_string(&path) {
-        let mut in_input = false;
-        for line in contents.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with('[') {
-                in_input = trimmed == "[input]";
-                continue;
-            }
-            if in_input {
-                // Split on '=' to get exact key name
-                if let Some((k, v)) = trimmed.split_once('=') {
-                    if k.trim() == key {
-                        return v.trim().trim_matches('"').to_string();
+    match std::fs::read_to_string(&path) {
+        Ok(contents) => {
+            let mut in_input = false;
+            for line in contents.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with('[') {
+                    in_input = trimmed == "[input]";
+                    continue;
+                }
+                if in_input {
+                    if let Some((k, v)) = trimmed.split_once('=') {
+                        if k.trim() == key {
+                            let val = v.trim().trim_matches('"').to_string();
+                            tracing::debug!("read_input_setting: {}='{}' from {}", key, val, path.display());
+                            return val;
+                        }
                     }
                 }
             }
+            tracing::warn!("read_input_setting: key '{}' not found in [input] section of {}", key, path.display());
+        }
+        Err(e) => {
+            tracing::warn!("read_input_setting: failed to read {}: {}", path.display(), e);
         }
     }
     default.to_string()

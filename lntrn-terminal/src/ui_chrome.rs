@@ -226,15 +226,12 @@ pub fn handle_click(
         return ClickAction::None;
     }
 
-    // Window control buttons (check zone state)
-    if input.zone_state(ZONE_CLOSE).is_active() {
-        return ClickAction::Close;
-    }
-    if input.zone_state(ZONE_MAXIMIZE).is_active() {
-        return ClickAction::Maximize;
-    }
-    if input.zone_state(ZONE_MINIMIZE).is_active() {
-        return ClickAction::Minimize;
+    // Window control buttons (check which zone was just pressed)
+    match input.active_zone_id() {
+        Some(id) if id == ZONE_CLOSE => return ClickAction::Close,
+        Some(id) if id == ZONE_MAXIMIZE => return ClickAction::Maximize,
+        Some(id) if id == ZONE_MINIMIZE => return ClickAction::Minimize,
+        _ => {}
     }
 
     // Title bar drag
