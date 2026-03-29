@@ -27,6 +27,7 @@ pub struct MenuBar {
 const ZONE_BASE: u32 = 500;
 const LABEL_PAD_H: f32 = 8.0;
 const LABEL_PAD_V: f32 = 4.0;
+const LABEL_GAP: f32 = 12.0;
 
 impl MenuBar {
     pub fn new(palette: &FoxPalette) -> Self {
@@ -64,7 +65,7 @@ impl MenuBar {
             let h = font + pad_v * 2.0;
             let y = rect.y + (rect.h - h) * 0.5;
             self.label_rects.push(Rect::new(x, y, w, h));
-            x += w;
+            x += w + LABEL_GAP * scale;
         }
 
         // Register zones and check for hover-to-switch

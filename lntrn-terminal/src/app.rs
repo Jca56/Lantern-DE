@@ -10,6 +10,8 @@ use winit::keyboard::ModifiersState;
 use winit::platform::wayland::WindowAttributesExtWayland;
 use winit::window::{Icon, Window, WindowAttributes, WindowId};
 
+use lntrn_ui::gpu::InteractionContext;
+
 use crate::clipboard;
 use crate::config::LanternConfig;
 use crate::events::EventResult;
@@ -71,6 +73,7 @@ pub struct App {
     // UI chrome state
     pub chrome: ui_chrome::ChromeState,
     pub tab_bar: tab_bar::TabBarState,
+    pub input: InteractionContext,
 
     // Cursor blink
     pub cursor_visible: bool,
@@ -90,6 +93,9 @@ pub struct App {
 
     // Scrollbar drag
     pub(crate) scrollbar_dragging: bool,
+
+    // Pending menu action from overlay rendering
+    pub(crate) pending_menu_event: Option<ui_chrome::ClickAction>,
 
     // Sidebar file browser
     pub sidebar: sidebar::SidebarState,
@@ -116,6 +122,7 @@ impl App {
             left_pressed: false,
             chrome: ui_chrome::ChromeState::new(),
             tab_bar: tab_bar::TabBarState::new(),
+            input: InteractionContext::new(),
             cursor_visible: true,
             cursor_blink_deadline: Instant::now() + CURSOR_BLINK_INTERVAL,
             clipboard: clipboard::WaylandClipboard::new(),
@@ -125,6 +132,7 @@ impl App {
             last_frame_time: Instant::now(),
             selecting: false,
             scrollbar_dragging: false,
+            pending_menu_event: None,
             sidebar: sidebar::SidebarState::new(),
         }
     }
@@ -435,6 +443,16 @@ impl ApplicationHandler<UserEvent> for App {
 
             WindowEvent::RedrawRequested => {
                 self.render_frame();
+                // Process any menu events that occurred during rendering
+                if let Some(action) = self.pending_menu_event.take() {
+                    match self.dispatch_chrome_action(action, event_loop, self.gpu.as_ref().map_or(600, |g| g.height())) {
+                        EventResult::Exit => {
+                            event_loop.exit();
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
             }
 
             WindowEvent::ModifiersChanged(mods) => {
@@ -451,6 +469,7 @@ impl ApplicationHandler<UserEvent> for App {
 
             WindowEvent::CursorLeft { .. } => {
                 self.cursor_pos = None;
+                self.input.on_cursor_left();
                 self.request_redraw();
             }
 

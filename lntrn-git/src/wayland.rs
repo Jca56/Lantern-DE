@@ -2,7 +2,7 @@ use std::ffi::c_void;
 use std::ptr::NonNull;
 
 use anyhow::{anyhow, Result};
-use lntrn_render::{GpuContext, Painter, Rect, TextRenderer};
+use lntrn_render::{Color, GpuContext, Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{
     FoxPalette, GradientStrip, InteractionContext, TitleBar, WaylandPopupBackend,
 };
@@ -629,7 +629,7 @@ pub fn run() -> Result<()> {
         // Render
         if let Ok(mut frame) = gpu.begin_frame("lntrn-git") {
             let view = frame.view().clone();
-            painter.render_pass(&gpu, frame.encoder_mut(), &view, fox.bg.with_alpha(0.0));
+            painter.render_pass(&gpu, frame.encoder_mut(), &view, Color::TRANSPARENT);
             text.render_queued(&gpu, frame.encoder_mut(), &view);
             frame.submit(&gpu.queue);
         }

@@ -158,7 +158,7 @@ impl Audio {
     fn set_vol_from_x(&mut self, phys_cx: f32) {
         if let Some(rect) = self.vol_slider_rect {
             let frac = ((phys_cx - rect.x) / rect.w).clamp(0.0, 1.0);
-            let vol = Self::snap_5(frac) * 1.2; // max 120%
+            let vol = Self::snap_5(frac);
             let _ = self.cmd_tx.send(AudioCmd::SetVolume(vol));
             self.volume = vol;
         }
@@ -176,7 +176,7 @@ impl Audio {
     pub fn on_scroll(&mut self, delta: f32) {
         if !self.open { return; }
         let step = if delta > 0.0 { -0.05 } else { 0.05 };
-        let new_vol = Self::snap_5(((self.volume + step) / 1.2).clamp(0.0, 1.0)) * 1.2;
+        let new_vol = Self::snap_5((self.volume + step).clamp(0.0, 1.0));
         let _ = self.cmd_tx.send(AudioCmd::SetVolume(new_vol));
         self.volume = new_vol;
     }
@@ -314,7 +314,7 @@ impl Audio {
         // Volume slider
         self.vol_slider_rect = Some(Rect::new(cx, y, cw, slider_h));
         self.draw_slider(painter, ix, palette, cx, y, cw, slider_h, scale,
-            self.volume / 1.2, self.muted, ZONE_VOL_SLIDER);
+            self.volume, self.muted, ZONE_VOL_SLIDER);
         y += slider_h + section_gap;
 
         // Separator
@@ -465,7 +465,7 @@ fn poll_thread(tx: mpsc::Sender<AudioEvent>, cmd_rx: mpsc::Receiver<AudioCmd>) {
                 AudioCmd::SetVolume(vol) => {
                     let pct = format!("{:.0}%", vol * 100.0);
                     let _ = Command::new("wpctl")
-                        .args(["set-volume", "--limit", "1.2", "@DEFAULT_AUDIO_SINK@", &pct])
+                        .args(["set-volume", "--limit", "1.0", "@DEFAULT_AUDIO_SINK@", &pct])
                         .output();
                     let _ = tx.send(AudioEvent::State(poll_full_state()));
                 }

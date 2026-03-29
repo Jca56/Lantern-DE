@@ -23,6 +23,7 @@ pub(crate) enum EventResult {
 impl App {
     pub(crate) fn handle_cursor_moved(&mut self, x: f32, y: f32) -> EventResult {
         self.cursor_pos = Some((x, y));
+        self.input.on_cursor_moved(x, y);
 
         // Tab drag reorder
         if self.tab_bar.dragging.is_some() {
@@ -130,12 +131,17 @@ impl App {
             }
         }
 
+        self.input.on_left_pressed();
+        let menus = ui_chrome::build_menus(
+            self.config.font.size,
+            self.config.window.opacity,
+            self.sidebar.visible,
+        );
         let action = ui_chrome::handle_click(
             &mut self.chrome,
-            self.cursor_pos,
-            self.config.font.size,
-            screen_w,
-            screen_h,
+            &mut self.input,
+            &menus,
+            1.0,
         );
 
         match self.dispatch_chrome_action(action, event_loop, screen_h) {
@@ -151,7 +157,7 @@ impl App {
         EventResult::Continue
     }
 
-    fn dispatch_chrome_action(
+    pub(crate) fn dispatch_chrome_action(
         &mut self,
         action: ui_chrome::ClickAction,
         event_loop: &ActiveEventLoop,
@@ -183,13 +189,12 @@ impl App {
                     window.drag_window().ok();
                 }
             }
-            ui_chrome::ClickAction::SliderDrag => {}
-            ui_chrome::ClickAction::OpacitySliderDrag => {}
-            ui_chrome::ClickAction::RunCommand(cmd) => {
-                if !self.tabs.is_empty() {
-                    let tab = &self.tabs[self.active_tab];
-                    tab.panes[tab.active_pane].pty.write(cmd.as_bytes());
-                }
+            ui_chrome::ClickAction::SliderDrag => {
+                self.config.save();
+                self.update_grid_size();
+            }
+            ui_chrome::ClickAction::OpacitySliderDrag => {
+                self.config.save();
             }
             ui_chrome::ClickAction::SplitHorizontal => {
                 self.split_pane(SplitDir::Horizontal);
@@ -316,6 +321,7 @@ impl App {
     pub(crate) fn handle_left_release(&mut self) {
         self.left_pressed = false;
         self.scrollbar_dragging = false;
+        self.input.on_left_released();
         tab_bar::handle_drag_end(&mut self.tab_bar);
         if self.selecting && !self.tabs.is_empty() {
             let tab = &mut self.tabs[self.active_tab];
@@ -325,20 +331,12 @@ impl App {
             }
         }
         self.selecting = false;
-        if self.chrome.slider_dragging {
-            self.chrome.slider_dragging = false;
-            self.config.save();
-            self.update_grid_size();
-        }
-        if self.chrome.opacity_slider_dragging {
-            self.chrome.opacity_slider_dragging = false;
-            self.config.save();
-        }
         self.request_redraw();
     }
 
     pub(crate) fn handle_right_press(&mut self) {
         let screen_w = self.gpu.as_ref().map_or(800, |g| g.width());
+        let screen_h = self.gpu.as_ref().map_or(600, |g| g.height());
         if tab_bar::handle_right_click(
             &mut self.tab_bar,
             self.cursor_pos,
@@ -347,13 +345,23 @@ impl App {
         ) {
             self.chrome.close_all_menus();
             self.request_redraw();
-        } else if let Some(pos) = self.cursor_pos {
+        } else if let Some((x, y)) = self.cursor_pos {
             self.tab_bar.context_menu = None;
-            self.chrome.context_menu = Some(pos);
-            self.chrome.view_menu_open = false;
-            self.chrome.help_menu_open = false;
-            self.chrome.help_expanded = None;
-            self.chrome.split_menu_open = false;
+            self.chrome.menu_bar.close();
+
+            // Build context menu items
+            let has_selection = if !self.tabs.is_empty() {
+                let tab = &self.tabs[self.active_tab];
+                tab.panes[tab.active_pane]
+                    .terminal
+                    .selection_range()
+                    .is_some()
+            } else {
+                false
+            };
+            let items = ui_chrome::build_context_menu(has_selection);
+            self.chrome.context_menu.open(x, y, items);
+            self.chrome.context_menu.clamp_to_screen(screen_w as f32, screen_h as f32);
             self.request_redraw();
         }
     }
@@ -363,9 +371,9 @@ impl App {
         event: &winit::event::KeyEvent,
         event_loop: &ActiveEventLoop,
     ) -> EventResult {
-        if event.state == ElementState::Pressed {
-            // Tab rename mode captures all keyboard input
-            if tab_bar::is_capturing_input(&self.tab_bar) {
+        // Tab rename mode captures ALL keyboard input (press and release)
+        if tab_bar::is_capturing_input(&self.tab_bar) {
+            if event.state == ElementState::Pressed {
                 let key_str = match &event.logical_key {
                     winit::keyboard::Key::Named(n) => match n {
                         winit::keyboard::NamedKey::Enter => Some("Enter"),
@@ -389,10 +397,13 @@ impl App {
                         tab_bar::handle_rename_char(&mut self.tab_bar, ch);
                     }
                 }
-                self.request_redraw();
-                return EventResult::Handled;
             }
+            // Consume all events (press + release) while renaming
+            self.request_redraw();
+            return EventResult::Handled;
+        }
 
+        if event.state == ElementState::Pressed {
             // Close menus on Escape
             if let winit::keyboard::Key::Named(winit::keyboard::NamedKey::Escape) =
                 &event.logical_key
@@ -538,7 +549,7 @@ impl App {
             return;
         }
 
-        if self.chrome.slider_dragging || self.tabs.is_empty() {
+        if self.tabs.is_empty() {
             return;
         }
 
@@ -558,28 +569,6 @@ impl App {
     }
 
     pub(crate) fn handle_slider_drags(&mut self) {
-        if self.chrome.slider_dragging {
-            if let Some((x, _)) = self.cursor_pos {
-                let slider_rect =
-                    ui_chrome::slider_rect(self.gpu.as_ref().map_or(800, |g| g.width()));
-                let t = ((x - slider_rect.x) / slider_rect.w.max(1.0)).clamp(0.0, 1.0);
-                let new_size = 6.0 + t * 24.0;
-                self.config.font.size = (new_size * 2.0).round() / 2.0;
-                self.request_redraw();
-            }
-        }
-
-        if self.chrome.opacity_slider_dragging {
-            if let Some((x, _)) = self.cursor_pos {
-                let sr =
-                    ui_chrome::opacity_slider_rect(self.gpu.as_ref().map_or(800, |g| g.width()));
-                let t = ((x - sr.x) / sr.w.max(1.0)).clamp(0.0, 1.0);
-                let new_opacity = 0.1 + t * 0.9;
-                self.config.window.opacity = (new_opacity * 20.0).round() / 20.0;
-                self.request_redraw();
-            }
-        }
-
         if self.scrollbar_dragging {
             if let Some((_, cy)) = self.cursor_pos {
                 if let Some(hit) = self.scrollbar_hit_test(0.0, cy) {

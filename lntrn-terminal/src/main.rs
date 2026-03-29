@@ -1,9 +1,7 @@
 mod app;
-mod claude_menu;
 mod clipboard;
 mod config;
 mod events;
-mod help_menu;
 mod input;
 mod pty;
 mod render;

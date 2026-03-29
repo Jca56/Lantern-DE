@@ -6,7 +6,7 @@ use lntrn_render::{
 use crate::terminal::{Color8, TerminalState, Wide};
 use crate::theme;
 
-/// Height of chrome above the terminal grid (title bar + tab bar).
+/// Height of chrome above the terminal grid (title bar incl. gradient strip + tab bar).
 pub fn chrome_height() -> f32 {
     crate::ui_chrome::TITLE_BAR_HEIGHT + crate::tab_bar::TAB_BAR_HEIGHT
 }
@@ -27,6 +27,10 @@ const CORNER_RADIUS: f32 = 10.0;
 
 /// Draw the window background with rounded corners matching the compositor.
 /// When maximized, corners are square (radius=0) so the bg doesn't bleed through.
+///
+/// The TitleBar widget draws its own background, so we only fill:
+///   1. Full window bg (rounded rect for transparency)
+///   2. Tab bar area (below gradient strip, above terminal)
 pub fn draw_window_bg(
     painter: &mut Painter,
     title_bar_color: Color,
@@ -36,16 +40,15 @@ pub fn draw_window_bg(
     maximized: bool,
 ) {
     let r = if maximized { 0.0 } else { CORNER_RADIUS };
-    let title_h = chrome_height();
 
-    // Draw the full window bg as one rounded rect — no overlap artifacts with transparency
+    // Full window bg — rounded for transparency
     painter.rect_filled(Rect::new(0.0, 0.0, w, h), r, bg_color);
 
-    // Title bar on top (always opaque, covers bg's top area)
-    painter.rect_filled(Rect::new(0.0, 0.0, w, title_h), r, title_bar_color);
-    // Square off the bottom corners of the title bar
+    // Tab bar region (below title bar, which includes gradient strip)
+    let tab_bar_y = crate::ui_chrome::TITLE_BAR_HEIGHT;
+    let tab_bar_h = crate::tab_bar::TAB_BAR_HEIGHT;
     painter.rect_filled(
-        Rect::new(0.0, r, w, (title_h - r).max(0.0)),
+        Rect::new(0.0, tab_bar_y, w, tab_bar_h),
         0.0,
         title_bar_color,
     );

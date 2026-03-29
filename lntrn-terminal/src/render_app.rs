@@ -1,4 +1,5 @@
 use lntrn_render::{Color, Frame, GpuContext, Painter};
+use lntrn_ui::gpu::MenuEvent;
 
 use crate::render;
 use crate::sidebar;
@@ -38,6 +39,7 @@ impl App {
         let bg = Color::from_rgba8(self.theme.bg.r, self.theme.bg.g, self.theme.bg.b, bg_alpha);
 
         painter.clear();
+        self.input.begin_frame();
 
         // Draw window background — square corners when maximized
         let title_bar_color = Color::from_rgba8(51, 51, 51, 255);
@@ -152,15 +154,19 @@ impl App {
             })
             .collect();
 
-        // Draw title bar (menus + window controls, no tabs)
+        // Draw title bar (menus + window controls + gradient strip)
         ui_chrome::draw_chrome(
             painter,
             text,
-            &self.chrome,
+            &mut self.chrome,
+            &mut self.input,
             screen_w,
             screen_h,
-            self.cursor_pos,
+            self.config.font.size,
+            self.config.window.opacity,
             self.sidebar.visible,
+            maximized,
+            1.0,
         );
 
         // Draw tab bar (separate row below title bar)
@@ -200,26 +206,31 @@ impl App {
                 text.render_queued(gpu, frame.encoder_mut(), &view);
 
                 // Queue overlay text AFTER pass 1 drains the text queue
-                let has_selection = if !self.tabs.is_empty() {
-                    let tab = &self.tabs[self.active_tab];
-                    tab.panes[tab.active_pane]
-                        .terminal
-                        .selection_range()
-                        .is_some()
-                } else {
-                    false
-                };
-                ui_chrome::draw_overlay(
+                let menu_event = ui_chrome::draw_overlay(
                     overlay_painter,
                     text,
-                    &self.chrome,
-                    self.config.font.size,
-                    opacity,
+                    &mut self.chrome,
+                    &mut self.input,
                     screen_w,
                     screen_h,
-                    self.cursor_pos,
-                    has_selection,
                 );
+
+                // Process menu events from overlay
+                if let Some(ref event) = menu_event {
+                    self.pending_menu_event = Some(ui_chrome::menu_event_to_action(event));
+                    // Handle slider value changes immediately
+                    if let MenuEvent::SliderChanged { id, value } = event {
+                        match *id {
+                            ui_chrome::MENU_FONT_SLIDER => {
+                                self.config.font.size = ui_chrome::font_size_from_slider(*value);
+                            }
+                            ui_chrome::MENU_OPACITY_SLIDER => {
+                                self.config.window.opacity = ui_chrome::opacity_from_slider(*value);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
 
                 // Tab context menu overlay
                 tab_bar::draw_tab_context_menu(

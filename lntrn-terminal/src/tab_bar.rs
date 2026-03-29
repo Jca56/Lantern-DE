@@ -6,14 +6,14 @@ use crate::terminal::Color8;
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-pub const TAB_BAR_HEIGHT: f32 = 40.0;
+pub const TAB_BAR_HEIGHT: f32 = 50.0;
 const TAB_MAX_WIDTH: f32 = 200.0;
 const TAB_MIN_WIDTH: f32 = 90.0;
-const TAB_GAP: f32 = 2.0;
+const TAB_GAP: f32 = 6.0;
 const TAB_PAD_H: f32 = 14.0;
 const NEW_TAB_WIDTH: f32 = 48.0;
-const TAB_CLOSE_SIZE: f32 = 20.0;
-const TAB_FONT_SIZE: f32 = 20.0;
+const TAB_CLOSE_SIZE: f32 = 24.0;
+const TAB_FONT_SIZE: f32 = 22.0;
 const PIN_WIDTH: f32 = 22.0;
 const DOUBLE_CLICK_MS: u128 = 400;
 
@@ -284,51 +284,57 @@ pub fn draw_tab_bar(
     } else {
         c(Color8::from_rgb(190, 190, 190))
     };
-    let plus_font = TAB_FONT_SIZE + 6.0;
-    let plus_y = nb.y + (nb.h - plus_font) / 2.0;
-    text.queue(
-        "+",
-        plus_font,
-        nb.x + (nb.w - 12.0) / 2.0,
-        plus_y,
-        plus_color,
-        24.0,
-        screen_w,
-        screen_h,
-    );
+    let cx = nb.x + nb.w / 2.0;
+    let cy = nb.y + nb.h / 2.0;
+    let arm = 8.0;
+    painter.line(cx - arm, cy, cx + arm, cy, 2.0, plus_color);
+    painter.line(cx, cy - arm, cx, cy + arm, 2.0, plus_color);
 }
 
 fn draw_rename_field(
     painter: &mut Painter,
     text: &mut TextRenderer,
     state: &TabBarState,
-    _tab_rect: Rect,
+    tab_rect: Rect,
     text_x: f32,
     text_y: f32,
     max_w: f32,
     screen_w: u32,
     screen_h: u32,
 ) {
-    // Draw the rename text
+    let char_w = TAB_FONT_SIZE * 0.6;
+    let cursor_px = state.rename_cursor as f32 * char_w;
+
+    // Scroll offset so cursor stays visible within max_w
+    let scroll = if cursor_px > max_w - char_w {
+        cursor_px - max_w + char_w
+    } else {
+        0.0
+    };
+
+    // Clip to tab bounds so text doesn't overflow
+    painter.push_clip(Rect::new(text_x, tab_rect.y, max_w.max(10.0), tab_rect.h));
+
     text.queue(
         &state.rename_buf,
         TAB_FONT_SIZE,
-        text_x,
+        text_x - scroll,
         text_y,
         c(TEXT_COLOR),
-        max_w.max(10.0),
+        (max_w + scroll).max(10.0),
         screen_w,
         screen_h,
     );
 
     // Draw cursor
-    let char_w = TAB_FONT_SIZE * 0.6;
-    let cursor_x = text_x + state.rename_cursor as f32 * char_w;
+    let cursor_x = text_x + cursor_px - scroll;
     painter.rect_filled(
         Rect::new(cursor_x, text_y, 2.0, TAB_FONT_SIZE + 2.0),
         0.0,
         c(TEXT_COLOR),
     );
+
+    painter.pop_clip();
 }
 
 fn draw_close_x(
@@ -348,16 +354,13 @@ fn draw_close_x(
     } else {
         Color8::from_rgb(120, 50, 50)
     });
-    let inset = 5.0;
-    let steps = 8;
-    for s in 0..=steps {
-        let t = s as f32 / steps as f32;
-        let px = cr.x + inset + t * (cr.w - inset * 2.0);
-        let py1 = cr.y + inset + t * (cr.h - inset * 2.0);
-        let py2 = cr.y + cr.h - inset - t * (cr.h - inset * 2.0);
-        painter.rect_filled(Rect::new(px - 0.75, py1 - 0.75, 1.5, 1.5), 0.0, xc);
-        painter.rect_filled(Rect::new(px - 0.75, py2 - 0.75, 1.5, 1.5), 0.0, xc);
-    }
+    let inset = 6.0;
+    let x1 = cr.x + inset;
+    let y1 = cr.y + inset;
+    let x2 = cr.x + cr.w - inset;
+    let y2 = cr.y + cr.h - inset;
+    painter.line(x1, y1, x2, y2, 1.5, xc);
+    painter.line(x2, y1, x1, y2, 1.5, xc);
 }
 
 fn truncate_title(title: &str, _max_w: f32) -> String {
