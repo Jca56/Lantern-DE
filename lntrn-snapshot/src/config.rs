@@ -7,9 +7,10 @@ use std::path::PathBuf;
 /// Configuration for lntrn-snapshot
 #[derive(Debug, Clone)]
 pub struct Config {
-    /// Subvolumes to snapshot: (source_path, snapshot_dir_path)
+    /// Paths to snapshot: (source_path, snapshot_dir_path)
     pub targets: Vec<SnapshotTarget>,
     pub retention: RetentionPolicy,
+    pub excludes: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -26,6 +27,10 @@ impl Default for Config {
                 snapshot_dir: PathBuf::from("/.lantern-snapshots"),
             }],
             retention: RetentionPolicy::default(),
+            excludes: crate::manager::DEFAULT_EXCLUDES
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
         }
     }
 }
@@ -65,11 +70,10 @@ impl Config {
 
         let content = r#"# lntrn-snapshot configuration
 #
-# Targets: which subvolumes to snapshot
+# Targets: which paths to snapshot
 # Format: target <source_path> <snapshot_dir>
 
 target / /.lantern-snapshots
-# target /home /home/.lantern-snapshots
 
 # Retention policy: how many of each kind to keep
 retention.manual  = 10
@@ -77,6 +81,19 @@ retention.boot    = 3
 retention.hourly  = 5
 retention.daily   = 7
 retention.weekly  = 4
+
+# Excluded paths (virtual filesystems, caches, temp)
+exclude /proc
+exclude /sys
+exclude /dev
+exclude /tmp
+exclude /run
+exclude /mnt
+exclude /media
+exclude /lost+found
+exclude /swapfile
+exclude /var/tmp
+exclude /var/cache/pacman/pkg
 "#;
 
         fs::write(&path, content)?;
@@ -86,6 +103,7 @@ retention.weekly  = 4
     fn parse(content: &str) -> Self {
         let mut targets = Vec::new();
         let mut retention = RetentionPolicy::default();
+        let mut excludes = Vec::new();
 
         for line in content.lines() {
             let line = line.trim();
@@ -100,6 +118,11 @@ retention.weekly  = 4
                         source: PathBuf::from(parts[1]),
                         snapshot_dir: PathBuf::from(parts[2]),
                     });
+                }
+            } else if let Some(path) = line.strip_prefix("exclude ") {
+                let path = path.trim();
+                if !path.is_empty() {
+                    excludes.push(path.to_string());
                 }
             } else if let Some((key, value)) = line.split_once('=') {
                 let key = key.trim();
@@ -124,6 +147,14 @@ retention.weekly  = 4
             });
         }
 
-        Self { targets, retention }
+        // Fall back to defaults if no excludes in config
+        if excludes.is_empty() {
+            excludes = crate::manager::DEFAULT_EXCLUDES
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+        }
+
+        Self { targets, retention, excludes }
     }
 }

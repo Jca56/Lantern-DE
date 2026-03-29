@@ -4,6 +4,7 @@ use lntrn_render::{Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea, Scrollbar};
 
 use crate::git;
+use crate::keys;
 
 // Zone IDs (must not collide with app.rs zones)
 const ZONE_REMOTE_BASE: u32 = 3000;
@@ -11,10 +12,6 @@ const ZONE_SCROLLBAR: u32 = 3500;
 const ZONE_BACK_BTN: u32 = 3501;
 const ZONE_CLONE_BTN: u32 = 3502;
 const ZONE_PATH_INPUT: u32 = 3503;
-
-// Key constants
-const KEY_BACKSPACE: u32 = 14;
-const KEY_ENTER: u32 = 28;
 
 #[derive(PartialEq)]
 enum Phase {
@@ -152,19 +149,19 @@ impl CloneView {
     pub fn on_key(&mut self, key: u32, shift: bool) {
         if !self.path_focused { return; }
         match key {
-            1 => { self.path_focused = false; } // ESC
-            KEY_BACKSPACE => {
+            keys::KEY_ESC => { self.path_focused = false; }
+            keys::KEY_BACKSPACE => {
                 if self.cursor_pos > 0 {
                     self.cursor_pos -= 1;
                     self.clone_path.remove(self.cursor_pos);
                 }
             }
-            KEY_ENTER => {
+            keys::KEY_ENTER => {
                 // Trigger clone (same as clicking Clone button)
                 self.path_focused = false;
             }
             _ => {
-                if let Some(ch) = keycode_to_char(key, shift) {
+                if let Some(ch) = keys::keycode_to_char(key, shift) {
                     self.clone_path.insert(self.cursor_pos, ch);
                     self.cursor_pos += 1;
                 }
@@ -383,38 +380,3 @@ fn default_clone_path() -> String {
     format!("{home}/Projects")
 }
 
-// Same keycode mapper as app.rs — TODO: extract shared util
-fn keycode_to_char(key: u32, shift: bool) -> Option<char> {
-    let ch = match key {
-        2..=11 => {
-            let base = b"1234567890"[(key - 2) as usize];
-            if shift { b"!@#$%^&*()"[(key - 2) as usize] } else { base }
-        }
-        12 => if shift { b'_' } else { b'-' },
-        13 => if shift { b'+' } else { b'=' },
-        16..=25 => {
-            let base = b"qwertyuiop"[(key - 16) as usize];
-            if shift { base.to_ascii_uppercase() } else { base }
-        }
-        30..=38 => {
-            let base = b"asdfghjkl"[(key - 30) as usize];
-            if shift { base.to_ascii_uppercase() } else { base }
-        }
-        44..=50 => {
-            let base = b"zxcvbnm"[(key - 44) as usize];
-            if shift { base.to_ascii_uppercase() } else { base }
-        }
-        26 => if shift { b'{' } else { b'[' },
-        27 => if shift { b'}' } else { b']' },
-        39 => if shift { b':' } else { b';' },
-        40 => if shift { b'"' } else { b'\'' },
-        41 => if shift { b'~' } else { b'`' },
-        43 => if shift { b'|' } else { b'\\' },
-        51 => if shift { b'<' } else { b',' },
-        52 => if shift { b'>' } else { b'.' },
-        53 => if shift { b'?' } else { b'/' },
-        57 => b' ',
-        _ => return None,
-    };
-    Some(ch as char)
-}

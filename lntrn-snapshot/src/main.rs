@@ -11,7 +11,7 @@ fn main() {
         process::exit(1);
     }
 
-    // Root check — btrfs ioctls need it
+    // Root check — rsync needs it to preserve ownership/permissions
     if !is_root() {
         eprintln!("error: lntrn-snapshot requires root privileges");
         eprintln!("  try: sudo lntrn-snapshot {}", args[1..].join(" "));
@@ -65,7 +65,7 @@ fn main() {
 fn print_usage() {
     eprintln!(
         "\
-lntrn-snapshot — btrfs snapshot manager
+lntrn-snapshot — rsync snapshot manager
 
 usage:
   lntrn-snapshot init                    Set up snapshot directories + default config
@@ -106,6 +106,20 @@ fn parse_kind_flag(args: &[String]) -> SnapshotKind {
     SnapshotKind::Manual
 }
 
+fn make_manager(config: &Config, target: &lntrn_snapshot::config::SnapshotTarget) -> SnapshotManager {
+    let mut mgr = SnapshotManager::new(
+        target.source.clone(),
+        target.snapshot_dir.clone(),
+    );
+    mgr.excludes = config.excludes.clone();
+    // Always exclude the snapshot dir itself
+    let snap_dir_str = target.snapshot_dir.to_string_lossy().to_string();
+    if !mgr.excludes.contains(&snap_dir_str) {
+        mgr.excludes.push(snap_dir_str);
+    }
+    mgr
+}
+
 // ── Commands ───────────────────────────────────────────────────────
 
 fn cmd_init(config: &Config) {
@@ -122,10 +136,7 @@ fn cmd_init(config: &Config) {
 
     // Create snapshot directories
     for target in &config.targets {
-        let mgr = SnapshotManager::new(
-            target.source.clone(),
-            target.snapshot_dir.clone(),
-        );
+        let mgr = make_manager(config, target);
         match mgr.init() {
             Ok(()) => println!(
                 "snapshot dir ready: {} -> {}",
@@ -143,10 +154,7 @@ fn cmd_init(config: &Config) {
 
 fn cmd_create(config: &Config, kind: SnapshotKind) {
     for target in &config.targets {
-        let mgr = SnapshotManager::new(
-            target.source.clone(),
-            target.snapshot_dir.clone(),
-        );
+        let mgr = make_manager(config, target);
 
         match mgr.create(kind) {
             Ok(snap) => println!(
@@ -168,10 +176,7 @@ fn cmd_create(config: &Config, kind: SnapshotKind) {
 
 fn cmd_list(config: &Config) {
     for target in &config.targets {
-        let mgr = SnapshotManager::new(
-            target.source.clone(),
-            target.snapshot_dir.clone(),
-        );
+        let mgr = make_manager(config, target);
 
         println!("snapshots for {}:", target.source.display());
 
@@ -210,10 +215,7 @@ fn cmd_rename(config: &Config, old_name: &str, new_name: &str) {
             continue;
         }
 
-        let mgr = SnapshotManager::new(
-            target.source.clone(),
-            target.snapshot_dir.clone(),
-        );
+        let mgr = make_manager(config, target);
 
         match mgr.rename(old_name, new_name) {
             Ok(()) => println!("renamed {} -> {}", old_name, new_name),
@@ -232,10 +234,7 @@ fn cmd_delete(config: &Config, name: &str) {
             continue;
         }
 
-        let mgr = SnapshotManager::new(
-            target.source.clone(),
-            target.snapshot_dir.clone(),
-        );
+        let mgr = make_manager(config, target);
 
         match mgr.delete(name) {
             Ok(()) => println!("deleted {}", name),
@@ -272,10 +271,7 @@ fn cmd_prune(config: &Config) {
 
 fn cmd_prune_quiet(config: &Config) {
     for target in &config.targets {
-        let mut mgr = SnapshotManager::new(
-            target.source.clone(),
-            target.snapshot_dir.clone(),
-        );
+        let mut mgr = make_manager(config, target);
         mgr.retention_mut(&config.retention);
         let _ = mgr.prune();
     }
@@ -288,23 +284,14 @@ fn cmd_rollback(config: &Config, name: &str) {
             continue;
         }
 
-        let mgr = SnapshotManager::new(
-            target.source.clone(),
-            target.snapshot_dir.clone(),
-        );
+        let mgr = make_manager(config, target);
 
         match mgr.rollback(name) {
-            Ok(rollback_path) => {
-                println!("rollback snapshot created: {}", rollback_path.display());
+            Ok(backup_path) => {
+                println!("rollback complete! restored from: {}", name);
+                println!("pre-rollback backup saved to: {}", backup_path.display());
                 println!();
-                println!("to complete the rollback, set it as the default subvolume:");
-                println!(
-                    "  sudo btrfs subvolume set-default {}",
-                    rollback_path.display()
-                );
-                println!("  sudo reboot");
-                println!();
-                println!("after reboot, you can delete the old subvolume if everything looks good.");
+                println!("reboot recommended to pick up all changes.");
             }
             Err(e) => eprintln!("error rolling back: {}", e),
         }

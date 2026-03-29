@@ -1,11 +1,16 @@
 mod render;
 
+use std::sync::mpsc;
+
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::platform::wayland::WindowAttributesExtWayland;
 use winit::window::{CursorIcon, ResizeDirection, Window, WindowAttributes, WindowId};
 
 use lntrn_render::{GpuContext, Painter, TextRenderer};
+use lntrn_snapshot::config::Config;
+use lntrn_snapshot::manager::{Progress, SnapshotKind, SnapshotManager};
 use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea};
 
 // ── Hit zone IDs ────────────────────────────────────────────────────
@@ -66,6 +71,15 @@ struct SnapHandler {
     selected: Option<usize>,
     scroll_offset: f32,
     status_msg: String,
+    /// Progress bar state — Some while an operation is running.
+    progress: Option<ProgressState>,
+}
+
+struct ProgressState {
+    rx: mpsc::Receiver<Progress>,
+    handle: Option<std::thread::JoinHandle<Result<lntrn_snapshot::manager::Snapshot, lntrn_snapshot::manager::SnapError>>>,
+    fraction: f32,
+    label: String,
 }
 
 impl SnapHandler {
@@ -81,6 +95,7 @@ impl SnapHandler {
             selected: None,
             scroll_offset: 0.0,
             status_msg: String::new(),
+            progress: None,
         }
     }
 
@@ -100,9 +115,72 @@ impl SnapHandler {
     }
 
     fn action_create(&mut self) {
-        let output = run_snapshot_cmd(&["create"]);
-        self.status_msg = output;
-        self.refresh_list();
+        // Don't start another if one is already running
+        if self.progress.is_some() { return; }
+
+        let config = Config::load();
+        if let Some(target) = config.targets.first() {
+            let mut mgr = SnapshotManager::new(
+                target.source.clone(),
+                target.snapshot_dir.clone(),
+            );
+            mgr.excludes = config.excludes.clone();
+            let snap_dir_str = target.snapshot_dir.to_string_lossy().to_string();
+            if !mgr.excludes.contains(&snap_dir_str) {
+                mgr.excludes.push(snap_dir_str);
+            }
+
+            match mgr.create_with_progress(SnapshotKind::Manual) {
+                Ok((rx, handle)) => {
+                    self.progress = Some(ProgressState {
+                        rx,
+                        handle: Some(handle),
+                        fraction: 0.0,
+                        label: "Starting snapshot...".into(),
+                    });
+                    self.status_msg.clear();
+                }
+                Err(e) => {
+                    self.status_msg = format!("error: {e}");
+                }
+            }
+        }
+    }
+
+    /// Poll progress channel — called every frame while an operation is running.
+    fn poll_progress(&mut self) {
+        let finished = if let Some(prog) = &mut self.progress {
+            let mut done = false;
+            while let Ok(p) = prog.rx.try_recv() {
+                prog.fraction = p.fraction;
+                prog.label = p.label;
+                done = p.done;
+            }
+            self.needs_redraw = true;
+            done
+        } else {
+            return;
+        };
+
+        if finished {
+            if let Some(mut prog) = self.progress.take() {
+                if let Some(handle) = prog.handle.take() {
+                    match handle.join() {
+                        Ok(Ok(snap)) => {
+                            self.status_msg = format!("Created {}", snap.name);
+                        }
+                        Ok(Err(e)) => {
+                            self.status_msg = format!("error: {e}");
+                        }
+                        Err(_) => {
+                            self.status_msg = "error: snapshot thread panicked".into();
+                        }
+                    }
+                }
+            }
+            self.refresh_list();
+            self.needs_redraw = true;
+        }
     }
 
     fn action_prune(&mut self) {
@@ -216,6 +294,7 @@ impl ApplicationHandler for SnapHandler {
         }
 
         let attrs = WindowAttributes::default()
+            .with_name("lntrn-snapshot", "lntrn-snapshot")
             .with_title("lntrn-snapshot")
             .with_inner_size(winit::dpi::LogicalSize::new(700.0, 500.0))
             .with_decorations(false)
@@ -352,6 +431,13 @@ impl ApplicationHandler for SnapHandler {
             }
 
             WindowEvent::RedrawRequested => {
+                // Poll progress before rendering
+                self.poll_progress();
+
+                let (prog_fraction, prog_label) = self.progress.as_ref()
+                    .map(|p| (Some(p.fraction), p.label.as_str()))
+                    .unwrap_or((None, ""));
+
                 if let Some(gpu) = &mut self.gpu {
                     render::render_frame(
                         gpu,
@@ -362,9 +448,18 @@ impl ApplicationHandler for SnapHandler {
                         self.selected,
                         &mut self.scroll_offset,
                         &self.status_msg,
+                        prog_fraction,
+                        prog_label,
                     );
                 }
                 self.needs_redraw = false;
+
+                // Keep redrawing while progress is active
+                if self.progress.is_some() {
+                    if let Some(w) = &self.window {
+                        w.request_redraw();
+                    }
+                }
             }
 
             _ => {}
@@ -390,10 +485,10 @@ fn find_cli_exe() -> std::path::PathBuf {
             }
         }
     }
-    // 2. ~/.local/bin (where we deploy)
+    // 2. ~/.lantern/bin (where we deploy)
     if let Ok(home) = std::env::var("HOME") {
         let candidate = std::path::PathBuf::from(home)
-            .join(".local/bin/lntrn-snapshot");
+            .join(".lantern/bin/lntrn-snapshot");
         if candidate.exists() {
             return candidate;
         }

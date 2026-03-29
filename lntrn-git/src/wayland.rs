@@ -623,6 +623,9 @@ pub fn run() -> Result<()> {
             s, sw, sh,
         );
 
+        // Branch dropdown overlay (drawn on top of content)
+        app.draw_branch_dropdown(&mut painter, &mut text, &mut ix, &fox, s, sw, sh);
+
         // Render
         if let Ok(mut frame) = gpu.begin_frame("lntrn-git") {
             let view = frame.view().clone();

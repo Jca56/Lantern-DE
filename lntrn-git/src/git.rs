@@ -370,6 +370,61 @@ fn extract_json_bool(obj: &str, key: &str) -> bool {
     rest.starts_with("true")
 }
 
+// ── Branch operations ───────────────────────────────────────────────────────
+
+/// A local branch.
+#[derive(Debug, Clone)]
+pub struct BranchInfo {
+    pub name: String,
+    pub is_current: bool,
+}
+
+/// List all local branches.
+pub fn list_branches(repo: &Path) -> Vec<BranchInfo> {
+    let output = Command::new("git")
+        .args(["branch", "--list"])
+        .current_dir(repo)
+        .output();
+    let Ok(output) = output else { return Vec::new() };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| {
+            let is_current = line.starts_with('*');
+            let name = line.trim_start_matches('*').trim().to_string();
+            BranchInfo { name, is_current }
+        })
+        .filter(|b| !b.name.is_empty())
+        .collect()
+}
+
+/// Create a new branch and switch to it.
+pub fn create_branch(repo: &Path, name: &str) -> Result<String, String> {
+    let output = Command::new("git")
+        .args(["checkout", "-b", name])
+        .current_dir(repo)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if output.status.success() {
+        Ok(format!("Created and switched to '{name}'"))
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+/// Switch to an existing branch.
+pub fn switch_branch(repo: &Path, name: &str) -> Result<String, String> {
+    let output = Command::new("git")
+        .args(["checkout", name])
+        .current_dir(repo)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if output.status.success() {
+        Ok(format!("Switched to '{name}'"))
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
 /// Get the repo name from the path.
 pub fn repo_name(repo: &Path) -> String {
     repo.file_name()

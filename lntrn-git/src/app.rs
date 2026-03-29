@@ -6,8 +6,11 @@ use std::sync::mpsc;
 use lntrn_render::{Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea, Scrollbar};
 
+use crate::branch_view::{BranchDropdown, BranchAction};
 use crate::clone::{CloneView, CloneAction};
 use crate::git;
+use crate::keys;
+use crate::worker::{GitCmd, GitEvent};
 
 // Zone IDs
 const ZONE_REPO_BASE: u32 = 200;
@@ -21,34 +24,7 @@ const ZONE_REFRESH_BTN: u32 = 2003;
 const ZONE_BACK_BTN: u32 = 2004;
 const ZONE_STAGE_ALL: u32 = 2005;
 const ZONE_UNSTAGE_ALL: u32 = 2006;
-
-// Key constants
-const KEY_BACKSPACE: u32 = 14;
-const KEY_ENTER: u32 = 28;
-
-/// Events from the background git thread.
-enum GitEvent {
-    Repos(Vec<PathBuf>),
-    Status(git::RepoStatus),
-    Message(String),
-    Error(String),
-    RemoteRepos(Result<Vec<git::RemoteRepo>, String>),
-}
-
-/// Commands to the background git thread.
-enum GitCmd {
-    FindRepos,
-    OpenRepo(PathBuf),
-    Refresh,
-    Stage(String),
-    Unstage(String),
-    StageAll,
-    UnstageAll,
-    Commit(String),
-    Push,
-    Pull,
-    FetchGitHubRepos,
-}
+const ZONE_BRANCH_TOGGLE: u32 = 2007;
 
 #[derive(PartialEq)]
 enum View {
@@ -63,7 +39,7 @@ pub struct App {
     repos: Vec<PathBuf>,
     // Main view
     repo_path: Option<PathBuf>,
-    repo_stack: Vec<PathBuf>, // for navigating into submodules
+    repo_stack: Vec<PathBuf>,
     status: Option<git::RepoStatus>,
     // Commit message
     pub commit_msg: String,
@@ -73,8 +49,11 @@ pub struct App {
     message: Option<String>,
     error: Option<String>,
     busy: bool,
-    // Clone view
+    // Sub-views
     clone_view: CloneView,
+    branch_dropdown: BranchDropdown,
+    /// Saved rect of the branch label in the title bar so the dropdown can anchor to it.
+    branch_anchor: Rect,
     // Scroll
     scroll_offset: f32,
     picker_content_height: f32,
@@ -88,13 +67,7 @@ pub struct App {
 
 impl App {
     pub fn new() -> Self {
-        let (cmd_tx, cmd_rx) = mpsc::channel();
-        let (event_tx, event_rx) = mpsc::channel();
-
-        std::thread::Builder::new()
-            .name("git-worker".into())
-            .spawn(move || worker_thread(event_tx, cmd_rx))
-            .expect("spawn git worker");
+        let (cmd_tx, event_rx) = crate::worker::spawn();
 
         let app = Self {
             view: View::RepoPicker,
@@ -109,6 +82,8 @@ impl App {
             error: None,
             busy: false,
             clone_view: CloneView::new(),
+            branch_dropdown: BranchDropdown::new(),
+            branch_anchor: Rect::new(0.0, 0.0, 0.0, 0.0),
             scroll_offset: 0.0,
             picker_content_height: 0.0,
             picker_viewport_h: 0.0,
@@ -129,11 +104,13 @@ impl App {
                     self.status = Some(status);
                     self.busy = false;
                 }
+                GitEvent::Branches(branches) => {
+                    self.branch_dropdown.branches = branches;
+                }
                 GitEvent::Message(msg) => {
                     self.message = Some(msg);
                     self.error = None;
                     self.busy = false;
-                    // Refresh after successful action
                     let _ = self.cmd_tx.send(GitCmd::Refresh);
                 }
                 GitEvent::Error(err) => {
@@ -153,6 +130,27 @@ impl App {
     }
 
     pub fn on_click(&mut self, ix: &InteractionContext, phys_cx: f32, phys_cy: f32) {
+        // Branch dropdown gets first shot when open
+        if self.branch_dropdown.open {
+            let (action, consumed) = self.branch_dropdown.on_click(ix, phys_cx, phys_cy);
+            match action {
+                BranchAction::Switch(name) => {
+                    self.busy = true;
+                    let _ = self.cmd_tx.send(GitCmd::SwitchBranch(name));
+                    return;
+                }
+                BranchAction::Create(name) => {
+                    self.busy = true;
+                    let _ = self.cmd_tx.send(GitCmd::CreateBranch(name));
+                    return;
+                }
+                BranchAction::None => {
+                    if consumed { return; }
+                    // Click was outside dropdown — fall through to normal handling
+                }
+            }
+        }
+
         // Clone view handles its own clicks
         if self.view == View::Clone {
             match self.clone_view.on_click(ix, phys_cx, phys_cy) {
@@ -197,20 +195,24 @@ impl App {
                 }
             }
             View::Main => {
-                if zone == ZONE_BACK_BTN {
+                if zone == ZONE_BRANCH_TOGGLE {
+                    self.branch_dropdown.toggle();
+                    if self.branch_dropdown.open {
+                        let _ = self.cmd_tx.send(GitCmd::ListBranches);
+                    }
+                } else if zone == ZONE_BACK_BTN {
                     self.commit_msg.clear();
                     self.cursor_pos = 0;
                     self.commit_focused = false;
                     self.message = None;
                     self.error = None;
                     self.scroll_offset = 0.0;
+                    self.branch_dropdown.close();
                     if let Some(parent) = self.repo_stack.pop() {
-                        // Go back to parent repo
                         self.repo_path = Some(parent.clone());
                         self.busy = true;
                         let _ = self.cmd_tx.send(GitCmd::OpenRepo(parent));
                     } else {
-                        // No parent — go to repo picker
                         self.view = View::RepoPicker;
                         self.status = None;
                         self.repo_path = None;
@@ -242,7 +244,6 @@ impl App {
                     if let Some(status) = &self.status {
                         if let Some(file) = status.files.get(idx) {
                             if file.is_submodule {
-                                // Navigate into submodule
                                 if let Some(current) = &self.repo_path {
                                     let sub_path = current.join(&file.path);
                                     if sub_path.join(".git").exists() || sub_path.join(".git").is_file() {
@@ -273,27 +274,43 @@ impl App {
                 // Focus commit input if clicked
                 self.commit_focused = zone == ZONE_COMMIT_BTN + 100;
             }
-            View::Clone => {} // handled above
+            View::Clone => {}
         }
     }
 
     pub fn on_key(&mut self, key: u32, shift: bool) {
+        // Branch dropdown input takes priority
+        if self.branch_dropdown.wants_keyboard() {
+            match self.branch_dropdown.on_key(key, shift) {
+                BranchAction::Create(name) => {
+                    self.busy = true;
+                    let _ = self.cmd_tx.send(GitCmd::CreateBranch(name));
+                }
+                BranchAction::Switch(name) => {
+                    self.busy = true;
+                    let _ = self.cmd_tx.send(GitCmd::SwitchBranch(name));
+                }
+                BranchAction::None => {}
+            }
+            return;
+        }
+
         if self.view == View::Clone {
             self.clone_view.on_key(key, shift);
             return;
         }
         if !self.commit_focused { return; }
         match key {
-            1 => { // ESC
+            keys::KEY_ESC => {
                 self.commit_focused = false;
             }
-            KEY_BACKSPACE => {
+            keys::KEY_BACKSPACE => {
                 if self.cursor_pos > 0 {
                     self.cursor_pos -= 1;
                     self.commit_msg.remove(self.cursor_pos);
                 }
             }
-            KEY_ENTER => {
+            keys::KEY_ENTER => {
                 if !self.commit_msg.trim().is_empty() {
                     self.busy = true;
                     let _ = self.cmd_tx.send(GitCmd::Commit(self.commit_msg.clone()));
@@ -302,7 +319,7 @@ impl App {
                 }
             }
             _ => {
-                if let Some(ch) = keycode_to_char(key, shift) {
+                if let Some(ch) = keys::keycode_to_char(key, shift) {
                     self.commit_msg.insert(self.cursor_pos, ch);
                     self.cursor_pos += 1;
                 }
@@ -311,6 +328,10 @@ impl App {
     }
 
     pub fn on_scroll(&mut self, delta: f32) {
+        if self.branch_dropdown.open {
+            self.branch_dropdown.on_scroll(delta);
+            return;
+        }
         if self.view == View::Clone {
             self.clone_view.on_scroll(delta);
             return;
@@ -328,24 +349,24 @@ impl App {
                     self.main_content_height, self.main_viewport_h,
                 );
             }
-            View::Clone => {} // handled above
+            View::Clone => {}
         }
     }
 
     pub fn wants_keyboard(&self) -> bool {
-        (self.view == View::Main && self.commit_focused)
+        self.branch_dropdown.wants_keyboard()
+            || (self.view == View::Main && self.commit_focused)
             || (self.view == View::Clone && self.clone_view.wants_keyboard())
     }
 
-    /// Draw into the title bar content area (between left edge and window buttons).
+    /// Draw into the title bar content area.
     pub fn draw_title_bar(
-        &self, text: &mut TextRenderer, ix: &mut InteractionContext, palette: &FoxPalette,
-        tb_content: lntrn_render::Rect, painter: &mut Painter,
+        &mut self, text: &mut TextRenderer, ix: &mut InteractionContext, palette: &FoxPalette,
+        tb_content: Rect, painter: &mut Painter,
         scale: f32, screen_w: u32, screen_h: u32,
     ) {
         let s = scale;
         let font = 20.0 * s;
-        let small = 16.0 * s;
         let tx = tb_content.x + 8.0 * s;
         let ty = tb_content.y + (tb_content.h - font) / 2.0;
 
@@ -356,14 +377,15 @@ impl App {
             }
             View::Main => {
                 // Back button
-                let back_label = if self.repo_stack.is_empty() { "←" } else { "←" };
-                let back_w = 32.0 * s;
-                let back_rect = lntrn_render::Rect::new(tx, tb_content.y, back_w, tb_content.h);
+                let back_font = 28.0 * s;
+                let back_w = 40.0 * s;
+                let back_rect = Rect::new(tx, tb_content.y, back_w, tb_content.h);
                 let back_state = ix.add_zone(ZONE_BACK_BTN, back_rect);
                 if back_state.is_hovered() {
                     painter.rect_filled(back_rect, 6.0 * s, palette.muted.with_alpha(0.2));
                 }
-                text.queue(back_label, font, tx + 6.0 * s, ty, palette.accent,
+                let back_ty = tb_content.y + (tb_content.h - back_font) / 2.0;
+                text.queue("←", back_font, tx + 6.0 * s, back_ty, palette.accent,
                     back_w, screen_w, screen_h);
 
                 let mut lx = tx + back_w + 8.0 * s;
@@ -376,15 +398,29 @@ impl App {
                     lx += name.len() as f32 * font * 0.5 + 12.0 * s;
                 }
 
-                // Branch
+                // Branch (clickable to toggle dropdown)
                 if let Some(status) = &self.status {
                     let branch_text = format!(" {}", status.branch);
-                    text.queue(&branch_text, small, lx, ty + 2.0 * s, palette.accent,
-                        200.0 * s, screen_w, screen_h);
-                    lx += branch_text.len() as f32 * small * 0.5 + 12.0 * s;
+                    let branch_w = branch_text.len() as f32 * font * 0.5 + 16.0 * s;
+                    let branch_rect = Rect::new(lx, tb_content.y, branch_w, tb_content.h);
+                    let branch_state = ix.add_zone(ZONE_BRANCH_TOGGLE, branch_rect);
+
+                    if branch_state.is_hovered() || self.branch_dropdown.open {
+                        painter.rect_filled(branch_rect, 6.0 * s, palette.muted.with_alpha(0.2));
+                    }
+
+                    // Down arrow hint
+                    let arrow = if self.branch_dropdown.open { "▲" } else { "▼" };
+                    let label = format!("{branch_text} {arrow}");
+                    text.queue(&label, font, lx, ty, palette.accent,
+                        branch_w, screen_w, screen_h);
+
+                    self.branch_anchor = branch_rect;
+                    lx += branch_w + 12.0 * s;
 
                     // Ahead/behind
                     if status.ahead > 0 || status.behind > 0 {
+                        let small = 16.0 * s;
                         let sync = format!("↑{} ↓{}", status.ahead, status.behind);
                         text.queue(&sync, small, lx, ty + 2.0 * s, palette.warning,
                             100.0 * s, screen_w, screen_h);
@@ -392,6 +428,18 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Draw the branch dropdown overlay (call after main content).
+    pub fn draw_branch_dropdown(
+        &mut self, painter: &mut Painter, text: &mut TextRenderer,
+        ix: &mut InteractionContext, palette: &FoxPalette,
+        scale: f32, screen_w: u32, screen_h: u32,
+    ) {
+        self.branch_dropdown.draw(
+            painter, text, ix, palette,
+            self.branch_anchor, scale, screen_w, screen_h,
+        );
     }
 
     pub fn draw(
@@ -432,11 +480,10 @@ impl App {
         let divider_h = 1.0 * s;
         let pad = 20.0 * s;
 
-        // Title + Clone button (fixed, above scroll area)
         let mut header_y = cy;
         text.queue("Open Repository", title_font, cx + pad, header_y, palette.text, cw, sw, sh);
 
-        // "Clone from GitHub" button — right-aligned in header
+        // "Clone from GitHub" button
         let clone_label = "Clone from GitHub";
         let clone_w = 180.0 * s;
         let clone_h = 36.0 * s;
@@ -452,11 +499,10 @@ impl App {
         header_y += title_font + 20.0 * s;
 
         if self.repos.is_empty() {
-            text.queue("Scanning for repos…", body_font, cx + pad, header_y, palette.muted, cw, sw, sh);
+            text.queue("Scanning for repos...", body_font, cx + pad, header_y, palette.muted, cw, sw, sh);
             return;
         }
 
-        // Compute total content height for all repos
         let total_content_h = self.repos.len() as f32 * row_h;
         let viewport_h = ch - (header_y - cy);
 
@@ -472,7 +518,6 @@ impl App {
         for (idx, repo) in self.repos.iter().enumerate() {
             let y = base_y + idx as f32 * row_h;
 
-            // Skip rows entirely outside the viewport
             if y + row_h < header_y || y > header_y + viewport_h {
                 continue;
             }
@@ -495,7 +540,6 @@ impl App {
                 palette.muted, cw - pad * 2.0, sw, sh,
             );
 
-            // Divider line after each repo (except the last)
             if idx < self.repos.len() - 1 {
                 let div_y = y + row_h - divider_h;
                 painter.rect_filled(
@@ -508,7 +552,6 @@ impl App {
 
         scroll.end(painter);
 
-        // Scrollbar
         let scrollbar = Scrollbar::new(&viewport, total_content_h, self.scroll_offset);
         let sb_state = ix.add_zone(ZONE_SCROLLBAR, scrollbar.thumb);
         scrollbar.draw(painter, sb_state, palette);
@@ -520,6 +563,15 @@ impl App {
         cx: f32, cy: f32, cw: f32, ch: f32,
         s: f32, sw: u32, sh: u32,
     ) {
+        // When the branch dropdown is open, clip main text so it doesn't
+        // bleed through the dropdown panel.
+        if let Some(panel) = self.branch_dropdown.panel_rect {
+            if self.branch_dropdown.open {
+                let clip_y = panel.y + panel.h;
+                text.push_clip([cx, clip_y, cw, ch - (clip_y - cy)]);
+            }
+        }
+
         let body_font = 20.0 * s;
         let small_font = 16.0 * s;
         let row_h = 40.0 * s;
@@ -530,7 +582,7 @@ impl App {
 
         let mut y = cy + 8.0 * s;
 
-        // Action buttons row: [Refresh] [Push] [Pull]
+        // Action buttons row
         let btn_w = 100.0 * s;
         let btn_gap = 8.0 * s;
         let mut bx = cx + pad;
@@ -557,33 +609,33 @@ impl App {
             palette.muted.with_alpha(0.2));
         y += 1.0 * s + gap;
 
-        // File list header: [Stage All] [Unstage All]
+        // File list header
         text.queue("Changes", body_font, cx + pad, y, palette.text, 100.0 * s, sw, sh);
 
-        let sa_rect = Rect::new(cx + cw - pad - 220.0 * s, y, 100.0 * s, btn_h);
+        let sa_rect = Rect::new(cx + cw - pad - 260.0 * s, y, 120.0 * s, btn_h);
         let sa_state = ix.add_zone(ZONE_STAGE_ALL, sa_rect);
         if sa_state.is_hovered() {
             painter.rect_filled(sa_rect, 6.0 * s, palette.accent.with_alpha(0.2));
         }
-        text.queue("Stage All", small_font, sa_rect.x + 8.0 * s, y + 4.0 * s,
-            palette.accent, 90.0 * s, sw, sh);
+        text.queue("Stage All", body_font, sa_rect.x + 8.0 * s, y + (btn_h - body_font) / 2.0,
+            palette.accent, 110.0 * s, sw, sh);
 
-        let ua_rect = Rect::new(cx + cw - pad - 110.0 * s, y, 110.0 * s, btn_h);
+        let ua_rect = Rect::new(cx + cw - pad - 130.0 * s, y, 130.0 * s, btn_h);
         let ua_state = ix.add_zone(ZONE_UNSTAGE_ALL, ua_rect);
         if ua_state.is_hovered() {
             painter.rect_filled(ua_rect, 6.0 * s, palette.muted.with_alpha(0.2));
         }
-        text.queue("Unstage All", small_font, ua_rect.x + 8.0 * s, y + 4.0 * s,
-            palette.text_secondary, 100.0 * s, sw, sh);
+        text.queue("Unstage All", body_font, ua_rect.x + 8.0 * s, y + (btn_h - body_font) / 2.0,
+            palette.text_secondary, 120.0 * s, sw, sh);
 
         y += btn_h + gap * 0.5;
 
-        // Bottom area reserved for commit input
-        let bottom_reserve = 70.0 * s;
+        // Bottom area reserved for commit input + status message
+        let bottom_reserve = 90.0 * s;
         let list_top = y;
         let list_h = ch - (y - cy) - bottom_reserve;
 
-        // File list with ScrollArea
+        // File list
         if let Some(status) = &self.status {
             let file_count = status.files.len();
             let total_content_h = if file_count == 0 {
@@ -599,7 +651,7 @@ impl App {
             let scroll = ScrollArea::new(viewport, total_content_h, &mut self.scroll_offset);
 
             if status.files.is_empty() {
-                text.queue("Working tree clean ✓", body_font, cx + pad, list_top,
+                text.queue("Working tree clean", body_font, cx + pad, list_top,
                     palette.accent, cw, sw, sh);
             } else {
                 scroll.begin(painter);
@@ -608,7 +660,6 @@ impl App {
                 for (i, file) in status.files.iter().enumerate() {
                     let fy = base_y + i as f32 * row_h;
 
-                    // Skip rows outside viewport
                     if fy + row_h < list_top || fy > list_top + list_h {
                         continue;
                     }
@@ -624,16 +675,16 @@ impl App {
                     let ty = fy + (row_h - body_font) / 2.0;
 
                     if file.is_submodule {
-                        text.queue("📦", body_font, cx + pad, ty, palette.accent, 24.0 * s, sw, sh);
+                        text.queue("pkg", body_font, cx + pad, ty, palette.accent, 24.0 * s, sw, sh);
                         text.queue(&file.path, body_font,
                             cx + pad + 28.0 * s, ty, palette.accent,
                             cw * 0.5, sw, sh);
-                        text.queue("click to open →", small_font,
+                        text.queue("click to open", small_font,
                             cx + cw - pad - 120.0 * s, ty + 2.0 * s,
                             palette.muted, 120.0 * s, sw, sh);
                     } else {
                         let stage_color = if file.staged { palette.accent } else { palette.muted };
-                        let indicator = if file.staged { "●" } else { "○" };
+                        let indicator = if file.staged { "+" } else { "o" };
                         text.queue(indicator, body_font, cx + pad, ty, stage_color, 20.0 * s, sw, sh);
 
                         let status_color = match file.status {
@@ -650,7 +701,6 @@ impl App {
                             cw - pad * 2.0 - 60.0 * s, sw, sh);
                     }
 
-                    // Divider line between files
                     if i < file_count - 1 {
                         let div_y = fy + row_h - divider_h;
                         painter.rect_filled(
@@ -663,13 +713,12 @@ impl App {
 
                 scroll.end(painter);
 
-                // Scrollbar
                 let scrollbar = Scrollbar::new(&viewport, total_content_h, self.scroll_offset);
                 let sb_state = ix.add_zone(ZONE_SCROLLBAR, scrollbar.thumb);
                 scrollbar.draw(painter, sb_state, palette);
             }
         } else if self.busy {
-            text.queue("Loading…", body_font, cx + pad, list_top, palette.muted, cw, sw, sh);
+            text.queue("Loading...", body_font, cx + pad, list_top, palette.muted, cw, sw, sh);
         }
 
         // Commit message input (bottom area)
@@ -686,7 +735,7 @@ impl App {
 
         lntrn_ui::gpu::TextInput::new(input_rect)
             .text(&masked)
-            .placeholder("Commit message…")
+            .placeholder("Commit message...")
             .focused(self.commit_focused)
             .scale(s)
             .cursor_pos(self.cursor_pos)
@@ -720,135 +769,9 @@ impl App {
             text.queue(err, small_font, cx + pad, input_y - 24.0 * s,
                 palette.danger, cw - pad * 2.0, sw, sh);
         }
-    }
-}
 
-// ── Background worker ───────────────────────────────────────────────────────
-
-fn worker_thread(tx: mpsc::Sender<GitEvent>, rx: mpsc::Receiver<GitCmd>) {
-    let mut repo_path: Option<PathBuf> = None;
-
-    loop {
-        let cmd = match rx.recv() {
-            Ok(cmd) => cmd,
-            Err(_) => return,
-        };
-
-        match cmd {
-            GitCmd::FindRepos => {
-                let repos = git::find_repos();
-                let _ = tx.send(GitEvent::Repos(repos));
-            }
-            GitCmd::OpenRepo(path) => {
-                repo_path = Some(path.clone());
-                let status = git::status(&path);
-                let _ = tx.send(GitEvent::Status(status));
-            }
-            GitCmd::Refresh => {
-                if let Some(ref path) = repo_path {
-                    let status = git::status(path);
-                    let _ = tx.send(GitEvent::Status(status));
-                }
-            }
-            GitCmd::Stage(file) => {
-                if let Some(ref path) = repo_path {
-                    git::stage(path, &file);
-                    let status = git::status(path);
-                    let _ = tx.send(GitEvent::Status(status));
-                }
-            }
-            GitCmd::Unstage(file) => {
-                if let Some(ref path) = repo_path {
-                    git::unstage(path, &file);
-                    let status = git::status(path);
-                    let _ = tx.send(GitEvent::Status(status));
-                }
-            }
-            GitCmd::StageAll => {
-                if let Some(ref path) = repo_path {
-                    let _ = std::process::Command::new("git")
-                        .args(["add", "-A"])
-                        .current_dir(path)
-                        .output();
-                    let status = git::status(path);
-                    let _ = tx.send(GitEvent::Status(status));
-                }
-            }
-            GitCmd::UnstageAll => {
-                if let Some(ref path) = repo_path {
-                    let _ = std::process::Command::new("git")
-                        .args(["reset", "HEAD"])
-                        .current_dir(path)
-                        .output();
-                    let status = git::status(path);
-                    let _ = tx.send(GitEvent::Status(status));
-                }
-            }
-            GitCmd::Commit(msg) => {
-                if let Some(ref path) = repo_path {
-                    match git::commit(path, &msg) {
-                        Ok(out) => { let _ = tx.send(GitEvent::Message(out)); }
-                        Err(err) => { let _ = tx.send(GitEvent::Error(err)); }
-                    }
-                }
-            }
-            GitCmd::Push => {
-                if let Some(ref path) = repo_path {
-                    match git::push(path) {
-                        Ok(out) => { let _ = tx.send(GitEvent::Message(out)); }
-                        Err(err) => { let _ = tx.send(GitEvent::Error(err)); }
-                    }
-                }
-            }
-            GitCmd::Pull => {
-                if let Some(ref path) = repo_path {
-                    match git::pull(path) {
-                        Ok(out) => { let _ = tx.send(GitEvent::Message(out)); }
-                        Err(err) => { let _ = tx.send(GitEvent::Error(err)); }
-                    }
-                }
-            }
-            GitCmd::FetchGitHubRepos => {
-                let result = git::fetch_github_repos();
-                let _ = tx.send(GitEvent::RemoteRepos(result));
-            }
+        if self.branch_dropdown.open && self.branch_dropdown.panel_rect.is_some() {
+            text.pop_clip();
         }
     }
-}
-
-// ── Keycode → char ──────────────────────────────────────────────────────────
-
-fn keycode_to_char(key: u32, shift: bool) -> Option<char> {
-    let ch = match key {
-        2..=11 => {
-            let base = b"1234567890"[(key - 2) as usize];
-            if shift { b"!@#$%^&*()"[(key - 2) as usize] } else { base }
-        }
-        12 => if shift { b'_' } else { b'-' },
-        13 => if shift { b'+' } else { b'=' },
-        16..=25 => {
-            let base = b"qwertyuiop"[(key - 16) as usize];
-            if shift { base.to_ascii_uppercase() } else { base }
-        }
-        30..=38 => {
-            let base = b"asdfghjkl"[(key - 30) as usize];
-            if shift { base.to_ascii_uppercase() } else { base }
-        }
-        44..=50 => {
-            let base = b"zxcvbnm"[(key - 44) as usize];
-            if shift { base.to_ascii_uppercase() } else { base }
-        }
-        26 => if shift { b'{' } else { b'[' },
-        27 => if shift { b'}' } else { b']' },
-        39 => if shift { b':' } else { b';' },
-        40 => if shift { b'"' } else { b'\'' },
-        41 => if shift { b'~' } else { b'`' },
-        43 => if shift { b'|' } else { b'\\' },
-        51 => if shift { b'<' } else { b',' },
-        52 => if shift { b'>' } else { b'.' },
-        53 => if shift { b'?' } else { b'/' },
-        57 => b' ',
-        _ => return None,
-    };
-    Some(ch as char)
 }

@@ -1,6 +1,6 @@
 use lntrn_render::Rect;
 use lntrn_ui::gpu::{
-    Button, ButtonVariant, FontSize, FoxPalette, InteractionContext,
+    Button, ButtonVariant, FontSize, FoxPalette, GradientStrip, InteractionContext,
     ScrollArea, Scrollbar, TextLabel, TitleBar,
 };
 
@@ -10,6 +10,7 @@ use super::{
 };
 
 pub const TITLE_BAR_H: f32 = 52.0;
+const STRIP_H: f32 = 4.0;
 const TOOLBAR_H: f32 = 52.0;
 const HEADER_H: f32 = 36.0;
 const ROW_H: f32 = 44.0;
@@ -19,7 +20,7 @@ const BTN_GAP: f32 = 8.0;
 const PAD: f32 = 14.0;
 
 pub fn list_viewport(wf: f32, hf: f32, s: f32) -> Rect {
-    let top = (TITLE_BAR_H + TOOLBAR_H + HEADER_H) * s;
+    let top = (TITLE_BAR_H + STRIP_H + TOOLBAR_H + HEADER_H) * s;
     Rect::new(0.0, top, wf, hf - top)
 }
 
@@ -36,6 +37,8 @@ pub fn render_frame(
     selected: Option<usize>,
     scroll_offset: &mut f32,
     status_msg: &str,
+    progress_fraction: Option<f32>,
+    progress_label: &str,
 ) {
     let Gpu { ctx, painter, text } = gpu;
     let w = ctx.width();
@@ -65,8 +68,14 @@ pub fn render_frame(
         .minimize_hovered(min_state.is_hovered())
         .draw(painter, pal);
 
+    // ── Gradient strip below title bar ─────────────────────────────
+    let strip_y = TITLE_BAR_H * s;
+    let mut strip = GradientStrip::new(0.0, strip_y, wf);
+    strip.height = 4.0 * s;
+    strip.draw(painter);
+
     // ── Toolbar ───────────────────────────────────────────────────
-    let toolbar_y = TITLE_BAR_H * s;
+    let toolbar_y = (TITLE_BAR_H + STRIP_H) * s;
     let toolbar_rect = Rect::new(0.0, toolbar_y, wf, TOOLBAR_H * s);
     painter.rect_filled(toolbar_rect, 0.0, pal.surface);
 
@@ -158,7 +167,7 @@ pub fn render_frame(
     );
 
     // ── Column headers ────────────────────────────────────────────
-    let header_y = (TITLE_BAR_H + TOOLBAR_H) * s;
+    let header_y = (TITLE_BAR_H + STRIP_H + TOOLBAR_H) * s;
     painter.rect_filled(
         Rect::new(0.0, header_y, wf, HEADER_H * s),
         0.0,
@@ -262,8 +271,46 @@ pub fn render_frame(
         scrollbar.draw(painter, sb_state, pal);
     }
 
-    // ── Status bar ────────────────────────────────────────────────
-    if !status_msg.is_empty() {
+    // ── Status / progress bar ────────────────────────────────────
+    if let Some(fraction) = progress_fraction {
+        let bar_h = 36.0 * s;
+        let bar_y = hf - bar_h;
+        let bar_pad = PAD * s;
+        let bar_inner_h = 8.0 * s;
+
+        // Background
+        painter.rect_filled(
+            Rect::new(0.0, bar_y, wf, bar_h),
+            0.0,
+            pal.surface_2,
+        );
+
+        // Progress label + percentage
+        let pct_text = format!("{}%  {}", (fraction * 100.0) as u32, progress_label);
+        TextLabel::new(&pct_text, bar_pad, bar_y + 2.0 * s)
+            .size(FontSize::Custom(16.0 * s))
+            .color(pal.text)
+            .draw(text, w, h);
+
+        // Track
+        let track_y = bar_y + bar_h - bar_inner_h - 4.0 * s;
+        let track_w = wf - bar_pad * 2.0;
+        painter.rect_filled(
+            Rect::new(bar_pad, track_y, track_w, bar_inner_h),
+            4.0 * s,
+            pal.muted.with_alpha(0.2),
+        );
+
+        // Fill
+        let fill_w = track_w * fraction.clamp(0.0, 1.0);
+        if fill_w > 0.5 {
+            painter.rect_filled(
+                Rect::new(bar_pad, track_y, fill_w, bar_inner_h),
+                4.0 * s,
+                pal.accent,
+            );
+        }
+    } else if !status_msg.is_empty() {
         let status_h = 28.0 * s;
         let status_y = hf - status_h;
         painter.rect_filled(

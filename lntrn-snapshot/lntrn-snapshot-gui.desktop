@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Lantern Snapshots
+GenericName=Snapshot Manager
+Comment=Btrfs snapshot manager for the Lantern desktop
+Exec=/home/alva/.lantern/bin/lntrn-snapshot-gui-launch
+Icon=lntrn-snapshot
+Terminal=false
+Categories=System;
+Keywords=snapshot;btrfs;backup;rollback;lantern;
+StartupNotify=true
+StartupWMClass=lntrn-snapshot
