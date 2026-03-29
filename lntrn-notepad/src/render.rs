@@ -257,7 +257,7 @@ pub fn render_frame(
     // ── Submit frame ──────────────────────────────────────────────────
     match ctx.begin_frame("lntrn-notepad") {
         Ok(mut frame) => {
-            painter.render_into(ctx, &mut frame, pal.bg);
+            painter.render_into(ctx, &mut frame, Color::rgba(0.0, 0.0, 0.0, 0.0));
 
             let view = frame.view().clone();
             text.render_queued(ctx, frame.encoder_mut(), &view);

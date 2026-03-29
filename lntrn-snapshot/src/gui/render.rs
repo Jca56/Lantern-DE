@@ -1,4 +1,4 @@
-use lntrn_render::Rect;
+use lntrn_render::{Color, Rect};
 use lntrn_ui::gpu::{
     Button, ButtonVariant, FontSize, FoxPalette, GradientStrip, InteractionContext,
     ScrollArea, Scrollbar, TextLabel, TitleBar,
@@ -327,7 +327,7 @@ pub fn render_frame(
     // ── Submit frame ──────────────────────────────────────────────
     match ctx.begin_frame("lntrn-snapshot") {
         Ok(mut frame) => {
-            painter.render_into(ctx, &mut frame, pal.bg);
+            painter.render_into(ctx, &mut frame, Color::rgba(0.0, 0.0, 0.0, 0.0));
             let view = frame.view().clone();
             text.render_queued(ctx, frame.encoder_mut(), &view);
             frame.submit(&ctx.queue);
