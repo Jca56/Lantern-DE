@@ -181,7 +181,7 @@ impl App {
             self.cursor_pos,
         );
 
-        let has_overlay = self.chrome.has_overlay() || self.tab_bar.has_overlay();
+        let has_overlay = self.chrome.has_overlay() || self.tab_bar.has_overlay() || self.sidebar.has_overlay();
 
         if has_overlay {
             // Two-pass rendering: menus must appear ABOVE terminal text.
@@ -239,6 +239,16 @@ impl App {
                 overlay_text,
                 &self.tab_bar,
                 &tab_displays,
+                screen_w,
+                screen_h,
+                self.cursor_pos,
+            );
+
+            // Sidebar context menu overlay
+            sidebar::draw_sidebar_context_menu(
+                overlay_painter,
+                overlay_text,
+                &self.sidebar,
                 screen_w,
                 screen_h,
                 self.cursor_pos,

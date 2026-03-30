@@ -165,7 +165,7 @@ impl App {
 
     pub(crate) fn sidebar_offset(&self) -> f32 {
         if self.sidebar.visible {
-            sidebar::SIDEBAR_WIDTH
+            self.sidebar.width
         } else {
             0.0
         }

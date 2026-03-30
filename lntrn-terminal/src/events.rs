@@ -337,6 +337,18 @@ impl App {
     pub(crate) fn handle_right_press(&mut self) {
         let screen_w = self.gpu.as_ref().map_or(800, |g| g.width());
         let screen_h = self.gpu.as_ref().map_or(600, |g| g.height());
+        // Sidebar right-click
+        if sidebar::handle_right_click(
+            &mut self.sidebar,
+            self.cursor_pos,
+            render::chrome_height(),
+        ) {
+            self.chrome.close_all_menus();
+            self.tab_bar.context_menu = None;
+            self.request_redraw();
+            return;
+        }
+
         if tab_bar::handle_right_click(
             &mut self.tab_bar,
             self.cursor_pos,
@@ -344,6 +356,7 @@ impl App {
             screen_w,
         ) {
             self.chrome.close_all_menus();
+            self.sidebar.context_menu = None;
             self.request_redraw();
         } else if let Some((x, y)) = self.cursor_pos {
             self.tab_bar.context_menu = None;
@@ -371,6 +384,36 @@ impl App {
         event: &winit::event::KeyEvent,
         event_loop: &ActiveEventLoop,
     ) -> EventResult {
+        // Sidebar inline edit captures ALL keyboard input
+        if self.sidebar.is_editing() {
+            if event.state == ElementState::Pressed {
+                let key_str = match &event.logical_key {
+                    winit::keyboard::Key::Named(n) => match n {
+                        winit::keyboard::NamedKey::Enter => Some("Enter"),
+                        winit::keyboard::NamedKey::Escape => Some("Escape"),
+                        winit::keyboard::NamedKey::Backspace => Some("Backspace"),
+                        winit::keyboard::NamedKey::Delete => Some("Delete"),
+                        winit::keyboard::NamedKey::ArrowLeft => Some("Left"),
+                        winit::keyboard::NamedKey::ArrowRight => Some("Right"),
+                        winit::keyboard::NamedKey::Home => Some("Home"),
+                        winit::keyboard::NamedKey::End => Some("End"),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some(key) = key_str {
+                    sidebar::handle_edit_key(&mut self.sidebar, key);
+                } else if let winit::keyboard::Key::Character(s) = &event.logical_key {
+                    for ch in s.chars() {
+                        sidebar::handle_edit_char(&mut self.sidebar, ch);
+                    }
+                }
+            }
+            self.update_grid_size();
+            self.request_redraw();
+            return EventResult::Handled;
+        }
+
         // Tab rename mode captures ALL keyboard input (press and release)
         if tab_bar::is_capturing_input(&self.tab_bar) {
             if event.state == ElementState::Pressed {
