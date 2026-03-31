@@ -19,7 +19,7 @@ use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
 use crate::app::App;
-use crate::{Gpu, ZONE_CANVAS, ZONE_CLOSE, ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_PLAY_PAUSE, ZONE_SEEK_BAR};
+use crate::{Gpu, ZONE_CANVAS, ZONE_CLOSE, ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_PLAY_PAUSE, ZONE_SEEK_BAR, ZONE_VOLUME, ZONE_VOL_SLIDER};
 
 // ── WaylandHandle for wgpu ──────────────────────────────────────────────────
 
@@ -346,8 +346,9 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
         update_title(&toplevel, &app);
     }
 
-    // Seek bar rect cache (set each frame in render, read in input handling)
+    // Control rect caches (set each frame in render, read in input handling)
     let mut seek_rect = Rect::new(0.0, 0.0, 0.0, 0.0);
+    let mut vol_slider_rect = Rect::new(0.0, 0.0, 0.0, 0.0);
 
     while state.running {
         // Non-blocking when playing (or audio-only visualizer), blocking when paused
@@ -411,6 +412,15 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
             app.seek_value = frac;
         }
 
+        // ── Volume slider drag (motion) ─────────────────────────────────
+        if app.vol_dragging && state.pointer_in_surface && vol_slider_rect.h > 0.0 {
+            let frac = 1.0 - ((cy - vol_slider_rect.y) / vol_slider_rect.h).clamp(0.0, 1.0);
+            app.volume = frac as f64;
+            if let Some(pipe) = &app.pipeline {
+                pipe.set_volume(app.volume);
+            }
+        }
+
         // ── Keyboard ────────────────────────────────────────────────────
         if let Some(key) = state.key_pressed.take() {
             handle_key(&mut app, &toplevel, &mut state, key);
@@ -447,8 +457,21 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
                             app.seek_value = frac;
                         }
                     }
+                    ZONE_VOLUME => {
+                        app.vol_showing = !app.vol_showing;
+                    }
+                    ZONE_VOL_SLIDER => {
+                        if vol_slider_rect.h > 0.0 {
+                            let frac = 1.0 - ((cy - vol_slider_rect.y) / vol_slider_rect.h).clamp(0.0, 1.0);
+                            app.volume = frac as f64;
+                            if let Some(pipe) = &app.pipeline {
+                                pipe.set_volume(app.volume);
+                            }
+                            app.vol_dragging = true;
+                        }
+                    }
                     ZONE_CANVAS => {
-                        // Double-click handled via rapid press — or just toggle play
+                        app.vol_showing = false;
                         app.toggle_play_pause();
                     }
                     _ => {}
@@ -470,11 +493,15 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
             if app.seeking {
                 app.seek_to_fraction(app.seek_value);
             }
+            app.vol_dragging = false;
             input.on_left_released();
         }
 
         // ── Render ──────────────────────────────────────────────────────
-        seek_rect = crate::render::render_frame(&mut gpu, &app, &mut input, &palette, s);
+        let is_maximized = state.maximized || state.fullscreen;
+        let rects = crate::render::render_frame(&mut gpu, &app, &mut input, &palette, s, is_maximized);
+        seek_rect = rects.seek;
+        vol_slider_rect = rects.vol_slider;
 
         surface.frame(&qh, ());
         surface.commit();

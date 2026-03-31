@@ -33,7 +33,7 @@ use crate::temperature::{Temperature, ZONE_TEMP};
 use crate::toplevel::ToplevelTracker;
 use crate::wifi::{Wifi, ZONE_WIFI_ICON};
 
-const BAR_HEIGHT_DEFAULT: u32 = 72;
+pub(crate) const BAR_HEIGHT_DEFAULT: u32 = 72;
 const BAR_HEIGHT_MIN: u32 = 48;
 const BAR_HEIGHT_MAX: u32 = 120;
 const MENU_OVERFLOW: u32 = 700;
@@ -52,6 +52,9 @@ const MENU_LAVA_LAMP: u32 = 7;
 const MENU_APP_PIN: u32 = 10;
 const MENU_APP_LAUNCH: u32 = 11;
 const MENU_APP_CLOSE: u32 = 12;
+const MENU_PROC_PIN: u32 = 13;
+const MENU_PROC_UNPIN: u32 = 14;
+const MENU_PROC_KILL: u32 = 15;
 /// Seconds to wait after pointer leaves before hiding.
 const AUTOHIDE_DELAY: f32 = 1.5;
 
@@ -415,6 +418,18 @@ fn slider_to_height(v: f32) -> u32 {
     BAR_HEIGHT_MIN + (range * v.clamp(0.0, 1.0)).round() as u32
 }
 
+fn save_settings(
+    style: BarStyle, auto_hide: bool, height: u32, opacity: f32,
+    lava_lamp: bool, pinned: &[crate::appmenu::sysmon::PinnedProcess],
+) {
+    let s = crate::bar_settings::BarSettings {
+        floating: style == BarStyle::Floating,
+        auto_hide, height, opacity, lava_lamp,
+        pinned_procs: pinned.iter().map(|p| p.name.clone()).collect(),
+    };
+    s.save();
+}
+
 // ── Entry point ──────────────────────────────────────────────────────────────
 
 pub fn run() -> Result<()> {
@@ -435,14 +450,16 @@ pub fn run() -> Result<()> {
     let surface = compositor.create_surface(&qh, ());
     let input_region = compositor.create_region(&qh, ());
 
-    let mut user_style = BarStyle::Floating;
-    let mut bar_height = BAR_HEIGHT_DEFAULT;
+    let saved = crate::bar_settings::BarSettings::load();
+    let mut user_style = if saved.floating { BarStyle::Floating } else { BarStyle::Docked };
+    let mut bar_height = saved.height.clamp(BAR_HEIGHT_MIN, BAR_HEIGHT_MAX);
     // 0.0 = floating, 1.0 = docked
-    let mut anim_t: f32 = 0.0;
+    let mut anim_t: f32 = if saved.floating { 0.0 } else { 1.0 };
     // Auto-hide state
-    let mut auto_hide = false;
-    let mut bar_opacity: f32 = 1.0;
+    let mut auto_hide = saved.auto_hide;
+    let mut bar_opacity: f32 = saved.opacity.clamp(0.1, 1.0);
     let mut lava = crate::lava::LavaLamp::new();
+    lava.enabled = saved.lava_lamp;
     // 0.0 = fully visible, 1.0 = fully hidden
     let mut hide_t: f32 = 0.0;
     let mut hide_timer: f32 = 0.0;
@@ -526,6 +543,14 @@ pub fn run() -> Result<()> {
     let mut kb_was_active = false;
     let mut app_tray = crate::apptray::AppTray::new();
     let mut app_menu = crate::appmenu::AppMenu::new();
+    // Restore pinned sysmon processes from saved settings
+    for name in &saved.pinned_procs {
+        app_menu.sysmon.pinned.push(crate::appmenu::sysmon::PinnedProcess {
+            name: name.clone(), pid: 0, cpu_pct: 0.0, mem_kb: 0,
+            cpu_history: [0.0; crate::appmenu::sysmon::SPARKLINE_LEN],
+            history_idx: 0, warning_phase: 0.0,
+        });
+    }
     // The app_id of the app whose context menu is currently open (if any).
     let mut ctx_menu_app: Option<String> = None;
     let mut hover_client = crate::hover::HoverClient::new();
@@ -805,10 +830,42 @@ pub fn run() -> Result<()> {
         }
         if state.right_clicked {
             state.right_clicked = false;
-            // Right-click in app menu → app context menu
+            // Right-click in app menu → app or process context menu
             if app_menu.is_open() && app_menu.contains(phys_cx, phys_cy) {
-                app_menu.on_right_click(phys_cx, phys_cy, &ix);
+                // Check if right-click hit a sysmon process row first
+                if app_menu.sysmon.on_right_click(&ix, phys_cx, phys_cy) {
+                    let is_pinned = if let Some((ref name, _)) = app_menu.sysmon.right_clicked_proc {
+                        app_menu.sysmon.pinned.iter().any(|p| p.name == *name)
+                    } else { false };
+                    let label = if is_pinned { "Unpin from Bar" } else { "Pin to Bar" };
+                    let action = if is_pinned { MENU_PROC_UNPIN } else { MENU_PROC_PIN };
+                    context_menu.open(phys_cx, phys_cy, vec![
+                        MenuItem::action(action, label),
+                        MenuItem::separator(),
+                        MenuItem::action(MENU_PROC_KILL, "Kill Process"),
+                    ]);
+                } else {
+                    app_menu.on_right_click(phys_cx, phys_cy, &ix);
+                }
             } else {
+                // Check if right-click hit a pinned process monitor on the bar
+                let mut handled_pinned = false;
+                if let Some(zone) = ix.zone_at(phys_cx, phys_cy) {
+                    use crate::appmenu::sysmon::ZONE_PINNED_BASE;
+                    if zone >= ZONE_PINNED_BASE && zone < ZONE_PINNED_BASE + 64 {
+                        let idx = (zone - ZONE_PINNED_BASE) as usize;
+                        if let Some(pinned) = app_menu.sysmon.pinned.get(idx) {
+                            app_menu.sysmon.right_clicked_proc = Some((pinned.name.clone(), pinned.pid));
+                            context_menu.open(phys_cx, bar_y_offset, vec![
+                                MenuItem::action(MENU_PROC_UNPIN, "Unpin from Bar"),
+                                MenuItem::separator(),
+                                MenuItem::action(MENU_PROC_KILL, "Kill Process"),
+                            ]);
+                            handled_pinned = true;
+                        }
+                    }
+                }
+                if !handled_pinned {
                 let toplevels = state.tracker.toplevels();
                 if let Some((app_id, pinned, running)) =
                     app_tray.handle_right_click(&ix, phys_cx, phys_cy, &toplevels)
@@ -847,6 +904,7 @@ pub fn run() -> Result<()> {
                 context_menu.clamp_bottom_bar(phys_w_f, total_phys_h as f32);
                 surface.set_input_region(None);
                 menu_was_open = true;
+            } // !handled_pinned
             }
         }
         if state.scroll_delta != 0.0 {
@@ -909,6 +967,7 @@ pub fn run() -> Result<()> {
             surface.set_input_region(None);
         } else if !any_menu_open && menu_was_open {
             set_bar_input_region(&surface, &input_region, bar_height, auto_hide, hide_t);
+            surface.commit();
         }
         // Keyboard focus: grab when app menu wants typing, release otherwise
         let wants_kb = app_menu.wants_keyboard() || wifi.wants_keyboard();
@@ -917,6 +976,8 @@ pub fn run() -> Result<()> {
             surface.commit();
         } else if !wants_kb && kb_was_active {
             layer_surface.set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::None);
+            // Clear held key — we won't receive the release event after losing keyboard
+            state.held_key = None;
             surface.commit();
         }
         kb_was_active = wants_kb;
@@ -975,6 +1036,14 @@ pub fn run() -> Result<()> {
             vis_x, vis_y, vis_h, scale_f,
         );
 
+        // ── Pinned process monitors (after launcher button) ─────
+        let pinned_x = vis_x + launcher_w + 8.0 * scale_f;
+        let _pinned_w = app_menu.sysmon.draw_pinned(
+            &mut painter, &mut text, &mut ix, &palette,
+            pinned_x, vis_y, vis_h, scale_f,
+            phys_w, total_phys_h,
+        );
+
         // ── Right-aligned widgets: [tray] [battery] [clock] ──────
         // We lay out right-to-left, accumulating consumed width.
         let mut right_used = 0.0f32;
@@ -1008,7 +1077,7 @@ pub fn run() -> Result<()> {
             let iw = ih * 1.5;
             bat.load_icons(&mut icon_cache, &tex_pass, &gpu, iw as u32, ih as u32);
         }
-        if app_menu.is_open() {
+        if app_menu.is_open() || !app_menu.sysmon.pinned.is_empty() {
             app_menu.sysmon.tick();
         }
         temperature.tick();
@@ -1234,6 +1303,7 @@ pub fn run() -> Result<()> {
             match event {
                 MenuEvent::CheckboxToggled { id: MENU_FLOAT_CHECKBOX, checked } => {
                     user_style = if checked { BarStyle::Floating } else { BarStyle::Docked };
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, &app_menu.sysmon.pinned);
                     context_menu.close();
                 }
                 MenuEvent::CheckboxToggled { id: MENU_AUTOHIDE_CHECKBOX, checked } => {
@@ -1244,6 +1314,7 @@ pub fn run() -> Result<()> {
                         apply_layer_config(&layer_surface, state.width, bar_height, anim_t, auto_hide);
                         surface.commit();
                     }
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, &app_menu.sysmon.pinned);
                     context_menu.close();
                 }
                 MenuEvent::Action(MENU_OPEN_TERMINAL) => {
@@ -1283,12 +1354,31 @@ pub fn run() -> Result<()> {
                     }
                     context_menu.close();
                 }
+                MenuEvent::Action(MENU_PROC_PIN) => {
+                    app_menu.sysmon.pin_right_clicked();
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, &app_menu.sysmon.pinned);
+                    context_menu.close();
+                }
+                MenuEvent::Action(MENU_PROC_UNPIN) => {
+                    if let Some((name, _)) = app_menu.sysmon.right_clicked_proc.clone() {
+                        app_menu.sysmon.unpin(&name);
+                    }
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, &app_menu.sysmon.pinned);
+                    context_menu.close();
+                }
+                MenuEvent::Action(MENU_PROC_KILL) => {
+                    app_menu.sysmon.kill_right_clicked();
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, &app_menu.sysmon.pinned);
+                    context_menu.close();
+                }
                 MenuEvent::CheckboxToggled { id: MENU_LAVA_LAMP, checked } => {
                     lava.enabled = checked;
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, &app_menu.sysmon.pinned);
                     context_menu.close();
                 }
                 MenuEvent::SliderChanged { id: MENU_OPACITY_SLIDER, value } => {
                     bar_opacity = value.clamp(0.1, 1.0);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, &app_menu.sysmon.pinned);
                 }
                 MenuEvent::SliderChanged { id: MENU_HEIGHT_SLIDER, value } => {
                     bar_height = slider_to_height(value);
@@ -1299,6 +1389,7 @@ pub fn run() -> Result<()> {
                         vp.set_destination(state.width as i32, state.height as i32);
                     }
                     surface.commit();
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, &app_menu.sysmon.pinned);
                 }
                 MenuEvent::Action(id) if id >= crate::dbusmenu::DBUSMENU_ID_BASE => {
                     let item_id = (id - crate::dbusmenu::DBUSMENU_ID_BASE) as i32;

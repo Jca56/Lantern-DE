@@ -37,6 +37,8 @@ pub struct App {
     pub audio_only: bool,
     pub vis_mode: VisMode,
     pub vis_bars: Vec<f32>,
+    pub vol_showing: bool,
+    pub vol_dragging: bool,
 }
 
 impl App {
@@ -57,6 +59,8 @@ impl App {
             audio_only: false,
             vis_mode: VisMode::ConcentricRings,
             vis_bars: vec![0.0; VIS_BARS],
+            vol_showing: false,
+            vol_dragging: false,
         }
     }
 
@@ -104,17 +108,18 @@ impl App {
             None => return false,
         };
 
-        // Detect audio-only via playbin's n-video property
-        if !self.audio_only && pipe.is_audio_only() {
-            self.audio_only = true;
-        }
-
         // Update position/duration
         if let Some(pos) = pipe.position() {
             self.position_ns = pos;
         }
         if let Some(dur) = pipe.duration() {
             self.duration_ns = dur;
+        }
+
+        // Detect audio-only — only trust n-video after duration is known
+        // (playbin needs time to demux before stream counts are valid)
+        if !self.audio_only && self.duration_ns > 0 && pipe.is_audio_only() {
+            self.audio_only = true;
         }
 
         // Poll bus for spectrum messages + log-scale into visual bars
@@ -132,8 +137,9 @@ impl App {
             }
         }
 
-        // Grab latest video frame
+        // Grab latest video frame — if we get one, it's definitely not audio-only
         if let Some(frame) = pipe.take_frame() {
+            self.audio_only = false;
             self.video_width = frame.width;
             self.video_height = frame.height;
             self.video_texture = Some(tex_pass.upload(gpu, &frame.rgba, frame.width, frame.height));

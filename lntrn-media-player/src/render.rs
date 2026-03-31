@@ -1,17 +1,25 @@
 use lntrn_render::{Color, Rect, TextPass, TextureDraw};
-use lntrn_ui::gpu::{FontSize, FoxPalette, InteractionContext, Slider, TextLabel, TitleBar};
+use lntrn_ui::gpu::{FontSize, FoxPalette, GradientStrip, InteractionContext, Slider, TextLabel, TitleBar};
 
 use crate::app::{App, VisMode, VIS_BARS};
-use crate::{Gpu, ZONE_CANVAS, ZONE_CLOSE, ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_PLAY_PAUSE, ZONE_SEEK_BAR};
+use crate::{Gpu, ZONE_CANVAS, ZONE_CLOSE, ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_PLAY_PAUSE, ZONE_SEEK_BAR, ZONE_VOLUME, ZONE_VOL_SLIDER};
 
-/// Render a frame and return the seek bar rect (for drag handling in wayland.rs).
+const GRADIENT_STRIP_H: f32 = 4.0;
+
+pub struct ControlRects {
+    pub seek: Rect,
+    pub vol_slider: Rect,
+}
+
+/// Render a frame and return control rects (for drag handling in wayland.rs).
 pub fn render_frame(
     gpu: &mut Gpu,
     app: &App,
     input: &mut InteractionContext,
     palette: &FoxPalette,
     scale: f32,
-) -> Rect {
+    maximized: bool,
+) -> ControlRects {
     let Gpu { ctx, painter, text, tex_pass } = gpu;
     let wf = ctx.width() as f32;
     let hf = ctx.height() as f32;
@@ -20,11 +28,13 @@ pub fn render_frame(
     painter.clear();
     input.begin_frame();
 
+    let corner_r = if maximized { 0.0 } else { 10.0 * s };
     let title_h = 36.0 * s;
-    let controls_h = 64.0 * s;
+    let strip_h = GRADIENT_STRIP_H * s;
+    let controls_h = 48.0 * s;
 
-    // ── Background ──────────────────────────────────────────────────
-    painter.rect_filled(Rect::new(0.0, 0.0, wf, hf), 10.0 * s, palette.bg);
+    // ── Background with rounded corners ─────────────────────────────
+    painter.rect_filled(Rect::new(0.0, 0.0, wf, hf), corner_r, palette.bg);
 
     // ── Title bar ───────────────────────────────────────────────────
     let title_rect = Rect::new(0.0, 0.0, wf, title_h);
@@ -39,8 +49,14 @@ pub fn render_frame(
         .minimize_hovered(min_state.is_hovered())
         .draw(painter, palette);
 
+    // ── Gradient strip ──────────────────────────────────────────────
+    let mut strip = GradientStrip::new(0.0, title_h, wf);
+    strip.height = strip_h;
+    strip.draw(painter);
+
     // ── Canvas area ─────────────────────────────────────────────────
-    let canvas = Rect::new(0.0, title_h, wf, hf - title_h - controls_h);
+    let canvas_y = title_h + strip_h;
+    let canvas = Rect::new(0.0, canvas_y, wf, hf - canvas_y - controls_h);
     painter.rect_filled(canvas, 0.0, Color::from_rgb8(18, 18, 18));
     let _canvas_state = input.add_zone(ZONE_CANVAS, canvas);
 
@@ -64,6 +80,8 @@ pub fn render_frame(
     let ctrl_rect = Rect::new(0.0, hf - controls_h, wf, controls_h);
     painter.rect_filled(ctrl_rect, 0.0, palette.surface);
 
+    let font = FontSize::Body;
+
     // Play/pause button
     let pp_size = 40.0 * s;
     let pp_x = 12.0 * s;
@@ -79,14 +97,13 @@ pub fn render_frame(
     painter.rect_filled(pp_rect, 8.0 * s, pp_bg);
 
     let pp_icon = if app.is_playing() { "\u{23F8}" } else { "\u{25B6}" };
-    let icon_size = FontSize::Body;
-    let icon_w = text.measure_width(pp_icon, icon_size.px());
+    let icon_w = text.measure_width(pp_icon, font.px());
     TextLabel::new(
         pp_icon,
         pp_rect.x + (pp_size - icon_w) * 0.5,
-        pp_rect.y + (pp_size - icon_size.px()) * 0.5,
+        pp_rect.y + (pp_size - font.px()) * 0.5,
     )
-    .size(icon_size)
+    .size(font)
     .color(palette.text)
     .draw(text, ctx.width(), ctx.height());
 
@@ -96,26 +113,32 @@ pub fn render_frame(
         App::format_time(app.position_ns),
         App::format_time(app.duration_ns),
     );
-    let time_x = pp_x + pp_size + 12.0 * s;
-    let time_y = ctrl_rect.y + (controls_h - FontSize::Small.px()) * 0.5;
-    let time_w = text.measure_width(&time_str, FontSize::Small.px());
+    let time_x = pp_x + pp_size + 10.0 * s;
+    let time_y = ctrl_rect.y + (controls_h - font.px()) * 0.5;
+    let time_w = text.measure_width(&time_str, font.px());
     TextLabel::new(&time_str, time_x, time_y)
-        .size(FontSize::Small)
+        .size(font)
         .color(palette.text)
         .draw(text, ctx.width(), ctx.height());
 
-    // Volume label (right side)
+    // Volume button (right side) — clickable to toggle popup
     let vol_str = format!("Vol {}%", (app.volume * 100.0).round() as u32);
-    let vol_w = text.measure_width(&vol_str, FontSize::Small.px());
-    let vol_x = wf - vol_w - 12.0 * s;
+    let vol_w = text.measure_width(&vol_str, font.px());
+    let vol_x = wf - vol_w - 14.0 * s;
+    let vol_btn_rect = Rect::new(vol_x - 6.0 * s, ctrl_rect.y, vol_w + 12.0 * s, controls_h);
+    let vol_state = input.add_zone(ZONE_VOLUME, vol_btn_rect);
+
+    if vol_state.is_hovered() {
+        painter.rect_filled(vol_btn_rect, 4.0 * s, palette.surface_2.with_alpha(0.3));
+    }
     TextLabel::new(&vol_str, vol_x, time_y)
-        .size(FontSize::Small)
+        .size(font)
         .color(palette.text)
         .draw(text, ctx.width(), ctx.height());
 
     // Seek bar (between time and volume)
-    let seek_x = time_x + time_w + 16.0 * s;
-    let seek_w = vol_x - seek_x - 16.0 * s;
+    let seek_x = time_x + time_w + 12.0 * s;
+    let seek_w = vol_btn_rect.x - seek_x - 8.0 * s;
     let seek_h = 40.0 * s;
     let seek_y = ctrl_rect.y + (controls_h - seek_h) * 0.5;
     let seek_rect = Rect::new(seek_x, seek_y, seek_w.max(0.0), seek_h);
@@ -128,11 +151,65 @@ pub fn render_frame(
         .active(seek_state.is_active())
         .draw(painter, palette);
 
+    // ── Volume slider popup ─────────────────────────────────────────
+    let mut vol_slider_rect = Rect::new(0.0, 0.0, 0.0, 0.0);
+    if app.vol_showing {
+        let popup_w = 36.0 * s;
+        let popup_h = 160.0 * s;
+        let popup_x = vol_btn_rect.x + (vol_btn_rect.w - popup_w) * 0.5;
+        let popup_y = ctrl_rect.y - popup_h - 8.0 * s;
+        let popup_rect = Rect::new(popup_x, popup_y, popup_w, popup_h);
+
+        // Background
+        painter.rect_filled(popup_rect, 8.0 * s, palette.surface);
+        painter.rect_filled(
+            Rect::new(popup_rect.x + 1.0, popup_rect.y + 1.0, popup_rect.w - 2.0, popup_rect.h - 2.0),
+            8.0 * s,
+            palette.surface_2.with_alpha(0.3),
+        );
+
+        // Slider track area (vertical)
+        let track_margin = 10.0 * s;
+        let track_x = popup_x + track_margin;
+        let track_y = popup_y + track_margin;
+        let track_w = popup_w - track_margin * 2.0;
+        let track_h = popup_h - track_margin * 2.0;
+        vol_slider_rect = Rect::new(track_x, track_y, track_w, track_h);
+
+        let vs_state = input.add_zone(ZONE_VOL_SLIDER, vol_slider_rect);
+
+        // Track background
+        painter.rect_filled(
+            Rect::new(track_x + track_w * 0.5 - 2.0 * s, track_y, 4.0 * s, track_h),
+            2.0 * s,
+            palette.surface_2.with_alpha(0.5),
+        );
+
+        // Fill (from bottom up)
+        let fill_h = track_h * app.volume as f32;
+        let fill_y = track_y + track_h - fill_h;
+        painter.rect_filled(
+            Rect::new(track_x + track_w * 0.5 - 2.0 * s, fill_y, 4.0 * s, fill_h),
+            2.0 * s,
+            palette.accent,
+        );
+
+        // Knob
+        let knob_r = 7.0 * s;
+        let knob_y = fill_y;
+        let knob_color = if vs_state.is_hovered() || app.vol_dragging {
+            palette.accent.lighten(0.2)
+        } else {
+            palette.accent
+        };
+        painter.circle_filled(track_x + track_w * 0.5, knob_y, knob_r, knob_color);
+    }
+
     // ── Multi-pass render ───────────────────────────────────────────
     let frame = ctx.begin_frame("Media Player");
     match frame {
         Ok(mut frame) => {
-            painter.render_into(ctx, &mut frame, palette.bg.with_alpha(0.0));
+            painter.render_into(ctx, &mut frame, Color::rgba(0.0, 0.0, 0.0, 0.0));
             let view = frame.view().clone();
             if !tex_draws.is_empty() {
                 tex_pass.render_pass(ctx, frame.encoder_mut(), &view, &tex_draws, None);
@@ -143,7 +220,7 @@ pub fn render_frame(
         Err(e) => eprintln!("[media-player] render error: {e}"),
     }
 
-    seek_rect
+    ControlRects { seek: seek_rect, vol_slider: vol_slider_rect }
 }
 
 // ── Visualizer: Mirrored Radial Bars ────────────────────────────────────────

@@ -14,6 +14,8 @@ pub const ZONE_MINIMIZE: u32 = 3;
 pub const ZONE_CANVAS: u32 = 10;
 pub const ZONE_SEEK_BAR: u32 = 20;
 pub const ZONE_PLAY_PAUSE: u32 = 21;
+pub const ZONE_VOLUME: u32 = 22;
+pub const ZONE_VOL_SLIDER: u32 = 23;
 
 // ── Shared types ────────────────────────────────────────────────────────────
 

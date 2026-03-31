@@ -1,55 +1,82 @@
-//! System monitor tab — CPU, RAM, disk, network metrics + process list.
+//! System monitor — CPU, RAM, disk, network metrics + process list.
+//! Drawing code lives in sysmon_draw.rs.
 
 use std::path::PathBuf;
 use std::time::Instant;
 
-use lntrn_render::{Color, Painter, Rect, TextRenderer};
-use lntrn_ui::gpu::input::InteractionState;
-use lntrn_ui::gpu::scroll::{ScrollArea, Scrollbar};
-use lntrn_ui::gpu::{FoxPalette, InteractionContext};
+use lntrn_render::Rect;
+use lntrn_ui::gpu::InteractionContext;
 
-const POLL_FAST_MS: u64 = 2_000;
+pub(crate) const POLL_FAST_MS: u64 = 2_000;
 const POLL_DISK_MS: u64 = 10_000;
-const MAX_PROCS: usize = 30;
-
-const SECTION_FONT: f32 = 20.0;
-const VALUE_FONT: f32 = 18.0;
-const CORE_FONT: f32 = 16.0;
-const PROC_FONT: f32 = 18.0;
-const BAR_H: f32 = 14.0;
-const CORE_BAR_H: f32 = 10.0;
-const SECTION_GAP: f32 = 18.0;
-const LINE_GAP: f32 = 6.0;
-const BAR_RADIUS: f32 = 5.0;
-const PROC_LINE_H: f32 = 26.0;
-const GAUGE_R: f32 = 60.0;
-const GAUGE_THICK: f32 = 10.0;
+pub(crate) const MAX_PROCS: usize = 30;
 
 pub(crate) const ZONE_CORES_TOGGLE: u32 = 0xBF_F000;
+pub(crate) const ZONE_PROC_BASE: u32 = 0xBF_E000;
+pub(crate) const ZONE_PINNED_BASE: u32 = 0xBF_D000;
+pub(crate) const ZONE_KILL_BASE: u32 = 0xBF_C000;
+pub(crate) const ZONE_SORT_NAME: u32 = 0xBF_B000;
+pub(crate) const ZONE_SORT_CPU: u32 = 0xBF_B001;
+pub(crate) const ZONE_SORT_MEM: u32 = 0xBF_B002;
+pub(crate) const ZONE_SORT_PID: u32 = 0xBF_B003;
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum SortColumn { Cpu, Mem, Name, Pid }
+
+pub(crate) const SPARKLINE_LEN: usize = 15;
+
+/// A process pinned to the bar for live monitoring.
+pub struct PinnedProcess {
+    pub name: String,
+    pub pid: u32,
+    pub cpu_pct: f32,
+    pub mem_kb: u64,
+    /// Ring buffer of CPU% samples (~30s at 2s poll).
+    pub cpu_history: [f32; SPARKLINE_LEN],
+    pub history_idx: usize,
+    /// Animation phase for high-CPU warning pulse (0.0–1.0).
+    pub warning_phase: f32,
+}
 
 pub struct SystemMonitor {
-    prev_total: u64, prev_idle: u64, cpu_pct: f32,
-    per_core: Vec<f32>, prev_cores: Vec<(u64, u64)>,
-    mem_total_kb: u64, mem_avail_kb: u64, swap_total_kb: u64, swap_used_kb: u64,
-    disks: Vec<DiskInfo>,
-    prev_rx: u64, prev_tx: u64, rx_rate: f64, tx_rate: f64,
-    cpu_temp: u32,
+    pub(crate) prev_total: u64, pub(crate) prev_idle: u64, pub(crate) cpu_pct: f32,
+    pub(crate) per_core: Vec<f32>, pub(crate) prev_cores: Vec<(u64, u64)>,
+    pub(crate) cpu_freqs: Vec<u32>,
+    pub(crate) mem_total_kb: u64, pub(crate) mem_avail_kb: u64,
+    pub(crate) swap_total_kb: u64, pub(crate) swap_used_kb: u64,
+    pub(crate) disks: Vec<DiskInfo>,
+    pub(crate) prev_rx: u64, pub(crate) prev_tx: u64,
+    pub(crate) rx_rate: f64, pub(crate) tx_rate: f64,
+    pub(crate) cpu_temp: u32,
     thermal_zone: Option<PathBuf>,
-    procs: Vec<ProcInfo>,
+    pub(crate) procs: Vec<ProcInfo>,
     prev_proc_times: std::collections::HashMap<u32, (u64, u64)>,
     last_fast: Instant, last_disk: Instant, first_tick: bool,
     pub scroll_offset: f32,
     pub cores_expanded: bool,
+    pub pinned: Vec<PinnedProcess>,
+    pub right_clicked_proc: Option<(String, u32)>,
+    pub sort_column: SortColumn,
+    pub sort_ascending: bool,
+    pub proc_filter: String,
+    pub filter_focused: bool,
+    pub filter_cursor: usize,
 }
 
-struct DiskInfo { name: String, mount: String, total: u64, used: u64 }
-struct ProcInfo { pid: u32, name: String, cpu_pct: f32, mem_kb: u64 }
+pub(crate) struct DiskInfo {
+    pub(crate) name: String, pub(crate) mount: String,
+    pub(crate) total: u64, pub(crate) used: u64,
+}
+pub(crate) struct ProcInfo {
+    pub(crate) pid: u32, pub(crate) name: String,
+    pub(crate) cpu_pct: f32, pub(crate) mem_kb: u64,
+}
 
 impl SystemMonitor {
     pub fn new() -> Self {
         Self {
             prev_total: 0, prev_idle: 0, cpu_pct: 0.0,
-            per_core: Vec::new(), prev_cores: Vec::new(),
+            per_core: Vec::new(), prev_cores: Vec::new(), cpu_freqs: Vec::new(),
             mem_total_kb: 0, mem_avail_kb: 0, swap_total_kb: 0, swap_used_kb: 0,
             disks: Vec::new(),
             prev_rx: 0, prev_tx: 0, rx_rate: 0.0, tx_rate: 0.0,
@@ -58,6 +85,9 @@ impl SystemMonitor {
             last_fast: Instant::now() - std::time::Duration::from_secs(10),
             last_disk: Instant::now() - std::time::Duration::from_secs(60),
             first_tick: true, scroll_offset: 0.0, cores_expanded: false,
+            pinned: Vec::new(), right_clicked_proc: None,
+            sort_column: SortColumn::Cpu, sort_ascending: false,
+            proc_filter: String::new(), filter_focused: false, filter_cursor: 0,
         }
     }
 
@@ -76,6 +106,7 @@ impl SystemMonitor {
             self.last_disk = now;
         }
         self.first_tick = false;
+        self.update_pinned();
     }
 
     fn poll_cpu(&mut self) {
@@ -105,6 +136,16 @@ impl SystemMonitor {
                     }
                     self.prev_cores[idx] = (total, idle);
                 }
+            }
+        }
+        // Read per-core frequencies
+        while self.cpu_freqs.len() < self.per_core.len() {
+            self.cpu_freqs.push(0);
+        }
+        for i in 0..self.per_core.len() {
+            let path = format!("/sys/devices/system/cpu/cpu{i}/cpufreq/scaling_cur_freq");
+            if let Ok(s) = std::fs::read_to_string(&path) {
+                self.cpu_freqs[i] = s.trim().parse::<u32>().unwrap_or(0);
             }
         }
     }
@@ -195,268 +236,144 @@ impl SystemMonitor {
             raw.push(ProcInfo { pid, name: comm, cpu_pct, mem_kb });
         }
         self.prev_proc_times = new_times;
+        // Always collect top 30 by CPU first
         raw.sort_by(|a, b| b.cpu_pct.partial_cmp(&a.cpu_pct).unwrap_or(std::cmp::Ordering::Equal));
         raw.truncate(MAX_PROCS);
+        // Then re-sort for display
+        match self.sort_column {
+            SortColumn::Cpu => raw.sort_by(|a, b| a.cpu_pct.partial_cmp(&b.cpu_pct).unwrap_or(std::cmp::Ordering::Equal)),
+            SortColumn::Mem => raw.sort_by(|a, b| a.mem_kb.cmp(&b.mem_kb)),
+            SortColumn::Name => raw.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase())),
+            SortColumn::Pid => raw.sort_by_key(|p| p.pid),
+        }
+        if !self.sort_ascending { raw.reverse(); }
         self.procs = raw;
     }
 
-    // ── Drawing ──────────────────────────────────────────────────────
+    // ── Right-click on process row ──────────────────────────────────
 
-    fn content_height(&self, scale: f32) -> f32 {
-        let s = scale;
-        let sg = SECTION_GAP * s; let lg = LINE_GAP * s;
-        let sf = SECTION_FONT * s; let vf = VALUE_FONT * s; let cf = CORE_FONT * s;
-        let bh = BAR_H * s; let cbh = CORE_BAR_H * s;
-        let mut h = 16.0 * s;
-        // Gauge row (CPU+Temp + RAM+Swap circles) + label + detail + padding
-        h += (GAUGE_R * 2.0) * s + 10.0 * s + sf + cf + 24.0 * s;
-        // Cores toggle (uses section font + padding)
-        h += sf + 16.0 * s;
-        if self.cores_expanded {
-            h += ((self.per_core.len() + 1) / 2) as f32 * (cf + cbh + lg + 2.0 * s);
-        }
-        h += sg;
-        for _ in &self.disks { h += vf + lg + bh + lg; }
-        h += sg;
-        h += sf + lg + cbh + sg; // net
-        h += sf + lg + PROC_LINE_H * s; // proc header + column header
-        h += self.procs.len() as f32 * PROC_LINE_H * s;
-        h + 16.0 * s
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn draw(
-        &mut self, painter: &mut Painter, text: &mut TextRenderer,
-        ix: &mut InteractionContext, palette: &FoxPalette,
-        area: Rect, scale: f32, screen_w: u32, screen_h: u32,
-    ) {
-        let pad = 16.0 * scale;
-        let sf = SECTION_FONT * scale; let vf = VALUE_FONT * scale;
-        let cf = CORE_FONT * scale; let pf = PROC_FONT * scale;
-        let bh = BAR_H * scale; let cbh = CORE_BAR_H * scale;
-        let sg = SECTION_GAP * scale; let lg = LINE_GAP * scale;
-        let br = BAR_RADIUS * scale; let plh = PROC_LINE_H * scale;
-
-        let content_h = self.content_height(scale);
-        let gr = Rect::new(area.x + pad, area.y + pad, area.w - pad * 2.0, area.h - pad * 2.0);
-        let scroll = ScrollArea::new(gr, content_h, &mut self.scroll_offset);
-        scroll.begin(painter, text);
-
-        let x = gr.x; let w = gr.w;
-        let mut y = scroll.content_y();
-        let clip = [gr.x, gr.y, gr.w, gr.h];
-
-        let accent = palette.accent;
-        let ram_c = Color::from_rgb8(59, 130, 246);
-        let swap_c = Color::from_rgb8(168, 85, 247);
-        let disk_c = Color::from_rgb8(34, 197, 94);
-        let net_c = Color::from_rgb8(236, 72, 153);
-        let proc_c = Color::from_rgb8(239, 68, 68);
-        let track = palette.muted.with_alpha(0.15);
-
-        // ── Dual-ring gauges: CPU+Temp (left), RAM+Swap (right) ──
-        let gauge_r = GAUGE_R * scale;
-        let thick = GAUGE_THICK * scale;
-        let gauge_cy = y + gauge_r + 4.0 * scale;
-        let quarter_w = w * 0.25;
-
-        // CPU temp color
-        let temp_color = match self.cpu_temp {
-            0..=59 => Color::from_rgb8(34, 197, 94),   // green
-            60..=79 => Color::from_rgb8(234, 179, 8),   // yellow
-            _ => Color::from_rgb8(239, 68, 68),          // red
-        };
-        let temp_pct = (self.cpu_temp as f32 / 100.0).clamp(0.0, 1.0);
-        let temp_sub = if self.cpu_temp > 0 { format!("{}C", self.cpu_temp) } else { String::new() };
-
-        // CPU (outer) + Temp (inner)
-        let cpu_cx = x + quarter_w;
-        self.draw_dual_gauge(painter, text, cpu_cx, gauge_cy, gauge_r, thick,
-            self.cpu_pct / 100.0, accent,
-            temp_pct, temp_color,
-            track, &format!("{:.0}%", self.cpu_pct), accent,
-            "CPU", &temp_sub, scale, clip);
-
-        // RAM (outer) + Swap (inner)
-        let mem_used = self.mem_total_kb.saturating_sub(self.mem_avail_kb);
-        let mem_pct = if self.mem_total_kb > 0 { mem_used as f32 / self.mem_total_kb as f32 } else { 0.0 };
-        let swap_pct = if self.swap_total_kb > 0 { self.swap_used_kb as f32 / self.swap_total_kb as f32 } else { 0.0 };
-        let ram_cx = x + w - quarter_w;
-        let ram_detail = format!("{} / {}", format_bytes_kb(mem_used), format_bytes_kb(self.mem_total_kb));
-
-        self.draw_dual_gauge(painter, text, ram_cx, gauge_cy, gauge_r, thick,
-            mem_pct, ram_c,
-            swap_pct, swap_c,
-            track, &format!("{:.0}%", mem_pct * 100.0), ram_c,
-            "RAM", "Swap", scale, clip);
-
-        // RAM detail below "RAM" label
-        let label_bottom = gauge_cy + gauge_r + 10.0 * scale + sf;
-        let rw = text.measure_width(&ram_detail, cf);
-        text.queue_clipped(&ram_detail, cf, ram_cx - rw * 0.5, label_bottom + 4.0 * scale, palette.text_secondary, w, clip);
-
-        // Advance past gauges + label + detail + padding
-        y += gauge_r * 2.0 + 10.0 * scale + sf + cf + 24.0 * scale;
-
-        // Cores dropdown toggle
-        let arrow = if self.cores_expanded { "v" } else { ">" };
-        let cores_label = format!("{arrow}  Cores ({})", self.per_core.len());
-        let toggle_h = sf + pad;
-        let toggle_rect = Rect::new(x, y, w, toggle_h);
-        let ts = ix.add_zone(ZONE_CORES_TOGGLE, toggle_rect);
-        if ts.is_hovered() {
-            painter.rect_filled(toggle_rect, 6.0 * scale, palette.surface_2);
-        }
-        let toggle_color = if ts.is_hovered() { palette.text } else { palette.text_secondary };
-        text.queue_clipped(&cores_label, sf, x + 8.0 * scale, y + (toggle_h - sf) * 0.5, toggle_color, w, clip);
-        y += toggle_h;
-
-        if self.cores_expanded {
-            let cw = (w - pad) * 0.5;
-            let cores = self.per_core.len();
-            for row in 0..(cores + 1) / 2 {
-                for col in 0..2 {
-                    let idx = row * 2 + col;
-                    if idx >= cores { break; }
-                    let cx = x + col as f32 * (cw + pad);
-                    text.queue_clipped(&format!("Core {} {:.0}%", idx, self.per_core[idx]), cf, cx, y, palette.text_secondary, cw, clip);
-                    self.draw_bar(painter, cx, y + cf + 2.0 * scale, cw, cbh, br, self.per_core[idx] / 100.0, accent.with_alpha(0.7), track);
+    pub fn on_right_click(&mut self, ix: &InteractionContext, phys_x: f32, phys_y: f32) -> bool {
+        if let Some(zone) = ix.zone_at(phys_x, phys_y) {
+            if zone >= ZONE_PROC_BASE && zone < ZONE_PROC_BASE + MAX_PROCS as u32 {
+                let idx = (zone - ZONE_PROC_BASE) as usize;
+                if let Some(proc) = self.procs.get(idx) {
+                    self.right_clicked_proc = Some((proc.name.clone(), proc.pid));
+                    return true;
                 }
-                y += cf + cbh + lg + 2.0 * scale;
             }
         }
-        y += sg;
+        false
+    }
 
-        // Disks
-        for disk in &self.disks {
-            let pct = if disk.total > 0 { disk.used as f32 / disk.total as f32 } else { 0.0 };
-            text.queue_clipped(&format!("{}  {} / {}", disk.name, format_bytes(disk.used), format_bytes(disk.total)),
-                vf, x, y, palette.text, w, clip);
-            y += vf + lg;
-            self.draw_bar(painter, x, y, w, bh, br, pct, disk_c, track);
-            y += bh + lg;
+    /// Check if a left-click hit a kill button on a process row.
+    pub fn on_kill_click(&mut self, ix: &InteractionContext, phys_x: f32, phys_y: f32) -> bool {
+        if let Some(zone) = ix.zone_at(phys_x, phys_y) {
+            if zone >= ZONE_KILL_BASE && zone < ZONE_KILL_BASE + MAX_PROCS as u32 {
+                let idx = (zone - ZONE_KILL_BASE) as usize;
+                if let Some(proc) = self.procs.get(idx) {
+                    kill_pid(proc.pid);
+                    return true;
+                }
+            }
         }
-        y += sg;
+        false
+    }
 
-        // Network
-        text.queue_clipped(&format!("Net  v {}  ^ {}", format_rate(self.rx_rate), format_rate(self.tx_rate)),
-            sf, x, y, palette.text, w, clip);
-        y += sf + lg;
-        let max_rate = 100.0 * 1024.0 * 1024.0;
-        let hw = (w - pad) * 0.5;
-        self.draw_bar(painter, x, y, hw, cbh, br, (self.rx_rate as f32 / max_rate).min(1.0), net_c, track);
-        self.draw_bar(painter, x + hw + pad, y, hw, cbh, br, (self.tx_rate as f32 / max_rate).min(1.0), net_c.with_alpha(0.7), track);
-        y += cbh + sg;
-
-        // Processes
-        text.queue_clipped("Processes", sf, x, y, palette.text, w, clip);
-        y += sf + lg;
-
-        let name_w = w * 0.45; let cpu_x = x + name_w; let cpu_w = w * 0.2;
-        let mem_x = cpu_x + cpu_w; let mem_w = w * 0.2;
-        let pid_x = mem_x + mem_w; let pid_w = w - name_w - cpu_w - mem_w;
-
-        text.queue_clipped("Name", pf, x, y, palette.text_secondary, name_w, clip);
-        text.queue_clipped("CPU%", pf, cpu_x, y, palette.text_secondary, cpu_w, clip);
-        text.queue_clipped("Mem", pf, mem_x, y, palette.text_secondary, mem_w, clip);
-        text.queue_clipped("PID", pf, pid_x, y, palette.text_secondary, pid_w, clip);
-        y += plh;
-
-        for p in &self.procs {
-            let cc = if p.cpu_pct > 50.0 { proc_c } else if p.cpu_pct > 10.0 { palette.warning } else { palette.text_secondary };
-            let nm = if p.name.len() > 22 { format!("{}...", &p.name[..20]) } else { p.name.clone() };
-            text.queue_clipped(&nm, pf, x, y, palette.text, name_w, clip);
-            text.queue_clipped(&format!("{:.1}", p.cpu_pct), pf, cpu_x, y, cc, cpu_w, clip);
-            text.queue_clipped(&format_bytes_kb(p.mem_kb), pf, mem_x, y, palette.text_secondary, mem_w, clip);
-            text.queue_clipped(&p.pid.to_string(), pf, pid_x, y, palette.muted, pid_w, clip);
-            y += plh;
+    /// Handle click on a sort column header.
+    pub fn on_sort_click(&mut self, ix: &InteractionContext, phys_x: f32, phys_y: f32) -> bool {
+        if let Some(zone) = ix.zone_at(phys_x, phys_y) {
+            let col = match zone {
+                ZONE_SORT_NAME => Some(SortColumn::Name),
+                ZONE_SORT_CPU => Some(SortColumn::Cpu),
+                ZONE_SORT_MEM => Some(SortColumn::Mem),
+                ZONE_SORT_PID => Some(SortColumn::Pid),
+                _ => None,
+            };
+            if let Some(col) = col {
+                if self.sort_column == col {
+                    self.sort_ascending = !self.sort_ascending;
+                } else {
+                    self.sort_column = col;
+                    // Default descending for CPU/Mem, ascending for Name/Pid
+                    self.sort_ascending = matches!(col, SortColumn::Name | SortColumn::Pid);
+                }
+                return true;
+            }
         }
-        let _ = y;
+        false
+    }
 
-        scroll.end(painter, text);
-        if scroll.is_scrollable() {
-            let sb = Scrollbar::new(&gr, content_h, self.scroll_offset);
-            sb.draw(painter, InteractionState::Idle, palette);
+    // ── Pinning ─────────────────────────────────────────────────────
+
+    pub fn pin_right_clicked(&mut self) {
+        if let Some((name, pid)) = self.right_clicked_proc.take() {
+            if self.pinned.iter().any(|p| p.name == name) { return; }
+            self.pinned.push(PinnedProcess {
+                name, pid, cpu_pct: 0.0, mem_kb: 0,
+                cpu_history: [0.0; SPARKLINE_LEN], history_idx: 0,
+                warning_phase: 0.0,
+            });
         }
     }
 
-    /// Draw a dual-ring gauge: outer ring + inner ring with labels.
-    #[allow(clippy::too_many_arguments)]
-    fn draw_dual_gauge(
-        &self, painter: &mut Painter, text: &mut TextRenderer,
-        cx: f32, cy: f32, r: f32, thick: f32,
-        outer_pct: f32, outer_color: Color,
-        inner_pct: f32, inner_color: Color,
-        track_color: Color,
-        center_text: &str, center_color: Color,
-        label: &str, sub_label: &str,
-        scale: f32, clip: [f32; 4],
-    ) {
-        let pi = std::f32::consts::PI;
-        let gap = 4.0 * scale;
-        let inner_r = r - thick - gap;
-        let inner_thick = thick * 0.7;
-        let start = -pi * 0.5;
-        let full = pi * 2.0 - 0.001; // slight less than full to avoid wrap glitch
-
-        // Outer ring: track + fill
-        painter.arc(cx, cy, r, start, full, thick, r - thick, track_color);
-        if outer_pct > 0.001 {
-            painter.arc(cx, cy, r, start, full * outer_pct.clamp(0.0, 1.0), thick, r - thick, outer_color);
-        }
-
-        // Inner ring: track + fill
-        painter.arc(cx, cy, inner_r, start, full, inner_thick, inner_r - inner_thick, track_color);
-        if inner_pct > 0.001 {
-            painter.arc(cx, cy, inner_r, start, full * inner_pct.clamp(0.0, 1.0), inner_thick, inner_r - inner_thick, inner_color);
-        }
-
-        // Center text (percentage) — nudge up a bit more
-        let vf = 24.0 * scale;
-        let vw = text.measure_width(center_text, vf);
-        text.queue_clipped(center_text, vf, cx - vw * 0.5, cy - vf * 0.8, center_color, vw + 4.0, clip);
-
-        // Sub text inside circle (below percentage, with padding)
-        if !sub_label.is_empty() {
-            let sf = CORE_FONT * scale;
-            let sw = text.measure_width(sub_label, sf);
-            text.queue_clipped(sub_label, sf, cx - sw * 0.5, cy + vf * 0.1, inner_color.with_alpha(0.7), sw + 4.0, clip);
-        }
-
-        // Label below circle (more padding below ring)
-        let lf = SECTION_FONT * scale;
-        let lw = text.measure_width(label, lf);
-        text.queue_clipped(label, lf, cx - lw * 0.5, cy + r + 10.0 * scale, outer_color, lw + 4.0, clip);
+    pub fn unpin(&mut self, name: &str) {
+        self.pinned.retain(|p| p.name != name);
     }
 
-    fn draw_bar(&self, painter: &mut Painter, x: f32, y: f32, w: f32, h: f32, r: f32, pct: f32, fill: Color, track: Color) {
-        painter.rect_filled(Rect::new(x, y, w, h), r, track);
-        if pct > 0.001 {
-            painter.rect_filled(Rect::new(x, y, (w * pct.clamp(0.0, 1.0)).max(h), h), r, fill);
+    /// Kill the right-clicked process and unpin if pinned.
+    pub fn kill_right_clicked(&mut self) {
+        if let Some((ref name, pid)) = self.right_clicked_proc {
+            kill_pid(pid);
+            let name = name.clone();
+            self.unpin(&name);
+        }
+        self.right_clicked_proc = None;
+    }
+
+    fn update_pinned(&mut self) {
+        for pinned in &mut self.pinned {
+            if let Some(proc) = self.procs.iter().find(|p| p.name == pinned.name) {
+                pinned.cpu_pct = proc.cpu_pct;
+                pinned.mem_kb = proc.mem_kb;
+                pinned.pid = proc.pid;
+            } else {
+                pinned.cpu_pct = 0.0;
+                pinned.mem_kb = 0;
+            }
+            // Record sparkline sample
+            pinned.cpu_history[pinned.history_idx] = pinned.cpu_pct;
+            pinned.history_idx = (pinned.history_idx + 1) % SPARKLINE_LEN;
+            // Warning pulse: ramp up when hot, decay when cool
+            if pinned.cpu_pct > 80.0 {
+                pinned.warning_phase = (pinned.warning_phase + 0.15).min(1.0);
+            } else {
+                pinned.warning_phase *= 0.85;
+                if pinned.warning_phase < 0.01 { pinned.warning_phase = 0.0; }
+            }
         }
     }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-fn parse_cpu_line(line: &str) -> (u64, u64) {
+pub(crate) fn parse_cpu_line(line: &str) -> (u64, u64) {
     let n: Vec<u64> = line.split_whitespace().skip(1).filter_map(|s| s.parse().ok()).collect();
     (n.iter().sum(), n.get(3).copied().unwrap_or(0) + n.get(4).copied().unwrap_or(0))
 }
 
-fn parse_kb(s: &str) -> u64 { s.trim().trim_end_matches("kB").trim().parse().unwrap_or(0) }
+pub(crate) fn parse_kb(s: &str) -> u64 { s.trim().trim_end_matches("kB").trim().parse().unwrap_or(0) }
 
-fn format_bytes_kb(kb: u64) -> String {
+pub(crate) fn format_bytes_kb(kb: u64) -> String {
     let gb = kb as f64 / (1024.0 * 1024.0);
     if gb >= 1.0 { format!("{:.1} GB", gb) } else { format!("{} MB", kb / 1024) }
 }
 
-fn format_bytes(bytes: u64) -> String {
+pub(crate) fn format_bytes(bytes: u64) -> String {
     let gb = bytes as f64 / (1024.0 * 1024.0 * 1024.0);
     if gb >= 1.0 { format!("{:.0} GB", gb) } else { format!("{:.0} MB", bytes as f64 / (1024.0 * 1024.0)) }
 }
 
-fn format_rate(bps: f64) -> String {
+pub(crate) fn format_rate(bps: f64) -> String {
     if bps >= 1024.0 * 1024.0 { format!("{:.1} MB/s", bps / (1024.0 * 1024.0)) }
     else if bps >= 1024.0 { format!("{:.0} KB/s", bps / 1024.0) }
     else { format!("{:.0} B/s", bps) }
@@ -474,9 +391,13 @@ fn find_thermal_zone() -> Option<PathBuf> {
     None
 }
 
-struct StatVfs { block_size: u64, blocks: u64, blocks_free: u64 }
+fn kill_pid(pid: u32) {
+    unsafe { libc::kill(pid as i32, libc::SIGTERM); }
+}
 
-fn statvfs(path: &str) -> Option<StatVfs> {
+pub(crate) struct StatVfs { pub(crate) block_size: u64, pub(crate) blocks: u64, pub(crate) blocks_free: u64 }
+
+pub(crate) fn statvfs(path: &str) -> Option<StatVfs> {
     use std::ffi::CString; use std::mem::MaybeUninit;
     extern "C" { fn statvfs(path: *const i8, buf: *mut LibcStatvfs) -> i32; }
     #[repr(C)]

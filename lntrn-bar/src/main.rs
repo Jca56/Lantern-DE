@@ -1,4 +1,5 @@
 mod appmenu;
+mod bar_settings;
 mod apptray;
 mod audio;
 mod battery;

@@ -4,6 +4,7 @@
 mod draw;
 pub(crate) mod notes;
 pub(crate) mod sysmon;
+mod sysmon_draw;
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -138,6 +139,7 @@ impl AppMenu {
     pub fn close(&mut self) {
         self.open = false;
         self.ctx_open = false;
+        self.sysmon.filter_focused = false;
         self.notes.save_all();
     }
 
@@ -247,6 +249,35 @@ impl AppMenu {
         if self.active_tab == MenuTab::Notes && self.notes.wants_keyboard() {
             return self.notes.on_key(key, shift);
         }
+        // Sysmon filter gets keyboard when on SystemMonitor tab
+        if self.active_tab == MenuTab::SystemMonitor && self.sysmon.filter_focused {
+            match key {
+                1 => { // Esc — unfocus filter or close menu
+                    if !self.sysmon.proc_filter.is_empty() {
+                        self.sysmon.proc_filter.clear();
+                        self.sysmon.filter_cursor = 0;
+                    } else {
+                        self.close();
+                    }
+                    return true;
+                }
+                14 => { // Backspace
+                    if self.sysmon.filter_cursor > 0 {
+                        self.sysmon.filter_cursor -= 1;
+                        self.sysmon.proc_filter.remove(self.sysmon.filter_cursor);
+                    }
+                    return true;
+                }
+                _ => {
+                    if let Some(ch) = keycode_to_char(key, shift) {
+                        self.sysmon.proc_filter.insert(self.sysmon.filter_cursor, ch);
+                        self.sysmon.filter_cursor += 1;
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
         match key {
             1 => { self.close(); true } // Esc
             14 => { self.search.pop(); self.scroll_offset = 0.0; true } // Backspace
@@ -301,13 +332,21 @@ impl AppMenu {
                 self.ctx_open = false;
             }
         }
-        // Sysmon cores toggle
+        // Sysmon cores toggle + kill button + sort headers
         if self.active_tab == MenuTab::SystemMonitor {
+            if self.sysmon.on_kill_click(ix, phys_x, phys_y) {
+                return;
+            }
+            if self.sysmon.on_sort_click(ix, phys_x, phys_y) {
+                return;
+            }
             if let Some(zone) = ix.zone_at(phys_x, phys_y) {
                 if zone == sysmon::ZONE_CORES_TOGGLE {
                     self.sysmon.cores_expanded = !self.sysmon.cores_expanded;
                 }
             }
+            // Toggle filter focus
+            self.sysmon.filter_focused = true;
         }
         // Notes click
         if self.active_tab == MenuTab::Notes {
@@ -382,6 +421,11 @@ impl AppMenu {
             });
             let path = custom.or_else(|| {
                 let icon_name = entry.icon.as_deref().unwrap_or(&entry.app_id);
+                // Handle absolute paths directly (e.g. /home/.../.lantern/icons/foo.svg)
+                if icon_name.starts_with('/') {
+                    let p = std::path::PathBuf::from(icon_name);
+                    if p.exists() { return Some(p); }
+                }
                 find_icon(icon_name)
             });
             if let Some(path) = path {

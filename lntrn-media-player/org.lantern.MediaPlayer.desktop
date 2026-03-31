@@ -5,4 +5,4 @@ Exec=/home/alva/.lantern/bin/lntrn-media-player %f
 Icon=/home/alva/.lantern/icons/lntrn-media-player.svg
 Terminal=false
 Categories=AudioVideo;Video;Audio;Player;
-MimeType=video/mp4;video/x-matroska;video/webm;video/avi;video/x-flv;video/quicktime;video/x-msvideo;video/ogg;video/mpeg;audio/mpeg;audio/flac;audio/x-wav;audio/ogg;audio/aac;audio/x-aiff;audio/mp4;audio/x-opus+ogg;audio/opus;
+MimeType=video/mp4;video/x-matroska;video/webm;video/avi;video/x-flv;video/quicktime;video/x-msvideo;video/x-m4v;video/x-ms-wmv;video/ogg;video/mpeg;audio/mpeg;audio/flac;audio/x-wav;audio/ogg;audio/aac;audio/x-aiff;audio/mp4;audio/x-m4a;audio/x-opus+ogg;audio/opus;

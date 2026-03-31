@@ -18,6 +18,7 @@ pub const ZONE_WIFI_ICON: u32 = 0xFF_0000;
 const ZONE_NETWORK_BASE: u32 = 0xFF_0100;
 const ZONE_CONNECT_BTN: u32 = 0xFF_1000;
 const ZONE_PASSWORD: u32 = 0xFF_1001;
+const ZONE_REFRESH_BTN: u32 = 0xFF_1002;
 
 // Key constants (evdev)
 const KEY_ESC: u32 = 1;
@@ -159,6 +160,8 @@ impl Wifi {
                         self.connect_error = None;
                     }
                 }
+            } else if zone == ZONE_REFRESH_BTN {
+                self.request_scan();
             } else if zone == ZONE_CONNECT_BTN {
                 if let Some(ssid) = self.selected_ssid.clone() {
                     let pw = if self.password_buf.is_empty() { None } else { Some(self.password_buf.clone()) };
@@ -322,13 +325,27 @@ impl Wifi {
         let cw = popup_w - pad * 2.0;
         let mut y = popup_y + pad;
 
-        // Title
+        // Title + refresh button
         let title = match &self.state {
             WifiState::Connected { ssid, .. } => format!("Wi-Fi — {ssid}"),
             WifiState::Disconnected => "Wi-Fi — Disconnected".to_string(),
             WifiState::Off => "Wi-Fi — Off".to_string(),
         };
-        text.queue(&title, title_font, cx, y, palette.text, cw, screen_w, screen_h);
+        text.queue(&title, title_font, cx, y, palette.text, cw - title_font - 8.0 * scale, screen_w, screen_h);
+
+        // Refresh button (right side of title row)
+        let refresh_size = title_font;
+        let refresh_x = cx + cw - refresh_size;
+        let refresh_y = y;
+        let refresh_rect = Rect::new(refresh_x - 4.0 * scale, refresh_y - 2.0 * scale,
+            refresh_size + 8.0 * scale, refresh_size + 4.0 * scale);
+        let refresh_state = ix.add_zone(ZONE_REFRESH_BTN, refresh_rect);
+        if refresh_state.is_hovered() {
+            painter.rect_filled(refresh_rect, 6.0 * scale, palette.muted.with_alpha(0.2));
+        }
+        text.queue("⟳", refresh_size, refresh_x, refresh_y, palette.text_secondary,
+            refresh_size, screen_w, screen_h);
+
         y += title_font + section_gap;
 
         // Network list
