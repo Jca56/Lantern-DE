@@ -99,6 +99,10 @@ impl AppMenu {
                 let area = Rect::new(mx, panel_y, w, h);
                 self.notes.draw(painter, text, ix, palette, area, scale, screen_w, screen_h);
             }
+            MenuTab::Clipboard => {
+                let area = Rect::new(mx, panel_y, w, h);
+                self.clipboard.draw(painter, text, ix, palette, area, scale, screen_w, screen_h);
+            }
         }
 
         // Context menu overlay
@@ -259,12 +263,28 @@ impl AppMenu {
                         painter.rect_filled(Rect::new(lx, ly, w, 2.0 * scale), 1.0, color);
                     }
                 }
+                MenuTab::Clipboard => {
+                    // Clipboard icon: board with clip at top
+                    let bw = tab_sz * 0.5;
+                    let bh = tab_sz * 0.55;
+                    let board_x = bx + (tab_sz - bw) * 0.5;
+                    let board_y = by + tab_sz * 0.28;
+                    painter.rect_filled(Rect::new(board_x, board_y, bw, bh), 3.0 * scale, color.with_alpha(0.3));
+                    painter.rect_stroke_sdf(Rect::new(board_x, board_y, bw, bh), 3.0 * scale, 1.5 * scale, color);
+                    // Clip at top center
+                    let clip_w = bw * 0.4;
+                    let clip_h = tab_sz * 0.12;
+                    let clip_x = board_x + (bw - clip_w) * 0.5;
+                    let clip_y = board_y - clip_h * 0.5;
+                    painter.rect_filled(Rect::new(clip_x, clip_y, clip_w, clip_h), 2.0 * scale, color);
+                }
                 _ => {}
             }
 
             if state.is_hovered() {
                 let label = match tab {
                     MenuTab::Notes => "Notes",
+                    MenuTab::Clipboard => "Clipboard",
                     _ => "",
                 };
                 if !label.is_empty() {

@@ -1079,6 +1079,7 @@ pub fn run() -> Result<()> {
         if app_menu.is_open() || !app_menu.sysmon.pinned.is_empty() {
             app_menu.sysmon.tick();
         }
+        app_menu.clipboard.tick();
         temperature.tick();
         {
             let pad = 5.0 * scale_f;

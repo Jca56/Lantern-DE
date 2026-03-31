@@ -147,12 +147,15 @@ impl TextHandler {
         let (wf, hf) = self.window_size();
         let font_size = editor::FONT_SIZE * s;
 
-        let line_idx = self.editor.line_at_y(cy, wf, hf, s);
-        self.editor.cursor_line = line_idx;
+        let (doc_line, row_start, row_end) = self.editor.wrap_row_at_y(cy, wf, hf, s);
+        self.editor.cursor_line = doc_line;
 
         if let Some(gpu) = &mut self.gpu {
-            let col = self.editor.col_at_x(cx, line_idx, wf, hf, s, |byte_off| {
-                render::measure_to_offset(&mut gpu.text, &self.editor, line_idx, byte_off, font_size)
+            let base = render::measure_to_offset(
+                &mut gpu.text, &self.editor, doc_line, row_start, font_size,
+            );
+            let col = self.editor.col_at_x(cx, doc_line, row_start, row_end, wf, hf, s, |byte_off| {
+                render::measure_to_offset(&mut gpu.text, &self.editor, doc_line, byte_off, font_size) - base
             });
             self.editor.cursor_col = col;
         }

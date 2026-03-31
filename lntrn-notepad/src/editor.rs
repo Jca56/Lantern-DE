@@ -54,6 +54,8 @@ pub struct Editor {
     pub filename: String,
     pub modified: bool,
     pub scroll_offset: f32,
+    /// Per-line word-wrap row starts (byte offsets). Recomputed each frame.
+    pub wrap_rows: Vec<Vec<usize>>,
     undo_stack: Vec<Snapshot>,
     redo_stack: Vec<Snapshot>,
 }
@@ -71,6 +73,7 @@ impl Editor {
             filename: "Untitled".to_string(),
             modified: false,
             scroll_offset: 0.0,
+            wrap_rows: vec![vec![0]],
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
         }
@@ -225,6 +228,7 @@ impl Editor {
             self.lines.push(String::new());
         }
         self.formats = DocFormats::new(self.lines.len());
+        self.wrap_rows = vec![vec![0]; self.lines.len()];
         self.filename = path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -293,7 +297,7 @@ impl Editor {
         } else {
             self.push_undo();
         }
-        let pending = self.pending_attrs.take();
+        let pending = self.pending_attrs.clone();
         if ch == '\n' {
             let right_fmts = self.formats.get_mut(self.cursor_line).split_at(self.cursor_col);
             let rest = self.lines[self.cursor_line][self.cursor_col..].to_string();
@@ -347,7 +351,6 @@ impl Editor {
             return;
         }
         self.push_undo();
-        self.pending_attrs = None;
         if self.cursor_col > 0 {
             let prev = self.lines[self.cursor_line][..self.cursor_col]
                 .char_indices()
@@ -375,7 +378,6 @@ impl Editor {
             return;
         }
         self.push_undo();
-        self.pending_attrs = None;
         let line_len = self.lines[self.cursor_line].len();
         if self.cursor_col < line_len {
             let ch_len = self.lines[self.cursor_line][self.cursor_col..]
@@ -496,30 +498,47 @@ impl Editor {
         }
     }
 
-    /// Total content height in physical pixels.
+    /// Total content height in physical pixels (accounts for word-wrap rows).
     pub fn content_height(&self, scale: f32) -> f32 {
         let line_h = FONT_SIZE * LINE_HEIGHT * scale;
-        self.lines.len() as f32 * line_h + PAD * scale * 2.0
+        let rows = if self.wrap_rows.len() == self.lines.len() {
+            self.wrap_rows.iter().map(|w| w.len()).sum::<usize>()
+        } else {
+            self.lines.len()
+        };
+        rows as f32 * line_h + PAD * scale * 2.0
     }
 
-    /// Resolve which line a click y-coordinate falls on.
-    pub fn line_at_y(&self, cy: f32, wf: f32, hf: f32, scale: f32) -> usize {
+    /// Resolve which doc line and wrap-row byte range a click y falls on.
+    /// Returns `(doc_line, row_start_byte, row_end_byte)`.
+    pub fn wrap_row_at_y(&self, cy: f32, wf: f32, hf: f32, scale: f32) -> (usize, usize, usize) {
         let editor_rect = crate::render::editor_rect(wf, hf, scale);
         let line_h = FONT_SIZE * LINE_HEIGHT * scale;
         let text_y_start = editor_rect.y + PAD * scale - self.scroll_offset;
-        let rel_y = cy - text_y_start;
-        let line_idx = (rel_y / line_h).floor().max(0.0) as usize;
-        line_idx.min(self.lines.len() - 1)
+        let vis_row = ((cy - text_y_start) / line_h).floor().max(0.0) as usize;
+
+        let mut cum = 0;
+        for (i, wraps) in self.wrap_rows.iter().enumerate() {
+            if cum + wraps.len() > vis_row {
+                let row_idx = vis_row - cum;
+                let row_start = wraps[row_idx];
+                let row_end = wraps.get(row_idx + 1).copied().unwrap_or(self.lines[i].len());
+                return (i, row_start, row_end);
+            }
+            cum += wraps.len();
+        }
+        let last = self.lines.len() - 1;
+        let last_start = *self.wrap_rows.get(last).and_then(|w| w.last()).unwrap_or(&0);
+        (last, last_start, self.lines[last].len())
     }
 
-    /// Find the byte column closest to click x using real text measurement.
-    ///
-    /// `measure_fn(byte_offset)` returns the x-width from the start of the
-    /// line content to that byte offset on `line_idx`.
+    /// Find the byte column closest to click x within a wrap-row byte range.
     pub fn col_at_x(
         &self,
         cx: f32,
         line_idx: usize,
+        row_start: usize,
+        row_end: usize,
         wf: f32,
         hf: f32,
         scale: f32,
@@ -531,13 +550,13 @@ impl Editor {
         let rel_x = (cx - content_x).max(0.0);
 
         let line = &self.lines[line_idx];
-        let char_offsets: Vec<usize> = line
+        let char_offsets: Vec<usize> = line[row_start..row_end]
             .char_indices()
-            .map(|(i, _)| i)
-            .chain(std::iter::once(line.len()))
+            .map(|(i, _)| row_start + i)
+            .chain(std::iter::once(row_end))
             .collect();
 
-        let mut best_col = 0;
+        let mut best_col = row_start;
         let mut best_dist = f32::MAX;
         for &byte_off in &char_offsets {
             let dist = (measure_fn(byte_off) - rel_x).abs();

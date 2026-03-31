@@ -1,6 +1,7 @@
 //! App launcher menu — popup above the bar with floating tabs, search, and grid.
 //! Split into mod.rs (state/logic), draw.rs (rendering), sysmon.rs (system monitor).
 
+pub(crate) mod clipboard_tab;
 mod draw;
 pub(crate) mod notes;
 pub(crate) mod sysmon;
@@ -54,13 +55,14 @@ pub enum MenuTab {
     Apps,
     SystemMonitor,
     Notes,
+    Clipboard,
 }
 
 impl MenuTab {
     /// Tabs shown in the top row (next to search bar).
     pub const TOP: &[MenuTab] = &[MenuTab::Apps, MenuTab::SystemMonitor];
     /// Tabs shown on the right side (aligned with panel top).
-    pub const RIGHT: &[MenuTab] = &[MenuTab::Notes];
+    pub const RIGHT: &[MenuTab] = &[MenuTab::Notes, MenuTab::Clipboard];
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -81,6 +83,7 @@ pub struct AppMenu {
     pub(crate) active_tab: MenuTab,
     pub(crate) sysmon: sysmon::SystemMonitor,
     pub(crate) notes: notes::Notes,
+    pub(crate) clipboard: clipboard_tab::ClipboardHistory,
     /// Right-click context menu state
     pub(crate) ctx_app_id: Option<String>,
     pub(crate) ctx_pos: (f32, f32),
@@ -108,6 +111,7 @@ impl AppMenu {
             active_tab: MenuTab::Apps,
             sysmon: sysmon::SystemMonitor::new(),
             notes: notes::Notes::new(),
+            clipboard: clipboard_tab::ClipboardHistory::new(),
             ctx_app_id: None,
             ctx_pos: (0.0, 0.0),
             ctx_open: false,
@@ -140,6 +144,7 @@ impl AppMenu {
         self.open = false;
         self.ctx_open = false;
         self.sysmon.filter_focused = false;
+        self.clipboard.search_focused = false;
         self.notes.save_all();
     }
 
@@ -249,6 +254,10 @@ impl AppMenu {
         if self.active_tab == MenuTab::Notes && self.notes.wants_keyboard() {
             return self.notes.on_key(key, shift);
         }
+        // Clipboard search filter
+        if self.active_tab == MenuTab::Clipboard && self.clipboard.wants_keyboard() {
+            return self.clipboard.on_key(key, shift);
+        }
         // Sysmon filter gets keyboard when on SystemMonitor tab
         if self.active_tab == MenuTab::SystemMonitor && self.sysmon.filter_focused {
             match key {
@@ -303,6 +312,7 @@ impl AppMenu {
             MenuTab::Apps => self.scroll_offset = (self.scroll_offset + delta).max(0.0),
             MenuTab::SystemMonitor => self.sysmon.scroll_offset = (self.sysmon.scroll_offset + delta).max(0.0),
             MenuTab::Notes => self.notes.scroll_offset = (self.notes.scroll_offset + delta).max(0.0),
+            MenuTab::Clipboard => self.clipboard.scroll_offset = (self.clipboard.scroll_offset + delta).max(0.0),
         }
     }
 
@@ -351,6 +361,10 @@ impl AppMenu {
         // Notes click
         if self.active_tab == MenuTab::Notes {
             self.notes.on_left_click(ix, phys_x, phys_y);
+        }
+        // Clipboard click
+        if self.active_tab == MenuTab::Clipboard {
+            self.clipboard.on_left_click(ix, phys_x, phys_y);
         }
     }
 
