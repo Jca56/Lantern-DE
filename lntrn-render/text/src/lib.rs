@@ -146,44 +146,22 @@ impl TextRenderer {
         let ob = rect[1] + rect[3];
 
         for q in &mut self.queued {
-            // Use the text's actual position to determine overlap, not the
-            // (possibly full-screen) bounds. Estimate text width from the
-            // layout's max_width stored in the key.
             let tx = q.x;
             let ty = q.y;
-            let tw = f32::from_bits(q.key.max_width_bits);
             let th = q.line_height;
-            let tr = tx + tw;
             let tb = ty + th;
 
-            // Skip entries whose actual text position doesn't overlap
-            if tr <= ox || tx >= or || tb <= oy || ty >= ob {
+            // Only check vertical + horizontal start position overlap.
+            // Don't use max_width — it's the layout bound, not actual text width,
+            // and catches entries that are visually far from the occluder.
+            if tb <= oy || ty >= ob || tx >= or {
                 continue;
             }
 
-            // Text overlaps the occluder. Shrink bounds to best preserve
-            // visible area outside the occluding rect.
-            let above = (oy - ty).max(0.0);
-            let below = (tb - ob).max(0.0);
-            let left_space = (ox - tx).max(0.0);
-            let right_space = (tr - or).max(0.0);
-
-            let max = above.max(below).max(left_space).max(right_space);
-            if max == 0.0 {
-                // Fully occluded
-                q.bounds_top = 0;
-                q.bounds_bottom = 0;
-                q.bounds_left = 0;
-                q.bounds_right = 0;
-            } else if max == above {
-                q.bounds_bottom = q.bounds_bottom.min(oy as i32);
-            } else if max == below {
-                q.bounds_top = q.bounds_top.max(ob as i32);
-            } else if max == left_space {
-                q.bounds_right = q.bounds_right.min(ox as i32);
-            } else {
-                q.bounds_left = q.bounds_left.max(or as i32);
-            }
+            // Text starts inside or to the left of the occluder and is
+            // vertically overlapping — clip its right edge so it doesn't
+            // render inside the occluded area.
+            q.bounds_right = q.bounds_right.min(ox as i32);
         }
     }
 

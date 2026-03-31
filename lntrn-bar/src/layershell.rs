@@ -848,63 +848,67 @@ pub fn run() -> Result<()> {
                     app_menu.on_right_click(phys_cx, phys_cy, &ix);
                 }
             } else {
-                // Check if right-click hit a pinned process monitor on the bar
-                let mut handled_pinned = false;
+                // ── Unified bar right-click menu ──
+                // Build context-specific items, then append common bar settings.
+                let mut items: Vec<MenuItem> = Vec::new();
+                ctx_menu_app = None;
+
+                // Check pinned sysmon pill
+                let mut handled = false;
                 if let Some(zone) = ix.zone_at(phys_cx, phys_cy) {
                     use crate::appmenu::sysmon::ZONE_PINNED_BASE;
                     if zone >= ZONE_PINNED_BASE && zone < ZONE_PINNED_BASE + 64 {
                         let idx = (zone - ZONE_PINNED_BASE) as usize;
                         if let Some(pinned) = app_menu.sysmon.pinned.get(idx) {
                             app_menu.sysmon.right_clicked_proc = Some((pinned.name.clone(), pinned.pid));
-                            context_menu.open(phys_cx, bar_y_offset, vec![
-                                MenuItem::action(MENU_PROC_UNPIN, "Unpin from Bar"),
-                                MenuItem::separator(),
-                                MenuItem::action(MENU_PROC_KILL, "Kill Process"),
-                            ]);
-                            handled_pinned = true;
+                            items.push(MenuItem::action(MENU_PROC_UNPIN, "Unpin from Bar"));
+                            items.push(MenuItem::action(MENU_PROC_KILL, "Kill Process"));
+                            handled = true;
                         }
                     }
                 }
-                if !handled_pinned {
-                let toplevels = state.tracker.toplevels();
-                if let Some((app_id, pinned, running)) =
-                    app_tray.handle_right_click(&ix, phys_cx, phys_cy, &toplevels)
-                {
-                    // App tray right-click → app-specific context menu
-                    let pin_label = if pinned { "Unpin" } else { "Pin to Bar" };
-                    let mut items = vec![
-                        MenuItem::action(MENU_APP_PIN, pin_label),
-                        MenuItem::action(MENU_APP_LAUNCH, "New Window"),
-                    ];
-                    if running {
-                        items.push(MenuItem::separator());
-                        items.push(MenuItem::action(MENU_APP_CLOSE, "Close"));
+
+                // Check app tray icon
+                if !handled {
+                    let toplevels = state.tracker.toplevels();
+                    if let Some((app_id, pinned, running)) =
+                        app_tray.handle_right_click(&ix, phys_cx, phys_cy, &toplevels)
+                    {
+                        let pin_label = if pinned { "Unpin" } else { "Pin to Bar" };
+                        items.push(MenuItem::action(MENU_APP_PIN, pin_label));
+                        items.push(MenuItem::action(MENU_APP_LAUNCH, "New Window"));
+                        if running {
+                            items.push(MenuItem::separator());
+                            items.push(MenuItem::action(MENU_APP_CLOSE, "Close"));
+                        }
+                        ctx_menu_app = Some(app_id);
+                        handled = true;
                     }
-                    ctx_menu_app = Some(app_id);
-                    context_menu.open(phys_cx, bar_y_offset, items);
-                } else {
-                    // Default bar context menu
-                    ctx_menu_app = None;
-                    let is_floating = user_style == BarStyle::Floating;
-                    context_menu.open(
-                        phys_cx, bar_y_offset,
-                        vec![
-                            MenuItem::action(MENU_OPEN_TERMINAL, "Open Terminal"),
-                            MenuItem::action(MENU_OPEN_FILES, "Open File Manager"),
-                            MenuItem::separator(),
-                            MenuItem::checkbox(MENU_FLOAT_CHECKBOX, "Float", is_floating),
-                            MenuItem::checkbox(MENU_AUTOHIDE_CHECKBOX, "Auto Hide", auto_hide),
-                            MenuItem::slider(MENU_HEIGHT_SLIDER, "Bar Height", height_to_slider(bar_height)),
-                            MenuItem::slider(MENU_OPACITY_SLIDER, "Opacity", bar_opacity),
-                            MenuItem::separator(),
-                            MenuItem::checkbox(MENU_LAVA_LAMP, "Lava Lamp", lava.enabled),
-                        ],
-                    );
                 }
+
+                // Colored separator between context items and common items
+                if handled {
+                    items.push(MenuItem::colored_separator(
+                        lntrn_render::Color::from_rgb8(234, 179, 8).with_alpha(0.5),
+                    ));
+                }
+
+                // Common bar items (always present)
+                let is_floating = user_style == BarStyle::Floating;
+                items.push(MenuItem::action(MENU_OPEN_TERMINAL, "Open Terminal"));
+                items.push(MenuItem::action(MENU_OPEN_FILES, "Open File Manager"));
+                items.push(MenuItem::separator());
+                items.push(MenuItem::checkbox(MENU_FLOAT_CHECKBOX, "Float", is_floating));
+                items.push(MenuItem::checkbox(MENU_AUTOHIDE_CHECKBOX, "Auto Hide", auto_hide));
+                items.push(MenuItem::slider(MENU_HEIGHT_SLIDER, "Bar Height", height_to_slider(bar_height)));
+                items.push(MenuItem::slider(MENU_OPACITY_SLIDER, "Opacity", bar_opacity));
+                items.push(MenuItem::separator());
+                items.push(MenuItem::checkbox(MENU_LAVA_LAMP, "Lava Lamp", lava.enabled));
+
+                context_menu.open(phys_cx, bar_y_offset, items);
                 context_menu.clamp_bottom_bar(phys_w_f, total_phys_h as f32);
                 surface.set_input_region(None);
                 menu_was_open = true;
-            } // !handled_pinned
             }
         }
         if state.scroll_delta != 0.0 {
@@ -1016,11 +1020,6 @@ pub fn run() -> Result<()> {
         } else {
             let bar_bg = palette.bg.with_alpha(bar_opacity);
             if gap_phys < 0.5 {
-                let pad = 4.0;
-                painter.rect_filled(
-                    Rect::new(-pad, bar_y_offset - pad, phys_w_f + pad * 2.0, bar_h_f + pad * 2.0),
-                    0.0, bar_bg,
-                );
                 painter.rect_filled(
                     Rect::new(0.0, bar_y_offset, phys_w_f, bar_h_f),
                     0.0, bar_bg,

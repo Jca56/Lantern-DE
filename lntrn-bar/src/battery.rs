@@ -372,7 +372,7 @@ impl Battery {
         // Background
         let bg_rect = Rect::new(popup_x, popup_y, popup_w, popup_h);
         painter.rect_filled(bg_rect, corner_r, palette.bg);
-        painter.rect_stroke(bg_rect, corner_r, 1.0 * scale, Color::WHITE.with_alpha(0.08));
+        painter.rect_stroke_sdf(bg_rect, corner_r, 1.0 * scale, Color::WHITE.with_alpha(0.08));
 
         let cx = popup_x + pad; // content left edge
         let cw = popup_w - pad * 2.0; // content width

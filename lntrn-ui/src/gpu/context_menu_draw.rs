@@ -60,7 +60,7 @@ pub(super) fn draw_panel(
 
     // Background
     painter.rect_filled(menu_rect, cr, style.bg);
-    painter.rect_stroke(menu_rect, cr, style.border_width * s, style.border);
+    painter.rect_stroke_sdf(menu_rect, cr, style.border_width * s, style.border);
 
     let mut event = None;
     let mut hovered_submenu: Option<u32> = None;
@@ -259,6 +259,16 @@ pub(super) fn draw_panel(
                 let sep_w = content_w - pad;
                 painter.rect_filled(
                     Rect::new(sep_x, sep_y, sep_w, 1.0 * s), 0.0, style.separator,
+                );
+                cy += sep_h;
+            }
+            MenuItem::ColoredSeparator(color) => {
+                let sep_h = SEPARATOR_HEIGHT * s;
+                let sep_y = cy + sep_h * 0.5;
+                let sep_x = content_x;
+                let sep_w = content_w - pad;
+                painter.rect_filled(
+                    Rect::new(sep_x, sep_y, sep_w, 2.0 * s), 1.0 * s, *color,
                 );
                 cy += sep_h;
             }

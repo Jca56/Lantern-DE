@@ -61,6 +61,7 @@ impl ContextMenuStyle {
 pub enum MenuItem {
     Action { id: u32, label: String, shortcut: Option<String>, enabled: bool, danger: bool },
     Separator,
+    ColoredSeparator(Color),
     Slider { id: u32, label: String, value: f32 },
     SubMenu { id: u32, label: String, children: Vec<MenuItem> },
     Toggle { id: u32, label: String, checked: bool, enabled: bool },
@@ -87,6 +88,7 @@ impl MenuItem {
         Self::Action { id, label: label.into(), shortcut: None, enabled: true, danger: true }
     }
     pub fn separator() -> Self { Self::Separator }
+    pub fn colored_separator(color: Color) -> Self { Self::ColoredSeparator(color) }
     pub fn slider(id: u32, label: impl Into<String>, value: f32) -> Self {
         Self::Slider { id, label: label.into(), value }
     }
@@ -700,7 +702,7 @@ pub(super) fn item_height(item: &MenuItem, style: &ContextMenuStyle) -> f32 {
         MenuItem::Action { .. } | MenuItem::SubMenu { .. }
         | MenuItem::Toggle { .. } | MenuItem::Checkbox { .. }
         | MenuItem::Radio { .. } | MenuItem::Button { .. } => style.item_height * s,
-        MenuItem::Separator => SEPARATOR_HEIGHT * s,
+        MenuItem::Separator | MenuItem::ColoredSeparator(_) => SEPARATOR_HEIGHT * s,
         MenuItem::Slider { .. } => SLIDER_ITEM_HEIGHT * s,
         MenuItem::Progress { .. } => PROGRESS_ITEM_HEIGHT * s,
         MenuItem::Header { .. } => HEADER_HEIGHT * s,
@@ -742,7 +744,7 @@ fn compute_width(items: &[MenuItem], style: &ContextMenuStyle) -> f32 {
             let gap = 6.0 * s;
             Some(swatches.len() as f32 * icon + (swatches.len().saturating_sub(1)) as f32 * gap)
         }
-        MenuItem::Separator => None,
+        MenuItem::Separator | MenuItem::ColoredSeparator(_) => None,
     }).fold(0.0f32, f32::max);
     (max_w + style.padding * s * 6.0).max(style.min_width * s)
 }

@@ -474,10 +474,18 @@ impl AppMenu {
         let ctx_x = self.ctx_pos.0.min(self.bounds.x + self.bounds.w - menu_w - pad);
         let ctx_y = self.ctx_pos.1.min(self.bounds.y + self.bounds.h - menu_h - pad);
 
-        painter.rect_filled(Rect::new(ctx_x, ctx_y, menu_w, menu_h), 0.0, palette.surface_2);
-        painter.rect_stroke(Rect::new(ctx_x, ctx_y, menu_w, menu_h), 0.0, 2.0 * scale, Color::BLACK);
+        // Shadow
+        let shadow_expand = 4.0 * scale;
+        painter.rect_filled(
+            Rect::new(ctx_x - shadow_expand, ctx_y + shadow_expand,
+                menu_w + shadow_expand * 2.0, menu_h + shadow_expand),
+            cr, Color::BLACK.with_alpha(0.35),
+        );
+        painter.rect_filled(Rect::new(ctx_x, ctx_y, menu_w, menu_h), cr, palette.surface_2);
+        painter.rect_stroke_sdf(Rect::new(ctx_x, ctx_y, menu_w, menu_h), cr, 1.0 * scale, Color::WHITE.with_alpha(0.08));
 
-        // Punch a hole in underlying text so it doesn't bleed through
+        // Punch a hole in underlying text so it doesn't bleed through.
+        // Must happen BEFORE queuing the menu's own text labels.
         text.occlude_rect([ctx_x, ctx_y, menu_w, menu_h]);
 
         let font = 20.0 * scale;
