@@ -99,7 +99,7 @@ impl CursorState {
 
         match std::fs::read(&svg_path) {
             Ok(data) => {
-                if let Some(pixels) = self.rasterize_svg(&data) {
+                if self.rasterize_svg(&data).is_some() {
                     tracing::info!("Loaded custom SVG cursor: {}", svg_path.display());
                     self.custom_loaded = true;
                 } else {

@@ -201,7 +201,9 @@ impl Wifi {
 
     pub fn on_scroll(&mut self, delta: f32) {
         if !self.open { return; }
-        self.scroll_offset = (self.scroll_offset + delta).max(0.0);
+        let max_visible = 6;
+        let max_scroll = self.networks.len().saturating_sub(max_visible) as f32;
+        self.scroll_offset = (self.scroll_offset + delta * 0.35).clamp(0.0, max_scroll);
     }
 
     /// Whether the password field wants keyboard input.
@@ -237,7 +239,7 @@ impl Wifi {
     }
 
     pub fn measure(&self, bar_h: f32, scale: f32) -> f32 {
-        let pad = 5.0 * scale;
+        let pad = 9.0 * scale;
         (bar_h - pad * 2.0).max(16.0)
     }
 
@@ -247,7 +249,7 @@ impl Wifi {
         ix: &mut InteractionContext, icons: &'a IconCache, _palette: &FoxPalette,
         x: f32, bar_y: f32, bar_h: f32, scale: f32, _screen_w: u32, _screen_h: u32,
     ) -> (f32, Vec<TextureDraw<'a>>) {
-        let pad = 5.0 * scale;
+        let pad = 9.0 * scale;
         let icon_size = (bar_h - pad * 2.0).max(16.0);
         let icon_y = bar_y + pad;
 
@@ -313,7 +315,7 @@ impl Wifi {
         );
         // Background
         let bg = Rect::new(popup_x, popup_y, popup_w, popup_h);
-        painter.rect_filled(bg, corner_r, palette.surface_2);
+        painter.rect_filled(bg, corner_r, palette.bg);
         painter.rect_stroke(bg, corner_r, 1.0 * scale, Color::WHITE.with_alpha(0.08));
 
         let cx = popup_x + pad;

@@ -1,10 +1,7 @@
 /// Infinite canvas — DISABLED for now.
 /// All methods return identity transforms / no-ops so call sites compile unchanged.
 
-use smithay::utils::{Logical, Point, Rectangle, Size};
-
-pub const ZOOM_MIN: f64 = 0.25;
-pub const ZOOM_MAX: f64 = 2.0;
+use smithay::utils::{Logical, Rectangle, Size};
 
 pub struct Canvas {
     pub offset: (f64, f64),
@@ -35,7 +32,7 @@ impl Canvas {
 
     pub fn viewport(&self) -> Rectangle<f64, Logical> {
         let (w, h) = self.screen_size;
-        Rectangle::from_loc_and_size(Point::from((0.0, 0.0)), Size::from((w, h)))
+        Rectangle::from_size(Size::from((w, h)))
     }
 
     pub fn pan(&mut self, _screen_dx: f64, _screen_dy: f64) {}

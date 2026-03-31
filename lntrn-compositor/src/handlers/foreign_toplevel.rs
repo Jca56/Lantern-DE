@@ -3,15 +3,10 @@
 //! Allows external taskbars/docks to list open windows and request
 //! actions (activate, maximize, minimize, close, fullscreen).
 
-use std::collections::HashMap;
-
-use smithay::{
-    reexports::wayland_server::{
-        backend::{ClientId, GlobalId},
-        protocol::{wl_output::WlOutput, wl_seat::WlSeat, wl_surface::WlSurface},
-        Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource, Weak,
-    },
-    utils::Serial,
+use smithay::reexports::wayland_server::{
+    backend::{ClientId, GlobalId},
+    protocol::wl_surface::WlSurface,
+    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource, Weak,
 };
 use wayland_protocols_wlr::foreign_toplevel::v1::server::{
     zwlr_foreign_toplevel_handle_v1::{self, ZwlrForeignToplevelHandleV1},
@@ -78,6 +73,7 @@ impl ForeignToplevelEntry {
 // ── Global state ────────────────────────────────────────────────────
 
 pub struct ForeignToplevelManagerState {
+    #[allow(dead_code)] // must stay alive to keep the Wayland global registered
     global: GlobalId,
     /// Bound manager instances (one per client that binds the global).
     managers: Vec<ZwlrForeignToplevelManagerV1>,

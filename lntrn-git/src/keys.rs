@@ -3,6 +3,8 @@
 pub const KEY_BACKSPACE: u32 = 14;
 pub const KEY_ENTER: u32 = 28;
 pub const KEY_ESC: u32 = 1;
+pub const KEY_LEFT: u32 = 105;
+pub const KEY_RIGHT: u32 = 106;
 
 pub fn keycode_to_char(key: u32, shift: bool) -> Option<char> {
     let ch = match key {

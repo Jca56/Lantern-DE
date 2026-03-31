@@ -261,6 +261,10 @@ impl App {
                     pane.terminal.bell = false;
                     fire_bell_notification();
                 }
+
+                for (title, body) in pane.terminal.pending_notifications.drain(..) {
+                    fire_desktop_notification(title, body);
+                }
             }
         }
 
@@ -613,6 +617,22 @@ fn fire_bell_notification() {
     std::thread::spawn(|| {
         let _ = std::process::Command::new("notify-send")
             .args(["Terminal", "Bell"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    });
+}
+
+/// Fire a desktop notification via notify-send (OSC 99 / Kitty protocol).
+fn fire_desktop_notification(title: String, body: String) {
+    std::thread::spawn(move || {
+        let summary = if title.is_empty() { "Terminal" } else { &title };
+        let mut args = vec![summary.to_string()];
+        if !body.is_empty() {
+            args.push(body);
+        }
+        let _ = std::process::Command::new("notify-send")
+            .args(&args)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status();

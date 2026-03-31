@@ -218,7 +218,8 @@ impl Battery {
         let usable = bar_h - pad * 2.0;
         let font_size = (usable * 0.35).max(14.0);
         let gap = 5.0 * scale;
-        let icon_h = usable - font_size - gap;
+        let icon_shrink = 6.0 * scale;
+        let icon_h = usable - font_size - gap - icon_shrink;
         let icon_w = icon_h * 1.5;
         let num_text = format!("{}", self.capacity);
         let sym_size = font_size * 0.85;
@@ -249,11 +250,12 @@ impl Battery {
         let usable = bar_h - pad * 2.0;
         let font_size = (usable * 0.35).max(14.0);
         let gap = 5.0 * scale;
-        let icon_h = usable - font_size - gap;
+        let icon_shrink = 6.0 * scale;
+        let icon_h = usable - font_size - gap - icon_shrink;
         let icon_w = icon_h * 1.5;
 
         let stack_h = font_size + gap + icon_h;
-        let stack_y = bar_y + pad;
+        let stack_y = bar_y + pad + icon_shrink / 2.0;
 
         // Percentage text: numbers at full size, % symbol smaller
         let num_text = format!("{}", self.capacity);
@@ -265,8 +267,8 @@ impl Battery {
         let text_w = num_w + sym_gap + sym_w;
         let total_w = icon_w.max(text_w);
 
-        // Nudge text left to visually center over icon
-        let text_x = x - 4.0 * scale;
+        // Center text horizontally over icon (nudged left to account for glyph spacing)
+        let text_x = x + (total_w - text_w) / 2.0 - 3.0 * scale;
         let text_y = stack_y;
 
         let text_color = if self.capacity <= LOW_THRESH && self.status == BatteryStatus::Discharging {
@@ -369,7 +371,7 @@ impl Battery {
 
         // Background
         let bg_rect = Rect::new(popup_x, popup_y, popup_w, popup_h);
-        painter.rect_filled(bg_rect, corner_r, palette.surface_2);
+        painter.rect_filled(bg_rect, corner_r, palette.bg);
         painter.rect_stroke(bg_rect, corner_r, 1.0 * scale, Color::WHITE.with_alpha(0.08));
 
         let cx = popup_x + pad; // content left edge

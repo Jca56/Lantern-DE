@@ -104,9 +104,6 @@ pub fn render_surface(
     )
         .into();
 
-    let any_transparent = !state.window_opacity.is_empty();
-    let any_zoomed = !state.window_zoom.is_empty();
-    let any_animating = state.animations.has_active();
     // Promote silent switcher to visible if hold threshold reached
     if state.alt_tab_switcher.should_promote() {
         state.alt_tab_switcher.promote_to_visible();
@@ -123,7 +120,6 @@ pub fn render_surface(
     // Use slices for O(n) linear scan instead of HashSet allocation — these
     // lists are typically 0–2 entries so linear beats hashing overhead.
     let fullscreen_surfaces: &[_] = &state.fullscreen_windows;
-    let maximized_surfaces: &[_] = &state.maximized_windows;
     let _focused_surface = state.focused_surface.clone();
     let hot_corner = state.hot_corner.corner;
     // SSD state is accessed directly via state.ssd in the render loop
@@ -172,7 +168,6 @@ pub fn render_surface(
         None => return,
     };
 
-    let rounded_tex_shader = &udev.rounded_tex_shader;
     let _shadow_shader = &udev.shadow_shader;
     let hot_corner_glow_shader = &udev.hot_corner_glow_shader;
     let ssd_icon_shader = &udev.ssd_icon_shader;
@@ -199,6 +194,7 @@ pub fn render_surface(
     // We must collect because the loop body calls state.space.element_location().
     let windows: Vec<_> = state.space.elements().cloned().collect();
     let mut window_elements: Vec<CustomRenderElements> = Vec::new();
+    let mut fullscreen_elements: Vec<CustomRenderElements> = Vec::new();
 
     // Canvas transform: compute viewport in canvas-space for culling
     let canvas_offset = state.canvas.offset;
@@ -233,8 +229,6 @@ pub fn render_surface(
 
         let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(window) else { continue };
         let is_fullscreen = fullscreen_surfaces.iter().any(|e| e.surface == surface);
-        let is_maximized = maximized_surfaces.iter().any(|e| e.surface == surface);
-        let skip_rounding = is_fullscreen || is_maximized;
         let mut base_alpha = state.window_opacity.get(&surface).copied().unwrap_or(1.0);
         if state.show_desktop_active {
             base_alpha *= 0.05;
@@ -280,14 +274,14 @@ pub fn render_surface(
         let render_scale = smithay::utils::Scale::from(output_scale * combined_scale);
 
         let win_geo = window.geometry();
-        let render_scale_f = output_scale * combined_scale;
         let has_ssd = state.ssd.has_ssd(&surface);
 
         // Render window directly — window.render_elements handles toplevel +
         // popups + subsurfaces correctly for both CSD and SSD windows.
         let win_render_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
             window.render_elements(renderer, phys_loc, render_scale, alpha);
-        window_elements.extend(
+        let target = if is_fullscreen { &mut fullscreen_elements } else { &mut window_elements };
+        target.extend(
             win_render_elements.into_iter().map(CustomRenderElements::Surface),
         );
 
@@ -510,6 +504,9 @@ pub fn render_surface(
             elements.push(CustomRenderElements::Overlay(card_elem));
         }
     }
+
+    // Fullscreen windows render above layer surfaces (e.g. above the bar).
+    elements.extend(fullscreen_elements);
 
     // Layer surfaces: single pass, bucket into top (above windows) and bottom (behind windows).
     let mut bottom_layer_elements: Vec<CustomRenderElements> = Vec::new();

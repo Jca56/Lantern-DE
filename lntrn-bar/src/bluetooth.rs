@@ -1,7 +1,6 @@
 //! Bluetooth widget — icon in bar + popup for device management.
 //! All bluetoothctl interaction runs in a background thread.
 
-use std::path::Path;
 use std::process::Command;
 use std::sync::mpsc;
 
@@ -29,6 +28,24 @@ pub struct BtDevice {
     pub connected: bool,
     pub paired: bool,
     pub battery: Option<u8>,
+    pub icon: String,    // bluetoothctl "Icon:" field (e.g. "audio-headset")
+    pub rssi: Option<i16>, // signal strength in dBm (only during scan)
+}
+
+impl BtDevice {
+    /// Device type emoji based on the Icon field from bluetoothctl.
+    fn type_label(&self) -> &'static str {
+        match self.icon.as_str() {
+            s if s.contains("headset") || s.contains("headphone") => "🎧",
+            s if s.contains("speaker") || s.contains("audio-card") => "🔊",
+            s if s.contains("keyboard") => "⌨",
+            s if s.contains("mouse") || s.contains("pointing") => "🖱",
+            s if s.contains("gaming") || s.contains("joystick") => "🎮",
+            s if s.contains("phone") => "📱",
+            s if s.contains("computer") => "💻",
+            _ => "•",
+        }
+    }
 }
 
 enum BtCmd {
@@ -139,11 +156,6 @@ impl Bluetooth {
         true
     }
 
-    pub fn request_scan(&self) {
-        self.discovered.len(); // keep borrow checker happy — clear on open
-        let _ = self.cmd_tx.send(BtCmd::Scan);
-    }
-
     pub fn handle_click(&mut self, ix: &InteractionContext, phys_cx: f32, phys_cy: f32) {
         if let Some(zone) = ix.zone_at(phys_cx, phys_cy) {
             if zone == ZONE_BT_POWER {
@@ -211,7 +223,7 @@ impl Bluetooth {
     }
 
     pub fn measure(&self, bar_h: f32, scale: f32) -> f32 {
-        let pad = 5.0 * scale;
+        let pad = 9.0 * scale;
         (bar_h - pad * 2.0).max(16.0)
     }
 
@@ -220,7 +232,7 @@ impl Bluetooth {
         ix: &mut InteractionContext, icons: &'a IconCache, _palette: &FoxPalette,
         x: f32, bar_y: f32, bar_h: f32, scale: f32, _screen_w: u32, _screen_h: u32,
     ) -> (f32, Vec<TextureDraw<'a>>) {
-        let pad = 5.0 * scale;
+        let pad = 9.0 * scale;
         let icon_size = (bar_h - pad * 2.0).max(16.0);
         let icon_y = bar_y + pad;
         let mut tex_draws = Vec::new();
@@ -276,7 +288,7 @@ impl Bluetooth {
             corner_r + 2.0, Color::BLACK.with_alpha(0.35),
         );
         let bg = Rect::new(popup_x, popup_y, popup_w, popup_h);
-        painter.rect_filled(bg, corner_r, palette.surface_2);
+        painter.rect_filled(bg, corner_r, palette.bg);
         painter.rect_stroke(bg, corner_r, 1.0 * scale, Color::WHITE.with_alpha(0.08));
 
         let cx = popup_x + pad;
@@ -344,6 +356,12 @@ impl Bluetooth {
             let text_y = y + (row_h - body_font) / 2.0;
             let mut label_x = cx + 8.0 * scale;
 
+            // Device type icon
+            let type_icon = dev.type_label();
+            text.queue(type_icon, body_font, label_x, text_y, palette.muted,
+                body_font * 1.5, screen_w, screen_h);
+            label_x += body_font + 8.0 * scale;
+
             // Connected indicator
             if dev.connected {
                 text.queue("✓", body_font, label_x, text_y, palette.accent,
@@ -351,36 +369,56 @@ impl Bluetooth {
                 label_x += body_font + 4.0 * scale;
             }
 
-            // Device name
+            // Device name + connection status
             let name_color = if dev.connected { palette.text } else { palette.text_secondary };
             let display_name = if is_connecting {
-                format!("{} — connecting…", dev.name)
+                format!("{}  connecting…", dev.name)
             } else {
                 dev.name.clone()
             };
+            let name_w = cw * 0.45;
             text.queue(&display_name, body_font, label_x, text_y, name_color,
-                cw * 0.55, screen_w, screen_h);
+                name_w, screen_w, screen_h);
 
-            // Right side: battery + status + remove
-            let right_x = cx + cw - 120.0 * scale;
+            // Right side: RSSI + battery + status + remove
+            let right_x = cx + cw - 130.0 * scale;
+            let mut rx = right_x;
+
+            // Signal strength (RSSI) — shown as bars
+            if let Some(rssi) = dev.rssi {
+                let bars = match rssi {
+                    -50..=0 => "▂▄▆█",    // excellent
+                    -65..=-51 => "▂▄▆",   // good
+                    -80..=-66 => "▂▄",    // fair
+                    _ => "▂",              // weak
+                };
+                text.queue(bars, small_font, rx, text_y + 2.0 * scale,
+                    palette.muted, 40.0 * scale, screen_w, screen_h);
+                rx += 42.0 * scale;
+            }
 
             if let Some(batt) = dev.battery {
                 let batt_text = format!("{}%", batt);
-                text.queue(&batt_text, small_font, right_x, text_y + 2.0 * scale,
-                    palette.muted, 40.0 * scale, screen_w, screen_h);
+                text.queue(&batt_text, body_font, rx, text_y,
+                    palette.muted, 50.0 * scale, screen_w, screen_h);
             }
 
-            // Status label
-            let status = if dev.connected { "Connected" }
-                else if dev.paired { "Paired" }
-                else { "New" };
-            let status_x = right_x + 44.0 * scale;
-            text.queue(status, small_font, status_x, text_y + 2.0 * scale,
-                palette.muted, 60.0 * scale, screen_w, screen_h);
+            // Status label (only for non-connected devices)
+            if !dev.connected && !is_connecting {
+                let status = if dev.paired { "Paired" } else { "New" };
+                let status_x = right_x + 55.0 * scale;
+                text.queue(status, small_font, status_x, text_y + 2.0 * scale,
+                    palette.muted, 60.0 * scale, screen_w, screen_h);
+            }
 
-            // Remove button (×)
+            // Connecting feedback
+            if is_connecting {
+                painter.rect_filled(row_rect, 8.0 * scale, palette.accent.with_alpha(0.08));
+            }
+
+            // Remove/forget button (×)
             if dev.paired {
-                let rm_size = 24.0 * scale;
+                let rm_size = 32.0 * scale;
                 let rm_x = cx + cw - rm_size - 2.0 * scale;
                 let rm_y = y + (row_h - rm_size) / 2.0;
                 let rm_rect = Rect::new(rm_x, rm_y, rm_size, rm_size);
@@ -389,8 +427,9 @@ impl Bluetooth {
                 if rm_state.is_hovered() {
                     painter.rect_filled(rm_rect, 4.0 * scale, palette.danger.with_alpha(0.2));
                 }
-                let rm_ty = rm_y + (rm_size - small_font) / 2.0;
-                text.queue("×", small_font, rm_x + 6.0 * scale, rm_ty,
+                let rm_font = body_font;
+                let rm_ty = rm_y + (rm_size - rm_font) / 2.0;
+                text.queue("×", rm_font, rm_x + (rm_size - rm_font * 0.6) / 2.0, rm_ty,
                     palette.danger, rm_size, screen_w, screen_h);
             }
 
@@ -477,12 +516,15 @@ fn poll_thread(tx: mpsc::Sender<BtEvent>, cmd_rx: mpsc::Receiver<BtCmd>) {
                         for line in stdout.lines() {
                             if let Some(rest) = line.strip_prefix("[NEW] Device ") {
                                 if let Some((mac, name)) = rest.split_once(' ') {
+                                    let info = get_device_info(mac);
                                     found.push(BtDevice {
                                         mac: mac.to_string(),
                                         name: name.to_string(),
                                         connected: false,
                                         paired: false,
                                         battery: None,
+                                        icon: info.icon,
+                                        rssi: info.rssi,
                                     });
                                 }
                             }
@@ -558,9 +600,11 @@ fn poll_status() -> BtEvent {
                         devices.push(BtDevice {
                             mac: mac.to_string(),
                             name: name.to_string(),
-                            connected: info.0,
-                            paired: info.1,
-                            battery: info.2,
+                            connected: info.connected,
+                            paired: info.paired,
+                            battery: info.battery,
+                            icon: info.icon,
+                            rssi: info.rssi,
                         });
                     }
                 }
@@ -573,29 +617,46 @@ fn poll_status() -> BtEvent {
     BtEvent::Status { powered, devices }
 }
 
-fn get_device_info(mac: &str) -> (bool, bool, Option<u8>) {
-    let output = Command::new("bluetoothctl").args(["info", mac]).output();
-    let Ok(output) = output else { return (false, false, None) };
-    let stdout = String::from_utf8_lossy(&output.stdout);
+struct DeviceInfo {
+    connected: bool,
+    paired: bool,
+    battery: Option<u8>,
+    icon: String,
+    rssi: Option<i16>,
+}
 
-    let mut connected = false;
-    let mut paired = false;
-    let mut battery = None;
+fn get_device_info(mac: &str) -> DeviceInfo {
+    let output = Command::new("bluetoothctl").args(["info", mac]).output();
+    let mut info = DeviceInfo {
+        connected: false, paired: false, battery: None,
+        icon: String::new(), rssi: None,
+    };
+    let Ok(output) = output else { return info };
+    let stdout = String::from_utf8_lossy(&output.stdout);
 
     for line in stdout.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("Connected:") {
-            connected = trimmed.contains("yes");
+            info.connected = trimmed.contains("yes");
         } else if trimmed.starts_with("Paired:") {
-            paired = trimmed.contains("yes");
+            info.paired = trimmed.contains("yes");
         } else if trimmed.starts_with("Battery Percentage:") {
-            // Format: "Battery Percentage: 0x28 (40)"
             if let Some(paren) = trimmed.rfind('(') {
                 let num_str = &trimmed[paren + 1..trimmed.len() - 1];
-                battery = num_str.parse().ok();
+                info.battery = num_str.parse().ok();
+            }
+        } else if trimmed.starts_with("Icon:") {
+            info.icon = trimmed.strip_prefix("Icon:").unwrap_or("").trim().to_string();
+        } else if trimmed.starts_with("RSSI:") {
+            // Format: "RSSI: -45" or "RSSI: 0xffd3 (-45)"
+            if let Some(paren) = trimmed.rfind('(') {
+                let num_str = &trimmed[paren + 1..trimmed.len() - 1];
+                info.rssi = num_str.parse().ok();
+            } else if let Some(val) = trimmed.strip_prefix("RSSI:") {
+                info.rssi = val.trim().parse().ok();
             }
         }
     }
 
-    (connected, paired, battery)
+    info
 }

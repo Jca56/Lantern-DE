@@ -568,6 +568,7 @@ impl Lantern {
             .any(|entry| entry.surface == *surface)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn maximized_restore(&self, surface: &WlSurface) -> Option<Rectangle<i32, Logical>> {
         self.maximized_windows
             .iter()
@@ -688,10 +689,7 @@ impl Lantern {
 
     /// Wine fullscreen: Wine draws its own titlebar inside the window surface,
     /// so we configure the window taller and shift it up to hide the titlebar.
-    pub fn wine_fullscreen(&mut self, surface: &WlSurface, x11: &smithay::xwayland::X11Surface) {
-        // Get the Wine frame offset from X11 geometry (typically y=-4 for shadow)
-        let x11_geo = x11.geometry();
-
+    pub fn wine_fullscreen(&mut self, surface: &WlSurface, _x11: &smithay::xwayland::X11Surface) {
         // First do normal fullscreen
         if !self.fullscreen_surface(surface, Serial::from(0)) {
             return;

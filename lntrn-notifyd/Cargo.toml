@@ -5,6 +5,14 @@ description = "Notification daemon for Lantern DE"
 authors = ["Jca56"]
 edition = "2021"
 
+[[bin]]
+name = "lntrn-notifyd"
+path = "src/main.rs"
+
+[[bin]]
+name = "notify-send"
+path = "src/send.rs"
+
 [dependencies]
 anyhow = "1"
 libc = "0.2"
@@ -18,4 +26,4 @@ wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 wgpu = "28"
-zbus = { version = "5", default-features = false, features = ["tokio"] }
+zbus = { version = "5", default-features = false, features = ["tokio", "blocking-api"] }

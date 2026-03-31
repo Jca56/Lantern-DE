@@ -295,8 +295,8 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
     let surface = compositor.create_surface(&qh, ());
     let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
     let toplevel = xdg_surface.get_toplevel(&qh, ());
-    toplevel.set_title("Lantern Video Player".into());
-    toplevel.set_app_id("lntrn-video-player".into());
+    toplevel.set_title("Lantern Media Player".into());
+    toplevel.set_app_id("lntrn-media-player".into());
     toplevel.set_min_size(480, 320);
     surface.commit();
 
@@ -340,7 +340,7 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
     let mut app = App::new();
     let mut input = InteractionContext::new();
 
-    // Load initial video if provided
+    // Load initial media if provided
     if let Some(path) = initial_path {
         app.open_file(&path);
         update_title(&toplevel, &app);
@@ -350,13 +350,13 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
     let mut seek_rect = Rect::new(0.0, 0.0, 0.0, 0.0);
 
     while state.running {
-        // Non-blocking when playing, blocking when paused
-        if app.is_playing() {
+        // Non-blocking when playing (or audio-only visualizer), blocking when paused
+        if app.is_playing() || app.audio_only {
             if let Some(guard) = event_queue.prepare_read() {
                 let _ = guard.read();
             }
             if let Err(e) = event_queue.dispatch_pending(&mut state) {
-                eprintln!("[video-player] dispatch error: {e}");
+                eprintln!("[media-player] dispatch error: {e}");
                 break;
             }
             event_queue.flush()?;
@@ -371,7 +371,7 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
             }
         } else {
             if let Err(e) = event_queue.blocking_dispatch(&mut state) {
-                eprintln!("[video-player] dispatch error: {e}");
+                eprintln!("[media-player] dispatch error: {e}");
                 break;
             }
             // Still tick to update position display even when paused
@@ -487,9 +487,9 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
 
 fn update_title(toplevel: &xdg_toplevel::XdgToplevel, app: &App) {
     if app.file_name.is_empty() {
-        toplevel.set_title("Lantern Video Player".into());
+        toplevel.set_title("Lantern Media Player".into());
     } else {
-        toplevel.set_title(format!("{} — Lantern Video Player", app.file_name));
+        toplevel.set_title(format!("{} — Lantern Media Player", app.file_name));
     }
 }
 
@@ -516,6 +516,7 @@ const KEY_Q: u32 = 16;
 const KEY_A: u32 = 30;
 const KEY_D: u32 = 32;
 const KEY_F: u32 = 33;
+const KEY_V: u32 = 47;
 const KEY_SPACE: u32 = 57;
 const KEY_ESC: u32 = 1;
 const KEY_UP: u32 = 103;
@@ -532,6 +533,7 @@ fn handle_key(app: &mut App, toplevel: &xdg_toplevel::XdgToplevel, state: &mut S
         KEY_RIGHT | KEY_D => { app.seek_relative(FIVE_SEC_NS); }
         KEY_UP => { app.adjust_volume(0.05); }
         KEY_DOWN => { app.adjust_volume(-0.05); }
+        KEY_V => { app.cycle_vis_mode(); }
         KEY_F11 | KEY_F => {
             if state.fullscreen {
                 toplevel.unset_fullscreen();

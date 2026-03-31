@@ -1,7 +1,7 @@
 /// Hot corners, scratchpad toggle, and show desktop.
 
 use smithay::reexports::calloop::{timer::{Timer, TimeoutAction}, RegistrationToken};
-use smithay::utils::{Logical, Point, Rectangle, SERIAL_COUNTER};
+use smithay::utils::{Logical, Point, Rectangle};
 
 use crate::state::Lantern;
 
@@ -67,7 +67,14 @@ impl Lantern {
         &mut self,
         pos: Point<f64, Logical>,
     ) {
-        let corner = self.detect_hot_corner(pos);
+        // Suppress hot corners when the focused window is fullscreen
+        let focused_is_fullscreen = self.focused_surface.as_ref()
+            .is_some_and(|s| self.fullscreen_windows.iter().any(|e| e.surface == *s));
+        let corner = if focused_is_fullscreen {
+            None
+        } else {
+            self.detect_hot_corner(pos)
+        };
 
         if corner == self.hot_corner.corner {
             return; // No change, timer is already running (or no corner)

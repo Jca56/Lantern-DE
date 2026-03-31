@@ -2,10 +2,27 @@ use std::path::{Path, PathBuf};
 
 use lntrn_render::{GpuContext, GpuTexture, TexturePass};
 
-use crate::pipeline::VideoPipeline;
+use crate::pipeline::MediaPipeline;
+
+pub const VIS_BARS: usize = 32;
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum VisMode {
+    RadialBars,
+    ConcentricRings,
+}
+
+impl VisMode {
+    pub fn next(self) -> Self {
+        match self {
+            VisMode::RadialBars => VisMode::ConcentricRings,
+            VisMode::ConcentricRings => VisMode::RadialBars,
+        }
+    }
+}
 
 pub struct App {
-    pub pipeline: Option<VideoPipeline>,
+    pub pipeline: Option<MediaPipeline>,
     pub video_texture: Option<GpuTexture>,
     pub video_width: u32,
     pub video_height: u32,
@@ -17,6 +34,9 @@ pub struct App {
     pub seeking: bool,
     pub seek_value: f32,
     pub status_text: String,
+    pub audio_only: bool,
+    pub vis_mode: VisMode,
+    pub vis_bars: Vec<f32>,
 }
 
 impl App {
@@ -33,7 +53,10 @@ impl App {
             duration_ns: 0,
             seeking: false,
             seek_value: 0.0,
-            status_text: "No video loaded".into(),
+            status_text: "No media loaded".into(),
+            audio_only: false,
+            vis_mode: VisMode::ConcentricRings,
+            vis_bars: vec![0.0; VIS_BARS],
         }
     }
 
@@ -47,7 +70,7 @@ impl App {
         };
 
         let uri = format!("file://{}", abs.display());
-        match VideoPipeline::new(&uri) {
+        match MediaPipeline::new(&uri) {
             Ok(pipe) => {
                 pipe.set_volume(self.volume);
                 pipe.play();
@@ -64,6 +87,8 @@ impl App {
                 self.position_ns = 0;
                 self.duration_ns = 0;
                 self.seeking = false;
+                self.audio_only = false;
+                self.vis_bars = vec![0.0; VIS_BARS];
             }
             Err(e) => {
                 self.status_text = format!("Failed to open: {e}");
@@ -72,12 +97,17 @@ impl App {
     }
 
     /// Grab the latest decoded frame and upload it as a GPU texture.
-    /// Returns true if a new frame was uploaded (needs redraw).
+    /// Returns true if a new frame was uploaded or spectrum updated (needs redraw).
     pub fn tick(&mut self, gpu: &GpuContext, tex_pass: &TexturePass) -> bool {
-        let pipe = match &self.pipeline {
+        let pipe = match &mut self.pipeline {
             Some(p) => p,
             None => return false,
         };
+
+        // Detect audio-only via playbin's n-video property
+        if !self.audio_only && pipe.is_audio_only() {
+            self.audio_only = true;
+        }
 
         // Update position/duration
         if let Some(pos) = pipe.position() {
@@ -87,14 +117,31 @@ impl App {
             self.duration_ns = dur;
         }
 
-        // Grab latest frame
+        // Poll bus for spectrum messages + log-scale into visual bars
+        pipe.poll_spectrum();
+        let raw = pipe.spectrum();
+        let log_bars = log_group_spectrum(raw, VIS_BARS);
+        for i in 0..VIS_BARS {
+            let target = log_bars[i];
+            let current = self.vis_bars[i];
+            // Smooth: rise fast, fall moderate (snappy but not jittery)
+            if target > current {
+                self.vis_bars[i] = current + (target - current) * 0.7;
+            } else {
+                self.vis_bars[i] = current + (target - current) * 0.25;
+            }
+        }
+
+        // Grab latest video frame
         if let Some(frame) = pipe.take_frame() {
             self.video_width = frame.width;
             self.video_height = frame.height;
             self.video_texture = Some(tex_pass.upload(gpu, &frame.rgba, frame.width, frame.height));
             return true;
         }
-        false
+
+        // For audio-only, always redraw (visualizer animates)
+        self.audio_only
     }
 
     pub fn is_playing(&self) -> bool {
@@ -143,6 +190,10 @@ impl App {
         }
     }
 
+    pub fn cycle_vis_mode(&mut self) {
+        self.vis_mode = self.vis_mode.next();
+    }
+
     pub fn format_time(ns: u64) -> String {
         let total_secs = ns / 1_000_000_000;
         let hours = total_secs / 3600;
@@ -154,4 +205,31 @@ impl App {
             format!("{mins}:{secs:02}")
         }
     }
+}
+
+/// Group linear FFT bins into log-spaced visual bars.
+/// Low frequencies get fewer bins, high frequencies get more — matching human hearing.
+fn log_group_spectrum(raw: &[f32], num_bars: usize) -> Vec<f32> {
+    let n = raw.len();
+    if n == 0 {
+        return vec![0.0; num_bars];
+    }
+
+    let mut bars = Vec::with_capacity(num_bars);
+    for i in 0..num_bars {
+        // Log-spaced bin boundaries
+        let lo = ((i as f64 / num_bars as f64).powf(2.0) * n as f64) as usize;
+        let hi = (((i + 1) as f64 / num_bars as f64).powf(2.0) * n as f64) as usize;
+        let lo = lo.min(n);
+        let hi = hi.max(lo + 1).min(n);
+
+        // Average the dB values in this group, then normalize
+        let sum: f32 = raw[lo..hi].iter().sum();
+        let avg = sum / (hi - lo) as f32;
+        // Map -80..0 dB → 0.0..1.0, then boost a bit
+        let normalized = ((avg + 80.0) / 80.0).clamp(0.0, 1.0);
+        // Apply sqrt to compress the range — makes quieter bars more visible
+        bars.push(normalized.sqrt());
+    }
+    bars
 }

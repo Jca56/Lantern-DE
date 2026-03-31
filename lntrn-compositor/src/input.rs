@@ -97,17 +97,6 @@ pub fn read_input_setting_f64(key: &str, default: f64) -> f64 {
     s.parse::<f64>().unwrap_or(default)
 }
 
-/// Reload input settings from config into the compositor state.
-pub fn reload_input_config(state: &mut super::state::Lantern) {
-    state.mouse_speed = read_input_setting_f64("mouse_speed", 0.0);
-    state.mouse_acceleration = read_input_setting("mouse_acceleration", "true") == "true";
-    let new_theme = read_input_setting("cursor_theme", "default");
-    if new_theme != state.cursor_theme_name {
-        state.cursor_theme_name = new_theme.clone();
-        state.cursor.set_custom_theme(&new_theme);
-    }
-}
-
 fn spawn_detached(cmd: &str, wayland_display: &std::ffi::OsStr) {
     use std::os::unix::process::CommandExt;
     match unsafe {

@@ -310,6 +310,16 @@ impl App {
                     self.commit_msg.remove(self.cursor_pos);
                 }
             }
+            keys::KEY_LEFT => {
+                if self.cursor_pos > 0 {
+                    self.cursor_pos -= 1;
+                }
+            }
+            keys::KEY_RIGHT => {
+                if self.cursor_pos < self.commit_msg.len() {
+                    self.cursor_pos += 1;
+                }
+            }
             keys::KEY_ENTER => {
                 if !self.commit_msg.trim().is_empty() {
                     self.busy = true;
@@ -377,16 +387,17 @@ impl App {
             }
             View::Main => {
                 // Back button
-                let back_font = 28.0 * s;
-                let back_w = 40.0 * s;
+                let back_font = 44.0 * s;
+                let back_w = 56.0 * s;
                 let back_rect = Rect::new(tx, tb_content.y, back_w, tb_content.h);
                 let back_state = ix.add_zone(ZONE_BACK_BTN, back_rect);
                 if back_state.is_hovered() {
                     painter.rect_filled(back_rect, 6.0 * s, palette.muted.with_alpha(0.2));
                 }
-                let back_ty = tb_content.y + (tb_content.h - back_font) / 2.0;
-                text.queue("←", back_font, tx + 6.0 * s, back_ty, palette.accent,
-                    back_w, screen_w, screen_h);
+                let back_gw = text.measure_width("◀", back_font);
+                let back_ty = tb_content.y + (tb_content.h - back_font) / 2.0 - 6.0 * s;
+                text.queue("◀", back_font, tx + (back_w - back_gw) / 2.0, back_ty, palette.accent,
+                    back_w * 2.0, screen_w, screen_h);
 
                 let mut lx = tx + back_w + 8.0 * s;
 
@@ -398,27 +409,8 @@ impl App {
                     lx += name.len() as f32 * font * 0.5 + 12.0 * s;
                 }
 
-                // Branch (clickable to toggle dropdown)
+                // Ahead/behind
                 if let Some(status) = &self.status {
-                    let branch_text = format!(" {}", status.branch);
-                    let branch_w = branch_text.len() as f32 * font * 0.5 + 16.0 * s;
-                    let branch_rect = Rect::new(lx, tb_content.y, branch_w, tb_content.h);
-                    let branch_state = ix.add_zone(ZONE_BRANCH_TOGGLE, branch_rect);
-
-                    if branch_state.is_hovered() || self.branch_dropdown.open {
-                        painter.rect_filled(branch_rect, 6.0 * s, palette.muted.with_alpha(0.2));
-                    }
-
-                    // Down arrow hint
-                    let arrow = if self.branch_dropdown.open { "▲" } else { "▼" };
-                    let label = format!("{branch_text} {arrow}");
-                    text.queue(&label, font, lx, ty, palette.accent,
-                        branch_w, screen_w, screen_h);
-
-                    self.branch_anchor = branch_rect;
-                    lx += branch_w + 12.0 * s;
-
-                    // Ahead/behind
                     if status.ahead > 0 || status.behind > 0 {
                         let small = 16.0 * s;
                         let sync = format!("↑{} ↓{}", status.ahead, status.behind);
@@ -474,29 +466,47 @@ impl App {
         s: f32, sw: u32, sh: u32,
     ) {
         let title_font = 28.0 * s;
-        let body_font = 22.0 * s;
-        let small_font = 16.0 * s;
-        let row_h = 56.0 * s;
+        let body_font = 24.0 * s;
+        let small_font = 18.0 * s;
+        let row_h = 60.0 * s;
         let divider_h = 1.0 * s;
         let pad = 20.0 * s;
 
-        let mut header_y = cy;
-        text.queue("Open Repository", title_font, cx + pad, header_y, palette.text, cw, sw, sh);
+        // --- Action row: "Open Repository" label + "Clone from GitHub" button ---
+        let action_row_h = 64.0 * s;
+        let action_rect = Rect::new(cx, cy, cw, action_row_h);
+        painter.rect_filled(action_rect, 0.0, palette.surface.with_alpha(0.4));
+
+        let label_y = cy + (action_row_h - title_font) / 2.0;
+        text.queue("Open Repository", title_font, cx + pad, label_y, palette.text, cw, sw, sh);
 
         // "Clone from GitHub" button
         let clone_label = "Clone from GitHub";
-        let clone_w = 180.0 * s;
-        let clone_h = 36.0 * s;
-        let clone_rect = Rect::new(cx + cw - pad - clone_w, header_y, clone_w, clone_h);
+        let btn_font = 20.0 * s;
+        let clone_w = 200.0 * s;
+        let clone_h = 38.0 * s;
+        let clone_rect = Rect::new(
+            cx + cw - pad - clone_w,
+            cy + (action_row_h - clone_h) / 2.0,
+            clone_w, clone_h,
+        );
         let clone_state = ix.add_zone(ZONE_CLONE_BTN, clone_rect);
         let clone_color = if clone_state.is_hovered() { palette.accent } else { palette.accent.with_alpha(0.7) };
         painter.rect_filled(clone_rect, 8.0 * s, clone_color);
-        let ct_y = header_y + (clone_h - small_font) / 2.0;
-        let tw = small_font * 0.5 * clone_label.len() as f32;
-        text.queue(clone_label, small_font, clone_rect.x + (clone_w - tw) / 2.0, ct_y,
+        let ct_y = clone_rect.y + (clone_h - btn_font) / 2.0;
+        let tw = btn_font * 0.5 * clone_label.len() as f32;
+        text.queue(clone_label, btn_font, clone_rect.x + (clone_w - tw) / 2.0, ct_y,
             palette.text, clone_w, sw, sh);
 
-        header_y += title_font + 20.0 * s;
+        // Divider below action row
+        let action_div_h = 3.0 * s;
+        let div_y = cy + action_row_h - action_div_h;
+        painter.rect_filled(
+            Rect::new(cx, div_y, cw, action_div_h),
+            0.0, palette.muted.with_alpha(0.4),
+        );
+
+        let header_y = cy + action_row_h + 8.0 * s;
 
         if self.repos.is_empty() {
             text.queue("Scanning for repos...", body_font, cx + pad, header_y, palette.muted, cw, sw, sh);
@@ -536,7 +546,7 @@ impl App {
 
             text.queue(&name, body_font, cx + pad, text_y, palette.text, cw - pad * 2.0, sw, sh);
             text.queue(
-                &path_str, small_font, cx + pad, text_y + body_font + 2.0 * s,
+                &path_str, small_font, cx + pad, text_y + body_font + 10.0 * s,
                 palette.muted, cw - pad * 2.0, sw, sh,
             );
 
@@ -573,7 +583,7 @@ impl App {
 
         let mut y = cy + 8.0 * s;
 
-        // Action buttons row
+        // Action buttons row: Refresh | Push | Pull | Branch selector | ... Stage All | Unstage All
         let btn_w = 100.0 * s;
         let btn_gap = 8.0 * s;
         let mut bx = cx + pad;
@@ -593,6 +603,48 @@ impl App {
             bx += btn_w + btn_gap;
         }
 
+        // Branch selector (after the action buttons)
+        if let Some(status) = &self.status {
+            bx += 4.0 * s;
+            let branch_text = format!(" {}", status.branch);
+            let arrow = if self.branch_dropdown.open { "▲" } else { "▼" };
+            let label = format!("{branch_text} {arrow}");
+            let branch_w = label.len() as f32 * body_font * 0.5 + 16.0 * s;
+            let branch_rect = Rect::new(bx, y, branch_w, btn_h);
+            let branch_state = ix.add_zone(ZONE_BRANCH_TOGGLE, branch_rect);
+
+            if branch_state.is_hovered() || self.branch_dropdown.open {
+                painter.rect_filled(branch_rect, 6.0 * s, palette.muted.with_alpha(0.2));
+            }
+            let bty = y + (btn_h - body_font) / 2.0;
+            text.queue(&label, body_font, bx + 8.0 * s, bty, palette.accent,
+                branch_w, sw, sh);
+
+            self.branch_anchor = branch_rect;
+        }
+
+        // Stage All / Unstage All (far right)
+        let ua_w = 130.0 * s;
+        let sa_w = 120.0 * s;
+        let ua_x = cx + cw - pad - ua_w;
+        let sa_x = ua_x - btn_gap - sa_w;
+
+        let sa_rect = Rect::new(sa_x, y, sa_w, btn_h);
+        let sa_state = ix.add_zone(ZONE_STAGE_ALL, sa_rect);
+        if sa_state.is_hovered() {
+            painter.rect_filled(sa_rect, 6.0 * s, palette.accent.with_alpha(0.2));
+        }
+        text.queue("Stage All", body_font, sa_rect.x + 8.0 * s, y + (btn_h - body_font) / 2.0,
+            palette.accent, sa_w, sw, sh);
+
+        let ua_rect = Rect::new(ua_x, y, ua_w, btn_h);
+        let ua_state = ix.add_zone(ZONE_UNSTAGE_ALL, ua_rect);
+        if ua_state.is_hovered() {
+            painter.rect_filled(ua_rect, 6.0 * s, palette.muted.with_alpha(0.2));
+        }
+        text.queue("Unstage All", body_font, ua_rect.x + 8.0 * s, y + (btn_h - body_font) / 2.0,
+            palette.text_secondary, ua_w, sw, sh);
+
         y += btn_h + gap;
 
         // Separator
@@ -602,24 +654,7 @@ impl App {
 
         // File list header
         text.queue("Changes", body_font, cx + pad, y, palette.text, 100.0 * s, sw, sh);
-
-        let sa_rect = Rect::new(cx + cw - pad - 260.0 * s, y, 120.0 * s, btn_h);
-        let sa_state = ix.add_zone(ZONE_STAGE_ALL, sa_rect);
-        if sa_state.is_hovered() {
-            painter.rect_filled(sa_rect, 6.0 * s, palette.accent.with_alpha(0.2));
-        }
-        text.queue("Stage All", body_font, sa_rect.x + 8.0 * s, y + (btn_h - body_font) / 2.0,
-            palette.accent, 110.0 * s, sw, sh);
-
-        let ua_rect = Rect::new(cx + cw - pad - 130.0 * s, y, 130.0 * s, btn_h);
-        let ua_state = ix.add_zone(ZONE_UNSTAGE_ALL, ua_rect);
-        if ua_state.is_hovered() {
-            painter.rect_filled(ua_rect, 6.0 * s, palette.muted.with_alpha(0.2));
-        }
-        text.queue("Unstage All", body_font, ua_rect.x + 8.0 * s, y + (btn_h - body_font) / 2.0,
-            palette.text_secondary, 120.0 * s, sw, sh);
-
-        y += btn_h + gap * 0.5;
+        y += body_font + gap * 0.5;
 
         // Bottom area reserved for commit input + status message
         let bottom_reserve = 90.0 * s;
@@ -747,8 +782,9 @@ impl App {
         };
         painter.rect_filled(commit_rect, 8.0 * s, commit_color);
         let ct_y = commit_rect.y + (btn_h - body_font) / 2.0;
+        let commit_tw = text.measure_width("Commit", body_font);
         text.queue("Commit", body_font,
-            commit_rect.x + (btn_w - body_font * 3.0) / 2.0, ct_y,
+            commit_rect.x + (btn_w - commit_tw) / 2.0, ct_y,
             palette.text, btn_w, sw, sh);
 
         // Status message / error

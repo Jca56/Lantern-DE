@@ -189,7 +189,7 @@ impl Clock {
 
         // Background
         let bg_rect = Rect::new(popup_x, popup_y, popup_w, popup_h);
-        painter.rect_filled(bg_rect, corner_r, palette.surface_2);
+        painter.rect_filled(bg_rect, corner_r, palette.bg);
         let border_color = Color::rgba(1.0, 1.0, 1.0, 0.1);
         painter.rect_stroke(bg_rect, corner_r, 1.0 * scale, border_color);
 

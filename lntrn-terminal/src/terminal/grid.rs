@@ -141,6 +141,11 @@ pub struct TerminalState {
     // BEL (0x07) received — app should fire a desktop notification
     pub bell: bool,
 
+    // OSC 99 (Kitty) desktop notifications — accumulator and queue
+    pub osc99_title: String,
+    pub osc99_body: String,
+    pub pending_notifications: Vec<(String, String)>, // (title, body)
+
     // Text selection (grid coordinates)
     pub selection_anchor: Option<(usize, usize)>, // (row, col) where drag started
     pub selection_end: Option<(usize, usize)>,    // (row, col) where drag is now
@@ -187,6 +192,9 @@ impl TerminalState {
             alt_cursor: None,
             pending_responses: Vec::new(),
             bell: false,
+            osc99_title: String::new(),
+            osc99_body: String::new(),
+            pending_notifications: Vec::new(),
             selection_anchor: None,
             selection_end: None,
             wrap_next: false,

@@ -104,7 +104,7 @@ impl Dispatch<ZwlrScreencopyManagerV1, (), Lantern> for Lantern {
 }
 
 fn handle_capture(
-    state: &mut Lantern,
+    _state: &mut Lantern,
     data_init: &mut DataInit<'_, Lantern>,
     frame: New<ZwlrScreencopyFrameV1>,
     overlay_cursor: i32,

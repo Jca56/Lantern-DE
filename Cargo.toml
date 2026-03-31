@@ -12,8 +12,7 @@ members = [
     "lntrn-bar",
     "lntrn-terminal",
     "lntrn-image-viewer",
-    "lntrn-video-player",
-    "lntrn-music-player",
+    "lntrn-media-player",
     "lntrn-screenshot",
     "lntrn-session-manager",
     "lntrn-system-settings",
@@ -33,6 +32,3 @@ members = [
 opt-level = 2
 strip = true
 incremental = false
-
-[profile.release.package.lantern-music-player]
-opt-level = 3

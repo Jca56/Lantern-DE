@@ -240,7 +240,7 @@ impl AppState {
         let hint = if self.selection.is_some() {
             "Enter = save + copy  \u{00b7}  Ctrl+C = copy  \u{00b7}  Ctrl+S = save  \u{00b7}  Esc = cancel"
         } else {
-            "Drag to select  \u{00b7}  Enter = full screen  \u{00b7}  Esc = cancel"
+            "Drag to select  \u{00b7}  Enter = capture all  \u{00b7}  Esc = cancel"
         };
         let hint_w = 860.0;
         self.painter.rect_filled(

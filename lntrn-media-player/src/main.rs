@@ -38,7 +38,7 @@ fn main() {
     });
 
     if let Err(e) = wayland::run(path) {
-        eprintln!("[video-player] fatal: {e}");
+        eprintln!("[media-player] fatal: {e}");
         std::process::exit(1);
     }
 }

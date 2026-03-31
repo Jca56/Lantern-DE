@@ -953,7 +953,7 @@ pub fn run() -> Result<()> {
                 lava.draw_blobs(&mut painter, vis_x, vis_y, vis_w, vis_h, bar_opacity);
             }
         } else {
-            let bar_bg = palette.surface.with_alpha(bar_opacity);
+            let bar_bg = palette.bg.with_alpha(bar_opacity);
             if gap_phys < 0.5 {
                 let pad = 4.0;
                 painter.rect_filled(
@@ -991,7 +991,7 @@ pub fn run() -> Result<()> {
             vis_w, vis_h, vis_x, vis_y,
             phys_w, total_phys_h,
         );
-        right_used += clock_w;
+        right_used += clock_w + 10.0 * scale_f; // extra gap before system tray
 
         // Load icons & tick widgets (mutable icon_cache borrows here)
         {

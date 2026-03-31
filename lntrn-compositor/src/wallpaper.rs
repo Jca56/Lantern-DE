@@ -69,10 +69,7 @@ impl WallpaperState {
         // logical size == physical size). dst_size is the logical output size.
         // This tells Smithay to sample the entire texture and scale it down
         // to fit the output.
-        let src = Rectangle::from_loc_and_size(
-            Point::from((0.0, 0.0)),
-            Size::from((phys_w as f64, phys_h as f64)),
-        );
+        let src = Rectangle::from_size(Size::from((phys_w as f64, phys_h as f64)));
         MemoryRenderBufferRenderElement::from_buffer(
             renderer,
             Point::<f64, Physical>::from((

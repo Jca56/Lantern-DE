@@ -1,7 +1,5 @@
 /// Shader constants and GLSL source code for window rendering effects.
 
-pub const CORNER_RADIUS: i32 = 10; // logical pixels
-
 /// Pixel shader for corner rounding.
 /// Placed at each window corner (radius x radius square).
 /// `corner` uniform: (0,0)=TL, (1,0)=TR, (0,1)=BL, (1,1)=BR
@@ -199,11 +197,17 @@ void main() {
 "#;
 
 // ── Window shadow / glow (disabled until settings page) ──────────
+#[allow(dead_code)]
 pub const SHADOW_SPREAD: i32 = 18; // logical pixels
+#[allow(dead_code)]
 pub const SHADOW_SIGMA: f32 = 10.0; // blur softness (physical pixels, scaled at use)
+#[allow(dead_code)]
 pub const SHADOW_COLOR: [f32; 4] = [0.0, 0.0, 0.0, 0.45];
+#[allow(dead_code)]
 pub const GLOW_SPREAD: i32 = 22;
+#[allow(dead_code)]
 pub const GLOW_SIGMA: f32 = 8.0;
+#[allow(dead_code)]
 pub const GLOW_COLOR: [f32; 4] = [1.0, 0.75, 0.0, 0.45]; // amber accent
 
 /// Pixel shader for window shadow / focused glow.

@@ -113,7 +113,6 @@ impl CompositorHandler for Lantern {
                 }
 
                 // Check keyboard interactivity (acted on after the borrow ends)
-                use smithay::wayland::shell::wlr_layer::KeyboardInteractivity;
                 let kb_state = with_states(surface, |states| {
                     states.cached_state.get::<LayerSurfaceCachedState>().current().keyboard_interactivity
                 });

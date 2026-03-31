@@ -93,8 +93,7 @@ fi
 │   ├── lntrn-osd
 │   ├── lntrn-system-settings
 │   ├── lntrn-image-viewer
-│   ├── lntrn-video-player
-│   ├── lantern-music-player
+│   ├── lntrn-media-player
 │   ├── lntrn-screenshot
 │   ├── lntrn-snapshot
 │   ├── lntrn-snapshot-gui
@@ -153,7 +152,7 @@ BINARIES := \
     lntrn-osd \
     lntrn-system-settings \
     lntrn-image-viewer \
-    lntrn-video-player \
+    lntrn-media-player \
     lntrn-screenshot \
     lntrn-session-manager \
     lntrn-browser \
@@ -163,8 +162,7 @@ BINARIES := \
 # Crates that produce binaries with different names
 # lntrn-clipboard -> lntrn-copy, lntrn-paste
 # lntrn-snapshot  -> lntrn-snapshot, lntrn-snapshot-gui
-# lntrn-music-player -> lantern-music-player
-EXTRA_BINARIES := lntrn-copy lntrn-paste lntrn-snapshot lntrn-snapshot-gui lantern-music-player
+EXTRA_BINARIES := lntrn-copy lntrn-paste lntrn-snapshot lntrn-snapshot-gui
 
 .PHONY: all build install install-bins install-config install-icons dirs clean
 

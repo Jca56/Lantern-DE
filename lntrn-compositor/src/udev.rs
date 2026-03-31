@@ -53,6 +53,7 @@ pub fn frame_callback_interval(output: &smithay::output::Output) -> Duration {
 }
 
 pub(crate) struct OutputSurface {
+    #[allow(dead_code)] // stored for future multi-GPU identification
     pub device_id: DrmNode,
     pub global: smithay::reexports::wayland_server::backend::GlobalId,
     pub drm_output: DrmOutput<
@@ -76,6 +77,7 @@ pub(crate) struct GpuBackend {
     >,
     pub(crate) drm_scanner: DrmScanner,
     pub surfaces: HashMap<crtc::Handle, OutputSurface>,
+    #[allow(dead_code)] // must stay alive to keep DRM event source registered
     pub(crate) drm_registration: RegistrationToken,
 }
 

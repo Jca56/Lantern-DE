@@ -10,7 +10,7 @@ pub struct PositionStore {
 
 impl PositionStore {
     fn data_path() -> Option<PathBuf> {
-        let dir = dirs::data_local_dir()?.join("lntrn-video-player");
+        let dir = dirs::data_local_dir()?.join("lntrn-media-player");
         fs::create_dir_all(&dir).ok()?;
         Some(dir.join("positions.json"))
     }

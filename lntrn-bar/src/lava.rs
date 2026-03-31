@@ -1,6 +1,22 @@
 use lntrn_render::{Color, Painter, Rect};
 
 const BLOB_COUNT: usize = 14;
+const LOBES_PER_BLOB: usize = 4;
+
+/// A sub-circle that orbits the blob center, creating organic shapes.
+#[derive(Clone, Copy)]
+struct Lobe {
+    /// Orbit radius as fraction of the blob's base radius.
+    orbit_r: f32,
+    /// Orbit speed and phase for X/Y offsets.
+    orbit_freq: f32,
+    orbit_phase: f32,
+    /// Secondary wobble for more organic motion.
+    wobble_freq: f32,
+    wobble_phase: f32,
+    /// Size relative to the blob's base radius (0.5–1.0).
+    size_factor: f32,
+}
 
 struct Blob {
     /// Normalized X position (0.0–1.0 across bar width).
@@ -19,6 +35,8 @@ struct Blob {
     phase_r: f32,
     /// Which color slot this blob uses (index into VAPORWAVE palette).
     color_idx: usize,
+    /// Sub-circles that create the organic blobby shape.
+    lobes: [Lobe; LOBES_PER_BLOB],
 }
 
 /// Vaporwave palette — purples, pinks, cyans.
@@ -43,6 +61,28 @@ impl LavaLamp {
             .map(|i| {
                 let fi = i as f32;
                 let seed = fi * 7.31;
+
+                // Generate lobes for this blob — each one orbits the center
+                let mut lobes = [Lobe {
+                    orbit_r: 0.0,
+                    orbit_freq: 0.0,
+                    orbit_phase: 0.0,
+                    wobble_freq: 0.0,
+                    wobble_phase: 0.0,
+                    size_factor: 0.0,
+                }; LOBES_PER_BLOB];
+                for (j, lobe) in lobes.iter_mut().enumerate() {
+                    let fj = j as f32;
+                    let lseed = seed + fj * 3.17;
+                    lobe.orbit_r = 0.25 + frac(lseed * 0.47) * 0.35;
+                    lobe.orbit_freq = 0.3 + frac(lseed * 0.63) * 0.4;
+                    lobe.orbit_phase = fj * std::f32::consts::TAU / LOBES_PER_BLOB as f32
+                        + frac(lseed * 0.31) * 1.5;
+                    lobe.wobble_freq = 0.5 + frac(lseed * 0.83) * 0.6;
+                    lobe.wobble_phase = frac(lseed * 0.59) * std::f32::consts::TAU;
+                    lobe.size_factor = 0.55 + frac(lseed * 0.41) * 0.45;
+                }
+
                 Blob {
                     x: frac(seed * 0.37 + 0.1),
                     y: frac(seed * 0.53 + 0.2),
@@ -54,6 +94,7 @@ impl LavaLamp {
                     phase_y: fi * 2.3,
                     phase_r: fi * 0.9,
                     color_idx: i % VAPORWAVE.len(),
+                    lobes,
                 }
             })
             .collect();
@@ -122,28 +163,39 @@ impl LavaLamp {
         let t = self.time;
 
         for blob in &self.blobs {
-            // Animate position with slow sine waves
+            // Animate blob center position with slow sine waves
             let ax = blob.x + 0.12 * (t * blob.freq_x + blob.phase_x).sin()
                 + 0.06 * (t * blob.freq_x * 1.7 + blob.phase_y).cos();
             let ay = blob.y + 0.15 * (t * blob.freq_y + blob.phase_y).sin()
                 + 0.08 * (t * blob.freq_y * 1.3 + blob.phase_x).cos();
 
-            // Pulsing radius
+            // Pulsing base radius
             let r_scale = 1.0 + 0.3 * (t * blob.freq_r + blob.phase_r).sin();
-            let r = blob.base_r * r_scale * bar_h;
+            let base_r = blob.base_r * r_scale * bar_h;
 
             let cx = bar_x + ax * bar_w;
             let cy = bar_y + ay * bar_h;
 
             let [cr, cg, cb] = VAPORWAVE[blob.color_idx];
             let alpha = (opacity * 100.0) as u8;
-            let center = Color::from_rgba8(cr, cg, cb, alpha);
-            let edge = Color::from_rgba8(cr, cg, cb, 0);
 
-            // Square rect with corner_radius = r makes the radial gradient circular
-            let size = r * 2.0;
-            let blob_rect = Rect::new(cx - r, cy - r, size, size);
-            painter.rect_gradient_radial(blob_rect, r, center, edge);
+            // Draw each lobe as an orbiting sub-circle around the blob center
+            for lobe in &blob.lobes {
+                let orbit_angle = t * lobe.orbit_freq + lobe.orbit_phase;
+                let wobble = 0.15 * (t * lobe.wobble_freq + lobe.wobble_phase).sin();
+                let orbit_dist = base_r * (lobe.orbit_r + wobble);
+
+                let lx = cx + orbit_angle.cos() * orbit_dist;
+                let ly = cy + orbit_angle.sin() * orbit_dist;
+
+                let lr = base_r * lobe.size_factor;
+                let center = Color::from_rgba8(cr, cg, cb, alpha);
+                let edge = Color::from_rgba8(cr, cg, cb, 0);
+
+                let size = lr * 2.0;
+                let blob_rect = Rect::new(lx - lr, ly - lr, size, size);
+                painter.rect_gradient_radial(blob_rect, lr, center, edge);
+            }
         }
     }
 }

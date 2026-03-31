@@ -398,7 +398,7 @@ impl Lantern {
                 }
                 let ls_loc = crate::render::layer_surface_position_logical(&cached, output_geo);
                 let size = cached.size;
-                let rect = Rectangle::from_loc_and_size(ls_loc, size);
+                let rect = Rectangle::new(ls_loc, size);
                 let pos_i = Point::from((pos.x as i32, pos.y as i32));
                 if rect.contains(pos_i) {
                     let relative = pos - ls_loc.to_f64();

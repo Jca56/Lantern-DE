@@ -485,6 +485,45 @@ impl vte::Perform for Performer<'_> {
                     }
                 }
             }
+            b"99" => {
+                // OSC 99: Kitty desktop notification protocol
+                // Format: ESC ] 99 ; <metadata> ; <payload> ST
+                // metadata is colon-separated key=value pairs:
+                //   i=<id>  d=0|1 (0=more data coming, 1=done)  p=title|body  a=focus
+                if params.len() < 2 {
+                    return;
+                }
+                let meta = std::str::from_utf8(params[1]).unwrap_or("");
+                let payload = if params.len() > 2 {
+                    std::str::from_utf8(params[2]).unwrap_or("")
+                } else {
+                    ""
+                };
+
+                let mut done = false;
+                let mut part = ""; // "title" or "body"
+                for kv in meta.split(':') {
+                    if let Some(v) = kv.strip_prefix("d=") {
+                        done = v == "1";
+                    } else if let Some(v) = kv.strip_prefix("p=") {
+                        part = v;
+                    }
+                }
+
+                match part {
+                    "title" => self.state.osc99_title = payload.to_string(),
+                    "body" => self.state.osc99_body = payload.to_string(),
+                    _ => {}
+                }
+
+                if done {
+                    let title = std::mem::take(&mut self.state.osc99_title);
+                    let body = std::mem::take(&mut self.state.osc99_body);
+                    if !title.is_empty() || !body.is_empty() {
+                        self.state.pending_notifications.push((title, body));
+                    }
+                }
+            }
             _ => {}
         }
     }

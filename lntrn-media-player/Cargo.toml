@@ -1,11 +1,11 @@
 [package]
-name = "lntrn-video-player"
+name = "lntrn-media-player"
 version = "0.1.0"
 edition = "2021"
-description = "Lantern DE - Video Player"
+description = "Lantern DE - Media Player"
 
 [[bin]]
-name = "lntrn-video-player"
+name = "lntrn-media-player"
 path = "src/main.rs"
 
 [dependencies]
@@ -18,6 +18,7 @@ wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 gstreamer = "0.23"
 gstreamer-app = "0.23"
+gstreamer-audio = "0.23"
 gstreamer-video = "0.23"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
