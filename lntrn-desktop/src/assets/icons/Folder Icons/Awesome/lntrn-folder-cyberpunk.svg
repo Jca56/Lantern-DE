@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="256" height="256">
+  <defs>
+    
+    <linearGradient id="cityBack" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#0a0015"/><stop offset="100%" stop-color="#05000a"/>
+    </linearGradient>
+    <linearGradient id="stripG" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ff0088"/><stop offset="50%" stop-color="#8800ff"/><stop offset="100%" stop-color="#00aaff"/>
+    </linearGradient>
+    <filter id="neonGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="0" stdDeviation="2.5" flood-color="#ff00aa" flood-opacity="0.8"/>
+    </filter>
+    <filter id="blueGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="#00aaff" flood-opacity="0.8"/>
+    </filter>
+    <linearGradient id="page1grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f0ece0"/><stop offset="100%" stop-color="#d8d4c8"/>
+    </linearGradient>
+    <linearGradient id="page2grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#e4e0d4"/><stop offset="100%" stop-color="#c8c4b8"/>
+    </linearGradient>
+    <filter id="fShadow">
+      <feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#000" flood-opacity="0.7"/>
+    </filter>
+    <filter id="pShadow">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  
+  <g filter="url(#fShadow)">
+    <path d="M7,22 Q7,17 12,17 L40,17 Q45,17 47,22 L53,30 L93,30 L93,93 Q93,98 88,98 L12,98 Q7,98 7,93 Z"
+          fill="#0a0015"/>
+  </g>
+  <g filter="url(#pShadow)">
+    <rect x="14" y="27" width="72" height="5" rx="1.5" fill="url(#page2grad)"/>
+  </g>
+  <g filter="url(#pShadow)">
+    <rect x="14" y="31" width="72" height="5" rx="1.5" fill="url(#page1grad)"/>
+  </g>
+  <rect x="7" y="36" width="86" height="12" fill="url(#stripG)"/><rect x="7" y="36" width="86" height="4.5" fill="#fff" opacity="0.12"/>
+  <clipPath id="bodyClip"><rect x="7" y="48" width="86" height="50" rx="5"/></clipPath>
+  <rect x="7" y="48" width="86" height="50" rx="5" fill="#05000a"/>
+  
+  <g clip-path="url(#bodyClip)">
+    <rect x="7" y="48" width="86" height="50" fill="url(#cityBack)"/>
+    <!-- City skyline buildings -->
+    <rect x="10" y="70" width="10" height="28" fill="#0a0015"/>
+    <rect x="12" y="65" width="6"  height="5"  fill="#0a0015"/>
+    <rect x="22" y="60" width="14" height="38" fill="#0d001a"/>
+    <rect x="38" y="55" width="8"  height="43" fill="#0a0015"/>
+    <rect x="48" y="63" width="12" height="35" fill="#0d001a"/>
+    <rect x="62" y="52" width="10" height="46" fill="#0a0015"/>
+    <rect x="74" y="68" width="8"  height="30" fill="#0d001a"/>
+    <rect x="84" y="62" width="9"  height="36" fill="#0a0015"/>
+    <!-- Neon windows pink -->
+    <g filter="url(#neonGlow)">
+      <rect x="23" y="63" width="3" height="2" fill="#ff00aa"/>
+      <rect x="28" y="67" width="3" height="2" fill="#ff00aa"/>
+      <rect x="23" y="70" width="3" height="2" fill="#ff0088" opacity="0.7"/>
+      <rect x="39" y="58" width="3" height="2" fill="#ff44cc"/>
+      <rect x="39" y="64" width="3" height="2" fill="#ff00aa"/>
+      <rect x="63" y="56" width="3" height="2" fill="#ff00aa"/>
+      <rect x="63" y="62" width="3" height="2" fill="#ff44cc" opacity="0.8"/>
+    </g>
+    <!-- Neon windows blue -->
+    <g filter="url(#blueGlow)">
+      <rect x="49" y="66" width="3" height="2" fill="#00aaff"/>
+      <rect x="54" y="70" width="3" height="2" fill="#00ccff"/>
+      <rect x="75" y="71" width="3" height="2" fill="#00aaff"/>
+      <rect x="75" y="77" width="3" height="2" fill="#0088ff" opacity="0.8"/>
+      <rect x="85" y="65" width="3" height="2" fill="#00aaff"/>
+      <rect x="11" y="73" width="3" height="2" fill="#00ccff"/>
+    </g>
+    <!-- Ground neon reflection -->
+    <rect x="7" y="91" width="86" height="7" fill="url(#stripG)" opacity="0.15"/>
+    <!-- Neon sign -->
+    <g filter="url(#neonGlow)">
+      <rect x="30" y="80" width="40" height="8" rx="1" fill="none" stroke="#ff00aa" stroke-width="1"/>
+      <text x="34" y="87" font-family="monospace" font-size="5.5" fill="#ff44cc">LNTRN</text>
+    </g>
+  </g>
+  <rect x="7" y="48" width="86" height="50" rx="5" fill="none" stroke="#ff00aa" stroke-width="1.2" opacity="0.3"/>
+  <rect x="7" y="48" width="86" height="12" rx="5" fill="#fff" opacity="0.04"/>
+  <rect x="7" y="90" width="86" height="8" rx="5" fill="#000" opacity="0.2"/>
+</svg>

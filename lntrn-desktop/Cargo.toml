@@ -1,12 +1,12 @@
 [package]
-name = "lntrn-file-manager"
+name = "lntrn-desktop"
 version = "0.1.0"
-description = "Lantern File Manager"
+description = "Lantern Desktop Shell"
 authors = ["Jca56"]
 edition = "2021"
 
 [[bin]]
-name = "lntrn-file-manager"
+name = "lntrn-desktop"
 path = "src/main.rs"
 
 [dependencies]

@@ -420,20 +420,56 @@ impl Lantern {
         let canvas_pos = Point::from((cx, cy));
 
         // Check windows in the space (which live in canvas-space)
-        self.space
+        let window_hit = self.space
             .element_under(canvas_pos)
             .and_then(|(window, location)| {
                 window
                     .surface_under(canvas_pos - location.to_f64(), WindowSurfaceType::ALL)
                     .map(|(s, p)| {
-                        // Convert the surface position back to screen-space so that
-                        // Smithay's `pointer_location - focus_location` math produces
-                        // the correct relative position within the surface.
                         let canvas_abs = (p + location).to_f64();
                         let (sx, sy) = self.canvas.canvas_to_screen(canvas_abs.x, canvas_abs.y);
                         (s, Point::from((sx, sy)))
                     })
-            })
+            });
+        if window_hit.is_some() {
+            return window_hit;
+        }
+
+        // Check Bottom layer surfaces (below windows, above wallpaper)
+        if let Some(output) = self.space.outputs().next() {
+            let output_geo = self.space.output_geometry(output).unwrap_or_default();
+            for ls in &self.layer_surfaces {
+                if !ls.alive() { continue; }
+                let cached = with_states(ls.wl_surface(), |states| {
+                    *states.cached_state.get::<LayerSurfaceCachedState>().current()
+                });
+                if cached.layer != Layer::Bottom { continue; }
+                let ls_loc = crate::render::layer_surface_position_logical(&cached, output_geo);
+                // cached.size is (0,0) when client requests auto-fill — use output size
+                let size: smithay::utils::Size<i32, Logical> = (
+                    if cached.size.w > 0 { cached.size.w } else { output_geo.size.w },
+                    if cached.size.h > 0 { cached.size.h } else { output_geo.size.h },
+                ).into();
+                let rect = Rectangle::new(ls_loc, size);
+                let pos_i = Point::from((pos.x as i32, pos.y as i32));
+                if rect.contains(pos_i) {
+                    let relative = pos - ls_loc.to_f64();
+                    if let Some((sub_surface, sub_loc)) = smithay::desktop::utils::under_from_surface_tree(
+                        ls.wl_surface(),
+                        relative,
+                        (0, 0),
+                        WindowSurfaceType::ALL,
+                    ) {
+                        return Some((sub_surface, (sub_loc.to_f64() + ls_loc.to_f64())));
+                    }
+                    // wgpu surfaces may not register in Smithay's surface tree —
+                    // fall back to returning the layer surface directly
+                    return Some((ls.wl_surface().clone(), ls_loc.to_f64()));
+                }
+            }
+        }
+
+        None
     }
 
     pub fn request_winit_redraw(&self) {

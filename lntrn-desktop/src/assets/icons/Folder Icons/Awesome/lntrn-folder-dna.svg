@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="256" height="256">
+  <defs>
+    
+    <linearGradient id="dnaBack" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#050a1a"/><stop offset="100%" stop-color="#020508"/>
+    </linearGradient>
+    <linearGradient id="stripG" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00ffcc"/><stop offset="100%" stop-color="#0044ff"/>
+    </linearGradient>
+    <filter id="dnaGlow" x="-30%" y="-20%" width="160%" height="140%">
+      <feDropShadow dx="0" dy="0" stdDeviation="2.5" flood-color="#00ffcc" flood-opacity="0.9"/>
+    </filter>
+    <filter id="dnaGlow2" x="-30%" y="-20%" width="160%" height="140%">
+      <feDropShadow dx="0" dy="0" stdDeviation="2.5" flood-color="#ff44aa" flood-opacity="0.9"/>
+    </filter>
+    <linearGradient id="page1grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f0ece0"/><stop offset="100%" stop-color="#d8d4c8"/>
+    </linearGradient>
+    <linearGradient id="page2grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#e4e0d4"/><stop offset="100%" stop-color="#c8c4b8"/>
+    </linearGradient>
+    <filter id="fShadow">
+      <feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#000" flood-opacity="0.7"/>
+    </filter>
+    <filter id="pShadow">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <g filter="url(#fShadow)">
+    <path d="M7,22 Q7,17 12,17 L40,17 Q45,17 47,22 L53,30 L93,30 L93,93 Q93,98 88,98 L12,98 Q7,98 7,93 Z"
+          fill="#050a1a"/>
+  </g>
+  <g filter="url(#pShadow)">
+    <rect x="14" y="27" width="72" height="5" rx="1.5" fill="url(#page2grad)"/>
+  </g>
+  <g filter="url(#pShadow)">
+    <rect x="14" y="31" width="72" height="5" rx="1.5" fill="url(#page1grad)"/>
+  </g>
+  <rect x="7" y="36" width="86" height="12" fill="url(#stripG)"/><rect x="7" y="36" width="86" height="4.5" fill="#fff" opacity="0.12"/>
+  <clipPath id="bodyClip"><rect x="7" y="48" width="86" height="50" rx="5"/></clipPath>
+  <rect x="7" y="48" width="86" height="50" rx="5" fill="#020508"/>
+  
+  <g clip-path="url(#bodyClip)">
+    <rect x="7" y="48" width="86" height="50" fill="url(#dnaBack)"/>
+    <!-- Left helix strand -->
+    <g filter="url(#dnaGlow)">
+      <path d="M35,50 Q25,58 35,66 Q45,74 35,82 Q25,90 35,98" fill="none" stroke="#00ffcc" stroke-width="2" stroke-linecap="round"/>
+    </g>
+    <!-- Right helix strand -->
+    <g filter="url(#dnaGlow2)">
+      <path d="M65,50 Q75,58 65,66 Q55,74 65,82 Q75,90 65,98" fill="none" stroke="#ff44aa" stroke-width="2" stroke-linecap="round"/>
+    </g>
+    <!-- Rungs connecting -->
+    <g opacity="0.8">
+      <line x1="35" y1="52" x2="65" y2="52" stroke="#44ffdd" stroke-width="1.5" stroke-linecap="round"/>
+      <line x1="30" y1="57" x2="70" y2="57" stroke="#88aaff" stroke-width="1.2" stroke-linecap="round"/>
+      <line x1="29" y1="62" x2="71" y2="62" stroke="#ff88cc" stroke-width="1.2" stroke-linecap="round"/>
+      <line x1="31" y1="67" x2="69" y2="67" stroke="#44ffdd" stroke-width="1.5" stroke-linecap="round"/>
+      <line x1="36" y1="72" x2="64" y2="72" stroke="#88aaff" stroke-width="1.2" stroke-linecap="round"/>
+      <line x1="40" y1="77" x2="60" y2="77" stroke="#ff88cc" stroke-width="1.2" stroke-linecap="round"/>
+      <line x1="37" y1="82" x2="63" y2="82" stroke="#44ffdd" stroke-width="1.5" stroke-linecap="round"/>
+      <line x1="31" y1="87" x2="69" y2="87" stroke="#88aaff" stroke-width="1.2" stroke-linecap="round"/>
+      <line x1="29" y1="92" x2="71" y2="92" stroke="#ff88cc" stroke-width="1.2" stroke-linecap="round"/>
+      <line x1="31" y1="97" x2="69" y2="97" stroke="#44ffdd" stroke-width="1.5" stroke-linecap="round"/>
+    </g>
+    <!-- Floating particle dots -->
+    <g filter="url(#dnaGlow)">
+      <circle cx="18" cy="60" r="1.5" fill="#00ffcc" opacity="0.7"/>
+      <circle cx="14" cy="75" r="1"   fill="#00ffcc" opacity="0.5"/>
+      <circle cx="20" cy="88" r="1.5" fill="#00ffcc" opacity="0.6"/>
+    </g>
+    <g filter="url(#dnaGlow2)">
+      <circle cx="82" cy="58" r="1.5" fill="#ff44aa" opacity="0.7"/>
+      <circle cx="86" cy="73" r="1"   fill="#ff44aa" opacity="0.5"/>
+      <circle cx="80" cy="86" r="1.5" fill="#ff44aa" opacity="0.6"/>
+    </g>
+  </g>
+  <rect x="7" y="48" width="86" height="50" rx="5" fill="none" stroke="#00ccaa" stroke-width="1.2" opacity="0.3"/>
+  <rect x="7" y="48" width="86" height="12" rx="5" fill="#fff" opacity="0.04"/>
+  <rect x="7" y="90" width="86" height="8" rx="5" fill="#000" opacity="0.2"/>
+</svg>

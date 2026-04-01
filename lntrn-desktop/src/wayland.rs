@@ -5,7 +5,6 @@ use anyhow::{anyhow, Result};
 use lntrn_render::{GpuContext, Painter, TextRenderer, TexturePass};
 use lntrn_ui::gpu::{
     ContextMenu, ContextMenuStyle, FoxPalette, InteractionContext,
-    WaylandPopupBackend,
 };
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
@@ -13,19 +12,17 @@ use raw_window_handle::{
 };
 use wayland_client::{
     protocol::{
-        wl_compositor, wl_data_device, wl_data_device_manager,
-        wl_seat, wl_surface,
+        wl_compositor, wl_seat, wl_surface,
     },
     Connection, EventQueue, Proxy,
 };
 use wayland_protocols::wp::viewporter::client::wp_viewporter;
-use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
 use crate::app::App;
 use crate::desktop::DesktopApp;
 use crate::icons::IconCache;
-use crate::{Gpu, PickConfig, PickResult};
+use crate::Gpu;
 use crate::settings::Settings;
 
 // ── WaylandHandle for wgpu ──────────────────────────────────────────────────
@@ -57,17 +54,12 @@ pub(crate) struct State {
     pub(crate) height: u32,
     pub(crate) scale: i32,
     pub(crate) output_phys_width: u32,
-    pub(crate) maximized: bool,
-    pub(crate) desktop_mode: bool,
     // Wayland objects
     pub(crate) compositor: Option<wl_compositor::WlCompositor>,
-    pub(crate) wm_base: Option<xdg_wm_base::XdgWmBase>,
     pub(crate) viewporter: Option<wp_viewporter::WpViewporter>,
     pub(crate) surface: Option<wl_surface::WlSurface>,
-    pub(crate) xdg_surface: Option<xdg_surface::XdgSurface>,
-    pub(crate) toplevel: Option<xdg_toplevel::XdgToplevel>,
     pub(crate) seat: Option<wl_seat::WlSeat>,
-    // Layer shell (desktop widget mode)
+    // Layer shell
     pub(crate) layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
     pub(crate) layer_surface: Option<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1>,
     // Input
@@ -88,36 +80,21 @@ pub(crate) struct State {
     pub(crate) held_key: Option<u32>,
     pub(crate) repeat_deadline: std::time::Instant,
     pub(crate) repeat_started: bool,
-    // Popups
-    pub(crate) popup_backend: Option<WaylandPopupBackend<State>>,
-    pub(crate) popup_closed: bool,
-    // DnD
-    pub(crate) data_device_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
-    pub(crate) data_device: Option<wl_data_device::WlDataDevice>,
-    pub(crate) dnd_active: bool,
-    pub(crate) dnd_start_requested: bool,
-    pub(crate) dnd_paths: Vec<std::path::PathBuf>,
-    pub(crate) dnd_serial: u32,
 }
 
 impl State {
     fn new() -> Self {
         Self {
             running: true, configured: false, frame_done: true,
-            width: 0, height: 0, scale: 1, output_phys_width: 0, maximized: false,
-            desktop_mode: false,
-            compositor: None, wm_base: None, viewporter: None,
-            surface: None, xdg_surface: None, toplevel: None, seat: None,
+            width: 0, height: 0, scale: 1, output_phys_width: 0,
+            compositor: None, viewporter: None,
+            surface: None, seat: None,
             layer_shell: None, layer_surface: None,
             cursor_x: 0.0, cursor_y: 0.0, pointer_in_surface: false,
             left_pressed: false, left_released: false, right_clicked: false,
             scroll_delta: 0.0, pointer_serial: 0, pointer_surface: None,
             ctrl: false, shift: false, key_pressed: None,
             held_key: None, repeat_deadline: std::time::Instant::now(), repeat_started: false,
-            popup_backend: None, popup_closed: false,
-            data_device_manager: None, data_device: None,
-            dnd_active: false, dnd_start_requested: false,
-            dnd_paths: Vec::new(), dnd_serial: 0,
         }
     }
 
@@ -135,16 +112,12 @@ impl State {
 
 // ── Entry point ─────────────────────────────────────────────────────────────
 
-pub fn run(pick: Option<PickConfig>, desktop: bool) -> Result<()> {
-    if desktop {
-        crate::layout::DESKTOP_MODE.store(true, std::sync::atomic::Ordering::Relaxed);
-    }
+pub fn run() -> Result<()> {
     let conn = Connection::connect_to_env()?;
     let display = conn.display();
     let mut event_queue: EventQueue<State> = conn.new_event_queue();
     let qh = event_queue.handle();
     let mut state = State::new();
-    state.desktop_mode = desktop;
 
     display.get_registry(&qh, ());
     event_queue.roundtrip(&mut state)?;
@@ -152,68 +125,35 @@ pub fn run(pick: Option<PickConfig>, desktop: bool) -> Result<()> {
     let compositor = state.compositor.clone()
         .ok_or_else(|| anyhow!("wl_compositor not available"))?;
 
-    // Create data device for DnD (if available)
-    if let (Some(mgr), Some(seat)) = (&state.data_device_manager, &state.seat) {
-        state.data_device = Some(mgr.get_data_device(seat, &qh, ()));
-    }
-
     let settings = Settings::load();
     let surface = compositor.create_surface(&qh, ());
 
-    // Dummy toplevel ref — only used in window mode
-    let mut toplevel_holder: Option<xdg_toplevel::XdgToplevel> = None;
+    // ── Layer shell desktop mode ─────────────────────────────────
+    let layer_shell = state.layer_shell.clone()
+        .ok_or_else(|| anyhow!("zwlr_layer_shell_v1 not available"))?;
 
-    if desktop {
-        // ── Layer shell desktop widget mode ─────────────────────────
-        let layer_shell = state.layer_shell.clone()
-            .ok_or_else(|| anyhow!("zwlr_layer_shell_v1 not available"))?;
+    let layer_surface = layer_shell.get_layer_surface(
+        &surface, None,
+        zwlr_layer_shell_v1::Layer::Bottom,
+        "lntrn-desktop".to_string(),
+        &qh, (),
+    );
+    // Anchor all edges + size 0 = fill available space (bar's exclusive zone respected)
+    layer_surface.set_anchor(
+        zwlr_layer_surface_v1::Anchor::Top
+        | zwlr_layer_surface_v1::Anchor::Bottom
+        | zwlr_layer_surface_v1::Anchor::Left
+        | zwlr_layer_surface_v1::Anchor::Right,
+    );
+    layer_surface.set_size(0, 0);
+    layer_surface.set_exclusive_zone(0);
+    layer_surface.set_keyboard_interactivity(
+        zwlr_layer_surface_v1::KeyboardInteractivity::OnDemand,
+    );
+    surface.commit();
 
-        let layer_surface = layer_shell.get_layer_surface(
-            &surface, None,
-            zwlr_layer_shell_v1::Layer::Bottom,
-            "lntrn-file-manager-desktop".to_string(),
-            &qh, (),
-        );
-        // Anchor all edges + size 0 = fill available space (bar's exclusive zone respected)
-        layer_surface.set_anchor(
-            zwlr_layer_surface_v1::Anchor::Top
-            | zwlr_layer_surface_v1::Anchor::Bottom
-            | zwlr_layer_surface_v1::Anchor::Left
-            | zwlr_layer_surface_v1::Anchor::Right,
-        );
-        layer_surface.set_size(0, 0);
-        layer_surface.set_exclusive_zone(0);
-        layer_surface.set_keyboard_interactivity(
-            zwlr_layer_surface_v1::KeyboardInteractivity::OnDemand,
-        );
-        surface.commit();
-
-        state.surface = Some(surface.clone());
-        state.layer_surface = Some(layer_surface);
-    } else {
-        // ── Normal xdg_toplevel window mode ─────────────────────────
-        let wm_base = state.wm_base.clone()
-            .ok_or_else(|| anyhow!("xdg_wm_base not available"))?;
-
-        if state.width == 0 { state.width = settings.window_width as u32; }
-        if state.height == 0 { state.height = settings.window_height as u32; }
-
-        let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
-        let toplevel = xdg_surface.get_toplevel(&qh, ());
-        let title = pick.as_ref()
-            .and_then(|p| p.title.as_deref())
-            .or(pick.as_ref().map(|p| p.default_title()))
-            .unwrap_or("Lantern File Manager");
-        toplevel.set_title(title.into());
-        toplevel.set_app_id("lntrn-file-manager".into());
-        toplevel.set_min_size(400, 300);
-        surface.commit();
-
-        toplevel_holder = Some(toplevel.clone());
-        state.surface = Some(surface.clone());
-        state.xdg_surface = Some(xdg_surface);
-        state.toplevel = Some(toplevel);
-    }
+    state.surface = Some(surface.clone());
+    state.layer_surface = Some(layer_surface);
 
     // Wait for initial configure
     while !state.configured {
@@ -248,16 +188,6 @@ pub fn run(pick: Option<PickConfig>, desktop: bool) -> Result<()> {
         ctx: gpu_ctx,
     };
 
-    // Popup backend (window mode only — desktop uses inline menus)
-    if !desktop {
-        let xdg_surf = state.xdg_surface.as_ref().unwrap().clone();
-        let wm_base = state.wm_base.as_ref().unwrap();
-        let vp = state.viewporter.as_ref();
-        state.popup_backend = Some(WaylandPopupBackend::new(
-            &conn, &compositor, wm_base, &xdg_surf, vp, &gpu.ctx, scale_f, &qh,
-        ));
-    }
-
     let palette = FoxPalette::dark();
     let mut view_menu = ContextMenu::new(ContextMenuStyle::from_palette(&palette));
     let mut context_menu = ContextMenu::new(ContextMenuStyle::from_palette(&palette));
@@ -269,38 +199,25 @@ pub fn run(pick: Option<PickConfig>, desktop: bool) -> Result<()> {
     app.icon_zoom = settings.icon_zoom;
     app.show_hidden = settings.show_hidden;
     app.sort_by = settings.sort_by_enum();
-    if let Some(ref p) = pick {
-        if let Some(ref dir) = p.start_dir {
-            app.navigate_to(dir.clone());
-        } else {
-            app.navigate_to_home();
+    app.navigate_to_home();
+    // Restore pinned tabs from settings (preserving saved order)
+    let mut pinned: Vec<crate::app::DirectoryTab> = Vec::new();
+    for pinned_path in &settings.pinned_tabs {
+        let path = std::path::PathBuf::from(pinned_path);
+        if path.is_dir() {
+            let mut tab = crate::app::DirectoryTab::new(path.clone());
+            tab.pinned = true;
+            tab.pinned_path = Some(path.clone());
+            tab.entries = crate::fs::list_directory(&path, app.show_hidden, app.sort_by);
+            pinned.push(tab);
         }
-        app.pick = Some(p.clone());
-        if let Some(ref name) = p.save_name {
-            app.save_name_buf = name.clone();
-        }
-    } else {
-        app.navigate_to_home();
-        // Restore pinned tabs from settings (preserving saved order)
-        let mut pinned: Vec<crate::app::DirectoryTab> = Vec::new();
-        for pinned_path in &settings.pinned_tabs {
-            let path = std::path::PathBuf::from(pinned_path);
-            if path.is_dir() {
-                let mut tab = crate::app::DirectoryTab::new(path.clone());
-                tab.pinned = true;
-                tab.pinned_path = Some(path.clone());
-                tab.entries = crate::fs::list_directory(&path, app.show_hidden, app.sort_by);
-                pinned.push(tab);
-            }
-        }
-        if !pinned.is_empty() {
-            let count = pinned.len();
-            // Prepend pinned tabs before the home tab
-            pinned.append(&mut app.tabs);
-            app.tabs = pinned;
-            app.current_tab = 0;
-            app.switch_tab(0);
-        }
+    }
+    if !pinned.is_empty() {
+        // Prepend pinned tabs before the home tab
+        pinned.append(&mut app.tabs);
+        app.tabs = pinned;
+        app.current_tab = 0;
+        app.switch_tab(0);
     }
 
     let mut input = InteractionContext::new();
@@ -310,36 +227,18 @@ pub fn run(pick: Option<PickConfig>, desktop: bool) -> Result<()> {
 
     crate::wayland_loop::run_loop(
         &conn, &mut event_queue, &mut state, &qh,
-        &surface, &toplevel_holder, &viewport,
+        &surface, &viewport,
         &mut gpu, &palette, &mut view_menu, &mut context_menu,
         &mut open_with_apps, &mut app, &mut input, &mut icon_cache,
         &mut file_info, &mut settings,
     )?;
 
-    eprintln!("[fox] exited main loop");
+    eprintln!("[desktop] exited main loop");
 
-    // Pick mode: output results
-    if pick.is_some() {
-        match app.pick_result.take() {
-            Some(PickResult::Selected(paths)) => {
-                for p in &paths {
-                    println!("{}", p.display());
-                }
-                return Ok(());
-            }
-            _ => {
-                // Cancelled — exit with code 1
-                std::process::exit(1);
-            }
-        }
-    }
-
-    // Save settings on exit (normal mode only)
+    // Save settings on exit
     settings.icon_zoom = app.icon_zoom;
     settings.show_hidden = app.show_hidden;
     settings.set_sort_by(app.sort_by);
-    settings.window_width = state.width as f32;
-    settings.window_height = state.height as f32;
     settings.pinned_tabs = app.tabs.iter()
         .filter(|t| t.pinned)
         .map(|t| {

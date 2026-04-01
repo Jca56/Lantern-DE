@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="256" height="256">
+  <defs>
+    
+    <linearGradient id="circBack" x1="0%" y1="0%" x2="10%" y2="100%">
+      <stop offset="0%" stop-color="#050f0a"/><stop offset="100%" stop-color="#020805"/>
+    </linearGradient>
+    <linearGradient id="stripG" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00ff88"/><stop offset="100%" stop-color="#00cc44"/>
+    </linearGradient>
+    <filter id="traceGlow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="0" stdDeviation="1.5" flood-color="#00ff88" flood-opacity="0.9"/>
+    </filter>
+    <filter id="nodeGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#00ff88" flood-opacity="1"/>
+    </filter>
+    <linearGradient id="page1grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f0ece0"/><stop offset="100%" stop-color="#d8d4c8"/>
+    </linearGradient>
+    <linearGradient id="page2grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#e4e0d4"/><stop offset="100%" stop-color="#c8c4b8"/>
+    </linearGradient>
+    <filter id="fShadow">
+      <feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#000" flood-opacity="0.7"/>
+    </filter>
+    <filter id="pShadow">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <g filter="url(#fShadow)">
+    <path d="M7,22 Q7,17 12,17 L40,17 Q45,17 47,22 L53,30 L93,30 L93,93 Q93,98 88,98 L12,98 Q7,98 7,93 Z" fill="#050f0a"/>
+  </g>
+  <g filter="url(#pShadow)">
+    <rect x="14" y="27" width="72" height="5" rx="1.5" fill="url(#page2grad)"/>
+  </g>
+  <g filter="url(#pShadow)">
+    <rect x="14" y="31" width="72" height="5" rx="1.5" fill="url(#page1grad)"/>
+  </g>
+  <rect x="7" y="36" width="86" height="12" fill="url(#stripG)"/><rect x="7" y="36" width="86" height="4.5" fill="#fff" opacity="0.12"/>
+  <clipPath id="bodyClip"><rect x="7" y="48" width="86" height="50" rx="5"/></clipPath>
+  <rect x="7" y="48" width="86" height="50" rx="5" fill="#020805"/>
+  
+  <g clip-path="url(#bodyClip)">
+    <rect x="7" y="48" width="86" height="50" fill="url(#circBack)"/>
+    <!-- Circuit traces -->
+    <g filter="url(#traceGlow)" fill="none" stroke="#00ff88" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="15,55 25,55 25,65 45,65 45,55 65,55 65,70 80,70"/>
+      <polyline points="15,75 30,75 30,65"/>
+      <polyline points="45,75 45,80 60,80 60,70"/>
+      <polyline points="80,70 80,80 70,80 70,90 50,90"/>
+      <polyline points="15,85 25,85 25,75"/>
+      <polyline points="65,90 65,98"/>
+      <polyline points="35,90 35,98"/>
+      <line x1="15" y1="65" x2="15" y2="85"/>
+      <line x1="80" y1="55" x2="93" y2="55"/>
+      <line x1="80" y1="85" x2="93" y2="85"/>
+      <polyline points="93,60 88,60 88,80 93,80"/>
+    </g>
+    <!-- Circuit nodes -->
+    <g filter="url(#nodeGlow)">
+      <circle cx="25" cy="55" r="2.5" fill="#00ff88"/>
+      <circle cx="45" cy="55" r="2.5" fill="#00ff88"/>
+      <circle cx="65" cy="55" r="2.5" fill="#00ff88"/>
+      <circle cx="25" cy="65" r="2"   fill="#00cc66"/>
+      <circle cx="45" cy="65" r="2"   fill="#00cc66"/>
+      <circle cx="65" cy="70" r="2"   fill="#00cc66"/>
+      <circle cx="80" cy="70" r="2.5" fill="#00ff88"/>
+      <circle cx="30" cy="75" r="2"   fill="#00cc66"/>
+      <circle cx="45" cy="80" r="2"   fill="#00cc66"/>
+      <circle cx="60" cy="80" r="2"   fill="#00cc66"/>
+      <circle cx="80" cy="80" r="2.5" fill="#00ff88"/>
+      <circle cx="25" cy="85" r="2"   fill="#00cc66"/>
+      <circle cx="50" cy="90" r="3"   fill="#00ff88"/>
+      <circle cx="70" cy="80" r="2"   fill="#00cc66"/>
+    </g>
+    <!-- CPU chip center -->
+    <rect x="33" y="53" width="14" height="14" rx="2" fill="#050f0a" stroke="#00ff88" stroke-width="1.2"/>
+    <rect x="35" y="55" width="10" height="10" rx="1" fill="#001a08" stroke="#00cc66" stroke-width="0.8"/>
+    <text x="37" y="63" font-family="monospace" font-size="5" fill="#00ff88">AI</text>
+  </g>
+  <rect x="7" y="48" width="86" height="50" rx="5" fill="none" stroke="#00cc66" stroke-width="1.2" opacity="0.3"/>
+  <rect x="7" y="48" width="86" height="12" rx="5" fill="#fff" opacity="0.04"/>
+  <rect x="7" y="90" width="86" height="8" rx="5" fill="#000" opacity="0.2"/>
+</svg>

@@ -9,6 +9,7 @@ members = [
     "lntrn-ui",
     "lntrn-render",
     "lntrn-file-manager",
+    "lntrn-desktop",
     "lntrn-bar",
     "lntrn-terminal",
     "lntrn-image-viewer",

@@ -803,9 +803,13 @@ impl Lantern {
                         .map(|(w, l)| (w.clone(), l))
                     {
                         self.focus_window(&window, serial);
+                    } else if let Some((surface, _)) = self.surface_under(pos) {
+                        // Clicked on a layer surface (e.g. Bottom layer desktop widget)
+                        // Give it keyboard focus so OnDemand interactivity works
+                        let keyboard = self.seat.get_keyboard().unwrap();
+                        keyboard.set_focus(self, Some(surface), serial.into());
                     } else {
                         self.clear_focus(serial);
-                        // TODO: desktop right-click context menu
                     }
                 };
 

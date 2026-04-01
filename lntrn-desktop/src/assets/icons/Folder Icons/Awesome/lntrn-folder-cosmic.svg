@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="256" height="256">
+  <defs>
+    
+    <radialGradient id="nebula" cx="40%" cy="50%" r="70%">
+      <stop offset="0%" stop-color="#ff44aa"/>
+      <stop offset="30%" stop-color="#8800ff"/>
+      <stop offset="60%" stop-color="#0044ff"/>
+      <stop offset="100%" stop-color="#001133"/>
+    </radialGradient>
+    <radialGradient id="nebula2" cx="70%" cy="30%" r="50%">
+      <stop offset="0%" stop-color="#ffaa00" stop-opacity="0.7"/>
+      <stop offset="100%" stop-color="#ff4400" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="stripG" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ff44cc"/><stop offset="100%" stop-color="#4400ff"/>
+    </linearGradient>
+    <filter id="starGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="#ffffff" flood-opacity="1"/>
+    </filter>
+    <linearGradient id="page1grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f0ece0"/><stop offset="100%" stop-color="#d8d4c8"/>
+    </linearGradient>
+    <linearGradient id="page2grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#e4e0d4"/><stop offset="100%" stop-color="#c8c4b8"/>
+    </linearGradient>
+    <filter id="fShadow">
+      <feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#000" flood-opacity="0.7"/>
+    </filter>
+    <filter id="pShadow">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  
+  <g filter="url(#fShadow)">
+    <path d="M7,22 Q7,17 12,17 L40,17 Q45,17 47,22 L53,30 L93,30 L93,93 Q93,98 88,98 L12,98 Q7,98 7,93 Z"
+          fill="#0a0020"/>
+  </g>
+  <g filter="url(#pShadow)">
+    <rect x="14" y="27" width="72" height="5" rx="1.5" fill="url(#page2grad)"/>
+  </g>
+  <g filter="url(#pShadow)">
+    <rect x="14" y="31" width="72" height="5" rx="1.5" fill="url(#page1grad)"/>
+  </g>
+  <rect x="7" y="36" width="86" height="12" fill="url(#stripG)"/><rect x="7" y="36" width="86" height="4.5" fill="#fff" opacity="0.15"/>
+  <clipPath id="bodyClip"><rect x="7" y="48" width="86" height="50" rx="5"/></clipPath>
+  <rect x="7" y="48" width="86" height="50" rx="5" fill="#0a0020"/>
+  
+  <g clip-path="url(#bodyClip)">
+    <rect x="7" y="48" width="86" height="50" fill="url(#nebula)"/>
+    <ellipse cx="35" cy="65" rx="25" ry="18" fill="url(#nebula2)" opacity="0.8"/>
+    <g filter="url(#starGlow)">
+      <circle cx="20" cy="55" r="1"   fill="#fff"/>
+      <circle cx="35" cy="50" r="1.5" fill="#fff"/>
+      <circle cx="55" cy="58" r="1"   fill="#fff"/>
+      <circle cx="70" cy="52" r="1.5" fill="#fff"/>
+      <circle cx="82" cy="60" r="1"   fill="#fff"/>
+      <circle cx="25" cy="72" r="1"   fill="#fff"/>
+      <circle cx="60" cy="80" r="1.5" fill="#fff"/>
+      <circle cx="78" cy="75" r="1"   fill="#fff"/>
+      <circle cx="45" cy="88" r="1"   fill="#fff"/>
+      <circle cx="15" cy="85" r="1.5" fill="#fff"/>
+    </g>
+    <!-- Planet -->
+    <circle cx="72" cy="70" r="10" fill="#330066" stroke="#aa44ff" stroke-width="1.5"/>
+    <ellipse cx="72" cy="70" rx="15" ry="4" fill="none" stroke="#ff88ff" stroke-width="1.5" opacity="0.7"/>
+    <circle cx="72" cy="68" r="3" fill="#aa44ff" opacity="0.5"/>
+  </g>
+  <rect x="7" y="48" width="86" height="50" rx="5" fill="none" stroke="#8800ff" stroke-width="1.2" opacity="0.3"/>
+  <rect x="7" y="48" width="86" height="12" rx="5" fill="#fff" opacity="0.04"/>
+  <rect x="7" y="90" width="86" height="8" rx="5" fill="#000" opacity="0.2"/>
+</svg>

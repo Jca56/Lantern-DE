@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="256" height="256">
+  <defs>
+    
+    <linearGradient id="stripG" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#00ff44"/><stop offset="100%" stop-color="#004422"/>
+    </linearGradient>
+    <filter id="matrixGlow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="#00ff44" flood-opacity="0.9"/>
+    </filter>
+    <linearGradient id="page1grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f0ece0"/><stop offset="100%" stop-color="#d8d4c8"/>
+    </linearGradient>
+    <linearGradient id="page2grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#e4e0d4"/><stop offset="100%" stop-color="#c8c4b8"/>
+    </linearGradient>
+    <filter id="fShadow">
+      <feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#000" flood-opacity="0.7"/>
+    </filter>
+    <filter id="pShadow">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  
+  <g filter="url(#fShadow)">
+    <path d="M7,22 Q7,17 12,17 L40,17 Q45,17 47,22 L53,30 L93,30 L93,93 Q93,98 88,98 L12,98 Q7,98 7,93 Z"
+          fill="#000a00"/>
+  </g>
+  <g filter="url(#pShadow)">
+    <rect x="14" y="27" width="72" height="5" rx="1.5" fill="url(#page2grad)"/>
+  </g>
+  <g filter="url(#pShadow)">
+    <rect x="14" y="31" width="72" height="5" rx="1.5" fill="url(#page1grad)"/>
+  </g>
+  <rect x="7" y="36" width="86" height="12" fill="url(#stripG)"/><rect x="7" y="36" width="86" height="4.5" fill="#fff" opacity="0.12"/>
+  <clipPath id="bodyClip"><rect x="7" y="48" width="86" height="50" rx="5"/></clipPath>
+  <rect x="7" y="48" width="86" height="50" rx="5" fill="#000800"/>
+  
+  <g clip-path="url(#bodyClip)" filter="url(#matrixGlow)" font-family="monospace" font-size="6" fill="#00ff44">
+    <rect x="7" y="48" width="86" height="50" fill="#000800"/>
+    <text x="10" y="57"  opacity="0.9">01101 10010</text>
+    <text x="10" y="64"  opacity="0.7">11010 01101</text>
+    <text x="10" y="71"  opacity="0.5">00110 11010</text>
+    <text x="10" y="78"  opacity="0.8">10101 00111</text>
+    <text x="10" y="85"  opacity="0.6">01010 11001</text>
+    <text x="10" y="92"  opacity="0.4">11100 01010</text>
+    <!-- Highlight column -->
+    <rect x="38" y="48" width="18" height="50" fill="#00ff44" opacity="0.06"/>
+    <text x="40" y="57"  opacity="1"  fill="#aaffcc">10 01</text>
+    <text x="40" y="64"  opacity="1"  fill="#ffffff">01 10</text>
+    <text x="40" y="71"  opacity="1"  fill="#aaffcc">11 00</text>
+    <text x="40" y="78"  opacity="0.9" fill="#00ff44">10 11</text>
+    <text x="40" y="85"  opacity="0.7" fill="#00cc33">01 01</text>
+    <text x="40" y="92"  opacity="0.5" fill="#006611">10 00</text>
+  </g>
+  <rect x="7" y="48" width="86" height="50" rx="5" fill="none" stroke="#00ff44" stroke-width="1.2" opacity="0.3"/>
+  <rect x="7" y="48" width="86" height="12" rx="5" fill="#fff" opacity="0.04"/>
+  <rect x="7" y="90" width="86" height="8" rx="5" fill="#000" opacity="0.2"/>
+</svg>

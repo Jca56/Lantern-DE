@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="256" height="256">
+  <defs>
+    
+    <linearGradient id="mushBack" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#06100a"/><stop offset="100%" stop-color="#020804"/>
+    </linearGradient>
+    <linearGradient id="stripG" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ff4422"/><stop offset="100%" stop-color="#ff8844"/>
+    </linearGradient>
+    <radialGradient id="capGrad" cx="40%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#ff6644"/><stop offset="50%" stop-color="#ff2200"/><stop offset="100%" stop-color="#990000"/>
+    </radialGradient>
+    <radialGradient id="capGrad2" cx="40%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#ffaa44"/><stop offset="50%" stop-color="#ff6600"/><stop offset="100%" stop-color="#882200"/>
+    </radialGradient>
+    <filter id="mushroomGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#ff4400" flood-opacity="0.9"/>
+    </filter>
+    <filter id="sporeGlow" x="-60%" y="-60%" width="220%" height="220%">
+      <feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="#ffaa44" flood-opacity="0.9"/>
+    </filter>
+    <linearGradient id="page1grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f0ece0"/><stop offset="100%" stop-color="#d8d4c8"/>
+    </linearGradient>
+    <linearGradient id="page2grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#e4e0d4"/><stop offset="100%" stop-color="#c8c4b8"/>
+    </linearGradient>
+    <filter id="fShadow">
+      <feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#000" flood-opacity="0.7"/>
+    </filter>
+    <filter id="pShadow">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <g filter="url(#fShadow)">
+    <path d="M7,22 Q7,17 12,17 L40,17 Q45,17 47,22 L53,30 L93,30 L93,93 Q93,98 88,98 L12,98 Q7,98 7,93 Z" fill="#06100a"/>
+  </g>
+  <g filter="url(#pShadow)">
+    <rect x="14" y="27" width="72" height="5" rx="1.5" fill="url(#page2grad)"/>
+  </g>
+  <g filter="url(#pShadow)">
+    <rect x="14" y="31" width="72" height="5" rx="1.5" fill="url(#page1grad)"/>
+  </g>
+  <rect x="7" y="36" width="86" height="12" fill="url(#stripG)"/><rect x="7" y="36" width="86" height="4.5" fill="#fff" opacity="0.12"/>
+  <clipPath id="bodyClip"><rect x="7" y="48" width="86" height="50" rx="5"/></clipPath>
+  <rect x="7" y="48" width="86" height="50" rx="5" fill="#020804"/>
+  
+  <g clip-path="url(#bodyClip)">
+    <rect x="7" y="48" width="86" height="50" fill="url(#mushBack)"/>
+    <!-- Ground -->
+    <rect x="7" y="88" width="86" height="10" fill="#0a1e0a" opacity="0.8"/>
+    <path d="M7,88 Q25,85 40,88 Q55,91 70,87 Q82,84 93,88" fill="none" stroke="#1a4a1a" stroke-width="1.5"/>
+    <!-- Main mushroom center -->
+    <g filter="url(#mushroomGlow)">
+      <!-- Stem -->
+      <path d="M42,88 Q40,76 44,72 L56,72 Q60,76 58,88 Z" fill="#e8e0cc"/>
+      <ellipse cx="50" cy="88" rx="8" ry="3" fill="#ddd8c0"/>
+      <!-- Veil skirt -->
+      <path d="M44,76 Q50,80 56,76" fill="none" stroke="#ccc4aa" stroke-width="1.5" stroke-linecap="round"/>
+      <!-- Cap -->
+      <path d="M28,73 Q28,56 50,54 Q72,56 72,73 Q65,78 50,79 Q35,78 28,73 Z" fill="url(#capGrad)"/>
+      <!-- Cap shine -->
+      <path d="M35,65 Q42,58 52,60" fill="none" stroke="#ff9977" stroke-width="2" stroke-linecap="round" opacity="0.6"/>
+      <!-- White spots -->
+      <circle cx="42" cy="65" r="4" fill="#fff" opacity="0.9"/>
+      <circle cx="57" cy="62" r="3" fill="#fff" opacity="0.85"/>
+      <circle cx="48" cy="72" r="2.5" fill="#fff" opacity="0.8"/>
+      <circle cx="64" cy="70" r="2" fill="#fff" opacity="0.7"/>
+      <circle cx="35" cy="70" r="2" fill="#fff" opacity="0.7"/>
+    </g>
+    <!-- Left small mushroom -->
+    <g filter="url(#mushroomGlow)" opacity="0.85">
+      <rect x="18" y="84" width="5" height="8" rx="2" fill="#d8d0bc"/>
+      <path d="M12,83 Q12,75 20.5,74 Q29,75 29,83 Q24,86 20.5,86 Q17,86 12,83 Z" fill="url(#capGrad2)"/>
+      <circle cx="18" cy="79" r="2.5" fill="#fff" opacity="0.8"/>
+      <circle cx="24" cy="77" r="1.8" fill="#fff" opacity="0.7"/>
+    </g>
+    <!-- Right small mushroom -->
+    <g filter="url(#mushroomGlow)" opacity="0.8">
+      <rect x="76" y="85" width="4" height="7" rx="2" fill="#d8d0bc"/>
+      <path d="M71,84 Q71,77 78,76 Q85,77 85,84 Q82,87 78,87 Q74,87 71,84 Z" fill="url(#capGrad)"/>
+      <circle cx="76" cy="80" r="2" fill="#fff" opacity="0.8"/>
+      <circle cx="81" cy="79" r="1.5" fill="#fff" opacity="0.7"/>
+    </g>
+    <!-- Floating spores -->
+    <g filter="url(#sporeGlow)">
+      <circle cx="22" cy="62" r="1.5" fill="#ffaa44" opacity="0.8"/>
+      <circle cx="32" cy="55" r="1"   fill="#ffcc66" opacity="0.7"/>
+      <circle cx="68" cy="57" r="1.5" fill="#ffaa44" opacity="0.8"/>
+      <circle cx="78" cy="63" r="1"   fill="#ffcc66" opacity="0.7"/>
+      <circle cx="60" cy="52" r="1.2" fill="#ffaa44" opacity="0.6"/>
+      <circle cx="38" cy="53" r="1"   fill="#ffcc66" opacity="0.6"/>
+    </g>
+    <!-- Moss on ground -->
+    <g fill="#1a5a1a" opacity="0.5">
+      <ellipse cx="15" cy="90" rx="5" ry="2"/><ellipse cx="30" cy="91" rx="4" ry="1.5"/>
+      <ellipse cx="70" cy="90" rx="5" ry="2"/><ellipse cx="84" cy="91" rx="4" ry="1.5"/>
+    </g>
+  </g>
+  <rect x="7" y="48" width="86" height="50" rx="5" fill="none" stroke="#ff4422" stroke-width="1.2" opacity="0.3"/>
+  <rect x="7" y="48" width="86" height="12" rx="5" fill="#fff" opacity="0.04"/>
+  <rect x="7" y="90" width="86" height="8" rx="5" fill="#000" opacity="0.2"/>
+</svg>

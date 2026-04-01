@@ -1,15 +1,10 @@
 use lntrn_render::Rect;
-use std::sync::atomic::{AtomicBool, Ordering};
 
-/// When true, layout omits the title bar (desktop widget mode).
-pub static DESKTOP_MODE: AtomicBool = AtomicBool::new(false);
-
-fn title_bar_h_base() -> f32 {
-    if DESKTOP_MODE.load(Ordering::Relaxed) { 0.0 } else { 50.0 }
-}
-const NAV_BAR_H: f32 = 48.0;
+// Base design values (at 1x scale)
 const GRADIENT_H: f32 = 4.0;
-const TAB_BAR_H: f32 = 46.0;
+const GLOBAL_TAB_H: f32 = 46.0;
+const NAV_BAR_H: f32 = 48.0;
+const FILE_TAB_H: f32 = 46.0;
 const SIDEBAR_W: f32 = 200.0;
 const STATUS_BAR_H: f32 = 28.0;
 const ITEM_SIZE: f32 = 80.0;
@@ -20,26 +15,39 @@ const TREE_ROW_H: f32 = 36.0;
 const TREE_INDENT: f32 = 24.0;
 
 /// Zoom 0.0 → 1.8x, 0.5 → 2.9x, 1.0 → 4.0x
-/// Floor is already a comfortable size; top end is huge.
 pub fn zoom_multiplier(zoom: f32) -> f32 {
     1.8 + zoom * 2.2
 }
 
-/// Scaled layout helper. All public functions return physical-pixel values.
-pub fn title_bar_h(s: f32) -> f32 { title_bar_h_base() * s }
 pub fn gradient_h(s: f32) -> f32 { GRADIENT_H * s }
 pub fn sidebar_w(s: f32) -> f32 { SIDEBAR_W * s }
 pub fn item_size(s: f32, zoom: f32) -> f32 { (ITEM_SIZE * zoom_multiplier(zoom)).max(60.0) * s }
 pub fn icon_size(s: f32, zoom: f32) -> f32 { ICON_SIZE * s * zoom_multiplier(zoom) }
 pub fn item_pad(s: f32) -> f32 { ITEM_PAD * s }
 
-pub fn title_bar_rect(width: f32, s: f32) -> Rect {
-    Rect::new(0.0, 0.0, width, title_bar_h_base() * s)
+// ── Global header (shared across all panels) ──────────────────────────────
+
+/// Y=0: first gradient strip
+pub fn gradient1_y(_s: f32) -> f32 { 0.0 }
+
+/// Y after gradient 1: global tab bar
+pub fn global_tab_y(s: f32) -> f32 { GRADIENT_H * s }
+
+/// Global tab bar rect (full width, between the two gradient strips)
+pub fn global_tab_rect(width: f32, s: f32) -> Rect {
+    Rect::new(0.0, global_tab_y(s), width, GLOBAL_TAB_H * s)
 }
 
-pub fn nav_bar_y(s: f32) -> f32 {
-    (title_bar_h_base() + GRADIENT_H) * s
-}
+/// Y after global tabs: second gradient strip
+pub fn gradient2_y(s: f32) -> f32 { (GRADIENT_H + GLOBAL_TAB_H) * s }
+
+/// Y where panel content begins (below both gradients + global tabs)
+pub fn panel_top(s: f32) -> f32 { (GRADIENT_H + GLOBAL_TAB_H + GRADIENT_H) * s }
+
+// ── Files panel layout (below panel_top) ──────────────────────────────────
+
+/// Nav bar Y (first thing in the files panel content)
+pub fn nav_bar_y(s: f32) -> f32 { panel_top(s) }
 
 pub fn nav_bar_rect(width: f32, s: f32) -> Rect {
     let x = SIDEBAR_W * s;
@@ -83,17 +91,19 @@ pub fn search_button_rect(width: f32, s: f32) -> Rect {
     Rect::new(width - 42.0 * s, y + 6.0 * s, 36.0 * s, 36.0 * s)
 }
 
+/// File tab bar Y (below nav bar)
 pub fn tab_bar_y(s: f32) -> f32 {
-    (title_bar_h_base() + GRADIENT_H + NAV_BAR_H + GRADIENT_H) * s
+    panel_top(s) + NAV_BAR_H * s
 }
 
 pub fn tab_bar_rect(width: f32, s: f32) -> Rect {
     let x = SIDEBAR_W * s;
-    Rect::new(x, tab_bar_y(s), width - x, TAB_BAR_H * s)
+    Rect::new(x, tab_bar_y(s), width - x, FILE_TAB_H * s)
 }
 
+/// Content area top (below nav bar + file tabs)
 pub fn content_top(s: f32) -> f32 {
-    (title_bar_h_base() + GRADIENT_H + NAV_BAR_H + GRADIENT_H + TAB_BAR_H) * s
+    panel_top(s) + NAV_BAR_H * s + FILE_TAB_H * s
 }
 
 pub fn content_bottom(height: f32, s: f32) -> f32 {
@@ -106,25 +116,23 @@ pub fn content_rect_with_bottom(width: f32, bottom: f32, s: f32) -> Rect {
 }
 
 pub fn sidebar_rect(height: f32, s: f32) -> Rect {
-    let top = nav_bar_y(s);
-    let bottom = content_bottom(height, s);
-    Rect::new(0.0, top, SIDEBAR_W * s, bottom - top)
+    let top = panel_top(s);
+    Rect::new(0.0, top, SIDEBAR_W * s, height - top)
 }
 
 pub fn sidebar_item_rect(index: usize, s: f32) -> Rect {
-    let mut y = nav_bar_y(s) + 42.0 * s;
+    let mut y = panel_top(s) + 42.0 * s;
     y += index as f32 * 40.0 * s;
     Rect::new(4.0 * s, y, (SIDEBAR_W - 12.0) * s, 40.0 * s)
 }
 
-/// Y position where the drives section starts (after places + header gap).
 pub fn drives_section_y(num_places: usize, s: f32) -> f32 {
-    nav_bar_y(s) + 42.0 * s + num_places as f32 * 40.0 * s + 20.0 * s
+    panel_top(s) + 42.0 * s + num_places as f32 * 40.0 * s + 20.0 * s
 }
 
 pub fn drive_item_rect(index: usize, num_places: usize, s: f32) -> Rect {
-    let mut y = drives_section_y(num_places, s) + 30.0 * s; // after "DEVICES" header
-    y += index as f32 * 64.0 * s; // taller items for usage bar
+    let mut y = drives_section_y(num_places, s) + 30.0 * s;
+    y += index as f32 * 64.0 * s;
     Rect::new(4.0 * s, y, (SIDEBAR_W - 12.0) * s, 64.0 * s)
 }
 
@@ -135,7 +143,7 @@ pub fn content_rect(width: f32, height: f32, s: f32) -> Rect {
 }
 
 pub fn status_rect(width: f32, height: f32, s: f32) -> Rect {
-    Rect::new(0.0, height - STATUS_BAR_H * s, width, STATUS_BAR_H * s)
+    Rect::new(SIDEBAR_W * s, height - STATUS_BAR_H * s, width - SIDEBAR_W * s, STATUS_BAR_H * s)
 }
 
 pub fn list_row_h(s: f32) -> f32 { LIST_ROW_H * s }

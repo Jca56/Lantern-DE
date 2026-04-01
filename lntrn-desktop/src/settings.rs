@@ -4,8 +4,6 @@ use std::path::PathBuf;
 #[derive(Serialize, Deserialize)]
 pub struct Settings {
     pub icon_zoom: f32,
-    pub window_width: f32,
-    pub window_height: f32,
     #[serde(default)]
     pub show_hidden: bool,
     #[serde(default = "default_sort")]
@@ -14,22 +12,9 @@ pub struct Settings {
     pub pinned_tabs: Vec<String>,
     #[serde(default = "default_bg_opacity")]
     pub bg_opacity: f32,
-    #[serde(default = "default_desktop_opacity")]
-    pub desktop_bg_opacity: f32,
-    #[serde(default = "default_desktop_w")]
-    pub desktop_width: f32,
-    #[serde(default = "default_desktop_h")]
-    pub desktop_height: f32,
-    #[serde(default)]
-    pub desktop_x: i32,
-    #[serde(default)]
-    pub desktop_y: i32,
 }
 
-fn default_bg_opacity() -> f32 { 1.0 }
-fn default_desktop_opacity() -> f32 { 0.0 }
-fn default_desktop_w() -> f32 { 800.0 }
-fn default_desktop_h() -> f32 { 600.0 }
+fn default_bg_opacity() -> f32 { 0.0 }
 
 fn default_sort() -> String { "name".into() }
 
@@ -37,17 +22,10 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             icon_zoom: 0.5,
-            window_width: 1024.0,
-            window_height: 680.0,
             show_hidden: false,
             sort_by: "name".into(),
             pinned_tabs: Vec::new(),
-            bg_opacity: 1.0,
-            desktop_bg_opacity: 0.0,
-            desktop_width: 800.0,
-            desktop_height: 600.0,
-            desktop_x: 0,
-            desktop_y: 0,
+            bg_opacity: 0.0,
         }
     }
 }
@@ -55,12 +33,7 @@ impl Default for Settings {
 impl Settings {
     fn config_path() -> PathBuf {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
-        let new = PathBuf::from(&home).join(".lantern/config/file-manager.json");
-        if new.exists() { return new; }
-        // Old path fallback for migration
-        let old = PathBuf::from(&home).join(".config/lantern/fox.json");
-        if old.exists() { return old; }
-        new
+        PathBuf::from(&home).join(".lantern/config/desktop.json")
     }
 
     pub fn load() -> Self {

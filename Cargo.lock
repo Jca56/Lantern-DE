@@ -2266,6 +2266,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "lntrn-desktop"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "image",
+ "libc",
+ "lntrn-render",
+ "lntrn-ui",
+ "raw-window-handle",
+ "resvg 0.47.0",
+ "serde",
+ "serde_json",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-protocols-wlr",
+]
+
+[[package]]
 name = "lntrn-draw"
 version = "0.1.0"
 dependencies = [
@@ -2290,6 +2309,7 @@ dependencies = [
  "wayland-backend",
  "wayland-client",
  "wayland-protocols",
+ "wayland-protocols-wlr",
 ]
 
 [[package]]

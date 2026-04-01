@@ -5,9 +5,6 @@ mod file_ops;
 mod fs;
 mod icons;
 mod layout;
-mod pick_bar;
-mod popup_backend;
-mod properties;
 mod render;
 mod sections;
 mod settings;
@@ -17,7 +14,6 @@ mod wayland_actions;
 mod wayland_dispatch;
 mod wayland_loop;
 
-use std::path::PathBuf;
 use lntrn_render::{GpuContext, Painter, TextRenderer, TexturePass};
 
 // ── Hit zone IDs ────────────────────────────────────────────────────────────
@@ -87,16 +83,6 @@ pub const CTX_NEW_FOLDER_PLAIN: u32 = 77;
 pub const CTX_CHANGE_ICON: u32 = 78;
 // Context menu — toggles
 pub const CTX_SHOW_HIDDEN: u32 = 90;
-// Pick mode action bar
-pub const ZONE_PICK_CONFIRM: u32 = 40;
-pub const ZONE_PICK_CANCEL: u32 = 41;
-pub const ZONE_PICK_FILENAME: u32 = 42;
-pub const ZONE_PICK_FILTER: u32 = 43;
-
-// Drop confirmation modal
-pub const ZONE_DROP_MOVE: u32 = 44;
-pub const ZONE_DROP_COPY: u32 = 45;
-pub const ZONE_DROP_CANCEL: u32 = 46;
 
 // ── Shared types ────────────────────────────────────────────────────────────
 
@@ -110,119 +96,30 @@ pub struct Gpu {
 pub enum ClickAction {
     None,
     Close,
-    Minimize,
-    ToggleMaximize,
+    SwitchPanel(DesktopPanel),
 }
 
-// ── Pick mode types ────────────────────────────────────────────────────────
-
-#[derive(Clone, Debug)]
-pub struct PickConfig {
-    pub mode: PickType,
-    pub multiple: bool,
-    pub title: Option<String>,
-    pub start_dir: Option<PathBuf>,
-    pub filters: Vec<FileFilter>,
-    pub active_filter: usize,
-    pub save_name: Option<String>,
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum DesktopPanel {
+    Files,
+    Blank,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum PickType {
-    Open,
-    Save,
-    Directory,
-}
-
-#[derive(Clone, Debug)]
-pub struct FileFilter {
-    pub name: String,
-    pub patterns: Vec<String>,
-}
-
-pub enum PickResult {
-    Selected(Vec<PathBuf>),
-    Cancelled,
-}
-
-impl PickConfig {
-    fn default_title(&self) -> &str {
-        match self.mode {
-            PickType::Open => "Open File",
-            PickType::Save => "Save File",
-            PickType::Directory => "Select Folder",
-        }
-    }
-}
-
-/// Parse `--filters "Images:*.png,*.jpg|Documents:*.pdf,*.txt"`
-fn parse_filter_arg(s: &str) -> Vec<FileFilter> {
-    s.split('|')
-        .filter(|g| !g.is_empty())
-        .filter_map(|group| {
-            let (name, pats) = group.split_once(':')?;
-            let patterns: Vec<String> = pats.split(',').map(|p| p.trim().to_string()).collect();
-            Some(FileFilter { name: name.trim().to_string(), patterns })
-        })
-        .collect()
-}
-
-fn parse_args() -> Option<PickConfig> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.is_empty() { return None; }
-
-    let mut mode = None;
-    let mut multiple = false;
-    let mut title = None;
-    let mut start_dir = None;
-    let mut filters = Vec::new();
-    let mut save_name = None;
-    let mut i = 0;
-
-    while i < args.len() {
-        match args[i].as_str() {
-            "--pick" => mode = Some(PickType::Open),
-            "--pick-save" => mode = Some(PickType::Save),
-            "--pick-directory" => mode = Some(PickType::Directory),
-            "--pick-multiple" => multiple = true,
-            "--title" => { i += 1; title = args.get(i).cloned(); }
-            "--start-dir" => { i += 1; start_dir = args.get(i).map(PathBuf::from); }
-            "--filters" => { i += 1; if let Some(s) = args.get(i) { filters = parse_filter_arg(s); } }
-            "--save-name" => { i += 1; save_name = args.get(i).cloned(); }
-            _ => {}
-        }
-        i += 1;
-    }
-
-    mode.map(|m| PickConfig {
-        mode: m,
-        multiple,
-        title,
-        start_dir,
-        filters,
-        active_filter: 0,
-        save_name,
-    })
-}
+pub const ZONE_GLOBAL_TAB_BASE: u32 = 9000;
 
 // ── Main ────────────────────────────────────────────────────────────────────
 
 fn main() {
-    let desktop = std::env::args().any(|a| a == "--desktop");
-    let pick = parse_args();
-
-    // Daemonize in desktop mode so it survives terminal close
-    if desktop {
-        unsafe {
-            let pid = libc::fork();
-            if pid < 0 { std::process::exit(1); }
-            if pid > 0 { std::process::exit(0); } // parent exits
-            libc::setsid(); // new session leader
-        }
+    // Daemonize so desktop survives terminal close
+    unsafe {
+        let pid = libc::fork();
+        if pid < 0 { std::process::exit(1); }
+        if pid > 0 { std::process::exit(0); }
+        libc::setsid();
     }
 
-    if let Err(e) = wayland::run(pick, desktop) {
-        eprintln!("[fox] fatal: {e}");
+    if let Err(e) = wayland::run() {
+        eprintln!("[desktop] fatal: {e}");
         std::process::exit(1);
     }
 }

@@ -1,7 +1,7 @@
 use lntrn_render::{Color, Rect, TextureDraw};
 use lntrn_ui::gpu::{
     ContextMenu, FontSize, FoxPalette, GradientStrip, InteractionContext, MenuEvent,
-    ScrollArea, Scrollbar, TabBar, TextInput, TextLabel, TitleBar,
+    ScrollArea, Scrollbar, TabBar, TextInput, TextLabel,
 };
 
 use crate::app::{App, ViewMode};
@@ -9,13 +9,11 @@ use crate::icons::{self, IconCache};
 use crate::layout::*;
 use crate::sections::*;
 use crate::views::{draw_content_list, draw_content_tree};
-use lntrn_ui::gpu::controls::{Button, ButtonVariant};
-use crate::{Gpu, ZONE_CLOSE, ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_MENU_VIEW,
+use crate::{Gpu, DesktopPanel, ZONE_GLOBAL_TAB_BASE,
     ZONE_NAV_VIEW_TOGGLE, ZONE_NAV_BACK, ZONE_NAV_FORWARD, ZONE_NAV_UP, ZONE_NAV_SEARCH,
     ZONE_SIDEBAR_ITEM_BASE, ZONE_FILE_ITEM_BASE, ZONE_CONTENT, ZONE_SCROLLBAR,
     ZONE_TAB_BASE, ZONE_TAB_CLOSE_BASE, ZONE_TAB_NEW, ZONE_RENAME_INPUT, ZONE_PATH_INPUT,
-    ZONE_DRIVE_ITEM_BASE, ZONE_TREE_ITEM_BASE,
-    ZONE_DROP_MOVE, ZONE_DROP_COPY, ZONE_DROP_CANCEL};
+    ZONE_DRIVE_ITEM_BASE, ZONE_TREE_ITEM_BASE};
 
 /// Render a full frame.
 pub fn render_frame(
@@ -26,13 +24,12 @@ pub fn render_frame(
     file_info: &mut crate::file_info::FileInfoCache,
     palette: &FoxPalette,
     scale: f32,
-    maximized: bool,
     view_menu: &mut ContextMenu,
     context_menu: &mut ContextMenu,
     tab_drag: Option<usize>,
     bg_opacity: f32,
-    desktop_mode: bool,
-) -> Option<MenuEvent> {
+    active_panel: DesktopPanel,
+) -> (Option<MenuEvent>, Option<MenuEvent>) {
     let Gpu { ctx, painter, text, tex_pass } = gpu;
 
     let w = ctx.width();
@@ -48,12 +45,7 @@ pub fn render_frame(
     // ── Compute content geometry per view mode ─────────────────────────
     icon_cache.ensure_dir(&app.current_dir);
     icon_cache.poll_video_thumbs(ctx, tex_pass);
-    let content = if app.pick.is_some() {
-        let bottom = hf - crate::pick_bar::PICK_BAR_H * s;
-        content_rect_with_bottom(wf, bottom, s)
-    } else {
-        content_rect(wf, hf, s)
-    };
+    let content = content_rect(wf, hf, s);
     let zoom = app.icon_zoom;
     // When searching, show search results in list mode
     let is_searching = app.searching && !app.search_buf.is_empty();
@@ -125,64 +117,71 @@ pub fn render_frame(
         }
     };
 
-    // ── Window background ─────────────────────────────────────────────
-    let corner_r = if desktop_mode { 0.0 } else { 10.0 * s };
-    painter.rect_filled(Rect::new(0.0, 0.0, wf, hf), corner_r, pal.bg.with_alpha(bg_opacity));
+    // ── Window background (transparent for layer shell) ──────────────
+    painter.rect_filled(Rect::new(0.0, 0.0, wf, hf), 0.0, pal.bg.with_alpha(bg_opacity));
 
-    // ── Title bar (window mode only) ─────────────────────────────────
-    if !desktop_mode {
-        let tb_rect = title_bar_rect(wf, s);
-        let close_rect = TitleBar::new(tb_rect).scale(s).close_button_rect();
-        let max_rect = TitleBar::new(tb_rect).scale(s).maximize_button_rect();
-        let min_rect = TitleBar::new(tb_rect).scale(s).minimize_button_rect();
-        let close_s = input.add_zone(ZONE_CLOSE, close_rect);
-        let max_s = input.add_zone(ZONE_MAXIMIZE, max_rect);
-        let min_s = input.add_zone(ZONE_MINIMIZE, min_rect);
-
-        TitleBar::new(tb_rect)
-            .scale(s)
-            .maximized(maximized)
-            .close_hovered(close_s.is_hovered())
-            .maximize_hovered(max_s.is_hovered())
-            .minimize_hovered(min_s.is_hovered())
-            .draw(painter, pal);
-
-        // "View" menu label in title bar
-        {
-            let tb_content = TitleBar::new(tb_rect).scale(s).content_rect();
-            let font = 22.0 * s;
-            let pad_h = 12.0 * s;
-            let label_w = font * 0.52 * 4.0 + pad_h * 2.0;
-            let label_h = font + 8.0 * s;
-            let label_x = tb_content.x + 10.0 * s;
-            let label_y = tb_content.y + (tb_content.h - label_h) * 0.5;
-            let label_rect = Rect::new(label_x, label_y, label_w, label_h);
-            let view_state = input.add_zone(ZONE_MENU_VIEW, label_rect);
-            let is_open = view_menu.is_open();
-            let r = 6.0 * s;
-
-            if is_open || view_state.is_hovered() {
-                painter.rect_filled(label_rect, r, pal.accent.with_alpha(if is_open { 0.15 } else { 0.10 }));
-            }
-            let color = if is_open { pal.accent } else { pal.text };
-            TextLabel::new("View", label_x + pad_h, label_y + (label_h - font) * 0.5)
-                .size(FontSize::Custom(font))
-                .color(color)
-                .draw(text, w, h);
-        }
-
-    }
-
-    // ── Top gradient strip ───────────────────────────────────────────
+    // ── Gradient strip 1 ────────────────────────────────────────────
     {
-        let tb_h = title_bar_rect(wf, s).h;
-        let mut grad = GradientStrip::new(0.0, tb_h, wf)
+        let mut grad = GradientStrip::new(0.0, gradient1_y(s), wf)
             .colors(pal.file_manager_gradient_stops());
-        grad.height = 4.0 * s;
+        grad.height = gradient_h(s);
         grad.draw(painter);
     }
 
-    // ── Nav bar ───────────────────────────────────────────────────────
+    // ── Global tab bar (between gradients) ──────────────────────────
+    {
+        let panels = [("Files", DesktopPanel::Files), ("Blank", DesktopPanel::Blank)];
+        let tab_rect = global_tab_rect(wf, s);
+        let font = 20.0 * s;
+        let pad = 16.0 * s;
+        let mut tx = tab_rect.x + 8.0 * s;
+        for (i, (label, panel)) in panels.iter().enumerate() {
+            let char_w = font * 0.52;
+            let tw = label.len() as f32 * char_w + pad * 2.0;
+            let tr = Rect::new(tx, tab_rect.y + 4.0 * s, tw, tab_rect.h - 8.0 * s);
+            let zone = input.add_zone(ZONE_GLOBAL_TAB_BASE + i as u32, tr);
+            let active = *panel == active_panel;
+            let r = 6.0 * s;
+            if active {
+                painter.rect_filled(tr, r, pal.accent.with_alpha(0.15));
+            } else if zone.is_hovered() {
+                painter.rect_filled(tr, r, pal.accent.with_alpha(0.08));
+            }
+            let color = if active { pal.accent } else { pal.text };
+            TextLabel::new(label, tx + pad, tr.y + (tr.h - font) * 0.5)
+                .size(FontSize::Custom(font))
+                .color(color)
+                .draw(text, w, h);
+            tx += tw + 4.0 * s;
+        }
+    }
+
+    // ── Gradient strip 2 ────────────────────────────────────────────
+    {
+        let mut grad = GradientStrip::new(0.0, gradient2_y(s), wf)
+            .colors(pal.file_manager_gradient_stops());
+        grad.height = gradient_h(s);
+        grad.draw(painter);
+    }
+
+    // ── Panel content ───────────────────────────────────────────────
+    if active_panel != DesktopPanel::Files {
+        // Blank panel — just render the layered output and return
+        let ctx_evt = context_menu.draw(painter, text, input, w, h);
+        let frame = ctx.begin_frame("Lantern Desktop");
+        match frame {
+            Ok(mut frame) => {
+                let view = frame.view().clone();
+                painter.render_layer(0, ctx, frame.encoder_mut(), &view, Some(Color::rgba(0.0, 0.0, 0.0, 0.0)));
+                text.render_layer(0, ctx, frame.encoder_mut(), &view);
+                frame.submit(&ctx.queue);
+            }
+            Err(e) => eprintln!("[desktop] render error: {e}"),
+        }
+        return (ctx_evt, None);
+    }
+
+    // ── Files panel: Nav bar ─────────────────────────────────────────
     let nav_rect = nav_bar_rect(wf, s);
     let vt_rect = view_toggle_rect(s);
     let vt_state = input.add_zone(ZONE_NAV_VIEW_TOGGLE, vt_rect);
@@ -193,11 +192,7 @@ pub fn render_frame(
     let up_rect = up_button_rect(s);
     let up_state = input.add_zone(ZONE_NAV_UP, up_rect);
     let p_rect = path_rect(wf, s);
-    let path_zone = if app.path_editing {
-        input.add_zone(ZONE_PATH_INPUT, p_rect)
-    } else {
-        input.add_zone(ZONE_PATH_INPUT, p_rect)
-    };
+    let path_zone = input.add_zone(ZONE_PATH_INPUT, p_rect);
     let srch_rect = search_button_rect(wf, s);
     let srch_state = input.add_zone(ZONE_NAV_SEARCH, srch_rect);
     draw_nav_bar(
@@ -239,7 +234,6 @@ pub fn render_frame(
                 hovered_tab = Some(i);
             }
         }
-        // Don't register close zones for pinned tabs
         let is_pinned = app.tabs.get(i).map_or(false, |t| t.pinned);
         if app.tabs.len() > 1 && !is_pinned && i < close_rects.len() {
             let zone_id = ZONE_TAB_CLOSE_BASE + i as u32;
@@ -249,8 +243,6 @@ pub fn render_frame(
             }
         }
     }
-    // During drag, InteractionContext suppresses hover on non-captured zones.
-    // Manually detect tab hover from cursor position so the highlight shows.
     if app.drag_item.is_some() {
         if let Some((cx, cy)) = input.cursor() {
             hovered_tab = tab_rects.iter().position(|r| r.contains(cx, cy));
@@ -269,30 +261,24 @@ pub fn render_frame(
         .hovered_new_tab(hovered_new)
         .draw(painter, text, pal, w, h);
 
-    // Draw pin icons on pinned tabs (replace close button with pin)
+    // Draw pin icons on pinned tabs
     for (i, tab) in app.tabs.iter().enumerate() {
         if tab.pinned && i < close_rects.len() {
             let cr = &close_rects[i];
-            // Cover the X icon with surface background
             painter.rect_filled(*cr, 4.0 * s, pal.surface);
-            // Draw pin icon centered in the close button rect
             let pc = pal.accent;
             let cx = cr.x + cr.w * 0.5;
             let cy = cr.y + cr.h * 0.5;
-            // Pin head (circle)
             painter.circle_filled(cx, cy - 3.0 * s, 3.5 * s, pc);
-            // Pin needle
             painter.line(cx, cy - 0.5 * s, cx, cy + 5.0 * s, 1.5 * s, pc);
         }
     }
 
     // Pinned tab drag indicator
     if let Some(src_idx) = tab_drag {
-        // Highlight the source tab being dragged
         if src_idx < tab_rects.len() {
             painter.rect_stroke(tab_rects[src_idx], 4.0 * s, 2.0 * s, pal.accent);
         }
-        // Show insertion indicator at cursor position
         if let Some((cursor_x, _)) = input.cursor() {
             if let Some(target) = tab_rects.iter().position(|r| r.contains(cursor_x, r.y + r.h * 0.5)) {
                 if target != src_idx && target < app.tabs.len() && app.tabs[target].pinned {
@@ -431,11 +417,8 @@ pub fn render_frame(
         draw_scrollbar(painter, &scrollbar, sb_state, pal);
     }
 
-    // ── Status bar / Pick bar ──────────────────────────────────────────
-    if app.pick.is_some() {
-        let bar_y = hf - crate::pick_bar::PICK_BAR_H * s;
-        crate::pick_bar::draw_pick_bar(app, painter, text, pal, input, wf, bar_y, s, (w, h));
-    } else {
+    // ── Status bar ──────────────────────────────────────────────────
+    {
         let status = status_rect(wf, hf, s);
         draw_status_bar(painter, text, pal, status, &app.entries, file_info, (w, h), s);
     }
@@ -457,7 +440,6 @@ pub fn render_frame(
             let gx = dx - ghost_sz * 0.5;
             let gy = dy - ghost_sz * 0.5;
 
-            // Count badge for multi-drag
             if drag_count > 1 {
                 let badge_font = 14.0 * s;
                 let badge_text = format!("{drag_count}");
@@ -541,7 +523,7 @@ pub fn render_frame(
         }
     };
 
-    // Drag ghost texture — just the icon, centered on cursor
+    // Drag ghost texture
     if let (Some(drag_idx), Some((dx, dy))) = (app.drag_item, app.drag_pos) {
         if drag_idx < entries.len() {
             let ghost_sz = 80.0 * s;
@@ -554,29 +536,16 @@ pub fn render_frame(
         }
     }
 
-    // ── Modal overlays (layer 1) ─────────────────────────────────────
+    // ── Inline menus (layer 1) ─────────────────────────────────────
     painter.set_layer(1);
     text.set_layer(1);
-    if let Some(ref props) = app.properties {
-        crate::properties::draw_properties_dialog(
-            props, painter, text, input, pal,
-            wf, hf, s, w, h,
-        );
-    }
-    if let Some(ref drop) = app.pending_drop {
-        draw_drop_modal(drop, painter, text, input, pal, wf, hf, s, w, h);
-    }
-
-    // ── Inline context menu (desktop mode) ─────────────────────────
-    let mut inline_menu_event = None;
-    if desktop_mode {
-        painter.set_layer(1);
-        inline_menu_event = context_menu.draw(painter, text, input, w, h);
-        painter.set_layer(0);
-    }
+    let ctx_menu_event = context_menu.draw(painter, text, input, w, h);
+    let view_menu_event = view_menu.draw(painter, text, input, w, h);
+    painter.set_layer(0);
+    text.set_layer(0);
 
     // ── Layered render ────────────────────────────────────────────────
-    let frame = ctx.begin_frame("Lantern File Manager");
+    let frame = ctx.begin_frame("Lantern Desktop");
     match frame {
         Ok(mut frame) => {
             let view = frame.view().clone();
@@ -591,109 +560,14 @@ pub fn render_frame(
             // Flush so glyphon's prepare() for layer 1 doesn't overwrite layer 0 vertices
             frame.flush(ctx);
 
-            // Layer 1: modal overlay shapes + text
+            // Layer 1: menu overlay shapes + text
             painter.render_layer(1, ctx, frame.encoder_mut(), &view, None);
             text.render_layer(1, ctx, frame.encoder_mut(), &view);
 
             frame.submit(&ctx.queue);
         }
-        Err(e) => eprintln!("[fox] render error: {e}"),
+        Err(e) => eprintln!("[desktop] render error: {e}"),
     }
 
-    inline_menu_event
-}
-
-fn draw_drop_modal(
-    drop: &crate::app::PendingDrop,
-    painter: &mut lntrn_render::Painter,
-    text: &mut lntrn_render::TextRenderer,
-    input: &mut InteractionContext,
-    pal: &FoxPalette,
-    screen_w: f32, screen_h: f32,
-    s: f32, sw: u32, sh: u32,
-) {
-    let dialog_w = 380.0 * s;
-    let pad = 20.0 * s;
-    let cr = 12.0 * s;
-    let title_font = 20.0 * s;
-    let body_font = 16.0 * s;
-    let btn_h = 40.0 * s;
-    let btn_gap = 10.0 * s;
-
-    // File name for display
-    let file_name = if drop.sources.len() == 1 {
-        drop.sources[0].file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "item".into())
-    } else {
-        format!("{} items", drop.sources.len())
-    };
-    let dest_dir = drop.dest_dir.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "/".into());
-
-    // Compute dialog height
-    let content_h = title_font + pad * 0.5
-        + body_font * 2.0 + pad * 0.5  // two lines of body text
-        + pad + btn_h;
-    let dialog_h = pad * 2.0 + content_h;
-    let dx = (screen_w - dialog_w) * 0.5;
-    let dy = (screen_h - dialog_h) * 0.5;
-
-    // Backdrop
-    painter.rect_filled(
-        Rect::new(0.0, 0.0, screen_w, screen_h), 0.0,
-        Color::rgba(0.0, 0.0, 0.0, 0.55),
-    );
-
-    // Shadow + panel
-    let panel = Rect::new(dx, dy, dialog_w, dialog_h);
-    let shadow = Rect::new(dx - 8.0 * s, dy - 4.0 * s, dialog_w + 16.0 * s, dialog_h + 16.0 * s);
-    painter.rect_filled(shadow, cr + 4.0 * s, Color::rgba(0.0, 0.0, 0.0, 0.3));
-    painter.rect_filled(panel, cr, pal.surface);
-    painter.rect_stroke_sdf(panel, cr, 1.0 * s, pal.muted.with_alpha(0.2));
-
-    let mut cy = dy + pad;
-
-    // Title
-    text.queue("Move or Copy?", title_font, dx + pad, cy, pal.text, dialog_w - pad * 2.0, sw, sh);
-    cy += title_font + pad * 0.5;
-
-    // Body text
-    let line1 = format!("\"{file_name}\"");
-    let line2 = format!("→ {dest_dir}/");
-    text.queue(&line1, body_font, dx + pad, cy, pal.text, dialog_w - pad * 2.0, sw, sh);
-    cy += body_font + 4.0 * s;
-    text.queue(&line2, body_font, dx + pad, cy, pal.text_secondary, dialog_w - pad * 2.0, sw, sh);
-    cy += body_font + pad;
-
-    // Buttons: [Move] [Copy] [Cancel] — right-aligned
-    let btn_w = 90.0 * s;
-    let total_btn_w = btn_w * 3.0 + btn_gap * 2.0;
-    let btn_x_start = dx + dialog_w - pad - total_btn_w;
-
-    // Move button
-    let move_rect = Rect::new(btn_x_start, cy, btn_w, btn_h);
-    let move_state = input.add_zone(ZONE_DROP_MOVE, move_rect);
-    Button::new(move_rect, "Move")
-        .variant(ButtonVariant::Primary)
-        .hovered(move_state.is_hovered())
-        .pressed(move_state.is_active())
-        .draw(painter, text, pal, sw, sh);
-
-    // Copy button
-    let copy_rect = Rect::new(btn_x_start + btn_w + btn_gap, cy, btn_w, btn_h);
-    let copy_state = input.add_zone(ZONE_DROP_COPY, copy_rect);
-    Button::new(copy_rect, "Copy")
-        .hovered(copy_state.is_hovered())
-        .pressed(copy_state.is_active())
-        .draw(painter, text, pal, sw, sh);
-
-    // Cancel button
-    let cancel_rect = Rect::new(btn_x_start + (btn_w + btn_gap) * 2.0, cy, btn_w, btn_h);
-    let cancel_state = input.add_zone(ZONE_DROP_CANCEL, cancel_rect);
-    Button::new(cancel_rect, "Cancel")
-        .hovered(cancel_state.is_hovered())
-        .pressed(cancel_state.is_active())
-        .draw(painter, text, pal, sw, sh);
+    (ctx_menu_event, view_menu_event)
 }

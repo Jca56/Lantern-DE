@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="256" height="256">
+  <defs>
+    
+    <linearGradient id="alchBack" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#0f0a05"/><stop offset="100%" stop-color="#070502"/>
+    </linearGradient>
+    <linearGradient id="stripG" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#aa6600"/><stop offset="100%" stop-color="#ff9900"/>
+    </linearGradient>
+    <linearGradient id="potion1" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#44ffcc"/><stop offset="100%" stop-color="#00aa88"/>
+    </linearGradient>
+    <linearGradient id="potion2" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ff44aa"/><stop offset="100%" stop-color="#aa0066"/>
+    </linearGradient>
+    <linearGradient id="potion3" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#aa88ff"/><stop offset="100%" stop-color="#440088"/>
+    </linearGradient>
+    <filter id="potionGlow1" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#00ffcc" flood-opacity="0.9"/>
+    </filter>
+    <filter id="potionGlow2" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#ff44aa" flood-opacity="0.9"/>
+    </filter>
+    <filter id="potionGlow3" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#aa88ff" flood-opacity="0.9"/>
+    </filter>
+    <filter id="smokeG" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="1.5"/>
+    </filter>
+    <linearGradient id="page1grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f0ece0"/><stop offset="100%" stop-color="#d8d4c8"/>
+    </linearGradient>
+    <linearGradient id="page2grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#e4e0d4"/><stop offset="100%" stop-color="#c8c4b8"/>
+    </linearGradient>
+    <filter id="fShadow">
+      <feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#000" flood-opacity="0.7"/>
+    </filter>
+    <filter id="pShadow">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.5" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <g filter="url(#fShadow)">
+    <path d="M7,22 Q7,17 12,17 L40,17 Q45,17 47,22 L53,30 L93,30 L93,93 Q93,98 88,98 L12,98 Q7,98 7,93 Z" fill="#0f0a05"/>
+  </g>
+  <g filter="url(#pShadow)">
+    <rect x="14" y="27" width="72" height="5" rx="1.5" fill="url(#page2grad)"/>
+  </g>
+  <g filter="url(#pShadow)">
+    <rect x="14" y="31" width="72" height="5" rx="1.5" fill="url(#page1grad)"/>
+  </g>
+  <rect x="7" y="36" width="86" height="12" fill="url(#stripG)"/><rect x="7" y="36" width="86" height="4.5" fill="#fff" opacity="0.12"/>
+  <clipPath id="bodyClip"><rect x="7" y="48" width="86" height="50" rx="5"/></clipPath>
+  <rect x="7" y="48" width="86" height="50" rx="5" fill="#070502"/>
+  
+  <g clip-path="url(#bodyClip)">
+    <rect x="7" y="48" width="86" height="50" fill="url(#alchBack)"/>
+    <!-- Shelf -->
+    <rect x="7" y="82" width="86" height="3" rx="1" fill="#2a1a0a"/>
+    <!-- Arcane symbols on back wall -->
+    <g font-family="serif" fill="#3a2a0a" opacity="0.4" font-size="8">
+      <text x="12" y="65">☽</text><text x="25" y="62">✦</text>
+      <text x="60" y="63">☿</text><text x="75" y="66">⊕</text>
+      <text x="40" y="60">△</text>
+    </g>
+    <!-- Potion 1 - teal -->
+    <g filter="url(#potionGlow1)">
+      <path d="M22,82 Q18,76 18,72 Q18,65 22,65 L30,65 Q34,65 34,72 Q34,76 30,82 Z" fill="url(#potion1)"/>
+      <rect x="23" y="62" width="6" height="4" rx="1" fill="#2a3a30"/>
+      <ellipse cx="26" cy="70" rx="4" ry="3" fill="#88ffee" opacity="0.4"/>
+    </g>
+    <!-- Smoke from potion 1 -->
+    <g filter="url(#smokeG)" opacity="0.5">
+      <path d="M26,62 Q24,56 26,52 Q28,48 26,44" fill="none" stroke="#44ffcc" stroke-width="2.5" stroke-linecap="round"/>
+      <path d="M26,60 Q29,55 27,51" fill="none" stroke="#44ffcc" stroke-width="1.5" stroke-linecap="round"/>
+    </g>
+    <!-- Potion 2 - pink -->
+    <g filter="url(#potionGlow2)">
+      <path d="M46,82 Q41,75 41,70 Q41,62 46,62 L56,62 Q61,62 61,70 Q61,75 56,82 Z" fill="url(#potion2)"/>
+      <rect x="47" y="58" width="8" height="5" rx="1" fill="#2a1020"/>
+      <ellipse cx="51" cy="68" rx="5" ry="3.5" fill="#ff88cc" opacity="0.35"/>
+      <!-- Bubbles -->
+      <circle cx="48" cy="72" r="1.5" fill="#ffaadd" opacity="0.6"/>
+      <circle cx="54" cy="68" r="1"   fill="#ffaadd" opacity="0.5"/>
+    </g>
+    <!-- Smoke from potion 2 -->
+    <g filter="url(#smokeG)" opacity="0.5">
+      <path d="M51,58 Q49,52 51,48 Q53,44 51,40" fill="none" stroke="#ff44aa" stroke-width="2.5" stroke-linecap="round"/>
+    </g>
+    <!-- Potion 3 - purple -->
+    <g filter="url(#potionGlow3)">
+      <path d="M70,82 Q66,76 66,72 Q66,65 70,65 L78,65 Q82,65 82,72 Q82,76 78,82 Z" fill="url(#potion3)"/>
+      <rect x="71" y="62" width="6" height="4" rx="1" fill="#1a1030"/>
+      <ellipse cx="74" cy="70" rx="4" ry="3" fill="#ddbbff" opacity="0.35"/>
+    </g>
+    <!-- Book on shelf -->
+    <rect x="82" y="68" width="7" height="14" rx="1" fill="#3a1a00" stroke="#6a3a00" stroke-width="0.8"/>
+    <line x1="85" y1="68" x2="85" y2="82" stroke="#6a3a00" stroke-width="0.8"/>
+    <!-- Arcane circle on floor -->
+    <circle cx="50" cy="96" r="8" fill="none" stroke="#3a2a0a" stroke-width="0.8" opacity="0.5"/>
+    <circle cx="50" cy="96" r="5" fill="none" stroke="#3a2a0a" stroke-width="0.8" opacity="0.4"/>
+  </g>
+  <rect x="7" y="48" width="86" height="50" rx="5" fill="none" stroke="#aa6600" stroke-width="1.2" opacity="0.3"/>
+  <rect x="7" y="48" width="86" height="12" rx="5" fill="#fff" opacity="0.04"/>
+  <rect x="7" y="90" width="86" height="8" rx="5" fill="#000" opacity="0.2"/>
+</svg>
