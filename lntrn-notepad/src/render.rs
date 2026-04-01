@@ -397,20 +397,32 @@ pub fn render_frame(
         .color(pal.text_secondary)
         .draw(text, w, h);
 
-    // ── Context menu (dropdown from menu bar) ──────────────────────────
+    // ── Context menu (dropdown from menu bar) — overlay layer ──────────
+    painter.set_layer(1);
+    text.set_layer(1);
     menu_bar.context_menu.update(0.016);
+    // Redraw menu bar labels in overlay layer so they aren't covered by the dropdown
+    menu_bar.draw_with_labels(painter, text, pal, &labels, w, h, s);
     let menu_event = menu_bar.context_menu.draw(painter, text, input, w, h);
 
-    // ── Submit frame ──────────────────────────────────────────────────
+    // ── Submit frame (layered) ───────────────────────────────────────
     match ctx.begin_frame("lntrn-notepad") {
         Ok(mut frame) => {
-            painter.render_into(ctx, &mut frame, Color::rgba(0.0, 0.0, 0.0, 0.0));
-
             let view = frame.view().clone();
-            text.render_queued(ctx, frame.encoder_mut(), &view);
 
-            // Cursor overlay (on top of text)
-            if cursor_visible {
+            // Layer 0: base shapes + text
+            painter.render_layer(0, ctx, frame.encoder_mut(), &view, Some(Color::rgba(0.0, 0.0, 0.0, 0.0)));
+            text.render_layer(0, ctx, frame.encoder_mut(), &view);
+
+            // Flush so glyphon's prepare() for layer 1 doesn't overwrite layer 0 vertices
+            frame.flush(ctx);
+
+            // Layer 1: menu overlay shapes + text
+            painter.render_layer(1, ctx, frame.encoder_mut(), &view, None);
+            text.render_layer(1, ctx, frame.encoder_mut(), &view);
+
+            // Cursor overlay (on top of text, but not on top of menus)
+            if cursor_visible && !menu_bar.context_menu.is_open() {
                 let c_wraps = &editor.wrap_rows[editor.cursor_line];
                 let c_row_idx = c_wraps
                     .partition_point(|&s| s <= editor.cursor_col)

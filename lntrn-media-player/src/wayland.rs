@@ -351,8 +351,8 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
     let mut vol_slider_rect = Rect::new(0.0, 0.0, 0.0, 0.0);
 
     while state.running {
-        // Non-blocking when playing (or audio-only visualizer), blocking when paused
-        if app.is_playing() || app.audio_only {
+        // Non-blocking when playing, blocking when paused
+        if app.is_playing() {
             if let Some(guard) = event_queue.prepare_read() {
                 let _ = guard.read();
             }
@@ -362,12 +362,11 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
             }
             event_queue.flush()?;
 
-            let new_frame = app.tick(&gpu.ctx, &gpu.tex_pass);
-            if new_frame {
-                state.frame_done = true;
-            }
+            app.tick(&gpu.ctx, &gpu.tex_pass);
+
+            // Wait for compositor frame callback — sleep to cap at ~60fps
             if !state.frame_done {
-                std::thread::sleep(std::time::Duration::from_millis(4));
+                std::thread::sleep(std::time::Duration::from_millis(16));
                 continue;
             }
         } else {
@@ -375,7 +374,6 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
                 eprintln!("[media-player] dispatch error: {e}");
                 break;
             }
-            // Still tick to update position display even when paused
             app.tick(&gpu.ctx, &gpu.tex_pass);
             if !state.frame_done { continue; }
         }

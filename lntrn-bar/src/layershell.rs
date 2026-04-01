@@ -1245,7 +1245,11 @@ pub fn run() -> Result<()> {
             }
         }
 
-        // ── App menu popup ────────────────────────────────────────
+        // ── Overlays (layer 1) ────────────────────────────────────
+        // Switch to overlay layer so popup shapes render ABOVE base text.
+        painter.set_layer(1);
+        text.set_layer(1);
+
         let mut menu_icon_draws = Vec::new();
         app_menu.draw(
             &mut painter, &mut text, &mut ix, &icon_cache, &palette,
@@ -1297,7 +1301,9 @@ pub fn run() -> Result<()> {
             phys_w, total_phys_h,
         );
 
-        // Context menu
+        // Context menu (layer 2 — always on top of popups)
+        painter.set_layer(2);
+        text.set_layer(2);
         context_menu.update(dt);
         if let Some(event) = context_menu.draw(&mut painter, &mut text, &mut ix, phys_w, total_phys_h) {
             match event {
@@ -1400,42 +1406,52 @@ pub fn run() -> Result<()> {
             }
         }
 
-        // ── Render ───────────────────────────────────────────────────
+        // ── Render (layered) ─────────────────────────────────────────
         match gpu.begin_frame("Bar") {
             Ok(mut frame) => {
                 let view = frame.view().clone();
-                painter.render_pass(&gpu, frame.encoder_mut(), &view, Color::TRANSPARENT);
-                let mut all_tex_draws = tray_tex_draws;
-                all_tex_draws.extend(battery_tex_draws);
-                all_tex_draws.extend(temp_tex_draws);
-                all_tex_draws.extend(wifi_tex_draws);
-                all_tex_draws.extend(bt_tex_draws);
-                all_tex_draws.extend(audio_tex_draws);
-                all_tex_draws.extend(app_tray_tex_draws);
-                let ctx_rect = app_menu.ctx_menu_rect(scale_f);
+
+                // Layer 0: base shapes + base textures + base text
+                painter.render_layer(0, &gpu, frame.encoder_mut(), &view, Some(Color::TRANSPARENT));
+                let mut base_tex_draws = tray_tex_draws;
+                base_tex_draws.extend(battery_tex_draws);
+                base_tex_draws.extend(temp_tex_draws);
+                base_tex_draws.extend(wifi_tex_draws);
+                base_tex_draws.extend(bt_tex_draws);
+                base_tex_draws.extend(audio_tex_draws);
+                base_tex_draws.extend(app_tray_tex_draws);
+                if !base_tex_draws.is_empty() {
+                    tex_pass.render_pass(&gpu, frame.encoder_mut(), &view, &base_tex_draws, None);
+                }
+                text.render_layer(0, &gpu, frame.encoder_mut(), &view);
+
+                // Flush so glyphon's prepare() for layer 1 doesn't overwrite layer 0 vertices
+                frame.flush(&gpu);
+
+                // Layer 1: overlay shapes + overlay textures + overlay text
+                painter.render_layer(1, &gpu, frame.encoder_mut(), &view, None);
+                let mut overlay_tex_draws: Vec<TextureDraw> = Vec::new();
                 for (key, x, y, w, h, clip) in &menu_icon_draws {
-                    // Skip icons that overlap the context menu
-                    if let Some(cr) = ctx_rect {
-                        let ir = *x + *w;
-                        let ib = *y + *h;
-                        let cr_r = cr[0] + cr[2];
-                        let cr_b = cr[1] + cr[3];
-                        if *x < cr_r && ir > cr[0] && *y < cr_b && ib > cr[1] {
-                            continue;
-                        }
-                    }
                     if let Some(tex) = icon_cache.get(key) {
-                        all_tex_draws.push(TextureDraw {
+                        overlay_tex_draws.push(TextureDraw {
                             texture: tex, x: *x, y: *y, w: *w, h: *h,
                             opacity: 1.0, uv: [0.0, 0.0, 1.0, 1.0],
                             clip: *clip,
                         });
                     }
                 }
-                if !all_tex_draws.is_empty() {
-                    tex_pass.render_pass(&gpu, frame.encoder_mut(), &view, &all_tex_draws, None);
+                if !overlay_tex_draws.is_empty() {
+                    tex_pass.render_pass(&gpu, frame.encoder_mut(), &view, &overlay_tex_draws, None);
                 }
-                text.render_queued(&gpu, frame.encoder_mut(), &view);
+                text.render_layer(1, &gpu, frame.encoder_mut(), &view);
+
+                // Layer 2: nested context menus (e.g. right-click inside app launcher)
+                if painter.layer_count() > 2 {
+                    frame.flush(&gpu);
+                    painter.render_layer(2, &gpu, frame.encoder_mut(), &view, None);
+                    text.render_layer(2, &gpu, frame.encoder_mut(), &view);
+                }
+
                 frame.submit(&gpu.queue);
             }
             Err(SurfaceError::Outdated | SurfaceError::Lost) => {

@@ -195,9 +195,6 @@ impl BranchDropdown {
         painter.rect_filled(panel_rect, 8.0 * s, palette.surface);
         painter.rect_stroke(panel_rect, 8.0 * s, 1.0 * s, palette.muted.with_alpha(0.3));
 
-        // Punch a hole in any already-queued text so it doesn't bleed through
-        text.occlude_rect([dx, dy, dropdown_w, total_h]);
-
         // Clip dropdown text to the panel
         text.push_clip([dx, dy, dropdown_w, total_h]);
 

@@ -624,13 +624,18 @@ pub fn run() -> Result<()> {
         );
 
         // Branch dropdown overlay (drawn on top of content)
+        painter.set_layer(1);
+        text.set_layer(1);
         app.draw_branch_dropdown(&mut painter, &mut text, &mut ix, &fox, s, sw, sh);
 
-        // Render
+        // Render (layered)
         if let Ok(mut frame) = gpu.begin_frame("lntrn-git") {
             let view = frame.view().clone();
-            painter.render_pass(&gpu, frame.encoder_mut(), &view, Color::TRANSPARENT);
-            text.render_queued(&gpu, frame.encoder_mut(), &view);
+            painter.render_layer(0, &gpu, frame.encoder_mut(), &view, Some(Color::TRANSPARENT));
+            text.render_layer(0, &gpu, frame.encoder_mut(), &view);
+            frame.flush(&gpu);
+            painter.render_layer(1, &gpu, frame.encoder_mut(), &view, None);
+            text.render_layer(1, &gpu, frame.encoder_mut(), &view);
             frame.submit(&gpu.queue);
         }
 

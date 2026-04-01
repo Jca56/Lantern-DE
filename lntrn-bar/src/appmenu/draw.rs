@@ -105,8 +105,10 @@ impl AppMenu {
             }
         }
 
-        // Context menu overlay
+        // Context menu overlay (layer 2 so it renders above app menu content)
         if self.ctx_open {
+            painter.set_layer(2);
+            text.set_layer(2);
             self.draw_context_menu(painter, text, ix, palette, scale, screen_w, screen_h);
         }
     }
@@ -503,10 +505,6 @@ impl AppMenu {
         );
         painter.rect_filled(Rect::new(ctx_x, ctx_y, menu_w, menu_h), cr, palette.surface_2);
         painter.rect_stroke_sdf(Rect::new(ctx_x, ctx_y, menu_w, menu_h), cr, 1.0 * scale, Color::WHITE.with_alpha(0.08));
-
-        // Punch a hole in underlying text so it doesn't bleed through.
-        // Must happen BEFORE queuing the menu's own text labels.
-        text.occlude_rect([ctx_x, ctx_y, menu_w, menu_h]);
 
         let font = 20.0 * scale;
         let items: [(&str, u32); 2] = [

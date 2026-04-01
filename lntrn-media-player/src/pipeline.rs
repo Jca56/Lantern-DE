@@ -52,6 +52,13 @@ impl MediaPipeline {
         appsink.set_callbacks(
             gst_app::AppSinkCallbacks::builder()
                 .new_sample(move |sink| {
+                    // Skip the expensive copy if we already have an unconsumed frame
+                    if let Ok(lock) = frame_ref.lock() {
+                        if lock.is_some() {
+                            return Ok(gst::FlowSuccess::Ok);
+                        }
+                    }
+
                     let sample = sink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
                     let buffer = sample.buffer().ok_or(gst::FlowError::Error)?;
                     let caps = sample.caps().ok_or(gst::FlowError::Error)?;

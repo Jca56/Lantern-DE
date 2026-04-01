@@ -1,4 +1,4 @@
-use lntrn_render::{Color, Rect, TextPass, TextureDraw};
+use lntrn_render::{Color, Rect, TextureDraw};
 use lntrn_ui::gpu::{
     ContextMenu, FontSize, FoxPalette, GradientStrip, InteractionContext, MenuEvent,
     ScrollArea, Scrollbar, TabBar, TextInput, TextLabel, TitleBar,
@@ -544,34 +544,39 @@ pub fn render_frame(
         }
     }
 
-    // ── Multi-pass render ──────────────────────────────────────────────
+    // ── Modal overlays (layer 1) ─────────────────────────────────────
+    painter.set_layer(1);
+    text.set_layer(1);
+    if let Some(ref props) = app.properties {
+        crate::properties::draw_properties_dialog(
+            props, painter, text, input, pal,
+            wf, hf, s, w, h,
+        );
+    }
+    if let Some(ref drop) = app.pending_drop {
+        draw_drop_modal(drop, painter, text, input, pal, wf, hf, s, w, h);
+    }
+
+    // ── Layered render ────────────────────────────────────────────────
     let frame = ctx.begin_frame("Lantern File Manager");
     match frame {
         Ok(mut frame) => {
-            // Pass 1: Base shapes
-            painter.render_into(ctx, &mut frame, Color::rgba(0.0, 0.0, 0.0, 0.0));
-
-            // Pass 2: Texture icons
             let view = frame.view().clone();
+
+            // Layer 0: base shapes + textures + text
+            painter.render_layer(0, ctx, frame.encoder_mut(), &view, Some(Color::rgba(0.0, 0.0, 0.0, 0.0)));
             if !tex_draws.is_empty() {
                 tex_pass.render_pass(ctx, frame.encoder_mut(), &view, &tex_draws, None);
             }
+            text.render_layer(0, ctx, frame.encoder_mut(), &view);
 
-            // Pass 3: Modal overlays (properties dialog / drop modal)
-            painter.clear();
-            if let Some(ref props) = app.properties {
-                crate::properties::draw_properties_dialog(
-                    props, painter, text, input, pal,
-                    wf, hf, s, w, h,
-                );
-            }
-            if let Some(ref drop) = app.pending_drop {
-                draw_drop_modal(drop, painter, text, input, pal, wf, hf, s, w, h);
-            }
-            painter.render_pass_overlay(ctx, frame.encoder_mut(), &view);
+            // Flush so glyphon's prepare() for layer 1 doesn't overwrite layer 0 vertices
+            frame.flush(ctx);
 
-            // Pass 4: Text
-            text.render_text(ctx, frame.encoder_mut(), &view);
+            // Layer 1: modal overlay shapes + text
+            painter.render_layer(1, ctx, frame.encoder_mut(), &view, None);
+            text.render_layer(1, ctx, frame.encoder_mut(), &view);
+
             frame.submit(&ctx.queue);
         }
         Err(e) => eprintln!("[fox] render error: {e}"),

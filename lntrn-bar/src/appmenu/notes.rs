@@ -13,11 +13,11 @@ const TITLE_FONT: f32 = 20.0;
 const LIST_ITEM_H: f32 = 36.0;
 const HEADER_H: f32 = 40.0;
 
-pub(crate) const ZONE_NOTE_BASE: u32 = 0xBF_E000;
-pub(crate) const ZONE_NOTE_NEW: u32 = 0xBF_EF00;
-pub(crate) const ZONE_NOTE_BACK: u32 = 0xBF_EF01;
-pub(crate) const ZONE_NOTE_DEL: u32 = 0xBF_EF02;
-pub(crate) const ZONE_NOTE_NAME: u32 = 0xBF_EF03;
+pub(crate) const ZONE_NOTE_BASE: u32 = 0xBE_0000;
+pub(crate) const ZONE_NOTE_NEW: u32 = 0xBE_0F00;
+pub(crate) const ZONE_NOTE_BACK: u32 = 0xBE_0F01;
+pub(crate) const ZONE_NOTE_DEL: u32 = 0xBE_0F02;
+pub(crate) const ZONE_NOTE_NAME: u32 = 0xBE_0F03;
 
 pub struct Notes {
     entries: Vec<NoteEntry>,

@@ -259,6 +259,19 @@ impl Frame {
         &mut self.encoder
     }
 
+    /// Submit the current encoder and create a fresh one. Use between render
+    /// layers so that text vertex-buffer writes from a later `prepare()` don't
+    /// overwrite data still needed by an earlier render pass.
+    pub fn flush(&mut self, gpu: &GpuContext) {
+        let old = std::mem::replace(
+            &mut self.encoder,
+            gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some(self.label),
+            }),
+        );
+        gpu.queue.submit(std::iter::once(old.finish()));
+    }
+
     pub fn submit(self, queue: &wgpu::Queue) {
         let submit_started = Instant::now();
         queue.submit(std::iter::once(self.encoder.finish()));

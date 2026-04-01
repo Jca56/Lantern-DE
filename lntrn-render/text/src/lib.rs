@@ -61,6 +61,10 @@ pub struct TextRenderer {
     monospace: bool,
     /// Clip stack for text bounds. When non-empty, `queue()` uses the top clip.
     clip_stack: Vec<[f32; 4]>,
+    /// Current layer being drawn into (0 = base, 1+ = overlay).
+    current_layer: u8,
+    /// Index into `queued` where each layer boundary starts.
+    layer_breaks: Vec<usize>,
 }
 
 struct CachedLayout {
@@ -112,6 +116,8 @@ impl TextRenderer {
             cache_misses: 0,
             monospace,
             clip_stack: Vec::new(),
+            current_layer: 0,
+            layer_breaks: Vec::new(),
         }
     }
 
@@ -361,6 +367,59 @@ impl TextRenderer {
         }
     }
 
+    /// Switch to a higher render layer. Layer 0 is base content, layer 1+
+    /// is overlay content (menus, popups).
+    pub fn set_layer(&mut self, layer: u8) {
+        if layer <= self.current_layer {
+            return;
+        }
+        self.layer_breaks.push(self.queued.len());
+        self.current_layer = layer;
+    }
+
+    /// How many layers have content (at least 1).
+    pub fn layer_count(&self) -> u8 {
+        (self.layer_breaks.len() as u8) + 1
+    }
+
+    /// Render only a specific layer's queued text. Clears all state after the
+    /// last layer is rendered.
+    pub fn render_layer(
+        &mut self,
+        layer: u8,
+        gpu: &GpuContext,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+    ) {
+        let li = layer as usize;
+
+        let start = if li == 0 {
+            0
+        } else if li <= self.layer_breaks.len() {
+            self.layer_breaks[li - 1]
+        } else {
+            return;
+        };
+        let end = if li < self.layer_breaks.len() {
+            self.layer_breaks[li]
+        } else {
+            self.queued.len()
+        };
+
+        if start < end {
+            self.render_range(gpu, encoder, view, start, end);
+        }
+
+        // Clean up after the last layer
+        let is_last = li >= self.layer_breaks.len();
+        if is_last {
+            self.queued.clear();
+            self.layer_breaks.clear();
+            self.current_layer = 0;
+        }
+    }
+
+    /// Render all queued text (all layers at once). Backwards compatible.
     pub fn render_queued(
         &mut self,
         gpu: &GpuContext,
@@ -370,7 +429,20 @@ impl TextRenderer {
         if self.queued.is_empty() {
             return;
         }
+        self.render_range(gpu, encoder, view, 0, self.queued.len());
+        self.queued.clear();
+        self.layer_breaks.clear();
+        self.current_layer = 0;
+    }
 
+    fn render_range(
+        &mut self,
+        gpu: &GpuContext,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        start: usize,
+        end: usize,
+    ) {
         self.viewport.update(
             &gpu.queue,
             Resolution {
@@ -379,8 +451,7 @@ impl TextRenderer {
             },
         );
 
-        let text_areas: Vec<TextArea<'_>> = self
-            .queued
+        let text_areas: Vec<TextArea<'_>> = self.queued[start..end]
             .iter()
             .filter_map(|queued| {
                 self.layouts.get(&queued.key).map(|layout| TextArea {
@@ -399,6 +470,10 @@ impl TextRenderer {
                 })
             })
             .collect();
+
+        if text_areas.is_empty() {
+            return;
+        }
 
         self.renderer
             .prepare(
@@ -430,8 +505,6 @@ impl TextRenderer {
         self.renderer
             .render(&self.atlas, &self.viewport, &mut pass)
             .expect("Failed to render text");
-
-        self.queued.clear();
     }
 
     fn evict_one_if_needed(&mut self) {

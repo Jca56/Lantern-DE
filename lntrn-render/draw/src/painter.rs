@@ -58,6 +58,12 @@ pub struct Painter {
     instances: Vec<Instance>,
     clip_stack: Vec<Rect>,
     clip_spans: Vec<ClipSpan>,
+    /// Current layer being drawn into (0 = base, 1+ = overlay).
+    current_layer: u8,
+    /// Boundary markers: (instance_idx, clip_span_idx) where each layer ends.
+    layer_breaks: Vec<(u32, usize)>,
+    /// Whether instances have been uploaded to GPU this frame.
+    instances_uploaded: bool,
 }
 
 impl Painter {
@@ -190,6 +196,9 @@ impl Painter {
             instances: Vec::with_capacity(1024),
             clip_stack: Vec::new(),
             clip_spans: vec![ClipSpan { start: 0, clip: None }],
+            current_layer: 0,
+            layer_breaks: Vec::new(),
+            instances_uploaded: false,
         }
     }
 
@@ -198,6 +207,9 @@ impl Painter {
         self.clip_stack.clear();
         self.clip_spans.clear();
         self.clip_spans.push(ClipSpan { start: 0, clip: None });
+        self.current_layer = 0;
+        self.layer_breaks.clear();
+        self.instances_uploaded = false;
     }
 
     /// Push a clip rectangle. Shapes drawn after this call will be clipped
@@ -223,6 +235,168 @@ impl Painter {
             start: self.instances.len() as u32,
             clip,
         });
+    }
+
+    /// Switch to a higher render layer. Layer 0 is base content, layer 1+
+    /// is overlay content (menus, popups). Each layer gets its own painter
+    /// and text sub-passes so overlays correctly cover underlying text.
+    pub fn set_layer(&mut self, layer: u8) {
+        if layer <= self.current_layer {
+            return;
+        }
+        // Record where current layer ends
+        self.layer_breaks
+            .push((self.instances.len() as u32, self.clip_spans.len()));
+        // Reset clip state for new layer
+        self.clip_stack.clear();
+        self.clip_spans
+            .push(ClipSpan { start: self.instances.len() as u32, clip: None });
+        self.current_layer = layer;
+    }
+
+    /// How many layers have content (at least 1).
+    pub fn layer_count(&self) -> u8 {
+        (self.layer_breaks.len() as u8) + 1
+    }
+
+    /// Upload instances to the GPU buffer. Called once before render_layer calls.
+    fn ensure_uploaded(&mut self, gpu: &GpuContext) {
+        if self.instances_uploaded {
+            return;
+        }
+        if self.instances.len() > MAX_INSTANCES {
+            self.instances.truncate(MAX_INSTANCES);
+        }
+        let globals = Globals {
+            screen_size: [gpu.width() as f32, gpu.height() as f32],
+            _pad: [0.0; 2],
+        };
+        gpu.queue
+            .write_buffer(&self.globals_buffer, 0, bytemuck::bytes_of(&globals));
+        if !self.instances.is_empty() {
+            gpu.queue.write_buffer(
+                &self.instance_buffer,
+                0,
+                bytemuck::cast_slice(&self.instances),
+            );
+        }
+        self.instances_uploaded = true;
+    }
+
+    /// Render a specific layer's shapes. Layer 0 clears with `clear_color`,
+    /// higher layers composite on top (LoadOp::Load).
+    pub fn render_layer(
+        &mut self,
+        layer: u8,
+        gpu: &GpuContext,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        clear_color: Option<Color>,
+    ) {
+        let li = layer as usize;
+
+        // Instance range for this layer
+        let inst_start = if li == 0 {
+            0u32
+        } else if li <= self.layer_breaks.len() {
+            self.layer_breaks[li - 1].0
+        } else {
+            return;
+        };
+        let inst_end = if li < self.layer_breaks.len() {
+            self.layer_breaks[li].0
+        } else {
+            self.instances.len() as u32
+        };
+
+        // Clip-span range for this layer
+        let span_start = if li == 0 {
+            0usize
+        } else {
+            self.layer_breaks[li - 1].1
+        };
+        let span_end = if li < self.layer_breaks.len() {
+            self.layer_breaks[li].1
+        } else {
+            self.clip_spans.len()
+        };
+
+        // Skip empty overlay layers (but always run layer 0 for the clear)
+        if inst_start == inst_end && clear_color.is_none() {
+            return;
+        }
+
+        self.ensure_uploaded(gpu);
+
+        let load = match clear_color {
+            Some(c) => wgpu::LoadOp::Clear(wgpu::Color {
+                r: c.r as f64,
+                g: c.g as f64,
+                b: c.b as f64,
+                a: c.a as f64,
+            }),
+            None => wgpu::LoadOp::Load,
+        };
+
+        let label = if layer == 0 {
+            "Lantern Layer 0"
+        } else {
+            "Lantern Overlay Layer"
+        };
+
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some(label),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load,
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            ..Default::default()
+        });
+
+        if inst_start < inst_end {
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &self.globals_bind_group, &[]);
+            pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
+
+            for i in span_start..span_end {
+                let span = &self.clip_spans[i];
+                let end = if i + 1 < span_end {
+                    self.clip_spans[i + 1].start
+                } else {
+                    inst_end
+                };
+
+                if end <= span.start {
+                    continue;
+                }
+
+                match span.clip {
+                    Some(rect) => {
+                        let sx = rect.x.max(0.0) as u32;
+                        let sy = rect.y.max(0.0) as u32;
+                        let sw =
+                            (rect.w.max(0.0) as u32).min(gpu.width().saturating_sub(sx));
+                        let sh =
+                            (rect.h.max(0.0) as u32).min(gpu.height().saturating_sub(sy));
+                        if sw == 0 || sh == 0 {
+                            continue;
+                        }
+                        pass.set_scissor_rect(sx, sy, sw, sh);
+                    }
+                    None => {
+                        pass.set_scissor_rect(0, 0, gpu.width(), gpu.height());
+                    }
+                }
+
+                pass.draw(0..4, span.start..end);
+            }
+        }
     }
 
     pub fn rect_filled(&mut self, rect: Rect, corner_radius: f32, color: Color) {
@@ -433,19 +607,7 @@ impl Painter {
         load: wgpu::LoadOp<wgpu::Color>,
         label: &str,
     ) {
-        if self.instances.len() > MAX_INSTANCES {
-            self.instances.truncate(MAX_INSTANCES);
-        }
-
-        let globals = Globals {
-            screen_size: [gpu.width() as f32, gpu.height() as f32],
-            _pad: [0.0; 2],
-        };
-        gpu.queue.write_buffer(&self.globals_buffer, 0, bytemuck::bytes_of(&globals));
-
-        if !self.instances.is_empty() {
-            gpu.queue.write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&self.instances));
-        }
+        self.ensure_uploaded(gpu);
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some(label),
