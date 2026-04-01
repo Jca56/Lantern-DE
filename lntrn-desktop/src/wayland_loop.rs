@@ -54,6 +54,10 @@ pub(crate) fn run_loop(
     let mut tab_drag: Option<usize> = None;
     let mut tab_drag_press: Option<(usize, f32)> = None;
     let mut active_panel = DesktopPanel::Files;
+    let panel_file = {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+        std::path::PathBuf::from(home).join(".lantern/config/desktop-panel")
+    };
 
     eprintln!("[desktop] entering main loop, size={}x{}", state.width, state.height);
 
@@ -274,6 +278,14 @@ pub(crate) fn run_loop(
         // ── Update menus ────────────────────────────────────────────────
         view_menu.update(dt);
         context_menu.update(dt);
+
+        // ── Read active panel from bar ──────────────────────────────────
+        if let Ok(s) = std::fs::read_to_string(&panel_file) {
+            active_panel = match s.trim() {
+                "blank" => DesktopPanel::Blank,
+                _ => DesktopPanel::Files,
+            };
+        }
 
         // ── Render ──────────────────────────────────────────────────────
         let opacity = settings.bg_opacity;

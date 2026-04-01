@@ -1,8 +1,6 @@
 use lntrn_render::Rect;
 
 // Base design values (at 1x scale)
-const GRADIENT_H: f32 = 4.0;
-const GLOBAL_TAB_H: f32 = 46.0;
 const NAV_BAR_H: f32 = 48.0;
 const FILE_TAB_H: f32 = 46.0;
 const SIDEBAR_W: f32 = 200.0;
@@ -19,30 +17,13 @@ pub fn zoom_multiplier(zoom: f32) -> f32 {
     1.8 + zoom * 2.2
 }
 
-pub fn gradient_h(s: f32) -> f32 { GRADIENT_H * s }
 pub fn sidebar_w(s: f32) -> f32 { SIDEBAR_W * s }
 pub fn item_size(s: f32, zoom: f32) -> f32 { (ITEM_SIZE * zoom_multiplier(zoom)).max(60.0) * s }
 pub fn icon_size(s: f32, zoom: f32) -> f32 { ICON_SIZE * s * zoom_multiplier(zoom) }
 pub fn item_pad(s: f32) -> f32 { ITEM_PAD * s }
 
-// ── Global header (shared across all panels) ──────────────────────────────
-
-/// Y=0: first gradient strip
-pub fn gradient1_y(_s: f32) -> f32 { 0.0 }
-
-/// Y after gradient 1: global tab bar
-pub fn global_tab_y(s: f32) -> f32 { GRADIENT_H * s }
-
-/// Global tab bar rect (full width, between the two gradient strips)
-pub fn global_tab_rect(width: f32, s: f32) -> Rect {
-    Rect::new(0.0, global_tab_y(s), width, GLOBAL_TAB_H * s)
-}
-
-/// Y after global tabs: second gradient strip
-pub fn gradient2_y(s: f32) -> f32 { (GRADIENT_H + GLOBAL_TAB_H) * s }
-
-/// Y where panel content begins (below both gradients + global tabs)
-pub fn panel_top(s: f32) -> f32 { (GRADIENT_H + GLOBAL_TAB_H + GRADIENT_H) * s }
+/// Y where panel content begins (top of screen — no chrome)
+pub fn panel_top(_s: f32) -> f32 { 0.0 }
 
 // ── Files panel layout (below panel_top) ──────────────────────────────────
 

@@ -1,4 +1,4 @@
-use lntrn_render::{Color, TextRenderer};
+use lntrn_render::{Color, FontWeight, FontStyle, TextRenderer};
 use lntrn_theme::{FONT_HEADING, FONT_SUBHEADING, FONT_BODY, FONT_SMALL, FONT_CAPTION, FONT_LABEL};
 
 #[derive(Clone, Copy, PartialEq)]
@@ -33,6 +33,7 @@ pub struct TextLabel<'a> {
     pub size: FontSize,
     pub color: Color,
     pub max_width: f32,
+    pub bold: bool,
 }
 
 impl<'a> TextLabel<'a> {
@@ -44,6 +45,7 @@ impl<'a> TextLabel<'a> {
             size: FontSize::Body,
             color: Color::from_rgb8(236, 236, 236),
             max_width: 800.0,
+            bold: false,
         }
     }
 
@@ -62,21 +64,41 @@ impl<'a> TextLabel<'a> {
         self
     }
 
+    pub fn bold(mut self) -> Self {
+        self.bold = true;
+        self
+    }
+
     pub fn draw(
         &self,
         text_renderer: &mut TextRenderer,
         screen_w: u32,
         screen_h: u32,
     ) {
-        text_renderer.queue(
-            self.text,
-            self.size.px(),
-            self.x,
-            self.y,
-            self.color,
-            self.max_width,
-            screen_w,
-            screen_h,
-        );
+        if self.bold {
+            text_renderer.queue_styled(
+                self.text,
+                self.size.px(),
+                self.x,
+                self.y,
+                self.color,
+                self.max_width,
+                FontWeight::Bold,
+                FontStyle::Normal,
+                screen_w,
+                screen_h,
+            );
+        } else {
+            text_renderer.queue(
+                self.text,
+                self.size.px(),
+                self.x,
+                self.y,
+                self.color,
+                self.max_width,
+                screen_w,
+                screen_h,
+            );
+        }
     }
 }

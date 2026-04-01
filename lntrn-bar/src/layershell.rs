@@ -404,7 +404,9 @@ fn set_bar_input_region(
         let surface_h = (MENU_OVERFLOW + bar_height) as i32;
         region.add(0, surface_h - 2, 100000, 2);
     } else {
-        region.add(0, MENU_OVERFLOW as i32, 100000, bar_height as i32);
+        // Bar area + extra space above for desktop panel pills
+        let pill_space = 40;
+        region.add(0, MENU_OVERFLOW as i32 - pill_space, 100000, bar_height as i32 + pill_space);
     }
     surface.set_input_region(Some(region));
 }
@@ -540,6 +542,11 @@ pub fn run() -> Result<()> {
     let mut ix = InteractionContext::new();
     let mut clock = Clock::new();
     let mut menu_was_open = false;
+    let mut desktop_panel_idx: usize = 0;
+    let desktop_panel_path = {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+        std::path::PathBuf::from(home).join(".lantern/config/desktop-panel")
+    };
     let mut kb_was_active = false;
     let mut app_tray = crate::apptray::AppTray::new();
     let mut app_menu = crate::appmenu::AppMenu::new();
@@ -697,6 +704,14 @@ pub fn run() -> Result<()> {
             }
             app_menu.on_left_click(phys_cx, phys_cy, &ix);
             ix.on_left_pressed();
+            // Desktop panel pill clicks
+            for i in 0..2u32 {
+                if ix.active_zone_id() == Some(8000 + i) {
+                    desktop_panel_idx = i as usize;
+                    let panel_name = match i { 0 => "files", _ => "blank" };
+                    let _ = std::fs::write(&desktop_panel_path, panel_name);
+                }
+            }
             // Start potential drag on app tray icons
             let toplevels = state.tracker.toplevels();
             app_tray.on_press(&ix, phys_cx, phys_cy, &toplevels);
@@ -1034,6 +1049,55 @@ pub fn run() -> Result<()> {
             Color::WHITE.with_alpha(0.09 * bar_opacity), 0.0, -bevel_offset);
         painter.inner_shadow(bar_rect, bar_r, bevel_sigma,
             Color::BLACK.with_alpha(0.15 * bar_opacity), 0.0, bevel_offset);
+
+        // ── Desktop panel pills (above bar, right side) ─────────
+        // Slide off-screen when bar docks (anim_t → 1) or hides (hide_t → 1)
+        {
+            let slide_t = anim_t.max(hide_t); // either docking or hiding
+            let pill_labels = ["Files", "Blank"];
+            let pill_h = 32.0 * scale_f;
+            let pill_gap = 5.0 * scale_f;
+            let pill_pad = 14.0 * scale_f;
+            let font = 20.0 * scale_f;
+            let pill_r = pill_h * 0.5;
+            let pill_y = bar_rect.y - pill_h - 6.0 * scale_f;
+            let gold = Color::from_rgb8(218, 185, 100);
+
+            let pill_widths: Vec<f32> = pill_labels.iter()
+                .map(|l| l.len() as f32 * font * 0.55 + pill_pad * 2.0)
+                .collect();
+            let total_w: f32 = pill_widths.iter().sum::<f32>()
+                + pill_gap * (pill_labels.len() - 1) as f32;
+            // Slide right off-screen: normal position → off right edge
+            let slide_offset = slide_t * (total_w + 20.0 * scale_f);
+            let base_x = bar_rect.x + bar_rect.w - total_w - 12.0 * scale_f + slide_offset;
+            let mut px = base_x;
+
+            if slide_t < 0.99 {
+                for (i, (label, pw)) in pill_labels.iter().zip(&pill_widths).enumerate() {
+                    let pr = lntrn_render::Rect::new(px, pill_y, *pw, pill_h);
+                    let zone_id = 8000 + i as u32;
+                    let zone = ix.add_zone(zone_id, pr);
+                    let active = i == desktop_panel_idx;
+
+                    if active {
+                        painter.rect_filled(pr, pill_r, palette.surface.with_alpha(0.85));
+                    } else if zone.is_hovered() {
+                        painter.rect_filled(pr, pill_r, palette.surface.with_alpha(0.5));
+                    } else {
+                        painter.rect_filled(pr, pill_r, palette.surface.with_alpha(0.3));
+                    }
+
+                    let color = if active { gold } else { palette.text };
+                    lntrn_ui::gpu::TextLabel::new(label, px + pill_pad, pill_y + (pill_h - font) * 0.5)
+                        .size(lntrn_ui::gpu::FontSize::Custom(font))
+                        .color(color)
+                        .bold()
+                        .draw(&mut text, phys_w, total_phys_h);
+                    px += pw + pill_gap;
+                }
+            }
+        }
 
         // ── Left: launcher button ─────────────────────────────────
         let launcher_w = app_menu.draw_button(

@@ -120,54 +120,12 @@ pub fn render_frame(
     // ── Window background (transparent for layer shell) ──────────────
     painter.rect_filled(Rect::new(0.0, 0.0, wf, hf), 0.0, pal.bg.with_alpha(bg_opacity));
 
-    // ── Gradient strip 1 ────────────────────────────────────────────
-    {
-        let mut grad = GradientStrip::new(0.0, gradient1_y(s), wf)
-            .colors(pal.file_manager_gradient_stops());
-        grad.height = gradient_h(s);
-        grad.draw(painter);
-    }
-
-    // ── Global tab bar (between gradients) ──────────────────────────
-    {
-        let panels = [("Files", DesktopPanel::Files), ("Blank", DesktopPanel::Blank)];
-        let tab_rect = global_tab_rect(wf, s);
-        let font = 20.0 * s;
-        let pad = 16.0 * s;
-        let mut tx = tab_rect.x + 8.0 * s;
-        for (i, (label, panel)) in panels.iter().enumerate() {
-            let char_w = font * 0.52;
-            let tw = label.len() as f32 * char_w + pad * 2.0;
-            let tr = Rect::new(tx, tab_rect.y + 4.0 * s, tw, tab_rect.h - 8.0 * s);
-            let zone = input.add_zone(ZONE_GLOBAL_TAB_BASE + i as u32, tr);
-            let active = *panel == active_panel;
-            let r = 6.0 * s;
-            if active {
-                painter.rect_filled(tr, r, pal.accent.with_alpha(0.15));
-            } else if zone.is_hovered() {
-                painter.rect_filled(tr, r, pal.accent.with_alpha(0.08));
-            }
-            let color = if active { pal.accent } else { pal.text };
-            TextLabel::new(label, tx + pad, tr.y + (tr.h - font) * 0.5)
-                .size(FontSize::Custom(font))
-                .color(color)
-                .draw(text, w, h);
-            tx += tw + 4.0 * s;
-        }
-    }
-
-    // ── Gradient strip 2 ────────────────────────────────────────────
-    {
-        let mut grad = GradientStrip::new(0.0, gradient2_y(s), wf)
-            .colors(pal.file_manager_gradient_stops());
-        grad.height = gradient_h(s);
-        grad.draw(painter);
-    }
-
     // ── Panel content ───────────────────────────────────────────────
     if active_panel != DesktopPanel::Files {
         // Blank panel — just render the layered output and return
+        painter.set_layer(1);
         let ctx_evt = context_menu.draw(painter, text, input, w, h);
+        painter.set_layer(0);
         let frame = ctx.begin_frame("Lantern Desktop");
         match frame {
             Ok(mut frame) => {
