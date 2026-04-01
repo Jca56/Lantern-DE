@@ -10,6 +10,8 @@ use std::time::Instant;
 use lntrn_render::Rect;
 use lntrn_ui::gpu::InteractionContext;
 
+use crate::mpris;
+
 // Zone IDs
 pub const ZONE_AUDIO_ICON: u32 = 0xAD_0000;
 const ZONE_VOL_SLIDER: u32 = 0xAD_0001;
@@ -19,6 +21,9 @@ const ZONE_MIC_MUTE: u32 = 0xAD_0004;
 const ZONE_SINK_BASE: u32 = 0xAD_0100;
 const ZONE_SOURCE_BASE: u32 = 0xAD_0200;
 const ZONE_STREAM_SLIDER_BASE: u32 = 0xAD_0300;
+pub(crate) const ZONE_MEDIA_PREV: u32 = 0xAD_0500;
+pub(crate) const ZONE_MEDIA_PLAY: u32 = 0xAD_0501;
+pub(crate) const ZONE_MEDIA_NEXT: u32 = 0xAD_0502;
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -89,6 +94,10 @@ pub struct Audio {
     last_vol_change: Instant,
     last_mic_change: Instant,
     last_stream_change: Instant,
+    /// MPRIS now-playing state
+    pub(crate) media: Option<mpris::MediaState>,
+    mpris_event_rx: mpsc::Receiver<mpris::MprisEvent>,
+    mpris_cmd_tx: mpsc::Sender<mpris::MediaCmd>,
 }
 
 const DEBOUNCE_MS: u128 = 500;
@@ -102,6 +111,8 @@ impl Audio {
             .name("audio-poll".into())
             .spawn(move || poll::poll_thread(event_tx, cmd_rx))
             .expect("spawn audio poll thread");
+
+        let (mpris_rx, mpris_tx) = mpris::spawn();
 
         Self {
             volume: 0.0, muted: false,
@@ -119,6 +130,9 @@ impl Audio {
             last_vol_change: Instant::now(),
             last_mic_change: Instant::now(),
             last_stream_change: Instant::now(),
+            media: None,
+            mpris_event_rx: mpris_rx,
+            mpris_cmd_tx: mpris_tx,
         }
     }
 
@@ -156,6 +170,23 @@ impl Audio {
                 }
             }
         }
+
+        // MPRIS now-playing
+        while let Ok(event) = self.mpris_event_rx.try_recv() {
+            match event {
+                mpris::MprisEvent::State(s) => self.media = s,
+            }
+        }
+    }
+
+    pub fn media_play_pause(&self) {
+        let _ = self.mpris_cmd_tx.send(mpris::MediaCmd::PlayPause);
+    }
+    pub fn media_next(&self) {
+        let _ = self.mpris_cmd_tx.send(mpris::MediaCmd::Next);
+    }
+    pub fn media_prev(&self) {
+        let _ = self.mpris_cmd_tx.send(mpris::MediaCmd::Previous);
     }
 
     pub fn handle_click(&mut self, ix: &InteractionContext, phys_cx: f32, phys_cy: f32) {
@@ -183,6 +214,12 @@ impl Audio {
             } else if zone >= ZONE_STREAM_SLIDER_BASE && zone < ZONE_STREAM_SLIDER_BASE + 256 {
                 self.dragging = Some(zone);
                 self.set_stream_from_x(zone, phys_cx);
+            } else if zone == ZONE_MEDIA_PREV {
+                self.media_prev();
+            } else if zone == ZONE_MEDIA_PLAY {
+                self.media_play_pause();
+            } else if zone == ZONE_MEDIA_NEXT {
+                self.media_next();
             }
         }
     }

@@ -23,6 +23,7 @@ use smithay::{
     desktop::space::SpaceRenderElements,
     utils::{Logical, Physical, Point, Rectangle, Scale, Size},
 };
+use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use tracing::{trace, warn};
 
 use crate::shaders::{HOT_CORNER_GLOW_COLOR, HOT_CORNER_GLOW_SIGMA, HOT_CORNER_GLOW_SIZE};
@@ -143,21 +144,31 @@ pub fn render_surface(
 
     // ── Hover preview pre-computation ────────────────────────────────
     state.hover_preview.poll();
+    let pointer_pos = state.seat.get_pointer()
+        .map(|p| p.current_location())
+        .unwrap_or_default();
+    state.hover_preview.tick(pointer_pos.x, pointer_pos.y, output_pos.size);
     let hover_active = state.hover_preview.is_active() && !switcher_visible;
-    let hover_slot_and_window: Option<(crate::hover_preview::PreviewSlot, Window)> = if hover_active {
+    let hover_slots_and_windows: Vec<(crate::hover_preview::PreviewSlot, Window)> = if hover_active {
         let toplevel_ids = state.foreign_toplevel_state.surface_app_ids();
-        state.hover_preview.find_surface(&toplevel_ids).and_then(|surf| {
-            let slot = state.hover_preview.thumbnail_slot(&surf, output_pos.size);
-            state.find_mapped_window(&surf)
+        let surfaces = state.hover_preview.find_surfaces(&toplevel_ids);
+        let windows: Vec<(WlSurface, Window)> = surfaces.iter().filter_map(|surf| {
+            let win = state.find_mapped_window(surf)
                 .or_else(|| state.minimized_windows.iter()
-                    .find(|m| m.surface == surf)
-                    .map(|m| m.window.clone()))
-                .map(|w| (slot, w))
-        })
+                    .find(|m| m.surface == *surf)
+                    .map(|m| m.window.clone()));
+            win.map(|w| (surf.clone(), w))
+        }).collect();
+        state.hover_preview.set_window_count(windows.len());
+        let surfs: Vec<WlSurface> = windows.iter().map(|(s, _)| s.clone()).collect();
+        let slots = state.hover_preview.thumbnail_slots(&surfs, output_pos.size);
+        slots.into_iter().zip(windows.into_iter().map(|(_, w)| w))
+            .map(|(slot, win)| (slot, win))
+            .collect()
     } else {
-        None
+        Vec::new()
     };
-    let hover_card = if hover_slot_and_window.is_some() {
+    let hover_card = if !hover_slots_and_windows.is_empty() {
         state.hover_preview.render_card(output_pos.size, scale)
     } else {
         Vec::new()
@@ -168,7 +179,7 @@ pub fn render_surface(
         None => return,
     };
 
-    let _shadow_shader = &udev.shadow_shader;
+    let shadow_shader = &udev.shadow_shader;
     let hot_corner_glow_shader = &udev.hot_corner_glow_shader;
     let ssd_icon_shader = &udev.ssd_icon_shader;
     let renderer = match udev.renderer.as_mut() {
@@ -302,6 +313,41 @@ pub fn render_surface(
                 for elem in solid_elems {
                     window_elements.push(CustomRenderElements::Overlay(elem));
                 }
+            }
+        }
+
+        // Window drop shadow (behind window, so pushed after = lower z)
+        if !is_fullscreen {
+            if let Some(ref shader) = shadow_shader {
+                let shadow_sigma = 20.0;
+                let shadow_expand = (shadow_sigma * 3.0) as i32;
+                let ssd_bar = if has_ssd { 34 } else { 0 };
+                let corner_r = 10.0;
+                // Shadow rect in logical coords, expanded around window + SSD bar
+                let win_log_x = (rel_x * canvas_zoom) as i32;
+                let win_log_y = (rel_y * canvas_zoom) as i32 - ssd_bar;
+                let win_log_w = (win_geo.size.w as f64 * canvas_zoom).round() as i32;
+                let win_log_h = ((win_geo.size.h + ssd_bar) as f64 * canvas_zoom).round() as i32;
+                let shadow_area = Rectangle::<i32, Logical>::new(
+                    (win_log_x - shadow_expand, win_log_y - shadow_expand).into(),
+                    (win_log_w + shadow_expand * 2, win_log_h + shadow_expand * 2).into(),
+                );
+                let win_phys_w = win_log_w as f32 * output_scale as f32;
+                let win_phys_h = win_log_h as f32 * output_scale as f32;
+                let shadow_elem = PixelShaderElement::new(
+                    shader.clone(),
+                    shadow_area,
+                    None,
+                    alpha,
+                    vec![
+                        Uniform::new("window_size", [win_phys_w, win_phys_h]),
+                        Uniform::new("sigma", shadow_sigma as f32 * output_scale as f32),
+                        Uniform::new("corner_radius", corner_r * output_scale as f32),
+                        Uniform::new("shadow_color", [0.0f32, 0.0, 0.0, 0.6]),
+                    ],
+                    Kind::Unspecified,
+                );
+                window_elements.push(CustomRenderElements::Shader(shadow_elem));
             }
         }
     }
@@ -460,46 +506,48 @@ pub fn render_surface(
     }
 
     // ── Hover preview (above bar, below alt-tab) ──────────────────
-    if let Some((ref slot, ref hover_window)) = hover_slot_and_window {
-        let win_geo = hover_window.geometry();
-        if win_geo.size.w > 0 && win_geo.size.h > 0 {
-            let scale_x = slot.size.w as f64 / win_geo.size.w as f64;
-            let scale_y = slot.size.h as f64 / win_geo.size.h as f64;
-            let thumb_scale = scale_x.min(scale_y);
-            let rendered_w = (win_geo.size.w as f64 * thumb_scale).round() as i32;
-            let rendered_h = (win_geo.size.h as f64 * thumb_scale).round() as i32;
-            let offset_x = (slot.size.w - rendered_w) / 2;
-            let offset_y = (slot.size.h - rendered_h) / 2;
+    if !hover_slots_and_windows.is_empty() {
+        for (ref slot, ref hover_window) in &hover_slots_and_windows {
+            let win_geo = hover_window.geometry();
+            if win_geo.size.w > 0 && win_geo.size.h > 0 {
+                let scale_x = slot.size.w as f64 / win_geo.size.w as f64;
+                let scale_y = slot.size.h as f64 / win_geo.size.h as f64;
+                let thumb_scale = scale_x.min(scale_y);
+                let rendered_w = (win_geo.size.w as f64 * thumb_scale).round() as i32;
+                let rendered_h = (win_geo.size.h as f64 * thumb_scale).round() as i32;
+                let offset_x = (slot.size.w - rendered_w) / 2;
+                let offset_y = (slot.size.h - rendered_h) / 2;
 
-            let content_phys: Point<i32, Physical> = (
-                ((slot.position.x + offset_x) as f64 * output_scale).round() as i32,
-                ((slot.position.y + offset_y) as f64 * output_scale).round() as i32,
-            ).into();
+                let content_phys: Point<i32, Physical> = (
+                    ((slot.position.x + offset_x) as f64 * output_scale).round() as i32,
+                    ((slot.position.y + offset_y) as f64 * output_scale).round() as i32,
+                ).into();
 
-            let geo_loc = win_geo.loc;
-            let base_phys: Point<i32, Physical> = (
-                content_phys.x - (geo_loc.x as f64 * output_scale).round() as i32,
-                content_phys.y - (geo_loc.y as f64 * output_scale).round() as i32,
-            ).into();
+                let geo_loc = win_geo.loc;
+                let base_phys: Point<i32, Physical> = (
+                    content_phys.x - (geo_loc.x as f64 * output_scale).round() as i32,
+                    content_phys.y - (geo_loc.y as f64 * output_scale).round() as i32,
+                ).into();
 
-            let full_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
-                hover_window.render_elements(
-                    renderer,
-                    base_phys,
-                    Scale::from(output_scale),
-                    1.0,
-                );
+                let full_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
+                    hover_window.render_elements(
+                        renderer,
+                        base_phys,
+                        Scale::from(output_scale),
+                        1.0,
+                    );
 
-            for elem in full_elements {
-                let rescaled = RescaleRenderElement::from_element(
-                    elem,
-                    content_phys,
-                    Scale::from(thumb_scale),
-                );
-                elements.push(CustomRenderElements::Rescaled(rescaled));
+                for elem in full_elements {
+                    let rescaled = RescaleRenderElement::from_element(
+                        elem,
+                        content_phys,
+                        Scale::from(thumb_scale),
+                    );
+                    elements.push(CustomRenderElements::Rescaled(rescaled));
+                }
             }
         }
-        // Card background (behind thumbnail)
+        // Card background (behind thumbnails)
         for card_elem in hover_card {
             elements.push(CustomRenderElements::Overlay(card_elem));
         }

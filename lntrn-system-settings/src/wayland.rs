@@ -59,6 +59,20 @@ const PANELS: &[(Panel, &str)] = &[
     (Panel::AppIcons, "App Icons"),
 ];
 
+fn parse_panel_arg() -> Option<Panel> {
+    let args: Vec<String> = std::env::args().collect();
+    let idx = args.iter().position(|a| a == "--panel")?;
+    match args.get(idx + 1)?.as_str() {
+        "appearance" => Some(Panel::Appearance),
+        "window-manager" => Some(Panel::WindowManager),
+        "input" => Some(Panel::Input),
+        "display" => Some(Panel::Display),
+        "power" => Some(Panel::Power),
+        "app-icons" => Some(Panel::AppIcons),
+        _ => None,
+    }
+}
+
 // ── WaylandHandle for wgpu ──────────────────────────────────────────────────
 
 struct WaylandHandle {
@@ -475,7 +489,7 @@ pub fn run() -> Result<()> {
         tex_pass.upload(&gpu, &rgba, ICON_SIZE, ICON_SIZE)
     }).collect();
 
-    let mut active_panel = Panel::Appearance;
+    let mut active_panel = parse_panel_arg().unwrap_or(Panel::Appearance);
     let mut config = LanternConfig::load();
     let mut saved_config = config.clone();
     let mut panel_state = PanelState::new(&fox);

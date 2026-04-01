@@ -69,4 +69,16 @@ impl FoxPalette {
         let gs = lntrn_theme::GRADIENT_STRIP;
         [to_color(gs[0]), to_color(gs[1]), to_color(gs[2]), to_color(gs[3]), to_color(gs[4])]
     }
+
+    /// Return a copy with background-layer colors (`bg`, `surface`, `surface_2`,
+    /// `sidebar`) multiplied by the given opacity. Useful for window transparency.
+    pub fn with_bg_opacity(self, opacity: f32) -> Self {
+        Self {
+            bg: self.bg.with_alpha(self.bg.a * opacity),
+            surface: self.surface.with_alpha(self.surface.a * opacity),
+            surface_2: self.surface_2.with_alpha(self.surface_2.a * opacity),
+            sidebar: self.sidebar.with_alpha(self.sidebar.a * opacity),
+            ..self
+        }
+    }
 }

@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use crate::dbus::{self, BodyReader, Connection, Message, Value};
+use lntrn_dbus::{self as dbus, BodyReader, Connection, Message, Value};
 
 const WATCHER_NAME: &str = "org.kde.StatusNotifierWatcher";
 const WATCHER_PATH: &str = "/StatusNotifierWatcher";

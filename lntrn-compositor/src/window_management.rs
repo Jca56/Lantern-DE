@@ -302,6 +302,22 @@ impl Lantern {
 
     /// Close a window from the switcher overlay (close button click).
     /// Removes it from the switcher and sends close to the toplevel.
+    /// Close all windows matching an app_id (used by hover preview close button).
+    pub fn close_windows_by_app_id(&mut self, app_id: &str) {
+        let surfaces: Vec<_> = self.foreign_toplevel_state.surface_app_ids()
+            .into_iter()
+            .filter(|(_, id)| id == app_id)
+            .map(|(s, _)| s)
+            .collect();
+        for surface in surfaces {
+            if let Some(window) = self.find_mapped_window(&surface) {
+                window.request_close();
+            } else if let Some(mw) = self.minimized_windows.iter().find(|m| m.surface == surface) {
+                mw.window.request_close();
+            }
+        }
+    }
+
     pub fn close_switcher_window(&mut self, index: usize) {
         let Some(surface) = self.alt_tab_switcher.remove_entry(index) else {
             return;

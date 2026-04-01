@@ -26,6 +26,8 @@ members = [
     "lntrn-snapshot",
     "lntrn-portal",
     "lntrn-git",
+    "lntrn-calculator",
+    "lntrn-dbus",
 ]
 
 [profile.release]

@@ -19,7 +19,8 @@ use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
 use crate::app::App;
-use crate::{Gpu, ZONE_CANVAS, ZONE_CLOSE, ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_PLAY_PAUSE, ZONE_SEEK_BAR, ZONE_VOLUME, ZONE_VOL_SLIDER};
+use crate::mpris_server::{self, PlayerState, MprisCmd};
+use crate::{Gpu, ZONE_CANVAS, ZONE_PLAY_PAUSE, ZONE_SEEK_BAR, ZONE_VOLUME, ZONE_VOL_SLIDER};
 
 // ── WaylandHandle for wgpu ──────────────────────────────────────────────────
 
@@ -274,7 +275,11 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
 
 // ── Entry point ─────────────────────────────────────────────────────────────
 
-pub fn run(initial_path: Option<String>) -> Result<()> {
+pub fn run(
+    initial_path: Option<String>,
+    mpris_tx: std::sync::mpsc::Sender<PlayerState>,
+    mpris_rx: std::sync::mpsc::Receiver<MprisCmd>,
+) -> Result<()> {
     let conn = Connection::connect_to_env()?;
     let display = conn.display();
     let mut event_queue: EventQueue<State> = conn.new_event_queue();
@@ -347,8 +352,12 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
     }
 
     // Control rect caches (set each frame in render, read in input handling)
-    let mut seek_rect = Rect::new(0.0, 0.0, 0.0, 0.0);
-    let mut vol_slider_rect = Rect::new(0.0, 0.0, 0.0, 0.0);
+    let mut rects = crate::render::ControlRects {
+        seek: Rect::new(0.0, 0.0, 0.0, 0.0),
+        vol_slider: Rect::new(0.0, 0.0, 0.0, 0.0),
+        seek_cx: 0.0, seek_cy: 0.0,
+        seek_arc_start: 0.0, seek_arc_sweep: 0.0,
+    };
 
     while state.running {
         // Non-blocking when playing, blocking when paused
@@ -404,15 +413,18 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
             input.on_cursor_left();
         }
 
-        // ── Seek bar drag (motion) ──────────────────────────────────────
-        if app.seeking && state.pointer_in_surface && seek_rect.w > 0.0 {
-            let frac = ((cx - seek_rect.x) / seek_rect.w).clamp(0.0, 1.0);
+        // ── Seek bar drag (motion) — angle-based for circular arc ────
+        if app.seeking && state.pointer_in_surface {
+            let frac = cursor_to_arc_fraction(
+                cx, cy, rects.seek_cx, rects.seek_cy,
+                rects.seek_arc_start, rects.seek_arc_sweep,
+            );
             app.seek_value = frac;
         }
 
         // ── Volume slider drag (motion) ─────────────────────────────────
-        if app.vol_dragging && state.pointer_in_surface && vol_slider_rect.h > 0.0 {
-            let frac = 1.0 - ((cy - vol_slider_rect.y) / vol_slider_rect.h).clamp(0.0, 1.0);
+        if app.vol_dragging && state.pointer_in_surface && rects.vol_slider.h > 0.0 {
+            let frac = 1.0 - ((cy - rects.vol_slider.y) / rects.vol_slider.h).clamp(0.0, 1.0);
             app.volume = frac as f64;
             if let Some(pipe) = &app.pipeline {
                 pipe.set_volume(app.volume);
@@ -441,26 +453,21 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
                 }
             } else if let Some(zone_id) = input.on_left_pressed() {
                 match zone_id {
-                    ZONE_CLOSE => { state.running = false; }
-                    ZONE_MINIMIZE => { toplevel.set_minimized(); }
-                    ZONE_MAXIMIZE => {
-                        if state.maximized { toplevel.unset_maximized(); }
-                        else { toplevel.set_maximized(); }
-                    }
                     ZONE_PLAY_PAUSE => { app.toggle_play_pause(); }
                     ZONE_SEEK_BAR => {
-                        if seek_rect.w > 0.0 {
-                            let frac = ((cx - seek_rect.x) / seek_rect.w).clamp(0.0, 1.0);
-                            app.seeking = true;
-                            app.seek_value = frac;
-                        }
+                        let frac = cursor_to_arc_fraction(
+                            cx, cy, rects.seek_cx, rects.seek_cy,
+                            rects.seek_arc_start, rects.seek_arc_sweep,
+                        );
+                        app.seeking = true;
+                        app.seek_value = frac;
                     }
                     ZONE_VOLUME => {
                         app.vol_showing = !app.vol_showing;
                     }
                     ZONE_VOL_SLIDER => {
-                        if vol_slider_rect.h > 0.0 {
-                            let frac = 1.0 - ((cy - vol_slider_rect.y) / vol_slider_rect.h).clamp(0.0, 1.0);
+                        if rects.vol_slider.h > 0.0 {
+                            let frac = 1.0 - ((cy - rects.vol_slider.y) / rects.vol_slider.h).clamp(0.0, 1.0);
                             app.volume = frac as f64;
                             if let Some(pipe) = &app.pipeline {
                                 pipe.set_volume(app.volume);
@@ -470,17 +477,12 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
                     }
                     ZONE_CANVAS => {
                         app.vol_showing = false;
-                        app.toggle_play_pause();
+                        // Drag window from canvas area
+                        if let Some(seat) = &state.seat {
+                            toplevel._move(seat, state.pointer_serial);
+                        }
                     }
                     _ => {}
-                }
-            } else {
-                // Title bar drag
-                let title_h = 36.0 * s;
-                if cy < title_h {
-                    if let Some(seat) = &state.seat {
-                        toplevel._move(seat, state.pointer_serial);
-                    }
                 }
             }
         }
@@ -495,11 +497,38 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
             input.on_left_released();
         }
 
+        // ── MPRIS commands ──────────────────────────────────────────────
+        while let Ok(cmd) = mpris_rx.try_recv() {
+            match cmd {
+                MprisCmd::PlayPause => app.toggle_play_pause(),
+                MprisCmd::Play => { if let Some(p) = &app.pipeline { p.play(); } }
+                MprisCmd::Pause => { if let Some(p) = &app.pipeline { p.pause(); } }
+                MprisCmd::Stop => { if let Some(p) = &app.pipeline { p.pause(); } }
+                MprisCmd::Next | MprisCmd::Previous => {} // single-file player
+                MprisCmd::SetVolume(v) => {
+                    app.volume = v;
+                    if let Some(p) = &app.pipeline { p.set_volume(v); }
+                }
+                MprisCmd::Seek(offset_us) => {
+                    app.seek_relative(offset_us * 1000); // us → ns
+                }
+            }
+        }
+        // Send state to MPRIS server
+        let _ = mpris_tx.send(PlayerState {
+            title: app.file_name.clone(),
+            file_path: app.file_path.as_ref()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            playing: app.is_playing(),
+            position_ns: app.position_ns,
+            duration_ns: app.duration_ns,
+            volume: app.volume,
+        });
+
         // ── Render ──────────────────────────────────────────────────────
         let is_maximized = state.maximized || state.fullscreen;
-        let rects = crate::render::render_frame(&mut gpu, &app, &mut input, &palette, s, is_maximized);
-        seek_rect = rects.seek;
-        vol_slider_rect = rects.vol_slider;
+        rects = crate::render::render_frame(&mut gpu, &app, &mut input, &palette, s, is_maximized);
 
         surface.frame(&qh, ());
         surface.commit();
@@ -577,4 +606,22 @@ fn handle_key(app: &mut App, toplevel: &xdg_toplevel::XdgToplevel, state: &mut S
         },
         _ => {}
     }
+}
+
+/// Map a cursor position to a fraction (0..1) along a circular arc.
+/// The arc internally goes right-to-left, but we invert so 0=left, 1=right.
+fn cursor_to_arc_fraction(
+    cursor_x: f32, cursor_y: f32,
+    arc_cx: f32, arc_cy: f32,
+    arc_start: f32, arc_sweep: f32,
+) -> f32 {
+    let dx = cursor_x - arc_cx;
+    let dy = cursor_y - arc_cy;
+    let angle = dy.atan2(dx); // -PI..PI
+    let mut rel = angle - arc_start;
+    while rel < 0.0 { rel += std::f32::consts::TAU; }
+    while rel > std::f32::consts::TAU { rel -= std::f32::consts::TAU; }
+    // Invert: arc goes right-to-left, but we want 0=left, 1=right
+    let raw = (rel / arc_sweep).clamp(0.0, 1.0);
+    1.0 - raw
 }

@@ -1,7 +1,7 @@
-//! Minimal D-Bus session bus client — just enough for StatusNotifierItem.
+//! Minimal D-Bus session bus client — wire protocol from scratch.
 //!
-//! Implements the wire protocol from scratch: Unix socket connection,
-//! SASL EXTERNAL auth, message encoding/decoding, method calls, signals.
+//! Implements Unix socket connection, SASL EXTERNAL auth, message
+//! encoding/decoding, method calls, replies, and signals.
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
@@ -36,21 +36,31 @@ pub struct Message {
     pub member: String,
     pub interface: String,
     pub signature: String,
+    pub destination: String,
     pub body: Vec<u8>,
 }
 
-/// Parsed D-Bus value (only the subset we need for SNI).
+impl Message {
+    pub fn is_method_call(&self) -> bool { self.msg_type == MSG_METHOD_CALL }
+    pub fn is_signal(&self) -> bool { self.msg_type == MSG_SIGNAL }
+    pub fn is_error(&self) -> bool { self.msg_type == MSG_ERROR }
+}
+
+/// Parsed D-Bus value.
 #[derive(Debug, Clone)]
 pub enum Value {
     String(String),
     ObjectPath(String),
     Int32(i32),
     Uint32(u32),
+    Int64(i64),
     Bool(bool),
+    Double(f64),
     Bytes(Vec<u8>),
     Array(Vec<Value>),
     Struct(Vec<Value>),
     Dict(HashMap<String, Value>),
+    Variant(Box<Value>),
 }
 
 impl Value {
@@ -59,6 +69,12 @@ impl Value {
     }
     pub fn as_i32(&self) -> Option<i32> {
         match self { Value::Int32(v) => Some(*v), _ => None }
+    }
+    pub fn as_i64(&self) -> Option<i64> {
+        match self { Value::Int64(v) => Some(*v), _ => None }
+    }
+    pub fn as_f64(&self) -> Option<f64> {
+        match self { Value::Double(v) => Some(*v), _ => None }
     }
     pub fn as_bytes(&self) -> Option<&[u8]> {
         match self { Value::Bytes(v) => Some(v), _ => None }
@@ -99,7 +115,6 @@ impl Connection {
 
         let mut conn = Self { stream, serial: 0, unique_name: String::new() };
 
-        // Hello handshake
         let serial = conn.method_call(
             "org.freedesktop.DBus", "/org/freedesktop/DBus",
             "org.freedesktop.DBus", "Hello", "", &[],
@@ -114,8 +129,6 @@ impl Connection {
     }
 
     pub fn unique_name(&self) -> &str { &self.unique_name }
-
-    /// Raw fd for use with poll/epoll (non-blocking socket).
     pub fn as_raw_fd(&self) -> i32 { self.stream.as_raw_fd() }
 
     /// Send a method call. Returns the serial number.
@@ -132,32 +145,39 @@ impl Connection {
 
     /// Request a well-known bus name. Returns true if granted.
     pub fn request_name(&mut self, name: &str) -> bool {
+        // Switch to blocking before sending so write_all won't fail with WouldBlock
+        self.stream.set_nonblocking(false).ok();
         let mut body = Vec::new();
         encode_string(&mut body, name);
         align_to(&mut body, 4);
         encode_u32(&mut body, 0x4); // DBUS_NAME_FLAG_DO_NOT_QUEUE
-        let serial = self.method_call(
-            "org.freedesktop.DBus", "/org/freedesktop/DBus",
+        self.serial += 1;
+        let serial = self.serial;
+        let msg = encode_method_call(
+            serial, "org.freedesktop.DBus", "/org/freedesktop/DBus",
             "org.freedesktop.DBus", "RequestName", "su", &body,
         );
-        // Block for the reply
-        self.stream.set_nonblocking(false).ok();
+        if let Err(e) = self.stream.write_all(&msg) {
+            self.stream.set_nonblocking(true).ok();
+            eprintln!("[dbus] RequestName write failed: {e}");
+            return false;
+        }
         let ok = loop {
             match read_message(&mut self.stream) {
                 Ok(msg) => {
                     if msg.reply_serial == serial {
-                        if msg.msg_type == MSG_ERROR {
-                            tracing::warn!("RequestName error: {:?}", String::from_utf8_lossy(&msg.body));
+                        if msg.is_error() {
+                            eprintln!("[dbus] RequestName error reply");
+                            break false;
                         }
                         let result = if msg.body.len() >= 4 {
                             u32::from_le_bytes([msg.body[0], msg.body[1], msg.body[2], msg.body[3]])
                         } else { 0 };
-                        tracing::debug!("RequestName reply: result={result}");
                         break result == 1;
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("RequestName read error: {e}");
+                    eprintln!("[dbus] RequestName read error: {e}");
                     break false;
                 }
             }
@@ -194,7 +214,6 @@ impl Connection {
     pub fn try_read(&mut self) -> Option<Message> {
         match read_message(&mut self.stream) {
             Ok(msg) => Some(msg),
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => None,
             Err(_) => None,
         }
     }
@@ -217,9 +236,7 @@ impl Connection {
 // ── SASL authentication ─────────────────────────────────────────────────────
 
 fn sasl_auth(stream: &mut UnixStream) -> io::Result<()> {
-    // Send null byte (required by D-Bus spec)
     stream.write_all(b"\0")?;
-    // EXTERNAL auth with our UID
     let uid = unsafe { libc::getuid() };
     let hex_uid = format!("{}", uid)
         .bytes()
@@ -227,7 +244,6 @@ fn sasl_auth(stream: &mut UnixStream) -> io::Result<()> {
         .collect::<String>();
     let auth_cmd = format!("AUTH EXTERNAL {}\r\n", hex_uid);
     stream.write_all(auth_cmd.as_bytes())?;
-    // Read response — expect "OK <guid>"
     let mut buf = [0u8; 256];
     let n = stream.read(&mut buf)?;
     let resp = std::str::from_utf8(&buf[..n]).unwrap_or("");
@@ -239,8 +255,6 @@ fn sasl_auth(stream: &mut UnixStream) -> io::Result<()> {
 }
 
 fn parse_bus_address(addr: &str) -> Option<String> {
-    // unix:path=/run/user/1000/bus
-    // unix:abstract=/tmp/dbus-xxx
     for part in addr.split(',') {
         let part = part.trim();
         if let Some(rest) = part.strip_prefix("unix:") {
@@ -249,7 +263,6 @@ fn parse_bus_address(addr: &str) -> Option<String> {
                     return Some(p.to_string());
                 }
                 if let Some(p) = kv.strip_prefix("abstract=") {
-                    // Abstract sockets: prepend null byte
                     let mut path = String::from("\0");
                     path.push_str(p);
                     return Some(path);
@@ -274,11 +287,19 @@ pub fn encode_i32(buf: &mut Vec<u8>, v: i32) {
     buf.extend_from_slice(&v.to_le_bytes());
 }
 
+pub fn encode_i64(buf: &mut Vec<u8>, v: i64) {
+    buf.extend_from_slice(&v.to_le_bytes());
+}
+
+pub fn encode_f64(buf: &mut Vec<u8>, v: f64) {
+    buf.extend_from_slice(&v.to_bits().to_le_bytes());
+}
+
 pub fn encode_string(buf: &mut Vec<u8>, s: &str) {
     align_to(buf, 4);
     encode_u32(buf, s.len() as u32);
     buf.extend_from_slice(s.as_bytes());
-    buf.push(0); // null terminator
+    buf.push(0);
 }
 
 pub fn encode_signature(buf: &mut Vec<u8>, s: &str) {
@@ -287,10 +308,40 @@ pub fn encode_signature(buf: &mut Vec<u8>, s: &str) {
     buf.push(0);
 }
 
+/// Encode a variant: signature + value.
+pub fn encode_variant_string(buf: &mut Vec<u8>, s: &str) {
+    encode_signature(buf, "s");
+    encode_string(buf, s);
+}
+
+pub fn encode_variant_bool(buf: &mut Vec<u8>, v: bool) {
+    encode_signature(buf, "b");
+    align_to(buf, 4);
+    encode_u32(buf, v as u32);
+}
+
+pub fn encode_variant_double(buf: &mut Vec<u8>, v: f64) {
+    encode_signature(buf, "d");
+    align_to(buf, 8);
+    encode_f64(buf, v);
+}
+
+pub fn encode_variant_i64(buf: &mut Vec<u8>, v: i64) {
+    encode_signature(buf, "x");
+    align_to(buf, 8);
+    encode_i64(buf, v);
+}
+
+/// Encode a dict entry {string: variant} into the buffer.
+pub fn encode_dict_entry_sv(buf: &mut Vec<u8>, key: &str, encode_variant: impl FnOnce(&mut Vec<u8>)) {
+    align_to(buf, 8);
+    encode_string(buf, key);
+    encode_variant(buf);
+}
+
 fn encode_header_field(buf: &mut Vec<u8>, code: u8, sig: &str, value: &str) {
-    align_to(buf, 8); // struct alignment
+    align_to(buf, 8);
     buf.push(code);
-    // Variant: signature + value
     encode_signature(buf, sig);
     match sig {
         "s" | "o" => encode_string(buf, value),
@@ -303,7 +354,6 @@ fn encode_method_call(
     serial: u32, dest: &str, path: &str, iface: &str, member: &str,
     body_sig: &str, body: &[u8],
 ) -> Vec<u8> {
-    // Build header fields
     let mut fields = Vec::new();
     encode_header_field(&mut fields, FIELD_PATH, "o", path);
     encode_header_field(&mut fields, FIELD_INTERFACE, "s", iface);
@@ -314,17 +364,14 @@ fn encode_method_call(
     }
 
     let mut msg = Vec::with_capacity(128 + fields.len() + body.len());
-    // Fixed header: 16 bytes
-    msg.push(b'l'); // little-endian
+    msg.push(b'l');
     msg.push(MSG_METHOD_CALL);
-    msg.push(0); // flags
-    msg.push(1); // protocol version
-    encode_u32(&mut msg, body.len() as u32); // body length
+    msg.push(0);
+    msg.push(1);
+    encode_u32(&mut msg, body.len() as u32);
     encode_u32(&mut msg, serial);
-    // Header fields array length
     encode_u32(&mut msg, fields.len() as u32);
     msg.extend_from_slice(&fields);
-    // Align body start to 8 bytes
     align_to(&mut msg, 8);
     msg.extend_from_slice(body);
     msg
@@ -334,13 +381,11 @@ fn encode_reply(
     serial: u32, reply_to: u32, dest: &str, body_sig: &str, body: &[u8],
 ) -> Vec<u8> {
     let mut fields = Vec::new();
-    // REPLY_SERIAL field
     align_to(&mut fields, 8);
     fields.push(FIELD_REPLY_SERIAL);
     encode_signature(&mut fields, "u");
     align_to(&mut fields, 4);
     encode_u32(&mut fields, reply_to);
-    // DESTINATION field
     encode_header_field(&mut fields, FIELD_DESTINATION, "s", dest);
     if !body_sig.is_empty() {
         encode_header_field(&mut fields, FIELD_SIGNATURE, "g", body_sig);
@@ -349,7 +394,7 @@ fn encode_reply(
     let mut msg = Vec::with_capacity(128 + fields.len() + body.len());
     msg.push(b'l');
     msg.push(MSG_METHOD_RETURN);
-    msg.push(1); // NO_REPLY_EXPECTED flag
+    msg.push(1);
     msg.push(1);
     encode_u32(&mut msg, body.len() as u32);
     encode_u32(&mut msg, serial);
@@ -374,7 +419,7 @@ fn encode_signal(
     let mut msg = Vec::with_capacity(128 + fields.len() + body.len());
     msg.push(b'l');
     msg.push(MSG_SIGNAL);
-    msg.push(1); // NO_REPLY_EXPECTED
+    msg.push(1);
     msg.push(1);
     encode_u32(&mut msg, body.len() as u32);
     encode_u32(&mut msg, serial);
@@ -404,34 +449,30 @@ fn read_message(stream: &mut UnixStream) -> io::Result<Message> {
     let mut hdr = [0u8; 16];
     read_exact(stream, &mut hdr)?;
 
-    // Parse fixed header
-    let _endian = hdr[0]; // always 'l' for our messages
     let msg_type = hdr[1];
     let body_len = u32::from_le_bytes([hdr[4], hdr[5], hdr[6], hdr[7]]) as usize;
     let serial = u32::from_le_bytes([hdr[8], hdr[9], hdr[10], hdr[11]]);
     let fields_len = u32::from_le_bytes([hdr[12], hdr[13], hdr[14], hdr[15]]) as usize;
 
-    // Read header fields + padding to 8-byte boundary
     let padded_fields_len = (fields_len + 7) & !7;
     let mut fields_buf = vec![0u8; padded_fields_len];
     read_exact(stream, &mut fields_buf)?;
 
-    // Parse header fields
     let mut reply_serial = 0u32;
     let mut sender = String::new();
     let mut path = String::new();
     let mut member = String::new();
     let mut interface = String::new();
     let mut signature = String::new();
+    let mut destination = String::new();
     let mut r = BodyReader::new(&fields_buf, "");
     while r.pos < fields_len {
         r.align(8);
         if r.pos >= fields_len { break; }
         let code = r.read_byte();
-        // Read variant: signature then value
         let vsig_len = r.read_byte() as usize;
         let vsig = r.read_bytes(vsig_len);
-        r.read_byte(); // null terminator
+        r.read_byte();
         let vsig_str = String::from_utf8_lossy(&vsig).to_string();
         match (code, vsig_str.as_str()) {
             (FIELD_REPLY_SERIAL, "u") => reply_serial = r.read_u32(),
@@ -439,10 +480,11 @@ fn read_message(stream: &mut UnixStream) -> io::Result<Message> {
             (FIELD_PATH, "o") => path = r.read_string(),
             (FIELD_MEMBER, "s") => member = r.read_string(),
             (FIELD_INTERFACE, "s") => interface = r.read_string(),
+            (FIELD_DESTINATION, "s") => destination = r.read_string(),
             (FIELD_SIGNATURE, "g") => {
                 let slen = r.read_byte() as usize;
                 let sbytes = r.read_bytes(slen);
-                r.read_byte(); // null
+                r.read_byte();
                 signature = String::from_utf8_lossy(&sbytes).to_string();
             }
             (_, "s" | "o") => { r.read_string(); }
@@ -452,13 +494,12 @@ fn read_message(stream: &mut UnixStream) -> io::Result<Message> {
         }
     }
 
-    // Read body
     let mut body = vec![0u8; body_len];
     if body_len > 0 {
         read_exact(stream, &mut body)?;
     }
 
-    Ok(Message { msg_type, serial, reply_serial, sender, path, member, interface, signature, body })
+    Ok(Message { msg_type, serial, reply_serial, sender, path, member, interface, signature, destination, body })
 }
 
 // ── Body reader ─────────────────────────────────────────────────────────────
@@ -487,7 +528,7 @@ impl<'a> BodyReader<'a> {
         v
     }
 
-    fn read_bytes(&mut self, n: usize) -> Vec<u8> {
+    pub fn read_bytes(&mut self, n: usize) -> Vec<u8> {
         let end = (self.pos + n).min(self.data.len());
         let v = self.data[self.pos..end].to_vec();
         self.pos = end;
@@ -521,7 +562,7 @@ impl<'a> BodyReader<'a> {
         let len = self.read_u32() as usize;
         let end = (self.pos + len).min(self.data.len());
         let s = String::from_utf8_lossy(&self.data[self.pos..end]).to_string();
-        self.pos = (end + 1).min(self.data.len()); // skip null terminator
+        self.pos = (end + 1).min(self.data.len());
         s
     }
 
@@ -529,7 +570,6 @@ impl<'a> BodyReader<'a> {
         self.read_u32() != 0
     }
 
-    /// Read a single value by its type signature character.
     pub fn read_value(&mut self, sig: &str) -> Option<Value> {
         let c = sig.chars().next()?;
         Some(match c {
@@ -540,13 +580,10 @@ impl<'a> BodyReader<'a> {
             's' => Value::String(self.read_string()),
             'o' => Value::ObjectPath(self.read_string()),
             'v' => {
-                // Variant: signature byte + value
                 let vsig_len = self.read_byte() as usize;
                 let end = (self.pos + vsig_len).min(self.data.len());
-                let vsig = String::from_utf8_lossy(
-                    &self.data[self.pos..end]
-                ).to_string();
-                self.pos = (end + 1).min(self.data.len()); // skip null
+                let vsig = String::from_utf8_lossy(&self.data[self.pos..end]).to_string();
+                self.pos = (end + 1).min(self.data.len());
                 self.read_value(&vsig)?
             }
             'a' => {
@@ -554,7 +591,6 @@ impl<'a> BodyReader<'a> {
                 self.align(4);
                 let array_len = self.read_u32() as usize;
                 let array_end = self.pos + array_len;
-                // Dict: a{sv}
                 if inner.starts_with('{') {
                     let mut dict = HashMap::new();
                     self.align(8);
@@ -568,7 +604,6 @@ impl<'a> BodyReader<'a> {
                     self.pos = array_end;
                     return Some(Value::Dict(dict));
                 }
-                // Array of strings
                 if inner == "s" {
                     let mut arr = Vec::new();
                     while self.pos < array_end {
@@ -576,7 +611,6 @@ impl<'a> BodyReader<'a> {
                     }
                     return Some(Value::Array(arr));
                 }
-                // Array of structs (iiay) — icon pixmaps
                 if inner.starts_with("(iiay)") {
                     let mut arr = Vec::new();
                     while self.pos < array_end {
@@ -592,7 +626,6 @@ impl<'a> BodyReader<'a> {
                     }
                     return Some(Value::Array(arr));
                 }
-                // Array of variants
                 if inner == "v" {
                     let mut arr = Vec::new();
                     while self.pos < array_end {
@@ -603,7 +636,6 @@ impl<'a> BodyReader<'a> {
                     self.pos = array_end;
                     return Some(Value::Array(arr));
                 }
-                // Generic array of structs
                 if inner.starts_with('(') {
                     let mut arr = Vec::new();
                     while self.pos < array_end {
@@ -614,14 +646,12 @@ impl<'a> BodyReader<'a> {
                     self.pos = array_end;
                     return Some(Value::Array(arr));
                 }
-                // Unknown: skip
                 self.pos = array_end;
                 Value::Array(Vec::new())
             }
             '(' => {
-                // Read struct fields using subsig_at for multi-char signatures
                 self.align(8);
-                let inner = &sig[1..sig.len()-1]; // strip parens
+                let inner = &sig[1..sig.len()-1];
                 let mut fields = Vec::new();
                 let mut i = 0;
                 while i < inner.len() {
@@ -637,7 +667,6 @@ impl<'a> BodyReader<'a> {
         })
     }
 
-    /// Read all values from the body according to the signature string.
     pub fn read_all(&mut self) -> Vec<Value> {
         let sig = self.sig.to_string();
         let mut values = Vec::new();
@@ -653,8 +682,8 @@ impl<'a> BodyReader<'a> {
     }
 }
 
-/// Extract a complete type signature starting at position `i`, returns (sig, chars_consumed).
-fn subsig_at(sig: &str, i: usize) -> (String, usize) {
+/// Extract a complete type signature starting at position `i`.
+pub fn subsig_at(sig: &str, i: usize) -> (String, usize) {
     let bytes = sig.as_bytes();
     if i >= bytes.len() { return (String::new(), 1); }
     match bytes[i] {

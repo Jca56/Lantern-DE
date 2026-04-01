@@ -1,14 +1,17 @@
 use lntrn_render::{Color, Rect, TextPass, TextureDraw};
-use lntrn_ui::gpu::{FontSize, FoxPalette, GradientStrip, InteractionContext, Slider, TextLabel, TitleBar};
+use lntrn_ui::gpu::{FontSize, FoxPalette, InteractionContext, TextLabel};
 
 use crate::app::{App, VisMode, VIS_BARS};
-use crate::{Gpu, ZONE_CANVAS, ZONE_CLOSE, ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_PLAY_PAUSE, ZONE_SEEK_BAR, ZONE_VOLUME, ZONE_VOL_SLIDER};
-
-const GRADIENT_STRIP_H: f32 = 4.0;
+use crate::{Gpu, ZONE_CANVAS, ZONE_PLAY_PAUSE, ZONE_SEEK_BAR, ZONE_VOLUME, ZONE_VOL_SLIDER};
 
 pub struct ControlRects {
     pub seek: Rect,
     pub vol_slider: Rect,
+    // Circular seek arc parameters for angle-based hit testing
+    pub seek_cx: f32,
+    pub seek_cy: f32,
+    pub seek_arc_start: f32,
+    pub seek_arc_sweep: f32,
 }
 
 /// Render a frame and return control rects (for drag handling in wayland.rs).
@@ -18,7 +21,7 @@ pub fn render_frame(
     input: &mut InteractionContext,
     palette: &FoxPalette,
     scale: f32,
-    maximized: bool,
+    _maximized: bool,
 ) -> ControlRects {
     let Gpu { ctx, painter, text, tex_pass } = gpu;
     let wf = ctx.width() as f32;
@@ -28,36 +31,10 @@ pub fn render_frame(
     painter.clear();
     input.begin_frame();
 
-    let corner_r = if maximized { 0.0 } else { 10.0 * s };
-    let title_h = 36.0 * s;
-    let strip_h = GRADIENT_STRIP_H * s;
     let controls_h = 48.0 * s;
 
-    // ── Background with rounded corners ─────────────────────────────
-    painter.rect_filled(Rect::new(0.0, 0.0, wf, hf), corner_r, palette.bg);
-
-    // ── Title bar ───────────────────────────────────────────────────
-    let title_rect = Rect::new(0.0, 0.0, wf, title_h);
-    let close_state = input.add_zone(ZONE_CLOSE, TitleBar::new(title_rect).scale(s).close_button_rect());
-    let max_state = input.add_zone(ZONE_MAXIMIZE, TitleBar::new(title_rect).scale(s).maximize_button_rect());
-    let min_state = input.add_zone(ZONE_MINIMIZE, TitleBar::new(title_rect).scale(s).minimize_button_rect());
-
-    TitleBar::new(title_rect)
-        .scale(s)
-        .close_hovered(close_state.is_hovered())
-        .maximize_hovered(max_state.is_hovered())
-        .minimize_hovered(min_state.is_hovered())
-        .draw(painter, palette);
-
-    // ── Gradient strip ──────────────────────────────────────────────
-    let mut strip = GradientStrip::new(0.0, title_h, wf);
-    strip.height = strip_h;
-    strip.draw(painter);
-
-    // ── Canvas area ─────────────────────────────────────────────────
-    let canvas_y = title_h + strip_h;
-    let canvas = Rect::new(0.0, canvas_y, wf, hf - canvas_y - controls_h);
-    painter.rect_filled(canvas, 0.0, Color::from_rgb8(18, 18, 18));
+    // ── Canvas area (transparent background) ────────────────────────
+    let canvas = Rect::new(0.0, 0.0, wf, hf);
     let _canvas_state = input.add_zone(ZONE_CANVAS, canvas);
 
     let mut tex_draws: Vec<TextureDraw> = Vec::new();
@@ -76,23 +53,59 @@ pub fn render_frame(
         }
     }
 
-    // ── Controls bar ────────────────────────────────────────────────
-    let ctrl_rect = Rect::new(0.0, hf - controls_h, wf, controls_h);
-    painter.rect_filled(ctrl_rect, 0.0, palette.surface);
+    // ── Circular seek arc (follows visualizer curvature) ─────────
+    let vis_cx = canvas.x + canvas.w * 0.5;
+    let vis_cy = canvas.y + canvas.h * 0.5;
+    let max_dim = canvas.w.min(canvas.h);
+    let seek_radius = max_dim * 0.52;
 
+    let arc_half_angle = 70.0_f32.to_radians();
+    let arc_start = std::f32::consts::FRAC_PI_2 - arc_half_angle; // bottom-right
+    let arc_sweep = arc_half_angle * 2.0; // to bottom-left
+    let arc_end = arc_start + arc_sweep;
+
+    // Arc endpoint positions (for placing controls)
+    // Left end = end of arc (bottom-left), Right end = start of arc (bottom-right)
+    let left_x = vis_cx + seek_radius * arc_end.cos();
+    let left_y = vis_cy + seek_radius * arc_end.sin();
+    let right_x = vis_cx + seek_radius * arc_start.cos();
+    let right_y = vis_cy + seek_radius * arc_start.sin();
+
+    // Hit zone: thin crescent that follows the arc shape
+    // Only covers from the arc's endpoint height down to the bottom of the arc
+    let hit_pad = 12.0 * s;
+    let endpoint_y = vis_cy + seek_radius * arc_start.sin(); // Y of endpoints (same for both sides)
+    let arc_top_y = endpoint_y - hit_pad;
+    let arc_bot_y = vis_cy + seek_radius + hit_pad;
+    // X range: only as wide as the endpoint positions + padding
+    let arc_left_x = left_x - hit_pad;
+    let arc_right_x = right_x + hit_pad;
+    let seek_rect = Rect::new(arc_left_x, arc_top_y, arc_right_x - arc_left_x, arc_bot_y - arc_top_y);
+    let seek_state = input.add_zone(ZONE_SEEK_BAR, seek_rect);
+    let seek_val = if app.seeking { app.seek_value } else { app.progress_fraction() };
+
+    draw_circular_seek(
+        painter, palette, s,
+        vis_cx, vis_cy, seek_radius,
+        arc_start, arc_sweep, seek_val,
+        seek_state.is_hovered() || seek_state.is_active(),
+    );
+
+    // ── Controls at arc endpoints ───────────────────────────────────
     let font = FontSize::Body;
+    let ctrl_offset = 14.0 * s;
 
-    // Play/pause button
-    let pp_size = 40.0 * s;
-    let pp_x = 12.0 * s;
-    let pp_y = ctrl_rect.y + (controls_h - pp_size) * 0.5;
+    // Play/pause button — left of the left arc endpoint
+    let pp_size = 36.0 * s;
+    let pp_x = left_x - pp_size - ctrl_offset;
+    let pp_y = left_y - pp_size * 0.5;
     let pp_rect = Rect::new(pp_x, pp_y, pp_size, pp_size);
     let pp_state = input.add_zone(ZONE_PLAY_PAUSE, pp_rect);
 
     let pp_bg = if pp_state.is_hovered() {
-        palette.surface_2.with_alpha(0.8)
+        palette.surface_2.with_alpha(0.6)
     } else {
-        palette.surface_2.with_alpha(0.4)
+        palette.surface_2.with_alpha(0.3)
     };
     painter.rect_filled(pp_rect, 8.0 * s, pp_bg);
 
@@ -107,49 +120,34 @@ pub fn render_frame(
     .color(palette.text)
     .draw(text, ctx.width(), ctx.height());
 
-    // Time label
+    // Time label — just right of play/pause, still left of arc
     let time_str = format!(
         "{} / {}",
         App::format_time(app.position_ns),
         App::format_time(app.duration_ns),
     );
-    let time_x = pp_x + pp_size + 10.0 * s;
-    let time_y = ctrl_rect.y + (controls_h - font.px()) * 0.5;
-    let time_w = text.measure_width(&time_str, font.px());
+    let time_x = pp_x - text.measure_width(&time_str, font.px()) - 10.0 * s;
+    let time_y = left_y - font.px() * 0.5;
     TextLabel::new(&time_str, time_x, time_y)
         .size(font)
         .color(palette.text)
         .draw(text, ctx.width(), ctx.height());
 
-    // Volume button (right side) — clickable to toggle popup
+    // Volume button — right of the right arc endpoint
     let vol_str = format!("Vol {}%", (app.volume * 100.0).round() as u32);
     let vol_w = text.measure_width(&vol_str, font.px());
-    let vol_x = wf - vol_w - 14.0 * s;
-    let vol_btn_rect = Rect::new(vol_x - 6.0 * s, ctrl_rect.y, vol_w + 12.0 * s, controls_h);
+    let vol_x = right_x + ctrl_offset;
+    let vol_y = right_y - font.px() * 0.5;
+    let vol_btn_rect = Rect::new(vol_x - 6.0 * s, right_y - controls_h * 0.5, vol_w + 12.0 * s, controls_h);
     let vol_state = input.add_zone(ZONE_VOLUME, vol_btn_rect);
 
     if vol_state.is_hovered() {
         painter.rect_filled(vol_btn_rect, 4.0 * s, palette.surface_2.with_alpha(0.3));
     }
-    TextLabel::new(&vol_str, vol_x, time_y)
+    TextLabel::new(&vol_str, vol_x, vol_y)
         .size(font)
         .color(palette.text)
         .draw(text, ctx.width(), ctx.height());
-
-    // Seek bar (between time and volume)
-    let seek_x = time_x + time_w + 12.0 * s;
-    let seek_w = vol_btn_rect.x - seek_x - 8.0 * s;
-    let seek_h = 40.0 * s;
-    let seek_y = ctrl_rect.y + (controls_h - seek_h) * 0.5;
-    let seek_rect = Rect::new(seek_x, seek_y, seek_w.max(0.0), seek_h);
-
-    let seek_state = input.add_zone(ZONE_SEEK_BAR, seek_rect);
-    let seek_val = if app.seeking { app.seek_value } else { app.progress_fraction() };
-    Slider::new(seek_rect)
-        .value(seek_val)
-        .hovered(seek_state.is_hovered())
-        .active(seek_state.is_active())
-        .draw(painter, palette);
 
     // ── Volume slider popup ─────────────────────────────────────────
     let mut vol_slider_rect = Rect::new(0.0, 0.0, 0.0, 0.0);
@@ -157,7 +155,7 @@ pub fn render_frame(
         let popup_w = 36.0 * s;
         let popup_h = 160.0 * s;
         let popup_x = vol_btn_rect.x + (vol_btn_rect.w - popup_w) * 0.5;
-        let popup_y = ctrl_rect.y - popup_h - 8.0 * s;
+        let popup_y = vol_btn_rect.y - popup_h - 8.0 * s;
         let popup_rect = Rect::new(popup_x, popup_y, popup_w, popup_h);
 
         // Background
@@ -220,7 +218,129 @@ pub fn render_frame(
         Err(e) => eprintln!("[media-player] render error: {e}"),
     }
 
-    ControlRects { seek: seek_rect, vol_slider: vol_slider_rect }
+    ControlRects {
+        seek: seek_rect,
+        vol_slider: vol_slider_rect,
+        seek_cx: vis_cx,
+        seek_cy: vis_cy,
+        seek_arc_start: arc_start,
+        seek_arc_sweep: arc_sweep,
+    }
+}
+
+// ── Circular seek arc ──────────────────────────────────────────────────────
+
+fn draw_circular_seek(
+    painter: &mut lntrn_render::Painter,
+    palette: &FoxPalette,
+    s: f32,
+    cx: f32, cy: f32, radius: f32,
+    start_angle: f32, sweep: f32,
+    value: f32, active: bool,
+) {
+    // Track arc (dim background showing the full arc path)
+    let track_w = 10.0 * s;
+    let track_color = palette.text_secondary.with_alpha(0.15);
+    painter.arc(
+        cx, cy, radius + track_w * 0.5,
+        start_angle, sweep,
+        track_w, radius - track_w * 0.5,
+        track_color,
+    );
+    // Rounded caps on the track
+    let cap_r = track_w * 0.5;
+    let trk_start_x = cx + radius * start_angle.cos();
+    let trk_start_y = cy + radius * start_angle.sin();
+    let trk_end_angle = start_angle + sweep;
+    let trk_end_x = cx + radius * trk_end_angle.cos();
+    let trk_end_y = cy + radius * trk_end_angle.sin();
+    painter.circle_filled(trk_start_x, trk_start_y, cap_r, track_color);
+    painter.circle_filled(trk_end_x, trk_end_y, cap_r, track_color);
+
+    // Filled arc with blue→purple gradient, left-to-right
+    // Blue at left (value=0 end), purple at right (value=1 end)
+    let blue = Color::from_rgb8(80, 120, 255);
+    let purple = Color::from_rgb8(180, 60, 255);
+
+    if value > 0.001 {
+        let fill_w = if active { 12.0 * s } else { 10.0 * s };
+        let fill_amount = sweep * value;
+        let fill_start = start_angle + sweep - fill_amount;
+
+        // Draw as segments to create gradient effect
+        let segments = 32;
+        let seg_sweep = fill_amount / segments as f32;
+        for i in 0..segments {
+            let seg_start = fill_start + seg_sweep * i as f32;
+            // t=0 at left end, t=1 at right end of the filled portion
+            let t = i as f32 / segments as f32;
+            // Arc goes right-to-left, but fill_start is at left, so invert t
+            let t_color = 1.0 - t;
+            let r = blue.r + (purple.r - blue.r) * t_color;
+            let g = blue.g + (purple.g - blue.g) * t_color;
+            let b = blue.b + (purple.b - blue.b) * t_color;
+            let color = Color::rgba(r, g, b, 1.0);
+            painter.arc(
+                cx, cy, radius + fill_w * 0.5,
+                seg_start, seg_sweep + 0.005, // tiny overlap to avoid gaps
+                fill_w, radius - fill_w * 0.5,
+                color,
+            );
+        }
+
+        // Rounded caps on the fill
+        let fill_cap_r = fill_w * 0.5;
+        // Left cap (start of fill = left end of arc)
+        let fill_left_x = cx + radius * fill_start.cos();
+        let fill_left_y = cy + radius * fill_start.sin();
+        painter.circle_filled(fill_left_x, fill_left_y, fill_cap_r, blue);
+        // Right cap (end of fill = current position)
+        let fill_end_angle = fill_start + fill_amount;
+        let fill_right_x = cx + radius * fill_end_angle.cos();
+        let fill_right_y = cy + radius * fill_end_angle.sin();
+        let right_color = Color::rgba(
+            blue.r + (purple.r - blue.r) * value,
+            blue.g + (purple.g - blue.g) * value,
+            blue.b + (purple.b - blue.b) * value,
+            1.0,
+        );
+        painter.circle_filled(fill_right_x, fill_right_y, fill_cap_r, right_color);
+
+        // Glow on filled portion when active
+        if active {
+            let glow_color = Color::rgba(
+                (blue.r + purple.r) * 0.5,
+                (blue.g + purple.g) * 0.5,
+                (blue.b + purple.b) * 0.5,
+                0.1,
+            );
+            painter.arc(
+                cx, cy, radius + 16.0 * s,
+                fill_start, fill_amount,
+                0.0, radius - 16.0 * s,
+                glow_color,
+            );
+        }
+    }
+
+    // Thumb circle — at the boundary between filled and unfilled
+    let thumb_angle = start_angle + sweep * (1.0 - value);
+    let thumb_x = cx + radius * thumb_angle.cos();
+    let thumb_y = cy + radius * thumb_angle.sin();
+    let thumb_r = if active { 10.0 * s } else { 8.0 * s };
+    // Thumb color matches gradient at current position
+    let thumb_color = Color::rgba(
+        blue.r + (purple.r - blue.r) * value,
+        blue.g + (purple.g - blue.g) * value,
+        blue.b + (purple.b - blue.b) * value,
+        1.0,
+    );
+    painter.circle_filled(thumb_x, thumb_y, thumb_r, thumb_color);
+    painter.circle_stroke(thumb_x, thumb_y, thumb_r, 1.5 * s, Color::BLACK.with_alpha(0.15));
+
+    if active {
+        painter.circle_stroke(thumb_x, thumb_y, thumb_r + 4.0 * s, 2.0 * s, thumb_color.with_alpha(0.3));
+    }
 }
 
 // ── Visualizer: Mirrored Radial Bars ────────────────────────────────────────

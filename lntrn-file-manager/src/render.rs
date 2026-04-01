@@ -29,6 +29,7 @@ pub fn render_frame(
     maximized: bool,
     view_menu: &mut ContextMenu,
     tab_drag: Option<usize>,
+    bg_opacity: f32,
 ) {
     let Gpu { ctx, painter, text, tex_pass } = gpu;
 
@@ -123,7 +124,7 @@ pub fn render_frame(
     };
 
     // ── Window background ─────────────────────────────────────────────
-    painter.rect_filled(Rect::new(0.0, 0.0, wf, hf), 10.0 * s, pal.bg);
+    painter.rect_filled(Rect::new(0.0, 0.0, wf, hf), 10.0 * s, pal.bg.with_alpha(bg_opacity));
 
     // ── Title bar ─────────────────────────────────────────────────────
     let tb_rect = title_bar_rect(wf, s);

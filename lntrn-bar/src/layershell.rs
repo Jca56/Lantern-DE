@@ -457,7 +457,7 @@ pub fn run() -> Result<()> {
     let mut anim_t: f32 = if saved.floating { 0.0 } else { 1.0 };
     // Auto-hide state
     let mut auto_hide = saved.auto_hide;
-    let mut bar_opacity: f32 = saved.opacity.clamp(0.1, 1.0);
+    let mut bar_opacity: f32 = saved.opacity.clamp(0.0, 1.0);
     let mut lava = crate::lava::LavaLamp::new();
     lava.enabled = saved.lava_lamp;
     // 0.0 = fully visible, 1.0 = fully hidden
@@ -842,7 +842,7 @@ pub fn run() -> Result<()> {
                     context_menu.open(phys_cx, phys_cy, vec![
                         MenuItem::action(action, label),
                         MenuItem::separator(),
-                        MenuItem::action(MENU_PROC_KILL, "Kill Process"),
+                        MenuItem::action_danger(MENU_PROC_KILL, "Kill Process"),
                     ]);
                 } else {
                     app_menu.on_right_click(phys_cx, phys_cy, &ix);
@@ -1008,26 +1008,32 @@ pub fn run() -> Result<()> {
 
         // ── Bar background ────────────────────────────────────────
         lava.update(dt);
+        let (bar_rect, bar_r) = if gap_phys < 0.5 {
+            (Rect::new(0.0, bar_y_offset, phys_w_f, bar_h_f), 0.0)
+        } else {
+            (Rect::new(vis_x, vis_y, vis_w, vis_h), radius)
+        };
+
+        // Drop shadow above the bar (bar is at bottom of screen)
+        let shadow_sigma = 8.0 * scale_f;
+        painter.shadow(bar_rect, bar_r, shadow_sigma,
+            Color::BLACK.with_alpha(0.45 * bar_opacity), 0.0, -2.0 * scale_f);
+
         if lava.enabled {
-            // Lava lamp: pulsing gradient background + circular blobs
-            if gap_phys < 0.5 {
-                lava.draw_background(&mut painter, 0.0, bar_y_offset, phys_w_f, bar_h_f, 0.0, bar_opacity);
-                lava.draw_blobs(&mut painter, 0.0, bar_y_offset, phys_w_f, bar_h_f, bar_opacity);
-            } else {
-                lava.draw_background(&mut painter, vis_x, vis_y, vis_w, vis_h, radius, bar_opacity);
-                lava.draw_blobs(&mut painter, vis_x, vis_y, vis_w, vis_h, bar_opacity);
-            }
+            lava.draw_background(&mut painter, bar_rect.x, bar_rect.y, bar_rect.w, bar_rect.h, bar_r, bar_opacity);
+            lava.draw_blobs(&mut painter, bar_rect.x, bar_rect.y, bar_rect.w, bar_rect.h, 1.0);
         } else {
             let bar_bg = palette.bg.with_alpha(bar_opacity);
-            if gap_phys < 0.5 {
-                painter.rect_filled(
-                    Rect::new(0.0, bar_y_offset, phys_w_f, bar_h_f),
-                    0.0, bar_bg,
-                );
-            } else {
-                painter.rect_filled(Rect::new(vis_x, vis_y, vis_w, vis_h), radius, bar_bg);
-            }
+            painter.rect_filled(bar_rect, bar_r, bar_bg);
         }
+
+        // Bevel: subtle highlight on top edge, dark shadow on bottom
+        let bevel_sigma = 2.0 * scale_f;
+        let bevel_offset = 1.5 * scale_f;
+        painter.inner_shadow(bar_rect, bar_r, bevel_sigma,
+            Color::WHITE.with_alpha(0.09 * bar_opacity), 0.0, -bevel_offset);
+        painter.inner_shadow(bar_rect, bar_r, bevel_sigma,
+            Color::BLACK.with_alpha(0.15 * bar_opacity), 0.0, bevel_offset);
 
         // ── Left: launcher button ─────────────────────────────────
         let launcher_w = app_menu.draw_button(
@@ -1221,10 +1227,14 @@ pub fn run() -> Result<()> {
             app_tray_tex_draws = draws;
 
             // Hover preview — debounced to avoid spamming the compositor
-            let hovered = app_tray.hovered_app(
-                &ix, phys_cx, phys_cy, &toplevels,
-                vis_x, vis_w, vis_h, scale_f,
-            );
+            let hovered = if state.pointer_in_surface {
+                app_tray.hovered_app(
+                    &ix, phys_cx, phys_cy, &toplevels,
+                    vis_x, vis_w, vis_h, scale_f,
+                )
+            } else {
+                None
+            };
             match hovered {
                 Some((app_id, lx, lw)) => {
                     let bar_h_logical = vis_h / scale_f;
@@ -1383,7 +1393,7 @@ pub fn run() -> Result<()> {
                     context_menu.close();
                 }
                 MenuEvent::SliderChanged { id: MENU_OPACITY_SLIDER, value } => {
-                    bar_opacity = value.clamp(0.1, 1.0);
+                    bar_opacity = value.clamp(0.0, 1.0);
                     save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, &app_menu.sysmon.pinned);
                 }
                 MenuEvent::SliderChanged { id: MENU_HEIGHT_SLIDER, value } => {

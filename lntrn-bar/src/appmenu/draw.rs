@@ -485,11 +485,11 @@ impl AppMenu {
         screen_w: u32, screen_h: u32,
     ) {
         let Some(app_id) = self.ctx_app_id.clone() else { return; };
-        let is_fav = self.favorites.contains(&app_id);
 
+        let item_count = 3;
         let item_h = 40.0 * scale;
-        let menu_w = 200.0 * scale;
-        let menu_h = item_h * 2.0 + 8.0 * scale;
+        let menu_w = 220.0 * scale;
+        let menu_h = item_h * item_count as f32 + 8.0 * scale;
         let cr = 10.0 * scale;
         let pad = 4.0 * scale;
 
@@ -507,13 +507,14 @@ impl AppMenu {
         painter.rect_stroke_sdf(Rect::new(ctx_x, ctx_y, menu_w, menu_h), cr, 1.0 * scale, Color::WHITE.with_alpha(0.08));
 
         let font = 20.0 * scale;
-        let items: [(&str, u32); 2] = [
-            (if is_fav { "Remove Favorite" } else { "Add to Favorites" }, ZONE_CTX),
-            ("Uninstall", ZONE_CTX + 1),
+        let items: [(&str, u32, bool); 3] = [
+            ("Change Icon", ZONE_CTX, false),
+            ("Hide", ZONE_CTX + 1, false),
+            ("Uninstall", ZONE_CTX + 2, true),
         ];
 
         let mut iy = ctx_y + pad;
-        for (label, zone_id) in &items {
+        for (label, zone_id, is_danger) in &items {
             let item_rect = Rect::new(ctx_x + pad, iy, menu_w - pad * 2.0, item_h);
             let state = ix.add_zone(*zone_id, item_rect);
 
@@ -523,15 +524,20 @@ impl AppMenu {
 
             let text_x = ctx_x + 14.0 * scale;
             let text_y = iy + (item_h - font) * 0.5;
-            let color = if *label == "Uninstall" { Color::from_rgb8(239, 68, 68) } else { palette.text };
+            let color = if *is_danger { Color::from_rgb8(239, 68, 68) } else { palette.text };
             text.queue(label, font, text_x, text_y, color, menu_w - 28.0 * scale, screen_w, screen_h);
 
             if state == InteractionState::Pressed {
                 match *zone_id {
                     ZONE_CTX => {
-                        self.toggle_favorite(&app_id);
+                        // Open System Settings to App Icons tab
+                        launch_app("lntrn-system-settings --panel app-icons");
                     }
                     z if z == ZONE_CTX + 1 => {
+                        crate::desktop::hide_app(&app_id);
+                        self.entries.retain(|e| e.app_id != app_id);
+                    }
+                    z if z == ZONE_CTX + 2 => {
                         uninstall_app(&app_id);
                     }
                     _ => {}

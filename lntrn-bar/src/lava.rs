@@ -131,10 +131,10 @@ impl LavaLamp {
 
         // Slowly cycling gradient angle
         let angle = t * 0.15;
-        // Pulse between deep purple-black and dark teal-black
+        // Pulse between rich purple and deep teal
         let pulse = ((t * 0.3).sin() * 0.5 + 0.5).clamp(0.0, 1.0);
-        let c1 = Color::from_rgb8(30, 10, 50).lerp(Color::from_rgb8(10, 30, 50), pulse);
-        let c2 = Color::from_rgb8(50, 10, 40).lerp(Color::from_rgb8(15, 40, 60), pulse);
+        let c1 = Color::from_rgb8(55, 20, 90).lerp(Color::from_rgb8(20, 55, 85), pulse);
+        let c2 = Color::from_rgb8(85, 20, 70).lerp(Color::from_rgb8(30, 65, 100), pulse);
 
         let bar_rect = Rect::new(bar_x, bar_y, bar_w, bar_h);
         painter.rect_gradient_linear(

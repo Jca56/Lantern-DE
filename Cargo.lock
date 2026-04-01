@@ -2191,6 +2191,7 @@ dependencies = [
  "anyhow",
  "flate2",
  "libc",
+ "lntrn-dbus",
  "lntrn-render",
  "lntrn-ui",
  "png 0.17.16",
@@ -2222,6 +2223,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "lntrn-calculator"
+version = "0.1.0"
+dependencies = [
+ "lntrn-render",
+ "winit",
+]
+
+[[package]]
 name = "lntrn-clipboard"
 version = "0.1.0"
 dependencies = [
@@ -2247,6 +2256,13 @@ dependencies = [
  "wayland-protocols",
  "wayland-protocols-wlr",
  "xcursor",
+]
+
+[[package]]
+name = "lntrn-dbus"
+version = "0.1.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -2327,6 +2343,7 @@ dependencies = [
  "gstreamer-audio",
  "gstreamer-video",
  "libc",
+ "lntrn-dbus",
  "lntrn-render",
  "lntrn-ui",
  "raw-window-handle",

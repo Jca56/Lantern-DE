@@ -35,6 +35,7 @@ const SHAPE_TRIANGLE: f32 = 8.0;
 const SHAPE_SHADOW: f32 = 9.0;
 const SHAPE_ARC: f32 = 10.0;
 const SHAPE_DASHED_LINE: f32 = 11.0;
+const SHAPE_INNER_SHADOW: f32 = 12.0;
 
 @vertex
 fn vs_main(@builtin(vertex_index) vi: u32, instance: InstanceInput) -> VertexOutput {
@@ -128,12 +129,12 @@ fn sdf_triangle(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f32>) -> f32 {
     return -sqrt(d.x) * sign(d.y);
 }
 
-// Approximate gaussian blur for shadows. Uses a polynomial approximation
-// of erf() to avoid expensive exp() calls.
+// Gaussian falloff for shadows. Full opacity inside the shape (dist < 0),
+// smooth exponential decay outside.
 fn shadow_mask(dist: f32, sigma: f32) -> f32 {
-    let x = dist / (sigma + 0.001);
-    // Approximation of 1 - erf(x/sqrt(2)) * 0.5 for the outer region
-    return 1.0 - smoothstep(-3.0 * sigma, 3.0 * sigma, dist);
+    if dist <= 0.0 { return 1.0; }
+    let t = dist / (sigma + 0.001);
+    return exp(-0.5 * t * t);
 }
 
 // ── Fragment shader ─────────────────────────────────────────────────────────
@@ -226,12 +227,32 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     } else if in.params.w == SHAPE_SHADOW {
         // Soft shadow for rounded rects
         // params: [corner_radius, blur_sigma, 0, shape_id]
+        // bounds are expanded by 3*sigma — shrink back to get original rect SDF
         let radius = in.params.x;
         let sigma = in.params.y;
+        let expand = 3.0 * sigma;
         let center = in.bounds.xy + in.bounds.zw * 0.5;
-        let half_size = in.bounds.zw * 0.5;
+        let half_size = in.bounds.zw * 0.5 - vec2<f32>(expand);
         let dist = sdf_rounded_rect(in.local_px, center, half_size, radius);
         mask = shadow_mask(dist, sigma);
+
+    } else if in.params.w == SHAPE_INNER_SHADOW {
+        // Inset shadow for bevels. Shadow is drawn *inside* the rect.
+        // params: [corner_radius, sigma, 0, shape_id]
+        // color_b: [offset_x, offset_y, 0, 0]
+        let radius = in.params.x;
+        let sigma = in.params.y;
+        let offset = in.color_b.xy;
+        let center = in.bounds.xy + in.bounds.zw * 0.5;
+        let half_size = in.bounds.zw * 0.5;
+        // SDF of the container — clip to inside
+        let container_dist = sdf_rounded_rect(in.local_px, center, half_size, radius);
+        let inside = 1.0 - smoothstep(-0.5, 0.5, container_dist);
+        // Offset SDF — shadow cast from the edges inward
+        let offset_dist = sdf_rounded_rect(in.local_px - offset, center, half_size, radius);
+        // Invert: we want shadow where we're close to (or outside) the offset boundary
+        let shadow = shadow_mask(-offset_dist, sigma);
+        mask = inside * shadow;
 
     } else if in.params.w == SHAPE_ARC {
         // Arc / pie slice

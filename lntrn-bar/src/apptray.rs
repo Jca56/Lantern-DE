@@ -543,13 +543,8 @@ impl AppTray {
         let idx = (zone - ZONE_BASE) as usize;
         let slots = self.build_slots(toplevels);
         let slot = slots.get(idx)?;
-        // Only show preview for running, non-minimized apps
+        // Only show preview for running apps (including minimized)
         if !slot.running { return None; }
-        // Check if all windows for this app are minimized — skip preview
-        let all_minimized = toplevels.iter()
-            .filter(|t| t.app_id == slot.app_id)
-            .all(|t| t.minimized);
-        if all_minimized { return None; }
 
         let icon_size = (bar_h * 0.75).max(36.0);
         let gap = ICON_GAP * scale;

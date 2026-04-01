@@ -179,7 +179,32 @@ fn is_hidden_app(app_id: &str) -> bool {
         "jshell-java17-openjdk",
         "qv4l2",
     ];
-    HIDDEN.contains(&app_id)
+    if HIDDEN.contains(&app_id) {
+        return true;
+    }
+    user_hidden_apps().contains(&app_id.to_string())
+}
+
+fn hidden_apps_path() -> PathBuf {
+    let config = std::env::var("HOME").unwrap_or_else(|_| "/home".into());
+    PathBuf::from(config).join(".lantern/config/hidden_apps.txt")
+}
+
+fn user_hidden_apps() -> Vec<String> {
+    fs::read_to_string(hidden_apps_path())
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.trim().to_string())
+        .collect()
+}
+
+pub fn hide_app(app_id: &str) {
+    let mut hidden = user_hidden_apps();
+    if !hidden.contains(&app_id.to_string()) {
+        hidden.push(app_id.to_string());
+        let _ = fs::write(hidden_apps_path(), hidden.join("\n") + "\n");
+    }
 }
 
 /// Strip freedesktop field codes (%f, %F, %u, %U, etc.) from exec string.

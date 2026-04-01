@@ -4,9 +4,11 @@ use lntrn_render::{Color, GpuContext, Painter, Rect, TextRenderer, TextureDraw, 
 use lntrn_ui::gpu::{FoxPalette, InteractionContext};
 
 use crate::svg_icon::IconCache;
+use crate::mpris::PlaybackStatus;
 use super::{
     Audio, ZONE_AUDIO_ICON, ZONE_VOL_SLIDER, ZONE_MUTE_BTN, ZONE_MIC_SLIDER, ZONE_MIC_MUTE,
     ZONE_SINK_BASE, ZONE_SOURCE_BASE, ZONE_STREAM_SLIDER_BASE,
+    ZONE_MEDIA_PREV, ZONE_MEDIA_PLAY, ZONE_MEDIA_NEXT,
 };
 
 fn icon_dir() -> std::path::PathBuf { crate::lantern_icons_dir() }
@@ -25,6 +27,8 @@ const SECTION_GAP: f32 = 16.0;
 const ROW_H: f32 = 42.0;
 const MUTE_BTN_SIZE: f32 = 32.0;
 const STREAM_ROW_H: f32 = 48.0;
+const MEDIA_BTN_SIZE: f32 = 36.0;
+const MEDIA_BTN_GAP: f32 = 16.0;
 
 impl Audio {
     pub fn load_icons(
@@ -74,7 +78,18 @@ impl Audio {
         let row_h = ROW_H * scale;
         let stream_row_h = STREAM_ROW_H * scale;
 
-        let mut h = title_font + section_gap;       // "Volume XX%"
+        let mut h = 0.0;
+
+        // Now-playing section (only when media active)
+        if self.media.is_some() {
+            let btn_sz = MEDIA_BTN_SIZE * scale;
+            h += body_font + 4.0 * scale;              // track title
+            h += small_font + section_gap * 0.5;         // artist
+            h += btn_sz + section_gap;                   // transport buttons
+            h += 1.0 * scale + section_gap;              // separator
+        }
+
+        h += title_font + section_gap;       // "Volume XX%"
         h += slider_h + section_gap;                 // volume slider
         h += 1.0 * scale + section_gap;              // separator
         h += body_font + section_gap;                 // "Microphone"
@@ -143,6 +158,46 @@ impl Audio {
         let cx = popup_x + pad;
         let cw = popup_w - pad * 2.0;
         let mut y = popup_y + pad;
+
+        // ── Now Playing section (only when media active) ──
+        if let Some(ref media) = self.media {
+            let title = if media.title.is_empty() { "Unknown Track" } else { &media.title };
+            text.queue(title, body_font, cx, y, palette.text, cw, screen_w, screen_h);
+            y += body_font + 4.0 * scale;
+
+            let subtitle = if media.artist.is_empty() {
+                media.player_name.clone()
+            } else {
+                format!("{} \u{2022} {}", media.artist, media.player_name)
+            };
+            text.queue(&subtitle, small_font, cx, y, palette.text_secondary, cw, screen_w, screen_h);
+            y += small_font + section_gap * 0.5;
+
+            // Transport buttons: [prev] [play/pause] [next]
+            let btn_sz = MEDIA_BTN_SIZE * scale;
+            let btn_gap = MEDIA_BTN_GAP * scale;
+            let total_btns_w = btn_sz * 3.0 + btn_gap * 2.0;
+            let btn_x = cx + (cw - total_btns_w) / 2.0;
+
+            draw_media_btn(painter, ix, palette, btn_x, y, btn_sz, scale,
+                ZONE_MEDIA_PREV, MediaIcon::Prev);
+            let play_icon = if media.status == PlaybackStatus::Playing {
+                MediaIcon::Pause
+            } else {
+                MediaIcon::Play
+            };
+            draw_media_btn(painter, ix, palette, btn_x + btn_sz + btn_gap, y, btn_sz, scale,
+                ZONE_MEDIA_PLAY, play_icon);
+            draw_media_btn(painter, ix, palette, btn_x + (btn_sz + btn_gap) * 2.0, y, btn_sz, scale,
+                ZONE_MEDIA_NEXT, MediaIcon::Next);
+
+            y += btn_sz + section_gap;
+
+            // Separator
+            painter.rect_filled(Rect::new(cx, y, cw, 1.0 * scale), 0.0,
+                palette.muted.with_alpha(0.2));
+            y += 1.0 * scale + section_gap;
+        }
 
         // ── Volume section ──
         let vol_pct = (self.volume * 100.0).round() as u32;
@@ -368,5 +423,70 @@ impl Audio {
         let popup_y = (bar_y - popup_h - gap).max(0.0);
 
         Some(Rect::new(popup_x, popup_y, popup_w, popup_h))
+    }
+}
+
+// ── Media button helpers ──────────────────────────────────────────────────
+
+enum MediaIcon { Prev, Play, Pause, Next }
+
+fn draw_media_btn(
+    painter: &mut Painter, ix: &mut InteractionContext, palette: &FoxPalette,
+    x: f32, y: f32, size: f32, scale: f32, zone_id: u32, icon: MediaIcon,
+) {
+    let rect = Rect::new(x, y, size, size);
+    let state = ix.add_zone(zone_id, rect);
+    let hovered = state.is_hovered();
+
+    if hovered {
+        painter.rect_filled(rect, 8.0 * scale, palette.muted.with_alpha(0.25));
+    }
+
+    let color = if hovered { palette.accent } else { palette.text };
+    let cx = x + size / 2.0;
+    let cy = y + size / 2.0;
+    let r = size * 0.3;
+
+    match icon {
+        MediaIcon::Play => {
+            // Right-pointing triangle
+            painter.triangle(
+                cx - r * 0.6, cy - r,
+                cx + r, cy,
+                cx - r * 0.6, cy + r,
+                color,
+            );
+        }
+        MediaIcon::Pause => {
+            // Two vertical bars
+            let bar_w = r * 0.4;
+            let bar_h = r * 1.6;
+            painter.rect_filled(
+                Rect::new(cx - r * 0.55, cy - bar_h / 2.0, bar_w, bar_h),
+                2.0 * scale, color,
+            );
+            painter.rect_filled(
+                Rect::new(cx + r * 0.15, cy - bar_h / 2.0, bar_w, bar_h),
+                2.0 * scale, color,
+            );
+        }
+        MediaIcon::Prev => {
+            // Left-pointing triangle
+            painter.triangle(
+                cx + r * 0.5, cy - r * 0.8,
+                cx - r * 0.5, cy,
+                cx + r * 0.5, cy + r * 0.8,
+                color,
+            );
+        }
+        MediaIcon::Next => {
+            // Right-pointing triangle
+            painter.triangle(
+                cx - r * 0.5, cy - r * 0.8,
+                cx + r * 0.5, cy,
+                cx - r * 0.5, cy + r * 0.8,
+                color,
+            );
+        }
     }
 }

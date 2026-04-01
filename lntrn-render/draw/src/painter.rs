@@ -17,6 +17,7 @@ const SHAPE_TRIANGLE: f32 = 8.0;
 const SHAPE_SHADOW: f32 = 9.0;
 const SHAPE_ARC: f32 = 10.0;
 const SHAPE_DASHED_LINE: f32 = 11.0;
+const SHAPE_INNER_SHADOW: f32 = 12.0;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -514,16 +515,36 @@ impl Painter {
     }
 
     /// Soft drop shadow for a rounded rect. `sigma` controls blur spread.
-    /// Typically drawn behind the actual rect with a slight offset.
-    pub fn shadow(&mut self, rect: Rect, corner_radius: f32, sigma: f32, color: Color) {
+    /// `offset_x` / `offset_y` shift the shadow (positive = right/down).
+    pub fn shadow(
+        &mut self, rect: Rect, corner_radius: f32, sigma: f32, color: Color,
+        offset_x: f32, offset_y: f32,
+    ) {
         if color.a < 0.004 { return; }
         let expand = sigma * 3.0;
-        let expanded = rect.expand(expand);
+        let shifted = Rect::new(rect.x + offset_x, rect.y + offset_y, rect.w, rect.h);
+        let expanded = shifted.expand(expand);
         self.instances.push(Instance {
             bounds: [expanded.x, expanded.y, expanded.w, expanded.h],
             color: [color.r, color.g, color.b, color.a],
             params: [corner_radius, sigma, 0.0, SHAPE_SHADOW],
             color_b: [0.0; 4],
+        });
+    }
+
+    /// Inset (inner) shadow for bevels and pressed effects.
+    /// The shadow is drawn *inside* the rect. `offset_x` / `offset_y` control
+    /// the light direction (e.g. negative Y = light from top).
+    pub fn inner_shadow(
+        &mut self, rect: Rect, corner_radius: f32, sigma: f32, color: Color,
+        offset_x: f32, offset_y: f32,
+    ) {
+        if color.a < 0.004 { return; }
+        self.instances.push(Instance {
+            bounds: [rect.x, rect.y, rect.w, rect.h],
+            color: [color.r, color.g, color.b, color.a],
+            params: [corner_radius, sigma, 0.0, SHAPE_INNER_SHADOW],
+            color_b: [offset_x, offset_y, 0.0, 0.0],
         });
     }
 

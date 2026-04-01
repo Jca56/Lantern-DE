@@ -37,7 +37,7 @@ use crate::{
     CTX_NEW_FOLDER_RED, CTX_NEW_FOLDER_YELLOW, CTX_OPEN, CTX_OPEN_AS_ROOT,
     CTX_OPEN_TERMINAL, CTX_OPEN_WITH, CTX_OPEN_WITH_BASE, CTX_PASTE, CTX_PROPERTIES,
     CTX_CHANGE_ICON, CTX_RENAME, CTX_SELECT_ALL, CTX_SHOW_HIDDEN, CTX_SORT_BY, CTX_SORT_DATE, CTX_SORT_NAME,
-    CTX_SORT_SIZE, CTX_SORT_TYPE, CTX_TRASH, SORT_RADIO_GROUP, VIEW_SLIDER_ID, ZONE_CLOSE,
+    CTX_SORT_SIZE, CTX_SORT_TYPE, CTX_TRASH, SORT_RADIO_GROUP, VIEW_SLIDER_ID, VIEW_OPACITY_SLIDER_ID, ZONE_CLOSE,
     ZONE_FILE_ITEM_BASE, ZONE_MAXIMIZE, ZONE_MENU_VIEW, ZONE_MINIMIZE, ZONE_NAV_BACK,
     ZONE_NAV_FORWARD, ZONE_NAV_UP, ZONE_NAV_SEARCH, ZONE_SIDEBAR_ITEM_BASE,
     ZONE_TAB_BASE, ZONE_TAB_CLOSE_BASE, ZONE_TAB_NEW, ZONE_PATH_INPUT,
@@ -829,6 +829,7 @@ pub fn run(pick: Option<PickConfig>) -> Result<()> {
                     let action = handle_click(
                         &mut input, &mut app, &mut view_menu, &mut state.popup_backend,
                         &mut last_tab_click, &mut tab_drag_press, s,
+                        settings.bg_opacity,
                     );
                     match action {
                         ClickAction::None => {
@@ -960,9 +961,11 @@ pub fn run(pick: Option<PickConfig>) -> Result<()> {
         }
 
         // ── Render ──────────────────────────────────────────────────────
+        let render_palette = palette.with_bg_opacity(settings.bg_opacity);
         crate::render::render_frame(
             &mut gpu, &mut app, &mut input, &mut icon_cache, &mut file_info,
-            &palette, s, state.maximized, &mut view_menu, tab_drag,
+            &render_palette, s, state.maximized, &mut view_menu, tab_drag,
+            settings.bg_opacity,
         );
 
         // ── Draw & render popup surfaces ────────────────────────────────
@@ -979,6 +982,9 @@ pub fn run(pick: Option<PickConfig>) -> Result<()> {
                                 grid_columns(content.w, s, value), s, value),
                             content.h,
                         );
+                    } else if id == VIEW_OPACITY_SLIDER_ID {
+                        settings.bg_opacity = value.clamp(0.0, 1.0);
+                        settings.save();
                     }
                 } else if matches!(evt, MenuEvent::Action(_)) {
                     view_menu.close_popups(backend);
@@ -1151,6 +1157,7 @@ fn handle_click(
     last_tab_click: &mut Option<(usize, Instant)>,
     tab_drag_press: &mut Option<(usize, f32)>,
     s: f32,
+    bg_opacity: f32,
 ) -> ClickAction {
     if let Some(zone_id) = input.on_left_pressed() {
         // If path editing, commit on any click outside the path input
@@ -1176,7 +1183,10 @@ fn handle_click(
                     if let Some(backend) = popup_backend {
                         view_menu.open_popup(
                             label_x as f32, label_y,
-                            vec![MenuItem::slider(VIEW_SLIDER_ID, "Icon Size", app.icon_zoom)],
+                            vec![
+                                MenuItem::slider(VIEW_SLIDER_ID, "Icon Size", app.icon_zoom),
+                                MenuItem::slider(VIEW_OPACITY_SLIDER_ID, "Opacity", bg_opacity),
+                            ],
                             backend,
                         );
                     }

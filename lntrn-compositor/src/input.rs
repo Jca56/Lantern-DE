@@ -648,6 +648,27 @@ impl Lantern {
                     return;
                 }
 
+                // Hover preview close button
+                if self.hover_preview.is_active()
+                    && button == BTN_LEFT
+                    && button_state == ButtonState::Pressed
+                {
+                    let pos = pointer.current_location();
+                    let output_size = self.space.outputs().next()
+                        .and_then(|o| self.space.output_geometry(o))
+                        .map(|g| g.size)
+                        .unwrap_or_default();
+                    if self.hover_preview.hit_close_button(pos.x, pos.y, output_size) {
+                        if let Some(app_id) = self.hover_preview.hovered_app_id().map(|s| s.to_string()) {
+                            self.close_windows_by_app_id(&app_id);
+                        }
+                        self.hover_preview.dismiss();
+                        pointer.frame(self);
+                        self.schedule_render();
+                        return;
+                    }
+                }
+
                 // Super+left-click: compositor-level move
                 // Super+right-click: compositor-level resize
                 if ButtonState::Pressed == button_state

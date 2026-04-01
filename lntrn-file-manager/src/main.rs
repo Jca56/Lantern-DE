@@ -31,6 +31,7 @@ pub const ZONE_NAV_UP: u32 = 22;
 pub const ZONE_NAV_SEARCH: u32 = 23;
 pub const ZONE_MENU_VIEW: u32 = 24;
 pub const VIEW_SLIDER_ID: u32 = 1;
+pub const VIEW_OPACITY_SLIDER_ID: u32 = 2;
 pub const ZONE_SIDEBAR_ITEM_BASE: u32 = 100;
 pub const ZONE_DRIVE_ITEM_BASE: u32 = 200;
 pub const ZONE_TAB_BASE: u32 = 500;

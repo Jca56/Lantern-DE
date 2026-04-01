@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use lntrn_ui::gpu::{MenuItem, FoxPalette};
 
-use crate::dbus::{self, Value};
+use lntrn_dbus::{self as dbus, Value};
 
 /// Base ID offset for dbusmenu items in the ContextMenu zone system.
 /// Dbusmenu item IDs are offset by this so they don't collide with bar's own menu IDs.

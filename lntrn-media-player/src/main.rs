@@ -1,4 +1,5 @@
 mod app;
+mod mpris_server;
 mod pipeline;
 mod position_store;
 mod render;
@@ -29,6 +30,10 @@ pub struct Gpu {
 // ── Main ────────────────────────────────────────────────────────────────────
 
 fn main() {
+    // Spawn MPRIS D-Bus server BEFORE GStreamer init — GStreamer's D-Bus
+    // usage on background threads interferes with our raw socket connection.
+    let (mpris_tx, mpris_rx) = mpris_server::spawn();
+
     gstreamer::init().expect("Failed to initialize GStreamer");
 
     let path = std::env::args().nth(1).map(|arg| {
@@ -39,7 +44,7 @@ fn main() {
         }
     });
 
-    if let Err(e) = wayland::run(path) {
+    if let Err(e) = wayland::run(path, mpris_tx, mpris_rx) {
         eprintln!("[media-player] fatal: {e}");
         std::process::exit(1);
     }
