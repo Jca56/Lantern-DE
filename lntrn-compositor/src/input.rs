@@ -195,7 +195,24 @@ impl Lantern {
                     serial,
                     time,
                     |data, _modifiers, keysym| {
+                        let was_super = data.super_pressed;
                         data.super_pressed = _modifiers.logo;
+                        // Super just pressed — start tracking clean tap
+                        if _modifiers.logo && !was_super {
+                            data.super_clean_tap = true;
+                        }
+                        // Any key pressed while Super held → not a clean tap
+                        if _modifiers.logo && event.state() == KeyState::Pressed {
+                            let sym = keysym.modified_sym().raw();
+                            if sym != xkb::KEY_Super_L && sym != xkb::KEY_Super_R {
+                                data.super_clean_tap = false;
+                            }
+                        }
+                        // Super released — if no combo was used, cycle desktop panel
+                        if !_modifiers.logo && was_super && data.super_clean_tap {
+                            data.super_clean_tap = false;
+                            data.cycle_desktop_panel();
+                        }
 
                         if event.state() == KeyState::Pressed
                             && keysym.modified_sym().raw() == xkb::KEY_BackSpace
@@ -475,6 +492,21 @@ impl Lantern {
                             spawn_detached_args(
                                 "sh",
                                 &["-c", "pkill lntrn-bar; sleep 0.2; lntrn-bar"],
+                                &data.socket_name,
+                            );
+                            return FilterResult::Intercept(());
+                        }
+
+                        // Super+Shift+D: restart lntrn-desktop
+                        if event.state() == KeyState::Pressed
+                            && _modifiers.logo
+                            && _modifiers.shift
+                            && keysym.modified_sym().raw() == xkb::KEY_D
+                        {
+                            tracing::info!("Super+Shift+D pressed, restarting lntrn-desktop");
+                            spawn_detached_args(
+                                "sh",
+                                &["-c", "pkill lntrn-desktop; sleep 0.2; lntrn-desktop"],
                                 &data.socket_name,
                             );
                             return FilterResult::Intercept(());

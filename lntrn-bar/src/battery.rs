@@ -304,7 +304,7 @@ impl Battery {
         (total_w, tex_draws)
     }
 
-    /// Draw the battery popup above the bar.
+    /// Draw the battery popup above/below the bar.
     pub fn draw_popup(
         &self,
         painter: &mut Painter,
@@ -315,6 +315,8 @@ impl Battery {
         bat_x: f32,
         bat_w: f32,
         bar_y: f32,
+        bar_h: f32,
+        position_top: bool,
         scale: f32,
         screen_w: u32,
         screen_h: u32,
@@ -353,11 +355,15 @@ impl Battery {
 
         let popup_h = pad * 2.0 + content_h;
 
-        // Position: centered above battery widget, clamped to screen
+        // Position: centered above/below battery widget, clamped to screen
         let popup_x = (bat_x + bat_w / 2.0 - popup_w / 2.0)
             .max(gap)
             .min(screen_w as f32 - popup_w - gap);
-        let popup_y = (bar_y - popup_h - gap).max(0.0);
+        let popup_y = if position_top {
+            bar_y + bar_h + gap
+        } else {
+            (bar_y - popup_h - gap).max(0.0)
+        };
 
         // Shadow
         let shadow_expand = 3.0 * scale;
@@ -470,7 +476,7 @@ impl Battery {
     }
 
     /// Returns the popup bounding rect (for contains() checks), or None if closed.
-    pub fn popup_rect(&self, bat_x: f32, bat_w: f32, bar_y: f32, scale: f32, screen_w: u32) -> Option<Rect> {
+    pub fn popup_rect(&self, bat_x: f32, bat_w: f32, bar_y: f32, bar_h: f32, position_top: bool, scale: f32, screen_w: u32) -> Option<Rect> {
         if !self.open { return None; }
         let pad = 20.0 * scale;
         let gap = 8.0 * scale;
@@ -495,7 +501,11 @@ impl Battery {
         let popup_x = (bat_x + bat_w / 2.0 - popup_w / 2.0)
             .max(gap)
             .min(screen_w as f32 - popup_w - gap);
-        let popup_y = (bar_y - popup_h - gap).max(0.0);
+        let popup_y = if position_top {
+            bar_y + bar_h + gap
+        } else {
+            (bar_y - popup_h - gap).max(0.0)
+        };
 
         Some(Rect::new(popup_x, popup_y, popup_w, popup_h))
     }

@@ -425,7 +425,7 @@ impl TexturePass {
                 return [0, 0, sw, sh];
             };
             // Intersect with pass-level scissor if both exist
-            if let (Some(c), Some(s)) = (draw.clip, scissor) {
+            let raw = if let (Some(c), Some(s)) = (draw.clip, scissor) {
                 let x0 = (c[0] as u32).max(s[0]);
                 let y0 = (c[1] as u32).max(s[1]);
                 let x1 = ((c[0] + c[2]) as u32).min(s[0] + s[2]);
@@ -437,7 +437,11 @@ impl TexturePass {
                 }
             } else {
                 base
-            }
+            };
+            // Clamp to render target bounds (x+w <= sw, y+h <= sh)
+            let cx = raw[0].min(sw.saturating_sub(1));
+            let cy = raw[1].min(sh.saturating_sub(1));
+            [cx, cy, raw[2].min(sw.saturating_sub(cx)), raw[3].min(sh.saturating_sub(cy))]
         };
 
         // Draw with per-draw scissor support — break batches on clip or texture change

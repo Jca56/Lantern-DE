@@ -22,6 +22,7 @@ pub fn draw_content_list(
     renaming: Option<usize>,
     screen: (u32, u32),
     s: f32,
+    _ox: f32,
 ) {
     let row_h = 40.0 * s;
     let font = FontSize::Custom(24.0 * s);
@@ -133,6 +134,7 @@ pub fn draw_content_tree(
     has_icon: &[bool],
     screen: (u32, u32),
     s: f32,
+    _ox: f32,
 ) {
     let row_h = 36.0 * s;
     let indent = 28.0 * s;

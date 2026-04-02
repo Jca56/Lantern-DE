@@ -93,11 +93,40 @@ impl CompositorHandler for Lantern {
                     let mut width = cached.size.w;
                     let mut height = cached.size.h;
 
+                    // Compute exclusive zone reductions from other layer surfaces
+                    use smithay::wayland::shell::wlr_layer::{Anchor as A, ExclusiveZone};
+                    let mut excl_top = 0i32;
+                    let mut excl_bottom = 0i32;
+                    let mut excl_left = 0i32;
+                    let mut excl_right = 0i32;
+                    let is_neutral = matches!(cached.exclusive_zone, ExclusiveZone::Neutral);
+                    if is_neutral {
+                        for other in &self.layer_surfaces {
+                            if other.wl_surface() == surface { continue; }
+                            let oc = with_states(other.wl_surface(), |s| {
+                                *s.cached_state.get::<LayerSurfaceCachedState>().current()
+                            });
+                            let ex = match oc.exclusive_zone {
+                                ExclusiveZone::Exclusive(v) => v as i32,
+                                _ => continue,
+                            };
+                            if oc.anchor.contains(A::BOTTOM) && !oc.anchor.contains(A::TOP) {
+                                excl_bottom += ex;
+                            } else if oc.anchor.contains(A::TOP) && !oc.anchor.contains(A::BOTTOM) {
+                                excl_top += ex;
+                            } else if oc.anchor.contains(A::LEFT) && !oc.anchor.contains(A::RIGHT) {
+                                excl_left += ex;
+                            } else if oc.anchor.contains(A::RIGHT) && !oc.anchor.contains(A::LEFT) {
+                                excl_right += ex;
+                            }
+                        }
+                    }
+
                     if cached.anchor.anchored_horizontally() && width == 0 {
-                        width = geo.size.w - cached.margin.left - cached.margin.right;
+                        width = geo.size.w - cached.margin.left - cached.margin.right - excl_left - excl_right;
                     }
                     if cached.anchor.anchored_vertically() && height == 0 {
-                        height = geo.size.h - cached.margin.top - cached.margin.bottom;
+                        height = geo.size.h - cached.margin.top - cached.margin.bottom - excl_top - excl_bottom;
                     }
 
                     tracing::info!(

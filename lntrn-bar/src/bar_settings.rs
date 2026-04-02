@@ -12,6 +12,7 @@ pub struct BarSettings {
     pub height: u32,
     pub opacity: f32,
     pub lava_lamp: bool,
+    pub position_top: bool,
     pub pinned_procs: Vec<String>,
 }
 
@@ -23,6 +24,7 @@ impl Default for BarSettings {
             height: crate::layershell::BAR_HEIGHT_DEFAULT,
             opacity: 1.0,
             lava_lamp: false,
+            position_top: false,
             pinned_procs: Vec::new(),
         }
     }
@@ -49,6 +51,7 @@ impl BarSettings {
                     "height" => s.height = val.parse().unwrap_or(s.height),
                     "opacity" => s.opacity = val.parse().unwrap_or(s.opacity),
                     "lava_lamp" => s.lava_lamp = val == "true",
+                    "position_top" => s.position_top = val == "true",
                     "pinned_procs" => {
                         if let Some(start) = val.find('[') {
                             if let Some(end) = val.find(']') {
@@ -79,9 +82,10 @@ impl BarSettings {
              height = {}\n\
              opacity = {:.2}\n\
              lava_lamp = {}\n\
+             position_top = {}\n\
              pinned_procs = [{}]\n",
             self.floating, self.auto_hide, self.height,
-            self.opacity, self.lava_lamp,
+            self.opacity, self.lava_lamp, self.position_top,
             procs.join(", "),
         );
         let _ = std::fs::create_dir_all(crate::bar_config_dir());

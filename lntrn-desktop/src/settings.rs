@@ -12,9 +12,15 @@ pub struct Settings {
     pub pinned_tabs: Vec<String>,
     #[serde(default = "default_bg_opacity")]
     pub bg_opacity: f32,
+    #[serde(default = "default_term_font")]
+    pub term_font_size: f32,
+    #[serde(default = "default_term_opacity")]
+    pub term_opacity: f32,
 }
 
 fn default_bg_opacity() -> f32 { 0.0 }
+fn default_term_font() -> f32 { 20.0 }
+fn default_term_opacity() -> f32 { 0.3 }
 
 fn default_sort() -> String { "name".into() }
 
@@ -26,6 +32,8 @@ impl Default for Settings {
             sort_by: "name".into(),
             pinned_tabs: Vec::new(),
             bg_opacity: 0.0,
+            term_font_size: 20.0,
+            term_opacity: 0.3,
         }
     }
 }

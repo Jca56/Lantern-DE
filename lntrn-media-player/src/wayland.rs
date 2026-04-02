@@ -355,6 +355,7 @@ pub fn run(
     let mut rects = crate::render::ControlRects {
         seek: Rect::new(0.0, 0.0, 0.0, 0.0),
         vol_slider: Rect::new(0.0, 0.0, 0.0, 0.0),
+        seek_vertical: false,
         seek_cx: 0.0, seek_cy: 0.0,
         seek_arc_start: 0.0, seek_arc_sweep: 0.0,
     };
@@ -413,12 +414,18 @@ pub fn run(
             input.on_cursor_left();
         }
 
-        // ── Seek bar drag (motion) — angle-based for circular arc ────
+        // ── Seek bar drag (motion) ─────────────────────────────────────
         if app.seeking && state.pointer_in_surface {
-            let frac = cursor_to_arc_fraction(
-                cx, cy, rects.seek_cx, rects.seek_cy,
-                rects.seek_arc_start, rects.seek_arc_sweep,
-            );
+            let frac = if rects.seek_vertical {
+                // Vertical: bottom=0, top=1
+                let seek = &rects.seek;
+                1.0 - ((cy - seek.y) / seek.h).clamp(0.0, 1.0)
+            } else {
+                cursor_to_arc_fraction(
+                    cx, cy, rects.seek_cx, rects.seek_cy,
+                    rects.seek_arc_start, rects.seek_arc_sweep,
+                )
+            };
             app.seek_value = frac;
         }
 
@@ -455,10 +462,15 @@ pub fn run(
                 match zone_id {
                     ZONE_PLAY_PAUSE => { app.toggle_play_pause(); }
                     ZONE_SEEK_BAR => {
-                        let frac = cursor_to_arc_fraction(
-                            cx, cy, rects.seek_cx, rects.seek_cy,
-                            rects.seek_arc_start, rects.seek_arc_sweep,
-                        );
+                        let frac = if rects.seek_vertical {
+                            let seek = &rects.seek;
+                            1.0 - ((cy - seek.y) / seek.h).clamp(0.0, 1.0)
+                        } else {
+                            cursor_to_arc_fraction(
+                                cx, cy, rects.seek_cx, rects.seek_cy,
+                                rects.seek_arc_start, rects.seek_arc_sweep,
+                            )
+                        };
                         app.seeking = true;
                         app.seek_value = frac;
                     }

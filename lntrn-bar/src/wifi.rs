@@ -264,11 +264,11 @@ impl Wifi {
         (icon_size, tex_draws)
     }
 
-    /// Draw the popup above the bar.
+    /// Draw the popup above/below the bar.
     pub fn draw_popup(
         &self, painter: &mut Painter, text: &mut TextRenderer,
         ix: &mut InteractionContext, palette: &FoxPalette,
-        wifi_x: f32, wifi_w: f32, bar_y: f32, scale: f32,
+        wifi_x: f32, wifi_w: f32, bar_y: f32, bar_h: f32, position_top: bool, scale: f32,
         screen_w: u32, screen_h: u32,
     ) {
         if !self.open { return; }
@@ -307,7 +307,11 @@ impl Wifi {
         let popup_x = (wifi_x + wifi_w / 2.0 - popup_w / 2.0)
             .max(gap)
             .min(screen_w as f32 - popup_w - gap);
-        let popup_y = (bar_y - popup_h - gap).max(0.0);
+        let popup_y = if position_top {
+            bar_y + bar_h + gap
+        } else {
+            (bar_y - popup_h - gap).max(0.0)
+        };
 
         // Shadow
         let shadow_expand = 3.0 * scale;
@@ -462,7 +466,7 @@ impl Wifi {
 
     /// Popup bounding rect for click-outside detection.
     pub fn popup_rect(
-        &self, wifi_x: f32, wifi_w: f32, bar_y: f32, scale: f32, screen_w: u32,
+        &self, wifi_x: f32, wifi_w: f32, bar_y: f32, bar_h: f32, position_top: bool, scale: f32, screen_w: u32,
     ) -> Option<Rect> {
         if !self.open { return None; }
 
@@ -492,7 +496,11 @@ impl Wifi {
         let popup_x = (wifi_x + wifi_w / 2.0 - popup_w / 2.0)
             .max(gap)
             .min(screen_w as f32 - popup_w - gap);
-        let popup_y = (bar_y - popup_h - gap).max(0.0);
+        let popup_y = if position_top {
+            bar_y + bar_h + gap
+        } else {
+            (bar_y - popup_h - gap).max(0.0)
+        };
 
         Some(Rect::new(popup_x, popup_y, popup_w, popup_h))
     }

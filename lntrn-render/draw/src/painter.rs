@@ -379,8 +379,8 @@ impl Painter {
 
                 match span.clip {
                     Some(rect) => {
-                        let sx = rect.x.max(0.0) as u32;
-                        let sy = rect.y.max(0.0) as u32;
+                        let sx = (rect.x.max(0.0) as u32).min(gpu.width().saturating_sub(1));
+                        let sy = (rect.y.max(0.0) as u32).min(gpu.height().saturating_sub(1));
                         let sw =
                             (rect.w.max(0.0) as u32).min(gpu.width().saturating_sub(sx));
                         let sh =
@@ -662,8 +662,8 @@ impl Painter {
 
                 match span.clip {
                     Some(rect) => {
-                        let sx = rect.x.max(0.0) as u32;
-                        let sy = rect.y.max(0.0) as u32;
+                        let sx = (rect.x.max(0.0) as u32).min(gpu.width().saturating_sub(1));
+                        let sy = (rect.y.max(0.0) as u32).min(gpu.height().saturating_sub(1));
                         let sw = (rect.w.max(0.0) as u32).min(gpu.width().saturating_sub(sx));
                         let sh = (rect.h.max(0.0) as u32).min(gpu.height().saturating_sub(sy));
                         if sw == 0 || sh == 0 { continue; }

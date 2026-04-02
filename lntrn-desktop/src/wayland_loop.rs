@@ -15,6 +15,7 @@ use crate::desktop::DesktopApp;
 use crate::icons::IconCache;
 use crate::layout::{content_rect, grid_columns, grid_content_height, list_content_height, tree_content_height};
 use crate::settings::Settings;
+use crate::terminal_panel::TerminalPanel;
 use crate::wayland::State;
 use crate::wayland_actions::{
     handle_click, handle_ctx_event, handle_key, handle_right_click,
@@ -53,11 +54,18 @@ pub(crate) fn run_loop(
     // Pinned tab drag reorder state
     let mut tab_drag: Option<usize> = None;
     let mut tab_drag_press: Option<(usize, f32)> = None;
-    let mut active_panel = DesktopPanel::Files;
+    let mut active_panel = DesktopPanel::Home;
+    let mut transition = crate::PanelTransition::new();
+    // Create terminal panel with initial size (will resize on first configure)
+    let initial_cols = 80;
+    let initial_rows = 24;
+    let mut terminal_panel = TerminalPanel::new(initial_cols, initial_rows);
+    terminal_panel.font_size = settings.term_font_size;
     let panel_file = {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
         std::path::PathBuf::from(home).join(".lantern/config/desktop-panel")
     };
+    let _ = std::fs::write(&panel_file, "home");
 
     eprintln!("[desktop] entering main loop, size={}x{}", state.width, state.height);
 
@@ -151,12 +159,25 @@ pub(crate) fn run_loop(
 
         // ── Keyboard ────────────────────────────────────────────────────
         if let Some(key) = state.key_pressed.take() {
-            handle_key(app, settings, context_menu, key, state.ctrl, state.shift, &mut state.running);
+            if active_panel == DesktopPanel::Terminal {
+                terminal_panel.handle_key(key, state.ctrl, state.shift, state.alt);
+            } else {
+                handle_key(app, settings, context_menu, key, state.ctrl, state.shift, &mut state.running);
+            }
         }
 
-        // Key repeat (for text editing modes)
+        // Key repeat
         if let Some(key) = state.held_key {
-            if (app.renaming.is_some() || app.path_editing || app.searching)
+            if active_panel == DesktopPanel::Terminal {
+                if std::time::Instant::now() >= state.repeat_deadline {
+                    terminal_panel.handle_key(key, state.ctrl, state.shift, state.alt);
+                    let interval = if state.repeat_started { 30 } else { 300 };
+                    state.repeat_deadline = std::time::Instant::now()
+                        + std::time::Duration::from_millis(interval);
+                    state.repeat_started = true;
+                    state.frame_done = true;
+                }
+            } else if (app.renaming.is_some() || app.path_editing || app.searching)
                 && std::time::Instant::now() >= state.repeat_deadline
             {
                 handle_key(app, settings, context_menu, key, state.ctrl, state.shift, &mut state.running);
@@ -172,26 +193,37 @@ pub(crate) fn run_loop(
         if state.scroll_delta.abs() > 0.01 {
             let scroll = state.scroll_delta * s;
             input.on_scroll(scroll);
-            let content = content_rect(wf, hf, s);
-            let zoom = app.icon_zoom;
-            let total_h = match app.view_mode {
-                crate::app::ViewMode::Grid => {
-                    let cols = grid_columns(content.w, s, zoom);
-                    grid_content_height(app.entries.len(), cols, s, zoom)
-                }
-                crate::app::ViewMode::List => list_content_height(app.entries.len(), s),
-                crate::app::ViewMode::Tree => tree_content_height(app.tree_entries.len(), s),
-            };
-            ScrollArea::apply_scroll(&mut app.scroll_offset, scroll, total_h, content.h);
+            if active_panel == DesktopPanel::Terminal {
+                // Terminal: scroll through scrollback history
+                let session = terminal_panel.active_session_mut();
+                let lines = if scroll > 0.0 { -3i32 } else { 3 };
+                let new_offset = session.terminal.scroll_offset as i32 + lines;
+                let max = session.terminal.scrollback.len();
+                session.terminal.scroll_offset = new_offset.clamp(0, max as i32) as usize;
+            } else if active_panel == DesktopPanel::Files {
+                let content = content_rect(wf, hf, s);
+                let zoom = app.icon_zoom;
+                let total_h = match app.view_mode {
+                    crate::app::ViewMode::Grid => {
+                        let cols = grid_columns(content.w, s, zoom);
+                        grid_content_height(app.entries.len(), cols, s, zoom)
+                    }
+                    crate::app::ViewMode::List => list_content_height(app.entries.len(), s),
+                    crate::app::ViewMode::Tree => tree_content_height(app.tree_entries.len(), s),
+                };
+                ScrollArea::apply_scroll(&mut app.scroll_offset, scroll, total_h, content.h);
+            }
             state.scroll_delta = 0.0;
         }
 
         // ── Left press ──────────────────────────────────────────────────
         if state.left_pressed {
             state.left_pressed = false;
-            if context_menu.is_open() {
+            let in_ctx = context_menu.is_open() && context_menu.contains(cx, cy);
+            let in_view = view_menu.is_open() && view_menu.contains(cx, cy);
+            if context_menu.is_open() && !in_ctx {
                 context_menu.close();
-            } else if view_menu.is_open() {
+            } else if view_menu.is_open() && !in_view {
                 view_menu.close();
             } else {
                 let action = handle_click(
@@ -201,7 +233,22 @@ pub(crate) fn run_loop(
                 );
                 match action {
                     ClickAction::None => {
-                        if app.pending_open.is_none() {
+                        // Terminal tab clicks
+                        if active_panel == DesktopPanel::Terminal {
+                            if let Some(zone_id) = input.active_zone_id() {
+                                if zone_id == crate::ZONE_TERM_TAB_NEW {
+                                    terminal_panel.new_tab();
+                                } else if zone_id >= crate::ZONE_TERM_TAB_CLOSE_BASE
+                                    && zone_id < crate::ZONE_TERM_TAB_CLOSE_BASE + 50
+                                {
+                                    terminal_panel.close_tab((zone_id - crate::ZONE_TERM_TAB_CLOSE_BASE) as usize);
+                                } else if zone_id >= crate::ZONE_TERM_TAB_BASE
+                                    && zone_id < crate::ZONE_TERM_TAB_BASE + 50
+                                {
+                                    terminal_panel.switch_tab((zone_id - crate::ZONE_TERM_TAB_BASE) as usize);
+                                }
+                            }
+                        } else if app.pending_open.is_none() {
                             let cr = content_rect(wf, hf, s);
                             if cr.contains(cx, cy) {
                                 app.clear_selection();
@@ -214,7 +261,10 @@ pub(crate) fn run_loop(
                         state.running = false;
                     }
                     ClickAction::SwitchPanel(panel) => {
-                        active_panel = panel;
+                        if panel != active_panel {
+                            transition.start(active_panel, panel);
+                            active_panel = panel;
+                        }
                     }
                 }
             }
@@ -272,19 +322,53 @@ pub(crate) fn run_loop(
             if context_menu.is_open() {
                 context_menu.close();
             }
-            handle_right_click(app, context_menu, input, open_with_apps, wf, hf, s);
+            if active_panel == DesktopPanel::Terminal {
+                // Terminal right-click: font size + opacity sliders
+                use lntrn_ui::gpu::MenuItem;
+                if let Some((cx, cy)) = input.cursor() {
+                    // Font slider: map font_size 14..32 to 0..1
+                    let font_val = ((terminal_panel.font_size - 14.0) / 18.0).clamp(0.0, 1.0);
+                    let opacity_val = settings.term_opacity;
+                    context_menu.set_scale(s);
+                    context_menu.open(cx, cy, vec![
+                        MenuItem::slider(crate::TERM_FONT_SLIDER_ID, "Font Size", font_val),
+                        MenuItem::slider(crate::TERM_OPACITY_SLIDER_ID, "Opacity", opacity_val),
+                    ]);
+                }
+            } else {
+                handle_right_click(app, context_menu, input, open_with_apps, wf, hf, s);
+            }
         }
 
-        // ── Update menus ────────────────────────────────────────────────
+        // ── Update menus + transition ────────────────────────────────────
         view_menu.update(dt);
         context_menu.update(dt);
+        let transition_animating = transition.tick(dt);
 
-        // ── Read active panel from bar ──────────────────────────────────
+        // ── Read active panel from bar / compositor ───────────────────
         if let Ok(s) = std::fs::read_to_string(&panel_file) {
-            active_panel = match s.trim() {
-                "blank" => DesktopPanel::Blank,
-                _ => DesktopPanel::Files,
+            let new_panel = match s.trim() {
+                "terminal" => DesktopPanel::Terminal,
+                "files" => DesktopPanel::Files,
+                _ => DesktopPanel::Home,
             };
+            if new_panel != active_panel {
+                transition.start(active_panel, new_panel);
+                active_panel = new_panel;
+            }
+        }
+
+        // ── Terminal panel tick ──────────────────────────────────────────
+        if active_panel == DesktopPanel::Terminal {
+            terminal_panel.tick();
+            // Resize terminal to match surface (minus tab bar)
+            let tab_h = crate::terminal_panel::TAB_BAR_HEIGHT * s;
+            let (cols, rows) = TerminalPanel::calc_grid_size(wf, hf - tab_h, terminal_panel.font_size);
+            if cols != terminal_panel.active_session().terminal.cols
+                || rows != terminal_panel.active_session().terminal.rows
+            {
+                terminal_panel.resize(cols, rows);
+            }
         }
 
         // ── Render ──────────────────────────────────────────────────────
@@ -293,14 +377,36 @@ pub(crate) fn run_loop(
         let (ctx_evt, view_evt) = crate::render::render_frame(
             gpu, app, input, icon_cache, file_info,
             &render_palette, s, view_menu, context_menu,
-            tab_drag, opacity, active_panel,
+            tab_drag, opacity, active_panel, &mut terminal_panel, settings.term_opacity,
+            &transition,
         );
         // Handle inline context menu events
         if let Some(evt) = ctx_evt {
-            if matches!(evt, MenuEvent::Action(_)) {
-                context_menu.close();
+            match &evt {
+                MenuEvent::SliderChanged { id, value } => {
+                    if *id == crate::TERM_FONT_SLIDER_ID {
+                        // Map 0..1 → 14..32
+                        let font = 14.0 + value * 18.0;
+                        terminal_panel.font_size = font;
+                        settings.term_font_size = font;
+                        // Resize terminal grid to match new cell size
+                        let tab_h = crate::terminal_panel::TAB_BAR_HEIGHT * s;
+                        let (cols, rows) = TerminalPanel::calc_grid_size(wf, hf - tab_h, font * s);
+                        terminal_panel.resize(cols, rows);
+                        settings.save();
+                    } else if *id == crate::TERM_OPACITY_SLIDER_ID {
+                        settings.term_opacity = value.clamp(0.0, 1.0);
+                        settings.save();
+                    }
+                }
+                MenuEvent::Action(_) => {
+                    context_menu.close();
+                    handle_ctx_event(app, settings, context_menu, open_with_apps, evt);
+                }
+                _ => {
+                    handle_ctx_event(app, settings, context_menu, open_with_apps, evt);
+                }
             }
-            handle_ctx_event(app, settings, context_menu, open_with_apps, evt);
         }
 
         // Handle inline view menu events
@@ -349,7 +455,9 @@ pub(crate) fn run_loop(
             || app.drag_item.is_some() || app.rubber_band_start.is_some()
             || state.held_key.is_some()
             || app.search_rx.is_some()
-            || tab_drag.is_some();
+            || tab_drag.is_some()
+            || active_panel == DesktopPanel::Terminal
+            || transition_animating;
     }
 
     Ok(())

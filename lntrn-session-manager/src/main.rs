@@ -320,6 +320,18 @@ fn main() {
         log(&format!("🏮 Started lntrn-bar (pid {})", child.id()));
     }
 
+    // Start the desktop shell
+    log("🏮 Starting lntrn-desktop...");
+    let mut desktop_cmd = Command::new("lntrn-desktop");
+    desktop_cmd.env("WAYLAND_DISPLAY", &wayland_socket);
+    if let Some(ref d) = x11_display {
+        desktop_cmd.env("DISPLAY", d);
+    }
+    let _desktop = desktop_cmd.spawn();
+    if let Ok(ref child) = _desktop {
+        log(&format!("🏮 Started lntrn-desktop (pid {})", child.id()));
+    }
+
     // Start the portal backend (xdg-desktop-portal FileChooser)
     log("🏮 Starting lntrn-portal...");
     let mut portal_cmd = Command::new("lntrn-portal");

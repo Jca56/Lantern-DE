@@ -75,6 +75,7 @@ pub(crate) struct State {
     // Keyboard
     pub(crate) ctrl: bool,
     pub(crate) shift: bool,
+    pub(crate) alt: bool,
     pub(crate) key_pressed: Option<u32>,
     // Key repeat
     pub(crate) held_key: Option<u32>,
@@ -93,7 +94,7 @@ impl State {
             cursor_x: 0.0, cursor_y: 0.0, pointer_in_surface: false,
             left_pressed: false, left_released: false, right_clicked: false,
             scroll_delta: 0.0, pointer_serial: 0, pointer_surface: None,
-            ctrl: false, shift: false, key_pressed: None,
+            ctrl: false, shift: false, alt: false, key_pressed: None,
             held_key: None, repeat_deadline: std::time::Instant::now(), repeat_started: false,
         }
     }
@@ -184,6 +185,7 @@ pub fn run() -> Result<()> {
     let mut gpu = Gpu {
         painter: Painter::new(&gpu_ctx),
         text: TextRenderer::new(&gpu_ctx),
+        mono_text: TextRenderer::new_monospace(&gpu_ctx),
         tex_pass: TexturePass::new(&gpu_ctx),
         ctx: gpu_ctx,
     };

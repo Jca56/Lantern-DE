@@ -7,7 +7,8 @@ use crate::{Gpu, ZONE_CANVAS, ZONE_PLAY_PAUSE, ZONE_SEEK_BAR, ZONE_VOLUME, ZONE_
 pub struct ControlRects {
     pub seek: Rect,
     pub vol_slider: Rect,
-    // Circular seek arc parameters for angle-based hit testing
+    pub seek_vertical: bool,
+    // Circular seek arc parameters (only used when !seek_vertical)
     pub seek_cx: f32,
     pub seek_cy: f32,
     pub seek_arc_start: f32,
@@ -41,8 +42,8 @@ pub fn render_frame(
 
     if app.audio_only {
         match app.vis_mode {
-            VisMode::RadialBars => draw_radial_bars(painter, &app.vis_bars, canvas, s),
             VisMode::ConcentricRings => draw_concentric_rings(painter, &app.vis_bars, canvas, s),
+            VisMode::ClassicBars => draw_classic_bars(painter, &app.vis_bars, canvas, s),
         }
     } else if let Some(tex) = &app.video_texture {
         if app.video_width > 0 && app.video_height > 0 {
@@ -53,101 +54,127 @@ pub fn render_frame(
         }
     }
 
-    // ── Circular seek arc (follows visualizer curvature) ─────────
-    let vis_cx = canvas.x + canvas.w * 0.5;
-    let vis_cy = canvas.y + canvas.h * 0.5;
-    let max_dim = canvas.w.min(canvas.h);
-    let seek_radius = max_dim * 0.52;
-
-    let arc_half_angle = 70.0_f32.to_radians();
-    let arc_start = std::f32::consts::FRAC_PI_2 - arc_half_angle; // bottom-right
-    let arc_sweep = arc_half_angle * 2.0; // to bottom-left
-    let arc_end = arc_start + arc_sweep;
-
-    // Arc endpoint positions (for placing controls)
-    // Left end = end of arc (bottom-left), Right end = start of arc (bottom-right)
-    let left_x = vis_cx + seek_radius * arc_end.cos();
-    let left_y = vis_cy + seek_radius * arc_end.sin();
-    let right_x = vis_cx + seek_radius * arc_start.cos();
-    let right_y = vis_cy + seek_radius * arc_start.sin();
-
-    // Hit zone: thin crescent that follows the arc shape
-    // Only covers from the arc's endpoint height down to the bottom of the arc
-    let hit_pad = 12.0 * s;
-    let endpoint_y = vis_cy + seek_radius * arc_start.sin(); // Y of endpoints (same for both sides)
-    let arc_top_y = endpoint_y - hit_pad;
-    let arc_bot_y = vis_cy + seek_radius + hit_pad;
-    // X range: only as wide as the endpoint positions + padding
-    let arc_left_x = left_x - hit_pad;
-    let arc_right_x = right_x + hit_pad;
-    let seek_rect = Rect::new(arc_left_x, arc_top_y, arc_right_x - arc_left_x, arc_bot_y - arc_top_y);
-    let seek_state = input.add_zone(ZONE_SEEK_BAR, seek_rect);
-    let seek_val = if app.seeking { app.seek_value } else { app.progress_fraction() };
-
-    draw_circular_seek(
-        painter, palette, s,
-        vis_cx, vis_cy, seek_radius,
-        arc_start, arc_sweep, seek_val,
-        seek_state.is_hovered() || seek_state.is_active(),
-    );
-
-    // ── Controls at arc endpoints ───────────────────────────────────
+    // ── Seek bar + controls (mode-dependent) ──────────────────────
     let font = FontSize::Body;
-    let ctrl_offset = 14.0 * s;
-
-    // Play/pause button — left of the left arc endpoint
-    let pp_size = 36.0 * s;
-    let pp_x = left_x - pp_size - ctrl_offset;
-    let pp_y = left_y - pp_size * 0.5;
-    let pp_rect = Rect::new(pp_x, pp_y, pp_size, pp_size);
-    let pp_state = input.add_zone(ZONE_PLAY_PAUSE, pp_rect);
-
-    let pp_bg = if pp_state.is_hovered() {
-        palette.surface_2.with_alpha(0.6)
-    } else {
-        palette.surface_2.with_alpha(0.3)
-    };
-    painter.rect_filled(pp_rect, 8.0 * s, pp_bg);
-
-    let pp_icon = if app.is_playing() { "\u{23F8}" } else { "\u{25B6}" };
-    let icon_w = text.measure_width(pp_icon, font.px());
-    TextLabel::new(
-        pp_icon,
-        pp_rect.x + (pp_size - icon_w) * 0.5,
-        pp_rect.y + (pp_size - font.px()) * 0.5,
-    )
-    .size(font)
-    .color(palette.text)
-    .draw(text, ctx.width(), ctx.height());
-
-    // Time label — just right of play/pause, still left of arc
-    let time_str = format!(
-        "{} / {}",
-        App::format_time(app.position_ns),
-        App::format_time(app.duration_ns),
-    );
-    let time_x = pp_x - text.measure_width(&time_str, font.px()) - 10.0 * s;
-    let time_y = left_y - font.px() * 0.5;
-    TextLabel::new(&time_str, time_x, time_y)
-        .size(font)
-        .color(palette.text)
-        .draw(text, ctx.width(), ctx.height());
-
-    // Volume button — right of the right arc endpoint
+    let seek_val = if app.seeking { app.seek_value } else { app.progress_fraction() };
+    let time_str = format!("{} / {}", App::format_time(app.position_ns), App::format_time(app.duration_ns));
     let vol_str = format!("Vol {}%", (app.volume * 100.0).round() as u32);
-    let vol_w = text.measure_width(&vol_str, font.px());
-    let vol_x = right_x + ctrl_offset;
-    let vol_y = right_y - font.px() * 0.5;
-    let vol_btn_rect = Rect::new(vol_x - 6.0 * s, right_y - controls_h * 0.5, vol_w + 12.0 * s, controls_h);
-    let vol_state = input.add_zone(ZONE_VOLUME, vol_btn_rect);
 
-    if vol_state.is_hovered() {
-        painter.rect_filled(vol_btn_rect, 4.0 * s, palette.surface_2.with_alpha(0.3));
+    let mut seek_rect = Rect::new(0.0, 0.0, 0.0, 0.0);
+    let mut seek_vertical = false;
+    let mut arc_cx = 0.0_f32;
+    let mut arc_cy = 0.0_f32;
+    let mut arc_start = 0.0_f32;
+    let mut arc_sweep = 0.0_f32;
+    let mut vol_btn_rect = Rect::new(0.0, 0.0, 0.0, 0.0);
+
+    let is_classic = app.audio_only && app.vis_mode == VisMode::ClassicBars;
+
+    if is_classic {
+        // ── Vertical seek bar on the left ───────────────────────
+        // Must match draw_classic_bars layout: base_y, max_h, bottom_margin
+        seek_vertical = true;
+        let bottom_margin = 80.0 * s; // room for play/pause + time below
+        let bars_base = hf - bottom_margin;
+        let bars_max_h = (hf - bottom_margin) * 0.85;
+        let bar_x = 16.0 * s;
+        let bar_w = 10.0 * s;
+        let bar_top = bars_base - bars_max_h;
+        let bar_h = bars_max_h;
+        seek_rect = Rect::new(bar_x - 8.0 * s, bar_top, bar_w + 16.0 * s, bar_h);
+        let seek_state = input.add_zone(ZONE_SEEK_BAR, seek_rect);
+        let active = seek_state.is_hovered() || seek_state.is_active();
+        draw_vertical_seek(painter, s, bar_x, bar_top, bar_w, bar_h, seek_val, active);
+
+        // Play/pause + time below the seek bar
+        let ctrl_x = bar_x + bar_w * 0.5;
+        let below_y = bars_base + 8.0 * s;
+
+        let pp_size = 36.0 * s;
+        let pp_rect = Rect::new(ctrl_x - pp_size * 0.5, below_y, pp_size, pp_size);
+        let pp_state = input.add_zone(ZONE_PLAY_PAUSE, pp_rect);
+        let pp_bg = if pp_state.is_hovered() { palette.surface_2.with_alpha(0.6) }
+                    else { palette.surface_2.with_alpha(0.3) };
+        painter.rect_filled(pp_rect, 8.0 * s, pp_bg);
+        let pp_icon = if app.is_playing() { "\u{23F8}" } else { "\u{25B6}" };
+        let icon_w = text.measure_width(pp_icon, font.px());
+        TextLabel::new(pp_icon, pp_rect.x + (pp_size - icon_w) * 0.5, pp_rect.y + (pp_size - font.px()) * 0.5)
+            .size(font).color(palette.text).draw(text, ctx.width(), ctx.height());
+
+        let tw = text.measure_width(&time_str, font.px());
+        TextLabel::new(&time_str, ctrl_x - tw * 0.5, below_y + pp_size + 4.0 * s)
+            .size(font).color(palette.text).draw(text, ctx.width(), ctx.height());
+
+        // Volume — bottom right, above the bars baseline
+        let vw = text.measure_width(&vol_str, font.px());
+        let vol_x = wf - vw - 20.0 * s;
+        let vol_y = bars_base + 8.0 * s;
+        vol_btn_rect = Rect::new(vol_x - 6.0 * s, vol_y - 8.0 * s, vw + 12.0 * s, 32.0 * s);
+        let vol_state = input.add_zone(ZONE_VOLUME, vol_btn_rect);
+        if vol_state.is_hovered() {
+            painter.rect_filled(vol_btn_rect, 4.0 * s, palette.surface_2.with_alpha(0.3));
+        }
+        TextLabel::new(&vol_str, vol_x, vol_y)
+            .size(font).color(palette.text).draw(text, ctx.width(), ctx.height());
+    } else {
+        // ── Circular arc seek (for rings / video) ───────────────
+        let vis_cx = canvas.x + canvas.w * 0.5;
+        let vis_cy = canvas.y + canvas.h * 0.5;
+        let max_dim = canvas.w.min(canvas.h);
+        let seek_radius = max_dim * 0.52;
+
+        let arc_half = 70.0_f32.to_radians();
+        arc_start = std::f32::consts::FRAC_PI_2 - arc_half;
+        arc_sweep = arc_half * 2.0;
+        arc_cx = vis_cx;
+        arc_cy = vis_cy;
+        let arc_end = arc_start + arc_sweep;
+
+        let left_x = vis_cx + seek_radius * arc_end.cos();
+        let left_y = vis_cy + seek_radius * arc_end.sin();
+        let right_x = vis_cx + seek_radius * arc_start.cos();
+        let right_y = vis_cy + seek_radius * arc_start.sin();
+
+        let vis_outer = max_dim * 0.50;
+        let hit_pad = 12.0 * s;
+        seek_rect = Rect::new(
+            left_x - hit_pad, vis_cy + vis_outer,
+            (right_x + hit_pad) - (left_x - hit_pad), vis_cy + seek_radius + hit_pad - (vis_cy + vis_outer),
+        );
+        let seek_state = input.add_zone(ZONE_SEEK_BAR, seek_rect);
+        let active = seek_state.is_hovered() || seek_state.is_active();
+        draw_circular_seek(painter, palette, s, vis_cx, vis_cy, seek_radius, arc_start, arc_sweep, seek_val, active);
+
+        let ctrl_offset = 14.0 * s;
+
+        // Play/pause — left of arc
+        let pp_size = 36.0 * s;
+        let pp_rect = Rect::new(left_x - pp_size - ctrl_offset, left_y - pp_size * 0.5, pp_size, pp_size);
+        let pp_state = input.add_zone(ZONE_PLAY_PAUSE, pp_rect);
+        let pp_bg = if pp_state.is_hovered() { palette.surface_2.with_alpha(0.6) }
+                    else { palette.surface_2.with_alpha(0.3) };
+        painter.rect_filled(pp_rect, 8.0 * s, pp_bg);
+        let pp_icon = if app.is_playing() { "\u{23F8}" } else { "\u{25B6}" };
+        let icon_w = text.measure_width(pp_icon, font.px());
+        TextLabel::new(pp_icon, pp_rect.x + (pp_size - icon_w) * 0.5, pp_rect.y + (pp_size - font.px()) * 0.5)
+            .size(font).color(palette.text).draw(text, ctx.width(), ctx.height());
+
+        // Time — left of play/pause
+        let tw = text.measure_width(&time_str, font.px());
+        TextLabel::new(&time_str, pp_rect.x - tw - 10.0 * s, left_y - font.px() * 0.5)
+            .size(font).color(palette.text).draw(text, ctx.width(), ctx.height());
+
+        // Volume — right of arc
+        let vol_w = text.measure_width(&vol_str, font.px());
+        let vol_x = right_x + ctrl_offset;
+        vol_btn_rect = Rect::new(vol_x - 6.0 * s, right_y - controls_h * 0.5, vol_w + 12.0 * s, controls_h);
+        let vol_state = input.add_zone(ZONE_VOLUME, vol_btn_rect);
+        if vol_state.is_hovered() {
+            painter.rect_filled(vol_btn_rect, 4.0 * s, palette.surface_2.with_alpha(0.3));
+        }
+        TextLabel::new(&vol_str, vol_x, right_y - font.px() * 0.5)
+            .size(font).color(palette.text).draw(text, ctx.width(), ctx.height());
     }
-    TextLabel::new(&vol_str, vol_x, vol_y)
-        .size(font)
-        .color(palette.text)
-        .draw(text, ctx.width(), ctx.height());
 
     // ── Volume slider popup ─────────────────────────────────────────
     let mut vol_slider_rect = Rect::new(0.0, 0.0, 0.0, 0.0);
@@ -157,50 +184,31 @@ pub fn render_frame(
         let popup_x = vol_btn_rect.x + (vol_btn_rect.w - popup_w) * 0.5;
         let popup_y = vol_btn_rect.y - popup_h - 8.0 * s;
         let popup_rect = Rect::new(popup_x, popup_y, popup_w, popup_h);
-
-        // Background
         painter.rect_filled(popup_rect, 8.0 * s, palette.surface);
         painter.rect_filled(
             Rect::new(popup_rect.x + 1.0, popup_rect.y + 1.0, popup_rect.w - 2.0, popup_rect.h - 2.0),
-            8.0 * s,
-            palette.surface_2.with_alpha(0.3),
+            8.0 * s, palette.surface_2.with_alpha(0.3),
         );
-
-        // Slider track area (vertical)
         let track_margin = 10.0 * s;
         let track_x = popup_x + track_margin;
         let track_y = popup_y + track_margin;
         let track_w = popup_w - track_margin * 2.0;
         let track_h = popup_h - track_margin * 2.0;
         vol_slider_rect = Rect::new(track_x, track_y, track_w, track_h);
-
         let vs_state = input.add_zone(ZONE_VOL_SLIDER, vol_slider_rect);
-
-        // Track background
         painter.rect_filled(
             Rect::new(track_x + track_w * 0.5 - 2.0 * s, track_y, 4.0 * s, track_h),
-            2.0 * s,
-            palette.surface_2.with_alpha(0.5),
+            2.0 * s, palette.surface_2.with_alpha(0.5),
         );
-
-        // Fill (from bottom up)
         let fill_h = track_h * app.volume as f32;
         let fill_y = track_y + track_h - fill_h;
         painter.rect_filled(
             Rect::new(track_x + track_w * 0.5 - 2.0 * s, fill_y, 4.0 * s, fill_h),
-            2.0 * s,
-            palette.accent,
+            2.0 * s, palette.accent,
         );
-
-        // Knob
         let knob_r = 7.0 * s;
-        let knob_y = fill_y;
-        let knob_color = if vs_state.is_hovered() || app.vol_dragging {
-            palette.accent.lighten(0.2)
-        } else {
-            palette.accent
-        };
-        painter.circle_filled(track_x + track_w * 0.5, knob_y, knob_r, knob_color);
+        let knob_color = if vs_state.is_hovered() || app.vol_dragging { palette.accent.lighten(0.2) } else { palette.accent };
+        painter.circle_filled(track_x + track_w * 0.5, fill_y, knob_r, knob_color);
     }
 
     // ── Multi-pass render ───────────────────────────────────────────
@@ -221,8 +229,9 @@ pub fn render_frame(
     ControlRects {
         seek: seek_rect,
         vol_slider: vol_slider_rect,
-        seek_cx: vis_cx,
-        seek_cy: vis_cy,
+        seek_vertical,
+        seek_cx: arc_cx,
+        seek_cy: arc_cy,
         seek_arc_start: arc_start,
         seek_arc_sweep: arc_sweep,
     }
@@ -343,94 +352,68 @@ fn draw_circular_seek(
     }
 }
 
-// ── Visualizer: Mirrored Radial Bars ────────────────────────────────────────
 
-fn draw_radial_bars(
+// ── Vertical seek bar ─────────────────────────────────────────────────────
+
+fn draw_vertical_seek(
     painter: &mut lntrn_render::Painter,
-    bars: &[f32],
-    canvas: Rect,
     s: f32,
+    x: f32, top: f32, w: f32, h: f32,
+    value: f32, active: bool,
 ) {
-    let cx = canvas.x + canvas.w * 0.5;
-    let cy = canvas.y + canvas.h * 0.5;
-    let max_dim = canvas.w.min(canvas.h);
+    let blue = Color::from_rgb8(80, 120, 255);
+    let purple = Color::from_rgb8(180, 60, 255);
+    let track_color = Color::from_rgba8(255, 255, 255, 30);
 
-    // Bass energy drives the center circle size
-    let bass_avg = bars.iter().take(4).sum::<f32>() / 4.0;
+    // Track (full height, rounded)
+    let track_w = if active { 12.0 * s } else { 10.0 * s };
+    let track_x = x + (w - track_w) * 0.5;
+    let corner = track_w * 0.5;
+    painter.rect_filled(Rect::new(track_x, top, track_w, h), corner, track_color);
 
-    let ring_radius = max_dim * 0.13;
-    let max_bar_length = max_dim * 0.30;
-    let bar_gap_angle = 0.012;
+    // Fill (bottom-to-top) with gradient
+    if value > 0.001 {
+        let fill_h = h * value;
+        let fill_y = top + h - fill_h;
 
-    let num_bars = bars.len();
-    let bar_sweep = (std::f32::consts::TAU / num_bars as f32) - bar_gap_angle;
-
-    // Breathing center circle — pulses with bass
-    let center_r = ring_radius - 2.0 * s + bass_avg * max_dim * 0.03;
-    let center_color = hue_color(0.75, 0.4, 0.15 + bass_avg * 0.15);
-    painter.circle_filled(cx, cy, center_r, center_color);
-    painter.circle_stroke(cx, cy, ring_radius, 2.0 * s, Color::from_rgba8(255, 255, 255, 20));
-
-    // Bass glow behind everything
-    if bass_avg > 0.3 {
-        let glow_a = (bass_avg - 0.3) * 0.15;
-        painter.circle_filled(cx, cy, ring_radius + max_dim * 0.05, hue_color(0.75, 0.5, 0.6).with_alpha(glow_a));
-    }
-
-    for i in 0..num_bars {
-        let magnitude = bars[i];
-        if magnitude < 0.02 {
-            continue;
+        // Draw gradient as segments
+        let segments = 32;
+        let seg_h = fill_h / segments as f32;
+        for i in 0..segments {
+            let sy = fill_y + seg_h * i as f32;
+            let t = 1.0 - (i as f32 / segments as f32); // bottom=0 (blue), top=1 (purple)
+            let r = blue.r + (purple.r - blue.r) * t;
+            let g = blue.g + (purple.g - blue.g) * t;
+            let b = blue.b + (purple.b - blue.b) * t;
+            let seg_corner = if i == 0 { corner } else if i == segments - 1 { corner } else { 0.0 };
+            painter.rect_filled(Rect::new(track_x, sy, track_w, seg_h + 0.5), seg_corner, Color::rgba(r, g, b, 1.0));
         }
 
-        let t = i as f32 / num_bars as f32;
-        let angle = t * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;
-        let bar_length = magnitude * max_bar_length;
-
-        // Rainbow color — shifts with magnitude for extra life
-        let color = hue_color(t + magnitude * 0.1, 0.85, 0.7 + magnitude * 0.3);
-
-        // Outward bar
-        painter.arc(
-            cx, cy,
-            ring_radius + bar_length,
-            angle, bar_sweep,
-            0.0,
-            ring_radius + 2.0 * s,
-            color,
+        // Rounded caps
+        let cap_r = track_w * 0.5;
+        painter.circle_filled(x + w * 0.5, fill_y, cap_r, purple);
+        let bot_color = Color::rgba(
+            blue.r + (purple.r - blue.r) * value,
+            blue.g + (purple.g - blue.g) * value,
+            blue.b + (purple.b - blue.b) * value,
+            1.0,
         );
+        painter.circle_filled(x + w * 0.5, top + h, cap_r, bot_color);
 
-        // Outward glow on strong bars
-        if magnitude > 0.5 {
-            let glow_len = bar_length * 1.15;
-            let glow_color = color.with_alpha((magnitude - 0.5) * 0.4);
-            painter.arc(
-                cx, cy,
-                ring_radius + glow_len,
-                angle, bar_sweep,
-                0.0,
-                ring_radius + bar_length,
-                glow_color,
-            );
-        }
-
-        // Inward bar (shorter, more transparent)
-        let inner_length = magnitude * max_bar_length * 0.5;
-        let inner_color = color.with_alpha(0.45);
-        if ring_radius > inner_length + 4.0 * s {
-            painter.arc(
-                cx, cy,
-                ring_radius - 2.0 * s,
-                angle, bar_sweep,
-                0.0,
-                ring_radius - inner_length,
-                inner_color,
-            );
+        // Thumb at the top of the fill
+        let thumb_r = if active { 10.0 * s } else { 8.0 * s };
+        let thumb_color = Color::rgba(
+            blue.r + (purple.r - blue.r) * value,
+            blue.g + (purple.g - blue.g) * value,
+            blue.b + (purple.b - blue.b) * value,
+            1.0,
+        );
+        painter.circle_filled(x + w * 0.5, fill_y, thumb_r, thumb_color);
+        painter.circle_stroke(x + w * 0.5, fill_y, thumb_r, 1.5 * s, Color::BLACK.with_alpha(0.15));
+        if active {
+            painter.circle_stroke(x + w * 0.5, fill_y, thumb_r + 4.0 * s, 2.0 * s, thumb_color.with_alpha(0.3));
         }
     }
-
-    // Outer accent ring
-    painter.circle_stroke(cx, cy, ring_radius + 1.0 * s, 1.0 * s, Color::from_rgba8(255, 255, 255, 20));
 }
 
 // ── Visualizer: Pulsing Concentric Rings ────────────────────────────────────
@@ -508,6 +491,82 @@ fn draw_concentric_rings(
     // Faint outer boundary that breathes
     let outer_r = max_radius + overall_energy * max_dim * 0.04;
     painter.circle_stroke(cx, cy, outer_r, 1.0 * s, Color::from_rgba8(255, 255, 255, 12));
+}
+
+// ── Visualizer: Classic Bars ────────────────────────────────────────────────
+
+/// Pastel palette: purple → green → pink → blue (4 even stops)
+const PASTEL_COLORS: [(u8, u8, u8); 4] = [
+    (170, 110, 250), // lavender purple
+    (120, 220, 190), // mint green / teal
+    (255, 140, 200), // soft pink
+    (120, 170, 255), // sky blue
+];
+
+fn pastel_color(t: f32, boost: f32) -> Color {
+    let t = (t % 1.0) * PASTEL_COLORS.len() as f32;
+    let idx = t as usize % PASTEL_COLORS.len();
+    let next = (idx + 1) % PASTEL_COLORS.len();
+    let frac = t - t.floor();
+    let (r0, g0, b0) = PASTEL_COLORS[idx];
+    let (r1, g1, b1) = PASTEL_COLORS[next];
+    let r = r0 as f32 + (r1 as f32 - r0 as f32) * frac;
+    let g = g0 as f32 + (g1 as f32 - g0 as f32) * frac;
+    let b = b0 as f32 + (b1 as f32 - b0 as f32) * frac;
+    let bright = 1.0 + boost * 0.3;
+    Color::from_rgba8(
+        (r * bright).min(255.0) as u8,
+        (g * bright).min(255.0) as u8,
+        (b * bright).min(255.0) as u8,
+        255,
+    )
+}
+
+fn draw_classic_bars(
+    painter: &mut lntrn_render::Painter,
+    bars: &[f32],
+    canvas: Rect,
+    s: f32,
+) {
+    let num_bars = bars.len();
+    let gap = 4.0 * s;
+    let total_gap = gap * (num_bars - 1) as f32;
+    let left_margin = 80.0 * s;
+    let right_margin = 32.0 * s;
+    let available_w = canvas.w - left_margin - right_margin;
+    let bar_w = ((available_w - total_gap) / num_bars as f32).max(4.0 * s);
+    let bottom_margin = 80.0 * s;
+    let base_y = canvas.y + canvas.h - bottom_margin;
+    let max_h = (canvas.h - bottom_margin) * 0.85;
+
+    for i in 0..num_bars {
+        // Tame the bass: compress low bars so they don't always max out
+        let raw = bars[i];
+        let t = i as f32 / num_bars as f32;
+        // Bass bars (low t) get compressed more
+        let bass_compress = 1.0 - (1.0 - t).powi(2) * 0.5; // 0.5 at leftmost, 1.0 at right
+        let magnitude = (raw * bass_compress).min(1.0);
+
+        let bar_h = (magnitude * max_h).max(3.0 * s);
+        let x = canvas.x + left_margin + i as f32 * (bar_w + gap);
+        let y = base_y - bar_h;
+
+        let color = pastel_color(t, magnitude);
+
+        let corner = (bar_w * 0.4).min(6.0 * s);
+        painter.rect_filled(Rect::new(x, y, bar_w, bar_h), corner, color);
+
+        if magnitude > 0.5 {
+            let glow_a = (magnitude - 0.5) * 0.3;
+            painter.rect_filled(
+                Rect::new(x - 2.0 * s, y - 2.0 * s, bar_w + 4.0 * s, bar_h + 4.0 * s),
+                corner + 2.0 * s, color.with_alpha(glow_a),
+            );
+        }
+
+        let cap_h = 3.0 * s;
+        painter.rect_filled(Rect::new(x, y, bar_w, cap_h), corner, color.lighten(0.3).with_alpha(0.9));
+    }
 }
 
 // ── Color helpers ───────────────────────────────────────────────────────────

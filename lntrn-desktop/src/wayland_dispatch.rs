@@ -159,6 +159,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
             wl_keyboard::Event::Modifiers { mods_depressed, .. } => {
                 state.ctrl = mods_depressed & 4 != 0;
                 state.shift = mods_depressed & 1 != 0;
+                state.alt = mods_depressed & 8 != 0;
             }
             _ => {}
         }

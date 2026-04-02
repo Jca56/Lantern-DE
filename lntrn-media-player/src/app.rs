@@ -8,15 +8,15 @@ pub const VIS_BARS: usize = 32;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum VisMode {
-    RadialBars,
     ConcentricRings,
+    ClassicBars,
 }
 
 impl VisMode {
     pub fn next(self) -> Self {
         match self {
-            VisMode::RadialBars => VisMode::ConcentricRings,
-            VisMode::ConcentricRings => VisMode::RadialBars,
+            VisMode::ConcentricRings => VisMode::ClassicBars,
+            VisMode::ClassicBars => VisMode::ConcentricRings,
         }
     }
 }

@@ -5,9 +5,16 @@ mod file_ops;
 mod fs;
 mod icons;
 mod layout;
+mod nav_bar;
+mod pty;
 mod render;
+mod render_files;
 mod sections;
+mod sidebar;
 mod settings;
+mod terminal;
+mod terminal_panel;
+mod terminal_render;
 mod views;
 mod wayland;
 mod wayland_actions;
@@ -31,6 +38,11 @@ pub const ZONE_NAV_SEARCH: u32 = 23;
 pub const ZONE_MENU_VIEW: u32 = 24;
 pub const VIEW_SLIDER_ID: u32 = 1;
 pub const VIEW_OPACITY_SLIDER_ID: u32 = 2;
+pub const TERM_FONT_SLIDER_ID: u32 = 3;
+pub const TERM_OPACITY_SLIDER_ID: u32 = 4;
+pub const ZONE_TERM_TAB_BASE: u32 = 9100;
+pub const ZONE_TERM_TAB_CLOSE_BASE: u32 = 9150;
+pub const ZONE_TERM_TAB_NEW: u32 = 9199;
 pub const ZONE_SIDEBAR_ITEM_BASE: u32 = 100;
 pub const ZONE_DRIVE_ITEM_BASE: u32 = 200;
 pub const ZONE_TAB_BASE: u32 = 500;
@@ -90,6 +102,7 @@ pub struct Gpu {
     pub ctx: GpuContext,
     pub painter: Painter,
     pub text: TextRenderer,
+    pub mono_text: TextRenderer,
     pub tex_pass: TexturePass,
 }
 
@@ -101,8 +114,60 @@ pub enum ClickAction {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DesktopPanel {
+    Home,
+    Terminal,
     Files,
-    Blank,
+}
+
+impl DesktopPanel {
+    pub fn index(self) -> i32 {
+        match self { Self::Home => 0, Self::Terminal => 1, Self::Files => 2 }
+    }
+}
+
+/// Slide animation state for panel transitions.
+pub struct PanelTransition {
+    pub from: DesktopPanel,
+    pub to: DesktopPanel,
+    /// 0.0 = fully showing `from`, 1.0 = fully showing `to`
+    pub t: f32,
+    pub active: bool,
+}
+
+impl PanelTransition {
+    pub fn new() -> Self {
+        Self { from: DesktopPanel::Home, to: DesktopPanel::Home, t: 0.0, active: false }
+    }
+
+    pub fn start(&mut self, from: DesktopPanel, to: DesktopPanel) {
+        if from == to { return; }
+        self.from = from;
+        self.to = to;
+        self.t = 0.0;
+        self.active = true;
+    }
+
+    /// Advance animation. Returns true if still animating.
+    pub fn tick(&mut self, dt: f32) -> bool {
+        if !self.active { return false; }
+        self.t += dt / 0.45; // 450ms duration
+        if self.t >= 0.98 {
+            // Snap to end — avoids a tiny offset on the last frame
+            self.t = 1.0;
+            self.active = false;
+        }
+        true
+    }
+
+    /// Linear progress — steady speed, no easing.
+    pub fn eased(&self) -> f32 {
+        self.t
+    }
+
+    /// Direction: positive = sliding left (going to higher index), negative = right.
+    pub fn direction(&self) -> f32 {
+        if self.to.index() > self.from.index() { 1.0 } else { -1.0 }
+    }
 }
 
 pub const ZONE_GLOBAL_TAB_BASE: u32 = 9000;

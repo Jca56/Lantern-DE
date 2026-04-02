@@ -121,6 +121,14 @@ impl TextRenderer {
         }
     }
 
+    /// Clear all queued text without rendering. Call at the start of each frame.
+    pub fn clear(&mut self) {
+        self.queued.clear();
+        self.layer_breaks.clear();
+        self.current_layer = 0;
+        self.clip_stack.clear();
+    }
+
     /// Push a clip rectangle `[x, y, w, h]` in physical pixels.
     /// All subsequent `queue()` calls will clip text to this rect.
     pub fn push_clip(&mut self, clip: [f32; 4]) {

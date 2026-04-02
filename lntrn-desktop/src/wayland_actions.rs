@@ -46,7 +46,7 @@ pub(crate) fn handle_click(
         }
         // Global tab bar clicks
         if zone_id >= crate::ZONE_GLOBAL_TAB_BASE && zone_id < crate::ZONE_GLOBAL_TAB_BASE + 10 {
-            let panels = [crate::DesktopPanel::Files, crate::DesktopPanel::Blank];
+            let panels = [crate::DesktopPanel::Home, crate::DesktopPanel::Terminal, crate::DesktopPanel::Files];
             let idx = (zone_id - crate::ZONE_GLOBAL_TAB_BASE) as usize;
             if idx < panels.len() {
                 return ClickAction::SwitchPanel(panels[idx]);

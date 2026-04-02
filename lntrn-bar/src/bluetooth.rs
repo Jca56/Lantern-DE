@@ -246,7 +246,7 @@ impl Bluetooth {
     pub fn draw_popup(
         &self, painter: &mut Painter, text: &mut TextRenderer,
         ix: &mut InteractionContext, palette: &FoxPalette,
-        bt_x: f32, bt_w: f32, bar_y: f32, scale: f32,
+        bt_x: f32, bt_w: f32, bar_y: f32, bar_h: f32, position_top: bool, scale: f32,
         screen_w: u32, screen_h: u32,
     ) {
         if !self.open { return; }
@@ -278,7 +278,11 @@ impl Bluetooth {
         let popup_x = (bt_x + bt_w / 2.0 - popup_w / 2.0)
             .max(gap)
             .min(screen_w as f32 - popup_w - gap);
-        let popup_y = (bar_y - popup_h - gap).max(0.0);
+        let popup_y = if position_top {
+            bar_y + bar_h + gap
+        } else {
+            (bar_y - popup_h - gap).max(0.0)
+        };
 
         // Shadow + background
         let shadow_expand = 3.0 * scale;
@@ -455,7 +459,7 @@ impl Bluetooth {
     }
 
     pub fn popup_rect(
-        &self, bt_x: f32, bt_w: f32, bar_y: f32, scale: f32, screen_w: u32,
+        &self, bt_x: f32, bt_w: f32, bar_y: f32, bar_h: f32, position_top: bool, scale: f32, screen_w: u32,
     ) -> Option<Rect> {
         if !self.open { return None; }
 
@@ -484,7 +488,11 @@ impl Bluetooth {
         let popup_x = (bt_x + bt_w / 2.0 - popup_w / 2.0)
             .max(gap)
             .min(screen_w as f32 - popup_w - gap);
-        let popup_y = (bar_y - popup_h - gap).max(0.0);
+        let popup_y = if position_top {
+            bar_y + bar_h + gap
+        } else {
+            (bar_y - popup_h - gap).max(0.0)
+        };
 
         Some(Rect::new(popup_x, popup_y, popup_w, popup_h))
     }

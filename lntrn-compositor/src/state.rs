@@ -190,6 +190,8 @@ pub struct Lantern {
     pub window_opacity: HashMap<WlSurface, f32>,
     pub window_zoom: HashMap<WlSurface, f64>,
     pub super_pressed: bool,
+    /// True if Super was pressed and no Super+combo was used (for tap detection)
+    pub super_clean_tap: bool,
     pub snapped_windows: Vec<SnappedWindow>,
     pub animations: AnimationState,
     pub gesture: GestureState,
@@ -316,6 +318,7 @@ impl Lantern {
             window_opacity: HashMap::new(),
             window_zoom: HashMap::new(),
             super_pressed: false,
+            super_clean_tap: false,
             snapped_windows: Vec::new(),
             animations: AnimationState::new(),
             gesture: GestureState::new(),
@@ -508,6 +511,17 @@ impl Lantern {
             self.request_winit_redraw();
         }
         self.debug_counters.maybe_report();
+    }
+
+    pub fn cycle_desktop_panel(&self) {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+        let path = std::path::PathBuf::from(home).join(".lantern/config/desktop-panel");
+        let current = std::fs::read_to_string(&path).unwrap_or_default();
+        let panels = ["home", "terminal", "files"];
+        let idx = panels.iter().position(|p| current.trim() == *p).unwrap_or(0);
+        let next = (idx + 1) % panels.len();
+        let _ = std::fs::write(&path, panels[next]);
+        tracing::info!("Desktop panel: {} → {}", panels[idx], panels[next]);
     }
 
     pub fn record_render(&mut self, frame_callbacks: usize) {
