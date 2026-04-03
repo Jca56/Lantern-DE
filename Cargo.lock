@@ -2513,6 +2513,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "lntrn-sysmon"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "image",
+ "libc",
+ "lntrn-render",
+ "lntrn-theme",
+ "lntrn-ui",
+ "raw-window-handle",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
+ "wgpu",
+]
+
+[[package]]
 name = "lntrn-system-settings"
 version = "0.1.0"
 dependencies = [
