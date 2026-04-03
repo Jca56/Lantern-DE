@@ -70,3 +70,39 @@ pub fn active_variant() -> ThemeVariant {
 
     ThemeVariant::default()
 }
+
+/// Read a float value from a `[section]` in `lantern.toml`.
+/// Returns `default` if the file/section/key is missing or unparseable.
+pub fn read_config_f32(section: &str, key: &str, default: f32) -> f32 {
+    let path = match lantern_config_path() {
+        Some(p) => p,
+        None => return default,
+    };
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return default,
+    };
+    let header = format!("[{}]", section);
+    let mut in_section = false;
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_section = trimmed == header;
+            continue;
+        }
+        if in_section {
+            if let Some((k, v)) = trimmed.split_once('=') {
+                if k.trim() == key {
+                    return v.trim().trim_matches('"').parse().unwrap_or(default);
+                }
+            }
+        }
+    }
+    default
+}
+
+/// Read the global background opacity from `[windows] background_opacity`.
+/// Apps use this to make their background transparent while keeping text opaque.
+pub fn background_opacity() -> f32 {
+    read_config_f32("windows", "background_opacity", 1.0)
+}

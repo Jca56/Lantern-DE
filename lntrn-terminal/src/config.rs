@@ -76,7 +76,7 @@ impl Default for WindowConfig {
         Self {
             width: 1060.0,
             height: 800.0,
-            opacity: 1.0,
+            opacity: lntrn_theme::background_opacity(),
         }
     }
 }

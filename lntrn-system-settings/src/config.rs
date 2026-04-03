@@ -9,6 +9,7 @@ use std::process::Command;
 pub struct LanternConfig {
     pub appearance: AppearanceConfig,
     pub window_manager: WmConfig,
+    pub windows: WindowsConfig,
     pub input: InputConfig,
     pub display: DisplayConfig,
     pub power: PowerConfig,
@@ -61,6 +62,30 @@ impl Default for WmConfig {
             gap: 8,
             corner_radius: 10,
             focus_follows_mouse: false,
+        }
+    }
+}
+
+// ── Windows (compositor visual effects) ──────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WindowsConfig {
+    pub window_opacity: f32,
+    pub blur_intensity: f32,
+    pub blur_tint: f32,
+    pub blur_darken: f32,
+    pub background_opacity: f32,
+}
+
+impl Default for WindowsConfig {
+    fn default() -> Self {
+        Self {
+            window_opacity: 1.0,
+            blur_intensity: 0.8,
+            blur_tint: 0.15,
+            blur_darken: 0.0,
+            background_opacity: 1.0,
         }
     }
 }
@@ -154,6 +179,7 @@ impl Default for LanternConfig {
         Self {
             appearance: AppearanceConfig::default(),
             window_manager: WmConfig::default(),
+            windows: WindowsConfig::default(),
             input: InputConfig::default(),
             display: DisplayConfig::default(),
             power: PowerConfig::default(),
@@ -236,6 +262,11 @@ impl LanternConfig {
         self.window_manager.titlebar_height = self.window_manager.titlebar_height.clamp(20, 60);
         self.window_manager.gap = self.window_manager.gap.clamp(0, 32);
         self.window_manager.corner_radius = self.window_manager.corner_radius.clamp(0, 20);
+        self.windows.window_opacity = self.windows.window_opacity.clamp(0.1, 1.0);
+        self.windows.blur_intensity = self.windows.blur_intensity.clamp(0.0, 1.0);
+        self.windows.blur_tint = self.windows.blur_tint.clamp(0.0, 1.0);
+        self.windows.blur_darken = self.windows.blur_darken.clamp(0.0, 1.0);
+        self.windows.background_opacity = self.windows.background_opacity.clamp(0.0, 1.0);
         self.input.mouse_speed = self.input.mouse_speed.clamp(-1.0, 1.0);
         self.input.keyboard_repeat_delay = self.input.keyboard_repeat_delay.clamp(100, 2000);
         self.input.keyboard_repeat_rate = self.input.keyboard_repeat_rate.clamp(1, 100);

@@ -238,13 +238,32 @@ fn compile_shaders(udev: &mut crate::udev::UdevData) {
 
     match renderer.compile_custom_texture_shader(
         crate::shaders::BLUR_UP_SHADER_SRC,
-        &[UniformName::new("halfpixel", UniformType::_2f)],
+        &[
+            UniformName::new("halfpixel", UniformType::_2f),
+            UniformName::new("tint_color", UniformType::_4f),
+            UniformName::new("darken", UniformType::_1f),
+        ],
     ) {
         Ok(shader) => {
             udev.blur_up_shader = Some(shader);
             info!("Blur upsample shader compiled");
         }
         Err(e) => warn!("Failed to compile blur up shader: {:?}", e),
+    }
+
+    match renderer.compile_custom_texture_shader(
+        crate::shaders::ROUNDED_BACKDROP_SHADER_SRC,
+        &[
+            UniformName::new("tex_size", UniformType::_2f),
+            UniformName::new("corner_radius", UniformType::_1f),
+            UniformName::new("src_rect", UniformType::_4f),
+        ],
+    ) {
+        Ok(shader) => {
+            udev.backdrop_shader = Some(shader);
+            info!("Rounded backdrop shader compiled");
+        }
+        Err(e) => warn!("Failed to compile backdrop shader: {:?}", e),
     }
 }
 

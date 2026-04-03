@@ -719,9 +719,10 @@ pub fn run() -> Result<()> {
         ix.begin_frame();
         painter.clear();
 
-        // Background
+        // Background (respects global background_opacity from lantern.toml)
         let win_r = if state.maximized { 0.0 } else { 10.0 * s };
-        painter.rect_filled(Rect::new(0.0, 0.0, wf, hf), win_r, fox.bg);
+        let win_bg_opacity = config.windows.background_opacity;
+        painter.rect_filled(Rect::new(0.0, 0.0, wf, hf), win_r, fox.bg.with_alpha(win_bg_opacity));
 
         // Title bar
         let tb_rect = Rect::new(0.0, 0.0, wf, TITLE_BAR_H * s);

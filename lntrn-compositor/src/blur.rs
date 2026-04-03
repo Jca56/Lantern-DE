@@ -109,6 +109,8 @@ pub fn render_and_blur(
     output_scale: f64,
     down_shader: &GlesTexProgram,
     up_shader: &GlesTexProgram,
+    tint_color: [f32; 4],
+    darken: f32,
 ) -> Result<(), GlesError> {
     if state.textures.is_empty() { return Ok(()); }
 
@@ -189,12 +191,12 @@ pub fn render_and_blur(
     }
 
     // Step 3: Dual Kawase upsample chain (back up to half-res → result texture)
+    // Tint/darken are applied on the final pass (i==0) only.
+    let no_tint = [0.0f32, 0.0, 0.0, 0.0];
     for i in (0..state.passes).rev() {
-        // Source is the smaller texture (or last downsample level)
         let src_tex = if i == state.passes - 1 {
             state.textures[state.passes].clone()
         } else {
-            // Previous upsample wrote into textures[i+1] (or result if i+1==0)
             if i + 1 == 0 { state.result.clone() } else { state.textures[i + 1].clone() }
         };
         let src_size = tex_size(&src_tex);
@@ -209,8 +211,11 @@ pub fn render_and_blur(
         );
         let dst_rect = Rectangle::<i32, Physical>::from_size(dst_size);
 
-        // Final upsample goes into result, intermediate into textures[i]
-        let target_tex = if i == 0 { &mut state.result } else { &mut state.textures[i] };
+        let is_final = i == 0;
+        let pass_tint = if is_final { tint_color } else { no_tint };
+        let pass_darken = if is_final { darken } else { 0.0 };
+
+        let target_tex = if is_final { &mut state.result } else { &mut state.textures[i] };
         let mut target = renderer.bind(target_tex)?;
         let mut frame = renderer.render(&mut target, dst_size, Transform::Normal)?;
         frame.clear(Color32F::from([0.0, 0.0, 0.0, 0.0]), &[dst_rect])?;
@@ -218,7 +223,11 @@ pub fn render_and_blur(
             &src_tex, src_rect, dst_rect,
             &[dst_rect], &[], Transform::Normal, 1.0,
             Some(up_shader),
-            &[Uniform::new("halfpixel", halfpixel)],
+            &[
+                Uniform::new("halfpixel", halfpixel),
+                Uniform::new("tint_color", pass_tint),
+                Uniform::new("darken", pass_darken),
+            ],
         )?;
         let _ = frame.finish();
     }
@@ -252,13 +261,11 @@ pub fn create_backdrop(
     let src_w = win_log_rect.size.w as f64 / output_logical.w as f64 * half_w;
     let src_h = win_log_rect.size.h as f64 / output_logical.h as f64 * half_h;
 
-    // Location in physical space (Smithay TextureRenderElement uses physical coords)
     let loc = Point::<f64, Physical>::from((
         win_log_rect.loc.x as f64 * output_scale,
         win_log_rect.loc.y as f64 * output_scale,
     ));
 
-    // Size in logical coords (Smithay scales by output_scale internally)
     let dst_size = Size::from((win_log_rect.size.w, win_log_rect.size.h));
 
     TextureRenderElement::from_static_texture(

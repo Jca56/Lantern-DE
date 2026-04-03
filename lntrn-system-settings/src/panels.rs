@@ -14,6 +14,11 @@ const ZONE_WM_TITLEBAR: u32 = 301;
 const ZONE_WM_GAP: u32 = 302;
 const ZONE_WM_CORNER: u32 = 303;
 const ZONE_WM_FOCUS: u32 = 304;
+const ZONE_WM_OPACITY: u32 = 305;
+const ZONE_WM_BLUR: u32 = 306;
+const ZONE_WM_TINT: u32 = 307;
+const ZONE_WM_DARKEN: u32 = 308;
+const ZONE_WM_BG_OPACITY: u32 = 309;
 
 const ZONE_PWR_LID_BTN: u32 = 400;
 const ZONE_PWR_LID_AC_BTN: u32 = 401;
@@ -239,6 +244,102 @@ pub fn draw_wm_panel(
         let track = toggle.track_rect();
         let zone = ix.add_zone(ZONE_WM_FOCUS, track);
         toggle.hovered(zone.is_hovered()).draw(painter, text, fox, sw, sh);
+        cy += row;
+    }
+
+    // ── Visual Effects section ─────────────────────────────────────
+    cy += 4.0 * s;
+    painter.rect_filled(
+        Rect::new(label_x, cy, w - PAD_LEFT * s - PAD_RIGHT * s, 1.0 * s),
+        0.0, fox.muted.with_alpha(0.2),
+    );
+    cy += 12.0 * s;
+    let section_sz = 18.0 * s;
+    text.queue("Visual Effects", section_sz, label_x, cy, fox.text_secondary, w, sw, sh);
+    cy += section_sz + 8.0 * s;
+
+    // Opacity slider (0.1 – 1.0)
+    {
+        let label_y = cy + (row - lsz) / 2.0;
+        text.queue("Window Opacity", lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
+        let frac = (config.windows.window_opacity - 0.1) / 0.9;
+        let rect = Rect::new(ctrl_x, cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
+        let zone = ix.add_zone(ZONE_WM_OPACITY, rect);
+        if let Some(f) = slider_value_from_cursor(ix, ZONE_WM_OPACITY, &rect) {
+            config.windows.window_opacity = ((0.1 + f * 0.9) * 100.0).round() / 100.0;
+        }
+        Slider::new(rect).value(frac).hovered(zone.is_hovered()).active(zone.is_active())
+            .draw(painter, fox);
+        let val = format!("{:.0}%", config.windows.window_opacity * 100.0);
+        text.queue(&val, vsz, value_x, label_y, fox.text_secondary, VALUE_W * s, sw, sh);
+        cy += row;
+    }
+
+    // Blur intensity slider (0.0 – 1.0)
+    {
+        let label_y = cy + (row - lsz) / 2.0;
+        text.queue("Blur Intensity", lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
+        let frac = config.windows.blur_intensity;
+        let rect = Rect::new(ctrl_x, cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
+        let zone = ix.add_zone(ZONE_WM_BLUR, rect);
+        if let Some(f) = slider_value_from_cursor(ix, ZONE_WM_BLUR, &rect) {
+            config.windows.blur_intensity = (f * 100.0).round() / 100.0;
+        }
+        Slider::new(rect).value(frac).hovered(zone.is_hovered()).active(zone.is_active())
+            .draw(painter, fox);
+        let val = format!("{:.0}%", config.windows.blur_intensity * 100.0);
+        text.queue(&val, vsz, value_x, label_y, fox.text_secondary, VALUE_W * s, sw, sh);
+        cy += row;
+    }
+
+    // Blur tint slider (0.0 – 1.0)
+    {
+        let label_y = cy + (row - lsz) / 2.0;
+        text.queue("Blur Tint", lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
+        let frac = config.windows.blur_tint;
+        let rect = Rect::new(ctrl_x, cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
+        let zone = ix.add_zone(ZONE_WM_TINT, rect);
+        if let Some(f) = slider_value_from_cursor(ix, ZONE_WM_TINT, &rect) {
+            config.windows.blur_tint = (f * 100.0).round() / 100.0;
+        }
+        Slider::new(rect).value(frac).hovered(zone.is_hovered()).active(zone.is_active())
+            .draw(painter, fox);
+        let val = format!("{:.0}%", config.windows.blur_tint * 100.0);
+        text.queue(&val, vsz, value_x, label_y, fox.text_secondary, VALUE_W * s, sw, sh);
+        cy += row;
+    }
+
+    // Blur darken slider (0.0 – 1.0)
+    {
+        let label_y = cy + (row - lsz) / 2.0;
+        text.queue("Blur Darken", lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
+        let frac = config.windows.blur_darken;
+        let rect = Rect::new(ctrl_x, cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
+        let zone = ix.add_zone(ZONE_WM_DARKEN, rect);
+        if let Some(f) = slider_value_from_cursor(ix, ZONE_WM_DARKEN, &rect) {
+            config.windows.blur_darken = (f * 100.0).round() / 100.0;
+        }
+        Slider::new(rect).value(frac).hovered(zone.is_hovered()).active(zone.is_active())
+            .draw(painter, fox);
+        let val = format!("{:.0}%", config.windows.blur_darken * 100.0);
+        text.queue(&val, vsz, value_x, label_y, fox.text_secondary, VALUE_W * s, sw, sh);
+        cy += row;
+    }
+
+    // Background opacity slider (0.0 – 1.0)
+    {
+        let label_y = cy + (row - lsz) / 2.0;
+        text.queue("Background Opacity", lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
+        let frac = config.windows.background_opacity;
+        let rect = Rect::new(ctrl_x, cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
+        let zone = ix.add_zone(ZONE_WM_BG_OPACITY, rect);
+        if let Some(f) = slider_value_from_cursor(ix, ZONE_WM_BG_OPACITY, &rect) {
+            config.windows.background_opacity = (f * 100.0).round() / 100.0;
+        }
+        Slider::new(rect).value(frac).hovered(zone.is_hovered()).active(zone.is_active())
+            .draw(painter, fox);
+        let val = format!("{:.0}%", config.windows.background_opacity * 100.0);
+        text.queue(&val, vsz, value_x, label_y, fox.text_secondary, VALUE_W * s, sw, sh);
     }
 }
 

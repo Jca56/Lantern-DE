@@ -26,7 +26,7 @@ pub struct Settings {
     pub desktop_y: i32,
 }
 
-fn default_bg_opacity() -> f32 { 1.0 }
+fn default_bg_opacity() -> f32 { lntrn_theme::background_opacity() }
 fn default_desktop_opacity() -> f32 { 0.0 }
 fn default_desktop_w() -> f32 { 800.0 }
 fn default_desktop_h() -> f32 { 600.0 }

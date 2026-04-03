@@ -42,6 +42,7 @@ render_elements! {
     Rescaled=RescaleRenderElement<WaylandSurfaceRenderElement<GlesRenderer>>,
     TextureShader=TextureShaderElement,
     Backdrop=TextureRenderElement<GlesTexture>,
+    RoundedBackdrop=crate::rounded_element::RoundedBackdropElement,
     RoundedSurface=crate::rounded_element::RoundedSurfaceElement,
 }
 
@@ -211,8 +212,8 @@ pub fn render_surface(
     let windows: Vec<_> = state.space.elements().cloned().collect();
     let mut window_elements: Vec<CustomRenderElements> = Vec::new();
     let mut fullscreen_elements: Vec<CustomRenderElements> = Vec::new();
-    // Blur backdrop tracking: (insert index, behind-content-end index, screen-logical rect)
-    let mut blur_backdrops: Vec<(usize, usize, Rectangle<i32, Logical>)> = Vec::new();
+    // Blur backdrop tracking: (insert index, screen-logical rect)
+    let mut blur_backdrops: Vec<(usize, Rectangle<i32, Logical>)> = Vec::new();
 
     // Canvas transform: compute viewport in canvas-space for culling
     let canvas_offset = state.canvas.offset;
@@ -320,9 +321,6 @@ pub fn render_surface(
         // Z-order (front-to-back): corner masks → SSD overlay → window → shadow
         // Elements pushed first = higher z (drawn on top).
 
-        // Record index before this window's elements for blur source slicing
-        let win_elem_start = window_elements.len();
-
         // SSD: render header overlay on top of the window
         if has_ssd && !is_fullscreen {
             if let Some(ssd_state) = state.ssd.get_mut(&surface) {
@@ -379,7 +377,7 @@ pub fn render_surface(
                     ((win_geo.size.h + ssd_bar) as f64 * canvas_zoom).round() as i32,
                 )),
             );
-            blur_backdrops.push((window_elements.len(), win_elem_start, log_rect));
+            blur_backdrops.push((window_elements.len(), log_rect));
         }
 
         // Window drop shadow (behind window, so pushed after = lower z)
@@ -686,6 +684,8 @@ pub fn render_surface(
             (&udev.blur_down_shader, &udev.blur_up_shader)
         {
             let blur_intensity = crate::read_config_f32("blur_intensity", 0.8);
+            let blur_tint = crate::read_config_f32("blur_tint", 0.15);
+            let blur_darken = crate::read_config_f32("blur_darken", 0.0);
             let passes = if blur_intensity < 0.3 { 2usize }
                 else if blur_intensity < 0.6 { 3 }
                 else if blur_intensity < 0.8 { 4 }
@@ -695,7 +695,7 @@ pub fn render_surface(
                 // Blur source: everything behind transparent windows.
                 // List is front-to-back, so take elements after the topmost
                 // transparent window's insert point (behind = higher indices).
-                let top_idx = blur_backdrops.iter().map(|(i, _, _)| *i).min().unwrap_or(0);
+                let top_idx = blur_backdrops.iter().map(|(i, _)| *i).min().unwrap_or(0);
                 let below_windows = &window_elements[top_idx..];
 
                 let mut wp_elements: Vec<CustomRenderElements> = Vec::new();
@@ -710,10 +710,19 @@ pub fn render_surface(
                     below_windows,
                 ];
 
+                // Compute premultiplied tint color for the shader
+                let tint_rgba = if blur_tint > 0.001 {
+                    let t = blur_tint.clamp(0.0, 1.0);
+                    [48.0 / 255.0 * t, 10.0 / 255.0 * t, 72.0 / 255.0 * t, t]
+                } else {
+                    [0.0f32, 0.0, 0.0, 0.0]
+                };
+
                 let blur_state = udev.blur_state.as_mut().unwrap();
                 match crate::blur::render_and_blur(
                     renderer, blur_state, &element_groups, BG_COLOR.into(),
                     output_phys, output_scale, down_shader, up_shader,
+                    tint_rgba, blur_darken,
                 ) {
                     Ok(()) => {
                         let ctx_id = {
@@ -723,15 +732,32 @@ pub fn render_surface(
                         let output_logical = Size::<i32, Logical>::from((
                             output_geo.size.w, output_geo.size.h,
                         ));
-                        for (idx, _, log_rect) in blur_backdrops.iter().rev() {
+                        let corner_r = crate::ssd::CORNER_RADIUS * output_scale as f32;
+                        let blur_tex_w = (output_phys.w / 2).max(1) as f32;
+                        let blur_tex_h = (output_phys.h / 2).max(1) as f32;
+
+                        for (idx, log_rect) in blur_backdrops.iter().rev() {
                             let backdrop = crate::blur::create_backdrop(
                                 blur_state, ctx_id.clone(), *log_rect,
                                 output_logical, output_scale,
                             );
-                            window_elements.insert(
-                                *idx,
-                                CustomRenderElements::Backdrop(backdrop),
-                            );
+                            // Wrap in rounded backdrop with SDF corner masking
+                            if let Some(ref shader) = udev.backdrop_shader {
+                                let phys_w = (log_rect.size.w as f64 * output_scale).round() as f32;
+                                let phys_h = (log_rect.size.h as f64 * output_scale).round() as f32;
+                                let rounded = crate::rounded_element::RoundedBackdropElement::new(
+                                    backdrop, shader.clone(),
+                                    [phys_w, phys_h], corner_r,
+                                    [blur_tex_w, blur_tex_h],
+                                );
+                                window_elements.insert(
+                                    *idx, CustomRenderElements::RoundedBackdrop(rounded),
+                                );
+                            } else {
+                                window_elements.insert(
+                                    *idx, CustomRenderElements::Backdrop(backdrop),
+                                );
+                            }
                         }
                     }
                     Err(e) => {

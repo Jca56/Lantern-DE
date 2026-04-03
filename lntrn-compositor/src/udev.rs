@@ -95,6 +95,7 @@ pub struct UdevData {
     pub rounded_tex_shader: Option<GlesTexProgram>,
     pub blur_down_shader: Option<GlesTexProgram>,
     pub blur_up_shader: Option<GlesTexProgram>,
+    pub backdrop_shader: Option<GlesTexProgram>,
     pub blur_state: Option<crate::blur::BlurState>,
     /// One-shot timer token for demand-driven rendering.
     /// When a render is scheduled, we insert a timer to flush it;
@@ -143,6 +144,7 @@ pub fn init_udev(
         rounded_tex_shader: None,
         blur_down_shader: None,
         blur_up_shader: None,
+        backdrop_shader: None,
         blur_state: None,
         render_timer: None,
     };

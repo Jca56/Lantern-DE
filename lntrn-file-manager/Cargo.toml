@@ -13,6 +13,7 @@ path = "src/main.rs"
 anyhow = "1"
 libc = "0.2"
 lntrn-render = { path = "../lntrn-render" }
+lntrn-theme = { path = "../lntrn-theme" }
 lntrn-ui = { path = "../lntrn-ui" }
 raw-window-handle = "0.6"
 wayland-backend = { version = "0.3", features = ["client_system"] }

@@ -35,12 +35,13 @@ const CORNER_RADIUS: f32 = 12.0;
 
 // ── Night Sky palette (inspired by indigo sky + pink clouds wallpaper) ──────
 
+#[allow(dead_code)]
 mod sky {
     use lntrn_render::Color;
 
-    // Backgrounds — deep purple-indigo (opaque — compositor handles transparency)
-    pub const BG_DEEP: Color       = Color::rgb(0.008, 0.005, 0.028);
-    pub const BG_SURFACE: Color    = Color::rgb(0.014, 0.010, 0.042);
+    // Backgrounds — deep purple-indigo
+    pub const BG_DEEP: Color       = Color::rgba(0.01, 0.00, 0.03, 0.90);
+    pub const BG_SURFACE: Color    = Color::rgba(0.021, 0.005, 0.059, 0.90);
 
     // Text
     pub const TEXT_PRIMARY: Color   = Color::rgb(0.80, 0.76, 0.90);
@@ -48,7 +49,7 @@ mod sky {
 
     // Subtle glows
     pub const GLOW_PINK: Color     = Color::rgba(0.40, 0.12, 0.28, 0.04);
-    pub const GLOW_PURPLE: Color   = Color::rgba(0.35, 0.18, 0.55, 0.04);
+    pub const GLOW_CYAN: Color     = Color::rgba(0.12, 0.30, 0.45, 0.04);
 
     // Borders — very subtle
     pub const BORDER_SUBTLE: Color = Color::rgba(0.30, 0.20, 0.50, 0.15);
@@ -708,7 +709,7 @@ pub fn run() -> Result<()> {
         let sh = gpu.height();
         let r = if state.maximized { 0.0 } else { CORNER_RADIUS * s };
 
-        // ── Background: deep indigo, nearly black ───────────────────────
+        // ── Background ───────────────────────────────────────────────────
         painter.rect_gradient_linear(
             Rect::new(0.0, 0.0, wf, hf), r,
             std::f32::consts::FRAC_PI_2,
@@ -716,17 +717,17 @@ pub fn run() -> Result<()> {
             sky::BG_SURFACE,
         );
 
-        // Very subtle radial glow — pink, bottom-left
+        // Radial glow — pink, bottom-left
         painter.rect_gradient_radial(
-            Rect::new(-wf * 0.3, hf * 0.4, wf * 0.9, hf * 0.9), 0.0,
+            Rect::new(-wf * 0.35, hf * 0.5, wf * 0.8, hf * 0.8), 0.0,
             sky::GLOW_PINK,
             Color::TRANSPARENT,
         );
 
-        // Very subtle radial glow — purple, top-right
+        // Radial glow — cyan, top-right
         painter.rect_gradient_radial(
-            Rect::new(wf * 0.5, -hf * 0.3, wf * 0.7, hf * 0.6), 0.0,
-            sky::GLOW_PURPLE,
+            Rect::new(wf * 0.5, -hf * 0.25, wf * 0.8, hf * 0.7), 0.0,
+            sky::GLOW_CYAN,
             Color::TRANSPARENT,
         );
 
@@ -734,7 +735,7 @@ pub fn run() -> Result<()> {
         // No separate title bar bg — it's the same gradient as the window
 
         // Title text — centered, subtle
-        let title_sz = 18.0 * s;
+        let title_sz = 20.0 * s;
         let title_str = "Lantern";
         let title_w = title_sz * 0.55 * title_str.len() as f32;
         text.queue(

@@ -2318,6 +2318,7 @@ dependencies = [
  "image",
  "libc",
  "lntrn-render",
+ "lntrn-theme",
  "lntrn-ui",
  "raw-window-handle",
  "resvg 0.47.0",

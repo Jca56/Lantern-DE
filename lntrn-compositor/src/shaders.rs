@@ -296,6 +296,8 @@ void main() {
 
 /// Upsample pass: 8-tap tent filter at double resolution.
 /// `halfpixel` uniform = vec2(0.5 / dst_width, 0.5 / dst_height).
+/// `tint_color` uniform = premultiplied RGBA tint (vec4, applied on final pass).
+/// `darken` uniform = 0.0–1.0 darkening factor (float, applied on final pass).
 pub const BLUR_UP_SHADER_SRC: &str = r#"
 //_DEFINES_
 
@@ -313,6 +315,8 @@ uniform sampler2D tex;
 
 uniform float alpha;
 uniform vec2 halfpixel;
+uniform vec4 tint_color;
+uniform float darken;
 varying vec2 v_coords;
 
 #if defined(DEBUG_FLAGS)
@@ -329,7 +333,72 @@ void main() {
     sum += texture2D(tex, uv + vec2(halfpixel.x, -halfpixel.y)) * 2.0;
     sum += texture2D(tex, uv + vec2(0.0, -halfpixel.y * 2.0));
     sum += texture2D(tex, uv + vec2(-halfpixel.x, -halfpixel.y)) * 2.0;
-    gl_FragColor = sum / 12.0;
+    vec4 color = sum / 12.0;
+
+    // Darken (reduce brightness, preserve alpha)
+    color.rgb *= (1.0 - darken);
+    // Tint (premultiplied over blend)
+    color = color * (1.0 - tint_color.a) + tint_color;
+
+    gl_FragColor = color;
+}
+"#;
+
+// ── Rounded backdrop (blur texture with subregion src rect) ─────
+/// Like ROUNDED_TEX_SHADER_SRC but normalises v_coords from texture-space
+/// to element-local 0-1 range using `src_rect` (min_u, min_v, max_u, max_v).
+pub const ROUNDED_BACKDROP_SHADER_SRC: &str = r#"
+//_DEFINES_
+
+#if defined(EXTERNAL)
+#extension GL_OES_EGL_image_external : require
+#endif
+
+precision mediump float;
+
+#if defined(EXTERNAL)
+uniform samplerExternalOES tex;
+#else
+uniform sampler2D tex;
+#endif
+
+uniform float alpha;
+uniform vec2 tex_size;
+uniform float corner_radius;
+uniform vec4 src_rect;
+varying vec2 v_coords;
+
+#if defined(DEBUG_FLAGS)
+uniform float tint;
+#endif
+
+void main() {
+    vec4 color = texture2D(tex, v_coords);
+
+#if defined(NO_ALPHA)
+    color = vec4(color.rgb, 1.0) * alpha;
+#else
+    color = color * alpha;
+#endif
+
+    // Map texture coords to element-local pixel coords
+    vec2 uv = (v_coords - src_rect.xy) / (src_rect.zw - src_rect.xy);
+    vec2 pos = uv * tex_size;
+
+    // SDF rounded-rect mask
+    vec2 half_size = tex_size * 0.5;
+    vec2 q = abs(pos - half_size) - half_size + vec2(corner_radius);
+    float dist = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - corner_radius;
+    float mask = 1.0 - smoothstep(-0.5, 0.5, dist);
+
+    color *= mask;
+
+#if defined(DEBUG_FLAGS)
+    if (tint == 1.0)
+        color = vec4(0.0, 0.2, 0.0, 0.2) + color * 0.8;
+#endif
+
+    gl_FragColor = color;
 }
 "#;
 
