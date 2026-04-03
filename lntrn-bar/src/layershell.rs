@@ -409,6 +409,7 @@ fn set_bar_input_region(
     bar_height: u32,
     auto_hide: bool,
     hide_t: f32,
+    anim_t: f32,
     position_top: bool,
 ) {
     region.subtract(0, 0, 100000, 100000);
@@ -425,7 +426,12 @@ fn set_bar_input_region(
             let surface_h = (MENU_OVERFLOW + bar_height + SHADOW_PAD) as i32;
             region.add(0, surface_h - 2, 100000, 2);
         } else {
-            region.add(0, MENU_OVERFLOW as i32 - pill_space, 100000, bar_height as i32 + pill_space);
+            // Bar renders at MENU_OVERFLOW + SHADOW_PAD - float_gap from top.
+            // When docked (anim_t=1): bar_y = MENU_OVERFLOW + SHADOW_PAD
+            // When floating (anim_t=0): bar_y = MENU_OVERFLOW + SHADOW_PAD - FLOAT_GAP
+            let float_gap = (FLOAT_GAP * (1.0 - anim_t)).round() as i32;
+            let bar_y = MENU_OVERFLOW as i32 + SHADOW_PAD as i32 - float_gap;
+            region.add(0, bar_y - pill_space, 100000, bar_height as i32 + pill_space);
         }
     }
     surface.set_input_region(Some(region));
@@ -492,7 +498,7 @@ pub fn run() -> Result<()> {
         "lntrn-bar".to_string(), &qh, (),
     );
     apply_layer_config(&layer_surface, 0, bar_height, anim_t, auto_hide, position_top);
-    set_bar_input_region(&surface, &input_region, bar_height, auto_hide, 0.0, position_top);
+    set_bar_input_region(&surface, &input_region, bar_height, auto_hide, 0.0, anim_t, position_top);
     surface.commit();
 
     state.surface = Some(surface.clone());
@@ -516,7 +522,7 @@ pub fn run() -> Result<()> {
     });
 
     apply_layer_config(&layer_surface, state.width, bar_height, anim_t, auto_hide, position_top);
-    set_bar_input_region(&surface, &input_region, bar_height, auto_hide, 0.0, position_top);
+    set_bar_input_region(&surface, &input_region, bar_height, auto_hide, 0.0, anim_t, position_top);
     surface.commit();
 
     // wgpu setup
@@ -638,10 +644,15 @@ pub fn run() -> Result<()> {
         let target = if should_dock { 1.0f32 } else { 0.0 };
         let animating = (anim_t - target).abs() > 0.001;
         let anim_step = dt / ANIM_DURATION;
+        let prev_anim_t = anim_t;
         if anim_t < target {
             anim_t = (anim_t + anim_step).min(1.0);
         } else if anim_t > target {
             anim_t = (anim_t - anim_step).max(0.0);
+        }
+        // Update input region when float/dock animation changes bar position
+        if !position_top && (prev_anim_t - anim_t).abs() > 0.001 {
+            set_bar_input_region(&surface, &input_region, bar_height, auto_hide, hide_t, anim_t, position_top);
         }
 
         // ── Auto-hide animation ──────────────────────────────────────
@@ -677,7 +688,7 @@ pub fn run() -> Result<()> {
         if auto_hide && !menu_was_open
             && ((prev_hide_t <= 0.5 && hide_t > 0.5) || (prev_hide_t > 0.5 && hide_t <= 0.5))
         {
-            set_bar_input_region(&surface, &input_region, bar_height, auto_hide, hide_t, position_top);
+            set_bar_input_region(&surface, &input_region, bar_height, auto_hide, hide_t, anim_t, position_top);
             surface.commit();
         }
 
@@ -1018,7 +1029,7 @@ pub fn run() -> Result<()> {
         if any_menu_open && !menu_was_open {
             surface.set_input_region(None);
         } else if !any_menu_open && menu_was_open {
-            set_bar_input_region(&surface, &input_region, bar_height, auto_hide, hide_t, position_top);
+            set_bar_input_region(&surface, &input_region, bar_height, auto_hide, hide_t, anim_t, position_top);
             surface.commit();
         }
         // Keyboard focus: grab when app menu wants typing, release otherwise

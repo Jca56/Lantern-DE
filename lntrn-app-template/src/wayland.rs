@@ -12,26 +12,23 @@ use raw_window_handle::{
     RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle, WindowHandle,
 };
 use wayland_client::{
-    protocol::{
-        wl_callback, wl_compositor, wl_keyboard, wl_output, wl_pointer, wl_registry, wl_seat,
-        wl_surface,
-    },
-    Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum,
+    protocol::{wl_compositor, wl_pointer, wl_seat, wl_surface},
+    Connection, EventQueue, Proxy,
 };
 use wayland_protocols::wp::cursor_shape::v1::client::{
     wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1,
 };
-use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
+use wayland_protocols::wp::viewporter::client::wp_viewporter;
 use wayland_protocols::xdg::decoration::zv1::client::{
     zxdg_decoration_manager_v1, zxdg_toplevel_decoration_v1,
 };
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
-const BTN_LEFT: u32 = 0x110;
-const BTN_RIGHT: u32 = 0x111;
+pub const BTN_LEFT: u32 = 0x110;
+pub const BTN_RIGHT: u32 = 0x111;
 const KEY_ESC: u32 = 1;
 const TITLE_BAR_H: f32 = 40.0;
-const CORNER_RADIUS: f32 = 12.0;
+const CORNER_RADIUS: f32 = 16.0;
 
 // ── Night Sky palette (inspired by indigo sky + pink clouds wallpaper) ──────
 
@@ -54,11 +51,11 @@ mod sky {
     // Borders — very subtle
     pub const BORDER_SUBTLE: Color = Color::rgba(0.30, 0.20, 0.50, 0.15);
 
-    // Window control buttons
-    pub const CLOSE_BG: Color      = Color::rgb(0.65, 0.18, 0.25);
+    // Window control buttons (close uses Blood red)
+    pub const CLOSE_BG: Color      = Color::rgb(0.45, 0.02, 0.02); // Blood red (sRGB ~140,15,15)
     pub const CONTROL_HOVER: Color = Color::rgba(0.50, 0.38, 0.70, 0.25);
     pub const CONTROL_ICON: Color  = Color::rgb(0.55, 0.50, 0.68);
-    pub const CLOSE_HOVER: Color   = Color::rgba(0.65, 0.18, 0.25, 0.35);
+    pub const CLOSE_HOVER: Color   = Color::rgba(0.45, 0.02, 0.02, 0.35);
 
 }
 
@@ -84,46 +81,39 @@ impl HasWindowHandle for WaylandHandle {
 // ── Wayland state ───────────────────────────────────────────────────────────
 
 pub(crate) struct State {
-    running: bool,
-    configured: bool,
+    pub(crate) running: bool,
+    pub(crate) configured: bool,
     pub(crate) frame_done: bool,
-    width: u32,
-    height: u32,
-    scale: i32,
-    output_phys_width: u32,
-    maximized: bool,
-    // Wayland objects
-    compositor: Option<wl_compositor::WlCompositor>,
-    wm_base: Option<xdg_wm_base::XdgWmBase>,
-    viewporter: Option<wp_viewporter::WpViewporter>,
-    surface: Option<wl_surface::WlSurface>,
-    xdg_surface: Option<xdg_surface::XdgSurface>,
-    toplevel: Option<xdg_toplevel::XdgToplevel>,
-    seat: Option<wl_seat::WlSeat>,
-    // Input
-    cursor_x: f64,
-    cursor_y: f64,
-    pointer_in_surface: bool,
-    left_pressed: bool,
-    left_released: bool,
-    right_pressed: bool,
-    scroll_delta: f32,
-    pointer_serial: u32,
-    enter_serial: u32,
-    // Cursor shape
-    cursor_shape_mgr: Option<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1>,
-    cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
-    current_cursor_shape: Option<wp_cursor_shape_device_v1::Shape>,
-    pointer: Option<wl_pointer::WlPointer>,
-    // Keyboard
-    key_pressed: Option<u32>,
-    // Decoration
-    decoration_mgr: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
-    // Popup
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) scale: i32,
+    pub(crate) output_phys_width: u32,
+    pub(crate) maximized: bool,
+    pub(crate) compositor: Option<wl_compositor::WlCompositor>,
+    pub(crate) wm_base: Option<xdg_wm_base::XdgWmBase>,
+    pub(crate) viewporter: Option<wp_viewporter::WpViewporter>,
+    pub(crate) surface: Option<wl_surface::WlSurface>,
+    pub(crate) xdg_surface: Option<xdg_surface::XdgSurface>,
+    pub(crate) toplevel: Option<xdg_toplevel::XdgToplevel>,
+    pub(crate) seat: Option<wl_seat::WlSeat>,
+    pub(crate) cursor_x: f64,
+    pub(crate) cursor_y: f64,
+    pub(crate) pointer_in_surface: bool,
+    pub(crate) left_pressed: bool,
+    pub(crate) left_released: bool,
+    pub(crate) right_pressed: bool,
+    pub(crate) scroll_delta: f32,
+    pub(crate) pointer_serial: u32,
+    pub(crate) enter_serial: u32,
+    pub(crate) cursor_shape_mgr: Option<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1>,
+    pub(crate) cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
+    pub(crate) current_cursor_shape: Option<wp_cursor_shape_device_v1::Shape>,
+    pub(crate) pointer: Option<wl_pointer::WlPointer>,
+    pub(crate) key_pressed: Option<u32>,
+    pub(crate) decoration_mgr: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
     pub(crate) popup_backend: Option<WaylandPopupBackend<State>>,
     pub(crate) popup_closed: bool,
-    /// Which wl_surface the pointer is currently in (for routing to popups)
-    pointer_surface: Option<wl_surface::WlSurface>,
+    pub(crate) pointer_surface: Option<wl_surface::WlSurface>,
 }
 
 impl State {
@@ -156,200 +146,6 @@ impl State {
 
     fn phys_width(&self) -> u32 { (self.width as f64 * self.fractional_scale()).round() as u32 }
     fn phys_height(&self) -> u32 { (self.height as f64 * self.fractional_scale()).round() as u32 }
-}
-
-// ── Dispatch impls ──────────────────────────────────────────────────────────
-
-impl Dispatch<wl_registry::WlRegistry, ()> for State {
-    fn event(
-        state: &mut Self, registry: &wl_registry::WlRegistry,
-        event: wl_registry::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>,
-    ) {
-        if let wl_registry::Event::Global { name, interface, version } = event {
-            match interface.as_str() {
-                "wl_compositor" => { state.compositor = Some(registry.bind(name, version.min(6), qh, ())); }
-                "xdg_wm_base" => { state.wm_base = Some(registry.bind(name, version.min(5), qh, ())); }
-                "wp_viewporter" => { state.viewporter = Some(registry.bind(name, version.min(1), qh, ())); }
-                "wl_output" => { let _: wl_output::WlOutput = registry.bind(name, version.min(4), qh, ()); }
-                "wl_seat" => { state.seat = Some(registry.bind(name, version.min(9), qh, ())); }
-                "wp_cursor_shape_manager_v1" => {
-                    state.cursor_shape_mgr = Some(registry.bind(name, version.min(1), qh, ()));
-                }
-                "zxdg_decoration_manager_v1" => {
-                    state.decoration_mgr = Some(registry.bind(name, version.min(1), qh, ()));
-                }
-                _ => {}
-            }
-        }
-    }
-}
-
-impl Dispatch<wl_compositor::WlCompositor, ()> for State {
-    fn event(_: &mut Self, _: &wl_compositor::WlCompositor, _: wl_compositor::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
-}
-impl Dispatch<wl_surface::WlSurface, ()> for State {
-    fn event(_: &mut Self, _: &wl_surface::WlSurface, _: wl_surface::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
-}
-impl Dispatch<wp_viewporter::WpViewporter, ()> for State {
-    fn event(_: &mut Self, _: &wp_viewporter::WpViewporter, _: wp_viewporter::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
-}
-impl Dispatch<wp_viewport::WpViewport, ()> for State {
-    fn event(_: &mut Self, _: &wp_viewport::WpViewport, _: wp_viewport::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
-}
-
-impl Dispatch<xdg_wm_base::XdgWmBase, ()> for State {
-    fn event(
-        _: &mut Self, wm_base: &xdg_wm_base::XdgWmBase,
-        event: xdg_wm_base::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
-    ) {
-        if let xdg_wm_base::Event::Ping { serial } = event { wm_base.pong(serial); }
-    }
-}
-
-impl Dispatch<xdg_surface::XdgSurface, ()> for State {
-    fn event(
-        state: &mut Self, xdg_surface: &xdg_surface::XdgSurface,
-        event: xdg_surface::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
-    ) {
-        if let xdg_surface::Event::Configure { serial } = event {
-            xdg_surface.ack_configure(serial);
-            state.configured = true;
-            state.frame_done = true;
-        }
-    }
-}
-
-impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
-    fn event(
-        state: &mut Self, _: &xdg_toplevel::XdgToplevel,
-        event: xdg_toplevel::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
-    ) {
-        match event {
-            xdg_toplevel::Event::Configure { width, height, states } => {
-                if width > 0 { state.width = width as u32; }
-                if height > 0 { state.height = height as u32; }
-                state.maximized = states.chunks_exact(4).any(|chunk| {
-                    let val = u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-                    val == xdg_toplevel::State::Maximized as u32
-                });
-            }
-            xdg_toplevel::Event::Close => { state.running = false; }
-            _ => {}
-        }
-    }
-}
-
-impl Dispatch<wl_output::WlOutput, ()> for State {
-    fn event(
-        state: &mut Self, _: &wl_output::WlOutput,
-        event: wl_output::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
-    ) {
-        match event {
-            wl_output::Event::Scale { factor } => { state.scale = factor; }
-            wl_output::Event::Mode { width, .. } => { state.output_phys_width = width as u32; }
-            _ => {}
-        }
-    }
-}
-
-impl Dispatch<wl_callback::WlCallback, ()> for State {
-    fn event(state: &mut Self, _: &wl_callback::WlCallback, _: wl_callback::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
-        state.frame_done = true;
-    }
-}
-
-impl Dispatch<wl_seat::WlSeat, ()> for State {
-    fn event(
-        state: &mut Self, seat: &wl_seat::WlSeat,
-        event: wl_seat::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>,
-    ) {
-        if let wl_seat::Event::Capabilities { capabilities: WEnum::Value(cap) } = event {
-            if cap.contains(wl_seat::Capability::Pointer) {
-                let ptr = seat.get_pointer(qh, ());
-                // Create cursor shape device if manager is available
-                if let Some(mgr) = &state.cursor_shape_mgr {
-                    state.cursor_shape_device = Some(mgr.get_pointer(&ptr, qh, ()));
-                }
-                state.pointer = Some(ptr);
-            }
-            if cap.contains(wl_seat::Capability::Keyboard) { seat.get_keyboard(qh, ()); }
-        }
-    }
-}
-
-impl Dispatch<wl_pointer::WlPointer, ()> for State {
-    fn event(
-        state: &mut Self, _: &wl_pointer::WlPointer,
-        event: wl_pointer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
-    ) {
-        match event {
-            wl_pointer::Event::Enter { serial, surface, surface_x, surface_y, .. } => {
-                state.pointer_in_surface = true;
-                state.cursor_x = surface_x;
-                state.cursor_y = surface_y;
-                state.enter_serial = serial;
-                state.current_cursor_shape = None;
-                state.pointer_surface = Some(surface);
-                state.frame_done = true;
-            }
-            wl_pointer::Event::Leave { .. } => {
-                state.pointer_in_surface = false;
-                state.pointer_surface = None;
-                state.frame_done = true;
-            }
-            wl_pointer::Event::Motion { surface_x, surface_y, .. } => {
-                state.cursor_x = surface_x;
-                state.cursor_y = surface_y;
-                state.frame_done = true;
-            }
-            wl_pointer::Event::Button { button, state: btn_state, serial, .. } => {
-                state.pointer_serial = serial;
-                let pressed = btn_state == WEnum::Value(wl_pointer::ButtonState::Pressed);
-                let released = btn_state == WEnum::Value(wl_pointer::ButtonState::Released);
-                if button == BTN_LEFT && pressed { state.left_pressed = true; }
-                if button == BTN_LEFT && released { state.left_released = true; }
-                if button == BTN_RIGHT && pressed { state.right_pressed = true; }
-                state.frame_done = true;
-            }
-            wl_pointer::Event::Axis { axis, value, .. } => {
-                if axis == WEnum::Value(wl_pointer::Axis::VerticalScroll) {
-                    state.scroll_delta += value as f32;
-                }
-                state.frame_done = true;
-            }
-            _ => {}
-        }
-    }
-}
-
-impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
-    fn event(
-        state: &mut Self, _: &wl_keyboard::WlKeyboard,
-        event: wl_keyboard::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
-    ) {
-        match event {
-            wl_keyboard::Event::Key { key, state: key_state, .. } => {
-                if key_state == WEnum::Value(wl_keyboard::KeyState::Pressed) {
-                    state.key_pressed = Some(key);
-                }
-                state.frame_done = true;
-            }
-            _ => {}
-        }
-    }
-}
-
-impl Dispatch<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1, ()> for State {
-    fn event(_: &mut Self, _: &wp_cursor_shape_manager_v1::WpCursorShapeManagerV1, _: wp_cursor_shape_manager_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
-}
-impl Dispatch<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1, ()> for State {
-    fn event(_: &mut Self, _: &wp_cursor_shape_device_v1::WpCursorShapeDeviceV1, _: wp_cursor_shape_device_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
-}
-impl Dispatch<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1, ()> for State {
-    fn event(_: &mut Self, _: &zxdg_decoration_manager_v1::ZxdgDecorationManagerV1, _: zxdg_decoration_manager_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
-}
-impl Dispatch<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1, ()> for State {
-    fn event(_: &mut Self, _: &zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1, _: zxdg_toplevel_decoration_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
 }
 
 // ── Edge resize helper ──────────────────────────────────────────────────────
@@ -461,9 +257,26 @@ pub fn run() -> Result<()> {
     let mut ix = InteractionContext::new();
     let fox = FoxPalette::dark();
     let mut menu_bar = MenuBar::new(&fox);
-    let mut right_click_menu = lntrn_ui::gpu::ContextMenu::new(
-        lntrn_ui::gpu::ContextMenuStyle::from_palette(&fox),
-    );
+    let ctx_style = lntrn_ui::gpu::ContextMenuStyle {
+        palette: fox.clone(),
+        bg: Color::from_rgba8(18, 12, 40, 240),
+        bg_hover: Color::from_rgba8(50, 120, 200, 50),
+        text: Color::from_rgb8(210, 200, 230),
+        text_muted: Color::from_rgb8(120, 110, 150),
+        text_disabled: Color::from_rgb8(80, 70, 100),
+        separator: Color::from_rgba8(100, 70, 160, 40),
+        border: Color::from_rgba8(80, 55, 140, 50),
+        accent: Color::from_rgb8(65, 165, 230),
+        corner_radius: 12.0,
+        padding: 5.0,
+        item_height: 38.0,
+        font_size: 22.0,
+        min_width: 200.0,
+        border_width: 1.0,
+        scale: 1.0,
+        no_shadow: false,
+    };
+    let mut right_click_menu = lntrn_ui::gpu::ContextMenu::new(ctx_style);
 
     // Initialize popup backend (clone xdg_surface to avoid borrow conflict)
     {
@@ -502,6 +315,8 @@ pub fn run() -> Result<()> {
             MenuItem::action(30, "About"),
         ]),
     ];
+
+    let mut gallery = crate::gallery::GalleryState::new();
 
     while state.running {
         if let Err(e) = event_queue.blocking_dispatch(&mut state) {
@@ -588,23 +403,23 @@ pub fn run() -> Result<()> {
                 }
             } else if cy < title_h {
                 // CSD title bar — check window control buttons (right side)
-                let btn_r = 14.0 * s;
+                let hit_r = 20.0 * s; // larger hitbox than visual
                 let btn_y = title_h * 0.5;
-                let close_cx = wf - 24.0 * s;
-                let max_cx = wf - 58.0 * s;
-                let min_cx = wf - 92.0 * s;
+                let close_cx = wf - 28.0 * s;
+                let max_cx = wf - 66.0 * s;
+                let min_cx = wf - 104.0 * s;
                 let dist_close = ((cx - close_cx).powi(2) + (cy - btn_y).powi(2)).sqrt();
                 let dist_max = ((cx - max_cx).powi(2) + (cy - btn_y).powi(2)).sqrt();
                 let dist_min = ((cx - min_cx).powi(2) + (cy - btn_y).powi(2)).sqrt();
-                if dist_close < btn_r {
+                if dist_close < hit_r {
                     state.running = false;
-                } else if dist_max < btn_r {
+                } else if dist_max < hit_r {
                     if state.maximized {
                         toplevel.unset_maximized();
                     } else {
                         toplevel.set_maximized();
                     }
-                } else if dist_min < btn_r {
+                } else if dist_min < hit_r {
                     toplevel.set_minimized();
                 } else {
                     // Drag to move
@@ -614,15 +429,21 @@ pub fn run() -> Result<()> {
                 }
             } else if menu_bar.on_click(&mut ix, &menus, s) {
                 // Menu bar consumed the click
+            } else if crate::gallery::handle_click(cx, cy, s, title_h, wf, hf, &mut gallery) {
+                // Gallery consumed the click
             } else {
                 ix.on_left_pressed();
             }
             } // end else (not on popup)
         }
 
+        // Slider drag
+        crate::gallery::handle_drag(cx, cy, s, title_h, hf, &mut gallery);
+
         // Left release
         if state.left_released {
             state.left_released = false;
+            crate::gallery::handle_release(&mut gallery);
             if let Some(pid) = pointer_on_popup {
                 if let Some(backend) = &mut state.popup_backend {
                     if let Some(ctx) = backend.popup_render(pid) {
@@ -791,6 +612,12 @@ pub fn run() -> Result<()> {
         }
         let min_icon = if hover_min { sky::TEXT_PRIMARY } else { sky::CONTROL_ICON };
         painter.line(min_cx - x_sz, btn_y, min_cx + x_sz, btn_y, icon_thick, min_icon);
+
+        // ── Component gallery ────────────────────────────────────────────
+        crate::gallery::draw(
+            &mut painter, &mut text, cx, cy, s, title_h,
+            &gallery, wf, hf, sw, sh,
+        );
 
         // ── Window outer border (very subtle) ───────────────────────────
         if !state.maximized {

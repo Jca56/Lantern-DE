@@ -1,3 +1,5 @@
+mod dispatch;
+mod gallery;
 mod popup_backend;
 mod wayland;
 

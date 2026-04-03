@@ -493,7 +493,9 @@ impl TextRenderer {
                 text_areas,
                 &mut self.swash_cache,
             )
-            .expect("Failed to prepare text");
+            .unwrap_or_else(|_| {
+                self.atlas.trim();
+            });
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Text Pass"),
