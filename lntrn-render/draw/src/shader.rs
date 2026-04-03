@@ -61,6 +61,14 @@ fn vs_main(@builtin(vertex_index) vi: u32, instance: InstanceInput) -> VertexOut
         let max_pt = max(max(p1, p2), p3) + vec2<f32>(2.0);
         quad_pos = min_pt;
         quad_size = max_pt - min_pt;
+    } else if instance.params.w == SHAPE_GRADIENT_RADIAL && instance.params.x == 0.0 {
+        // Radial gradient with no corner radius: expand quad by 20% so the
+        // gradient has room to fully fade before hitting the quad edge.
+        // The fragment shader uses bounds (not quad) for the gradient math,
+        // so this only adds extra pixels where t > 1.0 → fully edge-color.
+        let expand = max(instance.bounds.z, instance.bounds.w) * 0.2;
+        quad_pos = instance.bounds.xy - vec2<f32>(expand);
+        quad_size = instance.bounds.zw + vec2<f32>(expand * 2.0);
     } else {
         quad_pos = instance.bounds.xy;
         quad_size = instance.bounds.zw;
@@ -187,8 +195,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let radius = in.params.x;
         let center = in.bounds.xy + in.bounds.zw * 0.5;
         let half_size = in.bounds.zw * 0.5;
-        let dist = sdf_rounded_rect(in.local_px, center, half_size, radius);
-        mask = 1.0 - smoothstep(-1.0, 1.0, dist);
+        if radius > 0.0 {
+            // With corner radius, use SDF mask for the rounded shape
+            let dist = sdf_rounded_rect(in.local_px, center, half_size, radius);
+            mask = 1.0 - smoothstep(-1.0, 1.0, dist);
+        } else {
+            // No corner radius — skip SDF clipping entirely, let the gradient
+            // colors handle alpha (avoids hard rectangular edges)
+            mask = 1.0;
+        }
         let max_dist = length(in.bounds.zw * 0.5);
         let d = length(in.local_px - center) / max_dist;
         let t = clamp(d, 0.0, 1.0);

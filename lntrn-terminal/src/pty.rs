@@ -64,7 +64,7 @@ impl Pty {
                 }
 
                 std::env::set_var("TERM", "xterm-256color");
-                std::env::set_var("TERM_PROGRAM", "kitty");
+                std::env::set_var("TERM_PROGRAM", "Lantern");
                 std::env::set_var("TERM_PROGRAM_VERSION", "0.1.0");
 
                 // Clean up inherited env vars that confuse child tools

@@ -179,10 +179,10 @@ impl Temperature {
     pub fn measure(&self, bar_h: f32, scale: f32) -> f32 {
         let pad = 5.0 * scale;
         let usable = bar_h - pad * 2.0;
-        let font_size = (usable * 0.35).max(14.0);
-        let gap = 5.0 * scale;
-        let icon_h = usable - font_size - gap;
-        let icon_w = icon_h; // square icon
+        let font_size = (usable * 0.50).max(18.0);
+        let icon_h = usable * 0.85;
+        let icon_w = icon_h; // SVG is pre-cropped, aspect preserved by renderer
+        let gap = 1.0 * scale;
 
         let temp_text = format!("{}", self.cpu_temp);
         let sym_size = font_size * 0.85;
@@ -191,10 +191,10 @@ impl Temperature {
         let sym_gap = 1.0 * scale;
         let text_w = num_w + sym_gap + sym_w;
 
-        icon_w.max(text_w)
+        icon_w + gap + text_w
     }
 
-    /// Draw the temperature: temp text on top, icon below, vertically stacked.
+    /// Draw the temperature: icon on left, temp text to the right.
     pub fn draw<'a>(
         &self,
         _painter: &mut Painter,
@@ -211,13 +211,10 @@ impl Temperature {
     ) -> (f32, Vec<TextureDraw<'a>>) {
         let pad = 5.0 * scale;
         let usable = bar_h - pad * 2.0;
-        let font_size = (usable * 0.35).max(14.0);
-        let gap = 5.0 * scale;
-        let icon_h = usable - font_size - gap;
-        let icon_w = icon_h; // square icon
-
-        let stack_h = font_size + gap + icon_h;
-        let stack_y = bar_y + pad;
+        let font_size = (usable * 0.50).max(18.0);
+        let icon_h = usable * 0.85;
+        let icon_w = icon_h; // SVG is pre-cropped, aspect preserved by renderer
+        let gap = 1.0 * scale;
 
         // Temperature text: numbers + °
         let temp_text = format!("{}", self.cpu_temp);
@@ -227,11 +224,21 @@ impl Temperature {
         let sym_w = sym_size * 0.58;
         let sym_gap = 1.0 * scale;
         let text_w = num_w + sym_gap + sym_w;
-        let total_w = icon_w.max(text_w);
+        let total_w = icon_w + gap + text_w;
 
-        // Nudge text right to visually center over icon
-        let text_x = x + 8.0 * scale;
-        let text_y = stack_y;
+        // Icon on the left, vertically centered
+        let icon_x = x;
+        let icon_y = bar_y + (bar_h - icon_h) / 2.0;
+
+        let mut tex_draws = Vec::new();
+        let key = self.icon_key();
+        if let Some(tex) = icons.get(key) {
+            tex_draws.push(TextureDraw::new(tex, icon_x, icon_y, icon_w, icon_h));
+        }
+
+        // Text to the right of icon, aligned to top of icon
+        let text_x = x + icon_w + gap;
+        let text_y = icon_y;
 
         let text_color = if self.cpu_temp > WARM_THRESH {
             Color::rgba(1.0, 0.2, 0.2, 1.0)
@@ -251,17 +258,8 @@ impl Temperature {
             sym_size + 10.0, screen_w, screen_h,
         );
 
-        // Icon (below text, centered)
-        let icon_x = x + (total_w - icon_w) / 2.0;
-        let icon_y = stack_y + font_size + gap;
-        let mut tex_draws = Vec::new();
-        let key = self.icon_key();
-        if let Some(tex) = icons.get(key) {
-            tex_draws.push(TextureDraw::new(tex, icon_x, icon_y, icon_w, icon_h));
-        }
-
         // Hit zone
-        let zone_rect = Rect::new(x, stack_y, total_w, stack_h);
+        let zone_rect = Rect::new(x, bar_y + pad, total_w, usable);
         ix.add_zone(ZONE_TEMP, zone_rect);
 
         (total_w, tex_draws)

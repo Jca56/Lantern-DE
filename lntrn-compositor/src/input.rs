@@ -842,6 +842,67 @@ impl Lantern {
                     }
                 }
 
+                // Outer resize zone: when clicking near a window edge but outside
+                // the surface, start a compositor-level resize grab. This gives
+                // CSD windows the same edge-grab feel as SSD.
+                if ButtonState::Pressed == button_state
+                    && button == BTN_LEFT
+                    && !pointer.is_grabbed()
+                {
+                    let pos = pointer.current_location();
+                    let (cx, cy) = self.canvas.screen_to_canvas(pos.x, pos.y);
+                    let canvas_pos = smithay::utils::Point::from((cx, cy));
+                    // Only trigger if we're NOT directly on a window surface
+                    if self.space.element_under(canvas_pos).is_none() {
+                        const OUTER_BORDER: f64 = 8.0;
+                        let mut found = None;
+                        for window in self.space.elements().cloned().collect::<Vec<_>>() {
+                            let loc = self.space.element_location(&window).unwrap_or_default();
+                            let geo = window.geometry();
+                            let expanded: smithay::utils::Rectangle<i32, smithay::utils::Logical> = smithay::utils::Rectangle::new(
+                                smithay::utils::Point::from((
+                                    loc.x - OUTER_BORDER as i32,
+                                    loc.y - OUTER_BORDER as i32,
+                                )),
+                                smithay::utils::Size::from((
+                                    geo.size.w + OUTER_BORDER as i32 * 2,
+                                    geo.size.h + OUTER_BORDER as i32 * 2,
+                                )),
+                            );
+                            let cp_i = smithay::utils::Point::from((cx as i32, cy as i32));
+                            if expanded.contains(cp_i) {
+                                found = Some((window, loc, geo));
+                                break;
+                            }
+                        }
+                        if let Some((window, win_loc, win_geo)) = found {
+                            let center_x = win_loc.x as f64 + win_geo.size.w as f64 / 2.0;
+                            let center_y = win_loc.y as f64 + win_geo.size.h as f64 / 2.0;
+                            let mut edges = crate::grabs::resize_grab::ResizeEdge::empty();
+                            if cx < center_x { edges |= crate::grabs::resize_grab::ResizeEdge::LEFT; }
+                            else { edges |= crate::grabs::resize_grab::ResizeEdge::RIGHT; }
+                            if cy < center_y { edges |= crate::grabs::resize_grab::ResizeEdge::TOP; }
+                            else { edges |= crate::grabs::resize_grab::ResizeEdge::BOTTOM; }
+
+                            let start_data = smithay::input::pointer::GrabStartData {
+                                focus: None,
+                                button,
+                                location: pos,
+                            };
+                            let initial_rect = smithay::utils::Rectangle::new(win_loc, win_geo.size);
+                            let grab = crate::grabs::ResizeSurfaceGrab::start(
+                                start_data, window, edges, initial_rect,
+                            );
+                            pointer.set_grab(self, grab, serial, smithay::input::pointer::Focus::Clear);
+                            let icon = crate::grabs::ResizeSurfaceGrab::cursor_icon_for_edges(edges);
+                            self.cursor.set_status(smithay::input::pointer::CursorImageStatus::Named(icon));
+                            pointer.frame(self);
+                            self.schedule_render();
+                            return;
+                        }
+                    }
+                }
+
                 if ButtonState::Pressed == button_state && !pointer.is_grabbed() {
                     let pos = pointer.current_location();
                     let (cx, cy) = self.canvas.screen_to_canvas(pos.x, pos.y);

@@ -700,17 +700,21 @@ pub fn run() -> Result<()> {
         let bar_phys_h = (bar_height as f32 * scale_f).round() as u32;
         let phys_w_f = phys_w as f32;
         let bar_h_f = bar_phys_h as f32;
-        // Slide the bar down visually when hiding
-        // When auto_hide, margin is 0 so we draw the float gap visually
-        let visual_gap = if auto_hide { gap_phys } else { 0.0 };
-        // Shadow pad in physical pixels — shrinks to 0 when docked
+        // Slide the bar visually when hiding.
+        // Shadow pad in physical pixels — shrinks to 0 when docked.
         let shadow_pad_phys = SHADOW_PAD as f32 * scale_f * (1.0 - anim_t);
+        // The layer-shell margin is (gap - shadow_pad), clamped to 0.
+        // When shadow_pad > gap the surface sits flush against the edge,
+        // so only gap_phys worth of inset is needed — not the full shadow_pad.
+        let edge_inset = gap_phys.min(shadow_pad_phys);
+        // When auto_hide, margin is always 0 so we draw the float gap visually.
+        let visual_gap = if auto_hide { gap_phys } else { edge_inset };
         let bar_y_offset = if position_top {
-            let hide_slide = hide_t * (bar_h_f + gap_phys + visual_gap);
-            shadow_pad_phys + visual_gap - hide_slide
+            let hide_slide = hide_t * (bar_h_f + visual_gap);
+            visual_gap - hide_slide
         } else {
-            let hide_slide = hide_t * (bar_h_f + gap_phys + visual_gap);
-            (total_phys_h - bar_phys_h) as f32 - shadow_pad_phys - visual_gap + hide_slide
+            let hide_slide = hide_t * (bar_h_f + visual_gap);
+            (total_phys_h - bar_phys_h) as f32 - visual_gap + hide_slide
         };
 
         clock.tick();
@@ -1178,8 +1182,8 @@ pub fn run() -> Result<()> {
         let widget_gap = 6.0 * scale_f;
 
         // Clock (rightmost)
-        let font_size = vis_h * 0.7;
-        let clock_padding = font_size * 0.6;
+        let font_size = vis_h * 0.78;
+        let clock_padding = font_size * 0.35;
         let clock_char_w = font_size * 0.52;
         let clock_text = clock.time_text_len();
         let clock_w = clock_text as f32 * clock_char_w + clock_padding;
@@ -1213,8 +1217,7 @@ pub fn run() -> Result<()> {
         {
             let pad = 5.0 * scale_f;
             let usable = vis_h - pad * 2.0;
-            let font_sz = (usable * 0.35).max(14.0);
-            let icon_sz = (usable - font_sz - 5.0 * scale_f) as u32;
+            let icon_sz = (usable * 0.85) as u32;
             temperature.load_icons(&mut icon_cache, &tex_pass, &gpu, icon_sz);
         }
         wifi.tick();
@@ -1249,11 +1252,12 @@ pub fn run() -> Result<()> {
             right_used += tw + widget_gap;
         }
 
-        // Battery (left of temperature)
+        // Battery (left of temperature) — tighter gap
         let mut battery_tex_draws = Vec::new();
         if let Some(bat) = &mut battery {
+            let temp_bat_gap = 2.0 * scale_f;
             let bw = bat.measure(vis_h, scale_f);
-            let bx = vis_x + vis_w - right_used - widget_gap - bw;
+            let bx = vis_x + vis_w - right_used - temp_bat_gap - bw;
             bat_draw_x = bx;
             bat_draw_w = bw;
             let (_, draws) = bat.draw(
@@ -1261,14 +1265,15 @@ pub fn run() -> Result<()> {
                 bx, vis_y, vis_h, scale_f, phys_w, total_phys_h,
             );
             battery_tex_draws = draws;
-            right_used += bw + widget_gap;
+            right_used += bw + temp_bat_gap;
         }
 
-        // WiFi (left of battery) — small gap before icon-only section
+        // WiFi (left of battery) — extra gap to separate from battery
         let wifi_tex_draws;
         {
+            let bat_wifi_gap = widget_gap + 6.0 * scale_f;
             let ww = wifi.measure(vis_h, scale_f);
-            let wx = vis_x + vis_w - right_used - widget_gap - ww;
+            let wx = vis_x + vis_w - right_used - bat_wifi_gap - ww;
             wifi_draw_x = wx;
             wifi_draw_w = ww;
             let (_, draws) = wifi.draw(
@@ -1276,7 +1281,7 @@ pub fn run() -> Result<()> {
                 wx, vis_y, vis_h, scale_f, phys_w, total_phys_h,
             );
             wifi_tex_draws = draws;
-            right_used += ww + widget_gap;
+            right_used += ww + bat_wifi_gap;
         }
 
         // Bluetooth (left of wifi)

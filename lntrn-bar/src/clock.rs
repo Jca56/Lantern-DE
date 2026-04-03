@@ -122,7 +122,7 @@ impl Clock {
         screen_h: u32,
     ) {
         let display = self.time_text();
-        let padding = font_size * 0.6;
+        let padding = font_size * 0.35;
         let char_w = font_size * 0.52;
         let text_w = display.len() as f32 * char_w;
         let x = bar_x + (bar_w - text_w - padding).max(0.0);

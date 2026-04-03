@@ -211,9 +211,8 @@ pub fn render_surface(
     let windows: Vec<_> = state.space.elements().cloned().collect();
     let mut window_elements: Vec<CustomRenderElements> = Vec::new();
     let mut fullscreen_elements: Vec<CustomRenderElements> = Vec::new();
-    // Blur backdrop tracking — disabled until coordinate mapping is fixed
-    // TODO: TextureRenderElement location/src/size coordinate spaces don't align
-    let blur_backdrops: Vec<(usize, Rectangle<i32, Logical>)> = Vec::new();
+    // Blur backdrop tracking: (insert index, behind-content-end index, screen-logical rect)
+    let mut blur_backdrops: Vec<(usize, usize, Rectangle<i32, Logical>)> = Vec::new();
 
     // Canvas transform: compute viewport in canvas-space for culling
     let canvas_offset = state.canvas.offset;
@@ -248,8 +247,12 @@ pub fn render_surface(
 
         let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(window) else { continue };
         let is_fullscreen = fullscreen_surfaces.iter().any(|e| e.surface == surface);
-        let mut base_alpha = state.window_opacity.get(&surface).copied()
-            .unwrap_or(state.default_window_opacity);
+        let mut base_alpha = if is_fullscreen {
+            1.0
+        } else {
+            state.window_opacity.get(&surface).copied()
+                .unwrap_or(state.default_window_opacity)
+        };
         if state.show_desktop_active {
             base_alpha *= 0.05;
         }
@@ -317,6 +320,9 @@ pub fn render_surface(
         // Z-order (front-to-back): corner masks → SSD overlay → window → shadow
         // Elements pushed first = higher z (drawn on top).
 
+        // Record index before this window's elements for blur source slicing
+        let win_elem_start = window_elements.len();
+
         // SSD: render header overlay on top of the window
         if has_ssd && !is_fullscreen {
             if let Some(ssd_state) = state.ssd.get_mut(&surface) {
@@ -359,15 +365,22 @@ pub fn render_surface(
             );
         }
 
-        // Blur backdrop tracking disabled — TODO: fix coordinate mapping
-        // if !is_fullscreen && !is_maximized {
-        //     let ssd_bar = if has_ssd { crate::ssd::SsdManager::bar_height() } else { 0 };
-        //     let win_log_rect = Rectangle::<i32, Logical>::new(
-        //         (rel_x.round() as i32, rel_y.round() as i32 - ssd_bar).into(),
-        //         (win_geo.size.w, win_geo.size.h + ssd_bar).into(),
-        //     );
-        //     blur_backdrops.push((window_elements.len(), win_log_rect));
-        // }
+        // Track transparent windows for blur backdrop
+        if !is_fullscreen && alpha < 0.99 {
+            let ssd_bar = if has_ssd { crate::ssd::SsdManager::bar_height() } else { 0 };
+            // Screen-logical rect (rel_x/rel_y are already in screen-logical space)
+            let log_rect = Rectangle::<i32, Logical>::new(
+                Point::from((
+                    rel_x.round() as i32,
+                    (rel_y - ssd_bar as f64).round() as i32,
+                )),
+                Size::from((
+                    (win_geo.size.w as f64 * canvas_zoom).round() as i32,
+                    ((win_geo.size.h + ssd_bar) as f64 * canvas_zoom).round() as i32,
+                )),
+            );
+            blur_backdrops.push((window_elements.len(), win_elem_start, log_rect));
+        }
 
         // Window drop shadow (behind window, so pushed after = lower z)
         if !is_fullscreen {
@@ -672,52 +685,57 @@ pub fn render_surface(
         if let (Some(ref down_shader), Some(ref up_shader)) =
             (&udev.blur_down_shader, &udev.blur_up_shader)
         {
-            let blur_intensity = crate::read_config_f32("blur_intensity", 0.5);
+            let blur_intensity = crate::read_config_f32("blur_intensity", 0.8);
             let passes = if blur_intensity < 0.3 { 2usize }
-                else if blur_intensity < 0.7 { 3 }
-                else { 4 };
+                else if blur_intensity < 0.6 { 3 }
+                else if blur_intensity < 0.8 { 4 }
+                else { 5 };
 
             if crate::blur::ensure_textures(renderer, output_phys, passes, &mut udev.blur_state) {
-                // Collect ALL background elements: bottom layers + wallpaper + opaque windows
-                let mut bg_elements: Vec<CustomRenderElements> = Vec::new();
+                // Blur source: everything behind transparent windows.
+                // List is front-to-back, so take elements after the topmost
+                // transparent window's insert point (behind = higher indices).
+                let top_idx = blur_backdrops.iter().map(|(i, _, _)| *i).min().unwrap_or(0);
+                let below_windows = &window_elements[top_idx..];
 
-                // Add wallpaper
+                let mut wp_elements: Vec<CustomRenderElements> = Vec::new();
                 if let Some(wp_elem) = state.wallpaper.render_element(renderer, output_pos, scale) {
-                    bg_elements.push(CustomRenderElements::Memory(wp_elem));
+                    wp_elements.push(CustomRenderElements::Memory(wp_elem));
                 }
 
-                // Add bottom layer surfaces
-                bg_elements.extend(
-                    bottom_layer_elements.iter()
-                        .filter_map(|e| {
-                            // Clone-ish: re-render bottom layers
-                            // Actually we can't clone CustomRenderElements...
-                            // For now just use wallpaper as the blur source.
-                            // TODO: include bottom layers + opaque windows
-                            None::<CustomRenderElements>
-                        })
-                );
+                // Back-to-front render order: wallpaper → bottom layers → windows
+                let element_groups: Vec<&[CustomRenderElements]> = vec![
+                    &wp_elements,
+                    &bottom_layer_elements,
+                    below_windows,
+                ];
 
                 let blur_state = udev.blur_state.as_mut().unwrap();
-                if crate::blur::render_and_blur(
-                    renderer, blur_state, &bg_elements, BG_COLOR.into(),
-                    output_phys, down_shader, up_shader,
-                ).is_ok() {
-                    let ctx_id = {
-                        use smithay::backend::renderer::Renderer as _;
-                        renderer.context_id()
-                    };
-                    let output_logical = Size::<i32, Logical>::from((
-                        output_geo.size.w, output_geo.size.h,
-                    ));
-                    for (idx, rect) in blur_backdrops.iter().rev() {
-                        let backdrop = crate::blur::create_backdrop(
-                            blur_state, ctx_id.clone(), *rect, output_logical, output_scale,
-                        );
-                        window_elements.insert(
-                            *idx,
-                            CustomRenderElements::Backdrop(backdrop),
-                        );
+                match crate::blur::render_and_blur(
+                    renderer, blur_state, &element_groups, BG_COLOR.into(),
+                    output_phys, output_scale, down_shader, up_shader,
+                ) {
+                    Ok(()) => {
+                        let ctx_id = {
+                            use smithay::backend::renderer::Renderer as _;
+                            renderer.context_id()
+                        };
+                        let output_logical = Size::<i32, Logical>::from((
+                            output_geo.size.w, output_geo.size.h,
+                        ));
+                        for (idx, _, log_rect) in blur_backdrops.iter().rev() {
+                            let backdrop = crate::blur::create_backdrop(
+                                blur_state, ctx_id.clone(), *log_rect,
+                                output_logical, output_scale,
+                            );
+                            window_elements.insert(
+                                *idx,
+                                CustomRenderElements::Backdrop(backdrop),
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("blur: render_and_blur failed: {:?}", e);
                     }
                 }
             }

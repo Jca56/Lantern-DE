@@ -328,9 +328,15 @@ impl vte::Perform for Performer<'_> {
                 s.cursor_col = 0;
             }
             'c' => {
-                // Device Attributes (DA) — report as VT100 with AVO
-                if intermediates.is_empty() || intermediates == [b'?'] {
-                    s.pending_responses.push(b"\x1b[?1;2c".to_vec());
+                if intermediates == [b'>'] {
+                    // Secondary Device Attributes (DA2) — identify as Lantern 0.1.0
+                    // Format: CSI > Pp ; Pv ; Pc c
+                    // Pp=1 (VT100 family), Pv=100 (version 0.1.0 as int), Pc=0
+                    s.pending_responses.push(b"\x1b[>1;100;0c".to_vec());
+                } else if intermediates.is_empty() || intermediates == [b'?'] {
+                    // Primary Device Attributes (DA1) — report as VT220
+                    // (VT220 is more appropriate for a modern terminal with 256-color)
+                    s.pending_responses.push(b"\x1b[?62;22c".to_vec());
                 }
             }
             's' => {
@@ -393,8 +399,12 @@ impl vte::Perform for Performer<'_> {
                 }
             }
             'q' => {
-                // DECSCUSR — set cursor shape
-                if intermediates == [b' '] {
+                if intermediates == [b'>'] {
+                    // XTVERSION — report terminal name and version
+                    // Response: DCS > | Lantern 0.1.0 ST
+                    s.pending_responses.push(b"\x1bP>|Lantern 0.1.0\x1b\\".to_vec());
+                } else if intermediates == [b' '] {
+                    // DECSCUSR — set cursor shape
                     s.cursor_shape = p(0, 0) as u8;
                 }
             }

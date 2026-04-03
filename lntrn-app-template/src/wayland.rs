@@ -2,9 +2,9 @@ use std::ffi::c_void;
 use std::ptr::NonNull;
 
 use anyhow::{anyhow, Result};
-use lntrn_render::{GpuContext, Painter, Rect, TextRenderer};
+use lntrn_render::{Color, GpuContext, Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{
-    FoxPalette, GradientStrip, InteractionContext, MenuBar, MenuItem, PopupSurface,
+    FoxPalette, InteractionContext, MenuBar, MenuItem, PopupSurface,
     WaylandPopupBackend,
 };
 use raw_window_handle::{
@@ -30,6 +30,36 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
 const KEY_ESC: u32 = 1;
+const TITLE_BAR_H: f32 = 40.0;
+const CORNER_RADIUS: f32 = 12.0;
+
+// ── Night Sky palette (inspired by indigo sky + pink clouds wallpaper) ──────
+
+mod sky {
+    use lntrn_render::Color;
+
+    // Backgrounds — deep purple-indigo (opaque — compositor handles transparency)
+    pub const BG_DEEP: Color       = Color::rgb(0.008, 0.005, 0.028);
+    pub const BG_SURFACE: Color    = Color::rgb(0.014, 0.010, 0.042);
+
+    // Text
+    pub const TEXT_PRIMARY: Color   = Color::rgb(0.80, 0.76, 0.90);
+    pub const TEXT_SECONDARY: Color = Color::rgb(0.45, 0.40, 0.58);
+
+    // Subtle glows
+    pub const GLOW_PINK: Color     = Color::rgba(0.40, 0.12, 0.28, 0.04);
+    pub const GLOW_PURPLE: Color   = Color::rgba(0.35, 0.18, 0.55, 0.04);
+
+    // Borders — very subtle
+    pub const BORDER_SUBTLE: Color = Color::rgba(0.30, 0.20, 0.50, 0.15);
+
+    // Window control buttons
+    pub const CLOSE_BG: Color      = Color::rgb(0.65, 0.18, 0.25);
+    pub const CONTROL_HOVER: Color = Color::rgba(0.50, 0.38, 0.70, 0.25);
+    pub const CONTROL_ICON: Color  = Color::rgb(0.55, 0.50, 0.68);
+    pub const CLOSE_HOVER: Color   = Color::rgba(0.65, 0.18, 0.25, 0.35);
+
+}
 
 // ── WaylandHandle for wgpu ──────────────────────────────────────────────────
 
@@ -323,11 +353,16 @@ impl Dispatch<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1, ()> for Sta
 
 // ── Edge resize helper ──────────────────────────────────────────────────────
 
-fn edge_resize(cx: f32, cy: f32, w: f32, h: f32, border: f32) -> Option<xdg_toplevel::ResizeEdge> {
+/// `controls_x` is the left edge of the window controls zone — if the cursor
+/// is in the top-right corner (x > controls_x AND y < border), skip resize so
+/// clicks reach the close/max/min buttons instead.
+fn edge_resize(cx: f32, cy: f32, w: f32, h: f32, border: f32, controls_x: f32) -> Option<xdg_toplevel::ResizeEdge> {
     let left = cx < border;
     let right = cx > w - border;
     let top = cy < border;
     let bottom = cy > h - border;
+    // Don't resize in the window controls area (top-right)
+    if top && cx > controls_x { return None; }
     match (left, right, top, bottom) {
         (true, _, true, _) => Some(xdg_toplevel::ResizeEdge::TopLeft),
         (_, true, true, _) => Some(xdg_toplevel::ResizeEdge::TopRight),
@@ -379,14 +414,14 @@ pub fn run() -> Result<()> {
     let surface = compositor.create_surface(&qh, ());
     let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
     let toplevel = xdg_surface.get_toplevel(&qh, ());
-    toplevel.set_title("lntrn-ui-test".into());
-    toplevel.set_app_id("lntrn-ui-test".into());
+    toplevel.set_title("Lantern".into());
+    toplevel.set_app_id("lntrn-app-template".into());
     toplevel.set_min_size(640, 480);
 
-    // Request server-side decorations from the compositor
+    // Request client-side decorations so we control the title bar
     if let Some(mgr) = &state.decoration_mgr {
         let deco = mgr.get_toplevel_decoration(&toplevel, &qh, ());
-        deco.set_mode(zxdg_toplevel_decoration_v1::Mode::ServerSide);
+        deco.set_mode(zxdg_toplevel_decoration_v1::Mode::ClientSide);
     }
 
     surface.commit();
@@ -527,6 +562,7 @@ pub fn run() -> Result<()> {
         }
 
         // Left press
+        let title_h = TITLE_BAR_H * s;
         if state.left_pressed {
             state.left_pressed = false;
             // Route click to popup if pointer is on a popup
@@ -544,9 +580,36 @@ pub fn run() -> Result<()> {
                 }
             }
             let border = 10.0 * s;
-            if let Some(edge) = edge_resize(cx, cy, wf, hf, border) {
+            let controls_x = wf - 120.0 * s;
+            if let Some(edge) = edge_resize(cx, cy, wf, hf, border, controls_x) {
                 if let Some(seat) = &state.seat {
                     toplevel.resize(seat, state.pointer_serial, edge);
+                }
+            } else if cy < title_h {
+                // CSD title bar — check window control buttons (right side)
+                let btn_r = 14.0 * s;
+                let btn_y = title_h * 0.5;
+                let close_cx = wf - 24.0 * s;
+                let max_cx = wf - 58.0 * s;
+                let min_cx = wf - 92.0 * s;
+                let dist_close = ((cx - close_cx).powi(2) + (cy - btn_y).powi(2)).sqrt();
+                let dist_max = ((cx - max_cx).powi(2) + (cy - btn_y).powi(2)).sqrt();
+                let dist_min = ((cx - min_cx).powi(2) + (cy - btn_y).powi(2)).sqrt();
+                if dist_close < btn_r {
+                    state.running = false;
+                } else if dist_max < btn_r {
+                    if state.maximized {
+                        toplevel.unset_maximized();
+                    } else {
+                        toplevel.set_maximized();
+                    }
+                } else if dist_min < btn_r {
+                    toplevel.set_minimized();
+                } else {
+                    // Drag to move
+                    if let Some(seat) = &state.seat {
+                        toplevel._move(seat, state.pointer_serial);
+                    }
                 }
             } else if menu_bar.on_click(&mut ix, &menus, s) {
                 // Menu bar consumed the click
@@ -624,7 +687,8 @@ pub fn run() -> Result<()> {
         // ── Cursor shape ────────────────────────────────────────────────
         if state.pointer_in_surface {
             let border = 10.0 * s;
-            let desired = match edge_resize(cx, cy, wf, hf, border) {
+            let controls_x = wf - 120.0 * s;
+            let desired = match edge_resize(cx, cy, wf, hf, border, controls_x) {
                 Some(edge) => resize_edge_to_cursor_shape(edge),
                 None => wp_cursor_shape_device_v1::Shape::Default,
             };
@@ -640,15 +704,100 @@ pub fn run() -> Result<()> {
         ix.begin_frame();
         painter.clear();
 
-        // Background — compositor handles decorations via SSD
-        painter.rect_filled(Rect::new(0.0, 0.0, wf, hf), 0.0, fox.bg);
-
         let sw = gpu.width();
         let sh = gpu.height();
+        let r = if state.maximized { 0.0 } else { CORNER_RADIUS * s };
 
-        // Big label so we know the new binary is running
-        let label_sz = 24.0 * s;
-        text.queue("SSD Test Window", label_sz, 20.0 * s, 20.0 * s, fox.text, wf, sw, sh);
+        // ── Background: deep indigo, nearly black ───────────────────────
+        painter.rect_gradient_linear(
+            Rect::new(0.0, 0.0, wf, hf), r,
+            std::f32::consts::FRAC_PI_2,
+            sky::BG_DEEP,
+            sky::BG_SURFACE,
+        );
+
+        // Very subtle radial glow — pink, bottom-left
+        painter.rect_gradient_radial(
+            Rect::new(-wf * 0.3, hf * 0.4, wf * 0.9, hf * 0.9), 0.0,
+            sky::GLOW_PINK,
+            Color::TRANSPARENT,
+        );
+
+        // Very subtle radial glow — purple, top-right
+        painter.rect_gradient_radial(
+            Rect::new(wf * 0.5, -hf * 0.3, wf * 0.7, hf * 0.6), 0.0,
+            sky::GLOW_PURPLE,
+            Color::TRANSPARENT,
+        );
+
+        // ── CSD Title bar (seamless with background) ────────────────────
+        // No separate title bar bg — it's the same gradient as the window
+
+        // Title text — centered, subtle
+        let title_sz = 18.0 * s;
+        let title_str = "Lantern";
+        let title_w = title_sz * 0.55 * title_str.len() as f32;
+        text.queue(
+            title_str, title_sz,
+            (wf - title_w) * 0.5, (title_h - title_sz) * 0.5,
+            sky::TEXT_SECONDARY, wf, sw, sh,
+        );
+
+        // ── Window controls (Windows-style icons in circles, right) ─────
+        let btn_r = 14.0 * s;
+        let btn_y = title_h * 0.5;
+        let close_cx = wf - 28.0 * s;
+        let max_cx = wf - 66.0 * s;
+        let min_cx = wf - 104.0 * s;
+        let icon_thick = 1.5 * s;
+
+        let hover_close = {
+            let dx = cx - close_cx; let dy = cy - btn_y;
+            (dx * dx + dy * dy).sqrt() < btn_r
+        };
+        let hover_max = {
+            let dx = cx - max_cx; let dy = cy - btn_y;
+            (dx * dx + dy * dy).sqrt() < btn_r
+        };
+        let hover_min = {
+            let dx = cx - min_cx; let dy = cy - btn_y;
+            (dx * dx + dy * dy).sqrt() < btn_r
+        };
+
+        // Close — X icon
+        if hover_close {
+            painter.circle_filled(close_cx, btn_y, btn_r, sky::CLOSE_HOVER);
+        }
+        let x_sz = 5.0 * s;
+        let close_icon = if hover_close { sky::CLOSE_BG } else { sky::CONTROL_ICON };
+        painter.line(close_cx - x_sz, btn_y - x_sz, close_cx + x_sz, btn_y + x_sz, icon_thick, close_icon);
+        painter.line(close_cx - x_sz, btn_y + x_sz, close_cx + x_sz, btn_y - x_sz, icon_thick, close_icon);
+
+        // Maximize — square icon
+        if hover_max {
+            painter.circle_filled(max_cx, btn_y, btn_r, sky::CONTROL_HOVER);
+        }
+        let sq_sz = 5.0 * s;
+        let max_icon = if hover_max { sky::TEXT_PRIMARY } else { sky::CONTROL_ICON };
+        painter.rect_stroke_sdf(
+            Rect::new(max_cx - sq_sz, btn_y - sq_sz, sq_sz * 2.0, sq_sz * 2.0),
+            1.5 * s, icon_thick, max_icon,
+        );
+
+        // Minimize — horizontal line icon
+        if hover_min {
+            painter.circle_filled(min_cx, btn_y, btn_r, sky::CONTROL_HOVER);
+        }
+        let min_icon = if hover_min { sky::TEXT_PRIMARY } else { sky::CONTROL_ICON };
+        painter.line(min_cx - x_sz, btn_y, min_cx + x_sz, btn_y, icon_thick, min_icon);
+
+        // ── Window outer border (very subtle) ───────────────────────────
+        if !state.maximized {
+            painter.rect_stroke_sdf(
+                Rect::new(0.0, 0.0, wf, hf), r, 1.0 * s,
+                sky::BORDER_SUBTLE,
+            );
+        }
 
         // Context menus (drawn into painter on top of other shapes)
         menu_bar.context_menu.update(0.016);
@@ -676,9 +825,9 @@ pub fn run() -> Result<()> {
         }
 
         // Render pass — main window
-        if let Ok(mut frame) = gpu.begin_frame("ui-test") {
+        if let Ok(mut frame) = gpu.begin_frame("app-template") {
             let view = frame.view().clone();
-            painter.render_pass(&gpu, frame.encoder_mut(), &view, fox.bg.with_alpha(0.0));
+            painter.render_pass(&gpu, frame.encoder_mut(), &view, Color::TRANSPARENT);
             text.render_queued(&gpu, frame.encoder_mut(), &view);
             frame.submit(&gpu.queue);
         }

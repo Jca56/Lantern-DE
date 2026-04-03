@@ -22,6 +22,8 @@ use crate::render::CustomRenderElements;
 // ── Blur state ─────────────────────────────────────────────────────────────
 
 pub struct BlurState {
+    /// Full-res scene capture texture (rendered before transparent windows).
+    pub scene: GlesTexture,
     /// Chain of textures at decreasing resolutions for downsample.
     /// textures[0] = half-res, textures[1] = quarter-res, etc.
     pub textures: Vec<GlesTexture>,
@@ -64,6 +66,17 @@ pub fn ensure_textures(
         h /= 2;
     }
 
+    // Full-res scene capture texture
+    let scene = match Offscreen::<GlesTexture>::create_buffer(
+        renderer, Fourcc::Abgr8888, Size::from((phys_size.w, phys_size.h)),
+    ) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!("blur: scene texture failed: {:?}", e);
+            return false;
+        }
+    };
+
     // Result texture at half-res (same size as textures[0])
     let result_w = (phys_size.w / 2).max(1);
     let result_h = (phys_size.h / 2).max(1);
@@ -77,20 +90,23 @@ pub fn ensure_textures(
         }
     };
 
-    *existing = Some(BlurState { textures, result, full_size: phys_size, passes });
+    *existing = Some(BlurState { scene, textures, result, full_size: phys_size, passes });
     true
 }
 
 // ── Render background + blur ───────────────────────────────────────────────
 
-/// Render background elements to the first blur texture (half-res), then
-/// run dual-kawase downsample + upsample passes.
+/// Render scene behind transparent windows to a full-res capture, downsample
+/// to half-res, then run dual-kawase downsample + upsample blur passes.
+/// `element_groups` is a list of element slices to render back-to-front
+/// (each group is rendered in reverse order, groups are in render order).
 pub fn render_and_blur(
     renderer: &mut GlesRenderer,
     state: &mut BlurState,
-    bg_elements: &[CustomRenderElements],
+    element_groups: &[&[CustomRenderElements]],
     bg_color: Color32F,
     output_phys: Size<i32, Physical>,
+    output_scale: f64,
     down_shader: &GlesTexProgram,
     up_shader: &GlesTexProgram,
 ) -> Result<(), GlesError> {
@@ -99,36 +115,52 @@ pub fn render_and_blur(
     let half_w = (output_phys.w / 2).max(1);
     let half_h = (output_phys.h / 2).max(1);
     let half_size = Size::<i32, Physical>::from((half_w, half_h));
-    let scale_x = half_w as f64 / output_phys.w as f64;
-    let scale_y = half_h as f64 / output_phys.h as f64;
 
-    // Step 1: Render background elements into textures[0] at half-res
+    // Step 1: Render all background elements at full-res into scene texture
+    // Groups are back-to-front: wallpaper → bottom layers → windows.
     {
-        let mut target = renderer.bind(&mut state.textures[0])?;
-        let mut frame = renderer.render(&mut target, half_size, Transform::Normal)?;
-        frame.clear(bg_color, &[Rectangle::from_size(half_size)])?;
+        let mut target = renderer.bind(&mut state.scene)?;
+        let mut frame = renderer.render(&mut target, output_phys, Transform::Normal)?;
+        frame.clear(bg_color, &[Rectangle::from_size(output_phys)])?;
 
-        for elem in bg_elements.iter().rev() {
-            let geo = elem.geometry(smithay::utils::Scale::from(1.0));
-            let src = elem.src();
-            let dst = Rectangle::<i32, Physical>::new(
-                Point::from((
-                    (geo.loc.x as f64 * scale_x).round() as i32,
-                    (geo.loc.y as f64 * scale_y).round() as i32,
-                )),
-                Size::from((
-                    (geo.size.w as f64 * scale_x).round() as i32,
-                    (geo.size.h as f64 * scale_y).round() as i32,
-                )),
-            );
-            if dst.size.w > 0 && dst.size.h > 0 {
-                let _ = elem.draw(&mut frame, src, dst, &[dst], &[]);
+        let scale = smithay::utils::Scale::from(output_scale);
+        for group in element_groups.iter() {
+            for elem in group.iter().rev() {
+                let geo = elem.geometry(scale);
+                let src = elem.src();
+                let dst = Rectangle::<i32, Physical>::new(geo.loc, geo.size);
+                if dst.size.w > 0 && dst.size.h > 0 {
+                    let _ = elem.draw(&mut frame, src, dst, &[dst], &[]);
+                }
             }
         }
         let _ = frame.finish();
     }
 
-    // Step 2: Dual Kawase downsample chain
+    // Step 2: Downsample scene to half-res (textures[0])
+    {
+        let scene_tex = state.scene.clone();
+        let scene_size = tex_size(&scene_tex);
+        let src_rect = Rectangle::<f64, BufferCoords>::new(
+            Point::from((0.0, 0.0)),
+            Size::from((scene_size.w as f64, scene_size.h as f64)),
+        );
+        let dst_rect = Rectangle::<i32, Physical>::from_size(half_size);
+        let halfpixel = [0.5 / scene_size.w as f32, 0.5 / scene_size.h as f32];
+
+        let mut target = renderer.bind(&mut state.textures[0])?;
+        let mut frame = renderer.render(&mut target, half_size, Transform::Normal)?;
+        frame.clear(Color32F::from([0.0, 0.0, 0.0, 0.0]), &[dst_rect])?;
+        frame.render_texture_from_to(
+            &scene_tex, src_rect, dst_rect,
+            &[dst_rect], &[], Transform::Normal, 1.0,
+            Some(down_shader),
+            &[Uniform::new("halfpixel", halfpixel)],
+        )?;
+        let _ = frame.finish();
+    }
+
+    // Step 3: Dual Kawase downsample chain
     for i in 0..state.passes {
         // Clone source to break borrow conflict (Arc-backed, cheap)
         let src_tex = state.textures[i].clone();
@@ -203,26 +235,31 @@ fn tex_size(tex: &GlesTexture) -> Size<i32, Physical> {
 // ── Backdrop element ───────────────────────────────────────────────────────
 
 /// Create a backdrop element sampling the blurred result texture.
+/// `win_log_rect` is the window's rectangle in screen-logical coordinates.
 pub fn create_backdrop(
     state: &BlurState,
     ctx_id: smithay::backend::renderer::ContextId<GlesTexture>,
-    win_rect: Rectangle<i32, smithay::utils::Logical>,
+    win_log_rect: Rectangle<i32, smithay::utils::Logical>,
     output_logical: Size<i32, smithay::utils::Logical>,
     output_scale: f64,
 ) -> TextureRenderElement<GlesTexture> {
     let half_w = (state.full_size.w / 2).max(1) as f64;
     let half_h = (state.full_size.h / 2).max(1) as f64;
 
-    // Map window logical position to src rect in the half-res blur texture
-    let src_x = win_rect.loc.x as f64 / output_logical.w as f64 * half_w;
-    let src_y = win_rect.loc.y as f64 / output_logical.h as f64 * half_h;
-    let src_w = win_rect.size.w as f64 / output_logical.w as f64 * half_w;
-    let src_h = win_rect.size.h as f64 / output_logical.h as f64 * half_h;
+    // Map logical window position to src rect in the half-res blur texture
+    let src_x = win_log_rect.loc.x as f64 / output_logical.w as f64 * half_w;
+    let src_y = win_log_rect.loc.y as f64 / output_logical.h as f64 * half_h;
+    let src_w = win_log_rect.size.w as f64 / output_logical.w as f64 * half_w;
+    let src_h = win_log_rect.size.h as f64 / output_logical.h as f64 * half_h;
 
+    // Location in physical space (Smithay TextureRenderElement uses physical coords)
     let loc = Point::<f64, Physical>::from((
-        win_rect.loc.x as f64 * output_scale,
-        win_rect.loc.y as f64 * output_scale,
+        win_log_rect.loc.x as f64 * output_scale,
+        win_log_rect.loc.y as f64 * output_scale,
     ));
+
+    // Size in logical coords (Smithay scales by output_scale internally)
+    let dst_size = Size::from((win_log_rect.size.w, win_log_rect.size.h));
 
     TextureRenderElement::from_static_texture(
         Id::new(),
@@ -236,7 +273,7 @@ pub fn create_backdrop(
             Point::from((src_x, src_y)),
             Size::from((src_w, src_h)),
         )),
-        Some(Size::from((win_rect.size.w, win_rect.size.h))),
+        Some(dst_size),
         None,
         Kind::Unspecified,
     )
