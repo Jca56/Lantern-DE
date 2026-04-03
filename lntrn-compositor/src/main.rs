@@ -1,6 +1,7 @@
 #![allow(irrefutable_let_patterns)]
 
 mod animation;
+mod blur;
 mod canvas;
 mod cursor;
 mod gestures;
@@ -11,6 +12,7 @@ pub mod hover_preview;
 mod input;
 mod layer_position;
 mod render;
+mod rounded_element;
 mod screencopy_render;
 mod shaders;
 mod snap;
@@ -42,6 +44,39 @@ pub(crate) fn lantern_config_path() -> std::path::PathBuf {
     let old_path = std::path::PathBuf::from(home).join(".config/lantern/lantern.toml");
     if old_path.exists() { return old_path; }
     new_path
+}
+
+/// Read a string setting from a given [section] in lantern.toml.
+pub(crate) fn read_config(section: &str, key: &str, default: &str) -> String {
+    let path = lantern_config_path();
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return default.to_string(),
+    };
+    let section_header = format!("[{}]", section);
+    let mut in_section = false;
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_section = trimmed == section_header;
+            continue;
+        }
+        if in_section {
+            if let Some((k, v)) = trimmed.split_once('=') {
+                if k.trim() == key {
+                    return v.trim().trim_matches('"').to_string();
+                }
+            }
+        }
+    }
+    default.to_string()
+}
+
+/// Read a float setting from a given [section] in lantern.toml.
+pub(crate) fn read_config_f32(key: &str, default: f32) -> f32 {
+    let s = read_config("windows", key, "");
+    if s.is_empty() { return default; }
+    s.parse::<f32>().unwrap_or(default)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

@@ -76,6 +76,26 @@ impl ResizeSurfaceGrab {
             grab_button,
         }
     }
+
+    /// Map resize edges to the appropriate cursor icon.
+    pub fn cursor_icon_for_edges(edges: ResizeEdge) -> smithay::input::pointer::CursorIcon {
+        use smithay::input::pointer::CursorIcon;
+        let has_top = edges.intersects(ResizeEdge::TOP);
+        let has_bottom = edges.intersects(ResizeEdge::BOTTOM);
+        let has_left = edges.intersects(ResizeEdge::LEFT);
+        let has_right = edges.intersects(ResizeEdge::RIGHT);
+        match (has_left, has_right, has_top, has_bottom) {
+            (true, _, true, _) => CursorIcon::NwResize,
+            (_, true, true, _) => CursorIcon::NeResize,
+            (true, _, _, true) => CursorIcon::SwResize,
+            (_, true, _, true) => CursorIcon::SeResize,
+            (true, _, _, _) => CursorIcon::WResize,
+            (_, true, _, _) => CursorIcon::EResize,
+            (_, _, true, _) => CursorIcon::NResize,
+            (_, _, _, true) => CursorIcon::SResize,
+            _ => CursorIcon::Default,
+        }
+    }
 }
 
 impl PointerGrab<Lantern> for ResizeSurfaceGrab {
@@ -87,6 +107,12 @@ impl PointerGrab<Lantern> for ResizeSurfaceGrab {
         event: &MotionEvent,
     ) {
         handle.motion(data, None, event);
+
+        // Keep resize cursor active during the grab
+        let icon = Self::cursor_icon_for_edges(self.edges);
+        data.cursor.set_status(
+            smithay::input::pointer::CursorImageStatus::Named(icon),
+        );
 
         let raw_delta = event.location - self.start_data.location;
         // Convert screen-space delta to canvas-space
@@ -167,6 +193,13 @@ impl PointerGrab<Lantern> for ResizeSurfaceGrab {
 
         if !handle.current_pressed().contains(&self.grab_button) {
             handle.unset_grab(self, data, event.serial, event.time, true);
+
+            // Restore default cursor
+            data.cursor.set_status(
+                smithay::input::pointer::CursorImageStatus::Named(
+                    smithay::input::pointer::CursorIcon::Default,
+                ),
+            );
 
             if let Some(xdg) = self.window.toplevel() {
                 xdg.with_pending_state(|state| {

@@ -29,6 +29,7 @@ members = [
     "lntrn-git",
     "lntrn-calculator",
     "lntrn-dbus",
+    "lntrn-app-template",
 ]
 
 [profile.release]

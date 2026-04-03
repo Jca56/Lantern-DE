@@ -221,9 +221,12 @@ pub(crate) fn run_loop(
             state.left_pressed = false;
             let in_ctx = context_menu.is_open() && context_menu.contains(cx, cy);
             let in_view = view_menu.is_open() && view_menu.contains(cx, cy);
-            if context_menu.is_open() && !in_ctx {
+            if in_ctx || in_view {
+                // Click inside a menu — signal the press so draw() can detect it
+                input.on_left_pressed();
+            } else if context_menu.is_open() {
                 context_menu.close();
-            } else if view_menu.is_open() && !in_view {
+            } else if view_menu.is_open() {
                 view_menu.close();
             } else {
                 let action = handle_click(
@@ -334,9 +337,10 @@ pub(crate) fn run_loop(
                         MenuItem::slider(crate::TERM_FONT_SLIDER_ID, "Font Size", font_val),
                         MenuItem::slider(crate::TERM_OPACITY_SLIDER_ID, "Opacity", opacity_val),
                     ]);
+                    context_menu.clamp_to_screen(wf, hf);
                 }
             } else {
-                handle_right_click(app, context_menu, input, open_with_apps, wf, hf, s);
+                handle_right_click(app, context_menu, input, open_with_apps, settings, wf, hf, s);
             }
         }
 
@@ -396,6 +400,10 @@ pub(crate) fn run_loop(
                         settings.save();
                     } else if *id == crate::TERM_OPACITY_SLIDER_ID {
                         settings.term_opacity = value.clamp(0.0, 1.0);
+                        settings.save();
+                    } else if *id == crate::FILES_FONT_SLIDER_ID {
+                        app.icon_zoom = *value;
+                        settings.icon_zoom = *value;
                         settings.save();
                     }
                 }

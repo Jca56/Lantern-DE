@@ -238,6 +238,10 @@ impl ContextMenu {
         let icon_sz = 40.0 * s;
         let icon_gap = 6.0 * s;
 
+        // Menu screen position (for inline rendering on main surface)
+        let menu_x = self.x;
+        let menu_y = self.y - self.scroll_offset;
+
         let mut cy = pad;
         let mut result = Vec::new();
         for item in &self.items {
@@ -246,10 +250,10 @@ impl ContextMenu {
                     let total_sw = swatches.len() as f32 * icon_sz
                         + (swatches.len().saturating_sub(1)) as f32 * icon_gap;
                     let start_x = content_x + (content_w - pad - total_sw) * 0.5;
-                    let icon_top = cy + label_size + 12.0 * s;
+                    let icon_top = cy + label_size + 18.0 * s;
                     for (i, (sid, _)) in swatches.iter().enumerate() {
-                        let ix = start_x + i as f32 * (icon_sz + icon_gap);
-                        result.push((*sid, ix, icon_top, icon_sz));
+                        let ix = menu_x + start_x + i as f32 * (icon_sz + icon_gap);
+                        result.push((*sid, ix, menu_y + icon_top, icon_sz));
                     }
                     cy += COLOR_SWATCH_HEIGHT * s;
                 }
@@ -794,5 +798,5 @@ pub(super) const SLIDER_TRACK_H: f32 = 12.0;
 pub(super) const HEADER_HEIGHT: f32 = 32.0;
 pub(super) const PROGRESS_ITEM_HEIGHT: f32 = 50.0;
 pub(super) const CONTEXT_MENU_ZONE_BASE: u32 = 0xCE_0000;
-pub(super) const COLOR_SWATCH_HEIGHT: f32 = 80.0;
+pub(super) const COLOR_SWATCH_HEIGHT: f32 = 86.0;
 pub(super) const ACCENT_BAR_WIDTH: f32 = 3.5;

@@ -11,12 +11,13 @@ use smithay::{
                 render_elements,
                 solid::SolidColorRenderElement,
                 surface::{render_elements_from_surface_tree, WaylandSurfaceRenderElement},
+                texture::TextureRenderElement,
                 utils::RescaleRenderElement,
                 AsRenderElements, Kind,
             },
             gles::{
                 element::{PixelShaderElement, TextureShaderElement},
-                GlesRenderer, Uniform,
+                GlesRenderer, GlesTexture, Uniform,
             },
         },
     },
@@ -40,6 +41,8 @@ render_elements! {
     Shader=PixelShaderElement,
     Rescaled=RescaleRenderElement<WaylandSurfaceRenderElement<GlesRenderer>>,
     TextureShader=TextureShaderElement,
+    Backdrop=TextureRenderElement<GlesTexture>,
+    RoundedSurface=crate::rounded_element::RoundedSurfaceElement,
 }
 
 pub fn render_surface(
@@ -182,6 +185,8 @@ pub fn render_surface(
     let shadow_shader = &udev.shadow_shader;
     let hot_corner_glow_shader = &udev.hot_corner_glow_shader;
     let ssd_icon_shader = &udev.ssd_icon_shader;
+    let ssd_header_shader = &udev.ssd_header_shader;
+    let corner_shader = &udev.corner_shader;
     let renderer = match udev.renderer.as_mut() {
         Some(r) => r,
         None => return,
@@ -206,6 +211,9 @@ pub fn render_surface(
     let windows: Vec<_> = state.space.elements().cloned().collect();
     let mut window_elements: Vec<CustomRenderElements> = Vec::new();
     let mut fullscreen_elements: Vec<CustomRenderElements> = Vec::new();
+    // Blur backdrop tracking — disabled until coordinate mapping is fixed
+    // TODO: TextureRenderElement location/src/size coordinate spaces don't align
+    let blur_backdrops: Vec<(usize, Rectangle<i32, Logical>)> = Vec::new();
 
     // Canvas transform: compute viewport in canvas-space for culling
     let canvas_offset = state.canvas.offset;
@@ -240,7 +248,8 @@ pub fn render_surface(
 
         let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(window) else { continue };
         let is_fullscreen = fullscreen_surfaces.iter().any(|e| e.surface == surface);
-        let mut base_alpha = state.window_opacity.get(&surface).copied().unwrap_or(1.0);
+        let mut base_alpha = state.window_opacity.get(&surface).copied()
+            .unwrap_or(state.default_window_opacity);
         if state.show_desktop_active {
             base_alpha *= 0.05;
         }
@@ -287,25 +296,34 @@ pub fn render_surface(
         let win_geo = window.geometry();
         let has_ssd = state.ssd.has_ssd(&surface);
 
-        // Render window directly — window.render_elements handles toplevel +
-        // popups + subsurfaces correctly for both CSD and SSD windows.
-        let win_render_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
-            window.render_elements(renderer, phys_loc, render_scale, alpha);
-        let target = if is_fullscreen { &mut fullscreen_elements } else { &mut window_elements };
-        target.extend(
-            win_render_elements.into_iter().map(CustomRenderElements::Surface),
-        );
+        // Determine corner rounding based on window state
+        let is_maximized = state.maximized_windows.iter().any(|m| m.surface == surface);
+        let snap_zone = state.snapped_windows.iter()
+            .find(|s| s.surface == surface)
+            .map(|s| s.zone);
+        let corners = if is_maximized {
+            crate::ssd::RoundedCorners::none()
+        } else if let Some(zone) = snap_zone {
+            crate::ssd::RoundedCorners::for_snap(zone)
+        } else {
+            crate::ssd::RoundedCorners::all()
+        };
 
-        // SSD: render titlebar decoration above the window
+        let win_log_loc: Point<i32, Logical> = Point::from((
+            (rel_x * canvas_zoom) as i32,
+            (rel_y * canvas_zoom) as i32,
+        ));
+
+        // Z-order (front-to-back): corner masks → SSD overlay → window → shadow
+        // Elements pushed first = higher z (drawn on top).
+
+        // SSD: render header overlay on top of the window
         if has_ssd && !is_fullscreen {
             if let Some(ssd_state) = state.ssd.get_mut(&surface) {
-                let ssd_logical_loc: Point<i32, Logical> = Point::from((
-                    (rel_x * canvas_zoom) as i32,
-                    (rel_y * canvas_zoom) as i32,
-                ));
                 let (solid_elems, shader_elems) = crate::ssd::render_decoration(
-                    ssd_state, phys_loc, ssd_logical_loc,
+                    ssd_state, phys_loc, win_log_loc,
                     win_geo.size, output_scale, ssd_icon_shader.as_ref(),
+                    ssd_header_shader.as_ref(), corners,
                 );
                 for elem in shader_elems {
                     window_elements.push(CustomRenderElements::Shader(elem));
@@ -316,34 +334,67 @@ pub fn render_surface(
             }
         }
 
+        // Window surface (behind SSD overlay, in front of shadow)
+        let win_render_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
+            window.render_elements(renderer, phys_loc, render_scale, alpha);
+        let target = if is_fullscreen { &mut fullscreen_elements } else { &mut window_elements };
+        let needs_rounding = !is_fullscreen && !is_maximized
+            && snap_zone.is_none()
+            && udev.rounded_tex_shader.is_some();
+        if needs_rounding {
+            let shader = udev.rounded_tex_shader.as_ref().unwrap();
+            let win_phys_w = (win_geo.size.w as f64 * output_scale * canvas_zoom) as f32;
+            let win_phys_h = (win_geo.size.h as f64 * output_scale * canvas_zoom) as f32;
+            let corner_r = crate::ssd::CORNER_RADIUS * output_scale as f32;
+            target.extend(win_render_elements.into_iter().map(|e| {
+                CustomRenderElements::RoundedSurface(
+                    crate::rounded_element::RoundedSurfaceElement::new(
+                        e, shader.clone(), [win_phys_w, win_phys_h], corner_r,
+                    ),
+                )
+            }));
+        } else {
+            target.extend(
+                win_render_elements.into_iter().map(CustomRenderElements::Surface),
+            );
+        }
+
+        // Blur backdrop tracking disabled — TODO: fix coordinate mapping
+        // if !is_fullscreen && !is_maximized {
+        //     let ssd_bar = if has_ssd { crate::ssd::SsdManager::bar_height() } else { 0 };
+        //     let win_log_rect = Rectangle::<i32, Logical>::new(
+        //         (rel_x.round() as i32, rel_y.round() as i32 - ssd_bar).into(),
+        //         (win_geo.size.w, win_geo.size.h + ssd_bar).into(),
+        //     );
+        //     blur_backdrops.push((window_elements.len(), win_log_rect));
+        // }
+
         // Window drop shadow (behind window, so pushed after = lower z)
         if !is_fullscreen {
             if let Some(ref shader) = shadow_shader {
-                let shadow_sigma = 20.0;
-                let shadow_expand = (shadow_sigma * 3.0) as i32;
-                let ssd_bar = if has_ssd { 34 } else { 0 };
-                let corner_r = 10.0;
-                // Shadow rect in logical coords, expanded around window + SSD bar
-                let win_log_x = (rel_x * canvas_zoom) as i32;
-                let win_log_y = (rel_y * canvas_zoom) as i32 - ssd_bar;
-                let win_log_w = (win_geo.size.w as f64 * canvas_zoom).round() as i32;
-                let win_log_h = ((win_geo.size.h + ssd_bar) as f64 * canvas_zoom).round() as i32;
+                let shadow_expand = 40i32;
+                let corner_r = crate::ssd::CORNER_RADIUS;
+                let ssd_bar = if has_ssd { crate::ssd::SsdManager::bar_height() } else { 0 };
+                let win_x = rel_x.round() as i32;
+                let win_y = rel_y.round() as i32 - ssd_bar;
+                let win_w = win_geo.size.w;
+                let win_h = win_geo.size.h + ssd_bar;
                 let shadow_area = Rectangle::<i32, Logical>::new(
-                    (win_log_x - shadow_expand, win_log_y - shadow_expand).into(),
-                    (win_log_w + shadow_expand * 2, win_log_h + shadow_expand * 2).into(),
+                    (win_x - shadow_expand, win_y - shadow_expand).into(),
+                    (win_w + shadow_expand * 2, win_h + shadow_expand * 2).into(),
                 );
-                let win_phys_w = win_log_w as f32 * output_scale as f32;
-                let win_phys_h = win_log_h as f32 * output_scale as f32;
+                // Smithay sets the shader `size` uniform in logical pixels (scale 1).
+                // All other uniforms must match that coordinate space.
                 let shadow_elem = PixelShaderElement::new(
                     shader.clone(),
                     shadow_area,
                     None,
                     alpha,
                     vec![
-                        Uniform::new("window_size", [win_phys_w, win_phys_h]),
-                        Uniform::new("sigma", shadow_sigma as f32 * output_scale as f32),
-                        Uniform::new("corner_radius", corner_r * output_scale as f32),
-                        Uniform::new("shadow_color", [0.0f32, 0.0, 0.0, 0.6]),
+                        Uniform::new("window_size", [win_w as f32, win_h as f32]),
+                        Uniform::new("sigma", 12.0f32),
+                        Uniform::new("corner_radius", corner_r),
+                        Uniform::new("shadow_color", [0.0f32, 0.0, 0.0, 0.4]),
                     ],
                     Kind::Unspecified,
                 );
@@ -588,8 +639,7 @@ pub fn render_surface(
         }
     }
 
-    elements.extend(window_elements);
-    elements.extend(bottom_layer_elements);
+    // (window_elements and bottom_layer_elements extended after blur pipeline below)
 
     // Periodically check if wallpaper config changed
     state.wallpaper_frame_counter += 1;
@@ -610,7 +660,72 @@ pub fn render_surface(
             state.cursor_theme_name = new_theme.clone();
             state.cursor.set_custom_theme(&new_theme);
         }
+        state.default_window_opacity = crate::read_config_f32("window_opacity", 1.0);
     }
+
+    // ── Blur pipeline: render background, dual-kawase blur, insert backdrops ──
+    let output_phys = Size::<i32, Physical>::from((
+        (output_geo.size.w as f64 * output_scale).round() as i32,
+        (output_geo.size.h as f64 * output_scale).round() as i32,
+    ));
+    if !blur_backdrops.is_empty() {
+        if let (Some(ref down_shader), Some(ref up_shader)) =
+            (&udev.blur_down_shader, &udev.blur_up_shader)
+        {
+            let blur_intensity = crate::read_config_f32("blur_intensity", 0.5);
+            let passes = if blur_intensity < 0.3 { 2usize }
+                else if blur_intensity < 0.7 { 3 }
+                else { 4 };
+
+            if crate::blur::ensure_textures(renderer, output_phys, passes, &mut udev.blur_state) {
+                // Collect ALL background elements: bottom layers + wallpaper + opaque windows
+                let mut bg_elements: Vec<CustomRenderElements> = Vec::new();
+
+                // Add wallpaper
+                if let Some(wp_elem) = state.wallpaper.render_element(renderer, output_pos, scale) {
+                    bg_elements.push(CustomRenderElements::Memory(wp_elem));
+                }
+
+                // Add bottom layer surfaces
+                bg_elements.extend(
+                    bottom_layer_elements.iter()
+                        .filter_map(|e| {
+                            // Clone-ish: re-render bottom layers
+                            // Actually we can't clone CustomRenderElements...
+                            // For now just use wallpaper as the blur source.
+                            // TODO: include bottom layers + opaque windows
+                            None::<CustomRenderElements>
+                        })
+                );
+
+                let blur_state = udev.blur_state.as_mut().unwrap();
+                if crate::blur::render_and_blur(
+                    renderer, blur_state, &bg_elements, BG_COLOR.into(),
+                    output_phys, down_shader, up_shader,
+                ).is_ok() {
+                    let ctx_id = {
+                        use smithay::backend::renderer::Renderer as _;
+                        renderer.context_id()
+                    };
+                    let output_logical = Size::<i32, Logical>::from((
+                        output_geo.size.w, output_geo.size.h,
+                    ));
+                    for (idx, rect) in blur_backdrops.iter().rev() {
+                        let backdrop = crate::blur::create_backdrop(
+                            blur_state, ctx_id.clone(), *rect, output_logical, output_scale,
+                        );
+                        window_elements.insert(
+                            *idx,
+                            CustomRenderElements::Backdrop(backdrop),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    elements.extend(window_elements);
+    elements.extend(bottom_layer_elements);
 
     if let Some(wallpaper_elem) = state.wallpaper.render_element(renderer, output_pos, scale) {
         elements.push(CustomRenderElements::Memory(wallpaper_elem));
@@ -648,6 +763,7 @@ pub fn render_surface(
             return;
         }
     };
+
 
     // Fulfill any pending screencopy requests after a successful render
     if rendered && !state.pending_screencopy.is_empty() {

@@ -40,6 +40,7 @@ pub const VIEW_SLIDER_ID: u32 = 1;
 pub const VIEW_OPACITY_SLIDER_ID: u32 = 2;
 pub const TERM_FONT_SLIDER_ID: u32 = 3;
 pub const TERM_OPACITY_SLIDER_ID: u32 = 4;
+pub const FILES_FONT_SLIDER_ID: u32 = 5;
 pub const ZONE_TERM_TAB_BASE: u32 = 9100;
 pub const ZONE_TERM_TAB_CLOSE_BASE: u32 = 9150;
 pub const ZONE_TERM_TAB_NEW: u32 = 9199;

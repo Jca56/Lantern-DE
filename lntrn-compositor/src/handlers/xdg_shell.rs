@@ -121,14 +121,17 @@ impl XdgShellHandler for Lantern {
             });
             surface.send_pending_configure();
 
+            let our_edges: crate::grabs::resize_grab::ResizeEdge = edges.into();
             let grab = ResizeSurfaceGrab::start(
                 start_data,
                 window,
-                edges.into(),
+                our_edges,
                 Rectangle::new(initial_window_location, initial_window_size),
             );
 
             pointer.set_grab(self, grab, serial, Focus::Clear);
+            let icon = ResizeSurfaceGrab::cursor_icon_for_edges(our_edges);
+            self.cursor.set_status(smithay::input::pointer::CursorImageStatus::Named(icon));
         }
     }
 

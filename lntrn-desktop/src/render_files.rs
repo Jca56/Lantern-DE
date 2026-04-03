@@ -471,6 +471,9 @@ pub fn draw_files_panel(
     painter.set_layer(0);
     text.set_layer(0);
 
+    // ── Folder color swatch rects (for texture rendering in layer 1) ──
+    let swatches = context_menu.swatch_rects();
+
     // ── Layered render ────────────────────────────────────────────────
     let frame = ctx.begin_frame("Lantern Desktop");
     match frame {
@@ -484,11 +487,39 @@ pub fn draw_files_panel(
             }
             text.render_layer(0, ctx, frame.encoder_mut(), &view);
 
+            // tex_draws consumed — icon_cache is now free for mutable borrow
+            drop(tex_draws);
+
             // Flush so glyphon's prepare() for layer 1 doesn't overwrite layer 0 vertices
             frame.flush(ctx);
 
             // Layer 1: menu overlay shapes + text
             painter.render_layer(1, ctx, frame.encoder_mut(), &view, None);
+
+            // Render folder swatch textures on layer 1
+            if !swatches.is_empty() {
+                let color_names: &[(u32, &str)] = &[
+                    (crate::CTX_NEW_FOLDER_RED, "red"),
+                    (crate::CTX_NEW_FOLDER_ORANGE, "orange"),
+                    (crate::CTX_NEW_FOLDER_YELLOW, "yellow"),
+                    (crate::CTX_NEW_FOLDER_GREEN, "green"),
+                    (crate::CTX_NEW_FOLDER_BLUE, "blue"),
+                    (crate::CTX_NEW_FOLDER_PURPLE, "purple"),
+                ];
+                for &(_, name) in color_names {
+                    icon_cache.get_or_load_folder_color(name, ctx, tex_pass);
+                }
+                let swatch_draws: Vec<TextureDraw> = swatches.iter().filter_map(|&(sid, ix, iy, isz)| {
+                    let name = color_names.iter().find(|(id, _)| *id == sid).map(|(_, n)| *n)?;
+                    let tex = icon_cache.get_folder_color(name)?;
+                    let (dx, dy, dw, dh) = crate::icons::fit_in_box(tex, ix, iy, isz, isz);
+                    Some(TextureDraw::new(tex, dx, dy, dw, dh))
+                }).collect();
+                if !swatch_draws.is_empty() {
+                    tex_pass.render_pass(ctx, frame.encoder_mut(), &view, &swatch_draws, None);
+                }
+            }
+
             text.render_layer(1, ctx, frame.encoder_mut(), &view);
 
             frame.submit(&ctx.queue);

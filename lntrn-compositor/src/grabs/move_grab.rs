@@ -54,7 +54,7 @@ impl PointerGrab<Lantern> for MoveSurfaceGrab {
                 let geo = self.window.geometry();
                 let (cx, cy) = data.canvas.screen_to_canvas(event.location.x, event.location.y);
                 let new_x = cx - geo.size.w as f64 / 2.0;
-                let new_y = cy - 16.0;
+                let new_y = cy + crate::ssd::SsdManager::bar_height() as f64 / 2.0;
                 let new_loc = Point::from((new_x as i32, new_y as i32));
                 data.space.map_element(self.window.clone(), new_loc, false);
                 self.initial_window_location = new_loc;

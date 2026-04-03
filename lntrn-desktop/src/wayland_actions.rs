@@ -176,6 +176,7 @@ pub(crate) fn handle_right_click(
     context_menu: &mut ContextMenu,
     input: &InteractionContext,
     open_with_apps: &mut Vec<DesktopApp>,
+    settings: &Settings,
     wf: f32, hf: f32, s: f32,
 ) {
     let Some((cx, cy)) = input.cursor() else { return };
@@ -230,6 +231,8 @@ pub(crate) fn handle_right_click(
             v.push(MenuItem::action(CTX_CHANGE_ICON, "Change Icon"));
         }
         v.push(MenuItem::action(CTX_PROPERTIES, "Properties"));
+        v.push(MenuItem::separator());
+        v.push(MenuItem::slider(crate::FILES_FONT_SLIDER_ID, "Icon Size", app.icon_zoom));
         v
     } else {
         app.clear_selection();
@@ -239,9 +242,7 @@ pub(crate) fn handle_right_click(
             v.push(MenuItem::action_with(CTX_PASTE, "Paste", "Ctrl+V"));
             v.push(MenuItem::separator());
         }
-        v.push(MenuItem::action(CTX_NEW_FILE, "New File"));
         v.push(MenuItem::color_swatches("New Folder", vec![
-            (CTX_NEW_FOLDER_PLAIN,  Color::from_rgb8(140, 140, 140)),
             (CTX_NEW_FOLDER_RED,    Color::from_rgb8(220, 60, 60)),
             (CTX_NEW_FOLDER_ORANGE, Color::from_rgb8(230, 150, 40)),
             (CTX_NEW_FOLDER_YELLOW, Color::from_rgb8(220, 200, 50)),
@@ -261,12 +262,14 @@ pub(crate) fn handle_right_click(
         v.push(MenuItem::action(CTX_OPEN_TERMINAL, "Open Terminal Here"));
         v.push(MenuItem::separator());
         v.push(MenuItem::checkbox(CTX_SHOW_HIDDEN, "Show Hidden Files", app.show_hidden));
+        v.push(MenuItem::separator());
+        v.push(MenuItem::slider(crate::FILES_FONT_SLIDER_ID, "Icon Size", app.icon_zoom));
         v
     };
 
     context_menu.set_scale(s);
-    // Desktop mode: open inline (rendered on same surface)
     context_menu.open(cx, cy, items);
+    context_menu.clamp_to_screen(wf, hf);
 }
 
 pub(crate) fn handle_ctx_event(

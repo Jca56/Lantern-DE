@@ -197,6 +197,20 @@ fn compile_shaders(udev: &mut crate::udev::UdevData) {
         Err(e) => warn!("Failed to compile SSD icon shader: {:?}", e),
     }
 
+    match renderer.compile_custom_pixel_shader(
+        crate::shaders::SSD_HEADER_SHADER_SRC,
+        &[
+            UniformName::new("corner_radius", UniformType::_1f),
+            UniformName::new("bar_color", UniformType::_4f),
+        ],
+    ) {
+        Ok(shader) => {
+            udev.ssd_header_shader = Some(shader);
+            info!("SSD header shader compiled");
+        }
+        Err(e) => warn!("Failed to compile SSD header shader: {:?}", e),
+    }
+
     match renderer.compile_custom_texture_shader(
         ROUNDED_TEX_SHADER_SRC,
         &[
@@ -209,6 +223,28 @@ fn compile_shaders(udev: &mut crate::udev::UdevData) {
             info!("Rounded-corner texture shader compiled");
         }
         Err(e) => warn!("Failed to compile rounded-corner texture shader: {:?}", e),
+    }
+
+    match renderer.compile_custom_texture_shader(
+        crate::shaders::BLUR_DOWN_SHADER_SRC,
+        &[UniformName::new("halfpixel", UniformType::_2f)],
+    ) {
+        Ok(shader) => {
+            udev.blur_down_shader = Some(shader);
+            info!("Blur downsample shader compiled");
+        }
+        Err(e) => warn!("Failed to compile blur down shader: {:?}", e),
+    }
+
+    match renderer.compile_custom_texture_shader(
+        crate::shaders::BLUR_UP_SHADER_SRC,
+        &[UniformName::new("halfpixel", UniformType::_2f)],
+    ) {
+        Ok(shader) => {
+            udev.blur_up_shader = Some(shader);
+            info!("Blur upsample shader compiled");
+        }
+        Err(e) => warn!("Failed to compile blur up shader: {:?}", e),
     }
 }
 

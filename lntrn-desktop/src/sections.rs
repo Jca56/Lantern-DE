@@ -29,7 +29,7 @@ use crate::{
 
 pub fn draw_gradient_h(painter: &mut Painter, palette: &FoxPalette, x: f32, y: f32, width: f32, s: f32) {
     let mut bar = GradientStrip::new(x, y, width);
-    bar.height = 4.0 * s;
+    bar.height = 5.0 * s;
     bar.colors = palette.file_manager_gradient_stops();
     bar.draw(painter);
 }
@@ -125,7 +125,7 @@ pub fn draw_content_grid(
         }
 
         // Only draw procedural icons when no texture icon is available
-        let label_font = 16.0 * s;
+        let label_font = 20.0 * s;
         let content_h = icsz + 2.0 * s + label_font;
         let top_pad = (isz - content_h) * 0.5;
         if !has_icon.get(index).copied().unwrap_or(false) {

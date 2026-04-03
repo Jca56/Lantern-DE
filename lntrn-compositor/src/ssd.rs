@@ -1,7 +1,7 @@
 /// Server-side decorations (SSD) for windows that don't draw their own.
 ///
-/// Minimal style: flat titlebar with gold accent line and proper vector icons
-/// rendered via a GLSL pixel shader for crisp X/square/dash at any scale.
+/// Integrated style: semi-transparent header overlay on the window's top region,
+/// rounded corners via corner-mask shader elements, no gold accent line.
 
 use smithay::{
     backend::renderer::{
@@ -13,18 +13,16 @@ use smithay::{
 };
 use std::collections::HashMap;
 
+use crate::snap::SnapZone;
+
 // ── Constants ───────────────────────────────────────────────────────────────
 
-/// Titlebar height in logical pixels.
+/// Titlebar height in logical pixels (overlay on window top).
 const BAR_HEIGHT: i32 = 34;
-/// Gold accent line thickness at the top.
-const ACCENT_HEIGHT: i32 = 2;
 /// Window control button width.
 const BTN_W: i32 = 46;
-
-fn color_srgb8(r: u8, g: u8, b: u8, a: f32) -> [f32; 4] {
-    [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, a]
-}
+/// Corner radius for floating (non-tiled) windows.
+pub const CORNER_RADIUS: f32 = 18.0;
 
 fn phys_pt(x: i32, y: i32) -> Point<i32, Physical> {
     Point::from((x, y))
@@ -39,26 +37,53 @@ pub enum SsdButton {
     Minimize,
 }
 
+/// Which corners of a window should be rounded.
+#[derive(Clone, Copy, Debug)]
+pub struct RoundedCorners {
+    pub tl: bool,
+    pub tr: bool,
+    pub bl: bool,
+    pub br: bool,
+}
+
+impl RoundedCorners {
+    pub fn all() -> Self {
+        Self { tl: true, tr: true, bl: true, br: true }
+    }
+    pub fn none() -> Self {
+        Self { tl: false, tr: false, bl: false, br: false }
+    }
+
+    /// Which corners are exposed (not against screen edge) for a snap zone.
+    pub fn for_snap(zone: SnapZone) -> Self {
+        match zone {
+            // Left-snapped: left edge flush, round right side
+            SnapZone::Left => Self { tl: false, tr: true, bl: false, br: true },
+            // Right-snapped: right edge flush, round left side
+            SnapZone::Right => Self { tl: true, tr: false, bl: true, br: false },
+            // Quarter snaps: only the inner corner is exposed
+            SnapZone::TopLeft => Self { tl: false, tr: false, bl: false, br: true },
+            SnapZone::TopRight => Self { tl: false, tr: false, bl: true, br: false },
+            SnapZone::BottomLeft => Self { tl: false, tr: true, bl: false, br: false },
+            SnapZone::BottomRight => Self { tl: true, tr: false, bl: false, br: false },
+        }
+    }
+}
+
 /// Per-window SSD state with pre-allocated color buffers.
 pub struct SsdState {
     pub hovered_button: Option<SsdButton>,
-    bar_buf: SolidColorBuffer,
-    accent_buf: SolidColorBuffer,
     close_hover_buf: SolidColorBuffer,
     btn_hover_buf: SolidColorBuffer,
 }
 
 impl SsdState {
     fn new() -> Self {
-        let bar_color = color_srgb8(39, 39, 39, 1.0);
-        let accent_color = color_srgb8(200, 134, 10, 1.0);
-        let close_hover = color_srgb8(232, 45, 45, 1.0);
-        let btn_hover: [f32; 4] = [1.0, 1.0, 1.0, 0.06];
+        let close_hover: [f32; 4] = [0.91, 0.18, 0.18, 0.70]; // semi-transparent red
+        let btn_hover: [f32; 4] = [1.0, 1.0, 1.0, 0.08];
 
         Self {
             hovered_button: None,
-            bar_buf: SolidColorBuffer::new((1, 1), bar_color),
-            accent_buf: SolidColorBuffer::new((1, 1), accent_color),
             close_hover_buf: SolidColorBuffer::new((1, 1), close_hover),
             btn_hover_buf: SolidColorBuffer::new((1, 1), btn_hover),
         }
@@ -98,6 +123,7 @@ impl SsdManager {
 
 // ── Geometry helpers ────────────────────────────────────────────────────────
 
+/// Titlebar rect — sits above the window (not overlapping content).
 pub fn titlebar_rect(
     win_loc: Point<i32, Logical>,
     win_size: Size<i32, Logical>,
@@ -144,7 +170,8 @@ pub fn hit_test(
 
 // ── Rendering ───────────────────────────────────────────────────────────────
 
-/// Render elements for the SSD titlebar. Returns (solid_elements, shader_elements).
+/// Render the SSD header overlay + button highlights.
+/// Returns (solid_elements, shader_elements).
 pub fn render_decoration(
     state: &mut SsdState,
     win_loc_phys: Point<i32, Physical>,
@@ -152,19 +179,20 @@ pub fn render_decoration(
     win_size: Size<i32, Logical>,
     scale: f64,
     icon_shader: Option<&GlesPixelProgram>,
+    header_shader: Option<&GlesPixelProgram>,
+    corners: RoundedCorners,
 ) -> (Vec<SolidColorRenderElement>, Vec<PixelShaderElement>) {
-    let mut solids = Vec::with_capacity(4);
-    let mut shaders = Vec::with_capacity(3);
+    let mut solids = Vec::with_capacity(2);
+    let mut shaders = Vec::with_capacity(4);
     let kind = smithay::backend::renderer::element::Kind::Unspecified;
 
     let bar_w = win_size.w;
     let bar_h = BAR_HEIGHT;
-    // Compute physical bar height and position so bar bottom == window top (no gap)
     let phys_bar_h = (bar_h as f64 * scale).round() as i32;
     let bar_px = win_loc_phys.x;
-    let bar_py = win_loc_phys.y - phys_bar_h;
+    let bar_py = win_loc_phys.y - phys_bar_h; // bar sits above the window
 
-    // Logical origin of the bar (for PixelShaderElement which uses logical coords)
+    // Logical origin of the bar (above the window)
     let bar_lx = win_loc_logical.x;
     let bar_ly = win_loc_logical.y - bar_h;
 
@@ -175,12 +203,31 @@ pub fn render_decoration(
         )
     };
 
-    // Gold accent line at bottom of titlebar (highest Z)
-    state.accent_buf.resize((bar_w, ACCENT_HEIGHT));
-    let accent_py = bar_py + phys_bar_h - (ACCENT_HEIGHT as f64 * scale).round() as i32;
-    solids.push(SolidColorRenderElement::from_buffer(
-        &state.accent_buf, phys_pt(bar_px, accent_py), scale, 1.0, kind,
-    ));
+    // Header background via shader (semi-transparent with rounded top corners)
+    if let Some(shader) = header_shader {
+        let corner_r = if corners.tl || corners.tr {
+            CORNER_RADIUS * scale as f32
+        } else {
+            0.0
+        };
+
+        let header_area = Rectangle::<i32, Logical>::new(
+            Point::from((bar_lx, bar_ly)),
+            Size::from((bar_w, bar_h)),
+        );
+
+        shaders.push(PixelShaderElement::new(
+            shader.clone(),
+            header_area,
+            None,
+            1.0,
+            vec![
+                Uniform::new("corner_radius", corner_r),
+                Uniform::new("bar_color", [0.18f32, 0.18, 0.18, 0.75]),
+            ],
+            kind,
+        ));
+    }
 
     // Button hover highlight
     if let Some(btn) = state.hovered_button {
@@ -189,21 +236,35 @@ pub fn render_decoration(
             SsdButton::Maximize => 1,
             SsdButton::Minimize => 2,
         };
-        let buf = if btn == SsdButton::Close {
-            state.close_hover_buf.resize((BTN_W, bar_h));
-            &state.close_hover_buf
+        if btn == SsdButton::Close {
+            // Close hover uses header shader so it respects the rounded top-right corner
+            if let Some(shader) = header_shader {
+                let btn_x = bar_lx + bar_w - BTN_W;
+                let hover_r = if corners.tr { CORNER_RADIUS * scale as f32 } else { 0.0 };
+                let hover_area = Rectangle::<i32, Logical>::new(
+                    Point::from((btn_x, bar_ly)),
+                    Size::from((BTN_W, bar_h)),
+                );
+                shaders.push(PixelShaderElement::new(
+                    shader.clone(), hover_area, None, 1.0,
+                    vec![
+                        Uniform::new("corner_radius", hover_r),
+                        Uniform::new("bar_color", [0.91f32, 0.18, 0.18, 0.70]),
+                    ],
+                    kind,
+                ));
+            }
         } else {
             state.btn_hover_buf.resize((BTN_W, bar_h));
-            &state.btn_hover_buf
-        };
-        solids.push(SolidColorRenderElement::from_buffer(
-            buf, p(bar_w - BTN_W * (idx + 1), 0), scale, 1.0, kind,
-        ));
+            solids.push(SolidColorRenderElement::from_buffer(
+                &state.btn_hover_buf, p(bar_w - BTN_W * (idx + 1), 0), scale, 1.0, kind,
+            ));
+        }
     }
 
     // Icons via pixel shader
     if let Some(shader) = icon_shader {
-        let icon_rest = color_srgb8(220, 220, 220, 0.78);
+        let icon_rest: [f32; 4] = [0.86, 0.86, 0.86, 0.78];
         let icon_white: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
         let is_close_hovered = state.hovered_button == Some(SsdButton::Close);
 
@@ -211,7 +272,6 @@ pub fn render_decoration(
             let btn_x = bar_w - BTN_W * (idx + 1);
             let color = if idx == 0 && is_close_hovered { icon_white } else { icon_rest };
 
-            // PixelShaderElement uses logical coordinates directly
             let screen_area: Rectangle<i32, Logical> = Rectangle::new(
                 Point::from((bar_lx + btn_x, bar_ly)),
                 Size::from((BTN_W, bar_h)),
@@ -231,11 +291,54 @@ pub fn render_decoration(
         }
     }
 
-    // Bar background (lowest Z)
-    state.bar_buf.resize((bar_w, bar_h));
-    solids.push(SolidColorRenderElement::from_buffer(
-        &state.bar_buf, phys_pt(bar_px, bar_py), scale, 1.0, kind,
-    ));
-
     (solids, shaders)
+}
+
+/// Generate corner mask elements that clip the window to rounded corners.
+/// Each mask is a `radius x radius` square at the relevant corner.
+pub fn render_corner_masks(
+    corner_shader: &GlesPixelProgram,
+    win_loc_logical: Point<i32, Logical>,
+    win_size: Size<i32, Logical>,
+    scale: f64,
+    alpha: f32,
+    corners: RoundedCorners,
+) -> Vec<PixelShaderElement> {
+    let r = CORNER_RADIUS.ceil() as i32;
+    let kind = smithay::backend::renderer::element::Kind::Unspecified;
+    let phys_r = CORNER_RADIUS * scale as f32;
+    let x = win_loc_logical.x;
+    let y = win_loc_logical.y;
+    let w = win_size.w;
+    let h = win_size.h;
+
+    let mut masks = Vec::with_capacity(4);
+
+    let corner_cases: [(bool, i32, i32, f32, f32); 4] = [
+        (corners.tl, x,         y,         0.0, 0.0), // top-left
+        (corners.tr, x + w - r, y,         1.0, 0.0), // top-right
+        (corners.bl, x,         y + h - r, 0.0, 1.0), // bottom-left
+        (corners.br, x + w - r, y + h - r, 1.0, 1.0), // bottom-right
+    ];
+
+    for (enabled, cx, cy, corner_x, corner_y) in corner_cases {
+        if !enabled { continue; }
+        let area = Rectangle::<i32, Logical>::new(
+            Point::from((cx, cy)),
+            Size::from((r, r)),
+        );
+        masks.push(PixelShaderElement::new(
+            corner_shader.clone(),
+            area,
+            None,
+            alpha,
+            vec![
+                Uniform::new("corner_radius", phys_r),
+                Uniform::new("corner", [corner_x, corner_y]),
+            ],
+            kind,
+        ));
+    }
+
+    masks
 }

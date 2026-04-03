@@ -497,6 +497,20 @@ impl Lantern {
                             return FilterResult::Intercept(());
                         }
 
+                        // Super+Shift+C: restart compositor (exec replace)
+                        if event.state() == KeyState::Pressed
+                            && _modifiers.logo
+                            && _modifiers.shift
+                            && keysym.modified_sym().raw() == xkb::KEY_C
+                        {
+                            tracing::info!("Super+Shift+C pressed, restarting compositor");
+                            use std::os::unix::process::CommandExt;
+                            let exe = crate::lantern_home().join("bin/lntrn-compositor");
+                            let err = std::process::Command::new(&exe).exec();
+                            tracing::error!("exec failed: {}", err);
+                            return FilterResult::Intercept(());
+                        }
+
                         // Super+Shift+D: restart lntrn-desktop
                         if event.state() == KeyState::Pressed
                             && _modifiers.logo
@@ -760,6 +774,9 @@ impl Lantern {
                                 initial_rect,
                             );
                             pointer.set_grab(self, grab, serial, smithay::input::pointer::Focus::Clear);
+                            // Set resize cursor immediately so there's no flash to default
+                            let icon = crate::grabs::ResizeSurfaceGrab::cursor_icon_for_edges(edges);
+                            self.cursor.set_status(smithay::input::pointer::CursorImageStatus::Named(icon));
                         }
 
                         pointer.frame(self);

@@ -16,10 +16,13 @@ pub struct Settings {
     pub term_font_size: f32,
     #[serde(default = "default_term_opacity")]
     pub term_opacity: f32,
+    #[serde(default = "default_files_font")]
+    pub files_font_size: f32,
 }
 
 fn default_bg_opacity() -> f32 { 0.0 }
 fn default_term_font() -> f32 { 20.0 }
+fn default_files_font() -> f32 { 16.0 }
 fn default_term_opacity() -> f32 { 0.3 }
 
 fn default_sort() -> String { "name".into() }
@@ -34,6 +37,7 @@ impl Default for Settings {
             bg_opacity: 0.0,
             term_font_size: 20.0,
             term_opacity: 0.3,
+            files_font_size: 16.0,
         }
     }
 }

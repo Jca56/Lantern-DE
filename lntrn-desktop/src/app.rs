@@ -347,15 +347,10 @@ impl App {
 
         let is_dir = self.entries[index].is_dir;
 
-        // Navigate into directories on double-click
+        // Navigate into directories on single click
         if is_dir {
-            if is_double {
-                let path = self.entries[index].path.clone();
-                self.navigate_to(path);
-            } else {
-                for e in &mut self.entries { e.selected = false; }
-                self.entries[index].selected = true;
-            }
+            let path = self.entries[index].path.clone();
+            self.navigate_to(path);
             return;
         }
         // File handling

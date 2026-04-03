@@ -343,7 +343,7 @@ pub(super) fn draw_panel(
                 let total_sw = swatches.len() as f32 * icon_sz
                     + (swatches.len().saturating_sub(1)) as f32 * icon_gap;
                 let start_x = content_x + (content_w - pad - total_sw) * 0.5;
-                let icon_top = cy + label_size + 12.0 * s;
+                let icon_top = cy + label_size + 18.0 * s;
 
                 for (i, (sid, _color)) in swatches.iter().enumerate() {
                     let ix = start_x + i as f32 * (icon_sz + icon_gap);

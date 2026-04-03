@@ -188,6 +188,7 @@ pub struct Lantern {
     pub wallpaper_frame_counter: u32,
     pub layer_surfaces: Vec<LayerSurface>,
     pub window_opacity: HashMap<WlSurface, f32>,
+    pub default_window_opacity: f32,
     pub window_zoom: HashMap<WlSurface, f64>,
     pub super_pressed: bool,
     /// True if Super was pressed and no Super+combo was used (for tap detection)
@@ -316,6 +317,7 @@ impl Lantern {
             wallpaper_frame_counter: 0,
             layer_surfaces: Vec::new(),
             window_opacity: HashMap::new(),
+            default_window_opacity: crate::read_config_f32("window_opacity", 1.0),
             window_zoom: HashMap::new(),
             super_pressed: false,
             super_clean_tap: false,

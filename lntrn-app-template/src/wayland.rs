@@ -4,7 +4,7 @@ use std::ptr::NonNull;
 use anyhow::{anyhow, Result};
 use lntrn_render::{GpuContext, Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{
-    FoxPalette, GradientStrip, InteractionContext, MenuBar, MenuItem, PopupSurface, TitleBar,
+    FoxPalette, GradientStrip, InteractionContext, MenuBar, MenuItem, PopupSurface,
     WaylandPopupBackend,
 };
 use raw_window_handle::{
@@ -22,12 +22,11 @@ use wayland_protocols::wp::cursor_shape::v1::client::{
     wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1,
 };
 use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
+use wayland_protocols::xdg::decoration::zv1::client::{
+    zxdg_decoration_manager_v1, zxdg_toplevel_decoration_v1,
+};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
-const TITLE_BAR_H: f32 = 48.0;
-const ZONE_CLOSE: u32 = 100;
-const ZONE_MAXIMIZE: u32 = 101;
-const ZONE_MINIMIZE: u32 = 102;
 const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
 const KEY_ESC: u32 = 1;
@@ -87,6 +86,8 @@ pub(crate) struct State {
     pointer: Option<wl_pointer::WlPointer>,
     // Keyboard
     key_pressed: Option<u32>,
+    // Decoration
+    decoration_mgr: Option<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1>,
     // Popup
     pub(crate) popup_backend: Option<WaylandPopupBackend<State>>,
     pub(crate) popup_closed: bool,
@@ -107,6 +108,7 @@ impl State {
             cursor_shape_mgr: None, cursor_shape_device: None,
             current_cursor_shape: None, pointer: None,
             key_pressed: None,
+            decoration_mgr: None,
             popup_backend: None,
             popup_closed: false,
             pointer_surface: None,
@@ -141,6 +143,9 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 "wl_seat" => { state.seat = Some(registry.bind(name, version.min(9), qh, ())); }
                 "wp_cursor_shape_manager_v1" => {
                     state.cursor_shape_mgr = Some(registry.bind(name, version.min(1), qh, ()));
+                }
+                "zxdg_decoration_manager_v1" => {
+                    state.decoration_mgr = Some(registry.bind(name, version.min(1), qh, ()));
                 }
                 _ => {}
             }
@@ -309,6 +314,12 @@ impl Dispatch<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1, ()> for State 
 impl Dispatch<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1, ()> for State {
     fn event(_: &mut Self, _: &wp_cursor_shape_device_v1::WpCursorShapeDeviceV1, _: wp_cursor_shape_device_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
 }
+impl Dispatch<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1, ()> for State {
+    fn event(_: &mut Self, _: &zxdg_decoration_manager_v1::ZxdgDecorationManagerV1, _: zxdg_decoration_manager_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
+impl Dispatch<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1, ()> for State {
+    fn event(_: &mut Self, _: &zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1, _: zxdg_toplevel_decoration_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
 
 // ── Edge resize helper ──────────────────────────────────────────────────────
 
@@ -371,6 +382,13 @@ pub fn run() -> Result<()> {
     toplevel.set_title("lntrn-ui-test".into());
     toplevel.set_app_id("lntrn-ui-test".into());
     toplevel.set_min_size(640, 480);
+
+    // Request server-side decorations from the compositor
+    if let Some(mgr) = &state.decoration_mgr {
+        let deco = mgr.get_toplevel_decoration(&toplevel, &qh, ());
+        deco.set_mode(zxdg_toplevel_decoration_v1::Mode::ServerSide);
+    }
+
     surface.commit();
 
     state.surface = Some(surface.clone());
@@ -532,24 +550,8 @@ pub fn run() -> Result<()> {
                 }
             } else if menu_bar.on_click(&mut ix, &menus, s) {
                 // Menu bar consumed the click
-            } else if let Some(zone_id) = ix.on_left_pressed() {
-                match zone_id {
-                    ZONE_CLOSE => { state.running = false; }
-                    ZONE_MINIMIZE => { toplevel.set_minimized(); }
-                    ZONE_MAXIMIZE => {
-                        if state.maximized { toplevel.unset_maximized(); }
-                        else { toplevel.set_maximized(); }
-                    }
-                    _ => {}
-                }
             } else {
-                // Title bar drag (only if menu bar isn't open)
-                let title_h = TITLE_BAR_H * s;
-                if cy < title_h && !menu_bar.is_open() {
-                    if let Some(seat) = &state.seat {
-                        toplevel._move(seat, state.pointer_serial);
-                    }
-                }
+                ix.on_left_pressed();
             }
             } // end else (not on popup)
         }
@@ -638,40 +640,15 @@ pub fn run() -> Result<()> {
         ix.begin_frame();
         painter.clear();
 
-        // Background — all corners rounded
-        let win_r = if state.maximized { 0.0 } else { 10.0 * s };
-        painter.rect_filled(Rect::new(0.0, 0.0, wf, hf), win_r, fox.bg);
+        // Background — compositor handles decorations via SSD
+        painter.rect_filled(Rect::new(0.0, 0.0, wf, hf), 0.0, fox.bg);
 
-        // Title bar
-        let tb_rect = Rect::new(0.0, 0.0, wf, TITLE_BAR_H * s);
-        let close_rect = TitleBar::new(tb_rect).scale(s).close_button_rect();
-        let max_rect = TitleBar::new(tb_rect).scale(s).maximize_button_rect();
-        let min_rect = TitleBar::new(tb_rect).scale(s).minimize_button_rect();
-        let close_s = ix.add_zone(ZONE_CLOSE, close_rect);
-        let max_s = ix.add_zone(ZONE_MAXIMIZE, max_rect);
-        let min_s = ix.add_zone(ZONE_MINIMIZE, min_rect);
-
-        TitleBar::new(tb_rect)
-            .scale(s)
-            .maximized(state.maximized)
-            .close_hovered(close_s.is_hovered())
-            .maximize_hovered(max_s.is_hovered())
-            .minimize_hovered(min_s.is_hovered())
-            .draw(&mut painter, &fox);
-
-        // Menu bar in title bar content area
         let sw = gpu.width();
         let sh = gpu.height();
-        let content = TitleBar::new(tb_rect).scale(s).content_rect();
-        menu_bar.update(&mut ix, &menus, content, s);
-        let labels: Vec<&str> = menus.iter().map(|(l, _)| *l).collect();
-        menu_bar.draw_with_labels(&mut painter, &mut text, &fox, &labels, sw, sh, s);
 
-        // Gradient strip below title bar
-        let strip_y = TITLE_BAR_H * s;
-        let mut strip = GradientStrip::new(0.0, strip_y, wf);
-        strip.height = 4.0 * s;
-        strip.draw(&mut painter);
+        // Big label so we know the new binary is running
+        let label_sz = 24.0 * s;
+        text.queue("SSD Test Window", label_sz, 20.0 * s, 20.0 * s, fox.text, wf, sw, sh);
 
         // Context menus (drawn into painter on top of other shapes)
         menu_bar.context_menu.update(0.016);

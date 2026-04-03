@@ -87,8 +87,10 @@ pub fn content_top(s: f32) -> f32 {
     panel_top(s) + NAV_BAR_H * s + FILE_TAB_H * s
 }
 
+/// Bottom of the content area. Leaves room for the status bar.
+/// The extra 8px margin ensures the status bar doesn't overlap the taskbar.
 pub fn content_bottom(height: f32, s: f32) -> f32 {
-    height - STATUS_BAR_H * s
+    height - STATUS_BAR_H * s - 18.0 * s
 }
 
 pub fn content_rect_with_bottom(width: f32, bottom: f32, s: f32) -> Rect {
@@ -101,18 +103,25 @@ pub fn sidebar_rect(height: f32, s: f32) -> Rect {
     Rect::new(0.0, top, SIDEBAR_W * s, height - top)
 }
 
+/// Y where sidebar items start (below nav bar + gradient + PLACES header)
+fn sidebar_items_top(s: f32) -> f32 {
+    // Must match sidebar.rs: nav_bar_y + 48 (nav) + 4 (gradient) + 12 (margin) + 34 (header+gap)
+    nav_bar_y(s) + (48.0 + 4.0 + 12.0 + 34.0) * s
+}
+
+const SIDEBAR_ITEM_H: f32 = 44.0;
+
 pub fn sidebar_item_rect(index: usize, s: f32) -> Rect {
-    let mut y = panel_top(s) + 42.0 * s;
-    y += index as f32 * 40.0 * s;
-    Rect::new(4.0 * s, y, (SIDEBAR_W - 12.0) * s, 40.0 * s)
+    let y = sidebar_items_top(s) + index as f32 * SIDEBAR_ITEM_H * s;
+    Rect::new(4.0 * s, y, (SIDEBAR_W - 12.0) * s, SIDEBAR_ITEM_H * s)
 }
 
 pub fn drives_section_y(num_places: usize, s: f32) -> f32 {
-    panel_top(s) + 42.0 * s + num_places as f32 * 40.0 * s + 20.0 * s
+    sidebar_items_top(s) + num_places as f32 * SIDEBAR_ITEM_H * s + 28.0 * s
 }
 
 pub fn drive_item_rect(index: usize, num_places: usize, s: f32) -> Rect {
-    let mut y = drives_section_y(num_places, s) + 30.0 * s;
+    let mut y = drives_section_y(num_places, s) + 34.0 * s;
     y += index as f32 * 64.0 * s;
     Rect::new(4.0 * s, y, (SIDEBAR_W - 12.0) * s, 64.0 * s)
 }
@@ -124,7 +133,8 @@ pub fn content_rect(width: f32, height: f32, s: f32) -> Rect {
 }
 
 pub fn status_rect(width: f32, height: f32, s: f32) -> Rect {
-    Rect::new(SIDEBAR_W * s, height - STATUS_BAR_H * s, width - SIDEBAR_W * s, STATUS_BAR_H * s)
+    let bottom = content_bottom(height, s);
+    Rect::new(SIDEBAR_W * s, bottom, width - SIDEBAR_W * s, STATUS_BAR_H * s)
 }
 
 pub fn list_row_h(s: f32) -> f32 { LIST_ROW_H * s }

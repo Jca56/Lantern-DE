@@ -144,7 +144,7 @@ impl Lantern {
     }
 
     pub fn get_window_opacity(&self, surface: &WlSurface) -> f32 {
-        self.window_opacity.get(surface).copied().unwrap_or(1.0)
+        self.window_opacity.get(surface).copied().unwrap_or(self.default_window_opacity)
     }
 
     pub fn adjust_window_opacity(&mut self, surface: &WlSurface, delta: f32) {

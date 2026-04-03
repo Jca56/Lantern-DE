@@ -30,8 +30,18 @@ void main() {
     // Only apply rounding in the corner quadrant
     if (dx > 0.0 && dy > 0.0) {
         float dist = length(vec2(dx, dy)) - corner_radius;
+        // mask = 1.0 outside the curve (needs to be erased),
+        // mask = 0.0 inside the curve (keep the pixel as-is).
         float mask = smoothstep(-0.5, 0.5, dist);
         if (mask < 0.01) discard;
+        // Erase the window pixel by covering it with a fully transparent black.
+        // With premultiplied blending (GL_ONE, GL_ONE_MINUS_SRC_ALPHA):
+        //   result.rgb = src.rgb + dst.rgb * (1 - src.a)
+        //   result.a   = src.a   + dst.a   * (1 - src.a)
+        // Setting src = (0, 0, 0, mask) gives:
+        //   result.rgb = dst.rgb * (1 - mask)  → fades to black
+        //   result.a   = mask + dst.a * (1-mask)
+        // This effectively "punches out" the corner, fading to transparent/BG.
         gl_FragColor = vec4(0.0, 0.0, 0.0, mask * alpha);
     } else {
         discard;
@@ -156,30 +166,27 @@ void main() {
     if (icon_type < 0.5) {
         // Close: X shape — two diagonal lines
         vec2 p = pos - center;
-        // Distance to line from (-half,-half) to (half,half)
-        float half = icon_sz * 0.5;
+        float hsize = icon_sz * 0.5;
         float d1 = abs(p.x - p.y) / 1.41421;
         float d2 = abs(p.x + p.y) / 1.41421;
-        // Clamp to line segment length
         float len_check = max(abs(p.x), abs(p.y));
-        d1 = len_check > half ? 1e10 : d1;
-        d2 = len_check > half ? 1e10 : d2;
+        d1 = len_check > hsize ? 1e10 : d1;
+        d2 = len_check > hsize ? 1e10 : d2;
         d = min(d1, d2);
     } else if (icon_type < 1.5) {
         // Maximize: square outline
         vec2 p = pos - center;
-        float half = icon_sz * 0.5;
+        float hsize = icon_sz * 0.5;
         vec2 ap = abs(p);
-        // SDF of a hollow rectangle
-        float outer = max(ap.x - half, ap.y - half);
-        float inner = max(ap.x - (half - line_w), ap.y - (half - line_w));
+        float outer = max(ap.x - hsize, ap.y - hsize);
+        float inner = max(ap.x - (hsize - line_w), ap.y - (hsize - line_w));
         d = max(outer, -inner);
         d = -d; // flip so positive = inside the outline
     } else {
         // Minimize: horizontal dash
         vec2 p = pos - center;
-        float half = icon_sz * 0.5;
-        d = max(abs(p.x) - half, abs(p.y) - line_w * 0.5);
+        float hsize = icon_sz * 0.5;
+        d = max(abs(p.x) - hsize, abs(p.y) - line_w * 0.5);
         d = -d;
     }
 
@@ -193,6 +200,136 @@ void main() {
     if (mask < 0.01) discard;
     float a = icon_color.a * mask * alpha;
     gl_FragColor = vec4(icon_color.rgb * a, a);
+}
+"#;
+
+// ── SSD header overlay (semi-transparent bar with rounded top corners) ──
+/// Pixel shader for the integrated titlebar overlay.
+/// Draws a filled rectangle with rounded top corners.
+/// Uniforms: `corner_radius` (float), `bar_color` (vec4 premultiplied)
+pub const SSD_HEADER_SHADER_SRC: &str = r#"
+precision mediump float;
+varying vec2 v_coords;
+uniform float alpha;
+uniform vec2 size;
+uniform float corner_radius;
+uniform vec4 bar_color;
+
+#if defined(DEBUG_FLAGS)
+uniform float tint;
+#endif
+
+void main() {
+    vec2 pos = v_coords * size;
+
+    // SDF for rectangle with only top corners rounded:
+    // Top-left and top-right get the radius, bottom corners stay sharp.
+    float r_top = corner_radius;
+    float r_bot = 0.0;
+
+    // Distance from each edge (positive = inside)
+    float dx_left = pos.x;
+    float dx_right = size.x - pos.x;
+    float dy_top = pos.y;
+    float dy_bottom = size.y - pos.y;
+
+    float dist = 1e10;
+
+    // Top-left corner
+    if (dx_left < r_top && dy_top < r_top) {
+        dist = length(vec2(r_top - dx_left, r_top - dy_top)) - r_top;
+    }
+    // Top-right corner
+    else if (dx_right < r_top && dy_top < r_top) {
+        dist = length(vec2(r_top - dx_right, r_top - dy_top)) - r_top;
+    }
+    // Everywhere else: inside the rectangle
+    else {
+        dist = -min(min(dx_left, dx_right), min(dy_top, dy_bottom));
+    }
+
+    // dist < 0 means inside the shape
+    float mask = 1.0 - smoothstep(-0.5, 0.5, dist);
+    if (mask < 0.01) discard;
+
+    float a = bar_color.a * mask * alpha;
+    gl_FragColor = vec4(bar_color.rgb * a, a);
+}
+"#;
+
+// ── Dual Kawase blur (window backdrop) ───────────────────────────
+/// Downsample pass: 5-tap filter at half resolution.
+/// `halfpixel` uniform = vec2(0.5 / src_width, 0.5 / src_height).
+pub const BLUR_DOWN_SHADER_SRC: &str = r#"
+//_DEFINES_
+
+#if defined(EXTERNAL)
+#extension GL_OES_EGL_image_external : require
+#endif
+
+precision mediump float;
+
+#if defined(EXTERNAL)
+uniform samplerExternalOES tex;
+#else
+uniform sampler2D tex;
+#endif
+
+uniform float alpha;
+uniform vec2 halfpixel;
+varying vec2 v_coords;
+
+#if defined(DEBUG_FLAGS)
+uniform float tint;
+#endif
+
+void main() {
+    vec2 uv = v_coords;
+    vec4 sum = texture2D(tex, uv) * 4.0;
+    sum += texture2D(tex, uv - halfpixel);
+    sum += texture2D(tex, uv + halfpixel);
+    sum += texture2D(tex, uv + vec2(halfpixel.x, -halfpixel.y));
+    sum += texture2D(tex, uv - vec2(halfpixel.x, -halfpixel.y));
+    gl_FragColor = sum / 8.0;
+}
+"#;
+
+/// Upsample pass: 8-tap tent filter at double resolution.
+/// `halfpixel` uniform = vec2(0.5 / dst_width, 0.5 / dst_height).
+pub const BLUR_UP_SHADER_SRC: &str = r#"
+//_DEFINES_
+
+#if defined(EXTERNAL)
+#extension GL_OES_EGL_image_external : require
+#endif
+
+precision mediump float;
+
+#if defined(EXTERNAL)
+uniform samplerExternalOES tex;
+#else
+uniform sampler2D tex;
+#endif
+
+uniform float alpha;
+uniform vec2 halfpixel;
+varying vec2 v_coords;
+
+#if defined(DEBUG_FLAGS)
+uniform float tint;
+#endif
+
+void main() {
+    vec2 uv = v_coords;
+    vec4 sum = texture2D(tex, uv + vec2(-halfpixel.x * 2.0, 0.0));
+    sum += texture2D(tex, uv + vec2(-halfpixel.x, halfpixel.y)) * 2.0;
+    sum += texture2D(tex, uv + vec2(0.0, halfpixel.y * 2.0));
+    sum += texture2D(tex, uv + vec2(halfpixel.x, halfpixel.y)) * 2.0;
+    sum += texture2D(tex, uv + vec2(halfpixel.x * 2.0, 0.0));
+    sum += texture2D(tex, uv + vec2(halfpixel.x, -halfpixel.y)) * 2.0;
+    sum += texture2D(tex, uv + vec2(0.0, -halfpixel.y * 2.0));
+    sum += texture2D(tex, uv + vec2(-halfpixel.x, -halfpixel.y)) * 2.0;
+    gl_FragColor = sum / 12.0;
 }
 "#;
 

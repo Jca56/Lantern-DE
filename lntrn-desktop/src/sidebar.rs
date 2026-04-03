@@ -10,8 +10,8 @@ use crate::{
 // ── Sidebar place icons ─────────────────────────────────────────────────────
 
 fn draw_place_icon(painter: &mut Painter, name: &str, cx: f32, cy: f32, color: Color, s: f32) {
-    let sw = 1.5 * s; // stroke width
-    let u = s; // unit scale
+    let sw = 1.8 * s; // stroke width
+    let u = 1.3 * s; // unit scale (bigger icons)
     match name {
         "Home" => {
             painter.line(cx - 7.0*u, cy + 1.0*u, cx, cy - 7.0*u, sw, color);
@@ -124,15 +124,17 @@ pub fn draw_sidebar(
     // Vertical gradient divider on right edge
     draw_gradient_v(painter, palette, sx + sw - 4.0 * s, sidebar_rect.y, sidebar_rect.h, s, 0.0);
 
-    // "PLACES" header
-    let mut sy = sidebar_rect.y + 12.0 * s;
+    // "PLACES" header — positioned below the nav bar + gradient strip
+    let nav_bottom = crate::layout::nav_bar_y(s) + 48.0 * s + 4.0 * s; // nav + gradient height
+    let mut sy = nav_bottom + 12.0 * s;
     TextLabel::new("PLACES", sx + 14.0 * s, sy)
-        .size(FontSize::Custom(20.0 * s))
-        .color(palette.text_secondary)
+        .size(FontSize::Custom(24.0 * s))
+        .color(palette.text_secondary.with_alpha(0.95))
+        .bold()
         .draw(text, screen.0, screen.1);
-    sy += 30.0 * s;
+    sy += 34.0 * s;
 
-    let item_h = 40.0 * s;
+    let item_h = 44.0 * s; // more padding between items
     let places = app.sidebar_places();
     for (index, place) in places.iter().enumerate() {
         let item_rect = Rect::new(sx + 4.0 * s, sy, sw - 12.0 * s, item_h);
@@ -159,26 +161,25 @@ pub fn draw_sidebar(
 
         sy += item_h;
 
-        // Thin divider between items (not after last)
-        if index + 1 < places.len() {
-            painter.rect_filled(
-                Rect::new(sx + 14.0 * s, sy, sw - 32.0 * s, 1.5 * s),
-                0.0,
-                Color::WHITE.with_alpha(0.12),
-            );
-        }
+        // Divider between items (same style for all)
+        painter.rect_filled(
+            Rect::new(sx + 14.0 * s, sy - 1.0 * s, sw - 32.0 * s, 1.5 * s),
+            0.0,
+            Color::WHITE.with_alpha(0.12),
+        );
     }
 
     // ── Drives / Devices section ────────────────────────────────────
     if !app.drives.is_empty() {
-        sy += 20.0 * s;
+        sy += 28.0 * s;
 
         // "DEVICES" header
         TextLabel::new("DEVICES", sx + 14.0 * s, sy)
-            .size(FontSize::Custom(20.0 * s))
-            .color(palette.text_secondary)
+            .size(FontSize::Custom(22.0 * s))
+            .color(palette.text_secondary.with_alpha(0.9))
+            .bold()
             .draw(text, screen.0, screen.1);
-        sy += 30.0 * s;
+        sy += 34.0 * s;
 
         let drive_item_h = 64.0 * s;
         for (index, drive) in app.drives.iter().enumerate() {
