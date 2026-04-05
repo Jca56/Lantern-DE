@@ -22,8 +22,8 @@ use crate::notifications::{NotifyEvent, Notification, Urgency};
 
 const DISPLAY_SECS: f32 = 5.0;
 const FADE_SECS: f32 = 0.4;
-const SLIDE_IN_SECS: f32 = 0.35;
-const SLIDE_OUT_SECS: f32 = 0.25;
+const SLIDE_IN_SECS: f32 = 0.5;
+const SLIDE_OUT_SECS: f32 = 0.4;
 const CRITICAL_DISPLAY_SECS: f32 = 10.0;
 
 fn notification_sound_path() -> Option<std::path::PathBuf> {

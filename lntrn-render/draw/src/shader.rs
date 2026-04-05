@@ -36,6 +36,7 @@ const SHAPE_SHADOW: f32 = 9.0;
 const SHAPE_ARC: f32 = 10.0;
 const SHAPE_DASHED_LINE: f32 = 11.0;
 const SHAPE_INNER_SHADOW: f32 = 12.0;
+const SHAPE_RECT_STROKE_PROGRESS: f32 = 13.0;
 
 @vertex
 fn vs_main(@builtin(vertex_index) vi: u32, instance: InstanceInput) -> VertexOutput {
@@ -220,6 +221,88 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Hollow: abs(dist) gives distance to the boundary ring
         let ring_dist = abs(dist + stroke_w * 0.5) - stroke_w * 0.5;
         mask = 1.0 - smoothstep(-1.0, 1.0, ring_dist);
+
+    } else if in.params.w == SHAPE_RECT_STROKE_PROGRESS {
+        // Rounded rect stroke with perimeter-based progress mask.
+        // Sweeps counter-clockwise from top-left with uniform speed.
+        // params: [corner_radius, stroke_width, progress(0-1), shape_id]
+        let radius = in.params.x;
+        let stroke_w = in.params.y;
+        let progress = in.params.z;
+        let center = in.bounds.xy + in.bounds.zw * 0.5;
+        let half_size = in.bounds.zw * 0.5;
+
+        // SDF stroke mask
+        let dist = sdf_rounded_rect(in.local_px, center, half_size, radius);
+        let ring_dist = abs(dist + stroke_w * 0.5) - stroke_w * 0.5;
+        let stroke_mask = 1.0 - smoothstep(-1.0, 1.0, ring_dist);
+
+        // Recover original rect half-size (undo CPU-side expansion)
+        let hs = half_size - vec2<f32>(stroke_w * 0.5 + 2.0);
+
+        // Inner rect corners (where straight edges meet corner arcs)
+        let imin = center - hs + vec2<f32>(radius);
+        let imax = center + hs - vec2<f32>(radius);
+
+        // Segment lengths
+        let ew = max(imax.x - imin.x, 0.001); // top/bottom straight edge
+        let eh = max(imax.y - imin.y, 0.001); // left/right straight edge
+        let aq = 1.5707963 * radius;           // quarter-circle arc length
+        let total = 2.0 * ew + 2.0 * eh + 4.0 * aq;
+
+        // Counter-clockwise from top-left:
+        //   seg0: TL arc        [0,              aq]
+        //   seg1: Left edge ↓   [aq,             aq + eh]
+        //   seg2: BL arc        [aq + eh,        2aq + eh]
+        //   seg3: Bottom edge → [2aq + eh,       2aq + eh + ew]
+        //   seg4: BR arc        [2aq + eh + ew,  3aq + eh + ew]
+        //   seg5: Right edge ↑  [3aq + eh + ew,  3aq + 2eh + ew]
+        //   seg6: TR arc        [3aq + 2eh + ew, 4aq + 2eh + ew]
+        //   seg7: Top edge ←    [4aq + 2eh + ew, total]
+
+        let p = in.local_px;
+        let hp = 1.5707963; // π/2
+        var d: f32 = 0.0;
+
+        if p.x < imin.x && p.y < imin.y {
+            // TL corner arc
+            let rel = p - vec2<f32>(imin.x, imin.y);
+            let f = clamp(atan2(-rel.x, -rel.y) / hp, 0.0, 1.0);
+            d = f * aq;
+        } else if p.x < imin.x && p.y > imax.y {
+            // BL corner arc
+            let rel = p - vec2<f32>(imin.x, imax.y);
+            let f = clamp(atan2(rel.y, -rel.x) / hp, 0.0, 1.0);
+            d = aq + eh + f * aq;
+        } else if p.x > imax.x && p.y > imax.y {
+            // BR corner arc
+            let rel = p - vec2<f32>(imax.x, imax.y);
+            let f = clamp(atan2(rel.x, rel.y) / hp, 0.0, 1.0);
+            d = 2.0 * aq + eh + ew + f * aq;
+        } else if p.x > imax.x && p.y < imin.y {
+            // TR corner arc
+            let rel = p - vec2<f32>(imax.x, imin.y);
+            let f = clamp(atan2(-rel.y, rel.x) / hp, 0.0, 1.0);
+            d = 3.0 * aq + 2.0 * eh + ew + f * aq;
+        } else if p.x < imin.x {
+            // Left edge (going down)
+            d = aq + clamp((p.y - imin.y) / eh, 0.0, 1.0) * eh;
+        } else if p.y > imax.y {
+            // Bottom edge (going right)
+            d = 2.0 * aq + eh + clamp((p.x - imin.x) / ew, 0.0, 1.0) * ew;
+        } else if p.x > imax.x {
+            // Right edge (going up)
+            d = 3.0 * aq + eh + ew + clamp((imax.y - p.y) / eh, 0.0, 1.0) * eh;
+        } else if p.y < imin.y {
+            // Top edge (going left)
+            d = 4.0 * aq + 2.0 * eh + ew + clamp((imax.x - p.x) / ew, 0.0, 1.0) * ew;
+        }
+
+        let t = d / total;
+        let feather = 3.0 / total;
+        let progress_mask = 1.0 - smoothstep(progress - feather, progress + feather, t);
+
+        mask = stroke_mask * progress_mask;
 
     } else if in.params.w == SHAPE_RECT_4CORNER {
         // Per-corner radii rect

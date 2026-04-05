@@ -2,20 +2,25 @@ use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
 use super::palette::FoxPalette;
 
-// Matches the OSD pill aesthetic
-const TOAST_W: f32 = 400.0;
-const TOAST_H: f32 = 140.0;
-const TOAST_RADIUS: f32 = 16.0;
-const TITLE_SIZE: f32 = 24.0;
-const BODY_SIZE: f32 = 20.0;
-const PADDING: f32 = 20.0;
-const TOAST_GAP: f32 = 14.0;
-const PROGRESS_H: f32 = 4.0;
-const SLIDE_DISTANCE: f32 = 460.0;
+const TOAST_W: f32 = 480.0;
+const TOAST_H: f32 = 160.0;
+const TOAST_RADIUS: f32 = 18.0;
+const TITLE_SIZE: f32 = 28.0;
+const BODY_SIZE: f32 = 22.0;
+const PADDING: f32 = 24.0;
+const TOAST_GAP: f32 = 16.0;
+const BORDER_W: f32 = 2.0;
+const SLIDE_DISTANCE: f32 = 540.0;
+
+// Night Sky background
+const BG_DEEP: Color = Color::rgb(0.003, 0.001, 0.014);
+const BG_SURFACE: Color = Color::rgb(0.008, 0.003, 0.028);
+const GLOW_PINK: Color = Color::rgba(0.45, 0.14, 0.32, 0.18);
+const GLOW_CYAN: Color = Color::rgba(0.14, 0.35, 0.52, 0.18);
+const BORDER_SUBTLE: Color = Color::rgba(0.30, 0.20, 0.50, 0.15);
 
 // OSD gold — use from_rgb8 which handles sRGB→linear conversion
 fn amber() -> Color { Color::from_rgb8(250, 204, 21) }
-fn amber_dim() -> Color { Color::from_rgb8(170, 110, 8) }
 
 /// Variant determines the accent color.
 #[derive(Clone, Copy, PartialEq)]
@@ -171,7 +176,7 @@ impl<'a> ToastStack<'a> {
         y: f32,
         painter: &mut Painter,
         text_renderer: &mut TextRenderer,
-        palette: &FoxPalette,
+        _palette: &FoxPalette,
         screen_w: u32,
         screen_h: u32,
     ) {
@@ -181,15 +186,33 @@ impl<'a> ToastStack<'a> {
         let pad = self.s(PADDING);
         let accent = variant_color(toast.variant);
 
-        // Background pill — same semi-transparent dark as OSD
-        let bg = Color::rgba(palette.surface.r, palette.surface.g, palette.surface.b, 0.92);
-        painter.rect_filled(Rect::new(x, y, w, h), r, bg);
-
-        // Thin amber top accent line
-        let line_h = self.s(3.0);
+        // Night Sky background gradient (top-to-bottom)
         painter.rect_gradient_linear(
-            Rect::new(x + r, y, w - r * 2.0, line_h),
-            0.0, 0.0, amber_dim(), accent,
+            Rect::new(x, y, w, h), r,
+            std::f32::consts::FRAC_PI_2,
+            BG_DEEP.with_alpha(0.92),
+            BG_SURFACE.with_alpha(0.92),
+        );
+
+        // Subtle radial glows (square + circular SDF for smooth fade, no spill)
+        let gs = w * 0.22;
+        let gr = gs * 0.5;
+        painter.rect_gradient_radial(
+            Rect::new(x + w * 0.02, y + h * 0.35, gs, gs), gr,
+            GLOW_PINK, Color::TRANSPARENT,
+        );
+        painter.rect_gradient_radial(
+            Rect::new(x + w * 0.58, y + h * 0.06, w * 0.28, w * 0.28), w * 0.14,
+            GLOW_CYAN, Color::TRANSPARENT,
+        );
+
+        // Subtle base border
+        painter.rect_stroke_sdf(Rect::new(x, y, w, h), r, self.s(1.0), BORDER_SUBTLE);
+
+        // Progress border — slightly dimmer than title
+        painter.rect_stroke_progress(
+            Rect::new(x, y, w, h), r, self.s(BORDER_W),
+            accent.with_alpha(0.7), toast.progress,
         );
 
         // Title text (amber)
@@ -207,33 +230,24 @@ impl<'a> ToastStack<'a> {
             screen_h,
         );
 
-        // Body text (lighter)
+        // Body text (muted silver)
         if !toast.body.is_empty() {
             let body_font = self.s(BODY_SIZE);
-            let body_y = title_y + title_font + self.s(6.0);
+            let body_y = title_y + title_font + self.s(8.0);
+            let body_color = Color::rgb(0.65, 0.60, 0.75);
             text_renderer.queue(
                 &toast.body,
                 body_font,
                 x + pad,
                 body_y,
-                palette.text_secondary,
+                body_color,
                 max_w,
                 screen_w,
                 screen_h,
             );
         }
-
-        // Progress bar at bottom — amber gradient like OSD slider
-        if toast.progress <= 1.0 {
-            let bar_h = self.s(PROGRESS_H);
-            let bar_y = y + h - bar_h;
-            let bar_w = w * toast.progress;
-            painter.rect_gradient_linear(
-                Rect::new(x, bar_y, bar_w, bar_h),
-                0.0, 0.0, amber_dim(), accent,
-            );
-        }
     }
+
 }
 
 fn variant_color(variant: ToastVariant) -> Color {

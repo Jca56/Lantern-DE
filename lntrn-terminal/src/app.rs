@@ -103,6 +103,7 @@ pub struct App {
 
     // Tab bar auto-hide
     pub(crate) tab_bar_visible: bool,
+    pub(crate) tab_bar_hover_since: Option<Instant>,
 }
 
 impl App {
@@ -140,6 +141,7 @@ impl App {
             pending_menu_event: None,
             sidebar: sidebar::SidebarState::new(),
             tab_bar_visible: false,
+            tab_bar_hover_since: None,
         }
     }
 
@@ -167,12 +169,13 @@ impl App {
         self.overlay_text = Some(overlay_text);
     }
 
-    /// Chrome height accounting for tab bar auto-hide.
+    /// Chrome height accounting for window mode and tab bar auto-hide.
     pub(crate) fn chrome_height(&self) -> f32 {
+        let title_h = ui_chrome::title_bar_height(&self.config.window.mode);
         if self.tab_bar_visible {
-            crate::ui_chrome::TITLE_BAR_HEIGHT + tab_bar::TAB_BAR_HEIGHT
+            title_h + tab_bar::TAB_BAR_HEIGHT
         } else {
-            crate::ui_chrome::TITLE_BAR_HEIGHT
+            title_h
         }
     }
 

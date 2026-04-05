@@ -481,6 +481,15 @@ impl vte::Perform for Performer<'_> {
                     }
                 }
             }
+            b"9" => {
+                // OSC 9: Desktop notification (iTerm2/common style)
+                // Format: ESC ] 9 ; <message> ST
+                if params.len() > 1 {
+                    if let Ok(msg) = std::str::from_utf8(params[1]) {
+                        self.state.pending_notifications.push(("Terminal".to_string(), msg.to_string()));
+                    }
+                }
+            }
             b"7" => {
                 // OSC 7: report working directory — file://<host>/<path>
                 if params.len() > 1 {
@@ -531,6 +540,23 @@ impl vte::Perform for Performer<'_> {
                     let body = std::mem::take(&mut self.state.osc99_body);
                     if !title.is_empty() || !body.is_empty() {
                         self.state.pending_notifications.push((title, body));
+                    }
+                }
+            }
+            b"777" => {
+                // OSC 777: rxvt-unicode notification
+                // Format: ESC ] 777 ; notify ; <title> ; <body> ST
+                if params.len() >= 3 {
+                    if let Ok(cmd) = std::str::from_utf8(params[1]) {
+                        if cmd == "notify" {
+                            let title = std::str::from_utf8(params[2]).unwrap_or("Terminal").to_string();
+                            let body = if params.len() > 3 {
+                                std::str::from_utf8(params[3]).unwrap_or("").to_string()
+                            } else {
+                                String::new()
+                            };
+                            self.state.pending_notifications.push((title, body));
+                        }
                     }
                 }
             }

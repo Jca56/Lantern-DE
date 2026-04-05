@@ -21,6 +21,8 @@ impl App {
         let font_size = self.effective_font_size();
         let chrome_h = self.chrome_height();
         let tab_bar_visible = self.tab_bar_visible;
+        let mode = self.config.window.mode.clone();
+        let cursor_pos = self.cursor_pos;
         let gpu = match self.gpu.as_ref() {
             Some(g) => g,
             None => return,
@@ -58,6 +60,7 @@ impl App {
             screen_h as f32,
             maximized,
             tab_bar_visible,
+            &mode,
         );
 
         // Draw sidebar file browser
@@ -170,6 +173,8 @@ impl App {
             self.sidebar.visible,
             maximized,
             1.0,
+            &mode,
+            cursor_pos,
         );
 
         // Draw tab bar (auto-hides, appears on hover)

@@ -25,18 +25,35 @@ impl App {
         self.cursor_pos = Some((x, y));
         self.input.on_cursor_moved(x, y);
 
-        // Auto-show/hide tab bar on hover
-        let title_h = crate::ui_chrome::TITLE_BAR_HEIGHT;
+        // Auto-show/hide tab bar on hover (with dwell delay to avoid flashing)
+        let title_h = ui_chrome::title_bar_height(&self.config.window.mode);
         let tab_zone_bottom = title_h + tab_bar::TAB_BAR_HEIGHT;
         let in_tab_zone = y >= title_h && y < tab_zone_bottom;
         let tab_bar_busy = self.tab_bar.dragging.is_some()
             || self.tab_bar.renaming.is_some()
             || self.tab_bar.context_menu.is_some();
-        let was_visible = self.tab_bar_visible;
-        self.tab_bar_visible = in_tab_zone || tab_bar_busy;
-        if self.tab_bar_visible != was_visible {
-            self.update_grid_size();
-            self.request_redraw();
+
+        if in_tab_zone {
+            // Start dwell timer on enter, show after 200ms
+            if self.tab_bar_hover_since.is_none() {
+                self.tab_bar_hover_since = Some(Instant::now());
+            }
+            let dwell = self.tab_bar_hover_since.unwrap().elapsed();
+            if !self.tab_bar_visible && dwell >= std::time::Duration::from_millis(200) {
+                self.tab_bar_visible = true;
+                self.update_grid_size();
+                self.request_redraw();
+            } else if !self.tab_bar_visible {
+                // Schedule a redraw after the remaining dwell time
+                self.request_redraw();
+            }
+        } else {
+            self.tab_bar_hover_since = None;
+            if self.tab_bar_visible && !tab_bar_busy {
+                self.tab_bar_visible = false;
+                self.update_grid_size();
+                self.request_redraw();
+            }
         }
 
         // Tab drag reorder
@@ -151,11 +168,14 @@ impl App {
             self.config.window.opacity,
             self.sidebar.visible,
         );
+        let screen_w = self.gpu.as_ref().map_or(800, |g| g.width()) as f32;
         let action = ui_chrome::handle_click(
             &mut self.chrome,
             &mut self.input,
             &menus,
             1.0,
+            &self.config.window.mode,
+            screen_w,
         );
 
         match self.dispatch_chrome_action(action, event_loop, screen_h) {

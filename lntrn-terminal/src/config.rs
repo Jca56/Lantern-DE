@@ -1,5 +1,47 @@
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::path::PathBuf;
+
+/// Window chrome style.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WindowMode {
+    Fox,
+    NightSky,
+}
+
+impl Default for WindowMode {
+    fn default() -> Self {
+        Self::Fox
+    }
+}
+
+impl Serialize for WindowMode {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(match self {
+            Self::Fox => "fox",
+            Self::NightSky => "night_sky",
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for WindowMode {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(match s.as_str() {
+            "night_sky" | "nightsky" | "NightSky" => Self::NightSky,
+            _ => Self::Fox,
+        })
+    }
+}
+
+impl fmt::Display for WindowMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Fox => write!(f, "fox"),
+            Self::NightSky => write!(f, "night_sky"),
+        }
+    }
+}
 
 /// A pinned tab that persists across restarts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +81,9 @@ pub struct WindowConfig {
     pub height: f32,
     /// Window opacity (0.0 – 1.0).
     pub opacity: f32,
+    /// Window chrome style: "fox" or "night_sky".
+    #[serde(default)]
+    pub mode: WindowMode,
 }
 
 /// General preferences.
@@ -77,6 +122,7 @@ impl Default for WindowConfig {
             width: 1060.0,
             height: 800.0,
             opacity: lntrn_theme::background_opacity(),
+            mode: WindowMode::default(),
         }
     }
 }
