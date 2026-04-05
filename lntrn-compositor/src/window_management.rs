@@ -88,6 +88,13 @@ impl Lantern {
             }
         }
 
+        // Insert into tiling tree if tiling is active
+        // Always insert at the end of the tree for predictable placement
+        if self.tiling.active && !is_scratchpad {
+            self.tiling.insert(surface.clone(), None);
+            self.apply_tiling_layout();
+        }
+
         // Start open animation
         self.animations.start_open(&surface);
 
@@ -108,6 +115,12 @@ impl Lantern {
         self.snapped_windows.retain(|entry| entry.surface != *surface);
         self.window_opacity.remove(surface);
         self.animations.remove(surface);
+        self.tiling_anim.remove(surface);
+        let was_tiled = self.tiling.contains(surface);
+        self.tiling.remove(surface);
+        if was_tiled && self.tiling.active {
+            self.apply_tiling_layout();
+        }
         self.ssd.remove(surface);
         self.foreign_toplevel_state.toplevel_closed(surface);
 
@@ -494,6 +507,14 @@ impl Lantern {
         window.send_pending_configure();
         self.space.unmap_elem(&window);
 
+        // Remove from tiling tree so remaining windows reflow
+        let was_tiled = self.tiling.contains(surface);
+        self.tiling.remove(surface);
+        self.tiling_anim.remove(surface);
+        if was_tiled && self.tiling.active {
+            self.apply_tiling_layout();
+        }
+
         // Clear focus BEFORE broadcasting foreign-toplevel state so the
         // minimized window is no longer marked as activated. We must do
         // this before update_foreign_toplevel_states because the window
@@ -536,6 +557,13 @@ impl Lantern {
         };
 
         self.space.map_element(entry.window.clone(), location, true);
+
+        // Re-insert into tiling tree if tiling is active
+        if self.tiling.active && !self.tiling.contains(&entry.surface) {
+            self.tiling.insert(entry.surface.clone(), None);
+            self.apply_tiling_layout();
+        }
+
         self.update_foreign_toplevel_states(&entry.surface);
         Some(entry.window)
     }

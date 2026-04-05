@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
 Name=Image Viewer
-Exec=/home/alva/.lantern/bin/lntrn-image-viewer %f
-Icon=/home/alva/.lantern/icons/lntrn-image-viewer.svg
+Exec=lntrn-image-viewer %f
+Icon=lntrn-image-viewer
 Terminal=false
 Categories=Graphics;ImageViewer;
 MimeType=image/png;image/jpeg;image/gif;image/bmp;image/webp;image/svg+xml;image/tiff;image/x-icon;

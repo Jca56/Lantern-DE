@@ -2242,6 +2242,7 @@ name = "lntrn-calculator"
 version = "0.1.0"
 dependencies = [
  "lntrn-render",
+ "lntrn-theme",
  "winit",
 ]
 

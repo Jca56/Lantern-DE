@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="21.044 43.62 217.747 200.581" xmlns:bx="https://boxy-svg.com" preserveAspectRatio="none"><defs><linearGradient id="folderBack" x1="0%" y1="0%" x2="15%" y2="100%"><stop offset="0" stop-color="#1a5a1a"/><stop offset="0.4" stop-color="#0e3a0e"/><stop offset="1" stop-color="#051a05"/></linearGradient><linearGradient id="folderFront" x1="0%" y1="0%" x2="5%" y2="100%"><stop offset="0" style="stop-color: rgb(30, 110, 30);"/><stop offset="0.35" style="stop-color: rgb(18, 75, 18);"/><stop offset="1" stop-color="#0a2a0a"/></linearGradient><linearGradient id="folderFrontHighlight" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0" stop-color="#d8ffd8" stop-opacity="0.45"/><stop offset="0.15" stop-color="#fff" stop-opacity="0"/></linearGradient><linearGradient id="tabHighlight" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0" stop-color="#66dd66" stop-opacity="0.7"/><stop offset="1" stop-color="#1a5a1a" stop-opacity="0"/></linearGradient><linearGradient id="page1grad" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0" stop-color="#f2f0ea"/><stop offset="1" stop-color="#ddd9cc"/></linearGradient><linearGradient id="page2grad" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0" stop-color="#ccc9bf"/><stop offset="1" stop-color="#b8b4a8"/></linearGradient><linearGradient id="pageEdge" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0" stop-color="#fff" stop-opacity="0.6"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient><linearGradient id="innerShadow" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0" stop-color="#000" stop-opacity="0.25"/><stop offset="0.12" stop-color="#000" stop-opacity="0"/></linearGradient><filter id="fShadow" x="-10%" y="-10%" width="130%" height="140%"><feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="#000" flood-opacity="0.5"/></filter><filter id="pShadow" x="-5%" y="-15%" width="115%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#000" flood-opacity="0.3"/></filter><linearGradient id="gardenBack" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#0a1a0a"/><stop offset="100%" stop-color="#050d05"/>
+    </linearGradient>
+    <linearGradient id="stripG" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ff44aa"/><stop offset="50%" stop-color="#ffaa00"/><stop offset="100%" stop-color="#44ff88"/>
+    </linearGradient>
+    <filter id="flowerGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="#ffaaff" flood-opacity="0.7"/>
+    </filter>
+    <filter id="wingGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#ff8800" flood-opacity="0.9"/>
+    </filter>
+    <linearGradient id="stripG" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="#ff44aa"/><stop offset="50%" stop-color="#ffaa00"/><stop offset="100%" stop-color="#44ff88"/></linearGradient>
+    <clipPath id="frontClip"><path d="M22,98 L238,98 L238,232 Q238,244 226,244 L34,244 Q22,244 22,232 Z"/></clipPath>
+  </defs><g filter="url(#fShadow)" style=""><path d="M22,60 Q22,44 32,44 L102,44 Q112,44 118,56 L134,78 L234,78 Q238,78 238,82 L238,232 Q238,244 226,244 L34,244 Q22,244 22,232 Z" fill="url(#folderBack)"/><line x1="30" y1="100" x2="230" y2="100" stroke="#000" stroke-opacity="0.06" stroke-width="0.5" style=""/><line x1="30" y1="140" x2="230" y2="140" stroke="#000" stroke-opacity="0.04" stroke-width="0.5" style=""/><line x1="30" y1="180" x2="230" y2="180" stroke="#000" stroke-opacity="0.03" stroke-width="0.5" style=""/></g><g filter="url(#pShadow)" transform="matrix(1, 0, 0, 1, -1.701021, 0.340202)" style=""><rect x="38" y="56" width="184" height="22" rx="2" ry="2" fill="url(#page2grad)"/><line x1="58" y1="63" x2="170" y2="63" stroke="#a8a498" stroke-width="1" stroke-opacity="0.5"/><line x1="58" y1="69" x2="145" y2="69" stroke="#a8a498" stroke-width="1" stroke-opacity="0.35"/></g><g filter="url(#pShadow)" transform="matrix(1, 0, 0, 1, -0.1701, 3.402037)" style=""><rect x="28" y="68" width="200" height="26" rx="2" ry="2" fill="url(#page1grad)"/><rect x="28" y="68" width="200" height="4" rx="2" ry="2" fill="url(#pageEdge)"/><line x1="48" y1="76" x2="185" y2="76" stroke="#b0ad9f" stroke-width="1.2" stroke-opacity="0.6"/><line x1="48" y1="82" x2="160" y2="82" stroke="#b0ad9f" stroke-width="1.2" stroke-opacity="0.45"/><line x1="48" y1="88" x2="120" y2="88" stroke="#b0ad9f" stroke-width="1.2" stroke-opacity="0.3"/><path d="M216,68 L228,68 L228,80 Z" fill="#c8c4b4" opacity="0.5"/><path d="M216,68 L228,80 L216,80 Z" fill="#e8e4d8" opacity="0.6"/></g>
+  <!-- Colored strip at fold line -->
+  <rect x="22" y="98" width="216" height="28" fill="url(#stripG)"/>
+  <rect x="22" y="98" width="216" height="10" fill="#fff" opacity="0.12"/>
+  
+  <!-- Theme scene content -->
+  <g clip-path="url(#frontClip)">
+    <g transform="translate(22, 98) scale(2.5116, 2.9200) translate(-7, -48)">
+      
+    <rect x="7" y="48" width="86" height="50" fill="url(#gardenBack)"/>
+    <!-- Grass -->
+    <g stroke="#1a5a1a" stroke-width="1.2" stroke-linecap="round" opacity="0.6">
+      <line x1="10" y1="98" x2="12" y2="88"/><line x1="14" y1="98" x2="13" y2="90"/>
+      <line x1="18" y1="98" x2="20" y2="87"/><line x1="75" y1="98" x2="77" y2="88"/>
+      <line x1="80" y1="98" x2="79" y2="90"/><line x1="85" y1="98" x2="87" y2="87"/>
+      <line x1="88" y1="98" x2="89" y2="91"/><line x1="92" y1="98" x2="91" y2="89"/>
+    </g>
+    <!-- Flowers -->
+    <g filter="url(#flowerGlow)">
+      <!-- Pink flower -->
+      <circle cx="20" cy="84" r="4" fill="#ff44aa" opacity="0.9"/>
+      <circle cx="16" cy="82" r="3" fill="#ff66bb" opacity="0.8"/>
+      <circle cx="24" cy="82" r="3" fill="#ff44aa" opacity="0.8"/>
+      <circle cx="20" cy="79" r="3" fill="#ff66bb" opacity="0.8"/>
+      <circle cx="20" cy="87" r="3" fill="#ff44aa" opacity="0.7"/>
+      <circle cx="20" cy="83" r="2" fill="#ffee44"/>
+      <line x1="20" y1="87" x2="20" y2="98" stroke="#1a5a1a" stroke-width="1.5"/>
+      <!-- Yellow flower -->
+      <circle cx="42" cy="80" r="4" fill="#ffcc00" opacity="0.9"/>
+      <circle cx="38" cy="78" r="3" fill="#ffdd44" opacity="0.8"/>
+      <circle cx="46" cy="78" r="3" fill="#ffcc00" opacity="0.8"/>
+      <circle cx="42" cy="75" r="3" fill="#ffdd44" opacity="0.8"/>
+      <circle cx="42" cy="83" r="3" fill="#ffcc00" opacity="0.7"/>
+      <circle cx="42" cy="79" r="2" fill="#ff8800"/>
+      <line x1="42" y1="83" x2="40" y2="98" stroke="#1a5a1a" stroke-width="1.5"/>
+      <!-- Purple flower -->
+      <circle cx="75" cy="82" r="4" fill="#aa44ff" opacity="0.9"/>
+      <circle cx="71" cy="80" r="3" fill="#bb66ff" opacity="0.8"/>
+      <circle cx="79" cy="80" r="3" fill="#aa44ff" opacity="0.8"/>
+      <circle cx="75" cy="77" r="3" fill="#bb66ff" opacity="0.8"/>
+      <circle cx="75" cy="85" r="3" fill="#aa44ff" opacity="0.7"/>
+      <circle cx="75" cy="81" r="2" fill="#ffee44"/>
+      <line x1="75" y1="85" x2="73" y2="98" stroke="#1a5a1a" stroke-width="1.5"/>
+    </g>
+    <!-- Butterflies -->
+    <g filter="url(#wingGlow)">
+      <!-- Center butterfly -->
+      <path d="M50,65 Q42,58 40,64 Q42,70 50,67 Z" fill="#ff8800" opacity="0.9"/>
+      <path d="M50,65 Q58,58 60,64 Q58,70 50,67 Z" fill="#ff6600" opacity="0.9"/>
+      <path d="M50,67 Q44,68 43,73 Q46,74 50,70 Z" fill="#ffaa44" opacity="0.8"/>
+      <path d="M50,67 Q56,68 57,73 Q54,74 50,70 Z" fill="#ff8822" opacity="0.8"/>
+      <ellipse cx="50" cy="67" rx="1.5" ry="3" fill="#1a0500"/>
+      <!-- Small top left butterfly -->
+      <path d="M25,58 Q21,54 20,57 Q21,61 25,59 Z" fill="#44aaff" opacity="0.8"/>
+      <path d="M25,58 Q29,54 30,57 Q29,61 25,59 Z" fill="#2288dd" opacity="0.8"/>
+      <path d="M25,59 Q22,60 22,63 Q24,63 25,61 Z" fill="#66bbff" opacity="0.7"/>
+      <path d="M25,59 Q28,60 28,63 Q26,63 25,61 Z" fill="#4499ee" opacity="0.7"/>
+      <ellipse cx="25" cy="59" rx="1" ry="2" fill="#0a0a1a"/>
+      <!-- Small right butterfly -->
+      <path d="M72,55 Q68,51 67,54 Q68,58 72,56 Z" fill="#ff44aa" opacity="0.8"/>
+      <path d="M72,55 Q76,51 77,54 Q76,58 72,56 Z" fill="#cc2288" opacity="0.8"/>
+      <path d="M72,56 Q69,57 69,60 Q71,60 72,58 Z" fill="#ff88cc" opacity="0.7"/>
+      <path d="M72,56 Q75,57 75,60 Q73,60 72,58 Z" fill="#ee44aa" opacity="0.7"/>
+      <ellipse cx="72" cy="56" rx="1" ry="2" fill="#1a001a"/>
+    </g>
+  
+    </g>
+  </g>
+  
+  <!-- Scene border -->
+  <path d="M22,98 L238,98 L238,232 Q238,244 226,244 L34,244 Q22,244 22,232 Z" fill="none" stroke="#66dd66" stroke-width="1.5" opacity="0.25"/>
+  <!-- Top highlight on scene -->  
+  <rect x="22" y="126" width="216" height="20" fill="#fff" opacity="0.03"/>
+  <!-- Bottom shadow on scene -->
+  <rect x="22" y="230" width="216" height="14" rx="5" fill="#000" opacity="0.15"/>
+
+</svg>

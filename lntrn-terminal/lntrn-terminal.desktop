@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Terminal
+Exec=lntrn-terminal
+Icon=lntrn-terminal
+Categories=System;TerminalEmulator;

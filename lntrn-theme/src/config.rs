@@ -27,9 +27,10 @@ pub fn lantern_config_path() -> Option<PathBuf> {
 /// Parse a theme name string into a `ThemeVariant`.
 pub fn parse_variant(name: &str) -> Option<ThemeVariant> {
     match name.trim() {
-        "fox-dark" => Some(ThemeVariant::FoxDark),
+        "fox-dark" | "fox" => Some(ThemeVariant::FoxDark),
         "fox-light" => Some(ThemeVariant::FoxLight),
         "lantern" => Some(ThemeVariant::Lantern),
+        "night-sky" | "nightsky" | "night_sky" => Some(ThemeVariant::NightSky),
         _ => None,
     }
 }

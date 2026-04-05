@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=File Manager
+Exec=lntrn-file-manager
+Icon=lntrn-file-manager
+Categories=System;FileManager;

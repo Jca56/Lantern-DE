@@ -145,18 +145,33 @@ fn fire_audio_osd(cmd: &str, wayland_display: &std::ffi::OsStr) {
     spawn_detached_args("sh", &["-c", &script], wayland_display);
 }
 
-const BACKLIGHT_PATH: &str = "/sys/class/backlight/intel_backlight";
 const BRIGHTNESS_STEP: u32 = 5; // percent
 
+/// Auto-detect the first available backlight device under /sys/class/backlight/.
+fn detect_backlight_path() -> Option<String> {
+    let dir = std::fs::read_dir("/sys/class/backlight/").ok()?;
+    for entry in dir.flatten() {
+        let path = entry.path();
+        if path.join("brightness").exists() && path.join("max_brightness").exists() {
+            return Some(path.to_string_lossy().into_owned());
+        }
+    }
+    None
+}
+
 fn fire_brightness_osd(direction: i32, wayland_display: &std::ffi::OsStr) {
+    let Some(bl) = detect_backlight_path() else {
+        tracing::warn!("No backlight device found in /sys/class/backlight/");
+        return;
+    };
     let script = format!(
-        "max=$(cat {BACKLIGHT_PATH}/max_brightness); \
-         cur=$(cat {BACKLIGHT_PATH}/brightness); \
+        "max=$(cat {bl}/max_brightness); \
+         cur=$(cat {bl}/brightness); \
          step=$((max * {BRIGHTNESS_STEP} / 100)); \
          new=$((cur + step * {direction})); \
          [ $new -lt 1 ] && new=1; \
          [ $new -gt $max ] && new=$max; \
-         echo $new > {BACKLIGHT_PATH}/brightness; \
+         echo $new > {bl}/brightness; \
          pct=$((new * 100 / max)); \
          lntrn-osd brightness $pct"
     );
@@ -295,47 +310,79 @@ impl Lantern {
                             return FilterResult::Intercept(());
                         }
 
+                        // --- Tiling keybinds ---
                         if event.state() == KeyState::Pressed
                             && _modifiers.logo
-                            && keysym.modified_sym().raw() == xkb::KEY_Up
+                            && keysym.modified_sym().raw() == xkb::KEY_t
                         {
-                            tracing::info!("Super+Up pressed, attempting maximize toggle");
-                            if data.toggle_maximize_focused(serial) {
-                                tracing::info!("Super+Up: maximize toggled successfully");
-                            } else {
-                                tracing::warn!("Super+Up: toggle_maximize_focused returned false");
+                            data.toggle_tiling();
+                            return FilterResult::Intercept(());
+                        }
+
+                        // Super+Arrow: move focus between tiled windows
+                        if event.state() == KeyState::Pressed
+                            && _modifiers.logo && !_modifiers.shift && !_modifiers.ctrl
+                            && data.tiling.active
+                        {
+                            let dir = match keysym.modified_sym().raw() {
+                                xkb::KEY_Left => Some(crate::tiling::AdjacentDir::Left),
+                                xkb::KEY_Right => Some(crate::tiling::AdjacentDir::Right),
+                                xkb::KEY_Up => Some(crate::tiling::AdjacentDir::Up),
+                                xkb::KEY_Down => Some(crate::tiling::AdjacentDir::Down),
+                                _ => None,
+                            };
+                            if let Some(dir) = dir {
+                                if let Some(area) = crate::tiling::TilingState::tiling_area(data) {
+                                    if let Some(focused) = data.focused_surface.clone() {
+                                        if let Some(target) = data.tiling.find_adjacent(&focused, area, dir) {
+                                            if let Some(window) = data.find_mapped_window(&target) {
+                                                let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+                                                data.focus_window(&window, serial);
+                                            }
+                                        }
+                                    }
+                                }
+                                return FilterResult::Intercept(());
+                            }
+                        }
+
+                        // Super+Shift+Return: swap focused with next in tree
+                        if event.state() == KeyState::Pressed
+                            && _modifiers.logo && _modifiers.shift
+                            && keysym.modified_sym().raw() == xkb::KEY_Return
+                            && data.tiling.active
+                        {
+                            if let Some(focused) = data.focused_surface.clone() {
+                                if let Some(area) = crate::tiling::TilingState::tiling_area(data) {
+                                    // Swap with the next window to the right, or below
+                                    let target = data.tiling.find_adjacent(&focused, area, crate::tiling::AdjacentDir::Right)
+                                        .or_else(|| data.tiling.find_adjacent(&focused, area, crate::tiling::AdjacentDir::Down));
+                                    if let Some(target) = target {
+                                        data.tiling.swap(&focused, &target);
+                                        data.apply_tiling_layout();
+                                    }
+                                }
                             }
                             return FilterResult::Intercept(());
                         }
 
+                        // Super+Ctrl+Left/Right: resize tiling split
                         if event.state() == KeyState::Pressed
-                            && _modifiers.logo
-                            && keysym.modified_sym().raw() == xkb::KEY_Down
+                            && _modifiers.logo && _modifiers.ctrl
+                            && data.tiling.active
                         {
-                            if data.minimize_focused(serial) {
-                                tracing::info!("Super+Down pressed, minimized focused window");
+                            let delta = match keysym.modified_sym().raw() {
+                                xkb::KEY_Left => Some(-0.05f32),
+                                xkb::KEY_Right => Some(0.05f32),
+                                _ => None,
+                            };
+                            if let Some(delta) = delta {
+                                if let Some(focused) = data.focused_surface.clone() {
+                                    data.tiling.resize_split(&focused, delta);
+                                    data.apply_tiling_layout();
+                                }
+                                return FilterResult::Intercept(());
                             }
-                            return FilterResult::Intercept(());
-                        }
-
-                        if event.state() == KeyState::Pressed
-                            && _modifiers.logo
-                            && keysym.modified_sym().raw() == xkb::KEY_Left
-                        {
-                            if data.snap_focused(SnapZone::Left) {
-                                tracing::info!("Super+Left pressed, snapped window to left half");
-                            }
-                            return FilterResult::Intercept(());
-                        }
-
-                        if event.state() == KeyState::Pressed
-                            && _modifiers.logo
-                            && keysym.modified_sym().raw() == xkb::KEY_Right
-                        {
-                            if data.snap_focused(SnapZone::Right) {
-                                tracing::info!("Super+Right pressed, snapped window to right half");
-                            }
-                            return FilterResult::Intercept(());
                         }
 
                         // F11 or Super+F: toggle fullscreen
@@ -582,6 +629,22 @@ impl Lantern {
 
                 let under = self.surface_under(pos);
 
+                // Focus follows mouse: focus the window under the pointer
+                if self.focus_follows_mouse {
+                    let canvas_pos = {
+                        let (cx, cy) = self.canvas.screen_to_canvas(pos.x, pos.y);
+                        smithay::utils::Point::from((cx, cy))
+                    };
+                    if let Some((window, _)) = self.space.element_under(canvas_pos) {
+                        let window = window.clone();
+                        if let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(&window) {
+                            if self.focused_surface.as_ref() != Some(&surface) {
+                                self.focus_window(&window, serial);
+                            }
+                        }
+                    }
+                }
+
                 pointer.motion(
                     self,
                     under.clone(),
@@ -743,12 +806,14 @@ impl Lantern {
                             let initial_window_location = self.space.element_location(&window).unwrap_or_default();
                             let was_snapped = self.is_snapped(&wl_surface);
                             let was_maximized = self.is_maximized(&wl_surface);
+                            let was_tiled = self.tiling.contains(&wl_surface);
                             let grab = crate::grabs::MoveSurfaceGrab {
                                 start_data,
                                 window,
                                 initial_window_location,
                                 was_snapped,
                                 was_maximized,
+                                was_tiled,
                                 restored_this_drag: false,
                                 has_moved: false,
                             };
@@ -823,12 +888,14 @@ impl Lantern {
                                 let initial_window_location = self.space.element_location(&window).unwrap_or_default();
                                 let was_snapped = self.is_snapped(&wl_surface);
                                 let was_maximized = self.is_maximized(&wl_surface);
+                                let was_tiled = self.tiling.contains(&wl_surface);
                                 let grab = crate::grabs::MoveSurfaceGrab {
                                     start_data,
                                     window,
                                     initial_window_location,
                                     was_snapped,
                                     was_maximized,
+                                    was_tiled,
                                     restored_this_drag: false,
                                     has_moved: false,
                                 };

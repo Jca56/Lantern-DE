@@ -8,6 +8,7 @@ pub enum ThemeVariant {
     FoxDark,
     FoxLight,
     Lantern,
+    NightSky,
 }
 
 impl ThemeVariant {
@@ -16,6 +17,7 @@ impl ThemeVariant {
             Self::FoxDark => &palette::FOX_DARK,
             Self::FoxLight => &palette::FOX_LIGHT,
             Self::Lantern => &palette::LANTERN,
+            Self::NightSky => &palette::NIGHT_SKY,
         }
     }
 
@@ -24,12 +26,13 @@ impl ThemeVariant {
         match self {
             Self::FoxDark | Self::FoxLight => BRAND_GOLD,
             Self::Lantern => Rgba::rgb(212, 160, 32),
+            Self::NightSky => Rgba::rgb(225, 175, 35),   // Bright gold
         }
     }
 
     pub const fn is_dark(self) -> bool {
         match self {
-            Self::FoxDark | Self::Lantern => true,
+            Self::FoxDark | Self::Lantern | Self::NightSky => true,
             Self::FoxLight => false,
         }
     }
@@ -39,6 +42,7 @@ impl ThemeVariant {
             Self::FoxDark => "Fox Dark",
             Self::FoxLight => "Fox Light",
             Self::Lantern => "Lantern",
+            Self::NightSky => "Night Sky",
         }
     }
 }

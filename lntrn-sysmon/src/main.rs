@@ -1,3 +1,4 @@
+mod chrome;
 mod dispatch;
 mod performance;
 mod popup_backend;

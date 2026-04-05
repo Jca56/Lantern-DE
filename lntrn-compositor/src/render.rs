@@ -89,6 +89,7 @@ pub fn render_surface(
     for surface in &finished_closes {
         state.finish_close_animation(surface);
     }
+    state.tiling_anim.tick();
 
     // Get cursor position relative to this output (logical -> physical)
     let pointer_location = state
@@ -125,7 +126,7 @@ pub fn render_surface(
     // Use slices for O(n) linear scan instead of HashSet allocation — these
     // lists are typically 0–2 entries so linear beats hashing overhead.
     let fullscreen_surfaces: &[_] = &state.fullscreen_windows;
-    let _focused_surface = state.focused_surface.clone();
+    let focused_surface = state.focused_surface.clone();
     let hot_corner = state.hot_corner.corner;
     // SSD state is accessed directly via state.ssd in the render loop
 
@@ -243,10 +244,14 @@ pub fn render_surface(
             continue;
         }
 
-        let location = state.space.element_location(window).unwrap_or_default();
-        let render_location = location - window.geometry().loc;
-
+        let mut location = state.space.element_location(window).unwrap_or_default();
         let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(window) else { continue };
+
+        // Apply tiling animation offset: slide from old position to target
+        if let Some(anim_rect) = state.tiling_anim.current_rect(&surface) {
+            location = anim_rect.loc;
+        }
+        let render_location = location - window.geometry().loc;
         let is_fullscreen = fullscreen_surfaces.iter().any(|e| e.surface == surface);
         let mut base_alpha = if is_fullscreen {
             1.0
@@ -380,10 +385,11 @@ pub fn render_surface(
             blur_backdrops.push((window_elements.len(), log_rect));
         }
 
-        // Window drop shadow (behind window, so pushed after = lower z)
+        // Window drop shadow / focus glow (behind window, so pushed after = lower z)
         if !is_fullscreen {
             if let Some(ref shader) = shadow_shader {
-                let shadow_expand = 40i32;
+                let is_focused = focused_surface.as_ref() == Some(&surface);
+                let shadow_expand = if is_focused { 48i32 } else { 40i32 };
                 let corner_r = crate::ssd::CORNER_RADIUS;
                 let ssd_bar = if has_ssd { crate::ssd::SsdManager::bar_height() } else { 0 };
                 let win_x = rel_x.round() as i32;
@@ -394,8 +400,12 @@ pub fn render_surface(
                     (win_x - shadow_expand, win_y - shadow_expand).into(),
                     (win_w + shadow_expand * 2, win_h + shadow_expand * 2).into(),
                 );
-                // Smithay sets the shader `size` uniform in logical pixels (scale 1).
-                // All other uniforms must match that coordinate space.
+                // Focused windows get a subtle colored glow, others get a dark shadow
+                let (sigma, shadow_color) = if is_focused {
+                    (14.0f32, [0.4f32, 0.6, 1.0, 0.2])
+                } else {
+                    (12.0f32, [0.0f32, 0.0, 0.0, 0.4])
+                };
                 let shadow_elem = PixelShaderElement::new(
                     shader.clone(),
                     shadow_area,
@@ -403,9 +413,9 @@ pub fn render_surface(
                     alpha,
                     vec![
                         Uniform::new("window_size", [win_w as f32, win_h as f32]),
-                        Uniform::new("sigma", 12.0f32),
+                        Uniform::new("sigma", sigma),
                         Uniform::new("corner_radius", corner_r),
-                        Uniform::new("shadow_color", [0.0f32, 0.0, 0.0, 0.4]),
+                        Uniform::new("shadow_color", shadow_color),
                     ],
                     Kind::Unspecified,
                 );
@@ -862,6 +872,7 @@ pub fn render_surface(
     // Also keep rendering while switcher is silently waiting for hold threshold
     let switcher_pending = state.alt_tab_switcher.is_active() && !state.alt_tab_switcher.is_visible();
     if state.animations.has_active()
+        || state.tiling_anim.has_active()
         || state.alt_tab_switcher.needs_redraw()
         || state.hover_preview.needs_redraw()
         || switcher_pending

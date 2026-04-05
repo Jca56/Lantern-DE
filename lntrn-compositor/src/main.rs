@@ -19,6 +19,8 @@ mod snap;
 pub mod ssd;
 mod state;
 mod switcher;
+mod tiling;
+mod tiling_anim;
 pub mod udev;
 mod udev_device;
 mod wallpaper;

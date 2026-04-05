@@ -18,6 +18,7 @@ impl App {
         let sub_pixel_y = self.sync_scroll_to_terminal();
         let sb_offset = self.sidebar_offset();
 
+        let font_size = self.effective_font_size();
         let gpu = match self.gpu.as_ref() {
             Some(g) => g,
             None => return,
@@ -72,13 +73,13 @@ impl App {
         let tab_ref = &self.tabs[self.active_tab];
         let rects = Self::pane_rects_for_tab(tab_ref, screen_w, screen_h, sb_offset);
         let tab = &self.tabs[self.active_tab];
-        let cell_h = render::measure_cell(self.config.font.size).1;
+        let cell_h = render::measure_cell(font_size).1;
         for (i, pane) in tab.panes.iter().enumerate() {
             if i >= rects.len() {
                 break;
             }
             let (gx, gy, gw, gh) =
-                Self::pane_grid_bounds(pane, rects[i], self.config.font.size);
+                Self::pane_grid_bounds(pane, rects[i], font_size);
             let is_focused = i == tab.active_pane;
             let is_active_pane = i == tab.active_pane;
 
@@ -94,7 +95,7 @@ impl App {
                 painter,
                 text,
                 &pane.terminal,
-                self.config.font.size,
+                font_size,
                 (gx, gy - pane_sub_pixel),
                 screen_w,
                 screen_h,
@@ -162,7 +163,7 @@ impl App {
             &mut self.input,
             screen_w,
             screen_h,
-            self.config.font.size,
+            font_size,
             self.config.window.opacity,
             self.sidebar.visible,
             maximized,
@@ -278,6 +279,10 @@ impl App {
                 Self::handle_render_error(e, &mut self.gpu);
             }
         }
+
+        // If the base font size changed (e.g. via slider), the effective size
+        // may now differ from what update_grid_size last used — resync.
+        self.update_grid_size();
     }
 
     pub(crate) fn handle_render_error(

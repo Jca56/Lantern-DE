@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Git
+Exec=lntrn-git
+Icon=lntrn-git
+Categories=Development;

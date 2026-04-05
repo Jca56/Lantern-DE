@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="21.044 43.62 217.747 200.581" xmlns:bx="https://boxy-svg.com" preserveAspectRatio="none"><defs><linearGradient id="folderBack" x1="0%" y1="0%" x2="15%" y2="100%"><stop offset="0" stop-color="#0a3018"/><stop offset="0.4" stop-color="#062010"/><stop offset="1" stop-color="#020a04"/></linearGradient><linearGradient id="folderFront" x1="0%" y1="0%" x2="5%" y2="100%"><stop offset="0" style="stop-color: rgb(14, 60, 30);"/><stop offset="0.35" style="stop-color: rgb(8, 40, 18);"/><stop offset="1" stop-color="#021a0a"/></linearGradient><linearGradient id="folderFrontHighlight" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0" stop-color="#d8ffe0" stop-opacity="0.45"/><stop offset="0.15" stop-color="#fff" stop-opacity="0"/></linearGradient><linearGradient id="tabHighlight" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0" stop-color="#55cc55" stop-opacity="0.7"/><stop offset="1" stop-color="#0a3018" stop-opacity="0"/></linearGradient><linearGradient id="page1grad" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0" stop-color="#f2f0ea"/><stop offset="1" stop-color="#ddd9cc"/></linearGradient><linearGradient id="page2grad" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0" stop-color="#ccc9bf"/><stop offset="1" stop-color="#b8b4a8"/></linearGradient><linearGradient id="pageEdge" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0" stop-color="#fff" stop-opacity="0.6"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient><linearGradient id="innerShadow" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0" stop-color="#000" stop-opacity="0.25"/><stop offset="0.12" stop-color="#000" stop-opacity="0"/></linearGradient><filter id="fShadow" x="-10%" y="-10%" width="130%" height="140%"><feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="#000" flood-opacity="0.5"/></filter><filter id="pShadow" x="-5%" y="-15%" width="115%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#000" flood-opacity="0.3"/></filter>
+    <linearGradient id="mushBack" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#06100a"/><stop offset="100%" stop-color="#020804"/>
+    </linearGradient>
+    <radialGradient id="capGrad" cx="40%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#ff6644"/><stop offset="50%" stop-color="#ff2200"/><stop offset="100%" stop-color="#990000"/>
+    </radialGradient>
+    <radialGradient id="capGrad2" cx="40%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#ffaa44"/><stop offset="50%" stop-color="#ff6600"/><stop offset="100%" stop-color="#882200"/>
+    </radialGradient>
+    <filter id="mushroomGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#ff4400" flood-opacity="0.9"/>
+    </filter>
+    <filter id="sporeGlow" x="-60%" y="-60%" width="220%" height="220%">
+      <feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="#ffaa44" flood-opacity="0.9"/>
+    </filter>
+    <linearGradient id="stripG" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="#ff4422"/><stop offset="100%" stop-color="#ff8844"/></linearGradient>
+    <clipPath id="frontClip"><path d="M22,98 L238,98 L238,232 Q238,244 226,244 L34,244 Q22,244 22,232 Z"/></clipPath>
+  </defs><g filter="url(#fShadow)" style=""><path d="M22,60 Q22,44 32,44 L102,44 Q112,44 118,56 L134,78 L234,78 Q238,78 238,82 L238,232 Q238,244 226,244 L34,244 Q22,244 22,232 Z" fill="url(#folderBack)"/><line x1="30" y1="100" x2="230" y2="100" stroke="#000" stroke-opacity="0.06" stroke-width="0.5" style=""/><line x1="30" y1="140" x2="230" y2="140" stroke="#000" stroke-opacity="0.04" stroke-width="0.5" style=""/><line x1="30" y1="180" x2="230" y2="180" stroke="#000" stroke-opacity="0.03" stroke-width="0.5" style=""/></g><g filter="url(#pShadow)" transform="matrix(1, 0, 0, 1, -1.701021, 0.340202)" style=""><rect x="38" y="56" width="184" height="22" rx="2" ry="2" fill="url(#page2grad)"/><line x1="58" y1="63" x2="170" y2="63" stroke="#a8a498" stroke-width="1" stroke-opacity="0.5"/><line x1="58" y1="69" x2="145" y2="69" stroke="#a8a498" stroke-width="1" stroke-opacity="0.35"/></g><g filter="url(#pShadow)" transform="matrix(1, 0, 0, 1, -0.1701, 3.402037)" style=""><rect x="28" y="68" width="200" height="26" rx="2" ry="2" fill="url(#page1grad)"/><rect x="28" y="68" width="200" height="4" rx="2" ry="2" fill="url(#pageEdge)"/><line x1="48" y1="76" x2="185" y2="76" stroke="#b0ad9f" stroke-width="1.2" stroke-opacity="0.6"/><line x1="48" y1="82" x2="160" y2="82" stroke="#b0ad9f" stroke-width="1.2" stroke-opacity="0.45"/><line x1="48" y1="88" x2="120" y2="88" stroke="#b0ad9f" stroke-width="1.2" stroke-opacity="0.3"/><path d="M216,68 L228,68 L228,80 Z" fill="#c8c4b4" opacity="0.5"/><path d="M216,68 L228,80 L216,80 Z" fill="#e8e4d8" opacity="0.6"/></g>
+  <!-- Colored strip at fold line -->
+  <rect x="22" y="98" width="216" height="28" fill="url(#stripG)"/>
+  <rect x="22" y="98" width="216" height="10" fill="#fff" opacity="0.12"/>
+  
+  <!-- Theme scene -->
+  <g clip-path="url(#frontClip)">
+    <g transform="translate(22, 98) scale(2.5116, 2.9200) translate(-7, -48)">
+      
+    <rect x="7" y="48" width="86" height="50" fill="url(#mushBack)"/>
+    <!-- Ground -->
+    <rect x="7" y="88" width="86" height="10" fill="#0a1e0a" opacity="0.8"/>
+    <path d="M7,88 Q25,85 40,88 Q55,91 70,87 Q82,84 93,88" fill="none" stroke="#1a4a1a" stroke-width="1.5"/>
+    <!-- Main mushroom center -->
+    <g filter="url(#mushroomGlow)">
+      <!-- Stem -->
+      <path d="M42,88 Q40,76 44,72 L56,72 Q60,76 58,88 Z" fill="#e8e0cc"/>
+      <ellipse cx="50" cy="88" rx="8" ry="3" fill="#ddd8c0"/>
+      <!-- Veil skirt -->
+      <path d="M44,76 Q50,80 56,76" fill="none" stroke="#ccc4aa" stroke-width="1.5" stroke-linecap="round"/>
+      <!-- Cap -->
+      <path d="M28,73 Q28,56 50,54 Q72,56 72,73 Q65,78 50,79 Q35,78 28,73 Z" fill="url(#capGrad)"/>
+      <!-- Cap shine -->
+      <path d="M35,65 Q42,58 52,60" fill="none" stroke="#ff9977" stroke-width="2" stroke-linecap="round" opacity="0.6"/>
+      <!-- White spots -->
+      <circle cx="42" cy="65" r="4" fill="#fff" opacity="0.9"/>
+      <circle cx="57" cy="62" r="3" fill="#fff" opacity="0.85"/>
+      <circle cx="48" cy="72" r="2.5" fill="#fff" opacity="0.8"/>
+      <circle cx="64" cy="70" r="2" fill="#fff" opacity="0.7"/>
+      <circle cx="35" cy="70" r="2" fill="#fff" opacity="0.7"/>
+    </g>
+    <!-- Left small mushroom -->
+    <g filter="url(#mushroomGlow)" opacity="0.85">
+      <rect x="18" y="84" width="5" height="8" rx="2" fill="#d8d0bc"/>
+      <path d="M12,83 Q12,75 20.5,74 Q29,75 29,83 Q24,86 20.5,86 Q17,86 12,83 Z" fill="url(#capGrad2)"/>
+      <circle cx="18" cy="79" r="2.5" fill="#fff" opacity="0.8"/>
+      <circle cx="24" cy="77" r="1.8" fill="#fff" opacity="0.7"/>
+    </g>
+    <!-- Right small mushroom -->
+    <g filter="url(#mushroomGlow)" opacity="0.8">
+      <rect x="76" y="85" width="4" height="7" rx="2" fill="#d8d0bc"/>
+      <path d="M71,84 Q71,77 78,76 Q85,77 85,84 Q82,87 78,87 Q74,87 71,84 Z" fill="url(#capGrad)"/>
+      <circle cx="76" cy="80" r="2" fill="#fff" opacity="0.8"/>
+      <circle cx="81" cy="79" r="1.5" fill="#fff" opacity="0.7"/>
+    </g>
+    <!-- Floating spores -->
+    <g filter="url(#sporeGlow)">
+      <circle cx="22" cy="62" r="1.5" fill="#ffaa44" opacity="0.8"/>
+      <circle cx="32" cy="55" r="1"   fill="#ffcc66" opacity="0.7"/>
+      <circle cx="68" cy="57" r="1.5" fill="#ffaa44" opacity="0.8"/>
+      <circle cx="78" cy="63" r="1"   fill="#ffcc66" opacity="0.7"/>
+      <circle cx="60" cy="52" r="1.2" fill="#ffaa44" opacity="0.6"/>
+      <circle cx="38" cy="53" r="1"   fill="#ffcc66" opacity="0.6"/>
+    </g>
+    <!-- Moss on ground -->
+    <g fill="#1a5a1a" opacity="0.5">
+      <ellipse cx="15" cy="90" rx="5" ry="2"/><ellipse cx="30" cy="91" rx="4" ry="1.5"/>
+      <ellipse cx="70" cy="90" rx="5" ry="2"/><ellipse cx="84" cy="91" rx="4" ry="1.5"/>
+    </g>
+  
+    </g>
+  </g>
+  
+  <path d="M22,98 L238,98 L238,232 Q238,244 226,244 L34,244 Q22,244 22,232 Z" fill="none" stroke="#55cc55" stroke-width="1.5" opacity="0.25"/>
+  <rect x="22" y="126" width="216" height="20" fill="#fff" opacity="0.03"/>
+  <rect x="22" y="230" width="216" height="14" rx="5" fill="#000" opacity="0.15"/>
+
+</svg>

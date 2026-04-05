@@ -60,6 +60,10 @@ impl FoxPalette {
         Self::from_theme(&lntrn_theme::FOX_LIGHT, lntrn_theme::ThemeVariant::FoxLight)
     }
 
+    pub fn night_sky() -> Self {
+        Self::from_theme(&lntrn_theme::NIGHT_SKY, lntrn_theme::ThemeVariant::NightSky)
+    }
+
     pub fn gradient_border_colors(&self) -> [Color; 4] {
         let gb = lntrn_theme::GRADIENT_BORDER;
         [to_color(gb[0]), to_color(gb[1]), to_color(gb[2]), to_color(gb[3])]

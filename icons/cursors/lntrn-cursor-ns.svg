@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-2 -2 36 36" width="32" height="32">
+  <defs>
+    <filter id="cShadow" x="-15%" y="-10%" width="140%" height="130%">
+      <feDropShadow dx="0.6" dy="0.8" stdDeviation="0.6" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <g filter="url(#cShadow)">
+    <!-- Up-Down double arrow -->
+    <path d="M16,1 L22,9 L18.5,9 L18.5,23 L22,23 L16,31 L10,23 L13.5,23 L13.5,9 L10,9 Z"
+          fill="#0a0a0a" stroke="#ffffff" stroke-width="1.8" stroke-linejoin="miter" stroke-linecap="square" style="paint-order: stroke;"/>
+  </g>
+</svg>

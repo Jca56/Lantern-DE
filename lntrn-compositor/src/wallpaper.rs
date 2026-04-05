@@ -21,18 +21,18 @@ impl WallpaperState {
     pub fn load_from_config() -> Self {
         let wallpaper_path = read_wallpaper_setting();
         let source = if wallpaper_path.is_empty() {
-            eprintln!("[wallpaper] using embedded default");
+            tracing::info!("[wallpaper] using embedded default");
             image::load_from_memory(include_bytes!("../../Lantern-DE_Wallpaper.jpeg")).ok()
         } else {
-            eprintln!("[wallpaper] loading from '{}'", wallpaper_path);
+            tracing::info!("[wallpaper] loading from '{}'", wallpaper_path);
             match image::open(&wallpaper_path) {
                 Ok(img) => {
                     let (w, h) = img.dimensions();
-                    eprintln!("[wallpaper] loaded {}x{}", w, h);
+                    tracing::info!("[wallpaper] loaded {}x{}", w, h);
                     Some(img)
                 }
                 Err(e) => {
-                    eprintln!("[wallpaper] failed to load '{}': {e}, using default", wallpaper_path);
+                    tracing::info!("[wallpaper] failed to load '{}': {e}, using default", wallpaper_path);
                     image::load_from_memory(include_bytes!("../../Lantern-DE_Wallpaper.jpeg")).ok()
                 }
             }
@@ -50,7 +50,7 @@ impl WallpaperState {
         if new_path == self.current_path {
             return;
         }
-        eprintln!("[wallpaper] config changed to: '{}'", if new_path.is_empty() { "(default)" } else { &new_path });
+        tracing::info!("[wallpaper] config changed to: '{}'", if new_path.is_empty() { "(default)" } else { &new_path });
         *self = Self::load_from_config();
     }
 
@@ -90,10 +90,10 @@ impl WallpaperState {
         let key = (size.w.max(1), size.h.max(1));
         if !self.cache.contains_key(&key) {
             let (src_w, src_h) = source.dimensions();
-            eprintln!("[wallpaper] resize {}x{} -> {}x{} phys", src_w, src_h, key.0, key.1);
+            tracing::info!("[wallpaper] resize {}x{} -> {}x{} phys", src_w, src_h, key.0, key.1);
             let resized_img = resize_to_fill(source, key.0 as u32, key.1 as u32);
             let (rw, rh) = resized_img.dimensions();
-            eprintln!("[wallpaper] result = {}x{}", rw, rh);
+            tracing::info!("[wallpaper] result = {}x{}", rw, rh);
             let resized = resized_img.to_rgba8();
             let bytes = resized.into_raw();
             let buffer = MemoryRenderBuffer::from_slice(

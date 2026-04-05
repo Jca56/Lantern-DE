@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="256" height="256">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="10%" y2="100%">
+      <stop offset="0%" stop-color="#1a1a1a"/>
+      <stop offset="100%" stop-color="#0a0a0a"/>
+    </linearGradient>
+    <!-- Green data color -->
+    <linearGradient id="greenGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#40ff80"/>
+      <stop offset="100%" stop-color="#20c050"/>
+    </linearGradient>
+    <linearGradient id="barGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#40ff80"/>
+      <stop offset="100%" stop-color="#10803a"/>
+    </linearGradient>
+    <filter id="bgShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#000" flood-opacity="0.6"/>
+    </filter>
+    <filter id="greenGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#30ff70" flood-opacity="0.7"/>
+    </filter>
+    <filter id="sonarGlow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="0" stdDeviation="4" flood-color="#30ff70" flood-opacity="0.6"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <g filter="url(#bgShadow)">
+    <rect x="6" y="6" width="88" height="88" rx="12" fill="url(#bgGrad)"/>
+  </g>
+  <rect x="6" y="6" width="88" height="28" rx="12" fill="#fff" opacity="0.03"/>
+
+  <!-- LEFT SIDE: data rows + line graph + bar graph -->
+
+  <!-- Text rows (simulated data labels) -->
+  <g opacity="0.5">
+    <rect x="11" y="11" width="18" height="2.5" rx="1" fill="#30cc60"/>
+    <rect x="11" y="16" width="14" height="2.5" rx="1" fill="#30cc60"/>
+    <rect x="11" y="21" width="16" height="2.5" rx="1" fill="#30cc60"/>
+  </g>
+
+  <!-- Line graph (CPU style) -->
+  <g>
+    <polyline points="11,45 17,38 22,42 27,33 32,40 37,30 42,36 47,28"
+              fill="none" stroke="url(#greenGrad)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- Area fill under line -->
+    <polygon points="11,45 17,38 22,42 27,33 32,40 37,30 42,36 47,28 47,47 11,47"
+             fill="#20c050" opacity="0.12"/>
+  </g>
+
+  <!-- Grid lines behind graph -->
+  <line x1="11" y1="47" x2="47" y2="47" stroke="#1a4a2a" stroke-width="0.8"/>
+  <line x1="11" y1="40" x2="47" y2="40" stroke="#1a4a2a" stroke-width="0.8"/>
+  <line x1="11" y1="33" x2="47" y2="33" stroke="#1a4a2a" stroke-width="0.8"/>
+
+  <!-- Bar graph (memory style) -->
+  <g>
+    <rect x="11" y="61" width="5" height="14" rx="1" fill="url(#barGrad)"/>
+    <rect x="19" y="57" width="5" height="18" rx="1" fill="url(#barGrad)"/>
+    <rect x="27" y="64" width="5" height="11" rx="1" fill="url(#barGrad)"/>
+    <rect x="35" y="54" width="5" height="21" rx="1" fill="url(#barGrad)"/>
+    <rect x="43" y="59" width="5" height="16" rx="1" fill="url(#barGrad)"/>
+  </g>
+  <!-- Bar baseline -->
+  <line x1="11" y1="75" x2="50" y2="75" stroke="#1a4a2a" stroke-width="0.8"/>
+
+  <!-- Data value rows bottom left -->
+  <g opacity="0.45">
+    <rect x="11" y="80" width="22" height="2" rx="1" fill="#30cc60"/>
+    <rect x="11" y="85" width="16" height="2" rx="1" fill="#30cc60"/>
+    <rect x="11" y="90" width="19" height="2" rx="1" fill="#30cc60"/>
+  </g>
+
+  <!-- Vertical divider -->
+  <line x1="53" y1="10" x2="53" y2="92" stroke="#1e3a28" stroke-width="1"/>
+
+  <!-- RIGHT SIDE: Sonar/circular monitor -->
+  <g filter="url(#sonarGlow)">
+    <!-- Outer ring -->
+    <circle cx="74" cy="52" r="20" fill="none" stroke="#20c050" stroke-width="1.5" opacity="0.6"/>
+    <!-- Mid ring -->
+    <circle cx="74" cy="52" r="13" fill="none" stroke="#20c050" stroke-width="1.2" opacity="0.45"/>
+    <!-- Inner ring -->
+    <circle cx="74" cy="52" r="6.5" fill="none" stroke="#20c050" stroke-width="1.2" opacity="0.5"/>
+    <!-- Center dot -->
+    <circle cx="74" cy="52" r="2" fill="#40ff80"/>
+
+    <!-- Crosshairs -->
+    <line x1="74" y1="30" x2="74" y2="74" stroke="#20c050" stroke-width="0.8" opacity="0.3"/>
+    <line x1="52" y1="52" x2="96" y2="52" stroke="#20c050" stroke-width="0.8" opacity="0.3"/>
+
+    <!-- Sonar sweep arc (frozen mid-sweep) -->
+    <path d="M74,52 L74,32 A20,20 0 0,1 91,63 Z"
+          fill="#30ff70" opacity="0.12"/>
+    <line x1="74" y1="52" x2="91" y2="63"
+          stroke="#40ff80" stroke-width="1.5" stroke-linecap="round" opacity="0.9"/>
+
+    <!-- Blip dots -->
+    <circle cx="83" cy="42" r="2" fill="#40ff80" opacity="0.9"/>
+    <circle cx="68" cy="60" r="1.5" fill="#40ff80" opacity="0.6"/>
+    <circle cx="79" cy="58" r="1" fill="#40ff80" opacity="0.4"/>
+  </g>
+
+  <!-- Sonar label row -->
+  <g opacity="0.4">
+    <rect x="58" y="80" width="10" height="2" rx="1" fill="#30cc60"/>
+    <rect x="71" y="80" width="14" height="2" rx="1" fill="#30cc60"/>
+    <rect x="60" y="85" width="8" height="2" rx="1" fill="#30cc60"/>
+    <rect x="71" y="85" width="10" height="2" rx="1" fill="#30cc60"/>
+    <rect x="60" y="90" width="12" height="2" rx="1" fill="#30cc60"/>
+  </g>
+
+</svg>

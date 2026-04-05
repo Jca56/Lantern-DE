@@ -133,7 +133,7 @@ impl App {
 
         self.input.on_left_pressed();
         let menus = ui_chrome::build_menus(
-            self.config.font.size,
+            self.effective_font_size(),
             self.config.window.opacity,
             self.sidebar.visible,
         );
@@ -492,6 +492,7 @@ impl App {
         }
 
         if !self.tabs.is_empty() {
+            let font_size = self.effective_font_size();
             let tab = &mut self.tabs[self.active_tab];
             let pane = &mut tab.panes[tab.active_pane];
             let old_offset = pane.terminal.scroll_offset;
@@ -504,7 +505,7 @@ impl App {
                 &self.clipboard,
             );
             if pane.terminal.scroll_offset != old_offset {
-                let cell_h = render::measure_cell(self.config.font.size).1;
+                let cell_h = render::measure_cell(font_size).1;
                 let new_px = pane.terminal.scroll_offset as f32 * cell_h;
                 self.scroll_target_px = new_px;
                 if pane.terminal.scroll_offset == 0 {
@@ -596,7 +597,7 @@ impl App {
             return;
         }
 
-        let cell_h = render::measure_cell(self.config.font.size).1;
+        let cell_h = render::measure_cell(self.effective_font_size()).1;
         let delta_px = match delta {
             MouseScrollDelta::LineDelta(_, y) => y * cell_h * 10.0,
             MouseScrollDelta::PixelDelta(pos) => pos.y as f32 * 4.0,
@@ -627,7 +628,7 @@ impl App {
         if self.tabs.is_empty() {
             return None;
         }
-        let cell_h = render::measure_cell(self.config.font.size).1;
+        let cell_h = render::measure_cell(self.effective_font_size()).1;
         let screen_w = self.gpu.as_ref().map_or(800, |g| g.width());
         let screen_h = self.gpu.as_ref().map_or(600, |g| g.height());
         let tab = &self.tabs[self.active_tab];
@@ -637,7 +638,7 @@ impl App {
             return None;
         }
         let (gx, gy, gw, gh) =
-            Self::pane_grid_bounds(pane, rects[tab.active_pane], self.config.font.size);
+            Self::pane_grid_bounds(pane, rects[tab.active_pane], self.effective_font_size());
         let viewport = lntrn_render::Rect::new(gx, gy, gw, gh);
         let total_lines = pane.terminal.scrollback.len() + pane.terminal.rows;
         let content_height = total_lines as f32 * cell_h;
@@ -671,7 +672,7 @@ impl App {
             return;
         }
         let (gx, gy, gw, gh) =
-            Self::pane_grid_bounds(pane, rects[tab.active_pane], self.config.font.size);
+            Self::pane_grid_bounds(pane, rects[tab.active_pane], self.effective_font_size());
         let viewport = lntrn_render::Rect::new(gx, gy, gw, gh);
         let inverted_offset = hit.max_scroll - self.scroll_current_px.min(hit.max_scroll);
         let scrollbar = lntrn_ui::gpu::scroll::Scrollbar::new(

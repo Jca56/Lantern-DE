@@ -2,7 +2,6 @@ use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
 pub const TAB_NAMES: &[&str] = &["System", "Processes", "Performance"];
 
-const TEXT_PRIMARY: Color   = Color::rgb(0.88, 0.85, 0.95);
 const TEXT_MUTED: Color     = Color::rgb(0.50, 0.45, 0.62);
 const ACCENT: Color         = Color::rgb(0.25, 0.65, 0.90);
 const SURFACE: Color        = Color::rgba(0.08, 0.04, 0.16, 0.40);
@@ -43,17 +42,13 @@ pub fn draw(
 
         if is_active {
             p.rect_filled(Rect::new(tx, y, tw, tab_h), 8.0 * s, SURFACE);
-            p.rect_filled(
-                Rect::new(tx + 10.0 * s, y + tab_h - 3.0 * s, tw - 20.0 * s, 3.0 * s),
-                1.5 * s, ACCENT,
-            );
         } else if hov {
             p.rect_filled(Rect::new(tx, y, tw, tab_h), 8.0 * s,
                 Color::rgba(0.06, 0.03, 0.12, 0.25));
         }
 
-        let tc = if is_active { TEXT_PRIMARY } else { TEXT_MUTED };
-        t.queue(TAB_NAMES[i], 16.0 * s, tx + 14.0 * s, y + 8.0 * s, tc, wf, sw, sh);
+        let tc = if is_active { ACCENT } else { TEXT_MUTED };
+        t.queue(TAB_NAMES[i], 18.0 * s, tx + 14.0 * s, y + 7.0 * s, tc, wf, sw, sh);
         tx += tw + 8.0 * s;
     }
 

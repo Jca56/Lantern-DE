@@ -7,6 +7,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
+fn log_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+    PathBuf::from(home).join(".lantern").join("log").join("session.log")
+}
+
 extern "C" fn handle_signal(_: i32) {
     SHUTDOWN.store(true, Ordering::SeqCst);
 }
@@ -20,15 +25,6 @@ struct ManagedProcess {
 }
 
 impl ManagedProcess {
-    fn spawn(name: &'static str, cmd: &str, args: &[&str]) -> Result<Self, String> {
-        let child = Command::new(cmd)
-            .args(args)
-            .spawn()
-            .map_err(|e| format!("Failed to start {name}: {e}"))?;
-        println!("🏮 Started {name} (pid {})", child.id());
-        Ok(Self { name, child })
-    }
-
     fn is_running(&mut self) -> bool {
         matches!(self.child.try_wait(), Ok(None))
     }
@@ -40,6 +36,24 @@ impl ManagedProcess {
         if self.is_running() {
             let _ = signal::kill(pid, Signal::SIGKILL);
         }
+    }
+
+    fn spawn_wayland(
+        name: &'static str,
+        cmd: &str,
+        wayland_display: &str,
+        x11_display: Option<&str>,
+    ) -> Result<Self, String> {
+        let mut command = Command::new(cmd);
+        command.env("WAYLAND_DISPLAY", wayland_display);
+        if let Some(d) = x11_display {
+            command.env("DISPLAY", d);
+        }
+        let child = command
+            .spawn()
+            .map_err(|e| format!("Failed to start {name}: {e}"))?;
+        log(&format!("🏮 Started {name} (pid {})", child.id()));
+        Ok(Self { name, child })
     }
 }
 
@@ -149,7 +163,7 @@ fn log(msg: &str) {
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open("/tmp/lantern-session.log")
+        .open(log_path())
     {
         use std::io::Write;
         let _ = writeln!(f, "{msg}");
@@ -158,12 +172,17 @@ fn log(msg: &str) {
 }
 
 fn main() {
+    // Ensure ~/.lantern/log/ exists before any logging
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+    let lantern_log_dir = PathBuf::from(&home).join(".lantern").join("log");
+    let _ = std::fs::create_dir_all(&lantern_log_dir);
+
     std::panic::set_hook(Box::new(|info| {
         let msg = format!("PANIC: {info}");
         if let Ok(mut f) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open("/tmp/lantern-session.log")
+            .open(log_path())
         {
             use std::io::Write;
             let _ = writeln!(f, "{msg}");
@@ -214,7 +233,7 @@ fn main() {
 
     // Start the Lantern compositor
     log("🏮 Starting lntrn-compositor...");
-    let compositor_log = std::fs::File::create("/tmp/lantern-compositor.log")
+    let compositor_log = std::fs::File::create(lantern_log_dir.join("compositor.log"))
         .expect("Failed to create compositor log file");
     let compositor_err = compositor_log.try_clone().expect("Failed to clone log file handle");
 
@@ -267,6 +286,15 @@ fn main() {
         }
     };
 
+    // Export WAYLAND_DISPLAY to systemd/dbus so portals and dbus-activated services work
+    std::env::set_var("WAYLAND_DISPLAY", &wayland_socket);
+    let _ = Command::new("systemctl")
+        .args(["--user", "import-environment", "WAYLAND_DISPLAY"])
+        .status();
+    let _ = Command::new("dbus-update-activation-environment")
+        .args(["--systemd", &format!("WAYLAND_DISPLAY={wayland_socket}")])
+        .status();
+
     // Wait for XWayland to create an X11 socket so we can pass DISPLAY
     let x11_display = {
         let mut found = None;
@@ -308,52 +336,19 @@ fn main() {
         }
     };
 
-    // Start the bar as an independent process
-    log("🏮 Starting lntrn-bar...");
-    let mut bar_cmd = Command::new("lntrn-bar");
-    bar_cmd.env("WAYLAND_DISPLAY", &wayland_socket);
-    if let Some(ref d) = x11_display {
-        bar_cmd.env("DISPLAY", d);
-    }
-    let _bar = bar_cmd.spawn();
-    if let Ok(ref child) = _bar {
-        log(&format!("🏮 Started lntrn-bar (pid {})", child.id()));
-    }
-
-    // Start the desktop shell
-    log("🏮 Starting lntrn-desktop...");
-    let mut desktop_cmd = Command::new("lntrn-desktop");
-    desktop_cmd.env("WAYLAND_DISPLAY", &wayland_socket);
-    if let Some(ref d) = x11_display {
-        desktop_cmd.env("DISPLAY", d);
-    }
-    let _desktop = desktop_cmd.spawn();
-    if let Ok(ref child) = _desktop {
-        log(&format!("🏮 Started lntrn-desktop (pid {})", child.id()));
-    }
-
-    // Start the portal backend (xdg-desktop-portal FileChooser)
-    log("🏮 Starting lntrn-portal...");
-    let mut portal_cmd = Command::new("lntrn-portal");
-    portal_cmd.env("WAYLAND_DISPLAY", &wayland_socket);
-    if let Some(ref d) = x11_display {
-        portal_cmd.env("DISPLAY", d);
-    }
-    let _portal = portal_cmd.spawn();
-    if let Ok(ref child) = _portal {
-        log(&format!("🏮 Started lntrn-portal (pid {})", child.id()));
-    }
-
-    // Start the notification daemon
-    log("🏮 Starting lntrn-notifyd...");
-    let mut notifyd_cmd = Command::new("lntrn-notifyd");
-    notifyd_cmd.env("WAYLAND_DISPLAY", &wayland_socket);
-    if let Some(ref d) = x11_display {
-        notifyd_cmd.env("DISPLAY", d);
-    }
-    let _notifyd = notifyd_cmd.spawn();
-    if let Ok(ref child) = _notifyd {
-        log(&format!("🏮 Started lntrn-notifyd (pid {})", child.id()));
+    // Start shell components — all tracked for clean shutdown
+    let mut children: Vec<ManagedProcess> = Vec::new();
+    for &(name, cmd) in &[
+        ("lntrn-bar", "lntrn-bar"),
+        ("lntrn-desktop", "lntrn-desktop"),
+        ("lntrn-portal", "lntrn-portal"),
+        ("lntrn-notifyd", "lntrn-notifyd"),
+    ] {
+        log(&format!("🏮 Starting {name}..."));
+        match ManagedProcess::spawn_wayland(name, cmd, &wayland_socket, x11_display.as_deref()) {
+            Ok(p) => children.push(p),
+            Err(e) => log(&format!("WARNING: {e}")),
+        }
     }
 
     // Run XDG autostart entries
@@ -375,8 +370,11 @@ fn main() {
         std::thread::sleep(std::time::Duration::from_millis(250));
     }
 
-    // Cleanup
+    // Cleanup — kill children in reverse order, then compositor
     log("🏮 Cleaning up...");
+    for child in children.iter_mut().rev() {
+        child.kill();
+    }
     compositor.kill();
 
     // Reap zombies

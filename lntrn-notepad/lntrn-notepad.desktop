@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Notepad
+Exec=lntrn-notepad
+Icon=lntrn-notepad
+Categories=Utility;TextEditor;

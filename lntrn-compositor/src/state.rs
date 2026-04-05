@@ -52,6 +52,8 @@ use crate::handlers::xdg_foreign::XdgForeignState;
 use crate::hot_corners::HotCornerState;
 use crate::snap::SnappedWindow;
 use crate::switcher::AltTabSwitcher;
+use crate::tiling::TilingState;
+use crate::tiling_anim::TilingAnimationState;
 use crate::udev::UdevData;
 use crate::wallpaper::WallpaperState;
 
@@ -190,11 +192,14 @@ pub struct Lantern {
     pub window_opacity: HashMap<WlSurface, f32>,
     pub default_window_opacity: f32,
     pub window_zoom: HashMap<WlSurface, f64>,
+    pub focus_follows_mouse: bool,
     pub super_pressed: bool,
     /// True if Super was pressed and no Super+combo was used (for tap detection)
     pub super_clean_tap: bool,
     pub snapped_windows: Vec<SnappedWindow>,
     pub animations: AnimationState,
+    pub tiling: TilingState,
+    pub tiling_anim: TilingAnimationState,
     pub gesture: GestureState,
     pub canvas: Canvas,
 
@@ -319,10 +324,13 @@ impl Lantern {
             window_opacity: HashMap::new(),
             default_window_opacity: crate::read_config_f32("window_opacity", 1.0),
             window_zoom: HashMap::new(),
+            focus_follows_mouse: crate::read_config("window_manager", "focus_follows_mouse", "false") == "true",
             super_pressed: false,
             super_clean_tap: false,
             snapped_windows: Vec::new(),
             animations: AnimationState::new(),
+            tiling: TilingState::new(),
+            tiling_anim: TilingAnimationState::new(),
             gesture: GestureState::new(),
             canvas: Canvas::new(),
             scratchpad_surface: None,
@@ -516,8 +524,7 @@ impl Lantern {
     }
 
     pub fn cycle_desktop_panel(&self) {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-        let path = std::path::PathBuf::from(home).join(".lantern/config/desktop-panel");
+        let path = crate::lantern_home().join("config/desktop-panel");
         let current = std::fs::read_to_string(&path).unwrap_or_default();
         let panels = ["home", "terminal", "files"];
         let idx = panels.iter().position(|p| current.trim() == *p).unwrap_or(0);

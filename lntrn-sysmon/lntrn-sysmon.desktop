@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=System Monitor
+Exec=lntrn-sysmon
+Icon=lntrn-sysmon
+Categories=System;Monitor;
