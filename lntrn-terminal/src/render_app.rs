@@ -19,6 +19,8 @@ impl App {
         let sb_offset = self.sidebar_offset();
 
         let font_size = self.effective_font_size();
+        let chrome_h = self.chrome_height();
+        let tab_bar_visible = self.tab_bar_visible;
         let gpu = match self.gpu.as_ref() {
             Some(g) => g,
             None => return,
@@ -55,10 +57,10 @@ impl App {
             screen_w as f32,
             screen_h as f32,
             maximized,
+            tab_bar_visible,
         );
 
         // Draw sidebar file browser
-        let chrome_h = render::chrome_height();
         sidebar::draw_sidebar(
             painter,
             text,
@@ -71,7 +73,7 @@ impl App {
 
         // Render all panes in the active tab
         let tab_ref = &self.tabs[self.active_tab];
-        let rects = Self::pane_rects_for_tab(tab_ref, screen_w, screen_h, sb_offset);
+        let rects = Self::pane_rects_for_tab(tab_ref, screen_w, screen_h, sb_offset, chrome_h);
         let tab = &self.tabs[self.active_tab];
         let cell_h = render::measure_cell(font_size).1;
         for (i, pane) in tab.panes.iter().enumerate() {
@@ -122,7 +124,7 @@ impl App {
                     lntrn_ui::gpu::input::InteractionState::Pressed
                 } else if self
                     .cursor_pos
-                    .map_or(false, |(cx, cy)| scrollbar.track.contains(cx, cy))
+                    .map_or(false, |(cx, cy)| scrollbar.hover_zone().contains(cx, cy))
                 {
                     lntrn_ui::gpu::input::InteractionState::Hovered
                 } else {
@@ -170,17 +172,19 @@ impl App {
             1.0,
         );
 
-        // Draw tab bar (separate row below title bar)
-        tab_bar::draw_tab_bar(
-            painter,
-            text,
-            &self.tab_bar,
-            &tab_displays,
-            self.active_tab,
-            screen_w,
-            screen_h,
-            self.cursor_pos,
-        );
+        // Draw tab bar (auto-hides, appears on hover)
+        if tab_bar_visible {
+            tab_bar::draw_tab_bar(
+                painter,
+                text,
+                &self.tab_bar,
+                &tab_displays,
+                self.active_tab,
+                screen_w,
+                screen_h,
+                self.cursor_pos,
+            );
+        }
 
         let has_overlay = self.chrome.has_overlay() || self.tab_bar.has_overlay() || self.sidebar.has_overlay();
 

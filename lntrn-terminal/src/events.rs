@@ -25,6 +25,20 @@ impl App {
         self.cursor_pos = Some((x, y));
         self.input.on_cursor_moved(x, y);
 
+        // Auto-show/hide tab bar on hover
+        let title_h = crate::ui_chrome::TITLE_BAR_HEIGHT;
+        let tab_zone_bottom = title_h + tab_bar::TAB_BAR_HEIGHT;
+        let in_tab_zone = y >= title_h && y < tab_zone_bottom;
+        let tab_bar_busy = self.tab_bar.dragging.is_some()
+            || self.tab_bar.renaming.is_some()
+            || self.tab_bar.context_menu.is_some();
+        let was_visible = self.tab_bar_visible;
+        self.tab_bar_visible = in_tab_zone || tab_bar_busy;
+        if self.tab_bar_visible != was_visible {
+            self.update_grid_size();
+            self.request_redraw();
+        }
+
         // Tab drag reorder
         if self.tab_bar.dragging.is_some() {
             let screen_w = self.gpu.as_ref().map_or(800, |g| g.width());
@@ -279,11 +293,12 @@ impl App {
 
     fn handle_click_passthrough(&mut self, screen_h: u32) -> EventResult {
         // Check sidebar click first
-        if sidebar::contains(&self.sidebar, self.cursor_pos, render::chrome_height()) {
+        let chrome_h = self.chrome_height();
+        if sidebar::contains(&self.sidebar, self.cursor_pos, chrome_h) {
             sidebar::handle_click(
                 &mut self.sidebar,
                 self.cursor_pos,
-                render::chrome_height(),
+                chrome_h,
                 screen_h,
             );
             self.request_redraw();
@@ -337,11 +352,12 @@ impl App {
     pub(crate) fn handle_right_press(&mut self) {
         let screen_w = self.gpu.as_ref().map_or(800, |g| g.width());
         let screen_h = self.gpu.as_ref().map_or(600, |g| g.height());
+        let chrome_h = self.chrome_height();
         // Sidebar right-click
         if sidebar::handle_right_click(
             &mut self.sidebar,
             self.cursor_pos,
-            render::chrome_height(),
+            chrome_h,
         ) {
             self.chrome.close_all_menus();
             self.tab_bar.context_menu = None;
@@ -583,7 +599,7 @@ impl App {
 
     pub(crate) fn handle_mouse_wheel(&mut self, delta: MouseScrollDelta) {
         // Sidebar scroll
-        if sidebar::contains(&self.sidebar, self.cursor_pos, render::chrome_height()) {
+        if sidebar::contains(&self.sidebar, self.cursor_pos, self.chrome_height()) {
             let dy = match delta {
                 MouseScrollDelta::LineDelta(_, y) => y,
                 MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 20.0,
@@ -633,7 +649,7 @@ impl App {
         let screen_h = self.gpu.as_ref().map_or(600, |g| g.height());
         let tab = &self.tabs[self.active_tab];
         let pane = &tab.panes[tab.active_pane];
-        let rects = Self::pane_rects_for_tab(tab, screen_w, screen_h, self.sidebar_offset());
+        let rects = Self::pane_rects_for_tab(tab, screen_w, screen_h, self.sidebar_offset(), self.chrome_height());
         if tab.active_pane >= rects.len() {
             return None;
         }
@@ -648,7 +664,7 @@ impl App {
             lntrn_ui::gpu::scroll::Scrollbar::new(&viewport, content_height, inverted_offset);
 
         // For drag updates we skip the hit test (cx=0.0 sentinel)
-        if cx == 0.0 || scrollbar.thumb.contains(cx, cy) || scrollbar.track.contains(cx, cy) {
+        if cx == 0.0 || scrollbar.hover_zone().contains(cx, cy) {
             Some(ScrollbarHit {
                 content_height,
                 max_scroll,
@@ -667,7 +683,7 @@ impl App {
         let screen_h = self.gpu.as_ref().map_or(600, |g| g.height());
         let tab = &self.tabs[self.active_tab];
         let pane = &tab.panes[tab.active_pane];
-        let rects = Self::pane_rects_for_tab(tab, screen_w, screen_h, self.sidebar_offset());
+        let rects = Self::pane_rects_for_tab(tab, screen_w, screen_h, self.sidebar_offset(), self.chrome_height());
         if tab.active_pane >= rects.len() {
             return;
         }

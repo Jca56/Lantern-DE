@@ -100,6 +100,9 @@ pub struct App {
 
     // Sidebar file browser
     pub sidebar: sidebar::SidebarState,
+
+    // Tab bar auto-hide
+    pub(crate) tab_bar_visible: bool,
 }
 
 impl App {
@@ -136,6 +139,7 @@ impl App {
             scrollbar_dragging: false,
             pending_menu_event: None,
             sidebar: sidebar::SidebarState::new(),
+            tab_bar_visible: false,
         }
     }
 
@@ -161,6 +165,15 @@ impl App {
         self.overlay_painter = Some(overlay_painter);
         self.text = Some(text);
         self.overlay_text = Some(overlay_text);
+    }
+
+    /// Chrome height accounting for tab bar auto-hide.
+    pub(crate) fn chrome_height(&self) -> f32 {
+        if self.tab_bar_visible {
+            crate::ui_chrome::TITLE_BAR_HEIGHT + tab_bar::TAB_BAR_HEIGHT
+        } else {
+            crate::ui_chrome::TITLE_BAR_HEIGHT
+        }
     }
 
     /// Font size scaled to current window width.
@@ -190,8 +203,8 @@ impl App {
         screen_w: u32,
         screen_h: u32,
         sidebar_offset: f32,
+        chrome_h: f32,
     ) -> Vec<(f32, f32, f32, f32)> {
-        let chrome_h = render::chrome_height();
         let avail_w = screen_w as f32 - sidebar_offset;
         let avail_h = screen_h as f32 - chrome_h;
         let x0 = sidebar_offset;
@@ -302,9 +315,10 @@ impl App {
         let font_size = self.effective_font_size();
         let (cell_w, cell_h) = render::measure_cell(font_size);
         let sb_offset = self.sidebar_offset();
+        let chrome_h = self.chrome_height();
 
         for tab in &mut self.tabs {
-            let rects = Self::pane_rects_for_tab(tab, screen_w, screen_h, sb_offset);
+            let rects = Self::pane_rects_for_tab(tab, screen_w, screen_h, sb_offset, chrome_h);
             for (i, pane) in tab.panes.iter_mut().enumerate() {
                 if i >= rects.len() {
                     break;
@@ -324,7 +338,7 @@ impl App {
         let screen_w = self.gpu.as_ref().map_or(800, |g| g.width());
         let screen_h = self.gpu.as_ref().map_or(600, |g| g.height());
         let tab = &self.tabs[self.active_tab];
-        let rects = Self::pane_rects_for_tab(tab, screen_w, screen_h, self.sidebar_offset());
+        let rects = Self::pane_rects_for_tab(tab, screen_w, screen_h, self.sidebar_offset(), self.chrome_height());
         let font_size = self.effective_font_size();
         let (cell_w, cell_h) = render::measure_cell(font_size);
 

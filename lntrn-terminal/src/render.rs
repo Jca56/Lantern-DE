@@ -38,20 +38,23 @@ pub fn draw_window_bg(
     w: f32,
     h: f32,
     maximized: bool,
+    tab_bar_visible: bool,
 ) {
     let r = if maximized { 0.0 } else { CORNER_RADIUS };
 
     // Full window bg — rounded for transparency
     painter.rect_filled(Rect::new(0.0, 0.0, w, h), r, bg_color);
 
-    // Tab bar region (below title bar, which includes gradient strip)
-    let tab_bar_y = crate::ui_chrome::TITLE_BAR_HEIGHT;
-    let tab_bar_h = crate::tab_bar::TAB_BAR_HEIGHT;
-    painter.rect_filled(
-        Rect::new(0.0, tab_bar_y, w, tab_bar_h),
-        0.0,
-        title_bar_color,
-    );
+    // Tab bar region (only when visible)
+    if tab_bar_visible {
+        let tab_bar_y = crate::ui_chrome::TITLE_BAR_HEIGHT;
+        let tab_bar_h = crate::tab_bar::TAB_BAR_HEIGHT;
+        painter.rect_filled(
+            Rect::new(0.0, tab_bar_y, w, tab_bar_h),
+            0.0,
+            title_bar_color,
+        );
+    }
 }
 
 /// Render the full terminal grid at the given origin.
