@@ -153,7 +153,7 @@ clean:
 
 # ── Deploy single component ──────────────────────────────────────────────────
 
-deploy-%:
+deploy-%: dirs
 	cargo build --release -p lntrn-$*
 	@if [ -f target/release/lntrn-$* ]; then \
 		cp target/release/lntrn-$* /tmp/lntrn-$*-new && \

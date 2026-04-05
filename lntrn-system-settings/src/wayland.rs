@@ -13,6 +13,7 @@ use crate::display_panel::{self, DisplayPanelState};
 use crate::icon_panel;
 use crate::icons;
 use crate::input_panel;
+use crate::monitor_arrange;
 use crate::panels::{self, PanelState};
 use crate::text_edit::{KeyboardState, keycode_to_char};
 use raw_window_handle::{
@@ -94,6 +95,17 @@ impl HasWindowHandle for WaylandHandle {
 
 // ── Wayland state ───────────────────────────────────────────────────────────
 
+/// Info about a connected monitor from wl_output events.
+#[derive(Clone, Debug)]
+pub(crate) struct OutputInfo {
+    pub name: String,
+    pub width: i32,
+    pub height: i32,
+    pub x: i32,
+    pub y: i32,
+    pub scale: i32,
+}
+
 pub(crate) struct State {
     running: bool,
     configured: bool,
@@ -103,6 +115,10 @@ pub(crate) struct State {
     scale: i32,
     output_phys_width: u32,
     maximized: bool,
+    /// Tracked outputs from wl_output events (key = global name from registry).
+    pub(crate) outputs: Vec<(u32, OutputInfo)>,
+    /// Staging area for incomplete wl_output event batches (before Done).
+    output_pending: std::collections::HashMap<u32, OutputInfo>,
     // Wayland objects
     compositor: Option<wl_compositor::WlCompositor>,
     wm_base: Option<xdg_wm_base::XdgWmBase>,
@@ -142,6 +158,8 @@ impl State {
         Self {
             running: true, configured: false, frame_done: true,
             width: 0, height: 0, scale: 1, output_phys_width: 0, maximized: false,
+            outputs: Vec::new(),
+            output_pending: std::collections::HashMap::new(),
             compositor: None, wm_base: None, viewporter: None,
             surface: None, xdg_surface: None, toplevel: None, seat: None,
             cursor_x: 0.0, cursor_y: 0.0, pointer_in_surface: false,
@@ -183,7 +201,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 "wl_compositor" => { state.compositor = Some(registry.bind(name, version.min(6), qh, ())); }
                 "xdg_wm_base" => { state.wm_base = Some(registry.bind(name, version.min(5), qh, ())); }
                 "wp_viewporter" => { state.viewporter = Some(registry.bind(name, version.min(1), qh, ())); }
-                "wl_output" => { let _: wl_output::WlOutput = registry.bind(name, version.min(4), qh, ()); }
+                "wl_output" => { let _: wl_output::WlOutput = registry.bind(name, version.min(4), qh, name); }
                 "wl_seat" => { state.seat = Some(registry.bind(name, version.min(9), qh, ())); }
                 "wp_cursor_shape_manager_v1" => {
                     state.cursor_shape_mgr = Some(registry.bind(name, version.min(1), qh, ()));
@@ -249,14 +267,40 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
     }
 }
 
-impl Dispatch<wl_output::WlOutput, ()> for State {
+impl Dispatch<wl_output::WlOutput, u32> for State {
     fn event(
         state: &mut Self, _: &wl_output::WlOutput,
-        event: wl_output::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        event: wl_output::Event, global_name: &u32, _: &Connection, _: &QueueHandle<Self>,
     ) {
+        let gn = *global_name;
+        let pending = state.output_pending.entry(gn).or_insert_with(|| OutputInfo {
+            name: String::new(), width: 0, height: 0, x: 0, y: 0, scale: 1,
+        });
         match event {
-            wl_output::Event::Scale { factor } => { state.scale = factor; }
-            wl_output::Event::Mode { width, .. } => { state.output_phys_width = width as u32; }
+            wl_output::Event::Name { name } => { pending.name = name; }
+            wl_output::Event::Mode { width, height, .. } => {
+                pending.width = width;
+                pending.height = height;
+                // Keep backwards compat for fractional scale calculation
+                state.output_phys_width = width as u32;
+            }
+            wl_output::Event::Scale { factor } => {
+                pending.scale = factor;
+                state.scale = factor;
+            }
+            wl_output::Event::Geometry { x, y, .. } => {
+                pending.x = x;
+                pending.y = y;
+            }
+            wl_output::Event::Done => {
+                if let Some(info) = state.output_pending.remove(&gn) {
+                    if let Some(existing) = state.outputs.iter_mut().find(|(n, _)| *n == gn) {
+                        existing.1 = info;
+                    } else {
+                        state.outputs.push((gn, info));
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -648,6 +692,7 @@ pub fn run() -> Result<()> {
                                     Panel::Display | Panel::Appearance => {
                                         display_panel::handle_display_click(
                                             &mut config, &mut display_state, id,
+                                            cx, cy,
                                         );
                                     }
                                     Panel::Input => {
@@ -675,6 +720,13 @@ pub fn run() -> Result<()> {
         // Left release
         if state.left_released {
             state.left_released = false;
+            // End monitor drag on release
+            if monitor_arrange::is_dragging(&display_state.monitor_arrange) {
+                monitor_arrange::handle_arrange_release(&mut display_state.monitor_arrange);
+                if display_state.monitor_arrange.dirty {
+                    config.monitors = display_state.monitor_arrange.to_config();
+                }
+            }
             if let Some(pid) = pointer_on_popup {
                 if let Some(backend) = &mut state.popup_backend {
                     if let Some(ctx) = backend.popup_render(pid) {
@@ -684,6 +736,11 @@ pub fn run() -> Result<()> {
             } else {
                 ix.on_left_released();
             }
+        }
+
+        // Monitor drag update on pointer motion
+        if monitor_arrange::is_dragging(&display_state.monitor_arrange) {
+            monitor_arrange::handle_arrange_drag(&mut display_state.monitor_arrange, cx, cy);
         }
 
         // Right press (no context menu yet, just consume)
@@ -853,7 +910,7 @@ pub fn run() -> Result<()> {
                     &mut config, &mut display_state,
                     &mut painter, &mut text, &mut ix, &tex_pass, &fox, &gpu,
                     content_x, panel_y, content_w, panel_h, s, sw, sh,
-                    frame_scroll,
+                    frame_scroll, &state.outputs,
                 );
                 let thumb_draws = display_panel::collect_thumb_draws(&display_state, s);
                 for td in thumb_draws {

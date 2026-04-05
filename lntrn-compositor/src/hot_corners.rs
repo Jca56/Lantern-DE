@@ -43,8 +43,8 @@ impl Lantern {
     ) -> Option<ScreenCorner> {
         const ZONE: f64 = 2.0;
 
-        let geo = self.space.outputs().next()
-            .and_then(|output| self.space.output_geometry(output))?;
+        let output = self.output_at_point(pos)?;
+        let geo = self.space.output_geometry(&output)?;
 
         let at_left = pos.x - (geo.loc.x as f64) < ZONE;
         let at_right = (geo.loc.x + geo.size.w) as f64 - pos.x <= ZONE;
@@ -141,8 +141,12 @@ impl Lantern {
     /// Compute the target geometry for the scratchpad window:
     /// full width, 40% height, positioned at top of usable area.
     pub fn scratchpad_geometry(&self) -> Option<Rectangle<i32, Logical>> {
-        let geo = self.space.outputs().next()
-            .and_then(|output| self.space.output_geometry(output))?;
+        let pointer_pos = self.seat.get_pointer()
+            .map(|p| p.current_location())
+            .unwrap_or_default();
+        let output = self.output_at_point(pointer_pos)
+            .or_else(|| self.space.outputs().next().cloned())?;
+        let geo = self.space.output_geometry(&output)?;
 
         let (top_excl, _bottom_excl, left_excl, right_excl) = self.exclusive_zone_offsets();
         let x = geo.loc.x + left_excl;

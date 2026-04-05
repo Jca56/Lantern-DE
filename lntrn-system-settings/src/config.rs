@@ -13,6 +13,8 @@ pub struct LanternConfig {
     pub input: InputConfig,
     pub display: DisplayConfig,
     pub power: PowerConfig,
+    #[serde(default)]
+    pub monitors: Vec<MonitorEntry>,
 }
 
 // ── Appearance ───────────────────────────────────────────────────────────────
@@ -138,6 +140,16 @@ impl Default for DisplayConfig {
     }
 }
 
+// ── Monitor arrangement ─────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MonitorEntry {
+    pub name: String,
+    pub x: i32,
+    pub y: i32,
+}
+
+
 // ── Power ───────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -183,6 +195,7 @@ impl Default for LanternConfig {
             input: InputConfig::default(),
             display: DisplayConfig::default(),
             power: PowerConfig::default(),
+            monitors: Vec::new(),
         }
     }
 }

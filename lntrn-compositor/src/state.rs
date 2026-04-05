@@ -10,6 +10,7 @@ use std::{
 use smithay::{
     desktop::{PopupManager, Space, Window, WindowSurfaceType},
     input::{Seat, SeatState},
+    output::Output,
     reexports::{
         calloop::{generic::Generic, EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction},
         wayland_server::{
@@ -395,9 +396,9 @@ impl Lantern {
 
         // Check layer surfaces first (Top/Overlay are above windows)
         // Layer surfaces are in screen-space — no canvas transform
-        let output = self.space.outputs().next();
-        if let Some(output) = output {
-            let output_geo = self.space.output_geometry(output).unwrap_or_default();
+        // Use the output the pointer is on for layer surface positioning
+        if let Some(output) = self.output_at_point(pos) {
+            let output_geo = self.space.output_geometry(&output).unwrap_or_default();
             for ls in &self.layer_surfaces {
                 if !ls.alive() {
                     continue;
@@ -449,8 +450,8 @@ impl Lantern {
         }
 
         // Check Bottom layer surfaces (below windows, above wallpaper)
-        if let Some(output) = self.space.outputs().next() {
-            let output_geo = self.space.output_geometry(output).unwrap_or_default();
+        if let Some(output) = self.output_at_point(pos) {
+            let output_geo = self.space.output_geometry(&output).unwrap_or_default();
             for ls in &self.layer_surfaces {
                 if !ls.alive() { continue; }
                 let cached = with_states(ls.wl_surface(), |states| {
@@ -559,6 +560,65 @@ impl Lantern {
 
         self.last_pointer_render_location = Some(rounded);
         true
+    }
+
+    /// Find the output whose geometry contains `point`.
+    /// Falls back to the closest output if the point is between monitors.
+    pub fn output_at_point(&self, point: Point<f64, Logical>) -> Option<Output> {
+        // Exact containment check
+        for output in self.space.outputs() {
+            if let Some(geo) = self.space.output_geometry(output) {
+                if geo.to_f64().contains(point) {
+                    return Some(output.clone());
+                }
+            }
+        }
+        // Fallback: closest output center
+        self.space
+            .outputs()
+            .min_by_key(|o| {
+                let geo = self.space.output_geometry(o).unwrap();
+                let cx = geo.loc.x + geo.size.w / 2;
+                let cy = geo.loc.y + geo.size.h / 2;
+                let dx = point.x - cx as f64;
+                let dy = point.y - cy as f64;
+                (dx * dx + dy * dy) as i64
+            })
+            .cloned()
+    }
+
+    /// Find the output a window lives on by checking which output contains its center.
+    pub fn output_for_window(&self, window: &Window) -> Option<Output> {
+        let loc = self.space.element_location(window)?;
+        let size = window.geometry().size;
+        let center = Point::from((
+            loc.x as f64 + size.w as f64 / 2.0,
+            loc.y as f64 + size.h as f64 / 2.0,
+        ));
+        self.output_at_point(center)
+    }
+
+    /// Combined bounding box of all outputs.
+    pub fn total_output_bounds(&self) -> Rectangle<i32, Logical> {
+        let mut min_x = i32::MAX;
+        let mut min_y = i32::MAX;
+        let mut max_x = i32::MIN;
+        let mut max_y = i32::MIN;
+        for output in self.space.outputs() {
+            if let Some(geo) = self.space.output_geometry(output) {
+                min_x = min_x.min(geo.loc.x);
+                min_y = min_y.min(geo.loc.y);
+                max_x = max_x.max(geo.loc.x + geo.size.w);
+                max_y = max_y.max(geo.loc.y + geo.size.h);
+            }
+        }
+        if min_x == i32::MAX {
+            return Rectangle::default();
+        }
+        Rectangle::new(
+            (min_x, min_y).into(),
+            (max_x - min_x, max_y - min_y).into(),
+        )
     }
 
     /// Compute the total exclusive zone offsets from all layer surfaces.

@@ -3,6 +3,7 @@ mod display_panel;
 mod icon_panel;
 mod icons;
 mod input_panel;
+mod monitor_arrange;
 mod panels;
 mod popup_backend;
 mod text_edit;

@@ -27,18 +27,16 @@ impl Lantern {
     }
 
     pub fn place_new_window(&mut self, _window: &Window) -> Point<i32, Logical> {
-        let Some(output_geo) = self
-            .space
-            .outputs()
-            .next()
-            .and_then(|output| self.space.output_geometry(output))
+        let pointer_pos = self.seat.get_pointer()
+            .map(|p| p.current_location())
+            .unwrap_or_default();
+        let output = self.output_at_point(pointer_pos)
+            .or_else(|| self.space.outputs().next().cloned());
+        let Some(output_geo) = output
+            .and_then(|o| self.space.output_geometry(&o))
         else {
             return (0, 0).into();
         };
-
-        // Place windows in the current canvas viewport
-        let viewport_x = self.canvas.offset.0 as i32;
-        let viewport_y = self.canvas.offset.1 as i32;
 
         let existing_count = self.space.elements().count() as i32;
         let cascade_step = 36;
@@ -47,7 +45,7 @@ impl Lantern {
         let offset_x = (existing_count * cascade_step) % max_offset_x;
         let offset_y = (existing_count * cascade_step) % max_offset_y;
 
-        Point::from((viewport_x + offset_x, viewport_y + offset_y))
+        Point::from((output_geo.loc.x + offset_x, output_geo.loc.y + offset_y))
     }
 
     pub fn map_new_window(&mut self, window: Window) {
@@ -644,8 +642,9 @@ impl Lantern {
         };
 
         // Get the raw output geometry (no exclusive zone subtraction)
-        let Some(output_geo) = self.space.outputs().next()
-            .and_then(|output| self.space.output_geometry(output))
+        let Some(output_geo) = self.output_for_window(&window)
+            .or_else(|| self.space.outputs().next().cloned())
+            .and_then(|o| self.space.output_geometry(&o))
         else {
             return false;
         };
@@ -746,8 +745,9 @@ impl Lantern {
         let titlebar_h = 19;
 
         let Some(window) = self.find_mapped_window(surface) else { return };
-        let Some(output_geo) = self.space.outputs().next()
-            .and_then(|output| self.space.output_geometry(output))
+        let Some(output_geo) = self.output_for_window(&window)
+            .or_else(|| self.space.outputs().next().cloned())
+            .and_then(|o| self.space.output_geometry(&o))
         else { return };
 
         // Configure window to be taller (output height + titlebar)
@@ -795,18 +795,13 @@ impl Lantern {
         self.foreign_toplevel_state.set_states(surface, states);
     }
 
-    pub(crate) fn window_output_geometry(&self, _window: &Window) -> Option<Rectangle<i32, Logical>> {
-        let geo = self.space
-            .outputs()
-            .next()
-            .and_then(|output| self.space.output_geometry(output))?;
-
-        // Maximize fills the current viewport in canvas-space
-        let viewport_x = self.canvas.offset.0 as i32;
-        let viewport_y = self.canvas.offset.1 as i32;
+    pub(crate) fn window_output_geometry(&self, window: &Window) -> Option<Rectangle<i32, Logical>> {
+        let output = self.output_for_window(window)
+            .or_else(|| self.space.outputs().next().cloned())?;
+        let geo = self.space.output_geometry(&output)?;
 
         let mut result = Rectangle::new(
-            Point::from((viewport_x, viewport_y)),
+            geo.loc.into(),
             geo.size,
         );
 

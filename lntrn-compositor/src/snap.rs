@@ -35,8 +35,8 @@ impl Lantern {
     ) -> Option<SnapZone> {
         const EDGE_THRESHOLD: f64 = 8.0;
 
-        let geo = self.space.outputs().next()
-            .and_then(|output| self.space.output_geometry(output))?;
+        let output = self.output_at_point(pos)?;
+        let geo = self.space.output_geometry(&output)?;
 
         let near_left = pos.x - geo.loc.x as f64 <= EDGE_THRESHOLD;
         let near_right = (geo.loc.x + geo.size.w) as f64 - pos.x <= EDGE_THRESHOLD;
@@ -57,8 +57,12 @@ impl Lantern {
 
     /// Compute the target rectangle for a snap zone, respecting exclusive zones.
     pub fn snap_zone_geometry(&self, zone: SnapZone) -> Option<Rectangle<i32, Logical>> {
-        let geo = self.space.outputs().next()
-            .and_then(|output| self.space.output_geometry(output))?;
+        let pointer_pos = self.seat.get_pointer()
+            .map(|p| p.current_location())
+            .unwrap_or_default();
+        let output = self.output_at_point(pointer_pos)
+            .or_else(|| self.space.outputs().next().cloned())?;
+        let geo = self.space.output_geometry(&output)?;
 
         let (top_excl, bottom_excl, left_excl, right_excl) = self.exclusive_zone_offsets();
         let x = geo.loc.x + left_excl;
@@ -156,8 +160,8 @@ impl Lantern {
     ) -> Option<()> {
         const EDGE_THRESHOLD: f64 = 8.0;
 
-        let geo = self.space.outputs().next()
-            .and_then(|output| self.space.output_geometry(output))?;
+        let output = self.output_at_point(pos)?;
+        let geo = self.space.output_geometry(&output)?;
 
         let near_left = pos.x - geo.loc.x as f64 <= EDGE_THRESHOLD;
         let near_right = (geo.loc.x + geo.size.w) as f64 - pos.x <= EDGE_THRESHOLD;

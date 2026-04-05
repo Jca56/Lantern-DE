@@ -53,6 +53,12 @@ pub fn render_surface(
 ) {
     let render_start = Instant::now();
 
+    // Live-reload monitor positions from config (must run before any udev borrows)
+    // Uses wallpaper_frame_counter which is incremented later in this function.
+    if state.wallpaper_frame_counter == 0 {
+        crate::udev_device::reload_monitor_positions(state);
+    }
+
     // Clear pending state FIRST so early returns don't leave flags stuck.
     // Without this, a failure in render_elements_for_output would leave
     // pending_render=true with no cooldown, causing a CPU-burning busy loop.
@@ -709,7 +715,7 @@ pub fn render_surface(
                 let below_windows = &window_elements[top_idx..];
 
                 let mut wp_elements: Vec<CustomRenderElements> = Vec::new();
-                if let Some(wp_elem) = state.wallpaper.render_element(renderer, output_pos, scale) {
+                if let Some(wp_elem) = state.wallpaper.render_element(renderer, output_pos.size, scale) {
                     wp_elements.push(CustomRenderElements::Memory(wp_elem));
                 }
 
@@ -781,7 +787,7 @@ pub fn render_surface(
     elements.extend(window_elements);
     elements.extend(bottom_layer_elements);
 
-    if let Some(wallpaper_elem) = state.wallpaper.render_element(renderer, output_pos, scale) {
+    if let Some(wallpaper_elem) = state.wallpaper.render_element(renderer, output_pos.size, scale) {
         elements.push(CustomRenderElements::Memory(wallpaper_elem));
     }
 

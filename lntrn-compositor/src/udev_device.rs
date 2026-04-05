@@ -331,17 +331,33 @@ fn connector_connected(
     );
     info!("Connector connected: {} (modes: {})", output_name, connector.modes().len());
 
-    let mode_id = connector
+    // Find preferred resolution, then pick highest refresh rate at that resolution
+    let preferred_idx = connector
         .modes()
         .iter()
         .position(|mode| mode.mode_type().contains(ModeTypeFlags::PREFERRED))
         .unwrap_or(0);
+    let preferred = connector.modes()[preferred_idx];
+    let pref_size = preferred.size();
+
+    let mode_id = connector
+        .modes()
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.size() == pref_size)
+        .max_by_key(|(_, m)| m.vrefresh())
+        .map(|(i, _)| i)
+        .unwrap_or(preferred_idx);
     let drm_mode = connector.modes()[mode_id];
+    info!(
+        "Selected mode: {}x{}@{}Hz for {}",
+        drm_mode.size().0, drm_mode.size().1, drm_mode.vrefresh(), output_name
+    );
     let wl_mode = WlMode::from(drm_mode);
 
     let (phys_w, phys_h) = connector.size().unwrap_or((0, 0));
     let output = Output::new(
-        output_name,
+        output_name.clone(),
         PhysicalProperties {
             size: (phys_w as i32, phys_h as i32).into(),
             subpixel: connector.subpixel().into(),
@@ -352,21 +368,29 @@ fn connector_connected(
 
     let global = output.create_global::<Lantern>(&udev.display_handle);
 
-    let x = state
-        .space
-        .outputs()
-        .fold(0, |acc, o| {
-            acc + state.space.output_geometry(o).unwrap().size.w
-        });
+    // Check monitor config for explicit position, otherwise auto-layout horizontally
+    let monitor_configs = crate::read_monitor_configs();
+    let (x, y) = if let Some(cfg) = monitor_configs.iter().find(|c| c.name == output_name) {
+        info!("Using configured position for {}: ({}, {})", output_name, cfg.x, cfg.y);
+        (cfg.x, cfg.y)
+    } else {
+        let auto_x = state
+            .space
+            .outputs()
+            .fold(0, |acc, o| {
+                acc + state.space.output_geometry(o).unwrap().size.w
+            });
+        (auto_x, 0)
+    };
 
     output.set_preferred(wl_mode);
     output.change_current_state(
         Some(wl_mode),
         None,
         Some(Scale::Fractional(LANTERN_OUTPUT_SCALE)),
-        Some((x, 0).into()),
+        Some((x, y).into()),
     );
-    state.space.map_output(&output, (x, 0));
+    state.space.map_output(&output, (x, y));
 
     // Initialize canvas bounds from output size
     let mode_w = wl_mode.size.w as f64 / LANTERN_OUTPUT_SCALE;
@@ -498,5 +522,39 @@ pub fn render_device(state: &mut Lantern, node: DrmNode, crtc: Option<crtc::Hand
 
     for crtc in crtcs {
         render_surface(state, node, crtc);
+    }
+}
+
+/// Re-read monitor positions from config and reposition outputs if changed.
+pub fn reload_monitor_positions(state: &mut Lantern) {
+    let configs = crate::read_monitor_configs();
+    if configs.is_empty() {
+        return;
+    }
+
+    let mut changed = false;
+    let outputs: Vec<_> = state.space.outputs().cloned().collect();
+
+    for output in &outputs {
+        let name = output.name();
+        if let Some(cfg) = configs.iter().find(|c| c.name == name) {
+            let current_geo = state.space.output_geometry(output).unwrap_or_default();
+            if current_geo.loc.x != cfg.x || current_geo.loc.y != cfg.y {
+                output.change_current_state(
+                    None,
+                    None,
+                    None,
+                    Some((cfg.x, cfg.y).into()),
+                );
+                state.space.map_output(output, (cfg.x, cfg.y));
+                info!("Live-reloaded position for {}: ({}, {})", name, cfg.x, cfg.y);
+                changed = true;
+            }
+        }
+    }
+
+    if changed {
+        // Reconfigure maximized/snapped windows for new output positions
+        state.check_exclusive_zone_change();
     }
 }

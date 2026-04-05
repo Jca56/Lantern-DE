@@ -57,12 +57,11 @@ impl WallpaperState {
     pub fn render_element(
         &mut self,
         renderer: &mut GlesRenderer,
-        output_rect: Rectangle<i32, Logical>,
+        output_size: smithay::utils::Size<i32, Logical>,
         scale: f64,
     ) -> Option<MemoryRenderBufferRenderElement<GlesRenderer>> {
-        let size = output_rect.size;
-        let phys_w = (size.w as f64 * scale).round() as i32;
-        let phys_h = (size.h as f64 * scale).round() as i32;
+        let phys_w = (output_size.w as f64 * scale).round() as i32;
+        let phys_h = (output_size.h as f64 * scale).round() as i32;
         let phys_size = Size::from((phys_w, phys_h));
         let buffer = self.buffer_for_physical_size(phys_size)?;
         // src covers the full buffer in logical coords (buffer scale=1, so
@@ -70,16 +69,14 @@ impl WallpaperState {
         // This tells Smithay to sample the entire texture and scale it down
         // to fit the output.
         let src = Rectangle::from_size(Size::from((phys_w as f64, phys_h as f64)));
+        // Position at (0,0) — each output's render_frame starts from origin
         MemoryRenderBufferRenderElement::from_buffer(
             renderer,
-            Point::<f64, Physical>::from((
-                output_rect.loc.x as f64 * scale,
-                output_rect.loc.y as f64 * scale,
-            )),
+            Point::<f64, Physical>::from((0.0, 0.0)),
             buffer,
             None,
             Some(src),
-            Some(Size::from((size.w, size.h))),
+            Some(Size::from((output_size.w, output_size.h))),
             Kind::Unspecified,
         )
         .ok()

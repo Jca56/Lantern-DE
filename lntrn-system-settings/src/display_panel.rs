@@ -2,7 +2,9 @@ use lntrn_render::{Painter, Rect, TextureDraw, TexturePass, TextRenderer};
 use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea, Scrollbar, TextInput};
 
 use crate::config::LanternConfig;
+use crate::monitor_arrange::{self, MonitorArrangeState};
 use crate::text_edit::TextBuffer;
+use crate::wayland::OutputInfo;
 use crate::wallpaper_picker::WallpaperPicker;
 
 // ── Zone IDs ────────────────────────────────────────────────────────────────
@@ -30,6 +32,7 @@ pub struct DisplayPanelState {
     pub dir_focused: bool,
     pub scroll_offset: f32,
     pub needs_reload: bool,
+    pub monitor_arrange: MonitorArrangeState,
     /// Viewport for the whole panel (set during draw, used by collect_thumb_draws).
     viewport_x: f32,
     viewport_y: f32,
@@ -50,6 +53,7 @@ impl DisplayPanelState {
             dir_focused: false,
             scroll_offset: 0.0,
             needs_reload: true,
+            monitor_arrange: MonitorArrangeState::new(),
             viewport_x: 0.0,
             viewport_y: 0.0,
             viewport_w: 0.0,
@@ -95,9 +99,18 @@ pub fn draw_display_panel(
     sw: u32,
     sh: u32,
     scroll_delta: f32,
+    outputs: &[(u32, OutputInfo)],
 ) {
     let pad = PAD * s;
     let lsz = LABEL_SIZE * s;
+
+    // ── Monitor arrangement (fixed at top, not scrolled) ───────────
+    let mon_h = monitor_arrange::draw_monitor_arrange(
+        &mut dps.monitor_arrange, outputs, &config.monitors,
+        painter, text, ix, fox, x, y, w, s, sw, sh,
+    );
+    let wp_y = y + mon_h;
+    let wp_h = h - mon_h;
 
     // Load thumbnails if needed
     if dps.needs_reload {
@@ -123,13 +136,13 @@ pub fn draw_display_panel(
     let grid_content_h = rows as f32 * (thumb_h + gap);
 
     let content_height = header_h + input_row_h + grid_content_h;
-    let viewport = Rect::new(x, y, w, h);
+    let viewport = Rect::new(x, wp_y, w, wp_h);
 
     // Store for collect_thumb_draws
     dps.viewport_x = x;
-    dps.viewport_y = y;
+    dps.viewport_y = wp_y;
     dps.viewport_w = w;
-    dps.viewport_h = h;
+    dps.viewport_h = wp_h;
     dps.grid_x = grid_x;
     dps.grid_w = grid_w;
     dps.grid_content_y_offset = header_h + input_row_h;
@@ -137,7 +150,7 @@ pub fn draw_display_panel(
 
     // Handle scrolling
     if scroll_delta != 0.0 {
-        ScrollArea::apply_scroll(&mut dps.scroll_offset, scroll_delta * 40.0, content_height, h);
+        ScrollArea::apply_scroll(&mut dps.scroll_offset, scroll_delta * 40.0, content_height, wp_h);
     }
 
     let scroll_area = ScrollArea::new(viewport, content_height, &mut dps.scroll_offset);
@@ -319,7 +332,14 @@ pub fn handle_display_click(
     config: &mut LanternConfig,
     dps: &mut DisplayPanelState,
     zone_id: u32,
+    cursor_x: f32,
+    cursor_y: f32,
 ) {
+    // Monitor arrangement clicks
+    if monitor_arrange::handle_arrange_click(&mut dps.monitor_arrange, zone_id, cursor_x, cursor_y) {
+        return;
+    }
+
     if zone_id == ZONE_DIR_INPUT {
         dps.dir_focused = true;
         return;

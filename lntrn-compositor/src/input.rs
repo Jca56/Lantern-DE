@@ -588,18 +588,17 @@ impl Lantern {
                 pos.x += delta.x * sensitivity;
                 pos.y += delta.y * sensitivity;
 
-                // Clamp to output bounds
-                let output = self.space.outputs().next();
-                if let Some(output) = output {
-                    let geo = self.space.output_geometry(output).unwrap();
-                    pos.x = pos.x.clamp(geo.loc.x as f64, (geo.loc.x + geo.size.w) as f64 - 1.0);
-                    pos.y = pos.y.clamp(geo.loc.y as f64, (geo.loc.y + geo.size.h) as f64 - 1.0);
+                // Clamp to combined output bounds
+                let bounds = self.total_output_bounds();
+                if bounds.size.w > 0 {
+                    pos.x = pos.x.clamp(bounds.loc.x as f64, (bounds.loc.x + bounds.size.w) as f64 - 1.0);
+                    pos.y = pos.y.clamp(bounds.loc.y as f64, (bounds.loc.y + bounds.size.h) as f64 - 1.0);
                 }
 
                 // When switcher overlay is visible, hover to highlight thumbnails
                 if self.alt_tab_switcher.is_visible() {
-                    let output_size = self.space.outputs().next()
-                        .and_then(|o| self.space.output_geometry(o))
+                    let output_size = self.output_at_point(pos)
+                        .and_then(|o| self.space.output_geometry(&o))
                         .map(|g| g.size)
                         .unwrap_or_default();
                     let logical_point = smithay::utils::Point::from((pos.x, pos.y));
@@ -670,8 +669,11 @@ impl Lantern {
                 }
             }
             InputEvent::PointerMotionAbsolute { event, .. } => {
-                let output = self.space.outputs().next().unwrap();
-                let output_geo = self.space.output_geometry(output).unwrap();
+                let output = self.output_at_point(
+                    self.seat.get_pointer().map(|p| p.current_location()).unwrap_or_default()
+                ).or_else(|| self.space.outputs().next().cloned());
+                let Some(output) = output else { return };
+                let output_geo = self.space.output_geometry(&output).unwrap();
                 let pos =
                     event.position_transformed(output_geo.size) + output_geo.loc.to_f64();
 
@@ -735,8 +737,8 @@ impl Lantern {
                     && button_state == ButtonState::Pressed
                 {
                     let pos = pointer.current_location();
-                    let output_size = self.space.outputs().next()
-                        .and_then(|o| self.space.output_geometry(o))
+                    let output_size = self.output_at_point(pos)
+                        .and_then(|o| self.space.output_geometry(&o))
                         .map(|g| g.size)
                         .unwrap_or_default();
                     let logical_point = smithay::utils::Point::from((pos.x, pos.y));
@@ -763,8 +765,8 @@ impl Lantern {
                     && button_state == ButtonState::Pressed
                 {
                     let pos = pointer.current_location();
-                    let output_size = self.space.outputs().next()
-                        .and_then(|o| self.space.output_geometry(o))
+                    let output_size = self.output_at_point(pos)
+                        .and_then(|o| self.space.output_geometry(&o))
                         .map(|g| g.size)
                         .unwrap_or_default();
                     if self.hover_preview.hit_close_button(pos.x, pos.y, output_size) {
