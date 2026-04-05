@@ -241,6 +241,17 @@ impl App {
                         _ => {}
                     }
                 }
+                if let MenuEvent::RadioSelected { id, .. } = event {
+                    match *id {
+                        ui_chrome::MENU_MODE_FOX => {
+                            self.config.window.mode = crate::config::WindowMode::Fox;
+                        }
+                        ui_chrome::MENU_MODE_NIGHT_SKY => {
+                            self.config.window.mode = crate::config::WindowMode::NightSky;
+                        }
+                        _ => {}
+                    }
+                }
             }
 
             // Tab context menu overlay

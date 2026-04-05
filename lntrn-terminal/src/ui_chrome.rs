@@ -29,6 +29,9 @@ const ZONE_MINIMIZE: u32 = 12;
 
 pub const MENU_FONT_SLIDER: u32 = 100;
 pub const MENU_OPACITY_SLIDER: u32 = 101;
+pub const MENU_MODE_FOX: u32 = 102;
+pub const MENU_MODE_NIGHT_SKY: u32 = 103;
+const MENU_MODE_GROUP: u32 = 1;
 pub const MENU_SPLIT_RIGHT: u32 = 200;
 pub const MENU_SPLIT_DOWN: u32 = 201;
 pub const MENU_CLOSE_PANE: u32 = 202;
@@ -79,6 +82,7 @@ pub enum ClickAction {
     StartDrag,
     SliderDrag,
     OpacitySliderDrag,
+    WindowModeChanged,
     SplitHorizontal,
     SplitVertical,
     ClosePane,
@@ -92,12 +96,17 @@ pub enum ClickAction {
 
 // ── Menu definitions ────────────────────────────────────────────────────────
 
-pub fn build_menus(font_size: f32, opacity: f32, sidebar_visible: bool) -> Vec<(&'static str, Vec<MenuItem>)> {
+pub fn build_menus(font_size: f32, opacity: f32, sidebar_visible: bool, mode: &WindowMode) -> Vec<(&'static str, Vec<MenuItem>)> {
+    let is_fox = *mode == WindowMode::Fox;
     vec![
         ("View", vec![
             MenuItem::slider(MENU_FONT_SLIDER, "Text Size", ((font_size - 6.0) / 24.0).clamp(0.0, 1.0)),
             MenuItem::separator(),
             MenuItem::slider(MENU_OPACITY_SLIDER, "Opacity", ((opacity - 0.1) / 0.9).clamp(0.0, 1.0)),
+            MenuItem::separator(),
+            MenuItem::header("Window Style"),
+            MenuItem::radio(MENU_MODE_FOX, MENU_MODE_GROUP, "Fox", is_fox),
+            MenuItem::radio(MENU_MODE_NIGHT_SKY, MENU_MODE_GROUP, "Night Sky", !is_fox),
         ]),
         ("Split", vec![
             MenuItem::action_with(MENU_SPLIT_RIGHT, "Split Right", "Ctrl+Shift+D"),
@@ -168,7 +177,7 @@ pub fn draw_chrome(
                 .draw(painter, pal);
 
             // Menu bar inside title bar content area
-            let menus = build_menus(font_size, opacity, sidebar_visible);
+            let menus = build_menus(font_size, opacity, sidebar_visible, mode);
             state.menu_bar.update(input, &menus, content, s);
             let labels: Vec<&str> = menus.iter().map(|(l, _)| *l).collect();
             state.menu_bar.draw_with_labels(painter, text, pal, &labels, screen_w, screen_h, s);
@@ -186,7 +195,7 @@ pub fn draw_chrome(
 
             // Menu bar positioned in the left side of the title bar
             let content = Rect::new(8.0, 0.0, wf - 120.0, bar_h);
-            let menus = build_menus(font_size, opacity, sidebar_visible);
+            let menus = build_menus(font_size, opacity, sidebar_visible, mode);
             state.menu_bar.update(input, &menus, content, s);
             let labels: Vec<&str> = menus.iter().map(|(l, _)| *l).collect();
             state.menu_bar.draw_with_labels(painter, text, pal, &labels, screen_w, screen_h, s);
@@ -307,6 +316,10 @@ pub fn menu_event_to_action(event: &MenuEvent) -> ClickAction {
         MenuEvent::SliderChanged { id, .. } => match *id {
             MENU_FONT_SLIDER => ClickAction::SliderDrag,
             MENU_OPACITY_SLIDER => ClickAction::OpacitySliderDrag,
+            _ => ClickAction::None,
+        },
+        MenuEvent::RadioSelected { id, .. } => match *id {
+            MENU_MODE_FOX | MENU_MODE_NIGHT_SKY => ClickAction::WindowModeChanged,
             _ => ClickAction::None,
         },
         _ => ClickAction::None,

@@ -167,6 +167,7 @@ impl App {
             self.effective_font_size(),
             self.config.window.opacity,
             self.sidebar.visible,
+            &self.config.window.mode,
         );
         let screen_w = self.gpu.as_ref().map_or(800, |g| g.width()) as f32;
         let action = ui_chrome::handle_click(
@@ -229,6 +230,10 @@ impl App {
             }
             ui_chrome::ClickAction::OpacitySliderDrag => {
                 self.config.save();
+            }
+            ui_chrome::ClickAction::WindowModeChanged => {
+                self.config.save();
+                self.update_grid_size();
             }
             ui_chrome::ClickAction::SplitHorizontal => {
                 self.split_pane(SplitDir::Horizontal);
