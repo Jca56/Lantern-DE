@@ -22,10 +22,6 @@ use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_l
 use crate::svg_icon;
 use crate::OsdMode;
 
-fn icon_dir() -> String {
-    let home = std::env::var("HOME").unwrap_or_default();
-    format!("{home}/.lantern/icons")
-}
 
 const OSD_W: u32 = 340;
 const OSD_H: u32 = 64;
@@ -359,11 +355,11 @@ pub fn run(mut mode: OsdMode, sock: UnixDatagram) -> Result<()> {
     // Pre-load all icon variants
     let icon_sz = (phys_h as f32 * 0.6) as u32;
     let mut icons: HashMap<&str, GpuTexture> = HashMap::new();
-    let dir_str = icon_dir();
-    let dir = Path::new(&dir_str);
     for &(key, file) in ICON_FILES {
-        if let Some(tex) = svg_icon::load_svg(&tex_pass, &gpu, &dir.join(file), icon_sz, icon_sz) {
-            icons.insert(key, tex);
+        if let Some(data) = lntrn_icons::get(file) {
+            if let Some(tex) = svg_icon::load_svg_bytes(&tex_pass, &gpu, data, icon_sz, icon_sz) {
+                icons.insert(key, tex);
+            }
         }
     }
 

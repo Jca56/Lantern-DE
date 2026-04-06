@@ -1,0 +1,2 @@
+# Allow video group to control backlight brightness
+SUBSYSTEM=="backlight", ACTION=="add", GROUP="video", MODE="0664"

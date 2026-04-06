@@ -390,7 +390,18 @@ impl AppTray {
             if self.icons_loaded.contains_key(&slot.app_id) {
                 continue;
             }
-            if let Some(path) = self.resolve_icon(&slot.app_id) {
+            // Try embedded icon first (our Lantern apps)
+            let svg_name = format!("{}.svg", slot.app_id);
+            let png_name = format!("{}.png", slot.app_id);
+            if lntrn_icons::get(&svg_name).is_some() {
+                if icons.load_embedded(tex_pass, gpu, &key, &svg_name, icon_size, icon_size).is_some() {
+                    self.icons_loaded.insert(slot.app_id.clone(), true);
+                }
+            } else if lntrn_icons::get(&png_name).is_some() {
+                if icons.load_embedded(tex_pass, gpu, &key, &png_name, icon_size, icon_size).is_some() {
+                    self.icons_loaded.insert(slot.app_id.clone(), true);
+                }
+            } else if let Some(path) = self.resolve_icon(&slot.app_id) {
                 if icons.load(tex_pass, gpu, &key, &path, icon_size, icon_size).is_some() {
                     self.icons_loaded.insert(slot.app_id.clone(), true);
                 }

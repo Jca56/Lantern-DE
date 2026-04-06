@@ -474,23 +474,28 @@ impl AppMenu {
         }
 
         let icon_sz = (ICON_SIZE * scale) as u32;
-        let custom_dir = crate::lantern_icons_dir();
         for entry in &self.entries {
             let key = format!("appmenu_{}", entry.app_id);
-            // Check custom icon by app_id first
-            let custom = ["svg", "png"].iter().find_map(|ext| {
-                let p = custom_dir.join(format!("{}.{ext}", entry.app_id));
-                p.exists().then_some(p)
-            });
-            let path = custom.or_else(|| {
-                let icon_name = entry.icon.as_deref().unwrap_or(&entry.app_id);
-                // Handle absolute paths directly (e.g. /home/.../.lantern/icons/foo.svg)
-                if icon_name.starts_with('/') {
-                    let p = std::path::PathBuf::from(icon_name);
-                    if p.exists() { return Some(p); }
-                }
+            // Try embedded icon first (our Lantern apps)
+            let embedded = lntrn_icons::get(&format!("{}.svg", entry.app_id))
+                .or_else(|| lntrn_icons::get(&format!("{}.png", entry.app_id)));
+            if embedded.is_some() {
+                let file = if lntrn_icons::get(&format!("{}.svg", entry.app_id)).is_some() {
+                    format!("{}.svg", entry.app_id)
+                } else {
+                    format!("{}.png", entry.app_id)
+                };
+                icon_cache.load_embedded(tex_pass, gpu, &key, &file, icon_sz, icon_sz);
+                continue;
+            }
+            // Fall back to disk (third-party apps)
+            let icon_name = entry.icon.as_deref().unwrap_or(&entry.app_id);
+            let path = if icon_name.starts_with('/') {
+                let p = std::path::PathBuf::from(icon_name);
+                if p.exists() { Some(p) } else { None }
+            } else {
                 find_icon(icon_name)
-            });
+            };
             if let Some(path) = path {
                 icon_cache.load(tex_pass, gpu, &key, &path, icon_sz, icon_sz);
             }
@@ -508,15 +513,12 @@ impl AppMenu {
             }
         }
 
-        // Power footer icons
+        // Power footer icons (all embedded)
         let pwr_sz = (FOOTER_ICON_SZ * scale) as u32;
         for (key_name, _label, svg_file) in draw::POWER_ICONS {
             let key = format!("power_{key_name}");
             if icon_cache.get(&key).is_some() { continue; }
-            let path = assets_dir().join(svg_file);
-            if path.exists() {
-                icon_cache.load(tex_pass, gpu, &key, &path, pwr_sz, pwr_sz);
-            }
+            icon_cache.load_embedded(tex_pass, gpu, &key, svg_file, pwr_sz, pwr_sz);
         }
     }
 }

@@ -11,8 +11,6 @@ use super::{
     ZONE_MEDIA_PREV, ZONE_MEDIA_PLAY, ZONE_MEDIA_NEXT,
 };
 
-fn icon_dir() -> std::path::PathBuf { crate::lantern_icons_dir() }
-
 // ── Layout constants (pre-scale) ───────────────────────────────────────────
 
 const PAD: f32 = 20.0;
@@ -35,14 +33,13 @@ impl Audio {
         &mut self, icons: &mut IconCache, tex_pass: &TexturePass, gpu: &GpuContext, size: u32,
     ) {
         if self.icons_loaded { return; }
-        let dir = icon_dir();
         for (key, file) in [
             ("sound-high", "spark-sound-high.svg"),
             ("sound-medium", "spark-sound-medium.svg"),
             ("sound-low", "spark-sound-low.svg"),
             ("sound-muted", "spark-sound-muted.svg"),
         ] {
-            icons.load(tex_pass, gpu, key, &dir.join(file), size, size);
+            icons.load_embedded(tex_pass, gpu, key, file, size, size);
         }
         self.icons_loaded = true;
     }

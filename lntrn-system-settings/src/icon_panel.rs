@@ -86,9 +86,15 @@ impl IconPanelState {
         let sz = (ICON_SZ * scale) as u32;
         self.icon_textures.clear();
         for app in &self.apps {
-            let icon_name = app.icon_name.as_deref().unwrap_or(&app.app_id);
-            let tex = find_icon_path(icon_name, &app.app_id)
-                .and_then(|path| load_icon_texture(tex_pass, gpu, &path, sz));
+            // Try embedded icon first (our Lantern apps)
+            let tex = lntrn_icons::get(&format!("{}.svg", app.app_id))
+                .or_else(|| lntrn_icons::get(&format!("{}.png", app.app_id)))
+                .and_then(|data| load_icon_bytes(tex_pass, gpu, data, &app.app_id, sz))
+                .or_else(|| {
+                    let icon_name = app.icon_name.as_deref().unwrap_or(&app.app_id);
+                    find_icon_path(icon_name, &app.app_id)
+                        .and_then(|path| load_icon_texture(tex_pass, gpu, &path, sz))
+                });
             self.icon_textures.push(tex);
         }
     }
@@ -423,6 +429,25 @@ fn find_icon_path(icon_name: &str, app_id: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+fn load_icon_bytes(tex_pass: &TexturePass, gpu: &GpuContext, data: &[u8], app_id: &str, sz: u32) -> Option<GpuTexture> {
+    let is_svg = lntrn_icons::get(&format!("{app_id}.svg")).is_some();
+    if is_svg {
+        let tree = resvg::usvg::Tree::from_data(data, &Default::default()).ok()?;
+        let mut pixmap = resvg::tiny_skia::Pixmap::new(sz, sz)?;
+        let sx = sz as f32 / tree.size().width();
+        let sy = sz as f32 / tree.size().height();
+        let scale = sx.min(sy);
+        let tx = (sz as f32 - tree.size().width() * scale) * 0.5;
+        let ty = (sz as f32 - tree.size().height() * scale) * 0.5;
+        resvg::render(&tree, resvg::tiny_skia::Transform::from_scale(scale, scale).post_translate(tx, ty), &mut pixmap.as_mut());
+        Some(tex_pass.upload(gpu, pixmap.data(), sz, sz))
+    } else {
+        let img = image::load_from_memory(data).ok()?
+            .resize_exact(sz, sz, image::imageops::FilterType::Triangle).to_rgba8();
+        Some(tex_pass.upload(gpu, &img, sz, sz))
+    }
 }
 
 fn load_icon_texture(tex_pass: &TexturePass, gpu: &GpuContext, path: &Path, sz: u32) -> Option<GpuTexture> {

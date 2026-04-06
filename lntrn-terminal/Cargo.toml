@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 libc = "0.2"
+lntrn-icons = { path = "../lntrn-icons" }
 lntrn-render = { path = "../lntrn-render" }
 nix = { version = "0.29", features = ["term", "signal", "fs", "process", "poll"] }
 wayland-client = { version = "0.31", features = ["log"] }

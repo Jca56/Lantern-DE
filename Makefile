@@ -35,7 +35,7 @@ EXTRA_BINARIES := lntrn-copy lntrn-paste notify-send
 
 .PHONY: all build install install-bins install-icons install-config \
         install-desktop install-wallpaper install-session install-portal \
-        dirs clean deploy-%
+        install-udev install-system fresh-install dirs clean deploy-%
 
 all: build install
 	@echo ""
@@ -133,9 +133,59 @@ install-portal:
 		/usr/share/dbus-1/services/
 	@echo "  ✓ portal config installed"
 
+install-udev:
+	@echo "Installing udev rules..."
+	@sudo cp system/udev/*.rules /etc/udev/rules.d/
+	@sudo udevadm control --reload-rules
+	@sudo udevadm trigger
+	@echo "  ✓ udev rules installed (backlight + battery)"
+
+# ── All system-level installs ───────────────────────────────────────────────
+
+install-system: install-session install-portal install-udev
+	@echo ""
+	@echo "🏮 All system-level components installed"
+
+# ── Fresh install (full setup from scratch) ─────────────────────────────────
+
+fresh-install: build install install-system
+	@echo ""
+	@echo "🔍 Checking required packages..."
+	@for pkg in pipewire wireplumber networkmanager bluez polkit xdg-desktop-portal; do \
+		if pacman -Qi $$pkg >/dev/null 2>&1; then \
+			echo "  ✓ $$pkg"; \
+		else \
+			echo "  ✗ $$pkg (missing — sudo pacman -S $$pkg)"; \
+		fi \
+	done
+	@echo ""
+	@echo "🔍 Checking user groups..."
+	@for grp in video input; do \
+		if id -nG | grep -qw $$grp; then \
+			echo "  ✓ member of $$grp"; \
+		else \
+			echo "  ✗ not in $$grp (fix: sudo usermod -aG $$grp $$USER)"; \
+		fi \
+	done
+	@echo ""
+	@echo "📋 Remaining setup:"
+	@echo "  1. Enable services:"
+	@echo "     systemctl enable --now NetworkManager"
+	@echo "     systemctl --user enable --now pipewire wireplumber"
+	@echo ""
+	@echo "  2. Add to ~/.zprofile:"
+	@echo '     if [ -z "$$WAYLAND_DISPLAY" ] && [ "$$(tty)" = "/dev/tty1" ]; then'
+	@echo '         exec $$HOME/.lantern/bin/lntrn-session-manager'
+	@echo '     fi'
+	@echo ""
+	@echo "  3. Add to ~/.zshrc:"
+	@echo '     export PATH="$$HOME/.lantern/bin:$$PATH"'
+	@echo ""
+	@echo "🏮 Lantern DE is ready!"
+
 # ── Full install ─────────────────────────────────────────────────────────────
 
-install: install-bins install-icons install-config install-desktop install-wallpaper
+install: install-bins install-config install-desktop install-wallpaper
 	@echo ""
 	@echo "🏮 Lantern DE installed to $(LANTERN_HOME)"
 	@echo ""
