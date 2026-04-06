@@ -8,6 +8,7 @@ const STATE_FULLSCREEN: u32 = 3;
 
 /// Info about a tracked toplevel window, exposed for the app tray.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ToplevelInfo {
     pub app_id: String,
     pub title: String,
@@ -93,6 +94,7 @@ impl ToplevelTracker {
     }
 
     /// Count how many windows are open for a given app_id.
+    #[allow(dead_code)]
     pub fn window_count(&self, app_id: &str) -> usize {
         self.entries.iter().filter(|e| e.app_id == app_id).count()
     }

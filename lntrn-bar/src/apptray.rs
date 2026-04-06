@@ -26,6 +26,7 @@ struct AppSlot {
     pinned: bool,
     running: bool,
     activated: bool,
+    #[allow(dead_code)]
     title: String,
 }
 
@@ -34,6 +35,7 @@ struct DragState {
     /// Index in the current slot list where the drag started.
     src_idx: usize,
     /// The app_id being dragged.
+    #[allow(dead_code)]
     app_id: String,
     /// Cursor X when the press happened (physical pixels).
     press_x: f32,
@@ -619,7 +621,6 @@ pub(crate) fn find_icon(app_id: &str) -> Option<PathBuf> {
     let home = std::env::var("HOME").unwrap_or_default();
     let user_tela = format!("{home}/.local/share/icons/Tela/scalable/apps");
     let user_hicolor = format!("{home}/.local/share/icons/hicolor/scalable/apps");
-    let user_apps = format!("{home}/.local/share/applications");
     let search_dirs = [
         // User-local icons first
         user_tela.as_str(),

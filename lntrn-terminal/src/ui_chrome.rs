@@ -4,10 +4,21 @@ use lntrn_ui::gpu::{
     MenuEvent, MenuItem, TitleBar,
 };
 
+use crate::config::WindowMode;
+use crate::night_sky;
+
 // ── Constants ───────────────────────────────────────────────────────────────
 
 pub const TITLE_BAR_HEIGHT: f32 = 54.0;
 pub const GRADIENT_STRIP_HEIGHT: f32 = 4.0;
+
+/// Title bar height for the given window mode.
+pub fn title_bar_height(mode: &WindowMode) -> f32 {
+    match mode {
+        WindowMode::Fox => TITLE_BAR_HEIGHT,
+        WindowMode::NightSky => night_sky::TITLE_BAR_HEIGHT,
+    }
+}
 
 // Zone IDs for title bar buttons
 const ZONE_CLOSE: u32 = 10;
@@ -18,6 +29,9 @@ const ZONE_MINIMIZE: u32 = 12;
 
 pub const MENU_FONT_SLIDER: u32 = 100;
 pub const MENU_OPACITY_SLIDER: u32 = 101;
+pub const MENU_MODE_FOX: u32 = 102;
+pub const MENU_MODE_NIGHT_SKY: u32 = 103;
+const MENU_MODE_GROUP: u32 = 1;
 pub const MENU_SPLIT_RIGHT: u32 = 200;
 pub const MENU_SPLIT_DOWN: u32 = 201;
 pub const MENU_CLOSE_PANE: u32 = 202;
@@ -68,6 +82,7 @@ pub enum ClickAction {
     StartDrag,
     SliderDrag,
     OpacitySliderDrag,
+    WindowModeChanged,
     SplitHorizontal,
     SplitVertical,
     ClosePane,
@@ -81,12 +96,17 @@ pub enum ClickAction {
 
 // ── Menu definitions ────────────────────────────────────────────────────────
 
-pub fn build_menus(font_size: f32, opacity: f32, sidebar_visible: bool) -> Vec<(&'static str, Vec<MenuItem>)> {
+pub fn build_menus(font_size: f32, opacity: f32, sidebar_visible: bool, mode: &WindowMode) -> Vec<(&'static str, Vec<MenuItem>)> {
+    let is_fox = *mode == WindowMode::Fox;
     vec![
         ("View", vec![
             MenuItem::slider(MENU_FONT_SLIDER, "Text Size", ((font_size - 6.0) / 24.0).clamp(0.0, 1.0)),
             MenuItem::separator(),
             MenuItem::slider(MENU_OPACITY_SLIDER, "Opacity", ((opacity - 0.1) / 0.9).clamp(0.0, 1.0)),
+            MenuItem::separator(),
+            MenuItem::header("Window Style"),
+            MenuItem::radio(MENU_MODE_FOX, MENU_MODE_GROUP, "Fox", is_fox),
+            MenuItem::radio(MENU_MODE_NIGHT_SKY, MENU_MODE_GROUP, "Night Sky", !is_fox),
         ]),
         ("Split", vec![
             MenuItem::action_with(MENU_SPLIT_RIGHT, "Split Right", "Ctrl+Shift+D"),
@@ -131,38 +151,56 @@ pub fn draw_chrome(
     sidebar_visible: bool,
     maximized: bool,
     scale: f32,
+    mode: &WindowMode,
+    cursor_pos: Option<(f32, f32)>,
 ) {
     let s = scale;
     let pal = &state.palette;
     let wf = screen_w as f32;
 
-    // ── Title bar (excluding gradient strip height) ───────────────
-    let bar_h = (TITLE_BAR_HEIGHT - GRADIENT_STRIP_HEIGHT) * s;
-    let title_rect = Rect::new(0.0, 0.0, wf, bar_h);
-    let tb = TitleBar::new(title_rect).scale(s);
+    match mode {
+        WindowMode::Fox => {
+            // ── Fox: TitleBar widget + gradient strip ─────────────
+            let bar_h = (TITLE_BAR_HEIGHT - GRADIENT_STRIP_HEIGHT) * s;
+            let title_rect = Rect::new(0.0, 0.0, wf, bar_h);
+            let tb = TitleBar::new(title_rect).scale(s);
 
-    let close_state = input.add_zone(ZONE_CLOSE, tb.close_button_rect());
-    let max_state = input.add_zone(ZONE_MAXIMIZE, tb.maximize_button_rect());
-    let min_state = input.add_zone(ZONE_MINIMIZE, tb.minimize_button_rect());
-    let content = tb.content_rect();
+            let close_state = input.add_zone(ZONE_CLOSE, tb.close_button_rect());
+            let max_state = input.add_zone(ZONE_MAXIMIZE, tb.maximize_button_rect());
+            let min_state = input.add_zone(ZONE_MINIMIZE, tb.minimize_button_rect());
+            let content = tb.content_rect();
 
-    tb.close_hovered(close_state.is_hovered())
-        .maximize_hovered(max_state.is_hovered())
-        .minimize_hovered(min_state.is_hovered())
-        .maximized(maximized)
-        .draw(painter, pal);
+            tb.close_hovered(close_state.is_hovered())
+                .maximize_hovered(max_state.is_hovered())
+                .minimize_hovered(min_state.is_hovered())
+                .maximized(maximized)
+                .draw(painter, pal);
 
-    // ── Menu bar (inside title bar content area) ────────────────────
-    let menus = build_menus(font_size, opacity, sidebar_visible);
-    state.menu_bar.update(input, &menus, content, s);
-    let labels: Vec<&str> = menus.iter().map(|(l, _)| *l).collect();
-    state.menu_bar.draw_with_labels(painter, text, pal, &labels, screen_w, screen_h, s);
+            // Menu bar inside title bar content area
+            let menus = build_menus(font_size, opacity, sidebar_visible, mode);
+            state.menu_bar.update(input, &menus, content, s);
+            let labels: Vec<&str> = menus.iter().map(|(l, _)| *l).collect();
+            state.menu_bar.draw_with_labels(painter, text, pal, &labels, screen_w, screen_h, s);
 
-    // ── Gradient strip directly below title bar ─────────────────────
-    let strip_y = bar_h;
-    let mut strip = GradientStrip::new(0.0, strip_y, wf);
-    strip.height = GRADIENT_STRIP_HEIGHT * s;
-    strip.draw(painter);
+            // Gradient strip below title bar
+            let strip_y = bar_h;
+            let mut strip = GradientStrip::new(0.0, strip_y, wf);
+            strip.height = GRADIENT_STRIP_HEIGHT * s;
+            strip.draw(painter);
+        }
+        WindowMode::NightSky => {
+            // ── Night Sky: custom controls + menu bar ─────────────
+            let bar_h = night_sky::TITLE_BAR_HEIGHT;
+            night_sky::draw_controls(painter, cursor_pos, wf);
+
+            // Menu bar positioned in the left side of the title bar
+            let content = Rect::new(8.0, 0.0, wf - 120.0, bar_h);
+            let menus = build_menus(font_size, opacity, sidebar_visible, mode);
+            state.menu_bar.update(input, &menus, content, s);
+            let labels: Vec<&str> = menus.iter().map(|(l, _)| *l).collect();
+            state.menu_bar.draw_with_labels(painter, text, pal, &labels, screen_w, screen_h, s);
+        }
+    }
 }
 
 /// Draw menu overlays (second render pass).
@@ -199,6 +237,8 @@ pub fn handle_click(
     input: &mut InteractionContext,
     menus: &[(&str, Vec<MenuItem>)],
     scale: f32,
+    mode: &WindowMode,
+    screen_w: f32,
 ) -> ClickAction {
     let (x, y) = match input.cursor() {
         Some(pos) => pos,
@@ -208,7 +248,6 @@ pub fn handle_click(
     // Context menu takes priority
     if state.context_menu.is_open() {
         if state.context_menu.contains(x, y) {
-            // Let draw() handle it via MenuEvent
             return ClickAction::None;
         }
         state.context_menu.close();
@@ -217,7 +256,6 @@ pub fn handle_click(
 
     // Menu bar dropdown click
     if state.menu_bar.is_open() && state.menu_bar.context_menu.contains(x, y) {
-        // Let draw() handle it via MenuEvent
         return ClickAction::None;
     }
 
@@ -226,16 +264,30 @@ pub fn handle_click(
         return ClickAction::None;
     }
 
-    // Window control buttons (check which zone was just pressed)
-    match input.active_zone_id() {
-        Some(id) if id == ZONE_CLOSE => return ClickAction::Close,
-        Some(id) if id == ZONE_MAXIMIZE => return ClickAction::Maximize,
-        Some(id) if id == ZONE_MINIMIZE => return ClickAction::Minimize,
-        _ => {}
+    // Window control buttons
+    match mode {
+        WindowMode::Fox => {
+            match input.active_zone_id() {
+                Some(id) if id == ZONE_CLOSE => return ClickAction::Close,
+                Some(id) if id == ZONE_MAXIMIZE => return ClickAction::Maximize,
+                Some(id) if id == ZONE_MINIMIZE => return ClickAction::Minimize,
+                _ => {}
+            }
+        }
+        WindowMode::NightSky => {
+            if let Some(zone) = night_sky::hit_test_controls((x, y), screen_w) {
+                return match zone {
+                    10 => ClickAction::Close,
+                    11 => ClickAction::Maximize,
+                    12 => ClickAction::Minimize,
+                    _ => ClickAction::None,
+                };
+            }
+        }
     }
 
     // Title bar drag
-    let title_h = TITLE_BAR_HEIGHT * scale;
+    let title_h = title_bar_height(mode) * scale;
     if y <= title_h {
         return ClickAction::StartDrag;
     }
@@ -264,6 +316,10 @@ pub fn menu_event_to_action(event: &MenuEvent) -> ClickAction {
         MenuEvent::SliderChanged { id, .. } => match *id {
             MENU_FONT_SLIDER => ClickAction::SliderDrag,
             MENU_OPACITY_SLIDER => ClickAction::OpacitySliderDrag,
+            _ => ClickAction::None,
+        },
+        MenuEvent::RadioSelected { id, .. } => match *id {
+            MENU_MODE_FOX | MENU_MODE_NIGHT_SKY => ClickAction::WindowModeChanged,
             _ => ClickAction::None,
         },
         _ => ClickAction::None,

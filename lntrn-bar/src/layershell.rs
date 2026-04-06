@@ -1,4 +1,5 @@
 use std::ffi::c_void;
+use std::os::fd::AsRawFd;
 use std::ptr::NonNull;
 use std::time::{Duration, Instant};
 
@@ -88,6 +89,7 @@ pub(crate) struct State {
     running: bool,
     configured: bool,
     frame_done: bool,
+    input_dirty: bool,
     width: u32,
     height: u32,
     scale: i32,
@@ -118,7 +120,7 @@ pub(crate) struct State {
 impl State {
     fn new() -> Self {
         Self {
-            running: true, configured: false, frame_done: true,
+            running: true, configured: false, frame_done: true, input_dirty: false,
             width: 0, height: BAR_HEIGHT_DEFAULT + MENU_OVERFLOW + SHADOW_PAD,
             scale: 1, output_phys_width: 0,
             compositor: None, layer_shell: None, viewporter: None,
@@ -292,7 +294,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
             }
             _ => {}
         }
-        state.frame_done = true;
+        state.input_dirty = true;
     }
 }
 
@@ -314,7 +316,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                         state.held_key = None;
                     }
                 }
-                state.frame_done = true;
+                state.input_dirty = true;
             }
             wl_keyboard::Event::Modifiers { mods_depressed, .. } => {
                 state.ctrl = mods_depressed & 4 != 0;
@@ -616,7 +618,44 @@ pub fn run() -> Result<()> {
             std::thread::sleep(Duration::from_millis(16));
             state.frame_done = true;
         } else {
-            event_queue.blocking_dispatch(&mut state)?;
+            // Poll the Wayland fd with a 1-second timeout so we wake up
+            // periodically to check if any widget has new data to display.
+            event_queue.flush()?;
+            let guard = event_queue.prepare_read().unwrap();
+            let fd = guard.connection_fd().as_raw_fd();
+            let mut pfd = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+            let ret = unsafe { libc::poll(&mut pfd, 1, 1000) };
+            if ret > 0 {
+                let _ = guard.read();
+            } else {
+                drop(guard);
+            }
+            event_queue.dispatch_pending(&mut state)?;
+
+            if state.input_dirty || state.frame_done {
+                // Input or Wayland event arrived — throttle and render.
+                if !state.frame_done {
+                    std::thread::sleep(Duration::from_millis(16));
+                    event_queue.dispatch_pending(&mut state)?;
+                }
+                state.input_dirty = false;
+                state.frame_done = true;
+            } else {
+                // Timeout with no Wayland events — tick widgets to check for
+                // new data (clock minute change, temperature poll, mpsc events).
+                let mut dirty = clock.tick()
+                    | temperature.tick()
+                    | wifi.tick()
+                    | bluetooth.tick()
+                    | audio.tick()
+                    | app_menu.clipboard.tick()
+                    | battery.as_mut().map_or(false, |b| b.tick())
+                    | system_tray.as_mut().map_or(false, |t| t.tick());
+                if app_menu.is_open() || !app_menu.sysmon.pinned.is_empty() {
+                    dirty |= app_menu.sysmon.tick();
+                }
+                state.frame_done = dirty;
+            }
         }
         if !state.frame_done { continue; }
         state.frame_done = false;
@@ -745,7 +784,7 @@ pub fn run() -> Result<()> {
             if let Some(edge) = app_menu.resize_edge_at(phys_cx, phys_cy, scale_f) {
                 app_menu.start_resize(edge, phys_cx, phys_cy);
             }
-            app_menu.on_left_click(phys_cx, phys_cy, &ix);
+            app_menu.on_left_click(phys_cx, phys_cy, &ix, scale_f);
             ix.on_left_pressed();
             // Desktop panel pill clicks
             for i in 0..3u32 {
@@ -1282,7 +1321,7 @@ pub fn run() -> Result<()> {
         // WiFi (left of battery) — extra gap to separate from battery
         let wifi_tex_draws;
         {
-            let bat_wifi_gap = widget_gap + 6.0 * scale_f;
+            let bat_wifi_gap = widget_gap;
             let ww = wifi.measure(vis_h, scale_f);
             let wx = vis_x + vis_w - right_used - bat_wifi_gap - ww;
             wifi_draw_x = wx;
@@ -1350,7 +1389,7 @@ pub fn run() -> Result<()> {
                 scale_f, phys_w, total_phys_h,
             );
             tray_tex_draws = draws;
-            right_used += tw;
+            let _ = right_used + tw;
         }
 
         // ── App tray (centered) ─────────────────────────────────────
@@ -1631,16 +1670,21 @@ pub fn run() -> Result<()> {
             tray_menu_path = None;
         }
 
-        surface.frame(&qh, ());
-        apply_layer_config(&layer_surface, state.width, bar_height, anim_t, auto_hide, position_top);
-        surface.commit();
-
-        // Need continuous frames when animating or hide timer is counting
+        // Determine if we need continuous frames BEFORE committing
         needs_anim = (anim_t - target).abs() > 0.001
             || (hide_t - hide_target).abs() > 0.001
             || (auto_hide && !state.pointer_in_surface && hide_t < 0.99)
             || tray_animating || bat_animating || bt_animating || app_tray.is_dragging()
             || audio.is_dragging();
+
+        // Only request a frame callback when we need continuous rendering.
+        // Without this guard, the callback fires → sets frame_done → renders
+        // → requests callback again, creating a perpetual render loop at idle.
+        if needs_anim {
+            surface.frame(&qh, ());
+        }
+        apply_layer_config(&layer_surface, state.width, bar_height, anim_t, auto_hide, position_top);
+        surface.commit();
     }
 
     Ok(())

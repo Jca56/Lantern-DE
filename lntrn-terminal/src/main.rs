@@ -3,6 +3,7 @@ mod clipboard;
 mod config;
 mod events;
 mod input;
+mod night_sky;
 mod pty;
 mod render;
 mod render_app;

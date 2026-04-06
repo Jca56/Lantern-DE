@@ -25,6 +25,49 @@ impl App {
         self.cursor_pos = Some((x, y));
         self.input.on_cursor_moved(x, y);
 
+        // Auto-show/hide tab bar on hover (with dwell delay to avoid flashing)
+        let title_h = ui_chrome::title_bar_height(&self.config.window.mode);
+        let tab_zone_bottom = title_h + tab_bar::TAB_BAR_HEIGHT;
+        let in_tab_zone = y >= title_h && y < tab_zone_bottom;
+        let tab_bar_busy = self.tab_bar.dragging.is_some()
+            || self.tab_bar.renaming.is_some()
+            || self.tab_bar.context_menu.is_some();
+
+        if in_tab_zone {
+            // Start dwell timer on enter, show after 200ms
+            self.tab_bar_leave_since = None;
+            if self.tab_bar_hover_since.is_none() {
+                self.tab_bar_hover_since = Some(Instant::now());
+            }
+            let dwell = self.tab_bar_hover_since.unwrap().elapsed();
+            if !self.tab_bar_visible && dwell >= std::time::Duration::from_millis(200) {
+                self.tab_bar_visible = true;
+                self.update_grid_size();
+                self.request_redraw();
+            } else if !self.tab_bar_visible {
+                // Schedule a redraw after the remaining dwell time
+                self.request_redraw();
+            }
+        } else {
+            self.tab_bar_hover_since = None;
+            if self.tab_bar_visible && !tab_bar_busy {
+                if self.tab_bar_leave_since.is_none() {
+                    self.tab_bar_leave_since = Some(Instant::now());
+                }
+                let away = self.tab_bar_leave_since.unwrap().elapsed();
+                if away >= std::time::Duration::from_millis(200) {
+                    self.tab_bar_visible = false;
+                    self.tab_bar_leave_since = None;
+                    self.update_grid_size();
+                    self.request_redraw();
+                } else {
+                    self.request_redraw();
+                }
+            } else {
+                self.tab_bar_leave_since = None;
+            }
+        }
+
         // Tab drag reorder
         if self.tab_bar.dragging.is_some() {
             let screen_w = self.gpu.as_ref().map_or(800, |g| g.width());
@@ -133,15 +176,19 @@ impl App {
 
         self.input.on_left_pressed();
         let menus = ui_chrome::build_menus(
-            self.config.font.size,
+            self.effective_font_size(),
             self.config.window.opacity,
             self.sidebar.visible,
+            &self.config.window.mode,
         );
+        let screen_w = self.gpu.as_ref().map_or(800, |g| g.width()) as f32;
         let action = ui_chrome::handle_click(
             &mut self.chrome,
             &mut self.input,
             &menus,
             1.0,
+            &self.config.window.mode,
+            screen_w,
         );
 
         match self.dispatch_chrome_action(action, event_loop, screen_h) {
@@ -195,6 +242,10 @@ impl App {
             }
             ui_chrome::ClickAction::OpacitySliderDrag => {
                 self.config.save();
+            }
+            ui_chrome::ClickAction::WindowModeChanged => {
+                self.config.save();
+                self.update_grid_size();
             }
             ui_chrome::ClickAction::SplitHorizontal => {
                 self.split_pane(SplitDir::Horizontal);
@@ -279,11 +330,12 @@ impl App {
 
     fn handle_click_passthrough(&mut self, screen_h: u32) -> EventResult {
         // Check sidebar click first
-        if sidebar::contains(&self.sidebar, self.cursor_pos, render::chrome_height()) {
+        let chrome_h = self.chrome_height();
+        if sidebar::contains(&self.sidebar, self.cursor_pos, chrome_h) {
             sidebar::handle_click(
                 &mut self.sidebar,
                 self.cursor_pos,
-                render::chrome_height(),
+                chrome_h,
                 screen_h,
             );
             self.request_redraw();
@@ -337,11 +389,12 @@ impl App {
     pub(crate) fn handle_right_press(&mut self) {
         let screen_w = self.gpu.as_ref().map_or(800, |g| g.width());
         let screen_h = self.gpu.as_ref().map_or(600, |g| g.height());
+        let chrome_h = self.chrome_height();
         // Sidebar right-click
         if sidebar::handle_right_click(
             &mut self.sidebar,
             self.cursor_pos,
-            render::chrome_height(),
+            chrome_h,
         ) {
             self.chrome.close_all_menus();
             self.tab_bar.context_menu = None;
@@ -492,6 +545,7 @@ impl App {
         }
 
         if !self.tabs.is_empty() {
+            let font_size = self.effective_font_size();
             let tab = &mut self.tabs[self.active_tab];
             let pane = &mut tab.panes[tab.active_pane];
             let old_offset = pane.terminal.scroll_offset;
@@ -504,7 +558,7 @@ impl App {
                 &self.clipboard,
             );
             if pane.terminal.scroll_offset != old_offset {
-                let cell_h = render::measure_cell(self.config.font.size).1;
+                let cell_h = render::measure_cell(font_size).1;
                 let new_px = pane.terminal.scroll_offset as f32 * cell_h;
                 self.scroll_target_px = new_px;
                 if pane.terminal.scroll_offset == 0 {
@@ -582,7 +636,7 @@ impl App {
 
     pub(crate) fn handle_mouse_wheel(&mut self, delta: MouseScrollDelta) {
         // Sidebar scroll
-        if sidebar::contains(&self.sidebar, self.cursor_pos, render::chrome_height()) {
+        if sidebar::contains(&self.sidebar, self.cursor_pos, self.chrome_height()) {
             let dy = match delta {
                 MouseScrollDelta::LineDelta(_, y) => y,
                 MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 20.0,
@@ -596,7 +650,7 @@ impl App {
             return;
         }
 
-        let cell_h = render::measure_cell(self.config.font.size).1;
+        let cell_h = render::measure_cell(self.effective_font_size()).1;
         let delta_px = match delta {
             MouseScrollDelta::LineDelta(_, y) => y * cell_h * 10.0,
             MouseScrollDelta::PixelDelta(pos) => pos.y as f32 * 4.0,
@@ -627,17 +681,17 @@ impl App {
         if self.tabs.is_empty() {
             return None;
         }
-        let cell_h = render::measure_cell(self.config.font.size).1;
+        let cell_h = render::measure_cell(self.effective_font_size()).1;
         let screen_w = self.gpu.as_ref().map_or(800, |g| g.width());
         let screen_h = self.gpu.as_ref().map_or(600, |g| g.height());
         let tab = &self.tabs[self.active_tab];
         let pane = &tab.panes[tab.active_pane];
-        let rects = Self::pane_rects_for_tab(tab, screen_w, screen_h, self.sidebar_offset());
+        let rects = Self::pane_rects_for_tab(tab, screen_w, screen_h, self.sidebar_offset(), self.chrome_height());
         if tab.active_pane >= rects.len() {
             return None;
         }
         let (gx, gy, gw, gh) =
-            Self::pane_grid_bounds(pane, rects[tab.active_pane], self.config.font.size);
+            Self::pane_grid_bounds(pane, rects[tab.active_pane], self.effective_font_size());
         let viewport = lntrn_render::Rect::new(gx, gy, gw, gh);
         let total_lines = pane.terminal.scrollback.len() + pane.terminal.rows;
         let content_height = total_lines as f32 * cell_h;
@@ -647,7 +701,7 @@ impl App {
             lntrn_ui::gpu::scroll::Scrollbar::new(&viewport, content_height, inverted_offset);
 
         // For drag updates we skip the hit test (cx=0.0 sentinel)
-        if cx == 0.0 || scrollbar.thumb.contains(cx, cy) || scrollbar.track.contains(cx, cy) {
+        if cx == 0.0 || scrollbar.hover_zone().contains(cx, cy) {
             Some(ScrollbarHit {
                 content_height,
                 max_scroll,
@@ -666,12 +720,12 @@ impl App {
         let screen_h = self.gpu.as_ref().map_or(600, |g| g.height());
         let tab = &self.tabs[self.active_tab];
         let pane = &tab.panes[tab.active_pane];
-        let rects = Self::pane_rects_for_tab(tab, screen_w, screen_h, self.sidebar_offset());
+        let rects = Self::pane_rects_for_tab(tab, screen_w, screen_h, self.sidebar_offset(), self.chrome_height());
         if tab.active_pane >= rects.len() {
             return;
         }
         let (gx, gy, gw, gh) =
-            Self::pane_grid_bounds(pane, rects[tab.active_pane], self.config.font.size);
+            Self::pane_grid_bounds(pane, rects[tab.active_pane], self.effective_font_size());
         let viewport = lntrn_render::Rect::new(gx, gy, gw, gh);
         let inverted_offset = hit.max_scroll - self.scroll_current_px.min(hit.max_scroll);
         let scrollbar = lntrn_ui::gpu::scroll::Scrollbar::new(

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <defs>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="0" stdDeviation="1.5" flood-color="#44ff88" flood-opacity="0.9"/>
+    </filter>
+  </defs>
+  <g filter="url(#glow)" fill="none" stroke="#44ff88" stroke-linecap="round" stroke-linejoin="round">
+    <!-- < > brackets -->
+    <polyline points="8,7 3,12 8,17" stroke-width="2.2"/>
+    <polyline points="16,7 21,12 16,17" stroke-width="2.2"/>
+    <!-- / slash -->
+    <line x1="14" y1="5" x2="10" y2="19" stroke-width="2" stroke="#44ff88"/>
+  </g>
+</svg>

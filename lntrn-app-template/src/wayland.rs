@@ -27,37 +27,7 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 pub const BTN_LEFT: u32 = 0x110;
 pub const BTN_RIGHT: u32 = 0x111;
 const KEY_ESC: u32 = 1;
-const TITLE_BAR_H: f32 = 40.0;
-const CORNER_RADIUS: f32 = 16.0;
-
-// ── Night Sky palette (inspired by indigo sky + pink clouds wallpaper) ──────
-
-#[allow(dead_code)]
-mod sky {
-    use lntrn_render::Color;
-
-    // Backgrounds — deep purple-indigo
-    pub const BG_DEEP: Color       = Color::rgba(0.01, 0.00, 0.03, 0.90);
-    pub const BG_SURFACE: Color    = Color::rgba(0.021, 0.005, 0.059, 0.90);
-
-    // Text
-    pub const TEXT_PRIMARY: Color   = Color::rgb(0.80, 0.76, 0.90);
-    pub const TEXT_SECONDARY: Color = Color::rgb(0.45, 0.40, 0.58);
-
-    // Subtle glows
-    pub const GLOW_PINK: Color     = Color::rgba(0.40, 0.12, 0.28, 0.04);
-    pub const GLOW_CYAN: Color     = Color::rgba(0.12, 0.30, 0.45, 0.04);
-
-    // Borders — very subtle
-    pub const BORDER_SUBTLE: Color = Color::rgba(0.30, 0.20, 0.50, 0.15);
-
-    // Window control buttons (close uses Blood red)
-    pub const CLOSE_BG: Color      = Color::rgb(0.45, 0.02, 0.02); // Blood red (sRGB ~140,15,15)
-    pub const CONTROL_HOVER: Color = Color::rgba(0.50, 0.38, 0.70, 0.25);
-    pub const CONTROL_ICON: Color  = Color::rgb(0.55, 0.50, 0.68);
-    pub const CLOSE_HOVER: Color   = Color::rgba(0.45, 0.02, 0.02, 0.35);
-
-}
+use crate::chrome::{TITLE_BAR_H, CORNER_RADIUS};
 
 // ── WaylandHandle for wgpu ──────────────────────────────────────────────────
 
@@ -255,7 +225,7 @@ pub fn run() -> Result<()> {
     let mut painter = Painter::new(&gpu);
     let mut text = TextRenderer::new(&gpu);
     let mut ix = InteractionContext::new();
-    let fox = FoxPalette::dark();
+    let fox = FoxPalette::night_sky();
     let mut menu_bar = MenuBar::new(&fox);
     let ctx_style = lntrn_ui::gpu::ContextMenuStyle {
         palette: fox.clone(),
@@ -266,7 +236,7 @@ pub fn run() -> Result<()> {
         text_disabled: Color::from_rgb8(80, 70, 100),
         separator: Color::from_rgba8(100, 70, 160, 40),
         border: Color::from_rgba8(80, 55, 140, 50),
-        accent: Color::from_rgb8(65, 165, 230),
+        accent: Color::from_rgb8(225, 175, 35),
         corner_radius: 12.0,
         padding: 5.0,
         item_height: 38.0,
@@ -317,6 +287,8 @@ pub fn run() -> Result<()> {
     ];
 
     let mut gallery = crate::gallery::GalleryState::new();
+    let mut active_tab: usize = 0;
+    let tab_names = ["Shell", "Widgets"];
 
     while state.running {
         if let Err(e) = event_queue.blocking_dispatch(&mut state) {
@@ -429,10 +401,28 @@ pub fn run() -> Result<()> {
                 }
             } else if menu_bar.on_click(&mut ix, &menus, s) {
                 // Menu bar consumed the click
-            } else if crate::gallery::handle_click(cx, cy, s, title_h, wf, hf, &mut gallery) {
-                // Gallery consumed the click
             } else {
-                ix.on_left_pressed();
+                // Tab bar hit-test
+                let tab_y = title_h + 4.0 * s;
+                let tab_h = 36.0 * s;
+                let mut tab_hit = false;
+                let mut tx = 32.0 * s;
+                for i in 0..tab_names.len() {
+                    let tw = tab_names[i].len() as f32 * 11.0 * s + 28.0 * s;
+                    if cx >= tx && cx <= tx + tw && cy >= tab_y && cy <= tab_y + tab_h {
+                        active_tab = i;
+                        tab_hit = true;
+                        break;
+                    }
+                    tx += tw + 8.0 * s;
+                }
+                if tab_hit {
+                    // Tab consumed
+                } else if active_tab == 1 && crate::gallery::handle_click(cx, cy, s, title_h + 44.0 * s, wf, hf, &mut gallery) {
+                    // Gallery consumed
+                } else {
+                    ix.on_left_pressed();
+                }
             }
             } // end else (not on popup)
         }
@@ -530,102 +520,52 @@ pub fn run() -> Result<()> {
         let sh = gpu.height();
         let r = if state.maximized { 0.0 } else { CORNER_RADIUS * s };
 
-        // ── Background ───────────────────────────────────────────────────
-        painter.rect_gradient_linear(
-            Rect::new(0.0, 0.0, wf, hf), r,
-            std::f32::consts::FRAC_PI_2,
-            sky::BG_DEEP,
-            sky::BG_SURFACE,
-        );
+        // ── Window chrome ────────────────────────────────────────────────
+        crate::chrome::draw_background(&mut painter, wf, hf, r);
+        crate::chrome::draw_title(&mut text, "Lantern", s, wf, title_h, sw, sh);
+        crate::chrome::draw_controls(&mut painter, cx, cy, s, wf, title_h);
 
-        // Radial glow — pink, bottom-left
-        painter.rect_gradient_radial(
-            Rect::new(-wf * 0.35, hf * 0.5, wf * 0.8, hf * 0.8), 0.0,
-            sky::GLOW_PINK,
-            Color::TRANSPARENT,
-        );
-
-        // Radial glow — cyan, top-right
-        painter.rect_gradient_radial(
-            Rect::new(wf * 0.5, -hf * 0.25, wf * 0.8, hf * 0.7), 0.0,
-            sky::GLOW_CYAN,
-            Color::TRANSPARENT,
-        );
-
-        // ── CSD Title bar (seamless with background) ────────────────────
-        // No separate title bar bg — it's the same gradient as the window
-
-        // Title text — centered, subtle
-        let title_sz = 20.0 * s;
-        let title_str = "Lantern";
-        let title_w = title_sz * 0.55 * title_str.len() as f32;
-        text.queue(
-            title_str, title_sz,
-            (wf - title_w) * 0.5, (title_h - title_sz) * 0.5,
-            sky::TEXT_SECONDARY, wf, sw, sh,
-        );
-
-        // ── Window controls (Windows-style icons in circles, right) ─────
-        let btn_r = 14.0 * s;
-        let btn_y = title_h * 0.5;
-        let close_cx = wf - 28.0 * s;
-        let max_cx = wf - 66.0 * s;
-        let min_cx = wf - 104.0 * s;
-        let icon_thick = 1.5 * s;
-
-        let hover_close = {
-            let dx = cx - close_cx; let dy = cy - btn_y;
-            (dx * dx + dy * dy).sqrt() < btn_r
-        };
-        let hover_max = {
-            let dx = cx - max_cx; let dy = cy - btn_y;
-            (dx * dx + dy * dy).sqrt() < btn_r
-        };
-        let hover_min = {
-            let dx = cx - min_cx; let dy = cy - btn_y;
-            (dx * dx + dy * dy).sqrt() < btn_r
-        };
-
-        // Close — X icon
-        if hover_close {
-            painter.circle_filled(close_cx, btn_y, btn_r, sky::CLOSE_HOVER);
-        }
-        let x_sz = 5.0 * s;
-        let close_icon = if hover_close { sky::CLOSE_BG } else { sky::CONTROL_ICON };
-        painter.line(close_cx - x_sz, btn_y - x_sz, close_cx + x_sz, btn_y + x_sz, icon_thick, close_icon);
-        painter.line(close_cx - x_sz, btn_y + x_sz, close_cx + x_sz, btn_y - x_sz, icon_thick, close_icon);
-
-        // Maximize — square icon
-        if hover_max {
-            painter.circle_filled(max_cx, btn_y, btn_r, sky::CONTROL_HOVER);
-        }
-        let sq_sz = 5.0 * s;
-        let max_icon = if hover_max { sky::TEXT_PRIMARY } else { sky::CONTROL_ICON };
-        painter.rect_stroke_sdf(
-            Rect::new(max_cx - sq_sz, btn_y - sq_sz, sq_sz * 2.0, sq_sz * 2.0),
-            1.5 * s, icon_thick, max_icon,
-        );
-
-        // Minimize — horizontal line icon
-        if hover_min {
-            painter.circle_filled(min_cx, btn_y, btn_r, sky::CONTROL_HOVER);
-        }
-        let min_icon = if hover_min { sky::TEXT_PRIMARY } else { sky::CONTROL_ICON };
-        painter.line(min_cx - x_sz, btn_y, min_cx + x_sz, btn_y, icon_thick, min_icon);
-
-        // ── Component gallery ────────────────────────────────────────────
-        crate::gallery::draw(
-            &mut painter, &mut text, cx, cy, s, title_h,
-            &gallery, wf, hf, sw, sh,
-        );
-
-        // ── Window outer border (very subtle) ───────────────────────────
-        if !state.maximized {
-            painter.rect_stroke_sdf(
-                Rect::new(0.0, 0.0, wf, hf), r, 1.0 * s,
-                sky::BORDER_SUBTLE,
+        // ── Tab bar ──────────────────────────────────────────────────────
+        let tab_bar_y = title_h + 4.0 * s;
+        let tab_h = 36.0 * s;
+        let tab_pad = 32.0 * s;
+        let accent_color = Color::from_rgb8(225, 175, 35);
+        let tab_surface = Color::rgba(0.08, 0.04, 0.16, 0.40);
+        let tab_border = Color::rgba(0.30, 0.20, 0.50, 0.12);
+        {
+            let mut tx = tab_pad;
+            for i in 0..tab_names.len() {
+                let tw = tab_names[i].len() as f32 * 11.0 * s + 28.0 * s;
+                let is_active = active_tab == i;
+                let hov = cx >= tx && cx <= tx + tw && cy >= tab_bar_y && cy <= tab_bar_y + tab_h;
+                if is_active {
+                    painter.rect_filled(Rect::new(tx, tab_bar_y, tw, tab_h), 8.0 * s, tab_surface);
+                } else if hov {
+                    painter.rect_filled(Rect::new(tx, tab_bar_y, tw, tab_h), 8.0 * s,
+                        Color::rgba(0.06, 0.03, 0.12, 0.25));
+                }
+                let tc = if is_active { accent_color } else { crate::chrome::TEXT_SECONDARY };
+                text.queue(tab_names[i], 18.0 * s, tx + 14.0 * s, tab_bar_y + 7.0 * s, tc, wf, sw, sh);
+                tx += tw + 8.0 * s;
+            }
+            // Bottom line
+            painter.rect_filled(
+                Rect::new(tab_pad, tab_bar_y + tab_h, wf - tab_pad * 2.0, 1.0 * s), 0.0, tab_border,
             );
         }
+
+        let content_top = tab_bar_y + tab_h + 4.0 * s;
+
+        // ── Tab content ─────────────────────────────────────────────────
+        if active_tab == 1 {
+            crate::gallery::draw(
+                &mut painter, &mut text, cx, cy, s, content_top,
+                &gallery, wf, hf, sw, sh,
+            );
+        }
+        // Tab 0 ("Shell") is intentionally empty
+
+        if !state.maximized { crate::chrome::draw_border(&mut painter, wf, hf, r); }
 
         // Context menus (drawn into painter on top of other shapes)
         menu_bar.context_menu.update(0.016);

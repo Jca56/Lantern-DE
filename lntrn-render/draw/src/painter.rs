@@ -18,6 +18,7 @@ const SHAPE_SHADOW: f32 = 9.0;
 const SHAPE_ARC: f32 = 10.0;
 const SHAPE_DASHED_LINE: f32 = 11.0;
 const SHAPE_INNER_SHADOW: f32 = 12.0;
+const SHAPE_RECT_STROKE_PROGRESS: f32 = 13.0;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -487,6 +488,24 @@ impl Painter {
             bounds: [expanded.x, expanded.y, expanded.w, expanded.h],
             color: [color.r, color.g, color.b, color.a],
             params: [corner_radius, width, 0.0, SHAPE_RECT_STROKE],
+            color_b: [0.0; 4],
+        });
+    }
+
+    /// SDF rounded-rect stroke masked by a clockwise progress value.
+    ///
+    /// `progress` ranges from 1.0 (full border) to 0.0 (invisible),
+    /// sweeping clockwise from the top-left corner.
+    pub fn rect_stroke_progress(
+        &mut self, rect: Rect, corner_radius: f32, width: f32, color: Color, progress: f32,
+    ) {
+        if color.a < 0.004 || progress <= 0.0 { return; }
+        let expand = width * 0.5 + 2.0;
+        let expanded = rect.expand(expand);
+        self.instances.push(Instance {
+            bounds: [expanded.x, expanded.y, expanded.w, expanded.h],
+            color: [color.r, color.g, color.b, color.a],
+            params: [corner_radius, width, progress.clamp(0.0, 1.0), SHAPE_RECT_STROKE_PROGRESS],
             color_b: [0.0; 4],
         });
     }

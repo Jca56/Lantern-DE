@@ -10,6 +10,7 @@ use std::{
 use smithay::{
     desktop::{PopupManager, Space, Window, WindowSurfaceType},
     input::{Seat, SeatState},
+    output::Output,
     reexports::{
         calloop::{generic::Generic, EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction},
         wayland_server::{
@@ -47,11 +48,14 @@ use crate::cursor::CursorState;
 use crate::gestures::GestureState;
 use crate::ssd::SsdManager;
 use crate::handlers::foreign_toplevel::ForeignToplevelManagerState;
+use crate::handlers::output_management::OutputManagementState;
 use crate::handlers::screencopy::{PendingScreencopy, ScreencopyManagerState};
 use crate::handlers::xdg_foreign::XdgForeignState;
 use crate::hot_corners::HotCornerState;
 use crate::snap::SnappedWindow;
 use crate::switcher::AltTabSwitcher;
+use crate::tiling::PerOutputTiling;
+use crate::tiling_anim::TilingAnimationState;
 use crate::udev::UdevData;
 use crate::wallpaper::WallpaperState;
 
@@ -163,6 +167,7 @@ pub struct Lantern {
     pub screencopy_state: ScreencopyManagerState,
     pub pending_screencopy: Vec<PendingScreencopy>,
     pub foreign_toplevel_state: ForeignToplevelManagerState,
+    pub output_management_state: OutputManagementState,
     pub pointer_gestures_state: PointerGesturesState,
     pub popups: PopupManager,
 
@@ -187,14 +192,18 @@ pub struct Lantern {
     pub wallpaper: WallpaperState,
     pub wallpaper_frame_counter: u32,
     pub layer_surfaces: Vec<LayerSurface>,
+    pub layer_surface_outputs: HashMap<WlSurface, Output>,
     pub window_opacity: HashMap<WlSurface, f32>,
     pub default_window_opacity: f32,
     pub window_zoom: HashMap<WlSurface, f64>,
+    pub focus_follows_mouse: bool,
     pub super_pressed: bool,
     /// True if Super was pressed and no Super+combo was used (for tap detection)
     pub super_clean_tap: bool,
     pub snapped_windows: Vec<SnappedWindow>,
     pub animations: AnimationState,
+    pub tiling: PerOutputTiling,
+    pub tiling_anim: TilingAnimationState,
     pub gesture: GestureState,
     pub canvas: Canvas,
 
@@ -257,6 +266,7 @@ impl Lantern {
         let dmabuf_state = DmabufState::new();
         let screencopy_state = ScreencopyManagerState::new(&dh);
         let foreign_toplevel_state = ForeignToplevelManagerState::new(&dh);
+        let output_management_state = OutputManagementState::new(&dh);
         let xdg_foreign_state = XdgForeignState::new(&dh);
         let pointer_gestures_state = PointerGesturesState::new::<Self>(&dh);
         let xwayland_shell_state = smithay::wayland::xwayland_shell::XWaylandShellState::new::<Self>(&dh);
@@ -297,6 +307,7 @@ impl Lantern {
             screencopy_state,
             pending_screencopy: Vec::new(),
             foreign_toplevel_state,
+            output_management_state,
             pointer_gestures_state,
             popups,
             seat,
@@ -316,13 +327,17 @@ impl Lantern {
             wallpaper: WallpaperState::load_from_config(),
             wallpaper_frame_counter: 0,
             layer_surfaces: Vec::new(),
+            layer_surface_outputs: HashMap::new(),
             window_opacity: HashMap::new(),
             default_window_opacity: crate::read_config_f32("window_opacity", 1.0),
             window_zoom: HashMap::new(),
+            focus_follows_mouse: crate::read_config("window_manager", "focus_follows_mouse", "false") == "true",
             super_pressed: false,
             super_clean_tap: false,
             snapped_windows: Vec::new(),
             animations: AnimationState::new(),
+            tiling: PerOutputTiling::new(),
+            tiling_anim: TilingAnimationState::new(),
             gesture: GestureState::new(),
             canvas: Canvas::new(),
             scratchpad_surface: None,
@@ -387,10 +402,17 @@ impl Lantern {
 
         // Check layer surfaces first (Top/Overlay are above windows)
         // Layer surfaces are in screen-space — no canvas transform
-        let output = self.space.outputs().next();
-        if let Some(output) = output {
-            let output_geo = self.space.output_geometry(output).unwrap_or_default();
+        // Use the output the pointer is on for layer surface positioning
+        // Skip if a fullscreen window covers this output — fullscreen takes priority
+        if let Some(output) = self.output_at_point(pos) {
+            let output_has_fullscreen = self.fullscreen_windows.iter().any(|fw| {
+                self.find_mapped_window(&fw.surface)
+                    .and_then(|w| self.output_for_window(&w))
+                    .map_or(false, |o| o == output)
+            });
+            let output_geo = self.space.output_geometry(&output).unwrap_or_default();
             for ls in &self.layer_surfaces {
+                if output_has_fullscreen { break; }
                 if !ls.alive() {
                     continue;
                 }
@@ -441,8 +463,8 @@ impl Lantern {
         }
 
         // Check Bottom layer surfaces (below windows, above wallpaper)
-        if let Some(output) = self.space.outputs().next() {
-            let output_geo = self.space.output_geometry(output).unwrap_or_default();
+        if let Some(output) = self.output_at_point(pos) {
+            let output_geo = self.space.output_geometry(&output).unwrap_or_default();
             for ls in &self.layer_surfaces {
                 if !ls.alive() { continue; }
                 let cached = with_states(ls.wl_surface(), |states| {
@@ -516,8 +538,7 @@ impl Lantern {
     }
 
     pub fn cycle_desktop_panel(&self) {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-        let path = std::path::PathBuf::from(home).join(".lantern/config/desktop-panel");
+        let path = crate::lantern_home().join("config/desktop-panel");
         let current = std::fs::read_to_string(&path).unwrap_or_default();
         let panels = ["home", "terminal", "files"];
         let idx = panels.iter().position(|p| current.trim() == *p).unwrap_or(0);
@@ -554,7 +575,109 @@ impl Lantern {
         true
     }
 
+    /// Find the output whose geometry contains `point`.
+    /// Falls back to the closest output if the point is between monitors.
+    pub fn output_at_point(&self, point: Point<f64, Logical>) -> Option<Output> {
+        // Exact containment check
+        for output in self.space.outputs() {
+            if let Some(geo) = self.space.output_geometry(output) {
+                if geo.to_f64().contains(point) {
+                    return Some(output.clone());
+                }
+            }
+        }
+        // Fallback: closest output center
+        self.space
+            .outputs()
+            .min_by_key(|o| {
+                let geo = self.space.output_geometry(o).unwrap();
+                let cx = geo.loc.x + geo.size.w / 2;
+                let cy = geo.loc.y + geo.size.h / 2;
+                let dx = point.x - cx as f64;
+                let dy = point.y - cy as f64;
+                (dx * dx + dy * dy) as i64
+            })
+            .cloned()
+    }
+
+    /// Find the output a window lives on by checking which output contains its center.
+    pub fn output_for_window(&self, window: &Window) -> Option<Output> {
+        let loc = self.space.element_location(window)?;
+        let size = window.geometry().size;
+        let center = Point::from((
+            loc.x as f64 + size.w as f64 / 2.0,
+            loc.y as f64 + size.h as f64 / 2.0,
+        ));
+        self.output_at_point(center)
+    }
+
+    /// Combined bounding box of all outputs.
+    pub fn total_output_bounds(&self) -> Rectangle<i32, Logical> {
+        let mut min_x = i32::MAX;
+        let mut min_y = i32::MAX;
+        let mut max_x = i32::MIN;
+        let mut max_y = i32::MIN;
+        for output in self.space.outputs() {
+            if let Some(geo) = self.space.output_geometry(output) {
+                min_x = min_x.min(geo.loc.x);
+                min_y = min_y.min(geo.loc.y);
+                max_x = max_x.max(geo.loc.x + geo.size.w);
+                max_y = max_y.max(geo.loc.y + geo.size.h);
+            }
+        }
+        if min_x == i32::MAX {
+            return Rectangle::default();
+        }
+        Rectangle::new(
+            (min_x, min_y).into(),
+            (max_x - min_x, max_y - min_y).into(),
+        )
+    }
+
     /// Compute the total exclusive zone offsets from all layer surfaces.
+    /// Compute exclusive zone offsets for a specific output.
+    /// Only counts layer surfaces assigned to that output.
+    pub fn exclusive_zone_offsets_for_output(&self, output: &Output) -> (i32, i32, i32, i32) {
+        use smithay::wayland::compositor::with_states;
+        let mut top = 0i32;
+        let mut bottom = 0i32;
+        let mut left = 0i32;
+        let mut right = 0i32;
+
+        let output_name = output.name();
+        for ls in &self.layer_surfaces {
+            if !ls.alive() {
+                continue;
+            }
+            // Only count layer surfaces assigned to this output
+            if let Some(ls_output) = self.layer_surface_outputs.get(ls.wl_surface()) {
+                if ls_output.name() != output_name {
+                    continue;
+                }
+            }
+            let cached = with_states(ls.wl_surface(), |states| {
+                *states.cached_state.get::<LayerSurfaceCachedState>().current()
+            });
+            let zone = match cached.exclusive_zone {
+                ExclusiveZone::Exclusive(v) => v as i32,
+                _ => continue,
+            };
+            let anchor = cached.anchor;
+            if anchor.contains(Anchor::TOP) && !anchor.contains(Anchor::BOTTOM) {
+                top = top.max(zone + cached.margin.top);
+            } else if anchor.contains(Anchor::BOTTOM) && !anchor.contains(Anchor::TOP) {
+                bottom = bottom.max(zone + cached.margin.bottom);
+            } else if anchor.contains(Anchor::LEFT) && !anchor.contains(Anchor::RIGHT) {
+                left = left.max(zone + cached.margin.left);
+            } else if anchor.contains(Anchor::RIGHT) && !anchor.contains(Anchor::LEFT) {
+                right = right.max(zone + cached.margin.right);
+            }
+        }
+
+        (top, bottom, left, right)
+    }
+
+    /// Global exclusive zone offsets (sum across all outputs). Legacy fallback.
     pub fn exclusive_zone_offsets(&self) -> (i32, i32, i32, i32) {
         use smithay::wayland::compositor::with_states;
         let mut top = 0i32;
@@ -583,7 +706,6 @@ impl Lantern {
             } else if anchor.contains(Anchor::RIGHT) && !anchor.contains(Anchor::LEFT) {
                 right = right.max(zone + cached.margin.right);
             }
-            // If anchored to both opposite edges, exclusive zone is neutral per spec
         }
 
         (top, bottom, left, right)

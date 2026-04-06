@@ -44,7 +44,7 @@ impl App {
             let (cell_w, cell_h) = render::measure_cell(self.config.font.size);
             let cols =
                 ((gpu.width() as f32 - self.sidebar_offset()) / cell_w).floor().max(1.0) as usize;
-            let avail_h = gpu.height() as f32 - render::chrome_height();
+            let avail_h = gpu.height() as f32 - self.chrome_height();
             let rows = (avail_h / cell_h).floor().max(1.0) as usize;
             (cols, rows)
         } else {

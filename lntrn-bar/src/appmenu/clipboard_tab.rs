@@ -5,7 +5,7 @@ use std::os::fd::{AsFd, FromRawFd, OwnedFd};
 use std::sync::{mpsc, Arc};
 use std::time::Instant;
 
-use lntrn_render::{Color, Painter, Rect, TextRenderer};
+use lntrn_render::{Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::input::InteractionState;
 use lntrn_ui::gpu::scroll::{ScrollArea, Scrollbar};
 use lntrn_ui::gpu::{FoxPalette, InteractionContext, TextInput};
@@ -66,7 +66,9 @@ impl ClipboardHistory {
         }
     }
 
-    pub fn tick(&mut self) {
+    /// Drain clipboard events. Returns `true` if any new entry was received.
+    pub fn tick(&mut self) -> bool {
+        let mut changed = false;
         while let Ok(event) = self.event_rx.try_recv() {
             match event {
                 ClipEvent::NewEntry(text) => {
@@ -84,9 +86,11 @@ impl ClipboardHistory {
                     if self.entries.len() > MAX_ENTRIES {
                         self.entries.pop();
                     }
+                    changed = true;
                 }
             }
         }
+        changed
     }
 
     pub fn wants_keyboard(&self) -> bool {

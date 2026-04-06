@@ -11,8 +11,8 @@ use crate::svg_icon::IconCache;
 use super::{
     launch_app, uninstall_app, AppMenu, MenuTab,
     CELL_SIZE, FOOTER_ICON_SZ,
-    ICON_SIZE, LABEL_FONT, PADDING, SEARCH_FLOAT_GAP, SEARCH_HEIGHT,
-    TAB_GAP, TAB_SIZE,
+    ICON_SIZE, LABEL_FONT, PADDING, SEARCH_FLOAT_GAP,
+    SIDEBAR_W, TAB_GAP, TAB_SIZE,
     ZONE_BASE, ZONE_CTX, ZONE_POWER, ZONE_TAB,
 };
 
@@ -86,9 +86,14 @@ impl AppMenu {
         // Tab content (full panel height)
         match self.active_tab {
             MenuTab::Apps => {
+                // Category sidebar on the left
+                let sidebar_w = SIDEBAR_W * scale;
+                self.draw_sidebar(painter, text, ix, icon_cache, palette, mx, panel_y, sidebar_w, h, scale, screen_w, screen_h, icon_draws);
+
+                // Grid shifted right by sidebar width
                 self.draw_grid(
                     painter, text, ix, icon_cache, palette,
-                    mx, panel_y, w, h, pad, scale, screen_w, screen_h, icon_draws,
+                    mx + sidebar_w, panel_y, w - sidebar_w, h, pad, scale, screen_w, screen_h, icon_draws,
                 );
             }
             MenuTab::SystemMonitor => {
@@ -123,7 +128,6 @@ impl AppMenu {
         mx: f32, row_y: f32, w: f32, row_h: f32,
         scale: f32, screen_w: u32, screen_h: u32,
     ) {
-        let pad = PADDING * scale;
         let tab_sz = TAB_SIZE * scale;
         let gap = TAB_GAP * scale;
 
@@ -142,8 +146,6 @@ impl AppMenu {
 
         // Tab buttons: right-aligned in the row
         let tabs_start_x = mx + w - tabs_total_w;
-        let tab_cr = 10.0 * scale;
-
         for (i, &tab) in tabs.iter().enumerate() {
             let tx = tabs_start_x + i as f32 * (tab_sz + gap);
             let ty = row_y + (row_h - tab_sz) * 0.5; // vertically center in row
@@ -486,9 +488,12 @@ impl AppMenu {
     ) {
         let Some(app_id) = self.ctx_app_id.clone() else { return; };
 
-        let item_count = 3;
+        let is_fav = self.favorites.contains(&app_id);
+        let fav_label = if is_fav { "Remove from Favorites" } else { "Add to Favorites" };
+
+        let item_count = 4;
         let item_h = 40.0 * scale;
-        let menu_w = 220.0 * scale;
+        let menu_w = 250.0 * scale;
         let menu_h = item_h * item_count as f32 + 8.0 * scale;
         let cr = 10.0 * scale;
         let pad = 4.0 * scale;
@@ -507,10 +512,11 @@ impl AppMenu {
         painter.rect_stroke_sdf(Rect::new(ctx_x, ctx_y, menu_w, menu_h), cr, 1.0 * scale, Color::WHITE.with_alpha(0.08));
 
         let font = 20.0 * scale;
-        let items: [(&str, u32, bool); 3] = [
-            ("Change Icon", ZONE_CTX, false),
-            ("Hide", ZONE_CTX + 1, false),
-            ("Uninstall", ZONE_CTX + 2, true),
+        let items: [(&str, u32, bool); 4] = [
+            (fav_label, ZONE_CTX, false),
+            ("Change Icon", ZONE_CTX + 1, false),
+            ("Hide", ZONE_CTX + 2, false),
+            ("Uninstall", ZONE_CTX + 3, true),
         ];
 
         let mut iy = ctx_y + pad;
@@ -530,14 +536,17 @@ impl AppMenu {
             if state == InteractionState::Pressed {
                 match *zone_id {
                     ZONE_CTX => {
+                        self.toggle_favorite(&app_id);
+                    }
+                    z if z == ZONE_CTX + 1 => {
                         // Open System Settings to App Icons tab
                         launch_app("lntrn-system-settings --panel app-icons");
                     }
-                    z if z == ZONE_CTX + 1 => {
+                    z if z == ZONE_CTX + 2 => {
                         crate::desktop::hide_app(&app_id);
                         self.entries.retain(|e| e.app_id != app_id);
                     }
-                    z if z == ZONE_CTX + 2 => {
+                    z if z == ZONE_CTX + 3 => {
                         uninstall_app(&app_id);
                     }
                     _ => {}

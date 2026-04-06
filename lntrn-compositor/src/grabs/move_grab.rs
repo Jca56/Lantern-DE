@@ -22,6 +22,8 @@ pub struct MoveSurfaceGrab {
     pub was_maximized: bool,
     /// Whether we already restored the window during this drag
     pub restored_this_drag: bool,
+    /// If the window was tiled when the drag started
+    pub was_tiled: bool,
     /// Whether any actual motion happened (for click-without-drag detection)
     pub has_moved: bool,
 }
@@ -36,6 +38,27 @@ impl PointerGrab<Lantern> for MoveSurfaceGrab {
     ) {
         handle.motion(data, None, event);
         self.has_moved = true;
+
+        // If tiled, pop out of the tree on first motion
+        if self.was_tiled && !self.restored_this_drag {
+            self.restored_this_drag = true;
+            let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(&self.window) else { return };
+            data.tiling.remove(&surface);
+            data.tiling_anim.remove(&surface);
+            if data.tiling.active {
+                data.apply_tiling_layout();
+            }
+            // Re-center under cursor like snap/maximize restore
+            let geo = self.window.geometry();
+            let (cx, cy) = data.canvas.screen_to_canvas(event.location.x, event.location.y);
+            let new_x = cx - geo.size.w as f64 / 2.0;
+            let new_y = cy + crate::ssd::SsdManager::bar_height() as f64 / 2.0;
+            let new_loc = Point::from((new_x as i32, new_y as i32));
+            data.space.map_element(self.window.clone(), new_loc, false);
+            self.initial_window_location = new_loc;
+            self.start_data.location = event.location;
+            return;
+        }
 
         // If this window was snapped or maximized, restore it on first drag motion
         // and re-center the window under the cursor.
@@ -106,6 +129,14 @@ impl PointerGrab<Lantern> for MoveSurfaceGrab {
                     if !data.is_maximized(&surface) {
                         data.maximize_request_surface(&surface);
                     }
+                } else if self.was_tiled && self.has_moved && data.tiling.active {
+                    // Re-insert into tiling tree on the output where it was dropped
+                    let output_name = data.output_at_point(pointer_pos)
+                        .or_else(|| data.space.outputs().next().cloned())
+                        .map(|o| o.name())
+                        .unwrap_or_default();
+                    data.tiling.insert(&output_name, surface.clone(), None);
+                    data.apply_tiling_layout();
                 }
             }
 

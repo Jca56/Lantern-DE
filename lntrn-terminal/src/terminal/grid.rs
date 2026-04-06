@@ -248,9 +248,14 @@ impl TerminalState {
             }
         }
 
+        // Only extend rows that are too short — never truncate.
+        // Cells beyond new_cols are preserved (not rendered) so that
+        // growing the window back restores the original content.
         let def_cell = self.default_cell();
         for row in &mut self.grid {
-            row.resize(new_cols, def_cell.clone());
+            if row.len() < new_cols {
+                row.resize(new_cols, def_cell.clone());
+            }
         }
 
         self.cols = new_cols;

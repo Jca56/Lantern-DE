@@ -4,12 +4,9 @@ use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
 const TEXT_PRIMARY: Color   = Color::rgb(0.88, 0.85, 0.95);
 const TEXT_SECONDARY: Color = Color::rgb(0.50, 0.45, 0.62);
-const ACCENT: Color         = Color::rgb(0.25, 0.65, 0.90);     // vibrant cyan-blue
-const ACCENT_HOVER: Color   = Color::rgb(0.30, 0.72, 0.95);
-const PINK: Color           = Color::rgb(0.90, 0.35, 0.55);     // hot pink
-const GREEN: Color          = Color::rgb(0.30, 0.80, 0.50);     // mint green
+const ACCENT: Color         = Color::rgb(0.82, 0.50, 0.02);  // bright gold
+const ACCENT_DIM: Color     = Color::rgb(0.45, 0.18, 0.01);  // dark amber/ember
 const SURFACE: Color        = Color::rgba(0.10, 0.06, 0.18, 0.45);
-const SURFACE_HOVER: Color  = Color::rgba(0.14, 0.08, 0.24, 0.55);
 const WIDGET_BG: Color      = Color::rgba(0.06, 0.03, 0.12, 0.55);
 const BORDER: Color         = Color::rgba(0.35, 0.25, 0.55, 0.25);
 
@@ -52,17 +49,7 @@ fn in_rect(cx: f32, cy: f32, x: f32, y: f32, w: f32, h: f32) -> bool {
 // Layout constants
 const TAB_NAMES: &[&str] = &["Widgets", "Colors", "Layout", "Settings"];
 
-fn swatch_end_y(s: f32, title_h: f32) -> f32 {
-    let swatch_y = title_h + 24.0 * s;
-    let wy = 28.0 * s;
-    let btn_h = 38.0 * s;
-    let row1_y = swatch_y + wy;
-    let row2_label_y = row1_y + btn_h + 16.0 * s;
-    let row2_y = row2_label_y + wy;
-    row2_y + btn_h + 14.0 * s
-}
-
-fn tabs_y(s: f32, title_h: f32) -> f32 { swatch_end_y(s, title_h) }
+fn tabs_y(s: f32, title_h: f32) -> f32 { title_h + 16.0 * s }
 fn widgets_base_y(s: f32, title_h: f32) -> f32 { tabs_y(s, title_h) + 40.0 * s }
 
 pub fn handle_click(
@@ -163,61 +150,10 @@ pub fn draw(
     let col2 = 520.0 * s;
     let label_sz = 16.0 * s;
     let wy = 28.0 * s;
-    let btn_h = 38.0 * s;
-    let btn_r = 8.0 * s;
-
-    // ── Accent color swatches (full width, 2 rows) ──────────────
-
-    let swatch_y = title_h + 24.0 * s;
-    if swatch_y > hf { return; }
-    t.queue("Soft", label_sz, col1, swatch_y, TEXT_SECONDARY, wf, sw, sh);
-    let row1_y = swatch_y + wy;
-    let soft: &[(&str, Color)] = &[
-        ("Cyan",      Color::rgb(0.25, 0.65, 0.90)),
-        ("Pink",      Color::rgb(0.90, 0.35, 0.55)),
-        ("Mint",      Color::rgb(0.30, 0.80, 0.50)),
-        ("Peach",     Color::rgb(0.92, 0.55, 0.35)),
-        ("Lavender",  Color::rgb(0.62, 0.48, 0.88)),
-        ("Gold",      Color::rgb(0.85, 0.72, 0.25)),
-        ("Rose",      Color::rgb(0.82, 0.42, 0.68)),
-    ];
-    let gap = 10.0 * s;
-    let total_gap = gap * (soft.len() - 1) as f32;
-    let btn_w = (wf - col1 * 2.0 - total_gap) / soft.len() as f32;
-    for (i, (name, color)) in soft.iter().enumerate() {
-        let bx = col1 + i as f32 * (btn_w + gap);
-        let hov = in_rect(cx, cy, bx, row1_y, btn_w, btn_h);
-        let c = if hov { color.lighten(0.15) } else { *color };
-        p.rect_filled(Rect::new(bx, row1_y, btn_w, btn_h), btn_r, c);
-        t.queue(name, 14.0 * s, bx + 8.0 * s, row1_y + 10.0 * s,
-            Color::rgb(0.98, 0.98, 1.0), wf, sw, sh);
-    }
-
-    let row2_label_y = row1_y + btn_h + 16.0 * s;
-    if row2_label_y > hf { return; }
-    t.queue("Deep", label_sz, col1, row2_label_y, TEXT_SECONDARY, wf, sw, sh);
-    let row2_y = row2_label_y + wy;
-    let deep: [(&str, Color); 7] = [
-        ("Navy",      Color::from_rgb8(20, 40, 120)),
-        ("Blood",     Color::from_rgb8(140, 15, 15)),
-        ("Forest",    Color::from_rgb8(15, 120, 30)),
-        ("Ember",     Color::from_rgb8(160, 60, 10)),
-        ("Plum",      Color::from_rgb8(100, 20, 120)),
-        ("Amber",     Color::from_rgb8(180, 140, 15)),
-        ("Slate",     Color::from_rgb8(45, 55, 80)),
-    ];
-    for (i, (name, color)) in deep.iter().enumerate() {
-        let bx = col1 + i as f32 * (btn_w + gap);
-        let hov = in_rect(cx, cy, bx, row2_y, btn_w, btn_h);
-        let c = if hov { color.lighten(0.15) } else { *color };
-        p.rect_filled(Rect::new(bx, row2_y, btn_w, btn_h), btn_r, c);
-        t.queue(name, 14.0 * s, bx + 6.0 * s, row2_y + 10.0 * s,
-            Color::rgb(0.98, 0.98, 1.0), wf, sw, sh);
-    }
 
     // ── Tabs ────────────────────────────────────────────────────────
 
-    let tabs_y = row2_y + btn_h + 14.0 * s;
+    let tabs_y = title_h + 16.0 * s;
     if tabs_y > hf { return; }
     let tab_h = 34.0 * s;
     let mut tx = col1;
@@ -227,17 +163,12 @@ pub fn draw(
         let hov = in_rect(cx, cy, tx, tabs_y, tw, tab_h);
         if active {
             p.rect_filled(Rect::new(tx, tabs_y, tw, tab_h), 8.0 * s, SURFACE);
-            // Active underline
-            p.rect_filled(
-                Rect::new(tx + 8.0 * s, tabs_y + tab_h - 2.5 * s, tw - 16.0 * s, 2.5 * s),
-                1.0 * s, ACCENT,
-            );
         } else if hov {
             p.rect_filled(Rect::new(tx, tabs_y, tw, tab_h), 8.0 * s,
                 WIDGET_BG.with_alpha(0.3));
         }
-        let tc = if active { TEXT_PRIMARY } else { TEXT_SECONDARY };
-        t.queue(TAB_NAMES[i], 15.0 * s, tx + 12.0 * s, tabs_y + 8.0 * s, tc, wf, sw, sh);
+        let tc = if active { ACCENT } else { TEXT_SECONDARY };
+        t.queue(TAB_NAMES[i], 18.0 * s, tx + 12.0 * s, tabs_y + 6.0 * s, tc, wf, sw, sh);
         tx += tw + 6.0 * s;
     }
     // Tab bar bottom line
@@ -270,11 +201,14 @@ pub fn draw(
     let track_h = 5.0 * s;
     p.rect_filled(Rect::new(col1, sl_y, track_w, track_h), 3.0 * s, WIDGET_BG);
     let fill_w = track_w * gs.slider_value;
-    p.rect_filled(Rect::new(col1, sl_y, fill_w, track_h), 3.0 * s, ACCENT);
+    p.rect_gradient_linear(
+        Rect::new(col1, sl_y, fill_w, track_h), 3.0 * s,
+        0.0, ACCENT_DIM, ACCENT,
+    );
     let tx = col1 + fill_w;
     let ty = sl_y + track_h * 0.5;
     p.circle_filled(tx, ty, 9.0 * s, ACCENT);
-    p.circle_filled(tx, ty, 5.0 * s, Color::rgb(0.95, 0.95, 1.0));
+    p.circle_filled(tx, ty, 5.0 * s, Color::rgb(0.95, 0.92, 0.85));
     let val_str = format!("{:.0}%", gs.slider_value * 100.0);
     t.queue(&val_str, 14.0 * s, col1 + track_w + 14.0 * s, r2 + 28.0 * s,
         TEXT_SECONDARY, wf, sw, sh);
@@ -288,7 +222,7 @@ pub fn draw(
     p.rect_filled(Rect::new(col1, pg_y, track_w, pg_h), 4.0 * s, WIDGET_BG);
     p.rect_gradient_linear(
         Rect::new(col1, pg_y, track_w * gs.progress, pg_h), 4.0 * s,
-        0.0, ACCENT, GREEN,
+        0.0, ACCENT_DIM, ACCENT,
     );
 
     // ── Column 2 ────────────────────────────────────────────────────
@@ -300,7 +234,7 @@ pub fn draw(
     let tog_h = 26.0 * s;
     let tog_r = tog_h * 0.5;
     let tsz = 20.0 * s;
-    let tog_bg = if gs.toggle_on { GREEN } else { WIDGET_BG };
+    let tog_bg = if gs.toggle_on { ACCENT } else { WIDGET_BG };
     p.rect_filled(Rect::new(col2, tog_y, tog_w, tog_h), tog_r, tog_bg);
     if !gs.toggle_on {
         p.rect_stroke_sdf(Rect::new(col2, tog_y, tog_w, tog_h), tog_r, 1.0 * s, BORDER);
@@ -356,7 +290,7 @@ pub fn draw(
     let br = bh * 0.5;
     let badges: &[(&str, Color)] = &[
         ("New", ACCENT),
-        ("Beta", PINK),
+        ("Beta", ACCENT.darken(0.3)),
         ("v1.0", SURFACE),
     ];
     let mut bx = col2;

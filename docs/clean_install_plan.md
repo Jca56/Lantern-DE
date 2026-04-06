@@ -35,8 +35,11 @@ ttf-dejavu noto-fonts
 # Lantern build dependencies (libraries we link against)
 libxkbcommon libinput dbus
 
+# Bluetooth
+bluez bluez-utils
+
 # Misc tools you'll probably want
-unzip wget man-db
+unzip wget man-db rsync
 ```
 
 ### Post-Install Steps
@@ -69,10 +72,10 @@ ExecStart=
 ExecStart=-/usr/bin/agetty --autologin alva --noclear %I $TERM
 EOF
 
-# 7. Auto-start compositor from zsh profile
+# 7. Auto-start session manager from zsh profile
 # Add to ~/.zprofile:
 if [ -z "$WAYLAND_DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
-    exec ~/.lantern/bin/lntrn-compositor
+    exec ~/.lantern/bin/lntrn-session-manager
 fi
 ```
 

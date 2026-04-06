@@ -4,6 +4,7 @@ use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
+use winit::platform::wayland::WindowAttributesExtWayland;
 use winit::window::{Window, WindowAttributes, WindowId};
 
 use lntrn_render::{Color, GpuContext, Painter, Rect, TextRenderer};
@@ -13,10 +14,10 @@ use calc::{Calculator, Op};
 // ── Layout constants (logical pixels, multiplied by scale at render time) ────
 
 const WIN_W: f32 = 340.0;
-const WIN_H: f32 = 520.0;
+const WIN_H: f32 = 550.0;
 
 const PADDING: f32 = 16.0;
-const DISPLAY_H: f32 = 120.0;
+const DISPLAY_H: f32 = 150.0;
 const BTN_GAP: f32 = 10.0;
 const BTN_ROWS: usize = 5;
 const BTN_COLS: usize = 4;
@@ -25,23 +26,25 @@ const BTN_RADIUS: f32 = 14.0;
 
 // ── Colors — frosted glass + mint/teal accent ───────────────────────────────
 
-const GLASS_BG: Color = Color::rgba(0.10, 0.14, 0.22, 0.92);
-const GLASS_SURFACE: Color = Color::rgba(0.5, 0.6, 0.8, 0.08);
-const GLASS_BTN: Color = Color::rgba(0.5, 0.6, 0.8, 0.12);
-const GLASS_BTN_HOVER: Color = Color::rgba(0.5, 0.65, 0.85, 0.22);
-const GLASS_BTN_PRESS: Color = Color::rgba(0.5, 0.65, 0.85, 0.30);
+const GLASS_BG_R: f32 = 0.08;
+const GLASS_BG_G: f32 = 0.11;
+const GLASS_BG_B: f32 = 0.18;
+const GLASS_SURFACE: Color = Color::rgba(0.5, 0.6, 0.8, 0.12);
+const GLASS_BTN: Color = Color::rgba(0.5, 0.6, 0.8, 0.16);
+const GLASS_BTN_HOVER: Color = Color::rgba(0.52, 0.65, 0.85, 0.26);
+const GLASS_BTN_PRESS: Color = Color::rgba(0.52, 0.65, 0.85, 0.34);
 const CLOSE_BTN: Color = Color::rgba(1.0, 1.0, 1.0, 0.0);
-const CLOSE_BTN_HOVER: Color = Color::rgba(1.0, 0.35, 0.35, 0.6);
+const CLOSE_BTN_HOVER: Color = Color::rgba(0.9, 0.3, 0.3, 0.55);
 
-const ACCENT: Color = Color::rgba(0.376, 0.839, 0.757, 1.0); // mint/teal #60D6C1
-const ACCENT_HOVER: Color = Color::rgba(0.439, 0.878, 0.800, 1.0);
-const ACCENT_PRESS: Color = Color::rgba(0.502, 0.918, 0.843, 1.0);
+const ACCENT: Color = Color::rgba(0.32, 0.75, 0.68, 1.0);
+const ACCENT_HOVER: Color = Color::rgba(0.38, 0.80, 0.72, 1.0);
+const ACCENT_PRESS: Color = Color::rgba(0.44, 0.85, 0.77, 1.0);
 
-const TEXT_PRIMARY: Color = Color::rgba(1.0, 1.0, 1.0, 0.95);
-const TEXT_SECONDARY: Color = Color::rgba(1.0, 1.0, 1.0, 0.55);
-const TEXT_ON_ACCENT: Color = Color::rgba(0.05, 0.15, 0.12, 1.0);
+const TEXT_PRIMARY: Color = Color::rgba(0.92, 0.92, 0.92, 0.92);
+const TEXT_SECONDARY: Color = Color::rgba(0.85, 0.85, 0.85, 0.50);
+const TEXT_ON_ACCENT: Color = Color::rgba(0.04, 0.12, 0.10, 1.0);
 
-const OP_TEXT: Color = Color::rgba(0.376, 0.839, 0.757, 1.0); // mint for operator labels
+const OP_TEXT: Color = Color::rgba(0.32, 0.75, 0.68, 1.0);
 
 const FONT_DISPLAY: f32 = 44.0;
 const FONT_EXPR: f32 = 20.0;
@@ -58,6 +61,7 @@ enum BtnKind {
     Negate,
     Percent,
     Decimal,
+    Paren,
 }
 
 #[derive(Clone, Copy)]
@@ -76,14 +80,10 @@ const fn btn_accent(label: &'static str, kind: BtnKind) -> BtnDef {
     BtnDef { label, kind, col_span: 1, accent: true }
 }
 
-const fn btn_wide(label: &'static str, kind: BtnKind) -> BtnDef {
-    BtnDef { label, kind, col_span: 2, accent: false }
-}
-
-const BUTTONS: [BtnDef; 19] = [
-    // Row 0: AC  ±  %  ÷
+const BUTTONS: [BtnDef; 20] = [
+    // Row 0: AC  ()  %  ÷
     btn("AC", BtnKind::Clear),
-    btn("\u{00b1}", BtnKind::Negate),
+    btn("( )", BtnKind::Paren),
     btn("%", BtnKind::Percent),
     btn_accent("\u{00f7}", BtnKind::Op(Op::Div)),
     // Row 1: 7  8  9  ×
@@ -101,8 +101,9 @@ const BUTTONS: [BtnDef; 19] = [
     btn("2", BtnKind::Digit('2')),
     btn("3", BtnKind::Digit('3')),
     btn_accent("+", BtnKind::Op(Op::Add)),
-    // Row 4: 0(wide)  .  =
-    btn_wide("0", BtnKind::Digit('0')),
+    // Row 4: ±  0  .  =
+    btn("\u{00b1}", BtnKind::Negate),
+    btn("0", BtnKind::Digit('0')),
     btn(".", BtnKind::Decimal),
     btn_accent("=", BtnKind::Equals),
 ];
@@ -122,11 +123,13 @@ struct CalcApp {
     gpu: Option<Gpu>,
     calc: Calculator,
     scale: f32,
+    bg_opacity: f32,
     needs_redraw: bool,
     cursor: Option<(f32, f32)>,
     pressed_btn: Option<usize>,
     btn_rects: Vec<Rect>,
     close_rect: Rect,
+    backspace_rect: Rect,
 }
 
 impl CalcApp {
@@ -136,11 +139,13 @@ impl CalcApp {
             gpu: None,
             calc: Calculator::new(),
             scale: 1.0,
+            bg_opacity: lntrn_theme::background_opacity() * 0.8,
             needs_redraw: true,
             cursor: None,
             pressed_btn: None,
             btn_rects: Vec::new(),
             close_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
+            backspace_rect: Rect::new(0.0, 0.0, 0.0, 0.0),
         }
     }
 
@@ -163,6 +168,7 @@ impl CalcApp {
             BtnKind::Negate => self.calc.press_negate(),
             BtnKind::Percent => self.calc.press_percent(),
             BtnKind::Decimal => self.calc.press_digit('.'),
+            BtnKind::Paren => self.calc.press_smart_paren(),
         }
     }
 
@@ -185,6 +191,8 @@ impl CalcApp {
                 "*" => self.calc.press_operator(Op::Mul),
                 "/" => self.calc.press_operator(Op::Div),
                 "%" => self.calc.press_percent(),
+                "(" => self.calc.press_smart_paren(),
+                ")" => self.calc.press_smart_paren(),
                 _ => {}
             },
             Key::Named(NamedKey::Enter) => self.calc.press_equals(),
@@ -212,23 +220,46 @@ impl CalcApp {
         painter.clear();
 
         // ── Window background — frosted glass panel ──────────────────────
-        // Main glass background
-        painter.rect_filled(Rect::new(0.0, 0.0, w, h), CORNER_RADIUS * s, GLASS_BG);
-        // ── Close button (top-right) ────────────────────────────────────
-        let close_size = 24.0 * s;
-        let close_margin = 10.0 * s;
+        // Main glass background — alpha from system-settings opacity
+        let glass_bg = Color::rgba(GLASS_BG_R, GLASS_BG_G, GLASS_BG_B, self.bg_opacity);
+        painter.rect_filled(Rect::new(0.0, 0.0, w, h), CORNER_RADIUS * s, glass_bg);
+
+        // ── Display area ─────────────────────────────────────────────────
+        let display_rect = Rect::new(pad, pad, w - pad * 2.0, DISPLAY_H * s);
+        painter.rect_filled(display_rect, 14.0 * s, GLASS_SURFACE);
+
+        // ── Backspace button (top-left of display) ─────────────────────
+        let icon_size = 28.0 * s;
+        let icon_pad = 10.0 * s;
+        self.backspace_rect = Rect::new(
+            display_rect.x + icon_pad,
+            display_rect.y + icon_pad,
+            icon_size,
+            icon_size,
+        );
+        let bksp_hovered = self.cursor.map_or(false, |(cx, cy)| self.backspace_rect.contains(cx, cy));
+        let bksp_bg = if bksp_hovered { GLASS_BTN_HOVER } else { Color::rgba(0.0, 0.0, 0.0, 0.0) };
+        painter.rect_filled(self.backspace_rect, 6.0 * s, bksp_bg);
+        let icon_font = 20.0 * s;
+        let bksp_label = "\u{232b}";
+        let bksp_lw = text.measure_width(bksp_label, icon_font);
+        let bksp_lx = self.backspace_rect.x + (self.backspace_rect.w - bksp_lw) / 2.0;
+        let bksp_ly = self.backspace_rect.y + (self.backspace_rect.h - icon_font) / 2.0;
+        let bksp_color = if bksp_hovered { TEXT_PRIMARY } else { TEXT_SECONDARY };
+        text.queue(bksp_label, icon_font, bksp_lx, bksp_ly, bksp_color, icon_size, sw, 0);
+
+        // ── Close button (top-right of display) ─────────────────────────
         self.close_rect = Rect::new(
-            w - close_size - close_margin,
-            close_margin,
-            close_size,
-            close_size,
+            display_rect.x + display_rect.w - icon_size - icon_pad,
+            display_rect.y + icon_pad,
+            icon_size,
+            icon_size,
         );
         let close_hovered = self.cursor.map_or(false, |(cx, cy)| self.close_rect.contains(cx, cy));
         let close_bg = if close_hovered { CLOSE_BTN_HOVER } else { CLOSE_BTN };
         painter.rect_filled(self.close_rect, 6.0 * s, close_bg);
-        // Draw X with two lines
-        let cx = self.close_rect.x + close_size / 2.0;
-        let cy = self.close_rect.y + close_size / 2.0;
+        let cx = self.close_rect.x + icon_size / 2.0;
+        let cy = self.close_rect.y + icon_size / 2.0;
         let arm = 5.0 * s;
         let x_color = if close_hovered {
             Color::rgba(1.0, 1.0, 1.0, 0.95)
@@ -238,18 +269,24 @@ impl CalcApp {
         painter.line(cx - arm, cy - arm, cx + arm, cy + arm, 1.5 * s, x_color);
         painter.line(cx + arm, cy - arm, cx - arm, cy + arm, 1.5 * s, x_color);
 
-        // ── Display area ─────────────────────────────────────────────────
-        let display_rect = Rect::new(pad, pad, w - pad * 2.0, DISPLAY_H * s);
-        painter.rect_filled(display_rect, 14.0 * s, GLASS_SURFACE);
-
-        // Expression (top-right of display)
-        let expr = &self.calc.expression;
-        if !expr.is_empty() {
-            let expr_w = text.measure_width(expr, FONT_EXPR * s);
+        // Expression / formula (top-right of display)
+        // Build full formula: expression so far + current input
+        let formula = if !self.calc.expression.is_empty() {
+            if self.calc.start_new {
+                self.calc.expression.clone()
+            } else {
+                format!("{}{}", self.calc.expression, self.calc.display)
+            }
+        } else {
+            String::new()
+        };
+        if !formula.is_empty() {
+            let expr_font = FONT_EXPR * s;
+            let expr_w = text.measure_width(&formula, expr_font);
             let expr_x = display_rect.x + display_rect.w - expr_w - 12.0 * s;
-            let expr_y = display_rect.y + 14.0 * s;
+            let expr_y = display_rect.y + icon_size + icon_pad + 4.0 * s;
             text.queue(
-                expr, FONT_EXPR * s, expr_x, expr_y,
+                &formula, expr_font, expr_x, expr_y,
                 TEXT_SECONDARY, display_rect.w, sw, 0,
             );
         }
@@ -268,7 +305,7 @@ impl CalcApp {
         let disp_y = display_rect.y + display_rect.h - display_size - 16.0 * s;
         text.queue(
             display_str, display_size, disp_x, disp_y,
-            TEXT_PRIMARY, display_rect.w, sw, 0,
+            ACCENT, display_rect.w, sw, 0,
         );
 
         // ── Buttons grid ─────────────────────────────────────────────────
@@ -315,8 +352,9 @@ impl CalcApp {
                 } else {
                     GLASS_BTN
                 };
-                // Top row (AC, ±, %) get slightly different text
-                let tc = if matches!(def.kind, BtnKind::Clear | BtnKind::Negate | BtnKind::Percent) {
+                // Function buttons get accent-colored text
+                let tc = if matches!(def.kind, BtnKind::Clear | BtnKind::Negate | BtnKind::Percent
+                    | BtnKind::Paren) {
                     OP_TEXT
                 } else {
                     TEXT_PRIMARY
@@ -370,6 +408,7 @@ impl ApplicationHandler for CalcApp {
 
         let attrs = WindowAttributes::default()
             .with_title("lntrn-calculator")
+            .with_name("lntrn-calculator", "lntrn-calculator")
             .with_inner_size(winit::dpi::LogicalSize::new(WIN_W, WIN_H))
             .with_decorations(false)
             .with_transparent(true)
@@ -437,6 +476,12 @@ impl ApplicationHandler for CalcApp {
                                     self.gpu = None;
                                     self.window = None;
                                     event_loop.exit();
+                                    return;
+                                }
+                                // Backspace button
+                                if self.backspace_rect.contains(cx, cy) {
+                                    self.calc.press_backspace();
+                                    self.needs_redraw = true;
                                     return;
                                 }
                                 if let Some(idx) = self.btn_at(cx, cy) {

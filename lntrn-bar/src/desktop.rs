@@ -41,6 +41,20 @@ impl Category {
             Category::Games => "Games",
         }
     }
+
+    /// SVG icon filename in ~/.lantern/icons/
+    pub fn icon_file(self) -> &'static str {
+        match self {
+            Category::Favorites => "spark-menu-favorites.svg",
+            Category::All => "spark-menu-all.svg",
+            Category::Internet => "spark-menu-internet.svg",
+            Category::Office => "spark-menu-settings.svg",
+            Category::Media => "spark-menu-media.svg",
+            Category::Dev => "spark-menu-development.svg",
+            Category::System => "spark-menu-system.svg",
+            Category::Games => "spark-menu-graphics.svg",
+        }
+    }
 }
 
 /// Map a freedesktop Categories= value to our condensed category.
@@ -224,13 +238,13 @@ fn data_home() -> PathBuf {
         })
 }
 
-fn data_dirs() -> Vec<PathBuf> {
+pub fn data_dirs() -> Vec<PathBuf> {
     let dirs_str = std::env::var("XDG_DATA_DIRS")
         .unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
     dirs_str.split(':').map(PathBuf::from).collect()
 }
 
-mod dirs {
+pub mod dirs {
     use super::*;
     pub fn data_home() -> PathBuf { super::data_home() }
 }

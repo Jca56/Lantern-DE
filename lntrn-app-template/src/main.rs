@@ -1,3 +1,4 @@
+mod chrome;
 mod dispatch;
 mod gallery;
 mod popup_backend;

@@ -246,7 +246,7 @@ pub fn init_winit(
                             state.wallpaper_frame_counter = 0;
                             state.wallpaper.reload_if_changed();
                         }
-                        if let Some(wallpaper) = state.wallpaper.render_element(renderer, output_geo, scale) {
+                        if let Some(wallpaper) = state.wallpaper.render_element(renderer, output_geo.size, scale) {
                             elements.push(WinitRenderElements::Wallpaper(wallpaper));
                         }
 

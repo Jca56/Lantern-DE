@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <!-- Door outline -->
+  <path d="M10,3 L4,3 L4,21 L10,21" fill="none" stroke="#0a0a0a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" opacity="0.35"/>
+  <!-- Arrow outline -->
+  <line x1="9" y1="12" x2="21" y2="12" stroke="#0a0a0a" stroke-width="4" stroke-linecap="round" opacity="0.35"/>
+  <polyline points="17,8 21,12 17,16" fill="none" stroke="#0a0a0a" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" opacity="0.35"/>
+  <!-- Door -->
+  <path d="M10,3 L4,3 L4,21 L10,21" fill="none" stroke="#ff8844" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Arrow -->
+  <line x1="9" y1="12" x2="21" y2="12" stroke="#ff8844" stroke-width="2.2" stroke-linecap="round"/>
+  <polyline points="17,8 21,12 17,16" fill="none" stroke="#ff8844" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Door knob -->
+  <circle cx="8.5" cy="12" r="1.2" fill="#ff8844" stroke="#0a0a0a" stroke-width="1"/>
+</svg>

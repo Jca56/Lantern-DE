@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <defs>
+    <filter id="glow" x="-40%" y="-30%" width="180%" height="160%">
+      <feDropShadow dx="0" dy="0" stdDeviation="1.5" flood-color="#ffcc44" flood-opacity="0.8"/>
+    </filter>
+  </defs>
+  <g filter="url(#glow)">
+    <!-- Bell body with black outline -->
+    <path d="M12,3 C8,3 6,6 6,10 L6,15 L4,17 L20,17 L18,15 L18,10 C18,6 16,3 12,3 Z"
+          fill="#ffcc44" stroke="#0a0a0a" stroke-width="1.5" stroke-linejoin="round"/>
+    <!-- Clapper -->
+    <path d="M10,17 Q10,20 12,20 Q14,20 14,17"
+          fill="#ffcc44" stroke="#0a0a0a" stroke-width="1.5" stroke-linecap="round"/>
+    <!-- Top stem -->
+    <line x1="12" y1="1.5" x2="12" y2="4" stroke="#0a0a0a" stroke-width="2" stroke-linecap="round"/>
+    <line x1="12" y1="2" x2="12" y2="4" stroke="#ffcc44" stroke-width="1.5" stroke-linecap="round"/>
+    <!-- Notification dot -->
+    <circle cx="18" cy="5" r="3.5" fill="#ff3a3a" stroke="#0a0a0a" stroke-width="1.2"/>
+  </g>
+</svg>

@@ -18,6 +18,11 @@ impl App {
         let sub_pixel_y = self.sync_scroll_to_terminal();
         let sb_offset = self.sidebar_offset();
 
+        let font_size = self.effective_font_size();
+        let chrome_h = self.chrome_height();
+        let tab_bar_visible = self.tab_bar_visible;
+        let mode = self.config.window.mode.clone();
+        let cursor_pos = self.cursor_pos;
         let gpu = match self.gpu.as_ref() {
             Some(g) => g,
             None => return,
@@ -54,10 +59,11 @@ impl App {
             screen_w as f32,
             screen_h as f32,
             maximized,
+            tab_bar_visible,
+            &mode,
         );
 
         // Draw sidebar file browser
-        let chrome_h = render::chrome_height();
         sidebar::draw_sidebar(
             painter,
             text,
@@ -70,15 +76,15 @@ impl App {
 
         // Render all panes in the active tab
         let tab_ref = &self.tabs[self.active_tab];
-        let rects = Self::pane_rects_for_tab(tab_ref, screen_w, screen_h, sb_offset);
+        let rects = Self::pane_rects_for_tab(tab_ref, screen_w, screen_h, sb_offset, chrome_h);
         let tab = &self.tabs[self.active_tab];
-        let cell_h = render::measure_cell(self.config.font.size).1;
+        let cell_h = render::measure_cell(font_size).1;
         for (i, pane) in tab.panes.iter().enumerate() {
             if i >= rects.len() {
                 break;
             }
             let (gx, gy, gw, gh) =
-                Self::pane_grid_bounds(pane, rects[i], self.config.font.size);
+                Self::pane_grid_bounds(pane, rects[i], font_size);
             let is_focused = i == tab.active_pane;
             let is_active_pane = i == tab.active_pane;
 
@@ -94,7 +100,7 @@ impl App {
                 painter,
                 text,
                 &pane.terminal,
-                self.config.font.size,
+                font_size,
                 (gx, gy - pane_sub_pixel),
                 screen_w,
                 screen_h,
@@ -121,7 +127,7 @@ impl App {
                     lntrn_ui::gpu::input::InteractionState::Pressed
                 } else if self
                     .cursor_pos
-                    .map_or(false, |(cx, cy)| scrollbar.track.contains(cx, cy))
+                    .map_or(false, |(cx, cy)| scrollbar.hover_zone().contains(cx, cy))
                 {
                     lntrn_ui::gpu::input::InteractionState::Hovered
                 } else {
@@ -162,24 +168,29 @@ impl App {
             &mut self.input,
             screen_w,
             screen_h,
-            self.config.font.size,
+            font_size,
             self.config.window.opacity,
             self.sidebar.visible,
             maximized,
             1.0,
+            &mode,
+            cursor_pos,
         );
 
-        // Draw tab bar (separate row below title bar)
-        tab_bar::draw_tab_bar(
-            painter,
-            text,
-            &self.tab_bar,
-            &tab_displays,
-            self.active_tab,
-            screen_w,
-            screen_h,
-            self.cursor_pos,
-        );
+        // Draw tab bar (auto-hides, appears on hover)
+        if tab_bar_visible {
+            tab_bar::draw_tab_bar(
+                painter,
+                text,
+                &self.tab_bar,
+                &tab_displays,
+                self.active_tab,
+                screen_w,
+                screen_h,
+                self.cursor_pos,
+                &mode,
+            );
+        }
 
         let has_overlay = self.chrome.has_overlay() || self.tab_bar.has_overlay() || self.sidebar.has_overlay();
 
@@ -231,6 +242,17 @@ impl App {
                         _ => {}
                     }
                 }
+                if let MenuEvent::RadioSelected { id, .. } = event {
+                    match *id {
+                        ui_chrome::MENU_MODE_FOX => {
+                            self.config.window.mode = crate::config::WindowMode::Fox;
+                        }
+                        ui_chrome::MENU_MODE_NIGHT_SKY => {
+                            self.config.window.mode = crate::config::WindowMode::NightSky;
+                        }
+                        _ => {}
+                    }
+                }
             }
 
             // Tab context menu overlay
@@ -242,6 +264,7 @@ impl App {
                 screen_w,
                 screen_h,
                 self.cursor_pos,
+                &mode,
             );
 
             // Sidebar context menu overlay
@@ -278,6 +301,10 @@ impl App {
                 Self::handle_render_error(e, &mut self.gpu);
             }
         }
+
+        // If the base font size changed (e.g. via slider), the effective size
+        // may now differ from what update_grid_size last used — resync.
+        self.update_grid_size();
     }
 
     pub(crate) fn handle_render_error(

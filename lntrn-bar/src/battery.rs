@@ -83,10 +83,13 @@ impl Battery {
         Some(bat)
     }
 
-    /// Re-read sysfs if enough time has passed.
-    pub fn tick(&mut self) {
+    /// Re-read sysfs if enough time has passed. Returns `true` if new data was read.
+    pub fn tick(&mut self) -> bool {
         if self.last_poll.elapsed().as_millis() >= POLL_INTERVAL_MS as u128 {
             self.poll_sysfs();
+            true
+        } else {
+            false
         }
     }
 
@@ -520,7 +523,13 @@ fn find_battery() -> Option<PathBuf> {
         let path = entry.path();
         if let Ok(typ) = std::fs::read_to_string(path.join("type")) {
             if typ.trim() == "Battery" {
-                // Make sure it has capacity
+                // Skip peripheral batteries (mice, headsets, etc.) —
+                // only show the system/laptop battery.
+                if let Ok(scope) = std::fs::read_to_string(path.join("scope")) {
+                    if scope.trim() == "Device" {
+                        continue;
+                    }
+                }
                 if path.join("capacity").exists() {
                     return Some(path);
                 }

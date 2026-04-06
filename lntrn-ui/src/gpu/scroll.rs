@@ -67,9 +67,9 @@ impl ScrollArea {
     }
 }
 
-const MIN_THUMB_H: f32 = 24.0;
-const SCROLLBAR_W: f32 = 8.0;
-const SCROLLBAR_PAD: f32 = 3.0;
+const MIN_THUMB_H: f32 = 30.0;
+const SCROLLBAR_W: f32 = 14.0;
+const SCROLLBAR_PAD: f32 = 4.0;
 
 /// Vertical scrollbar with track + thumb rendering and hit-test math.
 pub struct Scrollbar {
@@ -122,7 +122,19 @@ impl Scrollbar {
         fraction * max_offset
     }
 
+    /// Width of the hover zone (wider than the visible bar for easy targeting).
+    pub fn hover_zone(&self) -> Rect {
+        let pad = 10.0;
+        Rect::new(
+            self.track.x - pad,
+            self.track.y,
+            self.track.w + pad * 2.0,
+            self.track.h,
+        )
+    }
+
     /// Draw the scrollbar track and thumb.
+    /// Hidden when Idle — only appears on hover or drag.
     pub fn draw(
         &self,
         painter: &mut Painter,
@@ -133,14 +145,19 @@ impl Scrollbar {
             return; // No scrollbar needed
         }
 
+        // Hidden when idle — auto-hide until hover
+        if matches!(state, InteractionState::Idle) {
+            return;
+        }
+
         // Track
         painter.rect_filled(self.track, SCROLLBAR_W * 0.5, palette.bg.with_alpha(0.3));
 
         // Thumb
         let thumb_color = match state {
             InteractionState::Pressed | InteractionState::Dragging => palette.accent,
-            InteractionState::Hovered => palette.text_secondary.with_alpha(0.6),
-            InteractionState::Idle => palette.accent.with_alpha(0.5),
+            InteractionState::Hovered => palette.text_secondary.with_alpha(0.7),
+            InteractionState::Idle => unreachable!(),
         };
         painter.rect_filled(self.thumb, SCROLLBAR_W * 0.5, thumb_color);
     }

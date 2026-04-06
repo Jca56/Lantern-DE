@@ -77,9 +77,9 @@ impl CompositorHandler for Lantern {
                 use smithay::wayland::shell::wlr_layer::LayerSurfaceCachedState;
 
                 let output_geo = self
-                    .space
-                    .outputs()
-                    .next()
+                    .layer_surface_outputs
+                    .get(surface)
+                    .or_else(|| self.space.outputs().next())
                     .and_then(|o| self.space.output_geometry(o));
 
                 if let Some(geo) = output_geo {

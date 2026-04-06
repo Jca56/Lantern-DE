@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <defs>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="0" stdDeviation="1.5" flood-color="#44aaff" flood-opacity="0.8"/>
+    </filter>
+  </defs>
+  <g filter="url(#glow)">
+    <!-- Main vertical stem -->
+    <line x1="12" y1="4" x2="12" y2="18" stroke="#44aaff" stroke-width="2" stroke-linecap="round"/>
+
+    <!-- Top circle -->
+    <circle cx="12" cy="4" r="2.5" fill="none" stroke="#44aaff" stroke-width="2"/>
+
+    <!-- Left branch -->
+    <line x1="12" y1="9"  x2="7"  y2="9"  stroke="#44aaff" stroke-width="2" stroke-linecap="round"/>
+    <rect  x="5"  y="7"   width="4" height="4" rx="1" fill="none" stroke="#44aaff" stroke-width="1.8"/>
+
+    <!-- Right branch -->
+    <line x1="12" y1="14" x2="17" y2="14" stroke="#44aaff" stroke-width="2" stroke-linecap="round"/>
+    <circle cx="18.5" cy="14" r="2" fill="none" stroke="#44aaff" stroke-width="1.8"/>
+
+    <!-- Bottom plug -->
+    <rect x="9" y="18" width="6" height="3.5" rx="1" fill="#44aaff"/>
+    <rect x="8" y="21" width="8" height="2"   rx="1" fill="#44aaff"/>
+  </g>
+</svg>

@@ -385,7 +385,7 @@ impl Audio {
 
     pub fn draw_slider(
         &self, painter: &mut Painter, ix: &mut InteractionContext, palette: &FoxPalette,
-        x: f32, y: f32, w: f32, h: f32, scale: f32,
+        x: f32, y: f32, w: f32, h: f32, _scale: f32,
         frac: f32, is_muted: bool, zone_id: u32,
     ) {
         let track_r = h / 2.0;

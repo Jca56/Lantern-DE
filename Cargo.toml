@@ -30,6 +30,7 @@ members = [
     "lntrn-calculator",
     "lntrn-dbus",
     "lntrn-app-template",
+    "lntrn-sysmon",
 ]
 
 [profile.release]

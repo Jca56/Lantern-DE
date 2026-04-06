@@ -34,6 +34,12 @@ impl Op {
     }
 }
 
+/// Saved state when entering a parenthesized sub-expression.
+struct ParenFrame {
+    accumulator: Option<f64>,
+    pending_op: Option<Op>,
+}
+
 pub struct Calculator {
     /// The text currently being entered / displayed.
     pub display: String,
@@ -44,9 +50,11 @@ pub struct Calculator {
     /// Pending operator waiting for the second operand.
     pending_op: Option<Op>,
     /// True right after `=` or an operator is pressed (next digit replaces display).
-    start_new: bool,
+    pub start_new: bool,
     /// True if an error occurred (division by zero, etc.).
     pub error: bool,
+    /// Stack for nested parentheses.
+    paren_stack: Vec<ParenFrame>,
 }
 
 impl Calculator {
@@ -58,6 +66,7 @@ impl Calculator {
             pending_op: None,
             start_new: true,
             error: false,
+            paren_stack: Vec::new(),
         }
     }
 
@@ -89,28 +98,26 @@ impl Calculator {
             return;
         }
         let current = self.display_value();
-        // Build up the expression string
         if self.accumulator.is_none() {
-            self.expression = format!("{} {} ", format_number(current), op.symbol());
+            // First operand — append to expression (preserves parens/prior context)
+            self.expression.push_str(&format!("{} {} ", format_number(current), op.symbol()));
+            self.accumulator = Some(current);
         } else if !self.start_new {
-            // Chain: evaluate pending, then set new op
+            // Chaining: append current number, evaluate, then add new op
             self.evaluate_pending(current);
             if self.error {
                 return;
             }
-            let acc = self.accumulator.unwrap_or(current);
-            self.expression = format!("{} {} ", format_number(acc), op.symbol());
+            self.expression = format!("{}{} {} ", self.expression, format_number(current), op.symbol());
+        } else if self.pending_op.is_some() {
+            // Just changing the operator (no new number typed yet) — replace last op
+            let trimmed = self.expression.trim_end();
+            if let Some(pos) = trimmed.rfind(' ') {
+                self.expression = format!("{} {} ", &trimmed[..pos], op.symbol());
+            }
         } else {
-            // Just change the operator
-            self.expression = format!(
-                "{} {} ",
-                format_number(self.accumulator.unwrap_or(current)),
-                op.symbol()
-            );
-        }
-
-        if self.accumulator.is_none() {
-            self.accumulator = Some(current);
+            // Starting a new chain from a previous result (after = was pressed)
+            self.expression = format!("{} {} ", format_number(current), op.symbol());
         }
         self.pending_op = Some(op);
         self.start_new = true;
@@ -123,13 +130,11 @@ impl Calculator {
         let current = self.display_value();
         if let Some(op) = self.pending_op {
             let acc = self.accumulator.unwrap_or(0.0);
-            // Show full expression
-            self.expression = format!(
-                "{} {} {}",
-                format_number(acc),
-                op.symbol(),
-                format_number(current)
-            );
+            // Append final operand to the expression chain
+            if !self.start_new {
+                self.expression = format!("{}{}",
+                    self.expression, format_number(current));
+            }
             let result = op.apply(acc, current);
             if result.is_nan() || result.is_infinite() {
                 self.display = "Error".into();
@@ -164,6 +169,56 @@ impl Calculator {
         }
         let val = self.display_value() / 100.0;
         self.display = format_number(val);
+        self.start_new = true;
+    }
+
+    /// Smart paren: opens if we're expecting a value, closes if there's an open paren to match.
+    pub fn press_smart_paren(&mut self) {
+        if self.error {
+            return;
+        }
+        // Close if: there are open parens AND we have a value ready (not mid-operator)
+        if !self.paren_stack.is_empty() && !self.start_new {
+            self.press_close_paren();
+        } else if !self.paren_stack.is_empty() && self.start_new && self.pending_op.is_none() {
+            // Just finished inside parens with no pending op — close
+            self.press_close_paren();
+        } else {
+            self.press_open_paren();
+        }
+    }
+
+    fn press_open_paren(&mut self) {
+        // Save math state, keep expression visible
+        self.paren_stack.push(ParenFrame {
+            accumulator: self.accumulator.take(),
+            pending_op: self.pending_op.take(),
+        });
+        self.expression.push('(');
+        self.display = "0".into();
+        self.start_new = true;
+    }
+
+    fn press_close_paren(&mut self) {
+        // Evaluate everything inside the parens
+        if self.pending_op.is_some() {
+            let current = self.display_value();
+            if !self.start_new {
+                self.expression.push_str(&format_number(current));
+            }
+            self.evaluate_pending(current);
+            if self.error {
+                return;
+            }
+        }
+        let inner_result = self.display_value();
+        self.expression.push(')');
+
+        // Restore the outer math state
+        let frame = self.paren_stack.pop().unwrap();
+        self.accumulator = frame.accumulator;
+        self.pending_op = frame.pending_op;
+        self.display = format_number(inner_result);
         self.start_new = true;
     }
 

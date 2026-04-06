@@ -1,31 +1,27 @@
 //! App launcher menu — popup above the bar with floating tabs, search, and grid.
 //! Split into mod.rs (state/logic), draw.rs (rendering), sysmon.rs (system monitor).
 
+mod actions;
 pub(crate) mod clipboard_tab;
 mod draw;
 pub(crate) mod notes;
+mod sidebar;
 pub(crate) mod sysmon;
 mod sysmon_draw;
 
 use std::collections::HashSet;
-use std::path::Path;
 
 use lntrn_render::{GpuContext, Rect, TexturePass};
 use lntrn_ui::gpu::InteractionContext;
 
 use crate::apptray::find_icon;
-use crate::desktop::{self, DesktopEntry};
+use crate::desktop::{self, Category, DesktopEntry};
 use crate::svg_icon::IconCache;
 
-pub(crate) const SEARCH_HEIGHT: f32 = 48.0;
 pub(crate) const CELL_SIZE: f32 = 120.0;
 pub(crate) const ICON_SIZE: f32 = 56.0;
-pub(crate) const CORNER_RADIUS: f32 = 14.0;
 pub(crate) const PADDING: f32 = 16.0;
 pub(crate) const LABEL_FONT: f32 = 16.0;
-pub(crate) const FOOTER_H: f32 = 48.0;
-pub(crate) const GRADIENT_H: f32 = 3.0;
-pub(crate) const FOOTER_FONT: f32 = 16.0;
 pub(crate) const FOOTER_ICON_SZ: f32 = 24.0;
 
 pub(crate) const TAB_SIZE: f32 = 44.0;
@@ -36,6 +32,9 @@ pub(crate) const ZONE_BASE: u32 = 0xBB_0000;
 pub(crate) const ZONE_CTX: u32 = 0xBD_0000;
 pub(crate) const ZONE_POWER: u32 = 0xBE_0000;
 pub(crate) const ZONE_TAB: u32 = 0xBF_0000;
+pub(crate) const ZONE_CAT: u32 = 0xBC_0000;
+
+pub(crate) const SIDEBAR_W: f32 = 140.0;
 
 pub(crate) const RESIZE_EDGE: f32 = 6.0;
 
@@ -84,6 +83,8 @@ pub struct AppMenu {
     pub(crate) sysmon: sysmon::SystemMonitor,
     pub(crate) notes: notes::Notes,
     pub(crate) clipboard: clipboard_tab::ClipboardHistory,
+    /// Selected category filter
+    pub(crate) selected_category: Category,
     /// Right-click context menu state
     pub(crate) ctx_app_id: Option<String>,
     pub(crate) ctx_pos: (f32, f32),
@@ -109,6 +110,7 @@ impl AppMenu {
             bounds: Rect::new(0.0, 0.0, 0.0, 0.0),
             favorites: HashSet::new(),
             active_tab: MenuTab::Apps,
+            selected_category: Category::Favorites,
             sysmon: sysmon::SystemMonitor::new(),
             notes: notes::Notes::new(),
             clipboard: clipboard_tab::ClipboardHistory::new(),
@@ -137,6 +139,7 @@ impl AppMenu {
             self.scroll_offset = 0.0;
             self.ctx_open = false;
             self.active_tab = MenuTab::Apps;
+            self.selected_category = Category::Favorites;
         }
     }
 
@@ -149,11 +152,12 @@ impl AppMenu {
     }
 
     /// Returns the context menu rect if it's open, for texture occlusion.
+    #[allow(dead_code)]
     pub fn ctx_menu_rect(&self, scale: f32) -> Option<[f32; 4]> {
         if !self.ctx_open { return None; }
         let item_h = 40.0 * scale;
-        let menu_w = 200.0 * scale;
-        let menu_h = item_h * 2.0 + 8.0 * scale;
+        let menu_w = 250.0 * scale;
+        let menu_h = item_h * 4.0 + 8.0 * scale;
         let pad = 4.0 * scale;
         let ctx_x = self.ctx_pos.0.min(self.bounds.x + self.bounds.w - menu_w - pad);
         let ctx_y = self.ctx_pos.1.min(self.bounds.y + self.bounds.h - menu_h - pad);
@@ -333,13 +337,49 @@ impl AppMenu {
         self.ctx_open = false;
     }
 
-    pub fn on_left_click(&mut self, phys_x: f32, phys_y: f32, ix: &InteractionContext) {
+    pub fn on_left_click(&mut self, phys_x: f32, phys_y: f32, ix: &InteractionContext, scale: f32) {
         if self.ctx_open {
-            let menu_w = 200.0;
-            let menu_h = 88.0;
+            let menu_w = 250.0 * scale;
+            let menu_h = (40.0 * 4.0 + 8.0) * scale;
             let (cx, cy) = self.ctx_pos;
             if phys_x < cx || phys_x > cx + menu_w || phys_y < cy || phys_y > cy + menu_h {
                 self.ctx_open = false;
+            } else if let Some(app_id) = self.ctx_app_id.clone() {
+                // Click inside context menu — handle actions directly
+                if let Some(zone) = ix.zone_at(phys_x, phys_y) {
+                    match zone {
+                        ZONE_CTX => {
+                            self.toggle_favorite(&app_id);
+                        }
+                        z if z == ZONE_CTX + 1 => {
+                            launch_app("lntrn-system-settings --panel app-icons");
+                        }
+                        z if z == ZONE_CTX + 2 => {
+                            crate::desktop::hide_app(&app_id);
+                            self.entries.retain(|e| e.app_id != app_id);
+                        }
+                        z if z == ZONE_CTX + 3 => {
+                            uninstall_app(&app_id);
+                            self.entries.retain(|e| e.app_id != app_id);
+                        }
+                        _ => {}
+                    }
+                }
+                self.ctx_open = false;
+            }
+            return;
+        }
+        // Category sidebar clicks (Apps tab)
+        if self.active_tab == MenuTab::Apps {
+            if let Some(zone) = ix.zone_at(phys_x, phys_y) {
+                if zone >= ZONE_CAT && zone < ZONE_CAT + 0x100 {
+                    let idx = (zone - ZONE_CAT) as usize;
+                    if let Some(&cat) = Category::SIDEBAR_ORDER.get(idx) {
+                        self.selected_category = cat;
+                        self.scroll_offset = 0.0;
+                    }
+                    return;
+                }
             }
         }
         // Sysmon cores toggle + kill button + sort headers
@@ -402,7 +442,16 @@ impl AppMenu {
         let q = self.search.to_lowercase();
         self.entries.iter().enumerate()
             .filter(|(_, e)| {
-                q.is_empty() || e.name.to_lowercase().contains(&q)
+                // Search filter
+                if !q.is_empty() && !e.name.to_lowercase().contains(&q) {
+                    return false;
+                }
+                // Category filter
+                match self.selected_category {
+                    Category::All => true,
+                    Category::Favorites => self.favorites.contains(&e.app_id),
+                    cat => e.category == cat,
+                }
             })
             .map(|(i, _)| i)
             .collect()
@@ -447,6 +496,18 @@ impl AppMenu {
             }
         }
 
+        // Category sidebar icons
+        let cat_sz = (18.0 * scale) as u32;
+        let icons_dir = crate::lantern_icons_dir();
+        for &cat in Category::SIDEBAR_ORDER {
+            let key = format!("cat_{}", cat.label());
+            if icon_cache.get(&key).is_some() { continue; }
+            let path = icons_dir.join(cat.icon_file());
+            if path.exists() {
+                icon_cache.load(tex_pass, gpu, &key, &path, cat_sz, cat_sz);
+            }
+        }
+
         // Power footer icons
         let pwr_sz = (FOOTER_ICON_SZ * scale) as u32;
         for (key_name, _label, svg_file) in draw::POWER_ICONS {
@@ -474,48 +535,8 @@ fn save_size(w: f32, h: f32) {
     let _ = std::fs::write(size_path(), format!("{}x{}", w as u32, h as u32));
 }
 
-pub(crate) fn launch_app(exec: &str) {
-    let parts: Vec<&str> = exec.split_whitespace().collect();
-    if parts.is_empty() { return; }
-    let mut cmd = std::process::Command::new("systemd-run");
-    cmd.arg("--user").arg("--scope");
-
-    if let Ok(val) = std::env::var("WAYLAND_DISPLAY") {
-        cmd.arg(format!("--setenv=WAYLAND_DISPLAY={val}"));
-    }
-    let display = std::env::var("DISPLAY").ok().or_else(detect_x11_display);
-    if let Some(val) = display {
-        cmd.arg(format!("--setenv=DISPLAY={val}"));
-    }
-
-    cmd.arg("--");
-    cmd.args(&parts);
-    match cmd.spawn() {
-        Ok(_) => tracing::info!("launched: {exec}"),
-        Err(e) => tracing::error!("failed to launch {exec}: {e}"),
-    }
-}
-
-fn uninstall_app(app_id: &str) {
-    let desktop_path = format!("/usr/share/applications/{app_id}.desktop");
-    let pkg = std::process::Command::new("pacman")
-        .args(["-Qo", &desktop_path])
-        .output()
-        .ok()
-        .and_then(|o| {
-            let out = String::from_utf8_lossy(&o.stdout);
-            out.split_whitespace().nth_back(1).map(|s| s.to_string())
-        });
-
-    if let Some(pkg) = pkg {
-        tracing::info!("uninstalling package: {pkg}");
-        let _ = std::process::Command::new("systemd-run")
-            .args(["--user", "--scope", "--", "lntrn-terminal", "-e", &format!("sudo pacman -R {pkg}")])
-            .spawn();
-    } else {
-        tracing::warn!("could not find package for {app_id}");
-    }
-}
+pub(crate) use actions::launch_app;
+use actions::uninstall_app;
 
 pub(crate) fn keycode_to_char(key: u32, shift: bool) -> Option<char> {
     let ch = match key {
@@ -543,17 +564,3 @@ pub(crate) fn keycode_to_char(key: u32, shift: bool) -> Option<char> {
     Some(ch as char)
 }
 
-fn detect_x11_display() -> Option<String> {
-    let dir = std::fs::read_dir("/tmp/.X11-unix/").ok()?;
-    let mut best: Option<u32> = None;
-    for entry in dir.flatten() {
-        let name = entry.file_name();
-        let name = name.to_str()?;
-        if let Some(num_str) = name.strip_prefix('X') {
-            if let Ok(n) = num_str.parse::<u32>() {
-                best = Some(best.map_or(n, |prev: u32| prev.max(n)));
-            }
-        }
-    }
-    best.map(|n| format!(":{n}"))
-}

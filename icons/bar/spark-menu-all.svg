@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <defs>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="0" stdDeviation="1.5" flood-color="#aaaaff" flood-opacity="0.9"/>
+    </filter>
+  </defs>
+  <g filter="url(#glow)" fill="#aaaaff">
+    <!-- 3x3 grid of rounded squares -->
+    <rect x="3"  y="3"  width="5" height="5" rx="1.5"/>
+    <rect x="9.5"  y="3"  width="5" height="5" rx="1.5"/>
+    <rect x="16" y="3"  width="5" height="5" rx="1.5"/>
+    <rect x="3"  y="9.5"  width="5" height="5" rx="1.5"/>
+    <rect x="9.5"  y="9.5"  width="5" height="5" rx="1.5"/>
+    <rect x="16" y="9.5"  width="5" height="5" rx="1.5"/>
+    <rect x="3"  y="16" width="5" height="5" rx="1.5"/>
+    <rect x="9.5"  y="16" width="5" height="5" rx="1.5"/>
+    <rect x="16" y="16" width="5" height="5" rx="1.5"/>
+  </g>
+</svg>

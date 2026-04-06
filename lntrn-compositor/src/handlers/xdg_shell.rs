@@ -78,12 +78,14 @@ impl XdgShellHandler for Lantern {
 
             let was_snapped = self.is_snapped(wl_surface);
             let was_maximized = self.is_maximized(wl_surface);
+            let was_tiled = self.tiling.contains(wl_surface);
             let grab = MoveSurfaceGrab {
                 start_data,
                 window,
                 initial_window_location,
                 was_snapped,
                 was_maximized,
+                was_tiled,
                 restored_this_drag: false,
                 has_moved: false,
             };
@@ -248,8 +250,10 @@ impl Lantern {
             return;
         };
 
-        let output = self.space.outputs().next().unwrap();
-        let output_geo = self.space.output_geometry(output).unwrap();
+        let output = self.output_for_window(window)
+            .or_else(|| self.space.outputs().next().cloned())
+            .unwrap();
+        let output_geo = self.space.output_geometry(&output).unwrap();
         let window_geo = self.space.element_geometry(window).unwrap();
 
         let mut target = output_geo;

@@ -43,7 +43,7 @@ use crate::Lantern;
 pub const BG_COLOR: [f32; 4] = [0.094, 0.094, 0.094, 1.0];
 pub(crate) const SUPPORTED_FORMATS: &[Fourcc] = &[Fourcc::Argb8888, Fourcc::Abgr8888];
 pub const RENDER_INTERVAL: Duration = Duration::from_millis(16);
-const POINTER_RENDER_INTERVAL: Duration = Duration::from_millis(33);
+const POINTER_RENDER_INTERVAL: Duration = Duration::from_millis(16);
 pub(crate) const LANTERN_OUTPUT_SCALE: f64 = 1.25;
 
 pub fn frame_callback_interval(output: &smithay::output::Output) -> Duration {
@@ -107,6 +107,12 @@ pub struct UdevData {
 pub(crate) struct UdevOutputId {
     pub device_id: DrmNode,
     pub crtc: crtc::Handle,
+}
+
+/// All DRM modes available for a given output (stored as Output user data).
+pub(crate) struct UdevOutputModes {
+    pub drm_modes: Vec<smithay::reexports::drm::control::Mode>,
+    pub connector_handle: smithay::reexports::drm::control::connector::Handle,
 }
 
 pub fn init_udev(

@@ -13,6 +13,8 @@ pub struct LanternConfig {
     pub input: InputConfig,
     pub display: DisplayConfig,
     pub power: PowerConfig,
+    #[serde(default)]
+    pub monitors: Vec<MonitorEntry>,
 }
 
 // ── Appearance ───────────────────────────────────────────────────────────────
@@ -138,6 +140,26 @@ impl Default for DisplayConfig {
     }
 }
 
+// ── Monitor arrangement ─────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MonitorEntry {
+    pub name: String,
+    pub x: i32,
+    pub y: i32,
+    #[serde(default)]
+    pub resolution: String,
+    #[serde(default)]
+    pub refresh_rate: String,
+    #[serde(default = "default_monitor_scale")]
+    pub scale: f32,
+    #[serde(default)]
+    pub wallpaper: String,
+}
+
+fn default_monitor_scale() -> f32 { 1.25 }
+
+
 // ── Power ───────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -183,6 +205,7 @@ impl Default for LanternConfig {
             input: InputConfig::default(),
             display: DisplayConfig::default(),
             power: PowerConfig::default(),
+            monitors: Vec::new(),
         }
     }
 }
@@ -222,11 +245,18 @@ impl LanternConfig {
 
     /// Apply WiFi power settings immediately and persist to /etc/modprobe.d/.
     /// Spawns a background thread so pkexec dialogs don't block the Wayland event loop.
+    /// Auto-detects the WiFi interface and driver — skips silently if no WiFi hardware found.
     pub fn apply_wifi_power(&self) {
         let power_save = self.power.wifi_power_save;
         let scheme = self.power.wifi_power_scheme.clone();
 
         std::thread::spawn(move || {
+            // Auto-detect wireless interface and driver
+            let Some((iface, driver)) = detect_wifi_interface() else {
+                eprintln!("[settings] No WiFi interface found, skipping WiFi power settings");
+                return;
+            };
+
             let power_save_val = if power_save { 1 } else { 0 };
             let scheme_val = match scheme.as_str() {
                 "active" => 1,
@@ -237,11 +267,11 @@ impl LanternConfig {
 
             // Write modprobe.d config via pkexec sh -c (pkexec doesn't pipe stdin)
             let conf = format!(
-                "options iwlwifi power_save={}\noptions iwlmvm power_scheme={}\n",
-                power_save_val, scheme_val,
+                "options {driver} power_save={power_save_val}\noptions {driver} power_scheme={scheme_val}\n",
             );
+            let modprobe_path = format!("/etc/modprobe.d/{driver}.conf");
             let script = format!(
-                "printf '{}' > /etc/modprobe.d/iwlwifi.conf",
+                "printf '{}' > {modprobe_path}",
                 conf.replace('\'', "'\\''"),
             );
             let _ = Command::new("pkexec")
@@ -251,11 +281,33 @@ impl LanternConfig {
             // Apply power save immediately via iw
             let ps_arg = if power_save { "on" } else { "off" };
             let _ = Command::new("pkexec")
-                .args(["iw", "dev", "wlan0", "set", "power_save", ps_arg])
+                .args(["iw", "dev", &iface, "set", "power_save", ps_arg])
                 .status();
         });
     }
+}
 
+/// Detect the first wireless network interface and its kernel driver.
+/// Returns `(interface_name, driver_name)` or None if no WiFi hardware found.
+fn detect_wifi_interface() -> Option<(String, String)> {
+    let net_dir = std::fs::read_dir("/sys/class/net/").ok()?;
+    for entry in net_dir.flatten() {
+        let path = entry.path();
+        // Wireless interfaces have /sys/class/net/<iface>/wireless/
+        if path.join("wireless").exists() {
+            let iface = entry.file_name().to_string_lossy().into_owned();
+            // Read the driver name from the device symlink
+            let driver = std::fs::read_link(path.join("device/driver"))
+                .ok()
+                .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+                .unwrap_or_else(|| "iwlwifi".to_string());
+            return Some((iface, driver));
+        }
+    }
+    None
+}
+
+impl LanternConfig {
     fn sanitize(&mut self) {
         self.appearance.font_size = self.appearance.font_size.clamp(10.0, 32.0);
         self.window_manager.border_width = self.window_manager.border_width.clamp(0, 10);

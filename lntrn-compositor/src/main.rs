@@ -19,6 +19,8 @@ mod snap;
 pub mod ssd;
 mod state;
 mod switcher;
+mod tiling;
+mod tiling_anim;
 pub mod udev;
 mod udev_device;
 mod wallpaper;
@@ -77,6 +79,92 @@ pub(crate) fn read_config_f32(key: &str, default: f32) -> f32 {
     let s = read_config("windows", key, "");
     if s.is_empty() { return default; }
     s.parse::<f32>().unwrap_or(default)
+}
+
+/// A configured monitor position from `[[monitors]]` in lantern.toml.
+#[derive(Debug, Clone)]
+pub(crate) struct MonitorConfig {
+    pub name: String,
+    pub x: i32,
+    pub y: i32,
+    pub resolution: Option<String>,
+    pub refresh_rate: Option<u32>,
+    pub scale: Option<f64>,
+    pub wallpaper: Option<String>,
+}
+
+/// Read all `[[monitors]]` entries from lantern.toml.
+pub(crate) fn read_monitor_configs() -> Vec<MonitorConfig> {
+    let path = lantern_config_path();
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut monitors = Vec::new();
+    let mut in_monitors = false;
+    let mut name = String::new();
+    let mut x: Option<i32> = None;
+    let mut y: Option<i32> = None;
+    let mut resolution: Option<String> = None;
+    let mut refresh_rate: Option<u32> = None;
+    let mut scale: Option<f64> = None;
+    let mut wallpaper: Option<String> = None;
+
+    let mut flush = |name: &mut String, x: &mut Option<i32>, y: &mut Option<i32>,
+                     resolution: &mut Option<String>, refresh_rate: &mut Option<u32>,
+                     scale: &mut Option<f64>, wallpaper: &mut Option<String>,
+                     monitors: &mut Vec<MonitorConfig>| {
+        if !name.is_empty() {
+            monitors.push(MonitorConfig {
+                name: std::mem::take(name),
+                x: x.take().unwrap_or(0),
+                y: y.take().unwrap_or(0),
+                resolution: resolution.take(),
+                refresh_rate: refresh_rate.take(),
+                scale: scale.take(),
+                wallpaper: wallpaper.take(),
+            });
+        }
+    };
+
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed == "[[monitors]]" {
+            flush(&mut name, &mut x, &mut y, &mut resolution, &mut refresh_rate, &mut scale, &mut wallpaper, &mut monitors);
+            in_monitors = true;
+            continue;
+        }
+        if trimmed.starts_with('[') {
+            if in_monitors {
+                flush(&mut name, &mut x, &mut y, &mut resolution, &mut refresh_rate, &mut scale, &mut wallpaper, &mut monitors);
+            }
+            in_monitors = false;
+            continue;
+        }
+        if in_monitors {
+            if let Some((k, v)) = trimmed.split_once('=') {
+                let k = k.trim();
+                let v = v.trim().trim_matches('"');
+                match k {
+                    "name" => name = v.to_string(),
+                    "x" => x = v.parse().ok(),
+                    "y" => y = v.parse().ok(),
+                    "resolution" => resolution = Some(v.to_string()),
+                    "refresh_rate" => refresh_rate = v.parse().ok(),
+                    "scale" => scale = v.parse().ok(),
+                    "wallpaper" => wallpaper = Some(v.to_string()),
+                    _ => {}
+                }
+            }
+        }
+    }
+    // Flush last entry
+    if in_monitors {
+        flush(&mut name, &mut x, &mut y, &mut resolution, &mut refresh_rate, &mut scale, &mut wallpaper, &mut monitors);
+    }
+
+    monitors
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

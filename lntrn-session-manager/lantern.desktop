@@ -1,6 +1,7 @@
 [Desktop Entry]
 Name=Lantern
 Comment=Lantern Desktop Environment
-Exec=/home/alva/.lantern/bin/lntrn-session-manager
+Exec=lntrn-session-manager
 Type=Application
+Icon=lntrn
 DesktopNames=Lantern

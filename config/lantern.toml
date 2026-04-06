@@ -1,0 +1,47 @@
+[appearance]
+theme = "fox"
+accent_color = "#C8860A"
+font_family = "sans-serif"
+font_size = 16.0
+wallpaper = ""
+wallpaper_directory = ""
+
+[window_manager]
+border_width = 2
+titlebar_height = 36
+gap = 8
+corner_radius = 10
+focus_follows_mouse = true
+
+[windows]
+window_opacity = 0.98
+blur_intensity = 0.5
+blur_tint = 0.0
+blur_darken = 0.4
+background_opacity = 0.7
+
+[input]
+mouse_speed = 0.0
+mouse_acceleration = true
+natural_scroll = false
+tap_to_click = true
+keyboard_repeat_delay = 300
+keyboard_repeat_rate = 25
+cursor_theme = "default"
+
+[display]
+resolution = "auto"
+refresh_rate = "auto"
+scale = 1.0
+
+[power]
+lid_close_action = "suspend"
+lid_close_on_ac = "nothing"
+dim_after = 300
+idle_timeout = 900
+idle_action = "suspend"
+low_battery_threshold = 15
+critical_battery_threshold = 5
+critical_battery_action = "suspend"
+wifi_power_save = false
+wifi_power_scheme = "active"

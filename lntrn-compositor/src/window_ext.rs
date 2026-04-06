@@ -6,6 +6,7 @@
 
 use smithay::desktop::Window;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
+use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::utils::{Logical, Size};
 use smithay::wayland::seat::WaylandFocus;
 
@@ -36,6 +37,9 @@ pub trait WindowExt {
 
     /// Set the fullscreen state on the window.
     fn set_fullscreen(&self, fullscreen: bool);
+
+    /// Set the tiled state on the window (all four edges).
+    fn set_tiled(&self, tiled: bool);
 }
 
 impl WindowExt for Window {
@@ -109,13 +113,9 @@ impl WindowExt for Window {
         if let Some(toplevel) = self.toplevel() {
             toplevel.with_pending_state(|state| {
                 if maximized {
-                    state.states.set(
-                        smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State::Maximized,
-                    );
+                    state.states.set(xdg_toplevel::State::Maximized);
                 } else {
-                    state.states.unset(
-                        smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State::Maximized,
-                    );
+                    state.states.unset(xdg_toplevel::State::Maximized);
                 }
             });
         } else if let Some(x11) = self.x11_surface() {
@@ -127,17 +127,33 @@ impl WindowExt for Window {
         if let Some(toplevel) = self.toplevel() {
             toplevel.with_pending_state(|state| {
                 if fullscreen {
-                    state.states.set(
-                        smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State::Fullscreen,
-                    );
+                    state.states.set(xdg_toplevel::State::Fullscreen);
                 } else {
-                    state.states.unset(
-                        smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State::Fullscreen,
-                    );
+                    state.states.unset(xdg_toplevel::State::Fullscreen);
                 }
             });
         } else if let Some(x11) = self.x11_surface() {
             let _ = x11.set_fullscreen(fullscreen);
         }
+    }
+
+    fn set_tiled(&self, tiled: bool) {
+        if let Some(toplevel) = self.toplevel() {
+            toplevel.with_pending_state(|state| {
+                for edge in [
+                    xdg_toplevel::State::TiledLeft,
+                    xdg_toplevel::State::TiledRight,
+                    xdg_toplevel::State::TiledTop,
+                    xdg_toplevel::State::TiledBottom,
+                ] {
+                    if tiled {
+                        state.states.set(edge);
+                    } else {
+                        state.states.unset(edge);
+                    }
+                }
+            });
+        }
+        // X11: no tiled state concept
     }
 }

@@ -278,12 +278,32 @@ export LNTRN_DISPLAY="$DISPLAY_SERVER"
 export LNTRN_MONITORS="$MONITORS"
 export LNTRN_BATTERY="$BATTERY"
 
-python3 - "$ICON" << 'PYEOF'
+TERM_COLS="$(tput cols 2>/dev/null || echo 80)"
+python3 - "$ICON" "$TERM_COLS" << 'PYEOF'
 import sys, os
 from PIL import Image
 
+# Adapt to terminal width
+try:
+    term_cols = int(sys.argv[2])
+except (IndexError, ValueError):
+    try:
+        term_cols = os.get_terminal_size().columns
+    except OSError:
+        term_cols = 80
+
+# Scale icon width based on available space.
+# Side-by-side needs ~32 cols for info, so icon gets the rest.
+# Minimum icon width 12, max 24.
+INFO_MIN = 32
+if term_cols >= INFO_MIN + 28:
+    W = min(24, term_cols - INFO_MIN - 6)
+elif term_cols >= INFO_MIN + 16:
+    W = min(18, term_cols - INFO_MIN - 4)
+else:
+    W = max(12, min(18, term_cols - 4))
+
 img = Image.open(sys.argv[1]).convert('RGBA')
-W = 24
 H = int(W * img.height / img.width / 2 + 0.5) * 2
 img = img.resize((W, H), Image.LANCZOS)
 
@@ -345,6 +365,10 @@ D = "\033[38;2;120;90;55m"
 user = os.environ.get('LNTRN_USER', '?')
 host = os.environ.get('LNTRN_HOST', '?')
 
+# Layout metrics — computed early so info[] can use them
+COL = W + 6
+info_avail = term_cols - COL  # columns available for info text
+
 def lerp(a, b, t):
     return int(round(a + (b - a) * t))
 
@@ -377,12 +401,16 @@ def strip_ansi(text):
         i += 1
     return "".join(out)
 
-def dot_row(colors):
+def dot_row(colors, max_dots=None):
+    if max_dots is not None:
+        colors = colors[:max_dots]
     return "  " + " ".join(f"\033[38;2;{r};{g};{b}m⬤" for r, g, b in colors) + R
 
+sep_len = max(12, min(26, info_avail - 4)) if info_avail >= 20 else max(12, min(26, term_cols - 6))
+separator = "─" * sep_len
 info = [
     f"  {B}{O}{user}{R}{D}@{R}{B}{O}{host}{R}",
-    f"  {D}──────────────────────────{R}",
+    f"  {D}{separator}{R}",
     f"  {O}OS{R}        {os.environ.get('LNTRN_DISTRO', '?')}",
     f"  {O}Kernel{R}    {os.environ.get('LNTRN_KERNEL', '?')}",
     f"  {O}Shell{R}     {os.environ.get('LNTRN_SHELL', '?')}",
@@ -412,8 +440,10 @@ battery = os.environ.get('LNTRN_BATTERY', '')
 if battery:
     info.append(f"  {O}Battery{R}   {battery}")
 
-info.append("")
-info.append(dot_row([
+dot_avail = info_avail if info_avail >= 20 else term_cols - 4
+max_dots = max(4, (dot_avail - 2) // 2)  # each dot + space is ~2 cols
+
+amber_dots = [
     (180, 130, 70),
     (150, 110, 65),
     (120, 90, 55),
@@ -422,7 +452,7 @@ info.append(dot_row([
     (95, 75, 50),
     (120, 90, 55),
     (150, 110, 65),
-]))
+]
 gradient_stops = [
     (255, 105, 180),
     (59, 130, 246),
@@ -430,15 +460,57 @@ gradient_stops = [
     (250, 204, 21),
     (239, 68, 68),
 ]
-info.append(dot_row([sample_gradient(gradient_stops, i / 7) for i in range(8)]))
+n_grad = min(8, max_dots)
+grad_dots = [sample_gradient(gradient_stops, i / max(1, n_grad - 1)) for i in range(n_grad)]
+
+info.append("")
+info.append(dot_row(amber_dots, max_dots))
+info.append(dot_row(grad_dots, max_dots))
 
 print()
-COL = W + 8
-total_lines = max(len(art_lines), len(info))
-for i in range(total_lines):
-    art = art_lines[i] if i < len(art_lines) else ""
-    inf = info[i] if i < len(info) else ""
-    print(f"  {art}\033[{COL}G{inf}")
+
+def truncate_info(line, max_visible):
+    """Truncate an info line to fit max_visible printable chars."""
+    if max_visible <= 0:
+        return ""
+    visible = 0
+    result = []
+    i = 0
+    text = line
+    while i < len(text):
+        if text[i] == "\033":
+            # Copy full escape sequence without counting
+            j = i + 1
+            if j < len(text) and text[j] == "[":
+                j += 1
+                while j < len(text) and text[j] != "m":
+                    j += 1
+                if j < len(text):
+                    j += 1
+            result.append(text[i:j])
+            i = j
+        else:
+            if visible >= max_visible:
+                break
+            result.append(text[i])
+            visible += 1
+            i += 1
+    result.append(R)
+    return "".join(result)
+
+if info_avail >= 20:
+    # Side-by-side layout
+    total_lines = max(len(art_lines), len(info))
+    for i in range(total_lines):
+        art = art_lines[i] if i < len(art_lines) else ""
+        inf = truncate_info(info[i], info_avail) if i < len(info) else ""
+        print(f"  {art}\033[{COL}G{inf}")
+else:
+    # Stacked layout for very narrow terminals
+    for line in art_lines:
+        print(f"  {line}")
+    for line in info:
+        print(truncate_info(line, term_cols - 2))
 print()
 PYEOF
 

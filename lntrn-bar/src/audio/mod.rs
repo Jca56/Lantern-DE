@@ -136,7 +136,9 @@ impl Audio {
         }
     }
 
-    pub fn tick(&mut self) {
+    /// Drain audio + MPRIS events. Returns `true` if any event was received.
+    pub fn tick(&mut self) -> bool {
+        let mut changed = false;
         let now = Instant::now();
         let vol_locked = self.dragging == Some(ZONE_VOL_SLIDER)
             || now.duration_since(self.last_vol_change).as_millis() < DEBOUNCE_MS;
@@ -147,6 +149,7 @@ impl Audio {
             if z >= ZONE_STREAM_SLIDER_BASE && z < ZONE_STREAM_SLIDER_BASE + 256);
 
         while let Ok(event) = self.event_rx.try_recv() {
+            changed = true;
             match event {
                 AudioEvent::State(s) => {
                     if !vol_locked { self.volume = s.volume; }
@@ -173,10 +176,12 @@ impl Audio {
 
         // MPRIS now-playing
         while let Ok(event) = self.mpris_event_rx.try_recv() {
+            changed = true;
             match event {
                 mpris::MprisEvent::State(s) => self.media = s,
             }
         }
+        changed
     }
 
     pub fn media_play_pause(&self) {

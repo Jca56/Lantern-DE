@@ -20,6 +20,7 @@ toml = "0.8"
 wayland-backend = { version = "0.3", features = ["client_system"] }
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 xkbcommon = "0.9"
 wgpu = "28"

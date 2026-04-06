@@ -2242,6 +2242,7 @@ name = "lntrn-calculator"
 version = "0.1.0"
 dependencies = [
  "lntrn-render",
+ "lntrn-theme",
  "winit",
 ]
 
@@ -2513,6 +2514,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "lntrn-sysmon"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "image",
+ "libc",
+ "lntrn-render",
+ "lntrn-theme",
+ "lntrn-ui",
+ "raw-window-handle",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
+ "wgpu",
+]
+
+[[package]]
 name = "lntrn-system-settings"
 version = "0.1.0"
 dependencies = [
@@ -2528,6 +2546,7 @@ dependencies = [
  "wayland-backend",
  "wayland-client",
  "wayland-protocols",
+ "wayland-protocols-wlr",
  "wgpu",
  "xkbcommon 0.9.0",
 ]

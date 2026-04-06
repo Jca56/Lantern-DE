@@ -100,6 +100,11 @@ pub struct App {
 
     // Sidebar file browser
     pub sidebar: sidebar::SidebarState,
+
+    // Tab bar auto-hide
+    pub(crate) tab_bar_visible: bool,
+    pub(crate) tab_bar_hover_since: Option<Instant>,
+    pub(crate) tab_bar_leave_since: Option<Instant>,
 }
 
 impl App {
@@ -136,6 +141,9 @@ impl App {
             scrollbar_dragging: false,
             pending_menu_event: None,
             sidebar: sidebar::SidebarState::new(),
+            tab_bar_visible: false,
+            tab_bar_hover_since: None,
+            tab_bar_leave_since: None,
         }
     }
 
@@ -163,6 +171,30 @@ impl App {
         self.overlay_text = Some(overlay_text);
     }
 
+    /// Chrome height accounting for window mode and tab bar auto-hide.
+    pub(crate) fn chrome_height(&self) -> f32 {
+        let title_h = ui_chrome::title_bar_height(&self.config.window.mode);
+        if self.tab_bar_visible {
+            title_h + tab_bar::TAB_BAR_HEIGHT
+        } else {
+            title_h
+        }
+    }
+
+    /// Font size scaled to current window width.
+    /// At the configured window width (or larger), returns the full config font size.
+    /// As the window shrinks, the font scales down proportionally (min 10px).
+    pub(crate) fn effective_font_size(&self) -> f32 {
+        let base = self.config.font.size;
+        let ref_w = self.config.window.width; // logical reference width
+        let cur_w = self.gpu.as_ref().map_or(ref_w, |g| g.width() as f32);
+        if cur_w >= ref_w {
+            return base;
+        }
+        let scaled = base * cur_w / ref_w;
+        scaled.clamp(10.0, base)
+    }
+
     pub(crate) fn sidebar_offset(&self) -> f32 {
         if self.sidebar.visible {
             self.sidebar.width
@@ -176,8 +208,8 @@ impl App {
         screen_w: u32,
         screen_h: u32,
         sidebar_offset: f32,
+        chrome_h: f32,
     ) -> Vec<(f32, f32, f32, f32)> {
-        let chrome_h = render::chrome_height();
         let avail_w = screen_w as f32 - sidebar_offset;
         let avail_h = screen_h as f32 - chrome_h;
         let x0 = sidebar_offset;
@@ -285,12 +317,13 @@ impl App {
 
         let screen_w = gpu.width();
         let screen_h = gpu.height();
-        let font_size = self.config.font.size;
+        let font_size = self.effective_font_size();
         let (cell_w, cell_h) = render::measure_cell(font_size);
         let sb_offset = self.sidebar_offset();
+        let chrome_h = self.chrome_height();
 
         for tab in &mut self.tabs {
-            let rects = Self::pane_rects_for_tab(tab, screen_w, screen_h, sb_offset);
+            let rects = Self::pane_rects_for_tab(tab, screen_w, screen_h, sb_offset, chrome_h);
             for (i, pane) in tab.panes.iter_mut().enumerate() {
                 if i >= rects.len() {
                     break;
@@ -310,15 +343,16 @@ impl App {
         let screen_w = self.gpu.as_ref().map_or(800, |g| g.width());
         let screen_h = self.gpu.as_ref().map_or(600, |g| g.height());
         let tab = &self.tabs[self.active_tab];
-        let rects = Self::pane_rects_for_tab(tab, screen_w, screen_h, self.sidebar_offset());
-        let (cell_w, cell_h) = render::measure_cell(self.config.font.size);
+        let rects = Self::pane_rects_for_tab(tab, screen_w, screen_h, self.sidebar_offset(), self.chrome_height());
+        let font_size = self.effective_font_size();
+        let (cell_w, cell_h) = render::measure_cell(font_size);
 
         for (i, &rect) in rects.iter().enumerate() {
             if i >= tab.panes.len() {
                 return None;
             }
             let pane = &tab.panes[i];
-            let (gx, gy, gw, gh) = Self::pane_grid_bounds(pane, rect, self.config.font.size);
+            let (gx, gy, gw, gh) = Self::pane_grid_bounds(pane, rect, font_size);
             if x >= gx && x < gx + gw && y >= gy && y < gy + gh {
                 let row = ((y - gy) / cell_h) as usize;
                 let col = ((x - gx) / cell_w) as usize;
@@ -363,7 +397,7 @@ impl App {
         if self.tabs.is_empty() {
             return 0.0;
         }
-        let cell_h = render::measure_cell(self.config.font.size).1;
+        let cell_h = render::measure_cell(self.effective_font_size()).1;
         let tab = &mut self.tabs[self.active_tab];
         let terminal = &mut tab.panes[tab.active_pane].terminal;
         let max_px = terminal.scrollback.len() as f32 * cell_h;
@@ -402,11 +436,13 @@ impl ApplicationHandler<UserEvent> for App {
             .with_decorations(false)
             .with_transparent(true);
 
-        if let Ok(img) = image::open(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/terminal.png")) {
-            let rgba = img.into_rgba8();
-            let (w, h) = (rgba.width(), rgba.height());
-            if let Ok(icon) = Icon::from_rgba(rgba.into_raw(), w, h) {
-                attrs = attrs.with_window_icon(Some(icon));
+        if let Some(icon_path) = lntrn_theme::lantern_home().map(|h| h.join("icons/lntrn-terminal.png")) {
+            if let Ok(img) = image::open(&icon_path) {
+                let rgba = img.into_rgba8();
+                let (w, h) = (rgba.width(), rgba.height());
+                if let Ok(icon) = Icon::from_rgba(rgba.into_raw(), w, h) {
+                    attrs = attrs.with_window_icon(Some(icon));
+                }
             }
         }
 

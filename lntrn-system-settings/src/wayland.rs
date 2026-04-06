@@ -4,7 +4,7 @@ use std::ptr::NonNull;
 use anyhow::{anyhow, Result};
 use lntrn_render::{Color, GpuContext, GpuTexture, Painter, Rect, TextureDraw, TexturePass, TextRenderer};
 use lntrn_ui::gpu::{
-    FoxPalette, GradientStrip, InteractionContext, PopupSurface, TitleBar,
+    FoxPalette, InteractionContext, PopupSurface,
     WaylandPopupBackend,
 };
 
@@ -13,6 +13,7 @@ use crate::display_panel::{self, DisplayPanelState};
 use crate::icon_panel;
 use crate::icons;
 use crate::input_panel;
+use crate::monitor_arrange;
 use crate::panels::{self, PanelState};
 use crate::text_edit::{KeyboardState, keycode_to_char};
 use raw_window_handle::{
@@ -32,13 +33,10 @@ use wayland_protocols::wp::cursor_shape::v1::client::{
 use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
-const TITLE_BAR_H: f32 = 48.0;
-const ZONE_CLOSE: u32 = 100;
-const ZONE_MAXIMIZE: u32 = 101;
-const ZONE_MINIMIZE: u32 = 102;
 const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
 const KEY_ESC: u32 = 1;
+use crate::chrome::{TITLE_BAR_H, CORNER_RADIUS};
 
 const SIDEBAR_W: f32 = 220.0;
 const SIDEBAR_ITEM_H: f32 = 48.0;
@@ -48,10 +46,9 @@ const SIDEBAR_ICON_DRAW: f32 = 24.0; // logical draw size for icons
 const ZONE_SIDEBAR_BASE: u32 = 200;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Panel { Appearance, WindowManager, Input, Display, Power, AppIcons }
+enum Panel { WindowManager, Input, Display, Power, AppIcons }
 
 const PANELS: &[(Panel, &str)] = &[
-    (Panel::Appearance, "Appearance"),
     (Panel::WindowManager, "Window Manager"),
     (Panel::Input, "Input"),
     (Panel::Display, "Display"),
@@ -63,7 +60,6 @@ fn parse_panel_arg() -> Option<Panel> {
     let args: Vec<String> = std::env::args().collect();
     let idx = args.iter().position(|a| a == "--panel")?;
     match args.get(idx + 1)?.as_str() {
-        "appearance" => Some(Panel::Appearance),
         "window-manager" => Some(Panel::WindowManager),
         "input" => Some(Panel::Input),
         "display" => Some(Panel::Display),
@@ -94,6 +90,17 @@ impl HasWindowHandle for WaylandHandle {
 
 // ── Wayland state ───────────────────────────────────────────────────────────
 
+/// Info about a connected monitor from wl_output events.
+#[derive(Clone, Debug)]
+pub(crate) struct OutputInfo {
+    pub name: String,
+    pub width: i32,
+    pub height: i32,
+    pub x: i32,
+    pub y: i32,
+    pub scale: i32,
+}
+
 pub(crate) struct State {
     running: bool,
     configured: bool,
@@ -103,6 +110,10 @@ pub(crate) struct State {
     scale: i32,
     output_phys_width: u32,
     maximized: bool,
+    /// Tracked outputs from wl_output events (key = global name from registry).
+    pub(crate) outputs: Vec<(u32, OutputInfo)>,
+    /// Staging area for incomplete wl_output event batches (before Done).
+    output_pending: std::collections::HashMap<u32, OutputInfo>,
     // Wayland objects
     compositor: Option<wl_compositor::WlCompositor>,
     wm_base: Option<xdg_wm_base::XdgWmBase>,
@@ -135,6 +146,8 @@ pub(crate) struct State {
     pub(crate) popup_backend: Option<WaylandPopupBackend<State>>,
     pub(crate) popup_closed: bool,
     pointer_surface: Option<wl_surface::WlSurface>,
+    // Output management
+    pub(crate) output_mgr: crate::output_manager::OutputManagerClient,
 }
 
 impl State {
@@ -142,6 +155,8 @@ impl State {
         Self {
             running: true, configured: false, frame_done: true,
             width: 0, height: 0, scale: 1, output_phys_width: 0, maximized: false,
+            outputs: Vec::new(),
+            output_pending: std::collections::HashMap::new(),
             compositor: None, wm_base: None, viewporter: None,
             surface: None, xdg_surface: None, toplevel: None, seat: None,
             cursor_x: 0.0, cursor_y: 0.0, pointer_in_surface: false,
@@ -156,6 +171,7 @@ impl State {
             popup_backend: None,
             popup_closed: false,
             pointer_surface: None,
+            output_mgr: crate::output_manager::OutputManagerClient::new(),
         }
     }
 
@@ -183,10 +199,13 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 "wl_compositor" => { state.compositor = Some(registry.bind(name, version.min(6), qh, ())); }
                 "xdg_wm_base" => { state.wm_base = Some(registry.bind(name, version.min(5), qh, ())); }
                 "wp_viewporter" => { state.viewporter = Some(registry.bind(name, version.min(1), qh, ())); }
-                "wl_output" => { let _: wl_output::WlOutput = registry.bind(name, version.min(4), qh, ()); }
+                "wl_output" => { let _: wl_output::WlOutput = registry.bind(name, version.min(4), qh, name); }
                 "wl_seat" => { state.seat = Some(registry.bind(name, version.min(9), qh, ())); }
                 "wp_cursor_shape_manager_v1" => {
                     state.cursor_shape_mgr = Some(registry.bind(name, version.min(1), qh, ()));
+                }
+                "zwlr_output_manager_v1" => {
+                    state.output_mgr.manager = Some(registry.bind(name, version.min(4), qh, ()));
                 }
                 _ => {}
             }
@@ -249,14 +268,40 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
     }
 }
 
-impl Dispatch<wl_output::WlOutput, ()> for State {
+impl Dispatch<wl_output::WlOutput, u32> for State {
     fn event(
         state: &mut Self, _: &wl_output::WlOutput,
-        event: wl_output::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        event: wl_output::Event, global_name: &u32, _: &Connection, _: &QueueHandle<Self>,
     ) {
+        let gn = *global_name;
+        let pending = state.output_pending.entry(gn).or_insert_with(|| OutputInfo {
+            name: String::new(), width: 0, height: 0, x: 0, y: 0, scale: 1,
+        });
         match event {
-            wl_output::Event::Scale { factor } => { state.scale = factor; }
-            wl_output::Event::Mode { width, .. } => { state.output_phys_width = width as u32; }
+            wl_output::Event::Name { name } => { pending.name = name; }
+            wl_output::Event::Mode { width, height, .. } => {
+                pending.width = width;
+                pending.height = height;
+                // Keep backwards compat for fractional scale calculation
+                state.output_phys_width = width as u32;
+            }
+            wl_output::Event::Scale { factor } => {
+                pending.scale = factor;
+                state.scale = factor;
+            }
+            wl_output::Event::Geometry { x, y, .. } => {
+                pending.x = x;
+                pending.y = y;
+            }
+            wl_output::Event::Done => {
+                if let Some(info) = state.output_pending.remove(&gn) {
+                    if let Some(existing) = state.outputs.iter_mut().find(|(n, _)| *n == gn) {
+                        existing.1 = info;
+                    } else {
+                        state.outputs.push((gn, info));
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -369,11 +414,13 @@ impl Dispatch<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1, ()> for State {
 
 // ── Edge resize helper ──────────────────────────────────────────────────────
 
-fn edge_resize(cx: f32, cy: f32, w: f32, h: f32, border: f32) -> Option<xdg_toplevel::ResizeEdge> {
+fn edge_resize(cx: f32, cy: f32, w: f32, h: f32, border: f32, controls_x: f32) -> Option<xdg_toplevel::ResizeEdge> {
     let left = cx < border;
     let right = cx > w - border;
     let top = cy < border;
     let bottom = cy > h - border;
+    // Don't resize in the window controls area (top-right)
+    if top && cx > controls_x { return None; }
     match (left, right, top, bottom) {
         (true, _, true, _) => Some(xdg_toplevel::ResizeEdge::TopLeft),
         (_, true, true, _) => Some(xdg_toplevel::ResizeEdge::TopRight),
@@ -462,7 +509,7 @@ pub fn run() -> Result<()> {
     let mut painter = Painter::new(&gpu);
     let mut text = TextRenderer::new(&gpu);
     let mut ix = InteractionContext::new();
-    let fox = FoxPalette::dark();
+    let fox = FoxPalette::night_sky();
 
     // Initialize popup backend
     {
@@ -476,8 +523,7 @@ pub fn run() -> Result<()> {
 
     // Rasterize sidebar icons into GPU textures
     let tex_pass = TexturePass::new(&gpu);
-    let icon_defs: [(Vec<icons::PathCmd>, Color); 6] = [
-        (icons::icon_appearance(),     Color::from_rgb8(229, 165, 75)),  // warm amber
+    let icon_defs: [(Vec<icons::PathCmd>, Color); 5] = [
         (icons::icon_window_manager(), Color::from_rgb8(130, 170, 255)), // soft blue
         (icons::icon_input(),          Color::from_rgb8(180, 140, 220)), // lavender
         (icons::icon_display(),        Color::from_rgb8(100, 200, 180)), // teal
@@ -489,7 +535,7 @@ pub fn run() -> Result<()> {
         tex_pass.upload(&gpu, &rgba, ICON_SIZE, ICON_SIZE)
     }).collect();
 
-    let mut active_panel = parse_panel_arg().unwrap_or(Panel::Appearance);
+    let mut active_panel = parse_panel_arg().unwrap_or(Panel::Display);
     let mut config = LanternConfig::load();
     let mut saved_config = config.clone();
     let mut panel_state = PanelState::new(&fox);
@@ -598,18 +644,36 @@ pub fn run() -> Result<()> {
                 }
             } else {
                 let border = 10.0 * s;
-                if let Some(edge) = edge_resize(cx, cy, wf, hf, border) {
+                let controls_x = wf - 120.0 * s;
+                if let Some(edge) = edge_resize(cx, cy, wf, hf, border, controls_x) {
                     if let Some(seat) = &state.seat {
                         toplevel.resize(seat, state.pointer_serial, edge);
                     }
+                } else if cy < title_h {
+                    // Chrome-style window controls (distance-based hit detection)
+                    let hit_r = 20.0 * s;
+                    let btn_y = title_h * 0.5;
+                    let close_cx = wf - 28.0 * s;
+                    let max_cx = wf - 66.0 * s;
+                    let min_cx = wf - 104.0 * s;
+                    let dist_close = ((cx - close_cx).powi(2) + (cy - btn_y).powi(2)).sqrt();
+                    let dist_max = ((cx - max_cx).powi(2) + (cy - btn_y).powi(2)).sqrt();
+                    let dist_min = ((cx - min_cx).powi(2) + (cy - btn_y).powi(2)).sqrt();
+                    if dist_close < hit_r {
+                        state.running = false;
+                    } else if dist_max < hit_r {
+                        if state.maximized { toplevel.unset_maximized(); }
+                        else { toplevel.set_maximized(); }
+                    } else if dist_min < hit_r {
+                        toplevel.set_minimized();
+                    } else {
+                        // Drag to move
+                        if let Some(seat) = &state.seat {
+                            toplevel._move(seat, state.pointer_serial);
+                        }
+                    }
                 } else if let Some(zone_id) = ix.on_left_pressed() {
                     match zone_id {
-                        ZONE_CLOSE => { state.running = false; }
-                        ZONE_MINIMIZE => { toplevel.set_minimized(); }
-                        ZONE_MAXIMIZE => {
-                            if state.maximized { toplevel.unset_maximized(); }
-                            else { toplevel.set_maximized(); }
-                        }
                         id if id >= ZONE_SIDEBAR_BASE && id < ZONE_SIDEBAR_BASE + PANELS.len() as u32 => {
                             active_panel = PANELS[(id - ZONE_SIDEBAR_BASE) as usize].0;
                             panel_state.close_dropdown();
@@ -621,6 +685,21 @@ pub fn run() -> Result<()> {
                             config.save();
                             if wifi_changed {
                                 config.apply_wifi_power();
+                            }
+                            // Apply output settings via wlr-output-management
+                            if display_state.monitor_settings.dirty {
+                                if let Some(selected_name) = display_state.monitor_arrange.selected_output_name() {
+                                    if let Some(hi) = state.output_mgr.heads.iter().position(|h| h.name == selected_name) {
+                                        let changes = vec![crate::output_manager::HeadChange {
+                                            head_idx: hi,
+                                            mode_idx: display_state.monitor_settings.selected_mode_idx,
+                                            position: None,
+                                            scale: display_state.monitor_settings.selected_scale,
+                                        }];
+                                        crate::output_manager::apply_config(&state, &qh, &changes);
+                                        display_state.monitor_settings.dirty = false;
+                                    }
+                                }
                             }
                             saved_config = config.clone();
                         }
@@ -645,9 +724,10 @@ pub fn run() -> Result<()> {
                                             btn_x, btn_w, btn_h, row_h, panel_y, s,
                                         );
                                     }
-                                    Panel::Display | Panel::Appearance => {
+                                    Panel::Display => {
                                         display_panel::handle_display_click(
                                             &mut config, &mut display_state, id,
+                                            cx, cy, &state.output_mgr,
                                         );
                                     }
                                     Panel::Input => {
@@ -661,13 +741,6 @@ pub fn run() -> Result<()> {
                             }
                         }
                     }
-                } else {
-                    let title_h = TITLE_BAR_H * s;
-                    if cy < title_h {
-                        if let Some(seat) = &state.seat {
-                            toplevel._move(seat, state.pointer_serial);
-                        }
-                    }
                 }
             }
         }
@@ -675,6 +748,13 @@ pub fn run() -> Result<()> {
         // Left release
         if state.left_released {
             state.left_released = false;
+            // End monitor drag on release
+            if monitor_arrange::is_dragging(&display_state.monitor_arrange) {
+                monitor_arrange::handle_arrange_release(&mut display_state.monitor_arrange);
+                if display_state.monitor_arrange.dirty {
+                    config.monitors = display_state.monitor_arrange.to_config();
+                }
+            }
             if let Some(pid) = pointer_on_popup {
                 if let Some(backend) = &mut state.popup_backend {
                     if let Some(ctx) = backend.popup_render(pid) {
@@ -684,6 +764,11 @@ pub fn run() -> Result<()> {
             } else {
                 ix.on_left_released();
             }
+        }
+
+        // Monitor drag update on pointer motion
+        if monitor_arrange::is_dragging(&display_state.monitor_arrange) {
+            monitor_arrange::handle_arrange_drag(&mut display_state.monitor_arrange, cx, cy);
         }
 
         // Right press (no context menu yet, just consume)
@@ -703,7 +788,8 @@ pub fn run() -> Result<()> {
         // ── Cursor shape ────────────────────────────────────────────────
         if state.pointer_in_surface {
             let border = 10.0 * s;
-            let desired = match edge_resize(cx, cy, wf, hf, border) {
+            let controls_x = wf - 120.0 * s;
+            let desired = match edge_resize(cx, cy, wf, hf, border, controls_x) {
                 Some(edge) => resize_edge_to_cursor_shape(edge),
                 None => wp_cursor_shape_device_v1::Shape::Default,
             };
@@ -719,49 +805,14 @@ pub fn run() -> Result<()> {
         ix.begin_frame();
         painter.clear();
 
-        // Background (respects global background_opacity from lantern.toml)
-        let win_r = if state.maximized { 0.0 } else { 10.0 * s };
-        let win_bg_opacity = config.windows.background_opacity;
-        painter.rect_filled(Rect::new(0.0, 0.0, wf, hf), win_r, fox.bg.with_alpha(win_bg_opacity));
-
-        // Title bar
-        let tb_rect = Rect::new(0.0, 0.0, wf, TITLE_BAR_H * s);
-        let close_rect = TitleBar::new(tb_rect).scale(s).close_button_rect();
-        let max_rect = TitleBar::new(tb_rect).scale(s).maximize_button_rect();
-        let min_rect = TitleBar::new(tb_rect).scale(s).minimize_button_rect();
-        let close_s = ix.add_zone(ZONE_CLOSE, close_rect);
-        let max_s = ix.add_zone(ZONE_MAXIMIZE, max_rect);
-        let min_s = ix.add_zone(ZONE_MINIMIZE, min_rect);
-
-        TitleBar::new(tb_rect)
-            .scale(s)
-            .maximized(state.maximized)
-            .close_hovered(close_s.is_hovered())
-            .maximize_hovered(max_s.is_hovered())
-            .minimize_hovered(min_s.is_hovered())
-            .draw(&mut painter, &fox);
-
-        // Title text
-        let font_size = 18.0 * s;
-        let tb_content = TitleBar::new(tb_rect).scale(s).content_rect();
         let sw = gpu.width();
         let sh = gpu.height();
-        text.queue(
-            "System Settings",
-            font_size,
-            tb_content.x + 8.0 * s,
-            tb_content.y + (tb_content.h - font_size) / 2.0,
-            fox.text,
-            wf,
-            sw,
-            sh,
-        );
+        let r = if state.maximized { 0.0 } else { CORNER_RADIUS * s };
 
-        // Gradient strip below title bar
-        let strip_y = title_h;
-        let mut strip = GradientStrip::new(0.0, strip_y, wf);
-        strip.height = 4.0 * s;
-        strip.draw(&mut painter);
+        // Window chrome (Night Sky background + controls)
+        crate::chrome::draw_background(&mut painter, wf, hf, r);
+        crate::chrome::draw_title(&mut text, "System Settings", s, wf, title_h, sw, sh);
+        crate::chrome::draw_controls(&mut painter, cx, cy, s, wf, title_h);
 
         // ── Sidebar ────────────────────────────────────────────────────
         let item_h = SIDEBAR_ITEM_H * s;
@@ -771,7 +822,7 @@ pub fn run() -> Result<()> {
 
         // Sidebar background (slightly lighter than window bg)
         // Bottom-left corner must match the window radius so it doesn't cover the rounded corner
-        let sidebar_bl_r = if state.maximized { 0.0 } else { win_r };
+        let sidebar_bl_r = if state.maximized { 0.0 } else { r };
         painter.rect_4corner(
             Rect::new(0.0, body_y, sidebar_w, hf - body_y),
             [0.0, 0.0, sidebar_bl_r, 0.0], // only bottom-left rounded
@@ -846,14 +897,14 @@ pub fn run() -> Result<()> {
                     content_x, panel_y, content_w, panel_h, s, sw, sh, frame_scroll,
                 );
             }
-            Panel::Display | Panel::Appearance => {
+            Panel::Display => {
                 display_state.sync_from_config(&config);
                 let panel_h = hf - panel_y;
                 display_panel::draw_display_panel(
                     &mut config, &mut display_state,
                     &mut painter, &mut text, &mut ix, &tex_pass, &fox, &gpu,
                     content_x, panel_y, content_w, panel_h, s, sw, sh,
-                    frame_scroll,
+                    frame_scroll, &state.outputs, &state.output_mgr,
                 );
                 let thumb_draws = display_panel::collect_thumb_draws(&display_state, s);
                 for td in thumb_draws {
@@ -886,6 +937,9 @@ pub fn run() -> Result<()> {
                 content_x, content_w, hf, s, sw, sh,
             );
         }
+
+        // Window border (skip when maximized)
+        if !state.maximized { crate::chrome::draw_border(&mut painter, wf, hf, r); }
 
         // ── Render pass ─────────────────────────────────────────────────
         if let Ok(mut frame) = gpu.begin_frame("system-settings") {

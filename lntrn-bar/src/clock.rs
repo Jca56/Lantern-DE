@@ -1,11 +1,6 @@
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{FoxPalette, InteractionContext};
 
-const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MONTHS: [&str; 12] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
 const MONTHS_FULL: [&str; 12] = [
     "January", "February", "March", "April", "May", "June",
     "July", "August", "September", "October", "November", "December",
@@ -40,19 +35,22 @@ impl Clock {
         c
     }
 
-    pub fn tick(&mut self) {
+    /// Update time fields. Returns `true` if the displayed minute changed.
+    pub fn tick(&mut self) -> bool {
         let secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs() as libc::time_t;
         let mut tm: libc::tm = unsafe { std::mem::zeroed() };
         unsafe { libc::localtime_r(&secs, &mut tm) };
+        let changed = self.hour != tm.tm_hour || self.minute != tm.tm_min;
         self.hour = tm.tm_hour;
         self.minute = tm.tm_min;
         self.weekday = tm.tm_wday;
         self.month = tm.tm_mon;
         self.day = tm.tm_mday;
         self.year = tm.tm_year + 1900;
+        changed
     }
 
     pub fn time_text_len(&self) -> usize {
