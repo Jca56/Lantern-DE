@@ -130,8 +130,12 @@ impl PointerGrab<Lantern> for MoveSurfaceGrab {
                         data.maximize_request_surface(&surface);
                     }
                 } else if self.was_tiled && self.has_moved && data.tiling.active {
-                    // Re-insert into tiling tree (only if we actually dragged it out)
-                    data.tiling.insert(surface.clone(), None);
+                    // Re-insert into tiling tree on the output where it was dropped
+                    let output_name = data.output_at_point(pointer_pos)
+                        .or_else(|| data.space.outputs().next().cloned())
+                        .map(|o| o.name())
+                        .unwrap_or_default();
+                    data.tiling.insert(&output_name, surface.clone(), None);
                     data.apply_tiling_layout();
                 }
             }

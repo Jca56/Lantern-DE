@@ -89,7 +89,11 @@ impl Lantern {
         // Insert into tiling tree if tiling is active
         // Always insert at the end of the tree for predictable placement
         if self.tiling.active && !is_scratchpad {
-            self.tiling.insert(surface.clone(), None);
+            let output_name = self.output_for_window(&window)
+                .or_else(|| self.space.outputs().next().cloned())
+                .map(|o| o.name())
+                .unwrap_or_default();
+            self.tiling.insert(&output_name, surface.clone(), None);
             self.apply_tiling_layout();
         }
 
@@ -558,7 +562,11 @@ impl Lantern {
 
         // Re-insert into tiling tree if tiling is active
         if self.tiling.active && !self.tiling.contains(&entry.surface) {
-            self.tiling.insert(entry.surface.clone(), None);
+            let output_name = self.output_for_window(&entry.window)
+                .or_else(|| self.space.outputs().next().cloned())
+                .map(|o| o.name())
+                .unwrap_or_default();
+            self.tiling.insert(&output_name, entry.surface.clone(), None);
             self.apply_tiling_layout();
         }
 
@@ -805,8 +813,8 @@ impl Lantern {
             geo.size,
         );
 
-        // Subtract exclusive zones from layer surfaces (e.g. panel)
-        let (top_excl, bottom_excl, left_excl, right_excl) = self.exclusive_zone_offsets();
+        // Subtract exclusive zones only from layer surfaces on this output
+        let (top_excl, bottom_excl, left_excl, right_excl) = self.exclusive_zone_offsets_for_output(&output);
         result.loc.x += left_excl;
         result.loc.y += top_excl;
         result.size.w -= left_excl + right_excl;

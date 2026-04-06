@@ -225,7 +225,12 @@ fn dbus_thread(
 
     loop {
         let mut pfd = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
-        unsafe { libc::poll(&mut pfd, 1, 100) };
+        let poll_ret = unsafe { libc::poll(&mut pfd, 1, 100) };
+        // If poll returned an error or the fd has POLLERR/POLLHUP/POLLNVAL,
+        // it will return immediately every iteration — sleep to avoid a spin.
+        if poll_ret < 0 || pfd.revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
 
         // Process commands from render thread
         while let Ok(cmd) = cmd_rx.try_recv() {

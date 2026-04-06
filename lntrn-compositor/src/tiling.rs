@@ -4,7 +4,10 @@
 /// or a Leaf (holding a window surface). Layout is computed by recursively
 /// subdividing a root rectangle with gaps between windows and at screen edges.
 
+use std::collections::HashMap;
+
 use smithay::{
+    output::Output,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Point, Rectangle, Size},
 };
@@ -341,18 +344,6 @@ impl TilingState {
             .map(|(s, _)| s.clone())
     }
 
-    /// Get the tiling area: output geometry minus exclusive zones, inset by outer gap.
-    pub fn tiling_area(lantern: &Lantern) -> Option<Rectangle<i32, Logical>> {
-        // Reuse the exclusive-zone-aware geometry used by maximize
-        let dummy_window = lantern.space.elements().next()?;
-        let mut area = lantern.window_output_geometry(dummy_window)?;
-        let gap = lantern.tiling.outer_gap;
-        area.loc.x += gap;
-        area.loc.y += gap;
-        area.size.w -= gap * 2;
-        area.size.h -= gap * 2;
-        Some(area)
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -363,32 +354,160 @@ pub enum AdjacentDir {
     Down,
 }
 
+// ── Per-output tiling wrapper ───────────────────────────────────────────────
+
+/// Holds one independent BSP tree per output so each monitor tiles separately.
+pub struct PerOutputTiling {
+    trees: HashMap<String, TilingState>,
+    pub active: bool,
+    pub outer_gap: i32,
+}
+
+impl PerOutputTiling {
+    pub fn new() -> Self {
+        Self {
+            trees: HashMap::new(),
+            active: false,
+            outer_gap: DEFAULT_OUTER_GAP,
+        }
+    }
+
+    /// Toggle tiling on/off. Returns new active state.
+    pub fn toggle(&mut self) -> bool {
+        self.active = !self.active;
+        if !self.active {
+            self.trees.values_mut().for_each(|t| t.clear());
+        }
+        self.active
+    }
+
+    fn tree_mut(&mut self, output_name: &str) -> &mut TilingState {
+        self.trees.entry(output_name.to_string()).or_insert_with(TilingState::new)
+    }
+
+    fn tree(&self, output_name: &str) -> Option<&TilingState> {
+        self.trees.get(output_name)
+    }
+
+    /// Check if any tree contains this surface.
+    pub fn contains(&self, surface: &WlSurface) -> bool {
+        self.trees.values().any(|t| t.contains(surface))
+    }
+
+    /// Find which output name a surface lives in.
+    pub fn output_of(&self, surface: &WlSurface) -> Option<String> {
+        self.trees.iter()
+            .find(|(_, t)| t.contains(surface))
+            .map(|(name, _)| name.clone())
+    }
+
+    /// Insert a surface into the tree for the given output.
+    pub fn insert(&mut self, output_name: &str, surface: WlSurface, near: Option<&WlSurface>) {
+        self.tree_mut(output_name).insert(surface, near);
+    }
+
+    /// Remove a surface from whichever tree contains it.
+    pub fn remove(&mut self, surface: &WlSurface) {
+        for tree in self.trees.values_mut() {
+            if tree.contains(surface) {
+                tree.remove(surface);
+                return;
+            }
+        }
+    }
+
+    /// Swap two surfaces (must be on the same output).
+    pub fn swap(&mut self, a: &WlSurface, b: &WlSurface) {
+        for tree in self.trees.values_mut() {
+            if tree.contains(a) && tree.contains(b) {
+                tree.swap(a, b);
+                return;
+            }
+        }
+    }
+
+    /// Resize the split containing `surface`.
+    pub fn resize_split(&mut self, surface: &WlSurface, delta: f32) {
+        for tree in self.trees.values_mut() {
+            if tree.contains(surface) {
+                tree.resize_split(surface, delta);
+                return;
+            }
+        }
+    }
+
+    /// Find adjacent window on the same output.
+    pub fn find_adjacent(
+        &self,
+        surface: &WlSurface,
+        area: Rectangle<i32, Logical>,
+        dir: AdjacentDir,
+    ) -> Option<WlSurface> {
+        for tree in self.trees.values() {
+            if tree.contains(surface) {
+                return tree.find_adjacent(surface, area, dir);
+            }
+        }
+        None
+    }
+}
+
 /// Methods on Lantern for applying tiling layout.
 impl Lantern {
+    /// Get the tiling area for a specific output.
+    pub fn tiling_area_for_output(&self, output: &Output) -> Option<Rectangle<i32, Logical>> {
+        let geo = self.space.output_geometry(output)?;
+        let mut area = Rectangle::new(geo.loc.into(), geo.size);
+        let (top_excl, bottom_excl, left_excl, right_excl) = self.exclusive_zone_offsets_for_output(output);
+        area.loc.x += left_excl;
+        area.loc.y += top_excl;
+        area.size.w -= left_excl + right_excl;
+        area.size.h -= top_excl + bottom_excl;
+        let gap = self.tiling.outer_gap;
+        area.loc.x += gap;
+        area.loc.y += gap;
+        area.size.w -= gap * 2;
+        area.size.h -= gap * 2;
+        Some(area)
+    }
+
+    /// Get the tiling area for the output a surface's window is on.
+    pub fn tiling_area_for_surface(&self, surface: &WlSurface) -> Option<Rectangle<i32, Logical>> {
+        let window = self.find_mapped_window(surface)?;
+        let output = self.output_for_window(&window)
+            .or_else(|| self.space.outputs().next().cloned())?;
+        self.tiling_area_for_output(&output)
+    }
+
     /// Recompute tiling layout and animate all tiled windows to their targets.
     pub fn apply_tiling_layout(&mut self) {
         if !self.tiling.active {
             return;
         }
 
-        let Some(area) = TilingState::tiling_area(self) else { return };
-        let layout = self.tiling.compute_layout(area);
+        // Collect per-output layouts
+        let outputs: Vec<Output> = self.space.outputs().cloned().collect();
+        let mut all_layout = Vec::new();
 
-        for (surface, target_rect) in layout {
+        for output in &outputs {
+            let name = output.name();
+            let Some(area) = self.tiling_area_for_output(output) else { continue };
+            if let Some(tree) = self.tiling.tree(&name) {
+                all_layout.extend(tree.compute_layout(area));
+            }
+        }
+
+        for (surface, target_rect) in all_layout {
             let Some(window) = self.find_mapped_window(&surface) else { continue };
 
-            // Get current position for animation start
             let current_loc = self.space.element_location(&window).unwrap_or_default();
             let current_size = window.geometry().size;
             let current_rect = Rectangle::new(current_loc, current_size);
 
-            // Start animation from current to target
             if current_rect != target_rect {
                 self.tiling_anim.animate_to(&surface, current_rect, target_rect);
             }
 
-            // Set tiled state so the client respects the configured size,
-            // then configure window to final size and position.
             window.set_tiled(true);
             window.configure_size(target_rect.size);
             self.space.map_element(window, target_rect.loc, false);
@@ -402,24 +521,29 @@ impl Lantern {
         let now_active = self.tiling.toggle();
 
         if now_active {
-            // Collect all mapped window surfaces (excluding minimized/fullscreen)
-            let surfaces: Vec<WlSurface> = self.space.elements()
-                .filter_map(|w| w.get_wl_surface())
-                .filter(|s| {
-                    !self.fullscreen_windows.iter().any(|f| f.surface == *s)
-                        && !self.scratchpad_surface.as_ref().is_some_and(|sc| sc == s)
+            // Group windows by their output
+            let windows: Vec<_> = self.space.elements()
+                .filter_map(|w| {
+                    let s = w.get_wl_surface()?;
+                    if self.fullscreen_windows.iter().any(|f| f.surface == s)
+                        || self.scratchpad_surface.as_ref().is_some_and(|sc| sc == &s)
+                    {
+                        return None;
+                    }
+                    let output = self.output_for_window(w)
+                        .or_else(|| self.space.outputs().next().cloned())?;
+                    Some((s, output.name()))
                 })
                 .collect();
 
-            for surface in surfaces {
+            for (surface, output_name) in windows {
                 if !self.tiling.contains(&surface) {
-                    self.tiling.insert(surface, None);
+                    self.tiling.insert(&output_name, surface, None);
                 }
             }
             self.apply_tiling_layout();
             tracing::info!("Tiling enabled");
         } else {
-            // Clear tiled state on all windows so they can freely resize again
             let surfaces: Vec<WlSurface> = self.space.elements()
                 .filter_map(|w| w.get_wl_surface())
                 .collect();

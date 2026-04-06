@@ -332,8 +332,8 @@ impl Lantern {
                                 _ => None,
                             };
                             if let Some(dir) = dir {
-                                if let Some(area) = crate::tiling::TilingState::tiling_area(data) {
-                                    if let Some(focused) = data.focused_surface.clone() {
+                                if let Some(focused) = data.focused_surface.clone() {
+                                    if let Some(area) = data.tiling_area_for_surface(&focused) {
                                         if let Some(target) = data.tiling.find_adjacent(&focused, area, dir) {
                                             if let Some(window) = data.find_mapped_window(&target) {
                                                 let serial = smithay::utils::SERIAL_COUNTER.next_serial();
@@ -353,7 +353,7 @@ impl Lantern {
                             && data.tiling.active
                         {
                             if let Some(focused) = data.focused_surface.clone() {
-                                if let Some(area) = crate::tiling::TilingState::tiling_area(data) {
+                                if let Some(area) = data.tiling_area_for_surface(&focused) {
                                     // Swap with the next window to the right, or below
                                     let target = data.tiling.find_adjacent(&focused, area, crate::tiling::AdjacentDir::Right)
                                         .or_else(|| data.tiling.find_adjacent(&focused, area, crate::tiling::AdjacentDir::Down));

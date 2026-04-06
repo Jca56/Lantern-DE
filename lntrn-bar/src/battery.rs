@@ -520,7 +520,13 @@ fn find_battery() -> Option<PathBuf> {
         let path = entry.path();
         if let Ok(typ) = std::fs::read_to_string(path.join("type")) {
             if typ.trim() == "Battery" {
-                // Make sure it has capacity
+                // Skip peripheral batteries (mice, headsets, etc.) —
+                // only show the system/laptop battery.
+                if let Ok(scope) = std::fs::read_to_string(path.join("scope")) {
+                    if scope.trim() == "Device" {
+                        continue;
+                    }
+                }
                 if path.join("capacity").exists() {
                     return Some(path);
                 }

@@ -148,7 +148,7 @@ impl Lantern {
             .or_else(|| self.space.outputs().next().cloned())?;
         let geo = self.space.output_geometry(&output)?;
 
-        let (top_excl, _bottom_excl, left_excl, right_excl) = self.exclusive_zone_offsets();
+        let (top_excl, _bottom_excl, left_excl, right_excl) = self.exclusive_zone_offsets_for_output(&output);
         let x = geo.loc.x + left_excl;
         let y = geo.loc.y + top_excl;
         let w = geo.size.w - left_excl - right_excl;

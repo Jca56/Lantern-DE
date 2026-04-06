@@ -88,6 +88,7 @@ pub(crate) struct State {
     running: bool,
     configured: bool,
     frame_done: bool,
+    input_dirty: bool,
     width: u32,
     height: u32,
     scale: i32,
@@ -118,7 +119,7 @@ pub(crate) struct State {
 impl State {
     fn new() -> Self {
         Self {
-            running: true, configured: false, frame_done: true,
+            running: true, configured: false, frame_done: true, input_dirty: false,
             width: 0, height: BAR_HEIGHT_DEFAULT + MENU_OVERFLOW + SHADOW_PAD,
             scale: 1, output_phys_width: 0,
             compositor: None, layer_shell: None, viewporter: None,
@@ -292,7 +293,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
             }
             _ => {}
         }
-        state.frame_done = true;
+        state.input_dirty = true;
     }
 }
 
@@ -314,7 +315,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                         state.held_key = None;
                     }
                 }
-                state.frame_done = true;
+                state.input_dirty = true;
             }
             wl_keyboard::Event::Modifiers { mods_depressed, .. } => {
                 state.ctrl = mods_depressed & 4 != 0;
@@ -616,7 +617,16 @@ pub fn run() -> Result<()> {
             std::thread::sleep(Duration::from_millis(16));
             state.frame_done = true;
         } else {
+            // Block until a Wayland event arrives
             event_queue.blocking_dispatch(&mut state)?;
+            // If input arrived (pointer/keyboard), drain pending events and
+            // throttle to ~60fps instead of rendering per-event.
+            if state.input_dirty && !state.frame_done {
+                std::thread::sleep(Duration::from_millis(16));
+                event_queue.dispatch_pending(&mut state)?;
+                state.frame_done = true;
+            }
+            state.input_dirty = false;
         }
         if !state.frame_done { continue; }
         state.frame_done = false;
@@ -1631,16 +1641,21 @@ pub fn run() -> Result<()> {
             tray_menu_path = None;
         }
 
-        surface.frame(&qh, ());
-        apply_layer_config(&layer_surface, state.width, bar_height, anim_t, auto_hide, position_top);
-        surface.commit();
-
-        // Need continuous frames when animating or hide timer is counting
+        // Determine if we need continuous frames BEFORE committing
         needs_anim = (anim_t - target).abs() > 0.001
             || (hide_t - hide_target).abs() > 0.001
             || (auto_hide && !state.pointer_in_surface && hide_t < 0.99)
             || tray_animating || bat_animating || bt_animating || app_tray.is_dragging()
             || audio.is_dragging();
+
+        // Only request a frame callback when we need continuous rendering.
+        // Without this guard, the callback fires → sets frame_done → renders
+        // → requests callback again, creating a perpetual render loop at idle.
+        if needs_anim {
+            surface.frame(&qh, ());
+        }
+        apply_layer_config(&layer_surface, state.width, bar_height, anim_t, auto_hide, position_top);
+        surface.commit();
     }
 
     Ok(())
