@@ -16,6 +16,7 @@ const ICON_GAP: f32 = 8.0;
 struct TrayIcon {
     bus_name: String,
     obj_path: String,
+    #[allow(dead_code)]
     id: String,
     status: String,
     menu_path: Option<String>,
@@ -37,6 +38,8 @@ pub struct SystemTray {
     event_rx: mpsc::Receiver<TrayEvent>,
     /// Track which items have had their textures uploaded.
     uploaded: HashMap<String, bool>,
+    /// Items buffered by `tick()` awaiting texture upload in `poll()`.
+    pending_items: Vec<Vec<SniItem>>,
 }
 
 impl SystemTray {
@@ -59,12 +62,28 @@ impl SystemTray {
             item_rx,
             event_rx,
             uploaded: HashMap::new(),
+            pending_items: Vec::new(),
         })
     }
 
-    /// Poll for updates from the D-Bus thread and upload new textures.
-    pub fn poll(&mut self, tex_pass: &TexturePass, gpu: &GpuContext) {
+    /// Drain channel into buffer. Returns `true` if new items are pending.
+    pub fn tick(&mut self) -> bool {
+        let mut changed = false;
         while let Ok(items) = self.item_rx.try_recv() {
+            changed = true;
+            self.pending_items.push(items);
+        }
+        changed
+    }
+
+    /// Process buffered items (upload textures). Returns `true` if icons changed.
+    pub fn poll(&mut self, tex_pass: &TexturePass, gpu: &GpuContext) -> bool {
+        // Drain any new items from channel too
+        while let Ok(items) = self.item_rx.try_recv() {
+            self.pending_items.push(items);
+        }
+        let changed = !self.pending_items.is_empty();
+        for items in self.pending_items.drain(..) {
             self.icons.clear();
             self.uploaded.clear();
             for item in &items {
@@ -85,6 +104,7 @@ impl SystemTray {
                 self.icons.push(icon);
             }
         }
+        changed
     }
 
     /// Check for menu events from the D-Bus thread.

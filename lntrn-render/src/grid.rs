@@ -237,7 +237,7 @@ impl TerminalGridRenderer {
         c: char,
         rect: Rect,
         fg: Color,
-        bg: Color,
+        _bg: Color,
     ) -> Option<bool> {
         let w = rect.w;
         let h = rect.h;

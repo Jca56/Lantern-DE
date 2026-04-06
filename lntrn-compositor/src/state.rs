@@ -48,6 +48,7 @@ use crate::cursor::CursorState;
 use crate::gestures::GestureState;
 use crate::ssd::SsdManager;
 use crate::handlers::foreign_toplevel::ForeignToplevelManagerState;
+use crate::handlers::output_management::OutputManagementState;
 use crate::handlers::screencopy::{PendingScreencopy, ScreencopyManagerState};
 use crate::handlers::xdg_foreign::XdgForeignState;
 use crate::hot_corners::HotCornerState;
@@ -166,6 +167,7 @@ pub struct Lantern {
     pub screencopy_state: ScreencopyManagerState,
     pub pending_screencopy: Vec<PendingScreencopy>,
     pub foreign_toplevel_state: ForeignToplevelManagerState,
+    pub output_management_state: OutputManagementState,
     pub pointer_gestures_state: PointerGesturesState,
     pub popups: PopupManager,
 
@@ -264,6 +266,7 @@ impl Lantern {
         let dmabuf_state = DmabufState::new();
         let screencopy_state = ScreencopyManagerState::new(&dh);
         let foreign_toplevel_state = ForeignToplevelManagerState::new(&dh);
+        let output_management_state = OutputManagementState::new(&dh);
         let xdg_foreign_state = XdgForeignState::new(&dh);
         let pointer_gestures_state = PointerGesturesState::new::<Self>(&dh);
         let xwayland_shell_state = smithay::wayland::xwayland_shell::XWaylandShellState::new::<Self>(&dh);
@@ -304,6 +307,7 @@ impl Lantern {
             screencopy_state,
             pending_screencopy: Vec::new(),
             foreign_toplevel_state,
+            output_management_state,
             pointer_gestures_state,
             popups,
             seat,

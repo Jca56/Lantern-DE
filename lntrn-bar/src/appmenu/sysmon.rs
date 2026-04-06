@@ -4,7 +4,6 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use lntrn_render::Rect;
 use lntrn_ui::gpu::InteractionContext;
 
 pub(crate) const POLL_FAST_MS: u64 = 2_000;
@@ -91,8 +90,10 @@ impl SystemMonitor {
         }
     }
 
-    pub fn tick(&mut self) {
+    /// Poll system metrics if intervals have elapsed. Returns `true` if new data was read.
+    pub fn tick(&mut self) -> bool {
         let now = Instant::now();
+        let mut changed = false;
         if now.duration_since(self.last_fast).as_millis() >= POLL_FAST_MS as u128 || self.first_tick {
             self.poll_cpu();
             self.poll_memory();
@@ -100,13 +101,16 @@ impl SystemMonitor {
             self.poll_processes();
             self.poll_temp();
             self.last_fast = now;
+            changed = true;
         }
         if now.duration_since(self.last_disk).as_millis() >= POLL_DISK_MS as u128 || self.first_tick {
             self.poll_disks();
             self.last_disk = now;
+            changed = true;
         }
         self.first_tick = false;
         self.update_pinned();
+        changed
     }
 
     fn poll_cpu(&mut self) {

@@ -1,5 +1,8 @@
+mod chrome;
 mod config;
 mod display_panel;
+mod monitor_settings;
+mod output_manager;
 mod icon_panel;
 mod icons;
 mod input_panel;

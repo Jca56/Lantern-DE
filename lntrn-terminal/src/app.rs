@@ -104,6 +104,7 @@ pub struct App {
     // Tab bar auto-hide
     pub(crate) tab_bar_visible: bool,
     pub(crate) tab_bar_hover_since: Option<Instant>,
+    pub(crate) tab_bar_leave_since: Option<Instant>,
 }
 
 impl App {
@@ -142,6 +143,7 @@ impl App {
             sidebar: sidebar::SidebarState::new(),
             tab_bar_visible: false,
             tab_bar_hover_since: None,
+            tab_bar_leave_since: None,
         }
     }
 

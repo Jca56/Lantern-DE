@@ -53,6 +53,10 @@ pub struct MonitorArrangeState {
     needs_sync: bool,
     /// Dirty flag — user has dragged something.
     pub dirty: bool,
+    /// Selected monitor index (for per-monitor settings).
+    pub selected: Option<usize>,
+    /// True if the last click was a drag (suppress selection on release).
+    drag_moved: bool,
 }
 
 impl MonitorArrangeState {
@@ -69,6 +73,8 @@ impl MonitorArrangeState {
             canvas_offset_y: 0.0,
             needs_sync: true,
             dirty: false,
+            selected: None,
+            drag_moved: false,
         }
     }
 
@@ -113,12 +119,25 @@ impl MonitorArrangeState {
             name: r.name.clone(),
             x: r.out_x,
             y: r.out_y,
+            resolution: String::new(),
+            refresh_rate: String::new(),
+            scale: 1.25,
+            wallpaper: String::new(),
         }).collect()
     }
 
     /// Force re-sync on next frame.
     pub fn request_sync(&mut self) {
         self.needs_sync = true;
+    }
+
+    /// Get the name of the selected output (auto-selects if only one).
+    pub fn selected_output_name(&mut self) -> Option<String> {
+        if self.rects.len() == 1 {
+            self.selected = Some(0);
+        }
+        let idx = self.selected?;
+        self.rects.get(idx).map(|r| r.name.clone())
     }
 }
 
@@ -207,15 +226,18 @@ pub fn draw_monitor_arrange(
         let is_dragging = mas.dragging == i as i32;
 
         // Monitor fill + border
+        let is_selected = mas.selected == Some(i);
         let fill = if is_dragging {
             fox.accent.with_alpha(0.4)
+        } else if is_selected {
+            fox.accent.with_alpha(0.15)
         } else if zone.is_hovered() {
             fox.accent.with_alpha(0.25)
         } else {
             fox.bg.with_alpha(0.8)
         };
-        let bw = 2.0 * s;
-        let border_color = if is_dragging { fox.accent } else { fox.muted };
+        let bw = if is_selected { 3.0 * s } else { 2.0 * s };
+        let border_color = if is_dragging || is_selected { fox.accent } else { fox.muted };
         let border_rect = Rect::new(rx - bw, ry - bw, rw + bw * 2.0, rh + bw * 2.0);
         painter.rect_filled(border_rect, 6.0 * s, border_color);
         painter.rect_filled(rect, 4.0 * s, fill);
@@ -263,6 +285,8 @@ pub fn handle_arrange_click(
     }
 
     mas.dragging = idx as i32;
+    mas.drag_moved = false;
+    mas.selected = Some(idx);
     let r = &mas.rects[idx];
     let rx = mas.canvas_offset_x + r.out_x as f32 * mas.view_scale;
     let ry = mas.canvas_offset_y + r.out_y as f32 * mas.view_scale;
@@ -293,6 +317,7 @@ pub fn handle_arrange_drag(
     mas.rects[idx].out_x = out_x;
     mas.rects[idx].out_y = out_y;
     mas.dirty = true;
+    mas.drag_moved = true;
 }
 
 /// End drag. Snap to nearest edge of other monitors.

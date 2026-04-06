@@ -715,7 +715,7 @@ pub fn render_surface(
                 let below_windows = &window_elements[top_idx..];
 
                 let mut wp_elements: Vec<CustomRenderElements> = Vec::new();
-                if let Some(wp_elem) = state.wallpaper.render_element(renderer, output_pos.size, scale) {
+                if let Some(wp_elem) = state.wallpaper.render_element_for_output(renderer, &output.name(), output_pos.size, scale) {
                     wp_elements.push(CustomRenderElements::Memory(wp_elem));
                 }
 
@@ -787,7 +787,7 @@ pub fn render_surface(
     elements.extend(window_elements);
     elements.extend(bottom_layer_elements);
 
-    if let Some(wallpaper_elem) = state.wallpaper.render_element(renderer, output_pos.size, scale) {
+    if let Some(wallpaper_elem) = state.wallpaper.render_element_for_output(renderer, &output.name(), output_pos.size, scale) {
         elements.push(CustomRenderElements::Memory(wallpaper_elem));
     }
 

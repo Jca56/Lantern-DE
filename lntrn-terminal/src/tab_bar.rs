@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
-use crate::terminal::Color8;
+use crate::config::WindowMode;
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -17,11 +17,82 @@ const TAB_FONT_SIZE: f32 = 22.0;
 const PIN_WIDTH: f32 = 22.0;
 const DOUBLE_CLICK_MS: u128 = 400;
 
-// Palette
-const SURFACE: Color8 = Color8::from_rgb(30, 30, 30);
-const TEXT_COLOR: Color8 = Color8::from_rgb(236, 236, 236);
-const MUTED: Color8 = Color8::from_rgb(144, 144, 144);
-const ACCENT: Color8 = Color8::from_rgb(200, 134, 10);
+// ── Palettes ───────────────────────────────────────────────────────────────
+
+struct TabPalette {
+    surface: Color,
+    tab_active: Color,
+    tab_hover: Color,
+    tab_inactive: Color,
+    tab_rename: Color,
+    text: Color,
+    muted: Color,
+    accent: Color,
+    close_hover_bg: Color,
+    close_hover_fg: Color,
+    close_active_fg: Color,
+    close_inactive_fg: Color,
+    plus_bg: Color,
+    plus_bg_hover: Color,
+    plus_border: Color,
+    plus_icon: Color,
+    plus_icon_hover: Color,
+    ctx_shadow: Color,
+    ctx_bg: Color,
+    ctx_highlight: Color,
+    ctx_top_line: Color,
+}
+
+fn palette(mode: &WindowMode) -> TabPalette {
+    match mode {
+        WindowMode::Fox => TabPalette {
+            surface: Color::from_rgba8(30, 30, 30, 255),
+            tab_active: Color::from_rgba8(50, 50, 50, 255),
+            tab_hover: Color::from_rgba8(45, 45, 45, 255),
+            tab_inactive: Color::from_rgba8(35, 35, 35, 255),
+            tab_rename: Color::from_rgba8(50, 50, 50, 255),
+            text: Color::from_rgba8(236, 236, 236, 255),
+            muted: Color::from_rgba8(144, 144, 144, 255),
+            accent: Color::from_rgba8(200, 134, 10, 255),
+            close_hover_bg: Color::from_rgba8(232, 50, 50, 40),
+            close_hover_fg: Color::from_rgba8(232, 80, 80, 255),
+            close_active_fg: Color::from_rgba8(180, 60, 60, 255),
+            close_inactive_fg: Color::from_rgba8(120, 50, 50, 255),
+            plus_bg: Color::from_rgba8(255, 255, 255, 12),
+            plus_bg_hover: Color::from_rgba8(255, 255, 255, 35),
+            plus_border: Color::from_rgba8(255, 255, 255, 40),
+            plus_icon: Color::from_rgba8(190, 190, 190, 255),
+            plus_icon_hover: Color::from_rgba8(236, 236, 236, 255),
+            ctx_shadow: Color::from_rgba8(0, 0, 0, 60),
+            ctx_bg: Color::from_rgba8(39, 39, 39, 255),
+            ctx_highlight: Color::from_rgba8(255, 255, 255, 15),
+            ctx_top_line: Color::from_rgba8(255, 255, 255, 15),
+        },
+        WindowMode::NightSky => TabPalette {
+            surface: Color::rgba(0.005, 0.002, 0.020, 0.85),
+            tab_active: Color::rgba(0.06, 0.03, 0.12, 0.9),
+            tab_hover: Color::rgba(0.05, 0.025, 0.10, 0.8),
+            tab_inactive: Color::rgba(0.025, 0.012, 0.06, 0.7),
+            tab_rename: Color::rgba(0.06, 0.03, 0.12, 0.9),
+            text: Color::rgb(0.80, 0.76, 0.90),
+            muted: Color::rgb(0.45, 0.40, 0.58),
+            accent: Color::from_rgba8(200, 134, 10, 255),
+            close_hover_bg: Color::rgba(0.45, 0.02, 0.02, 0.35),
+            close_hover_fg: Color::rgb(0.85, 0.25, 0.25),
+            close_active_fg: Color::rgb(0.60, 0.18, 0.18),
+            close_inactive_fg: Color::rgb(0.40, 0.15, 0.15),
+            plus_bg: Color::rgba(0.30, 0.20, 0.50, 0.12),
+            plus_bg_hover: Color::rgba(0.30, 0.20, 0.50, 0.30),
+            plus_border: Color::rgba(0.30, 0.20, 0.50, 0.25),
+            plus_icon: Color::rgb(0.55, 0.50, 0.68),
+            plus_icon_hover: Color::rgb(0.80, 0.76, 0.90),
+            ctx_shadow: Color::rgba(0.0, 0.0, 0.0, 0.35),
+            ctx_bg: Color::rgba(0.04, 0.02, 0.08, 0.95),
+            ctx_highlight: Color::rgba(0.30, 0.20, 0.50, 0.20),
+            ctx_top_line: Color::rgba(0.30, 0.20, 0.50, 0.15),
+        },
+    }
+}
 
 // Tab context menu
 const CTX_MENU_WIDTH: f32 = 180.0;
@@ -115,10 +186,12 @@ fn calc_tab_width(tab_count: usize, available: f32) -> f32 {
     per_tab.clamp(TAB_MIN_WIDTH, TAB_MAX_WIDTH)
 }
 
+const TAB_PAD_V: f32 = 8.0;
+
 fn tab_rect(idx: usize, tab_count: usize, screen_w: f32) -> Rect {
     let tab_w = calc_tab_width(tab_count, screen_w - 16.0);
     let x = 8.0 + idx as f32 * (tab_w + TAB_GAP);
-    Rect::new(x, bar_y(), tab_w, TAB_BAR_HEIGHT)
+    Rect::new(x, bar_y() + TAB_PAD_V, tab_w, TAB_BAR_HEIGHT - TAB_PAD_V * 2.0)
 }
 
 fn tab_close_rect(tab: Rect) -> Rect {
@@ -130,7 +203,7 @@ fn tab_close_rect(tab: Rect) -> Rect {
 fn new_tab_button_rect(tab_count: usize, screen_w: f32) -> Rect {
     let tab_w = calc_tab_width(tab_count, screen_w - 16.0);
     let x = 8.0 + tab_count as f32 * (tab_w + TAB_GAP) + 4.0;
-    Rect::new(x, bar_y(), NEW_TAB_WIDTH, TAB_BAR_HEIGHT)
+    Rect::new(x, bar_y() + TAB_PAD_V, NEW_TAB_WIDTH, TAB_BAR_HEIGHT - TAB_PAD_V * 2.0)
 }
 
 fn hit(rect: Rect, pos: Option<(f32, f32)>) -> bool {
@@ -139,10 +212,6 @@ fn hit(rect: Rect, pos: Option<(f32, f32)>) -> bool {
     } else {
         false
     }
-}
-
-fn c(color: Color8) -> Color {
-    Color::from_rgba8(color.r, color.g, color.b, color.a)
 }
 
 // ── Drawing ─────────────────────────────────────────────────────────────────
@@ -156,15 +225,17 @@ pub fn draw_tab_bar(
     screen_w: u32,
     screen_h: u32,
     cursor_pos: Option<(f32, f32)>,
+    mode: &WindowMode,
 ) {
     let sw = screen_w as f32;
     let tab_count = tabs.len();
+    let pal = palette(mode);
 
     // Tab bar background
     painter.rect_filled(
         Rect::new(0.0, bar_y(), sw, TAB_BAR_HEIGHT),
         0.0,
-        c(SURFACE),
+        pal.surface,
     );
 
     for (i, tab) in tabs.iter().enumerate() {
@@ -179,35 +250,20 @@ pub fn draw_tab_bar(
         let is_hovered = hit(rect, cursor_pos);
         let is_renaming = state.renaming == Some(i);
 
-        // Tab background
+        // Tab background (pill shape)
+        let pill_r = rect.h / 2.0;
         if is_renaming {
-            painter.rect_filled(rect, 4.0, c(Color8::from_rgba(50, 50, 50, 255)));
+            painter.rect_filled(rect, pill_r, pal.tab_rename);
             // Gold border for rename mode
-            let b = 2.0;
-            painter.rect_filled(Rect::new(rect.x, rect.y, rect.w, b), 2.0, c(ACCENT));
-            painter.rect_filled(
-                Rect::new(rect.x, rect.y + rect.h - b, rect.w, b),
-                2.0,
-                c(ACCENT),
-            );
-            painter.rect_filled(Rect::new(rect.x, rect.y, b, rect.h), 2.0, c(ACCENT));
-            painter.rect_filled(
-                Rect::new(rect.x + rect.w - b, rect.y, b, rect.h),
-                2.0,
-                c(ACCENT),
-            );
+            painter.rect_stroke_sdf(rect, pill_r, 2.0, pal.accent);
         } else if is_active {
-            painter.rect_filled(rect, 4.0, c(Color8::from_rgba(50, 50, 50, 255)));
-            // Accent bar on bottom
-            painter.rect_filled(
-                Rect::new(rect.x, rect.y + rect.h - 3.0, rect.w, 3.0),
-                0.0,
-                c(ACCENT),
-            );
+            painter.rect_filled(rect, pill_r, pal.tab_active);
+            // Accent stroke around active pill
+            painter.rect_stroke_sdf(rect, pill_r, 1.5, pal.accent);
         } else if is_hovered {
-            painter.rect_filled(rect, 4.0, c(Color8::from_rgba(45, 45, 45, 255)));
+            painter.rect_filled(rect, pill_r, pal.tab_hover);
         } else {
-            painter.rect_filled(rect, 4.0, c(Color8::from_rgba(35, 35, 35, 255)));
+            painter.rect_filled(rect, pill_r, pal.tab_inactive);
         }
 
         // Pin indicator
@@ -219,7 +275,7 @@ pub fn draw_tab_bar(
                 TAB_FONT_SIZE - 4.0,
                 pin_x,
                 pin_y,
-                c(ACCENT),
+                pal.accent,
                 PIN_WIDTH,
                 screen_w,
                 screen_h,
@@ -243,9 +299,10 @@ pub fn draw_tab_bar(
         if is_renaming {
             draw_rename_field(
                 painter, text, state, rect, text_x, text_y, max_text_w, screen_w, screen_h,
+                &pal,
             );
         } else {
-            let text_color = if is_active { c(TEXT_COLOR) } else { c(MUTED) };
+            let text_color = if is_active { pal.text } else { pal.muted };
             let display = truncate_title(tab.title, max_text_w);
             text.queue(
                 &display,
@@ -261,29 +318,21 @@ pub fn draw_tab_bar(
 
         // Close X button
         if has_close && !is_renaming {
-            draw_close_x(painter, tab_close_rect(rect), cursor_pos, is_active);
+            draw_close_x(painter, tab_close_rect(rect), cursor_pos, is_active, &pal);
         }
     }
 
-    // "+" new tab button
+    // "+" new tab button (pill)
     let nb = new_tab_button_rect(tab_count, sw);
+    let nb_r = nb.h / 2.0;
     let plus_hovered = hit(nb, cursor_pos);
     if plus_hovered {
-        painter.rect_filled(nb, 6.0, c(Color8::from_rgba(255, 255, 255, 35)));
+        painter.rect_filled(nb, nb_r, pal.plus_bg_hover);
     } else {
-        painter.rect_filled(nb, 6.0, c(Color8::from_rgba(255, 255, 255, 12)));
-        let b = 1.5;
-        let bc = c(Color8::from_rgba(255, 255, 255, 40));
-        painter.rect_filled(Rect::new(nb.x, nb.y, nb.w, b), 0.0, bc);
-        painter.rect_filled(Rect::new(nb.x, nb.y + nb.h - b, nb.w, b), 0.0, bc);
-        painter.rect_filled(Rect::new(nb.x, nb.y, b, nb.h), 0.0, bc);
-        painter.rect_filled(Rect::new(nb.x + nb.w - b, nb.y, b, nb.h), 0.0, bc);
+        painter.rect_filled(nb, nb_r, pal.plus_bg);
+        painter.rect_stroke_sdf(nb, nb_r, 1.5, pal.plus_border);
     }
-    let plus_color = if plus_hovered {
-        c(TEXT_COLOR)
-    } else {
-        c(Color8::from_rgb(190, 190, 190))
-    };
+    let plus_color = if plus_hovered { pal.plus_icon_hover } else { pal.plus_icon };
     let cx = nb.x + nb.w / 2.0;
     let cy = nb.y + nb.h / 2.0;
     let arm = 8.0;
@@ -301,6 +350,7 @@ fn draw_rename_field(
     max_w: f32,
     screen_w: u32,
     screen_h: u32,
+    pal: &TabPalette,
 ) {
     let char_w = TAB_FONT_SIZE * 0.6;
     let cursor_px = state.rename_cursor as f32 * char_w;
@@ -320,7 +370,7 @@ fn draw_rename_field(
         TAB_FONT_SIZE,
         text_x - scroll,
         text_y,
-        c(TEXT_COLOR),
+        pal.text,
         (max_w + scroll).max(10.0),
         screen_w,
         screen_h,
@@ -331,7 +381,7 @@ fn draw_rename_field(
     painter.rect_filled(
         Rect::new(cursor_x, text_y, 2.0, TAB_FONT_SIZE + 2.0),
         0.0,
-        c(TEXT_COLOR),
+        pal.text,
     );
 
     painter.pop_clip();
@@ -342,18 +392,19 @@ fn draw_close_x(
     cr: Rect,
     cursor_pos: Option<(f32, f32)>,
     is_active: bool,
+    pal: &TabPalette,
 ) {
     let close_hovered = hit(cr, cursor_pos);
     if close_hovered {
-        painter.rect_filled(cr, 3.0, c(Color8::from_rgba(232, 50, 50, 40)));
+        painter.rect_filled(cr, 3.0, pal.close_hover_bg);
     }
-    let xc = c(if close_hovered {
-        Color8::from_rgb(232, 80, 80)
+    let xc = if close_hovered {
+        pal.close_hover_fg
     } else if is_active {
-        Color8::from_rgb(180, 60, 60)
+        pal.close_active_fg
     } else {
-        Color8::from_rgb(120, 50, 50)
-    });
+        pal.close_inactive_fg
+    };
     let inset = 6.0;
     let x1 = cr.x + inset;
     let y1 = cr.y + inset;
@@ -384,6 +435,7 @@ pub fn draw_tab_context_menu(
     screen_w: u32,
     screen_h: u32,
     cursor_pos: Option<(f32, f32)>,
+    mode: &WindowMode,
 ) {
     let (tab_idx, mx, my) = match state.context_menu {
         Some(v) => v,
@@ -392,6 +444,8 @@ pub fn draw_tab_context_menu(
     if tab_idx >= tabs.len() {
         return;
     }
+
+    let pal = palette(mode);
 
     let is_pinned = tabs[tab_idx].pinned;
     let items: &[&str] = if is_pinned {
@@ -419,13 +473,13 @@ pub fn draw_tab_context_menu(
     painter.rect_filled(
         Rect::new(menu.x + 2.0, menu.y + 2.0, menu.w, menu.h),
         6.0,
-        c(Color8::from_rgba(0, 0, 0, 60)),
+        pal.ctx_shadow,
     );
-    painter.rect_filled(menu, 6.0, c(Color8::from_rgb(39, 39, 39)));
+    painter.rect_filled(menu, 6.0, pal.ctx_bg);
     painter.rect_filled(
         Rect::new(menu.x + 3.0, menu.y, menu.w - 6.0, 1.0),
         0.0,
-        c(Color8::from_rgba(255, 255, 255, 15)),
+        pal.ctx_top_line,
     );
 
     let mut iy = menu.y + 8.0;
@@ -434,9 +488,9 @@ pub fn draw_tab_context_menu(
         let item_rect = Rect::new(menu.x + 4.0, iy, menu.w - 8.0, CTX_ITEM_HEIGHT);
         let hovered = hit(item_rect, cursor_pos);
         if hovered {
-            painter.rect_filled(item_rect, 4.0, c(Color8::from_rgba(255, 255, 255, 15)));
+            painter.rect_filled(item_rect, 4.0, pal.ctx_highlight);
         }
-        let lc = if hovered { c(TEXT_COLOR) } else { c(MUTED) };
+        let lc = if hovered { pal.text } else { pal.muted };
         text.queue(
             label,
             font,

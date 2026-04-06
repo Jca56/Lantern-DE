@@ -4,7 +4,7 @@
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use lntrn_dbus::{self as dbus, Connection, BodyReader, Value, encode_string};
+use lntrn_dbus::{Connection, BodyReader, encode_string};
 
 const MPRIS_PREFIX: &str = "org.mpris.MediaPlayer2.";
 const MPRIS_PLAYER_IFACE: &str = "org.mpris.MediaPlayer2.Player";

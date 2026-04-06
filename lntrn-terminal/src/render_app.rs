@@ -188,6 +188,7 @@ impl App {
                 screen_w,
                 screen_h,
                 self.cursor_pos,
+                &mode,
             );
         }
 
@@ -263,6 +264,7 @@ impl App {
                 screen_w,
                 screen_h,
                 self.cursor_pos,
+                &mode,
             );
 
             // Sidebar context menu overlay

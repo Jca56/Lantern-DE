@@ -1,7 +1,6 @@
 //! WiFi widget — icon in bar + popup with network list and password entry.
 //! All nmcli interaction runs in a background thread.
 
-use std::path::Path;
 use std::process::Command;
 use std::sync::mpsc;
 
@@ -103,8 +102,11 @@ impl Wifi {
         }
     }
 
-    pub fn tick(&mut self) {
+    /// Drain background events. Returns `true` if any event was received.
+    pub fn tick(&mut self) -> bool {
+        let mut changed = false;
         while let Ok(event) = self.event_rx.try_recv() {
+            changed = true;
             match event {
                 WifiEvent::Status(s) => self.state = s,
                 WifiEvent::Networks(n) => self.networks = n,
@@ -122,6 +124,7 @@ impl Wifi {
                 }
             }
         }
+        changed
     }
 
     /// Request a rescan when opening the popup.

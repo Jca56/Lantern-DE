@@ -147,7 +147,17 @@ pub struct MonitorEntry {
     pub name: String,
     pub x: i32,
     pub y: i32,
+    #[serde(default)]
+    pub resolution: String,
+    #[serde(default)]
+    pub refresh_rate: String,
+    #[serde(default = "default_monitor_scale")]
+    pub scale: f32,
+    #[serde(default)]
+    pub wallpaper: String,
 }
+
+fn default_monitor_scale() -> f32 { 1.25 }
 
 
 // ── Power ───────────────────────────────────────────────────────────────────

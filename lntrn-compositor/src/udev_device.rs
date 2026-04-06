@@ -403,6 +403,12 @@ fn connector_connected(
             crtc,
             device_id: node,
         });
+    output
+        .user_data()
+        .insert_if_missing(|| crate::udev::UdevOutputModes {
+            drm_modes: connector.modes().to_vec(),
+            connector_handle: connector.handle(),
+        });
 
     let drm_output = match backend
         .drm_output_manager
@@ -435,6 +441,17 @@ fn connector_connected(
         },
     );
 
+    // Announce to wlr-output-management clients
+    state.output_management_state.add_head(
+        &output_name,
+        connector.modes(),
+        mode_id,
+        LANTERN_OUTPUT_SCALE,
+        (x, y),
+        (phys_w as i32, phys_h as i32),
+    );
+    state.output_management_state.broadcast_done();
+
     render_device(state, node, Some(crtc));
 }
 
@@ -466,6 +483,8 @@ pub fn connector_disconnected(state: &mut Lantern, node: DrmNode, crtc: crtc::Ha
         .cloned();
 
     if let Some(output) = output {
+        state.output_management_state.remove_head(&output.name());
+        state.output_management_state.broadcast_done();
         state.space.unmap_output(&output);
     }
 }
@@ -501,6 +520,111 @@ pub fn device_removed(state: &mut Lantern, node: DrmNode) {
     for output in outputs {
         state.space.unmap_output(&output);
     }
+}
+
+/// Apply output configuration changes from wlr-output-management.
+pub fn apply_output_config(
+    state: &mut Lantern,
+    changes: Vec<crate::handlers::output_management::OutputChange>,
+) -> bool {
+    use smithay::output::{Mode as WlMode, Scale};
+
+    for change in &changes {
+        let output = match state.space.outputs().find(|o| o.name() == change.output_name).cloned() {
+            Some(o) => o,
+            None => return false,
+        };
+
+        let oid = match output.user_data().get::<UdevOutputId>() {
+            Some(id) => *id,
+            None => return false,
+        };
+
+        // Apply mode change
+        if let Some(drm_idx) = change.drm_mode_index {
+            let modes = match output.user_data().get::<crate::udev::UdevOutputModes>() {
+                Some(m) => m,
+                None => return false,
+            };
+            if drm_idx >= modes.drm_modes.len() { return false; }
+            let drm_mode = modes.drm_modes[drm_idx];
+            let wl_mode = WlMode::from(drm_mode);
+
+            // Switch DRM mode via drm_output_manager
+            let udev = match state.udev.as_mut() {
+                Some(u) => u,
+                None => return false,
+            };
+            let backend = match udev.backends.get_mut(&oid.device_id) {
+                Some(b) => b,
+                None => return false,
+            };
+            let renderer = match udev.renderer.as_mut() {
+                Some(r) => r,
+                None => return false,
+            };
+            if let Err(e) = backend.drm_output_manager.use_mode::<_, CustomRenderElements>(
+                &oid.crtc,
+                drm_mode,
+                renderer,
+                &DrmOutputRenderElements::default(),
+            ) {
+                tracing::warn!("Failed to switch DRM mode: {:?}", e);
+                return false;
+            }
+
+            output.set_preferred(wl_mode);
+            let cur_scale = change.scale.unwrap_or(LANTERN_OUTPUT_SCALE);
+            output.change_current_state(
+                Some(wl_mode),
+                None,
+                Some(Scale::Fractional(cur_scale)),
+                None,
+            );
+        }
+
+        // Apply scale change (if no mode change already applied it)
+        if change.drm_mode_index.is_none() {
+            if let Some(new_scale) = change.scale {
+                output.change_current_state(
+                    None,
+                    None,
+                    Some(Scale::Fractional(new_scale)),
+                    None,
+                );
+            }
+        }
+
+        // Apply position change
+        if let Some((x, y)) = change.position {
+            output.change_current_state(
+                None,
+                None,
+                None,
+                Some((x, y).into()),
+            );
+            state.space.map_output(&output, (x, y));
+        }
+    }
+
+    // Invalidate wallpaper cache
+    state.wallpaper.clear_cache();
+
+    // Collect render targets, then schedule re-renders
+    let render_targets: Vec<(DrmNode, crtc::Handle)> = changes
+        .iter()
+        .filter_map(|change| {
+            let output = state.space.outputs().find(|o| o.name() == change.output_name)?;
+            let oid = output.user_data().get::<UdevOutputId>()?;
+            Some((oid.device_id, oid.crtc))
+        })
+        .collect();
+
+    for (node, crtc) in render_targets {
+        render_device(state, node, Some(crtc));
+    }
+
+    true
 }
 
 pub fn render_device(state: &mut Lantern, node: DrmNode, crtc: Option<crtc::Handle>) {

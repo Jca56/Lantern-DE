@@ -35,6 +35,7 @@ impl App {
 
         if in_tab_zone {
             // Start dwell timer on enter, show after 200ms
+            self.tab_bar_leave_since = None;
             if self.tab_bar_hover_since.is_none() {
                 self.tab_bar_hover_since = Some(Instant::now());
             }
@@ -50,9 +51,20 @@ impl App {
         } else {
             self.tab_bar_hover_since = None;
             if self.tab_bar_visible && !tab_bar_busy {
-                self.tab_bar_visible = false;
-                self.update_grid_size();
-                self.request_redraw();
+                if self.tab_bar_leave_since.is_none() {
+                    self.tab_bar_leave_since = Some(Instant::now());
+                }
+                let away = self.tab_bar_leave_since.unwrap().elapsed();
+                if away >= std::time::Duration::from_millis(200) {
+                    self.tab_bar_visible = false;
+                    self.tab_bar_leave_since = None;
+                    self.update_grid_size();
+                    self.request_redraw();
+                } else {
+                    self.request_redraw();
+                }
+            } else {
+                self.tab_bar_leave_since = None;
             }
         }
 

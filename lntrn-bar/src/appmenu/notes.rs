@@ -1,6 +1,6 @@
 //! Quick Notes tab — multiple named notes with create/delete, auto-save.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::input::InteractionState;

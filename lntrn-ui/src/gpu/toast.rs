@@ -15,8 +15,6 @@ const SLIDE_DISTANCE: f32 = 540.0;
 // Night Sky background
 const BG_DEEP: Color = Color::rgb(0.003, 0.001, 0.014);
 const BG_SURFACE: Color = Color::rgb(0.008, 0.003, 0.028);
-const GLOW_PINK: Color = Color::rgba(0.45, 0.14, 0.32, 0.18);
-const GLOW_CYAN: Color = Color::rgba(0.14, 0.35, 0.52, 0.18);
 const BORDER_SUBTLE: Color = Color::rgba(0.30, 0.20, 0.50, 0.15);
 
 // OSD gold — use from_rgb8 which handles sRGB→linear conversion
@@ -192,18 +190,6 @@ impl<'a> ToastStack<'a> {
             std::f32::consts::FRAC_PI_2,
             BG_DEEP.with_alpha(0.92),
             BG_SURFACE.with_alpha(0.92),
-        );
-
-        // Subtle radial glows (square + circular SDF for smooth fade, no spill)
-        let gs = w * 0.22;
-        let gr = gs * 0.5;
-        painter.rect_gradient_radial(
-            Rect::new(x + w * 0.02, y + h * 0.35, gs, gs), gr,
-            GLOW_PINK, Color::TRANSPARENT,
-        );
-        painter.rect_gradient_radial(
-            Rect::new(x + w * 0.58, y + h * 0.06, w * 0.28, w * 0.28), w * 0.14,
-            GLOW_CYAN, Color::TRANSPARENT,
         );
 
         // Subtle base border

@@ -87,6 +87,10 @@ pub(crate) struct MonitorConfig {
     pub name: String,
     pub x: i32,
     pub y: i32,
+    pub resolution: Option<String>,
+    pub refresh_rate: Option<u32>,
+    pub scale: Option<f64>,
+    pub wallpaper: Option<String>,
 }
 
 /// Read all `[[monitors]]` entries from lantern.toml.
@@ -102,29 +106,38 @@ pub(crate) fn read_monitor_configs() -> Vec<MonitorConfig> {
     let mut name = String::new();
     let mut x: Option<i32> = None;
     let mut y: Option<i32> = None;
+    let mut resolution: Option<String> = None;
+    let mut refresh_rate: Option<u32> = None;
+    let mut scale: Option<f64> = None;
+    let mut wallpaper: Option<String> = None;
+
+    let mut flush = |name: &mut String, x: &mut Option<i32>, y: &mut Option<i32>,
+                     resolution: &mut Option<String>, refresh_rate: &mut Option<u32>,
+                     scale: &mut Option<f64>, wallpaper: &mut Option<String>,
+                     monitors: &mut Vec<MonitorConfig>| {
+        if !name.is_empty() {
+            monitors.push(MonitorConfig {
+                name: std::mem::take(name),
+                x: x.take().unwrap_or(0),
+                y: y.take().unwrap_or(0),
+                resolution: resolution.take(),
+                refresh_rate: refresh_rate.take(),
+                scale: scale.take(),
+                wallpaper: wallpaper.take(),
+            });
+        }
+    };
 
     for line in contents.lines() {
         let trimmed = line.trim();
         if trimmed == "[[monitors]]" {
-            // Flush previous entry
-            if !name.is_empty() {
-                monitors.push(MonitorConfig {
-                    name: std::mem::take(&mut name),
-                    x: x.take().unwrap_or(0),
-                    y: y.take().unwrap_or(0),
-                });
-            }
+            flush(&mut name, &mut x, &mut y, &mut resolution, &mut refresh_rate, &mut scale, &mut wallpaper, &mut monitors);
             in_monitors = true;
             continue;
         }
         if trimmed.starts_with('[') {
-            // Different section — flush and stop
-            if in_monitors && !name.is_empty() {
-                monitors.push(MonitorConfig {
-                    name: std::mem::take(&mut name),
-                    x: x.take().unwrap_or(0),
-                    y: y.take().unwrap_or(0),
-                });
+            if in_monitors {
+                flush(&mut name, &mut x, &mut y, &mut resolution, &mut refresh_rate, &mut scale, &mut wallpaper, &mut monitors);
             }
             in_monitors = false;
             continue;
@@ -137,18 +150,18 @@ pub(crate) fn read_monitor_configs() -> Vec<MonitorConfig> {
                     "name" => name = v.to_string(),
                     "x" => x = v.parse().ok(),
                     "y" => y = v.parse().ok(),
+                    "resolution" => resolution = Some(v.to_string()),
+                    "refresh_rate" => refresh_rate = v.parse().ok(),
+                    "scale" => scale = v.parse().ok(),
+                    "wallpaper" => wallpaper = Some(v.to_string()),
                     _ => {}
                 }
             }
         }
     }
     // Flush last entry
-    if in_monitors && !name.is_empty() {
-        monitors.push(MonitorConfig {
-            name,
-            x: x.unwrap_or(0),
-            y: y.unwrap_or(0),
-        });
+    if in_monitors {
+        flush(&mut name, &mut x, &mut y, &mut resolution, &mut refresh_rate, &mut scale, &mut wallpaper, &mut monitors);
     }
 
     monitors

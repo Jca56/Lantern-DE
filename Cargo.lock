@@ -2546,6 +2546,7 @@ dependencies = [
  "wayland-backend",
  "wayland-client",
  "wayland-protocols",
+ "wayland-protocols-wlr",
  "wgpu",
  "xkbcommon 0.9.0",
 ]

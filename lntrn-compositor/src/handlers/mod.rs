@@ -1,6 +1,7 @@
 mod compositor;
 pub mod foreign_toplevel;
 mod layer_shell;
+pub mod output_management;
 pub mod screencopy;
 pub mod xdg_foreign;
 mod xdg_shell;

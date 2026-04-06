@@ -109,6 +109,12 @@ pub(crate) struct UdevOutputId {
     pub crtc: crtc::Handle,
 }
 
+/// All DRM modes available for a given output (stored as Output user data).
+pub(crate) struct UdevOutputModes {
+    pub drm_modes: Vec<smithay::reexports::drm::control::Mode>,
+    pub connector_handle: smithay::reexports::drm::control::connector::Handle,
+}
+
 pub fn init_udev(
     event_loop: &mut EventLoop<'static, Lantern>,
     state: &mut Lantern,

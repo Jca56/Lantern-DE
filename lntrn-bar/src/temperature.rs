@@ -79,9 +79,13 @@ impl Temperature {
         t
     }
 
-    pub fn tick(&mut self) {
+    /// Poll sensors if the interval has elapsed. Returns `true` if new data was read.
+    pub fn tick(&mut self) -> bool {
         if self.last_poll.elapsed().as_millis() >= POLL_INTERVAL_MS as u128 {
             self.poll_sensors();
+            true
+        } else {
+            false
         }
     }
 

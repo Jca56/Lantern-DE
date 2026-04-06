@@ -83,10 +83,13 @@ impl Battery {
         Some(bat)
     }
 
-    /// Re-read sysfs if enough time has passed.
-    pub fn tick(&mut self) {
+    /// Re-read sysfs if enough time has passed. Returns `true` if new data was read.
+    pub fn tick(&mut self) -> bool {
         if self.last_poll.elapsed().as_millis() >= POLL_INTERVAL_MS as u128 {
             self.poll_sysfs();
+            true
+        } else {
+            false
         }
     }
 

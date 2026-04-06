@@ -21,7 +21,6 @@ use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_l
 use crate::notifications::{NotifyEvent, Notification, Urgency};
 
 const DISPLAY_SECS: f32 = 5.0;
-const FADE_SECS: f32 = 0.4;
 const SLIDE_IN_SECS: f32 = 0.5;
 const SLIDE_OUT_SECS: f32 = 0.4;
 const CRITICAL_DISPLAY_SECS: f32 = 10.0;

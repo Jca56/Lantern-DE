@@ -3,6 +3,8 @@ use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea, Scrollbar, TextI
 
 use crate::config::LanternConfig;
 use crate::monitor_arrange::{self, MonitorArrangeState};
+use crate::monitor_settings::{self, MonitorSettingsState};
+use crate::output_manager::OutputManagerClient;
 use crate::text_edit::TextBuffer;
 use crate::wayland::OutputInfo;
 use crate::wallpaper_picker::WallpaperPicker;
@@ -33,6 +35,9 @@ pub struct DisplayPanelState {
     pub scroll_offset: f32,
     pub needs_reload: bool,
     pub monitor_arrange: MonitorArrangeState,
+    pub monitor_settings: MonitorSettingsState,
+    /// Track which output was last selected (to detect changes).
+    last_selected_output: Option<String>,
     /// Viewport for the whole panel (set during draw, used by collect_thumb_draws).
     viewport_x: f32,
     viewport_y: f32,
@@ -54,6 +59,8 @@ impl DisplayPanelState {
             scroll_offset: 0.0,
             needs_reload: true,
             monitor_arrange: MonitorArrangeState::new(),
+            monitor_settings: MonitorSettingsState::new(),
+            last_selected_output: None,
             viewport_x: 0.0,
             viewport_y: 0.0,
             viewport_w: 0.0,
@@ -100,6 +107,7 @@ pub fn draw_display_panel(
     sh: u32,
     scroll_delta: f32,
     outputs: &[(u32, OutputInfo)],
+    output_mgr: &OutputManagerClient,
 ) {
     let pad = PAD * s;
     let lsz = LABEL_SIZE * s;
@@ -109,8 +117,27 @@ pub fn draw_display_panel(
         &mut dps.monitor_arrange, outputs, &config.monitors,
         painter, text, ix, fox, x, y, w, s, sw, sh,
     );
-    let wp_y = y + mon_h;
-    let wp_h = h - mon_h;
+    // ── Per-monitor settings (resolution, refresh, scale) ────────
+    let mut settings_h = 0.0;
+    let selected_name = dps.monitor_arrange.selected_output_name();
+    // Reset monitor settings if selection changed
+    if selected_name != dps.last_selected_output {
+        dps.monitor_settings.reset();
+        dps.last_selected_output = selected_name.clone();
+    }
+    let selected_head_idx = selected_name.as_ref().and_then(|name| {
+        output_mgr.heads.iter().position(|h| &h.name == name)
+    });
+    if let Some(hi) = selected_head_idx {
+        settings_h = monitor_settings::draw_monitor_settings(
+            output_mgr, &mut dps.monitor_settings, hi,
+            painter, text, ix, fox,
+            x, y + mon_h, w, s, sw, sh,
+        );
+    }
+
+    let wp_y = y + mon_h + settings_h;
+    let wp_h = h - mon_h - settings_h;
 
     // Load thumbnails if needed
     if dps.needs_reload {
@@ -334,10 +361,21 @@ pub fn handle_display_click(
     zone_id: u32,
     cursor_x: f32,
     cursor_y: f32,
+    output_mgr: &OutputManagerClient,
 ) {
     // Monitor arrangement clicks
     if monitor_arrange::handle_arrange_click(&mut dps.monitor_arrange, zone_id, cursor_x, cursor_y) {
         return;
+    }
+
+    // Per-monitor settings clicks
+    let selected_head_idx = dps.monitor_arrange.selected_output_name().and_then(|name| {
+        output_mgr.heads.iter().position(|h| h.name == name)
+    });
+    if let Some(hi) = selected_head_idx {
+        if monitor_settings::handle_monitor_settings_click(output_mgr, &mut dps.monitor_settings, hi, zone_id) {
+            return;
+        }
     }
 
     if zone_id == ZONE_DIR_INPUT {
@@ -354,11 +392,19 @@ pub fn handle_display_click(
         }
     }
 
-    // Thumbnail click
+    // Thumbnail click — write to per-monitor config if a monitor is selected
     if zone_id >= ZONE_THUMB_BASE && zone_id < ZONE_THUMB_BASE + MAX_THUMBS {
         let idx = (zone_id - ZONE_THUMB_BASE) as usize;
         if let Some(entry) = dps.picker.entries.get(idx) {
-            config.appearance.wallpaper = entry.path.to_string_lossy().to_string();
+            let wp_path = entry.path.to_string_lossy().to_string();
+            if let Some(selected_name) = dps.monitor_arrange.selected_output_name() {
+                // Write to per-monitor config entry
+                if let Some(mon) = config.monitors.iter_mut().find(|m| m.name == selected_name) {
+                    mon.wallpaper = wp_path.clone();
+                }
+            }
+            // Also update global wallpaper
+            config.appearance.wallpaper = wp_path;
         }
     }
 }

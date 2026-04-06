@@ -109,8 +109,11 @@ impl Bluetooth {
         }
     }
 
-    pub fn tick(&mut self) {
+    /// Drain background events. Returns `true` if any event was received.
+    pub fn tick(&mut self) -> bool {
+        let mut changed = false;
         while let Ok(event) = self.event_rx.try_recv() {
+            changed = true;
             match event {
                 BtEvent::Status { powered, devices } => {
                     self.powered = powered;
@@ -139,6 +142,7 @@ impl Bluetooth {
                 }
             }
         }
+        changed
     }
 
     pub fn update_anim(&mut self, dt: f32) -> bool {

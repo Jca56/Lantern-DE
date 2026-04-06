@@ -10,6 +10,7 @@ use zbus::{interface, zvariant::Value};
 #[derive(Clone, Debug)]
 pub struct Notification {
     pub id: u32,
+    #[allow(dead_code)]
     pub app_name: String,
     pub summary: String,
     pub body: String,

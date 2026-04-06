@@ -61,6 +61,7 @@ impl IconCache {
     }
 
     /// Remove all cached textures (e.g. on scale change).
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.textures.clear();
     }
