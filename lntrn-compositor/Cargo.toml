@@ -29,6 +29,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 bitflags = "2"
 xcursor = "0.3"
 libc = "0.2"
+lntrn-icons = { path = "../lntrn-icons" }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 wayland-protocols = { version = "0.32", features = ["server", "unstable"] }
 wayland-protocols-wlr = { version = "0.3", features = ["server"] }

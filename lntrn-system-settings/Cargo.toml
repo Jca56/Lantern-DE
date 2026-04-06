@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+lntrn-icons = { path = "../lntrn-icons" }
 lntrn-render = { path = "../lntrn-render" }
 lntrn-ui = { path = "../lntrn-ui" }
 lntrn-theme = { path = "../lntrn-theme" }

@@ -436,8 +436,8 @@ impl ApplicationHandler<UserEvent> for App {
             .with_decorations(false)
             .with_transparent(true);
 
-        if let Some(icon_path) = lntrn_theme::lantern_home().map(|h| h.join("icons/lntrn-terminal.png")) {
-            if let Ok(img) = image::open(&icon_path) {
+        if let Some(data) = lntrn_icons::get("lntrn-terminal.png") {
+            if let Ok(img) = image::load_from_memory(data) {
                 let rgba = img.into_rgba8();
                 let (w, h) = (rgba.width(), rgba.height());
                 if let Ok(icon) = Icon::from_rgba(rgba.into_raw(), w, h) {

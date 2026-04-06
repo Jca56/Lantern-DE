@@ -77,25 +77,22 @@ impl CursorState {
     /// Try to load a Lantern SVG cursor from ~/.lantern/icons/cursors/
     /// Returns true if successfully loaded.
     fn load_lantern_svg(&mut self, icon_key: &'static str) -> bool {
-        let svg_name = match icon_key {
-            "default" => "lntrn-cursor",
-            "ew-resize" => "lntrn-cursor-ew",
-            "ns-resize" => "lntrn-cursor-ns",
-            "nesw-resize" => "lntrn-cursor-nesw",
-            "nwse-resize" => "lntrn-cursor-nwse",
+        let svg_file = match icon_key {
+            "default" => "lntrn-cursor.svg",
+            "ew-resize" => "lntrn-cursor-ew.svg",
+            "ns-resize" => "lntrn-cursor-ns.svg",
+            "nesw-resize" => "lntrn-cursor-nesw.svg",
+            "nwse-resize" => "lntrn-cursor-nwse.svg",
             _ => return false,
         };
-        let svg_path = crate::lantern_home()
-            .join("icons/cursors")
-            .join(format!("{}.svg", svg_name));
-        let data = match std::fs::read(&svg_path) {
-            Ok(d) => d,
-            Err(_) => return false,
+        let data = match lntrn_icons::get(svg_file) {
+            Some(d) => d,
+            None => return false,
         };
-        if self.rasterize_svg(&data).is_some() {
+        if self.rasterize_svg(data).is_some() {
             self.loaded_icon_key = Some(icon_key);
-            self.custom_loaded = false; // not a full custom theme, just per-icon
-            tracing::info!("Loaded Lantern SVG cursor: {}", svg_path.display());
+            self.custom_loaded = false;
+            tracing::info!("Loaded embedded Lantern cursor: {}", svg_file);
             true
         } else {
             false

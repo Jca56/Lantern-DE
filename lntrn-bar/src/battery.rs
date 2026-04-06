@@ -8,8 +8,6 @@ use lntrn_ui::gpu::{FoxPalette, InteractionContext, Toggle};
 
 use crate::svg_icon::IconCache;
 
-fn icon_dir() -> std::path::PathBuf { crate::lantern_icons_dir() }
-
 const POLL_INTERVAL_MS: u64 = 15_000; // read sysfs every 15s
 
 /// Battery charge level thresholds.
@@ -202,7 +200,6 @@ impl Battery {
         icon_h: u32,
     ) {
         if self.icons_loaded { return; }
-        let dir = icon_dir();
         let pairs = [
             ("battery-high", "spark-battery-high.svg"),
             ("battery-medium", "spark-battery-medium.svg"),
@@ -210,7 +207,7 @@ impl Battery {
             ("battery-charging", "spark-battery-charging(1).svg"),
         ];
         for (key, file) in pairs {
-            icons.load(tex_pass, gpu, key, &dir.join(file), icon_w, icon_h);
+            icons.load_embedded(tex_pass, gpu, key, file, icon_w, icon_h);
         }
         self.icons_loaded = true;
     }

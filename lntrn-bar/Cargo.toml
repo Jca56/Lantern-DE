@@ -9,6 +9,7 @@ edition = "2021"
 anyhow = "1"
 libc = "0.2"
 lntrn-dbus = { path = "../lntrn-dbus" }
+lntrn-icons = { path = "../lntrn-icons" }
 lntrn-render = { path = "../lntrn-render" }
 lntrn-ui = { path = "../lntrn-ui" }
 raw-window-handle = "0.6"

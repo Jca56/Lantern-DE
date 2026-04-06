@@ -119,14 +119,21 @@ impl IconCache {
     ) -> Option<&GpuTexture> {
         let key = format!("folder_color:{color}");
         if !self.cache.contains_key(&key) {
-            let base = icon_dir();
-            let svg_path = if color.is_empty() {
-                base.join("Colors").join("lntrn-folder-yellow.svg")
+            let icon_name = if color.is_empty() {
+                "folders/Colors/lntrn-folder-yellow.svg".to_string()
             } else {
-                base.join("Colors").join(format!("lntrn-folder-{color}.svg"))
+                format!("folders/Colors/lntrn-folder-{color}.svg")
             };
-            if let Some(texture) = rasterize_svg(&svg_path, gpu, tex) {
-                self.cache.insert(key.clone(), texture);
+            let texture = if let Some(data) = lntrn_icons::get(&icon_name) {
+                rasterize_svg_bytes(data, gpu, tex)
+            } else {
+                let base = icon_dir();
+                let svg_path = base.join("Colors").join(format!("lntrn-folder-{}.svg",
+                    if color.is_empty() { "yellow" } else { color }));
+                rasterize_svg(&svg_path, gpu, tex)
+            };
+            if let Some(t) = texture {
+                self.cache.insert(key.clone(), t);
             }
         }
         self.cache.get(&key)
@@ -161,8 +168,38 @@ fn cache_key(entry: &FileEntry) -> String {
 
 // ── Loading ──────────────────────────────────────────────────────────────────
 
+/// Try to get embedded folder icon bytes. Returns None if the icon
+/// requires disk access (xattr custom icon path).
+fn folder_icon_embedded(entry: &FileEntry) -> Option<&'static [u8]> {
+    // xattr custom icon path? Must go to disk.
+    if get_folder_icon(&entry.path).is_some() {
+        return None;
+    }
+    // xattr custom color? Try embedded.
+    if let Some(color) = get_folder_color(&entry.path) {
+        return lntrn_icons::get(&format!("folders/Colors/lntrn-folder-{color}.svg"));
+    }
+    // Standard named folders
+    let icon_name = match entry.name.to_lowercase().as_str() {
+        "desktop" => "folders/Standard/lntrn-folder-desktop.svg",
+        "documents" => "folders/Standard/lntrn-folder-documents.svg",
+        "downloads" => "folders/Standard/lntrn-folder-downloads.svg",
+        "music" => "folders/Standard/lntrn-folder-music.svg",
+        "pictures" => "folders/Standard/lntrn-folder-pictures.svg",
+        "projects" => "folders/Standard/lntrn-folder-projects.svg",
+        "videos" => "folders/Standard/lntrn-folder-videos.svg",
+        _ => "folders/Colors/lntrn-folder-yellow.svg",
+    };
+    lntrn_icons::get(icon_name)
+}
+
 fn load_icon(entry: &FileEntry, gpu: &GpuContext, tex: &TexturePass) -> Option<GpuTexture> {
     if entry.is_dir {
+        // Try embedded first
+        if let Some(data) = folder_icon_embedded(entry) {
+            return rasterize_svg_bytes(data, gpu, tex);
+        }
+        // Fall back to disk (xattr custom icons)
         let icon_path = folder_icon_path(entry);
         if is_svg_file(&icon_path) {
             rasterize_svg(&icon_path, gpu, tex)
@@ -274,9 +311,8 @@ fn write_xattr(path: &Path, attr: &str, value: &str) {
 
 // ── SVG rasterization ────────────────────────────────────────────────────────
 
-fn rasterize_svg(path: &Path, gpu: &GpuContext, tex: &TexturePass) -> Option<GpuTexture> {
-    let data = std::fs::read(path).ok()?;
-    let tree = resvg::usvg::Tree::from_data(&data, &resvg::usvg::Options::default()).ok()?;
+fn rasterize_svg_bytes(data: &[u8], gpu: &GpuContext, tex: &TexturePass) -> Option<GpuTexture> {
+    let tree = resvg::usvg::Tree::from_data(data, &resvg::usvg::Options::default()).ok()?;
 
     let svg_size = tree.size();
     let scale = (ICON_RENDER_SIZE as f32 / svg_size.width())
@@ -289,6 +325,11 @@ fn rasterize_svg(path: &Path, gpu: &GpuContext, tex: &TexturePass) -> Option<Gpu
     resvg::render(&tree, transform, &mut pixmap.as_mut());
 
     Some(tex.upload(gpu, pixmap.data(), w, h))
+}
+
+fn rasterize_svg(path: &Path, gpu: &GpuContext, tex: &TexturePass) -> Option<GpuTexture> {
+    let data = std::fs::read(path).ok()?;
+    rasterize_svg_bytes(&data, gpu, tex)
 }
 
 // ── Image thumbnails ─────────────────────────────────────────────────────────

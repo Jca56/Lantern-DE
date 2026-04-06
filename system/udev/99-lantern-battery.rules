@@ -1,0 +1,2 @@
+# Allow video group to set battery charge threshold (80% limit toggle)
+SUBSYSTEM=="power_supply", ATTR{charge_control_end_threshold}=="*", GROUP="video", MODE="0664"

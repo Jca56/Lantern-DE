@@ -8,7 +8,6 @@ use lntrn_ui::gpu::{FoxPalette, InteractionContext};
 
 use crate::svg_icon::IconCache;
 
-fn icon_dir() -> std::path::PathBuf { crate::lantern_icons_dir() }
 const POLL_INTERVAL_MS: u64 = 5_000; // read temps every 5s
 
 /// Temperature thresholds (°C).
@@ -167,14 +166,13 @@ impl Temperature {
         icon_size: u32,
     ) {
         if self.icons_loaded { return; }
-        let dir = icon_dir();
         let pairs = [
             ("temp-cool", "spark-temp-cool.svg"),
             ("temp-warm", "spark-temp-warm.svg"),
             ("temp-hot", "spark-temp-hot.svg"),
         ];
         for (key, file) in pairs {
-            icons.load(tex_pass, gpu, key, &dir.join(file), icon_size, icon_size);
+            icons.load_embedded(tex_pass, gpu, key, file, icon_size, icon_size);
         }
         self.icons_loaded = true;
     }

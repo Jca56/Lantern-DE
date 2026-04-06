@@ -51,6 +51,41 @@ impl IconCache {
         self.textures.get(key)
     }
 
+    /// Load an embedded icon by name from `lntrn_icons`.
+    /// The `icon_file` is the filename passed to `lntrn_icons::get()`.
+    pub fn load_embedded(
+        &mut self,
+        tex_pass: &TexturePass,
+        gpu: &GpuContext,
+        key: &str,
+        icon_file: &str,
+        w: u32,
+        h: u32,
+    ) -> Option<&GpuTexture> {
+        if self.textures.contains_key(key) {
+            return self.textures.get(key);
+        }
+
+        let data = lntrn_icons::get(icon_file)?;
+        let ext = icon_file.rsplit('.').next().unwrap_or("svg");
+
+        let rgba = match ext {
+            "png" => rasterize_png(data, w, h),
+            _ => {
+                let svg_data = if data.len() >= 2 && data[0] == 0x1f && data[1] == 0x8b {
+                    decompress_gzip(data)?
+                } else {
+                    data.to_vec()
+                };
+                rasterize_svg(&svg_data, w, h)
+            }
+        }?;
+
+        let texture = tex_pass.upload(gpu, &rgba, w, h);
+        self.textures.insert(key.to_string(), texture);
+        self.textures.get(key)
+    }
+
     pub fn get(&self, key: &str) -> Option<&GpuTexture> {
         self.textures.get(key)
     }

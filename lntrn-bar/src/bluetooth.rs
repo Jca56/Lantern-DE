@@ -9,7 +9,6 @@ use lntrn_ui::gpu::{FoxPalette, InteractionContext, Toggle};
 
 use crate::svg_icon::IconCache;
 
-fn icon_dir() -> std::path::PathBuf { crate::lantern_icons_dir() }
 const POLL_INTERVAL_MS: u64 = 10_000;
 
 // Zone IDs
@@ -215,13 +214,12 @@ impl Bluetooth {
         &mut self, icons: &mut IconCache, tex_pass: &TexturePass, gpu: &GpuContext, size: u32,
     ) {
         if self.icons_loaded { return; }
-        let dir = icon_dir();
         for (key, file) in [
             ("bt-on", "spark-bluetooth-on.svg"),
             ("bt-off", "spark-bluetooth-off.svg"),
             ("bt-connected", "spark-bluetooth-connected.svg"),
         ] {
-            icons.load(tex_pass, gpu, key, &dir.join(file), size, size);
+            icons.load_embedded(tex_pass, gpu, key, file, size, size);
         }
         self.icons_loaded = true;
     }
