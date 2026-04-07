@@ -621,7 +621,10 @@ pub fn run() -> Result<()> {
             // Poll the Wayland fd with a 1-second timeout so we wake up
             // periodically to check if any widget has new data to display.
             event_queue.flush()?;
-            let guard = event_queue.prepare_read().unwrap();
+            let Some(guard) = event_queue.prepare_read() else {
+                event_queue.dispatch_pending(&mut state)?;
+                continue;
+            };
             let fd = guard.connection_fd().as_raw_fd();
             let mut pfd = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
             let ret = unsafe { libc::poll(&mut pfd, 1, 1000) };
