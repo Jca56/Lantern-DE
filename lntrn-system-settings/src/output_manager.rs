@@ -161,6 +161,10 @@ impl Dispatch<ZwlrOutputManagerV1, ()> for State {
             _ => {}
         }
     }
+
+    wayland_client::event_created_child!(State, ZwlrOutputManagerV1, [
+        0 => (ZwlrOutputHeadV1, ())
+    ]);
 }
 
 // ── Dispatch: Head ─────────────────────────────────────────────────
@@ -174,6 +178,7 @@ impl Dispatch<ZwlrOutputHeadV1, ()> for State {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
+
         // Find or create the building head for this proxy
         let head = match state
             .output_mgr
@@ -226,6 +231,10 @@ impl Dispatch<ZwlrOutputHeadV1, ()> for State {
             _ => {}
         }
     }
+
+    wayland_client::event_created_child!(State, ZwlrOutputHeadV1, [
+        3 => (ZwlrOutputModeV1, ())
+    ]);
 }
 
 // ── Dispatch: Mode ─────────────────────────────────────────────────
