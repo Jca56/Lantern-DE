@@ -340,7 +340,6 @@ fn main() {
     let mut children: Vec<ManagedProcess> = Vec::new();
     for &(name, cmd) in &[
         ("lntrn-bar", "lntrn-bar"),
-        ("lntrn-desktop", "lntrn-desktop"),
         ("lntrn-portal", "lntrn-portal"),
         ("lntrn-notifyd", "lntrn-notifyd"),
     ] {

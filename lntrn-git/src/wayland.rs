@@ -623,10 +623,10 @@ pub fn run() -> Result<()> {
             s, sw, sh,
         );
 
-        // Branch dropdown overlay (drawn on top of content)
+        // Overlays (branch dropdown, merge modal) drawn on top of content
         painter.set_layer(1);
         text.set_layer(1);
-        app.draw_branch_dropdown(&mut painter, &mut text, &mut ix, &fox, s, sw, sh);
+        app.draw_overlays(&mut painter, &mut text, &mut ix, &fox, s, wf, hf, sw, sh);
 
         // Render (layered)
         if let Ok(mut frame) = gpu.begin_frame("lntrn-git") {

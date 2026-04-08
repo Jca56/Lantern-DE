@@ -20,7 +20,7 @@ use crate::{
     CTX_NEW_FOLDER_RED, CTX_NEW_FOLDER_YELLOW, CTX_OPEN, CTX_OPEN_AS_ROOT,
     CTX_OPEN_TERMINAL, CTX_OPEN_WITH, CTX_OPEN_WITH_BASE, CTX_PASTE, CTX_PROPERTIES,
     CTX_RENAME, CTX_SELECT_ALL, CTX_SHOW_HIDDEN, CTX_SORT_BY, CTX_SORT_DATE, CTX_SORT_NAME,
-    CTX_SORT_SIZE, CTX_SORT_TYPE, CTX_TRASH, SORT_RADIO_GROUP, VIEW_SLIDER_ID, VIEW_OPACITY_SLIDER_ID,
+    CTX_SORT_SIZE, CTX_SORT_TYPE, CTX_TRASH, SORT_RADIO_GROUP, VIEW_SLIDER_ID, VIEW_OPACITY_SLIDER_ID, VIEW_SHOW_HIDDEN_ID,
     ZONE_CLOSE, ZONE_FILE_ITEM_BASE, ZONE_MAXIMIZE, ZONE_MENU_VIEW, ZONE_MINIMIZE,
     ZONE_NAV_BACK, ZONE_NAV_FORWARD, ZONE_NAV_UP, ZONE_NAV_SEARCH, ZONE_NAV_VIEW_TOGGLE,
     ZONE_PATH_INPUT, ZONE_SIDEBAR_ITEM_BASE, ZONE_TAB_BASE, ZONE_TAB_CLOSE_BASE, ZONE_TAB_NEW,
@@ -84,6 +84,7 @@ pub(crate) fn handle_click(
                             vec![
                                 MenuItem::slider(VIEW_SLIDER_ID, "Icon Size", app.icon_zoom),
                                 MenuItem::slider(VIEW_OPACITY_SLIDER_ID, "Opacity", bg_opacity),
+                                MenuItem::checkbox(VIEW_SHOW_HIDDEN_ID, "Show Hidden Files", app.show_hidden),
                             ],
                             backend,
                         );
@@ -691,32 +692,76 @@ pub(crate) fn handle_key(
 
     // ── Path bar editing ─────────────────────────────────────────────
     if app.path_editing {
+        if ctrl {
+            match key {
+                KEY_A => {
+                    let len = app.path_buf.chars().count();
+                    app.path_selection = Some((0, len));
+                    app.path_cursor = len;
+                }
+                KEY_C => {
+                    if let Some(text) = app.path_selected_text() {
+                        crate::file_ops::wl_copy(text);
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+        // Helper: delete selected range and place cursor at selection start
+        let delete_selection = |app: &mut App| -> bool {
+            if let Some((a, b)) = app.path_selection.take() {
+                let s = a.min(b);
+                let e = a.max(b);
+                if s != e {
+                    let byte_start = app.path_buf.char_indices().nth(s).map(|(i,_)| i).unwrap_or(app.path_buf.len());
+                    let byte_end = app.path_buf.char_indices().nth(e).map(|(i,_)| i).unwrap_or(app.path_buf.len());
+                    app.path_buf.replace_range(byte_start..byte_end, "");
+                    app.path_cursor = s;
+                    return true;
+                }
+            }
+            false
+        };
         match key {
             KEY_ENTER => app.commit_path_edit(),
             KEY_ESC => app.cancel_path_edit(),
             KEY_BACKSPACE => {
-                if app.path_cursor > 0 {
+                if !delete_selection(app) && app.path_cursor > 0 {
+                    let byte_pos = app.path_buf.char_indices().nth(app.path_cursor - 1).map(|(i,_)| i).unwrap_or(0);
+                    app.path_buf.remove(byte_pos);
                     app.path_cursor -= 1;
-                    app.path_buf.remove(app.path_cursor);
                 }
+                app.path_selection = None;
             }
             KEY_DELETE => {
-                if app.path_cursor < app.path_buf.len() {
-                    app.path_buf.remove(app.path_cursor);
+                if !delete_selection(app) {
+                    let char_len = app.path_buf.chars().count();
+                    if app.path_cursor < char_len {
+                        let byte_pos = app.path_buf.char_indices().nth(app.path_cursor).map(|(i,_)| i).unwrap_or(app.path_buf.len());
+                        app.path_buf.remove(byte_pos);
+                    }
                 }
+                app.path_selection = None;
             }
             KEY_LEFT => {
                 if app.path_cursor > 0 { app.path_cursor -= 1; }
+                app.path_selection = None;
             }
             KEY_RIGHT => {
-                if app.path_cursor < app.path_buf.len() { app.path_cursor += 1; }
+                let char_len = app.path_buf.chars().count();
+                if app.path_cursor < char_len { app.path_cursor += 1; }
+                app.path_selection = None;
             }
-            KEY_HOME => app.path_cursor = 0,
-            KEY_END => app.path_cursor = app.path_buf.len(),
+            KEY_HOME => { app.path_cursor = 0; app.path_selection = None; }
+            KEY_END => { app.path_cursor = app.path_buf.chars().count(); app.path_selection = None; }
             _ => {
                 if let Some(ch) = keycode_to_char(key, shift) {
-                    app.path_buf.insert(app.path_cursor, ch);
+                    delete_selection(app);
+                    let byte_pos = app.path_buf.char_indices().nth(app.path_cursor).map(|(i,_)| i).unwrap_or(app.path_buf.len());
+                    app.path_buf.insert(byte_pos, ch);
                     app.path_cursor += 1;
+                    app.path_selection = None;
                 }
             }
         }

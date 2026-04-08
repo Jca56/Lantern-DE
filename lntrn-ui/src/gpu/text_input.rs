@@ -35,6 +35,8 @@ pub struct TextInput<'a> {
     focused: bool,
     hovered: bool,
     cursor_pos: Option<usize>,
+    /// Selection range in char offsets (start, end). Highlighted when start != end.
+    selection: Option<(usize, usize)>,
     scale: f32,
 }
 
@@ -49,6 +51,7 @@ impl<'a> TextInput<'a> {
             focused: false,
             hovered: false,
             cursor_pos: None,
+            selection: None,
             scale: 1.0,
         }
     }
@@ -75,6 +78,11 @@ impl<'a> TextInput<'a> {
 
     pub fn cursor_pos(mut self, pos: usize) -> Self {
         self.cursor_pos = Some(pos);
+        self
+    }
+
+    pub fn selection(mut self, sel: Option<(usize, usize)>) -> Self {
+        self.selection = sel;
         self
     }
 
@@ -200,6 +208,27 @@ impl<'a> TextInput<'a> {
                 screen_w,
                 screen_h,
             );
+        }
+
+        // -- Selection highlight --
+        if self.focused {
+            if let Some((sel_start, sel_end)) = self.selection {
+                let s_min = sel_start.min(sel_end);
+                let s_max = sel_start.max(sel_end);
+                if s_min != s_max {
+                    let byte_start = self.text.char_indices().nth(s_min).map(|(i,_)| i).unwrap_or(0);
+                    let byte_end = self.text.char_indices().nth(s_max).map(|(i,_)| i).unwrap_or(self.text.len());
+                    let x_start = text_x + text_renderer.measure_width(&self.text[..byte_start], font_size);
+                    let x_end = text_x + text_renderer.measure_width(&self.text[..byte_end], font_size);
+                    let sel_y = self.rect.y + (self.rect.h - font_size) * 0.5 - 1.0 * s;
+                    let sel_h = font_size + 2.0 * s;
+                    painter.rect_filled(
+                        Rect::new(x_start, sel_y, x_end - x_start, sel_h),
+                        2.0 * s,
+                        palette.accent.with_alpha(0.3),
+                    );
+                }
+            }
         }
 
         // -- Caret --

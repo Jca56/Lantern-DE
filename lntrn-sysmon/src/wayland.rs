@@ -279,6 +279,8 @@ pub fn run() -> Result<()> {
     let mut proc_list = crate::processes::read_processes();
     let mut perf_state = crate::performance::PerfState::new();
     let mut frame_counter: u32 = 0;
+    let mut scroll_y: f32 = 0.0;
+    let mut prev_tab: usize = active_tab;
 
     let menus: Vec<(&str, Vec<MenuItem>)> = vec![
         ("File", vec![
@@ -489,8 +491,17 @@ pub fn run() -> Result<()> {
             }
         }
 
-        // Reset scroll
+        // Accumulate scroll into content offset (only when not on popup)
+        if pointer_on_popup.is_none() && state.scroll_delta != 0.0 {
+            scroll_y += state.scroll_delta * s;
+        }
         state.scroll_delta = 0.0;
+
+        // Reset scroll on tab switch
+        if active_tab != prev_tab {
+            scroll_y = 0.0;
+            prev_tab = active_tab;
+        }
 
         // ── Cursor shape ────────────────────────────────────────────────
         if state.pointer_in_surface {
@@ -540,11 +551,21 @@ pub fn run() -> Result<()> {
             perf_state.update();
         }
 
-        // ── Tab content ─────────────────────────────────────────────────
+        // ── Tab content (scrollable) ────────────────────────────────────
+        // Clip content to the area below the tabs
+        let clip_top = content_start;
+        let clip_rect = Rect::new(0.0, clip_top, wf, hf - clip_top);
+        painter.push_clip(clip_rect);
+        text.push_clip([0.0, clip_top, wf, hf - clip_top]);
+
+        // Apply scroll offset to content start
+        let scrolled_start = content_start - scroll_y;
+
         let mut logo_draws: Vec<lntrn_render::TextureDraw> = Vec::new();
+        let mut content_bottom: f32 = content_start; // track total content height
         if active_tab == 0 {
         // ── System Info ─────────────────────────────────────────────────
-        let content_y = content_start + 8.0 * s;
+        let content_y = scrolled_start + 8.0 * s;
 
         // Logo — centered, bigger
         let logo_h = 140.0 * s;
@@ -587,7 +608,8 @@ pub fn run() -> Result<()> {
         let row_count = sys.entries.len() - 1;
         let card_h = row_count as f32 * row_height + card_pad * 2.0;
 
-        if card_y < hf {
+        content_bottom = card_y + card_h + 24.0 * s;
+        {
             // Card shadow
             painter.shadow(
                 Rect::new(info_x - card_pad, card_y, info_w + card_pad * 2.0, card_h),
@@ -610,7 +632,6 @@ pub fn run() -> Result<()> {
 
         for (i, (label, value)) in sys.entries.iter().skip(1).enumerate() {
             let y = card_y + card_pad + i as f32 * row_height;
-            if y > hf { break; }
 
             let lc = label_color(label, accent_cyan, accent_pink, accent_green, crate::chrome::TEXT_SECONDARY);
             text.queue(label, label_sz, info_x, y, lc, wf, sw, sh);
@@ -629,16 +650,35 @@ pub fn run() -> Result<()> {
         } else if active_tab == 1 {
             // ── Processes ───────────────────────────────────────────────
             crate::processes::draw(
-                &mut painter, &mut text, cx, cy, s, content_start,
+                &mut painter, &mut text, cx, cy, s, scrolled_start,
                 &proc_list, wf, hf, sw, sh,
             );
+            // Estimate content height: header + rows
+            let row_h = 30.0 * s;
+            let header_h = 34.0 * s;
+            content_bottom = content_start + 10.0 * s + header_h + 4.0 * s
+                + proc_list.len() as f32 * row_h + 16.0 * s;
         } else if active_tab == 2 {
             // ── Performance ─────────────────────────────────────────────
             crate::performance::draw(
-                &mut painter, &mut text, s, content_start,
+                &mut painter, &mut text, s, scrolled_start,
                 &perf_state, wf, hf, sw, sh,
             );
+            // Estimate: two graphs + info
+            let graph_h = 180.0 * s;
+            let gap = 20.0 * s;
+            content_bottom = content_start + 12.0 * s + graph_h + gap + graph_h + gap + 40.0 * s;
         }
+
+        // Pop clip after content
+        painter.pop_clip();
+        text.pop_clip();
+
+        // Clamp scroll: can't scroll above top, can't scroll past content
+        let visible_h = hf - clip_top;
+        let total_content = content_bottom - content_start;
+        let max_scroll = (total_content - visible_h).max(0.0);
+        scroll_y = scroll_y.clamp(0.0, max_scroll);
 
         if !state.maximized { crate::chrome::draw_border(&mut painter, wf, hf, r); }
 

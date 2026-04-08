@@ -4,6 +4,8 @@ mod apptray;
 mod audio;
 mod battery;
 mod bluetooth;
+mod bluetooth_worker;
+mod bluetooth_transfer;
 mod clock;
 mod dbusmenu;
 mod desktop;

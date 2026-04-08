@@ -299,6 +299,7 @@ pub fn draw_nav_bar(
         TextInput::new(path_rect)
             .text(&app.path_buf)
             .cursor_pos(app.path_cursor)
+            .selection(app.path_selection)
             .focused(true)
             .scale(s)
             .draw(painter, text, palette, screen.0, screen.1);

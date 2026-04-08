@@ -409,7 +409,18 @@ impl AppTray {
         }
     }
 
-    /// Draw the app tray centered in the bar.
+    /// Measure the total width the app tray would occupy (without drawing).
+    pub fn measure_width(&self, toplevels: &[ToplevelInfo], bar_h: f32, scale: f32) -> f32 {
+        let slots = self.build_slots(toplevels);
+        if slots.is_empty() { return 0.0; }
+        let icon_size = (bar_h * 0.75).max(36.0);
+        let gap = ICON_GAP * scale;
+        let stride = icon_size + gap;
+        slots.len() as f32 * stride - gap
+    }
+
+    /// Draw the app tray in the bar.
+    /// When `left_x` is Some, left-aligns at that x position; otherwise centers.
     /// Returns (total_width, Vec<TextureDraw>).
     pub fn draw<'a>(
         &self,
@@ -426,6 +437,7 @@ impl AppTray {
         scale: f32,
         _screen_w: u32,
         _screen_h: u32,
+        left_x: Option<f32>,
     ) -> (f32, Vec<TextureDraw<'a>>) {
         let slots = self.build_slots(toplevels);
         if slots.is_empty() {
@@ -437,8 +449,10 @@ impl AppTray {
         let stride = icon_size + gap;
         let total_w = slots.len() as f32 * stride - gap;
 
-        // Center in bar
-        let start_x = bar_x + (bar_w - total_w) / 2.0;
+        let start_x = match left_x {
+            Some(x) => x,
+            None => bar_x + (bar_w - total_w) / 2.0,
+        };
         let center_y = bar_y + (bar_h - icon_size) / 2.0;
 
         let mut tex_draws = Vec::new();
@@ -546,6 +560,7 @@ impl AppTray {
         bar_w: f32,
         bar_h: f32,
         scale: f32,
+        left_x: Option<f32>,
     ) -> Option<(String, f32, f32)> {
         // Don't show preview while dragging
         if self.is_dragging() { return None; }
@@ -563,7 +578,10 @@ impl AppTray {
         let gap = ICON_GAP * scale;
         let stride = icon_size + gap;
         let total_w = slots.len() as f32 * stride - gap;
-        let start_x = bar_x + (bar_w - total_w) / 2.0;
+        let start_x = match left_x {
+            Some(x) => x,
+            None => bar_x + (bar_w - total_w) / 2.0,
+        };
         let icon_x = start_x + idx as f32 * stride;
         // Convert from physical to logical for the compositor
         let logical_x = icon_x / scale;

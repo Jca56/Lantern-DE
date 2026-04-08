@@ -128,6 +128,26 @@ impl Connection {
         Ok(conn)
     }
 
+    /// Connect to the system bus, authenticate, and complete Hello handshake.
+    pub fn connect_system() -> io::Result<Self> {
+        let path = std::env::var("DBUS_SYSTEM_BUS_ADDRESS").ok()
+            .and_then(|a| parse_bus_address(&a))
+            .unwrap_or_else(|| "/run/dbus/system_bus_socket".to_string());
+        let mut stream = UnixStream::connect(&path)?;
+        sasl_auth(&mut stream)?;
+        let mut conn = Self { stream, serial: 0, unique_name: String::new() };
+        let serial = conn.method_call(
+            "org.freedesktop.DBus", "/org/freedesktop/DBus",
+            "org.freedesktop.DBus", "Hello", "", &[],
+        );
+        let reply = conn.read_reply(serial)?;
+        if let Some(name) = BodyReader::new(&reply.body, &reply.signature).read_value("s") {
+            conn.unique_name = name.as_str().unwrap_or("").to_string();
+        }
+        conn.stream.set_nonblocking(true)?;
+        Ok(conn)
+    }
+
     pub fn unique_name(&self) -> &str { &self.unique_name }
     pub fn as_raw_fd(&self) -> i32 { self.stream.as_raw_fd() }
 
@@ -190,6 +210,13 @@ impl Connection {
     pub fn send_reply(&mut self, reply_to_serial: u32, dest: &str, sig: &str, body: &[u8]) {
         self.serial += 1;
         let msg = encode_reply(self.serial, reply_to_serial, dest, sig, body);
+        let _ = self.stream.write_all(&msg);
+    }
+
+    /// Send a D-Bus error reply (e.g. to reject an OBEX transfer).
+    pub fn send_error(&mut self, reply_to_serial: u32, dest: &str, error_name: &str, message: &str) {
+        self.serial += 1;
+        let msg = encode_error(self.serial, reply_to_serial, dest, error_name, message);
         let _ = self.stream.write_all(&msg);
     }
 
@@ -402,6 +429,45 @@ fn encode_reply(
     msg.extend_from_slice(&fields);
     align_to(&mut msg, 8);
     msg.extend_from_slice(body);
+    msg
+}
+
+fn encode_error(
+    serial: u32, reply_to: u32, dest: &str, error_name: &str, message: &str,
+) -> Vec<u8> {
+    let mut fields = Vec::new();
+    align_to(&mut fields, 8);
+    fields.push(FIELD_REPLY_SERIAL);
+    encode_signature(&mut fields, "u");
+    align_to(&mut fields, 4);
+    encode_u32(&mut fields, reply_to);
+    // Error name — field code 4, type "s"
+    align_to(&mut fields, 8);
+    fields.push(4);
+    encode_signature(&mut fields, "s");
+    encode_string(&mut fields, error_name);
+    encode_header_field(&mut fields, FIELD_DESTINATION, "s", dest);
+
+    let mut body = Vec::new();
+    let body_sig = if message.is_empty() { "" } else {
+        encode_string(&mut body, message);
+        "s"
+    };
+    if !body_sig.is_empty() {
+        encode_header_field(&mut fields, FIELD_SIGNATURE, "g", body_sig);
+    }
+
+    let mut msg = Vec::with_capacity(128 + fields.len() + body.len());
+    msg.push(b'l');
+    msg.push(MSG_ERROR);
+    msg.push(1);
+    msg.push(1);
+    encode_u32(&mut msg, body.len() as u32);
+    encode_u32(&mut msg, serial);
+    encode_u32(&mut msg, fields.len() as u32);
+    msg.extend_from_slice(&fields);
+    align_to(&mut msg, 8);
+    msg.extend_from_slice(&body);
     msg
 }
 

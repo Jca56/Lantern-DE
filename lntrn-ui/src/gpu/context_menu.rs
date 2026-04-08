@@ -238,9 +238,13 @@ impl ContextMenu {
         let icon_sz = 40.0 * s;
         let icon_gap = 6.0 * s;
 
-        // Menu screen position (for inline rendering on main surface)
-        let menu_x = self.x;
-        let menu_y = self.y - self.scroll_offset;
+        // For inline rendering, offset by menu screen position;
+        // for popup mode, icons are drawn into the popup surface at local (0,0).
+        let (menu_x, menu_y) = if self.uses_popups {
+            (0.0, 0.0)
+        } else {
+            (self.x, self.y - self.scroll_offset)
+        };
 
         let mut cy = pad;
         let mut result = Vec::new();

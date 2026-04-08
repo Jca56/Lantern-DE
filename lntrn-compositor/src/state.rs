@@ -19,7 +19,7 @@ use smithay::{
             Display, DisplayHandle,
         },
     },
-        utils::{Logical, Point, Rectangle},
+        utils::{Logical, Physical, Point, Rectangle, Size},
     wayland::{
         compositor::{CompositorClientState, CompositorState},
         cursor_shape::CursorShapeManagerState,
@@ -41,7 +41,8 @@ use smithay::{
     },
 };
 
-use crate::animation::AnimationState;
+use smithay::backend::renderer::gles::GlesTexture;
+use crate::animation::{AnimationState, ClosingWindow};
 use crate::canvas::Canvas;
 use crate::input::AudioRepeat;
 use crate::cursor::CursorState;
@@ -195,6 +196,8 @@ pub struct Lantern {
     pub layer_surface_outputs: HashMap<WlSurface, Output>,
     pub window_opacity: HashMap<WlSurface, f32>,
     pub default_window_opacity: f32,
+    /// App IDs that skip blur backdrop and use full opacity.
+    pub blur_exclude: Vec<String>,
     pub window_zoom: HashMap<WlSurface, f64>,
     pub focus_follows_mouse: bool,
     pub super_pressed: bool,
@@ -202,6 +205,10 @@ pub struct Lantern {
     pub super_clean_tap: bool,
     pub snapped_windows: Vec<SnappedWindow>,
     pub animations: AnimationState,
+    /// Windows that died (client-initiated close) but still have a close animation playing.
+    pub closing_windows: Vec<ClosingWindow>,
+    /// Per-window snapshot textures captured each render frame for close animations.
+    pub window_snapshots: HashMap<WlSurface, (GlesTexture, Size<i32, Physical>)>,
     pub tiling: PerOutputTiling,
     pub tiling_anim: TilingAnimationState,
     pub gesture: GestureState,
@@ -330,12 +337,15 @@ impl Lantern {
             layer_surface_outputs: HashMap::new(),
             window_opacity: HashMap::new(),
             default_window_opacity: crate::read_config_f32("window_opacity", 1.0),
+            blur_exclude: crate::read_config_list("windows", "blur_exclude"),
             window_zoom: HashMap::new(),
             focus_follows_mouse: crate::read_config("window_manager", "focus_follows_mouse", "false") == "true",
             super_pressed: false,
             super_clean_tap: false,
             snapped_windows: Vec::new(),
             animations: AnimationState::new(),
+            closing_windows: Vec::new(),
+            window_snapshots: HashMap::new(),
             tiling: PerOutputTiling::new(),
             tiling_anim: TilingAnimationState::new(),
             gesture: GestureState::new(),

@@ -53,6 +53,7 @@ const MENU_AUTOHIDE_CHECKBOX: u32 = 5;
 const MENU_OPACITY_SLIDER: u32 = 6;
 const MENU_MOVE_POSITION: u32 = 7;
 const MENU_LAVA_LAMP: u32 = 7;
+const MENU_TRAY_LEFT: u32 = 8;
 const MENU_APP_PIN: u32 = 10;
 const MENU_APP_LAUNCH: u32 = 11;
 const MENU_APP_CLOSE: u32 = 12;
@@ -450,11 +451,12 @@ fn slider_to_height(v: f32) -> u32 {
 
 fn save_settings(
     style: BarStyle, auto_hide: bool, height: u32, opacity: f32,
-    lava_lamp: bool, position_top: bool, pinned: &[crate::appmenu::sysmon::PinnedProcess],
+    lava_lamp: bool, position_top: bool, tray_left: bool,
+    pinned: &[crate::appmenu::sysmon::PinnedProcess],
 ) {
     let s = crate::bar_settings::BarSettings {
         floating: style == BarStyle::Floating,
-        auto_hide, height, opacity, lava_lamp, position_top,
+        auto_hide, height, opacity, lava_lamp, position_top, tray_left,
         pinned_procs: pinned.iter().map(|p| p.name.clone()).collect(),
     };
     s.save();
@@ -488,6 +490,7 @@ pub fn run() -> Result<()> {
     // Auto-hide state
     let mut auto_hide = saved.auto_hide;
     let mut position_top = saved.position_top;
+    let mut tray_left = saved.tray_left;
     let mut bar_opacity: f32 = saved.opacity.clamp(0.0, 1.0);
     let mut lava = crate::lava::LavaLamp::new();
     lava.enabled = saved.lava_lamp;
@@ -571,11 +574,7 @@ pub fn run() -> Result<()> {
     let mut ix = InteractionContext::new();
     let mut clock = Clock::new();
     let mut menu_was_open = false;
-    let mut desktop_panel_idx: usize = 0;
-    let desktop_panel_path = {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-        std::path::PathBuf::from(home).join(".lantern/config/desktop-panel")
-    };
+
     let mut kb_was_active = false;
     let mut app_tray = crate::apptray::AppTray::new();
     let mut app_menu = crate::appmenu::AppMenu::new();
@@ -789,14 +788,6 @@ pub fn run() -> Result<()> {
             }
             app_menu.on_left_click(phys_cx, phys_cy, &ix, scale_f);
             ix.on_left_pressed();
-            // Desktop panel pill clicks
-            for i in 0..3u32 {
-                if ix.active_zone_id() == Some(8000 + i) {
-                    desktop_panel_idx = i as usize;
-                    let panel_name = match i { 0 => "home", 1 => "terminal", _ => "files" };
-                    let _ = std::fs::write(&desktop_panel_path, panel_name);
-                }
-            }
             // Start potential drag on app tray icons
             let toplevels = state.tracker.toplevels();
             app_tray.on_press(&ix, phys_cx, phys_cy, &toplevels);
@@ -1003,6 +994,7 @@ pub fn run() -> Result<()> {
                 items.push(MenuItem::checkbox(MENU_FLOAT_CHECKBOX, "Float", is_floating));
                 items.push(MenuItem::checkbox(MENU_AUTOHIDE_CHECKBOX, "Auto Hide", auto_hide));
                 items.push(MenuItem::checkbox(MENU_LAVA_LAMP, "Lava Lamp", lava.enabled));
+                items.push(MenuItem::checkbox(MENU_TRAY_LEFT, "App Tray Left", tray_left));
                 items.push(MenuItem::slider(MENU_HEIGHT_SLIDER, "Bar Height", height_to_slider(bar_height)));
                 items.push(MenuItem::slider(MENU_OPACITY_SLIDER, "Opacity", bar_opacity));
 
@@ -1146,88 +1138,35 @@ pub fn run() -> Result<()> {
         painter.inner_shadow(bar_rect, bar_r, bevel_sigma,
             Color::BLACK.with_alpha(0.12 * bar_opacity), 0.0, bevel_offset);
 
-        // ── Desktop panel pills (above bar, right side) ─────────
-        // Read current panel from file (compositor Super key may have changed it)
-        if let Ok(contents) = std::fs::read_to_string(&desktop_panel_path) {
-            desktop_panel_idx = match contents.trim() {
-                "home" => 0,
-                "terminal" => 1,
-                "files" => 2,
-                _ => 0,
-            };
-        }
-        // Slide off-screen when bar docks (anim_t → 1) or hides (hide_t → 1)
-        {
-            let slide_t = anim_t.max(hide_t); // either docking or hiding
-            let pill_labels = ["Home", "Terminal", "Files"];
-            let pill_h = 32.0 * scale_f;
-            let pill_gap = 5.0 * scale_f;
-            let pill_pad = 14.0 * scale_f;
-            let font = 20.0 * scale_f;
-            let pill_r = pill_h * 0.5;
-            let pill_y = if position_top {
-                bar_rect.y + bar_rect.h + 6.0 * scale_f
-            } else {
-                bar_rect.y - pill_h - 6.0 * scale_f
-            };
-            let active_color = Color::from_rgb8(100, 160, 255);
-
-            let min_pill_w = 80.0 * scale_f;
-            let pill_widths: Vec<f32> = pill_labels.iter()
-                .map(|l| (l.len() as f32 * font * 0.55 + pill_pad * 2.0).max(min_pill_w))
-                .collect();
-            let total_w: f32 = pill_widths.iter().sum::<f32>()
-                + pill_gap * (pill_labels.len() - 1) as f32;
-            // Slide right off-screen: normal position → off right edge
-            let slide_offset = slide_t * (total_w + 20.0 * scale_f);
-            let base_x = bar_rect.x + bar_rect.w - total_w - 12.0 * scale_f + slide_offset;
-            let mut px = base_x;
-
-            if slide_t < 0.99 {
-                for (i, (label, pw)) in pill_labels.iter().zip(&pill_widths).enumerate() {
-                    let pr = lntrn_render::Rect::new(px, pill_y, *pw, pill_h);
-                    let zone_id = 8000 + i as u32;
-                    let zone = ix.add_zone(zone_id, pr);
-                    let active = i == desktop_panel_idx;
-
-                    if active {
-                        painter.rect_filled(pr, pill_r, palette.surface.with_alpha(0.85));
-                    } else if zone.is_hovered() {
-                        painter.rect_filled(pr, pill_r, palette.surface.with_alpha(0.5));
-                    } else {
-                        painter.rect_filled(pr, pill_r, palette.surface.with_alpha(0.3));
-                    }
-
-                    let color = if active { active_color } else { palette.text };
-                    let text_w = text.measure_width_styled(
-                        label, font,
-                        lntrn_render::FontWeight::Bold,
-                        lntrn_render::FontStyle::Normal,
-                    );
-                    let text_x = px + (*pw - text_w) * 0.5;
-                    lntrn_ui::gpu::TextLabel::new(label, text_x, pill_y + (pill_h - font) * 0.5)
-                        .size(lntrn_ui::gpu::FontSize::Custom(font))
-                        .color(color)
-                        .bold()
-                        .draw(&mut text, phys_w, total_phys_h);
-                    px += pw + pill_gap;
-                }
-            }
-        }
-
         // ── Left: launcher button ─────────────────────────────────
         let launcher_w = app_menu.draw_button(
             &mut painter, &mut ix, &palette,
             vis_x, vis_y, vis_h, scale_f,
         );
 
-        // ── Pinned process monitors (after launcher button) ─────
-        let pinned_x = vis_x + launcher_w + 8.0 * scale_f;
-        let _pinned_w = app_menu.sysmon.draw_pinned(
-            &mut painter, &mut text, &mut ix, &palette,
-            pinned_x, vis_y, vis_h, scale_f,
-            phys_w, total_phys_h,
-        );
+        // ── Left-side widgets (app tray left mode swaps order) ───
+        let left_after_launcher = vis_x + launcher_w + 8.0 * scale_f;
+        let tray_left_x;
+        if tray_left {
+            // Compute app tray width to position pinned processes after it
+            let toplevels = state.tracker.toplevels();
+            let tray_w = app_tray.measure_width(&toplevels, vis_h, scale_f);
+            tray_left_x = Some(left_after_launcher);
+            let pinned_x = left_after_launcher + tray_w + 8.0 * scale_f;
+            let _pinned_w = app_menu.sysmon.draw_pinned(
+                &mut painter, &mut text, &mut ix, &palette,
+                pinned_x, vis_y, vis_h, scale_f,
+                phys_w, total_phys_h,
+            );
+        } else {
+            tray_left_x = None;
+            let pinned_x = left_after_launcher;
+            let _pinned_w = app_menu.sysmon.draw_pinned(
+                &mut painter, &mut text, &mut ix, &palette,
+                pinned_x, vis_y, vis_h, scale_f,
+                phys_w, total_phys_h,
+            );
+        }
 
         // ── Right-aligned widgets: [tray] [battery] [clock] ──────
         // We lay out right-to-left, accumulating consumed width.
@@ -1395,7 +1334,7 @@ pub fn run() -> Result<()> {
             let _ = right_used + tw;
         }
 
-        // ── App tray (centered) ─────────────────────────────────────
+        // ── App tray ─────────────────────────────────────────────────
         let app_tray_tex_draws;
         {
             let toplevels = state.tracker.toplevels();
@@ -1404,6 +1343,7 @@ pub fn run() -> Result<()> {
                 &toplevels,
                 vis_x, vis_y, vis_w, vis_h,
                 scale_f, phys_w, total_phys_h,
+                tray_left_x,
             );
             app_tray_tex_draws = draws;
 
@@ -1412,6 +1352,7 @@ pub fn run() -> Result<()> {
                 app_tray.hovered_app(
                     &ix, phys_cx, phys_cy, &toplevels,
                     vis_x, vis_w, vis_h, scale_f,
+                    tray_left_x,
                 )
             } else {
                 None
@@ -1500,7 +1441,7 @@ pub fn run() -> Result<()> {
             match event {
                 MenuEvent::CheckboxToggled { id: MENU_FLOAT_CHECKBOX, checked } => {
                     user_style = if checked { BarStyle::Floating } else { BarStyle::Docked };
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, &app_menu.sysmon.pinned);
                     context_menu.close();
                 }
                 MenuEvent::CheckboxToggled { id: MENU_AUTOHIDE_CHECKBOX, checked } => {
@@ -1511,7 +1452,7 @@ pub fn run() -> Result<()> {
                         apply_layer_config(&layer_surface, state.width, bar_height, anim_t, auto_hide, position_top);
                         surface.commit();
                     }
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, &app_menu.sysmon.pinned);
                     context_menu.close();
                 }
                 MenuEvent::Action(MENU_OPEN_TERMINAL) => {
@@ -1553,29 +1494,34 @@ pub fn run() -> Result<()> {
                 }
                 MenuEvent::Action(MENU_PROC_PIN) => {
                     app_menu.sysmon.pin_right_clicked();
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, &app_menu.sysmon.pinned);
                     context_menu.close();
                 }
                 MenuEvent::Action(MENU_PROC_UNPIN) => {
                     if let Some((name, _)) = app_menu.sysmon.right_clicked_proc.clone() {
                         app_menu.sysmon.unpin(&name);
                     }
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, &app_menu.sysmon.pinned);
                     context_menu.close();
                 }
                 MenuEvent::Action(MENU_PROC_KILL) => {
                     app_menu.sysmon.kill_right_clicked();
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, &app_menu.sysmon.pinned);
                     context_menu.close();
                 }
                 MenuEvent::CheckboxToggled { id: MENU_LAVA_LAMP, checked } => {
                     lava.enabled = checked;
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, &app_menu.sysmon.pinned);
+                    context_menu.close();
+                }
+                MenuEvent::CheckboxToggled { id: MENU_TRAY_LEFT, checked } => {
+                    tray_left = checked;
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, &app_menu.sysmon.pinned);
                     context_menu.close();
                 }
                 MenuEvent::SliderChanged { id: MENU_OPACITY_SLIDER, value } => {
                     bar_opacity = value.clamp(0.0, 1.0);
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, &app_menu.sysmon.pinned);
                 }
                 MenuEvent::SliderChanged { id: MENU_HEIGHT_SLIDER, value } => {
                     bar_height = slider_to_height(value);
@@ -1586,13 +1532,13 @@ pub fn run() -> Result<()> {
                         vp.set_destination(state.width as i32, state.height as i32);
                     }
                     surface.commit();
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, &app_menu.sysmon.pinned);
                 }
                 MenuEvent::Action(MENU_MOVE_POSITION) => {
                     position_top = !position_top;
                     apply_layer_config(&layer_surface, state.width, bar_height, anim_t, auto_hide, position_top);
                     surface.commit();
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, &app_menu.sysmon.pinned);
                     context_menu.close();
                 }
                 MenuEvent::Action(id) if id >= crate::dbusmenu::DBUSMENU_ID_BASE => {

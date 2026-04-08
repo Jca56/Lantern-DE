@@ -24,7 +24,7 @@ use crate::wayland_actions::{
 use crate::{
     ClickAction, Gpu, CTX_NEW_FOLDER_BLUE, CTX_NEW_FOLDER_GREEN, CTX_NEW_FOLDER_ORANGE,
     CTX_NEW_FOLDER_PURPLE, CTX_NEW_FOLDER_RED, CTX_NEW_FOLDER_YELLOW,
-    VIEW_SLIDER_ID, VIEW_OPACITY_SLIDER_ID,
+    VIEW_SLIDER_ID, VIEW_OPACITY_SLIDER_ID, VIEW_SHOW_HIDDEN_ID,
     ZONE_DROP_CANCEL, ZONE_DROP_COPY, ZONE_DROP_MOVE,
 };
 
@@ -519,6 +519,12 @@ pub(crate) fn run_loop(
                     } else if id == VIEW_OPACITY_SLIDER_ID {
                         settings.bg_opacity = value.clamp(0.0, 1.0);
                         settings.save();
+                    }
+                } else if let MenuEvent::CheckboxToggled { id, checked } = evt {
+                    if id == VIEW_SHOW_HIDDEN_ID {
+                        app.show_hidden = checked;
+                        settings.show_hidden = checked;
+                        app.reload();
                     }
                 } else if matches!(evt, MenuEvent::Action(_)) {
                     view_menu.close_popups(backend);

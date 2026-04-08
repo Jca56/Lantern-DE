@@ -66,8 +66,25 @@ impl CursorState {
         if let CursorImageStatus::Named(icon) = self.status {
             let icon_key = cursor_icon_key(icon);
             if self.loaded_icon_key != Some(icon_key) {
-                // Try Lantern SVG cursor first, then fall back to xcursor
-                if !self.load_lantern_svg(icon_key) {
+                if self.custom_loaded && icon_key == "default" {
+                    // Reload the custom theme SVG for the default cursor
+                    let svg_path = crate::lantern_home()
+                        .join("config/cursors")
+                        .join(format!("{}.svg", self.custom_theme));
+                    if let Ok(data) = std::fs::read(&svg_path) {
+                        if self.rasterize_svg(&data).is_some() {
+                            self.loaded_icon_key = Some(icon_key);
+                            return;
+                        }
+                    }
+                }
+                if !self.custom_loaded {
+                    // Try Lantern SVG cursor first, then fall back to xcursor
+                    if !self.load_lantern_svg(icon_key) {
+                        self.load_xcursor(icon);
+                    }
+                } else {
+                    // Custom theme active but not the default icon — use xcursor for this shape
                     self.load_xcursor(icon);
                 }
             }
@@ -91,7 +108,6 @@ impl CursorState {
         };
         if self.rasterize_svg(data).is_some() {
             self.loaded_icon_key = Some(icon_key);
-            self.custom_loaded = false;
             tracing::info!("Loaded embedded Lantern cursor: {}", svg_file);
             true
         } else {

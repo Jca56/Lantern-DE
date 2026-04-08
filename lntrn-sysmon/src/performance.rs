@@ -113,7 +113,7 @@ fn draw_graph(
 pub fn draw(
     p: &mut Painter, t: &mut TextRenderer,
     s: f32, top_y: f32, state: &PerfState,
-    wf: f32, hf: f32, sw: u32, sh: u32,
+    wf: f32, _hf: f32, sw: u32, sh: u32,
 ) {
     let pad = 32.0 * s;
     let graph_gap = 20.0 * s;
@@ -122,7 +122,6 @@ pub fn draw(
 
     // CPU graph
     let cpu_y = top_y + 12.0 * s;
-    if cpu_y + graph_h > hf { return; }
     let cpu_val = state.cpu_history.last().copied().unwrap_or(0.0);
     draw_graph(
         p, t, pad, cpu_y, graph_w, graph_h, s,
@@ -132,7 +131,6 @@ pub fn draw(
 
     // Memory graph
     let mem_y = cpu_y + graph_h + graph_gap;
-    if mem_y + graph_h > hf { return; }
     let mem_val = state.mem_history.last().copied().unwrap_or(0.0);
     draw_graph(
         p, t, pad, mem_y, graph_w, graph_h, s,
@@ -142,7 +140,6 @@ pub fn draw(
 
     // Battery / misc info below graphs
     let info_y = mem_y + graph_h + graph_gap;
-    if info_y > hf { return; }
     let load = std::fs::read_to_string("/proc/loadavg").unwrap_or_default();
     let load_str = load.split_whitespace().take(3).collect::<Vec<_>>().join("  ");
     t.queue("Load Average", 16.0 * s, pad, info_y, TEXT_MUTED, wf, sw, sh);

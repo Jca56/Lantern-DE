@@ -47,7 +47,6 @@ const MAX_HEIGHT: f32 = 900.0;
 
 fn favorites_path() -> std::path::PathBuf { crate::bar_config_dir().join("favorites.txt") }
 fn size_path() -> std::path::PathBuf { crate::bar_config_dir().join("menu_size.txt") }
-pub(crate) fn assets_dir() -> std::path::PathBuf { crate::lantern_icons_dir() }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuTab {

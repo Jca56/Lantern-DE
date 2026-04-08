@@ -116,6 +116,7 @@ impl Lantern {
         self.fullscreen_windows.retain(|entry| entry.surface != *surface);
         self.snapped_windows.retain(|entry| entry.surface != *surface);
         self.window_opacity.remove(surface);
+        self.window_snapshots.remove(surface);
         self.animations.remove(surface);
         self.tiling_anim.remove(surface);
         let was_tiled = self.tiling.contains(surface);
@@ -150,12 +151,28 @@ impl Lantern {
         }
     }
 
-    /// Called when a close animation finishes. Sends the actual close request.
+    /// Called when a close animation finishes for a live window (Super+Q path).
+    /// Unmaps immediately (prevents flash), sends the close request, and fully
+    /// cleans up compositor state so the bar receives the toplevel Closed event.
     pub fn finish_close_animation(&mut self, surface: &WlSurface) {
         if let Some(window) = self.find_mapped_window(surface) {
-            tracing::info!("Close animation finished, sending close");
+            tracing::info!("Close animation finished, unmapping and sending close");
+            self.space.unmap_elem(&window);
             window.request_close();
         }
+        // Clean up all state and notify the bar — the window is gone from the
+        // user's perspective once it's unmapped.  Previously we only set a
+        // close_done flag, but the dead-window detector never ran because the
+        // window was already removed from the space, so forget_window (and the
+        // foreign-toplevel Closed event) never fired.
+        self.forget_window(surface);
+    }
+
+    /// Called when a close animation finishes for a zombie window (client-initiated close).
+    /// The window is already dead, just clean up state.
+    pub fn finish_zombie_close(&mut self, surface: &WlSurface) {
+        self.closing_windows.retain(|cw| cw.surface != *surface);
+        self.forget_window(surface);
     }
 
     pub fn get_window_opacity(&self, surface: &WlSurface) -> f32 {

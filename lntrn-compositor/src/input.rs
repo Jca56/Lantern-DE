@@ -99,6 +99,7 @@ pub fn read_input_setting_f64(key: &str, default: f64) -> f64 {
 
 fn spawn_detached(cmd: &str, wayland_display: &std::ffi::OsStr) {
     use std::os::unix::process::CommandExt;
+    crate::reap_zombies();
     match unsafe {
         Command::new(cmd)
             .env("WAYLAND_DISPLAY", wayland_display)
@@ -116,6 +117,7 @@ fn spawn_detached(cmd: &str, wayland_display: &std::ffi::OsStr) {
 
 fn spawn_detached_args(cmd: &str, args: &[&str], wayland_display: &std::ffi::OsStr) {
     use std::os::unix::process::CommandExt;
+    crate::reap_zombies();
     match unsafe {
         Command::new(cmd)
             .args(args)

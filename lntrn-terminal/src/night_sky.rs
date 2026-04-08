@@ -5,8 +5,8 @@ use lntrn_render::{Color, Painter, Rect, TextRenderer};
 // ── Night sky palette ───────────────────────────────────────────────────────
 const BG_DEEP: Color = Color::rgb(0.003, 0.001, 0.014);
 const BG_SURFACE: Color = Color::rgb(0.008, 0.003, 0.028);
-const GLOW_PINK: Color = Color::rgba(0.45, 0.14, 0.32, 0.07);
-const GLOW_CYAN: Color = Color::rgba(0.14, 0.35, 0.52, 0.07);
+const GLOW_PINK: Color = Color::rgba(0.45, 0.14, 0.32, 0.04);
+const GLOW_CYAN: Color = Color::rgba(0.14, 0.35, 0.52, 0.04);
 pub const TEXT_SECONDARY: Color = Color::rgb(0.45, 0.40, 0.58);
 const BORDER_SUBTLE: Color = Color::rgba(0.30, 0.20, 0.50, 0.15);
 const CLOSE_BG: Color = Color::rgb(0.45, 0.02, 0.02);

@@ -145,6 +145,8 @@ pub struct App {
     pub path_editing: bool,
     pub path_buf: String,
     pub path_cursor: usize,
+    /// Selection range (char offsets). When Some, text between start..end is selected.
+    pub path_selection: Option<(usize, usize)>,
 
     // Pick mode
     pub pick: Option<PickConfig>,
@@ -216,6 +218,7 @@ impl App {
             path_editing: false,
             path_buf: String::new(),
             path_cursor: 0,
+            path_selection: None,
             tree_expanded: std::collections::HashSet::new(),
             tree_entries: Vec::new(),
             pick: None,
@@ -537,7 +540,8 @@ impl App {
 
     pub fn start_path_edit(&mut self) {
         self.path_buf = self.current_dir.to_string_lossy().to_string();
-        self.path_cursor = self.path_buf.len();
+        self.path_cursor = self.path_buf.chars().count();
+        self.path_selection = None;
         self.path_editing = true;
     }
 
@@ -549,12 +553,24 @@ impl App {
         self.path_editing = false;
         self.path_buf.clear();
         self.path_cursor = 0;
+        self.path_selection = None;
     }
 
     pub fn cancel_path_edit(&mut self) {
         self.path_editing = false;
         self.path_buf.clear();
         self.path_cursor = 0;
+        self.path_selection = None;
+    }
+
+    /// Get the currently selected text in the path bar, or the full path if all selected.
+    pub fn path_selected_text(&self) -> Option<String> {
+        let (start, end) = self.path_selection?;
+        if start == end { return None; }
+        let s = start.min(end);
+        let e = start.max(end);
+        let text: String = self.path_buf.chars().skip(s).take(e - s).collect();
+        Some(text)
     }
 
     // ── View mode & tree ──────────────────────────────────────────────

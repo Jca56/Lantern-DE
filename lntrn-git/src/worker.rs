@@ -10,6 +10,8 @@ pub enum GitEvent {
     Repos(Vec<PathBuf>),
     Status(git::RepoStatus),
     Branches(Vec<git::BranchInfo>),
+    BranchDetails(Vec<git::BranchDetail>),
+    GraphData(Vec<git::GraphCommit>),
     Message(String),
     Error(String),
     RemoteRepos(Result<Vec<git::RemoteRepo>, String>),
@@ -29,8 +31,11 @@ pub enum GitCmd {
     Pull,
     FetchGitHubRepos,
     ListBranches,
-    CreateBranch(String),
+    ListBranchesDetailed,
+    FetchGraph(usize),
+    CreateBranch(String, bool),
     SwitchBranch(String),
+    Merge { source: String, target: String },
 }
 
 /// Spawn the worker thread — returns the command sender and event receiver.
@@ -141,12 +146,34 @@ fn run(tx: mpsc::Sender<GitEvent>, rx: mpsc::Receiver<GitCmd>) {
                     let _ = tx.send(GitEvent::Branches(branches));
                 }
             }
-            GitCmd::CreateBranch(name) => {
+            GitCmd::ListBranchesDetailed => {
+                if let Some(ref path) = repo_path {
+                    let details = git::list_branches_detailed(path);
+                    let _ = tx.send(GitEvent::BranchDetails(details));
+                }
+            }
+            GitCmd::FetchGraph(count) => {
+                if let Some(ref path) = repo_path {
+                    let commits = git::log_structured(path, count);
+                    let _ = tx.send(GitEvent::GraphData(commits));
+                }
+            }
+            GitCmd::CreateBranch(name, push) => {
                 if let Some(ref path) = repo_path {
                     match git::create_branch(path, &name) {
-                        Ok(msg) => {
+                        Ok(mut msg) => {
+                            if push {
+                                match git::push_new_branch(path, &name) {
+                                    Ok(push_msg) => { msg = format!("{msg} — {push_msg}"); }
+                                    Err(push_err) => {
+                                        let _ = tx.send(GitEvent::Error(push_err));
+                                        let branches = git::list_branches(path);
+                                        let _ = tx.send(GitEvent::Branches(branches));
+                                        continue;
+                                    }
+                                }
+                            }
                             let _ = tx.send(GitEvent::Message(msg));
-                            // Refresh branches + status after create
                             let branches = git::list_branches(path);
                             let _ = tx.send(GitEvent::Branches(branches));
                         }
@@ -163,6 +190,26 @@ fn run(tx: mpsc::Sender<GitEvent>, rx: mpsc::Receiver<GitCmd>) {
                             let branches = git::list_branches(path);
                             let _ = tx.send(GitEvent::Status(status));
                             let _ = tx.send(GitEvent::Branches(branches));
+                        }
+                        Err(err) => { let _ = tx.send(GitEvent::Error(err)); }
+                    }
+                }
+            }
+            GitCmd::Merge { source, target } => {
+                if let Some(ref path) = repo_path {
+                    // Switch to target branch first (if not already on it)
+                    let current = git::current_branch(path);
+                    if current != target {
+                        if let Err(err) = git::switch_branch(path, &target) {
+                            let _ = tx.send(GitEvent::Error(err));
+                            continue;
+                        }
+                    }
+                    match git::merge_branch(path, &source) {
+                        Ok(msg) => {
+                            let _ = tx.send(GitEvent::Message(msg));
+                            let status = git::status(path);
+                            let _ = tx.send(GitEvent::Status(status));
                         }
                         Err(err) => { let _ = tx.send(GitEvent::Error(err)); }
                     }

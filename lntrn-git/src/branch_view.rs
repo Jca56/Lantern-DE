@@ -1,7 +1,7 @@
 //! Branch dropdown — lists branches, create new, switch on click.
 
 use lntrn_render::{Painter, Rect, TextRenderer};
-use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea, Scrollbar};
+use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea, Scrollbar, Toggle};
 
 use crate::git;
 use crate::keys;
@@ -11,14 +11,15 @@ const ZONE_BRANCH_BASE: u32 = 4000;
 const ZONE_NEW_INPUT: u32 = 4500;
 const ZONE_NEW_BTN: u32 = 4501;
 const ZONE_SCROLLBAR: u32 = 4502;
+const ZONE_PUSH_TOGGLE: u32 = 4503;
 
 /// Actions the branch dropdown can produce.
 pub enum BranchAction {
     None,
     /// User clicked a branch to switch to it.
     Switch(String),
-    /// User wants to create a new branch with this name.
-    Create(String),
+    /// User wants to create a new branch with this name + push-to-remote flag.
+    Create(String, bool),
 }
 
 pub struct BranchDropdown {
@@ -28,6 +29,7 @@ pub struct BranchDropdown {
     pub input: String,
     pub input_focused: bool,
     pub cursor_pos: usize,
+    pub push_to_remote: bool,
     // Scroll
     scroll_offset: f32,
     /// The panel rect from the last draw, used for text clipping.
@@ -42,6 +44,7 @@ impl BranchDropdown {
             input: String::new(),
             input_focused: false,
             cursor_pos: 0,
+            push_to_remote: true,
             scroll_offset: 0.0,
             panel_rect: None,
         }
@@ -88,7 +91,7 @@ impl BranchDropdown {
                     self.input.clear();
                     self.cursor_pos = 0;
                     self.input_focused = false;
-                    return BranchAction::Create(name);
+                    return BranchAction::Create(name, self.push_to_remote);
                 }
             }
             _ => {
@@ -121,6 +124,7 @@ impl BranchDropdown {
         let is_ours = zone == ZONE_NEW_INPUT
             || zone == ZONE_NEW_BTN
             || zone == ZONE_SCROLLBAR
+            || zone == ZONE_PUSH_TOGGLE
             || (zone >= ZONE_BRANCH_BASE && zone < ZONE_BRANCH_BASE + 256);
         if !is_ours {
             self.close();
@@ -137,8 +141,13 @@ impl BranchDropdown {
                 let name = self.input.trim().to_string();
                 self.input.clear();
                 self.cursor_pos = 0;
-                return (BranchAction::Create(name), true);
+                return (BranchAction::Create(name, self.push_to_remote), true);
             }
+            return (BranchAction::None, true);
+        }
+
+        if zone == ZONE_PUSH_TOGGLE {
+            self.push_to_remote = !self.push_to_remote;
             return (BranchAction::None, true);
         }
 
@@ -174,8 +183,9 @@ impl BranchDropdown {
         let btn_h = 34.0 * s;
         let dropdown_w = 300.0 * s;
 
-        // New branch input row height
-        let header_h = input_h + pad * 2.0;
+        // New branch input + push toggle rows
+        let toggle_h = 36.0 * s;
+        let header_h = input_h + toggle_h + pad * 2.0;
 
         // Branch list area
         let branch_count = self.branches.len();
@@ -232,6 +242,16 @@ impl BranchDropdown {
         text.queue("+", body_font,
             btn_rect.x + (btn_w - body_font * 0.5) / 2.0, ty,
             palette.text, btn_w, sw, sh);
+
+        // ── Push to GitHub toggle ──────────────────────────────────────────
+        let toggle_y = input_y + input_h + 4.0 * s;
+        let toggle_rect = Rect::new(dx + pad, toggle_y, dropdown_w - pad * 2.0, toggle_h);
+        let toggle_state = ix.add_zone(ZONE_PUSH_TOGGLE, toggle_rect);
+        Toggle::new(toggle_rect, self.push_to_remote)
+            .label("Push to GitHub")
+            .hovered(toggle_state.is_hovered())
+            .scale(s)
+            .draw(painter, text, palette, sw, sh);
 
         // ── Branch list ─────────────────────────────────────────────────────
         let list_top = dy + header_h;

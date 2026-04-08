@@ -411,6 +411,21 @@ pub fn create_branch(repo: &Path, name: &str) -> Result<String, String> {
     }
 }
 
+/// Push a new branch to origin with upstream tracking.
+pub fn push_new_branch(repo: &Path, name: &str) -> Result<String, String> {
+    let output = Command::new("git")
+        .args(["push", "-u", "origin", name])
+        .current_dir(repo)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if output.status.success() {
+        let msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Ok(if msg.is_empty() { format!("Pushed '{name}' to origin") } else { msg })
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
 /// Switch to an existing branch.
 pub fn switch_branch(repo: &Path, name: &str) -> Result<String, String> {
     let output = Command::new("git")
@@ -423,6 +438,150 @@ pub fn switch_branch(repo: &Path, name: &str) -> Result<String, String> {
     } else {
         Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
     }
+}
+
+// ── Detailed branch info ────────────────────────────────────────────────────
+
+/// Detailed branch info for the branch panel.
+#[derive(Debug, Clone)]
+pub struct BranchDetail {
+    pub name: String,
+    pub is_current: bool,
+    pub ahead: u32,
+    pub behind: u32,
+    pub last_commit: String,
+    pub has_upstream: bool,
+}
+
+/// Get ahead/behind counts between two branches.
+pub fn ahead_behind_branches(repo: &Path, a: &str, b: &str) -> (u32, u32) {
+    let output = Command::new("git")
+        .args(["rev-list", "--left-right", "--count", &format!("{a}...{b}")])
+        .current_dir(repo)
+        .output();
+    let Ok(output) = output else { return (0, 0) };
+    if !output.status.success() { return (0, 0); }
+    let s = String::from_utf8_lossy(&output.stdout);
+    let parts: Vec<&str> = s.trim().split_whitespace().collect();
+    if parts.len() == 2 {
+        (parts[0].parse().unwrap_or(0), parts[1].parse().unwrap_or(0))
+    } else {
+        (0, 0)
+    }
+}
+
+/// List all branches with ahead/behind relative to main (or master).
+pub fn list_branches_detailed(repo: &Path) -> Vec<BranchDetail> {
+    let branches = list_branches(repo);
+    if branches.is_empty() { return Vec::new(); }
+
+    // Find the base branch name (main or master)
+    let base = branches.iter()
+        .find(|b| b.name == "main" || b.name == "master")
+        .map(|b| b.name.clone())
+        .unwrap_or_else(|| branches[0].name.clone());
+
+    // Get last commit subject per branch
+    let output = Command::new("git")
+        .args(["branch", "--format=%(refname:short)\t%(subject)", "--list"])
+        .current_dir(repo)
+        .output();
+    let subjects: Vec<(String, String)> = output.map(|o| {
+        String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .filter_map(|line| {
+                let mut parts = line.splitn(2, '\t');
+                let name = parts.next()?.to_string();
+                let subject = parts.next().unwrap_or("").to_string();
+                Some((name, subject))
+            })
+            .collect()
+    }).unwrap_or_default();
+
+    branches.iter().map(|b| {
+        let (ahead, behind) = if b.name == base {
+            (0, 0)
+        } else {
+            ahead_behind_branches(repo, &b.name, &base)
+        };
+        let last_commit = subjects.iter()
+            .find(|(n, _)| n == &b.name)
+            .map(|(_, s)| s.clone())
+            .unwrap_or_default();
+        let has_upstream = Command::new("git")
+            .args(["config", &format!("branch.{}.remote", b.name)])
+            .current_dir(repo)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        BranchDetail {
+            name: b.name.clone(),
+            is_current: b.is_current,
+            ahead, behind, last_commit, has_upstream,
+        }
+    }).collect()
+}
+
+/// Merge another branch into the current branch.
+pub fn merge_branch(repo: &Path, source: &str) -> Result<String, String> {
+    let output = Command::new("git")
+        .args(["merge", source, "--no-edit"])
+        .current_dir(repo)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
+// ── Commit graph data ───────────────────────────────────────────────────────
+
+/// A commit for graph rendering.
+#[derive(Debug, Clone)]
+pub struct GraphCommit {
+    pub hash: String,
+    pub short_hash: String,
+    pub parents: Vec<String>,
+    pub subject: String,
+    pub decorations: Vec<String>,
+}
+
+/// Get structured commit data for graph rendering.
+pub fn log_structured(repo: &Path, count: usize) -> Vec<GraphCommit> {
+    // NUL-separated fields, record separator between commits
+    let output = Command::new("git")
+        .args([
+            "log", "--all", "--topo-order",
+            &format!("-n{count}"),
+            "--format=%H%x00%h%x00%P%x00%s%x00%D",
+        ])
+        .current_dir(repo)
+        .output();
+    let Ok(output) = output else { return Vec::new() };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout.lines().filter_map(|line| {
+        let parts: Vec<&str> = line.splitn(5, '\0').collect();
+        if parts.len() < 5 { return None; }
+        let parents = if parts[2].is_empty() {
+            Vec::new()
+        } else {
+            parts[2].split(' ').map(|s| s.to_string()).collect()
+        };
+        let decorations = if parts[4].is_empty() {
+            Vec::new()
+        } else {
+            parts[4].split(", ").map(|s| s.trim().to_string()).collect()
+        };
+        Some(GraphCommit {
+            hash: parts[0].to_string(),
+            short_hash: parts[1].to_string(),
+            parents,
+            subject: parts[3].to_string(),
+            decorations,
+        })
+    }).collect()
 }
 
 /// Get the repo name from the path.

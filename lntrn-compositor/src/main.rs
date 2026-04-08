@@ -81,6 +81,19 @@ pub(crate) fn read_config_f32(key: &str, default: f32) -> f32 {
     s.parse::<f32>().unwrap_or(default)
 }
 
+/// Read a string-list setting from [section] in lantern.toml.
+/// Expects TOML array syntax: `key = ["a", "b", "c"]`
+pub(crate) fn read_config_list(section: &str, key: &str) -> Vec<String> {
+    let raw = read_config(section, key, "");
+    if raw.is_empty() { return Vec::new(); }
+    // Strip surrounding brackets and split on commas
+    let inner = raw.trim().trim_start_matches('[').trim_end_matches(']');
+    inner.split(',')
+        .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
 /// A configured monitor position from `[[monitors]]` in lantern.toml.
 #[derive(Debug, Clone)]
 pub(crate) struct MonitorConfig {
@@ -267,6 +280,19 @@ fn install_child_reaper() {
         sa.sa_sigaction = libc::SIG_DFL;
         sa.sa_flags = libc::SA_NOCLDWAIT;
         libc::sigaction(libc::SIGCHLD, &sa, std::ptr::null_mut());
+    }
+}
+
+/// Actively reap any zombie children. Call this periodically since SA_NOCLDWAIT
+/// can be overridden by libraries (e.g. XWayland signal handling).
+pub fn reap_zombies() {
+    unsafe {
+        loop {
+            let ret = libc::waitpid(-1, std::ptr::null_mut(), libc::WNOHANG);
+            if ret <= 0 {
+                break;
+            }
+        }
     }
 }
 

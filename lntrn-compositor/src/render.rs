@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use smithay::{
     backend::{
+        allocator::Fourcc,
         drm::compositor::FrameFlags,
         renderer::{
             element::{
@@ -13,16 +14,17 @@ use smithay::{
                 surface::{render_elements_from_surface_tree, WaylandSurfaceRenderElement},
                 texture::TextureRenderElement,
                 utils::RescaleRenderElement,
-                AsRenderElements, Kind,
+                AsRenderElements, Element, Id, Kind, RenderElement,
             },
             gles::{
                 element::{PixelShaderElement, TextureShaderElement},
                 GlesRenderer, GlesTexture, Uniform,
             },
+            Bind, Color32F, Frame, Offscreen, Renderer,
         },
     },
     desktop::space::SpaceRenderElements,
-    utils::{Logical, Physical, Point, Rectangle, Scale, Size},
+    utils::{Buffer as BufferCoords, Logical, Physical, Point, Rectangle, Scale, Size, Transform},
 };
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use tracing::{trace, warn};
@@ -44,6 +46,45 @@ render_elements! {
     Backdrop=TextureRenderElement<GlesTexture>,
     RoundedBackdrop=crate::rounded_element::RoundedBackdropElement,
     RoundedSurface=crate::rounded_element::RoundedSurfaceElement,
+}
+
+/// Capture a window's surface content into an offscreen texture for close animations.
+fn capture_window_snapshot(
+    renderer: &mut GlesRenderer,
+    window: &smithay::desktop::Window,
+    win_size: Size<i32, Logical>,
+    output_scale: f64,
+) -> Option<(GlesTexture, Size<i32, Physical>)> {
+    let snap_w = (win_size.w as f64 * output_scale).round() as i32;
+    let snap_h = (win_size.h as f64 * output_scale).round() as i32;
+    if snap_w <= 0 || snap_h <= 0 { return None; }
+
+    let snap_size = Size::<i32, Physical>::from((snap_w, snap_h));
+    let buf_size: Size<i32, BufferCoords> = Size::from((snap_w, snap_h));
+
+    let elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
+        window.render_elements(renderer, Point::from((0i32, 0i32)), Scale::from(output_scale), 1.0);
+    if elements.is_empty() { return None; }
+
+    let mut tex = Offscreen::<GlesTexture>::create_buffer(renderer, Fourcc::Abgr8888, buf_size).ok()?;
+    {
+        let mut target = renderer.bind(&mut tex).ok()?;
+        let mut frame = renderer.render(&mut target, snap_size, Transform::Normal).ok()?;
+        frame.clear(Color32F::from([0.0, 0.0, 0.0, 0.0]), &[Rectangle::from_size(snap_size)]).ok()?;
+
+        let scale = Scale::from(output_scale);
+        for elem in &elements {
+            let geo = elem.geometry(scale);
+            let src = elem.src();
+            let dst = Rectangle::<i32, Physical>::new(geo.loc, geo.size);
+            if dst.size.w > 0 && dst.size.h > 0 {
+                let _ = elem.draw(&mut frame, src, dst, &[dst], &[]);
+            }
+        }
+        let _ = frame.finish();
+    }
+
+    Some((tex, snap_size))
 }
 
 pub fn render_surface(
@@ -93,7 +134,13 @@ pub fn render_surface(
     // Tick animations and handle finished close animations (before borrowing udev)
     let finished_closes = state.animations.tick();
     for surface in &finished_closes {
-        state.finish_close_animation(surface);
+        if state.closing_windows.iter().any(|cw| cw.surface == *surface) {
+            // Zombie window (client-initiated close) — clean up
+            state.finish_zombie_close(surface);
+        } else {
+            // Live window (Super+Q) — send close request
+            state.finish_close_animation(surface);
+        }
     }
     state.tiling_anim.tick();
 
@@ -259,7 +306,9 @@ pub fn render_surface(
         }
         let render_location = location - window.geometry().loc;
         let is_fullscreen = fullscreen_surfaces.iter().any(|e| e.surface == surface);
-        let mut base_alpha = if is_fullscreen {
+        let win_app_id = crate::window_ext::WindowExt::get_app_id(window);
+        let blur_excluded = state.blur_exclude.iter().any(|id| id == &win_app_id);
+        let mut base_alpha = if is_fullscreen || blur_excluded {
             1.0
         } else {
             state.window_opacity.get(&surface).copied()
@@ -349,6 +398,17 @@ pub fn render_surface(
             }
         }
 
+        // Capture window snapshot for close animation (clean render at native scale).
+        // Skip during open animation to avoid interference and wasted work.
+        let is_opening = state.animations.get(&surface)
+            .map(|a| a.kind == crate::animation::AnimationKind::Open)
+            .unwrap_or(false);
+        if !is_fullscreen && !is_opening {
+            if let Some(snap) = capture_window_snapshot(renderer, window, win_geo.size, output_scale) {
+                state.window_snapshots.insert(surface.clone(), snap);
+            }
+        }
+
         // Window surface (behind SSD overlay, in front of shadow)
         let win_render_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
             window.render_elements(renderer, phys_loc, render_scale, alpha);
@@ -422,6 +482,94 @@ pub fn render_surface(
                         Uniform::new("sigma", sigma),
                         Uniform::new("corner_radius", corner_r),
                         Uniform::new("shadow_color", shadow_color),
+                    ],
+                    Kind::Unspecified,
+                );
+                window_elements.push(CustomRenderElements::Shader(shadow_elem));
+            }
+        }
+    }
+
+    // Render zombie closing windows (client-initiated closes) using captured snapshots
+    {
+        let ctx_id = renderer.context_id();
+        for cw in &state.closing_windows {
+            let anim = match state.animations.get(&cw.surface) {
+                Some(a) => a,
+                None => continue,
+            };
+            let (anim_alpha, anim_scale) = anim.render_params();
+            let (snap_tex, _snap_phys_size) = match state.window_snapshots.get(&cw.surface) {
+                Some(s) => s,
+                None => continue,
+            };
+
+            // Canvas transform: canvas-space → screen-space
+            let render_location = cw.location - output_geo.loc;
+            let (screen_x, screen_y) = state.canvas.canvas_to_screen(
+                render_location.x as f64,
+                render_location.y as f64,
+            );
+            let rel_x = screen_x - output_geo.loc.x as f64;
+            let rel_y = screen_y - output_geo.loc.y as f64;
+
+            // SSD bar offset
+            let ssd_bar = if cw.had_ssd { crate::ssd::SsdManager::bar_height() } else { 0 };
+
+            // Centered scale transform (same logic as live windows)
+            let win_w = cw.size.w as f64;
+            let win_h = cw.size.h as f64;
+            let center_x = rel_x + win_w * canvas_zoom / 2.0;
+            let center_y = rel_y + win_h * canvas_zoom / 2.0;
+            let scaled_x = center_x - (win_w / 2.0) * anim_scale * canvas_zoom;
+            let scaled_y = center_y - (win_h / 2.0) * anim_scale * canvas_zoom;
+            let phys_x = (scaled_x * output_scale).round() as i32;
+            let phys_y = (scaled_y * output_scale).round() as i32;
+
+            let dst_w_log = (win_w * anim_scale * canvas_zoom).round() as i32;
+            let dst_h_log = (win_h * anim_scale * canvas_zoom).round() as i32;
+            if dst_w_log <= 0 || dst_h_log <= 0 { continue; }
+
+            let loc = Point::<f64, Physical>::from((phys_x as f64, phys_y as f64));
+            let dst_size = Size::from((dst_w_log, dst_h_log));
+
+            let tex_elem = TextureRenderElement::from_static_texture(
+                Id::new(),
+                ctx_id.clone(),
+                loc,
+                snap_tex.clone(),
+                1,
+                Transform::Normal,
+                Some(anim_alpha),
+                None, // full src
+                Some(dst_size),
+                None,
+                Kind::Unspecified,
+            );
+            window_elements.push(CustomRenderElements::Backdrop(tex_elem));
+
+            // Shadow behind the zombie
+            if let Some(ref shader) = shadow_shader {
+                let shadow_expand = 40i32;
+                let corner_r = crate::ssd::CORNER_RADIUS;
+                let win_x = (scaled_x).round() as i32;
+                let win_y = (scaled_y).round() as i32 - ssd_bar;
+                let shadow_w = (win_w * anim_scale * canvas_zoom).round() as i32;
+                let shadow_h = ((win_h + ssd_bar as f64) * anim_scale * canvas_zoom).round() as i32;
+                let shadow_area = Rectangle::<i32, Logical>::new(
+                    (win_x - shadow_expand, win_y - shadow_expand).into(),
+                    (shadow_w + shadow_expand * 2, shadow_h + shadow_expand * 2).into(),
+                );
+                let shadow_elem = PixelShaderElement::new(
+                    shader.clone(),
+                    shadow_area,
+                    None,
+                    anim_alpha,
+                    vec![
+                        Uniform::new("window_size", [shadow_w as f32, shadow_h as f32]),
+                        Uniform::new("sigma", 12.0f32),
+                        Uniform::new("corner_radius", corner_r),
+                        Uniform::new("shadow_color", [0.0f32, 0.0, 0.0, 0.4]),
                     ],
                     Kind::Unspecified,
                 );
@@ -688,6 +836,7 @@ pub fn render_surface(
             state.cursor.set_custom_theme(&new_theme);
         }
         state.default_window_opacity = crate::read_config_f32("window_opacity", 1.0);
+        state.blur_exclude = crate::read_config_list("windows", "blur_exclude");
     }
 
     // ── Blur pipeline: render background, dual-kawase blur, insert backdrops ──

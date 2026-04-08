@@ -13,6 +13,7 @@ pub struct BarSettings {
     pub opacity: f32,
     pub lava_lamp: bool,
     pub position_top: bool,
+    pub tray_left: bool,
     pub pinned_procs: Vec<String>,
 }
 
@@ -25,6 +26,7 @@ impl Default for BarSettings {
             opacity: 1.0,
             lava_lamp: false,
             position_top: false,
+            tray_left: false,
             pinned_procs: Vec::new(),
         }
     }
@@ -52,6 +54,7 @@ impl BarSettings {
                     "opacity" => s.opacity = val.parse().unwrap_or(s.opacity),
                     "lava_lamp" => s.lava_lamp = val == "true",
                     "position_top" => s.position_top = val == "true",
+                    "tray_left" => s.tray_left = val == "true",
                     "pinned_procs" => {
                         if let Some(start) = val.find('[') {
                             if let Some(end) = val.find(']') {
@@ -83,9 +86,10 @@ impl BarSettings {
              opacity = {:.2}\n\
              lava_lamp = {}\n\
              position_top = {}\n\
+             tray_left = {}\n\
              pinned_procs = [{}]\n",
             self.floating, self.auto_hide, self.height,
-            self.opacity, self.lava_lamp, self.position_top,
+            self.opacity, self.lava_lamp, self.position_top, self.tray_left,
             procs.join(", "),
         );
         let _ = std::fs::create_dir_all(crate::bar_config_dir());

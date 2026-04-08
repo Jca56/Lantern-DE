@@ -69,7 +69,7 @@ fn in_rect(cx: f32, cy: f32, x: f32, y: f32, w: f32, h: f32) -> bool {
 pub fn draw(
     p: &mut Painter, t: &mut TextRenderer,
     cx: f32, cy: f32, s: f32, top_y: f32,
-    procs: &[ProcessEntry], wf: f32, hf: f32, sw: u32, sh: u32,
+    procs: &[ProcessEntry], wf: f32, _hf: f32, sw: u32, sh: u32,
 ) {
     let pad = 32.0 * s;
     let row_h = 30.0 * s;
@@ -95,7 +95,6 @@ pub fn draw(
     let list_y = hy + header_h + 4.0 * s;
     for (i, proc) in procs.iter().enumerate() {
         let y = list_y + i as f32 * row_h;
-        if y + row_h > hf { break; }
 
         // Hover highlight
         let hov = in_rect(cx, cy, pad, y, wf - pad * 2.0, row_h);

@@ -1,15 +1,16 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
+use smithay::utils::{Logical, Point, Size};
 
-const OPEN_DURATION: Duration = Duration::from_millis(200);
-const CLOSE_DURATION: Duration = Duration::from_millis(150);
+const OPEN_DURATION: Duration = Duration::from_millis(300);
+const CLOSE_DURATION: Duration = Duration::from_millis(250);
 
-/// Scale range for open: 0.95 -> 1.0
-const OPEN_SCALE_START: f64 = 0.95;
-/// Scale range for close: 1.0 -> 0.95
-const CLOSE_SCALE_END: f64 = 0.95;
+/// Scale range for open: 0.8 -> 1.0
+const OPEN_SCALE_START: f64 = 0.8;
+/// Scale range for close: 1.0 -> 0.8
+const CLOSE_SCALE_END: f64 = 0.8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnimationKind {
@@ -72,15 +73,28 @@ impl WindowAnimation {
     }
 }
 
+/// A window that died (client-initiated close) but still has a close animation playing.
+/// We render a fading shadow effect at its last known position.
+pub struct ClosingWindow {
+    pub surface: WlSurface,
+    pub location: Point<i32, Logical>,
+    pub size: Size<i32, Logical>,
+    pub had_ssd: bool,
+}
+
 /// Tracks all active window animations.
 pub struct AnimationState {
     animations: HashMap<WlSurface, WindowAnimation>,
+    /// Surfaces whose compositor-initiated close animation already finished.
+    /// Prevents double-animation when the client dies after we sent request_close.
+    close_done: HashSet<WlSurface>,
 }
 
 impl AnimationState {
     pub fn new() -> Self {
         Self {
             animations: HashMap::new(),
+            close_done: HashSet::new(),
         }
     }
 
@@ -116,6 +130,19 @@ impl AnimationState {
     /// Remove a specific animation (e.g., when a close animation finishes).
     pub fn remove(&mut self, surface: &WlSurface) {
         self.animations.remove(surface);
+        self.close_done.remove(surface);
+    }
+
+    /// Mark that a compositor-initiated close animation finished (Super+Q path).
+    /// The surface will be ignored when it later dies as a dead window.
+    pub fn mark_close_done(&mut self, surface: &WlSurface) {
+        self.close_done.insert(surface.clone());
+    }
+
+    /// Check and consume the close_done flag. Returns true if the surface
+    /// already had its close animation (don't animate again).
+    pub fn take_close_done(&mut self, surface: &WlSurface) -> bool {
+        self.close_done.remove(surface)
     }
 
     /// Tick all animations and return surfaces whose close animations just finished.

@@ -284,20 +284,35 @@ pub fn init_udev(
         })?;
 
     event_loop.run(None, state, |state| {
-        // Clean up dead windows before space.refresh() removes them,
-        // so foreign toplevel entries get properly closed.
-        let dead_surfaces: Vec<_> = state.space.elements()
+        // Handle dead windows: animate client-initiated closes, clean up compositor-initiated ones.
+        let dead_windows: Vec<_> = state.space.elements()
             .filter(|w| !w.alive())
-            .filter_map(|w| crate::window_ext::WindowExt::get_wl_surface(w))
+            .filter_map(|w| {
+                let surface = crate::window_ext::WindowExt::get_wl_surface(w)?;
+                let location = state.space.element_location(w)?;
+                let size = w.geometry().size;
+                let had_ssd = state.ssd.has_ssd(&surface);
+                Some(crate::animation::ClosingWindow { surface, location, size, had_ssd })
+            })
             .collect();
-        for surface in &dead_surfaces {
-            state.forget_window(surface);
+        for cw in dead_windows {
+            if state.animations.take_close_done(&cw.surface) {
+                // Compositor-initiated close (Super+Q) already animated — just clean up
+                state.forget_window(&cw.surface);
+            } else {
+                // Client-initiated close — start zombie close animation
+                let surface = cw.surface.clone();
+                state.animations.start_close(&surface);
+                state.closing_windows.push(cw);
+                state.schedule_render();
+            }
         }
         state.space.refresh();
         state.popups.cleanup();
         state.layer_surfaces.retain(|ls| ls.alive());
         state.check_exclusive_zone_change();
         state.tick_audio_repeat();
+        crate::reap_zombies();
         let _ = state.display_handle.flush_clients();
     })?;
 

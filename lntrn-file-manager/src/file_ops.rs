@@ -420,10 +420,20 @@ impl App {
     }
 }
 
-fn wl_copy(text: String) {
+pub(crate) fn wl_copy(text: String) {
+    // lntrn-copy stays alive to serve paste requests until another client
+    // takes the clipboard. We wait for it in a background thread so the
+    // Child handle isn't dropped prematurely.
     std::thread::spawn(move || {
-        let _ = std::process::Command::new("lntrn-copy")
+        match std::process::Command::new("lntrn-copy")
             .arg(&text)
-            .spawn();
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(mut child) => { let _ = child.wait(); }
+            Err(e) => eprintln!("wl_copy: failed to spawn lntrn-copy: {e}"),
+        }
     });
 }
