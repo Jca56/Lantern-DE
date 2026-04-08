@@ -206,7 +206,7 @@ pub fn commit(repo: &Path, message: &str) -> Result<String, String> {
     }
 }
 
-/// Push to remote.
+/// Push to remote. If no upstream is set, automatically pushes with `-u origin <branch>`.
 pub fn push(repo: &Path) -> Result<String, String> {
     let output = Command::new("git")
         .args(["push"])
@@ -214,12 +214,16 @@ pub fn push(repo: &Path) -> Result<String, String> {
         .output()
         .map_err(|e| e.to_string())?;
     if output.status.success() {
-        // git push outputs to stderr even on success
         let msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        Ok(if msg.is_empty() { "Pushed successfully".into() } else { msg })
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        return Ok(if msg.is_empty() { "Pushed successfully".into() } else { msg });
     }
+    // If push failed due to no upstream, auto-set it
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("no upstream") || stderr.contains("has no upstream") || stderr.contains("set the remote as upstream") {
+        let branch = current_branch(repo);
+        return push_new_branch(repo, &branch);
+    }
+    Err(stderr.trim().to_string())
 }
 
 /// Pull from remote.
