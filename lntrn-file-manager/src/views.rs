@@ -2,6 +2,8 @@ use lntrn_render::{Color, Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{FontSize, FoxPalette, ScrollArea, TextLabel};
 use std::time::SystemTime;
 
+use std::path::Path;
+
 use crate::app::TreeEntry;
 use crate::fs::FileEntry;
 use crate::layout::sidebar_w;
@@ -20,12 +22,15 @@ pub fn draw_content_list(
     has_icon: &[bool],
     drag_item: Option<usize>,
     renaming: Option<usize>,
+    search_root: Option<&Path>,
     screen: (u32, u32),
     s: f32,
 ) {
-    let row_h = 40.0 * s;
+    let searching = search_root.is_some();
+    let row_h = if searching { 56.0 * s } else { 40.0 * s };
     let font = FontSize::Custom(24.0 * s);
     let small_font = FontSize::Custom(20.0 * s);
+    let path_font = FontSize::Custom(16.0 * s);
 
     painter.rect_filled(content_rect, 0.0, palette.bg);
 
@@ -42,12 +47,18 @@ pub fn draw_content_list(
     TextLabel::new("Name", name_x, hdr_y + 5.0 * s)
         .size(FontSize::Custom(20.0 * s)).color(palette.text_secondary)
         .draw(text, screen.0, screen.1);
-    TextLabel::new("Size", size_x, hdr_y + 5.0 * s)
-        .size(FontSize::Custom(20.0 * s)).color(palette.text_secondary)
-        .draw(text, screen.0, screen.1);
-    TextLabel::new("Modified", date_x, hdr_y + 5.0 * s)
-        .size(FontSize::Custom(20.0 * s)).color(palette.text_secondary)
-        .draw(text, screen.0, screen.1);
+    if searching {
+        TextLabel::new("Location", size_x, hdr_y + 5.0 * s)
+            .size(FontSize::Custom(20.0 * s)).color(palette.text_secondary)
+            .draw(text, screen.0, screen.1);
+    } else {
+        TextLabel::new("Size", size_x, hdr_y + 5.0 * s)
+            .size(FontSize::Custom(20.0 * s)).color(palette.text_secondary)
+            .draw(text, screen.0, screen.1);
+        TextLabel::new("Modified", date_x, hdr_y + 5.0 * s)
+            .size(FontSize::Custom(20.0 * s)).color(palette.text_secondary)
+            .draw(text, screen.0, screen.1);
+    }
 
     area.begin(painter, text);
     let base_y = area.content_y();
@@ -90,26 +101,62 @@ pub fn draw_content_list(
             }
         }
 
-        // Name
-        let text_y = y + (row_h - 24.0 * s) * 0.5;
-        let max_name_w = size_x - name_x - 12.0 * s;
-        let name_color = if entry.selected { palette.accent.with_alpha(alpha) } else { palette.text.with_alpha(alpha) };
-        let display = truncate_with_ellipsis(&entry.name, max_name_w, 24.0 * s * 0.52);
-        TextLabel::new(&display, name_x, text_y)
-            .size(font).color(name_color).max_width(max_name_w)
-            .draw(text, screen.0, screen.1);
+        if searching {
+            // Search mode: name on top, path below
+            let name_y = y + 6.0 * s;
+            let max_name_w = content_rect.w - 50.0 * s;
+            let name_color = palette.text.with_alpha(alpha);
+            let display = if entry.selected {
+                entry.name.clone()
+            } else {
+                truncate_with_ellipsis(&entry.name, max_name_w, 24.0 * s * 0.52)
+            };
+            TextLabel::new(&display, name_x, name_y)
+                .size(font).color(name_color).max_width(if entry.selected { 9999.0 } else { max_name_w })
+                .draw(text, screen.0, screen.1);
 
-        // Size
-        let size_str = if entry.is_dir { "--".to_string() } else { format_bytes(entry.size) };
-        TextLabel::new(&size_str, size_x, text_y)
-            .size(small_font).color(palette.muted.with_alpha(alpha))
-            .draw(text, screen.0, screen.1);
+            // Parent path (relative to search root)
+            let parent = entry.path.parent().unwrap_or(&entry.path);
+            let rel_path = if let Some(root) = search_root {
+                parent.strip_prefix(root)
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| parent.to_string_lossy().to_string())
+            } else {
+                parent.to_string_lossy().to_string()
+            };
+            let path_display = if rel_path.is_empty() { "./".to_string() } else { format!("./{rel_path}") };
+            let path_y = name_y + 26.0 * s;
+            let max_path_w = content_rect.w - 50.0 * s;
+            TextLabel::new(&path_display, name_x, path_y)
+                .size(path_font).color(palette.muted.with_alpha(alpha * 0.7))
+                .max_width(max_path_w)
+                .draw(text, screen.0, screen.1);
+        } else {
+            // Normal mode: name, size, date columns
+            let text_y = y + (row_h - 24.0 * s) * 0.5;
+            let max_name_w = size_x - name_x - 12.0 * s;
+            let name_color = palette.text.with_alpha(alpha);
+            let display = if entry.selected {
+                entry.name.clone()
+            } else {
+                truncate_with_ellipsis(&entry.name, max_name_w, 24.0 * s * 0.52)
+            };
+            TextLabel::new(&display, name_x, text_y)
+                .size(font).color(name_color).max_width(if entry.selected { 9999.0 } else { max_name_w })
+                .draw(text, screen.0, screen.1);
 
-        // Modified date
-        let date_str = format_date(entry.modified);
-        TextLabel::new(&date_str, date_x, text_y)
-            .size(small_font).color(palette.muted.with_alpha(alpha))
-            .draw(text, screen.0, screen.1);
+            // Size
+            let size_str = if entry.is_dir { "--".to_string() } else { format_bytes(entry.size) };
+            TextLabel::new(&size_str, size_x, text_y)
+                .size(small_font).color(palette.muted.with_alpha(alpha))
+                .draw(text, screen.0, screen.1);
+
+            // Modified date
+            let date_str = format_date(entry.modified);
+            TextLabel::new(&date_str, date_x, text_y)
+                .size(small_font).color(palette.muted.with_alpha(alpha))
+                .draw(text, screen.0, screen.1);
+        }
 
         // Divider
         painter.rect_filled(

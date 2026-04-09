@@ -200,6 +200,17 @@ fn main() {
         let _ = signal::sigaction(Signal::SIGHUP, &sa);
     }
 
+    // Ignore SIGCHLD with SA_NOCLDWAIT so the kernel automatically reaps
+    // child processes instead of leaving zombies.
+    let sa_chld = SigAction::new(
+        SigHandler::SigIgn,
+        SaFlags::SA_NOCLDWAIT | SaFlags::SA_RESTART,
+        SigSet::empty(),
+    );
+    unsafe {
+        let _ = signal::sigaction(Signal::SIGCHLD, &sa_chld);
+    }
+
     // Set desktop environment variables
     std::env::set_var("XDG_CURRENT_DESKTOP", "Lantern");
     std::env::set_var("DESKTOP_SESSION", "lantern");
@@ -364,6 +375,18 @@ fn main() {
         if !compositor.is_running() {
             log("🏮 Compositor exited, shutting down session");
             break;
+        }
+
+        // Reap any zombie children (belt-and-suspenders with SA_NOCLDWAIT)
+        loop {
+            match wait::waitpid(Pid::from_raw(-1), Some(wait::WaitPidFlag::WNOHANG)) {
+                Ok(WaitStatus::StillAlive) | Err(_) => break,
+                Ok(status) => {
+                    if let WaitStatus::Exited(pid, code) = status {
+                        log(&format!("🏮 Reaped child pid {pid} (exit code {code})"));
+                    }
+                }
+            }
         }
 
         std::thread::sleep(std::time::Duration::from_millis(250));

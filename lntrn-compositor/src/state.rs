@@ -199,6 +199,8 @@ pub struct Lantern {
     /// App IDs that skip blur backdrop and use full opacity.
     pub blur_exclude: Vec<String>,
     pub window_zoom: HashMap<WlSurface, f64>,
+    pub focus_glow: bool,
+    pub focus_glow_color: [f32; 4],
     pub focus_follows_mouse: bool,
     pub super_pressed: bool,
     /// True if Super was pressed and no Super+combo was used (for tap detection)
@@ -339,6 +341,8 @@ impl Lantern {
             default_window_opacity: crate::read_config_f32("window_opacity", 1.0),
             blur_exclude: crate::read_config_list("windows", "blur_exclude"),
             window_zoom: HashMap::new(),
+            focus_glow: crate::read_config("window_manager", "focus_glow", "true") == "true",
+            focus_glow_color: crate::parse_glow_color(&crate::read_config("window_manager", "focus_glow_color", "#4A9EFF")),
             focus_follows_mouse: crate::read_config("window_manager", "focus_follows_mouse", "false") == "true",
             super_pressed: false,
             super_clean_tap: false,

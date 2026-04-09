@@ -139,6 +139,7 @@ pub fn status_rect(width: f32, height: f32, s: f32) -> Rect {
 }
 
 pub fn list_row_h(s: f32) -> f32 { LIST_ROW_H * s }
+pub fn search_list_row_h(s: f32) -> f32 { 56.0 * s }
 pub fn tree_row_h(s: f32) -> f32 { TREE_ROW_H * s }
 pub fn tree_indent(s: f32) -> f32 { TREE_INDENT * s }
 

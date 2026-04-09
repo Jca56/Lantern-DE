@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use lntrn_render::{GpuContext, Painter, TextRenderer};
+use lntrn_render::{GpuContext, GpuTexture, Painter, TextRenderer, TexturePass};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, MouseButton, WindowEvent};
@@ -61,6 +61,8 @@ pub struct App {
     pub(crate) overlay_painter: Option<Painter>,
     pub(crate) text: Option<TextRenderer>,
     pub(crate) overlay_text: Option<TextRenderer>,
+    pub(crate) texture_pass: Option<TexturePass>,
+    pub(crate) image_textures: Vec<(u32, GpuTexture)>, // (image_id, gpu_texture)
 
     // Tabs
     pub tabs: Vec<Tab>,
@@ -101,10 +103,6 @@ pub struct App {
     // Sidebar file browser
     pub sidebar: sidebar::SidebarState,
 
-    // Tab bar auto-hide
-    pub(crate) tab_bar_visible: bool,
-    pub(crate) tab_bar_hover_since: Option<Instant>,
-    pub(crate) tab_bar_leave_since: Option<Instant>,
 }
 
 impl App {
@@ -122,6 +120,8 @@ impl App {
             overlay_painter: None,
             text: None,
             overlay_text: None,
+            texture_pass: None,
+            image_textures: Vec::new(),
             tabs: Vec::new(),
             active_tab: 0,
             modifiers: ModifiersState::empty(),
@@ -141,9 +141,6 @@ impl App {
             scrollbar_dragging: false,
             pending_menu_event: None,
             sidebar: sidebar::SidebarState::new(),
-            tab_bar_visible: false,
-            tab_bar_hover_since: None,
-            tab_bar_leave_since: None,
         }
     }
 
@@ -163,22 +160,20 @@ impl App {
         let overlay_painter = Painter::new(&gpu);
         let text = TextRenderer::new_monospace(&gpu);
         let overlay_text = TextRenderer::new_monospace(&gpu);
+        let texture_pass = TexturePass::new(&gpu);
 
         self.gpu = Some(gpu);
         self.painter = Some(painter);
         self.overlay_painter = Some(overlay_painter);
         self.text = Some(text);
         self.overlay_text = Some(overlay_text);
+        self.texture_pass = Some(texture_pass);
     }
 
-    /// Chrome height accounting for window mode and tab bar auto-hide.
+    /// Chrome height accounting for window mode and tab bar.
     pub(crate) fn chrome_height(&self) -> f32 {
         let title_h = ui_chrome::title_bar_height(&self.config.window.mode);
-        if self.tab_bar_visible {
-            title_h + tab_bar::TAB_BAR_HEIGHT
-        } else {
-            title_h
-        }
+        title_h + tab_bar::TAB_BAR_HEIGHT
     }
 
     /// Font size scaled to current window width.
@@ -303,8 +298,16 @@ impl App {
         if had_output {
             self.cursor_visible = true;
             self.cursor_blink_deadline = Instant::now() + CURSOR_BLINK_INTERVAL;
-            if let Some(ref window) = self.window {
-                window.request_redraw();
+
+            // Check if any active pane is in a synchronized update — if so,
+            // defer the redraw until the application ends the batch (Mode 2026 l).
+            let any_syncing = self.tabs.iter().any(|tab| {
+                tab.panes.iter().any(|pane| pane.terminal.sync_update)
+            });
+            if !any_syncing {
+                if let Some(ref window) = self.window {
+                    window.request_redraw();
+                }
             }
         }
     }

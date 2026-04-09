@@ -1,5 +1,7 @@
 mod app;
+mod clipboard;
 mod desktop;
+pub mod undo;
 mod file_info;
 mod file_ops;
 mod fs;
@@ -87,6 +89,8 @@ pub const CTX_NEW_FOLDER_PLAIN: u32 = 77;
 // Context menu — change folder icon
 pub const CTX_CHANGE_ICON: u32 = 78;
 // Context menu — toggles
+pub const CTX_OPEN_LOCATION: u32 = 91;
+pub const ZONE_BREADCRUMB_BASE: u32 = 300;
 pub const CTX_SHOW_HIDDEN: u32 = 90;
 // Pick mode action bar
 pub const ZONE_PICK_CONFIRM: u32 = 40;

@@ -39,6 +39,8 @@ pub struct Place {
 pub enum ContextTarget {
     /// Right-clicked on an item (index)
     Item(usize),
+    /// Right-clicked on a search result (index into search_results)
+    SearchItem(usize),
     /// Right-clicked on empty content area
     Empty,
 }
@@ -164,6 +166,15 @@ pub struct App {
     // Root mode — file operations use pkexec for elevated privileges
     pub root_mode: bool,
 
+    // Native Wayland clipboard
+    pub wayland_clipboard: Option<crate::clipboard::Clipboard>,
+
+    // Undo/redo
+    pub undo_stack: crate::undo::UndoStack,
+
+    // Breadcrumb overflow skip (set during rendering)
+    pub breadcrumb_skip: usize,
+
     // Search
     pub searching: bool,
     pub search_buf: String,
@@ -228,6 +239,9 @@ impl App {
             save_name_editing: false,
             properties: None,
             pending_drop: None,
+            wayland_clipboard: crate::clipboard::Clipboard::new(),
+            undo_stack: crate::undo::UndoStack::new(),
+            breadcrumb_skip: 0,
             searching: false,
             search_buf: String::new(),
             search_cursor: 0,
@@ -510,6 +524,7 @@ impl App {
                 let old = &self.entries[idx].path;
                 let new_path = old.parent().unwrap_or(old).join(&self.rename_buf);
                 if new_path != *old {
+                    let old_clone = old.clone();
                     if self.root_mode {
                         let old = old.clone();
                         let new_path = new_path.clone();
@@ -522,6 +537,9 @@ impl App {
                     } else {
                         let _ = std::fs::rename(old, &new_path);
                     }
+                    self.undo_stack.push(crate::undo::UndoAction::Rename {
+                        from: old_clone, to: new_path,
+                    });
                 }
             }
             self.rename_buf.clear();

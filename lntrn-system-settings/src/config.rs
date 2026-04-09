@@ -54,6 +54,8 @@ pub struct WmConfig {
     pub gap: u32,
     pub corner_radius: u32,
     pub focus_follows_mouse: bool,
+    pub focus_glow: bool,
+    pub focus_glow_color: String,
 }
 
 impl Default for WmConfig {
@@ -64,6 +66,8 @@ impl Default for WmConfig {
             gap: 8,
             corner_radius: 10,
             focus_follows_mouse: false,
+            focus_glow: true,
+            focus_glow_color: "#4A9EFF".into(),
         }
     }
 }
@@ -314,6 +318,9 @@ impl LanternConfig {
         self.window_manager.titlebar_height = self.window_manager.titlebar_height.clamp(20, 60);
         self.window_manager.gap = self.window_manager.gap.clamp(0, 32);
         self.window_manager.corner_radius = self.window_manager.corner_radius.clamp(0, 20);
+        if lntrn_render::Color::from_hex(&self.window_manager.focus_glow_color).is_none() {
+            self.window_manager.focus_glow_color = "#4A9EFF".into();
+        }
         self.windows.window_opacity = self.windows.window_opacity.clamp(0.1, 1.0);
         self.windows.blur_intensity = self.windows.blur_intensity.clamp(0.0, 1.0);
         self.windows.blur_tint = self.windows.blur_tint.clamp(0.0, 1.0);

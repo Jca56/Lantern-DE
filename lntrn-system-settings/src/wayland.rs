@@ -50,7 +50,7 @@ enum Panel { WindowManager, Input, Display, Power, AppIcons }
 
 const PANELS: &[(Panel, &str)] = &[
     (Panel::WindowManager, "Window Manager"),
-    (Panel::Input, "Input"),
+    (Panel::Input, "Mouse"),
     (Panel::Display, "Display"),
     (Panel::Power, "Power"),
     (Panel::AppIcons, "App Icons"),
@@ -914,8 +914,10 @@ pub fn run() -> Result<()> {
             Panel::Input => {
                 input_panel::draw_input_panel(
                     &mut config, &mut input_state,
-                    &mut painter, &mut text, &mut ix, &fox,
+                    &mut painter, &mut text, &mut ix,
+                    &tex_pass, &fox, &gpu,
                     content_x, panel_y, content_w, s, sw, sh,
+                    &mut tex_draws,
                 );
             }
             Panel::AppIcons => {

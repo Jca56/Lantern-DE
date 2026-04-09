@@ -34,34 +34,29 @@ pub fn draw_window_bg(
     w: f32,
     h: f32,
     maximized: bool,
-    tab_bar_visible: bool,
     mode: &WindowMode,
 ) {
     match mode {
         WindowMode::Fox => {
             let r = if maximized { 0.0 } else { CORNER_RADIUS };
             painter.rect_filled(Rect::new(0.0, 0.0, w, h), r, bg_color);
-            if tab_bar_visible {
-                let tab_bar_y = crate::ui_chrome::TITLE_BAR_HEIGHT;
-                let tab_bar_h = crate::tab_bar::TAB_BAR_HEIGHT;
-                painter.rect_filled(
-                    Rect::new(0.0, tab_bar_y, w, tab_bar_h),
-                    0.0,
-                    title_bar_color,
-                );
-            }
+            let tab_bar_y = crate::ui_chrome::TITLE_BAR_HEIGHT;
+            let tab_bar_h = crate::tab_bar::TAB_BAR_HEIGHT;
+            painter.rect_filled(
+                Rect::new(0.0, tab_bar_y, w, tab_bar_h),
+                0.0,
+                title_bar_color,
+            );
         }
         WindowMode::NightSky => {
             crate::night_sky::draw_background(painter, w, h, maximized);
-            if tab_bar_visible {
-                let tab_bar_y = crate::night_sky::TITLE_BAR_HEIGHT;
-                let tab_bar_h = crate::tab_bar::TAB_BAR_HEIGHT;
-                painter.rect_filled(
-                    Rect::new(0.0, tab_bar_y, w, tab_bar_h),
-                    0.0,
-                    crate::night_sky::TAB_BAR_BG,
-                );
-            }
+            let tab_bar_y = crate::night_sky::TITLE_BAR_HEIGHT;
+            let tab_bar_h = crate::tab_bar::TAB_BAR_HEIGHT;
+            painter.rect_filled(
+                Rect::new(0.0, tab_bar_y, w, tab_bar_h),
+                0.0,
+                crate::night_sky::TAB_BAR_BG,
+            );
             crate::night_sky::draw_border(painter, w, h, maximized);
         }
     }
@@ -173,6 +168,27 @@ pub fn draw_terminal_ex(
                     let ny = (origin.1 + (row + 1) as f32 * cell_h).ceil();
                     painter.rect_filled(Rect::new(x, y, nx - x, ny - y), 0.0, sel_color);
                 }
+            }
+        }
+    }
+
+    // ── Hyperlink underlines ────────────────────────────────────────────
+    let link_color = Color::from_rgba8(100, 180, 255, 200);
+    for row in 0..render_rows {
+        let line = terminal.display_line(row);
+        for col in 0..terminal.cols {
+            if col >= line.len() {
+                break;
+            }
+            if line[col].hyperlink != 0 {
+                let x = (origin.0 + col as f32 * cell_w).floor();
+                let y = (origin.1 + (row + 1) as f32 * cell_h).floor() - 1.5;
+                let nx = (origin.0 + (col + 1) as f32 * cell_w).ceil();
+                painter.rect_filled(
+                    Rect::new(x, y, nx - x, 1.5),
+                    0.0,
+                    link_color,
+                );
             }
         }
     }

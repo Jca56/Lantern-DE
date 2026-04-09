@@ -1,4 +1,4 @@
-use lntrn_render::{Painter, Rect, TextRenderer};
+use lntrn_render::{Color, Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{
     Button, ButtonVariant, ContextMenu, ContextMenuStyle, FoxPalette, InteractionContext,
     MenuEvent, MenuItem, ScrollArea, Scrollbar, Slider, Toggle,
@@ -19,6 +19,8 @@ const ZONE_WM_BLUR: u32 = 306;
 const ZONE_WM_TINT: u32 = 307;
 const ZONE_WM_DARKEN: u32 = 308;
 const ZONE_WM_BG_OPACITY: u32 = 309;
+const ZONE_WM_GLOW: u32 = 310;
+const ZONE_WM_GLOW_COLOR_BASE: u32 = 311; // 311..319 for up to 9 color swatches
 
 const ZONE_PWR_LID_BTN: u32 = 400;
 const ZONE_PWR_LID_AC_BTN: u32 = 401;
@@ -47,6 +49,18 @@ const PAD_LEFT: f32 = 24.0;
 const PAD_RIGHT: f32 = 32.0;
 const LABEL_W: f32 = 200.0;
 const VALUE_W: f32 = 60.0;
+
+const GLOW_COLORS: &[(&str, &str)] = &[
+    ("#4A9EFF", "Blue"),
+    ("#A855F7", "Purple"),
+    ("#EC4899", "Pink"),
+    ("#22D3EE", "Cyan"),
+    ("#22C55E", "Green"),
+    ("#F97316", "Orange"),
+    ("#EF4444", "Red"),
+    ("#EAB308", "Gold"),
+    ("#FFFFFF", "White"),
+];
 
 const LID_OPTIONS: &[&str] = &["Suspend", "Hibernate", "Lock", "Nothing"];
 const IDLE_ACTION_OPTIONS: &[&str] = &["Suspend", "Lock", "Nothing"];
@@ -244,6 +258,51 @@ pub fn draw_wm_panel(
         let track = toggle.track_rect();
         let zone = ix.add_zone(ZONE_WM_FOCUS, track);
         toggle.hovered(zone.is_hovered()).draw(painter, text, fox, sw, sh);
+        cy += row;
+    }
+
+    // Focus Glow toggle
+    {
+        let rect = Rect::new(label_x, cy, w - PAD_LEFT * s - PAD_RIGHT * s, TOGGLE_H * s);
+        let toggle = Toggle::new(rect, config.window_manager.focus_glow)
+            .label("Focus Glow").scale(s);
+        let track = toggle.track_rect();
+        let zone = ix.add_zone(ZONE_WM_GLOW, track);
+        toggle.hovered(zone.is_hovered()).draw(painter, text, fox, sw, sh);
+        cy += row;
+    }
+
+    // Glow Color swatches (only when glow is enabled)
+    if config.window_manager.focus_glow {
+        let label_y = cy + (row - lsz) / 2.0;
+        text.queue("Glow Color", lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
+
+        let swatch_size = 28.0 * s;
+        let swatch_gap = 8.0 * s;
+        let mut sx = ctrl_x;
+        for (i, (hex, _name)) in GLOW_COLORS.iter().enumerate() {
+            let color = Color::from_hex(hex).unwrap();
+            let zone_id = ZONE_WM_GLOW_COLOR_BASE + i as u32;
+            let swatch_rect = Rect::new(sx, cy + (row - swatch_size) / 2.0, swatch_size, swatch_size);
+            let zone = ix.add_zone(zone_id, swatch_rect);
+
+            let cx = sx + swatch_size / 2.0;
+            let cy_center = swatch_rect.y + swatch_size / 2.0;
+            let radius = swatch_size / 2.0;
+
+            // Draw the color circle
+            painter.circle_filled(cx, cy_center, radius, color);
+
+            // Selection ring
+            let is_selected = config.window_manager.focus_glow_color.eq_ignore_ascii_case(hex);
+            if is_selected {
+                painter.circle_stroke(cx, cy_center, radius + 3.0 * s, 2.0 * s, fox.text);
+            } else if zone.is_hovered() {
+                painter.circle_stroke(cx, cy_center, radius + 2.0 * s, 1.5 * s, fox.text_secondary);
+            }
+
+            sx += swatch_size + swatch_gap;
+        }
         cy += row;
     }
 
@@ -609,6 +668,13 @@ pub fn handle_power_click(
 pub fn handle_wm_click(config: &mut LanternConfig, zone_id: u32) {
     if zone_id == ZONE_WM_FOCUS {
         config.window_manager.focus_follows_mouse = !config.window_manager.focus_follows_mouse;
+    } else if zone_id == ZONE_WM_GLOW {
+        config.window_manager.focus_glow = !config.window_manager.focus_glow;
+    } else if zone_id >= ZONE_WM_GLOW_COLOR_BASE
+        && zone_id < ZONE_WM_GLOW_COLOR_BASE + GLOW_COLORS.len() as u32
+    {
+        let idx = (zone_id - ZONE_WM_GLOW_COLOR_BASE) as usize;
+        config.window_manager.focus_glow_color = GLOW_COLORS[idx].0.into();
     }
 }
 

@@ -14,7 +14,7 @@ use crate::{Gpu, ZONE_CLOSE, ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_MENU_VIEW,
     ZONE_NAV_VIEW_TOGGLE, ZONE_NAV_BACK, ZONE_NAV_FORWARD, ZONE_NAV_UP, ZONE_NAV_SEARCH,
     ZONE_SIDEBAR_ITEM_BASE, ZONE_FILE_ITEM_BASE, ZONE_CONTENT, ZONE_SCROLLBAR,
     ZONE_TAB_BASE, ZONE_TAB_CLOSE_BASE, ZONE_TAB_NEW, ZONE_RENAME_INPUT, ZONE_PATH_INPUT,
-    ZONE_DRIVE_ITEM_BASE, ZONE_TREE_ITEM_BASE,
+    ZONE_DRIVE_ITEM_BASE, ZONE_TREE_ITEM_BASE, ZONE_BREADCRUMB_BASE,
     ZONE_DROP_MOVE, ZONE_DROP_COPY, ZONE_DROP_CANCEL};
 
 /// Render a full frame.
@@ -68,7 +68,10 @@ pub fn render_frame(
     let cols = grid_columns(content.w, s, zoom);
     let total_content_h = match view_mode {
         ViewMode::Grid => grid_content_height(entries.len(), cols, s, zoom),
-        ViewMode::List => list_content_height(entries.len(), s) + 32.0 * s, // +header
+        ViewMode::List => {
+            let rh = if is_searching { search_list_row_h(s) } else { list_row_h(s) };
+            entries.len() as f32 * rh + 32.0 * s // +header
+        }
         ViewMode::Tree => tree_content_height(app.tree_entries.len(), s),
     };
     let scroll_area = ScrollArea::new(content, total_content_h, &mut app.scroll_offset);
@@ -92,7 +95,7 @@ pub fn render_frame(
                 .collect()
         }
         ViewMode::List => {
-            let row_h = list_row_h(s);
+            let row_h = if is_searching { search_list_row_h(s) } else { list_row_h(s) };
             let hdr_h = 32.0 * s;
             for i in 0..entries.len() {
                 let y = base_y + hdr_h + i as f32 * row_h;
@@ -193,10 +196,59 @@ pub fn render_frame(
     let up_rect = up_button_rect(s);
     let up_state = input.add_zone(ZONE_NAV_UP, up_rect);
     let p_rect = path_rect(wf, s);
-    let path_zone = if app.path_editing {
-        input.add_zone(ZONE_PATH_INPUT, p_rect)
+    let mut breadcrumb_hovered = Vec::new();
+    let path_hovered;
+    if !app.path_editing && !app.searching {
+        // Register breadcrumb segment zones
+        let segments = crate::sections::breadcrumb_segments(&app.current_dir, s);
+        let font = 22.0 * s;
+        let char_w = font * 0.45;
+        let sep_w = 14.0 * s;
+        let pad_x = 6.0 * s;
+        let seg_width = |name: &str| -> f32 { name.len() as f32 * char_w + pad_x * 2.0 };
+
+        // Compute overflow skip
+        let total_w: f32 = segments.iter().enumerate().map(|(i, (name, _))| {
+            if i > 0 { seg_width(name) + sep_w } else { seg_width(name) }
+        }).sum();
+        let mut skip = 0;
+        if total_w > p_rect.w {
+            let ellipsis_w = seg_width("...") + sep_w;
+            for (i, _) in segments.iter().enumerate() {
+                let remaining: f32 = segments[i..].iter().enumerate().map(|(j, (n, _))| {
+                    if j > 0 { seg_width(n) + sep_w } else { seg_width(n) }
+                }).sum();
+                if ellipsis_w + remaining <= p_rect.w { break; }
+                skip = i + 1;
+            }
+        }
+
+        app.breadcrumb_skip = skip;
+
+        let mut cx = p_rect.x + 4.0 * s;
+        if skip > 0 {
+            cx += seg_width("...") + sep_w;
+        }
+        for (i, (name, _)) in segments.iter().enumerate() {
+            if i < skip { continue; }
+            if i > skip { cx += sep_w; }
+            let sw = seg_width(name);
+            let seg_rect = Rect::new(cx, p_rect.y + 2.0 * s, sw, p_rect.h - 4.0 * s);
+            let zone_id = ZONE_BREADCRUMB_BASE + (i - skip) as u32;
+            let state = input.add_zone(zone_id, seg_rect);
+            breadcrumb_hovered.push(state.is_hovered());
+            cx += sw;
+        }
+        // Register remaining empty area for clicking into edit mode
+        let remaining_w = (p_rect.x + p_rect.w) - cx;
+        if remaining_w > 0.0 {
+            let empty_rect = Rect::new(cx, p_rect.y, remaining_w, p_rect.h);
+            input.add_zone(ZONE_PATH_INPUT, empty_rect);
+        }
+        path_hovered = false;
     } else {
-        input.add_zone(ZONE_PATH_INPUT, p_rect)
+        let zone = input.add_zone(ZONE_PATH_INPUT, p_rect);
+        path_hovered = zone.is_hovered();
     };
     let srch_rect = search_button_rect(wf, s);
     let srch_state = input.add_zone(ZONE_NAV_SEARCH, srch_rect);
@@ -206,7 +258,7 @@ pub fn render_frame(
         back_rect, back_state.is_hovered(),
         fwd_rect, fwd_state.is_hovered(),
         up_rect, up_state.is_hovered(),
-        p_rect, path_zone.is_hovered(),
+        p_rect, path_hovered, &breadcrumb_hovered,
         srch_rect, srch_state.is_hovered(),
         (w, h), s,
     );
@@ -384,7 +436,7 @@ pub fn render_frame(
             }
         }
         ViewMode::List => {
-            let row_h = list_row_h(s);
+            let row_h = if is_searching { search_list_row_h(s) } else { list_row_h(s) };
             let hdr_h = 32.0 * s;
             let mut item_hovered = Vec::with_capacity(entries.len());
             for i in 0..entries.len() {
@@ -397,9 +449,11 @@ pub fn render_frame(
                 };
                 item_hovered.push(hovered);
             }
+            let search_root = if is_searching { Some(app.current_dir.as_path()) } else { None };
             draw_content_list(
                 painter, text, pal, content, entries,
-                &scroll_area, &item_hovered, &has_icon, app.drag_item, app.renaming, (w, h), s,
+                &scroll_area, &item_hovered, &has_icon, app.drag_item, app.renaming,
+                search_root, (w, h), s,
             );
         }
         ViewMode::Tree => {
@@ -500,7 +554,7 @@ pub fn render_frame(
                 .collect()
         }
         ViewMode::List => {
-            let row_h = list_row_h(s);
+            let row_h = if is_searching { search_list_row_h(s) } else { list_row_h(s) };
             let hdr_h = 32.0 * s;
             let list_icon_sz = 28.0 * s;
             (0..entries.len())

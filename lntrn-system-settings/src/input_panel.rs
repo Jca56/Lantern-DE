@@ -1,4 +1,6 @@
-use lntrn_render::{Painter, Rect, TextRenderer};
+use std::path::PathBuf;
+
+use lntrn_render::{GpuContext, GpuTexture, Painter, Rect, TextRenderer, TextureDraw, TexturePass};
 use lntrn_ui::gpu::{FoxPalette, InteractionContext, Slider, Toggle};
 
 use crate::config::LanternConfig;
@@ -16,6 +18,7 @@ const PAD_LEFT: f32 = 24.0;
 const PAD_RIGHT: f32 = 32.0;
 const LABEL_W: f32 = 200.0;
 const VALUE_W: f32 = 60.0;
+const CURSOR_ICON_SZ: f32 = 48.0;
 
 /// A cursor SVG/PNG found in ~/.lantern/config/cursors/.
 struct CursorEntry {
@@ -23,6 +26,8 @@ struct CursorEntry {
     id: String,
     /// Display name: filename with dashes/underscores replaced by spaces, title-cased.
     display_name: String,
+    /// Full path to the SVG/PNG file.
+    path: PathBuf,
 }
 
 // ── State ──────────────────────────────────────────────────────────────────
@@ -30,11 +35,16 @@ struct CursorEntry {
 pub struct InputPanelState {
     cursors: Vec<CursorEntry>,
     scanned: bool,
+    cursor_textures: Vec<Option<GpuTexture>>,
+    textures_loaded: bool,
 }
 
 impl InputPanelState {
     pub fn new() -> Self {
-        Self { cursors: Vec::new(), scanned: false }
+        Self {
+            cursors: Vec::new(), scanned: false,
+            cursor_textures: Vec::new(), textures_loaded: false,
+        }
     }
 
     fn scan(&mut self) {
@@ -74,10 +84,21 @@ impl InputPanelState {
                 .collect::<Vec<_>>()
                 .join(" ");
 
-            self.cursors.push(CursorEntry { id: stem, display_name });
+            self.cursors.push(CursorEntry { id: stem, display_name, path });
         }
 
         self.cursors.sort_by(|a, b| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()));
+        self.textures_loaded = false;
+    }
+
+    fn load_textures(&mut self, tex_pass: &TexturePass, gpu: &GpuContext, scale: f32) {
+        if self.textures_loaded { return; }
+        self.textures_loaded = true;
+        let sz = (CURSOR_ICON_SZ * scale) as u32;
+        self.cursor_textures.clear();
+        for cursor in &self.cursors {
+            self.cursor_textures.push(load_cursor_texture(tex_pass, gpu, &cursor.path, sz));
+        }
     }
 }
 
@@ -105,15 +126,42 @@ fn slider_value_from_cursor(
     None
 }
 
+fn load_cursor_texture(
+    tex_pass: &TexturePass, gpu: &GpuContext, path: &std::path::Path, sz: u32,
+) -> Option<GpuTexture> {
+    let ext = path.extension()?.to_str()?;
+    if ext == "svg" {
+        let data = std::fs::read(path).ok()?;
+        let tree = resvg::usvg::Tree::from_data(&data, &Default::default()).ok()?;
+        let mut pixmap = resvg::tiny_skia::Pixmap::new(sz, sz)?;
+        let sx = sz as f32 / tree.size().width();
+        let sy = sz as f32 / tree.size().height();
+        let scale = sx.min(sy);
+        let tx = (sz as f32 - tree.size().width() * scale) * 0.5;
+        let ty = (sz as f32 - tree.size().height() * scale) * 0.5;
+        let xf = resvg::tiny_skia::Transform::from_scale(scale, scale).post_translate(tx, ty);
+        resvg::render(&tree, xf, &mut pixmap.as_mut());
+        Some(tex_pass.upload(gpu, pixmap.data(), sz, sz))
+    } else {
+        let img = image::open(path).ok()?
+            .resize_exact(sz, sz, image::imageops::FilterType::Triangle)
+            .to_rgba8();
+        Some(tex_pass.upload(gpu, &img, sz, sz))
+    }
+}
+
 // ── Input panel ─────────────────────────────────────────────────────────────
 
-pub fn draw_input_panel(
+pub fn draw_input_panel<'a>(
     config: &mut LanternConfig,
-    state: &mut InputPanelState,
+    state: &'a mut InputPanelState,
     painter: &mut Painter, text: &mut TextRenderer, ix: &mut InteractionContext,
-    fox: &FoxPalette, x: f32, y: f32, w: f32, s: f32, sw: u32, sh: u32,
+    tex_pass: &TexturePass, fox: &FoxPalette, gpu: &GpuContext,
+    x: f32, y: f32, w: f32, s: f32, sw: u32, sh: u32,
+    tex_draws: &mut Vec<TextureDraw<'a>>,
 ) {
     state.scan();
+    state.load_textures(tex_pass, gpu, s);
 
     let (label_x, ctrl_x, ctrl_w, value_x) = layout(x, w, s);
     let mut cy = y;
@@ -217,18 +265,24 @@ pub fn draw_input_panel(
         let border_w = if is_selected { 2.0 * s } else { 1.0 * s };
         painter.rect_stroke_sdf(card_rect, card_r, border_w, border_color);
 
-        // Draw a cursor arrow preview in the card
-        let icon_size = 32.0 * s;
+        // Draw cursor icon from rasterized SVG/PNG
+        let icon_size = CURSOR_ICON_SZ * s;
         let icon_x = card_x + (card_size - icon_size) / 2.0;
         let icon_y = card_y + (card_size - icon_size) / 2.0 - 8.0 * s;
-        let color = if is_selected { fox.accent } else { fox.text };
-        draw_cursor_preview(painter, icon_x, icon_y, icon_size, color);
+        if let Some(Some(tex)) = state.cursor_textures.get(i) {
+            tex_draws.push(TextureDraw::new(tex, icon_x, icon_y, icon_size, icon_size));
+        } else {
+            let color = if is_selected { fox.accent } else { fox.text };
+            draw_cursor_preview(painter, icon_x, icon_y, icon_size, color);
+        }
 
-        // Label below the icon
+        // Label below the icon — full name when selected, truncated otherwise
         let label_font = 14.0 * s;
         let label_y = card_y + card_size - label_font - 8.0 * s;
         let label_color = if is_selected { fox.accent } else { fox.text };
-        let display = if cursor.display_name.len() > 12 {
+        let display = if is_selected {
+            cursor.display_name.clone()
+        } else if cursor.display_name.len() > 12 {
             format!("{}...", &cursor.display_name[..10])
         } else {
             cursor.display_name.clone()

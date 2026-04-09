@@ -95,7 +95,14 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
     ) {
         match event {
             xdg_toplevel::Event::Configure { width, height, states } => {
-                if width > 0 { state.width = width as u32; }
+                if width > 0 {
+                    state.width = width as u32;
+                    // Store the initial configure width as the output logical width
+                    // (before any user resize). This stays constant for fractional_scale().
+                    if state.output_logical_width == 0 {
+                        state.output_logical_width = width as u32;
+                    }
+                }
                 if height > 0 { state.height = height as u32; }
                 // Parse states to detect maximized
                 state.maximized = states.chunks_exact(4).any(|chunk| {

@@ -65,6 +65,7 @@ impl vte::Perform for Performer<'_> {
                 italic: s.attr_italic,
                 underline: s.attr_underline,
                 wide: wide_flag,
+                hyperlink: s.active_hyperlink,
             };
             s.cursor_col += 1;
 
@@ -78,6 +79,7 @@ impl vte::Perform for Performer<'_> {
                     italic: false,
                     underline: false,
                     wide: Wide::Tail,
+                    hyperlink: s.active_hyperlink,
                 };
                 s.cursor_col += 1;
             }
@@ -190,6 +192,7 @@ impl vte::Perform for Performer<'_> {
                 s.cursor_col = (col - 1).min(s.cols - 1);
             }
             'J' => {
+                s.wrap_next = false;
                 let mode = p(0, 0);
                 match mode {
                     0 => {
@@ -223,6 +226,7 @@ impl vte::Perform for Performer<'_> {
                 }
             }
             'K' => {
+                s.wrap_next = false;
                 let mode = p(0, 0);
                 match mode {
                     0 => {
@@ -244,20 +248,26 @@ impl vte::Perform for Performer<'_> {
                 }
             }
             'L' => {
+                s.wrap_next = false;
                 let n = p(0, 1) as usize;
                 for _ in 0..n {
-                    if s.cursor_row <= s.scroll_bottom {
-                        if s.scroll_bottom < s.rows {
-                            s.grid.remove(s.scroll_bottom);
-                        }
+                    if s.cursor_row >= s.scroll_top
+                        && s.cursor_row <= s.scroll_bottom
+                        && s.scroll_bottom < s.rows
+                    {
+                        s.grid.remove(s.scroll_bottom);
                         s.grid.insert(s.cursor_row, vec![s.default_cell(); s.cols]);
                     }
                 }
             }
             'M' => {
+                s.wrap_next = false;
                 let n = p(0, 1) as usize;
                 for _ in 0..n {
-                    if s.cursor_row <= s.scroll_bottom {
+                    if s.cursor_row >= s.scroll_top
+                        && s.cursor_row <= s.scroll_bottom
+                        && s.scroll_bottom < s.rows
+                    {
                         s.grid.remove(s.cursor_row);
                         s.grid
                             .insert(s.scroll_bottom, vec![s.default_cell(); s.cols]);
@@ -265,6 +275,7 @@ impl vte::Perform for Performer<'_> {
                 }
             }
             'P' => {
+                s.wrap_next = false;
                 let n = p(0, 1) as usize;
                 let def = s.default_cell();
                 let row = &mut s.grid[s.cursor_row];
@@ -288,6 +299,7 @@ impl vte::Perform for Performer<'_> {
                 }
             }
             'X' => {
+                s.wrap_next = false;
                 let n = p(0, 1) as usize;
                 for i in 0..n {
                     let col = s.cursor_col + i;
@@ -297,6 +309,7 @@ impl vte::Perform for Performer<'_> {
                 }
             }
             '@' => {
+                s.wrap_next = false;
                 let n = p(0, 1) as usize;
                 let def = s.default_cell();
                 let row = &mut s.grid[s.cursor_row];
@@ -322,8 +335,17 @@ impl vte::Perform for Performer<'_> {
                 s.wrap_next = false;
                 let top = p(0, 1) as usize;
                 let bottom = p(1, s.rows as u16) as usize;
-                s.scroll_top = (top - 1).min(s.rows - 1);
-                s.scroll_bottom = (bottom - 1).min(s.rows - 1);
+                let new_top = (top - 1).min(s.rows - 1);
+                let new_bottom = (bottom - 1).min(s.rows - 1);
+                // Only apply if top < bottom (invalid regions are ignored)
+                if new_top < new_bottom {
+                    s.scroll_top = new_top;
+                    s.scroll_bottom = new_bottom;
+                } else {
+                    // Reset to full screen on invalid region
+                    s.scroll_top = 0;
+                    s.scroll_bottom = s.rows - 1;
+                }
                 s.cursor_row = 0;
                 s.cursor_col = 0;
             }
@@ -392,6 +414,10 @@ impl vte::Perform for Performer<'_> {
                                 } else {
                                     s.leave_alt_screen();
                                 }
+                            }
+                            2026 => {
+                                // Synchronized output — suppress rendering during batch updates
+                                s.sync_update = set;
                             }
                             _ => {}
                         }
@@ -488,6 +514,29 @@ impl vte::Perform for Performer<'_> {
                     if let Ok(msg) = std::str::from_utf8(params[1]) {
                         self.state.pending_notifications.push(("Terminal".to_string(), msg.to_string()));
                     }
+                }
+            }
+            b"8" => {
+                // OSC 8: Hyperlinks — ESC ] 8 ; params ; uri ST
+                // Empty URI closes the current hyperlink.
+                let uri = if params.len() > 2 {
+                    std::str::from_utf8(params[2]).unwrap_or("")
+                } else if params.len() > 1 {
+                    // Some terminals send OSC 8 ; ; uri (params as single segment)
+                    // but vte splits on ';' so params[1] would be empty, params[2] is URI
+                    ""
+                } else {
+                    ""
+                };
+                if uri.is_empty() {
+                    // Close hyperlink
+                    self.state.active_hyperlink = 0;
+                } else {
+                    let s = &mut *self.state;
+                    let id = s.hyperlink_next_id;
+                    s.hyperlink_next_id = s.hyperlink_next_id.wrapping_add(1).max(1);
+                    s.hyperlinks.insert(id, uri.to_string());
+                    s.active_hyperlink = id;
                 }
             }
             b"7" => {

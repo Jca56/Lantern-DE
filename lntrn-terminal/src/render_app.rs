@@ -1,4 +1,4 @@
-use lntrn_render::{Color, Frame, GpuContext, Painter};
+use lntrn_render::{Color, Frame, GpuContext, Painter, TextureDraw};
 use lntrn_ui::gpu::MenuEvent;
 
 use crate::render;
@@ -20,7 +20,11 @@ impl App {
 
         let font_size = self.effective_font_size();
         let chrome_h = self.chrome_height();
-        let tab_bar_visible = self.tab_bar_visible;
+
+        // Upload pending images and collect placements before borrowing painter
+        self.upload_pending_images();
+        let image_placements = self.collect_image_placements(font_size, sb_offset, chrome_h);
+
         let mode = self.config.window.mode.clone();
         let cursor_pos = self.cursor_pos;
         let gpu = match self.gpu.as_ref() {
@@ -59,7 +63,6 @@ impl App {
             screen_w as f32,
             screen_h as f32,
             maximized,
-            tab_bar_visible,
             &mode,
         );
 
@@ -94,6 +97,7 @@ impl App {
             // Clip to the pane rect so shifted content doesn't bleed
             let clip = lntrn_render::Rect::new(gx, gy, gw, gh);
             painter.push_clip(clip);
+            text.push_clip([gx, gy, gw, gh]);
 
             let extra = if pane_sub_pixel > 0.0 { 1 } else { 0 };
             render::draw_terminal_ex(
@@ -110,6 +114,7 @@ impl App {
             );
 
             painter.pop_clip();
+            text.pop_clip();
 
             // Draw scrollbar for active pane when scrolled
             if is_active_pane {
@@ -139,6 +144,7 @@ impl App {
         }
 
         // Draw dividers between panes
+        let tab = &self.tabs[self.active_tab];
         if tab.panes.len() > 1 {
             draw_pane_dividers(painter, &rects, tab);
         }
@@ -177,20 +183,18 @@ impl App {
             cursor_pos,
         );
 
-        // Draw tab bar (auto-hides, appears on hover)
-        if tab_bar_visible {
-            tab_bar::draw_tab_bar(
-                painter,
-                text,
-                &self.tab_bar,
-                &tab_displays,
-                self.active_tab,
-                screen_w,
-                screen_h,
-                self.cursor_pos,
-                &mode,
-            );
-        }
+        // Draw tab bar
+        tab_bar::draw_tab_bar(
+            painter,
+            text,
+            &self.tab_bar,
+            &tab_displays,
+            self.active_tab,
+            screen_w,
+            screen_h,
+            self.cursor_pos,
+            &mode,
+        );
 
         let has_overlay = self.chrome.has_overlay() || self.tab_bar.has_overlay() || self.sidebar.has_overlay();
 
@@ -285,6 +289,19 @@ impl App {
                 painter.render_pass(gpu, frame.encoder_mut(), &view, bg);
                 text.render_queued(gpu, frame.encoder_mut(), &view);
 
+                // Pass 1.5: inline images
+                if !image_placements.is_empty() {
+                    if let Some(ref tex_pass) = self.texture_pass {
+                        let draws: Vec<TextureDraw> = image_placements.iter().filter_map(|p| {
+                            let (_, gpu_tex) = self.image_textures.iter().find(|(id, _)| *id == p.0)?;
+                            Some(TextureDraw::new(gpu_tex, p.1, p.2, p.3, p.4))
+                        }).collect();
+                        if !draws.is_empty() {
+                            tex_pass.render_pass(gpu, frame.encoder_mut(), &view, &draws, None);
+                        }
+                    }
+                }
+
                 // Pass 2: overlay shapes + overlay text
                 overlay_painter.render_pass_overlay(gpu, frame.encoder_mut(), &view);
                 overlay_text.render_queued(gpu, frame.encoder_mut(), &view);
@@ -296,8 +313,31 @@ impl App {
                 Self::handle_render_error(e, &mut self.gpu);
             }
         } else {
-            // Single-pass: no menus open
-            if let Err(e) = painter.render_with_text(gpu, text, bg) {
+            // Single-pass: no menus open — use manual frame for image support
+            let result: Result<(), lntrn_render::SurfaceError> = (|| {
+                let mut frame: Frame = gpu.begin_frame("Lantern 2D+Text")?;
+                let view = frame.view().clone();
+
+                painter.render_pass(gpu, frame.encoder_mut(), &view, bg);
+                text.render_queued(gpu, frame.encoder_mut(), &view);
+
+                // Inline images
+                if !image_placements.is_empty() {
+                    if let Some(ref tex_pass) = self.texture_pass {
+                        let draws: Vec<TextureDraw> = image_placements.iter().filter_map(|p| {
+                            let (_, gpu_tex) = self.image_textures.iter().find(|(id, _)| *id == p.0)?;
+                            Some(TextureDraw::new(gpu_tex, p.1, p.2, p.3, p.4))
+                        }).collect();
+                        if !draws.is_empty() {
+                            tex_pass.render_pass(gpu, frame.encoder_mut(), &view, &draws, None);
+                        }
+                    }
+                }
+
+                frame.submit(&gpu.queue);
+                Ok(())
+            })();
+            if let Err(e) = result {
                 Self::handle_render_error(e, &mut self.gpu);
             }
         }
@@ -305,6 +345,71 @@ impl App {
         // If the base font size changed (e.g. via slider), the effective size
         // may now differ from what update_grid_size last used — resync.
         self.update_grid_size();
+    }
+
+    /// Upload any images that haven't been sent to the GPU yet.
+    fn upload_pending_images(&mut self) {
+        // Collect (image_id, rgba, width, height) for images that need uploading
+        let mut pending: Vec<(u32, Vec<u8>, u32, u32)> = Vec::new();
+        for tab in &self.tabs {
+            for pane in &tab.panes {
+                for img in &pane.terminal.image_manager.images {
+                    if !self.image_textures.iter().any(|(id, _)| *id == img.image_id) {
+                        pending.push((img.image_id, img.rgba.clone(), img.width, img.height));
+                    }
+                }
+            }
+        }
+        if pending.is_empty() {
+            return;
+        }
+        if let (Some(ref tex_pass), Some(ref gpu)) = (&self.texture_pass, &self.gpu) {
+            for (id, rgba, w, h) in pending {
+                let gpu_tex = tex_pass.upload(gpu, &rgba, w, h);
+                self.image_textures.push((id, gpu_tex));
+            }
+        }
+    }
+
+    /// Collect image placement info as owned tuples: (image_id, x, y, w, h).
+    /// No borrows are held, so this can be called before mutable render closures.
+    fn collect_image_placements(
+        &self,
+        font_size: f32,
+        sb_offset: f32,
+        chrome_h: f32,
+    ) -> Vec<(u32, f32, f32, f32, f32)> {
+        if self.tabs.is_empty() {
+            return Vec::new();
+        }
+        let screen_w = self.gpu.as_ref().map_or(800, |g| g.width());
+        let screen_h = self.gpu.as_ref().map_or(600, |g| g.height());
+        let (cell_w, cell_h) = render::measure_cell(font_size);
+        let tab = &self.tabs[self.active_tab];
+        let rects = Self::pane_rects_for_tab(tab, screen_w, screen_h, sb_offset, chrome_h);
+
+        let mut placements = Vec::new();
+        for (i, pane) in tab.panes.iter().enumerate() {
+            if i >= rects.len() {
+                break;
+            }
+            let (gx, gy, gw, gh) = Self::pane_grid_bounds(pane, rects[i], font_size);
+
+            for img in &pane.terminal.image_manager.images {
+                let x = gx + img.col as f32 * cell_w;
+                let y = gy + img.row as f32 * cell_h;
+                let w = img.cols_wide as f32 * cell_w;
+                let h = img.rows_tall as f32 * cell_h;
+
+                // Skip if entirely outside viewport
+                if x + w < gx || x > gx + gw || y + h < gy || y > gy + gh {
+                    continue;
+                }
+
+                placements.push((img.image_id, x, y, w, h));
+            }
+        }
+        placements
     }
 
     pub(crate) fn handle_render_error(

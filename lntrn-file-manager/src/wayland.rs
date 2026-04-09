@@ -57,6 +57,7 @@ pub(crate) struct State {
     pub(crate) height: u32,
     pub(crate) scale: i32,
     pub(crate) output_phys_width: u32,
+    pub(crate) output_logical_width: u32,
     pub(crate) maximized: bool,
     pub(crate) desktop_mode: bool,
     // Wayland objects
@@ -104,7 +105,7 @@ impl State {
     fn new() -> Self {
         Self {
             running: true, configured: false, frame_done: true,
-            width: 0, height: 0, scale: 1, output_phys_width: 0, maximized: false,
+            width: 0, height: 0, scale: 1, output_phys_width: 0, output_logical_width: 0, maximized: false,
             desktop_mode: false,
             compositor: None, wm_base: None, viewporter: None,
             surface: None, xdg_surface: None, toplevel: None, seat: None,
@@ -122,8 +123,8 @@ impl State {
     }
 
     pub(crate) fn fractional_scale(&self) -> f64 {
-        if self.output_phys_width > 0 && self.width > 0 {
-            self.output_phys_width as f64 / self.width as f64
+        if self.output_phys_width > 0 && self.output_logical_width > 0 {
+            self.output_phys_width as f64 / self.output_logical_width as f64
         } else {
             self.scale.max(1) as f64
         }

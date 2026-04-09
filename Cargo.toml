@@ -32,6 +32,8 @@ members = [
     "lntrn-app-template",
     "lntrn-sysmon",
     "lntrn-icons",
+    "lntrn-screencopy",
+    "lntrn-video-editor",
 ]
 
 [profile.release]

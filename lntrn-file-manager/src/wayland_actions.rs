@@ -17,14 +17,14 @@ use crate::{
     ClickAction, CTX_CHANGE_ICON, CTX_COMPRESS, CTX_COPY, CTX_COPY_NAME, CTX_COPY_PATH, CTX_CUT,
     CTX_DUPLICATE, CTX_EXTRACT, CTX_NEW_FILE, CTX_NEW_FOLDER, CTX_NEW_FOLDER_BLUE,
     CTX_NEW_FOLDER_GREEN, CTX_NEW_FOLDER_ORANGE, CTX_NEW_FOLDER_PLAIN, CTX_NEW_FOLDER_PURPLE,
-    CTX_NEW_FOLDER_RED, CTX_NEW_FOLDER_YELLOW, CTX_OPEN, CTX_OPEN_AS_ROOT,
+    CTX_NEW_FOLDER_RED, CTX_NEW_FOLDER_YELLOW, CTX_OPEN, CTX_OPEN_AS_ROOT, CTX_OPEN_LOCATION,
     CTX_OPEN_TERMINAL, CTX_OPEN_WITH, CTX_OPEN_WITH_BASE, CTX_PASTE, CTX_PROPERTIES,
     CTX_RENAME, CTX_SELECT_ALL, CTX_SHOW_HIDDEN, CTX_SORT_BY, CTX_SORT_DATE, CTX_SORT_NAME,
     CTX_SORT_SIZE, CTX_SORT_TYPE, CTX_TRASH, SORT_RADIO_GROUP, VIEW_SLIDER_ID, VIEW_OPACITY_SLIDER_ID, VIEW_SHOW_HIDDEN_ID,
     ZONE_CLOSE, ZONE_FILE_ITEM_BASE, ZONE_MAXIMIZE, ZONE_MENU_VIEW, ZONE_MINIMIZE,
     ZONE_NAV_BACK, ZONE_NAV_FORWARD, ZONE_NAV_UP, ZONE_NAV_SEARCH, ZONE_NAV_VIEW_TOGGLE,
     ZONE_PATH_INPUT, ZONE_SIDEBAR_ITEM_BASE, ZONE_TAB_BASE, ZONE_TAB_CLOSE_BASE, ZONE_TAB_NEW,
-    ZONE_DRIVE_ITEM_BASE, ZONE_TREE_ITEM_BASE,
+    ZONE_BREADCRUMB_BASE, ZONE_DRIVE_ITEM_BASE, ZONE_TREE_ITEM_BASE,
 };
 
 // ── Helper functions ────────────────────────────────────────────────────────
@@ -59,9 +59,15 @@ pub(crate) fn handle_click(
 ) -> ClickAction {
     if let Some(zone_id) = input.on_left_pressed() {
         // If path editing, commit on any click outside the path input
+        // (breadcrumb clicks cancel edit and fall through to navigate)
         if app.path_editing && zone_id != ZONE_PATH_INPUT {
-            app.commit_path_edit();
-            return ClickAction::None;
+            if zone_id >= ZONE_BREADCRUMB_BASE && zone_id < ZONE_BREADCRUMB_BASE + 100 {
+                app.cancel_path_edit();
+                // Fall through to handle the breadcrumb click below
+            } else {
+                app.commit_path_edit();
+                return ClickAction::None;
+            }
         }
         // If renaming, commit on any click outside the rename input
         if app.renaming.is_some() && zone_id != crate::ZONE_RENAME_INPUT {
@@ -101,6 +107,13 @@ pub(crate) fn handle_click(
             ZONE_PATH_INPUT => {
                 if !app.path_editing {
                     app.start_path_edit();
+                }
+            }
+            id if id >= ZONE_BREADCRUMB_BASE && id < ZONE_BREADCRUMB_BASE + 100 => {
+                let segments = crate::sections::breadcrumb_segments(&app.current_dir, s);
+                let seg_idx = (id - ZONE_BREADCRUMB_BASE) as usize + app.breadcrumb_skip;
+                if let Some((_, path)) = segments.get(seg_idx) {
+                    app.navigate_to(path.clone());
                 }
             }
             ZONE_NAV_BACK => app.go_back(),
@@ -228,6 +241,49 @@ pub(crate) fn handle_right_click(
     let cr = content_rect(wf, hf, s);
     if !cr.contains(cx, cy) { return; }
 
+    // Search mode: use list-based hit detection against search_results
+    if app.searching && !app.search_buf.is_empty() {
+        let row_h = crate::layout::search_list_row_h(s);
+        let hdr_h = 32.0 * s;
+        let base_y = cr.y - app.scroll_offset;
+        let clicked_idx = (0..app.search_results.len()).find(|&i| {
+            let y = base_y + hdr_h + i as f32 * row_h;
+            Rect::new(cr.x, y, cr.w, row_h).contains(cx, cy)
+        });
+        if let Some(idx) = clicked_idx {
+            app.context_target = Some(ContextTarget::SearchItem(idx));
+            let entry = &app.search_results[idx];
+            let mut items = vec![
+                MenuItem::action(CTX_OPEN, "Open"),
+                MenuItem::action(CTX_OPEN_LOCATION, "Open Location"),
+                MenuItem::separator(),
+                MenuItem::action(CTX_COPY_PATH, "Copy Path"),
+                MenuItem::action(CTX_COPY_NAME, "Copy Name"),
+            ];
+            if !entry.is_dir {
+                let ext = entry.path.extension()
+                    .map(|e| e.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                *open_with_apps = desktop::apps_for_extension(&ext);
+                if !open_with_apps.is_empty() {
+                    let children: Vec<MenuItem> = open_with_apps.iter().enumerate()
+                        .map(|(i, a)| MenuItem::action(CTX_OPEN_WITH_BASE + i as u32, &a.name))
+                        .collect();
+                    items.insert(1, MenuItem::submenu(CTX_OPEN_WITH, "Open With", children));
+                }
+            }
+            context_menu.set_scale(s);
+            if let Some(backend) = popup_backend {
+                let lx = (cx / s) as f32;
+                let ly = (cy / s) as f32;
+                context_menu.open_popup(lx, ly, items, backend);
+            } else {
+                context_menu.open(cx, cy, items);
+            }
+        }
+        return;
+    }
+
     let zoom = app.icon_zoom;
     let cols = grid_columns(cr.w, s, zoom);
     let base_y = cr.y - app.scroll_offset;
@@ -333,7 +389,36 @@ pub(crate) fn handle_ctx_event(
     match event {
         MenuEvent::Action(id) => {
             match id {
-                CTX_OPEN => app.open_selected(),
+                CTX_OPEN => {
+                    // In search mode, open the search result directly
+                    if let Some(ContextTarget::SearchItem(idx)) = &app.context_target {
+                        if let Some(entry) = app.search_results.get(*idx) {
+                            let path = entry.path.clone();
+                            if entry.is_dir {
+                                app.close_search();
+                                app.navigate_to(path);
+                            } else {
+                                std::thread::spawn(move || {
+                                    let _ = std::process::Command::new("xdg-open")
+                                        .arg(&path).spawn();
+                                });
+                            }
+                        }
+                    } else {
+                        app.open_selected();
+                    }
+                }
+                CTX_OPEN_LOCATION => {
+                    if let Some(ContextTarget::SearchItem(idx)) = &app.context_target {
+                        if let Some(entry) = app.search_results.get(*idx) {
+                            if let Some(parent) = entry.path.parent() {
+                                let parent = parent.to_path_buf();
+                                app.close_search();
+                                app.navigate_to(parent);
+                            }
+                        }
+                    }
+                }
                 CTX_CUT => app.cut_selected(),
                 CTX_COPY => app.copy_selected(),
                 CTX_PASTE => app.paste(),
@@ -343,8 +428,34 @@ pub(crate) fn handle_ctx_event(
                     }
                 }
                 CTX_TRASH => app.trash_selected(),
-                CTX_COPY_PATH => app.copy_path_to_clipboard(),
-                CTX_COPY_NAME => app.copy_name_to_clipboard(),
+                CTX_COPY_PATH => {
+                    let text = match &app.context_target {
+                        Some(ContextTarget::Item(idx)) =>
+                            app.entries.get(*idx).map(|e| e.path.display().to_string()),
+                        Some(ContextTarget::SearchItem(idx)) =>
+                            app.search_results.get(*idx).map(|e| e.path.display().to_string()),
+                        _ => None,
+                    };
+                    if let Some(text) = text {
+                        if let Some(clip) = &app.wayland_clipboard {
+                            clip.set_text(&text);
+                        }
+                    }
+                }
+                CTX_COPY_NAME => {
+                    let text = match &app.context_target {
+                        Some(ContextTarget::Item(idx)) =>
+                            app.entries.get(*idx).map(|e| e.name.clone()),
+                        Some(ContextTarget::SearchItem(idx)) =>
+                            app.search_results.get(*idx).map(|e| e.name.clone()),
+                        _ => None,
+                    };
+                    if let Some(text) = text {
+                        if let Some(clip) = &app.wayland_clipboard {
+                            clip.set_text(&text);
+                        }
+                    }
+                }
                 CTX_DUPLICATE => app.duplicate_selected(),
                 CTX_COMPRESS => app.compress_selected(),
                 CTX_EXTRACT => app.extract_selected(),
@@ -383,6 +494,9 @@ pub(crate) fn handle_ctx_event(
                                     Some(app.entries[*idx].path.clone())
                                 } else { None }
                             }
+                            crate::app::ContextTarget::SearchItem(idx) => {
+                                app.search_results.get(*idx).map(|e| e.path.clone())
+                            }
                             crate::app::ContextTarget::Empty => {
                                 Some(app.current_dir.clone())
                             }
@@ -400,6 +514,7 @@ pub(crate) fn handle_ctx_event(
                     } else {
                         let _ = std::fs::create_dir(&target);
                     }
+                    app.undo_stack.push(crate::undo::UndoAction::Create(vec![target]));
                     app.reload();
                 }
                 CTX_NEW_FOLDER_PLAIN | CTX_NEW_FOLDER_RED | CTX_NEW_FOLDER_ORANGE
@@ -424,6 +539,7 @@ pub(crate) fn handle_ctx_event(
                     if !color.is_empty() {
                         crate::icons::set_folder_color(&target, color);
                     }
+                    app.undo_stack.push(crate::undo::UndoAction::Create(vec![target]));
                     app.reload();
                 }
                 CTX_NEW_FILE => {
@@ -434,6 +550,7 @@ pub(crate) fn handle_ctx_event(
                     } else {
                         let _ = std::fs::write(&target, "");
                     }
+                    app.undo_stack.push(crate::undo::UndoAction::Create(vec![target]));
                     app.reload();
                 }
                 CTX_SELECT_ALL => app.select_all(),
@@ -441,12 +558,18 @@ pub(crate) fn handle_ctx_event(
                 id if id >= CTX_OPEN_WITH_BASE => {
                     let app_idx = (id - CTX_OPEN_WITH_BASE) as usize;
                     if app_idx < open_with_apps.len() {
-                        let selected: Vec<_> = app.entries.iter()
-                            .filter(|e| e.selected)
-                            .map(|e| e.path.clone())
-                            .collect();
-                        for file_path in &selected {
-                            desktop::launch_app(&open_with_apps[app_idx].exec, file_path);
+                        if let Some(ContextTarget::SearchItem(idx)) = &app.context_target {
+                            if let Some(entry) = app.search_results.get(*idx) {
+                                desktop::launch_app(&open_with_apps[app_idx].exec, &entry.path);
+                            }
+                        } else {
+                            let selected: Vec<_> = app.entries.iter()
+                                .filter(|e| e.selected)
+                                .map(|e| e.path.clone())
+                                .collect();
+                            for file_path in &selected {
+                                desktop::launch_app(&open_with_apps[app_idx].exec, file_path);
+                            }
                         }
                     }
                 }
@@ -586,6 +709,7 @@ const KEY_V: u32 = 47;
 const KEY_X: u32 = 45;
 const KEY_T: u32 = 20;
 const KEY_W: u32 = 17;
+const KEY_Z: u32 = 44;
 const KEY_F2: u32 = 60;
 const KEY_DELETE: u32 = 111;
 const KEY_HOME: u32 = 102;
@@ -701,7 +825,9 @@ pub(crate) fn handle_key(
                 }
                 KEY_C => {
                     if let Some(text) = app.path_selected_text() {
-                        crate::file_ops::wl_copy(text);
+                        if let Some(clip) = &app.wayland_clipboard {
+                            clip.set_text(&text);
+                        }
                     }
                 }
                 _ => {}
@@ -848,6 +974,14 @@ pub(crate) fn handle_key(
             KEY_C => app.copy_selected(),
             KEY_X => app.cut_selected(),
             KEY_V => app.paste(),
+            KEY_Z => {
+                if shift {
+                    let _ = app.undo_stack.redo(app.root_mode);
+                } else {
+                    let _ = app.undo_stack.undo(app.root_mode);
+                }
+                app.reload();
+            }
             KEY_T if app.pick.is_none() => app.new_tab(),
             KEY_W if app.pick.is_none() => app.close_tab(app.current_tab),
             _ => {}

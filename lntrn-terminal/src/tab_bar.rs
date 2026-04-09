@@ -7,7 +7,7 @@ use crate::config::WindowMode;
 // ── Constants ───────────────────────────────────────────────────────────────
 
 pub const TAB_BAR_HEIGHT: f32 = 50.0;
-const TAB_MAX_WIDTH: f32 = 200.0;
+const TAB_MAX_WIDTH: f32 = 350.0;
 const TAB_MIN_WIDTH: f32 = 90.0;
 const TAB_GAP: f32 = 6.0;
 const TAB_PAD_H: f32 = 14.0;
@@ -180,30 +180,64 @@ pub enum TabBarAction {
 
 // ── Layout helpers ──────────────────────────────────────────────────────────
 
-fn calc_tab_width(tab_count: usize, available: f32) -> f32 {
+const TAB_PAD_V: f32 = 8.0;
+const CHAR_W: f32 = TAB_FONT_SIZE * 0.6;
+
+/// Compute widths for each tab based on title length, fitting within available space.
+fn calc_tab_widths(titles: &[&str], available: f32) -> Vec<f32> {
+    let n = titles.len().max(1);
+    let space = available - NEW_TAB_WIDTH - 4.0 - (n.saturating_sub(1) as f32 * TAB_GAP);
+
+    // Ideal width per tab: pad + text + close + pad
+    let ideal: Vec<f32> = titles
+        .iter()
+        .map(|t| {
+            let text_w = t.chars().count() as f32 * CHAR_W;
+            (TAB_PAD_H * 2.0 + text_w + TAB_CLOSE_SIZE).clamp(TAB_MIN_WIDTH, TAB_MAX_WIDTH)
+        })
+        .collect();
+
+    let total_ideal: f32 = ideal.iter().sum();
+    if total_ideal <= space {
+        // All fit at ideal size
+        return ideal;
+    }
+
+    // Scale down proportionally, respecting min
+    let scale = space / total_ideal;
+    ideal
+        .iter()
+        .map(|&w| (w * scale).clamp(TAB_MIN_WIDTH, TAB_MAX_WIDTH))
+        .collect()
+}
+
+/// Uniform width fallback when we don't have title info.
+fn calc_tab_width_uniform(tab_count: usize, available: f32) -> f32 {
     let space = available - NEW_TAB_WIDTH - 4.0;
     let per_tab = space / tab_count.max(1) as f32 - TAB_GAP;
     per_tab.clamp(TAB_MIN_WIDTH, TAB_MAX_WIDTH)
 }
 
-const TAB_PAD_V: f32 = 8.0;
-
 fn tab_rect(idx: usize, tab_count: usize, screen_w: f32) -> Rect {
-    let tab_w = calc_tab_width(tab_count, screen_w - 16.0);
+    let tab_w = calc_tab_width_uniform(tab_count, screen_w - 16.0);
     let x = 8.0 + idx as f32 * (tab_w + TAB_GAP);
     Rect::new(x, bar_y() + TAB_PAD_V, tab_w, TAB_BAR_HEIGHT - TAB_PAD_V * 2.0)
+}
+
+/// Compute tab rect using pre-calculated dynamic widths.
+fn tab_rect_dynamic(idx: usize, widths: &[f32]) -> Rect {
+    let mut x = 8.0;
+    for i in 0..idx {
+        x += widths[i] + TAB_GAP;
+    }
+    let w = widths.get(idx).copied().unwrap_or(TAB_MIN_WIDTH);
+    Rect::new(x, bar_y() + TAB_PAD_V, w, TAB_BAR_HEIGHT - TAB_PAD_V * 2.0)
 }
 
 fn tab_close_rect(tab: Rect) -> Rect {
     let x = tab.x + tab.w - TAB_PAD_H - TAB_CLOSE_SIZE + 4.0;
     let y = tab.y + (tab.h - TAB_CLOSE_SIZE) / 2.0;
     Rect::new(x, y, TAB_CLOSE_SIZE, TAB_CLOSE_SIZE)
-}
-
-fn new_tab_button_rect(tab_count: usize, screen_w: f32) -> Rect {
-    let tab_w = calc_tab_width(tab_count, screen_w - 16.0);
-    let x = 8.0 + tab_count as f32 * (tab_w + TAB_GAP) + 4.0;
-    Rect::new(x, bar_y() + TAB_PAD_V, NEW_TAB_WIDTH, TAB_BAR_HEIGHT - TAB_PAD_V * 2.0)
 }
 
 fn hit(rect: Rect, pos: Option<(f32, f32)>) -> bool {
@@ -231,6 +265,10 @@ pub fn draw_tab_bar(
     let tab_count = tabs.len();
     let pal = palette(mode);
 
+    // Compute dynamic tab widths based on title lengths
+    let titles: Vec<&str> = tabs.iter().map(|t| t.title).collect();
+    let widths = calc_tab_widths(&titles, sw - 16.0);
+
     // Tab bar background
     painter.rect_filled(
         Rect::new(0.0, bar_y(), sw, TAB_BAR_HEIGHT),
@@ -239,7 +277,7 @@ pub fn draw_tab_bar(
     );
 
     for (i, tab) in tabs.iter().enumerate() {
-        let mut rect = tab_rect(i, tab_count, sw);
+        let mut rect = tab_rect_dynamic(i, &widths);
 
         // If dragging this tab, offset it
         if state.dragging == Some(i) && state.drag_committed {
@@ -322,8 +360,14 @@ pub fn draw_tab_bar(
         }
     }
 
-    // "+" new tab button (pill)
-    let nb = new_tab_button_rect(tab_count, sw);
+    // "+" new tab button (pill) — positioned after last dynamic tab
+    let last_end = if widths.is_empty() {
+        8.0
+    } else {
+        let last = tab_rect_dynamic(widths.len() - 1, &widths);
+        last.x + last.w + TAB_GAP
+    };
+    let nb = Rect::new(last_end + 4.0, bar_y() + TAB_PAD_V, NEW_TAB_WIDTH, TAB_BAR_HEIGHT - TAB_PAD_V * 2.0);
     let nb_r = nb.h / 2.0;
     let plus_hovered = hit(nb, cursor_pos);
     if plus_hovered {
@@ -559,6 +603,10 @@ pub fn handle_click(
         return TabBarAction::None;
     }
 
+    // Compute dynamic widths for hit testing
+    let titles: Vec<&str> = tabs.iter().map(|t| t.title).collect();
+    let widths = calc_tab_widths(&titles, sw - 16.0);
+
     // Not in tab bar area
     if py < bar_y() || py > bar_y() + TAB_BAR_HEIGHT {
         // If click is in title bar area, allow drag
@@ -570,7 +618,7 @@ pub fn handle_click(
 
     // If renaming, Enter/click-away confirms
     if let Some(idx) = state.renaming {
-        let rect = tab_rect(idx, tab_count, sw);
+        let rect = tab_rect_dynamic(idx, &widths);
         if !hit(rect, cursor_pos) {
             let name = state.rename_buf.clone();
             state.cancel_rename();
@@ -580,13 +628,20 @@ pub fn handle_click(
     }
 
     // New tab button
-    if hit(new_tab_button_rect(tab_count, sw), cursor_pos) {
+    let last_end = if widths.is_empty() {
+        8.0
+    } else {
+        let last = tab_rect_dynamic(widths.len() - 1, &widths);
+        last.x + last.w + TAB_GAP
+    };
+    let nb = Rect::new(last_end + 4.0, bar_y() + TAB_PAD_V, NEW_TAB_WIDTH, TAB_BAR_HEIGHT - TAB_PAD_V * 2.0);
+    if hit(nb, cursor_pos) {
         return TabBarAction::NewTab;
     }
 
     // Tab clicks
     for i in 0..tab_count {
-        let rect = tab_rect(i, tab_count, sw);
+        let rect = tab_rect_dynamic(i, &widths);
         if hit(rect, cursor_pos) {
             // Close button
             let is_pinned = tabs.get(i).map_or(false, |t| t.pinned);
@@ -624,7 +679,7 @@ pub fn handle_click(
 pub fn handle_right_click(
     state: &mut TabBarState,
     cursor_pos: Option<(f32, f32)>,
-    tab_count: usize,
+    tabs: &[TabDisplay],
     screen_w: u32,
 ) -> bool {
     let (px, py) = match cursor_pos {
@@ -637,8 +692,10 @@ pub fn handle_right_click(
     }
 
     let sw = screen_w as f32;
-    for i in 0..tab_count {
-        let rect = tab_rect(i, tab_count, sw);
+    let titles: Vec<&str> = tabs.iter().map(|t| t.title).collect();
+    let widths = calc_tab_widths(&titles, sw - 16.0);
+    for i in 0..tabs.len() {
+        let rect = tab_rect_dynamic(i, &widths);
         if hit(rect, cursor_pos) {
             state.context_menu = Some((i, px, py));
             return true;
@@ -651,7 +708,7 @@ pub fn handle_right_click(
 pub fn handle_drag_move(
     state: &mut TabBarState,
     cursor_x: f32,
-    tab_count: usize,
+    tabs: &[TabDisplay],
     screen_w: u32,
 ) -> Option<TabBarAction> {
     let dragging_idx = state.dragging?;
@@ -664,15 +721,17 @@ pub fn handle_drag_move(
     state.drag_offset_x = delta;
 
     let sw = screen_w as f32;
-    let rect = tab_rect(dragging_idx, tab_count, sw);
+    let titles: Vec<&str> = tabs.iter().map(|t| t.title).collect();
+    let widths = calc_tab_widths(&titles, sw - 16.0);
+    let rect = tab_rect_dynamic(dragging_idx, &widths);
     let dragged_center = rect.x + delta + rect.w / 2.0;
 
     // Check if we crossed into an adjacent tab
-    for i in 0..tab_count {
+    for i in 0..tabs.len() {
         if i == dragging_idx {
             continue;
         }
-        let other = tab_rect(i, tab_count, sw);
+        let other = tab_rect_dynamic(i, &widths);
         let other_center = other.x + other.w / 2.0;
         if (i < dragging_idx && dragged_center < other_center)
             || (i > dragging_idx && dragged_center > other_center)

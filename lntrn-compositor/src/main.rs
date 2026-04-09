@@ -94,6 +94,22 @@ pub(crate) fn read_config_list(section: &str, key: &str) -> Vec<String> {
         .collect()
 }
 
+/// Parse a hex color string into a linear [R, G, B, A] array for the glow shader.
+/// The alpha is fixed at 0.2 to match the glow intensity.
+pub(crate) fn parse_glow_color(hex: &str) -> [f32; 4] {
+    let hex = hex.strip_prefix('#').unwrap_or(hex);
+    let (r, g, b) = if hex.len() >= 6 {
+        (
+            u8::from_str_radix(&hex[0..2], 16).unwrap_or(74),
+            u8::from_str_radix(&hex[2..4], 16).unwrap_or(158),
+            u8::from_str_radix(&hex[4..6], 16).unwrap_or(255),
+        )
+    } else {
+        (74, 158, 255) // default blue
+    };
+    [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 0.2]
+}
+
 /// A configured monitor position from `[[monitors]]` in lantern.toml.
 #[derive(Debug, Clone)]
 pub(crate) struct MonitorConfig {

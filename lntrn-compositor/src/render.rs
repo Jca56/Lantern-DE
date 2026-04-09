@@ -467,8 +467,8 @@ pub fn render_surface(
                     (win_w + shadow_expand * 2, win_h + shadow_expand * 2).into(),
                 );
                 // Focused windows get a subtle colored glow, others get a dark shadow
-                let (sigma, shadow_color) = if is_focused {
-                    (14.0f32, [0.4f32, 0.6, 1.0, 0.2])
+                let (sigma, shadow_color) = if is_focused && state.focus_glow {
+                    (14.0f32, state.focus_glow_color)
                 } else {
                     (12.0f32, [0.0f32, 0.0, 0.0, 0.4])
                 };
@@ -837,6 +837,8 @@ pub fn render_surface(
         }
         state.default_window_opacity = crate::read_config_f32("window_opacity", 1.0);
         state.blur_exclude = crate::read_config_list("windows", "blur_exclude");
+        state.focus_glow = crate::read_config("window_manager", "focus_glow", "true") == "true";
+        state.focus_glow_color = crate::parse_glow_color(&crate::read_config("window_manager", "focus_glow_color", "#4A9EFF"));
     }
 
     // ── Blur pipeline: render background, dual-kawase blur, insert backdrops ──

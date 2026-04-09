@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+
+use super::images::ImageManager;
 use super::performer::Performer;
 
 // ── Framework-agnostic color type ───────────────────────────────────────────
@@ -62,6 +65,8 @@ pub struct Cell {
     /// the continuation cell has `wide: Wide::Tail`.
     /// Normal single-width characters have `wide: Wide::No`.
     pub wide: Wide,
+    /// Index into TerminalState::hyperlinks, or 0 for no link.
+    pub hyperlink: u16,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -81,8 +86,18 @@ impl Default for Cell {
             italic: false,
             underline: false,
             wide: Wide::No,
+            hyperlink: 0,
         }
     }
+}
+
+/// APC interception state — Kitty graphics uses ESC _ G ... ESC \
+#[derive(Clone, Copy, PartialEq)]
+enum ApcState {
+    Normal,
+    Esc,     // Just saw ESC
+    Apc,     // Inside APC payload
+    ApcEsc,  // Saw ESC inside APC (waiting for \ to end)
 }
 
 // ── Terminal grid state ─────────────────────────────────────────────────────
@@ -155,6 +170,23 @@ pub struct TerminalState {
     // flag is set. The *next* printable character triggers the actual wrap.
     pub wrap_next: bool,
 
+    // Synchronized output (Mode 2026) — when true, suppress rendering until
+    // the application sends CSI ? 2026 l to end the synchronized update.
+    pub sync_update: bool,
+
+    // OSC 8 hyperlinks — registry of URL strings keyed by u16 ID.
+    // ID 0 means "no link". Active hyperlink is applied to new cells.
+    pub hyperlinks: HashMap<u16, String>,
+    pub active_hyperlink: u16,
+    pub hyperlink_next_id: u16,
+
+    // Kitty graphics protocol — inline images
+    pub image_manager: ImageManager,
+
+    // APC sequence state machine (for Kitty graphics: ESC _ G ... ESC \)
+    apc_state: ApcState,
+    apc_buf: Vec<u8>,
+
     // VTE parser
     parser: vte::Parser,
 }
@@ -198,18 +230,83 @@ impl TerminalState {
             selection_anchor: None,
             selection_end: None,
             wrap_next: false,
+            sync_update: false,
+            hyperlinks: HashMap::new(),
+            active_hyperlink: 0,
+            hyperlink_next_id: 1,
+            image_manager: ImageManager::new(),
+            apc_state: ApcState::Normal,
+            apc_buf: Vec::new(),
             parser: vte::Parser::new(),
         }
     }
 
-    /// Process raw bytes from the PTY through the VTE parser
+    /// Process raw bytes from the PTY through the VTE parser.
+    /// APC sequences (ESC _ ... ESC \) are detected in parallel for Kitty
+    /// graphics — vte silently discards them but we capture the payload
+    /// without interfering with vte's state machine.
     pub fn process(&mut self, data: &[u8]) {
         let mut parser = std::mem::replace(&mut self.parser, vte::Parser::new());
-        let mut performer = Performer { state: self };
-        for byte in data {
-            parser.advance(&mut performer, *byte);
+
+        for &byte in data {
+            // Always forward every byte to vte — never intercept
+            let mut performer = Performer { state: self };
+            parser.advance(&mut performer, byte);
+
+            // Parallel APC detection (read-only sniffer, doesn't eat bytes)
+            match self.apc_state {
+                ApcState::Normal => {
+                    if byte == 0x1B {
+                        self.apc_state = ApcState::Esc;
+                    }
+                }
+                ApcState::Esc => {
+                    if byte == b'_' {
+                        self.apc_state = ApcState::Apc;
+                        self.apc_buf.clear();
+                    } else {
+                        self.apc_state = ApcState::Normal;
+                    }
+                }
+                ApcState::Apc => {
+                    if byte == 0x1B {
+                        self.apc_state = ApcState::ApcEsc;
+                    } else if byte == 0x07 {
+                        self.apc_state = ApcState::Normal;
+                        self.dispatch_apc();
+                    } else {
+                        self.apc_buf.push(byte);
+                    }
+                }
+                ApcState::ApcEsc => {
+                    if byte == b'\\' {
+                        self.apc_state = ApcState::Normal;
+                        self.dispatch_apc();
+                    } else {
+                        self.apc_buf.push(0x1B);
+                        self.apc_buf.push(byte);
+                        self.apc_state = ApcState::Apc;
+                    }
+                }
+            }
         }
+
         self.parser = parser;
+    }
+
+    /// Dispatch a completed APC payload.
+    fn dispatch_apc(&mut self) {
+        if self.apc_buf.is_empty() {
+            return;
+        }
+        // Kitty graphics: first byte is 'G' (or 'g')
+        if self.apc_buf[0] == b'G' || self.apc_buf[0] == b'g' {
+            let payload = &self.apc_buf[1..];
+            let row = self.cursor_row;
+            let col = self.cursor_col;
+            self.image_manager.process_kitty(payload, row, col);
+        }
+        self.apc_buf.clear();
     }
 
     /// Resize the terminal grid
@@ -287,6 +384,7 @@ impl TerminalState {
             italic: false,
             underline: false,
             wide: Wide::No,
+            hyperlink: 0,
         }
     }
 
@@ -443,5 +541,17 @@ impl TerminalState {
     pub fn clear_selection(&mut self) {
         self.selection_anchor = None;
         self.selection_end = None;
+    }
+
+    /// Get the hyperlink URL at the given grid cell, if any.
+    pub fn hyperlink_at(&self, row: usize, col: usize) -> Option<&str> {
+        if row >= self.rows || col >= self.cols {
+            return None;
+        }
+        let id = self.grid[row][col].hyperlink;
+        if id == 0 {
+            return None;
+        }
+        self.hyperlinks.get(&id).map(|s| s.as_str())
     }
 }

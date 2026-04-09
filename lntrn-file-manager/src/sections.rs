@@ -4,17 +4,8 @@ use lntrn_ui::gpu::{
     TextLabel,
 };
 
-/// Blend accent toward warning to get a warmer amber-gold for selection highlights.
-/// Pure accent (rgb 200,134,10) reads orange at low alpha on dark bg.
-pub fn selection_tint(palette: &FoxPalette) -> Color {
-    let a = palette.accent;
-    let w = palette.warning;
-    Color {
-        r: a.r * 0.7 + w.r * 0.3,
-        g: a.g * 0.7 + w.g * 0.3,
-        b: a.b * 0.7 + w.b * 0.3,
-        a: 1.0,
-    }
+pub fn selection_tint(_palette: &FoxPalette) -> Color {
+    Color::from_rgb8(255, 200, 0)
 }
 
 use crate::{
@@ -206,6 +197,7 @@ pub fn draw_nav_bar(
     up_hovered: bool,
     path_rect: Rect,
     path_hovered: bool,
+    breadcrumb_hovered: &[bool],
     search_rect: Rect,
     search_hovered: bool,
     screen: (u32, u32),
@@ -304,13 +296,79 @@ pub fn draw_nav_bar(
             .scale(s)
             .draw(painter, text, palette, screen.0, screen.1);
     } else {
-        let path = app.current_path_display();
-        TextInput::new(path_rect)
-            .text(&path)
-            .placeholder("/")
-            .hovered(path_hovered)
-            .scale(s)
-            .draw(painter, text, palette, screen.0, screen.1);
+        // Breadcrumb path bar
+        let segments = breadcrumb_segments(&app.current_dir, s);
+        let font = 22.0 * s;
+        let char_w = font * 0.45;
+        let sep_w = 14.0 * s;
+        let pad_x = 6.0 * s;
+        let seg_width = |name: &str| -> f32 { name.len() as f32 * char_w + pad_x * 2.0 };
+        let text_y = path_rect.y + (path_rect.h - font) * 0.5;
+
+        // Compute overflow skip (must match render.rs exactly)
+        let total_w: f32 = segments.iter().enumerate().map(|(i, (name, _))| {
+            if i > 0 { seg_width(name) + sep_w } else { seg_width(name) }
+        }).sum();
+        let mut skip = 0;
+        if total_w > path_rect.w {
+            let ellipsis_w = seg_width("...") + sep_w;
+            for (i, _) in segments.iter().enumerate() {
+                let remaining: f32 = segments[i..].iter().enumerate().map(|(j, (n, _))| {
+                    if j > 0 { seg_width(n) + sep_w } else { seg_width(n) }
+                }).sum();
+                if ellipsis_w + remaining <= path_rect.w { break; }
+                skip = i + 1;
+            }
+        }
+
+        let mut cx = path_rect.x + 4.0 * s;
+
+        if skip > 0 {
+            TextLabel::new("...", cx + pad_x, text_y)
+                .size(FontSize::Custom(font))
+                .color(palette.muted)
+                .draw(text, screen.0, screen.1);
+            cx += seg_width("...");
+            let sep_x = cx + (sep_w - char_w) * 0.5;
+            TextLabel::new("/", sep_x, text_y)
+                .size(FontSize::Custom(font))
+                .color(palette.muted.with_alpha(0.3))
+                .draw(text, screen.0, screen.1);
+            cx += sep_w;
+        }
+
+        for (i, (name, _)) in segments.iter().enumerate() {
+            if i < skip { continue; }
+            if i > skip {
+                let sep_x = cx + (sep_w - char_w) * 0.5;
+                TextLabel::new("/", sep_x, text_y)
+                    .size(FontSize::Custom(font))
+                    .color(palette.muted.with_alpha(0.3))
+                    .draw(text, screen.0, screen.1);
+                cx += sep_w;
+            }
+
+            let sw = seg_width(name);
+            let is_last = i == segments.len() - 1;
+            let hover_idx = i - skip;
+            let hovered = breadcrumb_hovered.get(hover_idx).copied().unwrap_or(false);
+
+            if hovered {
+                painter.rect_filled(
+                    Rect::new(cx, path_rect.y + 2.0 * s, sw, path_rect.h - 4.0 * s),
+                    4.0 * s,
+                    palette.surface_2.with_alpha(0.4),
+                );
+            }
+
+            let color = if is_last { palette.text } else { palette.text_secondary };
+            TextLabel::new(name, cx + pad_x, text_y)
+                .size(FontSize::Custom(font))
+                .color(color)
+                .draw(text, screen.0, screen.1);
+
+            cx += sw;
+        }
     }
 
     // ── Search button ──────────────────────────────────────────────────────
@@ -585,14 +643,30 @@ pub fn draw_content_grid(
 
         // Only draw text if the label is within the visible content area
         if label_y >= content_top && label_y + label_font <= content_bottom {
-            let display_name = truncate_with_ellipsis(&entry.name, max_label_w, char_w);
-            let est_w = display_name.len() as f32 * char_w;
-            let label_x = (x + (isz - est_w) * 0.5).max(x + min_margin);
-            TextLabel::new(&display_name, label_x, label_y)
-                .size(FontSize::Custom(label_font))
-                .color(if entry.selected { palette.accent.with_alpha(alpha) } else { palette.text.with_alpha(alpha) })
-                .max_width(max_label_w)
-                .draw(text, screen.0, screen.1);
+            let label_color = palette.text.with_alpha(alpha);
+            if entry.selected {
+                let lines = wrap_lines(&entry.name, max_label_w, char_w);
+                let line_h = label_font * 1.25;
+                for (li, line) in lines.iter().enumerate() {
+                    let ly = label_y + li as f32 * line_h;
+                    let est_w = line.len() as f32 * char_w;
+                    let lx = (x + (isz - est_w) * 0.5).max(x + min_margin);
+                    TextLabel::new(line, lx, ly)
+                        .size(FontSize::Custom(label_font))
+                        .color(label_color)
+                        .max_width(max_label_w)
+                        .draw(text, screen.0, screen.1);
+                }
+            } else {
+                let display_name = truncate_with_ellipsis(&entry.name, max_label_w, char_w);
+                let est_w = display_name.len() as f32 * char_w;
+                let label_x = (x + (isz - est_w) * 0.5).max(x + min_margin);
+                TextLabel::new(&display_name, label_x, label_y)
+                    .size(FontSize::Custom(label_font))
+                    .color(label_color)
+                    .max_width(max_label_w)
+                    .draw(text, screen.0, screen.1);
+            }
         }
 
     }
@@ -742,7 +816,55 @@ pub fn draw_status_bar(
     }
 }
 
+// ── Breadcrumb helpers ──────────────────────────────────────────────────────
+
+/// Split a path into breadcrumb segments: (display_name, full_path).
+/// Replaces home prefix with "Home".
+pub fn breadcrumb_segments(path: &std::path::Path, _s: f32) -> Vec<(String, std::path::PathBuf)> {
+    let home = crate::app::dirs_home();
+    let mut segments = Vec::new();
+
+    if path.starts_with(&home) {
+        segments.push(("Home".to_string(), home.clone()));
+        if let Ok(rel) = path.strip_prefix(&home) {
+            let mut accum = home.clone();
+            for comp in rel.components() {
+                accum = accum.join(comp);
+                segments.push((comp.as_os_str().to_string_lossy().to_string(), accum.clone()));
+            }
+        }
+    } else {
+        let mut accum = std::path::PathBuf::new();
+        for comp in path.components() {
+            accum = accum.join(comp);
+            let name = if accum == std::path::PathBuf::from("/") {
+                "/".to_string()
+            } else {
+                comp.as_os_str().to_string_lossy().to_string()
+            };
+            segments.push((name, accum.clone()));
+        }
+    }
+    segments
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
+
+pub fn wrap_lines(name: &str, max_w: f32, char_w: f32) -> Vec<String> {
+    let max_chars = (max_w / char_w).floor().max(1.0) as usize;
+    let chars: Vec<char> = name.chars().collect();
+    if chars.len() <= max_chars {
+        return vec![name.to_string()];
+    }
+    let mut lines = Vec::new();
+    let mut start = 0;
+    while start < chars.len() {
+        let end = (start + max_chars).min(chars.len());
+        lines.push(chars[start..end].iter().collect());
+        start = end;
+    }
+    lines
+}
 
 pub fn truncate_with_ellipsis(name: &str, max_w: f32, char_w: f32) -> String {
     let est_w = name.len() as f32 * char_w;

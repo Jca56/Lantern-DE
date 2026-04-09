@@ -25,54 +25,22 @@ impl App {
         self.cursor_pos = Some((x, y));
         self.input.on_cursor_moved(x, y);
 
-        // Auto-show/hide tab bar on hover (with dwell delay to avoid flashing)
-        let title_h = ui_chrome::title_bar_height(&self.config.window.mode);
-        let tab_zone_bottom = title_h + tab_bar::TAB_BAR_HEIGHT;
-        let in_tab_zone = y >= title_h && y < tab_zone_bottom;
-        let tab_bar_busy = self.tab_bar.dragging.is_some()
-            || self.tab_bar.renaming.is_some()
-            || self.tab_bar.context_menu.is_some();
-
-        if in_tab_zone {
-            // Start dwell timer on enter, show after 200ms
-            self.tab_bar_leave_since = None;
-            if self.tab_bar_hover_since.is_none() {
-                self.tab_bar_hover_since = Some(Instant::now());
-            }
-            let dwell = self.tab_bar_hover_since.unwrap().elapsed();
-            if !self.tab_bar_visible && dwell >= std::time::Duration::from_millis(200) {
-                self.tab_bar_visible = true;
-                self.update_grid_size();
-                self.request_redraw();
-            } else if !self.tab_bar_visible {
-                // Schedule a redraw after the remaining dwell time
-                self.request_redraw();
-            }
-        } else {
-            self.tab_bar_hover_since = None;
-            if self.tab_bar_visible && !tab_bar_busy {
-                if self.tab_bar_leave_since.is_none() {
-                    self.tab_bar_leave_since = Some(Instant::now());
-                }
-                let away = self.tab_bar_leave_since.unwrap().elapsed();
-                if away >= std::time::Duration::from_millis(200) {
-                    self.tab_bar_visible = false;
-                    self.tab_bar_leave_since = None;
-                    self.update_grid_size();
-                    self.request_redraw();
-                } else {
-                    self.request_redraw();
-                }
-            } else {
-                self.tab_bar_leave_since = None;
-            }
-        }
 
         // Tab drag reorder
         if self.tab_bar.dragging.is_some() {
             let screen_w = self.gpu.as_ref().map_or(800, |g| g.width());
+            let drag_displays: Vec<tab_bar::TabDisplay> = self
+                .tabs
+                .iter()
+                .map(|t| {
+                    let title = t.custom_name.as_deref().unwrap_or_else(|| {
+                        t.panes.get(t.active_pane).map_or("Shell", |p| p.title.as_str())
+                    });
+                    tab_bar::TabDisplay { title, pinned: t.pinned }
+                })
+                .collect();
             if let Some(action) =
-                tab_bar::handle_drag_move(&mut self.tab_bar, x, self.tabs.len(), screen_w)
+                tab_bar::handle_drag_move(&mut self.tab_bar, x, &drag_displays, screen_w)
             {
                 if let tab_bar::TabBarAction::Reorder { from, to } = action {
                     let tab = self.tabs.remove(from);
@@ -112,9 +80,26 @@ impl App {
                 return EventResult::Handled;
             }
         }
+
+        // Check if hovering over a hyperlink
+        let hovering_link = if !self.tabs.is_empty() {
+            if let Some((_pane_idx, row, col)) = self.pixel_to_pane_cell(x, y) {
+                let tab = &self.tabs[self.active_tab];
+                tab.panes[tab.active_pane].terminal.hyperlink_at(row, col).is_some()
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
         if self.selecting {
             if let Some(ref window) = self.window {
                 window.set_cursor(CursorIcon::Text);
+            }
+        } else if hovering_link {
+            if let Some(ref window) = self.window {
+                window.set_cursor(CursorIcon::Pointer);
             }
         } else if let Some(ref window) = self.window {
             window.set_cursor(CursorIcon::Default);
@@ -352,11 +337,29 @@ impl App {
             }
         }
 
-        // Click wasn't on chrome — start text selection / switch active pane
+        // Click wasn't on chrome — check for hyperlink click or start text selection
         if !self.chrome.has_overlay() {
             if let Some((x, y)) = self.cursor_pos {
                 if let Some((pane_idx, row, col)) = self.pixel_to_pane_cell(x, y) {
                     if !self.tabs.is_empty() {
+                        // Ctrl+Click on hyperlink opens the URL
+                        let ctrl = self.modifiers.contains(ModifiersState::CONTROL);
+                        if ctrl {
+                            let tab = &self.tabs[self.active_tab];
+                            if let Some(url) = tab.panes[pane_idx].terminal.hyperlink_at(row, col) {
+                                let url = url.to_string();
+                                std::thread::spawn(move || {
+                                    let _ = std::process::Command::new("xdg-open")
+                                        .arg(&url)
+                                        .stdout(std::process::Stdio::null())
+                                        .stderr(std::process::Stdio::null())
+                                        .status();
+                                });
+                                self.request_redraw();
+                                return EventResult::Handled;
+                            }
+                        }
+
                         let tab = &mut self.tabs[self.active_tab];
                         tab.active_pane = pane_idx;
                         let terminal = &mut tab.panes[pane_idx].terminal;
@@ -402,10 +405,20 @@ impl App {
             return;
         }
 
+        let tab_displays: Vec<tab_bar::TabDisplay> = self
+            .tabs
+            .iter()
+            .map(|t| {
+                let title = t.custom_name.as_deref().unwrap_or_else(|| {
+                    t.panes.get(t.active_pane).map_or("Shell", |p| p.title.as_str())
+                });
+                tab_bar::TabDisplay { title, pinned: t.pinned }
+            })
+            .collect();
         if tab_bar::handle_right_click(
             &mut self.tab_bar,
             self.cursor_pos,
-            self.tabs.len(),
+            &tab_displays,
             screen_w,
         ) {
             self.chrome.close_all_menus();
@@ -488,6 +501,8 @@ impl App {
                     if let Some(action) = tab_bar::handle_rename_key(&mut self.tab_bar, key) {
                         self.handle_tab_bar_action(action, event_loop);
                     }
+                } else if let winit::keyboard::Key::Named(winit::keyboard::NamedKey::Space) = &event.logical_key {
+                    tab_bar::handle_rename_char(&mut self.tab_bar, ' ');
                 } else if let winit::keyboard::Key::Character(s) = &event.logical_key {
                     for ch in s.chars() {
                         tab_bar::handle_rename_char(&mut self.tab_bar, ch);

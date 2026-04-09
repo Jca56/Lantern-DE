@@ -36,7 +36,7 @@ fn chrono_now() -> String {
     format!("{y}-{:02}-{:02}T{hours:02}:{mins:02}:{s:02}", m + 1, remaining + 1)
 }
 
-fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+pub fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
@@ -113,22 +113,35 @@ impl App {
         } else {
             match op {
                 ClipboardOp::Copy(paths) => {
+                    let mut created = Vec::new();
                     for src in &paths {
                         let name = src.file_name().unwrap_or_default();
                         let target = dest.join(name);
-                        if src.is_dir() {
-                            let _ = copy_dir_recursive(src, &target);
+                        let ok = if src.is_dir() {
+                            copy_dir_recursive(src, &target).is_ok()
                         } else {
-                            let _ = std::fs::copy(src, &target);
-                        }
+                            std::fs::copy(src, &target).is_ok()
+                        };
+                        if ok { created.push(target); }
+                    }
+                    if !created.is_empty() {
+                        self.undo_stack.push(crate::undo::UndoAction::Copy {
+                            sources: paths.clone(), created,
+                        });
                     }
                     self.clipboard = Some(ClipboardOp::Copy(paths));
                 }
                 ClipboardOp::Cut(paths) => {
+                    let mut moves = Vec::new();
                     for src in &paths {
                         let name = src.file_name().unwrap_or_default();
                         let target = dest.join(name);
-                        let _ = std::fs::rename(src, &target);
+                        if std::fs::rename(src, &target).is_ok() {
+                            moves.push((src.clone(), target));
+                        }
+                    }
+                    if !moves.is_empty() {
+                        self.undo_stack.push(crate::undo::UndoAction::Move(moves));
                     }
                 }
             }
@@ -138,23 +151,23 @@ impl App {
 
     pub fn trash_selected(&mut self) {
         if self.root_mode {
-            // In root mode, just delete (trash doesn't make sense for root files)
             self.delete_selected();
             return;
         }
         let trash_dir = trash_dir();
-        let trash_info = trash_dir.join("info");
-        let trash_files = trash_dir.join("files");
-        let _ = std::fs::create_dir_all(&trash_info);
-        let _ = std::fs::create_dir_all(&trash_files);
+        let trash_info_dir = trash_dir.join("info");
+        let trash_files_dir = trash_dir.join("files");
+        let _ = std::fs::create_dir_all(&trash_info_dir);
+        let _ = std::fs::create_dir_all(&trash_files_dir);
 
+        let mut undo_entries = Vec::new();
         for entry in &self.entries {
             if !entry.selected { continue; }
             let name = entry.path.file_name().unwrap_or_default().to_string_lossy().to_string();
 
             let mut dest_name = name.clone();
             let mut counter = 1u32;
-            while trash_files.join(&dest_name).exists() {
+            while trash_files_dir.join(&dest_name).exists() {
                 let stem = std::path::Path::new(&name).file_stem()
                     .map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
                 let ext = std::path::Path::new(&name).extension()
@@ -168,8 +181,15 @@ impl App {
                 "[Trash Info]\nPath={}\nDeletionDate={}\n",
                 entry.path.display(), now
             );
-            let _ = std::fs::write(trash_info.join(format!("{dest_name}.trashinfo")), info_content);
-            let _ = std::fs::rename(&entry.path, trash_files.join(&dest_name));
+            let info_path = trash_info_dir.join(format!("{dest_name}.trashinfo"));
+            let file_path = trash_files_dir.join(&dest_name);
+            let _ = std::fs::write(&info_path, info_content);
+            if std::fs::rename(&entry.path, &file_path).is_ok() {
+                undo_entries.push((entry.path.clone(), file_path, info_path));
+            }
+        }
+        if !undo_entries.is_empty() {
+            self.undo_stack.push(crate::undo::UndoAction::Trash(undo_entries));
         }
         self.reload();
     }
@@ -241,7 +261,9 @@ impl App {
             .collect();
         if paths.is_empty() { return; }
         let text = paths.join("\n");
-        wl_copy(text);
+        if let Some(clip) = &self.wayland_clipboard {
+            clip.set_text(&text);
+        }
     }
 
     pub fn copy_name_to_clipboard(&self) {
@@ -251,7 +273,9 @@ impl App {
             .collect();
         if names.is_empty() { return; }
         let text = names.join("\n");
-        wl_copy(text);
+        if let Some(clip) = &self.wayland_clipboard {
+            clip.set_text(&text);
+        }
     }
 
     pub fn duplicate_selected(&mut self) {
@@ -276,18 +300,23 @@ impl App {
             let dest = parent.join(&dest_name);
             if root_mode {
                 let src = path.clone();
+                let d = dest.clone();
                 std::thread::spawn(move || {
                     let _ = std::process::Command::new("pkexec")
                         .args(["cp", "-r", "--"])
-                        .arg(&src).arg(&dest)
+                        .arg(&src).arg(&d)
                         .status();
                 });
             } else if is_dir {
                 let src = path.clone();
-                std::thread::spawn(move || { let _ = copy_dir_recursive(&src, &dest); });
+                let d = dest.clone();
+                std::thread::spawn(move || { let _ = copy_dir_recursive(&src, &d); });
             } else {
                 let _ = std::fs::copy(&path, &dest);
             }
+            self.undo_stack.push(crate::undo::UndoAction::Copy {
+                sources: vec![path], created: vec![dest],
+            });
         }
         self.reload();
     }
@@ -420,20 +449,6 @@ impl App {
     }
 }
 
-pub(crate) fn wl_copy(text: String) {
-    // lntrn-copy stays alive to serve paste requests until another client
-    // takes the clipboard. We wait for it in a background thread so the
-    // Child handle isn't dropped prematurely.
-    std::thread::spawn(move || {
-        match std::process::Command::new("lntrn-copy")
-            .arg(&text)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-        {
-            Ok(mut child) => { let _ = child.wait(); }
-            Err(e) => eprintln!("wl_copy: failed to spawn lntrn-copy: {e}"),
-        }
-    });
+pub(crate) fn _wl_copy(_text: String) {
+    // Deprecated — native Wayland clipboard (clipboard.rs) is used instead.
 }

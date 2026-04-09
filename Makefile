@@ -28,7 +28,8 @@ BINARIES := \
 	lntrn-calculator \
 	lntrn-sysmon \
 	lntrn-snapshot \
-	lntrn-snapshot-gui
+	lntrn-snapshot-gui \
+	lntrn-screencopy
 
 # Extra binaries from multi-binary crates
 EXTRA_BINARIES := lntrn-copy lntrn-paste notify-send
