@@ -187,6 +187,7 @@ pub fn draw_monitor_arrange(
     s: f32,
     sw: u32,
     sh: u32,
+    show_header: bool,
 ) -> f32 {
     let pad = PAD * s;
     let canvas_h = CANVAS_H * s;
@@ -196,9 +197,13 @@ pub fn draw_monitor_arrange(
 
     mas.sync_from_outputs(outputs, config);
 
-    // Section label
-    text.queue("Displays", label_sz, x + pad, y + pad, fox.text, w, sw, sh);
-    let canvas_y = y + pad + label_sz + 12.0 * s;
+    // Section label (skipped when drawn inside a card with its own header)
+    let canvas_y = if show_header {
+        text.queue("Displays", label_sz, x + pad, y + pad, fox.text, w, sw, sh);
+        y + pad + label_sz + 12.0 * s
+    } else {
+        y
+    };
     let canvas_w = w - pad * 2.0;
 
     // Canvas background

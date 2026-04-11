@@ -5,6 +5,7 @@ mod actions;
 pub(crate) mod clipboard_tab;
 mod draw;
 pub(crate) mod notes;
+mod power_modal;
 mod sidebar;
 pub(crate) mod sysmon;
 mod sysmon_draw;
@@ -33,8 +34,9 @@ pub(crate) const ZONE_CTX: u32 = 0xBD_0000;
 pub(crate) const ZONE_POWER: u32 = 0xBE_0000;
 pub(crate) const ZONE_TAB: u32 = 0xBF_0000;
 pub(crate) const ZONE_CAT: u32 = 0xBC_0000;
+pub(crate) const ZONE_PWR_MODAL: u32 = 0xBA_0000;
 
-pub(crate) const SIDEBAR_W: f32 = 140.0;
+pub(crate) const SIDEBAR_W: f32 = 200.0;
 
 pub(crate) const RESIZE_EDGE: f32 = 6.0;
 
@@ -95,6 +97,8 @@ pub struct AppMenu {
     pub(crate) dragging: Option<ResizeEdge>,
     pub(crate) drag_start: (f32, f32),
     pub(crate) drag_start_size: (f32, f32),
+    /// Power confirmation modal — Some when awaiting confirm/cancel.
+    pub(crate) pending_power: Option<power_modal::PowerAction>,
 }
 
 impl AppMenu {
@@ -121,6 +125,7 @@ impl AppMenu {
             dragging: None,
             drag_start: (0.0, 0.0),
             drag_start_size: (0.0, 0.0),
+            pending_power: None,
         };
         menu.load_favorites();
         menu
@@ -137,6 +142,7 @@ impl AppMenu {
             self.search.clear();
             self.scroll_offset = 0.0;
             self.ctx_open = false;
+            self.pending_power = None;
             self.active_tab = MenuTab::Apps;
             self.selected_category = Category::Favorites;
         }
@@ -145,6 +151,7 @@ impl AppMenu {
     pub fn close(&mut self) {
         self.open = false;
         self.ctx_open = false;
+        self.pending_power = None;
         self.sysmon.filter_focused = false;
         self.clipboard.search_focused = false;
         self.notes.save_all();
@@ -167,6 +174,8 @@ impl AppMenu {
     pub fn contains(&self, x: f32, y: f32) -> bool {
         if !self.open { return false; }
         if self.ctx_open { return true; }
+        // Modal locks all input — keep the menu alive regardless of click position
+        if self.pending_power.is_some() { return true; }
 
         let edge = RESIZE_EDGE * 2.0;
         let b = &self.bounds;
@@ -253,6 +262,14 @@ impl AppMenu {
     /// Handle keyboard input — returns true if consumed.
     pub fn on_key(&mut self, key: u32, shift: bool) -> bool {
         if !self.open || self.ctx_open { return false; }
+        // Power modal: Esc cancels, Enter confirms, eat all other keys
+        if let Some(action) = self.pending_power {
+            match key {
+                1 => { self.pending_power = None; return true; } // Esc
+                28 => { action.execute(); self.pending_power = None; return true; } // Enter
+                _ => return true,
+            }
+        }
         // Notes editor gets priority when editing
         if self.active_tab == MenuTab::Notes && self.notes.wants_keyboard() {
             return self.notes.on_key(key, shift);
@@ -337,6 +354,27 @@ impl AppMenu {
     }
 
     pub fn on_left_click(&mut self, phys_x: f32, phys_y: f32, ix: &InteractionContext, scale: f32) {
+        // Power confirmation modal intercepts everything else
+        if let Some(action) = self.pending_power {
+            let zone = ix.zone_at(phys_x, phys_y);
+            match zone {
+                Some(z) if z == power_modal::ZONE_CONFIRM => {
+                    action.execute();
+                    self.pending_power = None;
+                }
+                Some(z) if z == power_modal::ZONE_CANCEL => {
+                    self.pending_power = None;
+                }
+                Some(z) if z == power_modal::ZONE_BACKDROP => {
+                    self.pending_power = None;
+                }
+                _ => {
+                    // Anywhere else inside the menu: also cancel
+                    self.pending_power = None;
+                }
+            }
+            return;
+        }
         if self.ctx_open {
             let menu_w = 250.0 * scale;
             let menu_h = (40.0 * 4.0 + 8.0) * scale;
@@ -501,7 +539,7 @@ impl AppMenu {
         }
 
         // Category sidebar icons
-        let cat_sz = (18.0 * scale) as u32;
+        let cat_sz = (22.0 * scale) as u32;
         let icons_dir = crate::lantern_icons_dir();
         for &cat in Category::SIDEBAR_ORDER {
             let key = format!("cat_{}", cat.label());
@@ -518,6 +556,14 @@ impl AppMenu {
             let key = format!("power_{key_name}");
             if icon_cache.get(&key).is_some() { continue; }
             icon_cache.load_embedded(tex_pass, gpu, &key, svg_file, pwr_sz, pwr_sz);
+        }
+
+        // Larger variants for the power confirmation modal
+        let pwr_modal_sz = (80.0 * scale) as u32;
+        for (key_name, _label, svg_file) in draw::POWER_ICONS {
+            let key = format!("power_modal_{key_name}");
+            if icon_cache.get(&key).is_some() { continue; }
+            icon_cache.load_embedded(tex_pass, gpu, &key, svg_file, pwr_modal_sz, pwr_modal_sz);
         }
     }
 }

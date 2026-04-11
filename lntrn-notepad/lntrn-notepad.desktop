@@ -1,6 +1,10 @@
 [Desktop Entry]
 Type=Application
 Name=Notepad
-Exec=lntrn-notepad
+GenericName=Document Editor
+Comment=Write and format documents
+Exec=lntrn-notepad %F
 Icon=lntrn-notepad
-Categories=Utility;TextEditor;
+Terminal=false
+Categories=Office;WordProcessor;
+MimeType=text/plain;text/x-readme;text/csv;text/tab-separated-values;

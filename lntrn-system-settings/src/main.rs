@@ -9,9 +9,11 @@ mod input_panel;
 mod monitor_arrange;
 mod panels;
 mod popup_backend;
+mod power_panel;
 mod text_edit;
 mod wallpaper_picker;
 mod wayland;
+mod wayland_state;
 
 fn main() {
     if let Err(e) = wayland::run() {

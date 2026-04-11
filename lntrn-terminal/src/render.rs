@@ -24,12 +24,12 @@ const CORNER_RADIUS: f32 = 10.0;
 /// Draw the window background with rounded corners matching the compositor.
 /// When maximized, corners are square (radius=0) so the bg doesn't bleed through.
 ///
-/// The TitleBar widget draws its own background, so we only fill:
-///   1. Full window bg (rounded rect for transparency)
-///   2. Tab bar area (below gradient strip, above terminal)
+/// `ui_chrome::draw_chrome` paints its own bar background on top of this, so
+/// we only need to fill the full window with the terminal bg color (Fox) or
+/// the night sky gradient.
 pub fn draw_window_bg(
     painter: &mut Painter,
-    title_bar_color: Color,
+    _title_bar_color: Color,
     bg_color: Color,
     w: f32,
     h: f32,
@@ -40,23 +40,9 @@ pub fn draw_window_bg(
         WindowMode::Fox => {
             let r = if maximized { 0.0 } else { CORNER_RADIUS };
             painter.rect_filled(Rect::new(0.0, 0.0, w, h), r, bg_color);
-            let tab_bar_y = crate::ui_chrome::TITLE_BAR_HEIGHT;
-            let tab_bar_h = crate::tab_bar::TAB_BAR_HEIGHT;
-            painter.rect_filled(
-                Rect::new(0.0, tab_bar_y, w, tab_bar_h),
-                0.0,
-                title_bar_color,
-            );
         }
         WindowMode::NightSky => {
             crate::night_sky::draw_background(painter, w, h, maximized);
-            let tab_bar_y = crate::night_sky::TITLE_BAR_HEIGHT;
-            let tab_bar_h = crate::tab_bar::TAB_BAR_HEIGHT;
-            painter.rect_filled(
-                Rect::new(0.0, tab_bar_y, w, tab_bar_h),
-                0.0,
-                crate::night_sky::TAB_BAR_BG,
-            );
             crate::night_sky::draw_border(painter, w, h, maximized);
         }
     }
@@ -158,7 +144,9 @@ pub fn draw_terminal_ex(
 
     // ── Selection highlight ───────────────────────────────────────────
     if terminal.selection_range().is_some() {
-        let sel_color = Color::from_rgba8(200, 134, 10, 100);
+        // Punchier gold so the highlight reads as gold (not orange) when
+        // alpha-blended over the dark terminal background.
+        let sel_color = Color::from_rgba8(255, 200, 0, 110);
         for row in 0..render_rows {
             for col in 0..terminal.cols {
                 if terminal.is_selected(row, col) {

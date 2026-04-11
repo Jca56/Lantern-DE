@@ -2,6 +2,34 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::process::Command;
 
+// ── Window chrome mode ───────────────────────────────────────────────────────
+
+/// Visual style of the system-settings window chrome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowMode {
+    Fox,
+    NightSky,
+}
+
+impl Default for WindowMode {
+    fn default() -> Self { Self::Fox }
+}
+
+impl WindowMode {
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "night_sky" | "nightsky" | "NightSky" => Self::NightSky,
+            _ => Self::Fox,
+        }
+    }
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Fox => "fox",
+            Self::NightSky => "night_sky",
+        }
+    }
+}
+
 // ── Top-level Lantern config ─────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -28,7 +56,12 @@ pub struct AppearanceConfig {
     pub font_size: f32,
     pub wallpaper: String,
     pub wallpaper_directory: String,
+    /// Visual style of app windows: "fox" or "night_sky"
+    #[serde(default = "default_window_style")]
+    pub window_style: String,
 }
+
+fn default_window_style() -> String { "fox".into() }
 
 impl Default for AppearanceConfig {
     fn default() -> Self {
@@ -40,7 +73,14 @@ impl Default for AppearanceConfig {
             font_size: 16.0,
             wallpaper: String::new(),
             wallpaper_directory: format!("{}/Pictures/Wallpapers", home),
+            window_style: default_window_style(),
         }
+    }
+}
+
+impl AppearanceConfig {
+    pub fn window_mode(&self) -> WindowMode {
+        WindowMode::from_str(&self.window_style)
     }
 }
 
@@ -56,6 +96,7 @@ pub struct WmConfig {
     pub focus_follows_mouse: bool,
     pub focus_glow: bool,
     pub focus_glow_color: String,
+    pub focus_glow_intensity: f32,
 }
 
 impl Default for WmConfig {
@@ -68,6 +109,7 @@ impl Default for WmConfig {
             focus_follows_mouse: false,
             focus_glow: true,
             focus_glow_color: "#4A9EFF".into(),
+            focus_glow_intensity: 0.2,
         }
     }
 }
@@ -102,11 +144,15 @@ impl Default for WindowsConfig {
 #[serde(default)]
 pub struct InputConfig {
     pub mouse_speed: f32,
-    pub mouse_acceleration: bool,
-    pub natural_scroll: bool,
-    pub tap_to_click: bool,
-    pub keyboard_repeat_delay: u32,
-    pub keyboard_repeat_rate: u32,
+    /// libinput acceleration profile: true = adaptive, false = flat.
+    pub pointer_acceleration: bool,
+    /// Scroll wheel speed multiplier (0.25 – 3.0, default 1.0).
+    pub scroll_speed: f32,
+    /// File-manager click behavior: true = activate on single click,
+    /// false = activate on double click.
+    pub single_click_activate: bool,
+    /// Cursor size in pixels (16 – 64, default 24).
+    pub cursor_size: u32,
     pub cursor_theme: String,
 }
 
@@ -114,11 +160,10 @@ impl Default for InputConfig {
     fn default() -> Self {
         Self {
             mouse_speed: 0.0,
-            mouse_acceleration: true,
-            natural_scroll: false,
-            tap_to_click: true,
-            keyboard_repeat_delay: 300,
-            keyboard_repeat_rate: 25,
+            pointer_acceleration: true,
+            scroll_speed: 1.0,
+            single_click_activate: false,
+            cursor_size: 24,
             cursor_theme: "default".into(),
         }
     }
@@ -321,14 +366,16 @@ impl LanternConfig {
         if lntrn_render::Color::from_hex(&self.window_manager.focus_glow_color).is_none() {
             self.window_manager.focus_glow_color = "#4A9EFF".into();
         }
+        self.window_manager.focus_glow_intensity =
+            self.window_manager.focus_glow_intensity.clamp(0.0, 0.6);
         self.windows.window_opacity = self.windows.window_opacity.clamp(0.1, 1.0);
         self.windows.blur_intensity = self.windows.blur_intensity.clamp(0.0, 1.0);
         self.windows.blur_tint = self.windows.blur_tint.clamp(0.0, 1.0);
         self.windows.blur_darken = self.windows.blur_darken.clamp(0.0, 1.0);
         self.windows.background_opacity = self.windows.background_opacity.clamp(0.0, 1.0);
         self.input.mouse_speed = self.input.mouse_speed.clamp(-1.0, 1.0);
-        self.input.keyboard_repeat_delay = self.input.keyboard_repeat_delay.clamp(100, 2000);
-        self.input.keyboard_repeat_rate = self.input.keyboard_repeat_rate.clamp(1, 100);
+        self.input.scroll_speed = self.input.scroll_speed.clamp(0.25, 3.0);
+        self.input.cursor_size = self.input.cursor_size.clamp(16, 64);
         self.display.scale = self.display.scale.clamp(0.5, 3.0);
         if !["active", "balanced", "battery"].contains(&self.power.wifi_power_scheme.as_str()) {
             self.power.wifi_power_scheme = "balanced".into();

@@ -201,6 +201,7 @@ pub struct Lantern {
     pub window_zoom: HashMap<WlSurface, f64>,
     pub focus_glow: bool,
     pub focus_glow_color: [f32; 4],
+    pub focus_glow_intensity: f32,
     pub focus_follows_mouse: bool,
     pub super_pressed: bool,
     /// True if Super was pressed and no Super+combo was used (for tap detection)
@@ -238,7 +239,6 @@ pub struct Lantern {
 
     // Input settings (read from lantern.toml)
     pub mouse_speed: f64,
-    pub mouse_acceleration: bool,
     pub cursor_theme_name: String,
     pub input_config_counter: u32,
 
@@ -343,6 +343,8 @@ impl Lantern {
             window_zoom: HashMap::new(),
             focus_glow: crate::read_config("window_manager", "focus_glow", "true") == "true",
             focus_glow_color: crate::parse_glow_color(&crate::read_config("window_manager", "focus_glow_color", "#4A9EFF")),
+            focus_glow_intensity: crate::read_config("window_manager", "focus_glow_intensity", "0.2")
+                .parse::<f32>().unwrap_or(0.2).clamp(0.0, 0.6),
             focus_follows_mouse: crate::read_config("window_manager", "focus_follows_mouse", "false") == "true",
             super_pressed: false,
             super_clean_tap: false,
@@ -363,7 +365,6 @@ impl Lantern {
             last_exclusive_offsets: (0, 0, 0, 0),
             ssd: SsdManager::new(),
             mouse_speed: crate::input::read_input_setting_f64("mouse_speed", 0.0),
-            mouse_acceleration: crate::input::read_input_setting("mouse_acceleration", "true") == "true",
             cursor_theme_name: crate::input::read_input_setting("cursor_theme", "default"),
             input_config_counter: 0,
             hover_preview: crate::hover_preview::HoverPreview::new(),

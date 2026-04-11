@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Code
+GenericName=Code Editor
+Comment=Edit source code with syntax highlighting
+Exec=lntrn-code %F
+Icon=/home/alva/.lantern/icons/lntrn-code.svg
+Terminal=false
+Categories=Development;TextEditor;IDE;
+MimeType=text/markdown;text/x-markdown;text/x-log;text/x-changelog;text/x-tex;text/x-shellscript;text/x-python;text/x-rust;text/x-c;text/x-c++;text/x-java;text/x-go;text/x-toml;text/x-yaml;application/x-yaml;application/json;application/xml;text/xml;text/css;application/javascript;text/javascript;

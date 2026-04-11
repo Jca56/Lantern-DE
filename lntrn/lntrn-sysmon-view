@@ -1,0 +1,598 @@
+#!/usr/bin/env python3
+"""lntrn-sysmon-view — fancy TUI system monitor dashboard.
+
+r/unixporn vibes: gradient bars, sparkline history, per-thread grid, live
+network/disk rates, top processes. /proc + /sys only, no external deps.
+Launched by `lntrn --sysmon`.
+"""
+import fcntl, glob, os, re, select, shutil, signal, sys, termios, time, tty, unicodedata
+from collections import deque
+
+# ── Config ─────────────────────────────────────────────────────────────────
+POLL = 2.0       # seconds per frame
+HIST = 60        # samples retained per rolling metric
+MIN_COLS = 72    # below this we show a friendly notice
+
+# ── ANSI primitives ────────────────────────────────────────────────────────
+CSI = '\x1b['
+RESET, BOLD = CSI+'0m', CSI+'1m'
+HIDE_CUR, SHOW_CUR = CSI+'?25l', CSI+'?25h'
+ALT_ON, ALT_OFF = CSI+'?1049h', CSI+'?1049l'
+HOME, CLR_SCREEN = CSI+'H', CSI+'2J'
+CLR_LINE, CLR_EOS = CSI+'K', CSI+'J'
+def fg(c): return f'{CSI}38;2;{c[0]};{c[1]};{c[2]}m'
+
+# ── Theme ──────────────────────────────────────────────────────────────────
+AMBER      = (212, 160,  32)
+AMBER_HI   = (255, 186,  72)
+AMBER_DIM  = (135, 100,  55)
+BORDER_CLR = ( 95,  68,  30)
+TEXT       = (225, 205, 175)
+TEXT_DIM   = (150, 130, 100)
+TEXT_MUTED = ( 95,  85,  75)
+GREEN      = (100, 205, 115)
+YELLOW     = (240, 205,  70)
+ORANGE     = (240, 150,  55)
+RED        = (240,  70,  50)
+BLUE       = (100, 170, 235)
+CYAN       = ( 70, 195, 210)
+PURPLE     = (200, 130, 230)
+PINK       = (240, 120, 175)
+
+# ── Glyphs ─────────────────────────────────────────────────────────────────
+BAR_FILL, BAR_EMPTY = '█', '░'
+SPARK = '▁▂▃▄▅▆▇█'
+BOX_TL, BOX_TR, BOX_BL, BOX_BR = '╭', '╮', '╰', '╯'
+BOX_H, BOX_V = '─', '│'
+ARROW_DOWN, ARROW_UP, BOLT = '↓', '↑', '⚡'
+
+# ── Color math ─────────────────────────────────────────────────────────────
+def lerp(a, b, t):
+    return (int(a[0]+(b[0]-a[0])*t), int(a[1]+(b[1]-a[1])*t), int(a[2]+(b[2]-a[2])*t))
+def grad_pct(pct):
+    pct = 0 if pct < 0 else (100 if pct > 100 else pct)
+    if pct < 40: return lerp(GREEN, YELLOW, pct/40)
+    if pct < 75: return lerp(YELLOW, ORANGE, (pct-40)/35)
+    return lerp(ORANGE, RED, (pct-75)/25)
+
+# ── Visible width (ANSI + wide-char aware) ─────────────────────────────────
+ANSI_RE = re.compile(r'\x1b\[[0-9;]*[A-Za-z]')
+def char_w(ch):
+    return 2 if unicodedata.east_asian_width(ch) in ('W', 'F') else 1
+def vlen(s):
+    return sum(char_w(c) for c in ANSI_RE.sub('', s))
+def vtrunc(s, n):
+    if n <= 0: return ''
+    out, visible, i, L = [], 0, 0, len(s)
+    while i < L:
+        if s[i] == '\x1b':
+            j = i + 1
+            if j < L and s[j] == '[':
+                j += 1
+                while j < L and not s[j].isalpha(): j += 1
+                if j < L: j += 1
+            out.append(s[i:j]); i = j
+        else:
+            w = char_w(s[i])
+            if visible + w > n: break
+            out.append(s[i]); visible += w; i += 1
+    out.append(RESET)
+    return ''.join(out)
+def pad_to(s, n):
+    v = vlen(s)
+    return vtrunc(s, n) if v > n else s + ' '*(n-v)
+
+# ── /proc + /sys readers ───────────────────────────────────────────────────
+def _ri(p):
+    try:
+        with open(p) as f: return int(f.read().strip())
+    except (OSError, ValueError): return None
+def _rs(p):
+    try:
+        with open(p) as f: return f.read().strip()
+    except OSError: return None
+
+def read_cpu_stat():
+    """'cpu' → (total, idle); 'cpu0' → (total, idle); ..."""
+    out = {}
+    try:
+        with open('/proc/stat') as f:
+            for line in f:
+                if not line.startswith('cpu'): break
+                parts = line.split()
+                name = parts[0]
+                if name != 'cpu' and not name[3:].isdigit(): continue
+                vals = [int(x) for x in parts[1:]]
+                idle = vals[3] + (vals[4] if len(vals) > 4 else 0)
+                out[name] = (sum(vals), idle)
+    except OSError: pass
+    return out
+
+def delta_pct(prev, cur):
+    if not prev or not cur: return 0
+    dt = cur[0] - prev[0]; di = cur[1] - prev[1]
+    return 0 if dt <= 0 else int(100 * (dt - di) / dt)
+
+def read_meminfo():
+    out = {}
+    try:
+        with open('/proc/meminfo') as f:
+            for line in f:
+                k, _, rest = line.partition(':')
+                try: out[k] = int(rest.strip().split()[0])
+                except (ValueError, IndexError): pass
+    except OSError: pass
+    return out
+
+def read_net():
+    rx = tx = 0
+    try:
+        with open('/proc/net/dev') as f:
+            f.readline(); f.readline()
+            for line in f:
+                iface, _, rest = line.partition(':')
+                iface = iface.strip()
+                if iface == 'lo' or iface.startswith(('docker','veth','br-','virbr')): continue
+                parts = rest.split()
+                rx += int(parts[0]); tx += int(parts[8])
+    except (OSError, ValueError, IndexError): pass
+    return rx, tx
+
+_REAL_DISK = re.compile(r'^(sd[a-z]+|nvme\d+n\d+|mmcblk\d+|hd[a-z]+|vd[a-z]+)$')
+def read_disk():
+    r = w = 0
+    try:
+        with open('/proc/diskstats') as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) < 14 or not _REAL_DISK.match(parts[2]): continue
+                r += int(parts[5]) * 512
+                w += int(parts[9]) * 512
+    except (OSError, ValueError): pass
+    return r, w
+
+def read_loadavg():
+    try:
+        with open('/proc/loadavg') as f: parts = f.read().split()
+        return (float(parts[0]), float(parts[1]), float(parts[2]), parts[3])
+    except (OSError, ValueError, IndexError): return (0.0, 0.0, 0.0, '0/0')
+
+def read_uptime():
+    try:
+        with open('/proc/uptime') as f: return float(f.read().split()[0])
+    except (OSError, ValueError): return 0
+
+def read_temp():
+    """CPU package temp in °C, or None."""
+    for hwmon in sorted(glob.glob('/sys/class/hwmon/hwmon*')):
+        name = _rs(os.path.join(hwmon, 'name')) or ''
+        if name in ('coretemp', 'k10temp', 'zenpower'):
+            for inp in sorted(glob.glob(os.path.join(hwmon, 'temp*_input'))):
+                lbl = _rs(inp.replace('_input', '_label')) or ''
+                if 'Package' in lbl or 'Tdie' in lbl or 'Tctl' in lbl:
+                    v = _ri(inp)
+                    if v: return v / 1000
+            v = _ri(os.path.join(hwmon, 'temp1_input'))
+            if v: return v / 1000
+    v = _ri('/sys/class/thermal/thermal_zone0/temp')
+    return v / 1000 if v else None
+
+def read_cpu_freq_avg():
+    freqs = [v for f in glob.glob('/sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_cur_freq')
+             if (v := _ri(f))]
+    return sum(freqs)/len(freqs)/1000 if freqs else None  # MHz
+
+def read_gpu_busy():
+    for p in sorted(glob.glob('/sys/class/drm/card[0-9]/device/gpu_busy_percent')):
+        v = _ri(p)
+        if v is not None: return v
+    for d in sorted(glob.glob('/sys/class/drm/card[0-9]/')):
+        act = _ri(os.path.join(d, 'gt_act_freq_mhz'))
+        mx  = _ri(os.path.join(d, 'gt_max_freq_mhz'))
+        if act is not None and mx: return int(act * 100 / mx)
+    return None
+
+def read_gpu_freq():
+    for d in sorted(glob.glob('/sys/class/drm/card[0-9]/')):
+        v = _ri(os.path.join(d, 'gt_act_freq_mhz'))
+        if v is not None: return v
+    return None
+
+def read_gpu_temp():
+    for hwmon in sorted(glob.glob('/sys/class/hwmon/hwmon*')):
+        if (_rs(os.path.join(hwmon, 'name')) or '') in ('amdgpu', 'nouveau', 'i915'):
+            for inp in sorted(glob.glob(os.path.join(hwmon, 'temp*_input'))):
+                v = _ri(inp)
+                if v: return v / 1000
+    return None
+
+def read_battery():
+    for bat in sorted(glob.glob('/sys/class/power_supply/BAT*')):
+        cap = _ri(os.path.join(bat, 'capacity'))
+        status = _rs(os.path.join(bat, 'status')) or ''
+        if cap is not None: return cap, status
+    return None, None
+
+_HZ   = os.sysconf('SC_CLK_TCK') or 100
+_PAGE = os.sysconf('SC_PAGE_SIZE') or 4096
+
+def snapshot_procs():
+    """{pid: {'comm', 'cputime', 'rss'}} — a single point-in-time sample."""
+    out = {}
+    try: entries = os.listdir('/proc')
+    except OSError: return out
+    for d in entries:
+        if not d.isdigit(): continue
+        try:
+            with open(f'/proc/{d}/stat') as f: stat = f.read()
+            lpar, rpar = stat.index('('), stat.rindex(')')
+            comm = stat[lpar+1:rpar]
+            rest = stat[rpar+2:].split()
+            out[int(d)] = {'comm': comm,
+                           'cputime': int(rest[11]) + int(rest[12]),
+                           'rss': int(rest[21]) * _PAGE}
+        except (OSError, ValueError, IndexError): continue
+    return out
+
+# ── Ring buffers & render primitives ───────────────────────────────────────
+def new_ring(): return deque([0]*HIST, maxlen=HIST)
+
+def bar(pct, width):
+    pct_i = 0 if pct < 0 else (100 if pct > 100 else int(pct))
+    filled = pct_i * width // 100
+    return (fg(grad_pct(pct_i)) + BAR_FILL*filled
+            + fg(AMBER_DIM) + BAR_EMPTY*(width-filled) + RESET)
+
+def sparkline_grad(values, width):
+    vals = list(values)[-width:]
+    if len(vals) < width: vals = [0]*(width-len(vals)) + vals
+    out = []
+    for v in vals:
+        idx = int(v * 8 / 100)
+        idx = 0 if idx < 0 else (7 if idx > 7 else idx)
+        out.append(fg(grad_pct(v)) + SPARK[idx])
+    out.append(RESET)
+    return ''.join(out)
+
+def sparkline_auto(values, width, color):
+    vals = list(values)[-width:]
+    if len(vals) < width: vals = [0]*(width-len(vals)) + vals
+    mx = max(vals) if vals else 0
+    out = [fg(color)]
+    for v in vals:
+        if mx <= 0: idx = 0
+        else:
+            idx = int(v * 7.999 / mx)
+            idx = 0 if idx < 0 else (7 if idx > 7 else idx)
+        out.append(SPARK[idx])
+    out.append(RESET)
+    return ''.join(out)
+
+def fmt_rate(bps):
+    if bps < 0: bps = 0
+    for unit in (' B','KB','MB','GB','TB'):
+        if bps < 1024: return f'{bps:5.1f} {unit}/s'
+        bps /= 1024
+    return f'{bps:5.1f} PB/s'
+
+def fmt_uptime(secs):
+    secs = int(secs)
+    d, secs = divmod(secs, 86400)
+    h, secs = divmod(secs, 3600)
+    m, _    = divmod(secs, 60)
+    if d: return f'{d}d {h}h {m}m'
+    if h: return f'{h}h {m}m'
+    return f'{m}m'
+
+# ── State ──────────────────────────────────────────────────────────────────
+class State:
+    def __init__(self):
+        self.rings = {k: new_ring() for k in
+            ('cpu','gpu','mem','swp','temp','net_rx','net_tx','dsk_r','dsk_w')}
+        self.core_rings = {}
+        self.prev_cpu, self.prev_net, self.prev_disk = {}, (0,0), (0,0)
+        self.prev_procs = {}
+        self.prev_ts = time.monotonic()
+        self.cores_total = self.cores_physical = 0
+        self.cpu_model = '?'
+        self.user = os.environ.get('USER') or '?'
+        self.host = os.uname().nodename
+        self._read_cpu_info()
+
+    def _read_cpu_info(self):
+        try:
+            with open('/proc/cpuinfo') as f: text = f.read()
+            for line in text.split('\n'):
+                if line.startswith('model name'):
+                    self.cpu_model = (line.split(':', 1)[1].strip()
+                        .replace('(R)','').replace('(TM)','').replace(' CPU ',' '))
+                    break
+            cores = {line.split(':',1)[1].strip() for line in text.split('\n') if line.startswith('core id')}
+            self.cores_physical = len(cores)
+            self.cores_total = text.count('processor\t:')
+        except OSError: pass
+
+    def reset_history(self):
+        for r in list(self.rings.values()) + list(self.core_rings.values()):
+            r.clear()
+            for _ in range(HIST): r.append(0)
+
+# ── Sampling ───────────────────────────────────────────────────────────────
+def sample(state):
+    cur_cpu, cur_net, cur_disk = read_cpu_stat(), read_net(), read_disk()
+    cur_procs = snapshot_procs()
+    now = time.monotonic()
+    dt  = max(1e-3, now - state.prev_ts)
+
+    cpu_pct = delta_pct(state.prev_cpu.get('cpu'), cur_cpu.get('cpu'))
+    state.rings['cpu'].append(cpu_pct)
+    for name, val in cur_cpu.items():
+        if name == 'cpu': continue
+        r = state.core_rings.get(name)
+        if r is None: state.core_rings[name] = r = new_ring()
+        r.append(delta_pct(state.prev_cpu.get(name), val))
+
+    mi = read_meminfo()
+    m_total = mi.get('MemTotal', 1) or 1
+    m_avail = mi.get('MemAvailable', 0)
+    mem_pct = int(100 * (1 - m_avail / m_total))
+    state.rings['mem'].append(mem_pct)
+    swp_total = mi.get('SwapTotal', 0)
+    swp_free  = mi.get('SwapFree', 0)
+    swp_pct = int(100 * (1 - swp_free / swp_total)) if swp_total else 0
+    state.rings['swp'].append(swp_pct)
+
+    gpu_pct = read_gpu_busy() or 0
+    state.rings['gpu'].append(gpu_pct)
+    temp_c = read_temp()
+    state.rings['temp'].append(int(temp_c) if temp_c is not None else 0)
+
+    nrx = max(0, cur_net[0]  - state.prev_net[0])  / dt
+    ntx = max(0, cur_net[1]  - state.prev_net[1])  / dt
+    dr  = max(0, cur_disk[0] - state.prev_disk[0]) / dt
+    dw  = max(0, cur_disk[1] - state.prev_disk[1]) / dt
+    state.rings['net_rx'].append(nrx); state.rings['net_tx'].append(ntx)
+    state.rings['dsk_r'].append(dr);   state.rings['dsk_w'].append(dw)
+
+    top = []
+    for pid, info in cur_procs.items():
+        old = state.prev_procs.get(pid)
+        if old is None: continue
+        dticks = info['cputime'] - old['cputime']
+        if dticks < 0: continue
+        top.append((100 * dticks / (dt * _HZ), info['rss'], pid, info['comm']))
+    top.sort(key=lambda x: x[0], reverse=True)
+
+    frame = {
+        'cpu_pct': cpu_pct, 'gpu_pct': gpu_pct,
+        'mem_pct': mem_pct, 'mem_used': m_total - m_avail, 'mem_total': m_total,
+        'swp_pct': swp_pct, 'swp_used': swp_total - swp_free, 'swp_total': swp_total,
+        'temp_c': temp_c, 'freq_mhz': read_cpu_freq_avg(),
+        'gpu_freq': read_gpu_freq(), 'gpu_temp': read_gpu_temp(),
+        'net_rx': nrx, 'net_tx': ntx, 'dsk_r': dr, 'dsk_w': dw,
+        'top_procs': top[:12], 'mem_total_b': m_total * 1024,
+    }
+    state.prev_cpu, state.prev_net, state.prev_disk = cur_cpu, cur_net, cur_disk
+    state.prev_procs = cur_procs
+    state.prev_ts = now
+    return frame
+
+# ── Render ─────────────────────────────────────────────────────────────────
+def border_line(left, right, cols):
+    return fg(BORDER_CLR) + left + BOX_H*(cols-2) + right + RESET
+
+def row(content, cols):
+    inner = cols - 2
+    v = vlen(content)
+    content = vtrunc(content, inner) if v > inner else content + ' '*(inner-v)
+    return fg(BORDER_CLR) + BOX_V + RESET + content + fg(BORDER_CLR) + BOX_V + RESET
+
+def section(label, cols):
+    inner = cols - 2
+    lbl = fg(AMBER_HI) + BOLD + label + RESET
+    lead = '  ' + fg(BORDER_CLR) + BOX_H*3 + RESET + ' ' + lbl + ' '
+    tail = max(2, inner - vlen(lead) - 1)
+    return row(lead + fg(BORDER_CLR) + BOX_H*tail + RESET, cols)
+
+def _section_inline(label, width):
+    """Section header sized to a fixed visible width (no row borders)."""
+    lbl = fg(AMBER_HI) + BOLD + label + RESET
+    lead = '  ' + fg(BORDER_CLR) + BOX_H*3 + RESET + ' ' + lbl + ' '
+    tail = max(2, width - vlen(lead))
+    return lead + fg(BORDER_CLR) + BOX_H*tail + RESET
+
+def _metric_row(state, label, pct, ring_key, extra_l, extra_r, cols, bar_w, spark_w):
+    txt = ('  ' + fg(AMBER) + BOLD + f'{label:<4}' + RESET + ' '
+           + bar(pct, bar_w) + '  '
+           + fg(TEXT) + f'{pct:3d}%' + RESET + '  '
+           + sparkline_grad(state.rings[ring_key], spark_w)
+           + '  ' + fg(TEXT_DIM) + extra_l + RESET)
+    if extra_r: txt += '  ' + fg(TEXT_MUTED) + extra_r + RESET
+    return row(txt, cols)
+
+def render(state, frame, cols, rows):
+    if cols < MIN_COLS:
+        return (HOME + CLR_SCREEN + '\n'
+                + fg(AMBER) + f'  lntrn sysmon needs ≥ {MIN_COLS} cols (have {cols})\n'
+                + fg(TEXT_DIM) + '  resize the terminal, or press q to quit\n' + RESET)
+    inner = cols - 2
+    lines = [border_line(BOX_TL, BOX_TR, cols)]
+
+    # Title bar: [⚡ name] [user@host] [cpu model] ... [clock]
+    title = (BOLD + fg(AMBER_HI) + f' {BOLT} lntrn sysmon' + RESET
+             + '   ' + fg(TEXT_DIM) + f'{state.user}@{state.host}' + RESET
+             + '   ' + fg(TEXT_MUTED) + state.cpu_model + RESET)
+    clock = fg(TEXT_MUTED) + time.strftime('%Y-%m-%d %H:%M:%S') + ' ' + RESET
+    pad = max(1, inner - vlen(title) - vlen(clock))
+    lines.append(row(title + ' '*pad + clock, cols))
+    lines.append(row('', cols))
+
+    # Main metric bars
+    bar_w = max(16, min(30, inner - 48))
+    spark_w = 14
+    freq_s = f'{frame["freq_mhz"]/1000:.2f}GHz' if frame.get('freq_mhz') else '       '
+    temp_s = f'{frame["temp_c"]:.0f}°C' if frame.get('temp_c') is not None else '     '
+    lines.append(_metric_row(state, 'CPU', frame['cpu_pct'], 'cpu', freq_s, temp_s, cols, bar_w, spark_w))
+    gpu_f, gpu_t = frame.get('gpu_freq'), frame.get('gpu_temp')
+    lines.append(_metric_row(state, 'GPU', frame['gpu_pct'], 'gpu',
+        f'{gpu_f}MHz' if gpu_f else '       ',
+        f'{gpu_t:.0f}°C' if gpu_t else '', cols, bar_w, spark_w))
+    mu, mt = frame['mem_used']/1048576, frame['mem_total']/1048576
+    lines.append(_metric_row(state, 'MEM', frame['mem_pct'], 'mem', f'{mu:4.1f}/{mt:4.1f}G', '', cols, bar_w, spark_w))
+    su, st = frame['swp_used']/1048576, frame['swp_total']/1048576
+    swp_extra = f'{su:4.1f}/{st:4.1f}G' if frame['swp_total'] else ' no swap '
+    lines.append(_metric_row(state, 'SWP', frame['swp_pct'], 'swp', swp_extra, '', cols, bar_w, spark_w))
+    lines.append(row('', cols))
+
+    # Per-thread grid
+    core_count = len(state.core_rings)
+    lines.append(section(f'Per-Thread  {state.cores_physical}C / {core_count}T', cols))
+    entry_vw = 14  # "Tnn " + 5bar + " " + "NNN%"
+    per_row = max(1, (inner - 2 + 3) // (entry_vw + 3))
+    entries = []
+    for idx in range(core_count):
+        ring = state.core_rings.get(f'cpu{idx}')
+        pct = ring[-1] if ring else 0
+        entries.append(fg(TEXT_DIM) + f'T{idx:02d}' + RESET + ' '
+                       + bar(pct, 5) + ' ' + fg(TEXT) + f'{pct:3d}%' + RESET)
+    for i in range(0, len(entries), per_row):
+        chunk = entries[i:i+per_row]
+        lines.append(row('  ' + '   '.join(pad_to(e, entry_vw) for e in chunk), cols))
+    lines.append(row('', cols))
+
+    # ── Dual-column section: I/O + System (left)  |  Top Processes (right) ──
+    # Reserve space at bottom for hint + bottom border, then split horizontally.
+    bottom_reserved = 3  # hint + bottom border + safety
+    avail_rows = max(4, rows - len(lines) - bottom_reserved)
+    left_w = 38 if inner >= 86 else max(30, inner // 2 - 2)
+    gap = 2
+    right_w = inner - left_w - gap
+
+    # Build left column (I/O + System)
+    left = []
+    left.append(_section_inline('I/O', left_w))
+    net_io = ('  ' + fg(CYAN) + BOLD + 'NET' + RESET + ' '
+              + fg(GREEN) + ARROW_DOWN + RESET + ' '
+              + fg(TEXT) + pad_to(fmt_rate(frame['net_rx']), 11) + RESET + ' '
+              + sparkline_auto(state.rings['net_rx'], 6, GREEN)
+              + '  ' + fg(PINK) + ARROW_UP + RESET + ' '
+              + fg(TEXT) + pad_to(fmt_rate(frame['net_tx']), 11) + RESET)
+    left.append(net_io)
+    dsk_io = ('  ' + fg(PURPLE) + BOLD + 'DSK' + RESET + ' '
+              + fg(BLUE) + ARROW_DOWN + RESET + ' '
+              + fg(TEXT) + pad_to(fmt_rate(frame['dsk_r']), 11) + RESET + ' '
+              + sparkline_auto(state.rings['dsk_r'], 6, BLUE)
+              + '  ' + fg(YELLOW) + ARROW_UP + RESET + ' '
+              + fg(TEXT) + pad_to(fmt_rate(frame['dsk_w']), 11) + RESET)
+    left.append(dsk_io)
+    left.append('')
+    left.append(_section_inline('System', left_w))
+    la1, la5, la15, tasks = read_loadavg()
+    left.append('  ' + fg(AMBER) + 'Up   ' + RESET + fg(TEXT) + fmt_uptime(read_uptime()) + RESET)
+    left.append('  ' + fg(AMBER) + 'Load ' + RESET + fg(TEXT) + f'{la1:.2f} {la5:.2f} {la15:.2f}' + RESET)
+    left.append('  ' + fg(AMBER) + 'Tasks' + RESET + ' ' + fg(TEXT) + tasks + RESET)
+    bcap, bstatus = read_battery()
+    if bcap is not None:
+        icon = BOLT if bstatus == 'Charging' else '▼' if bstatus == 'Discharging' else '·'
+        bc = GREEN if bstatus == 'Charging' else grad_pct(100 - bcap)
+        left.append('  ' + fg(AMBER) + 'Bat  ' + RESET + fg(bc) + f'{bcap}% {icon}' + RESET)
+
+    # Build right column (Top Processes — fill the available height)
+    right = [_section_inline('Top Processes', right_w),
+             '  ' + fg(TEXT_MUTED) + BOLD
+             + f'{"PID":>7}  {"CPU%":>6}  {"MEM%":>6}  COMMAND' + RESET]
+    mem_total_b = frame['mem_total_b']
+    proc_slots = max(1, avail_rows - len(right))
+    cmd_w = max(8, right_w - 30)
+    for pct, rss, pid, comm in frame['top_procs'][:proc_slots]:
+        mem_pct_p = 100 * rss / mem_total_b if mem_total_b else 0
+        color = fg(grad_pct(pct)) if pct > 1 else fg(TEXT_DIM)
+        if len(comm) > cmd_w: comm = comm[:cmd_w-1] + '…'
+        right.append('  ' + color + f'{pid:>7}' + RESET
+                     + '  ' + color + f'{pct:5.1f}%' + RESET
+                     + '  ' + fg(TEXT_DIM) + f'{mem_pct_p:5.1f}%' + RESET
+                     + '  ' + fg(TEXT) + comm + RESET)
+
+    # Stitch the two columns together row-by-row
+    dual_h = min(avail_rows, max(len(left), len(right)))
+    for i in range(dual_h):
+        l = left[i]  if i < len(left)  else ''
+        r = right[i] if i < len(right) else ''
+        lines.append(row(pad_to(l, left_w) + ' ' * gap + pad_to(r, right_w), cols))
+
+    lines.append(row('  ' + fg(TEXT_MUTED) + 'q quit  ·  r reset graphs' + RESET, cols))
+    if len(lines) > rows - 1:
+        lines = lines[:rows - 1]
+    lines.append(border_line(BOX_BL, BOX_BR, cols))
+
+    # NOTE: no trailing '\n' on the last line — that would scroll the viewport
+    # by one row and leak the title bar into scrollback on terminals that
+    # populate scrollback during alt-screen scrolls.
+    out = [HOME]
+    for i, line in enumerate(lines):
+        out.append(line + CLR_LINE)
+        if i < len(lines) - 1:
+            out.append('\n')
+    out.append(CLR_EOS)
+    return ''.join(out)
+
+# ── Main loop ──────────────────────────────────────────────────────────────
+def main():
+    state = State()
+    fd = sys.stdin.fileno()
+    old_attrs = old_fl = None
+
+    def cleanup():
+        sys.stdout.write(SHOW_CUR + ALT_OFF); sys.stdout.flush()
+        if old_attrs is not None:
+            try: termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
+            except Exception: pass
+        if old_fl is not None:
+            try: fcntl.fcntl(fd, fcntl.F_SETFL, old_fl)
+            except Exception: pass
+
+    def on_sig(signum, frm):
+        cleanup(); sys.exit(0)
+    signal.signal(signal.SIGTERM, on_sig)
+    signal.signal(signal.SIGHUP, on_sig)
+
+    try:
+        old_attrs = termios.tcgetattr(fd)
+        tty.setcbreak(fd)
+    except Exception: pass
+    try:
+        old_fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, old_fl | os.O_NONBLOCK)
+    except Exception: pass
+
+    sys.stdout.write(ALT_ON + HIDE_CUR + CLR_SCREEN + HOME); sys.stdout.flush()
+
+    # Prime baseline then brief loading hint before first real frame
+    state.prev_cpu   = read_cpu_stat()
+    state.prev_net   = read_net()
+    state.prev_disk  = read_disk()
+    state.prev_procs = snapshot_procs()
+    state.prev_ts    = time.monotonic()
+    sys.stdout.write(fg(AMBER_HI) + BOLD + f'\n  {BOLT} lntrn sysmon\n' + RESET
+                     + fg(TEXT_DIM) + '  sampling...\n' + RESET)
+    sys.stdout.flush()
+    time.sleep(POLL)
+
+    try:
+        while True:
+            t0 = time.monotonic()
+            frame = sample(state)
+            cols, rows_ = shutil.get_terminal_size((100, 30))
+            sys.stdout.write(render(state, frame, cols, rows_)); sys.stdout.flush()
+            remain = max(0.05, POLL - (time.monotonic() - t0))
+            ready, _, _ = select.select([fd], [], [], remain)
+            if ready:
+                try: ch = os.read(fd, 1)
+                except BlockingIOError: ch = b''
+                if ch in (b'q', b'Q', b'\x1b', b'\x03'): break
+                if ch in (b'r', b'R'): state.reset_history()
+    except KeyboardInterrupt: pass
+    finally: cleanup()
+
+if __name__ == '__main__':
+    main()

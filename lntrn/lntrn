@@ -8,113 +8,19 @@ set -euo pipefail
 
 # ── System monitor mode ──────────────────────────────────────────────────────
 if [[ "${1:-}" == "--sysmon" ]]; then
-    O=$'\033[38;2;212;160;32m'
-    D=$'\033[38;2;120;90;55m'
-    R=$'\033[0m'
-    B=$'\033[1m'
-
-    # Read all /proc/stat cpu fields, return "total idle"
-    read_cpu() {
-        read -r _ user nice sys idle iowait irq sirq steal _ < <(head -1 /proc/stat)
-        local total=$((user + nice + sys + idle + iowait + irq + sirq + steal))
-        echo "$total $idle"
-    }
-
-    get_cpu_usage() {
-        read -r t1 i1 <<< "$(read_cpu)"
-        sleep 0.5
-        read -r t2 i2 <<< "$(read_cpu)"
-        local dt=$((t2 - t1))
-        local di=$((i2 - i1))
-        [[ "$dt" -gt 0 ]] && echo $(( 100 * (dt - di) / dt )) || echo 0
-    }
-
-    get_gpu_usage() {
-        if command -v nvidia-smi &>/dev/null; then
-            nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' '
-        elif [[ -f /sys/class/drm/card0/device/gpu_busy_percent ]]; then
-            cat /sys/class/drm/card0/device/gpu_busy_percent 2>/dev/null
-        elif [[ -f /sys/class/drm/card1/device/gpu_busy_percent ]]; then
-            cat /sys/class/drm/card1/device/gpu_busy_percent 2>/dev/null
-        else
-            for card in /sys/class/drm/card*/; do
-                if [[ -f "${card}gt_act_freq_mhz" && -f "${card}gt_max_freq_mhz" ]]; then
-                    local act max
-                    act=$(cat "${card}gt_act_freq_mhz" 2>/dev/null)
-                    max=$(cat "${card}gt_max_freq_mhz" 2>/dev/null)
-                    [[ -n "$act" && -n "$max" && "$max" -gt 0 ]] && echo $((act * 100 / max)) && return
-                fi
-            done
-            echo "?"
-        fi
-    }
-
-    get_mem() {
-        awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} END{used=(t-a)/1048576; total=t/1048576; pct=100*(1-a/t); printf "%.0f %.1f %.1f", pct, used, total}' /proc/meminfo
-    }
-
-    get_temp() {
-        for tz in /sys/class/thermal/thermal_zone*/temp; do
-            [[ -f "$tz" ]] || continue
-            local mc
-            mc=$(cat "$tz" 2>/dev/null)
-            [[ -n "$mc" && "$mc" -gt 0 ]] || continue
-            awk "BEGIN {printf \"%.0f\", ($mc/1000)*9/5+32}"
-            return
-        done
-        echo "?"
-    }
-
-    bar() {
-        local pct=$1 width=25 label=$2
-        [[ "$pct" == "?" ]] && { printf "  ${O}%-4s${R}  %-25s %4s" "$label" "?" ""; return; }
-        local filled=$(( pct * width / 100 ))
-        local empty=$(( width - filled ))
-        local bar_str=""
-        for ((i=0; i<filled; i++)); do bar_str+="█"; done
-        for ((i=0; i<empty; i++)); do bar_str+="░"; done
-        printf "  ${O}%-4s${R}  %s %3d%%" "$label" "$bar_str" "$pct"
-    }
-
-    trap 'tput cnorm 2>/dev/null; exit' INT TERM
-    tput civis 2>/dev/null || true
-    while true; do
-        cpu=$(get_cpu_usage)
-        gpu=$(get_gpu_usage)
-        mem_raw=$(get_mem)
-        mem_pct=${mem_raw%% *}; mem_rest=${mem_raw#* }
-        mem_used=${mem_rest%% *}; mem_total=${mem_rest#* }
-        temp=$(get_temp)
-
-        CL=$'\033[K'
-        printf '\033[H'
-        echo "${CL}"
-        echo "  ${B}${O}⚡ lntrn sysmon${R}${CL}"
-        echo "  ${D}──────────────────────────────────────${R}${CL}"
-        echo "${CL}"
-        bar "$cpu" "CPU"
-        echo "${CL}"
-        bar "$gpu" "GPU"
-        echo "${CL}"
-        bar "$mem_pct" "MEM"
-        printf "  %.1fG / %.1fG${CL}\n" "$mem_used" "$mem_total"
-        echo "  ${O}TEMP${R}  ${temp}°F${CL}"
-        echo "${CL}"
-        echo "  ${D}──────────────────────────────────────${R}${CL}"
-        printf "  ${B}${O}%7s  %6s  %6s  %-s${R}${CL}\n" "PID" "CPU%" "MEM%" "COMMAND"
-        echo "  ${D}──────────────────────────────────────${R}${CL}"
-        ps -eo pid,pcpu,pmem,comm --sort=-pcpu --no-headers | head -15 | while read -r pid pcpu pmem comm; do
-            printf "  %7s  %5s%%  %5s%%  %-s${CL}\n" "$pid" "$pcpu" "$pmem" "$comm"
-        done
-        echo "${CL}"
-        echo "  ${D}q to quit${R}${CL}"
-        printf '\033[J'
-
-        read -rsn1 -t 0.3 key 2>/dev/null || true
-        [[ "${key:-}" == "q" ]] && break
-    done
-    tput cnorm 2>/dev/null || true
-    exit 0
+    # Handoff to the fancy Python TUI dashboard (installed or dev-tree)
+    if [[ -f /usr/share/lntrn/lntrn-sysmon-view ]]; then
+        SYSMON_VIEW="/usr/share/lntrn/lntrn-sysmon-view"
+    else
+        SCRIPT_PATH="$(readlink -f "$0")"
+        SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+        SYSMON_VIEW="$SCRIPT_DIR/lntrn-sysmon-view"
+    fi
+    if [[ ! -f "$SYSMON_VIEW" ]]; then
+        echo "Error: lntrn-sysmon-view not found (looked in /usr/share/lntrn and $SCRIPT_DIR)" >&2
+        exit 1
+    fi
+    exec python3 "$SYSMON_VIEW"
 fi
 
 # ── Resolve icon path ─────────────────────────────────────────────────────────
@@ -144,6 +50,24 @@ TERMINAL="${TERM_PROGRAM:-${TERMINAL:-unknown}}"
 
 CPU=$(grep -m1 "model name" /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^ //' | sed 's/(R)//g; s/(TM)//g; s/CPU //g')
 CPU=${CPU:-"unknown"}
+
+# Cores (unique physical core ids) and threads (logical processors)
+CPU_CORES=$(grep "^core id" /proc/cpuinfo 2>/dev/null | sort -u | wc -l)
+CPU_THREADS=$(grep -c "^processor" /proc/cpuinfo 2>/dev/null || echo 0)
+
+# Max frequency — highest cpuinfo_max_freq across all cores (handles hybrid CPUs)
+CPU_MAX_GHZ=""
+if [[ -e /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq ]]; then
+    max_khz=$(cat /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_max_freq 2>/dev/null | sort -rn | head -1)
+    if [[ -n "$max_khz" && "$max_khz" -gt 0 ]]; then
+        CPU_MAX_GHZ=$(awk "BEGIN {printf \"%.1f\", $max_khz/1000000}")
+    fi
+fi
+
+[[ -n "$CPU_MAX_GHZ" ]] && CPU="${CPU} @ ${CPU_MAX_GHZ}GHz"
+if [[ "$CPU_CORES" -gt 0 && "$CPU_THREADS" -gt 0 ]]; then
+    CPU="${CPU} (${CPU_CORES}C/${CPU_THREADS}T)"
+fi
 
 if [[ -f /proc/meminfo ]]; then
     MEM_TOTAL=$(awk '/MemTotal/ {printf "%.0f", $2/1024}' /proc/meminfo)

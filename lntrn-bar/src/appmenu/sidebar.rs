@@ -2,6 +2,7 @@
 
 use lntrn_render::{Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{FoxPalette, InteractionContext};
+use std::f32::consts::FRAC_PI_2;
 
 use crate::desktop::Category;
 use crate::svg_icon::IconCache;
@@ -22,19 +23,24 @@ impl AppMenu {
         scale: f32, screen_w: u32, screen_h: u32,
         icon_draws: &mut Vec<(String, f32, f32, f32, f32, Option<[f32; 4]>)>,
     ) {
-        // Subtle separator line on the right edge
-        painter.rect_filled(
-            Rect::new(sx + sw - 1.0 * scale, sy, 1.0 * scale, sh),
-            0.0, palette.muted.with_alpha(0.25),
+        // 4px vertical gradient divider on the right edge — matches lntrn-file-manager
+        let grad_w = 4.0 * scale;
+        let grad_colors = palette.file_manager_gradient_stops();
+        let grad_stops: Vec<(f32, lntrn_render::Color)> = grad_colors.iter().enumerate()
+            .map(|(i, &c)| (i as f32 / (grad_colors.len() - 1) as f32, c))
+            .collect();
+        painter.rect_gradient_multi(
+            Rect::new(sx + sw - grad_w, sy, grad_w, sh),
+            0.0, FRAC_PI_2, &grad_stops,
         );
 
-        let font = 18.0 * scale;
-        let item_h = 40.0 * scale;
-        let pad_x = 14.0 * scale;
-        let icon_sz = 18.0 * scale;
-        let icon_text_gap = 10.0 * scale;
-        let cr = 8.0 * scale;
-        let top_pad = 12.0 * scale;
+        let font = 22.0 * scale;
+        let item_h = 48.0 * scale;
+        let pad_x = 16.0 * scale;
+        let icon_sz = 22.0 * scale;
+        let icon_text_gap = 12.0 * scale;
+        let cr = 10.0 * scale;
+        let top_pad = 14.0 * scale;
 
         for (i, &cat) in Category::SIDEBAR_ORDER.iter().enumerate() {
             let iy = sy + top_pad + i as f32 * item_h;

@@ -1,7 +1,7 @@
-use lntrn_render::{Painter, Rect, TextRenderer};
+use lntrn_render::{Color, Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{
-    ContextMenu, ContextMenuStyle, FoxPalette, GradientStrip, InteractionContext, MenuBar,
-    MenuEvent, MenuItem, TitleBar,
+    ContextMenu, ContextMenuStyle, FoxPalette, InteractionContext, MenuBar,
+    MenuEvent, MenuItem,
 };
 
 use crate::config::WindowMode;
@@ -9,21 +9,33 @@ use crate::night_sky;
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-pub const TITLE_BAR_HEIGHT: f32 = 54.0;
-pub const GRADIENT_STRIP_HEIGHT: f32 = 4.0;
+/// Unified title bar height — accommodates inline tabs, menus, and window controls.
+pub const TITLE_BAR_HEIGHT: f32 = 50.0;
 
-/// Title bar height for the given window mode.
-pub fn title_bar_height(mode: &WindowMode) -> f32 {
-    match mode {
-        WindowMode::Fox => TITLE_BAR_HEIGHT,
-        WindowMode::NightSky => night_sky::TITLE_BAR_HEIGHT,
-    }
+/// Width reserved on the right for window controls (same in both modes — they
+/// share the circular control style). Buttons sit at w-40 / w-78 / w-116 with
+/// 14px radius, so the leftmost edge is at w-130 — reserve a bit beyond that.
+const CONTROLS_W: f32 = 140.0;
+
+/// Left margin for the menu bar.
+const MENU_LEFT: f32 = 8.0;
+/// Padding around the divider after the menus.
+const DIVIDER_PAD: f32 = 14.0;
+/// Extra inset between the divider and the first tab so the pill doesn't
+/// kiss the divider.
+const TABS_LEFT_INSET: f32 = 12.0;
+/// Vertical line thickness for the divider.
+const DIVIDER_W: f32 = 2.5;
+
+// Replicated from lntrn_ui::gpu::menu_bar (private constants there).
+const MENU_FONT_BODY: f32 = 28.0;
+const MENU_LABEL_PAD_H: f32 = 8.0;
+const MENU_LABEL_GAP: f32 = 12.0;
+
+/// Title bar height for the given window mode (both modes are unified at 50px).
+pub fn title_bar_height(_mode: &WindowMode) -> f32 {
+    TITLE_BAR_HEIGHT
 }
-
-// Zone IDs for title bar buttons
-const ZONE_CLOSE: u32 = 10;
-const ZONE_MAXIMIZE: u32 = 11;
-const ZONE_MINIMIZE: u32 = 12;
 
 // ── Menu action IDs ─────────────────────────────────────────────────────────
 
@@ -136,9 +148,89 @@ pub fn build_context_menu(has_selection: bool) -> Vec<MenuItem> {
     ]
 }
 
+// ── Layout ──────────────────────────────────────────────────────────────────
+
+/// Resolved horizontal regions inside the title bar for the current frame.
+/// All values are in screen pixels.
+#[derive(Clone, Copy)]
+pub struct ChromeLayout {
+    /// Total bar height (logical = screen since scale is 1.0).
+    pub bar_h: f32,
+    /// Menus start x.
+    pub menu_left: f32,
+    /// Right edge of the menu labels (before divider).
+    pub menu_right: f32,
+    /// X of the vertical divider line.
+    pub divider_x: f32,
+    /// Tabs region — left edge.
+    pub tabs_left: f32,
+    /// Tabs region — right edge (where window controls begin).
+    pub tabs_right: f32,
+}
+
+/// Compute the horizontal layout of menus / divider / tabs / controls without
+/// any drawing. Used by both `draw_chrome` and `tabs_bounds` (for hit testing).
+pub fn compute_layout(
+    menus: &[(&'static str, Vec<MenuItem>)],
+    screen_w: f32,
+    scale: f32,
+    _mode: &WindowMode,
+) -> ChromeLayout {
+    let bar_h = TITLE_BAR_HEIGHT * scale;
+    let menu_left = MENU_LEFT * scale;
+    let menu_right = menu_bar_right_edge(menus, menu_left, scale);
+    let divider_pad = DIVIDER_PAD * scale;
+    let divider_x = menu_right + divider_pad;
+    let tabs_left = divider_x + DIVIDER_W * scale + TABS_LEFT_INSET * scale;
+    let controls_w = CONTROLS_W * scale;
+    let controls_left = screen_w - controls_w;
+    let tabs_right = (controls_left - 8.0 * scale).max(tabs_left);
+    ChromeLayout {
+        bar_h,
+        menu_left,
+        menu_right,
+        divider_x,
+        tabs_left,
+        tabs_right,
+    }
+}
+
+/// Replicates the menu bar's internal label-rect calculation so we know where
+/// the menus end (no public accessor on MenuBar).
+fn menu_bar_right_edge(menus: &[(&'static str, Vec<MenuItem>)], rect_x: f32, scale: f32) -> f32 {
+    let font = MENU_FONT_BODY * scale;
+    let pad_h = MENU_LABEL_PAD_H * scale;
+    let gap = MENU_LABEL_GAP * scale;
+    let mut x = rect_x + pad_h * 0.5;
+    for (label, _) in menus.iter() {
+        let text_w = label.len() as f32 * font * 0.52;
+        let w = text_w + pad_h * 2.0;
+        x += w + gap;
+    }
+    // The loop adds a trailing gap after the last label — strip it so we get
+    // the actual right edge of the last menu label.
+    if menus.is_empty() { x } else { x - gap }
+}
+
+/// Convenience: compute just the tabs region as a Rect for hit testing.
+pub fn tabs_bounds(
+    menus: &[(&'static str, Vec<MenuItem>)],
+    screen_w: f32,
+    scale: f32,
+    mode: &WindowMode,
+) -> Rect {
+    let l = compute_layout(menus, screen_w, scale, mode);
+    Rect::new(l.tabs_left, 0.0, (l.tabs_right - l.tabs_left).max(0.0), l.bar_h)
+}
+
 // ── Drawing ─────────────────────────────────────────────────────────────────
 
-/// Draw the title bar, menu labels, and gradient strip (base layer).
+/// Draw the title bar contents: menus, divider, and circular window controls.
+/// No background bar is drawn — we let the window background (Fox: solid bg,
+/// Night Sky: gradient) flow through so the title bar is seamless with the
+/// terminal area below.
+///
+/// Returns the layout so the caller can position the tab bar.
 pub fn draw_chrome(
     painter: &mut Painter,
     text: &mut TextRenderer,
@@ -149,58 +241,46 @@ pub fn draw_chrome(
     font_size: f32,
     opacity: f32,
     sidebar_visible: bool,
-    maximized: bool,
+    _maximized: bool,
     scale: f32,
     mode: &WindowMode,
     cursor_pos: Option<(f32, f32)>,
-) {
+) -> ChromeLayout {
     let s = scale;
     let pal = &state.palette;
     let wf = screen_w as f32;
 
-    match mode {
-        WindowMode::Fox => {
-            // ── Fox: TitleBar widget + gradient strip ─────────────
-            let bar_h = (TITLE_BAR_HEIGHT - GRADIENT_STRIP_HEIGHT) * s;
-            let title_rect = Rect::new(0.0, 0.0, wf, bar_h);
-            let tb = TitleBar::new(title_rect).scale(s);
+    let menus = build_menus(font_size, opacity, sidebar_visible, mode);
+    let layout = compute_layout(&menus, wf, s, mode);
 
-            let close_state = input.add_zone(ZONE_CLOSE, tb.close_button_rect());
-            let max_state = input.add_zone(ZONE_MAXIMIZE, tb.maximize_button_rect());
-            let min_state = input.add_zone(ZONE_MINIMIZE, tb.minimize_button_rect());
-            let content = tb.content_rect();
+    // ── Window controls — same circular style for both modes ────────────
+    night_sky::draw_controls(painter, cursor_pos, wf);
 
-            tb.close_hovered(close_state.is_hovered())
-                .maximize_hovered(max_state.is_hovered())
-                .minimize_hovered(min_state.is_hovered())
-                .maximized(maximized)
-                .draw(painter, pal);
+    // ── Menu bar in the menu region ─────────────────────────────────────
+    let menu_area = Rect::new(layout.menu_left, 0.0, layout.menu_right - layout.menu_left, layout.bar_h);
+    state.menu_bar.update(input, &menus, menu_area, s);
+    let labels: Vec<&str> = menus.iter().map(|(l, _)| *l).collect();
+    state.menu_bar.draw_with_labels(painter, text, pal, &labels, screen_w, screen_h, s);
 
-            // Menu bar inside title bar content area
-            let menus = build_menus(font_size, opacity, sidebar_visible, mode);
-            state.menu_bar.update(input, &menus, content, s);
-            let labels: Vec<&str> = menus.iter().map(|(l, _)| *l).collect();
-            state.menu_bar.draw_with_labels(painter, text, pal, &labels, screen_w, screen_h, s);
+    // ── Divider between menus and tabs ──────────────────────────────────
+    draw_divider(painter, layout.divider_x, layout.bar_h, s, mode);
 
-            // Gradient strip below title bar
-            let strip_y = bar_h;
-            let mut strip = GradientStrip::new(0.0, strip_y, wf);
-            strip.height = GRADIENT_STRIP_HEIGHT * s;
-            strip.draw(painter);
-        }
-        WindowMode::NightSky => {
-            // ── Night Sky: custom controls + menu bar ─────────────
-            let bar_h = night_sky::TITLE_BAR_HEIGHT;
-            night_sky::draw_controls(painter, cursor_pos, wf);
+    layout
+}
 
-            // Menu bar positioned in the left side of the title bar
-            let content = Rect::new(8.0, 0.0, wf - 120.0, bar_h);
-            let menus = build_menus(font_size, opacity, sidebar_visible, mode);
-            state.menu_bar.update(input, &menus, content, s);
-            let labels: Vec<&str> = menus.iter().map(|(l, _)| *l).collect();
-            state.menu_bar.draw_with_labels(painter, text, pal, &labels, screen_w, screen_h, s);
-        }
-    }
+/// Draw the vertical divider between the menu bar and the tabs.
+fn draw_divider(painter: &mut Painter, x: f32, bar_h: f32, scale: f32, mode: &WindowMode) {
+    let color = match mode {
+        WindowMode::Fox => Color::from_rgba8(255, 255, 255, 70),
+        WindowMode::NightSky => Color::rgba(0.55, 0.50, 0.70, 0.55),
+    };
+    let inset = bar_h * 0.20;
+    let h = bar_h - inset * 2.0;
+    painter.rect_filled(
+        Rect::new(x, inset, DIVIDER_W * scale, h),
+        0.0,
+        color,
+    );
 }
 
 /// Draw menu overlays (second render pass).
@@ -264,26 +344,14 @@ pub fn handle_click(
         return ClickAction::None;
     }
 
-    // Window control buttons
-    match mode {
-        WindowMode::Fox => {
-            match input.active_zone_id() {
-                Some(id) if id == ZONE_CLOSE => return ClickAction::Close,
-                Some(id) if id == ZONE_MAXIMIZE => return ClickAction::Maximize,
-                Some(id) if id == ZONE_MINIMIZE => return ClickAction::Minimize,
-                _ => {}
-            }
-        }
-        WindowMode::NightSky => {
-            if let Some(zone) = night_sky::hit_test_controls((x, y), screen_w) {
-                return match zone {
-                    10 => ClickAction::Close,
-                    11 => ClickAction::Maximize,
-                    12 => ClickAction::Minimize,
-                    _ => ClickAction::None,
-                };
-            }
-        }
+    // Window control buttons (shared circular controls for both modes)
+    if let Some(zone) = night_sky::hit_test_controls((x, y), screen_w) {
+        return match zone {
+            10 => ClickAction::Close,
+            11 => ClickAction::Maximize,
+            12 => ClickAction::Minimize,
+            _ => ClickAction::None,
+        };
     }
 
     // Title bar drag

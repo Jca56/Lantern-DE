@@ -53,6 +53,7 @@ impl AppMenu {
         screen_w: u32,
         screen_h: u32,
         icon_draws: &mut Vec<(String, f32, f32, f32, f32, Option<[f32; 4]>)>,
+        modal_icon_draws: &mut Vec<(String, f32, f32, f32, f32, Option<[f32; 4]>)>,
     ) {
         if !self.open { return; }
 
@@ -72,7 +73,7 @@ impl AppMenu {
 
         // Panel background (darker)
         painter.rect_filled(Rect::new(mx, panel_y, w, h), 0.0, palette.bg);
-        painter.rect_stroke(Rect::new(mx, panel_y, w, h), 0.0, 2.0 * scale, Color::BLACK);
+        painter.rect_stroke(Rect::new(mx, panel_y, w, h), 0.0, 3.0 * scale, Color::BLACK);
 
         // Floating row: search bar (left) + tabs (right), above the panel
         self.draw_floating_row(painter, text, ix, palette, mx, my, w, float_h, scale, screen_w, screen_h);
@@ -115,6 +116,13 @@ impl AppMenu {
             painter.set_layer(2);
             text.set_layer(2);
             self.draw_context_menu(painter, text, ix, palette, scale, screen_w, screen_h);
+        }
+
+        // Power confirmation modal (layer 2 — same as ctx menu, mutually exclusive)
+        if self.pending_power.is_some() {
+            painter.set_layer(2);
+            text.set_layer(2);
+            self.draw_power_modal(painter, text, ix, icon_cache, palette, scale, screen_w, screen_h, modal_icon_draws);
         }
     }
 
@@ -160,7 +168,7 @@ impl AppMenu {
                 painter.rect_stroke(tab_rect, 0.0, 2.0 * scale, palette.accent);
             } else {
                 painter.rect_filled(tab_rect, 0.0, palette.bg);
-                painter.rect_stroke(tab_rect, 0.0, 2.0 * scale, Color::BLACK);
+                painter.rect_stroke(tab_rect, 0.0, 3.0 * scale, Color::BLACK);
                 if state.is_hovered() {
                     painter.rect_filled(tab_rect, 0.0, palette.surface_2);
                 }
@@ -249,7 +257,7 @@ impl AppMenu {
                 painter.rect_stroke(tab_rect, 0.0, 2.0 * scale, palette.accent);
             } else {
                 painter.rect_filled(tab_rect, 0.0, palette.bg);
-                painter.rect_stroke(tab_rect, 0.0, 2.0 * scale, Color::BLACK);
+                painter.rect_stroke(tab_rect, 0.0, 3.0 * scale, Color::BLACK);
                 if state.is_hovered() {
                     painter.rect_filled(tab_rect, 0.0, palette.surface_2);
                 }
@@ -312,7 +320,7 @@ impl AppMenu {
     /// Floating power icons along the bottom-right edge of the panel.
     #[allow(clippy::too_many_arguments)]
     fn draw_power_icons(
-        &self,
+        &mut self,
         painter: &mut Painter,
         ix: &mut InteractionContext,
         icon_cache: &IconCache,
@@ -328,6 +336,9 @@ impl AppMenu {
         let bx = mx + w + gap;
         let start_y = panel_y + h - (POWER_ICONS.len() as f32 * (btn_sz + gap) - gap);
 
+        // Modal locks input — don't dispatch power presses while it's open.
+        let modal_open = self.pending_power.is_some();
+
         for (i, (key_name, _label, _svg)) in POWER_ICONS.iter().enumerate() {
             let by = start_y + i as f32 * (btn_sz + gap);
             let btn_rect = Rect::new(bx, by, btn_sz, btn_sz);
@@ -336,10 +347,10 @@ impl AppMenu {
 
             // Background
             painter.rect_filled(btn_rect, 0.0, palette.surface);
-            painter.rect_stroke(btn_rect, 0.0, 2.0 * scale, Color::BLACK);
+            painter.rect_stroke(btn_rect, 0.0, 3.0 * scale, Color::BLACK);
             if state.is_hovered() {
                 painter.rect_filled(btn_rect, 0.0, palette.surface_2);
-                painter.rect_stroke(btn_rect, 0.0, 2.0 * scale, Color::BLACK);
+                painter.rect_stroke(btn_rect, 0.0, 3.0 * scale, Color::BLACK);
             }
 
             // Icon centered in button
@@ -350,13 +361,14 @@ impl AppMenu {
                 icon_draws.push((icon_key, ix_pos, iy_pos, icon_sz, icon_sz, None));
             }
 
-            if state == InteractionState::Pressed {
+            if !modal_open && state == InteractionState::Pressed {
+                use super::power_modal::PowerAction;
                 match *key_name {
-                    "power" => { let _ = std::process::Command::new("systemctl").arg("poweroff").spawn(); }
-                    "reboot" => { let _ = std::process::Command::new("systemctl").arg("reboot").spawn(); }
+                    "power" => self.pending_power = Some(PowerAction::Power),
+                    "reboot" => self.pending_power = Some(PowerAction::Reboot),
+                    "logout" => self.pending_power = Some(PowerAction::Logout),
                     "suspend" => { let _ = std::process::Command::new("systemctl").arg("suspend").spawn(); }
                     "lock" => { let _ = std::process::Command::new("loginctl").arg("lock-session").spawn(); }
-                    "logout" => { let _ = std::process::Command::new("loginctl").arg("terminate-session").arg("self").spawn(); }
                     _ => {}
                 }
             }

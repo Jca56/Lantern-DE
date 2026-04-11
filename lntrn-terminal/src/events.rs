@@ -39,8 +39,20 @@ impl App {
                     tab_bar::TabDisplay { title, pinned: t.pinned }
                 })
                 .collect();
+            let menus = ui_chrome::build_menus(
+                self.effective_font_size(),
+                self.config.window.opacity,
+                self.sidebar.visible,
+                &self.config.window.mode,
+            );
+            let bounds = ui_chrome::tabs_bounds(
+                &menus,
+                screen_w as f32,
+                1.0,
+                &self.config.window.mode,
+            );
             if let Some(action) =
-                tab_bar::handle_drag_move(&mut self.tab_bar, x, &drag_displays, screen_w)
+                tab_bar::handle_drag_move(&mut self.tab_bar, x, &drag_displays, bounds)
             {
                 if let tab_bar::TabBarAction::Reorder { from, to } = action {
                     let tab = self.tabs.remove(from);
@@ -60,7 +72,7 @@ impl App {
         if self.selecting && !self.tabs.is_empty() {
             if let Some((_pane_idx, row, col)) = self.pixel_to_pane_cell(x, y) {
                 let tab = &mut self.tabs[self.active_tab];
-                tab.panes[tab.active_pane].terminal.selection_end = Some((row, col));
+                tab.panes[tab.active_pane].terminal.set_selection_end(row, col);
             }
         }
 
@@ -146,11 +158,24 @@ impl App {
                     }
                 })
                 .collect();
+            let menus = ui_chrome::build_menus(
+                self.effective_font_size(),
+                self.config.window.opacity,
+                self.sidebar.visible,
+                &self.config.window.mode,
+            );
+            let tabs_rect = ui_chrome::tabs_bounds(
+                &menus,
+                screen_w as f32,
+                1.0,
+                &self.config.window.mode,
+            );
             let tab_action = tab_bar::handle_click(
                 &mut self.tab_bar,
                 self.cursor_pos,
                 self.tabs.len(),
                 &tab_displays,
+                tabs_rect,
                 screen_w,
             );
             if self.handle_tab_bar_action(tab_action, event_loop) {
@@ -299,11 +324,10 @@ impl App {
                 if !self.tabs.is_empty() {
                     let tab = &mut self.tabs[self.active_tab];
                     let terminal = &mut tab.panes[tab.active_pane].terminal;
-                    terminal.selection_anchor = Some((0, 0));
-                    terminal.selection_end = Some((
-                        terminal.rows.saturating_sub(1),
-                        terminal.cols.saturating_sub(1),
-                    ));
+                    terminal.set_selection_anchor(0, 0);
+                    let last_row = terminal.rows.saturating_sub(1);
+                    let last_col = terminal.cols.saturating_sub(1);
+                    terminal.set_selection_end(last_row, last_col);
                 }
             }
             ui_chrome::ClickAction::None => {
@@ -363,8 +387,8 @@ impl App {
                         let tab = &mut self.tabs[self.active_tab];
                         tab.active_pane = pane_idx;
                         let terminal = &mut tab.panes[pane_idx].terminal;
-                        terminal.selection_anchor = Some((row, col));
-                        terminal.selection_end = Some((row, col));
+                        terminal.set_selection_anchor(row, col);
+                        terminal.set_selection_end(row, col);
                         self.selecting = true;
                     }
                 }
@@ -415,11 +439,23 @@ impl App {
                 tab_bar::TabDisplay { title, pinned: t.pinned }
             })
             .collect();
+        let menus = ui_chrome::build_menus(
+            self.effective_font_size(),
+            self.config.window.opacity,
+            self.sidebar.visible,
+            &self.config.window.mode,
+        );
+        let tabs_rect = ui_chrome::tabs_bounds(
+            &menus,
+            screen_w as f32,
+            1.0,
+            &self.config.window.mode,
+        );
         if tab_bar::handle_right_click(
             &mut self.tab_bar,
             self.cursor_pos,
             &tab_displays,
-            screen_w,
+            tabs_rect,
         ) {
             self.chrome.close_all_menus();
             self.sidebar.context_menu = None;

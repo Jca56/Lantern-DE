@@ -1,15 +1,26 @@
+mod actions;
 mod clipboard;
 mod editor;
+mod find_bar;
 mod format;
+mod keys;
+mod mouse;
 mod render;
+mod scrollbar;
+mod status_bar;
+mod tab_strip;
+mod tabs;
+mod theme;
+mod title_bar;
 mod toolbar;
 
 use std::time::{Duration, Instant};
 
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{Key, ModifiersState, NamedKey};
+use winit::keyboard::ModifiersState;
+use winit::platform::wayland::WindowAttributesExtWayland;
 use winit::window::{CursorIcon, ResizeDirection, Window, WindowAttributes, WindowId};
 
 use lntrn_render::{GpuContext, Painter, TextRenderer};
@@ -17,31 +28,36 @@ use lntrn_ui::gpu::{FoxPalette, InteractionContext, MenuBar, MenuEvent, ScrollAr
 
 use clipboard::WaylandClipboard;
 use editor::Editor;
-use toolbar::{
-    FormatToolbar, FONT_SIZES, ZONE_FMT_BOLD, ZONE_FMT_ITALIC, ZONE_FMT_SIZE_BTN,
-    ZONE_FMT_SIZE_OPT_BASE, ZONE_FMT_STRIKE, ZONE_FMT_UNDERLINE,
-};
+use find_bar::FindBar;
+use keys::KeyAction;
+use theme::Theme;
+use toolbar::FormatToolbar;
 
 // ── Hit zone IDs ────────────────────────────────────────────────────────────
 
-const ZONE_CLOSE: u32 = 1;
-const ZONE_MAXIMIZE: u32 = 2;
-const ZONE_MINIMIZE: u32 = 3;
-const ZONE_EDITOR: u32 = 10;
+pub(crate) const ZONE_CLOSE: u32 = 1;
+pub(crate) const ZONE_MAXIMIZE: u32 = 2;
+pub(crate) const ZONE_MINIMIZE: u32 = 3;
+pub(crate) const ZONE_EDITOR: u32 = 10;
+pub(crate) const ZONE_EDITOR_SCROLL_THUMB: u32 = 4000;
+pub(crate) const ZONE_EDITOR_SCROLL_TRACK: u32 = 4001;
 
 // ── Menu item IDs ───────────────────────────────────────────────────────────
 
-const MENU_NEW: u32 = 100;
-const MENU_OPEN: u32 = 101;
-const MENU_SAVE: u32 = 102;
-const MENU_SAVE_DOCX: u32 = 103;
+pub(crate) const MENU_NEW: u32 = 100;
+pub(crate) const MENU_OPEN: u32 = 101;
+pub(crate) const MENU_SAVE: u32 = 102;
+pub(crate) const MENU_SAVE_DOCX: u32 = 103;
+pub(crate) const MENU_THEME_PAPER: u32 = 200;
+pub(crate) const MENU_THEME_NIGHT: u32 = 201;
+pub(crate) const MENU_THEME_DARK: u32 = 202;
 
 // ── Main ────────────────────────────────────────────────────────────────────
 
 fn main() {
-    let file_path = std::env::args().nth(1);
+    let file_paths: Vec<String> = std::env::args().skip(1).collect();
     let event_loop = EventLoop::new().expect("Failed to create event loop");
-    let mut handler = TextHandler::new(file_path);
+    let mut handler = TextHandler::new(file_paths);
     event_loop.run_app(&mut handler).expect("Event loop failed");
 }
 
@@ -58,38 +74,62 @@ struct Gpu {
 /// Cursor blink interval.
 const BLINK_INTERVAL: Duration = Duration::from_millis(530);
 
-struct TextHandler {
-    window: Option<Window>,
-    gpu: Option<Gpu>,
-    editor: Editor,
-    input: InteractionContext,
-    menu_bar: MenuBar,
-    fmt_toolbar: FormatToolbar,
-    clipboard: Option<WaylandClipboard>,
-    palette: FoxPalette,
-    scale: f32,
-    needs_redraw: bool,
-    modifiers: ModifiersState,
-    cursor_visible: bool,
-    cursor_blink_deadline: Instant,
-    dragging: bool,
+pub(crate) struct TextHandler {
+    pub(crate) window: Option<Window>,
+    pub(crate) gpu: Option<Gpu>,
+    pub(crate) tabs: Vec<Editor>,
+    pub(crate) active_tab: usize,
+    pub(crate) next_tab_id: u64,
+    pub(crate) find_bar: FindBar,
+    pub(crate) input: InteractionContext,
+    pub(crate) menu_bar: MenuBar,
+    pub(crate) fmt_toolbar: FormatToolbar,
+    pub(crate) clipboard: Option<WaylandClipboard>,
+    pub(crate) theme: Theme,
+    pub(crate) palette: FoxPalette,
+    pub(crate) scale: f32,
+    pub(crate) needs_redraw: bool,
+    pub(crate) modifiers: ModifiersState,
+    pub(crate) cursor_visible: bool,
+    pub(crate) cursor_blink_deadline: Instant,
+    pub(crate) dragging: bool,
+    /// Wall-clock of the last animation tick — used for dt-based easing.
+    pub(crate) last_anim_tick: Instant,
 }
 
 impl TextHandler {
-    fn new(file_path: Option<String>) -> Self {
-        let mut editor = Editor::new();
-        if let Some(path) = file_path {
-            let _ = editor.load_file(std::path::PathBuf::from(path));
+    fn new(file_paths: Vec<String>) -> Self {
+        let mut next_id: u64 = 0;
+        let mut tabs: Vec<Editor> = file_paths
+            .into_iter()
+            .map(|path| {
+                let mut e = Editor::new();
+                e.tab_id = next_id;
+                next_id += 1;
+                let _ = e.load_file(std::path::PathBuf::from(path));
+                e
+            })
+            .collect();
+        if tabs.is_empty() {
+            let mut e = Editor::new();
+            e.tab_id = next_id;
+            next_id += 1;
+            tabs.push(e);
         }
-        let palette = FoxPalette::dark();
+        let theme = theme::load_active();
+        let palette = theme.palette();
         Self {
             window: None,
             gpu: None,
-            editor,
+            tabs,
+            active_tab: 0,
+            next_tab_id: next_id,
+            find_bar: FindBar::new(),
             input: InteractionContext::new(),
             menu_bar: MenuBar::new(&palette),
             fmt_toolbar: FormatToolbar::new(),
             clipboard: WaylandClipboard::new(),
+            theme,
             palette,
             scale: 1.0,
             needs_redraw: true,
@@ -97,11 +137,30 @@ impl TextHandler {
             cursor_visible: true,
             cursor_blink_deadline: Instant::now() + BLINK_INTERVAL,
             dragging: false,
+            last_anim_tick: Instant::now(),
         }
+    }
+
+    /// Borrow the active editor.
+    pub(crate) fn editor(&self) -> &Editor {
+        &self.tabs[self.active_tab]
+    }
+
+    /// Borrow the active editor mutably.
+    pub(crate) fn editor_mut(&mut self) -> &mut Editor {
+        &mut self.tabs[self.active_tab]
     }
 
     fn edge_resize_direction(&self) -> Option<ResizeDirection> {
         let (cx, cy) = self.input.cursor()?;
+        // Don't intercept resize when the cursor is over a scrollbar thumb
+        // or track — the user is trying to drag the scrollbar, not the
+        // window edge.
+        if let Some(zone_id) = self.input.zone_at(cx, cy) {
+            if zone_id == ZONE_EDITOR_SCROLL_THUMB || zone_id == ZONE_EDITOR_SCROLL_TRACK {
+                return None;
+            }
+        }
         let gpu = self.gpu.as_ref()?;
         let wf = gpu.ctx.width() as f32;
         let hf = gpu.ctx.height() as f32;
@@ -126,13 +185,19 @@ impl TextHandler {
     fn is_on_title_bar(&self) -> bool {
         self.input
             .cursor()
-            .map_or(false, |(_, cy)| cy < render::TITLE_BAR_H * self.scale)
+            .map_or(false, |(_, cy)| cy < title_bar::TITLE_BAR_H * self.scale)
     }
 
     fn window_size(&self) -> (f32, f32) {
         self.gpu
             .as_ref()
             .map_or((800.0, 600.0), |g| (g.ctx.width() as f32, g.ctx.height() as f32))
+    }
+
+    /// Crate-visible alias so sibling modules (mouse.rs) can read window
+    /// dimensions without us exposing the gpu field.
+    pub(crate) fn window_size_pub(&self) -> (f32, f32) {
+        self.window_size()
     }
 
     fn shutdown(&mut self, event_loop: &ActiveEventLoop) {
@@ -146,18 +211,21 @@ impl TextHandler {
         let s = self.scale;
         let (wf, hf) = self.window_size();
         let font_size = editor::FONT_SIZE * s;
+        let er = render::editor_rect(wf, hf, s, self.find_bar.height(s));
+        let active = self.active_tab;
+        let editor = &mut self.tabs[active];
 
-        let (doc_line, row_start, row_end) = self.editor.wrap_row_at_y(cy, wf, hf, s);
-        self.editor.cursor_line = doc_line;
+        let (doc_line, row_start, row_end) = editor.wrap_row_at_y(cy, er, s);
+        editor.cursor_line = doc_line;
 
         if let Some(gpu) = &mut self.gpu {
             let base = render::measure_to_offset(
-                &mut gpu.text, &self.editor, doc_line, row_start, font_size,
+                &mut gpu.text, editor, doc_line, row_start, font_size,
             );
-            let col = self.editor.col_at_x(cx, doc_line, row_start, row_end, wf, hf, s, |byte_off| {
-                render::measure_to_offset(&mut gpu.text, &self.editor, doc_line, byte_off, font_size) - base
+            let col = editor.col_at_x(cx, doc_line, row_start, row_end, er, s, |byte_off| {
+                render::measure_to_offset(&mut gpu.text, editor, doc_line, byte_off, font_size) - base
             });
-            self.editor.cursor_col = col;
+            editor.cursor_col = col;
         }
     }
 
@@ -166,80 +234,6 @@ impl TextHandler {
         self.cursor_blink_deadline = Instant::now() + BLINK_INTERVAL;
     }
 
-    fn open_file_dialog(&mut self) {
-        let output = std::process::Command::new("lntrn-file-manager")
-            .args(["--pick", "--title", "Open File"])
-            .output();
-        if let Ok(out) = output {
-            if out.status.success() {
-                let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                if !path.is_empty() {
-                    let _ = self.editor.load_file(std::path::PathBuf::from(path));
-                }
-            }
-        }
-    }
-
-    fn save_file_dialog(&mut self) {
-        if self.editor.file_path.is_some() {
-            let _ = self.editor.save_file();
-            return;
-        }
-        let output = std::process::Command::new("lntrn-file-manager")
-            .args(["--pick-save", "--title", "Save File"])
-            .output();
-        if let Ok(out) = output {
-            if out.status.success() {
-                let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                if !path.is_empty() {
-                    self.editor.file_path = Some(std::path::PathBuf::from(path));
-                    let _ = self.editor.save_file();
-                }
-            }
-        }
-    }
-
-    fn export_docx_dialog(&mut self) {
-        let default_name = self.editor.filename.replace(".txt", "").to_string() + ".docx";
-        let output = std::process::Command::new("lntrn-file-manager")
-            .args(["--pick-save", "--title", "Export as .docx", "--save-name", &default_name])
-            .output();
-        if let Ok(out) = output {
-            if out.status.success() {
-                let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                if !path.is_empty() {
-                    if let Err(e) = self.editor.export_docx(std::path::Path::new(&path)) {
-                        eprintln!("[lntrn-notepad] docx export error: {e}");
-                    }
-                }
-            }
-        }
-    }
-
-    fn do_copy(&mut self) {
-        if let Some(text) = self.editor.selected_text() {
-            if let Some(cb) = &self.clipboard {
-                cb.set_text(&text);
-            }
-        }
-    }
-
-    fn do_cut(&mut self) {
-        if let Some(text) = self.editor.selected_text() {
-            if let Some(cb) = &self.clipboard {
-                cb.set_text(&text);
-            }
-            self.editor.delete_selection();
-        }
-    }
-
-    fn do_paste(&mut self) {
-        if let Some(cb) = &self.clipboard {
-            if let Some(text) = cb.get_text() {
-                self.editor.insert_str(&text);
-            }
-        }
-    }
 }
 
 // ── Application handler ──────────────────────────────────────────────────────
@@ -251,6 +245,7 @@ impl ApplicationHandler for TextHandler {
         }
 
         let attrs = WindowAttributes::default()
+            .with_name("lntrn-notepad", "lntrn-notepad")
             .with_title("lntrn-notepad")
             .with_inner_size(winit::dpi::LogicalSize::new(900.0, 700.0))
             .with_decorations(false)
@@ -298,7 +293,9 @@ impl ApplicationHandler for TextHandler {
                 let (cx, cy) = (position.x as f32, position.y as f32);
                 self.input.on_cursor_moved(cx, cy);
 
-                if self.dragging {
+                if mouse::update_scrollbar_drag(self, cx, cy) {
+                    // scrollbar drag consumes the move
+                } else if self.dragging {
                     self.click_to_cursor(cx, cy);
                     self.reset_blink();
                 } else if let Some(dir) = self.edge_resize_direction() {
@@ -321,104 +318,33 @@ impl ApplicationHandler for TextHandler {
             }
 
             WindowEvent::MouseInput { state, button, .. } => {
-                match (button, state) {
-                    (MouseButton::Left, ElementState::Pressed) => {
-                        if let Some(dir) = self.edge_resize_direction() {
-                            if let Some(w) = &self.window {
-                                let _ = w.drag_resize_window(dir);
-                            }
-                            return;
-                        }
-
-                        // Let menu bar handle clicks first
-                        let menus = render::file_menu_items();
-                        if self.menu_bar.on_click(&mut self.input, &menus, self.scale) {
-                            self.needs_redraw = true;
-                            return;
-                        }
-
-                        if let Some(zone_id) = self.input.on_left_pressed() {
-                            match zone_id {
-                                ZONE_CLOSE => {
-                                    self.shutdown(event_loop);
-                                    return;
-                                }
-                                ZONE_MINIMIZE => {
-                                    if let Some(w) = &self.window {
-                                        w.set_minimized(true);
-                                    }
-                                }
-                                ZONE_MAXIMIZE => {
-                                    if let Some(w) = &self.window {
-                                        w.set_maximized(!w.is_maximized());
-                                    }
-                                }
-                                // Formatting toolbar buttons
-                                ZONE_FMT_BOLD => self.editor.toggle_format(|a| a.bold = !a.bold),
-                                ZONE_FMT_ITALIC => self.editor.toggle_format(|a| a.italic = !a.italic),
-                                ZONE_FMT_UNDERLINE => self.editor.toggle_format(|a| a.underline = !a.underline),
-                                ZONE_FMT_STRIKE => self.editor.toggle_format(|a| a.strikethrough = !a.strikethrough),
-                                ZONE_FMT_SIZE_BTN => {
-                                    self.fmt_toolbar.size_dropdown_open = !self.fmt_toolbar.size_dropdown_open;
-                                }
-                                z if z >= ZONE_FMT_SIZE_OPT_BASE
-                                    && z < ZONE_FMT_SIZE_OPT_BASE + FONT_SIZES.len() as u32 =>
-                                {
-                                    let idx = (z - ZONE_FMT_SIZE_OPT_BASE) as usize;
-                                    self.editor.set_font_size(FONT_SIZES[idx]);
-                                    self.fmt_toolbar.size_dropdown_open = false;
-                                }
-                                ZONE_EDITOR => {
-                                    self.fmt_toolbar.size_dropdown_open = false;
-                                    self.editor.clear_selection();
-                                    if let Some((cx, cy)) = self.input.cursor() {
-                                        self.click_to_cursor(cx, cy);
-                                        self.editor.begin_selection();
-                                        self.dragging = true;
-                                    }
-                                }
-                                _ => {
-                                    self.fmt_toolbar.size_dropdown_open = false;
-                                }
-                            }
-                        } else if self.is_on_title_bar() {
-                            if let Some(w) = &self.window {
-                                let _ = w.drag_window();
-                            }
-                            return;
-                        }
-                        self.needs_redraw = true;
-                    }
-                    (MouseButton::Left, ElementState::Released) => {
-                        self.input.on_left_released();
-                        if self.dragging {
-                            self.dragging = false;
-                            // If anchor == cursor, it was just a click — clear selection
-                            if !self.editor.has_selection() {
-                                self.editor.clear_selection();
-                            }
-                        }
-                        self.needs_redraw = true;
-                    }
-                    _ => {}
+                if let mouse::MouseAction::Consumed =
+                    mouse::handle_mouse_input(self, event_loop, button, state)
+                {
+                    self.needs_redraw = true;
                 }
             }
 
             WindowEvent::MouseWheel { delta, .. } => {
                 let scroll = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => -y * 40.0 * self.scale,
+                    MouseScrollDelta::LineDelta(_, y) => -y * 60.0 * self.scale,
                     MouseScrollDelta::PixelDelta(pos) => -pos.y as f32,
                 };
                 let s = self.scale;
                 let (wf, hf) = self.window_size();
-                let editor_rect = render::editor_rect(wf, hf, s);
-                let total_h = self.editor.content_height(s);
+                let find_h = self.find_bar.height(s);
+                let editor_rect = render::editor_rect(wf, hf, s, find_h);
+                let editor = self.editor_mut();
+                let total_h = editor.content_height(s);
+                // Apply scroll to the TARGET; the animation tick eases the
+                // visible offset toward it for a smooth feel.
                 ScrollArea::apply_scroll(
-                    &mut self.editor.scroll_offset,
+                    &mut editor.scroll_target,
                     scroll,
                     total_h,
                     editor_rect.h,
                 );
+                editor.scrollbar.ping();
                 self.needs_redraw = true;
             }
 
@@ -426,63 +352,11 @@ impl ApplicationHandler for TextHandler {
                 if event.state != ElementState::Pressed {
                     return;
                 }
-
-                // Close menu on Escape
-                if event.logical_key == Key::Named(NamedKey::Escape) {
-                    if self.menu_bar.is_open() {
-                        self.menu_bar.close();
-                        self.needs_redraw = true;
-                        return;
-                    }
+                let mods = self.modifiers;
+                if let KeyAction::Consumed = keys::handle_key(self, &event.logical_key, mods) {
+                    self.reset_blink();
+                    self.needs_redraw = true;
                 }
-
-                let ctrl = self.modifiers.contains(ModifiersState::CONTROL);
-                let shift = self.modifiers.contains(ModifiersState::SHIFT);
-
-                match &event.logical_key {
-                    Key::Character(s) if ctrl && shift => {
-                        match s.as_str() {
-                            "Z" | "z" => self.editor.redo(),
-                            "X" | "x" => self.editor.toggle_format(|a| a.strikethrough = !a.strikethrough),
-                            _ => {}
-                        }
-                    }
-                    Key::Character(s) if ctrl => {
-                        match s.as_str() {
-                            "s" => self.save_file_dialog(),
-                            "o" => self.open_file_dialog(),
-                            "n" => self.editor = Editor::new(),
-                            "a" => self.editor.select_all(),
-                            "c" => self.do_copy(),
-                            "x" => self.do_cut(),
-                            "v" => self.do_paste(),
-                            "z" => self.editor.undo(),
-                            "b" => self.editor.toggle_format(|a| a.bold = !a.bold),
-                            "i" => self.editor.toggle_format(|a| a.italic = !a.italic),
-                            "u" => self.editor.toggle_format(|a| a.underline = !a.underline),
-                            _ => {}
-                        }
-                    }
-                    Key::Named(NamedKey::Enter) => self.editor.insert_char('\n'),
-                    Key::Named(NamedKey::Backspace) => self.editor.backspace(),
-                    Key::Named(NamedKey::Delete) => self.editor.delete(),
-                    Key::Named(NamedKey::ArrowLeft) => self.editor.move_left(shift),
-                    Key::Named(NamedKey::ArrowRight) => self.editor.move_right(shift),
-                    Key::Named(NamedKey::ArrowUp) => self.editor.move_up(shift),
-                    Key::Named(NamedKey::ArrowDown) => self.editor.move_down(shift),
-                    Key::Named(NamedKey::Home) => self.editor.home(shift),
-                    Key::Named(NamedKey::End) => self.editor.end(shift),
-                    Key::Named(NamedKey::Space) => self.editor.insert_char(' '),
-                    Key::Named(NamedKey::Tab) => self.editor.insert_str("    "),
-                    Key::Character(s) if !ctrl => {
-                        for ch in s.chars() {
-                            self.editor.insert_char(ch);
-                        }
-                    }
-                    _ => {}
-                }
-                self.reset_blink();
-                self.needs_redraw = true;
             }
 
             WindowEvent::RedrawRequested => {
@@ -490,39 +364,67 @@ impl ApplicationHandler for TextHandler {
                     return;
                 }
                 let cursor_vis = self.cursor_visible;
-                if let Some(gpu) = &mut self.gpu {
-                    let event = render::render_frame(
+                let tab_labels = self.tab_labels();
+                let active_tab = self.active_tab;
+                let scale = self.scale;
+                let palette = self.palette;
+                let theme = self.theme;
+                // Split borrow: gpu, the active editor (via tabs), find_bar,
+                // and menu/toolbar state are all separate fields.
+                let active = self.active_tab;
+                let editor = &mut self.tabs[active];
+                let find_bar = &self.find_bar;
+                let event = if let Some(gpu) = self.gpu.as_mut() {
+                    render::render_frame(
                         gpu,
-                        &mut self.editor,
+                        editor,
+                        &tab_labels,
+                        active_tab,
+                        find_bar,
                         &mut self.input,
                         &mut self.menu_bar,
                         &mut self.fmt_toolbar,
-                        &self.palette,
-                        self.scale,
+                        &palette,
+                        theme,
+                        scale,
                         cursor_vis,
-                    );
-                    if let Some(evt) = event {
-                        match evt {
-                            MenuEvent::Action(MENU_NEW) => {
-                                self.editor = Editor::new();
-                                self.menu_bar.close();
-                            }
-                            MenuEvent::Action(MENU_OPEN) => {
-                                self.menu_bar.close();
-                                self.open_file_dialog();
-                            }
-                            MenuEvent::Action(MENU_SAVE) => {
-                                self.menu_bar.close();
-                                self.save_file_dialog();
-                            }
-                            MenuEvent::Action(MENU_SAVE_DOCX) => {
-                                self.menu_bar.close();
-                                self.export_docx_dialog();
-                            }
-                            _ => {}
+                    )
+                } else {
+                    None
+                };
+                if let Some(evt) = event {
+                    match evt {
+                        MenuEvent::Action(MENU_NEW) => {
+                            self.new_tab();
+                            self.menu_bar.close();
                         }
-                        self.needs_redraw = true;
+                        MenuEvent::Action(MENU_OPEN) => {
+                            self.menu_bar.close();
+                            actions::open_file_dialog(self);
+                        }
+                        MenuEvent::Action(MENU_SAVE) => {
+                            self.menu_bar.close();
+                            actions::save_file_dialog(self);
+                        }
+                        MenuEvent::Action(MENU_SAVE_DOCX) => {
+                            self.menu_bar.close();
+                            actions::export_docx_dialog(self);
+                        }
+                        MenuEvent::Action(MENU_THEME_PAPER) => {
+                            self.menu_bar.close();
+                            self.set_theme(Theme::Paper);
+                        }
+                        MenuEvent::Action(MENU_THEME_NIGHT) => {
+                            self.menu_bar.close();
+                            self.set_theme(Theme::NightSky);
+                        }
+                        MenuEvent::Action(MENU_THEME_DARK) => {
+                            self.menu_bar.close();
+                            self.set_theme(Theme::Dark);
+                        }
+                        _ => {}
                     }
+                    self.needs_redraw = true;
                 }
                 self.needs_redraw = false;
             }
@@ -539,14 +441,49 @@ impl ApplicationHandler for TextHandler {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         let now = Instant::now();
+
+        // ── Smooth scroll animation tick ──────────────────────────────
+        let dt = now.duration_since(self.last_anim_tick).as_secs_f32();
+        self.last_anim_tick = now;
+        let mut animating = false;
+        // Tick every tab so background tabs settle while not visible too.
+        for tab in &mut self.tabs {
+            let diff = tab.scroll_target - tab.scroll_offset;
+            if diff.abs() > 0.5 {
+                // Exponential decay: alpha = 1 - e^(-rate * dt). rate ~18
+                // gives a snappy ~80ms settle from a typical wheel notch.
+                let rate = 18.0;
+                let alpha = (1.0 - (-rate * dt).exp()).clamp(0.0, 1.0);
+                tab.scroll_offset += diff * alpha;
+                animating = true;
+            } else {
+                tab.scroll_offset = tab.scroll_target;
+            }
+        }
+        if animating {
+            self.needs_redraw = true;
+        }
+
+        // ── Cursor blink ──────────────────────────────────────────────
         if now >= self.cursor_blink_deadline {
             self.cursor_visible = !self.cursor_visible;
             self.cursor_blink_deadline = now + BLINK_INTERVAL;
             self.needs_redraw = true;
+        }
+
+        if self.needs_redraw {
             if let Some(window) = &self.window {
                 window.request_redraw();
             }
         }
-        event_loop.set_control_flow(ControlFlow::WaitUntil(self.cursor_blink_deadline));
+
+        // Schedule the next wake-up. While animating we want ~60fps; the
+        // blink deadline takes over once everything has settled.
+        let next = if animating {
+            now + Duration::from_millis(16)
+        } else {
+            self.cursor_blink_deadline
+        };
+        event_loop.set_control_flow(ControlFlow::WaitUntil(next));
     }
 }

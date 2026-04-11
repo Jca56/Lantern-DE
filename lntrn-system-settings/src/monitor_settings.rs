@@ -107,6 +107,7 @@ pub fn draw_monitor_settings(
     s: f32,
     sw: u32,
     sh: u32,
+    show_header: bool,
 ) -> f32 {
     let Some(head) = output_mgr.heads.get(head_idx) else { return 0.0 };
     mss.sync_from_head(output_mgr, head_idx);
@@ -122,18 +123,20 @@ pub fn draw_monitor_settings(
 
     let mut cy = y;
 
-    // Header
-    text.queue(
-        &format!("Settings: {}", head.name),
-        lsz * 1.1,
-        label_x,
-        cy + (row_h - lsz) / 2.0,
-        fox.accent,
-        w - pad * 2.0,
-        sw,
-        sh,
-    );
-    cy += row_h;
+    // Header (skipped when drawn inside a card)
+    if show_header {
+        text.queue(
+            &format!("Settings: {}", head.name),
+            lsz * 1.1,
+            label_x,
+            cy + (row_h - lsz) / 2.0,
+            fox.accent,
+            w - pad * 2.0,
+            sw,
+            sh,
+        );
+        cy += row_h;
+    }
 
     // ── Resolution row ─────────────────────────────────────────────
     let res_label_y = cy + (row_h - lsz) / 2.0;

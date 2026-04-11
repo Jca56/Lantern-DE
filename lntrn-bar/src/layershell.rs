@@ -1130,13 +1130,10 @@ pub fn run() -> Result<()> {
             painter.rect_filled(bar_rect, bar_r, bar_bg);
         }
 
-        // Bevel: symmetric highlight on top, shadow on bottom
-        let bevel_sigma = 2.0 * scale_f;
-        let bevel_offset = 1.5 * scale_f;
+        // Inset edge: uniform black on all four sides
+        let bevel_sigma = 3.5 * scale_f;
         painter.inner_shadow(bar_rect, bar_r, bevel_sigma,
-            Color::WHITE.with_alpha(0.12 * bar_opacity), 0.0, -bevel_offset);
-        painter.inner_shadow(bar_rect, bar_r, bevel_sigma,
-            Color::BLACK.with_alpha(0.12 * bar_opacity), 0.0, bevel_offset);
+            Color::BLACK.with_alpha(0.40 * bar_opacity), 0.0, 0.0);
 
         // ── Left: launcher button ─────────────────────────────────
         let launcher_w = app_menu.draw_button(
@@ -1383,10 +1380,11 @@ pub fn run() -> Result<()> {
         text.set_layer(1);
 
         let mut menu_icon_draws = Vec::new();
+        let mut menu_modal_icon_draws = Vec::new();
         app_menu.draw(
             &mut painter, &mut text, &mut ix, &icon_cache, &palette,
             vis_x, bar_y_offset, scale_f, phys_w, total_phys_h,
-            &mut menu_icon_draws,
+            &mut menu_icon_draws, &mut menu_modal_icon_draws,
         );
 
         // Calendar popup
@@ -1589,10 +1587,25 @@ pub fn run() -> Result<()> {
                 }
                 text.render_layer(1, &gpu, frame.encoder_mut(), &view);
 
-                // Layer 2: nested context menus (e.g. right-click inside app launcher)
+                // Layer 2: nested overlays (context menu OR power confirmation modal)
                 if painter.layer_count() > 2 {
                     frame.flush(&gpu);
                     painter.render_layer(2, &gpu, frame.encoder_mut(), &view, None);
+                    // Modal icons render here so they sit ON TOP of the modal card
+                    // shapes drawn by layer 2 painter, but still BELOW layer 2 text.
+                    let mut modal_tex_draws: Vec<TextureDraw> = Vec::new();
+                    for (key, x, y, w, h, clip) in &menu_modal_icon_draws {
+                        if let Some(tex) = icon_cache.get(key) {
+                            modal_tex_draws.push(TextureDraw {
+                                texture: tex, x: *x, y: *y, w: *w, h: *h,
+                                opacity: 1.0, uv: [0.0, 0.0, 1.0, 1.0],
+                                clip: *clip,
+                            });
+                        }
+                    }
+                    if !modal_tex_draws.is_empty() {
+                        tex_pass.render_pass(&gpu, frame.encoder_mut(), &view, &modal_tex_draws, None);
+                    }
                     text.render_layer(2, &gpu, frame.encoder_mut(), &view);
                 }
 

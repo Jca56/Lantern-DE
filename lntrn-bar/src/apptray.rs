@@ -54,6 +54,9 @@ pub struct AppTray {
     icon_paths: HashMap<String, PathBuf>,
     icons_loaded: HashMap<String, bool>,
     config_modified: Option<std::time::SystemTime>,
+    /// Mtime of `~/.lantern/icons/` — used to invalidate cached icon lookups
+    /// when the user drops in a new icon override.
+    icons_dir_modified: Option<std::time::SystemTime>,
     /// Explicit order for running-but-unpinned apps (persists across frames).
     running_order: Vec<String>,
     /// Active drag, if any.
@@ -74,6 +77,7 @@ impl AppTray {
             icon_paths: HashMap::new(),
             icons_loaded: HashMap::new(),
             config_modified: None,
+            icons_dir_modified: None,
             running_order: Vec::new(),
             drag: None,
             anim_offsets: HashMap::new(),
@@ -364,18 +368,47 @@ impl AppTray {
         slots
     }
 
-    /// Resolve icon path for an app_id (freedesktop lookup with custom fallback).
+    /// Resolve icon path for an app_id, mirroring how the app menu does it:
+    /// look up the matching .desktop entry's `Icon=` field first, then run that
+    /// name (or the raw app_id) through the freedesktop lookup. This way a
+    /// single icon override in `~/.lantern/icons/` works for both surfaces.
     fn resolve_icon(&mut self, app_id: &str) -> Option<PathBuf> {
         if let Some(path) = self.icon_paths.get(app_id) {
             return Some(path.clone());
         }
 
-        let path = find_icon(app_id)?;
+        // 1. Get icon name from the matching .desktop file (same logic as menu).
+        let icon_name = crate::desktop::lookup_icon_name(app_id);
+
+        // 2. Absolute paths from Icon= are used directly.
+        let path = if let Some(name) = icon_name.as_deref() {
+            if name.starts_with('/') {
+                let p = PathBuf::from(name);
+                if p.exists() { Some(p) } else { None }
+            } else {
+                find_icon(name)
+            }
+        } else {
+            None
+        }
+        // 3. Fall back to looking up the raw app_id directly.
+        .or_else(|| find_icon(app_id))?;
+
         self.icon_paths.insert(app_id.to_string(), path.clone());
         Some(path)
     }
 
-    /// Load icon textures for all visible apps.
+    /// Determine the icon name to use for embedded-icon lookup. Mirrors
+    /// `resolve_icon`'s name resolution so embedded icons can also be matched
+    /// via the .desktop `Icon=` field, not just the raw app_id.
+    fn embedded_icon_name(&self, app_id: &str) -> String {
+        crate::desktop::lookup_icon_name(app_id)
+            .filter(|n| !n.starts_with('/'))
+            .unwrap_or_else(|| app_id.to_string())
+    }
+
+    /// Load icon textures for all visible apps. Picks up new icons dropped into
+    /// `~/.lantern/icons/` automatically by mtime-watching that directory.
     pub fn load_icons(
         &mut self,
         toplevels: &[ToplevelInfo],
@@ -384,15 +417,30 @@ impl AppTray {
         gpu: &GpuContext,
         icon_size: u32,
     ) {
+        // Invalidate cached lookups if the user dropped new files into ~/.lantern/icons/
+        let icons_dir_mtime = std::fs::metadata(crate::lantern_icons_dir())
+            .and_then(|m| m.modified())
+            .ok();
+        if icons_dir_mtime != self.icons_dir_modified {
+            for app_id in self.icons_loaded.keys() {
+                icons.remove(&format!("app-{}", app_id));
+            }
+            self.icons_loaded.clear();
+            self.icon_paths.clear();
+            self.icons_dir_modified = icons_dir_mtime;
+        }
+
         let slots = self.build_slots(toplevels);
         for slot in &slots {
             let key = format!("app-{}", slot.app_id);
             if self.icons_loaded.contains_key(&slot.app_id) {
                 continue;
             }
-            // Try embedded icon first (our Lantern apps)
-            let svg_name = format!("{}.svg", slot.app_id);
-            let png_name = format!("{}.png", slot.app_id);
+            // Try embedded icon first (our Lantern apps), keyed by the same
+            // name resolution resolve_icon uses so .desktop Icon= overrides apply.
+            let icon_name = self.embedded_icon_name(&slot.app_id);
+            let svg_name = format!("{}.svg", icon_name);
+            let png_name = format!("{}.png", icon_name);
             if lntrn_icons::get(&svg_name).is_some() {
                 if icons.load_embedded(tex_pass, gpu, &key, &svg_name, icon_size, icon_size).is_some() {
                     self.icons_loaded.insert(slot.app_id.clone(), true);

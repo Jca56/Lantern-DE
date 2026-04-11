@@ -1,35 +1,49 @@
 use lntrn_render::{Color, FontStyle, FontWeight, Rect, TextRenderer};
-use lntrn_ui::gpu::{
-    FontSize, FoxPalette, GradientStrip, InteractionContext, MenuBar, MenuEvent, MenuItem,
-    TextLabel, TitleBar,
-};
+use lntrn_ui::gpu::{FoxPalette, InteractionContext, MenuBar, MenuEvent, MenuItem};
 
 use crate::editor::{self, Editor};
+use crate::find_bar::{draw_find_bar, match_color, FindBar};
 use crate::format::FormatSpan;
+use crate::scrollbar;
+use crate::tab_strip::{draw_tab_strip, TabLabel, TAB_STRIP_H};
+use crate::theme::Theme;
+use crate::title_bar::{draw_window_controls, title_content_rect, TITLE_BAR_H};
 use crate::toolbar::{self, FormatToolbar};
 use crate::{
-    Gpu, MENU_NEW, MENU_OPEN, MENU_SAVE, MENU_SAVE_DOCX, ZONE_CLOSE, ZONE_EDITOR, ZONE_MAXIMIZE,
-    ZONE_MINIMIZE,
+    Gpu, MENU_NEW, MENU_OPEN, MENU_SAVE, MENU_SAVE_DOCX, MENU_THEME_DARK, MENU_THEME_NIGHT,
+    MENU_THEME_PAPER, ZONE_EDITOR, ZONE_EDITOR_SCROLL_THUMB,
 };
 
-pub const TITLE_BAR_H: f32 = 52.0;
 pub const TOOLBAR_H: f32 = 40.0;
+pub const STATUS_BAR_H: f32 = 30.0;
 
-pub fn editor_rect(wf: f32, hf: f32, s: f32) -> Rect {
-    let top = (TITLE_BAR_H + TOOLBAR_H) * s;
-    Rect::new(0.0, top, wf, hf - top)
+/// `top_inset` is the find-bar height (or 0 when hidden).
+pub fn editor_rect(wf: f32, hf: f32, s: f32, top_inset: f32) -> Rect {
+    let top = (TITLE_BAR_H + TAB_STRIP_H + TOOLBAR_H) * s + top_inset;
+    let bottom = STATUS_BAR_H * s;
+    Rect::new(0.0, top, wf, (hf - top - bottom).max(0.0))
 }
 
 pub fn file_menu_items() -> Vec<(&'static str, Vec<MenuItem>)> {
-    vec![(
-        "File",
-        vec![
-            MenuItem::action_with(MENU_NEW, "New", "Ctrl+N"),
-            MenuItem::action_with(MENU_OPEN, "Open", "Ctrl+O"),
-            MenuItem::action_with(MENU_SAVE, "Save", "Ctrl+S"),
-            MenuItem::action_with(MENU_SAVE_DOCX, "Export .docx", ""),
-        ],
-    )]
+    vec![
+        (
+            "File",
+            vec![
+                MenuItem::action_with(MENU_NEW, "New", "Ctrl+N"),
+                MenuItem::action_with(MENU_OPEN, "Open", "Ctrl+O"),
+                MenuItem::action_with(MENU_SAVE, "Save", "Ctrl+S"),
+                MenuItem::action_with(MENU_SAVE_DOCX, "Export .docx", ""),
+            ],
+        ),
+        (
+            "View",
+            vec![
+                MenuItem::action_with(MENU_THEME_PAPER, "Theme: Paper", ""),
+                MenuItem::action_with(MENU_THEME_NIGHT, "Theme: Night Sky", ""),
+                MenuItem::action_with(MENU_THEME_DARK, "Theme: Dark", ""),
+            ],
+        ),
+    ]
 }
 
 /// Measure the x-offset from content_x to a byte offset within a line,
@@ -162,10 +176,14 @@ fn compute_wraps(
 pub fn render_frame(
     gpu: &mut Gpu,
     editor: &mut Editor,
+    tab_labels: &[TabLabel],
+    active_tab: usize,
+    find_bar: &FindBar,
     input: &mut InteractionContext,
     menu_bar: &mut MenuBar,
     fmt_toolbar: &mut FormatToolbar,
     palette: &FoxPalette,
+    theme: Theme,
     scale: f32,
     cursor_visible: bool,
 ) -> Option<MenuEvent> {
@@ -181,56 +199,69 @@ pub fn render_frame(
     painter.clear();
     input.begin_frame();
 
-    // ── Window background ─────────────────────────────────────────────
+    // ── Window background (one continuous paper sheet) ───────────────
     painter.rect_filled(Rect::new(0.0, 0.0, wf, hf), 10.0 * s, pal.bg);
 
-    // ── Title bar ─────────────────────────────────────────────────────
-    let title_rect = Rect::new(0.0, 0.0, wf, TITLE_BAR_H * s);
-    let tb = TitleBar::new(title_rect).scale(s);
-    let close_state = input.add_zone(ZONE_CLOSE, tb.close_button_rect());
-    let max_state = input.add_zone(ZONE_MAXIMIZE, tb.maximize_button_rect());
-    let min_state = input.add_zone(ZONE_MINIMIZE, tb.minimize_button_rect());
-    let content = tb.content_rect();
-
-    tb.close_hovered(close_state.is_hovered())
-        .maximize_hovered(max_state.is_hovered())
-        .minimize_hovered(min_state.is_hovered())
-        .draw(painter, pal);
+    // ── Inline title bar ──────────────────────────────────────────────
+    // No background fill — it shares the paper bg from above. We just draw
+    // the window controls and let the menu bar render on top.
+    draw_window_controls(painter, input, pal, wf, s);
 
     // ── Menu bar (inside title bar content area) ─────────────────────
     let menus = file_menu_items();
+    let content = title_content_rect(wf, s);
     menu_bar.update(input, &menus, content, s);
     let labels: Vec<&str> = menus.iter().map(|(l, _)| *l).collect();
     menu_bar.draw_with_labels(painter, text, pal, &labels, w, h, s);
+
+    // ── Tab strip ────────────────────────────────────────────────────
+    draw_tab_strip(
+        painter, text, input, tab_labels, active_tab, pal, wf, s, w, h,
+    );
 
     // ── Formatting toolbar ────────────────────────────────────────────
     let fmt_state = editor.selection_format_state();
     toolbar::draw_toolbar(fmt_toolbar, &fmt_state, painter, text, input, pal, wf, s, w, h);
 
-    // ── Gradient strip below title bar (on top of toolbar) ───────────
-    let strip_y = TITLE_BAR_H * s;
-    let mut strip = GradientStrip::new(0.0, strip_y, wf);
-    strip.height = 4.0 * s;
-    strip.draw(painter);
+    // ── Find bar overlay (shrinks the editor area when visible) ──────
+    let find_bar_top = (TITLE_BAR_H + TAB_STRIP_H + TOOLBAR_H) * s;
+    let find_bar_h = find_bar.height(s);
+    if find_bar_h > 0.0 {
+        draw_find_bar(
+            find_bar,
+            painter,
+            text,
+            input,
+            pal,
+            find_bar_top,
+            0.0,
+            wf,
+            s,
+            w,
+            h,
+        );
+    }
 
     // ── Editor area ───────────────────────────────────────────────────
-    let er = editor_rect(wf, hf, s);
+    let er = editor_rect(wf, hf, s, find_bar_h);
     input.add_zone(ZONE_EDITOR, er);
-
-    let editor_bg = Color::from_rgb8(110, 110, 118);
-    painter.rect_filled(er, 0.0, editor_bg);
+    // Editor surface shares the paper bg — no separate fill needed. The
+    // toolbar already draws a hairline along its bottom edge that visually
+    // separates the writing surface from the chrome.
 
     let font_size = editor::FONT_SIZE * s;
     let line_h = editor::FONT_SIZE * editor::LINE_HEIGHT * s;
     let pad = editor::PAD * s;
-    let text_x = er.x + pad;
-    let text_y_start = er.y + pad - editor.scroll_offset;
-    let max_text_w = (er.w - pad * 2.0).max(10.0);
 
-    let line_num_w = 50.0 * s;
-    let line_num_font = FontSize::Custom(font_size * 0.85);
-    let content_x = text_x + line_num_w;
-    let content_max_w = (max_text_w - line_num_w).max(10.0);
+    // Document mode: render the editor body as a centered "page" with
+    // generous side margins so prose has a fixed comfortable measure
+    // instead of stretching to the window edge.
+    let max_page_w = 800.0 * s;
+    let page_w = er.w.min(max_page_w);
+    let page_x = er.x + (er.w - page_w) * 0.5;
+    let content_x = page_x + pad;
+    let content_max_w = (page_w - pad * 2.0).max(10.0);
+    let text_y_start = er.y + pad * 1.5 - editor.scroll_offset;
 
     // ── Compute word wraps ────────────────────────────────────────────
     compute_wraps(text, editor, content_max_w, font_size);
@@ -261,7 +292,7 @@ pub fn render_frame(
     };
 
     // ── Selection highlight ───────────────────────────────────────────
-    let sel_color = pal.accent.with_alpha(0.3);
+    let sel_color = theme.selection_color();
     if let Some((sel_start, sel_end)) = editor.selection_range() {
         for i in first_doc..last_doc {
             let line_len = editor.lines[i].len();
@@ -322,6 +353,48 @@ pub fn render_frame(
         }
     }
 
+    // ── Find-bar match highlights ─────────────────────────────────────
+    if !find_bar.matches.is_empty() {
+        for (m_idx, m) in find_bar.matches.iter().enumerate() {
+            if m.line < first_doc || m.line >= last_doc {
+                continue;
+            }
+            let wraps = &editor.wrap_rows[m.line];
+            for (row_idx, &row_start) in wraps.iter().enumerate() {
+                let row_end = wraps
+                    .get(row_idx + 1)
+                    .copied()
+                    .unwrap_or_else(|| editor.lines[m.line].len());
+                if m.end <= row_start || m.start >= row_end {
+                    continue;
+                }
+                let vis_row = vis_offsets[m.line] + row_idx;
+                let y = text_y_start + vis_row as f32 * line_h;
+                if y + line_h < er.y || y > er.y + er.h {
+                    continue;
+                }
+                let hl_start = m.start.max(row_start);
+                let hl_end = m.end.min(row_end);
+                let x1 = content_x
+                    + measure_range(text, editor, m.line, row_start, hl_start, font_size);
+                let x2 = content_x
+                    + measure_range(text, editor, m.line, row_start, hl_end, font_size);
+                if x2 > x1 {
+                    painter.rect_filled(
+                        Rect::new(x1, y, x2 - x1, line_h),
+                        2.0 * s,
+                        match_color(m_idx == find_bar.current),
+                    );
+                }
+            }
+        }
+    }
+
+    // ── Clip the editor body so headings / large fonts can't bleed
+    //    into the toolbar / tab strip above or status bar below.
+    painter.push_clip(er);
+    text.push_clip([er.x, er.y, er.w, er.h]);
+
     // ── Draw text lines with formatting spans ─────────────────────────
     for i in first_doc..last_doc {
         let line_str = &editor.lines[i];
@@ -334,21 +407,11 @@ pub fn render_frame(
             if y + line_h < er.y || y > er.y + er.h {
                 continue;
             }
-
-            // Line number on first row only
-            if row_idx == 0 {
-                let num_str = format!("{}", i + 1);
-                TextLabel::new(&num_str, text_x, y)
-                    .size(line_num_font)
-                    .color(pal.muted)
-                    .draw(text, w, h);
-            }
-
             if row_start >= row_end {
                 continue;
             }
 
-            // Draw format spans clipped to this wrap row
+            // Draw format spans clipped to this wrap row.
             let spans = editor.formats.get(i).iter_spans(line_str.len());
             let mut x = content_x;
             for span in &spans {
@@ -363,7 +426,18 @@ pub fn render_frame(
                 }
 
                 let (fs, weight, style) = span_rendering(&span, font_size);
-                text.queue_styled(span_text, fs, x, y, pal.text, content_max_w, weight, style, w, h);
+                let span_color = match span.attrs.color {
+                    Some(rgb) => Color::from_rgb8(
+                        ((rgb >> 16) & 0xFF) as u8,
+                        ((rgb >> 8) & 0xFF) as u8,
+                        (rgb & 0xFF) as u8,
+                    ),
+                    None => pal.text,
+                };
+
+                text.queue_styled(
+                    span_text, fs, x, y, span_color, content_max_w, weight, style, w, h,
+                );
                 let span_w = text.measure_width_styled(span_text, fs, weight, style);
 
                 if span.attrs.underline {
@@ -380,22 +454,15 @@ pub fn render_frame(
         }
     }
 
-    // ── Status bar ────────────────────────────────────────────────────
-    let status_h = 28.0 * s;
-    let status_y = hf - status_h;
-    painter.rect_filled(Rect::new(0.0, status_y, wf, status_h), 0.0, pal.surface_2);
+    // Done with editor body — release the clip so chrome can paint freely.
+    painter.pop_clip();
+    text.pop_clip();
 
-    let status_text = format!(
-        "Ln {}, Col {}  |  {} lines",
-        editor.cursor_line + 1,
-        editor.cursor_col + 1,
-        editor.lines.len(),
-    );
-    let status_font = FontSize::Custom(18.0 * s);
-    TextLabel::new(&status_text, 12.0 * s, status_y + 4.0 * s)
-        .size(status_font)
-        .color(pal.text_secondary)
-        .draw(text, w, h);
+    // ── Editor scrollbar ──────────────────────────────────────────────
+    scrollbar::draw_editor_scrollbar(editor, painter, input, er, s, ZONE_EDITOR_SCROLL_THUMB);
+
+    // ── Status bar ────────────────────────────────────────────────────
+    crate::status_bar::draw_status_bar(editor, painter, text, pal, wf, hf, s, w, h);
 
     // ── Context menu (dropdown from menu bar) — overlay layer ──────────
     painter.set_layer(1);
@@ -421,7 +488,8 @@ pub fn render_frame(
             painter.render_layer(1, ctx, frame.encoder_mut(), &view, None);
             text.render_layer(1, ctx, frame.encoder_mut(), &view);
 
-            // Cursor overlay (on top of text, but not on top of menus)
+            // Cursor overlay (on top of text, but not on top of menus).
+            // Preview tabs hide the cursor since they're read-only.
             if cursor_visible && !menu_bar.context_menu.is_open() {
                 let c_wraps = &editor.wrap_rows[editor.cursor_line];
                 let c_row_idx = c_wraps
@@ -458,3 +526,4 @@ pub fn render_frame(
 
     menu_event
 }
+

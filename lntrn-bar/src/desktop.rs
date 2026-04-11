@@ -89,6 +89,10 @@ pub struct DesktopEntry {
     pub icon: Option<String>,
     pub app_id: String,
     pub category: Category,
+    /// `StartupWMClass=` field — what the app sets as its WM class / Wayland app_id.
+    /// Used to match a running toplevel back to its .desktop entry when the app_id
+    /// differs from the .desktop filename.
+    pub startup_wm_class: Option<String>,
 }
 
 /// Scan XDG application directories for .desktop files.
@@ -138,6 +142,7 @@ fn parse_desktop_file(path: &Path, app_id: &str) -> Option<DesktopEntry> {
     let mut exec = None;
     let mut icon = None;
     let mut categories_raw = String::new();
+    let mut startup_wm_class = None;
     let mut hidden = false;
     let mut no_display = false;
     let mut is_app = false;
@@ -159,6 +164,9 @@ fn parse_desktop_file(path: &Path, app_id: &str) -> Option<DesktopEntry> {
             icon = Some(val.to_string());
         } else if let Some(val) = line.strip_prefix("Categories=") {
             categories_raw = val.to_string();
+        } else if let Some(val) = line.strip_prefix("StartupWMClass=") {
+            let v = val.trim();
+            if !v.is_empty() { startup_wm_class = Some(v.to_string()); }
         } else if let Some(val) = line.strip_prefix("Type=") {
             is_app = val.trim() == "Application";
         } else if let Some(val) = line.strip_prefix("Hidden=") {
@@ -179,7 +187,42 @@ fn parse_desktop_file(path: &Path, app_id: &str) -> Option<DesktopEntry> {
         .find_map(|c| map_category(c.trim()))
         .unwrap_or(Category::System);
 
-    Some(DesktopEntry { name, exec, icon, app_id: app_id.to_string(), category })
+    Some(DesktopEntry {
+        name, exec, icon,
+        app_id: app_id.to_string(),
+        category,
+        startup_wm_class,
+    })
+}
+
+/// Look up the `Icon=` field for a running app's Wayland app_id by scanning
+/// .desktop files. Matches against the .desktop filename (case-insensitive)
+/// and against `StartupWMClass=` (case-insensitive). This is the same name
+/// resolution the app menu uses, so a single icon override in `~/.lantern/icons/`
+/// works for both surfaces.
+pub fn lookup_icon_name(app_id: &str) -> Option<String> {
+    if app_id.is_empty() { return None; }
+    let target = app_id.to_lowercase();
+    // Note: scan_apps filters hidden apps, but icon lookup needs the full set,
+    // so re-scan here directly.
+    let mut seen = HashMap::<String, DesktopEntry>::new();
+    let user_dir = dirs::data_home().join("applications");
+    scan_dir(&user_dir, &mut seen);
+    for dir in data_dirs() {
+        scan_dir(&dir.join("applications"), &mut seen);
+    }
+
+    // 1. Exact match against .desktop filename (case-insensitive).
+    if let Some(e) = seen.values().find(|e| e.app_id.eq_ignore_ascii_case(&target)) {
+        if let Some(icon) = &e.icon { return Some(icon.clone()); }
+    }
+    // 2. Match against StartupWMClass (case-insensitive).
+    if let Some(e) = seen.values().find(|e| {
+        e.startup_wm_class.as_deref().is_some_and(|c| c.eq_ignore_ascii_case(&target))
+    }) {
+        if let Some(icon) = &e.icon { return Some(icon.clone()); }
+    }
+    None
 }
 
 /// Apps to hide from the launcher (junk entries, dev tools, etc.).

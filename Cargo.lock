@@ -2345,6 +2345,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "lntrn-code"
+version = "0.1.0"
+dependencies = [
+ "lntrn-render",
+ "lntrn-ui",
+ "nix",
+ "wayland-client",
+ "wayland-protocols-wlr",
+ "winit",
+]
+
+[[package]]
 name = "lntrn-compositor"
 version = "0.1.0"
 dependencies = [

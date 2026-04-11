@@ -194,8 +194,7 @@ impl Clock {
         // Background
         let bg_rect = Rect::new(popup_x, popup_y, popup_w, popup_h);
         painter.rect_filled(bg_rect, corner_r, palette.bg);
-        let border_color = Color::rgba(1.0, 1.0, 1.0, 0.1);
-        painter.rect_stroke_sdf(bg_rect, corner_r, 1.0 * scale, border_color);
+        painter.rect_stroke_sdf(bg_rect, corner_r, 3.0 * scale, Color::BLACK);
 
         // ── Header: < March 2026 > ──
         let header_y = popup_y + pad;

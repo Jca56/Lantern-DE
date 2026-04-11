@@ -2,7 +2,8 @@ use lntrn_render::{Color, FontStyle, FontWeight, Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{Dropdown, FoxPalette, InteractionContext};
 
 use crate::format::TextAttrs;
-use crate::render::{TITLE_BAR_H, TOOLBAR_H};
+use crate::render::TOOLBAR_H;
+use crate::title_bar::TITLE_BAR_H;
 
 // ── Hit zone IDs ────────────────────────────────────────────────────────────
 
@@ -51,10 +52,10 @@ pub fn draw_toolbar(
     let tb_y = TITLE_BAR_H * s;
     let tb_h = TOOLBAR_H * s;
 
-    // Background
+    // Background — same paper color as the rest of the window so the toolbar
+    // feels integrated. The tab strip below handles the visual separation
+    // from the editor body via its own darker plate + hairline.
     painter.rect_filled(Rect::new(0.0, tb_y, wf, tb_h), 0.0, palette.surface);
-    // Bottom border
-    painter.line(0.0, tb_y + tb_h, wf, tb_y + tb_h, 1.0 * s, palette.muted.with_alpha(0.2));
 
     let btn_size = 34.0 * s;
     let btn_gap = 6.0 * s;

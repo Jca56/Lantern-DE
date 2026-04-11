@@ -223,7 +223,6 @@ impl App {
                 }
                 true
             }
-            tab_bar::TabBarAction::StartDrag => false,
         }
     }
 

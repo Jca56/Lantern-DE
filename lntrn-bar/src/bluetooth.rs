@@ -325,7 +325,7 @@ impl Bluetooth {
         );
         let bg = Rect::new(popup_x, popup_y, popup_w, popup_h);
         painter.rect_filled(bg, s.corner_r, palette.bg);
-        painter.rect_stroke_sdf(bg, s.corner_r, 1.0 * scale, Color::WHITE.with_alpha(0.08));
+        painter.rect_stroke_sdf(bg, s.corner_r, 3.0 * scale, Color::BLACK);
 
         let cx = popup_x + s.pad;
         let cw = popup_w - s.pad * 2.0;

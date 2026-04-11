@@ -3,8 +3,8 @@
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
 // ── Night sky palette ───────────────────────────────────────────────────────
-const BG_DEEP: Color = Color::rgb(0.003, 0.001, 0.014);
-const BG_SURFACE: Color = Color::rgb(0.008, 0.003, 0.028);
+const BG_DEEP: Color = Color::rgb(0.008, 0.003, 0.020);
+const BG_SURFACE: Color = Color::rgb(0.020, 0.007, 0.045);
 const GLOW_PINK: Color = Color::rgba(0.45, 0.14, 0.32, 0.04);
 const GLOW_CYAN: Color = Color::rgba(0.14, 0.35, 0.52, 0.04);
 pub const TEXT_SECONDARY: Color = Color::rgb(0.45, 0.40, 0.58);
@@ -18,7 +18,7 @@ const TEXT_PRIMARY: Color = Color::rgb(0.80, 0.76, 0.90);
 /// Tab bar fill color for Night Sky mode.
 pub const TAB_BAR_BG: Color = Color::rgba(0.005, 0.002, 0.020, 0.85);
 
-pub const TITLE_BAR_HEIGHT: f32 = 40.0;
+pub const TITLE_BAR_HEIGHT: f32 = 50.0;
 pub const CORNER_RADIUS: f32 = 16.0;
 
 // ── Background ──────────────────────────────────────────────────────────────
@@ -34,16 +34,18 @@ pub fn draw_background(p: &mut Painter, w: f32, h: f32, maximized: bool) {
         BG_DEEP.with_alpha(opacity),
         BG_SURFACE.with_alpha(opacity),
     );
+    // Cyan glow — top-left
     p.rect_gradient_radial(
-        Rect::new(-w * 0.35, h * 0.5, w * 0.8, h * 0.8),
-        0.0,
-        GLOW_PINK,
-        Color::TRANSPARENT,
-    );
-    p.rect_gradient_radial(
-        Rect::new(w * 0.5, -h * 0.25, w * 0.8, h * 0.7),
+        Rect::new(-w * 0.35, -h * 0.25, w * 0.8, h * 0.7),
         0.0,
         GLOW_CYAN,
+        Color::TRANSPARENT,
+    );
+    // Pink glow — bottom-right
+    p.rect_gradient_radial(
+        Rect::new(w * 0.5, h * 0.5, w * 0.8, h * 0.8),
+        0.0,
+        GLOW_PINK,
         Color::TRANSPARENT,
     );
 }
@@ -56,7 +58,8 @@ const ICON_SIZE: f32 = 5.0;
 
 fn btn_positions(w: f32) -> (f32, f32, f32, f32) {
     let y = TITLE_BAR_HEIGHT * 0.5;
-    (w - 28.0, w - 66.0, w - 104.0, y)
+    // Right margin slightly enlarged to pull the controls in from the edge.
+    (w - 40.0, w - 78.0, w - 116.0, y)
 }
 
 fn dist(cx: f32, cy: f32, bx: f32, by: f32) -> f32 {

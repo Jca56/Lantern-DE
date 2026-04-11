@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Notepad
+GenericName=Text Editor
+Comment=Edit plain text and Markdown files
+Exec=lntrn-notepad %F
+Icon=lntrn-notepad
+Terminal=false
+Categories=Utility;TextEditor;
+MimeType=text/plain;text/markdown;text/x-markdown;text/x-readme;text/x-log;text/x-changelog;text/csv;text/tab-separated-values;text/x-tex;text/x-shellscript;text/x-python;text/x-rust;text/x-c;text/x-c++;text/x-java;text/x-go;text/x-toml;text/x-yaml;application/x-yaml;application/json;application/xml;text/xml;text/html;text/css;application/javascript;text/javascript;

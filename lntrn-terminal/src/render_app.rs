@@ -166,8 +166,9 @@ impl App {
             })
             .collect();
 
-        // Draw title bar (menus + window controls + gradient strip)
-        ui_chrome::draw_chrome(
+        // Draw title bar (bg + menus + divider + window controls). Returns
+        // the resolved layout so we know where the tabs region is.
+        let layout = ui_chrome::draw_chrome(
             painter,
             text,
             &mut self.chrome,
@@ -183,13 +184,21 @@ impl App {
             cursor_pos,
         );
 
-        // Draw tab bar
+        // Draw tabs inside the title bar, in the region between the menu
+        // divider and the window controls.
+        let tabs_bounds = lntrn_render::Rect::new(
+            layout.tabs_left,
+            0.0,
+            (layout.tabs_right - layout.tabs_left).max(0.0),
+            layout.bar_h,
+        );
         tab_bar::draw_tab_bar(
             painter,
             text,
             &self.tab_bar,
             &tab_displays,
             self.active_tab,
+            tabs_bounds,
             screen_w,
             screen_h,
             self.cursor_pos,

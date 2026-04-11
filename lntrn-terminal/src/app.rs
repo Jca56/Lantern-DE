@@ -170,10 +170,10 @@ impl App {
         self.texture_pass = Some(texture_pass);
     }
 
-    /// Chrome height accounting for window mode and tab bar.
+    /// Chrome height — tabs now live inside the title bar, so this is just
+    /// the title bar height.
     pub(crate) fn chrome_height(&self) -> f32 {
-        let title_h = ui_chrome::title_bar_height(&self.config.window.mode);
-        title_h + tab_bar::TAB_BAR_HEIGHT
+        ui_chrome::title_bar_height(&self.config.window.mode)
     }
 
     /// Font size scaled to current window width.

@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crate::format::{DocFormats, TextAttrs};
+use crate::scrollbar::ScrollbarState;
 
 /// Font size for editor text (physical pixels, scaled at draw time).
 pub const FONT_SIZE: f32 = 24.0;
@@ -53,9 +54,17 @@ pub struct Editor {
     pub file_path: Option<PathBuf>,
     pub filename: String,
     pub modified: bool,
+    /// Stable identifier for this tab. Assigned by `TextHandler` when the
+    /// tab is created — `Editor::new` returns 0 and the host overwrites it.
+    pub tab_id: u64,
+    /// Animated scroll position drawn on screen. Eases toward `scroll_target`.
     pub scroll_offset: f32,
+    /// Where the editor wants to be scrolled to. Updated by the wheel /
+    /// keyboard nav; `scroll_offset` interpolates toward it each frame.
+    pub scroll_target: f32,
     /// Per-line word-wrap row starts (byte offsets). Recomputed each frame.
     pub wrap_rows: Vec<Vec<usize>>,
+    pub scrollbar: ScrollbarState,
     undo_stack: Vec<Snapshot>,
     redo_stack: Vec<Snapshot>,
 }
@@ -72,8 +81,11 @@ impl Editor {
             file_path: None,
             filename: "Untitled".to_string(),
             modified: false,
+            tab_id: 0,
             scroll_offset: 0.0,
+            scroll_target: 0.0,
             wrap_rows: vec![vec![0]],
+            scrollbar: ScrollbarState::new(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
         }
@@ -81,9 +93,9 @@ impl Editor {
 
     pub fn title(&self) -> String {
         if self.modified {
-            format!("* {} — lntrn-text", self.filename)
+            format!("* {} — lntrn-notepad", self.filename)
         } else {
-            format!("{} — lntrn-text", self.filename)
+            format!("{} — lntrn-notepad", self.filename)
         }
     }
 
@@ -108,20 +120,35 @@ impl Editor {
         self.selection_range().is_some()
     }
 
-    /// Get the selected text as a String.
+    /// Get the selected text as a String. Defensively clamps the selection
+    /// to valid line bounds so a stale anchor (e.g. left over from a
+    /// find/replace operation) cannot cause a panic.
     pub fn selected_text(&self) -> Option<String> {
         let (start, end) = self.selection_range()?;
-        if start.line == end.line {
-            return Some(self.lines[start.line][start.col..end.col].to_string());
+        let last_line = self.lines.len().saturating_sub(1);
+        let s_line = start.line.min(last_line);
+        let e_line = end.line.min(last_line);
+        let clamp_col = |line_idx: usize, col: usize| -> usize {
+            let line = &self.lines[line_idx];
+            let mut c = col.min(line.len());
+            while c > 0 && !line.is_char_boundary(c) {
+                c -= 1;
+            }
+            c
+        };
+        let s_col = clamp_col(s_line, start.col);
+        let e_col = clamp_col(e_line, end.col);
+        if s_line == e_line {
+            return Some(self.lines[s_line][s_col..e_col].to_string());
         }
         let mut result = String::new();
-        result.push_str(&self.lines[start.line][start.col..]);
-        for line in &self.lines[start.line + 1..end.line] {
+        result.push_str(&self.lines[s_line][s_col..]);
+        for line in &self.lines[s_line + 1..e_line] {
             result.push('\n');
             result.push_str(line);
         }
         result.push('\n');
-        result.push_str(&self.lines[end.line][..end.col]);
+        result.push_str(&self.lines[e_line][..e_col]);
         Some(result)
     }
 
@@ -240,6 +267,7 @@ impl Editor {
         self.pending_attrs = None;
         self.modified = false;
         self.scroll_offset = 0.0;
+        self.scroll_target = 0.0;
         self.undo_stack.clear();
         self.redo_stack.clear();
         Ok(())
@@ -254,38 +282,6 @@ impl Editor {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "Untitled".to_string());
-        Ok(())
-    }
-
-    pub fn export_docx(&self, path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-        use docx_rs::{Docx, Paragraph, Run};
-        use std::fs::File;
-
-        let file = File::create(path)?;
-        let mut doc = Docx::new();
-        for (i, line) in self.lines.iter().enumerate() {
-            let mut para = Paragraph::new();
-            let spans = self.formats.get(i).iter_spans(line.len());
-            if spans.is_empty() {
-                // Empty line — still add a paragraph
-                para = para.add_run(Run::new().add_text(""));
-            }
-            for span in &spans {
-                let text = &line[span.start..span.end];
-                let mut run = Run::new().add_text(text);
-                if span.attrs.bold { run = run.bold(); }
-                if span.attrs.italic { run = run.italic(); }
-                if span.attrs.underline { run = run.underline("single"); }
-                if span.attrs.strikethrough { run = run.strike(); }
-                if let Some(fs) = span.attrs.font_size {
-                    // docx uses half-points (24pt = size 48)
-                    run = run.size((fs * 2.0) as usize);
-                }
-                para = para.add_run(run);
-            }
-            doc = doc.add_paragraph(para);
-        }
-        doc.build().pack(file)?;
         Ok(())
     }
 
@@ -511,8 +507,12 @@ impl Editor {
 
     /// Resolve which doc line and wrap-row byte range a click y falls on.
     /// Returns `(doc_line, row_start_byte, row_end_byte)`.
-    pub fn wrap_row_at_y(&self, cy: f32, wf: f32, hf: f32, scale: f32) -> (usize, usize, usize) {
-        let editor_rect = crate::render::editor_rect(wf, hf, scale);
+    pub fn wrap_row_at_y(
+        &self,
+        cy: f32,
+        editor_rect: lntrn_render::Rect,
+        scale: f32,
+    ) -> (usize, usize, usize) {
         let line_h = FONT_SIZE * LINE_HEIGHT * scale;
         let text_y_start = editor_rect.y + PAD * scale - self.scroll_offset;
         let vis_row = ((cy - text_y_start) / line_h).floor().max(0.0) as usize;
@@ -539,12 +539,10 @@ impl Editor {
         line_idx: usize,
         row_start: usize,
         row_end: usize,
-        wf: f32,
-        hf: f32,
+        editor_rect: lntrn_render::Rect,
         scale: f32,
         mut measure_fn: impl FnMut(usize) -> f32,
     ) -> usize {
-        let editor_rect = crate::render::editor_rect(wf, hf, scale);
         let line_num_w = 50.0 * scale;
         let content_x = editor_rect.x + PAD * scale + line_num_w;
         let rel_x = (cx - content_x).max(0.0);

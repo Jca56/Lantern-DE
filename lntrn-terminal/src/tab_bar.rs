@@ -6,8 +6,7 @@ use crate::config::WindowMode;
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-pub const TAB_BAR_HEIGHT: f32 = 50.0;
-const TAB_MAX_WIDTH: f32 = 350.0;
+const TAB_MAX_WIDTH: f32 = 500.0;
 const TAB_MIN_WIDTH: f32 = 90.0;
 const TAB_GAP: f32 = 6.0;
 const TAB_PAD_H: f32 = 14.0;
@@ -16,6 +15,10 @@ const TAB_CLOSE_SIZE: f32 = 24.0;
 const TAB_FONT_SIZE: f32 = 22.0;
 const PIN_WIDTH: f32 = 22.0;
 const DOUBLE_CLICK_MS: u128 = 400;
+const TAB_PAD_V: f32 = 8.0;
+/// Internal left inset inside the tabs region so the first tab's rounded left
+/// edge isn't clipped by `push_clip(bounds)`.
+const TABS_INNER_LEFT: f32 = 6.0;
 
 // ── Palettes ───────────────────────────────────────────────────────────────
 
@@ -98,12 +101,6 @@ fn palette(mode: &WindowMode) -> TabPalette {
 const CTX_MENU_WIDTH: f32 = 180.0;
 const CTX_ITEM_HEIGHT: f32 = 36.0;
 
-// ── Tab bar Y offset (sits below the title bar) ────────────────────────────
-
-fn bar_y() -> f32 {
-    crate::ui_chrome::TITLE_BAR_HEIGHT
-}
-
 // ── Public info struct ──────────────────────────────────────────────────────
 
 pub struct TabDisplay<'a> {
@@ -175,18 +172,23 @@ pub enum TabBarAction {
     ConfirmRename(usize, String),
     TogglePin(usize),
     Reorder { from: usize, to: usize },
-    StartDrag,
 }
 
 // ── Layout helpers ──────────────────────────────────────────────────────────
 
-const TAB_PAD_V: f32 = 8.0;
-const CHAR_W: f32 = TAB_FONT_SIZE * 0.6;
+/// Per-char width used for tab title measurement. Uses the ceiling of
+/// `font * 0.6` to match the monospace grid cell width (see `render.rs`).
+const CHAR_W: f32 = 14.0; // ceil(22 * 0.6)
 
 /// Compute widths for each tab based on title length, fitting within available space.
 fn calc_tab_widths(titles: &[&str], available: f32) -> Vec<f32> {
     let n = titles.len().max(1);
-    let space = available - NEW_TAB_WIDTH - 4.0 - (n.saturating_sub(1) as f32 * TAB_GAP);
+    let space = available
+        - TABS_INNER_LEFT
+        - TABS_INNER_LEFT // symmetric right-side breathing room
+        - NEW_TAB_WIDTH
+        - 4.0
+        - (n.saturating_sub(1) as f32 * TAB_GAP);
 
     // Ideal width per tab: pad + text + close + pad
     let ideal: Vec<f32> = titles
@@ -211,27 +213,30 @@ fn calc_tab_widths(titles: &[&str], available: f32) -> Vec<f32> {
         .collect()
 }
 
-/// Uniform width fallback when we don't have title info.
-fn calc_tab_width_uniform(tab_count: usize, available: f32) -> f32 {
-    let space = available - NEW_TAB_WIDTH - 4.0;
-    let per_tab = space / tab_count.max(1) as f32 - TAB_GAP;
-    per_tab.clamp(TAB_MIN_WIDTH, TAB_MAX_WIDTH)
-}
-
-fn tab_rect(idx: usize, tab_count: usize, screen_w: f32) -> Rect {
-    let tab_w = calc_tab_width_uniform(tab_count, screen_w - 16.0);
-    let x = 8.0 + idx as f32 * (tab_w + TAB_GAP);
-    Rect::new(x, bar_y() + TAB_PAD_V, tab_w, TAB_BAR_HEIGHT - TAB_PAD_V * 2.0)
-}
-
-/// Compute tab rect using pre-calculated dynamic widths.
-fn tab_rect_dynamic(idx: usize, widths: &[f32]) -> Rect {
-    let mut x = 8.0;
+/// Compute tab rect using pre-calculated dynamic widths inside the given bounds.
+fn tab_rect_dynamic(idx: usize, widths: &[f32], bounds: Rect) -> Rect {
+    let mut x = bounds.x + TABS_INNER_LEFT;
     for i in 0..idx {
         x += widths[i] + TAB_GAP;
     }
     let w = widths.get(idx).copied().unwrap_or(TAB_MIN_WIDTH);
-    Rect::new(x, bar_y() + TAB_PAD_V, w, TAB_BAR_HEIGHT - TAB_PAD_V * 2.0)
+    Rect::new(x, bounds.y + TAB_PAD_V, w, bounds.h - TAB_PAD_V * 2.0)
+}
+
+/// Compute the new-tab "+" button rect placed after the last tab, inside bounds.
+fn new_tab_rect(widths: &[f32], bounds: Rect) -> Rect {
+    let last_end = if widths.is_empty() {
+        bounds.x + TABS_INNER_LEFT
+    } else {
+        let last = tab_rect_dynamic(widths.len() - 1, widths, bounds);
+        last.x + last.w + TAB_GAP
+    };
+    Rect::new(
+        last_end + 4.0,
+        bounds.y + TAB_PAD_V,
+        NEW_TAB_WIDTH,
+        bounds.h - TAB_PAD_V * 2.0,
+    )
 }
 
 fn tab_close_rect(tab: Rect) -> Rect {
@@ -250,34 +255,38 @@ fn hit(rect: Rect, pos: Option<(f32, f32)>) -> bool {
 
 // ── Drawing ─────────────────────────────────────────────────────────────────
 
+/// Draw the tabs row inside `bounds` (the region between the menu divider and
+/// the window controls). Tabs and the "+" button are clipped to bounds so they
+/// never overlap menus or window controls.
 pub fn draw_tab_bar(
     painter: &mut Painter,
     text: &mut TextRenderer,
     state: &TabBarState,
     tabs: &[TabDisplay],
     active: usize,
+    bounds: Rect,
     screen_w: u32,
     screen_h: u32,
     cursor_pos: Option<(f32, f32)>,
     mode: &WindowMode,
 ) {
-    let sw = screen_w as f32;
+    if bounds.w <= 0.0 {
+        return;
+    }
     let tab_count = tabs.len();
     let pal = palette(mode);
+    let _ = pal.surface; // bg now drawn by ui_chrome
 
     // Compute dynamic tab widths based on title lengths
     let titles: Vec<&str> = tabs.iter().map(|t| t.title).collect();
-    let widths = calc_tab_widths(&titles, sw - 16.0);
+    let widths = calc_tab_widths(&titles, bounds.w);
 
-    // Tab bar background
-    painter.rect_filled(
-        Rect::new(0.0, bar_y(), sw, TAB_BAR_HEIGHT),
-        0.0,
-        pal.surface,
-    );
+    // Clip everything inside the tabs region so dragged or oversized tabs
+    // don't bleed onto menus or window controls.
+    painter.push_clip(bounds);
 
     for (i, tab) in tabs.iter().enumerate() {
-        let mut rect = tab_rect_dynamic(i, &widths);
+        let mut rect = tab_rect_dynamic(i, &widths, bounds);
 
         // If dragging this tab, offset it
         if state.dragging == Some(i) && state.drag_committed {
@@ -348,7 +357,7 @@ pub fn draw_tab_bar(
                 text_x,
                 text_y,
                 text_color,
-                max_text_w.max(10.0),
+                max_text_w.max(10.0) + 1000.0, // give Glyphon room — we already truncated
                 screen_w,
                 screen_h,
             );
@@ -361,13 +370,7 @@ pub fn draw_tab_bar(
     }
 
     // "+" new tab button (pill) — positioned after last dynamic tab
-    let last_end = if widths.is_empty() {
-        8.0
-    } else {
-        let last = tab_rect_dynamic(widths.len() - 1, &widths);
-        last.x + last.w + TAB_GAP
-    };
-    let nb = Rect::new(last_end + 4.0, bar_y() + TAB_PAD_V, NEW_TAB_WIDTH, TAB_BAR_HEIGHT - TAB_PAD_V * 2.0);
+    let nb = new_tab_rect(&widths, bounds);
     let nb_r = nb.h / 2.0;
     let plus_hovered = hit(nb, cursor_pos);
     if plus_hovered {
@@ -382,6 +385,8 @@ pub fn draw_tab_bar(
     let arm = 8.0;
     painter.line(cx - arm, cy, cx + arm, cy, 2.0, plus_color);
     painter.line(cx, cy - arm, cx, cy + arm, 2.0, plus_color);
+
+    painter.pop_clip();
 }
 
 fn draw_rename_field(
@@ -396,8 +401,23 @@ fn draw_rename_field(
     screen_h: u32,
     pal: &TabPalette,
 ) {
-    let char_w = TAB_FONT_SIZE * 0.6;
-    let cursor_px = state.rename_cursor as f32 * char_w;
+    // Measure the actual rendered width of the text up to the cursor — using
+    // `font * 0.6` constants would drift from Glyphon's real advance metrics.
+    // We need a string slice up to `rename_cursor` chars, so handle multibyte
+    // safely by walking chars rather than indexing bytes.
+    let prefix: String = state
+        .rename_buf
+        .chars()
+        .take(state.rename_cursor)
+        .collect();
+    let cursor_px = if prefix.is_empty() {
+        0.0
+    } else {
+        text.measure_width(&prefix, TAB_FONT_SIZE)
+    };
+    // Per-char width estimate used for scroll bookkeeping (an exact value isn't
+    // required here — just enough to keep the caret on screen).
+    let char_w = (TAB_FONT_SIZE * 0.6).ceil();
 
     // Scroll offset so cursor stays visible within max_w
     let scroll = if cursor_px > max_w - char_w {
@@ -458,15 +478,24 @@ fn draw_close_x(
     painter.line(x2, y1, x1, y2, 1.5, xc);
 }
 
-fn truncate_title(title: &str, _max_w: f32) -> String {
+/// Truncate the title to fit within `max_w` pixels, appending an ellipsis
+/// if any characters were dropped. Uses the same per-char width assumption
+/// as the layout / cursor code so the visual fit matches what we measured.
+fn truncate_title(title: &str, max_w: f32) -> String {
     let chars: Vec<char> = title.chars().collect();
-    if chars.len() > 18 {
-        let mut t: String = chars[..17].iter().collect();
-        t.push('\u{2026}');
-        t
-    } else {
-        title.to_string()
+    // How many full characters fit, leaving space for the ellipsis if needed.
+    let max_chars = (max_w / CHAR_W).floor() as usize;
+    if chars.len() <= max_chars {
+        return title.to_string();
     }
+    // Need at least 1 char + ellipsis to be meaningful.
+    if max_chars < 2 {
+        return "\u{2026}".to_string();
+    }
+    let keep = max_chars.saturating_sub(1); // leave room for the ellipsis
+    let mut t: String = chars[..keep].iter().collect();
+    t.push('\u{2026}');
+    t
 }
 
 // ── Tab context menu (right-click) ──────────────────────────────────────────
@@ -551,21 +580,25 @@ pub fn draw_tab_context_menu(
 
 // ── Hit testing ─────────────────────────────────────────────────────────────
 
+/// Handle a left click on the tabs region. Returns:
+/// - `SwitchTab/CloseTab/NewTab/...` if a tab/button was clicked
+/// - `None` if the click landed on empty tab area, on the context menu, or
+///   outside the tabs region — the chrome `handle_click` should then decide
+///   whether to drag the window or do nothing.
 pub fn handle_click(
     state: &mut TabBarState,
     cursor_pos: Option<(f32, f32)>,
     tab_count: usize,
     tabs: &[TabDisplay],
+    bounds: Rect,
     screen_w: u32,
 ) -> TabBarAction {
-    let (px, py) = match cursor_pos {
+    let (px, _py) = match cursor_pos {
         Some(p) => p,
         None => return TabBarAction::None,
     };
 
-    let sw = screen_w as f32;
-
-    // Context menu takes priority
+    // Context menu takes priority — it can extend outside the tabs region.
     if let Some((tab_idx, mx, my)) = state.context_menu {
         let is_pinned = tabs.get(tab_idx).map_or(false, |t| t.pinned);
         let items: &[&str] = if is_pinned {
@@ -574,8 +607,9 @@ pub fn handle_click(
             &["Rename", "Pin tab", "Close tab"]
         };
         let h = 12.0 + items.len() as f32 * CTX_ITEM_HEIGHT + 12.0;
+        let sw = screen_w as f32;
         let x = if mx + CTX_MENU_WIDTH > sw { mx - CTX_MENU_WIDTH } else { mx }.max(0.0);
-        let y = if my + h > screen_w as f32 { my - h } else { my }.max(0.0);
+        let y = if my + h > sw { my - h } else { my }.max(0.0);
         let menu = Rect::new(x, y, CTX_MENU_WIDTH, h);
 
         if hit(menu, cursor_pos) {
@@ -603,22 +637,17 @@ pub fn handle_click(
         return TabBarAction::None;
     }
 
-    // Compute dynamic widths for hit testing
-    let titles: Vec<&str> = tabs.iter().map(|t| t.title).collect();
-    let widths = calc_tab_widths(&titles, sw - 16.0);
-
-    // Not in tab bar area
-    if py < bar_y() || py > bar_y() + TAB_BAR_HEIGHT {
-        // If click is in title bar area, allow drag
-        if py < bar_y() {
-            return TabBarAction::StartDrag;
-        }
+    // Click must be inside the tabs region for tab/button hit testing.
+    if !hit(bounds, cursor_pos) {
         return TabBarAction::None;
     }
 
-    // If renaming, Enter/click-away confirms
+    let titles: Vec<&str> = tabs.iter().map(|t| t.title).collect();
+    let widths = calc_tab_widths(&titles, bounds.w);
+
+    // If renaming, click-away confirms
     if let Some(idx) = state.renaming {
-        let rect = tab_rect_dynamic(idx, &widths);
+        let rect = tab_rect_dynamic(idx, &widths, bounds);
         if !hit(rect, cursor_pos) {
             let name = state.rename_buf.clone();
             state.cancel_rename();
@@ -628,20 +657,14 @@ pub fn handle_click(
     }
 
     // New tab button
-    let last_end = if widths.is_empty() {
-        8.0
-    } else {
-        let last = tab_rect_dynamic(widths.len() - 1, &widths);
-        last.x + last.w + TAB_GAP
-    };
-    let nb = Rect::new(last_end + 4.0, bar_y() + TAB_PAD_V, NEW_TAB_WIDTH, TAB_BAR_HEIGHT - TAB_PAD_V * 2.0);
+    let nb = new_tab_rect(&widths, bounds);
     if hit(nb, cursor_pos) {
         return TabBarAction::NewTab;
     }
 
     // Tab clicks
     for i in 0..tab_count {
-        let rect = tab_rect_dynamic(i, &widths);
+        let rect = tab_rect_dynamic(i, &widths, bounds);
         if hit(rect, cursor_pos) {
             // Close button
             let is_pinned = tabs.get(i).map_or(false, |t| t.pinned);
@@ -680,22 +703,21 @@ pub fn handle_right_click(
     state: &mut TabBarState,
     cursor_pos: Option<(f32, f32)>,
     tabs: &[TabDisplay],
-    screen_w: u32,
+    bounds: Rect,
 ) -> bool {
     let (px, py) = match cursor_pos {
         Some(p) => p,
         None => return false,
     };
 
-    if py < bar_y() || py > bar_y() + TAB_BAR_HEIGHT {
+    if !hit(bounds, cursor_pos) {
         return false;
     }
 
-    let sw = screen_w as f32;
     let titles: Vec<&str> = tabs.iter().map(|t| t.title).collect();
-    let widths = calc_tab_widths(&titles, sw - 16.0);
+    let widths = calc_tab_widths(&titles, bounds.w);
     for i in 0..tabs.len() {
-        let rect = tab_rect_dynamic(i, &widths);
+        let rect = tab_rect_dynamic(i, &widths, bounds);
         if hit(rect, cursor_pos) {
             state.context_menu = Some((i, px, py));
             return true;
@@ -709,7 +731,7 @@ pub fn handle_drag_move(
     state: &mut TabBarState,
     cursor_x: f32,
     tabs: &[TabDisplay],
-    screen_w: u32,
+    bounds: Rect,
 ) -> Option<TabBarAction> {
     let dragging_idx = state.dragging?;
     let delta = cursor_x - state.drag_start_x;
@@ -720,10 +742,9 @@ pub fn handle_drag_move(
     state.drag_committed = true;
     state.drag_offset_x = delta;
 
-    let sw = screen_w as f32;
     let titles: Vec<&str> = tabs.iter().map(|t| t.title).collect();
-    let widths = calc_tab_widths(&titles, sw - 16.0);
-    let rect = tab_rect_dynamic(dragging_idx, &widths);
+    let widths = calc_tab_widths(&titles, bounds.w);
+    let rect = tab_rect_dynamic(dragging_idx, &widths, bounds);
     let dragged_center = rect.x + delta + rect.w / 2.0;
 
     // Check if we crossed into an adjacent tab
@@ -731,7 +752,7 @@ pub fn handle_drag_move(
         if i == dragging_idx {
             continue;
         }
-        let other = tab_rect_dynamic(i, &widths);
+        let other = tab_rect_dynamic(i, &widths, bounds);
         let other_center = other.x + other.w / 2.0;
         if (i < dragging_idx && dragged_center < other_center)
             || (i > dragging_idx && dragged_center > other_center)

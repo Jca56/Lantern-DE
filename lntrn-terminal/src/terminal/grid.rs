@@ -161,9 +161,13 @@ pub struct TerminalState {
     pub osc99_body: String,
     pub pending_notifications: Vec<(String, String)>, // (title, body)
 
-    // Text selection (grid coordinates)
-    pub selection_anchor: Option<(usize, usize)>, // (row, col) where drag started
-    pub selection_end: Option<(usize, usize)>,    // (row, col) where drag is now
+    // Text selection — stored in ABSOLUTE line coordinates so the highlight
+    // follows the text when the user scrolls the scrollback. Absolute row 0
+    // is the oldest line in scrollback; the live grid starts at
+    // `scrollback.len()`. Use `set_selection_anchor`/`set_selection_end` to
+    // store, and `is_selected` for queries from visible-row code.
+    pub selection_anchor: Option<(usize, usize)>, // (absolute_row, col)
+    pub selection_end: Option<(usize, usize)>,    // (absolute_row, col)
 
     // Deferred line-wrap flag (standard terminal "pending wrap" / "wrap_next").
     // When a character fills the last column the cursor stays at cols-1 and this
@@ -408,7 +412,8 @@ impl TerminalState {
     pub fn scroll_up(&mut self) {
         if self.scroll_top < self.scroll_bottom && self.scroll_bottom < self.rows {
             let removed = self.grid.remove(self.scroll_top);
-            if self.scroll_top == 0 {
+            // Don't leak alt-screen content into the main scrollback buffer
+            if self.scroll_top == 0 && self.alt_grid.is_none() {
                 self.scrollback.push(removed);
                 if self.scrollback.len() > self.max_scrollback {
                     self.scrollback.remove(0);
@@ -472,8 +477,48 @@ impl TerminalState {
         }
     }
 
-    /// Returns the normalized selection range: (start_row, start_col, end_row, end_col).
-    /// Start is always before end in reading order.
+    /// Convert a visible row index (0..rows) into an absolute row index that
+    /// is stable across scrolling. Absolute 0 is the oldest line in scrollback;
+    /// the current live grid starts at `scrollback.len()`.
+    pub fn visible_to_absolute(&self, vrow: usize) -> usize {
+        let scrollback_len = self.scrollback.len();
+        let start = if self.scroll_offset == 0 {
+            scrollback_len
+        } else {
+            scrollback_len.saturating_sub(self.scroll_offset)
+        };
+        start + vrow
+    }
+
+    /// Get a line by absolute row index. Returns an empty slice if the index
+    /// is out of range (e.g. the line was evicted from scrollback).
+    pub fn absolute_line(&self, abs_row: usize) -> &[Cell] {
+        let scrollback_len = self.scrollback.len();
+        if abs_row < scrollback_len {
+            &self.scrollback[abs_row]
+        } else {
+            let grid_row = abs_row - scrollback_len;
+            if grid_row < self.grid.len() {
+                &self.grid[grid_row]
+            } else {
+                &[]
+            }
+        }
+    }
+
+    /// Set the selection anchor from a visible (row, col).
+    pub fn set_selection_anchor(&mut self, vrow: usize, col: usize) {
+        self.selection_anchor = Some((self.visible_to_absolute(vrow), col));
+    }
+
+    /// Set the selection end from a visible (row, col).
+    pub fn set_selection_end(&mut self, vrow: usize, col: usize) {
+        self.selection_end = Some((self.visible_to_absolute(vrow), col));
+    }
+
+    /// Returns the normalized selection range in ABSOLUTE coordinates:
+    /// (start_abs_row, start_col, end_abs_row, end_col). Start is before end
+    /// in reading order.
     pub fn selection_range(&self) -> Option<(usize, usize, usize, usize)> {
         let (ar, ac) = self.selection_anchor?;
         let (er, ec) = self.selection_end?;
@@ -484,19 +529,22 @@ impl TerminalState {
         }
     }
 
-    /// Check if a cell at (row, col) is inside the current selection.
-    pub fn is_selected(&self, row: usize, col: usize) -> bool {
+    /// Check if the cell at the given VISIBLE (row, col) is inside the
+    /// current selection. Converts the visible row to its absolute index
+    /// internally so the highlight follows the text when scrolling.
+    pub fn is_selected(&self, vrow: usize, col: usize) -> bool {
+        let abs = self.visible_to_absolute(vrow);
         if let Some((sr, sc, er, ec)) = self.selection_range() {
-            if row < sr || row > er {
+            if abs < sr || abs > er {
                 return false;
             }
-            if row == sr && row == er {
+            if abs == sr && abs == er {
                 return col >= sc && col <= ec;
             }
-            if row == sr {
+            if abs == sr {
                 return col >= sc;
             }
-            if row == er {
+            if abs == er {
                 return col <= ec;
             }
             true
@@ -505,14 +553,21 @@ impl TerminalState {
         }
     }
 
-    /// Extract selected text as a string.
+    /// Extract selected text as a string. Iterates over absolute rows so
+    /// scrollback content is included even when not currently visible.
     pub fn selected_text(&self) -> Option<String> {
         let (sr, sc, er, ec) = self.selection_range()?;
         let mut text = String::new();
-        for row in sr..=er {
-            let line = self.display_line(row);
-            let col_start = if row == sr { sc } else { 0 };
-            let col_end = if row == er {
+        for abs_row in sr..=er {
+            let line = self.absolute_line(abs_row);
+            if line.is_empty() {
+                if abs_row < er {
+                    text.push('\n');
+                }
+                continue;
+            }
+            let col_start = if abs_row == sr { sc } else { 0 };
+            let col_end = if abs_row == er {
                 ec
             } else {
                 line.len().saturating_sub(1)
@@ -527,7 +582,7 @@ impl TerminalState {
             // Trim trailing spaces on each line
             let trimmed = text.trim_end_matches(' ');
             text.truncate(trimmed.len());
-            if row < er {
+            if abs_row < er {
                 text.push('\n');
             }
         }
