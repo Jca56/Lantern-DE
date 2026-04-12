@@ -2,6 +2,9 @@ mod app;
 mod clipboard;
 mod config;
 mod events;
+mod git;
+mod git_app;
+mod git_sidebar;
 mod input;
 mod night_sky;
 mod pty;
@@ -19,6 +22,7 @@ use winit::event_loop::EventLoop;
 #[derive(Debug)]
 pub enum UserEvent {
     PtyOutput,
+    GitUpdate,
 }
 
 fn main() {

@@ -15,6 +15,8 @@ use lntrn_ui::gpu::InteractionContext;
 use crate::clipboard;
 use crate::config::LanternConfig;
 use crate::events::EventResult;
+use crate::git;
+use crate::git_sidebar;
 use crate::pty::Pty;
 use crate::render;
 use crate::sidebar;
@@ -62,7 +64,7 @@ pub struct App {
     pub(crate) text: Option<TextRenderer>,
     pub(crate) overlay_text: Option<TextRenderer>,
     pub(crate) texture_pass: Option<TexturePass>,
-    pub(crate) image_textures: Vec<(u32, GpuTexture)>, // (image_id, gpu_texture)
+    pub(crate) image_textures: Vec<(u32, u64, GpuTexture)>, // (image_id, version, gpu_texture)
 
     // Tabs
     pub tabs: Vec<Tab>,
@@ -103,12 +105,21 @@ pub struct App {
     // Sidebar file browser
     pub sidebar: sidebar::SidebarState,
 
+    // Git sidebar
+    pub git_sidebar: git_sidebar::GitSidebarState,
+    pub(crate) git_cmd_tx: Option<std::sync::mpsc::Sender<git::worker::GitCmd>>,
+    pub(crate) git_event_rx: Option<std::sync::mpsc::Receiver<git::worker::GitEvent>>,
 }
 
 impl App {
     pub fn new(proxy: EventLoopProxy<UserEvent>) -> Self {
         let config = LanternConfig::load();
         let theme = Theme::from_config(&config);
+
+        // Spawn git worker thread
+        let git_proxy = proxy.clone();
+        let (git_cmd_tx, git_event_rx) =
+            git::worker::spawn(move || { git_proxy.send_event(UserEvent::GitUpdate).ok(); });
 
         Self {
             config,
@@ -141,6 +152,9 @@ impl App {
             scrollbar_dragging: false,
             pending_menu_event: None,
             sidebar: sidebar::SidebarState::new(),
+            git_sidebar: git_sidebar::GitSidebarState::new(),
+            git_cmd_tx: Some(git_cmd_tx),
+            git_event_rx: Some(git_event_rx),
         }
     }
 
@@ -566,6 +580,10 @@ impl ApplicationHandler<UserEvent> for App {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
+            UserEvent::GitUpdate => {
+                self.poll_git_events();
+                self.request_redraw();
+            }
             UserEvent::PtyOutput => {
                 self.drain_pty();
 
@@ -606,6 +624,11 @@ impl ApplicationHandler<UserEvent> for App {
         if now >= self.cursor_blink_deadline {
             self.cursor_visible = !self.cursor_visible;
             self.cursor_blink_deadline = now + CURSOR_BLINK_INTERVAL;
+            self.request_redraw();
+        }
+
+        // Clear git status messages after timeout
+        if self.git_sidebar.check_message_timeout() {
             self.request_redraw();
         }
 

@@ -5,6 +5,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::ModifiersState;
 use winit::window::CursorIcon;
 
+use crate::git_sidebar;
 use crate::input;
 use crate::render;
 use crate::sidebar;
@@ -338,8 +339,32 @@ impl App {
     }
 
     fn handle_click_passthrough(&mut self, screen_h: u32) -> EventResult {
-        // Check sidebar click first
         let chrome_h = self.chrome_height();
+
+        // Check sidebar mode toggle first
+        if let Some(new_mode) = sidebar::handle_mode_click(&mut self.sidebar, self.cursor_pos, chrome_h) {
+            self.handle_sidebar_mode_change(new_mode);
+            self.request_redraw();
+            return EventResult::Handled;
+        }
+
+        // Git sidebar click handling
+        if self.sidebar.visible && self.sidebar.mode == sidebar::SidebarMode::Git {
+            let git_top = chrome_h + sidebar::TOGGLE_H;
+            if git_sidebar::contains(self.cursor_pos, self.sidebar.width, git_top) {
+                let action = git_sidebar::handle_click(
+                    &mut self.git_sidebar,
+                    self.cursor_pos,
+                    self.sidebar.width,
+                    git_top,
+                );
+                self.dispatch_git_action(action);
+                self.request_redraw();
+                return EventResult::Handled;
+            }
+        }
+
+        // Check file sidebar click
         if sidebar::contains(&self.sidebar, self.cursor_pos, chrome_h) {
             sidebar::handle_click(
                 &mut self.sidebar,
@@ -486,6 +511,45 @@ impl App {
         event: &winit::event::KeyEvent,
         event_loop: &ActiveEventLoop,
     ) -> EventResult {
+        // Git sidebar commit input captures ALL keyboard input
+        if self.git_sidebar.is_capturing_input() {
+            if event.state == ElementState::Pressed {
+                let key_str = match &event.logical_key {
+                    winit::keyboard::Key::Named(n) => match n {
+                        winit::keyboard::NamedKey::Enter => {
+                            // Enter commits (if there's a message)
+                            if !self.git_sidebar.commit_msg.trim().is_empty() {
+                                let action = git_sidebar::GitAction::Commit;
+                                self.dispatch_git_action(action);
+                            }
+                            self.request_redraw();
+                            return EventResult::Handled;
+                        }
+                        winit::keyboard::NamedKey::Escape => Some("Escape"),
+                        winit::keyboard::NamedKey::Backspace => Some("Backspace"),
+                        winit::keyboard::NamedKey::Delete => Some("Delete"),
+                        winit::keyboard::NamedKey::ArrowLeft => Some("Left"),
+                        winit::keyboard::NamedKey::ArrowRight => Some("Right"),
+                        winit::keyboard::NamedKey::Home => Some("Home"),
+                        winit::keyboard::NamedKey::End => Some("End"),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some(key) = key_str {
+                    git_sidebar::handle_key(&mut self.git_sidebar, key);
+                } else if let winit::keyboard::Key::Named(winit::keyboard::NamedKey::Space) = &event.logical_key {
+                    git_sidebar::handle_char(&mut self.git_sidebar, ' ');
+                } else if let winit::keyboard::Key::Character(s) = &event.logical_key {
+                    for ch in s.chars() {
+                        git_sidebar::handle_char(&mut self.git_sidebar, ch);
+                    }
+                }
+            }
+            self.request_redraw();
+            return EventResult::Handled;
+        }
+
         // Sidebar inline edit captures ALL keyboard input
         if self.sidebar.is_editing() {
             if event.state == ElementState::Pressed {
@@ -630,6 +694,22 @@ impl App {
         event_loop: &ActiveEventLoop,
     ) -> Option<EventResult> {
         match key {
+            winit::keyboard::Key::Character(s) if s.eq_ignore_ascii_case("g") => {
+                // Toggle git sidebar
+                if !self.sidebar.visible {
+                    self.sidebar.visible = true;
+                    self.sidebar.mode = sidebar::SidebarMode::Git;
+                    self.handle_sidebar_mode_change(sidebar::SidebarMode::Git);
+                } else if self.sidebar.mode == sidebar::SidebarMode::Git {
+                    self.sidebar.visible = false;
+                } else {
+                    self.sidebar.mode = sidebar::SidebarMode::Git;
+                    self.handle_sidebar_mode_change(sidebar::SidebarMode::Git);
+                }
+                self.update_grid_size();
+                self.request_redraw();
+                Some(EventResult::Handled)
+            }
             winit::keyboard::Key::Character(s) if s.eq_ignore_ascii_case("t") => {
                 self.spawn_tab();
                 self.request_redraw();
@@ -686,8 +766,24 @@ impl App {
     }
 
     pub(crate) fn handle_mouse_wheel(&mut self, delta: MouseScrollDelta) {
-        // Sidebar scroll
-        if sidebar::contains(&self.sidebar, self.cursor_pos, self.chrome_height()) {
+        let chrome_h = self.chrome_height();
+
+        // Git sidebar scroll
+        if self.sidebar.visible && self.sidebar.mode == sidebar::SidebarMode::Git {
+            let git_top = chrome_h + sidebar::TOGGLE_H;
+            if git_sidebar::contains(self.cursor_pos, self.sidebar.width, git_top) {
+                let dy = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y,
+                    MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 20.0,
+                };
+                self.git_sidebar.scroll(dy);
+                self.request_redraw();
+                return;
+            }
+        }
+
+        // File sidebar scroll
+        if sidebar::contains(&self.sidebar, self.cursor_pos, chrome_h) {
             let dy = match delta {
                 MouseScrollDelta::LineDelta(_, y) => y,
                 MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 20.0,

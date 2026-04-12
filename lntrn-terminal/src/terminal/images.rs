@@ -20,6 +20,11 @@ pub struct TerminalImage {
     pub image_id: u32,
     /// Z-index for layering (negative = behind text).
     pub z_index: i32,
+    /// Monotonically incrementing version for this image ID. The renderer
+    /// uses this to detect when cached GPU textures need to be re-uploaded
+    /// (e.g. when a TUI app re-transmits an image with the same ID but
+    /// different content).
+    pub version: u64,
 }
 
 /// Manages in-flight image transmissions and completed images.
@@ -30,6 +35,10 @@ pub struct ImageManager {
     transmissions: HashMap<u32, Transmission>,
     /// Next auto-assigned image ID.
     next_id: u32,
+    /// Monotonic version counter — bumped each time any image is transmitted
+    /// or replaced. The renderer compares this against its cached versions
+    /// to detect when GPU textures must be re-uploaded.
+    next_version: u64,
 }
 
 struct Transmission {
@@ -59,6 +68,7 @@ impl ImageManager {
             images: Vec::new(),
             transmissions: HashMap::new(),
             next_id: 1,
+            next_version: 1,
         }
     }
 
@@ -192,7 +202,9 @@ impl ImageManager {
                         return;
                     }
 
-                    self.images.push(TerminalImage {
+                    let version = self.next_version;
+                    self.next_version += 1;
+                    let new_image = TerminalImage {
                         rgba,
                         width,
                         height,
@@ -202,7 +214,21 @@ impl ImageManager {
                         rows_tall: if rows_tall == 0 { 1 } else { rows_tall },
                         image_id,
                         z_index,
-                    });
+                        version,
+                    };
+
+                    // Replace any existing image with the same ID, otherwise
+                    // append. This prevents duplicate images stacking up when
+                    // a TUI re-transmits at the same ID (e.g. animated tiles).
+                    if let Some(slot) = self
+                        .images
+                        .iter_mut()
+                        .find(|img| img.image_id == image_id)
+                    {
+                        *slot = new_image;
+                    } else {
+                        self.images.push(new_image);
+                    }
                 }
             }
             'd' => {

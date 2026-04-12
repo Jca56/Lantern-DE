@@ -4,6 +4,16 @@ use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
 use crate::terminal::Color8;
 
+// ── Sidebar mode ────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum SidebarMode {
+    Files,
+    Git,
+}
+
+pub const TOGGLE_H: f32 = 36.0;
+
 // ── Layout constants ─────────────────────────────────────────────────────────
 
 const MIN_WIDTH: f32 = 200.0;
@@ -72,6 +82,7 @@ struct InlineEdit {
 
 pub struct SidebarState {
     pub visible: bool,
+    pub mode: SidebarMode,
     pub root: PathBuf,
     pub entries: Vec<DirEntry>,
     pub scroll_offset: f32,
@@ -86,6 +97,7 @@ impl SidebarState {
     pub fn new() -> Self {
         Self {
             visible: false,
+            mode: SidebarMode::Files,
             root: PathBuf::new(),
             entries: Vec::new(),
             scroll_offset: 0.0,
@@ -375,9 +387,17 @@ pub fn draw_sidebar(
         c(DIVIDER),
     );
 
+    // Mode toggle buttons [Files] [Git]
+    draw_mode_toggle(painter, text, state, chrome_h, sw, screen_w, screen_h, cursor_pos);
+
+    // In Git mode, the git_sidebar module draws the content below the toggle
+    if state.mode == SidebarMode::Git {
+        return sw;
+    }
+
     // Header
     let header_h = 42.0;
-    let header_y = chrome_h + 4.0;
+    let header_y = chrome_h + TOGGLE_H + 4.0;
     let root_name = state
         .root
         .file_name()
@@ -395,8 +415,8 @@ pub fn draw_sidebar(
     );
 
     // Clip the file list area
-    let list_y = chrome_h + header_h;
-    let list_h = h - header_h;
+    let list_y = chrome_h + TOGGLE_H + header_h;
+    let list_h = h - TOGGLE_H - header_h;
     let clip = Rect::new(0.0, list_y, sw, list_h);
     painter.push_clip(clip);
 
@@ -658,6 +678,97 @@ fn entry_y_position(
     list_y - scroll_offset + pos as f32 * ITEM_HEIGHT
 }
 
+// ── Mode toggle ─────────────────────────────────────────────────────────────
+
+fn draw_mode_toggle(
+    painter: &mut Painter,
+    text: &mut TextRenderer,
+    state: &SidebarState,
+    chrome_h: f32,
+    sw: f32,
+    screen_w: u32,
+    screen_h: u32,
+    cursor_pos: Option<(f32, f32)>,
+) {
+    let y = chrome_h + 4.0;
+    let btn_w = (sw - 16.0) / 2.0;
+    let btn_h = TOGGLE_H - 8.0;
+
+    // Files button
+    let fx = 6.0;
+    let files_rect = Rect::new(fx, y, btn_w, btn_h);
+    let files_active = state.mode == SidebarMode::Files;
+    let files_hover = !files_active && hit(files_rect, cursor_pos);
+    let files_bg = if files_active {
+        c(ACCENT)
+    } else if files_hover {
+        c(SURFACE_HOVER)
+    } else {
+        c(Color8::from_rgba(55, 55, 55, 255))
+    };
+    let files_fg = if files_active { c(Color8::from_rgb(255, 255, 255)) } else { c(TEXT_DIM) };
+    painter.rect_filled(files_rect, 4.0, files_bg);
+    let ft_w = 5.0 * CHAR_WIDTH;
+    text.queue(
+        "Files", FONT_SIZE, fx + (btn_w - ft_w) / 2.0, y + (btn_h - FONT_SIZE) / 2.0,
+        files_fg, btn_w, screen_w, screen_h,
+    );
+
+    // Git button
+    let gx = 6.0 + btn_w + 4.0;
+    let git_rect = Rect::new(gx, y, btn_w, btn_h);
+    let git_active = state.mode == SidebarMode::Git;
+    let git_hover = !git_active && hit(git_rect, cursor_pos);
+    let git_bg = if git_active {
+        c(ACCENT)
+    } else if git_hover {
+        c(SURFACE_HOVER)
+    } else {
+        c(Color8::from_rgba(55, 55, 55, 255))
+    };
+    let git_fg = if git_active { c(Color8::from_rgb(255, 255, 255)) } else { c(TEXT_DIM) };
+    painter.rect_filled(git_rect, 4.0, git_bg);
+    let gt_w = 3.0 * CHAR_WIDTH;
+    text.queue(
+        "Git", FONT_SIZE, gx + (btn_w - gt_w) / 2.0, y + (btn_h - FONT_SIZE) / 2.0,
+        git_fg, btn_w, screen_w, screen_h,
+    );
+}
+
+/// Check if a mode toggle button was clicked. Returns the new mode if changed.
+pub fn handle_mode_click(
+    state: &mut SidebarState,
+    cursor_pos: Option<(f32, f32)>,
+    chrome_h: f32,
+) -> Option<SidebarMode> {
+    if !state.visible {
+        return None;
+    }
+    let (cx, cy) = cursor_pos?;
+    if cx > state.width {
+        return None;
+    }
+
+    let y = chrome_h + 4.0;
+    let btn_w = (state.width - 16.0) / 2.0;
+    let btn_h = TOGGLE_H - 8.0;
+
+    if cy < y || cy > y + btn_h {
+        return None;
+    }
+
+    if cx >= 6.0 && cx <= 6.0 + btn_w && state.mode != SidebarMode::Files {
+        state.mode = SidebarMode::Files;
+        return Some(SidebarMode::Files);
+    }
+    let gx = 6.0 + btn_w + 4.0;
+    if cx >= gx && cx <= gx + btn_w && state.mode != SidebarMode::Git {
+        state.mode = SidebarMode::Git;
+        return Some(SidebarMode::Git);
+    }
+    None
+}
+
 // ── Hit testing ──────────────────────────────────────────────────────────────
 
 /// Handle left click. Returns SidebarAction.
@@ -667,7 +778,7 @@ pub fn handle_click(
     chrome_h: f32,
     screen_h: u32,
 ) -> Option<usize> {
-    if !state.visible {
+    if !state.visible || state.mode != SidebarMode::Files {
         return None;
     }
 
@@ -693,8 +804,8 @@ pub fn handle_click(
     }
 
     let header_h = 42.0;
-    let list_y = chrome_h + header_h;
-    let list_h = screen_h as f32 - chrome_h - header_h;
+    let list_y = chrome_h + TOGGLE_H + header_h;
+    let list_h = screen_h as f32 - chrome_h - TOGGLE_H - header_h;
 
     if cy < list_y || cy > list_y + list_h {
         return None;
@@ -717,7 +828,7 @@ pub fn handle_right_click(
     cursor_pos: Option<(f32, f32)>,
     chrome_h: f32,
 ) -> bool {
-    if !state.visible {
+    if !state.visible || state.mode != SidebarMode::Files {
         return false;
     }
 
@@ -731,7 +842,7 @@ pub fn handle_right_click(
     }
 
     let header_h = 42.0;
-    let list_y = chrome_h + header_h;
+    let list_y = chrome_h + TOGGLE_H + header_h;
     let relative_y = cy - list_y + state.scroll_offset;
     let idx = (relative_y / ITEM_HEIGHT) as usize;
 

@@ -1,6 +1,7 @@
 use lntrn_render::{Color, Frame, GpuContext, Painter, TextureDraw};
 use lntrn_ui::gpu::MenuEvent;
 
+use crate::git_sidebar;
 use crate::render;
 use crate::sidebar;
 use crate::tab_bar;
@@ -66,7 +67,7 @@ impl App {
             &mode,
         );
 
-        // Draw sidebar file browser
+        // Draw sidebar (file browser or git panel)
         sidebar::draw_sidebar(
             painter,
             text,
@@ -76,6 +77,18 @@ impl App {
             screen_h,
             self.cursor_pos,
         );
+        if self.sidebar.visible && self.sidebar.mode == sidebar::SidebarMode::Git {
+            git_sidebar::draw_git_sidebar(
+                painter,
+                text,
+                &self.git_sidebar,
+                self.sidebar.width,
+                chrome_h + sidebar::TOGGLE_H,
+                screen_w,
+                screen_h,
+                self.cursor_pos,
+            );
+        }
 
         // Render all panes in the active tab
         let tab_ref = &self.tabs[self.active_tab];
@@ -302,7 +315,7 @@ impl App {
                 if !image_placements.is_empty() {
                     if let Some(ref tex_pass) = self.texture_pass {
                         let draws: Vec<TextureDraw> = image_placements.iter().filter_map(|p| {
-                            let (_, gpu_tex) = self.image_textures.iter().find(|(id, _)| *id == p.0)?;
+                            let (_, _, gpu_tex) = self.image_textures.iter().find(|(id, _, _)| *id == p.0)?;
                             Some(TextureDraw::new(gpu_tex, p.1, p.2, p.3, p.4))
                         }).collect();
                         if !draws.is_empty() {
@@ -334,7 +347,7 @@ impl App {
                 if !image_placements.is_empty() {
                     if let Some(ref tex_pass) = self.texture_pass {
                         let draws: Vec<TextureDraw> = image_placements.iter().filter_map(|p| {
-                            let (_, gpu_tex) = self.image_textures.iter().find(|(id, _)| *id == p.0)?;
+                            let (_, _, gpu_tex) = self.image_textures.iter().find(|(id, _, _)| *id == p.0)?;
                             Some(TextureDraw::new(gpu_tex, p.1, p.2, p.3, p.4))
                         }).collect();
                         if !draws.is_empty() {
@@ -356,26 +369,65 @@ impl App {
         self.update_grid_size();
     }
 
-    /// Upload any images that haven't been sent to the GPU yet.
+    /// Sync the GPU texture cache with the image_manager state. Each frame:
+    ///   1. Removes textures whose image IDs no longer exist (e.g. deleted via
+    ///      Kitty `a=d`, or replaced).
+    ///   2. Re-uploads textures whose version has bumped (image data changed
+    ///      under the same ID — happens when a TUI re-transmits at the same
+    ///      ID with different content, like animated map tiles).
+    ///   3. Uploads new textures for newly-seen image IDs.
     fn upload_pending_images(&mut self) {
-        // Collect (image_id, rgba, width, height) for images that need uploading
-        let mut pending: Vec<(u32, Vec<u8>, u32, u32)> = Vec::new();
+        // Collect current (image_id, version, rgba, width, height) from all panes.
+        let mut current: Vec<(u32, u64, Vec<u8>, u32, u32)> = Vec::new();
         for tab in &self.tabs {
             for pane in &tab.panes {
                 for img in &pane.terminal.image_manager.images {
-                    if !self.image_textures.iter().any(|(id, _)| *id == img.image_id) {
-                        pending.push((img.image_id, img.rgba.clone(), img.width, img.height));
-                    }
+                    current.push((
+                        img.image_id,
+                        img.version,
+                        img.rgba.clone(),
+                        img.width,
+                        img.height,
+                    ));
                 }
             }
         }
-        if pending.is_empty() {
+
+        // 1. Remove textures whose image IDs are no longer in any image_manager
+        let live_ids: Vec<u32> = current.iter().map(|(id, _, _, _, _)| *id).collect();
+        self.image_textures
+            .retain(|(id, _, _)| live_ids.contains(id));
+
+        if current.is_empty() {
             return;
         }
-        if let (Some(ref tex_pass), Some(ref gpu)) = (&self.texture_pass, &self.gpu) {
-            for (id, rgba, w, h) in pending {
-                let gpu_tex = tex_pass.upload(gpu, &rgba, w, h);
-                self.image_textures.push((id, gpu_tex));
+
+        let Some(ref tex_pass) = self.texture_pass else {
+            return;
+        };
+        let Some(ref gpu) = self.gpu else {
+            return;
+        };
+
+        // 2 & 3. For each current image, upload if missing or if version changed
+        for (id, version, rgba, w, h) in current {
+            let existing_idx = self
+                .image_textures
+                .iter()
+                .position(|(eid, _, _)| *eid == id);
+            match existing_idx {
+                Some(idx) => {
+                    let cached_version = self.image_textures[idx].1;
+                    if cached_version != version {
+                        // Version bumped — re-upload
+                        let gpu_tex = tex_pass.upload(gpu, &rgba, w, h);
+                        self.image_textures[idx] = (id, version, gpu_tex);
+                    }
+                }
+                None => {
+                    let gpu_tex = tex_pass.upload(gpu, &rgba, w, h);
+                    self.image_textures.push((id, version, gpu_tex));
+                }
             }
         }
     }
