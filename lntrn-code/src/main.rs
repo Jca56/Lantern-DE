@@ -7,6 +7,7 @@ mod find_bar;
 mod format;
 mod keys;
 mod markdown;
+mod minimap;
 mod mouse;
 mod render;
 mod scrollbar;
@@ -36,6 +37,7 @@ use editor::Editor;
 use find_bar::FindBar;
 use keys::KeyAction;
 use sidebar::Sidebar;
+use tab_strip::TabDragState;
 use theme::Theme;
 
 // ── Hit zone IDs ────────────────────────────────────────────────────────────
@@ -48,6 +50,7 @@ pub(crate) const ZONE_EDITOR_SCROLL_THUMB: u32 = 4000;
 pub(crate) const ZONE_EDITOR_SCROLL_TRACK: u32 = 4001;
 pub(crate) const ZONE_SIDEBAR_SCROLL_THUMB: u32 = 4002;
 pub(crate) const ZONE_SIDEBAR_SCROLL_TRACK: u32 = 4003;
+pub(crate) const ZONE_MINIMAP: u32 = 5000;
 
 // ── Menu item IDs ───────────────────────────────────────────────────────────
 
@@ -57,6 +60,8 @@ pub(crate) const MENU_SAVE: u32 = 102;
 pub(crate) const MENU_THEME_PAPER: u32 = 200;
 pub(crate) const MENU_THEME_NIGHT: u32 = 201;
 pub(crate) const MENU_THEME_DARK: u32 = 202;
+pub(crate) const MENU_TOGGLE_WRAP: u32 = 210;
+pub(crate) const MENU_TOGGLE_MINIMAP: u32 = 211;
 
 // ── Main ────────────────────────────────────────────────────────────────────
 
@@ -99,6 +104,12 @@ pub(crate) struct TextHandler {
     pub(crate) cursor_visible: bool,
     pub(crate) cursor_blink_deadline: Instant,
     pub(crate) dragging: bool,
+    pub(crate) minimap_visible: bool,
+    pub(crate) minimap_dragging: bool,
+    /// Tab drag-reorder state (active while the user holds down on a tab).
+    pub(crate) tab_drag: Option<TabDragState>,
+    /// Cumulative x positions of tab right edges — updated each render frame.
+    pub(crate) tab_edges: Vec<f32>,
     /// Wall-clock of the last animation tick — used for dt-based easing.
     pub(crate) last_anim_tick: Instant,
 }
@@ -143,6 +154,10 @@ impl TextHandler {
             cursor_visible: true,
             cursor_blink_deadline: Instant::now() + BLINK_INTERVAL,
             dragging: false,
+            minimap_visible: true,
+            minimap_dragging: false,
+            tab_drag: None,
+            tab_edges: Vec::new(),
             last_anim_tick: Instant::now(),
         }
     }
@@ -310,6 +325,45 @@ impl ApplicationHandler for TextHandler {
 
                 if mouse::update_scrollbar_drag(self, cx, cy) {
                     // scrollbar drag consumes the move
+                } else if self.minimap_dragging {
+                    mouse::update_minimap_drag(self, cy);
+                } else if let Some(ref mut drag) = self.tab_drag {
+                    // Tab drag-reorder: activate after 5px threshold, then
+                    // swap tabs when cursor crosses adjacent midpoints.
+                    const THRESHOLD: f32 = 5.0;
+                    if !drag.active && (cx - drag.start_cx).abs() > THRESHOLD {
+                        drag.active = true;
+                    }
+                    if drag.active {
+                        if let Some(w) = &self.window {
+                            w.set_cursor(CursorIcon::Grabbing);
+                        }
+                        let idx = drag.idx;
+                        let edges = &self.tab_edges;
+                        // Swap right: cursor past midpoint of next tab.
+                        if idx + 1 < self.tabs.len() && idx + 1 < edges.len() {
+                            let next_left = edges[idx];
+                            let next_right = edges[idx + 1];
+                            let mid = (next_left + next_right) * 0.5;
+                            if cx > mid {
+                                self.tabs.swap(idx, idx + 1);
+                                self.active_tab = idx + 1;
+                                self.tab_drag.as_mut().unwrap().idx = idx + 1;
+                            }
+                        }
+                        // Swap left: cursor past midpoint of previous tab.
+                        let idx = self.tab_drag.as_ref().unwrap().idx;
+                        if idx > 0 {
+                            let prev_left = if idx >= 2 { edges[idx - 2] } else { 0.0 };
+                            let prev_right = edges[idx - 1];
+                            let mid = (prev_left + prev_right) * 0.5;
+                            if cx < mid {
+                                self.tabs.swap(idx, idx - 1);
+                                self.active_tab = idx - 1;
+                                self.tab_drag.as_mut().unwrap().idx = idx - 1;
+                            }
+                        }
+                    }
                 } else if self.dragging {
                     self.click_to_cursor(cx, cy);
                     self.reset_blink();
@@ -419,12 +473,14 @@ impl ApplicationHandler for TextHandler {
                 let editor = &mut self.tabs[active];
                 let find_bar = &self.find_bar;
                 let sidebar = &mut self.sidebar;
-                let event = if let Some(gpu) = self.gpu.as_mut() {
+                let (event, edges) = if let Some(gpu) = self.gpu.as_mut() {
                     render::render_frame(
                         gpu,
                         editor,
                         &tab_labels,
                         active_tab,
+                        &self.tab_drag,
+                        self.minimap_visible,
                         find_bar,
                         sidebar,
                         &mut self.input,
@@ -435,8 +491,9 @@ impl ApplicationHandler for TextHandler {
                         cursor_vis,
                     )
                 } else {
-                    None
+                    (None, Vec::new())
                 };
+                self.tab_edges = edges;
                 if let Some(evt) = event {
                     match evt {
                         MenuEvent::Action(MENU_NEW) => {
@@ -462,6 +519,15 @@ impl ApplicationHandler for TextHandler {
                         MenuEvent::Action(MENU_THEME_DARK) => {
                             self.menu_bar.close();
                             self.set_theme(Theme::Dark);
+                        }
+                        MenuEvent::Action(MENU_TOGGLE_WRAP) => {
+                            self.menu_bar.close();
+                            let ed = &mut self.tabs[self.active_tab];
+                            ed.wrap_enabled = !ed.wrap_enabled;
+                        }
+                        MenuEvent::Action(MENU_TOGGLE_MINIMAP) => {
+                            self.menu_bar.close();
+                            self.minimap_visible = !self.minimap_visible;
                         }
                         _ => {}
                     }

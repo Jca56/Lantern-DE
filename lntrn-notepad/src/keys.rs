@@ -4,6 +4,7 @@
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 
 use crate::actions;
+use crate::format::Alignment;
 use crate::TextHandler;
 
 /// Result of handling a key. Lets `main.rs` decide whether to redraw or quit.
@@ -153,6 +154,19 @@ pub fn handle_key(
                 handler
                     .editor_mut()
                     .toggle_format(|a| a.underline = !a.underline);
+                KeyAction::Consumed
+            }
+            // Paragraph alignment shortcuts (MS Word standard)
+            "l" => {
+                handler.editor_mut().set_alignment(Alignment::Left);
+                KeyAction::Consumed
+            }
+            "e" => {
+                handler.editor_mut().set_alignment(Alignment::Center);
+                KeyAction::Consumed
+            }
+            "r" => {
+                handler.editor_mut().set_alignment(Alignment::Right);
                 KeyAction::Consumed
             }
             _ => KeyAction::Ignored,

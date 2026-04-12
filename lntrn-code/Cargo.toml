@@ -10,9 +10,11 @@ name = "lntrn-code"
 path = "src/main.rs"
 
 [dependencies]
+libc = "0.2"
 lntrn-render = { path = "../lntrn-render" }
 lntrn-ui = { path = "../lntrn-ui" }
-nix = { version = "0.29", features = ["poll"] }
+nix = { version = "0.29", features = ["poll", "term", "signal", "fs", "process"] }
+vte = "0.13"
 wayland-client = "0.31"
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 winit = { version = "0.30", features = ["wayland"] }

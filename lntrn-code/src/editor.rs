@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
-use crate::format::{DocFormats, TextAttrs};
+use crate::auto_pair;
+use crate::format::{DocFormats, LineFormats, TextAttrs};
 use crate::scrollbar::ScrollbarState;
 use crate::syntax::{detect_from_filename, Language};
 
@@ -73,6 +74,7 @@ pub struct Editor {
     pub scroll_target: f32,
     /// Per-line word-wrap row starts (byte offsets). Recomputed each frame.
     pub wrap_rows: Vec<Vec<usize>>,
+    pub wrap_enabled: bool,
     pub scrollbar: ScrollbarState,
     undo_stack: Vec<Snapshot>,
     redo_stack: Vec<Snapshot>,
@@ -97,6 +99,7 @@ impl Editor {
             scroll_offset: 0.0,
             scroll_target: 0.0,
             wrap_rows: vec![vec![0]],
+            wrap_enabled: true,
             scrollbar: ScrollbarState::new(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
@@ -314,13 +317,44 @@ impl Editor {
         }
         let pending = self.pending_attrs.clone();
         if ch == '\n' {
-            let right_fmts = self.formats.get_mut(self.cursor_line).split_at(self.cursor_col);
+            // Capture indent from the line we're splitting.
+            let indent: String = self.lines[self.cursor_line]
+                .chars()
+                .take_while(|c| *c == ' ' || *c == '\t')
+                .collect();
+            let opens_block = auto_pair::is_code_file(&self.filename)
+                && self.lines[self.cursor_line][..self.cursor_col]
+                    .trim_end()
+                    .ends_with('{');
+
+            let mut right_fmts =
+                self.formats.get_mut(self.cursor_line).split_at(self.cursor_col);
             let rest = self.lines[self.cursor_line][self.cursor_col..].to_string();
             self.lines[self.cursor_line].truncate(self.cursor_col);
             self.cursor_line += 1;
-            self.lines.insert(self.cursor_line, rest);
-            self.formats.insert_line(self.cursor_line, right_fmts);
-            self.cursor_col = 0;
+
+            let closes_block = opens_block && rest.starts_with('}');
+
+            if closes_block {
+                // Between `{` and `}` — blank indented line + closing brace line.
+                let extra = format!("{}    ", indent);
+                self.lines.insert(self.cursor_line, extra.clone());
+                self.formats.insert_line(self.cursor_line, LineFormats::new());
+                right_fmts.insert_at(0, indent.len());
+                self.lines.insert(self.cursor_line + 1, format!("{}{}", indent, rest));
+                self.formats.insert_line(self.cursor_line + 1, right_fmts);
+                self.cursor_col = extra.len();
+            } else {
+                let new_indent = if opens_block {
+                    format!("{}    ", indent)
+                } else {
+                    indent
+                };
+                right_fmts.insert_at(0, new_indent.len());
+                self.lines.insert(self.cursor_line, format!("{}{}", new_indent, rest));
+                self.formats.insert_line(self.cursor_line, right_fmts);
+                self.cursor_col = new_indent.len();
+            }
         } else {
             let len = ch.len_utf8();
             if let Some(attrs) = pending {

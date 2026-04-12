@@ -9,8 +9,11 @@ use lntrn_render::Rect;
 use crate::render;
 use crate::scrollbar;
 use crate::tab_strip::{self, ZONE_NEW_TAB, ZONE_TAB_BASE, ZONE_TAB_CLOSE_BASE};
+use crate::format::Alignment;
 use crate::toolbar::{
-    FONT_SIZES, ZONE_FMT_BOLD, ZONE_FMT_ITALIC, ZONE_FMT_SIZE_BTN, ZONE_FMT_SIZE_OPT_BASE,
+    FONT_SIZES, LINE_SPACINGS, ZONE_FMT_ALIGN_CENTER, ZONE_FMT_ALIGN_LEFT,
+    ZONE_FMT_ALIGN_RIGHT, ZONE_FMT_BOLD, ZONE_FMT_ITALIC, ZONE_FMT_SIZE_BTN,
+    ZONE_FMT_SIZE_OPT_BASE, ZONE_FMT_SPACING_BTN, ZONE_FMT_SPACING_OPT_BASE,
     ZONE_FMT_STRIKE, ZONE_FMT_UNDERLINE,
 };
 use crate::{
@@ -91,8 +94,25 @@ fn handle_left_press(handler: &mut TextHandler, event_loop: &ActiveEventLoop) ->
                 handler.editor_mut().set_font_size(FONT_SIZES[idx]);
                 handler.fmt_toolbar.size_dropdown_open = false;
             }
+            // Alignment buttons
+            ZONE_FMT_ALIGN_LEFT => handler.editor_mut().set_alignment(Alignment::Left),
+            ZONE_FMT_ALIGN_CENTER => handler.editor_mut().set_alignment(Alignment::Center),
+            ZONE_FMT_ALIGN_RIGHT => handler.editor_mut().set_alignment(Alignment::Right),
+            // Line spacing dropdown
+            ZONE_FMT_SPACING_BTN => {
+                handler.fmt_toolbar.spacing_dropdown_open =
+                    !handler.fmt_toolbar.spacing_dropdown_open;
+            }
+            z if z >= ZONE_FMT_SPACING_OPT_BASE
+                && z < ZONE_FMT_SPACING_OPT_BASE + LINE_SPACINGS.len() as u32 =>
+            {
+                let idx = (z - ZONE_FMT_SPACING_OPT_BASE) as usize;
+                handler.editor_mut().set_line_spacing(LINE_SPACINGS[idx]);
+                handler.fmt_toolbar.spacing_dropdown_open = false;
+            }
             ZONE_EDITOR => {
                 handler.fmt_toolbar.size_dropdown_open = false;
+                handler.fmt_toolbar.spacing_dropdown_open = false;
                 handler.editor_mut().clear_selection();
                 if let Some((cx, cy)) = handler.input.cursor() {
                     handler.click_to_cursor(cx, cy);
@@ -113,6 +133,7 @@ fn handle_left_press(handler: &mut TextHandler, event_loop: &ActiveEventLoop) ->
             ZONE_EDITOR_SCROLL_TRACK => begin_editor_scroll_drag(handler, true),
             _ => {
                 handler.fmt_toolbar.size_dropdown_open = false;
+                handler.fmt_toolbar.spacing_dropdown_open = false;
             }
         }
     } else if handler.is_on_title_bar() {

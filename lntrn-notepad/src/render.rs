@@ -3,7 +3,7 @@ use lntrn_ui::gpu::{FoxPalette, InteractionContext, MenuBar, MenuEvent, MenuItem
 
 use crate::editor::{self, Editor};
 use crate::find_bar::{draw_find_bar, match_color, FindBar};
-use crate::format::FormatSpan;
+use crate::format::{Alignment, FormatSpan};
 use crate::scrollbar;
 use crate::tab_strip::{draw_tab_strip, TabLabel, TAB_STRIP_H};
 use crate::theme::Theme;
@@ -86,8 +86,17 @@ fn span_rendering(span: &FormatSpan, default_font_size: f32) -> (f32, FontWeight
     (fs, weight, style)
 }
 
+/// Compute the x-offset for a given text alignment.
+pub fn alignment_offset(align: Alignment, content_max_w: f32, row_w: f32) -> f32 {
+    match align {
+        Alignment::Left | Alignment::Justify => 0.0,
+        Alignment::Center => (content_max_w - row_w).max(0.0) * 0.5,
+        Alignment::Right => (content_max_w - row_w).max(0.0),
+    }
+}
+
 /// Measure the pixel width of a byte range within a line.
-fn measure_range(
+pub fn measure_range(
     text: &mut TextRenderer,
     editor: &Editor,
     line: usize,
@@ -104,11 +113,13 @@ fn measure_range(
 
 /// Compute word-wrap break points for a single document line.
 /// Returns byte offsets where each visual row starts (first is always 0).
+/// `first_indent_px` reduces the first row's available width.
 fn compute_line_wraps(
     text: &mut TextRenderer,
     editor: &Editor,
     line_idx: usize,
     max_width: f32,
+    first_indent_px: f32,
     default_font_size: f32,
 ) -> Vec<usize> {
     let line_str = &editor.lines[line_idx];
@@ -119,7 +130,9 @@ fn compute_line_wraps(
     let spans = editor.formats.get(line_idx).iter_spans(line_str.len());
     let mut row_starts: Vec<usize> = vec![0];
     let mut row_x: f32 = 0.0;
-    let mut last_space: Option<(usize, f32)> = None; // (byte_after_space, row_x_at_that_point)
+    // First row has reduced width for first-line indent
+    let mut effective_w = (max_width - first_indent_px).max(10.0);
+    let mut last_break: Option<(usize, f32)> = None; // (byte_after_break, row_x_at_that_point)
 
     for span in &spans {
         let (fs, weight, style) = span_rendering(span, default_font_size);
@@ -132,11 +145,11 @@ fn compute_line_wraps(
                 style,
             );
 
-            if row_x + ch_w > max_width && byte_pos > *row_starts.last().unwrap() {
-                if let Some((sp_byte, sp_x)) = last_space {
-                    if sp_byte > *row_starts.last().unwrap() {
-                        row_starts.push(sp_byte);
-                        row_x -= sp_x;
+            if row_x + ch_w > effective_w && byte_pos > *row_starts.last().unwrap() {
+                if let Some((br_byte, br_x)) = last_break {
+                    if br_byte > *row_starts.last().unwrap() {
+                        row_starts.push(br_byte);
+                        row_x -= br_x;
                     } else {
                         row_starts.push(byte_pos);
                         row_x = 0.0;
@@ -145,13 +158,16 @@ fn compute_line_wraps(
                     row_starts.push(byte_pos);
                     row_x = 0.0;
                 }
-                last_space = None;
+                last_break = None;
+                // Subsequent rows get full width (no indent)
+                effective_w = max_width;
             }
 
             row_x += ch_w;
 
-            if ch == ' ' {
-                last_space = Some((byte_pos + 1, row_x));
+            // Track word-boundary break points: spaces and hyphens
+            if ch == ' ' || ch == '-' {
+                last_break = Some((byte_pos + ch.len_utf8(), row_x));
             }
         }
     }
@@ -164,11 +180,13 @@ fn compute_wraps(
     text: &mut TextRenderer,
     editor: &mut Editor,
     max_width: f32,
+    scale: f32,
     default_font_size: f32,
 ) {
     let mut wraps = Vec::with_capacity(editor.lines.len());
     for i in 0..editor.lines.len() {
-        wraps.push(compute_line_wraps(text, editor, i, max_width, default_font_size));
+        let indent_px = editor.formats.get(i).para.first_indent * scale;
+        wraps.push(compute_line_wraps(text, editor, i, max_width, indent_px, default_font_size));
     }
     editor.wrap_rows = wraps;
 }
@@ -221,7 +239,8 @@ pub fn render_frame(
 
     // ── Formatting toolbar ────────────────────────────────────────────
     let fmt_state = editor.selection_format_state();
-    toolbar::draw_toolbar(fmt_toolbar, &fmt_state, painter, text, input, pal, wf, s, w, h);
+    let para_state = editor.current_para();
+    toolbar::draw_toolbar(fmt_toolbar, &fmt_state, &para_state, painter, text, input, pal, wf, s, w, h);
 
     // ── Find bar overlay (shrinks the editor area when visible) ──────
     let find_bar_top = (TITLE_BAR_H + TAB_STRIP_H + TOOLBAR_H) * s;
@@ -245,12 +264,12 @@ pub fn render_frame(
     // ── Editor area ───────────────────────────────────────────────────
     let er = editor_rect(wf, hf, s, find_bar_h);
     input.add_zone(ZONE_EDITOR, er);
-    // Editor surface shares the paper bg — no separate fill needed. The
-    // toolbar already draws a hairline along its bottom edge that visually
-    // separates the writing surface from the chrome.
+
+    // Fill the editor area with the gutter color, then draw the page
+    // on top so the non-typeable margins are visually distinct.
+    painter.rect_filled(er, 0.0, pal.surface_2);
 
     let font_size = editor::FONT_SIZE * s;
-    let line_h = editor::FONT_SIZE * editor::LINE_HEIGHT * s;
     let pad = editor::PAD * s;
 
     // Document mode: render the editor body as a centered "page" with
@@ -263,33 +282,59 @@ pub fn render_frame(
     let content_max_w = (page_w - pad * 2.0).max(10.0);
     let text_y_start = er.y + pad * 1.5 - editor.scroll_offset;
 
+    // White page rect over the gutter so the typeable area stands out.
+    painter.rect_filled(Rect::new(page_x, er.y, page_w, er.h), 0.0, pal.bg);
+
     // ── Compute word wraps ────────────────────────────────────────────
-    compute_wraps(text, editor, content_max_w, font_size);
+    compute_wraps(text, editor, content_max_w, s, font_size);
 
-    let mut vis_offsets: Vec<usize> = Vec::with_capacity(editor.lines.len());
-    let mut cum = 0usize;
-    for wraps in &editor.wrap_rows {
-        vis_offsets.push(cum);
-        cum += wraps.len();
+    // Build per-line y-start positions (variable height per paragraph).
+    let mut line_y_starts: Vec<f32> = Vec::with_capacity(editor.lines.len());
+    let mut y_accum = text_y_start;
+    for (i, wraps) in editor.wrap_rows.iter().enumerate() {
+        let para = editor.formats.get(i).para;
+        y_accum += para.space_before * s;
+        line_y_starts.push(y_accum);
+        let row_h = editor::FONT_SIZE * para.line_spacing * s;
+        y_accum += wraps.len() as f32 * row_h;
+        y_accum += para.space_after * s;
     }
-    let total_vis_rows = cum;
 
-    let first_vis_row = ((editor.scroll_offset - pad) / line_h).floor().max(0.0) as usize;
-    let vis_count = ((er.h + line_h) / line_h).ceil() as usize + 1;
-    let last_vis_row = (first_vis_row + vis_count).min(total_vis_rows);
+    // Determine visible doc lines via y-coordinate comparison.
+    let first_doc = line_y_starts
+        .iter()
+        .enumerate()
+        .position(|(i, &y)| {
+            let para = editor.formats.get(i).para;
+            let row_h = editor::FONT_SIZE * para.line_spacing * s;
+            y + editor.wrap_rows[i].len() as f32 * row_h >= er.y
+        })
+        .unwrap_or(0);
+    let last_doc = line_y_starts
+        .iter()
+        .position(|&y| y > er.y + er.h)
+        .unwrap_or(editor.lines.len())
+        .min(editor.lines.len());
 
-    let first_doc = if vis_offsets.is_empty() {
-        0
-    } else {
-        vis_offsets.partition_point(|&o| o <= first_vis_row).saturating_sub(1)
-    };
-    let last_doc = if vis_offsets.is_empty() {
-        0
-    } else {
-        vis_offsets
-            .partition_point(|&o| o <= last_vis_row)
-            .min(editor.lines.len())
-    };
+    /// Per-row x-offset for alignment + first-line indent.
+    #[inline]
+    fn row_x_offset(
+        text: &mut TextRenderer,
+        editor: &Editor,
+        line: usize,
+        row_idx: usize,
+        row_start: usize,
+        row_end: usize,
+        content_max_w: f32,
+        font_size: f32,
+        s: f32,
+    ) -> f32 {
+        let para = editor.formats.get(line).para;
+        let row_w = measure_range(text, editor, line, row_start, row_end, font_size);
+        let align = alignment_offset(para.alignment, content_max_w, row_w);
+        let indent = if row_idx == 0 { para.first_indent * s } else { 0.0 };
+        align + indent
+    }
 
     // ── Selection highlight ───────────────────────────────────────────
     let sel_color = theme.selection_color();
@@ -308,23 +353,28 @@ pub fn render_frame(
                 (0, line_len)
             };
 
+            let para = editor.formats.get(i).para;
+            let row_h = editor::FONT_SIZE * para.line_spacing * s;
             let wraps = &editor.wrap_rows[i];
             for (row_idx, &row_start) in wraps.iter().enumerate() {
                 let row_end = wraps.get(row_idx + 1).copied().unwrap_or(line_len);
-                let vis_row = vis_offsets[i] + row_idx;
-                let y = text_y_start + vis_row as f32 * line_h;
-                if y + line_h < er.y || y > er.y + er.h {
+                let y = line_y_starts[i] + row_idx as f32 * row_h;
+                if y + row_h < er.y || y > er.y + er.h {
                     continue;
                 }
+                let x_off = row_x_offset(
+                    text, editor, i, row_idx, row_start, row_end,
+                    content_max_w, font_size, s,
+                );
 
                 let hl_start = sel_begin.max(row_start);
                 let hl_end = sel_finish.min(row_end);
                 if hl_start >= hl_end {
                     if i != sel_end.line && row_idx == wraps.len() - 1 && sel_finish >= row_end {
-                        let x_end =
-                            content_x + measure_range(text, editor, i, row_start, row_end, font_size);
+                        let x_end = content_x + x_off
+                            + measure_range(text, editor, i, row_start, row_end, font_size);
                         painter.rect_filled(
-                            Rect::new(x_end, y, font_size * 0.4, line_h),
+                            Rect::new(x_end, y, font_size * 0.4, row_h),
                             0.0,
                             sel_color,
                         );
@@ -332,10 +382,10 @@ pub fn render_frame(
                     continue;
                 }
 
-                let x1 =
-                    content_x + measure_range(text, editor, i, row_start, hl_start, font_size);
-                let x2 =
-                    content_x + measure_range(text, editor, i, row_start, hl_end, font_size);
+                let x1 = content_x + x_off
+                    + measure_range(text, editor, i, row_start, hl_start, font_size);
+                let x2 = content_x + x_off
+                    + measure_range(text, editor, i, row_start, hl_end, font_size);
                 let extra =
                     if i != sel_end.line && row_idx == wraps.len() - 1 && hl_end == line_len {
                         font_size * 0.4
@@ -344,7 +394,7 @@ pub fn render_frame(
                     };
                 if x2 > x1 || extra > 0.0 {
                     painter.rect_filled(
-                        Rect::new(x1, y, (x2 - x1) + extra, line_h),
+                        Rect::new(x1, y, (x2 - x1) + extra, row_h),
                         0.0,
                         sel_color,
                     );
@@ -359,6 +409,8 @@ pub fn render_frame(
             if m.line < first_doc || m.line >= last_doc {
                 continue;
             }
+            let para = editor.formats.get(m.line).para;
+            let row_h = editor::FONT_SIZE * para.line_spacing * s;
             let wraps = &editor.wrap_rows[m.line];
             for (row_idx, &row_start) in wraps.iter().enumerate() {
                 let row_end = wraps
@@ -368,20 +420,23 @@ pub fn render_frame(
                 if m.end <= row_start || m.start >= row_end {
                     continue;
                 }
-                let vis_row = vis_offsets[m.line] + row_idx;
-                let y = text_y_start + vis_row as f32 * line_h;
-                if y + line_h < er.y || y > er.y + er.h {
+                let y = line_y_starts[m.line] + row_idx as f32 * row_h;
+                if y + row_h < er.y || y > er.y + er.h {
                     continue;
                 }
+                let x_off = row_x_offset(
+                    text, editor, m.line, row_idx, row_start, row_end,
+                    content_max_w, font_size, s,
+                );
                 let hl_start = m.start.max(row_start);
                 let hl_end = m.end.min(row_end);
-                let x1 = content_x
+                let x1 = content_x + x_off
                     + measure_range(text, editor, m.line, row_start, hl_start, font_size);
-                let x2 = content_x
+                let x2 = content_x + x_off
                     + measure_range(text, editor, m.line, row_start, hl_end, font_size);
                 if x2 > x1 {
                     painter.rect_filled(
-                        Rect::new(x1, y, x2 - x1, line_h),
+                        Rect::new(x1, y, x2 - x1, row_h),
                         2.0 * s,
                         match_color(m_idx == find_bar.current),
                     );
@@ -399,21 +454,27 @@ pub fn render_frame(
     for i in first_doc..last_doc {
         let line_str = &editor.lines[i];
         let wraps = &editor.wrap_rows[i];
+        let para = editor.formats.get(i).para;
+        let row_h = editor::FONT_SIZE * para.line_spacing * s;
 
         for (row_idx, &row_start) in wraps.iter().enumerate() {
             let row_end = wraps.get(row_idx + 1).copied().unwrap_or(line_str.len());
-            let vis_row = vis_offsets[i] + row_idx;
-            let y = text_y_start + vis_row as f32 * line_h;
-            if y + line_h < er.y || y > er.y + er.h {
+            let y = line_y_starts[i] + row_idx as f32 * row_h;
+            if y + row_h < er.y || y > er.y + er.h {
                 continue;
             }
             if row_start >= row_end {
                 continue;
             }
 
+            let x_off = row_x_offset(
+                text, editor, i, row_idx, row_start, row_end,
+                content_max_w, font_size, s,
+            );
+
             // Draw format spans clipped to this wrap row.
             let spans = editor.formats.get(i).iter_spans(line_str.len());
-            let mut x = content_x;
+            let mut x = content_x + x_off;
             for span in &spans {
                 if span.end <= row_start || span.start >= row_end {
                     continue;
@@ -464,9 +525,15 @@ pub fn render_frame(
     // ── Status bar ────────────────────────────────────────────────────
     crate::status_bar::draw_status_bar(editor, painter, text, pal, wf, hf, s, w, h);
 
-    // ── Context menu (dropdown from menu bar) — overlay layer ──────────
+    // ── Overlay layer — menus and toolbar dropdowns above editor text ──
     painter.set_layer(1);
     text.set_layer(1);
+
+    // Toolbar dropdown panels (font size, line spacing)
+    toolbar::draw_toolbar_overlays(
+        fmt_toolbar, &fmt_state, &para_state, painter, text, pal, wf, s, w, h,
+    );
+
     menu_bar.context_menu.update(0.016);
     // Redraw menu bar labels in overlay layer so they aren't covered by the dropdown
     menu_bar.draw_with_labels(painter, text, pal, &labels, w, h, s);
@@ -489,26 +556,32 @@ pub fn render_frame(
             text.render_layer(1, ctx, frame.encoder_mut(), &view);
 
             // Cursor overlay (on top of text, but not on top of menus).
-            // Preview tabs hide the cursor since they're read-only.
             if cursor_visible && !menu_bar.context_menu.is_open() {
-                let c_wraps = &editor.wrap_rows[editor.cursor_line];
+                let c_line = editor.cursor_line;
+                let c_wraps = &editor.wrap_rows[c_line];
                 let c_row_idx = c_wraps
                     .partition_point(|&s| s <= editor.cursor_col)
                     .saturating_sub(1);
                 let c_row_start = c_wraps[c_row_idx];
-                let c_vis_row = vis_offsets[editor.cursor_line] + c_row_idx;
-                let cursor_y = text_y_start + c_vis_row as f32 * line_h;
-                let cursor_x = content_x
+                let c_row_end = c_wraps.get(c_row_idx + 1).copied().unwrap_or(editor.lines[c_line].len());
+                let c_para = editor.formats.get(c_line).para;
+                let c_row_h = editor::FONT_SIZE * c_para.line_spacing * s;
+                let cursor_y = line_y_starts[c_line] + c_row_idx as f32 * c_row_h;
+                let c_x_off = row_x_offset(
+                    text, editor, c_line, c_row_idx, c_row_start, c_row_end,
+                    content_max_w, font_size, s,
+                );
+                let cursor_x = content_x + c_x_off
                     + measure_range(
                         text,
                         editor,
-                        editor.cursor_line,
+                        c_line,
                         c_row_start,
                         editor.cursor_col,
                         font_size,
                     );
 
-                if cursor_y + line_h > er.y && cursor_y < er.y + er.h {
+                if cursor_y + c_row_h > er.y && cursor_y < er.y + er.h {
                     painter.clear();
                     painter.rect_filled(
                         Rect::new(cursor_x, cursor_y, 2.5 * s, font_size + 2.0),

@@ -10,11 +10,15 @@ use crate::editor::Editor;
 use crate::render::{self, STATUS_BAR_H};
 use crate::scrollbar;
 use crate::sidebar::{SIDEBAR_W, ZONE_SIDEBAR_BASE};
-use crate::tab_strip::{self, TAB_STRIP_H, ZONE_NEW_TAB, ZONE_TAB_BASE, ZONE_TAB_CLOSE_BASE};
+use crate::tab_strip::{
+    self, TabDragState, TAB_STRIP_H, ZONE_NEW_TAB, ZONE_TAB_BASE, ZONE_TAB_CLOSE_BASE,
+};
 use crate::title_bar::TITLE_BAR_H;
+use crate::minimap;
 use crate::{
     TextHandler, ZONE_CLOSE, ZONE_EDITOR, ZONE_EDITOR_SCROLL_THUMB, ZONE_EDITOR_SCROLL_TRACK,
-    ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_SIDEBAR_SCROLL_THUMB, ZONE_SIDEBAR_SCROLL_TRACK,
+    ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_MINIMAP, ZONE_SIDEBAR_SCROLL_THUMB,
+    ZONE_SIDEBAR_SCROLL_TRACK,
 };
 
 /// Result of a mouse event — same shape as `KeyAction` so callers can decide
@@ -82,11 +86,18 @@ fn handle_left_press(handler: &mut TextHandler, event_loop: &ActiveEventLoop) ->
             ZONE_NEW_TAB => {
                 handler.new_tab();
             }
-            z if z >= ZONE_TAB_BASE && z < ZONE_TAB_BASE + 1000 => {
-                handler.switch_tab((z - ZONE_TAB_BASE) as usize);
-            }
             z if z >= ZONE_TAB_CLOSE_BASE && z < ZONE_TAB_CLOSE_BASE + 1000 => {
                 handler.close_tab((z - ZONE_TAB_CLOSE_BASE) as usize);
+            }
+            z if z >= ZONE_TAB_BASE && z < ZONE_TAB_BASE + 1000 => {
+                let idx = (z - ZONE_TAB_BASE) as usize;
+                handler.switch_tab(idx);
+                let cx = handler.input.cursor().map(|(x, _)| x).unwrap_or(0.0);
+                handler.tab_drag = Some(TabDragState {
+                    idx,
+                    start_cx: cx,
+                    active: false,
+                });
             }
             z if z >= ZONE_SIDEBAR_BASE && z < ZONE_SIDEBAR_BASE + 10000 => {
                 let idx = (z - ZONE_SIDEBAR_BASE) as usize;
@@ -95,6 +106,16 @@ fn handle_left_press(handler: &mut TextHandler, event_loop: &ActiveEventLoop) ->
                     let _ = e.load_file(path);
                     handler.tabs.push(e);
                     handler.active_tab = handler.tabs.len() - 1;
+                }
+            }
+            ZONE_MINIMAP => {
+                if let Some((_, cy)) = handler.input.cursor() {
+                    let minimap_rect = minimap_rect(handler);
+                    let scroll = minimap::click_to_scroll(cy, minimap_rect, handler.editor(), handler.scale);
+                    let editor = handler.editor_mut();
+                    editor.scroll_offset = scroll;
+                    editor.scroll_target = scroll;
+                    handler.minimap_dragging = true;
                 }
             }
             ZONE_EDITOR_SCROLL_THUMB => begin_editor_scroll_drag(handler, false),
@@ -114,6 +135,10 @@ fn handle_left_press(handler: &mut TextHandler, event_loop: &ActiveEventLoop) ->
 
 fn handle_left_release(handler: &mut TextHandler) -> MouseAction {
     handler.input.on_left_released();
+    handler.minimap_dragging = false;
+    if handler.tab_drag.is_some() {
+        handler.tab_drag = None;
+    }
     if handler.dragging {
         handler.dragging = false;
         // If anchor == cursor, it was just a click — clear selection
@@ -124,6 +149,27 @@ fn handle_left_release(handler: &mut TextHandler) -> MouseAction {
     handler.editor_mut().scrollbar.dragging = false;
     handler.sidebar.scrollbar.dragging = false;
     MouseAction::Consumed
+}
+
+// ── Minimap helpers ─────────────────────────────────────────────────────────
+
+/// Compute the minimap rect at the current window state.
+fn minimap_rect(handler: &TextHandler) -> Rect {
+    let s = handler.scale;
+    let (wf, hf) = handler.window_size_pub();
+    let sidebar_w = if handler.sidebar.visible { SIDEBAR_W * s } else { 0.0 };
+    let er = render::editor_rect(wf, hf, s, handler.find_bar.height(s), sidebar_w);
+    let mw = minimap::MINIMAP_W * s;
+    Rect::new(er.x + er.w - mw, er.y, mw, er.h)
+}
+
+/// Called from main.rs CursorMoved while a minimap drag is in progress.
+pub fn update_minimap_drag(handler: &mut TextHandler, cy: f32) {
+    let rect = minimap_rect(handler);
+    let scroll = minimap::click_to_scroll(cy, rect, handler.editor(), handler.scale);
+    let editor = handler.editor_mut();
+    editor.scroll_offset = scroll;
+    editor.scroll_target = scroll;
 }
 
 // ── Scrollbar drag helpers ──────────────────────────────────────────────────

@@ -225,7 +225,7 @@ impl<'a> Dropdown<'a> {
 
             // Checkmark for selected item
             if is_selected {
-                let check_x = item_rect.x + item_rect.w - pad_h - 10.0 * s;
+                let check_x = item_rect.x + item_rect.w - pad_h - 4.0 * s;
                 let check_cy = item_rect.y + item_h * 0.5;
                 painter.line(check_x, check_cy, check_x + 4.0 * s, check_cy + 4.0 * s, 2.0 * s, palette.accent);
                 painter.line(check_x + 4.0 * s, check_cy + 4.0 * s, check_x + 12.0 * s, check_cy - 4.0 * s, 2.0 * s, palette.accent);

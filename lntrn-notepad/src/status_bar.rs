@@ -43,14 +43,12 @@ pub fn draw_status_bar(
         .color(palette.text)
         .draw(text, sw, sh);
 
-    // ── Right: cursor position + counts (selection-aware) ─────────
+    // ── Right: word / character counts (selection-aware) ───────────
     let pos_text = if let Some(selected) = editor.selected_text() {
         let words = selected.split_whitespace().count();
         let chars = selected.chars().count();
         format!(
-            "Ln {} Col {}  ·  {} {} selected · {} {}",
-            editor.cursor_line + 1,
-            editor.cursor_col + 1,
+            "{} {} selected · {} {}",
             words,
             if words == 1 { "word" } else { "words" },
             chars,
@@ -69,14 +67,7 @@ pub fn draw_status_bar(
         } else {
             format!("{} chars", chars)
         };
-        format!(
-            "Ln {} Col {}  ·  {} lines · {} words · {}",
-            editor.cursor_line + 1,
-            editor.cursor_col + 1,
-            editor.lines.len(),
-            words,
-            chars_label,
-        )
+        format!("{} words · {}", words, chars_label)
     };
     let pos_w = text.measure_width(&pos_text, font_px);
     TextLabel::new(&pos_text, wf - pos_w - 14.0 * s, label_y)

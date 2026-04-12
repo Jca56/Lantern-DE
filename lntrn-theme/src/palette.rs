@@ -23,7 +23,7 @@ pub const FOX_DARK: Palette = Palette {
     bg: Rgba::rgb(32, 32, 32),
     surface: Rgba::rgb(44, 44, 44),
     surface_2: Rgba::rgb(51, 51, 51),
-    sidebar: Rgba::rgb(52, 52, 58),
+    sidebar: Rgba::rgb(58, 58, 64),
     sidebar_text: Rgba::rgb(210, 210, 216),
     text: Rgba::rgb(236, 236, 236),
     text_secondary: Rgba::rgb(200, 200, 200),

@@ -211,6 +211,7 @@ impl TextHandler {
         let s = self.scale;
         let (wf, hf) = self.window_size();
         let font_size = editor::FONT_SIZE * s;
+        let pad = editor::PAD * s;
         let er = render::editor_rect(wf, hf, s, self.find_bar.height(s));
         let active = self.active_tab;
         let editor = &mut self.tabs[active];
@@ -219,10 +220,28 @@ impl TextHandler {
         editor.cursor_line = doc_line;
 
         if let Some(gpu) = &mut self.gpu {
+            // Compute content_x matching render.rs page layout
+            let max_page_w = 800.0 * s;
+            let page_w = er.w.min(max_page_w);
+            let page_x = er.x + (er.w - page_w) * 0.5;
+            let content_x = page_x + pad;
+            let content_max_w = (page_w - pad * 2.0).max(10.0);
+
+            // Alignment + indent offset for this row
+            let para = editor.formats.get(doc_line).para;
+            let wraps = &editor.wrap_rows[doc_line];
+            let row_idx = wraps.iter().position(|&s| s == row_start).unwrap_or(0);
+            let row_w = render::measure_range(
+                &mut gpu.text, editor, doc_line, row_start, row_end, font_size,
+            );
+            let align_off = render::alignment_offset(para.alignment, content_max_w, row_w);
+            let indent_off = if row_idx == 0 { para.first_indent * s } else { 0.0 };
+            let effective_x = content_x + align_off + indent_off;
+
             let base = render::measure_to_offset(
                 &mut gpu.text, editor, doc_line, row_start, font_size,
             );
-            let col = editor.col_at_x(cx, doc_line, row_start, row_end, er, s, |byte_off| {
+            let col = editor.col_at_x(cx, doc_line, row_start, row_end, effective_x, |byte_off| {
                 render::measure_to_offset(&mut gpu.text, editor, doc_line, byte_off, font_size) - base
             });
             editor.cursor_col = col;

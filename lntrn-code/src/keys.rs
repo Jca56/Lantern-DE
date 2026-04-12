@@ -38,6 +38,25 @@ pub fn handle_key(
 
     let ctrl = mods.contains(ModifiersState::CONTROL);
     let shift = mods.contains(ModifiersState::SHIFT);
+    let alt = mods.contains(ModifiersState::ALT);
+
+    // ── Alt shortcuts ────────────────────────────────────────────────
+    if alt && !ctrl {
+        if let Key::Character(s) = key {
+            match s.as_str() {
+                "z" => {
+                    let ed = handler.editor_mut();
+                    ed.wrap_enabled = !ed.wrap_enabled;
+                    return KeyAction::Consumed;
+                }
+                "m" => {
+                    handler.minimap_visible = !handler.minimap_visible;
+                    return KeyAction::Consumed;
+                }
+                _ => {}
+            }
+        }
+    }
 
     // ── Find / Replace shortcuts ──────────────────────────────────────
     if ctrl && !shift {

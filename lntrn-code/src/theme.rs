@@ -2,7 +2,7 @@
 //! `FoxPalette` plus a few extra colors that the editor uses directly
 //! (selection highlight, cursor, search match background).
 //!
-//! Themes are picked at startup from `~/.lantern/config/notepad.toml` and
+//! Themes are picked at startup from `~/.lantern/config/code.toml` and
 //! can be switched at runtime via the View menu.
 
 use std::path::PathBuf;
@@ -22,7 +22,7 @@ pub enum Theme {
 
 impl Default for Theme {
     fn default() -> Self {
-        Theme::Paper
+        Theme::NightSky
     }
 }
 
@@ -61,6 +61,31 @@ impl Theme {
             Theme::NightSky => Color::from_rgba8(160, 130, 220, 130),
             Theme::Dark => Color::from_rgba8(225, 200, 0, 160),
         }
+    }
+
+    /// Cycling indent guide colors — one per nesting level, wraps around.
+    pub fn indent_guide_color(&self, level: usize) -> Color {
+        let colors = match self {
+            Theme::Paper => [
+                Color::from_rgba8(180, 100, 60, 50),
+                Color::from_rgba8(60, 130, 180, 50),
+                Color::from_rgba8(140, 80, 160, 50),
+                Color::from_rgba8(60, 150, 80, 50),
+            ],
+            Theme::NightSky => [
+                Color::from_rgba8(100, 140, 240, 70),
+                Color::from_rgba8(180, 120, 240, 70),
+                Color::from_rgba8(240, 120, 180, 70),
+                Color::from_rgba8(240, 180, 100, 70),
+            ],
+            Theme::Dark => [
+                Color::from_rgba8(100, 160, 220, 60),
+                Color::from_rgba8(200, 120, 160, 60),
+                Color::from_rgba8(180, 160, 100, 60),
+                Color::from_rgba8(120, 200, 140, 60),
+            ],
+        };
+        colors[level % colors.len()]
     }
 
     /// Per-token-kind color for syntax highlighting.
@@ -163,7 +188,7 @@ pub fn dark_palette() -> FoxPalette {
 
 fn config_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(home).join(".lantern/config/notepad.toml")
+    PathBuf::from(home).join(".lantern/config/code.toml")
 }
 
 /// Load the active theme from disk. Returns `Theme::Paper` if no config exists

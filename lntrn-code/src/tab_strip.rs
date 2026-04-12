@@ -16,7 +16,7 @@ pub struct TabLabel {
 }
 
 /// Height of the tab strip in logical pixels.
-pub const TAB_STRIP_H: f32 = 32.0;
+pub const TAB_STRIP_H: f32 = 38.0;
 
 /// Tab sizing.
 const TAB_MIN_W: f32 = 110.0;
@@ -24,13 +24,23 @@ const TAB_MAX_W: f32 = 220.0;
 const TAB_PAD_X: f32 = 12.0;
 const CLOSE_BTN_W: f32 = 20.0;
 const NEW_TAB_BTN_W: f32 = 32.0;
-const FONT: f32 = 16.0;
+const FONT: f32 = 18.0;
 
 /// Hit-zone IDs. Tab clicks use `ZONE_TAB_BASE + index`, close buttons use
 /// `ZONE_TAB_CLOSE_BASE + index`. The new-tab button has its own ID.
 pub const ZONE_NEW_TAB: u32 = 199;
 pub const ZONE_TAB_BASE: u32 = 1000;
 pub const ZONE_TAB_CLOSE_BASE: u32 = 2000;
+
+/// State for an in-progress tab drag-to-reorder gesture.
+pub struct TabDragState {
+    /// Index of the tab being dragged (updated on each swap).
+    pub idx: usize,
+    /// Cursor x when the drag started.
+    pub start_cx: f32,
+    /// True once the cursor has moved past the dead-zone threshold.
+    pub active: bool,
+}
 
 /// Returns the y origin of the tab strip in physical pixels. The strip lives
 /// directly below the title bar, just above the editor area.
@@ -51,26 +61,27 @@ fn display_label(tab: &TabLabel) -> String {
     }
 }
 
-/// Draw the tab strip and register hit zones.
+/// Draw the tab strip and register hit zones. Returns the cumulative x
+/// positions of each tab edge (length = tabs.len()), used by drag-reorder.
 pub fn draw_tab_strip(
     painter: &mut Painter,
     text: &mut TextRenderer,
     input: &mut InteractionContext,
     tabs: &[TabLabel],
     active: usize,
+    tab_drag: &Option<TabDragState>,
     palette: &FoxPalette,
     wf: f32,
     s: f32,
     sw: u32,
     sh: u32,
-) {
+) -> Vec<f32> {
     let y = tab_strip_y(s);
     let h = TAB_STRIP_H * s;
 
     // ── Strip background ──────────────────────────────────────────────
-    // Slightly inset from the paper bg so inactive tabs sit on a darker plate.
-    let strip_bg = palette.surface_2;
-    painter.rect_filled(Rect::new(0.0, y, wf, h), 0.0, strip_bg);
+    // Transparent — the window bg shows through behind the tabs.
+    painter.rect_filled(Rect::new(0.0, y, wf, h), 0.0, Color::TRANSPARENT);
 
     // Hairline below the strip (separates from toolbar).
     painter.line(
@@ -86,7 +97,10 @@ pub fn draw_tab_strip(
     let close_w = CLOSE_BTN_W * s;
     let font_px = FONT * s;
 
+    let dragging = tab_drag.as_ref().map_or(false, |d| d.active);
+
     let mut x = 0.0;
+    let mut tab_edges: Vec<f32> = Vec::with_capacity(tabs.len());
     for (i, tab) in tabs.iter().enumerate() {
         let label = display_label(tab);
         let label_w = text.measure_width(&label, font_px);
@@ -150,14 +164,14 @@ pub fn draw_tab_strip(
             tab_r.w - pad * 2.0 - close_w, FontWeight::Normal, FontStyle::Normal, sw, sh,
         );
 
-        // ── Close button (visible on hover or active) ───────────
+        // ── Close button (visible on hover or active, hidden during drag) ─
         let close_r = Rect::new(
             tab_r.x + tab_r.w - close_w - pad * 0.4,
             tab_r.y + (h - close_w) * 0.5,
             close_w,
             close_w,
         );
-        if hovered || is_active {
+        if (hovered || is_active) && !dragging {
             let close_zone = input.add_zone(ZONE_TAB_CLOSE_BASE + i as u32, close_r);
             let close_hovered = close_zone.is_hovered();
             if close_hovered {
@@ -184,6 +198,7 @@ pub fn draw_tab_strip(
         }
 
         x += tab_w;
+        tab_edges.push(x);
     }
 
     // ── New-tab "+" button ────────────────────────────────────────────
@@ -207,4 +222,6 @@ pub fn draw_tab_strip(
         0.0,
         plus_color,
     );
+
+    tab_edges
 }

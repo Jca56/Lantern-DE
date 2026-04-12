@@ -1,3 +1,45 @@
+/// Paragraph text alignment.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Alignment {
+    Left,
+    Center,
+    Right,
+    Justify,
+}
+
+impl Default for Alignment {
+    fn default() -> Self {
+        Alignment::Left
+    }
+}
+
+/// Paragraph-level formatting attributes (one per document line).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ParagraphAttrs {
+    pub alignment: Alignment,
+    /// Line spacing multiplier (1.0, 1.15, 1.5, 2.0). Default 1.5 matches
+    /// the editor's original LINE_HEIGHT constant.
+    pub line_spacing: f32,
+    /// Extra space before this paragraph in logical pixels.
+    pub space_before: f32,
+    /// Extra space after this paragraph in logical pixels.
+    pub space_after: f32,
+    /// First-line indent in logical pixels.
+    pub first_indent: f32,
+}
+
+impl Default for ParagraphAttrs {
+    fn default() -> Self {
+        Self {
+            alignment: Alignment::Left,
+            line_spacing: 1.5,
+            space_before: 0.0,
+            space_after: 0.0,
+            first_indent: 0.0,
+        }
+    }
+}
+
 /// Rich text formatting attributes for a span of text.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TextAttrs {
@@ -46,14 +88,25 @@ pub struct FormatSpan {
 
 /// Format spans for a single line of text. Spans are sorted, non-overlapping,
 /// and cover subsets of `[0, line_len)`. Gaps are implicitly default-formatted.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct LineFormats {
     spans: Vec<FormatSpan>,
+    /// Paragraph-level attributes for this line.
+    pub para: ParagraphAttrs,
+}
+
+impl Default for LineFormats {
+    fn default() -> Self {
+        Self {
+            spans: Vec::new(),
+            para: ParagraphAttrs::default(),
+        }
+    }
 }
 
 impl LineFormats {
     pub fn new() -> Self {
-        Self { spans: Vec::new() }
+        Self::default()
     }
 
     /// Get the formatting at a specific byte offset.
@@ -219,7 +272,7 @@ impl LineFormats {
         }
 
         self.spans = left;
-        LineFormats { spans: right }
+        LineFormats { spans: right, para: self.para }
     }
 
     /// Append another line's formats onto the end of this line.

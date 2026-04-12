@@ -6,15 +6,17 @@ use lntrn_ui::gpu::{
 use crate::bracket_match;
 use crate::editor::{self, Editor};
 use crate::find_bar::{draw_find_bar, match_color, FindBar};
+use crate::minimap;
 use crate::scrollbar;
 use crate::sidebar::{draw_sidebar, Sidebar, SIDEBAR_W};
 use crate::syntax::{draw_chunk_with_syntax, tokenize_line};
-use crate::tab_strip::{draw_tab_strip, TabLabel, TAB_STRIP_H};
+use crate::tab_strip::{draw_tab_strip, TabDragState, TabLabel, TAB_STRIP_H};
 use crate::theme::Theme;
 use crate::title_bar::{draw_window_controls, title_content_rect, TITLE_BAR_H};
 use crate::{
     Gpu, MENU_NEW, MENU_OPEN, MENU_SAVE, MENU_THEME_DARK, MENU_THEME_NIGHT, MENU_THEME_PAPER,
-    ZONE_EDITOR, ZONE_EDITOR_SCROLL_THUMB, ZONE_SIDEBAR_SCROLL_THUMB,
+    MENU_TOGGLE_MINIMAP, MENU_TOGGLE_WRAP,
+    ZONE_EDITOR, ZONE_EDITOR_SCROLL_THUMB, ZONE_MINIMAP, ZONE_SIDEBAR_SCROLL_THUMB,
 };
 
 pub const STATUS_BAR_H: f32 = 30.0;
@@ -45,6 +47,8 @@ pub fn file_menu_items() -> Vec<(&'static str, Vec<MenuItem>)> {
         (
             "View",
             vec![
+                MenuItem::action_with(MENU_TOGGLE_WRAP, "Toggle Word Wrap", "Alt+Z"),
+                MenuItem::action_with(MENU_TOGGLE_MINIMAP, "Toggle Minimap", "Alt+M"),
                 MenuItem::action_with(MENU_THEME_PAPER, "Theme: Paper", ""),
                 MenuItem::action_with(MENU_THEME_NIGHT, "Theme: Night Sky", ""),
                 MenuItem::action_with(MENU_THEME_DARK, "Theme: Dark", ""),
@@ -63,6 +67,8 @@ pub fn render_frame(
     editor: &mut Editor,
     tab_labels: &[TabLabel],
     active_tab: usize,
+    tab_drag: &Option<TabDragState>,
+    minimap_visible: bool,
     find_bar: &FindBar,
     sidebar: &mut Sidebar,
     input: &mut InteractionContext,
@@ -71,7 +77,7 @@ pub fn render_frame(
     theme: Theme,
     scale: f32,
     cursor_visible: bool,
-) -> Option<MenuEvent> {
+) -> (Option<MenuEvent>, Vec<f32>) {
     let Gpu { ctx, painter, text } = gpu;
 
     let w = ctx.width();
@@ -100,8 +106,8 @@ pub fn render_frame(
     menu_bar.draw_with_labels(painter, text, pal, &labels, w, h, s);
 
     // ── Tab strip ────────────────────────────────────────────────────
-    draw_tab_strip(
-        painter, text, input, tab_labels, active_tab, pal, wf, s, w, h,
+    let tab_edges = draw_tab_strip(
+        painter, text, input, tab_labels, active_tab, tab_drag, pal, wf, s, w, h,
     );
 
     // ── Sidebar (left strip when visible) ─────────────────────────────
@@ -133,11 +139,11 @@ pub fn render_frame(
     }
 
     // ── Editor area ───────────────────────────────────────────────────
-    let er = editor_rect(wf, hf, s, find_bar_h, sidebar_w);
+    let full_er = editor_rect(wf, hf, s, find_bar_h, sidebar_w);
+    let minimap_w = if minimap_visible { minimap::MINIMAP_W * s } else { 0.0 };
+    let er = Rect::new(full_er.x, full_er.y, (full_er.w - minimap_w).max(0.0), full_er.h);
+    let minimap_rect = Rect::new(er.x + er.w, er.y, minimap_w, er.h);
     input.add_zone(ZONE_EDITOR, er);
-    // Editor surface shares the paper bg — no separate fill needed. The
-    // toolbar already draws a hairline along its bottom edge that visually
-    // separates the writing surface from the chrome.
 
     let font_size = editor::FONT_SIZE * s;
     let line_h = editor::FONT_SIZE * editor::LINE_HEIGHT * s;
@@ -319,6 +325,21 @@ pub fn render_frame(
                     .size(line_num_font)
                     .color(pal.muted)
                     .draw(text, w, h);
+
+                // Indent guides — colored vertical lines per nesting level.
+                let indent_bytes = line_str.len()
+                    - line_str
+                        .trim_start_matches(|c: char| c == ' ' || c == '\t')
+                        .len();
+                let indent_levels = indent_bytes / 4;
+                if indent_levels > 0 {
+                    let tab_w = text.measure_width("    ", font_size);
+                    let guide_h = wraps.len() as f32 * line_h;
+                    for lvl in 0..indent_levels {
+                        let gx = content_x + lvl as f32 * tab_w;
+                        painter.line(gx, y, gx, y + guide_h, 1.0 * s, theme.indent_guide_color(lvl));
+                    }
+                }
             }
 
             if row_start >= row_end {
@@ -405,7 +426,12 @@ pub fn render_frame(
     text.pop_clip();
 
     // ── Editor scrollbar ──────────────────────────────────────────────
-    scrollbar::draw_editor_scrollbar(editor, painter, input, er, s, ZONE_EDITOR_SCROLL_THUMB);
+    // Minimap replaces the scrollbar when visible.
+    if minimap_visible {
+        minimap::draw_minimap(painter, editor, input, minimap_rect, theme, pal, s, ZONE_MINIMAP);
+    } else {
+        scrollbar::draw_editor_scrollbar(editor, painter, input, er, s, ZONE_EDITOR_SCROLL_THUMB);
+    }
 
     // ── Sidebar scrollbar ─────────────────────────────────────────────
     if sidebar.visible {
@@ -490,6 +516,6 @@ pub fn render_frame(
         Err(e) => eprintln!("[lntrn-notepad] render error: {e}"),
     }
 
-    menu_event
+    (menu_event, tab_edges)
 }
 

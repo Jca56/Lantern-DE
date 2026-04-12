@@ -8,13 +8,47 @@ use crate::TextHandler;
 /// Export an editor's content to a `.docx` file. Lives here (not on
 /// `Editor`) to keep the editor module focused on text editing.
 pub fn export_docx(editor: &Editor, path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
-    use docx_rs::{Docx, Paragraph, Run};
+    use crate::format::Alignment;
+    use docx_rs::{
+        AlignmentType, Docx, LineSpacing, LineSpacingType, Paragraph, Run, SpecialIndentType,
+    };
     use std::fs::File;
 
     let file = File::create(path)?;
     let mut doc = Docx::new();
     for (i, line) in editor.lines.iter().enumerate() {
         let mut para = Paragraph::new();
+        let pa = editor.formats.get(i).para;
+
+        // Paragraph alignment
+        para = para.align(match pa.alignment {
+            Alignment::Left => AlignmentType::Left,
+            Alignment::Center => AlignmentType::Center,
+            Alignment::Right => AlignmentType::Right,
+            Alignment::Justify => AlignmentType::Justified,
+        });
+
+        // Line spacing: DOCX uses 240 twips = single spacing (1.0×)
+        let line_val = (pa.line_spacing * 240.0) as i32;
+        let mut spacing = LineSpacing::new()
+            .line(line_val)
+            .line_rule(LineSpacingType::Auto);
+        if pa.space_before > 0.0 {
+            // Convert logical px to twips (~15 twips/px)
+            spacing = spacing.before((pa.space_before * 15.0) as u32);
+        }
+        if pa.space_after > 0.0 {
+            spacing = spacing.after((pa.space_after * 15.0) as u32);
+        }
+        para = para.line_spacing(spacing);
+
+        // First-line indent (logical px to twips)
+        if pa.first_indent > 0.0 {
+            let twips = (pa.first_indent * 15.0) as i32;
+            para = para.indent(None, Some(SpecialIndentType::FirstLine(twips)), None, None);
+        }
+
+        // Character-level runs
         let spans = editor.formats.get(i).iter_spans(line.len());
         if spans.is_empty() {
             para = para.add_run(Run::new().add_text(""));

@@ -137,6 +137,10 @@ pub fn compute_wraps(
     max_width: f32,
     default_font_size: f32,
 ) {
+    if !editor.wrap_enabled {
+        editor.wrap_rows = vec![vec![0]; editor.lines.len()];
+        return;
+    }
     let mut wraps = Vec::with_capacity(editor.lines.len());
     for i in 0..editor.lines.len() {
         wraps.push(compute_line_wraps(text, editor, i, max_width, default_font_size));

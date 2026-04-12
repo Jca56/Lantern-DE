@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::format::{DocFormats, TextAttrs};
+use crate::format::{Alignment, DocFormats, ParagraphAttrs, TextAttrs};
 use crate::scrollbar::ScrollbarState;
 
 /// Font size for editor text (physical pixels, scaled at draw time).
@@ -494,15 +494,55 @@ impl Editor {
         }
     }
 
-    /// Total content height in physical pixels (accounts for word-wrap rows).
-    pub fn content_height(&self, scale: f32) -> f32 {
-        let line_h = FONT_SIZE * LINE_HEIGHT * scale;
-        let rows = if self.wrap_rows.len() == self.lines.len() {
-            self.wrap_rows.iter().map(|w| w.len()).sum::<usize>()
+    // ── Paragraph formatting ────────────────────────────────────────────
+
+    /// Apply a paragraph attribute change to the current line or all lines
+    /// touched by the selection.
+    pub fn set_paragraph_attr(&mut self, apply_fn: impl Fn(&mut ParagraphAttrs)) {
+        self.push_undo();
+        if let Some((start, end)) = self.selection_range() {
+            for i in start.line..=end.line {
+                apply_fn(&mut self.formats.get_mut(i).para);
+            }
         } else {
-            self.lines.len()
-        };
-        rows as f32 * line_h + PAD * scale * 2.0
+            apply_fn(&mut self.formats.get_mut(self.cursor_line).para);
+        }
+        self.modified = true;
+    }
+
+    pub fn set_alignment(&mut self, align: Alignment) {
+        self.set_paragraph_attr(|p| p.alignment = align);
+    }
+
+    pub fn set_line_spacing(&mut self, spacing: f32) {
+        self.set_paragraph_attr(|p| p.line_spacing = spacing);
+    }
+
+    pub fn set_first_indent(&mut self, indent: f32) {
+        self.set_paragraph_attr(|p| p.first_indent = indent);
+    }
+
+    /// Get the paragraph attrs of the line the cursor is on.
+    pub fn current_para(&self) -> ParagraphAttrs {
+        self.formats.get(self.cursor_line).para
+    }
+
+    /// Total content height in physical pixels (accounts for word-wrap rows
+    /// and per-paragraph line spacing / spacing before+after).
+    pub fn content_height(&self, scale: f32) -> f32 {
+        let mut h = PAD * scale * 2.0;
+        if self.wrap_rows.len() == self.lines.len() {
+            for (i, wraps) in self.wrap_rows.iter().enumerate() {
+                let para = self.formats.get(i).para;
+                let row_h = FONT_SIZE * para.line_spacing * scale;
+                h += wraps.len() as f32 * row_h;
+                h += (para.space_before + para.space_after) * scale;
+            }
+        } else {
+            let row_h = FONT_SIZE * LINE_HEIGHT * scale;
+            h += self.lines.len() as f32 * row_h;
+        }
+        h
     }
 
     /// Resolve which doc line and wrap-row byte range a click y falls on.
@@ -513,38 +553,40 @@ impl Editor {
         editor_rect: lntrn_render::Rect,
         scale: f32,
     ) -> (usize, usize, usize) {
-        let line_h = FONT_SIZE * LINE_HEIGHT * scale;
-        let text_y_start = editor_rect.y + PAD * scale - self.scroll_offset;
-        let vis_row = ((cy - text_y_start) / line_h).floor().max(0.0) as usize;
+        let text_y_start = editor_rect.y + PAD * scale * 1.5 - self.scroll_offset;
+        let mut y = text_y_start;
 
-        let mut cum = 0;
         for (i, wraps) in self.wrap_rows.iter().enumerate() {
-            if cum + wraps.len() > vis_row {
-                let row_idx = vis_row - cum;
-                let row_start = wraps[row_idx];
-                let row_end = wraps.get(row_idx + 1).copied().unwrap_or(self.lines[i].len());
-                return (i, row_start, row_end);
+            let para = self.formats.get(i).para;
+            let row_h = FONT_SIZE * para.line_spacing * scale;
+            y += para.space_before * scale;
+            for (row_idx, &row_start) in wraps.iter().enumerate() {
+                if cy < y + row_h {
+                    let row_end = wraps.get(row_idx + 1).copied().unwrap_or(self.lines[i].len());
+                    return (i, row_start, row_end);
+                }
+                y += row_h;
             }
-            cum += wraps.len();
+            y += para.space_after * scale;
         }
+
         let last = self.lines.len() - 1;
         let last_start = *self.wrap_rows.get(last).and_then(|w| w.last()).unwrap_or(&0);
         (last, last_start, self.lines[last].len())
     }
 
     /// Find the byte column closest to click x within a wrap-row byte range.
+    /// `content_x` is the pixel x where text starts (accounts for page
+    /// centering, padding, alignment offset, and first-line indent).
     pub fn col_at_x(
         &self,
         cx: f32,
         line_idx: usize,
         row_start: usize,
         row_end: usize,
-        editor_rect: lntrn_render::Rect,
-        scale: f32,
+        content_x: f32,
         mut measure_fn: impl FnMut(usize) -> f32,
     ) -> usize {
-        let line_num_w = 50.0 * scale;
-        let content_x = editor_rect.x + PAD * scale + line_num_w;
         let rel_x = (cx - content_x).max(0.0);
 
         let line = &self.lines[line_idx];
