@@ -48,7 +48,7 @@ struct TabPalette {
 
 fn palette(mode: &WindowMode) -> TabPalette {
     match mode {
-        WindowMode::Fox => TabPalette {
+        WindowMode::Fox | WindowMode::FoxLight => TabPalette {
             surface: Color::from_rgba8(30, 30, 30, 255),
             tab_active: Color::from_rgba8(50, 50, 50, 255),
             tab_hover: Color::from_rgba8(45, 45, 45, 255),

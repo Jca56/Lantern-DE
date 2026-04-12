@@ -255,6 +255,24 @@ impl App {
                 self.config.save();
             }
             ui_chrome::ClickAction::WindowModeChanged => {
+                // Update theme to match new mode
+                use crate::config::WindowMode;
+                use crate::theme::Theme;
+                use crate::terminal::Color8;
+                self.theme = match self.config.window.mode {
+                    WindowMode::FoxLight => Theme::fox_light(),
+                    _ => Theme::fox_dark(),
+                };
+                // Update terminal default colors for all panes
+                for tab in &mut self.tabs {
+                    for pane in &mut tab.panes {
+                        pane.terminal.set_default_colors(
+                            self.theme.terminal_fg,
+                            Color8::TRANSPARENT,
+                            self.theme.terminal_bold,
+                        );
+                    }
+                }
                 self.config.save();
                 self.update_grid_size();
             }
@@ -366,12 +384,22 @@ impl App {
 
         // Check file sidebar click
         if sidebar::contains(&self.sidebar, self.cursor_pos, chrome_h) {
-            sidebar::handle_click(
+            let ctrl = self.modifiers.contains(ModifiersState::CONTROL);
+            let result = sidebar::handle_click(
                 &mut self.sidebar,
                 self.cursor_pos,
                 chrome_h,
                 screen_h,
+                ctrl,
             );
+            match result {
+                sidebar::ClickResult::CopyPath(path_str) => {
+                    if let Some(ref cb) = self.clipboard {
+                        cb.set_text(&path_str);
+                    }
+                }
+                _ => {}
+            }
             self.request_redraw();
             return EventResult::Handled;
         }

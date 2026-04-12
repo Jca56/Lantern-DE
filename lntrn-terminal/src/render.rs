@@ -37,7 +37,7 @@ pub fn draw_window_bg(
     mode: &WindowMode,
 ) {
     match mode {
-        WindowMode::Fox => {
+        WindowMode::Fox | WindowMode::FoxLight => {
             let r = if maximized { 0.0 } else { CORNER_RADIUS };
             painter.rect_filled(Rect::new(0.0, 0.0, w, h), r, bg_color);
         }

@@ -23,7 +23,7 @@ const CHAR_W: f32 = 12.0;
 const SURFACE_HOVER: Color8 = Color8::from_rgba(255, 255, 255, 15);
 const TEXT_C: Color8 = Color8::from_rgb(200, 200, 200);
 const TEXT_DIM: Color8 = Color8::from_rgb(120, 120, 120);
-const ACCENT: Color8 = Color8::from_rgb(200, 134, 10);
+const ACCENT: Color8 = Color8::from_rgb(255, 200, 0);
 const GREEN: Color8 = Color8::from_rgb(80, 200, 80);
 const RED: Color8 = Color8::from_rgb(220, 80, 80);
 const BLUE: Color8 = Color8::from_rgb(100, 160, 230);
@@ -42,6 +42,7 @@ pub enum GitAction {
     Push,
     Pull,
     SwitchBranch(String),
+    Refresh,
 }
 
 // ── State ───────────────────────────────────────────────────────────────────
@@ -55,6 +56,7 @@ pub struct GitSidebarState {
     pub commit_msg: String,
     pub commit_cursor: usize,
     pub commit_focused: bool,
+    pub branches_expanded: bool,
     pub message: Option<(String, bool)>,
     message_time: Option<Instant>,
 }
@@ -70,6 +72,7 @@ impl GitSidebarState {
             commit_msg: String::new(),
             commit_cursor: 0,
             commit_focused: false,
+            branches_expanded: false,
             message: None,
             message_time: None,
         }
@@ -122,25 +125,109 @@ pub fn draw_git_sidebar(
 
     let mut y = top_y - state.scroll_offset;
 
+    // ── 1. Branch header (collapsible) ──────────────────────────────
     if let Some(ref status) = state.status {
-        // ── Branch header ───────────────────────────────────────────
-        let branch_label = format!("{}", status.branch);
+        let chevron = if state.branches_expanded { "v" } else { ">" };
+        let header_rect = Rect::new(0.0, y, sw - 44.0, SECTION_H);
+        let header_hover = cursor_pos.map_or(false, |(cx, cy)| {
+            cx >= 0.0 && cx < sw - 44.0 && cy >= y && cy < y + SECTION_H
+        });
+
+        // Chevron
+        let chev_color = if header_hover { c(ACCENT) } else { c(TEXT_DIM) };
         text.queue(
-            &branch_label, FONT, PAD, y + 6.0, c(ACCENT),
-            sw - PAD * 2.0, screen_w, screen_h,
+            chevron, SMALL_FONT, PAD, y + (SECTION_H - SMALL_FONT) / 2.0,
+            chev_color, 16.0, screen_w, screen_h,
         );
+        // Branch name
+        let name_color = if header_hover { c(ACCENT) } else { c(TEXT_C) };
+        text.queue(
+            &status.branch, FONT, PAD + 18.0, y + 5.0,
+            name_color, sw - PAD * 2.0 - 60.0, screen_w, screen_h,
+        );
+        if header_hover {
+            painter.rect_filled(header_rect, 0.0, c(SURFACE_HOVER));
+        }
+
+        // Refresh button (right side)
+        let ref_w = 28.0;
+        let ref_x = sw - PAD - ref_w;
+        let ref_rect = Rect::new(ref_x, y + 2.0, ref_w, SECTION_H - 4.0);
+        let ref_hover = cursor_pos.map_or(false, |(cx, cy)| {
+            cx >= ref_rect.x && cx <= ref_rect.x + ref_rect.w
+                && cy >= ref_rect.y && cy <= ref_rect.y + ref_rect.h
+        });
+        let ref_bg = if ref_hover { c(SURFACE_HOVER) } else { c(BTN_BG) };
+        painter.rect_filled(ref_rect, 4.0, ref_bg);
+        let ref_color = if ref_hover { c(ACCENT) } else { c(TEXT_DIM) };
+        text.queue(
+            "R", SMALL_FONT, ref_x + (ref_w - SMALL_FONT * 0.55) / 2.0,
+            y + (SECTION_H - SMALL_FONT) / 2.0, ref_color, ref_w, screen_w, screen_h,
+        );
+
+        // Ahead/behind (left of refresh)
         let ab = format!("{}  {}", status.ahead, status.behind);
-        let ab_x = sw - PAD - ab.len() as f32 * SMALL_FONT * 0.55;
+        let ab_x = ref_x - 8.0 - ab.len() as f32 * SMALL_FONT * 0.55;
         text.queue(
             &ab, SMALL_FONT, ab_x, y + 8.0, c(TEXT_DIM),
             100.0, screen_w, screen_h,
         );
-        y += SECTION_H + 4.0;
+        y += SECTION_H;
+
+        // Expanded branch list
+        if state.branches_expanded {
+            for branch in &state.branches {
+                let item_rect = Rect::new(4.0, y, sw - 8.0, ITEM_H);
+                let hovered = cursor_pos.map_or(false, |(cx, cy)| {
+                    cx >= 0.0 && cx <= sw && cy >= y.max(top_y) && cy < (y + ITEM_H).min(screen_h as f32)
+                });
+                if hovered && !branch.is_current {
+                    painter.rect_filled(item_rect, 4.0, c(SURFACE_HOVER));
+                }
+                let icon = if branch.is_current { "*" } else { " " };
+                let name_color = if branch.is_current {
+                    c(ACCENT)
+                } else if hovered {
+                    c(ACCENT)
+                } else {
+                    c(TEXT_C)
+                };
+                text.queue(icon, FONT, PAD + 10.0, y + (ITEM_H - FONT) / 2.0, c(ACCENT), 16.0, screen_w, screen_h);
+                text.queue(
+                    &branch.name, FONT, PAD + 28.0, y + (ITEM_H - FONT) / 2.0,
+                    name_color, sw - PAD * 2.0 - 28.0, screen_w, screen_h,
+                );
+                y += ITEM_H;
+            }
+        }
+
+        y += 4.0;
+        divider(painter, y, sw);
+        y += 6.0;
+
+        // ── 2. Commit section ───────────────────────────────────────
+        text.queue(
+            "COMMIT", SMALL_FONT, PAD, y + 6.0, c(TEXT_DIM),
+            sw - PAD * 2.0, screen_w, screen_h,
+        );
+        y += SECTION_H;
+
+        draw_commit_input(painter, text, state, sw, y, screen_w, screen_h);
+        y += INPUT_H + 4.0;
+
+        draw_button_at(painter, text, "Commit", PAD, sw - PAD * 2.0, y, screen_w, screen_h, cursor_pos, c(ACCENT));
+        y += BUTTON_H;
+
+        // Push / Pull side by side
+        let half = (sw - PAD * 3.0) / 2.0;
+        draw_button_at(painter, text, "Push", PAD, half, y, screen_w, screen_h, cursor_pos, c(BLUE));
+        draw_button_at(painter, text, "Pull", PAD * 2.0 + half, half, y, screen_w, screen_h, cursor_pos, c(BLUE));
+        y += BUTTON_H + 4.0;
 
         divider(painter, y, sw);
         y += 6.0;
 
-        // ── Staged files ────────────────────────────────────────────
+        // ── 3. Changes section ──────────────────────────────────────
         let staged: Vec<&FileStatus> = status.files.iter().filter(|f| f.staged).collect();
         if !staged.is_empty() {
             text.queue(
@@ -154,7 +241,6 @@ pub fn draw_git_sidebar(
             }
         }
 
-        // ── Unstaged / untracked files ──────────────────────────────
         let unstaged: Vec<&FileStatus> = status.files.iter().filter(|f| !f.staged).collect();
         if !unstaged.is_empty() {
             text.queue(
@@ -176,10 +262,9 @@ pub fn draw_git_sidebar(
             y += ITEM_H;
         }
 
-        y += 4.0;
-
-        // ── Stage / Unstage All ─────────────────────────────────────
+        // Stage All / Unstage All
         if !status.files.is_empty() {
+            y += 4.0;
             let half = (sw - PAD * 3.0) / 2.0;
             draw_button_at(painter, text, "Stage All", PAD, half, y, screen_w, screen_h, cursor_pos, c(GREEN));
             draw_button_at(painter, text, "Unstage All", PAD * 2.0 + half, half, y, screen_w, screen_h, cursor_pos, c(TEXT_DIM));
@@ -196,64 +281,7 @@ pub fn draw_git_sidebar(
         y += ITEM_H + 8.0;
     }
 
-    // ── Commit section ──────────────────────────────────────────────
-    text.queue(
-        "COMMIT", SMALL_FONT, PAD, y + 6.0, c(TEXT_DIM),
-        sw - PAD * 2.0, screen_w, screen_h,
-    );
-    y += SECTION_H;
-
-    draw_commit_input(painter, text, state, sw, y, screen_w, screen_h);
-    y += INPUT_H + 4.0;
-
-    draw_button_at(painter, text, "Commit", PAD, sw - PAD * 2.0, y, screen_w, screen_h, cursor_pos, c(ACCENT));
-    y += BUTTON_H;
-
-    // Push / Pull side by side
-    let half = (sw - PAD * 3.0) / 2.0;
-    draw_button_at(painter, text, "Push", PAD, half, y, screen_w, screen_h, cursor_pos, c(BLUE));
-    draw_button_at(painter, text, "Pull", PAD * 2.0 + half, half, y, screen_w, screen_h, cursor_pos, c(BLUE));
-    y += BUTTON_H + 8.0;
-
-    divider(painter, y, sw);
-    y += 8.0;
-
-    // ── Branches section ────────────────────────────────────────────
-    text.queue(
-        "BRANCHES", SMALL_FONT, PAD, y + 6.0, c(TEXT_DIM),
-        sw - PAD * 2.0, screen_w, screen_h,
-    );
-    y += SECTION_H;
-
-    for branch in &state.branches {
-        let item_rect = Rect::new(4.0, y, sw - 8.0, ITEM_H);
-        let hovered = cursor_pos.map_or(false, |(cx, cy)| {
-            cx >= 0.0 && cx <= sw && cy >= y.max(top_y) && cy < (y + ITEM_H).min(screen_h as f32)
-        });
-        if hovered && !branch.is_current {
-            painter.rect_filled(item_rect, 4.0, c(SURFACE_HOVER));
-        }
-        let icon = if branch.is_current { "*" } else { " " };
-        let name_color = if branch.is_current {
-            c(ACCENT)
-        } else if hovered {
-            c(ACCENT)
-        } else {
-            c(TEXT_C)
-        };
-        text.queue(icon, FONT, PAD, y + (ITEM_H - FONT) / 2.0, c(ACCENT), 16.0, screen_w, screen_h);
-        text.queue(
-            &branch.name, FONT, PAD + 18.0, y + (ITEM_H - FONT) / 2.0,
-            name_color, sw - PAD * 2.0 - 18.0, screen_w, screen_h,
-        );
-        y += ITEM_H;
-    }
-
-    y += 8.0;
-    divider(painter, y, sw);
-    y += 8.0;
-
-    // ── Recent commits ──────────────────────────────────────────────
+    // ── 4. Recent commits ───────────────────────────────────────────
     text.queue(
         "RECENT", SMALL_FONT, PAD, y + 6.0, c(TEXT_DIM),
         sw - PAD * 2.0, screen_w, screen_h,
@@ -261,23 +289,25 @@ pub fn draw_git_sidebar(
     y += SECTION_H;
 
     for commit in state.graph.iter().take(30) {
+        let has_deco = !commit.decorations.is_empty();
+        let row_h = if has_deco { ITEM_H + SMALL_FONT } else { ITEM_H };
+
         text.queue(
-            &commit.short_hash, SMALL_FONT, PAD, y + (ITEM_H - SMALL_FONT) / 2.0,
+            &commit.short_hash, SMALL_FONT, PAD, y + 6.0,
             c(BLUE), 60.0, screen_w, screen_h,
         );
         text.queue(
-            &commit.subject, SMALL_FONT, PAD + 65.0, y + (ITEM_H - SMALL_FONT) / 2.0,
+            &commit.subject, SMALL_FONT, PAD + 65.0, y + 6.0,
             c(TEXT_C), sw - PAD - 65.0, screen_w, screen_h,
         );
-        // Decoration badges
-        if !commit.decorations.is_empty() {
+        if has_deco {
             let deco = commit.decorations.join(", ");
             text.queue(
-                &deco, SMALL_FONT - 2.0, PAD + 65.0, y + ITEM_H - SMALL_FONT,
+                &deco, SMALL_FONT - 2.0, PAD + 65.0, y + 6.0 + SMALL_FONT + 2.0,
                 c(ACCENT), sw - PAD - 65.0, screen_w, screen_h,
             );
         }
-        y += ITEM_H;
+        y += row_h;
     }
 
     painter.pop_clip();
@@ -329,12 +359,10 @@ fn draw_file_item(
     let label = file.status.label();
     text.queue(label, FONT, PAD, y + (ITEM_H - FONT) / 2.0, status_color, 20.0, screen_w, screen_h);
 
-    // Staged dot indicator
     let dot = if file.staged { "+" } else { " " };
     let dot_color = if file.staged { c(GREEN) } else { c(TEXT_DIM) };
     text.queue(dot, FONT, PAD + 20.0, y + (ITEM_H - FONT) / 2.0, dot_color, 14.0, screen_w, screen_h);
 
-    // File name (basename only to save space)
     let name = file.path.rsplit('/').next().unwrap_or(&file.path);
     let name_color = if hovered { c(ACCENT) } else { c(TEXT_C) };
     text.queue(name, FONT, PAD + 36.0, y + (ITEM_H - FONT) / 2.0, name_color, sw - PAD - 36.0, screen_w, screen_h);
@@ -378,6 +406,7 @@ fn draw_commit_input(
 ) {
     let x = PAD;
     let w = sw - PAD * 2.0;
+    let inner_w = w - 16.0; // text area inside the border padding
     let r = Rect::new(x, y, w, INPUT_H - 4.0);
 
     // Background
@@ -391,25 +420,38 @@ fn draw_commit_input(
     painter.rect_filled(Rect::new(r.x, r.y, b, r.h), 0.0, border_color);
     painter.rect_filled(Rect::new(r.x + r.w - b, r.y, b, r.h), 0.0, border_color);
 
-    // Text
-    let display = if state.commit_msg.is_empty() && !state.commit_focused {
-        "commit message..."
-    } else {
-        &state.commit_msg
-    };
-    let text_color = if state.commit_msg.is_empty() && !state.commit_focused {
-        c(TEXT_DIM)
-    } else {
-        c(TEXT_C)
-    };
     let ty = y + (INPUT_H - 4.0 - FONT) / 2.0;
-    text.queue(display, FONT, x + 8.0, ty, text_color, w - 16.0, screen_w, screen_h);
+
+    if state.commit_msg.is_empty() && !state.commit_focused {
+        text.queue("commit message...", FONT, x + 8.0, ty, c(TEXT_DIM), inner_w, screen_w, screen_h);
+        return;
+    }
+
+    // Scroll the text so the cursor is always visible
+    let visible_chars = (inner_w / CHAR_W) as usize;
+    let scroll_chars = if state.commit_cursor >= visible_chars {
+        state.commit_cursor - visible_chars + 1
+    } else {
+        0
+    };
+
+    // Clip text to input bounds
+    painter.push_clip(Rect::new(x + 4.0, r.y, w - 8.0, r.h));
+
+    let display = if scroll_chars < state.commit_msg.len() {
+        &state.commit_msg[scroll_chars..]
+    } else {
+        ""
+    };
+    text.queue(display, FONT, x + 8.0, ty, c(TEXT_C), inner_w + 200.0, screen_w, screen_h);
 
     // Cursor
     if state.commit_focused {
-        let cursor_x = x + 8.0 + state.commit_cursor as f32 * CHAR_W;
+        let cursor_x = x + 8.0 + (state.commit_cursor - scroll_chars) as f32 * CHAR_W;
         painter.rect_filled(Rect::new(cursor_x, ty, 2.0, FONT + 2.0), 0.0, c(TEXT_C));
     }
+
+    painter.pop_clip();
 }
 
 // ── Hit testing ─────────────────────────────────────────────────────────────
@@ -432,8 +474,65 @@ pub fn handle_click(
     let mut y = top_y - state.scroll_offset;
 
     if let Some(ref status) = state.status.clone() {
-        // Branch header
-        y += SECTION_H + 4.0;
+        // Refresh button
+        let ref_w = 28.0;
+        let ref_x = sw - PAD - ref_w;
+        if cx >= ref_x && cx <= ref_x + ref_w && cy >= y + 2.0 && cy < y + SECTION_H - 2.0 {
+            state.commit_focused = false;
+            return GitAction::Refresh;
+        }
+
+        // Branch header click (toggles expand)
+        if cy >= y && cy < y + SECTION_H && cx < sw - 44.0 {
+            state.branches_expanded = !state.branches_expanded;
+            state.commit_focused = false;
+            return GitAction::Handled;
+        }
+        y += SECTION_H;
+
+        // Expanded branch list
+        if state.branches_expanded {
+            for branch in &state.branches {
+                if cy >= y && cy < y + ITEM_H && !branch.is_current {
+                    state.commit_focused = false;
+                    state.branches_expanded = false;
+                    return GitAction::SwitchBranch(branch.name.clone());
+                }
+                y += ITEM_H;
+            }
+        }
+
+        y += 4.0;
+        y += 6.0; // divider
+
+        // COMMIT header
+        y += SECTION_H;
+
+        // Commit input
+        if cy >= y && cy < y + INPUT_H {
+            state.commit_focused = true;
+            return GitAction::Handled;
+        }
+        y += INPUT_H + 4.0;
+
+        // Commit button
+        if cy >= y && cy < y + BUTTON_H {
+            state.commit_focused = false;
+            return GitAction::Commit;
+        }
+        y += BUTTON_H;
+
+        // Push / Pull
+        let half = (sw - PAD * 3.0) / 2.0;
+        if cy >= y && cy < y + BUTTON_H {
+            state.commit_focused = false;
+            if cx < PAD + half {
+                return GitAction::Push;
+            } else {
+                return GitAction::Pull;
+            }
+        }
+        y += BUTTON_H + 4.0;
         y += 6.0; // divider
 
         // Staged files
@@ -465,10 +564,10 @@ pub fn handle_click(
         if status.files.is_empty() {
             y += ITEM_H;
         }
-        y += 4.0;
 
         // Stage All / Unstage All buttons
         if !status.files.is_empty() {
+            y += 4.0;
             let half = (sw - PAD * 3.0) / 2.0;
             if cy >= y && cy < y + BUTTON_H {
                 state.commit_focused = false;
@@ -478,54 +577,9 @@ pub fn handle_click(
                     return GitAction::UnstageAll;
                 }
             }
-            y += BUTTON_H + 4.0;
         }
-
-        y += 8.0; // divider
     } else {
         y += ITEM_H + 8.0;
-    }
-
-    // COMMIT header
-    y += SECTION_H;
-
-    // Commit input
-    if cy >= y && cy < y + INPUT_H {
-        state.commit_focused = true;
-        return GitAction::Handled;
-    }
-    y += INPUT_H + 4.0;
-
-    // Commit button
-    if cy >= y && cy < y + BUTTON_H {
-        state.commit_focused = false;
-        return GitAction::Commit;
-    }
-    y += BUTTON_H;
-
-    // Push / Pull
-    let half = (sw - PAD * 3.0) / 2.0;
-    if cy >= y && cy < y + BUTTON_H {
-        state.commit_focused = false;
-        if cx < PAD + half {
-            return GitAction::Push;
-        } else {
-            return GitAction::Pull;
-        }
-    }
-    y += BUTTON_H + 8.0;
-    y += 8.0; // divider
-
-    // BRANCHES header
-    y += SECTION_H;
-
-    // Branch items
-    for branch in &state.branches {
-        if cy >= y && cy < y + ITEM_H && !branch.is_current {
-            state.commit_focused = false;
-            return GitAction::SwitchBranch(branch.name.clone());
-        }
-        y += ITEM_H;
     }
 
     state.commit_focused = false;

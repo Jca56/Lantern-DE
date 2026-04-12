@@ -6,6 +6,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WindowMode {
     Fox,
+    FoxLight,
     NightSky,
 }
 
@@ -19,6 +20,7 @@ impl Serialize for WindowMode {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(match self {
             Self::Fox => "fox",
+            Self::FoxLight => "fox_light",
             Self::NightSky => "night_sky",
         })
     }
@@ -29,6 +31,7 @@ impl<'de> Deserialize<'de> for WindowMode {
         let s = String::deserialize(deserializer)?;
         Ok(match s.as_str() {
             "night_sky" | "nightsky" | "NightSky" => Self::NightSky,
+            "fox_light" | "foxlight" | "FoxLight" => Self::FoxLight,
             _ => Self::Fox,
         })
     }
@@ -38,6 +41,7 @@ impl fmt::Display for WindowMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Fox => write!(f, "fox"),
+            Self::FoxLight => write!(f, "fox_light"),
             Self::NightSky => write!(f, "night_sky"),
         }
     }

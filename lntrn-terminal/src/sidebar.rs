@@ -38,7 +38,7 @@ const SURFACE: Color8 = Color8::from_rgb(30, 30, 30);
 const SURFACE_HOVER: Color8 = Color8::from_rgba(255, 255, 255, 15);
 const TEXT: Color8 = Color8::from_rgb(200, 200, 200);
 const TEXT_DIM: Color8 = Color8::from_rgb(120, 120, 120);
-const ACCENT: Color8 = Color8::from_rgb(200, 134, 10);
+const ACCENT: Color8 = Color8::from_rgb(255, 200, 0);
 const DANGER: Color8 = Color8::from_rgb(220, 60, 60);
 const DIVIDER: Color8 = Color8::from_rgba(255, 255, 255, 12);
 const MENU_BG: Color8 = Color8::from_rgb(42, 42, 42);
@@ -52,13 +52,15 @@ pub struct DirEntry {
     pub is_dir: bool,
     pub depth: usize,
     pub expanded: bool,
+    pub line_count: Option<usize>,
 }
 
-// ── Sidebar actions ─────────────────────────────────────────────────────────
-
-pub enum SidebarAction {
+/// Result from a click on the file sidebar.
+pub enum ClickResult {
     None,
     Handled,
+    CopyPath(String),
+    OpenLanternCode(PathBuf),
 }
 
 // ── Inline edit mode ────────────────────────────────────────────────────────
@@ -80,6 +82,9 @@ struct InlineEdit {
 
 // ── State ────────────────────────────────────────────────────────────────────
 
+/// Sentinel index for context menu on empty space (root directory).
+const ROOT_CTX: usize = usize::MAX;
+
 pub struct SidebarState {
     pub visible: bool,
     pub mode: SidebarMode,
@@ -87,10 +92,12 @@ pub struct SidebarState {
     pub entries: Vec<DirEntry>,
     pub scroll_offset: f32,
     pub width: f32,
-    /// Right-click context menu: (entry_index, x, y)
+    /// Right-click context menu: (entry_index, x, y). ROOT_CTX = empty space.
     pub context_menu: Option<(usize, f32, f32)>,
     /// Inline text editing (new file, new folder, rename)
     edit: Option<InlineEdit>,
+    /// Git status marks: (absolute_path, status_char)
+    pub git_marks: Vec<(PathBuf, char)>,
 }
 
 impl SidebarState {
@@ -104,6 +111,7 @@ impl SidebarState {
             width: MIN_WIDTH,
             context_menu: None,
             edit: None,
+            git_marks: Vec::new(),
         }
     }
 
@@ -171,12 +179,18 @@ impl SidebarState {
         });
 
         for (name, path, is_dir) in children {
+            let line_count = if !is_dir {
+                count_lines_rs(&path)
+            } else {
+                None
+            };
             self.entries.push(DirEntry {
                 name,
                 path,
                 is_dir,
                 depth,
                 expanded: false,
+                line_count,
             });
         }
     }
@@ -224,6 +238,7 @@ impl SidebarState {
 
             let insert_at = idx + 1;
             for (i, (name, path, is_dir)) in children.into_iter().enumerate() {
+                let line_count = if !is_dir { count_lines_rs(&path) } else { None };
                 self.entries.insert(
                     insert_at + i,
                     DirEntry {
@@ -232,6 +247,7 @@ impl SidebarState {
                         is_dir,
                         depth: child_depth,
                         expanded: false,
+                        line_count,
                     },
                 );
             }
@@ -259,6 +275,9 @@ impl SidebarState {
 
     /// Get the parent directory for a given entry index.
     fn parent_dir_of(&self, idx: usize) -> PathBuf {
+        if idx >= self.entries.len() {
+            return self.root.clone();
+        }
         if self.entries[idx].is_dir {
             self.entries[idx].path.clone()
         } else {
@@ -445,23 +464,46 @@ pub fn draw_sidebar(
             painter.rect_filled(item_rect, 4.0, c(SURFACE_HOVER));
         }
 
-        // Icon
-        let icon = if entry.is_dir {
-            if entry.expanded { "▾" } else { "▸" }
+        // Icon — git status badge replaces · for tracked files
+        let git_ch = if !entry.is_dir {
+            state.git_marks.iter().find(|(p, _)| *p == entry.path).map(|(_, ch)| *ch)
         } else {
-            "·"
+            None
         };
-        let icon_color = if entry.is_dir { c(ACCENT) } else { c(TEXT_DIM) };
-        text.queue(
-            icon,
-            ICON_FONT,
-            indent,
-            y + (ITEM_HEIGHT - ICON_FONT) / 2.0,
-            icon_color,
-            16.0,
-            screen_w,
-            screen_h,
-        );
+        let (icon, icon_color) = if entry.is_dir {
+            (if entry.expanded { "▾" } else { "▸" }, c(ACCENT))
+        } else if let Some(ch) = git_ch {
+            let col = match ch {
+                'M' => c(ACCENT),
+                'A' => c(Color8::from_rgb(80, 200, 80)),
+                'D' => c(DANGER),
+                _ => c(TEXT_DIM),
+            };
+            (match ch { 'M'=>"M", 'A'=>"A", 'D'=>"D", 'R'=>"R", '?'=>"?", _=>"·" }, col)
+        } else {
+            ("·", c(TEXT_DIM))
+        };
+        text.queue(icon, ICON_FONT, indent, y + (ITEM_HEIGHT - ICON_FONT) / 2.0,
+            icon_color, 16.0, screen_w, screen_h);
+
+        // Line count (right-aligned, color-coded by size)
+        if let Some(lines) = entry.line_count {
+            let count_str = lines.to_string();
+            let line_color = if lines >= 1000 {
+                c(DANGER) // red
+            } else if lines >= 700 {
+                c(Color8::from_rgb(230, 150, 30)) // orange
+            } else if lines >= 500 {
+                c(ACCENT) // yellow
+            } else {
+                c(TEXT_DIM)
+            };
+            let fs = FONT_SIZE - 6.0;
+            let cw = count_str.len() as f32 * fs * 0.55;
+            text.queue(&count_str, fs, sw - cw - 10.0,
+                y + (ITEM_HEIGHT - fs) / 2.0,
+                line_color, cw + 4.0, screen_w, screen_h);
+        }
 
         // Name — or inline edit field
         let name_x = indent + 16.0;
@@ -606,12 +648,16 @@ pub fn draw_sidebar_context_menu(
         Some(v) => v,
         None => return,
     };
-    if idx >= state.entries.len() {
+    if idx != ROOT_CTX && idx >= state.entries.len() {
         return;
     }
 
-    let is_dir = state.entries[idx].is_dir;
-    let items: &[(&str, Color8)] = if is_dir {
+    let items: &[(&str, Color8)] = if idx == ROOT_CTX {
+        &[
+            ("New File", TEXT),
+            ("New Folder", TEXT),
+        ]
+    } else if state.entries[idx].is_dir {
         &[
             ("New File", TEXT),
             ("New Folder", TEXT),
@@ -620,6 +666,7 @@ pub fn draw_sidebar_context_menu(
         ]
     } else {
         &[
+            ("Open with Lantern Code", TEXT),
             ("Rename", TEXT),
             ("Delete", DANGER),
         ]
@@ -771,36 +818,37 @@ pub fn handle_mode_click(
 
 // ── Hit testing ──────────────────────────────────────────────────────────────
 
-/// Handle left click. Returns SidebarAction.
+/// Handle left click. Returns what was clicked.
 pub fn handle_click(
     state: &mut SidebarState,
     cursor_pos: Option<(f32, f32)>,
     chrome_h: f32,
     screen_h: u32,
-) -> Option<usize> {
+    ctrl_held: bool,
+) -> ClickResult {
     if !state.visible || state.mode != SidebarMode::Files {
-        return None;
+        return ClickResult::None;
     }
 
     // Close context menu on any left click
     if state.context_menu.is_some() {
         let action = handle_context_menu_click(state, cursor_pos, screen_h);
         state.close_menu();
-        if action {
-            return Some(0);
-        }
-        return None;
+        return if action { ClickResult::Handled } else { ClickResult::None };
     }
 
     // If editing, click outside confirms
     if state.edit.is_some() {
         state.confirm_edit();
-        return Some(0);
+        return ClickResult::Handled;
     }
 
-    let (cx, cy) = cursor_pos?;
+    let (cx, cy) = match cursor_pos {
+        Some(p) => p,
+        None => return ClickResult::None,
+    };
     if cx < 0.0 || cx > state.width {
-        return None;
+        return ClickResult::None;
     }
 
     let header_h = 42.0;
@@ -808,17 +856,23 @@ pub fn handle_click(
     let list_h = screen_h as f32 - chrome_h - TOGGLE_H - header_h;
 
     if cy < list_y || cy > list_y + list_h {
-        return None;
+        return ClickResult::None;
     }
 
     let relative_y = cy - list_y + state.scroll_offset;
     let idx = (relative_y / ITEM_HEIGHT) as usize;
 
     if idx < state.entries.len() {
-        state.toggle_entry(idx);
-        Some(idx)
+        if state.entries[idx].is_dir {
+            state.toggle_entry(idx);
+            ClickResult::Handled
+        } else if ctrl_held {
+            ClickResult::CopyPath(state.entries[idx].path.to_string_lossy().to_string())
+        } else {
+            ClickResult::Handled
+        }
     } else {
-        None
+        ClickResult::None
     }
 }
 
@@ -843,15 +897,21 @@ pub fn handle_right_click(
 
     let header_h = 42.0;
     let list_y = chrome_h + TOGGLE_H + header_h;
+
+    if cy < list_y {
+        return false;
+    }
+
     let relative_y = cy - list_y + state.scroll_offset;
     let idx = (relative_y / ITEM_HEIGHT) as usize;
 
-    if idx < state.entries.len() && cy >= list_y {
+    if idx < state.entries.len() {
         state.context_menu = Some((idx, cx, cy));
-        return true;
+    } else {
+        // Right-click in empty space — context menu for root directory
+        state.context_menu = Some((ROOT_CTX, cx, cy));
     }
-
-    false
+    true
 }
 
 fn handle_context_menu_click(
@@ -863,12 +923,13 @@ fn handle_context_menu_click(
         Some(v) => v,
         None => return false,
     };
-    if idx >= state.entries.len() {
+    if idx != ROOT_CTX && idx >= state.entries.len() {
         return false;
     }
 
-    let is_dir = state.entries[idx].is_dir;
-    let item_count = if is_dir { 4 } else { 2 };
+    let is_root = idx == ROOT_CTX;
+    let is_dir = is_root || (idx < state.entries.len() && state.entries[idx].is_dir);
+    let item_count = if is_root { 2 } else if is_dir { 4 } else { 3 };
     let menu_h = 10.0 + item_count as f32 * CTX_ITEM_HEIGHT + 10.0;
     let x = mx.min(screen_h as f32 - CTX_MENU_WIDTH - 4.0).max(0.0);
     let y = if my + menu_h > screen_h as f32 { my - menu_h } else { my }.max(0.0);
@@ -881,10 +942,31 @@ fn handle_context_menu_click(
     let (_, cy) = cursor_pos.unwrap();
     let item_idx = ((cy - menu.y - 6.0) / CTX_ITEM_HEIGHT) as usize;
 
-    if is_dir {
+    if is_root {
+        // Root context: New File / New Folder in root directory
+        let root_idx = if state.entries.is_empty() { 0 } else { state.entries.len() - 1 };
         match item_idx {
             0 => {
-                // New File
+                state.edit = Some(InlineEdit {
+                    mode: EditMode::NewFile,
+                    entry_idx: root_idx,
+                    buf: String::new(),
+                    cursor: 0,
+                });
+            }
+            1 => {
+                state.edit = Some(InlineEdit {
+                    mode: EditMode::NewFolder,
+                    entry_idx: root_idx,
+                    buf: String::new(),
+                    cursor: 0,
+                });
+            }
+            _ => {}
+        }
+    } else if is_dir {
+        match item_idx {
+            0 => {
                 state.edit = Some(InlineEdit {
                     mode: EditMode::NewFile,
                     entry_idx: idx,
@@ -893,7 +975,6 @@ fn handle_context_menu_click(
                 });
             }
             1 => {
-                // New Folder
                 state.edit = Some(InlineEdit {
                     mode: EditMode::NewFolder,
                     entry_idx: idx,
@@ -902,7 +983,6 @@ fn handle_context_menu_click(
                 });
             }
             2 => {
-                // Rename
                 let name = state.entries[idx].name.clone();
                 let len = name.len();
                 state.edit = Some(InlineEdit {
@@ -913,7 +993,6 @@ fn handle_context_menu_click(
                 });
             }
             3 => {
-                // Delete
                 state.do_delete(idx);
             }
             _ => {}
@@ -921,7 +1000,17 @@ fn handle_context_menu_click(
     } else {
         match item_idx {
             0 => {
-                // Rename
+                // Open with Lantern Code
+                let path = state.entries[idx].path.clone();
+                std::thread::spawn(move || {
+                    let _ = std::process::Command::new("lntrn-code")
+                        .arg(&path)
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .spawn();
+                });
+            }
+            1 => {
                 let name = state.entries[idx].name.clone();
                 let len = name.len();
                 state.edit = Some(InlineEdit {
@@ -931,8 +1020,7 @@ fn handle_context_menu_click(
                     cursor: len,
                 });
             }
-            1 => {
-                // Delete
+            2 => {
                 state.do_delete(idx);
             }
             _ => {}
@@ -1005,6 +1093,15 @@ pub fn handle_edit_char(state: &mut SidebarState, ch: char) -> bool {
     edit.buf.insert(edit.cursor, ch);
     edit.cursor += 1;
     true
+}
+
+/// Count lines in .rs files.
+fn count_lines_rs(path: &Path) -> Option<usize> {
+    if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+        return None;
+    }
+    let data = std::fs::read(path).ok()?;
+    Some(data.iter().filter(|&&b| b == b'\n').count())
 }
 
 /// Returns true if cursor is within sidebar bounds.

@@ -40,6 +40,10 @@ impl App {
         };
         match action {
             GitAction::None | GitAction::Handled => {}
+            GitAction::Refresh => {
+                tx.send(git::worker::GitCmd::Refresh).ok();
+                tx.send(git::worker::GitCmd::FetchGraph(50)).ok();
+            }
             GitAction::ToggleStage(path) => {
                 let is_staged = self.git_sidebar.status.as_ref().map_or(false, |s| {
                     s.files.iter().any(|f| f.path == path && f.staged)
@@ -86,6 +90,14 @@ impl App {
         while let Ok(event) = rx.try_recv() {
             match event {
                 git::worker::GitEvent::Status(status) => {
+                    // Update file sidebar git marks
+                    if let Some(ref repo) = self.git_sidebar.repo_path {
+                        self.sidebar.git_marks = status.files.iter().map(|f| {
+                            let abs = repo.join(&f.path);
+                            let ch = f.status.label().chars().next().unwrap_or('?');
+                            (abs, ch)
+                        }).collect();
+                    }
                     self.git_sidebar.status = Some(status);
                 }
                 git::worker::GitEvent::Branches(branches) => {
