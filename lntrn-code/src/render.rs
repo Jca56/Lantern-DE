@@ -8,6 +8,7 @@ use crate::editor::{self, Editor};
 use crate::find_bar::{draw_find_bar, match_color, FindBar};
 use crate::minimap;
 use crate::scrollbar;
+use crate::term_panel::TermPanel;
 use crate::sidebar::{draw_sidebar, Sidebar, SIDEBAR_W};
 use crate::syntax::{draw_chunk_with_syntax, tokenize_line};
 use crate::tab_strip::{draw_tab_strip, TabDragState, TabLabel, TAB_STRIP_H};
@@ -69,6 +70,7 @@ pub fn render_frame(
     active_tab: usize,
     tab_drag: &Option<TabDragState>,
     minimap_visible: bool,
+    term_panel: &mut Option<TermPanel>,
     find_bar: &FindBar,
     sidebar: &mut Sidebar,
     input: &mut InteractionContext,
@@ -138,10 +140,19 @@ pub fn render_frame(
         );
     }
 
-    // ── Editor area ───────────────────────────────────────────────────
+    // ── Editor + terminal layout ────────────────────────────────────
     let full_er = editor_rect(wf, hf, s, find_bar_h, sidebar_w);
+    // Split vertically when the terminal panel is visible.
+    let term_visible = term_panel.as_ref().map_or(false, |p| p.visible);
+    let (editor_full, term_rect) = if term_visible {
+        let above = TermPanel::editor_rect_above(full_er, s);
+        let below = TermPanel::panel_rect(full_er, s);
+        (above, Some(below))
+    } else {
+        (full_er, None)
+    };
     let minimap_w = if minimap_visible { minimap::MINIMAP_W * s } else { 0.0 };
-    let er = Rect::new(full_er.x, full_er.y, (full_er.w - minimap_w).max(0.0), full_er.h);
+    let er = Rect::new(editor_full.x, editor_full.y, (editor_full.w - minimap_w).max(0.0), editor_full.h);
     let minimap_rect = Rect::new(er.x + er.w, er.y, minimap_w, er.h);
     input.add_zone(ZONE_EDITOR, er);
 
@@ -451,6 +462,12 @@ pub fn render_frame(
             s,
             ZONE_SIDEBAR_SCROLL_THUMB,
         );
+    }
+
+    // ── Terminal panel ────────────────────────────────────────────────
+    if let (Some(rect), Some(panel)) = (term_rect, term_panel.as_mut()) {
+        panel.update_size(rect, s);
+        panel.draw(painter, text, rect, pal, s, w, h);
     }
 
     // ── Status bar ────────────────────────────────────────────────────

@@ -170,10 +170,6 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 state.frame_done = true;
             }
             wl_pointer::Event::Leave { .. } => {
-                // Flag to start Wayland DnD from main loop when pointer leaves during drag
-                if !state.dnd_paths.is_empty() && !state.dnd_active {
-                    state.dnd_start_requested = true;
-                }
                 state.pointer_in_surface = false;
                 state.pointer_surface = None;
                 state.frame_done = true;
@@ -240,9 +236,38 @@ impl Dispatch<wl_data_device_manager::WlDataDeviceManager, ()> for State {
 
 impl Dispatch<wl_data_device::WlDataDevice, ()> for State {
     fn event(
-        _state: &mut Self, _: &wl_data_device::WlDataDevice,
-        _event: wl_data_device::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
-    ) {}
+        state: &mut Self, _: &wl_data_device::WlDataDevice,
+        event: wl_data_device::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+    ) {
+        match event {
+            wl_data_device::Event::Enter { surface, x, y, .. } => {
+                if state.surface.as_ref() == Some(&surface) {
+                    state.dnd_over_self = true;
+                    state.dnd_cursor_x = x;
+                    state.dnd_cursor_y = y;
+                    state.frame_done = true;
+                }
+            }
+            wl_data_device::Event::Motion { x, y, .. } => {
+                if state.dnd_over_self {
+                    state.dnd_cursor_x = x;
+                    state.dnd_cursor_y = y;
+                    state.frame_done = true;
+                }
+            }
+            wl_data_device::Event::Leave => {
+                state.dnd_over_self = false;
+                state.frame_done = true;
+            }
+            wl_data_device::Event::Drop => {
+                if state.dnd_over_self {
+                    state.dnd_drop_on_self = true;
+                    state.frame_done = true;
+                }
+            }
+            _ => {}
+        }
+    }
 
     wayland_client::event_created_child!(State, wl_data_device::WlDataDevice, [
         wl_data_device::EVT_DATA_OFFER_OPCODE => (wl_data_offer::WlDataOffer, ())
@@ -273,6 +298,8 @@ impl Dispatch<wl_data_source::WlDataSource, ()> for State {
             wl_data_source::Event::DndFinished | wl_data_source::Event::Cancelled => {
                 state.dnd_active = false;
                 state.dnd_paths.clear();
+                state.dnd_over_self = false;
+                state.frame_done = true;
             }
             _ => {}
         }

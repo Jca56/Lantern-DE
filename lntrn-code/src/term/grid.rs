@@ -226,71 +226,15 @@ impl TerminalState {
     }
 
     /// Process raw bytes from the PTY through the VTE parser.
-    /// APC sequences (ESC _ ... ESC \) are detected in parallel for Kitty
-    /// graphics — vte silently discards them but we capture the payload
-    /// without interfering with vte's state machine.
     pub fn process(&mut self, data: &[u8]) {
         let mut parser = std::mem::replace(&mut self.parser, vte::Parser::new());
 
         for &byte in data {
-            // Always forward every byte to vte — never intercept
             let mut performer = Performer { state: self };
             parser.advance(&mut performer, byte);
-
-            // Parallel APC detection (read-only sniffer, doesn't eat bytes)
-            match self.apc_state {
-                ApcState::Normal => {
-                    if byte == 0x1B {
-                        self.apc_state = ApcState::Esc;
-                    }
-                }
-                ApcState::Esc => {
-                    if byte == b'_' {
-                        self.apc_state = ApcState::Apc;
-                        self.apc_buf.clear();
-                    } else {
-                        self.apc_state = ApcState::Normal;
-                    }
-                }
-                ApcState::Apc => {
-                    if byte == 0x1B {
-                        self.apc_state = ApcState::ApcEsc;
-                    } else if byte == 0x07 {
-                        self.apc_state = ApcState::Normal;
-                        self.dispatch_apc();
-                    } else {
-                        self.apc_buf.push(byte);
-                    }
-                }
-                ApcState::ApcEsc => {
-                    if byte == b'\\' {
-                        self.apc_state = ApcState::Normal;
-                        self.dispatch_apc();
-                    } else {
-                        self.apc_buf.push(0x1B);
-                        self.apc_buf.push(byte);
-                        self.apc_state = ApcState::Apc;
-                    }
-                }
-            }
         }
 
         self.parser = parser;
-    }
-
-    /// Dispatch a completed APC payload.
-    fn dispatch_apc(&mut self) {
-        if self.apc_buf.is_empty() {
-            return;
-        }
-        // Kitty graphics: first byte is 'G' (or 'g')
-        if self.apc_buf[0] == b'G' || self.apc_buf[0] == b'g' {
-            let payload = &self.apc_buf[1..];
-            let row = self.cursor_row;
-            let col = self.cursor_col;
-            self.image_manager.process_kitty(payload, row, col);
-        }
-        self.apc_buf.clear();
     }
 
     /// Resize the terminal grid

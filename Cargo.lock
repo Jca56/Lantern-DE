@@ -2348,9 +2348,11 @@ dependencies = [
 name = "lntrn-code"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "lntrn-render",
  "lntrn-ui",
  "nix",
+ "vte",
  "wayland-client",
  "wayland-protocols-wlr",
  "winit",

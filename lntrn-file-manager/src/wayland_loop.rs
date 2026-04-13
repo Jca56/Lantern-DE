@@ -158,7 +158,7 @@ pub(crate) fn run_loop(
                     app.pending_open = None;
                     app.press_pos = None;
 
-                    // Prepare DnD paths for cross-window drag (deferred until pointer leaves)
+                    // Prepare DnD paths and start Wayland DnD immediately
                     let paths: Vec<std::path::PathBuf> = {
                         let selected = app.selected_paths();
                         if selected.is_empty() || !app.entries[idx].selected {
@@ -169,6 +169,23 @@ pub(crate) fn run_loop(
                     };
                     state.dnd_paths = paths;
                     state.dnd_serial = state.pointer_serial;
+
+                    // Start Wayland DnD at drag threshold (not deferred to pointer leave)
+                    if let (Some(mgr), Some(dd), Some(surf)) = (
+                        &state.data_device_manager,
+                        &state.data_device,
+                        &state.surface,
+                    ) {
+                        let source = mgr.create_data_source(qh, ());
+                        source.offer("text/uri-list".to_string());
+                        source.offer("text/plain".to_string());
+                        source.set_actions(
+                            wl_data_device_manager::DndAction::Copy
+                            | wl_data_device_manager::DndAction::Move,
+                        );
+                        dd.start_drag(Some(&source), surf, None, state.dnd_serial);
+                        state.dnd_active = true;
+                    }
                 }
             }
 
@@ -186,29 +203,34 @@ pub(crate) fn run_loop(
             app.drag_pos = Some((cx, cy));
         }
 
-        // ── Start Wayland DnD when pointer leaves during internal drag ─
-        if state.dnd_start_requested {
-            state.dnd_start_requested = false;
-            if app.drag_item.is_some() && !state.dnd_active {
-                if let (Some(mgr), Some(dd), Some(surf)) = (
-                    &state.data_device_manager,
-                    &state.data_device,
-                    &state.surface,
-                ) {
-                    let source = mgr.create_data_source(qh, ());
-                    source.offer("text/uri-list".to_string());
-                    source.offer("text/plain".to_string());
-                    source.set_actions(
-                        wl_data_device_manager::DndAction::Copy
-                        | wl_data_device_manager::DndAction::Move,
-                    );
-                    dd.start_drag(Some(&source), surf, None, state.dnd_serial);
-                    state.dnd_active = true;
-                    // Clear internal drag — compositor owns the drag now
-                    app.drag_item = None;
-                    app.drag_pos = None;
-                }
+        // ── DnD cursor tracking (compositor grab replaces pointer events) ─
+        if state.dnd_active && state.dnd_over_self {
+            let dcx = (state.dnd_cursor_x as f32) * s;
+            let dcy = (state.dnd_cursor_y as f32) * s;
+            if app.drag_item.is_some() {
+                app.drag_pos = Some((dcx, dcy));
             }
+            input.on_cursor_moved(dcx, dcy);
+        }
+
+        // ── Internal DnD drop (same window) ────────────────���────────────
+        if state.dnd_drop_on_self {
+            state.dnd_drop_on_self = false;
+            if let Some(drag_idx) = app.drag_item.take() {
+                let dcx = (state.dnd_cursor_x as f32) * s;
+                let dcy = (state.dnd_cursor_y as f32) * s;
+                input.on_cursor_moved(dcx, dcy);
+                handle_drop(app, input, wf, hf, s, drag_idx);
+            }
+            app.drag_pos = None;
+            state.dnd_paths.clear();
+            state.dnd_over_self = false;
+        }
+
+        // ── Clean up drag state after DnD ends ──────────────────────────
+        if !state.dnd_active && state.dnd_paths.is_empty() && app.drag_item.is_some() {
+            app.drag_item = None;
+            app.drag_pos = None;
         }
 
         // ── Keyboard ────────────────────────────────────────────────────
@@ -305,14 +327,23 @@ pub(crate) fn run_loop(
                     }
                 }
             } else if app.properties.is_some() {
-                // Properties dialog is open — close on any click
-                // (the close button zone handles itself via on_left_pressed)
+                // Properties dialog is open
                 if let Some(zone) = input.on_left_pressed() {
                     if zone == 800 || zone == 801 {
                         // Close button or backdrop
                         app.properties = None;
+                    } else if zone >= 810 && zone <= 815 {
+                        // Section header toggle
+                        if let Some(ref mut props) = app.properties {
+                            let idx = (zone - 810) as usize;
+                            if idx < props.section_open.len() {
+                                props.section_open[idx] = !props.section_open[idx];
+                            }
+                        }
                     }
+                    // zone == 802 (panel body) — do nothing, keep dialog open
                 } else {
+                    // Click outside any zone — close
                     app.properties = None;
                 }
             } else if context_menu.is_open() {
@@ -438,11 +469,12 @@ pub(crate) fn run_loop(
                         }
                     }
                 } else if let Some(drag_idx) = app.drag_item.take() {
-                    handle_drop(app, input, wf, hf, s, drag_idx);
-                    app.pending_open = None;
-                    // Clean up DnD state (internal drop, Wayland DnD never started)
-                    state.dnd_paths.clear();
-                    state.dnd_start_requested = false;
+                    if !state.dnd_active {
+                        // Internal drag without Wayland DnD (fallback)
+                        handle_drop(app, input, wf, hf, s, drag_idx);
+                        app.pending_open = None;
+                        state.dnd_paths.clear();
+                    }
                 } else if let Some(idx) = app.pending_open.take() {
                     app.on_item_click(idx);
                 }
@@ -499,7 +531,7 @@ pub(crate) fn run_loop(
             if matches!(evt, MenuEvent::Action(_)) {
                 context_menu.close();
             }
-            handle_ctx_event(app, settings, context_menu, &mut state.popup_backend, open_with_apps, evt);
+            handle_ctx_event(app, settings, context_menu, &mut state.popup_backend, open_with_apps, file_info, evt);
         }
 
         // ── Draw & render popup surfaces (window mode) ─────────────────
@@ -535,7 +567,7 @@ pub(crate) fn run_loop(
                 if matches!(evt, MenuEvent::Action(_)) {
                     context_menu.close_popups(backend);
                 }
-                handle_ctx_event(app, settings, context_menu, &mut state.popup_backend, open_with_apps, evt);
+                handle_ctx_event(app, settings, context_menu, &mut state.popup_backend, open_with_apps, file_info, evt);
             }
             // Render popup surfaces, injecting folder icon textures for swatch items
             let swatches = context_menu.swatch_rects();
@@ -630,7 +662,8 @@ pub(crate) fn run_loop(
             || app.drag_item.is_some() || app.rubber_band_start.is_some()
             || state.held_key.is_some()
             || app.search_rx.is_some()
-            || tab_drag.is_some();
+            || tab_drag.is_some()
+            || state.dnd_active;
     }
 
     Ok(())

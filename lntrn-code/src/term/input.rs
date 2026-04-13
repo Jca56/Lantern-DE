@@ -214,4 +214,3 @@ fn named_key_to_seq(key: &NamedKey, app_cursor: bool, shift: bool, ctrl: bool, a
         _ => vec![],
     }
 }
-

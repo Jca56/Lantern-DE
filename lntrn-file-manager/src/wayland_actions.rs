@@ -384,6 +384,7 @@ pub(crate) fn handle_ctx_event(
     context_menu: &mut ContextMenu,
     popup_backend: &mut Option<WaylandPopupBackend<State>>,
     open_with_apps: &[DesktopApp],
+    file_info: &mut crate::file_info::FileInfoCache,
     event: MenuEvent,
 ) {
     match event {
@@ -503,7 +504,10 @@ pub(crate) fn handle_ctx_event(
                         }
                     } else { None };
                     if let Some(path) = path {
-                        app.properties = crate::properties::FileProperties::from_path(&path);
+                        if let Some(mut props) = crate::properties::FileProperties::from_path(&path) {
+                            props.populate_media_info(file_info);
+                            app.properties = Some(props);
+                        }
                     }
                 }
                 CTX_NEW_FOLDER => {

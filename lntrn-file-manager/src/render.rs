@@ -611,11 +611,27 @@ pub fn render_frame(
     // ── Modal overlays (layer 1) ─────────────────────────────────────
     painter.set_layer(1);
     text.set_layer(1);
-    if let Some(ref props) = app.properties {
+    let mut props_tex_draws = Vec::new();
+    if let Some(ref mut props) = app.properties {
         crate::properties::draw_properties_dialog(
             props, painter, text, input, pal,
             wf, hf, s, w, h,
         );
+        // Render file icon texture in the header
+        if let Some((ix, iy, iw, ih)) = props.icon_rect {
+            let entry = crate::fs::FileEntry {
+                name: props.name.clone(),
+                path: props.path.clone(),
+                is_dir: props.is_dir,
+                size: props.size_bytes,
+                modified: None,
+                selected: false,
+            };
+            if let Some(tex) = icon_cache.get(&entry) {
+                let (bx, by, bw, bh) = icons::fit_in_box(tex, ix, iy, iw, ih);
+                props_tex_draws.push(TextureDraw::new(tex, bx, by, bw, bh));
+            }
+        }
     }
     if let Some(ref drop) = app.pending_drop {
         draw_drop_modal(drop, painter, text, input, pal, wf, hf, s, w, h);
@@ -645,8 +661,11 @@ pub fn render_frame(
             // Flush so glyphon's prepare() for layer 1 doesn't overwrite layer 0 vertices
             frame.flush(ctx);
 
-            // Layer 1: modal overlay shapes + text
+            // Layer 1: modal overlay shapes + textures + text
             painter.render_layer(1, ctx, frame.encoder_mut(), &view, None);
+            if !props_tex_draws.is_empty() {
+                tex_pass.render_pass(ctx, frame.encoder_mut(), &view, &props_tex_draws, None);
+            }
             text.render_layer(1, ctx, frame.encoder_mut(), &view);
 
             frame.submit(&ctx.queue);

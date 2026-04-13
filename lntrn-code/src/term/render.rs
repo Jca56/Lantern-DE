@@ -152,7 +152,7 @@ pub fn draw_terminal_ex(
             row: terminal.cursor_row,
             col: terminal.cursor_col,
             visible,
-            color: c(theme::CURSOR_COLOR),
+            color: cursor_color,
             shape,
         };
 

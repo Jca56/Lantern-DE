@@ -9,6 +9,8 @@ mod keys;
 mod markdown;
 mod minimap;
 mod mouse;
+mod term;
+mod term_panel;
 mod render;
 mod scrollbar;
 mod sidebar;
@@ -24,7 +26,7 @@ use std::time::{Duration, Instant};
 
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::ModifiersState;
 use winit::platform::wayland::WindowAttributesExtWayland;
 use winit::window::{CursorIcon, ResizeDirection, Window, WindowAttributes, WindowId};
@@ -38,7 +40,15 @@ use find_bar::FindBar;
 use keys::KeyAction;
 use sidebar::Sidebar;
 use tab_strip::TabDragState;
+use term_panel::TermPanel;
 use theme::Theme;
+
+// ── User events (sent from PTY reader threads) ────────────────────────────
+
+#[derive(Debug)]
+pub enum UserEvent {
+    PtyOutput,
+}
 
 // ── Hit zone IDs ────────────────────────────────────────────────────────────
 
@@ -67,8 +77,11 @@ pub(crate) const MENU_TOGGLE_MINIMAP: u32 = 211;
 
 fn main() {
     let file_paths: Vec<String> = std::env::args().skip(1).collect();
-    let event_loop = EventLoop::new().expect("Failed to create event loop");
-    let mut handler = TextHandler::new(file_paths);
+    let event_loop = EventLoop::<UserEvent>::with_user_event()
+        .build()
+        .expect("Failed to create event loop");
+    let proxy = event_loop.create_proxy();
+    let mut handler = TextHandler::new(file_paths, proxy);
     event_loop.run_app(&mut handler).expect("Event loop failed");
 }
 
@@ -110,12 +123,14 @@ pub(crate) struct TextHandler {
     pub(crate) tab_drag: Option<TabDragState>,
     /// Cumulative x positions of tab right edges — updated each render frame.
     pub(crate) tab_edges: Vec<f32>,
+    pub(crate) term_panel: Option<TermPanel>,
+    pub(crate) proxy: EventLoopProxy<UserEvent>,
     /// Wall-clock of the last animation tick — used for dt-based easing.
     pub(crate) last_anim_tick: Instant,
 }
 
 impl TextHandler {
-    fn new(file_paths: Vec<String>) -> Self {
+    fn new(file_paths: Vec<String>, proxy: EventLoopProxy<UserEvent>) -> Self {
         let mut next_id: u64 = 0;
         let mut tabs: Vec<Editor> = file_paths
             .into_iter()
@@ -158,6 +173,8 @@ impl TextHandler {
             minimap_dragging: false,
             tab_drag: None,
             tab_edges: Vec::new(),
+            term_panel: None,
+            proxy,
             last_anim_tick: Instant::now(),
         }
     }
@@ -268,15 +285,29 @@ impl TextHandler {
 
 // ── Application handler ──────────────────────────────────────────────────────
 
-impl ApplicationHandler for TextHandler {
+impl ApplicationHandler<UserEvent> for TextHandler {
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: UserEvent) {
+        match event {
+            UserEvent::PtyOutput => {
+                if let Some(panel) = &mut self.term_panel {
+                    panel.drain();
+                }
+                self.needs_redraw = true;
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+            }
+        }
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
         }
 
         let attrs = WindowAttributes::default()
-            .with_name("lntrn-notepad", "lntrn-notepad")
-            .with_title("lntrn-notepad")
+            .with_name("lntrn-code", "lntrn-code")
+            .with_title("lntrn-code")
             .with_inner_size(winit::dpi::LogicalSize::new(900.0, 700.0))
             .with_decorations(false)
             .with_transparent(true);
@@ -481,6 +512,7 @@ impl ApplicationHandler for TextHandler {
                         active_tab,
                         &self.tab_drag,
                         self.minimap_visible,
+                        &mut self.term_panel,
                         find_bar,
                         sidebar,
                         &mut self.input,
@@ -575,6 +607,9 @@ impl ApplicationHandler for TextHandler {
         if now >= self.cursor_blink_deadline {
             self.cursor_visible = !self.cursor_visible;
             self.cursor_blink_deadline = now + BLINK_INTERVAL;
+            if let Some(panel) = &mut self.term_panel {
+                panel.cursor_visible = self.cursor_visible;
+            }
             self.needs_redraw = true;
         }
 

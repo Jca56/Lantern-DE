@@ -6,6 +6,7 @@ use winit::keyboard::{Key, ModifiersState, NamedKey};
 
 use crate::actions;
 use crate::auto_pair;
+use crate::term_panel::TermPanel;
 use crate::TextHandler;
 
 /// Result of handling a key. Lets `main.rs` decide whether to redraw or quit.
@@ -39,6 +40,44 @@ pub fn handle_key(
     let ctrl = mods.contains(ModifiersState::CONTROL);
     let shift = mods.contains(ModifiersState::SHIFT);
     let alt = mods.contains(ModifiersState::ALT);
+
+    // ── Ctrl+` toggles terminal panel ────────────────────────────────
+    if ctrl && !shift && !alt {
+        if let Key::Character(s) = key {
+            if s.as_str() == "`" {
+                if let Some(panel) = &mut handler.term_panel {
+                    if panel.visible {
+                        // Toggle focus, or hide if already focused
+                        if panel.focused {
+                            panel.visible = false;
+                            panel.focused = false;
+                        } else {
+                            panel.focused = true;
+                        }
+                    } else {
+                        panel.visible = true;
+                        panel.focused = true;
+                    }
+                } else {
+                    // First time — spawn the terminal
+                    match TermPanel::new(handler.proxy.clone()) {
+                        Ok(panel) => handler.term_panel = Some(panel),
+                        Err(e) => eprintln!("[lntrn-code] terminal spawn failed: {e}"),
+                    }
+                }
+                return KeyAction::Consumed;
+            }
+        }
+    }
+
+    // ── Route to terminal when it has focus ───────────────────────────
+    if let Some(panel) = &mut handler.term_panel {
+        if panel.visible && panel.focused {
+            if panel.handle_key(key, mods) {
+                return KeyAction::Consumed;
+            }
+        }
+    }
 
     // ── Alt shortcuts ────────────────────────────────────────────────
     if alt && !ctrl {

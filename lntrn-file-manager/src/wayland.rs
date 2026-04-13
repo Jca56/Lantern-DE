@@ -96,9 +96,12 @@ pub(crate) struct State {
     pub(crate) data_device_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
     pub(crate) data_device: Option<wl_data_device::WlDataDevice>,
     pub(crate) dnd_active: bool,
-    pub(crate) dnd_start_requested: bool,
     pub(crate) dnd_paths: Vec<std::path::PathBuf>,
     pub(crate) dnd_serial: u32,
+    pub(crate) dnd_over_self: bool,
+    pub(crate) dnd_drop_on_self: bool,
+    pub(crate) dnd_cursor_x: f64,
+    pub(crate) dnd_cursor_y: f64,
 }
 
 impl State {
@@ -117,8 +120,9 @@ impl State {
             held_key: None, repeat_deadline: std::time::Instant::now(), repeat_started: false,
             popup_backend: None, popup_closed: false,
             data_device_manager: None, data_device: None,
-            dnd_active: false, dnd_start_requested: false,
-            dnd_paths: Vec::new(), dnd_serial: 0,
+            dnd_active: false, dnd_paths: Vec::new(), dnd_serial: 0,
+            dnd_over_self: false, dnd_drop_on_self: false,
+            dnd_cursor_x: 0.0, dnd_cursor_y: 0.0,
         }
     }
 
