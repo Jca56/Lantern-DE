@@ -24,6 +24,7 @@ pub struct MediaPipeline {
     pipeline: Element,
     frame: Arc<Mutex<Option<VideoFrame>>>,
     spectrum: Vec<f32>,
+    eos: bool,
 }
 
 impl MediaPipeline {
@@ -126,7 +127,7 @@ impl MediaPipeline {
 
         let spectrum = vec![0.0f32; SPECTRUM_BANDS];
 
-        Ok(Self { pipeline, frame, spectrum })
+        Ok(Self { pipeline, frame, spectrum, eos: false })
     }
 
     /// Poll bus for spectrum messages. Call this each frame.
@@ -138,6 +139,9 @@ impl MediaPipeline {
 
         let mut updated = false;
         while let Some(msg) = bus.pop() {
+            if let gst::MessageView::Eos(_) = msg.view() {
+                self.eos = true;
+            }
             if let gst::MessageView::Element(elem) = msg.view() {
                 if let Some(s) = elem.structure() {
                     if s.name() == "spectrum" {
@@ -165,6 +169,8 @@ impl MediaPipeline {
         let n_video: i32 = self.pipeline.property("n-video");
         n_video == 0
     }
+
+    pub fn is_eos(&self) -> bool { self.eos }
 
     pub fn spectrum(&self) -> &[f32] {
         &self.spectrum

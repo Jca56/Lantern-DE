@@ -185,6 +185,27 @@ impl App {
             }
         }
 
+        // Intercept "Files" label click BEFORE on_left_pressed so the
+        // InteractionContext never sees it — prevents the menu bar from
+        // opening a dropdown that captures all input.
+        if let Some((x, y)) = self.cursor_pos {
+            if y <= self.chrome_height() {
+                if ui_chrome::is_files_label_hit(x, &self.config.window.mode) {
+                    self.chrome.close_all_menus();
+                    match self.dispatch_chrome_action(
+                        ui_chrome::ClickAction::ToggleSidebar,
+                        event_loop,
+                        screen_h,
+                    ) {
+                        EventResult::Exit => return EventResult::Exit,
+                        _ => {}
+                    }
+                    self.request_redraw();
+                    return EventResult::Handled;
+                }
+            }
+        }
+
         self.input.on_left_pressed();
         let menus = ui_chrome::build_menus(
             self.effective_font_size(),

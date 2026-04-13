@@ -20,7 +20,10 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 
 use crate::app::App;
 use crate::mpris_server::{self, PlayerState, MprisCmd};
-use crate::{Gpu, ZONE_CANVAS, ZONE_PLAY_PAUSE, ZONE_SEEK_BAR, ZONE_VOLUME, ZONE_VOL_SLIDER};
+use crate::{
+    Gpu, ZONE_CANVAS, ZONE_CONTROLS_BAR, ZONE_LOOP, ZONE_NEXT, ZONE_PLAY_PAUSE, ZONE_PREV,
+    ZONE_SEEK_BAR, ZONE_VOLUME, ZONE_VOL_SLIDER,
+};
 
 // ── WaylandHandle for wgpu ──────────────────────────────────────────────────
 
@@ -355,9 +358,8 @@ pub fn run(
     let mut rects = crate::render::ControlRects {
         seek: Rect::new(0.0, 0.0, 0.0, 0.0),
         vol_slider: Rect::new(0.0, 0.0, 0.0, 0.0),
-        seek_vertical: false,
-        seek_cx: 0.0, seek_cy: 0.0,
-        seek_arc_start: 0.0, seek_arc_sweep: 0.0,
+        seek_horizontal: false,
+        controls_bar: Rect::new(0.0, 0.0, 0.0, 0.0),
     };
 
     while state.running {
@@ -373,6 +375,7 @@ pub fn run(
             event_queue.flush()?;
 
             app.tick(&gpu.ctx, &gpu.tex_pass);
+            if app.check_eos() { update_title(&toplevel, &app); }
 
             // Wait for compositor frame callback — sleep to cap at ~60fps
             if !state.frame_done {
@@ -385,6 +388,7 @@ pub fn run(
                 break;
             }
             app.tick(&gpu.ctx, &gpu.tex_pass);
+            if app.check_eos() { update_title(&toplevel, &app); }
             if !state.frame_done { continue; }
         }
         state.frame_done = false;
@@ -414,18 +418,19 @@ pub fn run(
             input.on_cursor_left();
         }
 
+        // ── Mouse movement → show controls ────────────────────────────
+        if state.pointer_in_surface {
+            app.reset_controls_timer();
+            // Keep controls visible while hovering over the bar
+            if rects.controls_bar.h > 0.0 && cy >= rects.controls_bar.y {
+                app.controls_last_move = std::time::Instant::now();
+            }
+        }
+        app.update_controls_visibility();
+
         // ── Seek bar drag (motion) ─────────────────────────────────────
-        if app.seeking && state.pointer_in_surface {
-            let frac = if rects.seek_vertical {
-                // Vertical: bottom=0, top=1
-                let seek = &rects.seek;
-                1.0 - ((cy - seek.y) / seek.h).clamp(0.0, 1.0)
-            } else {
-                cursor_to_arc_fraction(
-                    cx, cy, rects.seek_cx, rects.seek_cy,
-                    rects.seek_arc_start, rects.seek_arc_sweep,
-                )
-            };
+        if app.seeking && state.pointer_in_surface && rects.seek.w > 0.0 {
+            let frac = ((cx - rects.seek.x) / rects.seek.w).clamp(0.0, 1.0);
             app.seek_value = frac;
         }
 
@@ -461,18 +466,21 @@ pub fn run(
             } else if let Some(zone_id) = input.on_left_pressed() {
                 match zone_id {
                     ZONE_PLAY_PAUSE => { app.toggle_play_pause(); }
+                    ZONE_PREV => {
+                        app.prev_track();
+                        update_title(&toplevel, &app);
+                    }
+                    ZONE_NEXT => {
+                        app.next_track();
+                        update_title(&toplevel, &app);
+                    }
+                    ZONE_LOOP => { app.cycle_loop_mode(); }
                     ZONE_SEEK_BAR => {
-                        let frac = if rects.seek_vertical {
-                            let seek = &rects.seek;
-                            1.0 - ((cy - seek.y) / seek.h).clamp(0.0, 1.0)
-                        } else {
-                            cursor_to_arc_fraction(
-                                cx, cy, rects.seek_cx, rects.seek_cy,
-                                rects.seek_arc_start, rects.seek_arc_sweep,
-                            )
-                        };
-                        app.seeking = true;
-                        app.seek_value = frac;
+                        if rects.seek.w > 0.0 {
+                            let frac = ((cx - rects.seek.x) / rects.seek.w).clamp(0.0, 1.0);
+                            app.seeking = true;
+                            app.seek_value = frac;
+                        }
                     }
                     ZONE_VOLUME => {
                         app.vol_showing = !app.vol_showing;
@@ -487,9 +495,11 @@ pub fn run(
                             app.vol_dragging = true;
                         }
                     }
+                    ZONE_CONTROLS_BAR => {
+                        // Clicks on bar background — don't drag window
+                    }
                     ZONE_CANVAS => {
                         app.vol_showing = false;
-                        // Drag window from canvas area
                         if let Some(seat) = &state.seat {
                             toplevel._move(seat, state.pointer_serial);
                         }
@@ -516,7 +526,8 @@ pub fn run(
                 MprisCmd::Play => { if let Some(p) = &app.pipeline { p.play(); } }
                 MprisCmd::Pause => { if let Some(p) = &app.pipeline { p.pause(); } }
                 MprisCmd::Stop => { if let Some(p) = &app.pipeline { p.pause(); } }
-                MprisCmd::Next | MprisCmd::Previous => {} // single-file player
+                MprisCmd::Next => { app.next_track(); update_title(&toplevel, &app); }
+                MprisCmd::Previous => { app.prev_track(); update_title(&toplevel, &app); }
                 MprisCmd::SetVolume(v) => {
                     app.volume = v;
                     if let Some(p) = &app.pipeline { p.set_volume(v); }
@@ -579,6 +590,9 @@ fn edge_resize(cx: f32, cy: f32, w: f32, h: f32, border: f32) -> Option<xdg_topl
 
 // Linux keycodes
 const KEY_Q: u32 = 16;
+const KEY_N: u32 = 49;
+const KEY_P: u32 = 25;
+const KEY_L: u32 = 38;
 const KEY_A: u32 = 30;
 const KEY_D: u32 = 32;
 const KEY_F: u32 = 33;
@@ -600,6 +614,9 @@ fn handle_key(app: &mut App, toplevel: &xdg_toplevel::XdgToplevel, state: &mut S
         KEY_UP => { app.adjust_volume(0.05); }
         KEY_DOWN => { app.adjust_volume(-0.05); }
         KEY_V => { app.cycle_vis_mode(); }
+        KEY_N => { app.next_track(); }
+        KEY_P => { app.prev_track(); }
+        KEY_L => { app.cycle_loop_mode(); }
         KEY_F11 | KEY_F => {
             if state.fullscreen {
                 toplevel.unset_fullscreen();
@@ -620,20 +637,3 @@ fn handle_key(app: &mut App, toplevel: &xdg_toplevel::XdgToplevel, state: &mut S
     }
 }
 
-/// Map a cursor position to a fraction (0..1) along a circular arc.
-/// The arc internally goes right-to-left, but we invert so 0=left, 1=right.
-fn cursor_to_arc_fraction(
-    cursor_x: f32, cursor_y: f32,
-    arc_cx: f32, arc_cy: f32,
-    arc_start: f32, arc_sweep: f32,
-) -> f32 {
-    let dx = cursor_x - arc_cx;
-    let dy = cursor_y - arc_cy;
-    let angle = dy.atan2(dx); // -PI..PI
-    let mut rel = angle - arc_start;
-    while rel < 0.0 { rel += std::f32::consts::TAU; }
-    while rel > std::f32::consts::TAU { rel -= std::f32::consts::TAU; }
-    // Invert: arc goes right-to-left, but we want 0=left, 1=right
-    let raw = (rel / arc_sweep).clamp(0.0, 1.0);
-    1.0 - raw
-}

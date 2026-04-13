@@ -419,6 +419,19 @@ pub fn menu_event_to_action(event: &MenuEvent) -> ClickAction {
     }
 }
 
+/// Quick hit-test: is (x) on the "Files" menu label? Used by events.rs to
+/// intercept the click before InteractionContext sees it.
+pub fn is_files_label_hit(x: f32, mode: &WindowMode) -> bool {
+    let scale = 1.0_f32;
+    let font = MENU_FONT_BODY * scale;
+    let pad_h = MENU_LABEL_PAD_H * scale;
+    let ml = MENU_LEFT * scale + pad_h * 0.5;
+    // "Files" is the first menu label
+    let tw = 5.0 * font * 0.52; // "Files".len() = 5
+    let w = tw + pad_h * 2.0;
+    x >= ml && x <= ml + w
+}
+
 /// Get the new font size from a slider event value.
 pub fn font_size_from_slider(value: f32) -> f32 {
     let raw = 6.0 + value * 24.0;
