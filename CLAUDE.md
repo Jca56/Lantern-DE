@@ -20,7 +20,7 @@ All window applications in the workspace must use `lntrn-ui` for widgets and `ln
 
 ## Preferences
 - Always prefer building our own dependencies over using external crates. Minimal outside dependencies — we build all our own stuff! Only reach for an external crate when it would be incredibly difficult to implement ourselves.
-- Output scale: 1.25 (1920x1200 physical, 1536x960 logical)
+- Output scale: 1.0 native (DP-1: 2560x1440, HDMI-A-1: 1920x1080). Non-Lantern apps scaled via env vars (GDK_DPI_SCALE=1.25, QT_SCALE_FACTOR=1.25).
 - Large font sizes, minimum of 16 or 18. User has poor eyesight — always err on the side of BIGGER text and UI elements. When in doubt, make it larger.
 - When given tasks you will ask questions using the `AskUserQuestion` tool.
 - Files must be kept at less than 600 lines of code and flagged at 500 lines. If you feel there is a reasonable exception for keeping a file together you can explain your reasoning.

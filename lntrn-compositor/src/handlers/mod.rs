@@ -38,7 +38,7 @@ use smithay::{
     delegate_xdg_decoration,
 };
 
-const LANTERN_OUTPUT_SCALE: f64 = 1.25;
+const LANTERN_OUTPUT_SCALE: f64 = 1.0;
 
 impl SeatHandler for Lantern {
     type KeyboardFocus = WlSurface;

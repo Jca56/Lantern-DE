@@ -678,6 +678,7 @@ impl Lantern {
         self.fullscreen_windows.push(FullscreenWindow {
             surface: surface.clone(),
             restore,
+            output_name: String::new(),
         });
 
         window.set_fullscreen(true);
@@ -698,7 +699,8 @@ impl Lantern {
         let Some(idx) = self.fullscreen_windows.iter().position(|e| e.surface == *surface) else {
             return false;
         };
-        let restore = self.fullscreen_windows.remove(idx).restore;
+        let fw = self.fullscreen_windows.remove(idx);
+        let restore = fw.restore;
 
         let Some(window) = self.find_mapped_window(surface) else {
             return false;

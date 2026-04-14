@@ -801,6 +801,13 @@ pub fn run() -> Result<()> {
             }
         }
 
+        // ── Check for output manager updates ───────────────────────────
+        if state.output_mgr.heads_changed {
+            state.output_mgr.heads_changed = false;
+            display_state.monitor_arrange.request_sync();
+            display_state.monitor_settings.reset();
+        }
+
         // ── Render ──────────────────────────────────────────────────────
         ix.begin_frame();
         painter.clear();

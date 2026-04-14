@@ -50,6 +50,8 @@ pub struct OutputManagerClient {
     pub serial: u32,
     pub heads: Vec<HeadInfo>,
     pub config_result: Option<ConfigResult>,
+    /// Set true when heads are updated (Done event) — UI should resync.
+    pub heads_changed: bool,
     /// Heads currently being built (before done event).
     building_heads: Vec<HeadInfo>,
 }
@@ -61,6 +63,7 @@ impl OutputManagerClient {
             serial: 0,
             heads: Vec::new(),
             config_result: None,
+            heads_changed: false,
             building_heads: Vec::new(),
         }
     }
@@ -152,8 +155,12 @@ impl Dispatch<ZwlrOutputManagerV1, ()> for State {
             }
             zwlr_output_manager_v1::Event::Done { serial } => {
                 state.output_mgr.serial = serial;
-                // Swap building_heads into heads
-                state.output_mgr.heads = std::mem::take(&mut state.output_mgr.building_heads);
+                // Swap building_heads into heads (only if we have new/updated heads)
+                let new_heads = std::mem::take(&mut state.output_mgr.building_heads);
+                if !new_heads.is_empty() {
+                    state.output_mgr.heads = new_heads;
+                    state.output_mgr.heads_changed = true;
+                }
             }
             zwlr_output_manager_v1::Event::Finished => {
                 state.output_mgr.manager = None;
@@ -179,7 +186,10 @@ impl Dispatch<ZwlrOutputHeadV1, ()> for State {
         _qh: &QueueHandle<Self>,
     ) {
 
-        // Find or create the building head for this proxy
+        // Find in building_heads first, then check existing heads for updates.
+        // After a config apply, the compositor sends property updates on existing
+        // head proxies without re-creating them — we need to clone from heads
+        // into building_heads so the Done handler can merge properly.
         let head = match state
             .output_mgr
             .building_heads
@@ -188,18 +198,27 @@ impl Dispatch<ZwlrOutputHeadV1, ()> for State {
         {
             Some(h) => h,
             None => {
-                // First event for this head — create placeholder
-                state.output_mgr.building_heads.push(HeadInfo {
-                    name: String::new(),
-                    enabled: false,
-                    position: (0, 0),
-                    scale: 1.0,
-                    phys_w: 0,
-                    phys_h: 0,
-                    modes: Vec::new(),
-                    current_mode: None,
-                    head_obj: proxy.clone(),
-                });
+                // Check if this is an update to an existing head
+                let existing = state.output_mgr.heads.iter()
+                    .find(|h| h.head_obj == *proxy)
+                    .cloned();
+                if let Some(existing) = existing {
+                    // Clone existing head into building_heads for update
+                    state.output_mgr.building_heads.push(existing);
+                } else {
+                    // Truly new head — create placeholder
+                    state.output_mgr.building_heads.push(HeadInfo {
+                        name: String::new(),
+                        enabled: false,
+                        position: (0, 0),
+                        scale: 1.0,
+                        phys_w: 0,
+                        phys_h: 0,
+                        modes: Vec::new(),
+                        current_mode: None,
+                        head_obj: proxy.clone(),
+                    });
+                }
                 state.output_mgr.building_heads.last_mut().unwrap()
             }
         };

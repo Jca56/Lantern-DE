@@ -31,7 +31,7 @@ render_elements! {
 
 // Fox Dark background: #181818 → normalized RGBA
 const BG_COLOR: [f32; 4] = [0.094, 0.094, 0.094, 1.0];
-const LANTERN_OUTPUT_SCALE: f64 = 1.25;
+const LANTERN_OUTPUT_SCALE: f64 = 1.0;
 
 fn frame_callback_interval(output: &Output) -> Duration {
     let refresh = output.current_mode().map(|mode| mode.refresh).unwrap_or(60_000);

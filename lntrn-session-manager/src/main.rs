@@ -205,6 +205,13 @@ fn main() {
     std::env::set_var("DESKTOP_SESSION", "lantern");
     std::env::set_var("XDG_SESSION_TYPE", "wayland");
 
+    // Scale non-Lantern apps so text isn't tiny at native 2560x1440
+    // (these must live here, NOT in environment.d, or they break KDE scaling)
+    std::env::set_var("GDK_SCALE", "1");
+    std::env::set_var("GDK_DPI_SCALE", "1.25");
+    std::env::set_var("QT_SCALE_FACTOR", "1.25");
+    std::env::set_var("STEAM_FORCE_DESKTOPUI_SCALING", "1.25");
+
     // Ensure ~/.lantern/bin is in PATH
     if let Ok(path) = std::env::var("PATH") {
         let home = std::env::var("HOME").unwrap_or_default();

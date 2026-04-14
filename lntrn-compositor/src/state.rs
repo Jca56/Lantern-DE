@@ -72,6 +72,8 @@ pub struct MinimizedWindow {
 pub struct FullscreenWindow {
     pub surface: WlSurface,
     pub restore: Rectangle<i32, Logical>,
+    /// Output name so we can restore its scale on unfullscreen.
+    pub output_name: String,
 }
 
 #[derive(Clone)]

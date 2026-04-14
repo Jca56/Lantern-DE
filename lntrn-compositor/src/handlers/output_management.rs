@@ -163,6 +163,49 @@ impl OutputManagementState {
         }
     }
 
+    /// Update a head's properties after a config change, notifying all clients.
+    pub fn update_head(
+        &mut self,
+        output_name: &str,
+        scale: Option<f64>,
+        position: Option<(i32, i32)>,
+        current_mode_idx: Option<usize>,
+    ) {
+        let Some(head) = self.heads.iter_mut().find(|h| h.output_name == output_name) else {
+            return;
+        };
+        if let Some(s) = scale {
+            head.scale = s;
+        }
+        if let Some(pos) = position {
+            head.position = pos;
+        }
+        if let Some(mi) = current_mode_idx {
+            head.current_mode_idx = mi;
+        }
+
+        // Send updated properties to all existing head protocol instances
+        for weak in &head.instances {
+            let Ok(head_obj) = weak.upgrade() else { continue };
+            if let Some(s) = scale {
+                head_obj.scale(s);
+            }
+            if let Some((x, y)) = position {
+                head_obj.position(x, y);
+            }
+            if let Some(mi) = current_mode_idx {
+                if let Some(mode) = head.modes.get(mi) {
+                    for mode_weak in &mode.instances {
+                        if let Ok(mode_obj) = mode_weak.upgrade() {
+                            head_obj.current_mode(&mode_obj);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Increment serial and send done to all managers.
     pub fn broadcast_done(&mut self) {
         self.serial = self.serial.wrapping_add(1);

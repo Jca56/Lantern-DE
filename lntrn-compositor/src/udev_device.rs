@@ -607,6 +607,24 @@ pub fn apply_output_config(
         }
     }
 
+    // Update output management state so clients see the new values
+    for change in &changes {
+        let mode_idx = change.drm_mode_index.and_then(|drm_idx| {
+            state.output_management_state.heads.iter()
+                .find(|h| h.output_name == change.output_name)
+                .and_then(|h| h.modes.iter().position(|m| m.drm_mode_index == drm_idx))
+        });
+        state.output_management_state.update_head(
+            &change.output_name,
+            change.scale,
+            change.position,
+            mode_idx,
+        );
+    }
+
+    // Reconfigure layer surfaces on affected outputs (bar, panels, etc.)
+    reconfigure_layer_surfaces(state, &changes);
+
     // Invalidate wallpaper cache
     state.wallpaper.clear_cache();
 
@@ -625,6 +643,78 @@ pub fn apply_output_config(
     }
 
     true
+}
+
+/// Reconfigure all layer surfaces on outputs affected by config changes.
+/// This forces the bar (and other layer surfaces) to get updated dimensions
+/// after a scale or mode change.
+fn reconfigure_layer_surfaces(
+    state: &mut Lantern,
+    changes: &[crate::handlers::output_management::OutputChange],
+) {
+    use smithay::wayland::compositor::with_states;
+    use smithay::wayland::shell::wlr_layer::{Anchor as A, ExclusiveZone, LayerSurfaceCachedState};
+
+    let affected_outputs: Vec<String> = changes.iter().map(|c| c.output_name.clone()).collect();
+
+    for ls in &state.layer_surfaces {
+        let surface = ls.wl_surface();
+        let output = match state.layer_surface_outputs.get(surface) {
+            Some(o) if affected_outputs.contains(&o.name()) => o,
+            _ => continue,
+        };
+        let geo = match state.space.output_geometry(output) {
+            Some(g) => g,
+            None => continue,
+        };
+
+        let cached = with_states(surface, |states| {
+            *states.cached_state.get::<LayerSurfaceCachedState>().current()
+        });
+
+        let mut width = cached.size.w;
+        let mut height = cached.size.h;
+
+        // Compute exclusive zone reductions from other layer surfaces
+        let mut excl_top = 0i32;
+        let mut excl_bottom = 0i32;
+        let mut excl_left = 0i32;
+        let mut excl_right = 0i32;
+        let is_neutral = matches!(cached.exclusive_zone, ExclusiveZone::Neutral);
+        if is_neutral {
+            for other in &state.layer_surfaces {
+                if other.wl_surface() == surface { continue; }
+                let oc = with_states(other.wl_surface(), |s| {
+                    *s.cached_state.get::<LayerSurfaceCachedState>().current()
+                });
+                let ex = match oc.exclusive_zone {
+                    ExclusiveZone::Exclusive(v) => v as i32,
+                    _ => continue,
+                };
+                if oc.anchor.contains(A::BOTTOM) && !oc.anchor.contains(A::TOP) {
+                    excl_bottom += ex;
+                } else if oc.anchor.contains(A::TOP) && !oc.anchor.contains(A::BOTTOM) {
+                    excl_top += ex;
+                } else if oc.anchor.contains(A::LEFT) && !oc.anchor.contains(A::RIGHT) {
+                    excl_left += ex;
+                } else if oc.anchor.contains(A::RIGHT) && !oc.anchor.contains(A::LEFT) {
+                    excl_right += ex;
+                }
+            }
+        }
+
+        if cached.anchor.anchored_horizontally() && width == 0 {
+            width = geo.size.w - cached.margin.left - cached.margin.right - excl_left - excl_right;
+        }
+        if cached.anchor.anchored_vertically() && height == 0 {
+            height = geo.size.h - cached.margin.top - cached.margin.bottom - excl_top - excl_bottom;
+        }
+
+        ls.with_pending_state(|s| {
+            s.size = Some(smithay::utils::Size::from((width, height)));
+        });
+        ls.send_pending_configure();
+    }
 }
 
 pub fn render_device(state: &mut Lantern, node: DrmNode, crtc: Option<crtc::Handle>) {
