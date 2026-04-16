@@ -26,6 +26,9 @@ impl Lantern {
         self.remember_window_surface(&surface);
     }
 
+    /// Returns a temporary position at the output center.
+    /// The window will be repositioned to true center (accounting for its size)
+    /// after its first commit, via `center_pending_window`.
     pub fn place_new_window(&mut self, _window: &Window) -> Point<i32, Logical> {
         let pointer_pos = self.seat.get_pointer()
             .map(|p| p.current_location())
@@ -38,14 +41,60 @@ impl Lantern {
             return (0, 0).into();
         };
 
-        let existing_count = self.space.elements().count() as i32;
-        let cascade_step = 36;
-        let max_offset_x = (output_geo.size.w / 4).max(cascade_step);
-        let max_offset_y = (output_geo.size.h / 4).max(cascade_step);
-        let offset_x = (existing_count * cascade_step) % max_offset_x;
-        let offset_y = (existing_count * cascade_step) % max_offset_y;
+        // Temporary: place at output center (will be refined after first commit)
+        Point::from((
+            output_geo.loc.x + output_geo.size.w / 2,
+            output_geo.loc.y + output_geo.size.h / 2,
+        ))
+    }
 
-        Point::from((output_geo.loc.x + offset_x, output_geo.loc.y + offset_y))
+    /// Called on commit: if a window is pending centering and now has real
+    /// geometry, reposition it to the true center of its output with a
+    /// cascade offset so stacked windows fan out.
+    pub fn center_pending_window(&mut self, surface: &WlSurface) {
+        if !self.pending_center.contains(surface) {
+            return;
+        }
+        let Some(window) = self.space.elements()
+            .find(|w| w.get_wl_surface().as_ref() == Some(surface))
+            .cloned()
+        else {
+            return;
+        };
+        let win_geo = window.geometry();
+        if win_geo.size.w == 0 || win_geo.size.h == 0 {
+            return; // Not ready yet
+        }
+
+        self.pending_center.remove(surface);
+
+        let output = self.output_for_window(&window)
+            .or_else(|| self.space.outputs().next().cloned());
+        let Some(ref out) = output else { return };
+        let Some(output_geo) = self.space.output_geometry(out) else { return };
+
+        // Account for panels/bars so we center in the usable area
+        let (top_excl, bottom_excl, left_excl, right_excl) =
+            self.exclusive_zone_offsets_for_output(out);
+        let usable_x = output_geo.loc.x + left_excl;
+        let usable_y = output_geo.loc.y + top_excl;
+        let usable_w = output_geo.size.w - left_excl - right_excl;
+        let usable_h = output_geo.size.h - top_excl - bottom_excl;
+
+        let cascade_step = 36;
+        let max_offset = (usable_w / 8).max(cascade_step);
+        let offset = (self.center_cascade_counter * cascade_step) % max_offset;
+        self.center_cascade_counter += 1;
+
+        let x = usable_x + (usable_w - win_geo.size.w) / 2 + offset;
+        let y = usable_y + (usable_h - win_geo.size.h) / 2 + offset;
+
+        // Clamp to stay within usable area
+        let x = x.clamp(usable_x, (usable_x + usable_w - win_geo.size.w).max(usable_x));
+        let y = y.clamp(usable_y, (usable_y + usable_h - win_geo.size.h).max(usable_y));
+
+        tracing::info!(x, y, w = win_geo.size.w, h = win_geo.size.h, "Centering new window");
+        self.space.map_element(window, Point::from((x, y)), false);
     }
 
     pub fn map_new_window(&mut self, window: Window) {
@@ -86,6 +135,11 @@ impl Lantern {
             }
         }
 
+        // Mark for centering after first real commit (skip scratchpad & tiling)
+        if !is_scratchpad && !self.tiling.active {
+            self.pending_center.insert(surface.clone());
+        }
+
         // Insert into tiling tree if tiling is active
         // Always insert at the end of the tree for predictable placement
         if self.tiling.active && !is_scratchpad {
@@ -116,6 +170,7 @@ impl Lantern {
         self.fullscreen_windows.retain(|entry| entry.surface != *surface);
         self.snapped_windows.retain(|entry| entry.surface != *surface);
         self.window_opacity.remove(surface);
+        self.pending_center.remove(surface);
         self.window_snapshots.remove(surface);
         self.animations.remove(surface);
         self.tiling_anim.remove(surface);
@@ -469,7 +524,7 @@ impl Lantern {
         tracing::info!("maximize_surface: configuring to {:?}", output_geo);
 
         window.set_maximized(true);
-        window.configure_size(output_geo.size);
+        window.configure_rect(output_geo);
 
         self.space.map_element(window.clone(), output_geo.loc, true);
         self.update_foreign_toplevel_states(surface);
@@ -495,7 +550,7 @@ impl Lantern {
         };
 
         window.set_maximized(false);
-        window.configure_size(restore.size);
+        window.configure_rect(restore);
 
         self.space.map_element(window.clone(), restore.loc, true);
         self.update_foreign_toplevel_states(surface);
@@ -566,7 +621,7 @@ impl Lantern {
             // using current output geometry (not the pre-maximize restore rect).
             if let Some(output_geo) = self.window_output_geometry(&entry.window) {
                 entry.window.set_maximized(true);
-                entry.window.configure_size(output_geo.size);
+                entry.window.configure_rect(output_geo);
                 output_geo.loc
             } else {
                 entry.location
@@ -698,7 +753,7 @@ impl Lantern {
         });
 
         window.set_fullscreen(true);
-        window.configure_size(output_geo.size);
+        window.configure_rect(output_geo);
 
         self.space.map_element(window.clone(), output_geo.loc, true);
         self.update_foreign_toplevel_states(surface);
@@ -722,7 +777,7 @@ impl Lantern {
         };
 
         window.set_fullscreen(false);
-        window.configure_size(restore.size);
+        window.configure_rect(restore);
 
         self.space.map_element(window.clone(), restore.loc, true);
         self.update_foreign_toplevel_states(surface);
@@ -775,15 +830,13 @@ impl Lantern {
             .and_then(|o| self.space.output_geometry(&o))
         else { return };
 
-        // Configure window to be taller (output height + titlebar)
+        // Map shifted up so titlebar goes off-screen
+        let adjusted_loc = Point::from((output_geo.loc.x, output_geo.loc.y - titlebar_h));
         let padded_size = smithay::utils::Size::from((
             output_geo.size.w,
             output_geo.size.h + titlebar_h,
         ));
-        window.configure_size(padded_size);
-
-        // Map shifted up so titlebar goes off-screen
-        let adjusted_loc = Point::from((output_geo.loc.x, output_geo.loc.y - titlebar_h));
+        window.configure_rect(Rectangle::new(adjusted_loc, padded_size));
         self.space.map_element(window, adjusted_loc, true);
 
         tracing::info!(
@@ -855,7 +908,7 @@ impl Lantern {
         for surface in &maximized_surfaces {
             if let Some(window) = self.find_mapped_window(surface) {
                 if let Some(geo) = self.window_output_geometry(&window) {
-                    window.configure_size(geo.size);
+                    window.configure_rect(geo);
                     self.space.map_element(window, geo.loc, false);
                 }
             }
@@ -869,7 +922,7 @@ impl Lantern {
         for (surface, zone) in &snapped {
             if let Some(target) = self.snap_zone_geometry(*zone) {
                 if let Some(window) = self.find_mapped_window(&surface) {
-                    window.configure_size(target.size);
+                    window.configure_rect(target);
                     self.space.map_element(window, target.loc, false);
                 }
             }

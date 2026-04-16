@@ -35,6 +35,7 @@ use crate::udev::{
     GpuBackend, OutputSurface, UdevOutputId, LANTERN_OUTPUT_SCALE, RENDER_INTERVAL,
     SUPPORTED_FORMATS,
 };
+use crate::window_ext::WindowExt;
 use crate::Lantern;
 
 pub fn device_added(
@@ -604,6 +605,60 @@ pub fn apply_output_config(
                 Some((x, y).into()),
             );
             state.space.map_output(&output, (x, y));
+        }
+    }
+
+    // Update canvas logical size from the (possibly new) scale
+    if let Some(output) = state.space.outputs().next().cloned() {
+        if let Some(mode) = output.current_mode() {
+            let scale = output.current_scale().fractional_scale();
+            let logical_w = mode.size.w as f64 / scale;
+            let logical_h = mode.size.h as f64 / scale;
+            state.canvas.set_screen_size(logical_w, logical_h);
+            tracing::info!(
+                scale,
+                logical = %format!("{:.0}x{:.0}", logical_w, logical_h),
+                "Output scale applied"
+            );
+        }
+    }
+
+    // Reconfigure maximized windows for new output geometry
+    let maximized_surfaces: Vec<_> = state.maximized_windows
+        .iter().map(|e| e.surface.clone()).collect();
+    for surface in &maximized_surfaces {
+        if let Some(window) = state.find_mapped_window(surface) {
+            if let Some(geo) = state.window_output_geometry(&window) {
+                window.configure_rect(geo);
+                state.space.map_element(window, geo.loc, false);
+            }
+        }
+    }
+
+    // Reconfigure fullscreen windows for new raw output geometry
+    let fullscreen_surfaces: Vec<_> = state.fullscreen_windows
+        .iter().map(|e| e.surface.clone()).collect();
+    for surface in &fullscreen_surfaces {
+        if let Some(window) = state.find_mapped_window(surface) {
+            if let Some(output_geo) = state.output_for_window(&window)
+                .or_else(|| state.space.outputs().next().cloned())
+                .and_then(|o| state.space.output_geometry(&o))
+            {
+                window.configure_rect(output_geo);
+                state.space.map_element(window, output_geo.loc, false);
+            }
+        }
+    }
+
+    // Reconfigure snapped windows
+    let snapped: Vec<_> = state.snapped_windows
+        .iter().map(|e| (e.surface.clone(), e.zone)).collect();
+    for (surface, zone) in &snapped {
+        if let Some(target) = state.snap_zone_geometry(*zone) {
+            if let Some(window) = state.find_mapped_window(&surface) {
+                window.configure_rect(target);
+                state.space.map_element(window, target.loc, false);
+            }
         }
     }
 

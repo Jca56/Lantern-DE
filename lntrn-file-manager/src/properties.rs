@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
-use lntrn_ui::gpu::{FoxPalette, InteractionContext};
+use lntrn_ui::gpu::{FoxPalette, GradientStrip, InteractionContext};
 
 const ZONE_PROPS_CLOSE: u32 = 800;
 const ZONE_PROPS_BACKDROP: u32 = 801;
@@ -31,6 +31,7 @@ const SEC_PERMS: usize = 4;
 const SEC_SYMLINK: usize = 5;
 
 /// Gathered file properties for display.
+#[allow(dead_code)]
 pub struct FileProperties {
     pub path: PathBuf,
     pub name: String,
@@ -359,6 +360,12 @@ pub fn draw_properties_dialog(
     painter.rect_filled(shadow, corner_r + 4.0 * s, Color::rgba(0.0, 0.0, 0.0, 0.3));
     painter.rect_filled(panel, corner_r, fox.surface);
     painter.rect_stroke_sdf(panel, corner_r, 1.0 * s, fox.muted.with_alpha(0.2));
+
+    // Gradient strip across top of panel
+    let mut gradient = GradientStrip::new(dialog_x, dialog_y, dialog_w);
+    gradient.height = 4.0 * s;
+    gradient.colors = fox.file_manager_gradient_stops();
+    gradient.draw(painter);
 
     // Panel zone (clicks inside don't close)
     let _panel_zone = ix.add_zone(802, panel);

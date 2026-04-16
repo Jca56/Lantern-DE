@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ffi::OsString,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -251,6 +251,10 @@ pub struct Lantern {
     pub override_redirect_windows: Vec<Window>,
     /// X11 windows waiting for their Wayland surface to be associated.
     pub pending_x11_windows: Vec<Window>,
+
+    // Window centering: windows waiting for their first real geometry before being centered
+    pub pending_center: HashSet<WlSurface>,
+    pub center_cascade_counter: i32,
 }
 
 impl Lantern {
@@ -372,6 +376,8 @@ impl Lantern {
             xwayland_shell_state,
             override_redirect_windows: Vec::new(),
             pending_x11_windows: Vec::new(),
+            pending_center: HashSet::new(),
+            center_cascade_counter: 0,
         }
     }
 

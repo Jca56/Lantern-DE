@@ -60,7 +60,6 @@ pub enum ClickResult {
     None,
     Handled,
     CopyPath(String),
-    OpenLanternCode(PathBuf),
 }
 
 // ── Inline edit mode ────────────────────────────────────────────────────────
@@ -935,11 +934,9 @@ fn handle_context_menu_click(
     let y = if my + menu_h > screen_h as f32 { my - menu_h } else { my }.max(0.0);
     let menu = Rect::new(x, y, CTX_MENU_WIDTH, menu_h);
 
-    if !hit(menu, cursor_pos) {
+    let Some((_, cy)) = cursor_pos.filter(|_| hit(menu, cursor_pos)) else {
         return false;
-    }
-
-    let (_, cy) = cursor_pos.unwrap();
+    };
     let item_idx = ((cy - menu.y - 6.0) / CTX_ITEM_HEIGHT) as usize;
 
     if is_root {

@@ -8,6 +8,7 @@ pub enum WindowMode {
     Fox,
     FoxLight,
     NightSky,
+    Lantern,
 }
 
 impl Default for WindowMode {
@@ -22,6 +23,7 @@ impl Serialize for WindowMode {
             Self::Fox => "fox",
             Self::FoxLight => "fox_light",
             Self::NightSky => "night_sky",
+            Self::Lantern => "lantern",
         })
     }
 }
@@ -32,6 +34,7 @@ impl<'de> Deserialize<'de> for WindowMode {
         Ok(match s.as_str() {
             "night_sky" | "nightsky" | "NightSky" => Self::NightSky,
             "fox_light" | "foxlight" | "FoxLight" => Self::FoxLight,
+            "lantern" | "Lantern" => Self::Lantern,
             _ => Self::Fox,
         })
     }
@@ -43,6 +46,7 @@ impl fmt::Display for WindowMode {
             Self::Fox => write!(f, "fox"),
             Self::FoxLight => write!(f, "fox_light"),
             Self::NightSky => write!(f, "night_sky"),
+            Self::Lantern => write!(f, "lantern"),
         }
     }
 }

@@ -45,26 +45,15 @@ pub fn draw_window_bg(
             crate::night_sky::draw_background(painter, w, h, maximized);
             crate::night_sky::draw_border(painter, w, h, maximized);
         }
+        WindowMode::Lantern => {
+            let r = if maximized { 0.0 } else { CORNER_RADIUS };
+            painter.rect_filled(Rect::new(0.0, 0.0, w, h), r, bg_color);
+        }
     }
 }
 
 /// Render the full terminal grid at the given origin.
 /// `extra_rows` renders additional rows beyond terminal.rows (for sub-pixel scroll fill).
-pub fn draw_terminal(
-    painter: &mut Painter,
-    text: &mut TextRenderer,
-    terminal: &TerminalState,
-    font_size: f32,
-    origin: (f32, f32),
-    screen_w: u32,
-    screen_h: u32,
-    cursor_visible: bool,
-    bg_color: Color,
-) {
-    draw_terminal_ex(painter, text, terminal, font_size, origin, screen_w, screen_h, cursor_visible, bg_color, 0);
-}
-
-/// Extended terminal draw with extra rows for smooth scroll fill.
 pub fn draw_terminal_ex(
     painter: &mut Painter,
     text: &mut TextRenderer,

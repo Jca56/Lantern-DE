@@ -45,6 +45,7 @@ pub const MENU_MODE_FOX: u32 = 102;
 pub const MENU_MODE_NIGHT_SKY: u32 = 103;
 const MENU_MODE_GROUP: u32 = 1;
 pub const MENU_MODE_FOX_LIGHT: u32 = 104;
+pub const MENU_MODE_LANTERN: u32 = 105;
 pub const MENU_SPLIT_RIGHT: u32 = 200;
 pub const MENU_SPLIT_DOWN: u32 = 201;
 pub const MENU_CLOSE_PANE: u32 = 202;
@@ -109,10 +110,11 @@ pub enum ClickAction {
 
 // ── Menu definitions ────────────────────────────────────────────────────────
 
-pub fn build_menus(font_size: f32, opacity: f32, sidebar_visible: bool, mode: &WindowMode) -> Vec<(&'static str, Vec<MenuItem>)> {
+pub fn build_menus(font_size: f32, opacity: f32, _sidebar_visible: bool, mode: &WindowMode) -> Vec<(&'static str, Vec<MenuItem>)> {
     let is_fox_dark = *mode == WindowMode::Fox;
     let is_fox_light = *mode == WindowMode::FoxLight;
     let is_night_sky = *mode == WindowMode::NightSky;
+    let is_lantern = *mode == WindowMode::Lantern;
     vec![
         ("Files", vec![
             MenuItem::action(MENU_TOGGLE_SIDEBAR, "Toggle Sidebar"),
@@ -123,6 +125,7 @@ pub fn build_menus(font_size: f32, opacity: f32, sidebar_visible: bool, mode: &W
             MenuItem::slider(MENU_OPACITY_SLIDER, "Opacity", ((opacity - 0.1) / 0.9).clamp(0.0, 1.0)),
             MenuItem::separator(),
             MenuItem::header("Window Style"),
+            MenuItem::radio(MENU_MODE_LANTERN, MENU_MODE_GROUP, "Lantern", is_lantern),
             MenuItem::radio(MENU_MODE_FOX, MENU_MODE_GROUP, "Fox Dark", is_fox_dark),
             MenuItem::radio(MENU_MODE_FOX_LIGHT, MENU_MODE_GROUP, "Fox Light", is_fox_light),
             MenuItem::radio(MENU_MODE_NIGHT_SKY, MENU_MODE_GROUP, "Night Sky", is_night_sky),
@@ -257,8 +260,12 @@ pub fn draw_chrome(
     let menus = build_menus(font_size, opacity, sidebar_visible, mode);
     let layout = compute_layout(&menus, wf, s, mode);
 
-    // ── Window controls — same circular style for both modes ────────────
-    night_sky::draw_controls(painter, cursor_pos, wf);
+    // ── Window controls — same circular style, mode-specific palette ────
+    let ctrl_pal = match mode {
+        WindowMode::Lantern => night_sky::ControlPalette::lantern(),
+        _ => night_sky::ControlPalette::default_palette(),
+    };
+    night_sky::draw_controls(painter, cursor_pos, wf, &ctrl_pal);
 
     // ── Menu bar in the menu region ─────────────────────────────────────
     let menu_area = Rect::new(layout.menu_left, 0.0, layout.menu_right - layout.menu_left, layout.bar_h);
@@ -277,6 +284,7 @@ fn draw_divider(painter: &mut Painter, x: f32, bar_h: f32, scale: f32, mode: &Wi
     let color = match mode {
         WindowMode::Fox | WindowMode::FoxLight => Color::from_rgba8(255, 255, 255, 70),
         WindowMode::NightSky => Color::rgba(0.55, 0.50, 0.70, 0.55),
+        WindowMode::Lantern => Color::from_rgba8(240, 230, 210, 50),
     };
     let inset = bar_h * 0.20;
     let h = bar_h - inset * 2.0;
@@ -412,7 +420,7 @@ pub fn menu_event_to_action(event: &MenuEvent) -> ClickAction {
             _ => ClickAction::None,
         },
         MenuEvent::RadioSelected { id, .. } => match *id {
-            MENU_MODE_FOX | MENU_MODE_FOX_LIGHT | MENU_MODE_NIGHT_SKY => ClickAction::WindowModeChanged,
+            MENU_MODE_FOX | MENU_MODE_FOX_LIGHT | MENU_MODE_NIGHT_SKY | MENU_MODE_LANTERN => ClickAction::WindowModeChanged,
             _ => ClickAction::None,
         },
         _ => ClickAction::None,
@@ -421,7 +429,7 @@ pub fn menu_event_to_action(event: &MenuEvent) -> ClickAction {
 
 /// Quick hit-test: is (x) on the "Files" menu label? Used by events.rs to
 /// intercept the click before InteractionContext sees it.
-pub fn is_files_label_hit(x: f32, mode: &WindowMode) -> bool {
+pub fn is_files_label_hit(x: f32, _mode: &WindowMode) -> bool {
     let scale = 1.0_f32;
     let font = MENU_FONT_BODY * scale;
     let pad_h = MENU_LABEL_PAD_H * scale;

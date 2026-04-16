@@ -243,6 +243,7 @@ impl App {
         }
     }
 
+    #[allow(dead_code)]
     pub fn open_with(&self, app_name: &str) {
         for entry in &self.entries {
             if !entry.selected { continue; }
@@ -254,6 +255,7 @@ impl App {
         }
     }
 
+    #[allow(dead_code)]
     pub fn copy_path_to_clipboard(&self) {
         let paths: Vec<String> = self.entries.iter()
             .filter(|e| e.selected)
@@ -266,6 +268,7 @@ impl App {
         }
     }
 
+    #[allow(dead_code)]
     pub fn copy_name_to_clipboard(&self) {
         let names: Vec<String> = self.entries.iter()
             .filter(|e| e.selected)

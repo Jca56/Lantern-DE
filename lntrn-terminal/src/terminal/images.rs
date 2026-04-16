@@ -19,6 +19,7 @@ pub struct TerminalImage {
     /// Unique image ID (from Kitty protocol or auto-assigned).
     pub image_id: u32,
     /// Z-index for layering (negative = behind text).
+    #[allow(dead_code)]
     pub z_index: i32,
     /// Monotonically incrementing version for this image ID. The renderer
     /// uses this to detect when cached GPU textures need to be re-uploaded
@@ -41,6 +42,7 @@ pub struct ImageManager {
     next_version: u64,
 }
 
+#[allow(dead_code)]
 struct Transmission {
     image_id: u32,
     format: ImageFormat,
@@ -240,6 +242,7 @@ impl ImageManager {
     }
 
     /// Remove images whose anchor row has scrolled off screen.
+    #[allow(dead_code)]
     pub fn gc(&mut self, max_row: usize) {
         self.images.retain(|img| img.row < max_row + img.rows_tall);
     }

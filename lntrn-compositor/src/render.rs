@@ -232,6 +232,9 @@ pub fn render_surface(
         Vec::new()
     };
 
+    // Decay cursor spin-to-grow scale each frame (must be before udev borrow)
+    let spin_needs_redraw = state.cursor.tick_spin_decay();
+
     let udev = match state.udev.as_mut() {
         Some(u) => u,
         None => return,
@@ -300,8 +303,9 @@ pub fn render_surface(
         let mut location = state.space.element_location(window).unwrap_or_default();
         let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(window) else { continue };
 
-        // Apply tiling animation offset: slide from old position to target
-        if let Some(anim_rect) = state.tiling_anim.current_rect(&surface) {
+        // Apply tiling animation: slide from old position/size to target
+        let tiling_anim_rect = state.tiling_anim.current_rect(&surface);
+        if let Some(ref anim_rect) = tiling_anim_rect {
             location = anim_rect.loc;
         }
         let render_location = location - window.geometry().loc;
@@ -321,8 +325,9 @@ pub fn render_surface(
 
         // Compute combined scale: animation scale * zoom
         let anim_params = state.animations.get(&surface).map(|a| a.render_params());
-        let anim_alpha = anim_params.map(|(a, _)| a).unwrap_or(1.0);
-        let anim_scale = anim_params.map(|(_, s)| s).unwrap_or(1.0);
+        let anim_alpha = anim_params.as_ref().map(|p| p.alpha).unwrap_or(1.0);
+        let anim_scale = anim_params.as_ref().map(|p| p.scale).unwrap_or(1.0);
+        let anim_y_offset = anim_params.as_ref().map(|p| p.y_offset).unwrap_or(0.0);
         let alpha = base_alpha * anim_alpha;
 
         // Center the scale transform around the window's center
@@ -334,7 +339,7 @@ pub fn render_surface(
             render_location.y as f64,
         );
         let rel_x = screen_x - output_geo.loc.x as f64;
-        let rel_y = screen_y - output_geo.loc.y as f64;
+        let rel_y = screen_y - output_geo.loc.y as f64 + anim_y_offset;
 
         // Include canvas zoom in the combined scale
         let combined_scale = anim_scale * zoom * canvas_zoom;
@@ -358,6 +363,11 @@ pub fn render_surface(
         let render_scale = smithay::utils::Scale::from(output_scale * combined_scale);
 
         let win_geo = window.geometry();
+        // Use animated size for shadow/SSD bounds during tiling transitions
+        let effective_size = tiling_anim_rect
+            .as_ref()
+            .map(|r| r.size)
+            .unwrap_or(win_geo.size);
         let has_ssd = state.ssd.has_ssd(&surface);
 
         // Determine corner rounding based on window state
@@ -444,8 +454,8 @@ pub fn render_surface(
                     (rel_y - ssd_bar as f64).round() as i32,
                 )),
                 Size::from((
-                    (win_geo.size.w as f64 * canvas_zoom).round() as i32,
-                    ((win_geo.size.h + ssd_bar) as f64 * canvas_zoom).round() as i32,
+                    (effective_size.w as f64 * canvas_zoom).round() as i32,
+                    ((effective_size.h + ssd_bar) as f64 * canvas_zoom).round() as i32,
                 )),
             );
             blur_backdrops.push((window_elements.len(), log_rect));
@@ -460,8 +470,8 @@ pub fn render_surface(
                 let ssd_bar = if has_ssd { crate::ssd::SsdManager::bar_height() } else { 0 };
                 let win_x = rel_x.round() as i32;
                 let win_y = rel_y.round() as i32 - ssd_bar;
-                let win_w = win_geo.size.w;
-                let win_h = win_geo.size.h + ssd_bar;
+                let win_w = effective_size.w;
+                let win_h = effective_size.h + ssd_bar;
                 let shadow_area = Rectangle::<i32, Logical>::new(
                     (win_x - shadow_expand, win_y - shadow_expand).into(),
                     (win_w + shadow_expand * 2, win_h + shadow_expand * 2).into(),
@@ -500,7 +510,10 @@ pub fn render_surface(
                 Some(a) => a,
                 None => continue,
             };
-            let (anim_alpha, anim_scale) = anim.render_params();
+            let params = anim.render_params();
+            let anim_alpha = params.alpha;
+            let anim_scale = params.scale;
+            let anim_y_offset = params.y_offset;
             let (snap_tex, _snap_phys_size) = match state.window_snapshots.get(&cw.surface) {
                 Some(s) => s,
                 None => continue,
@@ -513,7 +526,7 @@ pub fn render_surface(
                 render_location.y as f64,
             );
             let rel_x = screen_x - output_geo.loc.x as f64;
-            let rel_y = screen_y - output_geo.loc.y as f64;
+            let rel_y = screen_y - output_geo.loc.y as f64 + anim_y_offset;
 
             // SSD bar offset
             let ssd_bar = if cw.had_ssd { crate::ssd::SsdManager::bar_height() } else { 0 };

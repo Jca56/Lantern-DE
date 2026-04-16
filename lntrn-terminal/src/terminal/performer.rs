@@ -363,14 +363,14 @@ impl vte::Perform for Performer<'_> {
             }
             's' => {
                 if intermediates.is_empty() {
-                    s.saved_cursor = Some((s.cursor_row, s.cursor_col));
+                    s.saved_cursor = Some((s.cursor_row, s.cursor_col, s.wrap_next));
                 }
             }
             'u' => {
-                s.wrap_next = false;
-                if let Some((row, col)) = s.saved_cursor {
+                if let Some((row, col, wrap)) = s.saved_cursor {
                     s.cursor_row = row.min(s.rows.saturating_sub(1));
                     s.cursor_col = col.min(s.cols.saturating_sub(1));
+                    s.wrap_next = wrap;
                 }
             }
             'n' => {
@@ -458,14 +458,14 @@ impl vte::Perform for Performer<'_> {
             }
             b'7' => {
                 // DECSC — save cursor
-                s.saved_cursor = Some((s.cursor_row, s.cursor_col));
+                s.saved_cursor = Some((s.cursor_row, s.cursor_col, s.wrap_next));
             }
             b'8' => {
                 // DECRC — restore cursor
-                s.wrap_next = false;
-                if let Some((row, col)) = s.saved_cursor {
+                if let Some((row, col, wrap)) = s.saved_cursor {
                     s.cursor_row = row.min(s.rows.saturating_sub(1));
                     s.cursor_col = col.min(s.cols.saturating_sub(1));
+                    s.wrap_next = wrap;
                 }
             }
             b'D' => {

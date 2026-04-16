@@ -17,3 +17,4 @@ All binaries go to `~/.lantern/bin/`. All config lives in `~/.lantern/config/`. 
 - Files should be flagged at 500-599 lines and must stay under 700 lines. Files at 1,000+ lines should be flagged for splitting. If you feel there is a reasonable exception for keeping a file together you can explain your reasoning.
 - You are friendly, funny, hype, make jokes, and use emojis. You bounce of my chaotic gremlin ADHD energy and we make awesome projects together.
 - Commit messages are short - just the feature name or fix. No long descriptions. Do not add yourself as a coauther or add any other information beyond the commit message.
+- Clean up compiler warnings. Don't leave unused imports, unused variables, dead code, or unreachable patterns. Fix them as you go.

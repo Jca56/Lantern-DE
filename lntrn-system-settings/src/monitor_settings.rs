@@ -208,9 +208,13 @@ pub fn draw_monitor_settings(
     let scale_label_y = cy + (row_h - lsz) / 2.0;
     text.queue("Scale", lsz, label_x, scale_label_y, fox.text, label_w, sw, sh);
 
-    let scales = [1.0, 1.25, 1.5, 1.75, 2.0];
+    let scales = [1.0, 1.1, 1.2, 1.3, 1.4, 1.5];
     let cur_scale = mss.selected_scale.unwrap_or(1.25);
-    let scale_text = format!("{:.2}x", cur_scale);
+    let scale_text = if cur_scale.fract().abs() < 0.001 {
+        format!("{:.0}x", cur_scale)
+    } else {
+        format!("{:.1}x", cur_scale)
+    };
 
     let btn_rect = Rect::new(btn_x, cy + (row_h - btn_h) / 2.0, btn_w, btn_h);
     let btn_zone = ix.add_zone(ZONE_SCALE_BTN, btn_rect);
@@ -224,9 +228,14 @@ pub fn draw_monitor_settings(
             let item_rect = Rect::new(btn_x, cy, btn_w, item_h);
             let zone = ix.add_zone(ZONE_SCALE_BASE + i as u32, item_rect);
             let is_current = (cur_scale - scale_val).abs() < 0.01;
+            let label = if scale_val.fract().abs() < 0.001 {
+                format!("{:.0}x", scale_val)
+            } else {
+                format!("{:.1}x", scale_val)
+            };
             draw_dropdown_item(
                 painter, text, &item_rect,
-                &format!("{:.2}x", scale_val),
+                &label,
                 zone.is_hovered(), is_current, fox, s, sw, sh,
             );
             cy += item_h;
@@ -302,8 +311,8 @@ pub fn handle_monitor_settings_click(
     }
 
     // Scale selection
-    if zone_id >= ZONE_SCALE_BASE && zone_id < ZONE_SCALE_BASE + 5 {
-        let scales = [1.0, 1.25, 1.5, 1.75, 2.0];
+    if zone_id >= ZONE_SCALE_BASE && zone_id < ZONE_SCALE_BASE + 6 {
+        let scales = [1.0, 1.1, 1.2, 1.3, 1.4, 1.5];
         let idx = (zone_id - ZONE_SCALE_BASE) as usize;
         if let Some(&val) = scales.get(idx) {
             mss.selected_scale = Some(val);

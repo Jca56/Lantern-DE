@@ -54,6 +54,9 @@ impl CompositorHandler for Lantern {
         xdg_shell::handle_commit(&mut self.popups, &self.space, surface);
         resize_grab::handle_commit(&mut self.space, surface);
 
+        // Center windows that are waiting for their first real geometry
+        self.center_pending_window(surface);
+
         // Propagate title/app_id changes to foreign-toplevel clients
         if self.space.elements().any(|w| w.get_wl_surface().as_ref() == Some(surface)) {
             with_states(surface, |states| {

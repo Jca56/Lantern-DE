@@ -3,10 +3,9 @@ use crate::terminal::Color8;
 
 // ── Brand palette ───────────────────────────────────────────────────────────
 
-pub const BRAND_GOLD: Color8 = Color8::from_rgb(200, 134, 10);
 pub const CURSOR_COLOR: Color8 = Color8::from_rgba(200, 134, 10, 180);
-pub const SELECTION_COLOR: Color8 = Color8::from_rgba(100, 140, 220, 100);
 
+#[allow(dead_code)]
 pub struct Theme {
     pub bg: Color8,
     pub surface: Color8,
@@ -17,8 +16,10 @@ pub struct Theme {
 
 impl Theme {
     pub fn from_config(config: &LanternConfig) -> Self {
-        match config.general.theme.as_str() {
-            "lantern" => Self::lantern(),
+        use crate::config::WindowMode;
+        match config.window.mode {
+            WindowMode::FoxLight => Self::fox_light(),
+            WindowMode::Lantern => Self::lantern(),
             _ => Self::fox_dark(),
         }
     }
@@ -35,8 +36,8 @@ impl Theme {
 
     pub fn fox_light() -> Self {
         Self {
-            bg: Color8::from_rgb(58, 58, 62),
-            surface: Color8::from_rgb(68, 68, 72),
+            bg: Color8::from_rgb(46, 46, 50),
+            surface: Color8::from_rgb(56, 56, 60),
             text: Color8::from_rgb(220, 220, 220),
             terminal_fg: Color8::from_rgb(220, 220, 220),
             terminal_bold: false,
@@ -45,11 +46,11 @@ impl Theme {
 
     pub fn lantern() -> Self {
         Self {
-            bg: Color8::from_rgb(97, 89, 77),
-            surface: Color8::from_rgb(34, 24, 18),
-            text: Color8::from_rgb(235, 230, 220),
-            terminal_fg: Color8::from_rgb(48, 32, 18),
-            terminal_bold: true,
+            bg: Color8::from_rgb(30, 25, 20),
+            surface: Color8::from_rgb(50, 38, 24),
+            text: Color8::from_rgb(240, 230, 210),
+            terminal_fg: Color8::from_rgb(240, 230, 210),
+            terminal_bold: false,
         }
     }
 }

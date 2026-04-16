@@ -4,6 +4,7 @@ mod animation;
 mod blur;
 mod canvas;
 mod cursor;
+mod easing;
 mod gestures;
 mod grabs;
 mod handlers;

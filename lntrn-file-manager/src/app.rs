@@ -135,7 +135,6 @@ pub struct App {
 
     // Drag
     pub drag_item: Option<usize>,
-    pub drag_offset: (f32, f32),
     pub drag_pos: Option<(f32, f32)>,
 
     // Rename
@@ -221,7 +220,6 @@ impl App {
             last_click_time: None,
             last_click_idx: None,
             drag_item: None,
-            drag_offset: (0.0, 0.0),
             drag_pos: None,
             renaming: None,
             rename_buf: String::new(),
@@ -358,6 +356,7 @@ impl App {
 
     // ── Info & sidebar ────────────────────────────────────────────────
 
+    #[allow(dead_code)]
     pub fn window_title(&self) -> String {
         let suffix = if self.root_mode { " [ROOT]" } else { "" };
         if let Some(name) = self.current_dir.file_name() {
@@ -367,6 +366,7 @@ impl App {
         }
     }
 
+    #[allow(dead_code)]
     pub fn current_path_display(&self) -> String {
         self.current_dir.to_string_lossy().into_owned()
     }
@@ -375,6 +375,7 @@ impl App {
         &self.places
     }
 
+    #[allow(dead_code)]
     pub fn refresh_drives(&mut self) {
         self.drives = fs::detect_drives();
     }

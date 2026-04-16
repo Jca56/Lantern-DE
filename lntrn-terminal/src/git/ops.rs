@@ -50,7 +50,6 @@ pub struct BranchInfo {
 #[derive(Debug, Clone)]
 pub struct GraphCommit {
     pub short_hash: String,
-    pub parents: Vec<String>,
     pub subject: String,
     pub decorations: Vec<String>,
 }
@@ -72,13 +71,6 @@ pub fn find_git_root(start: &Path) -> Option<PathBuf> {
             return None;
         }
     }
-}
-
-pub fn repo_name(repo: &Path) -> String {
-    repo.file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown")
-        .to_string()
 }
 
 // ── Status ──────────────────────────────────────────────────────────────────
@@ -295,19 +287,6 @@ pub fn list_branches(repo: &Path) -> Vec<BranchInfo> {
         .collect()
 }
 
-pub fn create_branch(repo: &Path, name: &str) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(["checkout", "-b", name])
-        .current_dir(repo)
-        .output()
-        .map_err(|e| e.to_string())?;
-    if output.status.success() {
-        Ok(format!("Created and switched to '{name}'"))
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
-    }
-}
-
 pub fn switch_branch(repo: &Path, name: &str) -> Result<String, String> {
     let output = Command::new("git")
         .args(["checkout", name])
@@ -316,19 +295,6 @@ pub fn switch_branch(repo: &Path, name: &str) -> Result<String, String> {
         .map_err(|e| e.to_string())?;
     if output.status.success() {
         Ok(format!("Switched to '{name}'"))
-    } else {
-        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
-    }
-}
-
-pub fn merge_branch(repo: &Path, source: &str) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(["merge", source, "--no-edit"])
-        .current_dir(repo)
-        .output()
-        .map_err(|e| e.to_string())?;
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     } else {
         Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
     }
@@ -358,11 +324,6 @@ pub fn log_structured(repo: &Path, count: usize) -> Vec<GraphCommit> {
             if parts.len() < 4 {
                 return None;
             }
-            let parents = if parts[1].is_empty() {
-                Vec::new()
-            } else {
-                parts[1].split(' ').map(|s| s.to_string()).collect()
-            };
             let decorations = if parts[3].is_empty() {
                 Vec::new()
             } else {
@@ -373,7 +334,6 @@ pub fn log_structured(repo: &Path, count: usize) -> Vec<GraphCommit> {
             };
             Some(GraphCommit {
                 short_hash: parts[0].to_string(),
-                parents,
                 subject: parts[2].to_string(),
                 decorations,
             })

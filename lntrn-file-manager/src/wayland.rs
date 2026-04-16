@@ -299,7 +299,6 @@ pub fn run(pick: Option<PickConfig>, desktop: bool) -> Result<()> {
             }
         }
         if !pinned.is_empty() {
-            let count = pinned.len();
             // Prepend pinned tabs before the home tab
             pinned.append(&mut app.tabs);
             app.tabs = pinned;

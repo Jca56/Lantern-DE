@@ -35,6 +35,7 @@ members = [
     "lntrn-icons",
     "lntrn-screencopy",
     "lntrn-video-editor",
+    "lntrn-lava-lamp",
 ]
 
 [profile.release]

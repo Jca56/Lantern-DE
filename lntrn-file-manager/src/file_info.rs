@@ -28,6 +28,7 @@ impl FileInfoCache {
     }
 
     /// Clear cache when directory changes.
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.cache.clear();
     }
@@ -127,7 +128,7 @@ fn type_name_from_ext(ext: &str) -> String {
         "html" | "htm" => "HTML",
         "css" => "CSS Stylesheet",
         "js" => "JavaScript",
-        "ts" => "TypeScript",
+        // "ts" already matched above as MPEG-TS Video
         "rs" => "Rust Source",
         "py" => "Python Script",
         "sh" => "Shell Script",
@@ -282,7 +283,7 @@ fn parse_video_dims(json: &str) -> Option<(u32, u32)> {
     // Look for "width": N and "height": N in video stream
     // Simple parser — find "codec_type": "video" then grab width/height
     let video_start = json.find("\"codec_type\": \"video\"")?;
-    let chunk = &json[..video_start + 200.min(json.len() - video_start)];
+    let _chunk = &json[..video_start + 200.min(json.len() - video_start)];
     // Search backwards from codec_type to find the stream start
     let stream_start = json[..video_start].rfind('{')?;
     let stream_end = json[video_start..].find('}').map(|i| video_start + i + 1)?;

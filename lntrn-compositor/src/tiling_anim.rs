@@ -2,6 +2,7 @@
 ///
 /// When the tiling layout changes (insert, remove, resize), each window
 /// smoothly animates from its current position/size to the new target.
+/// Uses spring physics for a natural bouncy feel.
 
 use std::{
     collections::HashMap,
@@ -13,7 +14,11 @@ use smithay::{
     utils::{Logical, Point, Rectangle, Size},
 };
 
-const ANIM_DURATION: Duration = Duration::from_millis(250);
+const ANIM_DURATION: Duration = Duration::from_millis(400);
+/// Spring damping (lower = more bouncy, 1.0 = critically damped)
+const SPRING_DAMPING: f64 = 0.7;
+/// Spring oscillation frequency
+const SPRING_FREQUENCY: f64 = 5.0;
 
 pub struct RectAnimation {
     start_rect: Rectangle<i32, Logical>,
@@ -35,9 +40,7 @@ impl RectAnimation {
     fn progress(&self) -> f64 {
         let elapsed = self.start_time.elapsed().as_secs_f64();
         let t = (elapsed / self.duration.as_secs_f64()).clamp(0.0, 1.0);
-        // Ease-out cubic: 1 - (1-t)^3
-        let inv = 1.0 - t;
-        1.0 - inv * inv * inv
+        crate::easing::spring(t, SPRING_DAMPING, SPRING_FREQUENCY)
     }
 
     fn is_finished(&self) -> bool {

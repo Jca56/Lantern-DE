@@ -6,7 +6,6 @@ use std::path::Path;
 
 use crate::app::TreeEntry;
 use crate::fs::FileEntry;
-use crate::layout::sidebar_w;
 use crate::sections::{selection_tint, truncate_with_ellipsis};
 
 // ── List view ───────────────────────────────────────────────────────────────

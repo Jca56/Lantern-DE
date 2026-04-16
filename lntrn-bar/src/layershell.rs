@@ -385,7 +385,7 @@ fn surface_height(bar_height: u32) -> u32 {
 
 fn apply_layer_config(
     layer_surface: &zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
-    width: u32, bar_height: u32, anim_t: f32, auto_hide: bool,
+    bar_height: u32, anim_t: f32, auto_hide: bool,
     position_top: bool,
 ) {
     use zwlr_layer_surface_v1::Anchor;
@@ -401,7 +401,9 @@ fn apply_layer_config(
         layer_surface.set_anchor(Anchor::Bottom | Anchor::Left | Anchor::Right);
         layer_surface.set_margin(0, 0, margin, 0);
     }
-    layer_surface.set_size(width, surface_height(bar_height));
+    // Width 0 + Left|Right anchor = compositor auto-fills the output width,
+    // so the bar adjusts automatically when scaling changes.
+    layer_surface.set_size(0, surface_height(bar_height));
     let zone = if auto_hide { 0 } else { bar_height as i32 + gap };
     layer_surface.set_exclusive_zone(zone);
 }
@@ -502,7 +504,7 @@ pub fn run() -> Result<()> {
         &surface, None, zwlr_layer_shell_v1::Layer::Top,
         "lntrn-bar".to_string(), &qh, (),
     );
-    apply_layer_config(&layer_surface, 0, bar_height, anim_t, auto_hide, position_top);
+    apply_layer_config(&layer_surface, bar_height, anim_t, auto_hide, position_top);
     set_bar_input_region(&surface, &input_region, bar_height, auto_hide, 0.0, anim_t, position_top);
     surface.commit();
 
@@ -526,7 +528,7 @@ pub fn run() -> Result<()> {
         vp
     });
 
-    apply_layer_config(&layer_surface, state.width, bar_height, anim_t, auto_hide, position_top);
+    apply_layer_config(&layer_surface, bar_height, anim_t, auto_hide, position_top);
     set_bar_input_region(&surface, &input_region, bar_height, auto_hide, 0.0, anim_t, position_top);
     surface.commit();
 
@@ -1447,7 +1449,7 @@ pub fn run() -> Result<()> {
                     if !checked {
                         hide_t = 0.0;
                         hide_timer = 0.0;
-                        apply_layer_config(&layer_surface, state.width, bar_height, anim_t, auto_hide, position_top);
+                        apply_layer_config(&layer_surface, bar_height, anim_t, auto_hide, position_top);
                         surface.commit();
                     }
                     save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, &app_menu.sysmon.pinned);
@@ -1524,7 +1526,7 @@ pub fn run() -> Result<()> {
                 MenuEvent::SliderChanged { id: MENU_HEIGHT_SLIDER, value } => {
                     bar_height = slider_to_height(value);
                     state.height = surface_height(bar_height);
-                    apply_layer_config(&layer_surface, state.width, bar_height, anim_t, auto_hide, position_top);
+                    apply_layer_config(&layer_surface, bar_height, anim_t, auto_hide, position_top);
                     gpu.resize(state.phys_width().max(1), state.phys_height().max(1));
                     if let Some(vp) = &viewport {
                         vp.set_destination(state.width as i32, state.height as i32);
@@ -1534,7 +1536,7 @@ pub fn run() -> Result<()> {
                 }
                 MenuEvent::Action(MENU_MOVE_POSITION) => {
                     position_top = !position_top;
-                    apply_layer_config(&layer_surface, state.width, bar_height, anim_t, auto_hide, position_top);
+                    apply_layer_config(&layer_surface, bar_height, anim_t, auto_hide, position_top);
                     surface.commit();
                     save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, &app_menu.sysmon.pinned);
                     context_menu.close();
@@ -1645,7 +1647,7 @@ pub fn run() -> Result<()> {
         if needs_anim {
             surface.frame(&qh, ());
         }
-        apply_layer_config(&layer_surface, state.width, bar_height, anim_t, auto_hide, position_top);
+        apply_layer_config(&layer_surface, bar_height, anim_t, auto_hide, position_top);
         surface.commit();
     }
 

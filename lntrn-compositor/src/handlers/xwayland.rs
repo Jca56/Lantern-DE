@@ -168,6 +168,18 @@ impl XwmHandler for Lantern {
         h: Option<u32>,
         _reorder: Option<Reorder>,
     ) {
+        // Don't let clients resize/reposition themselves out of a
+        // compositor-managed state (maximized or fullscreen).
+        if let Some(wl_surface) = window.wl_surface() {
+            if self.is_maximized(&wl_surface) || self.is_fullscreen(&wl_surface) {
+                tracing::debug!(
+                    class = window.class(),
+                    "Ignoring X11 configure request: window is in managed state"
+                );
+                return;
+            }
+        }
+
         let mut geo = window.geometry();
         if let Some(x) = x {
             geo.loc.x = x;

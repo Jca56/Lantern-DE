@@ -26,9 +26,7 @@ pub enum GitCmd {
     Push,
     Pull,
     FetchGraph(usize),
-    CreateBranch(String),
     SwitchBranch(String),
-    Merge { source: String },
 }
 
 /// Spawn the worker thread. `wake` is called after every event to prod the UI.
@@ -139,16 +137,6 @@ fn run(tx: mpsc::Sender<GitEvent>, rx: mpsc::Receiver<GitCmd>, wake: impl Fn()) 
                     send(&tx, &wake, GitEvent::GraphData(commits));
                 }
             }
-            GitCmd::CreateBranch(name) => {
-                if let Some(ref path) = repo_path {
-                    match ops::create_branch(path, &name) {
-                        Ok(msg) => send(&tx, &wake, GitEvent::Message(msg)),
-                        Err(err) => send(&tx, &wake, GitEvent::Error(err)),
-                    }
-                    send(&tx, &wake, GitEvent::Branches(ops::list_branches(path)));
-                    send(&tx, &wake, GitEvent::Status(ops::status(path)));
-                }
-            }
             GitCmd::SwitchBranch(name) => {
                 if let Some(ref path) = repo_path {
                     match ops::switch_branch(path, &name) {
@@ -157,15 +145,6 @@ fn run(tx: mpsc::Sender<GitEvent>, rx: mpsc::Receiver<GitCmd>, wake: impl Fn()) 
                     }
                     send(&tx, &wake, GitEvent::Status(ops::status(path)));
                     send(&tx, &wake, GitEvent::Branches(ops::list_branches(path)));
-                }
-            }
-            GitCmd::Merge { source } => {
-                if let Some(ref path) = repo_path {
-                    match ops::merge_branch(path, &source) {
-                        Ok(msg) => send(&tx, &wake, GitEvent::Message(msg)),
-                        Err(err) => send(&tx, &wake, GitEvent::Error(err)),
-                    }
-                    send(&tx, &wake, GitEvent::Status(ops::status(path)));
                 }
             }
         }

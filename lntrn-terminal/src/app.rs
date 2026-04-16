@@ -313,15 +313,8 @@ impl App {
             self.cursor_visible = true;
             self.cursor_blink_deadline = Instant::now() + CURSOR_BLINK_INTERVAL;
 
-            // Check if any active pane is in a synchronized update — if so,
-            // defer the redraw until the application ends the batch (Mode 2026 l).
-            let any_syncing = self.tabs.iter().any(|tab| {
-                tab.panes.iter().any(|pane| pane.terminal.sync_update)
-            });
-            if !any_syncing {
-                if let Some(ref window) = self.window {
-                    window.request_redraw();
-                }
+            if let Some(ref window) = self.window {
+                window.request_redraw();
             }
         }
     }

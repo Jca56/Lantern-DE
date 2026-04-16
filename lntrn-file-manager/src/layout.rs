@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub static DESKTOP_MODE: AtomicBool = AtomicBool::new(false);
 
 fn title_bar_h_base() -> f32 {
-    if DESKTOP_MODE.load(Ordering::Relaxed) { 0.0 } else { 50.0 }
+    if DESKTOP_MODE.load(Ordering::Relaxed) { 0.0 } else { 40.0 }
 }
 const NAV_BAR_H: f32 = 48.0;
 const GRADIENT_H: f32 = 4.0;
@@ -17,6 +17,7 @@ const ICON_SIZE: f32 = 48.0;
 const ITEM_PAD: f32 = 8.0;
 const LIST_ROW_H: f32 = 40.0;
 const TREE_ROW_H: f32 = 36.0;
+#[allow(dead_code)]
 const TREE_INDENT: f32 = 24.0;
 
 /// Zoom 0.0 → 1.8x, 0.5 → 2.9x, 1.0 → 4.0x
@@ -26,11 +27,14 @@ pub fn zoom_multiplier(zoom: f32) -> f32 {
 }
 
 /// Scaled layout helper. All public functions return physical-pixel values.
+#[allow(dead_code)]
 pub fn title_bar_h(s: f32) -> f32 { title_bar_h_base() * s }
+#[allow(dead_code)]
 pub fn gradient_h(s: f32) -> f32 { GRADIENT_H * s }
 pub fn sidebar_w(s: f32) -> f32 { SIDEBAR_W * s }
 pub fn item_size(s: f32, zoom: f32) -> f32 { (ITEM_SIZE * zoom_multiplier(zoom)).max(60.0) * s }
 pub fn icon_size(s: f32, zoom: f32) -> f32 { ICON_SIZE * s * zoom_multiplier(zoom) }
+#[allow(dead_code)]
 pub fn item_pad(s: f32) -> f32 { ITEM_PAD * s }
 
 pub fn title_bar_rect(width: f32, s: f32) -> Rect {
@@ -141,6 +145,7 @@ pub fn status_rect(width: f32, height: f32, s: f32) -> Rect {
 pub fn list_row_h(s: f32) -> f32 { LIST_ROW_H * s }
 pub fn search_list_row_h(s: f32) -> f32 { 56.0 * s }
 pub fn tree_row_h(s: f32) -> f32 { TREE_ROW_H * s }
+#[allow(dead_code)]
 pub fn tree_indent(s: f32) -> f32 { TREE_INDENT * s }
 
 pub fn list_content_height(entry_count: usize, s: f32) -> f32 {
@@ -151,11 +156,13 @@ pub fn tree_content_height(entry_count: usize, s: f32) -> f32 {
     entry_count as f32 * TREE_ROW_H * s
 }
 
+#[allow(dead_code)]
 pub fn list_row_rect(index: usize, content_x: f32, content_w: f32, base_y: f32, s: f32) -> Rect {
     let y = base_y + index as f32 * LIST_ROW_H * s;
     Rect::new(content_x, y, content_w, LIST_ROW_H * s)
 }
 
+#[allow(dead_code)]
 pub fn tree_row_rect(index: usize, depth: usize, content_x: f32, content_w: f32, base_y: f32, s: f32) -> Rect {
     let y = base_y + index as f32 * TREE_ROW_H * s;
     let indent = depth as f32 * TREE_INDENT * s;

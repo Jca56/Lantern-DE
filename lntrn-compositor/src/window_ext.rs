@@ -7,7 +7,7 @@
 use smithay::desktop::Window;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
-use smithay::utils::{Logical, Size};
+use smithay::utils::{Logical, Rectangle, Size};
 use smithay::wayland::seat::WaylandFocus;
 
 pub trait WindowExt {
@@ -28,6 +28,12 @@ pub trait WindowExt {
     /// Wayland: sets pending state + sends configure.
     /// X11: sends X11 ConfigureWindow.
     fn configure_size(&self, size: Size<i32, Logical>);
+
+    /// Configure both position and size.
+    /// Wayland: sets pending state size + sends configure (position is compositor-managed).
+    /// X11: sends X11 ConfigureWindow with the full geometry so the client's
+    /// internal coordinates stay in sync with the compositor's mapping.
+    fn configure_rect(&self, rect: Rectangle<i32, Logical>);
 
     /// Flush any pending configure to the client. No-op for X11.
     fn send_pending_configure(&self);
@@ -98,6 +104,17 @@ impl WindowExt for Window {
         } else if let Some(x11) = self.x11_surface() {
             let geo = x11.geometry();
             let rect = smithay::utils::Rectangle::new(geo.loc, size);
+            let _ = x11.configure(rect);
+        }
+    }
+
+    fn configure_rect(&self, rect: Rectangle<i32, Logical>) {
+        if let Some(toplevel) = self.toplevel() {
+            toplevel.with_pending_state(|state| {
+                state.size = Some(rect.size);
+            });
+            toplevel.send_pending_configure();
+        } else if let Some(x11) = self.x11_surface() {
             let _ = x11.configure(rect);
         }
     }

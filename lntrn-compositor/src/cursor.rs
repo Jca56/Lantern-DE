@@ -1,3 +1,6 @@
+use std::collections::VecDeque;
+use std::time::Instant;
+
 use smithay::{
     backend::{
         allocator::Fourcc,
@@ -10,7 +13,7 @@ use smithay::{
         },
     },
     input::pointer::{CursorIcon, CursorImageStatus},
-    utils::{Physical, Point, Transform},
+    utils::{Logical, Physical, Point, Size, Transform},
 };
 use xcursor::{parser::parse_xcursor, CursorTheme};
 
@@ -26,6 +29,10 @@ pub struct CursorState {
     /// "default", "custom1", "custom2" — from lantern.toml [input] cursor_theme
     custom_theme: String,
     custom_loaded: bool,
+    // Spin-to-grow: cursor grows when you spin the mouse in circles
+    spin_history: VecDeque<(Point<f64, Logical>, Instant)>,
+    spin_scale: f64,
+    spin_last_active: Instant,
 }
 
 impl CursorState {
@@ -49,6 +56,9 @@ impl CursorState {
             loaded_icon_key: None,
             custom_theme: "default".into(),
             custom_loaded: false,
+            spin_history: VecDeque::with_capacity(32),
+            spin_scale: 1.0,
+            spin_last_active: Instant::now(),
         };
         tracing::info!("CursorState::new with initial_theme='{}'", initial_theme);
         if initial_theme != "default" {
@@ -306,6 +316,73 @@ impl CursorState {
         self.loaded = true;
     }
 
+    // ── Spin-to-grow cursor ────────────────────────────────────────────
+
+    /// Feed a new pointer position. Detects circular motion and grows the cursor.
+    pub fn update_spin(&mut self, pos: Point<f64, Logical>) {
+        let now = Instant::now();
+        self.spin_history.push_back((pos, now));
+
+        // Keep only the last 30 samples
+        while self.spin_history.len() > 30 {
+            self.spin_history.pop_front();
+        }
+
+        if self.spin_history.len() < 8 {
+            return;
+        }
+
+        // Centroid of recent positions
+        let n = self.spin_history.len() as f64;
+        let cx: f64 = self.spin_history.iter().map(|(p, _)| p.x).sum::<f64>() / n;
+        let cy: f64 = self.spin_history.iter().map(|(p, _)| p.y).sum::<f64>() / n;
+
+        // Sum the signed angle swept around the centroid
+        let mut total_angle = 0.0f64;
+        let pts: Vec<_> = self.spin_history.iter().collect();
+        for w in pts.windows(2) {
+            let (p1, _) = w[0];
+            let (p2, _) = w[1];
+            let v1x = p1.x - cx;
+            let v1y = p1.y - cy;
+            let v2x = p2.x - cx;
+            let v2y = p2.y - cy;
+            let cross = v1x * v2y - v1y * v2x;
+            let dot = v1x * v2x + v1y * v2y;
+            total_angle += cross.atan2(dot);
+        }
+
+        let time_span = self.spin_history.back().unwrap().1
+            .duration_since(self.spin_history.front().unwrap().1)
+            .as_secs_f64();
+
+        if time_span > 0.05 {
+            let angular_vel = total_angle.abs() / time_span;
+            // ~0.7 revolutions per second threshold
+            if angular_vel > 4.5 {
+                self.spin_scale += 0.04;
+                self.spin_scale = self.spin_scale.min(8.0);
+                self.spin_last_active = now;
+            }
+        }
+    }
+
+    /// Decay the spin scale back toward 1.0 when the user stops spinning.
+    /// Call once per render frame. Returns true if a redraw is needed.
+    pub fn tick_spin_decay(&mut self) -> bool {
+        if self.spin_scale <= 1.0 {
+            return false;
+        }
+        let elapsed = self.spin_last_active.elapsed().as_secs_f64();
+        if elapsed > 0.3 {
+            self.spin_scale = (self.spin_scale - 0.12).max(1.0);
+            return true;
+        }
+        false
+    }
+
+    // ── Rendering ────────────────────────────────────────────────────
+
     pub fn render_element(
         &self,
         renderer: &mut GlesRenderer,
@@ -323,10 +400,20 @@ impl CursorState {
             return None;
         }
 
+        let scale = self.spin_scale;
         let cursor_pos = (
-            position.x - self.hotspot.0 as f64,
-            position.y - self.hotspot.1 as f64,
+            position.x - self.hotspot.0 as f64 * scale,
+            position.y - self.hotspot.1 as f64 * scale,
         );
+
+        let dst = if scale > 1.001 {
+            Some(Size::from((
+                (self.size.0 as f64 * scale) as i32,
+                (self.size.1 as f64 * scale) as i32,
+            )))
+        } else {
+            None
+        };
 
         MemoryRenderBufferRenderElement::from_buffer(
             renderer,
@@ -334,7 +421,7 @@ impl CursorState {
             &self.buffer,
             None,
             None,
-            None,
+            dst,
             Kind::Cursor,
         )
         .ok()

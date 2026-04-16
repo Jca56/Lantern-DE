@@ -196,7 +196,7 @@ pub fn draw_nav_bar(
     up_rect: Rect,
     up_hovered: bool,
     path_rect: Rect,
-    path_hovered: bool,
+    _path_hovered: bool,
     breadcrumb_hovered: &[bool],
     search_rect: Rect,
     search_hovered: bool,
@@ -421,7 +421,7 @@ pub fn draw_sidebar(
     let item_h = 40.0 * s;
     let places = app.sidebar_places();
     for (index, place) in places.iter().enumerate() {
-        let item_rect = Rect::new(4.0 * s, sy, sw - 12.0 * s, item_h);
+        let _item_rect = Rect::new(4.0 * s, sy, sw - 12.0 * s, item_h);
         let is_active = app.is_active_place(index);
         let is_hovered = hovered.get(index).copied().unwrap_or(false);
 
@@ -468,7 +468,7 @@ pub fn draw_sidebar(
 
         let drive_item_h = 64.0 * s;
         for (index, drive) in app.drives.iter().enumerate() {
-            let item_rect = Rect::new(4.0 * s, sy, sw - 12.0 * s, drive_item_h);
+            let _item_rect = Rect::new(4.0 * s, sy, sw - 12.0 * s, drive_item_h);
             let is_hovered = drive_hovered.get(index).copied().unwrap_or(false);
 
             // Drive icon (simple disk shape)

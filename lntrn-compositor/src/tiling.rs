@@ -53,7 +53,6 @@ pub struct TilingState {
     pub active: bool,
     pub gap: i32,
     pub outer_gap: i32,
-    next_direction: SplitDirection,
 }
 
 impl TilingState {
@@ -64,7 +63,6 @@ impl TilingState {
             active: false,
             gap: DEFAULT_GAP,
             outer_gap: DEFAULT_OUTER_GAP,
-            next_direction: SplitDirection::Horizontal,
         }
     }
 
@@ -80,7 +78,6 @@ impl TilingState {
     pub fn clear(&mut self) {
         self.nodes.clear();
         self.root = None;
-        self.next_direction = SplitDirection::Horizontal;
     }
 
     pub fn contains(&self, surface: &WlSurface) -> bool {
@@ -103,8 +100,10 @@ impl TilingState {
         }
     }
 
-    /// Insert a new surface into the tree. Splits the leaf containing `near`
-    /// (or the last leaf, or creates the root if tree is empty).
+    /// Insert a new surface into the tree using balanced BSP.
+    /// Splits the shallowest leaf (or `near` if specified) to keep the tree
+    /// balanced. Split direction is the opposite of the parent's, so the
+    /// layout naturally progresses: full → left|right → master+stack → 2×2 grid.
     pub fn insert(&mut self, surface: WlSurface, near: Option<&WlSurface>) {
         let new_leaf = self.alloc(TilingNode::Leaf { surface });
 
@@ -114,13 +113,19 @@ impl TilingState {
             return;
         };
 
-        // Find the leaf to split next to
+        // Find the leaf to split: prefer `near`, otherwise pick the shallowest
         let target = near
             .and_then(|s| self.find_leaf(s))
-            .unwrap_or_else(|| self.last_leaf(root).unwrap_or(root));
+            .unwrap_or_else(|| {
+                self.shallowest_leaf(root)
+                    .map(|(idx, _)| idx)
+                    .unwrap_or(root)
+            });
 
-        let dir = self.next_direction;
-        self.next_direction = dir.opposite(); // alternate for next insert
+        // Direction: opposite of parent's split, or Horizontal for root-level
+        let dir = self.parent_direction(target)
+            .map(|d| d.opposite())
+            .unwrap_or(SplitDirection::Horizontal);
 
         // Replace target leaf with a split, target becomes left child
         let old_node = self.nodes[target].clone();
@@ -142,7 +147,6 @@ impl TilingState {
         if self.root == Some(leaf_idx) {
             self.nodes[leaf_idx] = TilingNode::Empty;
             self.root = None;
-            self.next_direction = SplitDirection::Horizontal;
             return;
         }
 
@@ -168,10 +172,6 @@ impl TilingState {
         self.nodes[sibling_idx] = TilingNode::Empty;
         self.nodes[leaf_idx] = TilingNode::Empty;
 
-        // Reset split direction when down to one window
-        if self.leaf_count() <= 1 {
-            self.next_direction = SplitDirection::Horizontal;
-        }
     }
 
     /// Swap two surfaces in the tree.
@@ -297,13 +297,36 @@ impl TilingState {
         }
     }
 
-    /// Find the last (rightmost/bottommost) leaf in a subtree.
-    fn last_leaf(&self, idx: usize) -> Option<usize> {
+    /// Find the shallowest (minimum depth) leaf in a subtree.
+    /// Picks the first one in left-to-right order on ties.
+    fn shallowest_leaf(&self, idx: usize) -> Option<(usize, usize)> {
+        self.shallowest_leaf_at(idx, 0)
+    }
+
+    fn shallowest_leaf_at(&self, idx: usize, depth: usize) -> Option<(usize, usize)> {
         match &self.nodes[idx] {
-            TilingNode::Leaf { .. } => Some(idx),
-            TilingNode::Split { right, .. } => self.last_leaf(*right),
+            TilingNode::Leaf { .. } => Some((idx, depth)),
+            TilingNode::Split { left, right, .. } => {
+                let l = self.shallowest_leaf_at(*left, depth + 1);
+                let r = self.shallowest_leaf_at(*right, depth + 1);
+                match (l, r) {
+                    (Some((li, ld)), Some((ri, rd))) => {
+                        if ld <= rd { Some((li, ld)) } else { Some((ri, rd)) }
+                    }
+                    (Some(v), None) | (None, Some(v)) => Some(v),
+                    (None, None) => None,
+                }
+            }
             TilingNode::Empty => None,
         }
+    }
+
+    /// Get the split direction of a node's parent.
+    fn parent_direction(&self, child_idx: usize) -> Option<SplitDirection> {
+        self.find_parent(child_idx).and_then(|p| match &self.nodes[p] {
+            TilingNode::Split { dir, .. } => Some(*dir),
+            _ => None,
+        })
     }
 
     /// Find a neighbor window in a given direction from the focused surface.

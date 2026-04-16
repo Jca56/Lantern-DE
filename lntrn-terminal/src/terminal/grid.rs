@@ -54,6 +54,7 @@ pub const ANSI_COLORS: [Color8; 16] = [
 // ── Terminal cell ───────────────────────────────────────────────────────────
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct Cell {
     pub c: char,
     pub fg: Color8,
@@ -129,8 +130,8 @@ pub struct TerminalState {
     pub scroll_top: usize,
     pub scroll_bottom: usize,
 
-    // Saved cursor position (CSI s / ESC 7)
-    pub saved_cursor: Option<(usize, usize)>,
+    // Saved cursor position + wrap_next flag (CSI s / ESC 7)
+    pub saved_cursor: Option<(usize, usize, bool)>,
 
     // DEC private modes
     pub cursor_hidden: bool,      // mode 25

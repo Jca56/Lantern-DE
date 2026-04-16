@@ -578,8 +578,6 @@ pub fn handle_click(
                 }
             }
         }
-    } else {
-        y += ITEM_H + 8.0;
     }
 
     state.commit_focused = false;

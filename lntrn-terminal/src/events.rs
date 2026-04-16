@@ -282,6 +282,7 @@ impl App {
                 use crate::terminal::Color8;
                 self.theme = match self.config.window.mode {
                     WindowMode::FoxLight => Theme::fox_light(),
+                    WindowMode::Lantern => Theme::lantern(),
                     _ => Theme::fox_dark(),
                 };
                 // Update terminal default colors for all panes

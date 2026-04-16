@@ -18,9 +18,7 @@ mod anim {
     }
 
     pub fn ease_out(t: f32) -> f32 {
-        let t = t.clamp(0.0, 1.0);
-        let inv = 1.0 - t;
-        1.0 - inv * inv * inv
+        crate::easing::ease_out_cubic_f32(t)
     }
 
     pub fn lerp(a: f32, b: f32, t: f32) -> f32 {

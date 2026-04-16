@@ -99,6 +99,7 @@ pub fn list_directory(path: &Path, show_hidden: bool, sort_by: SortBy) -> Vec<Fi
 // ── Drive / mount detection ─────────────────────────────────────────────────
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct Drive {
     pub name: String,
     pub mount_point: PathBuf,

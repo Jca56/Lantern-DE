@@ -2481,6 +2481,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "lntrn-lava-lamp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "lntrn-render",
+ "raw-window-handle",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
+ "wgpu",
+]
+
+[[package]]
 name = "lntrn-media-player"
 version = "0.1.0"
 dependencies = [

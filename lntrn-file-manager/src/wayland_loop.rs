@@ -158,7 +158,7 @@ pub(crate) fn run_loop(
                     app.pending_open = None;
                     app.press_pos = None;
 
-                    // Prepare DnD paths and start Wayland DnD immediately
+                    // Prepare DnD paths (Wayland DnD starts when cursor leaves window)
                     let paths: Vec<std::path::PathBuf> = {
                         let selected = app.selected_paths();
                         if selected.is_empty() || !app.entries[idx].selected {
@@ -169,23 +169,6 @@ pub(crate) fn run_loop(
                     };
                     state.dnd_paths = paths;
                     state.dnd_serial = state.pointer_serial;
-
-                    // Start Wayland DnD at drag threshold (not deferred to pointer leave)
-                    if let (Some(mgr), Some(dd), Some(surf)) = (
-                        &state.data_device_manager,
-                        &state.data_device,
-                        &state.surface,
-                    ) {
-                        let source = mgr.create_data_source(qh, ());
-                        source.offer("text/uri-list".to_string());
-                        source.offer("text/plain".to_string());
-                        source.set_actions(
-                            wl_data_device_manager::DndAction::Copy
-                            | wl_data_device_manager::DndAction::Move,
-                        );
-                        dd.start_drag(Some(&source), surf, None, state.dnd_serial);
-                        state.dnd_active = true;
-                    }
                 }
             }
 
@@ -203,32 +186,38 @@ pub(crate) fn run_loop(
             app.drag_pos = Some((cx, cy));
         }
 
-        // ── DnD cursor tracking (compositor grab replaces pointer events) ─
-        if state.dnd_active && state.dnd_over_self {
-            let dcx = (state.dnd_cursor_x as f32) * s;
-            let dcy = (state.dnd_cursor_y as f32) * s;
-            if app.drag_item.is_some() {
-                app.drag_pos = Some((dcx, dcy));
+        // ── Start Wayland DnD when cursor leaves window during drag ────
+        if app.drag_item.is_some() && !state.dnd_active && !state.dnd_paths.is_empty() {
+            let raw_cx = state.cursor_x as f32;
+            let raw_cy = state.cursor_y as f32;
+            let logical_w = state.width as f32;
+            let logical_h = state.height as f32;
+            if raw_cx < 0.0 || raw_cy < 0.0 || raw_cx > logical_w || raw_cy > logical_h {
+                if let (Some(mgr), Some(dd), Some(surf)) = (
+                    &state.data_device_manager,
+                    &state.data_device,
+                    &state.surface,
+                ) {
+                    let source = mgr.create_data_source(qh, ());
+                    source.offer("text/uri-list".to_string());
+                    source.offer("text/plain".to_string());
+                    source.set_actions(
+                        wl_data_device_manager::DndAction::Copy
+                        | wl_data_device_manager::DndAction::Move,
+                    );
+                    dd.start_drag(Some(&source), surf, None, state.dnd_serial);
+                    state.dnd_active = true;
+                    // Clear internal drag — compositor owns the drag now
+                    app.drag_item = None;
+                    app.drag_pos = None;
+                }
             }
-            input.on_cursor_moved(dcx, dcy);
         }
 
-        // ── Internal DnD drop (same window) ────────────────���────────────
-        if state.dnd_drop_on_self {
-            state.dnd_drop_on_self = false;
-            if let Some(drag_idx) = app.drag_item.take() {
-                let dcx = (state.dnd_cursor_x as f32) * s;
-                let dcy = (state.dnd_cursor_y as f32) * s;
-                input.on_cursor_moved(dcx, dcy);
-                handle_drop(app, input, wf, hf, s, drag_idx);
-            }
-            app.drag_pos = None;
-            state.dnd_paths.clear();
-            state.dnd_over_self = false;
-        }
-
-        // ── Clean up drag state after DnD ends ──────────────────────────
-        if !state.dnd_active && state.dnd_paths.is_empty() && app.drag_item.is_some() {
+        // ── Clean up drag state after Wayland DnD ends ──────────────────
+        if !state.dnd_active && state.dnd_paths.is_empty() && app.drag_item.is_some()
+            && !state.pointer_in_surface
+        {
             app.drag_item = None;
             app.drag_pos = None;
         }
@@ -469,12 +458,9 @@ pub(crate) fn run_loop(
                         }
                     }
                 } else if let Some(drag_idx) = app.drag_item.take() {
-                    if !state.dnd_active {
-                        // Internal drag without Wayland DnD (fallback)
-                        handle_drop(app, input, wf, hf, s, drag_idx);
-                        app.pending_open = None;
-                        state.dnd_paths.clear();
-                    }
+                    handle_drop(app, input, wf, hf, s, drag_idx);
+                    app.pending_open = None;
+                    state.dnd_paths.clear();
                 } else if let Some(idx) = app.pending_open.take() {
                     app.on_item_click(idx);
                 }

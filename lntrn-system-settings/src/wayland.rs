@@ -443,6 +443,23 @@ pub fn run() -> Result<()> {
             }
         }
 
+        // Auto-apply monitor settings (scale, mode) immediately when changed.
+        // Display changes shouldn't need the Save button.
+        if display_state.monitor_settings.dirty {
+            if let Some(selected_name) = display_state.monitor_arrange.selected_output_name() {
+                if let Some(hi) = state.output_mgr.heads.iter().position(|h| h.name == selected_name) {
+                    let changes = vec![crate::output_manager::HeadChange {
+                        head_idx: hi,
+                        mode_idx: display_state.monitor_settings.selected_mode_idx,
+                        position: None,
+                        scale: display_state.monitor_settings.selected_scale,
+                    }];
+                    crate::output_manager::apply_config(&state, &qh, &changes);
+                    display_state.monitor_settings.dirty = false;
+                }
+            }
+        }
+
         // Monitor drag update on pointer motion
         if monitor_arrange::is_dragging(&display_state.monitor_arrange) {
             monitor_arrange::handle_arrange_drag(&mut display_state.monitor_arrange, cx, cy);

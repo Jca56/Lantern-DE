@@ -53,7 +53,8 @@ impl App {
 
         // Draw window background — square corners when maximized
         let title_bar_color = match mode {
-            crate::config::WindowMode::FoxLight => Color::from_rgba8(72, 72, 76, 255),
+            crate::config::WindowMode::FoxLight => Color::from_rgba8(60, 60, 64, 255),
+            crate::config::WindowMode::Lantern => Color::from_rgba8(50, 40, 30, 255),
             _ => Color::from_rgba8(51, 51, 51, 255),
         };
         let maximized = self
@@ -281,6 +282,9 @@ impl App {
                         }
                         ui_chrome::MENU_MODE_NIGHT_SKY => {
                             self.config.window.mode = crate::config::WindowMode::NightSky;
+                        }
+                        ui_chrome::MENU_MODE_LANTERN => {
+                            self.config.window.mode = crate::config::WindowMode::Lantern;
                         }
                         _ => {}
                     }
