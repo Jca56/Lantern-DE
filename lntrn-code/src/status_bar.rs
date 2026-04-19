@@ -8,6 +8,9 @@ use crate::editor::Editor;
 use crate::render::STATUS_BAR_H;
 use lntrn_render::Painter;
 
+/// `diagnostics`: `(errors, warnings, infos, hints)` from the LSP for the
+/// active file. `lsp_status`: last window/logMessage string (e.g. indexing
+/// progress). Both pass through unchanged when LSP isn't live.
 pub fn draw_status_bar(
     editor: &Editor,
     painter: &mut Painter,
@@ -18,6 +21,8 @@ pub fn draw_status_bar(
     s: f32,
     sw: u32,
     sh: u32,
+    diagnostics: (usize, usize, usize, usize),
+    lsp_status: &str,
 ) {
     let status_h = STATUS_BAR_H * s;
     let status_y = hf - status_h;
@@ -42,6 +47,38 @@ pub fn draw_status_bar(
         .size(font)
         .color(palette.text)
         .draw(text, sw, sh);
+
+    // ── Left-middle: diagnostic counts + LSP status string ────────
+    let (errs, warns, _infos, _hints) = diagnostics;
+    let mut tail_x = 14.0 * s + text.measure_width(&filename_label, font_px) + 20.0 * s;
+    if errs > 0 {
+        let t = format!("\u{2716} {errs}");
+        TextLabel::new(&t, tail_x, label_y)
+            .size(font)
+            .color(palette.danger)
+            .draw(text, sw, sh);
+        tail_x += text.measure_width(&t, font_px) + 14.0 * s;
+    }
+    if warns > 0 {
+        let t = format!("\u{26A0} {warns}");
+        TextLabel::new(&t, tail_x, label_y)
+            .size(font)
+            .color(palette.warning)
+            .draw(text, sw, sh);
+        tail_x += text.measure_width(&t, font_px) + 14.0 * s;
+    }
+    if !lsp_status.is_empty() {
+        // Truncate long status lines so they don't push past the counts.
+        let max_w = wf * 0.45;
+        let mut status = lsp_status.to_string();
+        while text.measure_width(&status, font_px) > max_w && status.len() > 4 {
+            status.pop();
+        }
+        TextLabel::new(&status, tail_x, label_y)
+            .size(font)
+            .color(palette.text_secondary)
+            .draw(text, sw, sh);
+    }
 
     // ── Right: cursor position + counts (selection-aware) ─────────
     let pos_text = if let Some(selected) = editor.selected_text() {

@@ -21,6 +21,7 @@ use crate::{
     CTX_OPEN_TERMINAL, CTX_OPEN_WITH, CTX_OPEN_WITH_BASE, CTX_PASTE, CTX_PROPERTIES,
     CTX_RENAME, CTX_SELECT_ALL, CTX_SHOW_HIDDEN, CTX_SORT_BY, CTX_SORT_DATE, CTX_SORT_NAME,
     CTX_SORT_SIZE, CTX_SORT_TYPE, CTX_TRASH, SORT_RADIO_GROUP, VIEW_SLIDER_ID, VIEW_OPACITY_SLIDER_ID, VIEW_SHOW_HIDDEN_ID,
+    VIEW_THEME_GROUP, VIEW_THEME_FOX_DARK, VIEW_THEME_FOX_LIGHT, VIEW_THEME_LANTERN, VIEW_THEME_NIGHT_SKY,
     ZONE_CLOSE, ZONE_FILE_ITEM_BASE, ZONE_MAXIMIZE, ZONE_MENU_VIEW, ZONE_MINIMIZE,
     ZONE_NAV_BACK, ZONE_NAV_FORWARD, ZONE_NAV_UP, ZONE_NAV_SEARCH, ZONE_NAV_VIEW_TOGGLE,
     ZONE_PATH_INPUT, ZONE_SIDEBAR_ITEM_BASE, ZONE_TAB_BASE, ZONE_TAB_CLOSE_BASE, ZONE_TAB_NEW,
@@ -56,6 +57,7 @@ pub(crate) fn handle_click(
     tab_drag_press: &mut Option<(usize, f32)>,
     s: f32,
     bg_opacity: f32,
+    current_theme: &str,
 ) -> ClickAction {
     if let Some(zone_id) = input.on_left_pressed() {
         // If path editing, commit on any click outside the path input
@@ -91,6 +93,12 @@ pub(crate) fn handle_click(
                                 MenuItem::slider(VIEW_SLIDER_ID, "Icon Size", app.icon_zoom),
                                 MenuItem::slider(VIEW_OPACITY_SLIDER_ID, "Opacity", bg_opacity),
                                 MenuItem::checkbox(VIEW_SHOW_HIDDEN_ID, "Show Hidden Files", app.show_hidden),
+                                MenuItem::separator(),
+                                MenuItem::header("Theme"),
+                                MenuItem::radio(VIEW_THEME_FOX_DARK, VIEW_THEME_GROUP, "Fox Dark", current_theme == "fox-dark"),
+                                MenuItem::radio(VIEW_THEME_FOX_LIGHT, VIEW_THEME_GROUP, "Fox Light", current_theme == "fox-light"),
+                                MenuItem::radio(VIEW_THEME_LANTERN, VIEW_THEME_GROUP, "Lantern", current_theme == "lantern"),
+                                MenuItem::radio(VIEW_THEME_NIGHT_SKY, VIEW_THEME_GROUP, "Night Sky", current_theme == "night-sky"),
                             ],
                             backend,
                         );

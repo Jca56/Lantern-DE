@@ -16,9 +16,11 @@ mod layershell;
 mod sni;
 mod svg_icon;
 mod temperature;
+mod theme_state;
 mod toplevel;
 mod tray;
 mod wifi;
+mod workspaces;
 
 use std::path::PathBuf;
 

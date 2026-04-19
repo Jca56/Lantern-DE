@@ -136,19 +136,22 @@ impl Lantern {
         }
 
         // Mark for centering after first real commit (skip scratchpad & tiling)
-        if !is_scratchpad && !self.tiling.active {
+        if !is_scratchpad && !self.workspaces.tiling_active {
             self.pending_center.insert(surface.clone());
         }
 
-        // Insert into tiling tree if tiling is active
-        // Always insert at the end of the tree for predictable placement
-        if self.tiling.active && !is_scratchpad {
+        // Attach window to its output's active workspace. Scratchpad stays global.
+        if !is_scratchpad {
             let output_name = self.output_for_window(&window)
                 .or_else(|| self.space.outputs().next().cloned())
                 .map(|o| o.name())
                 .unwrap_or_default();
-            self.tiling.insert(&output_name, surface.clone(), None);
-            self.apply_tiling_layout();
+            if self.workspaces.tiling_active {
+                self.workspaces.insert(&output_name, surface.clone(), None);
+                self.apply_tiling_layout();
+            } else {
+                self.workspaces.track_window(&output_name, surface.clone());
+            }
         }
 
         // Start open animation
@@ -160,6 +163,7 @@ impl Lantern {
         self.foreign_toplevel_state.new_toplevel(&surface, &title, &app_id);
 
         self.focus_window(&window, serial);
+        self.broadcast_workspace_state();
     }
 
     pub fn forget_window(&mut self, surface: &WlSurface) {
@@ -174,9 +178,10 @@ impl Lantern {
         self.window_snapshots.remove(surface);
         self.animations.remove(surface);
         self.tiling_anim.remove(surface);
-        let was_tiled = self.tiling.contains(surface);
-        self.tiling.remove(surface);
-        if was_tiled && self.tiling.active {
+        let was_tiled = self.workspaces.contains(surface);
+        self.workspaces.remove(surface);
+        self.unmapped_windows.remove(surface);
+        if was_tiled && self.workspaces.tiling_active {
             self.apply_tiling_layout();
         }
         self.ssd.remove(surface);
@@ -187,6 +192,8 @@ impl Lantern {
             self.scratchpad_surface = None;
             tracing::info!("Scratchpad window closed, clearing reference");
         }
+
+        self.broadcast_workspace_state();
     }
 
     /// Start a close animation on the focused window (Super+Q).
@@ -316,11 +323,7 @@ impl Lantern {
     pub fn open_hot_corner_switcher(&mut self) {
         self.compact_window_mru();
 
-        let all_surfaces: Vec<_> = self.window_spawn_order
-            .iter()
-            .filter(|s| self.find_any_window(s).is_some())
-            .cloned()
-            .collect();
+        let all_surfaces = self.switcher_entries();
 
         if all_surfaces.len() < 2 {
             return;
@@ -336,15 +339,30 @@ impl Lantern {
         self.schedule_render();
     }
 
+    /// Switcher entry list: windows on the focused output's active workspace,
+    /// plus any untracked mapped windows as a safety fallback (e.g. XWayland
+    /// transients that never routed through the standard map path).
+    /// Spawn-order preserved.
+    fn switcher_entries(&self) -> Vec<WlSurface> {
+        let focused_output = self.focused_output_name();
+        self.window_spawn_order
+            .iter()
+            .filter(|s| self.find_any_window(s).is_some())
+            .filter(|s| match self.workspaces.window_workspace(s) {
+                Some((out, ws)) => {
+                    focused_output.as_deref() == Some(out.as_str())
+                        && ws == self.workspaces.active_id(&out)
+                }
+                None => true,
+            })
+            .cloned()
+            .collect()
+    }
+
     pub fn focus_next_window(&mut self, serial: Serial) -> bool {
         self.compact_window_mru();
 
-        // Use spawn order so the list is stable and includes minimized windows
-        let all_surfaces: Vec<_> = self.window_spawn_order
-            .iter()
-            .filter(|s| self.find_any_window(s).is_some())
-            .cloned()
-            .collect();
+        let all_surfaces = self.switcher_entries();
 
         let pending_surface = if self.alt_tab_switcher.is_active() {
             self.alt_tab_switcher.advance()
@@ -582,10 +600,10 @@ impl Lantern {
         self.space.unmap_elem(&window);
 
         // Remove from tiling tree so remaining windows reflow
-        let was_tiled = self.tiling.contains(surface);
-        self.tiling.remove(surface);
+        let was_tiled = self.workspaces.contains(surface);
+        self.workspaces.remove(surface);
         self.tiling_anim.remove(surface);
-        if was_tiled && self.tiling.active {
+        if was_tiled && self.workspaces.tiling_active {
             self.apply_tiling_layout();
         }
 
@@ -633,12 +651,12 @@ impl Lantern {
         self.space.map_element(entry.window.clone(), location, true);
 
         // Re-insert into tiling tree if tiling is active
-        if self.tiling.active && !self.tiling.contains(&entry.surface) {
+        if self.workspaces.tiling_active && !self.workspaces.contains(&entry.surface) {
             let output_name = self.output_for_window(&entry.window)
                 .or_else(|| self.space.outputs().next().cloned())
                 .map(|o| o.name())
                 .unwrap_or_default();
-            self.tiling.insert(&output_name, entry.surface.clone(), None);
+            self.workspaces.insert(&output_name, entry.surface.clone(), None);
             self.apply_tiling_layout();
         }
 
@@ -933,9 +951,9 @@ impl Lantern {
 
     // ── SSD interaction ─────────────────────────────────────────────────
 
-    /// Update SSD hover state based on pointer position (in canvas-space).
+    /// Update SSD hover state based on logical pointer position.
     /// Returns true if any hover state changed (needs re-render).
-    pub fn ssd_update_hover(&mut self, canvas_pos: smithay::utils::Point<f64, smithay::utils::Logical>) -> bool {
+    pub fn ssd_update_hover(&mut self, pointer_pos: smithay::utils::Point<f64, smithay::utils::Logical>) -> bool {
         let mut changed = false;
 
         // Collect SSD surfaces first to avoid borrow conflict
@@ -953,7 +971,7 @@ impl Lantern {
             let win_loc = self.space.element_location(&window).unwrap_or_default();
             let win_size = window.geometry().size;
 
-            let new_hover = match crate::ssd::hit_test(canvas_pos, win_loc, win_size) {
+            let new_hover = match crate::ssd::hit_test(pointer_pos, win_loc, win_size) {
                 Ok(btn) => btn,
                 Err(()) => None, // Not over this window's decoration
             };
@@ -970,10 +988,10 @@ impl Lantern {
     }
 
     /// Handle a click on SSD decorations. Returns true if the click was consumed.
-    /// `canvas_pos` is the pointer position in canvas-space.
+    /// `pointer_pos` is the pointer position in canvas-space.
     pub fn ssd_handle_click(
         &mut self,
-        canvas_pos: smithay::utils::Point<f64, smithay::utils::Logical>,
+        pointer_pos: smithay::utils::Point<f64, smithay::utils::Logical>,
         serial: smithay::utils::Serial,
     ) -> Option<SsdClickAction> {
         let ssd_surfaces: Vec<WlSurface> = self.ssd.windows.keys().cloned().collect();
@@ -987,10 +1005,16 @@ impl Lantern {
             if self.is_fullscreen(&surface) {
                 continue;
             }
+            // Skip windows on non-active workspaces — they're not visible.
+            if let Some((out, ws)) = self.workspaces.window_workspace(&surface) {
+                if ws != self.workspaces.active_id(&out) {
+                    continue;
+                }
+            }
             let win_loc = self.space.element_location(&window).unwrap_or_default();
             let win_size = window.geometry().size;
 
-            match crate::ssd::hit_test(canvas_pos, win_loc, win_size) {
+            match crate::ssd::hit_test(pointer_pos, win_loc, win_size) {
                 Ok(Some(crate::ssd::SsdButton::Close)) => {
                     self.focus_window(&window, serial);
                     return Some(SsdClickAction::Close(surface));

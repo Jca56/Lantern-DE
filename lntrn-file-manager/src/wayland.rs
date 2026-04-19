@@ -263,7 +263,7 @@ pub fn run(pick: Option<PickConfig>, desktop: bool) -> Result<()> {
         ));
     }
 
-    let palette = FoxPalette::dark();
+    let mut palette = FoxPalette::from_variant(settings.theme_variant());
     let mut view_menu = ContextMenu::new(ContextMenuStyle::from_palette(&palette));
     let mut context_menu = ContextMenu::new(ContextMenuStyle::from_palette(&palette));
     view_menu.set_scale(scale_f);
@@ -315,7 +315,7 @@ pub fn run(pick: Option<PickConfig>, desktop: bool) -> Result<()> {
     crate::wayland_loop::run_loop(
         &conn, &mut event_queue, &mut state, &qh,
         &surface, &toplevel_holder, &viewport,
-        &mut gpu, &palette, &mut view_menu, &mut context_menu,
+        &mut gpu, &mut palette, &mut view_menu, &mut context_menu,
         &mut open_with_apps, &mut app, &mut input, &mut icon_cache,
         &mut file_info, &mut settings,
     )?;

@@ -44,7 +44,8 @@ pub const BG_COLOR: [f32; 4] = [0.094, 0.094, 0.094, 1.0];
 pub(crate) const SUPPORTED_FORMATS: &[Fourcc] = &[Fourcc::Argb8888, Fourcc::Abgr8888];
 pub const RENDER_INTERVAL: Duration = Duration::from_millis(16);
 const POINTER_RENDER_INTERVAL: Duration = Duration::from_millis(16);
-pub(crate) const LANTERN_OUTPUT_SCALE: f64 = 1.25;
+/// Compositor output scale (reads [display] scale from lantern.toml, defaults 1.0).
+pub(crate) fn lantern_output_scale() -> f64 { crate::output_scale() }
 
 pub fn frame_callback_interval(output: &smithay::output::Output) -> Duration {
     let refresh = output.current_mode().map(|mode| mode.refresh).unwrap_or(60_000);

@@ -18,8 +18,8 @@ pub fn measure_cell(font_size: f32) -> (f32, f32) {
     (cell_w, cell_h)
 }
 
-/// Corner radius — must match the compositor's CORNER_RADIUS (10).
-const CORNER_RADIUS: f32 = 10.0;
+/// Corner radius — must match the compositor's CORNER_RADIUS (18).
+const CORNER_RADIUS: f32 = 18.0;
 
 /// Draw the window background with rounded corners matching the compositor.
 /// When maximized, corners are square (radius=0) so the bg doesn't bleed through.
@@ -36,18 +36,34 @@ pub fn draw_window_bg(
     maximized: bool,
     mode: &WindowMode,
 ) {
+    const BORDER_THICK: f32 = 3.0;
+    let r = if maximized { 0.0 } else { CORNER_RADIUS };
+    let full = Rect::new(0.0, 0.0, w, h);
     match mode {
-        WindowMode::Fox | WindowMode::FoxLight => {
-            let r = if maximized { 0.0 } else { CORNER_RADIUS };
-            painter.rect_filled(Rect::new(0.0, 0.0, w, h), r, bg_color);
+        WindowMode::Fox => {
+            painter.rect_filled(full, r, bg_color);
+            if !maximized {
+                let black = Color::from_rgba8(0, 0, 0, 255);
+                painter.rect_border(full, CORNER_RADIUS, BORDER_THICK, black);
+            }
+        }
+        WindowMode::FoxLight => {
+            painter.rect_filled(full, r, bg_color);
+            if !maximized {
+                let dark_grey = Color::from_rgba8(60, 60, 60, 255);
+                painter.rect_border(full, CORNER_RADIUS, BORDER_THICK, dark_grey);
+            }
         }
         WindowMode::NightSky => {
             crate::night_sky::draw_background(painter, w, h, maximized);
             crate::night_sky::draw_border(painter, w, h, maximized);
         }
         WindowMode::Lantern => {
-            let r = if maximized { 0.0 } else { CORNER_RADIUS };
-            painter.rect_filled(Rect::new(0.0, 0.0, w, h), r, bg_color);
+            painter.rect_filled(full, r, bg_color);
+            if !maximized {
+                let amber = Color::from_rgba8(230, 160, 50, 255);
+                painter.rect_border(full, CORNER_RADIUS, BORDER_THICK, amber);
+            }
         }
     }
 }

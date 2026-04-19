@@ -128,9 +128,15 @@ pub fn render_frame(
         }
     };
 
-    // ── Window background ─────────────────────────────────────────────
-    let corner_r = if desktop_mode { 0.0 } else { 10.0 * s };
-    painter.rect_filled(Rect::new(0.0, 0.0, wf, hf), corner_r, pal.bg.with_alpha(bg_opacity));
+    // ── Window background + theme-aware accent border ─────────────────
+    // Corner radius matches the compositor mask (18) so the border traces
+    // the visible window edge cleanly.
+    let corner_r = if desktop_mode { 0.0 } else { 18.0 * s };
+    let win_rect = Rect::new(0.0, 0.0, wf, hf);
+    painter.rect_filled(win_rect, corner_r, pal.bg.with_alpha(bg_opacity));
+    if !desktop_mode {
+        painter.rect_border(win_rect, corner_r, 3.0 * s, pal.accent);
+    }
 
     // ── Title bar (window mode only) ─────────────────────────────────
     if !desktop_mode {

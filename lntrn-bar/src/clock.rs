@@ -53,10 +53,6 @@ impl Clock {
         changed
     }
 
-    pub fn time_text_len(&self) -> usize {
-        self.time_text().len()
-    }
-
     fn time_text(&self) -> String {
         let h12 = match self.hour {
             0 => 12,
@@ -64,6 +60,20 @@ impl Clock {
             _ => self.hour,
         };
         format!("{}:{:02}", h12, self.minute)
+    }
+
+    fn date_text(&self) -> String {
+        format!("{:02}/{:02}/{}", self.month + 1, self.day, self.year)
+    }
+
+    /// Total width the clock needs in the bar (max of time + date rows).
+    pub fn measure_width(&self, bar_h: f32) -> f32 {
+        let time_font = bar_h * 0.45;
+        let date_font = bar_h * 0.24;
+        let padding = time_font * 0.35;
+        let time_w = self.time_text().len() as f32 * time_font * 0.52;
+        let date_w = self.date_text().len() as f32 * date_font * 0.55;
+        time_w.max(date_w) + padding
     }
 
     pub fn toggle(&mut self) {
@@ -104,13 +114,12 @@ impl Clock {
         }
     }
 
-    /// Draw the clock time right-aligned within the visual bar rect.
-    /// Returns the hit-test rect for the clock text area.
+    /// Draw time on top and date (mm/dd/yyyy) below it, right-aligned in the bar.
     pub fn draw(
         &self,
         text: &mut TextRenderer,
         ix: &mut InteractionContext,
-        font_size: f32,
+        _unused_font: f32,
         color: Color,
         bar_w: f32,
         bar_h: f32,
@@ -119,16 +128,34 @@ impl Clock {
         screen_w: u32,
         screen_h: u32,
     ) {
-        let display = self.time_text();
-        let padding = font_size * 0.35;
-        let char_w = font_size * 0.52;
-        let text_w = display.len() as f32 * char_w;
-        let x = bar_x + (bar_w - text_w - padding).max(0.0);
-        let y = bar_y + (bar_h - font_size) / 2.0 - font_size * 0.10;
-        text.queue(&display, font_size, x, y, color, bar_w, screen_w, screen_h);
+        let time_font = bar_h * 0.45;
+        let date_font = bar_h * 0.24;
+        let padding = time_font * 0.35;
 
-        // Hit-test zone for the clock area
-        let zone_rect = Rect::new(x - 4.0, bar_y, text_w + padding + 4.0, bar_h);
+        let time_str = self.time_text();
+        let date_str = self.date_text();
+        let time_w = time_str.len() as f32 * time_font * 0.52;
+        let date_w = date_str.len() as f32 * date_font * 0.55;
+        let col_w = time_w.max(date_w);
+
+        let right_x = bar_x + bar_w - padding;
+        let date_x = right_x - date_w;
+        // Center the time horizontally over the date.
+        let time_x = date_x + (date_w - time_w) / 2.0;
+
+        // Stack time + date vertically, centered as a block within the bar.
+        let inner_gap = bar_h * 0.02;
+        let block_h = time_font + inner_gap + date_font;
+        let block_y = bar_y + (bar_h - block_h) / 2.0 - bar_h * 0.04;
+        let time_y = block_y;
+        let date_y = block_y + time_font + inner_gap;
+
+        text.queue(&time_str, time_font, time_x, time_y, color, bar_w, screen_w, screen_h);
+        text.queue(&date_str, date_font, date_x, date_y, color, bar_w, screen_w, screen_h);
+
+        // Hit zone covers both lines
+        let zone_x = right_x - col_w - 4.0;
+        let zone_rect = Rect::new(zone_x, bar_y, col_w + padding + 4.0, bar_h);
         ix.add_zone(ZONE_CLOCK, zone_rect);
     }
 
@@ -194,7 +221,7 @@ impl Clock {
         // Background
         let bg_rect = Rect::new(popup_x, popup_y, popup_w, popup_h);
         painter.rect_filled(bg_rect, corner_r, palette.bg);
-        painter.rect_stroke_sdf(bg_rect, corner_r, 3.0 * scale, Color::BLACK);
+        painter.rect_stroke_sdf(bg_rect, corner_r, 3.0 * scale, crate::theme_state::popup_border());
 
         // ── Header: < March 2026 > ──
         let header_y = popup_y + pad;

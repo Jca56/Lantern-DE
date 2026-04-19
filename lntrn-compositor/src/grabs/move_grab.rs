@@ -43,16 +43,15 @@ impl PointerGrab<Lantern> for MoveSurfaceGrab {
         if self.was_tiled && !self.restored_this_drag {
             self.restored_this_drag = true;
             let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(&self.window) else { return };
-            data.tiling.remove(&surface);
+            data.workspaces.remove(&surface);
             data.tiling_anim.remove(&surface);
-            if data.tiling.active {
+            if data.workspaces.tiling_active {
                 data.apply_tiling_layout();
             }
             // Re-center under cursor like snap/maximize restore
             let geo = self.window.geometry();
-            let (cx, cy) = data.canvas.screen_to_canvas(event.location.x, event.location.y);
-            let new_x = cx - geo.size.w as f64 / 2.0;
-            let new_y = cy + crate::ssd::SsdManager::bar_height() as f64 / 2.0;
+            let new_x = event.location.x - geo.size.w as f64 / 2.0;
+            let new_y = event.location.y + crate::ssd::SsdManager::bar_height() as f64 / 2.0;
             let new_loc = Point::from((new_x as i32, new_y as i32));
             data.space.map_element(self.window.clone(), new_loc, false);
             self.initial_window_location = new_loc;
@@ -73,11 +72,9 @@ impl PointerGrab<Lantern> for MoveSurfaceGrab {
             if restored {
                 // After restoring, the window has its original size.
                 // Place it so the cursor is roughly centered on the title bar.
-                // Convert screen pointer to canvas-space for placement.
                 let geo = self.window.geometry();
-                let (cx, cy) = data.canvas.screen_to_canvas(event.location.x, event.location.y);
-                let new_x = cx - geo.size.w as f64 / 2.0;
-                let new_y = cy + crate::ssd::SsdManager::bar_height() as f64 / 2.0;
+                let new_x = event.location.x - geo.size.w as f64 / 2.0;
+                let new_y = event.location.y + crate::ssd::SsdManager::bar_height() as f64 / 2.0;
                 let new_loc = Point::from((new_x as i32, new_y as i32));
                 data.space.map_element(self.window.clone(), new_loc, false);
                 self.initial_window_location = new_loc;
@@ -87,13 +84,7 @@ impl PointerGrab<Lantern> for MoveSurfaceGrab {
         }
 
         let delta = event.location - self.start_data.location;
-        // Divide delta by canvas zoom: pointer moves in screen-space,
-        // but window positions are in canvas-space
-        let canvas_delta = Point::from((
-            delta.x / data.canvas.zoom,
-            delta.y / data.canvas.zoom,
-        ));
-        let new_location = self.initial_window_location.to_f64() + canvas_delta;
+        let new_location = self.initial_window_location.to_f64() + delta;
         data.space
             .map_element(self.window.clone(), new_location.to_i32_round(), false);
     }
@@ -129,13 +120,13 @@ impl PointerGrab<Lantern> for MoveSurfaceGrab {
                     if !data.is_maximized(&surface) {
                         data.maximize_request_surface(&surface);
                     }
-                } else if self.was_tiled && self.has_moved && data.tiling.active {
+                } else if self.was_tiled && self.has_moved && data.workspaces.tiling_active {
                     // Re-insert into tiling tree on the output where it was dropped
                     let output_name = data.output_at_point(pointer_pos)
                         .or_else(|| data.space.outputs().next().cloned())
                         .map(|o| o.name())
                         .unwrap_or_default();
-                    data.tiling.insert(&output_name, surface.clone(), None);
+                    data.workspaces.insert(&output_name, surface.clone(), None);
                     data.apply_tiling_layout();
                 }
             }

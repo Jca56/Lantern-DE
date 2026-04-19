@@ -6,6 +6,7 @@ use winit::keyboard::{Key, ModifiersState, NamedKey};
 
 use crate::actions;
 use crate::auto_pair;
+use crate::lsp;
 use crate::term_panel::TermPanel;
 use crate::TextHandler;
 
@@ -24,8 +25,16 @@ pub fn handle_key(
     key: &Key,
     mods: ModifiersState,
 ) -> KeyAction {
-    // Escape closes the menu bar if it's open.
+    // Escape closes any floating LSP UI first, then the menu/find bar.
     if matches!(key, Key::Named(NamedKey::Escape)) {
+        if handler.completion.visible {
+            handler.completion.clear();
+            return KeyAction::Consumed;
+        }
+        if handler.hover.visible {
+            handler.hover.clear();
+            return KeyAction::Consumed;
+        }
         if handler.menu_bar.is_open() {
             handler.menu_bar.close();
             return KeyAction::Consumed;
@@ -35,6 +44,38 @@ pub fn handle_key(
             return KeyAction::Consumed;
         }
         return KeyAction::Ignored;
+    }
+
+    // ── Completion popup nav (must run before normal text input) ─────
+    if handler.completion.visible {
+        match key {
+            Key::Named(NamedKey::ArrowDown) => {
+                let n = handler.completion.filtered().len();
+                if n > 0 {
+                    handler.completion.selected =
+                        (handler.completion.selected + 1).min(n - 1);
+                }
+                return KeyAction::Consumed;
+            }
+            Key::Named(NamedKey::ArrowUp) => {
+                handler.completion.selected =
+                    handler.completion.selected.saturating_sub(1);
+                return KeyAction::Consumed;
+            }
+            Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Tab) => {
+                let choice = handler
+                    .completion
+                    .filtered()
+                    .get(handler.completion.selected)
+                    .map(|i| (*i).clone());
+                if let Some(item) = choice {
+                    lsp::glue::accept_completion(handler, &item);
+                    return KeyAction::Consumed;
+                }
+                handler.completion.clear();
+            }
+            _ => {}
+        }
     }
 
     let ctrl = mods.contains(ModifiersState::CONTROL);
@@ -76,6 +117,21 @@ pub fn handle_key(
             if panel.handle_key(key, mods) {
                 return KeyAction::Consumed;
             }
+        }
+    }
+
+    // ── LSP shortcuts ────────────────────────────────────────────────
+    // F12 → goto-definition on the current caret.
+    if matches!(key, Key::Named(NamedKey::F12)) {
+        lsp::glue::request_definition(handler, false);
+        return KeyAction::Consumed;
+    }
+    // Ctrl+Space → completion at caret.
+    if ctrl && !shift && !alt {
+        if matches!(key, Key::Named(NamedKey::Space)) {
+            let (ax, ay) = caret_anchor(handler);
+            lsp::glue::request_completion(handler, ax, ay);
+            return KeyAction::Consumed;
         }
     }
 
@@ -283,4 +339,18 @@ pub fn handle_key(
         }
         _ => KeyAction::Ignored,
     }
+}
+
+/// Compute a reasonable anchor point for popups (hover / completion) at the
+/// caret's current screen position. Returns `(x, y_below_caret)`.
+fn caret_anchor(handler: &TextHandler) -> (f32, f32) {
+    let (cx, cy) = handler
+        .input
+        .cursor()
+        .unwrap_or((80.0 * handler.scale, 80.0 * handler.scale));
+    // Anchor is "just below the cursor caret". The caret draws on a blink
+    // so the exact on-screen position is non-trivial to query from here —
+    // falling back to the mouse position is close enough: users typically
+    // trigger completion right where they're looking.
+    (cx, cy + handler.scale * 20.0)
 }

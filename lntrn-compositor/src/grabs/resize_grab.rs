@@ -114,12 +114,7 @@ impl PointerGrab<Lantern> for ResizeSurfaceGrab {
             smithay::input::pointer::CursorImageStatus::Named(icon),
         );
 
-        let raw_delta = event.location - self.start_data.location;
-        // Convert screen-space delta to canvas-space
-        let mut delta: Point<f64, Logical> = Point::from((
-            raw_delta.x / data.canvas.zoom,
-            raw_delta.y / data.canvas.zoom,
-        ));
+        let mut delta: Point<f64, Logical> = event.location - self.start_data.location;
 
         let mut new_window_width = self.initial_rect.size.w;
         let mut new_window_height = self.initial_rect.size.h;

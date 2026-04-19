@@ -312,6 +312,49 @@ impl Lantern {
                             return FilterResult::Intercept(());
                         }
 
+                        // --- Workspace keybinds ---
+                        // Use raw_syms() so Shift-modified digits (!, @, #, ...) still match.
+                        if event.state() == KeyState::Pressed {
+                            let ws_id: Option<u32> = keysym.raw_syms().iter()
+                                .find_map(|s| match s.raw() {
+                                    xkb::KEY_1 => Some(1),
+                                    xkb::KEY_2 => Some(2),
+                                    xkb::KEY_3 => Some(3),
+                                    xkb::KEY_4 => Some(4),
+                                    xkb::KEY_5 => Some(5),
+                                    xkb::KEY_6 => Some(6),
+                                    xkb::KEY_7 => Some(7),
+                                    xkb::KEY_8 => Some(8),
+                                    xkb::KEY_9 => Some(9),
+                                    _ => None,
+                                });
+                            if let Some(id) = ws_id {
+                                if _modifiers.logo {
+                                    if _modifiers.shift {
+                                        data.move_focused_to_workspace(id);
+                                    } else {
+                                        data.switch_to_workspace(id);
+                                    }
+                                    return FilterResult::Intercept(());
+                                }
+                            }
+                        }
+
+                        // Super+Alt+Left/Right: prev/next workspace (sparse, wraps)
+                        if event.state() == KeyState::Pressed
+                            && _modifiers.logo && _modifiers.alt && !_modifiers.shift
+                        {
+                            let dir = match keysym.modified_sym().raw() {
+                                xkb::KEY_Left => Some(-1i32),
+                                xkb::KEY_Right => Some(1i32),
+                                _ => None,
+                            };
+                            if let Some(d) = dir {
+                                data.switch_workspace_neighbor(d);
+                                return FilterResult::Intercept(());
+                            }
+                        }
+
                         // --- Tiling keybinds ---
                         if event.state() == KeyState::Pressed
                             && _modifiers.logo
@@ -324,7 +367,7 @@ impl Lantern {
                         // Super+Arrow: move focus between tiled windows
                         if event.state() == KeyState::Pressed
                             && _modifiers.logo && !_modifiers.shift && !_modifiers.ctrl
-                            && data.tiling.active
+                            && data.workspaces.tiling_active
                         {
                             let dir = match keysym.modified_sym().raw() {
                                 xkb::KEY_Left => Some(crate::tiling::AdjacentDir::Left),
@@ -336,7 +379,7 @@ impl Lantern {
                             if let Some(dir) = dir {
                                 if let Some(focused) = data.focused_surface.clone() {
                                     if let Some(area) = data.tiling_area_for_surface(&focused) {
-                                        if let Some(target) = data.tiling.find_adjacent(&focused, area, dir) {
+                                        if let Some(target) = data.workspaces.find_adjacent(&focused, area, dir) {
                                             if let Some(window) = data.find_mapped_window(&target) {
                                                 let serial = smithay::utils::SERIAL_COUNTER.next_serial();
                                                 data.focus_window(&window, serial);
@@ -348,19 +391,36 @@ impl Lantern {
                             }
                         }
 
+                        // Super+Shift+Arrow: cycle focused window's snap zone (3×3 grid)
+                        if event.state() == KeyState::Pressed
+                            && _modifiers.logo && _modifiers.shift && !_modifiers.ctrl
+                        {
+                            let zdir = match keysym.modified_sym().raw() {
+                                xkb::KEY_Left  => Some(crate::snap::ZoneDir::Left),
+                                xkb::KEY_Right => Some(crate::snap::ZoneDir::Right),
+                                xkb::KEY_Up    => Some(crate::snap::ZoneDir::Up),
+                                xkb::KEY_Down  => Some(crate::snap::ZoneDir::Down),
+                                _ => None,
+                            };
+                            if let Some(zdir) = zdir {
+                                data.cycle_snap_focused(zdir);
+                                return FilterResult::Intercept(());
+                            }
+                        }
+
                         // Super+Shift+Return: swap focused with next in tree
                         if event.state() == KeyState::Pressed
                             && _modifiers.logo && _modifiers.shift
                             && keysym.modified_sym().raw() == xkb::KEY_Return
-                            && data.tiling.active
+                            && data.workspaces.tiling_active
                         {
                             if let Some(focused) = data.focused_surface.clone() {
                                 if let Some(area) = data.tiling_area_for_surface(&focused) {
                                     // Swap with the next window to the right, or below
-                                    let target = data.tiling.find_adjacent(&focused, area, crate::tiling::AdjacentDir::Right)
-                                        .or_else(|| data.tiling.find_adjacent(&focused, area, crate::tiling::AdjacentDir::Down));
+                                    let target = data.workspaces.find_adjacent(&focused, area, crate::tiling::AdjacentDir::Right)
+                                        .or_else(|| data.workspaces.find_adjacent(&focused, area, crate::tiling::AdjacentDir::Down));
                                     if let Some(target) = target {
-                                        data.tiling.swap(&focused, &target);
+                                        data.workspaces.swap(&focused, &target);
                                         data.apply_tiling_layout();
                                     }
                                 }
@@ -371,7 +431,7 @@ impl Lantern {
                         // Super+Ctrl+Left/Right: resize tiling split
                         if event.state() == KeyState::Pressed
                             && _modifiers.logo && _modifiers.ctrl
-                            && data.tiling.active
+                            && data.workspaces.tiling_active
                         {
                             let delta = match keysym.modified_sym().raw() {
                                 xkb::KEY_Left => Some(-0.05f32),
@@ -380,7 +440,7 @@ impl Lantern {
                             };
                             if let Some(delta) = delta {
                                 if let Some(focused) = data.focused_surface.clone() {
-                                    data.tiling.resize_split(&focused, delta);
+                                    data.workspaces.resize_split(&focused, delta);
                                     data.apply_tiling_layout();
                                 }
                                 return FilterResult::Intercept(());
@@ -466,17 +526,6 @@ impl Lantern {
                         {
                             tracing::info!("Print Screen pressed, launching screenshot");
                             spawn_detached("lntrn-screenshot", &data.socket_name);
-                            return FilterResult::Intercept(());
-                        }
-
-                        // Super+0: reset canvas to origin
-                        if event.state() == KeyState::Pressed
-                            && _modifiers.logo
-                            && keysym.modified_sym().raw() == xkb::KEY_0
-                        {
-                            tracing::info!("Super+0 pressed, resetting canvas to origin");
-                            data.canvas.reset();
-                            data.schedule_render();
                             return FilterResult::Intercept(());
                         }
 
@@ -624,20 +673,13 @@ impl Lantern {
                 }
 
                 // Update SSD button hover state
-                let (cx, cy) = self.canvas.screen_to_canvas(pos.x, pos.y);
-                let canvas_pos_ssd = smithay::utils::Point::from((cx, cy));
-                let ssd_changed = self.ssd_update_hover(canvas_pos_ssd);
+                let ssd_changed = self.ssd_update_hover(pos);
 
                 let under = self.surface_under(pos);
 
                 // Focus follows mouse: focus the window under the pointer
                 if self.focus_follows_mouse {
-                    let canvas_pos = {
-                        let (cx, cy) = self.canvas.screen_to_canvas(pos.x, pos.y);
-                        smithay::utils::Point::from((cx, cy))
-                    };
-                    if let Some((window, _)) = self.space.element_under(canvas_pos) {
-                        let window = window.clone();
+                    if let Some((window, _)) = self.visible_element_under(pos) {
                         if let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(&window) {
                             if self.focused_surface.as_ref() != Some(&surface) {
                                 self.focus_window(&window, serial);
@@ -703,9 +745,7 @@ impl Lantern {
                 }
 
                 // Update SSD button hover state
-                let (cx_abs, cy_abs) = self.canvas.screen_to_canvas(pos.x, pos.y);
-                let canvas_pos_abs = smithay::utils::Point::from((cx_abs, cy_abs));
-                let ssd_changed_abs = self.ssd_update_hover(canvas_pos_abs);
+                let ssd_changed_abs = self.ssd_update_hover(pos);
 
                 let under = self.surface_under(pos);
 
@@ -790,13 +830,7 @@ impl Lantern {
                     && (button == BTN_LEFT || button == BTN_RIGHT)
                 {
                     let pos = pointer.current_location();
-                    let (cx, cy) = self.canvas.screen_to_canvas(pos.x, pos.y);
-                    let canvas_pos = smithay::utils::Point::from((cx, cy));
-                    if let Some((window, _loc)) = self
-                        .space
-                        .element_under(canvas_pos)
-                        .map(|(w, l)| (w.clone(), l))
-                    {
+                    if let Some((window, _loc)) = self.visible_element_under(pos) {
                         self.focus_window(&window, serial);
 
                         let start_data = smithay::input::pointer::GrabStartData {
@@ -810,7 +844,7 @@ impl Lantern {
                             let initial_window_location = self.space.element_location(&window).unwrap_or_default();
                             let was_snapped = self.is_snapped(&wl_surface);
                             let was_maximized = self.is_maximized(&wl_surface);
-                            let was_tiled = self.tiling.contains(&wl_surface);
+                            let was_tiled = self.workspaces.contains(&wl_surface);
                             let grab = crate::grabs::MoveSurfaceGrab {
                                 start_data,
                                 window,
@@ -830,9 +864,9 @@ impl Lantern {
                             let center_y = win_loc.y as f64 + win_geo.size.h as f64 / 2.0;
 
                             let mut edges = crate::grabs::resize_grab::ResizeEdge::empty();
-                            if cx < center_x { edges |= crate::grabs::resize_grab::ResizeEdge::LEFT; }
+                            if pos.x < center_x { edges |= crate::grabs::resize_grab::ResizeEdge::LEFT; }
                             else { edges |= crate::grabs::resize_grab::ResizeEdge::RIGHT; }
-                            if cy < center_y { edges |= crate::grabs::resize_grab::ResizeEdge::TOP; }
+                            if pos.y < center_y { edges |= crate::grabs::resize_grab::ResizeEdge::TOP; }
                             else { edges |= crate::grabs::resize_grab::ResizeEdge::BOTTOM; }
 
                             let initial_rect = smithay::utils::Rectangle::new(win_loc, win_geo.size);
@@ -860,10 +894,8 @@ impl Lantern {
                     && !pointer.is_grabbed()
                 {
                     let pos = pointer.current_location();
-                    let (cx, cy) = self.canvas.screen_to_canvas(pos.x, pos.y);
-                    let canvas_pos = smithay::utils::Point::from((cx, cy));
 
-                    if let Some(action) = self.ssd_handle_click(canvas_pos, serial) {
+                    if let Some(action) = self.ssd_handle_click(pos, serial) {
                         match action {
                             SsdClickAction::Close(surface) => {
                                 if self.animations.start_close(&surface) {
@@ -892,7 +924,7 @@ impl Lantern {
                                 let initial_window_location = self.space.element_location(&window).unwrap_or_default();
                                 let was_snapped = self.is_snapped(&wl_surface);
                                 let was_maximized = self.is_maximized(&wl_surface);
-                                let was_tiled = self.tiling.contains(&wl_surface);
+                                let was_tiled = self.workspaces.contains(&wl_surface);
                                 let grab = crate::grabs::MoveSurfaceGrab {
                                     start_data,
                                     window,
@@ -921,13 +953,21 @@ impl Lantern {
                     && !pointer.is_grabbed()
                 {
                     let pos = pointer.current_location();
-                    let (cx, cy) = self.canvas.screen_to_canvas(pos.x, pos.y);
-                    let canvas_pos = smithay::utils::Point::from((cx, cy));
                     // Only trigger if we're NOT directly on a window surface
-                    if self.space.element_under(canvas_pos).is_none() {
+                    if self.visible_element_under(pos).is_none() {
                         const OUTER_BORDER: f64 = 8.0;
                         let mut found = None;
-                        for window in self.space.elements().cloned().collect::<Vec<_>>() {
+                        let visible_windows: Vec<_> = self.space.elements()
+                            .filter(|w| {
+                                let Some(s) = crate::window_ext::WindowExt::get_wl_surface(*w) else { return true; };
+                                match self.workspaces.window_workspace(&s) {
+                                    Some((out, ws)) => ws == self.workspaces.active_id(&out),
+                                    None => true,
+                                }
+                            })
+                            .cloned()
+                            .collect();
+                        for window in visible_windows {
                             let loc = self.space.element_location(&window).unwrap_or_default();
                             let geo = window.geometry();
                             let expanded: smithay::utils::Rectangle<i32, smithay::utils::Logical> = smithay::utils::Rectangle::new(
@@ -940,7 +980,7 @@ impl Lantern {
                                     geo.size.h + OUTER_BORDER as i32 * 2,
                                 )),
                             );
-                            let cp_i = smithay::utils::Point::from((cx as i32, cy as i32));
+                            let cp_i = smithay::utils::Point::from((pos.x as i32, pos.y as i32));
                             if expanded.contains(cp_i) {
                                 found = Some((window, loc, geo));
                                 break;
@@ -950,9 +990,9 @@ impl Lantern {
                             let center_x = win_loc.x as f64 + win_geo.size.w as f64 / 2.0;
                             let center_y = win_loc.y as f64 + win_geo.size.h as f64 / 2.0;
                             let mut edges = crate::grabs::resize_grab::ResizeEdge::empty();
-                            if cx < center_x { edges |= crate::grabs::resize_grab::ResizeEdge::LEFT; }
+                            if pos.x < center_x { edges |= crate::grabs::resize_grab::ResizeEdge::LEFT; }
                             else { edges |= crate::grabs::resize_grab::ResizeEdge::RIGHT; }
-                            if cy < center_y { edges |= crate::grabs::resize_grab::ResizeEdge::TOP; }
+                            if pos.y < center_y { edges |= crate::grabs::resize_grab::ResizeEdge::TOP; }
                             else { edges |= crate::grabs::resize_grab::ResizeEdge::BOTTOM; }
 
                             let start_data = smithay::input::pointer::GrabStartData {
@@ -976,13 +1016,7 @@ impl Lantern {
 
                 if ButtonState::Pressed == button_state && !pointer.is_grabbed() {
                     let pos = pointer.current_location();
-                    let (cx, cy) = self.canvas.screen_to_canvas(pos.x, pos.y);
-                    let canvas_pos = smithay::utils::Point::from((cx, cy));
-                    if let Some((window, _loc)) = self
-                        .space
-                        .element_under(canvas_pos)
-                        .map(|(w, l)| (w.clone(), l))
-                    {
+                    if let Some((window, _loc)) = self.visible_element_under(pos) {
                         self.focus_window(&window, serial);
                     } else if let Some((surface, _)) = self.surface_under(pos) {
                         // Clicked on a layer surface (e.g. Bottom layer desktop widget)
@@ -1007,54 +1041,6 @@ impl Lantern {
                 self.schedule_render();
             }
             InputEvent::PointerAxis { event, .. } => {
-                // Super+Scroll: canvas zoom centered on cursor
-                if self.super_pressed {
-                    let vertical_amount = event
-                        .amount(Axis::Vertical)
-                        .unwrap_or_else(|| {
-                            event.amount_v120(Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.
-                        });
-                    if vertical_amount != 0.0 {
-                        let pointer = self.seat.get_pointer().unwrap();
-                        let pos = pointer.current_location();
-                        // Scroll up (negative) = zoom in, scroll down (positive) = zoom out
-                        let scale_factor = 1.0 - vertical_amount * 0.02;
-                        self.canvas.zoom_at(pos.x, pos.y, scale_factor);
-                        self.schedule_render();
-                    }
-                    return;
-                }
-
-                // Canvas pan: when zoomed out OR scrolling over empty desktop, pan
-                {
-                    let zoomed_out = self.canvas.zoom < 0.99;
-                    let over_window = if zoomed_out {
-                        false // Always pan when zoomed out
-                    } else {
-                        let pointer = self.seat.get_pointer().unwrap();
-                        let pos = pointer.current_location();
-                        self.surface_under(pos).is_some()
-                    };
-                    if !over_window {
-                        let h_amount = event
-                            .amount(Axis::Horizontal)
-                            .unwrap_or_else(|| {
-                                event.amount_v120(Axis::Horizontal).unwrap_or(0.0) * 15.0 / 120.
-                            });
-                        let v_amount = event
-                            .amount(Axis::Vertical)
-                            .unwrap_or_else(|| {
-                                event.amount_v120(Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.
-                            });
-                        if h_amount != 0.0 || v_amount != 0.0 {
-                            let sensitivity = 3.0;
-                            self.canvas.pan(h_amount * sensitivity, v_amount * sensitivity);
-                            self.schedule_render();
-                        }
-                        return;
-                    }
-                }
-
                 let source = event.source();
                 let horizontal_amount = event
                     .amount(Axis::Horizontal)

@@ -44,6 +44,14 @@ impl XwmHandler for Lantern {
     }
 
     fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
+        // Skip windows that have already been destroyed: Proton/Wine can race
+        // map ↔ destroy during startup, and reparenting a dead window spams
+        // X11 ReparentWindow errors that propagate into the game's Xlib.
+        if !window.alive() {
+            tracing::debug!(class = window.class(), "Ignoring X11 map request for dead window");
+            return;
+        }
+
         tracing::info!(
             class = window.class(),
             title = window.title(),
@@ -168,6 +176,11 @@ impl XwmHandler for Lantern {
         h: Option<u32>,
         _reorder: Option<Reorder>,
     ) {
+        // Configuring a dead window triggers X11 errors that propagate into
+        // the game's Xlib and can abort Proton/Wine.
+        if !window.alive() {
+            return;
+        }
         // Don't let clients resize/reposition themselves out of a
         // compositor-managed state (maximized or fullscreen).
         if let Some(wl_surface) = window.wl_surface() {
@@ -235,6 +248,10 @@ impl XwmHandler for Lantern {
     }
 
     fn fullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
+        if !window.alive() {
+            tracing::debug!("Ignoring X11 fullscreen request for dead window");
+            return;
+        }
         let geo = window.geometry();
         tracing::info!(
             class = window.class(),
@@ -257,6 +274,10 @@ impl XwmHandler for Lantern {
     }
 
     fn unfullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
+        if !window.alive() {
+            tracing::debug!("Ignoring X11 unfullscreen request for dead window");
+            return;
+        }
         let geo = window.geometry();
         tracing::info!(
             class = window.class(),
@@ -337,7 +358,7 @@ impl XwmHandler for Lantern {
         let initial_window_location = self.space.element_location(&win).unwrap_or_default();
         let was_snapped = self.is_snapped(&wl_surface);
         let was_maximized = self.is_maximized(&wl_surface);
-        let was_tiled = self.tiling.contains(&wl_surface);
+        let was_tiled = self.workspaces.contains(&wl_surface);
 
         let grab = MoveSurfaceGrab {
             start_data,

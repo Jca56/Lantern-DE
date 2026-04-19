@@ -18,6 +18,9 @@ use smithay::wayland::dmabuf::{DmabufGlobal, DmabufHandler, DmabufState, ImportN
 use smithay::wayland::fractional_scale::{self, FractionalScaleHandler};
 use smithay::wayland::idle_inhibit::IdleInhibitHandler;
 use smithay::wayland::output::OutputHandler;
+use smithay::wayland::pointer_constraints::{PointerConstraintsHandler, with_pointer_constraint};
+use smithay::input::pointer::PointerHandle;
+use smithay::utils::{Logical, Point};
 use smithay::wayland::selection::data_device::{
     set_data_device_focus, ClientDndGrabHandler, DataDeviceHandler, DataDeviceState,
     ServerDndGrabHandler,
@@ -34,11 +37,12 @@ use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_to
 use smithay::{
     delegate_cursor_shape, delegate_data_control, delegate_data_device, delegate_dmabuf,
     delegate_fractional_scale, delegate_idle_inhibit, delegate_layer_shell, delegate_output,
-    delegate_pointer_gestures, delegate_seat, delegate_viewporter, delegate_xdg_activation,
-    delegate_xdg_decoration,
+    delegate_pointer_constraints, delegate_pointer_gestures, delegate_presentation,
+    delegate_relative_pointer, delegate_seat, delegate_text_input_manager, delegate_viewporter,
+    delegate_xdg_activation, delegate_xdg_decoration,
 };
 
-const LANTERN_OUTPUT_SCALE: f64 = 1.25;
+fn lantern_output_scale() -> f64 { crate::output_scale() }
 
 impl SeatHandler for Lantern {
     type KeyboardFocus = WlSurface;
@@ -93,7 +97,7 @@ impl FractionalScaleHandler for Lantern {
     fn new_fractional_scale(&mut self, surface: WlSurface) {
         let scale = self.space.outputs().next()
             .map(|o| o.current_scale().fractional_scale())
-            .unwrap_or(LANTERN_OUTPUT_SCALE);
+            .unwrap_or(lantern_output_scale());
         with_states(&surface, |states| {
             fractional_scale::with_fractional_scale(states, |fractional_scale| {
                 fractional_scale.set_preferred_scale(scale);
@@ -229,3 +233,41 @@ delegate_dmabuf!(Lantern);
 // --- pointer gestures: touchpad swipe/pinch/hold forwarding to clients ---
 
 delegate_pointer_gestures!(Lantern);
+
+// --- pointer-constraints-v1: games lock/confine pointer for FPS-style input ---
+
+impl PointerConstraintsHandler for Lantern {
+    fn new_constraint(&mut self, surface: &WlSurface, pointer: &PointerHandle<Self>) {
+        // Activate the constraint immediately if the surface has pointer focus.
+        if pointer.current_focus().as_ref() == Some(surface) {
+            with_pointer_constraint(surface, pointer, |constraint| {
+                if let Some(constraint) = constraint {
+                    constraint.activate();
+                }
+            });
+        }
+    }
+
+    fn cursor_position_hint(
+        &mut self,
+        _surface: &WlSurface,
+        _pointer: &PointerHandle<Self>,
+        _location: Point<f64, Logical>,
+    ) {
+        // Hint is informational — our cursor stays hidden while locked, so nothing to do.
+    }
+}
+
+delegate_pointer_constraints!(Lantern);
+
+// --- relative-pointer-v1: raw mouse deltas for FPS/strategy games ---
+
+delegate_relative_pointer!(Lantern);
+
+// --- text-input-v3: required for Unity/Proton games that open text fields ---
+
+delegate_text_input_manager!(Lantern);
+
+// --- presentation-time: frame timing feedback for Unity/VRR/FreeSync ---
+
+delegate_presentation!(Lantern);

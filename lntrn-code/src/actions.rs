@@ -14,6 +14,8 @@ pub fn open_file_dialog(handler: &mut TextHandler) {
             let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
             if !path.is_empty() {
                 let mut e = Editor::new();
+                e.tab_id = handler.next_tab_id;
+                handler.next_tab_id += 1;
                 let _ = e.load_file(std::path::PathBuf::from(path));
                 handler.tabs.push(e);
                 handler.active_tab = handler.tabs.len() - 1;
@@ -27,6 +29,7 @@ pub fn open_file_dialog(handler: &mut TextHandler) {
 pub fn save_file_dialog(handler: &mut TextHandler) {
     if handler.editor_mut().file_path.is_some() {
         let _ = handler.editor_mut().save_file();
+        crate::lsp::glue::notify_did_save(handler);
         return;
     }
     let output = std::process::Command::new("lntrn-file-manager")
@@ -38,6 +41,8 @@ pub fn save_file_dialog(handler: &mut TextHandler) {
             if !path.is_empty() {
                 handler.editor_mut().file_path = Some(std::path::PathBuf::from(path));
                 let _ = handler.editor_mut().save_file();
+                // Treat as a fresh open so the right LSP picks it up.
+                handler.editor_mut().lsp_just_opened = true;
             }
         }
     }

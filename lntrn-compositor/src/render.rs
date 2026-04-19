@@ -49,6 +49,58 @@ render_elements! {
 }
 
 /// Capture a window's surface content into an offscreen texture for close animations.
+fn send_presentation_feedback(
+    space: &smithay::desktop::Space<smithay::desktop::Window>,
+    layer_surfaces: &[smithay::wayland::shell::wlr_layer::LayerSurface],
+    start_time: Instant,
+    output: &smithay::output::Output,
+    rendered: bool,
+) {
+    use smithay::wayland::compositor::with_states;
+    use smithay::wayland::presentation::{PresentationFeedbackCachedState, Refresh};
+    use smithay::reexports::wayland_protocols::wp::presentation_time::server::wp_presentation_feedback;
+
+    let timestamp = start_time.elapsed();
+    let refresh_ns = output
+        .current_mode()
+        .map(|m| 1_000_000_000_000u64 / m.refresh.max(1) as u64)
+        .unwrap_or(16_666_666);
+    let refresh = Refresh::fixed(Duration::from_nanos(refresh_ns));
+    let seq = 0u64;
+
+    let drain = |surface: &WlSurface| {
+        let feedbacks = with_states(surface, |states| {
+            std::mem::take(
+                &mut states
+                    .cached_state
+                    .get::<PresentationFeedbackCachedState>()
+                    .current()
+                    .callbacks,
+            )
+        });
+        for feedback in feedbacks {
+            if rendered {
+                feedback.presented(output, timestamp, refresh, seq, wp_presentation_feedback::Kind::Vsync);
+            } else {
+                feedback.discarded();
+            }
+        }
+    };
+
+    let surfaces: Vec<WlSurface> = space
+        .elements()
+        .filter_map(|w| crate::window_ext::WindowExt::get_wl_surface(w))
+        .collect();
+    for s in &surfaces {
+        smithay::desktop::utils::with_surfaces_surface_tree(s, |sub, _| drain(sub));
+    }
+    for ls in layer_surfaces {
+        if ls.alive() {
+            smithay::desktop::utils::with_surfaces_surface_tree(ls.wl_surface(), |sub, _| drain(sub));
+        }
+    }
+}
+
 fn capture_window_snapshot(
     renderer: &mut GlesRenderer,
     window: &smithay::desktop::Window,
@@ -57,7 +109,10 @@ fn capture_window_snapshot(
 ) -> Option<(GlesTexture, Size<i32, Physical>)> {
     let snap_w = (win_size.w as f64 * output_scale).round() as i32;
     let snap_h = (win_size.h as f64 * output_scale).round() as i32;
-    if snap_w <= 0 || snap_h <= 0 { return None; }
+    // Tiny surfaces (< 16px) are usually transient bootstrap buffers from
+    // Proton/Wine that resize themselves a frame later. Capturing them
+    // racing against the client's realloc triggers GL_INVALID_VALUE.
+    if snap_w < 16 || snap_h < 16 { return None; }
 
     let snap_size = Size::<i32, Physical>::from((snap_w, snap_h));
     let buf_size: Size<i32, BufferCoords> = Size::from((snap_w, snap_h));
@@ -143,6 +198,8 @@ pub fn render_surface(
         }
     }
     state.tiling_anim.tick();
+    state.workspace_anim.tick();
+    state.poll_workspace_ipc();
 
     // Get cursor position relative to this output (logical -> physical)
     let pointer_location = state
@@ -261,9 +318,6 @@ pub fn render_surface(
         None => return,
     };
 
-    // Tick canvas animation
-    let canvas_animating = state.canvas.tick(1.0 / 60.0);
-
     // Iterate windows back-to-front (space stores front-to-back, so reverse).
     // We must collect because the loop body calls state.space.element_location().
     let windows: Vec<_> = state.space.elements().cloned().collect();
@@ -272,36 +326,35 @@ pub fn render_surface(
     // Blur backdrop tracking: (insert index, screen-logical rect)
     let mut blur_backdrops: Vec<(usize, Rectangle<i32, Logical>)> = Vec::new();
 
-    // Canvas transform: compute viewport in canvas-space for culling
-    let canvas_offset = state.canvas.offset;
-    let canvas_zoom = state.canvas.zoom;
+    let output_name_str = output.name();
+    let ws_transition_now = std::time::Instant::now();
 
     for window in windows.iter().rev() {
-        // Window bounding box is in canvas-space
         let win_bbox = {
             let loc = state.space.element_location(window).unwrap_or_default();
             let mut bbox = window.bbox();
             bbox.loc += loc - window.geometry().loc;
             bbox
         };
-
-        // Transform bbox to screen-space for viewport culling
-        let screen_bbox = Rectangle::new(
-            Point::from((
-                ((win_bbox.loc.x as f64 - canvas_offset.0) * canvas_zoom) as i32,
-                ((win_bbox.loc.y as f64 - canvas_offset.1) * canvas_zoom) as i32,
-            )),
-            Size::from((
-                (win_bbox.size.w as f64 * canvas_zoom).ceil() as i32,
-                (win_bbox.size.h as f64 * canvas_zoom).ceil() as i32,
-            )),
-        );
-        if !output_geo.overlaps(screen_bbox) {
+        if !output_geo.overlaps(win_bbox) {
             continue;
         }
 
         let mut location = state.space.element_location(window).unwrap_or_default();
         let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(window) else { continue };
+
+        // Space only contains active-workspace windows (unmap/remap on switch).
+        // Apply slide offset if a transition is running on this output.
+        let mut ws_slide_offset = 0.0f64;
+        if let Some((win_output, win_ws)) = state.workspaces.window_workspace(&surface) {
+            if win_output == output_name_str {
+                if let Some(t) = state.workspace_anim.get(&output_name_str) {
+                    if let Some(off) = t.offset_for(win_ws, output_geo.size.w as f64, ws_transition_now) {
+                        ws_slide_offset = off;
+                    }
+                }
+            }
+        }
 
         // Apply tiling animation: slide from old position/size to target
         let tiling_anim_rect = state.tiling_anim.current_rect(&surface);
@@ -333,20 +386,14 @@ pub fn render_surface(
         // Center the scale transform around the window's center
         let win_geo = window.geometry();
 
-        // Apply canvas transform: canvas-space → screen-space
-        let (screen_x, screen_y) = state.canvas.canvas_to_screen(
-            render_location.x as f64,
-            render_location.y as f64,
-        );
-        let rel_x = screen_x - output_geo.loc.x as f64;
-        let rel_y = screen_y - output_geo.loc.y as f64 + anim_y_offset;
+        let rel_x = render_location.x as f64 - output_geo.loc.x as f64 + ws_slide_offset;
+        let rel_y = render_location.y as f64 - output_geo.loc.y as f64 + anim_y_offset;
 
-        // Include canvas zoom in the combined scale
-        let combined_scale = anim_scale * zoom * canvas_zoom;
+        let combined_scale = anim_scale * zoom;
 
         let phys_loc: Point<i32, Physical> = if (combined_scale - 1.0).abs() > f64::EPSILON {
-            let center_x = rel_x + win_geo.size.w as f64 * canvas_zoom / 2.0;
-            let center_y = rel_y + win_geo.size.h as f64 * canvas_zoom / 2.0;
+            let center_x = rel_x + win_geo.size.w as f64 / 2.0;
+            let center_y = rel_y + win_geo.size.h as f64 / 2.0;
             let scaled_x = center_x - (win_geo.size.w as f64 / 2.0) * combined_scale;
             let scaled_y = center_y - (win_geo.size.h as f64 / 2.0) * combined_scale;
             (
@@ -384,8 +431,8 @@ pub fn render_surface(
         };
 
         let win_log_loc: Point<i32, Logical> = Point::from((
-            (rel_x * canvas_zoom) as i32,
-            (rel_y * canvas_zoom) as i32,
+            rel_x as i32,
+            rel_y as i32,
         ));
 
         // Z-order (front-to-back): corner masks → SSD overlay → window → shadow
@@ -423,14 +470,23 @@ pub fn render_surface(
         let win_render_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
             window.render_elements(renderer, phys_loc, render_scale, alpha);
         let target = if is_fullscreen { &mut fullscreen_elements } else { &mut window_elements };
+        let win_phys_w_raw = (win_geo.size.w as f64 * output_scale) as f32;
+        let win_phys_h_raw = (win_geo.size.h as f64 * output_scale) as f32;
+        let corner_r = crate::ssd::CORNER_RADIUS * output_scale as f32;
+        // Skip rounding when the surface is smaller than the corner diameter —
+        // the SDF mask would be degenerate and tiny transient surfaces (Proton
+        // bootstrap splashes etc.) can otherwise trigger GL_INVALID_VALUE when
+        // their buffer resizes underneath the element.
+        let too_small_for_rounding = win_phys_w_raw < corner_r * 2.0 + 1.0
+            || win_phys_h_raw < corner_r * 2.0 + 1.0;
         let needs_rounding = !is_fullscreen && !is_maximized
             && snap_zone.is_none()
+            && !too_small_for_rounding
             && udev.rounded_tex_shader.is_some();
         if needs_rounding {
             let shader = udev.rounded_tex_shader.as_ref().unwrap();
-            let win_phys_w = (win_geo.size.w as f64 * output_scale * canvas_zoom) as f32;
-            let win_phys_h = (win_geo.size.h as f64 * output_scale * canvas_zoom) as f32;
-            let corner_r = crate::ssd::CORNER_RADIUS * output_scale as f32;
+            let win_phys_w = win_phys_w_raw;
+            let win_phys_h = win_phys_h_raw;
             target.extend(win_render_elements.into_iter().map(|e| {
                 CustomRenderElements::RoundedSurface(
                     crate::rounded_element::RoundedSurfaceElement::new(
@@ -454,8 +510,8 @@ pub fn render_surface(
                     (rel_y - ssd_bar as f64).round() as i32,
                 )),
                 Size::from((
-                    (effective_size.w as f64 * canvas_zoom).round() as i32,
-                    ((effective_size.h + ssd_bar) as f64 * canvas_zoom).round() as i32,
+                    effective_size.w,
+                    effective_size.h + ssd_bar,
                 )),
             );
             blur_backdrops.push((window_elements.len(), log_rect));
@@ -519,14 +575,9 @@ pub fn render_surface(
                 None => continue,
             };
 
-            // Canvas transform: canvas-space → screen-space
             let render_location = cw.location - output_geo.loc;
-            let (screen_x, screen_y) = state.canvas.canvas_to_screen(
-                render_location.x as f64,
-                render_location.y as f64,
-            );
-            let rel_x = screen_x - output_geo.loc.x as f64;
-            let rel_y = screen_y - output_geo.loc.y as f64 + anim_y_offset;
+            let rel_x = render_location.x as f64 - output_geo.loc.x as f64;
+            let rel_y = render_location.y as f64 - output_geo.loc.y as f64 + anim_y_offset;
 
             // SSD bar offset
             let ssd_bar = if cw.had_ssd { crate::ssd::SsdManager::bar_height() } else { 0 };
@@ -534,15 +585,15 @@ pub fn render_surface(
             // Centered scale transform (same logic as live windows)
             let win_w = cw.size.w as f64;
             let win_h = cw.size.h as f64;
-            let center_x = rel_x + win_w * canvas_zoom / 2.0;
-            let center_y = rel_y + win_h * canvas_zoom / 2.0;
-            let scaled_x = center_x - (win_w / 2.0) * anim_scale * canvas_zoom;
-            let scaled_y = center_y - (win_h / 2.0) * anim_scale * canvas_zoom;
+            let center_x = rel_x + win_w / 2.0;
+            let center_y = rel_y + win_h / 2.0;
+            let scaled_x = center_x - (win_w / 2.0) * anim_scale;
+            let scaled_y = center_y - (win_h / 2.0) * anim_scale;
             let phys_x = (scaled_x * output_scale).round() as i32;
             let phys_y = (scaled_y * output_scale).round() as i32;
 
-            let dst_w_log = (win_w * anim_scale * canvas_zoom).round() as i32;
-            let dst_h_log = (win_h * anim_scale * canvas_zoom).round() as i32;
+            let dst_w_log = (win_w * anim_scale).round() as i32;
+            let dst_h_log = (win_h * anim_scale).round() as i32;
             if dst_w_log <= 0 || dst_h_log <= 0 { continue; }
 
             let loc = Point::<f64, Physical>::from((phys_x as f64, phys_y as f64));
@@ -569,8 +620,8 @@ pub fn render_surface(
                 let corner_r = crate::ssd::CORNER_RADIUS;
                 let win_x = (scaled_x).round() as i32;
                 let win_y = (scaled_y).round() as i32 - ssd_bar;
-                let shadow_w = (win_w * anim_scale * canvas_zoom).round() as i32;
-                let shadow_h = ((win_h + ssd_bar as f64) * anim_scale * canvas_zoom).round() as i32;
+                let shadow_w = (win_w * anim_scale).round() as i32;
+                let shadow_h = ((win_h + ssd_bar as f64) * anim_scale).round() as i32;
                 let shadow_area = Rectangle::<i32, Logical>::new(
                     (win_x - shadow_expand, win_y - shadow_expand).into(),
                     (shadow_w + shadow_expand * 2, shadow_h + shadow_expand * 2).into(),
@@ -1024,6 +1075,18 @@ pub fn render_surface(
         state.pending_client_frame_callbacks = false;
     }
 
+    // presentation-time: fire feedback for every surface that has a pending
+    // callback. Games (Unity, Proton) use this for frame pacing — if we
+    // advertise the protocol but never fire feedback, callbacks pile up.
+    // Borrow individual fields so it coexists with the udev &mut borrow above.
+    send_presentation_feedback(
+        &state.space,
+        &state.layer_surfaces,
+        state.start_time,
+        &output,
+        rendered,
+    );
+
     // Only submit to DRM when there's actual damage — skip the atomic
     // commit when nothing changed (saves GPU and bus bandwidth).
     if rendered {
@@ -1045,10 +1108,10 @@ pub fn render_surface(
     let switcher_pending = state.alt_tab_switcher.is_active() && !state.alt_tab_switcher.is_visible();
     if state.animations.has_active()
         || state.tiling_anim.has_active()
+        || state.workspace_anim.is_active()
         || state.alt_tab_switcher.needs_redraw()
         || state.hover_preview.needs_redraw()
         || switcher_pending
-        || canvas_animating
     {
         state.schedule_render();
     }

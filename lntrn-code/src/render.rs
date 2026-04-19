@@ -1,4 +1,4 @@
-use lntrn_render::{Color, FontStyle, FontWeight, Rect, TextRenderer};
+use lntrn_render::{Color, FontWeight, Rect};
 use lntrn_ui::gpu::{
     FontSize, FoxPalette, InteractionContext, MenuBar, MenuEvent, MenuItem, TextLabel,
 };
@@ -6,6 +6,7 @@ use lntrn_ui::gpu::{
 use crate::bracket_match;
 use crate::editor::{self, Editor};
 use crate::find_bar::{draw_find_bar, match_color, FindBar};
+use crate::lsp::{self, ui_render as lsp_ui};
 use crate::minimap;
 use crate::scrollbar;
 use crate::term_panel::TermPanel;
@@ -79,6 +80,10 @@ pub fn render_frame(
     theme: Theme,
     scale: f32,
     cursor_visible: bool,
+    lsp_manager: &lsp::LspManager,
+    hover: &lsp::HoverState,
+    completion: &lsp::CompletionState,
+    lsp_status: &str,
 ) -> (Option<MenuEvent>, Vec<f32>) {
     let Gpu { ctx, painter, text } = gpu;
 
@@ -432,6 +437,27 @@ pub fn render_frame(
         }
     }
 
+    // ── Diagnostics overlay (still inside clip) ──────────────────────
+    if let Some(path) = &editor.file_path {
+        let uri = lsp::path_to_uri(path);
+        let diags = lsp_manager.diagnostics_for_uri(&uri);
+        if !diags.is_empty() {
+            let layout = lsp_ui::Layout {
+                editor,
+                er,
+                content_x,
+                text_y_start,
+                line_h,
+                font_size,
+                scale: s,
+                vis_offsets: &vis_offsets,
+                first_doc,
+                last_doc,
+            };
+            lsp_ui::draw_diagnostics(painter, text, diags, pal, &layout);
+        }
+    }
+
     // Done with editor body — release the clip so chrome can paint freely.
     painter.pop_clip();
     text.pop_clip();
@@ -471,12 +497,22 @@ pub fn render_frame(
     }
 
     // ── Status bar ────────────────────────────────────────────────────
-    crate::status_bar::draw_status_bar(editor, painter, text, pal, wf, hf, s, w, h);
+    let diag_summary = editor
+        .file_path
+        .as_ref()
+        .map(|p| lsp_manager.diagnostic_counts(&lsp::path_to_uri(p)))
+        .unwrap_or((0, 0, 0, 0));
+    crate::status_bar::draw_status_bar(
+        editor, painter, text, pal, wf, hf, s, w, h, diag_summary, lsp_status,
+    );
 
     // ── Context menu (dropdown from menu bar) — overlay layer ──────────
     painter.set_layer(1);
     text.set_layer(1);
     menu_bar.context_menu.update(0.016);
+    // LSP popups (hover, completion) share the overlay layer.
+    lsp_ui::draw_hover(painter, text, pal, hover, s, w, h);
+    lsp_ui::draw_completion(painter, text, pal, completion, s, w, h);
     // Redraw menu bar labels in overlay layer so they aren't covered by the dropdown
     menu_bar.draw_with_labels(painter, text, pal, &labels, w, h, s);
     let menu_event = menu_bar.context_menu.draw(painter, text, input, w, h);

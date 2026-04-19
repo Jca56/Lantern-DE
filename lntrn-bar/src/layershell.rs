@@ -54,12 +54,16 @@ const MENU_OPACITY_SLIDER: u32 = 6;
 const MENU_MOVE_POSITION: u32 = 7;
 const MENU_LAVA_LAMP: u32 = 7;
 const MENU_TRAY_LEFT: u32 = 8;
+const MENU_THEME_FOX_DARK: u32 = 20;
+const MENU_THEME_LANTERN: u32 = 21;
+const MENU_THEME_GROUP: u32 = 100;
 const MENU_APP_PIN: u32 = 10;
 const MENU_APP_LAUNCH: u32 = 11;
 const MENU_APP_CLOSE: u32 = 12;
 const MENU_PROC_PIN: u32 = 13;
 const MENU_PROC_UNPIN: u32 = 14;
 const MENU_PROC_KILL: u32 = 15;
+const MENU_WS_MOVE_HERE: u32 = 16;
 /// Seconds to wait after pointer leaves before hiding.
 const AUTOHIDE_DELAY: f32 = 1.5;
 
@@ -451,14 +455,24 @@ fn slider_to_height(v: f32) -> u32 {
     BAR_HEIGHT_MIN + (range * v.clamp(0.0, 1.0)).round() as u32
 }
 
+/// Match lntrn-terminal's theme backgrounds exactly.
+fn bar_theme_bg(lantern: bool) -> Color {
+    if lantern {
+        Color::from_rgba8(30, 25, 20, 255)
+    } else {
+        Color::from_rgba8(24, 24, 24, 255)
+    }
+}
+
 fn save_settings(
     style: BarStyle, auto_hide: bool, height: u32, opacity: f32,
-    lava_lamp: bool, position_top: bool, tray_left: bool,
+    lava_lamp: bool, position_top: bool, tray_left: bool, lantern_theme: bool,
     pinned: &[crate::appmenu::sysmon::PinnedProcess],
 ) {
     let s = crate::bar_settings::BarSettings {
         floating: style == BarStyle::Floating,
         auto_hide, height, opacity, lava_lamp, position_top, tray_left,
+        lantern_theme,
         pinned_procs: pinned.iter().map(|p| p.name.clone()).collect(),
     };
     s.save();
@@ -493,6 +507,7 @@ pub fn run() -> Result<()> {
     let mut auto_hide = saved.auto_hide;
     let mut position_top = saved.position_top;
     let mut tray_left = saved.tray_left;
+    let mut lantern_theme = saved.lantern_theme;
     let mut bar_opacity: f32 = saved.opacity.clamp(0.0, 1.0);
     let mut lava = crate::lava::LavaLamp::new();
     lava.enabled = saved.lava_lamp;
@@ -547,7 +562,9 @@ pub fn run() -> Result<()> {
     let mut painter = Painter::new(&gpu);
     let mut text = TextRenderer::new(&gpu);
 
-    let palette = FoxPalette::dark();
+    let mut palette = FoxPalette::dark();
+    palette.bg = bar_theme_bg(lantern_theme);
+    crate::theme_state::set_lantern(lantern_theme);
     let menu_style = ContextMenuStyle::from_palette(&palette);
     let mut context_menu = ContextMenu::new(menu_style);
     context_menu.set_scale(state.fractional_scale() as f32);
@@ -580,6 +597,7 @@ pub fn run() -> Result<()> {
     let mut kb_was_active = false;
     let mut app_tray = crate::apptray::AppTray::new();
     let mut app_menu = crate::appmenu::AppMenu::new();
+    let mut workspaces = crate::workspaces::WorkspacesModule::new();
     // Restore pinned sysmon processes from saved settings
     for name in &saved.pinned_procs {
         app_menu.sysmon.pinned.push(crate::appmenu::sysmon::PinnedProcess {
@@ -590,6 +608,8 @@ pub fn run() -> Result<()> {
     }
     // The app_id of the app whose context menu is currently open (if any).
     let mut ctx_menu_app: Option<String> = None;
+    // The workspace id the context menu was opened over (if any).
+    let mut ctx_menu_ws: Option<u32> = None;
     let mut hover_client = crate::hover::HoverClient::new();
     let mut hover_pending: Option<(String, f32, f32, f32)> = None; // (app_id, icon_x, icon_w, bar_h)
     let mut hover_debounce = Instant::now();
@@ -797,6 +817,12 @@ pub fn run() -> Result<()> {
             if ix.active_zone_id() == Some(0xBB_FFFF) {
                 app_menu.toggle();
             }
+            // Check workspace pill click
+            if let Some(active) = ix.active_zone_id() {
+                if let Some(ws) = workspaces.zone_to_ws(active) {
+                    workspaces.send_switch(ws);
+                }
+            }
             // Check app tray clicks — activate if running, launch if pinned but not running
             let toplevels = state.tracker.toplevels();
             if let Some(clicked_app_id) = app_tray.handle_click(&ix, phys_cx, phys_cy, &toplevels) {
@@ -945,9 +971,20 @@ pub fn run() -> Result<()> {
                 // Build context-specific items, then append common bar settings.
                 let mut items: Vec<MenuItem> = Vec::new();
                 ctx_menu_app = None;
+                ctx_menu_ws = None;
+
+                // Check workspace pill right-click first
+                let mut handled = false;
+                if let Some(zone) = ix.zone_at(phys_cx, phys_cy) {
+                    if let Some(ws_id) = workspaces.zone_to_ws(zone) {
+                        ctx_menu_ws = Some(ws_id);
+                        let label = format!("Move Window to WS {}", ws_id);
+                        items.push(MenuItem::action(MENU_WS_MOVE_HERE, &label));
+                        handled = true;
+                    }
+                }
 
                 // Check pinned sysmon pill
-                let mut handled = false;
                 if let Some(zone) = ix.zone_at(phys_cx, phys_cy) {
                     use crate::appmenu::sysmon::ZONE_PINNED_BASE;
                     if zone >= ZONE_PINNED_BASE && zone < ZONE_PINNED_BASE + 64 {
@@ -991,6 +1028,10 @@ pub fn run() -> Result<()> {
                 items.push(MenuItem::action(MENU_OPEN_TERMINAL, "Open Terminal"));
                 items.push(MenuItem::action(MENU_OPEN_FILES, "Open File Manager"));
                 items.push(MenuItem::separator());
+                items.push(MenuItem::submenu(0, "Theme", vec![
+                    MenuItem::radio(MENU_THEME_FOX_DARK, MENU_THEME_GROUP, "Fox Dark", !lantern_theme),
+                    MenuItem::radio(MENU_THEME_LANTERN, MENU_THEME_GROUP, "Lantern", lantern_theme),
+                ]));
                 let pos_label = if position_top { "Move to Bottom" } else { "Move to Top" };
                 items.push(MenuItem::action(MENU_MOVE_POSITION, pos_label));
                 items.push(MenuItem::checkbox(MENU_FLOAT_CHECKBOX, "Float", is_floating));
@@ -1013,6 +1054,10 @@ pub fn run() -> Result<()> {
                 bluetooth.on_scroll(state.scroll_delta);
             } else if audio.open {
                 audio.on_scroll(state.scroll_delta);
+            } else if workspaces.hit_strip(phys_cx, phys_cy) {
+                // Scroll over pills: cycle prev/next workspace
+                let direction = if state.scroll_delta > 0.0 { 1 } else { -1 };
+                workspaces.send_cycle(direction);
             } else {
                 app_menu.on_scroll(state.scroll_delta * scale_f);
             }
@@ -1108,34 +1153,77 @@ pub fn run() -> Result<()> {
         } else {
             (Rect::new(vis_x, vis_y, vis_w, vis_h), radius)
         };
+        let is_floating = gap_phys > 0.5;
+
+        // Taper: when floating and no lava, render the right status-cluster
+        // region shorter than the rest using a single tapered-pill SDF shape.
+        // Fill, shadow, and inner-shadow all share the same SDF so the bevel
+        // follows the taper curve cleanly.
+        let taper = if is_floating && !lava.enabled {
+            let widget_gap = 6.0 * scale_f;
+            let clock_w = clock.measure_width(vis_h);
+            let temp_w = temperature.measure(vis_h, scale_f);
+            let bat_w = battery.as_ref().map_or(0.0, |b| b.measure(vis_h, scale_f));
+            let wifi_w = wifi.measure(vis_h, scale_f);
+            let bt_w = bluetooth.measure(vis_h, scale_f);
+            let audio_w = audio.measure(vis_h, scale_f);
+
+            let right_before_audio = clock_w + 10.0 * scale_f
+                + widget_gap + temp_w
+                + widget_gap + bat_w
+                + widget_gap + wifi_w
+                + widget_gap + bt_w;
+            let audio_x = vis_x + vis_w - right_before_audio - widget_gap - audio_w;
+            let split_x_abs = audio_x - 20.0 * scale_f;
+            let split_x_rel = split_x_abs - vis_x;
+            let taper_amt = 6.0 * scale_f;
+            // Stretch the transition arc: bigger curve = longer, smoother taper.
+            let taper_curve = 40.0 * scale_f;
+            Some((split_x_rel, taper_amt, taper_curve))
+        } else {
+            None
+        };
 
         // Drop shadow — all around when floating, only inner edge when docked
-        let is_floating = gap_phys > 0.5;
         if is_floating {
-            // Floating: shadow on all sides, no offset
             let shadow_sigma = 10.0 * scale_f;
-            painter.shadow(bar_rect, bar_r, shadow_sigma,
-                Color::BLACK.with_alpha(0.50 * bar_opacity), 0.0, 0.0);
+            let shadow_color = Color::BLACK.with_alpha(0.35 * bar_opacity);
+            if let Some((split_x, taper_amt, taper_curve)) = taper {
+                painter.tapered_pill_shadow(
+                    bar_rect, bar_r, split_x, taper_amt, taper_curve,
+                    shadow_sigma, shadow_color, 0.0, 0.0,
+                );
+            } else {
+                painter.shadow(bar_rect, bar_r, shadow_sigma, shadow_color, 0.0, 0.0);
+            }
         } else {
             // Docked: shadow only on inner edge (toward center of screen)
             let shadow_sigma = 12.0 * scale_f;
             let offset_y = if position_top { 3.0 * scale_f } else { -3.0 * scale_f };
             painter.shadow(bar_rect, bar_r, shadow_sigma,
-                Color::BLACK.with_alpha(0.55 * bar_opacity), 0.0, offset_y);
+                Color::BLACK.with_alpha(0.40 * bar_opacity), 0.0, offset_y);
         }
+
+        let bevel_sigma = 3.5 * scale_f;
+        let bevel_color = crate::theme_state::bar_bevel(bar_opacity);
 
         if lava.enabled {
             lava.draw_background(&mut painter, bar_rect.x, bar_rect.y, bar_rect.w, bar_rect.h, bar_r, bar_opacity);
             lava.draw_blobs(&mut painter, bar_rect.x, bar_rect.y, bar_rect.w, bar_rect.h, 1.0);
+            painter.inner_shadow(bar_rect, bar_r, bevel_sigma, bevel_color, 0.0, 0.0);
         } else {
             let bar_bg = palette.bg.with_alpha(bar_opacity);
-            painter.rect_filled(bar_rect, bar_r, bar_bg);
+            if let Some((split_x, taper_amt, taper_curve)) = taper {
+                painter.tapered_pill(bar_rect, bar_r, split_x, taper_amt, taper_curve, bar_bg);
+                painter.tapered_pill_inner_shadow(
+                    bar_rect, bar_r, split_x, taper_amt, taper_curve,
+                    bevel_sigma, bevel_color, 0.0, 0.0,
+                );
+            } else {
+                painter.rect_filled(bar_rect, bar_r, bar_bg);
+                painter.inner_shadow(bar_rect, bar_r, bevel_sigma, bevel_color, 0.0, 0.0);
+            }
         }
-
-        // Inset edge: uniform black on all four sides
-        let bevel_sigma = 3.5 * scale_f;
-        painter.inner_shadow(bar_rect, bar_r, bevel_sigma,
-            Color::BLACK.with_alpha(0.40 * bar_opacity), 0.0, 0.0);
 
         // ── Left: launcher button ─────────────────────────────────
         let launcher_w = app_menu.draw_button(
@@ -1143,8 +1231,16 @@ pub fn run() -> Result<()> {
             vis_x, vis_y, vis_h, scale_f,
         );
 
+        // ── Workspace pills, just after launcher ─────────────────
+        workspaces.poll();
+        let ws_w = workspaces.draw(
+            &mut painter, &mut text, &mut ix, &palette,
+            vis_x + launcher_w, vis_y, vis_h, scale_f,
+            phys_w, total_phys_h,
+        );
+
         // ── Left-side widgets (app tray left mode swaps order) ───
-        let left_after_launcher = vis_x + launcher_w + 8.0 * scale_f;
+        let left_after_launcher = vis_x + launcher_w + ws_w + 8.0 * scale_f;
         let tray_left_x;
         if tray_left {
             // Compute app tray width to position pinned processes after it
@@ -1172,14 +1268,10 @@ pub fn run() -> Result<()> {
         let mut right_used = 0.0f32;
         let widget_gap = 6.0 * scale_f;
 
-        // Clock (rightmost)
-        let font_size = vis_h * 0.78;
-        let clock_padding = font_size * 0.35;
-        let clock_char_w = font_size * 0.52;
-        let clock_text = clock.time_text_len();
-        let clock_w = clock_text as f32 * clock_char_w + clock_padding;
+        // Clock (rightmost) — two-line: time on top, date below
+        let clock_w = clock.measure_width(vis_h);
         clock.draw(
-            &mut text, &mut ix, font_size, palette.text,
+            &mut text, &mut ix, 0.0, palette.text,
             vis_w, vis_h, vis_x, vis_y,
             phys_w, total_phys_h,
         );
@@ -1195,8 +1287,7 @@ pub fn run() -> Result<()> {
             bat.tick();
             let pad = 5.0 * scale_f;
             let usable = vis_h - pad * 2.0;
-            let font_sz = (usable * 0.35).max(14.0);
-            let ih = usable - font_sz - 5.0 * scale_f;
+            let ih = usable * 0.60;
             let iw = ih * 1.5;
             bat.load_icons(&mut icon_cache, &tex_pass, &gpu, iw as u32, ih as u32);
         }
@@ -1243,12 +1334,11 @@ pub fn run() -> Result<()> {
             right_used += tw + widget_gap;
         }
 
-        // Battery (left of temperature) — tighter gap
+        // Battery (left of temperature)
         let mut battery_tex_draws = Vec::new();
         if let Some(bat) = &mut battery {
-            let temp_bat_gap = 2.0 * scale_f;
             let bw = bat.measure(vis_h, scale_f);
-            let bx = vis_x + vis_w - right_used - temp_bat_gap - bw;
+            let bx = vis_x + vis_w - right_used - widget_gap - bw;
             bat_draw_x = bx;
             bat_draw_w = bw;
             let (_, draws) = bat.draw(
@@ -1256,7 +1346,7 @@ pub fn run() -> Result<()> {
                 bx, vis_y, vis_h, scale_f, phys_w, total_phys_h,
             );
             battery_tex_draws = draws;
-            right_used += bw + temp_bat_gap;
+            right_used += bw + widget_gap;
         }
 
         // WiFi (left of battery) — extra gap to separate from battery
@@ -1279,7 +1369,7 @@ pub fn run() -> Result<()> {
         let bt_tex_draws;
         {
             let bw = bluetooth.measure(vis_h, scale_f);
-            let btx = vis_x + vis_w - right_used - bw;
+            let btx = vis_x + vis_w - right_used - widget_gap - bw;
             bt_draw_x = btx;
             bt_draw_w = bw;
             let (_, draws) = bluetooth.draw(
@@ -1287,14 +1377,14 @@ pub fn run() -> Result<()> {
                 btx, vis_y, vis_h, scale_f, phys_w, total_phys_h,
             );
             bt_tex_draws = draws;
-            right_used += bw;
+            right_used += bw + widget_gap;
         }
 
         // Audio (left of bluetooth)
         let audio_tex_draws;
         {
             let aw = audio.measure(vis_h, scale_f);
-            let aud_x = vis_x + vis_w - right_used - aw;
+            let aud_x = vis_x + vis_w - right_used - widget_gap - aw;
             audio_draw_x = aud_x;
             audio_draw_w = aw;
             let (_, draws) = audio.draw(
@@ -1302,7 +1392,7 @@ pub fn run() -> Result<()> {
                 aud_x, vis_y, vis_h, scale_f, phys_w, total_phys_h,
             );
             audio_tex_draws = draws;
-            right_used += aw;
+            right_used += aw + widget_gap;
         }
 
         // System tray (left of audio)
@@ -1441,7 +1531,7 @@ pub fn run() -> Result<()> {
             match event {
                 MenuEvent::CheckboxToggled { id: MENU_FLOAT_CHECKBOX, checked } => {
                     user_style = if checked { BarStyle::Floating } else { BarStyle::Docked };
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, &app_menu.sysmon.pinned);
                     context_menu.close();
                 }
                 MenuEvent::CheckboxToggled { id: MENU_AUTOHIDE_CHECKBOX, checked } => {
@@ -1452,11 +1542,17 @@ pub fn run() -> Result<()> {
                         apply_layer_config(&layer_surface, bar_height, anim_t, auto_hide, position_top);
                         surface.commit();
                     }
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, &app_menu.sysmon.pinned);
                     context_menu.close();
                 }
                 MenuEvent::Action(MENU_OPEN_TERMINAL) => {
                     let _ = std::process::Command::new("lntrn-terminal").spawn();
+                    context_menu.close();
+                }
+                MenuEvent::Action(MENU_WS_MOVE_HERE) => {
+                    if let Some(ws) = ctx_menu_ws.take() {
+                        workspaces.send_move(ws);
+                    }
                     context_menu.close();
                 }
                 MenuEvent::Action(MENU_OPEN_FILES) => {
@@ -1494,34 +1590,41 @@ pub fn run() -> Result<()> {
                 }
                 MenuEvent::Action(MENU_PROC_PIN) => {
                     app_menu.sysmon.pin_right_clicked();
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, &app_menu.sysmon.pinned);
                     context_menu.close();
                 }
                 MenuEvent::Action(MENU_PROC_UNPIN) => {
                     if let Some((name, _)) = app_menu.sysmon.right_clicked_proc.clone() {
                         app_menu.sysmon.unpin(&name);
                     }
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, &app_menu.sysmon.pinned);
                     context_menu.close();
                 }
                 MenuEvent::Action(MENU_PROC_KILL) => {
                     app_menu.sysmon.kill_right_clicked();
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, &app_menu.sysmon.pinned);
                     context_menu.close();
                 }
                 MenuEvent::CheckboxToggled { id: MENU_LAVA_LAMP, checked } => {
                     lava.enabled = checked;
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, &app_menu.sysmon.pinned);
+                    context_menu.close();
+                }
+                MenuEvent::RadioSelected { group: MENU_THEME_GROUP, id } => {
+                    lantern_theme = id == MENU_THEME_LANTERN;
+                    palette.bg = bar_theme_bg(lantern_theme);
+                    crate::theme_state::set_lantern(lantern_theme);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, &app_menu.sysmon.pinned);
                     context_menu.close();
                 }
                 MenuEvent::CheckboxToggled { id: MENU_TRAY_LEFT, checked } => {
                     tray_left = checked;
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, &app_menu.sysmon.pinned);
                     context_menu.close();
                 }
                 MenuEvent::SliderChanged { id: MENU_OPACITY_SLIDER, value } => {
                     bar_opacity = value.clamp(0.0, 1.0);
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, &app_menu.sysmon.pinned);
                 }
                 MenuEvent::SliderChanged { id: MENU_HEIGHT_SLIDER, value } => {
                     bar_height = slider_to_height(value);
@@ -1532,13 +1635,13 @@ pub fn run() -> Result<()> {
                         vp.set_destination(state.width as i32, state.height as i32);
                     }
                     surface.commit();
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, &app_menu.sysmon.pinned);
                 }
                 MenuEvent::Action(MENU_MOVE_POSITION) => {
                     position_top = !position_top;
                     apply_layer_config(&layer_surface, bar_height, anim_t, auto_hide, position_top);
                     surface.commit();
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, &app_menu.sysmon.pinned);
                     context_menu.close();
                 }
                 MenuEvent::Action(id) if id >= crate::dbusmenu::DBUSMENU_ID_BASE => {

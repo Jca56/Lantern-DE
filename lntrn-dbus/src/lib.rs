@@ -54,6 +54,7 @@ pub enum Value {
     Int32(i32),
     Uint32(u32),
     Int64(i64),
+    Uint64(u64),
     Bool(bool),
     Double(f64),
     Bytes(Vec<u8>),
@@ -84,6 +85,13 @@ impl Value {
     }
     pub fn as_u32(&self) -> Option<u32> {
         match self { Value::Uint32(v) => Some(*v), _ => None }
+    }
+    pub fn as_u64(&self) -> Option<u64> {
+        match self {
+            Value::Uint64(v) => Some(*v),
+            Value::Uint32(v) => Some(*v as u64),
+            _ => None,
+        }
     }
     pub fn as_bool(&self) -> Option<bool> {
         match self { Value::Bool(v) => Some(*v), _ => None }
@@ -623,6 +631,23 @@ impl<'a> BodyReader<'a> {
         v
     }
 
+    pub fn read_u64(&mut self) -> u64 {
+        self.align(8);
+        if self.remaining() < 8 { return 0; }
+        let v = u64::from_le_bytes([
+            self.data[self.pos], self.data[self.pos+1],
+            self.data[self.pos+2], self.data[self.pos+3],
+            self.data[self.pos+4], self.data[self.pos+5],
+            self.data[self.pos+6], self.data[self.pos+7],
+        ]);
+        self.pos += 8;
+        v
+    }
+
+    pub fn read_i64(&mut self) -> i64 {
+        self.read_u64() as i64
+    }
+
     pub fn read_string(&mut self) -> String {
         self.align(4);
         let len = self.read_u32() as usize;
@@ -643,6 +668,8 @@ impl<'a> BodyReader<'a> {
             'b' => Value::Bool(self.read_bool()),
             'i' | 'n' => Value::Int32(self.read_i32()),
             'u' | 'q' => Value::Uint32(self.read_u32()),
+            't' => Value::Uint64(self.read_u64()),
+            'x' => Value::Int64(self.read_i64()),
             's' => Value::String(self.read_string()),
             'o' => Value::ObjectPath(self.read_string()),
             'v' => {

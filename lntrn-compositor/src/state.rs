@@ -27,7 +27,10 @@ use smithay::{
         fractional_scale::FractionalScaleManagerState,
         idle_inhibit::IdleInhibitManagerState,
         output::OutputManagerState,
+        pointer_constraints::PointerConstraintsState,
         pointer_gestures::PointerGesturesState,
+        presentation::PresentationState,
+        relative_pointer::RelativePointerManagerState,
         selection::data_device::DataDeviceState,
         selection::wlr_data_control::DataControlState,
         shell::{
@@ -36,6 +39,7 @@ use smithay::{
         },
         shm::ShmState,
         socket::ListeningSocketSource,
+        text_input::TextInputManagerState,
         viewporter::ViewporterState,
         xdg_activation::XdgActivationState,
     },
@@ -43,7 +47,6 @@ use smithay::{
 
 use smithay::backend::renderer::gles::GlesTexture;
 use crate::animation::{AnimationState, ClosingWindow};
-use crate::canvas::Canvas;
 use crate::input::AudioRepeat;
 use crate::cursor::CursorState;
 use crate::gestures::GestureState;
@@ -55,7 +58,9 @@ use crate::handlers::xdg_foreign::XdgForeignState;
 use crate::hot_corners::HotCornerState;
 use crate::snap::SnappedWindow;
 use crate::switcher::AltTabSwitcher;
-use crate::tiling::PerOutputTiling;
+use crate::workspace_anim::WorkspaceAnimState;
+use crate::workspace_ipc::WorkspaceIpc;
+use crate::workspaces::PerOutputWorkspaces;
 use crate::tiling_anim::TilingAnimationState;
 use crate::udev::UdevData;
 use crate::wallpaper::WallpaperState;
@@ -170,6 +175,10 @@ pub struct Lantern {
     pub foreign_toplevel_state: ForeignToplevelManagerState,
     pub output_management_state: OutputManagementState,
     pub pointer_gestures_state: PointerGesturesState,
+    pub pointer_constraints_state: PointerConstraintsState,
+    pub relative_pointer_state: RelativePointerManagerState,
+    pub text_input_manager_state: TextInputManagerState,
+    pub presentation_state: PresentationState,
     pub popups: PopupManager,
 
     pub seat: Seat<Self>,
@@ -212,10 +221,15 @@ pub struct Lantern {
     pub closing_windows: Vec<ClosingWindow>,
     /// Per-window snapshot textures captured each render frame for close animations.
     pub window_snapshots: HashMap<WlSurface, (GlesTexture, Size<i32, Physical>)>,
-    pub tiling: PerOutputTiling,
+    pub workspaces: PerOutputWorkspaces,
     pub tiling_anim: TilingAnimationState,
+    pub workspace_anim: WorkspaceAnimState,
+    pub workspace_ipc: WorkspaceIpc,
+    /// Windows temporarily removed from `space` because their workspace is
+    /// hidden. Keyed by the window's toplevel surface so we can re-map them
+    /// on workspace switch.
+    pub unmapped_windows: HashMap<WlSurface, Window>,
     pub gesture: GestureState,
-    pub canvas: Canvas,
 
     // Scratchpad (dropdown terminal)
     pub scratchpad_surface: Option<WlSurface>,
@@ -282,6 +296,11 @@ impl Lantern {
         let output_management_state = OutputManagementState::new(&dh);
         let xdg_foreign_state = XdgForeignState::new(&dh);
         let pointer_gestures_state = PointerGesturesState::new::<Self>(&dh);
+        let pointer_constraints_state = PointerConstraintsState::new::<Self>(&dh);
+        let relative_pointer_state = RelativePointerManagerState::new::<Self>(&dh);
+        let text_input_manager_state = TextInputManagerState::new::<Self>(&dh);
+        // clk_id 1 = CLOCK_MONOTONIC (libc::CLOCK_MONOTONIC)
+        let presentation_state = PresentationState::new::<Self>(&dh, libc::CLOCK_MONOTONIC as u32);
         let xwayland_shell_state = smithay::wayland::xwayland_shell::XWaylandShellState::new::<Self>(&dh);
 
         let mut seat_state = SeatState::new();
@@ -322,6 +341,10 @@ impl Lantern {
             foreign_toplevel_state,
             output_management_state,
             pointer_gestures_state,
+            pointer_constraints_state,
+            relative_pointer_state,
+            text_input_manager_state,
+            presentation_state,
             popups,
             seat,
             cursor: CursorState::new(&crate::input::read_input_setting("cursor_theme", "default")),
@@ -356,10 +379,12 @@ impl Lantern {
             animations: AnimationState::new(),
             closing_windows: Vec::new(),
             window_snapshots: HashMap::new(),
-            tiling: PerOutputTiling::new(),
+            workspaces: PerOutputWorkspaces::new(),
             tiling_anim: TilingAnimationState::new(),
+            workspace_anim: WorkspaceAnimState::new(),
+            workspace_ipc: WorkspaceIpc::new(),
+            unmapped_windows: HashMap::new(),
             gesture: GestureState::new(),
-            canvas: Canvas::new(),
             scratchpad_surface: None,
             scratchpad_pending: false,
             hot_corner: HotCornerState::new(),
@@ -422,7 +447,6 @@ impl Lantern {
         use smithay::wayland::shell::wlr_layer::Layer;
 
         // Check layer surfaces first (Top/Overlay are above windows)
-        // Layer surfaces are in screen-space — no canvas transform
         // Use the output the pointer is on for layer surface positioning
         // Skip if a fullscreen window covers this output — fullscreen takes priority
         if let Some(output) = self.output_at_point(pos) {
@@ -445,7 +469,7 @@ impl Lantern {
                     continue;
                 }
                 let ls_loc = crate::render::layer_surface_position_logical(&cached, output_geo);
-                let size = cached.size;
+                let size = crate::layer_position::layer_surface_effective_size(&cached, output_geo);
                 let rect = Rectangle::new(ls_loc, size);
                 let pos_i = Point::from((pos.x as i32, pos.y as i32));
                 if rect.contains(pos_i) {
@@ -463,21 +487,13 @@ impl Lantern {
             }
         }
 
-        // Transform screen-space pointer to canvas-space for window hit-testing
-        let (cx, cy) = self.canvas.screen_to_canvas(pos.x, pos.y);
-        let canvas_pos = Point::from((cx, cy));
-
-        // Check windows in the space (which live in canvas-space)
+        // Space only contains windows on active workspaces (unmapped elsewhere).
         let window_hit = self.space
-            .element_under(canvas_pos)
+            .element_under(pos)
             .and_then(|(window, location)| {
                 window
-                    .surface_under(canvas_pos - location.to_f64(), WindowSurfaceType::ALL)
-                    .map(|(s, p)| {
-                        let canvas_abs = (p + location).to_f64();
-                        let (sx, sy) = self.canvas.canvas_to_screen(canvas_abs.x, canvas_abs.y);
-                        (s, Point::from((sx, sy)))
-                    })
+                    .surface_under(pos - location.to_f64(), WindowSurfaceType::ALL)
+                    .map(|(s, p)| (s, (p + location).to_f64()))
             });
         if window_hit.is_some() {
             return window_hit;

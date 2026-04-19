@@ -76,11 +76,21 @@ fn handle_left_press(handler: &mut TextHandler, event_loop: &ActiveEventLoop) ->
                 }
             }
             ZONE_EDITOR => {
-                handler.editor_mut().clear_selection();
+                // Ctrl+Left click → goto-definition at the clicked position.
+                // The click still moves the caret so the LSP sees the right
+                // cursor location for the request.
                 if let Some((cx, cy)) = handler.input.cursor() {
                     handler.click_to_cursor(cx, cy);
-                    handler.editor_mut().begin_selection();
-                    handler.dragging = true;
+                    let ctrl = handler
+                        .modifiers
+                        .contains(winit::keyboard::ModifiersState::CONTROL);
+                    if ctrl {
+                        crate::lsp::glue::request_definition(handler, false);
+                    } else {
+                        handler.editor_mut().clear_selection();
+                        handler.editor_mut().begin_selection();
+                        handler.dragging = true;
+                    }
                 }
             }
             ZONE_NEW_TAB => {
@@ -103,6 +113,8 @@ fn handle_left_press(handler: &mut TextHandler, event_loop: &ActiveEventLoop) ->
                 let idx = (z - ZONE_SIDEBAR_BASE) as usize;
                 if let Some(path) = handler.sidebar.on_row_clicked(idx) {
                     let mut e = Editor::new();
+                    e.tab_id = handler.next_tab_id;
+                    handler.next_tab_id += 1;
                     let _ = e.load_file(path);
                     handler.tabs.push(e);
                     handler.active_tab = handler.tabs.len() - 1;

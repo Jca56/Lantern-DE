@@ -6,6 +6,7 @@ mod editor;
 mod find_bar;
 mod format;
 mod keys;
+mod lsp;
 mod markdown;
 mod minimap;
 mod mouse;
@@ -43,11 +44,14 @@ use tab_strip::TabDragState;
 use term_panel::TermPanel;
 use theme::Theme;
 
-// ── User events (sent from PTY reader threads) ────────────────────────────
+// ── User events (sent from background reader threads) ────────────────────
 
 #[derive(Debug)]
 pub enum UserEvent {
     PtyOutput,
+    /// Wake the main loop to drain `LspManager`'s MPSC channel. Sent from
+    /// each LSP server's reader thread when a message arrives.
+    LspMessage,
 }
 
 // ── Hit zone IDs ────────────────────────────────────────────────────────────
@@ -127,6 +131,18 @@ pub(crate) struct TextHandler {
     pub(crate) proxy: EventLoopProxy<UserEvent>,
     /// Wall-clock of the last animation tick — used for dt-based easing.
     pub(crate) last_anim_tick: Instant,
+    /// LSP client manager — spawns rust-analyzer / pyright / tsserver on
+    /// demand and routes diagnostics / hover / completions back to us.
+    pub(crate) lsp: lsp::LspManager,
+    /// Hover popup state (Ctrl+hover shows type info from the LSP server).
+    pub(crate) hover: lsp::HoverState,
+    /// Completion popup (Ctrl+Space).
+    pub(crate) completion: lsp::CompletionState,
+    /// Time the cursor last moved — used to debounce hover requests.
+    pub(crate) last_cursor_move: Instant,
+    /// Queued diagnostic status line — set by log messages like
+    /// "rust-analyzer: indexing…".
+    pub(crate) lsp_status: String,
 }
 
 impl TextHandler {
@@ -150,6 +166,14 @@ impl TextHandler {
         }
         let theme = theme::load_active();
         let palette = theme.palette();
+
+        // LspManager's wake closure just pokes the event loop; the actual
+        // data flows through the manager's own MPSC channel.
+        let wake_proxy = proxy.clone();
+        let lsp = lsp::LspManager::new(move || {
+            let _ = wake_proxy.send_event(UserEvent::LspMessage);
+        });
+
         Self {
             window: None,
             gpu: None,
@@ -176,6 +200,11 @@ impl TextHandler {
             term_panel: None,
             proxy,
             last_anim_tick: Instant::now(),
+            lsp,
+            hover: lsp::HoverState::default(),
+            completion: lsp::CompletionState::default(),
+            last_cursor_move: Instant::now(),
+            lsp_status: String::new(),
         }
     }
 
@@ -248,8 +277,10 @@ impl TextHandler {
         event_loop.exit();
     }
 
-    /// Set cursor from a click at physical (cx, cy), using real text measurement.
-    fn click_to_cursor(&mut self, cx: f32, cy: f32) {
+    /// Compute the document (line, col) a physical-pixel point resolves to in
+    /// the active editor. Returns None if the GPU context isn't live yet or
+    /// the point sits outside the editor body.
+    pub(crate) fn doc_pos_at(&mut self, cx: f32, cy: f32) -> Option<(usize, usize)> {
         let s = self.scale;
         let (wf, hf) = self.window_size();
         let font_size = editor::FONT_SIZE * s;
@@ -259,19 +290,26 @@ impl TextHandler {
             0.0
         };
         let er = render::editor_rect(wf, hf, s, self.find_bar.height(s), sidebar_w);
+        if cx < er.x || cx > er.x + er.w || cy < er.y || cy > er.y + er.h {
+            return None;
+        }
         let active = self.active_tab;
         let editor = &mut self.tabs[active];
-
         let (doc_line, row_start, row_end) = editor.wrap_row_at_y(cy, er, s);
-        editor.cursor_line = doc_line;
 
-        if let Some(gpu) = &mut self.gpu {
-            let base = render::measure_to_offset(
-                &mut gpu.text, editor, doc_line, row_start, font_size,
-            );
-            let col = editor.col_at_x(cx, doc_line, row_start, row_end, er, s, |byte_off| {
-                render::measure_to_offset(&mut gpu.text, editor, doc_line, byte_off, font_size) - base
-            });
+        let gpu = self.gpu.as_mut()?;
+        let base = render::measure_to_offset(&mut gpu.text, editor, doc_line, row_start, font_size);
+        let col = editor.col_at_x(cx, doc_line, row_start, row_end, er, s, |byte_off| {
+            render::measure_to_offset(&mut gpu.text, editor, doc_line, byte_off, font_size) - base
+        });
+        Some((doc_line, col))
+    }
+
+    /// Set cursor from a click at physical (cx, cy).
+    fn click_to_cursor(&mut self, cx: f32, cy: f32) {
+        if let Some((line, col)) = self.doc_pos_at(cx, cy) {
+            let editor = self.editor_mut();
+            editor.cursor_line = line;
             editor.cursor_col = col;
         }
     }
@@ -293,10 +331,13 @@ impl ApplicationHandler<UserEvent> for TextHandler {
                     panel.drain();
                 }
                 self.needs_redraw = true;
-                if let Some(window) = &self.window {
-                    window.request_redraw();
-                }
             }
+            UserEvent::LspMessage => {
+                lsp::glue::drain_inbound(self);
+            }
+        }
+        if let Some(window) = &self.window {
+            window.request_redraw();
         }
     }
 
@@ -353,6 +394,13 @@ impl ApplicationHandler<UserEvent> for TextHandler {
             WindowEvent::CursorMoved { position, .. } => {
                 let (cx, cy) = (position.x as f32, position.y as f32);
                 self.input.on_cursor_moved(cx, cy);
+                self.last_cursor_move = Instant::now();
+                // Dismiss hover popup once the mouse moves meaningfully;
+                // the debounced trigger in about_to_wait will re-request it.
+                if self.hover.visible {
+                    self.hover.clear();
+                    self.needs_redraw = true;
+                }
 
                 if mouse::update_scrollbar_drag(self, cx, cy) {
                     // scrollbar drag consumes the move
@@ -504,6 +552,10 @@ impl ApplicationHandler<UserEvent> for TextHandler {
                 let editor = &mut self.tabs[active];
                 let find_bar = &self.find_bar;
                 let sidebar = &mut self.sidebar;
+                let lsp_manager = &self.lsp;
+                let hover = &self.hover;
+                let completion = &self.completion;
+                let lsp_status = self.lsp_status.as_str();
                 let (event, edges) = if let Some(gpu) = self.gpu.as_mut() {
                     render::render_frame(
                         gpu,
@@ -521,6 +573,10 @@ impl ApplicationHandler<UserEvent> for TextHandler {
                         theme,
                         scale,
                         cursor_vis,
+                        lsp_manager,
+                        hover,
+                        completion,
+                        lsp_status,
                     )
                 } else {
                     (None, Vec::new())
@@ -580,6 +636,10 @@ impl ApplicationHandler<UserEvent> for TextHandler {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         let now = Instant::now();
+
+        // ── LSP document sync + Ctrl+hover debounce ───────────────────
+        lsp::glue::flush_document_state(self);
+        lsp::glue::tick_ctrl_hover(self, now);
 
         // ── Smooth scroll animation tick ──────────────────────────────
         let dt = now.duration_since(self.last_anim_tick).as_secs_f32();

@@ -46,7 +46,17 @@ impl Audio {
 
     pub fn measure(&self, bar_h: f32, scale: f32) -> f32 {
         let pad = 9.0 * scale;
-        (bar_h - pad * 2.0).max(16.0)
+        let icon_size = (bar_h - pad * 2.0).max(16.0);
+        // The speaker SVG grows horizontally with volume (extra wave bars).
+        // Shrink the reported width at low volumes so adjacent widgets sit
+        // visually closer — the icon itself still renders at icon_size.
+        let factor = match self.icon_key() {
+            "sound-muted" => 0.72,
+            "sound-low" => 0.82,
+            "sound-medium" => 0.92,
+            _ => 1.0,
+        };
+        icon_size * factor
     }
 
     pub fn draw<'a>(
@@ -154,7 +164,7 @@ impl Audio {
         );
         let bg = Rect::new(popup_x, popup_y, popup_w, popup_h);
         painter.rect_filled(bg, corner_r, palette.bg);
-        painter.rect_stroke_sdf(bg, corner_r, 3.0 * scale, Color::BLACK);
+        painter.rect_stroke_sdf(bg, corner_r, 3.0 * scale, crate::theme_state::popup_border());
 
         let cx = popup_x + pad;
         let cw = popup_w - pad * 2.0;

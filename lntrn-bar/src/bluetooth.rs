@@ -22,6 +22,8 @@ const ZONE_DEVICE_SEND: u32 = 0xDD_0400;
 const ZONE_TRANSFER_CANCEL: u32 = 0xDD_0500;
 const ZONE_PAIR_CONFIRM: u32 = 0xDD_0600;
 const ZONE_PAIR_REJECT: u32 = 0xDD_0601;
+const ZONE_RECV_ACCEPT: u32 = 0xDD_0700;
+const ZONE_RECV_REJECT: u32 = 0xDD_0701;
 
 pub struct Bluetooth {
     powered: bool,
@@ -47,6 +49,15 @@ pub struct Bluetooth {
     obex_available: bool,
     // Pairing
     pair_request: Option<(String, u32)>, // (device_name, passkey) — 0 means no passkey
+    // Incoming file authorization
+    incoming_request: Option<IncomingRequest>,
+}
+
+pub struct IncomingRequest {
+    pub auth_id: u32,
+    pub device_name: String,
+    pub filename: String,
+    pub size: u64,
 }
 
 impl Bluetooth {
@@ -75,6 +86,7 @@ impl Bluetooth {
             pick_child: None,
             obex_available: true,
             pair_request: None,
+            incoming_request: None,
         }
     }
 
@@ -135,10 +147,13 @@ impl Bluetooth {
                         if total > 0 { t.total = total; }
                     }
                 }
-                TransferEvent::Complete { id } => {
+                TransferEvent::Complete { id, final_path } => {
                     if let Some(t) = self.transfers.iter_mut().find(|t| t.id == id) {
                         t.transferred = t.total;
                         t.done = true;
+                    }
+                    if let Some(p) = final_path {
+                        tracing::info!("bluetooth: received file saved to {p}");
                     }
                 }
                 TransferEvent::Failed { id, error } => {
@@ -147,6 +162,12 @@ impl Bluetooth {
                 }
                 TransferEvent::ObexUnavailable => {
                     self.obex_available = false;
+                }
+                TransferEvent::IncomingRequest { auth_id, device_name, filename, size } => {
+                    self.incoming_request = Some(IncomingRequest {
+                        auth_id, device_name, filename, size,
+                    });
+                    self.open = true; // auto-open popup to show the request
                 }
             }
         }
@@ -181,7 +202,11 @@ impl Bluetooth {
         let step = dt / 0.2;
         let a = step_anim(&mut self.power_anim, self.powered, step);
         let b = step_anim(&mut self.discoverable_anim, self.discoverable, step);
-        a || b
+        // Keep the bar in the continuous-render path while a transfer is live
+        // so Progress events are drawn as they arrive instead of at the 1s
+        // idle-poll tick.
+        let transfers_live = self.transfers.iter().any(|t| !t.done);
+        a || b || transfers_live
     }
 
     pub fn handle_click(&mut self, ix: &InteractionContext, phys_cx: f32, phys_cy: f32) {
@@ -196,6 +221,18 @@ impl Bluetooth {
             } else if zone == ZONE_PAIR_REJECT {
                 let _ = self.cmd_tx.send(BtCmd::RejectPair);
                 self.pair_request = None;
+            } else if zone == ZONE_RECV_ACCEPT {
+                if let Some(req) = self.incoming_request.take() {
+                    let _ = self.transfer_cmd_tx.send(
+                        TransferCmd::AuthorizeReceive { auth_id: req.auth_id },
+                    );
+                }
+            } else if zone == ZONE_RECV_REJECT {
+                if let Some(req) = self.incoming_request.take() {
+                    let _ = self.transfer_cmd_tx.send(
+                        TransferCmd::RejectReceive { auth_id: req.auth_id },
+                    );
+                }
             } else if zone == ZONE_BT_SCAN {
                 if !self.scanning {
                     self.scanning = true;
@@ -278,7 +315,15 @@ impl Bluetooth {
         self.icons_loaded = true;
     }
     pub fn measure(&self, bar_h: f32, scale: f32) -> f32 {
-        (bar_h - 18.0 * scale).max(16.0)
+        let icon_size = (bar_h - 18.0 * scale).max(16.0);
+        // bt-connected shows connection dots; off/on are narrower. Shrink the
+        // reported width when dots aren't drawn so neighboring widgets sit
+        // visually closer.
+        let factor = match self.icon_key() {
+            "bt-connected" => 1.0,
+            _ => 0.82,
+        };
+        icon_size * factor
     }
     pub fn draw<'a>(
         &self, _painter: &mut Painter, _text: &mut TextRenderer,
@@ -325,7 +370,7 @@ impl Bluetooth {
         );
         let bg = Rect::new(popup_x, popup_y, popup_w, popup_h);
         painter.rect_filled(bg, s.corner_r, palette.bg);
-        painter.rect_stroke_sdf(bg, s.corner_r, 3.0 * scale, Color::BLACK);
+        painter.rect_stroke_sdf(bg, s.corner_r, 3.0 * scale, crate::theme_state::popup_border());
 
         let cx = popup_x + s.pad;
         let cw = popup_w - s.pad * 2.0;
@@ -349,6 +394,41 @@ impl Bluetooth {
             .hovered(ix.is_hovered(&r)).scale(scale).transition(self.discoverable_anim)
             .draw(painter, text, palette, screen_w, screen_h);
         y += s.toggle_h + s.section_gap;
+
+        // Incoming file request (if any)
+        if let Some(ref req) = self.incoming_request {
+            let ir_h = s.body_font * 3.0 + s.scan_h + s.section_gap * 2.0;
+            let ir_rect = Rect::new(cx, y, cw, ir_h);
+            painter.rect_filled(ir_rect, 8.0 * scale, palette.accent.with_alpha(0.12));
+            painter.rect_stroke_sdf(ir_rect, 8.0 * scale, 1.0 * scale,
+                palette.accent.with_alpha(0.4));
+            let ly = y + s.section_gap * 0.5;
+            text.queue(&format!("Incoming file from {}", req.device_name), s.body_font,
+                cx + 10.0 * scale, ly, palette.text, cw - 20.0 * scale, screen_w, screen_h);
+            text.queue(&req.filename, s.body_font, cx + 10.0 * scale,
+                ly + s.body_font + 2.0 * scale, palette.text_secondary,
+                cw - 20.0 * scale, screen_w, screen_h);
+            if req.size > 0 {
+                text.queue(&format_bytes(req.size), s.small_font, cx + 10.0 * scale,
+                    ly + s.body_font * 2.0 + 4.0 * scale, palette.muted,
+                    cw - 20.0 * scale, screen_w, screen_h);
+            }
+            let btn_y = y + ir_h - s.scan_h - s.section_gap * 0.5;
+            let btn_w = (cw - 16.0 * scale) / 2.0;
+            let acc_r = Rect::new(cx + 4.0 * scale, btn_y, btn_w, s.scan_h);
+            let acc_s = ix.add_zone(ZONE_RECV_ACCEPT, acc_r);
+            let ac = if acc_s.is_hovered() { palette.accent } else { palette.accent.with_alpha(0.7) };
+            painter.rect_filled(acc_r, 6.0 * scale, ac);
+            text.queue("Accept", s.body_font, acc_r.x + btn_w / 2.0 - 34.0 * scale,
+                btn_y + (s.scan_h - s.body_font) / 2.0, palette.text, btn_w, screen_w, screen_h);
+            let rej_r = Rect::new(cx + 12.0 * scale + btn_w, btn_y, btn_w, s.scan_h);
+            let rej_s = ix.add_zone(ZONE_RECV_REJECT, rej_r);
+            let rc = if rej_s.is_hovered() { palette.danger } else { palette.danger.with_alpha(0.5) };
+            painter.rect_filled(rej_r, 6.0 * scale, rc);
+            text.queue("Reject", s.body_font, rej_r.x + btn_w / 2.0 - 30.0 * scale,
+                btn_y + (s.scan_h - s.body_font) / 2.0, palette.text, btn_w, screen_w, screen_h);
+            y += ir_h + s.section_gap;
+        }
 
         // Pairing request (if any)
         if let Some((ref name, passkey)) = self.pair_request {
@@ -515,6 +595,9 @@ impl Bluetooth {
     fn content_height(&self, s: &PopupSizes, all_devs: &[BtDevice], dev_count: usize) -> f32 {
         let mut h = s.title_font.max(s.toggle_h) + s.section_gap; // title
         h += s.toggle_h + s.section_gap; // discoverable toggle
+        if self.incoming_request.is_some() {
+            h += s.body_font * 3.0 + s.scan_h + s.section_gap * 2.0 + s.section_gap; // incoming
+        }
         if self.pair_request.is_some() {
             h += s.body_font * 2.0 + s.scan_h + s.section_gap * 2.0 + s.section_gap; // pair request
         }
@@ -559,6 +642,16 @@ fn icon_btn(
     if ix.add_zone(zone, r).is_hovered() { p.rect_filled(r, 4.0 * sc, color.with_alpha(0.2)); }
     t.queue(label, font, x + (size - font * 0.6) / 2.0, by + (size - font) / 2.0,
         color, size, sw, sh);
+}
+
+fn format_bytes(n: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+    if n >= GB { format!("{:.2} GB", n as f64 / GB as f64) }
+    else if n >= MB { format!("{:.1} MB", n as f64 / MB as f64) }
+    else if n >= KB { format!("{:.0} KB", n as f64 / KB as f64) }
+    else { format!("{} B", n) }
 }
 
 fn step_anim(anim: &mut f32, on: bool, step: f32) -> bool {

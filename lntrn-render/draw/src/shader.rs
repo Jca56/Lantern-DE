@@ -37,6 +37,10 @@ const SHAPE_ARC: f32 = 10.0;
 const SHAPE_DASHED_LINE: f32 = 11.0;
 const SHAPE_INNER_SHADOW: f32 = 12.0;
 const SHAPE_RECT_STROKE_PROGRESS: f32 = 13.0;
+const SHAPE_TAPERED_PILL: f32 = 14.0;
+const SHAPE_TAPERED_PILL_SHADOW: f32 = 15.0;
+const SHAPE_TAPERED_PILL_INNER_SHADOW: f32 = 16.0;
+const SHAPE_ROUNDED_RING: f32 = 17.0;
 
 @vertex
 fn vs_main(@builtin(vertex_index) vi: u32, instance: InstanceInput) -> VertexOutput {
@@ -111,6 +115,39 @@ fn sdf_rounded_rect_4(p: vec2<f32>, center: vec2<f32>, half_size: vec2<f32>,
     }
     let d = abs(rel) - half_size + vec2<f32>(r);
     return length(max(d, vec2<f32>(0.0))) + min(max(d.x, d.y), 0.0) - r;
+}
+
+// Tapered pill: union of a full-height rounded rect on the left and a shorter
+// rounded rect on the right. The tall rect's TR/BR corners use `taper_curve`
+// (independent of the main `radius`) so the transition arc can be stretched
+// out for a smoother step-down without affecting the rounded ends.
+fn sdf_tapered_pill(p: vec2<f32>, bounds_min: vec2<f32>, bounds_max: vec2<f32>,
+                    split_x_rel: f32, taper_amt: f32, radius: f32, taper_curve: f32) -> f32 {
+    let size = bounds_max - bounds_min;
+    let curve = max(taper_curve, radius);
+    let tall_right = bounds_min.x + min(split_x_rel + curve, size.x);
+    let tall_center = vec2<f32>(
+        (bounds_min.x + tall_right) * 0.5,
+        (bounds_min.y + bounds_max.y) * 0.5
+    );
+    let tall_half = vec2<f32>(max((tall_right - bounds_min.x) * 0.5, 0.0), size.y * 0.5);
+    let r_end = min(radius, min(tall_half.x, tall_half.y));
+    let r_curve = min(curve, min(tall_half.x, tall_half.y));
+    let d_tall = sdf_rounded_rect_4(p, tall_center, tall_half, r_end, r_curve, r_end, r_curve);
+
+    let short_left = bounds_min.x + split_x_rel;
+    let short_center = vec2<f32>(
+        (short_left + bounds_max.x) * 0.5,
+        (bounds_min.y + bounds_max.y) * 0.5
+    );
+    let short_half = vec2<f32>(
+        max((bounds_max.x - short_left) * 0.5, 0.0),
+        max((size.y - taper_amt) * 0.5, 0.0)
+    );
+    let short_r = min(radius, min(short_half.x, short_half.y));
+    let d_short = sdf_rounded_rect(p, short_center, short_half, short_r);
+
+    return min(d_tall, d_short);
 }
 
 fn sdf_line(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
@@ -221,6 +258,23 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // Hollow: abs(dist) gives distance to the boundary ring
         let ring_dist = abs(dist + stroke_w * 0.5) - stroke_w * 0.5;
         mask = 1.0 - smoothstep(-1.0, 1.0, ring_dist);
+
+    } else if in.params.w == SHAPE_ROUNDED_RING {
+        // CSS-style border: independent outer/inner SDFs so the inner corner
+        // stays cleanly rounded for any thickness.
+        // params: [outer_radius, thickness, 0, shape_id]
+        let outer_r = in.params.x;
+        let thickness = in.params.y;
+        let inner_r = max(outer_r - thickness, 0.0);
+        let center = in.bounds.xy + in.bounds.zw * 0.5;
+        // Un-expand the AA padding (CPU side expanded by 2.0)
+        let outer_half = in.bounds.zw * 0.5 - vec2<f32>(2.0);
+        let inner_half = max(outer_half - vec2<f32>(thickness), vec2<f32>(0.0));
+        let outer_d = sdf_rounded_rect(in.local_px, center, outer_half, outer_r);
+        let inner_d = sdf_rounded_rect(in.local_px, center, inner_half, inner_r);
+        // Boolean difference: inside outer AND outside inner.
+        let ring_d = max(outer_d, -inner_d);
+        mask = 1.0 - smoothstep(-1.0, 1.0, ring_d);
 
     } else if in.params.w == SHAPE_RECT_STROKE_PROGRESS {
         // Rounded rect stroke with perimeter-based progress mask.
@@ -419,6 +473,53 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
         mask = line_mask * dash_mask;
         color = in.color;
+
+    } else if in.params.w == SHAPE_TAPERED_PILL {
+        // Tapered pill fill
+        // params: [radius, split_x_rel, taper_amt, shape_id]
+        // color_b: [_, _, _, taper_curve]
+        let radius = in.params.x;
+        let split_x = in.params.y;
+        let taper_amt = in.params.z;
+        let taper_curve = in.color_b.w;
+        let bounds_min = in.bounds.xy;
+        let bounds_max = in.bounds.xy + in.bounds.zw;
+        let dist = sdf_tapered_pill(in.local_px, bounds_min, bounds_max, split_x, taper_amt, radius, taper_curve);
+        mask = 1.0 - smoothstep(-0.5, 0.5, dist);
+
+    } else if in.params.w == SHAPE_TAPERED_PILL_SHADOW {
+        // Soft drop shadow for a tapered pill
+        // params: [radius, split_x_rel, taper_amt, shape_id]
+        // color_b: [sigma, _, _, taper_curve]
+        // bounds are expanded by 3*sigma — shrink back to get original rect SDF
+        let radius = in.params.x;
+        let split_x = in.params.y;
+        let taper_amt = in.params.z;
+        let sigma = in.color_b.x;
+        let taper_curve = in.color_b.w;
+        let expand = 3.0 * sigma;
+        let bounds_min = in.bounds.xy + vec2<f32>(expand);
+        let bounds_max = in.bounds.xy + in.bounds.zw - vec2<f32>(expand);
+        let dist = sdf_tapered_pill(in.local_px, bounds_min, bounds_max, split_x, taper_amt, radius, taper_curve);
+        mask = shadow_mask(dist, sigma);
+
+    } else if in.params.w == SHAPE_TAPERED_PILL_INNER_SHADOW {
+        // Inset shadow for a tapered pill — proper bevel that follows the taper curve.
+        // params: [radius, split_x_rel, taper_amt, shape_id]
+        // color_b: [sigma, offset_x, offset_y, taper_curve]
+        let radius = in.params.x;
+        let split_x = in.params.y;
+        let taper_amt = in.params.z;
+        let sigma = in.color_b.x;
+        let offset = in.color_b.yz;
+        let taper_curve = in.color_b.w;
+        let bounds_min = in.bounds.xy;
+        let bounds_max = in.bounds.xy + in.bounds.zw;
+        let container_dist = sdf_tapered_pill(in.local_px, bounds_min, bounds_max, split_x, taper_amt, radius, taper_curve);
+        let inside = 1.0 - smoothstep(-0.5, 0.5, container_dist);
+        let offset_dist = sdf_tapered_pill(in.local_px - offset, bounds_min, bounds_max, split_x, taper_amt, radius, taper_curve);
+        let shadow = shadow_mask(-offset_dist, sigma);
+        mask = inside * shadow;
     }
 
     let alpha = color.a * mask;

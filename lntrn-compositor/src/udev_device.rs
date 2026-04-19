@@ -32,7 +32,7 @@ use crate::shaders::{
     CORNER_SHADER_SRC, HOT_CORNER_GLOW_SHADER_SRC, ROUNDED_TEX_SHADER_SRC, SHADOW_SHADER_SRC,
 };
 use crate::udev::{
-    GpuBackend, OutputSurface, UdevOutputId, LANTERN_OUTPUT_SCALE, RENDER_INTERVAL,
+    GpuBackend, OutputSurface, UdevOutputId, lantern_output_scale, RENDER_INTERVAL,
     SUPPORTED_FORMATS,
 };
 use crate::window_ext::WindowExt;
@@ -388,15 +388,10 @@ fn connector_connected(
     output.change_current_state(
         Some(wl_mode),
         None,
-        Some(Scale::Fractional(LANTERN_OUTPUT_SCALE)),
+        Some(Scale::Fractional(lantern_output_scale())),
         Some((x, y).into()),
     );
     state.space.map_output(&output, (x, y));
-
-    // Initialize canvas bounds from output size
-    let mode_w = wl_mode.size.w as f64 / LANTERN_OUTPUT_SCALE;
-    let mode_h = wl_mode.size.h as f64 / LANTERN_OUTPUT_SCALE;
-    state.canvas.set_screen_size(mode_w, mode_h);
 
     output
         .user_data()
@@ -447,7 +442,7 @@ fn connector_connected(
         &output_name,
         connector.modes(),
         mode_id,
-        LANTERN_OUTPUT_SCALE,
+        lantern_output_scale(),
         (x, y),
         (phys_w as i32, phys_h as i32),
     );
@@ -575,7 +570,7 @@ pub fn apply_output_config(
             }
 
             output.set_preferred(wl_mode);
-            let cur_scale = change.scale.unwrap_or(LANTERN_OUTPUT_SCALE);
+            let cur_scale = change.scale.unwrap_or(lantern_output_scale());
             output.change_current_state(
                 Some(wl_mode),
                 None,
@@ -608,13 +603,11 @@ pub fn apply_output_config(
         }
     }
 
-    // Update canvas logical size from the (possibly new) scale
     if let Some(output) = state.space.outputs().next().cloned() {
         if let Some(mode) = output.current_mode() {
             let scale = output.current_scale().fractional_scale();
             let logical_w = mode.size.w as f64 / scale;
             let logical_h = mode.size.h as f64 / scale;
-            state.canvas.set_screen_size(logical_w, logical_h);
             tracing::info!(
                 scale,
                 logical = %format!("{:.0}x{:.0}", logical_w, logical_h),

@@ -2,7 +2,6 @@
 
 mod animation;
 mod blur;
-mod canvas;
 mod cursor;
 mod easing;
 mod gestures;
@@ -22,6 +21,9 @@ mod state;
 mod switcher;
 mod tiling;
 mod tiling_anim;
+mod workspace_anim;
+mod workspace_ipc;
+mod workspaces;
 pub mod udev;
 mod udev_device;
 mod wallpaper;
@@ -80,6 +82,17 @@ pub(crate) fn read_config_f32(key: &str, default: f32) -> f32 {
     let s = read_config("windows", key, "");
     if s.is_empty() { return default; }
     s.parse::<f32>().unwrap_or(default)
+}
+
+/// Global output scale — read from `[display] scale =` in lantern.toml
+/// on first access. Falls back to 1.0 if unset.
+pub(crate) fn output_scale() -> f64 {
+    use std::sync::OnceLock;
+    static SCALE: OnceLock<f64> = OnceLock::new();
+    *SCALE.get_or_init(|| {
+        let s = read_config("display", "scale", "1.0");
+        s.parse::<f64>().unwrap_or(1.0)
+    })
 }
 
 /// Read a string-list setting from [section] in lantern.toml.

@@ -24,7 +24,11 @@ pub struct Settings {
     pub desktop_x: i32,
     #[serde(default)]
     pub desktop_y: i32,
+    #[serde(default = "default_theme")]
+    pub theme: String,
 }
+
+fn default_theme() -> String { "fox-dark".into() }
 
 fn default_bg_opacity() -> f32 { lntrn_theme::background_opacity() }
 fn default_desktop_opacity() -> f32 { 0.0 }
@@ -48,6 +52,7 @@ impl Default for Settings {
             desktop_height: 600.0,
             desktop_x: 0,
             desktop_y: 0,
+            theme: "fox-dark".into(),
         }
     }
 }
@@ -87,6 +92,15 @@ impl Settings {
             "date" => crate::fs::SortBy::Date,
             "type" => crate::fs::SortBy::Type,
             _ => crate::fs::SortBy::Name,
+        }
+    }
+
+    pub fn theme_variant(&self) -> lntrn_theme::ThemeVariant {
+        match self.theme.as_str() {
+            "fox-light" => lntrn_theme::ThemeVariant::FoxLight,
+            "lantern" => lntrn_theme::ThemeVariant::Lantern,
+            "night-sky" | "nightsky" | "night_sky" => lntrn_theme::ThemeVariant::NightSky,
+            _ => lntrn_theme::ThemeVariant::FoxDark,
         }
     }
 

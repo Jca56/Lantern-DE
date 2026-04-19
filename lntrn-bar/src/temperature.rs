@@ -184,7 +184,7 @@ impl Temperature {
         let font_size = (usable * 0.50).max(18.0);
         let icon_h = usable * 0.85;
         let icon_w = icon_h; // SVG is pre-cropped, aspect preserved by renderer
-        let gap = 1.0 * scale;
+        let gap = -8.0 * scale;
 
         let temp_text = format!("{}", self.cpu_temp);
         let sym_size = font_size * 0.85;
@@ -216,7 +216,7 @@ impl Temperature {
         let font_size = (usable * 0.50).max(18.0);
         let icon_h = usable * 0.85;
         let icon_w = icon_h; // SVG is pre-cropped, aspect preserved by renderer
-        let gap = 1.0 * scale;
+        let gap = -8.0 * scale;
 
         // Temperature text: numbers + °
         let temp_text = format!("{}", self.cpu_temp);
@@ -363,7 +363,7 @@ impl Temperature {
         // Background
         let bg_rect = Rect::new(popup_x, popup_y, popup_w, popup_h);
         painter.rect_filled(bg_rect, corner_r, palette.bg);
-        painter.rect_stroke_sdf(bg_rect, corner_r, 3.0 * scale, Color::BLACK);
+        painter.rect_stroke_sdf(bg_rect, corner_r, 3.0 * scale, crate::theme_state::popup_border());
 
         let cx = popup_x + pad;
         let cw = popup_w - pad * 2.0;

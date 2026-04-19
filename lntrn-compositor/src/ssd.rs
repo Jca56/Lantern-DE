@@ -54,19 +54,10 @@ impl RoundedCorners {
         Self { tl: false, tr: false, bl: false, br: false }
     }
 
-    /// Which corners are exposed (not against screen edge) for a snap zone.
-    pub fn for_snap(zone: SnapZone) -> Self {
-        match zone {
-            // Left-snapped: left edge flush, round right side
-            SnapZone::Left => Self { tl: false, tr: true, bl: false, br: true },
-            // Right-snapped: right edge flush, round left side
-            SnapZone::Right => Self { tl: true, tr: false, bl: true, br: false },
-            // Quarter snaps: only the inner corner is exposed
-            SnapZone::TopLeft => Self { tl: false, tr: false, bl: false, br: true },
-            SnapZone::TopRight => Self { tl: false, tr: false, bl: true, br: false },
-            SnapZone::BottomLeft => Self { tl: false, tr: true, bl: false, br: false },
-            SnapZone::BottomRight => Self { tl: true, tr: false, bl: false, br: false },
-        }
+    /// Snapped windows always sit inside tiling gaps (outer + inner), so every
+    /// corner is floating in free space and should be rounded.
+    pub fn for_snap(_zone: SnapZone) -> Self {
+        Self::all()
     }
 }
 

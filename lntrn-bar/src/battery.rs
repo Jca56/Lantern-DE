@@ -216,21 +216,12 @@ impl Battery {
     pub fn measure(&self, bar_h: f32, scale: f32) -> f32 {
         let pad = 5.0 * scale;
         let usable = bar_h - pad * 2.0;
-        let font_size = (usable * 0.35).max(14.0);
-        let gap = 5.0 * scale;
-        let icon_shrink = 6.0 * scale;
-        let icon_h = usable - font_size - gap - icon_shrink;
-        let icon_w = icon_h * 1.5;
-        let num_text = format!("{}", self.capacity);
-        let sym_size = font_size * 0.85;
-        let num_w = num_text.len() as f32 * font_size * 0.52;
-        let sym_w = sym_size * 0.58;
-        let sym_gap = 2.0 * scale;
-        let text_w = num_w + sym_gap + sym_w;
-        icon_w.max(text_w)
+        let icon_h = usable * 0.60;
+        let leading_pad = 4.0 * scale;
+        icon_h * 1.5 + leading_pad
     }
 
-    /// Draw the battery: percentage text on top, icon below, vertically stacked.
+    /// Draw the battery: percentage text centered over the icon body.
     /// Returns (total_width, Vec<TextureDraw>).
     pub fn draw<'a>(
         &self,
@@ -248,57 +239,26 @@ impl Battery {
     ) -> (f32, Vec<TextureDraw<'a>>) {
         let pad = 5.0 * scale;
         let usable = bar_h - pad * 2.0;
-        let font_size = (usable * 0.35).max(14.0);
-        let gap = 5.0 * scale;
-        let icon_shrink = 6.0 * scale;
-        let icon_h = usable - font_size - gap - icon_shrink;
+        let icon_h = usable * 0.60;
         let icon_w = icon_h * 1.5;
+        let leading_pad = 4.0 * scale;
+        let total_w = icon_w + leading_pad;
 
-        let stack_h = font_size + gap + icon_h;
-        let stack_y = bar_y + pad + icon_shrink / 2.0;
+        // Icon, vertically centered in bar, offset right by leading_pad so the
+        // visible battery body doesn't crowd the adjacent widget.
+        let icon_x = x + leading_pad;
+        let icon_y = bar_y + (bar_h - icon_h) / 2.0;
 
-        // Percentage text: numbers at full size, % symbol smaller
-        let num_text = format!("{}", self.capacity);
-        let pct_sym = "%";
-        let sym_size = font_size * 0.85;
-        let num_w = num_text.len() as f32 * font_size * 0.52;
-        let sym_w = sym_size * 0.58;
-        let sym_gap = 2.0 * scale;
-        let text_w = num_w + sym_gap + sym_w;
-        let total_w = icon_w.max(text_w);
-
-        // Center text horizontally over icon (nudged left to account for glyph spacing)
-        let text_x = x + (total_w - text_w) / 2.0 - 3.0 * scale;
-        let text_y = stack_y;
-
-        let text_color = if self.capacity <= LOW_THRESH && self.status == BatteryStatus::Discharging {
-            Color::rgba(1.0, 0.2, 0.2, 1.0)
-        } else {
-            palette.text
-        };
-
-        text.queue(
-            &num_text, font_size, text_x, text_y, text_color,
-            text_w + 10.0, screen_w, screen_h,
-        );
-        // % symbol — smaller, vertically centered with numbers
-        let sym_y = text_y + (font_size - sym_size) / 2.0;
-        text.queue(
-            pct_sym, sym_size, text_x + num_w + sym_gap, sym_y, text_color,
-            sym_size + 10.0, screen_w, screen_h,
-        );
-
-        // Icon (below text, centered)
-        let icon_x = x + (total_w - icon_w) / 2.0;
-        let icon_y = stack_y + font_size + gap;
         let mut tex_draws = Vec::new();
         let key = self.icon_key();
         if let Some(tex) = icons.get(key) {
             tex_draws.push(TextureDraw::new(tex, icon_x, icon_y, icon_w, icon_h));
         }
 
+        let _ = (text, palette, screen_w, screen_h);
+
         // Hit zone
-        let zone_rect = Rect::new(x, stack_y, total_w, stack_h);
+        let zone_rect = Rect::new(x, bar_y + pad, total_w, usable);
         ix.add_zone(ZONE_BATTERY, zone_rect);
 
         (total_w, tex_draws)
@@ -378,7 +338,7 @@ impl Battery {
         // Background
         let bg_rect = Rect::new(popup_x, popup_y, popup_w, popup_h);
         painter.rect_filled(bg_rect, corner_r, palette.bg);
-        painter.rect_stroke_sdf(bg_rect, corner_r, 3.0 * scale, Color::BLACK);
+        painter.rect_stroke_sdf(bg_rect, corner_r, 3.0 * scale, crate::theme_state::popup_border());
 
         let cx = popup_x + pad; // content left edge
         let cw = popup_w - pad * 2.0; // content width

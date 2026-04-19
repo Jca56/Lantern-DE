@@ -48,6 +48,7 @@ impl TextHandler {
         if idx >= self.tabs.len() {
             return;
         }
+        crate::lsp::glue::notify_did_close(self, idx);
         if self.tabs.len() == 1 {
             self.tabs[0] = Editor::new();
             self.active_tab = 0;

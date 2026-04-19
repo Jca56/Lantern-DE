@@ -7,14 +7,14 @@ const BG_DEEP: Color = Color::rgb(0.008, 0.003, 0.020);
 const BG_SURFACE: Color = Color::rgb(0.020, 0.007, 0.045);
 const GLOW_PINK: Color = Color::rgba(0.45, 0.14, 0.32, 0.04);
 const GLOW_CYAN: Color = Color::rgba(0.14, 0.35, 0.52, 0.04);
-const BORDER_SUBTLE: Color = Color::rgba(0.30, 0.20, 0.50, 0.15);
+const BORDER_SUBTLE: Color = Color::rgba(0.55, 0.40, 0.85, 0.85);
 const CLOSE_BG: Color = Color::rgb(0.45, 0.02, 0.02);
 const CLOSE_HOVER: Color = Color::rgba(0.45, 0.02, 0.02, 0.35);
 const CONTROL_HOVER: Color = Color::rgba(0.50, 0.38, 0.70, 0.25);
 const CONTROL_ICON: Color = Color::rgb(0.55, 0.50, 0.68);
 const TEXT_PRIMARY: Color = Color::rgb(0.80, 0.76, 0.90);
 
-pub const CORNER_RADIUS: f32 = 16.0;
+pub const CORNER_RADIUS: f32 = 18.0;
 
 // ── Background ──────────────────────────────────────────────────────────────
 
@@ -146,6 +146,7 @@ pub fn hit_test_controls(cursor: (f32, f32), w: f32) -> Option<u32> {
 /// Draw subtle window border (skip when maximized).
 pub fn draw_border(p: &mut Painter, w: f32, h: f32, maximized: bool) {
     if !maximized {
-        p.rect_stroke_sdf(Rect::new(0.0, 0.0, w, h), CORNER_RADIUS, 1.0, BORDER_SUBTLE);
+        const THICK: f32 = 3.0;
+        p.rect_border(Rect::new(0.0, 0.0, w, h), CORNER_RADIUS, THICK, BORDER_SUBTLE);
     }
 }

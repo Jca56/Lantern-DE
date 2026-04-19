@@ -37,14 +37,17 @@ pub enum TransferDir { Send, Receive }
 pub enum TransferCmd {
     SendFile { mac: String, file_path: String },
     Cancel { id: u32 },
+    AuthorizeReceive { auth_id: u32 },
+    RejectReceive { auth_id: u32 },
 }
 
 pub enum TransferEvent {
     Started { id: u32, filename: String, total: u64, direction: TransferDir },
     Progress { id: u32, transferred: u64, total: u64 },
-    Complete { id: u32 },
+    Complete { id: u32, final_path: Option<String> },
     Failed { id: u32, error: String },
     ObexUnavailable,
+    IncomingRequest { auth_id: u32, device_name: String, filename: String, size: u64 },
 }
 
 // ── Spawn ──────────────────────────────────────────────────────────────────
@@ -68,6 +71,24 @@ struct ActiveTransfer {
     dbus_path: String,
     session_path: Option<String>,
     direction: TransferDir,
+    /// Basename used to move the completed file from obexd's cache to Downloads.
+    receive_name: Option<String>,
+    /// Set to true when a PropertiesChanged signal reports the final status.
+    /// Processed by the main loop on the next tick so it can do the file move
+    /// and emit the Complete/Failed event.
+    finished: Option<FinishKind>,
+}
+
+#[derive(Clone)]
+enum FinishKind { Complete, Error(String) }
+
+struct PendingAuth {
+    auth_id: u32,
+    msg_serial: u32,
+    sender: String,
+    transfer_path: String,
+    filename: String,
+    size: u64,
 }
 
 fn obex_thread(tx: mpsc::Sender<TransferEvent>, cmd_rx: mpsc::Receiver<TransferCmd>) {
@@ -94,7 +115,9 @@ fn obex_thread(tx: mpsc::Sender<TransferEvent>, cmd_rx: mpsc::Receiver<TransferC
     );
 
     let mut next_id = 1u32;
+    let mut next_auth_id = 1u32;
     let mut active: Vec<ActiveTransfer> = Vec::new();
+    let mut pending_auths: Vec<PendingAuth> = Vec::new();
     let mut last_progress = std::time::Instant::now();
 
     loop {
@@ -112,56 +135,139 @@ fn obex_thread(tx: mpsc::Sender<TransferEvent>, cmd_rx: mpsc::Receiver<TransferC
                     }
                     active.retain(|t| t.id != id);
                 }
+                TransferCmd::AuthorizeReceive { auth_id } => {
+                    if let Some(pos) = pending_auths.iter().position(|p| p.auth_id == auth_id) {
+                        let p = pending_auths.remove(pos);
+                        // Reply with the basename only so obexd writes inside its own
+                        // root dir (~/.cache/obexd). obexd refuses to open paths
+                        // outside its root, so we'll move the file after completion.
+                        let mut reply = Vec::new();
+                        encode_string(&mut reply, &p.filename);
+                        conn.send_reply(p.msg_serial, &p.sender, "s", &reply);
+                        let id = next_id;
+                        next_id += 1;
+                        active.push(ActiveTransfer {
+                            id, dbus_path: p.transfer_path,
+                            session_path: None, direction: TransferDir::Receive,
+                            receive_name: Some(p.filename.clone()),
+                            finished: None,
+                        });
+                        let _ = tx.send(TransferEvent::Started {
+                            id, filename: p.filename, total: p.size, direction: TransferDir::Receive,
+                        });
+                    }
+                }
+                TransferCmd::RejectReceive { auth_id } => {
+                    if let Some(pos) = pending_auths.iter().position(|p| p.auth_id == auth_id) {
+                        let p = pending_auths.remove(pos);
+                        conn.send_error(p.msg_serial, &p.sender,
+                            "org.bluez.obex.Error.Rejected", "Rejected by user");
+                    }
+                }
             }
         }
 
         // Process incoming D-Bus messages
         while let Some(msg) = conn.try_read() {
             if msg.is_method_call() && msg.interface == OBEX_AGENT_IFACE {
-                handle_agent_call(&mut conn, &msg, &tx, &mut next_id, &mut active);
+                handle_agent_call(&mut conn, &msg, &tx, &mut next_auth_id, &mut pending_auths);
             } else if msg.is_signal() && msg.member == "PropertiesChanged" {
-                handle_progress_signal(&msg, &tx, &active);
+                handle_progress_signal(&msg, &tx, &mut active);
             }
         }
 
-        // Periodic progress polling for active transfers
+        // Handle transfers marked finished by the signal handler: move the
+        // received file (if any) into ~/Downloads and emit the terminal event.
+        let mut completed: Vec<u32> = active.iter()
+            .filter(|t| t.finished.is_some())
+            .map(|t| t.id).collect();
+        for id in &completed {
+            if let Some(t) = active.iter().find(|t| t.id == *id) {
+                match t.finished.clone().unwrap() {
+                    FinishKind::Complete => {
+                        let final_path = if t.direction == TransferDir::Receive {
+                            t.receive_name.as_deref()
+                                .and_then(move_received_to_downloads)
+                        } else { None };
+                        let _ = tx.send(TransferEvent::Complete { id: t.id, final_path });
+                    }
+                    FinishKind::Error(e) => {
+                        let _ = tx.send(TransferEvent::Failed { id: t.id, error: e });
+                    }
+                }
+                if t.direction == TransferDir::Send {
+                    if let Some(ref s) = t.session_path {
+                        remove_session(&mut conn, s);
+                    }
+                }
+            }
+        }
+        active.retain(|t| !completed.contains(&t.id));
+
+        // Periodic progress polling as a fallback for when we miss signals.
         if !active.is_empty() && last_progress.elapsed().as_millis() >= PROGRESS_POLL_MS as u128 {
-            let mut completed = Vec::new();
-            for t in &active {
+            completed.clear();
+            for t in &mut active {
                 match poll_transfer_status(&mut conn, &t.dbus_path) {
                     Some(TransferPoll::Active { transferred, total }) => {
                         let _ = tx.send(TransferEvent::Progress {
                             id: t.id, transferred, total,
                         });
                     }
-                    Some(TransferPoll::Complete) => {
-                        let _ = tx.send(TransferEvent::Complete { id: t.id });
-                        completed.push(t.id);
-                        // Clean up session for sends
-                        if t.direction == TransferDir::Send {
-                            if let Some(ref s) = t.session_path {
-                                remove_session(&mut conn, s);
-                            }
+                    Some(TransferPoll::Complete) => { t.finished = Some(FinishKind::Complete); }
+                    Some(TransferPoll::Error(e)) => { t.finished = Some(FinishKind::Error(e)); }
+                    None => {
+                        // Transfer object went away. For receives, obexd deletes
+                        // the transfer object right after completion, so treat
+                        // the disappearance as "done" and let the file-move step
+                        // decide success by whether the cached file exists.
+                        if t.direction == TransferDir::Receive {
+                            t.finished = Some(FinishKind::Complete);
                         }
                     }
-                    Some(TransferPoll::Error(e)) => {
-                        let _ = tx.send(TransferEvent::Failed { id: t.id, error: e });
-                        completed.push(t.id);
-                        if t.direction == TransferDir::Send {
-                            if let Some(ref s) = t.session_path {
-                                remove_session(&mut conn, s);
-                            }
-                        }
-                    }
-                    None => {} // couldn't read, skip
                 }
             }
-            active.retain(|t| !completed.contains(&t.id));
+            // finished items will be drained on the next loop iteration
+            let _ = completed;
             last_progress = std::time::Instant::now();
         }
 
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
+}
+
+/// Move a completed received file from obexd's cache dir into ~/Downloads.
+/// If a file of the same name exists there, append " (N)" to disambiguate.
+fn move_received_to_downloads(name: &str) -> Option<String> {
+    let home = std::env::var("HOME").ok()?;
+    let src = format!("{}/.cache/obexd/{}", home, name);
+    let downloads_dir = format!("{}/Downloads", home);
+    let _ = std::fs::create_dir_all(&downloads_dir);
+    let dest = unique_dest(&downloads_dir, name);
+    match std::fs::rename(&src, &dest) {
+        Ok(()) => Some(dest),
+        Err(_) => {
+            // Cross-device rename can fail; fall back to copy + remove.
+            if std::fs::copy(&src, &dest).is_ok() {
+                let _ = std::fs::remove_file(&src);
+                Some(dest)
+            } else { None }
+        }
+    }
+}
+
+fn unique_dest(dir: &str, name: &str) -> String {
+    let base = format!("{}/{}", dir, name);
+    if !std::path::Path::new(&base).exists() { return base; }
+    let (stem, ext) = match name.rfind('.') {
+        Some(i) if i > 0 => (&name[..i], &name[i..]),
+        _ => (name, ""),
+    };
+    for n in 1..1000 {
+        let cand = format!("{}/{} ({}){}", dir, stem, n, ext);
+        if !std::path::Path::new(&cand).exists() { return cand; }
+    }
+    base
 }
 
 // ── Send flow ──────────────────────────────────────────────────────────────
@@ -186,6 +292,8 @@ fn handle_send(
                 id, dbus_path: transfer_path,
                 session_path: Some(session_path),
                 direction: TransferDir::Send,
+                receive_name: None,
+                finished: None,
             });
             let _ = tx.send(TransferEvent::Started {
                 id, filename, total: size, direction: TransferDir::Send,
@@ -266,7 +374,7 @@ fn push_file(conn: &mut Connection, session: &str, file_path: &str) -> Result<(S
                 filename = n.to_string();
             }
             if let Some(s) = d.get("Size") {
-                size = s.as_u32().unwrap_or(0) as u64;
+                size = s.as_u64().unwrap_or(0);
             }
         }
     }
@@ -327,7 +435,7 @@ fn get_property_u64(conn: &mut Connection, path: &str, iface: &str, prop: &str) 
     let reply = conn.read_reply(serial).ok()?;
     if reply.is_error() { return None; }
     let mut reader = BodyReader::new(&reply.body, &reply.signature);
-    reader.read_value("v").and_then(|v| v.as_u32().map(|n| n as u64))
+    reader.read_value("v").and_then(|v| v.as_u64())
 }
 
 // ── OBEX agent (receive) ───────────────────────────────────────────────────
@@ -346,49 +454,31 @@ fn register_agent(conn: &mut Connection) -> bool {
 
 fn handle_agent_call(
     conn: &mut Connection, msg: &lntrn_dbus::Message,
-    tx: &mpsc::Sender<TransferEvent>, next_id: &mut u32,
-    active: &mut Vec<ActiveTransfer>,
+    tx: &mpsc::Sender<TransferEvent>, next_auth_id: &mut u32,
+    pending_auths: &mut Vec<PendingAuth>,
 ) {
     match msg.member.as_str() {
         "AuthorizePush" => {
             // AuthorizePush(object transfer) -> string filename
+            // We defer the reply until the user clicks Accept/Reject in the bar.
             let mut reader = BodyReader::new(&msg.body, &msg.signature);
             let transfer_path = reader.read_string();
 
-            // Get transfer properties to learn filename, size, and source device
             let filename = get_property_string(conn, &transfer_path, OBEX_TRANSFER_IFACE, "Name")
                 .unwrap_or_else(|| "unknown".into());
             let size = get_property_u64(conn, &transfer_path, OBEX_TRANSFER_IFACE, "Size")
                 .unwrap_or(0);
+            let device_name = sender_device_name(conn, &transfer_path);
 
-            // Check if the sending device is paired (auto-accept paired only)
-            let accept = check_sender_paired(conn, &transfer_path);
-
-            if accept {
-                // Accept: reply with destination filename in ~/Downloads
-                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-                let dest_path = format!("{}/Downloads/{}", home, filename);
-
-                let mut reply_body = Vec::new();
-                encode_string(&mut reply_body, &dest_path);
-                conn.send_reply(msg.serial, &msg.sender, "s", &reply_body);
-
-                let id = *next_id;
-                *next_id += 1;
-                active.push(ActiveTransfer {
-                    id, dbus_path: transfer_path, session_path: None,
-                    direction: TransferDir::Receive,
-                });
-                let _ = tx.send(TransferEvent::Started {
-                    id, filename, total: size, direction: TransferDir::Receive,
-                });
-            } else {
-                // Reject: send error
-                conn.send_error(
-                    msg.serial, &msg.sender,
-                    "org.bluez.obex.Error.Rejected", "Transfer rejected — device not paired",
-                );
-            }
+            let auth_id = *next_auth_id;
+            *next_auth_id += 1;
+            pending_auths.push(PendingAuth {
+                auth_id, msg_serial: msg.serial, sender: msg.sender.clone(),
+                transfer_path, filename: filename.clone(), size,
+            });
+            let _ = tx.send(TransferEvent::IncomingRequest {
+                auth_id, device_name, filename, size,
+            });
         }
         "Cancel" => {
             conn.send_reply(msg.serial, &msg.sender, "", &[]);
@@ -400,21 +490,15 @@ fn handle_agent_call(
     }
 }
 
-/// Check if the device that initiated a transfer is paired.
-/// Gets the session from the transfer path, then checks via bluetoothctl.
-fn check_sender_paired(conn: &mut Connection, transfer_path: &str) -> bool {
-    // Transfer path looks like /org/bluez/obex/server/session0/transfer0
-    // Session path is the parent
+/// Look up a human-readable name for the device that initiated a transfer.
+fn sender_device_name(conn: &mut Connection, transfer_path: &str) -> String {
     let session_path = match transfer_path.rsplit_once('/') {
         Some((parent, _)) => parent,
-        None => return false,
+        None => return "Unknown device".into(),
     };
-
-    // Get the session's Source/Destination property to find the device MAC
-    let mac = get_property_string(conn, session_path, "org.bluez.obex.Session1", "Destination");
-    match mac {
-        Some(m) => crate::bluetooth_worker::is_device_paired(&m),
-        None => false,
+    match get_property_string(conn, session_path, "org.bluez.obex.Session1", "Destination") {
+        Some(mac) => crate::bluetooth_worker::get_device_name(&mac),
+        None => "Unknown device".into(),
     }
 }
 
@@ -422,7 +506,7 @@ fn check_sender_paired(conn: &mut Connection, transfer_path: &str) -> bool {
 
 fn handle_progress_signal(
     msg: &lntrn_dbus::Message, tx: &mpsc::Sender<TransferEvent>,
-    active: &[ActiveTransfer],
+    active: &mut [ActiveTransfer],
 ) {
     // PropertiesChanged(string interface, dict changed_properties, array invalidated)
     let mut reader = BodyReader::new(&msg.body, &msg.signature);
@@ -430,26 +514,23 @@ fn handle_progress_signal(
     if iface != OBEX_TRANSFER_IFACE { return; }
 
     // Find which transfer this signal is for
-    let transfer = match active.iter().find(|t| msg.path == t.dbus_path) {
-        Some(t) => t,
-        None => return,
-    };
+    let Some(transfer) = active.iter_mut().find(|t| msg.path == t.dbus_path) else { return };
 
     if let Some(dict) = reader.read_value("a{sv}") {
         if let Some(d) = dict.as_dict() {
             if let Some(status) = d.get("Status").and_then(|v| v.as_str()) {
                 match status {
-                    "complete" => { let _ = tx.send(TransferEvent::Complete { id: transfer.id }); }
-                    "error" => { let _ = tx.send(TransferEvent::Failed {
-                        id: transfer.id, error: "Transfer failed".into(),
-                    }); }
+                    "complete" => { transfer.finished = Some(FinishKind::Complete); }
+                    "error" => {
+                        transfer.finished = Some(FinishKind::Error("Transfer failed".into()));
+                    }
                     _ => {}
                 }
             }
-            if let Some(transferred) = d.get("Transferred").and_then(|v| v.as_u32()) {
+            if let Some(transferred) = d.get("Transferred").and_then(|v| v.as_u64()) {
                 let _ = tx.send(TransferEvent::Progress {
                     id: transfer.id,
-                    transferred: transferred as u64,
+                    transferred,
                     total: 0, // total from initial event
                 });
             }

@@ -117,7 +117,7 @@ impl AppMenu {
         // Card body — semi-transparent so a hint of the menu shows through
         painter.rect_filled(card, cr, palette.surface_2.with_alpha(0.92));
         // Black rounded border, matching the menu chrome
-        painter.rect_stroke_sdf(card, cr, 3.0 * scale, Color::BLACK);
+        painter.rect_stroke_sdf(card, cr, 3.0 * scale, crate::theme_state::popup_border());
 
         // ── Action icon (centered, near top) ──────────────────────────────
         let icon_sz = 80.0 * scale;
@@ -159,7 +159,7 @@ impl AppMenu {
         let cancel_state = ix.add_zone(ZONE_CANCEL, cancel_rect);
         let cancel_bg = if cancel_state.is_hovered() { palette.surface } else { palette.bg };
         painter.rect_filled(cancel_rect, btn_cr, cancel_bg);
-        painter.rect_stroke_sdf(cancel_rect, btn_cr, 3.0 * scale, Color::BLACK);
+        painter.rect_stroke_sdf(cancel_rect, btn_cr, 3.0 * scale, crate::theme_state::popup_border());
         let cancel_label = "Cancel";
         let cancel_w = text.measure_width(cancel_label, btn_font);
         let cancel_lx = cancel_x + (btn_w - cancel_w) * 0.5;
@@ -175,7 +175,7 @@ impl AppMenu {
             danger
         };
         painter.rect_filled(confirm_rect, btn_cr, confirm_bg);
-        painter.rect_stroke_sdf(confirm_rect, btn_cr, 3.0 * scale, Color::BLACK);
+        painter.rect_stroke_sdf(confirm_rect, btn_cr, 3.0 * scale, crate::theme_state::popup_border());
         let confirm_label = action.confirm_label();
         let confirm_w = text.measure_width(confirm_label, btn_font);
         let confirm_lx = confirm_x + (btn_w - confirm_w) * 0.5;

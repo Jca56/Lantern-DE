@@ -331,10 +331,16 @@ fn get_device_info(mac: &str) -> DeviceInfo {
     info
 }
 
-/// Check if a MAC address corresponds to a paired device.
-pub fn is_device_paired(mac: &str) -> bool {
+/// Look up the human-readable name for a paired device. Falls back to MAC.
+pub fn get_device_name(mac: &str) -> String {
     let output = Command::new("bluetoothctl").args(["info", mac]).output();
-    let Ok(output) = output else { return false };
+    let Ok(output) = output else { return mac.to_string() };
     let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout.lines().any(|l| l.trim().starts_with("Paired:") && l.contains("yes"))
+    for line in stdout.lines() {
+        if let Some(n) = line.trim().strip_prefix("Name:") {
+            let t = n.trim();
+            if !t.is_empty() { return t.to_string(); }
+        }
+    }
+    mac.to_string()
 }

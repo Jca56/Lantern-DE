@@ -31,7 +31,7 @@ render_elements! {
 
 // Fox Dark background: #181818 → normalized RGBA
 const BG_COLOR: [f32; 4] = [0.094, 0.094, 0.094, 1.0];
-const LANTERN_OUTPUT_SCALE: f64 = 1.25;
+fn lantern_output_scale() -> f64 { crate::output_scale() }
 
 fn frame_callback_interval(output: &Output) -> Duration {
     let refresh = output.current_mode().map(|mode| mode.refresh).unwrap_or(60_000);
@@ -65,15 +65,11 @@ pub fn init_winit(
     output.change_current_state(
         Some(mode),
         Some(Transform::Normal),
-        Some(Scale::Fractional(LANTERN_OUTPUT_SCALE)),
+        Some(Scale::Fractional(lantern_output_scale())),
         Some((0, 0).into()),
     );
     output.set_preferred(mode);
     state.space.map_output(&output, (0, 0));
-    state.canvas.set_screen_size(
-        mode.size.w as f64 / LANTERN_OUTPUT_SCALE,
-        mode.size.h as f64 / LANTERN_OUTPUT_SCALE,
-    );
 
     let mut damage_tracker = OutputDamageTracker::from_output(&output);
     let redraw_interval = frame_callback_interval(&output);
@@ -104,7 +100,7 @@ pub fn init_winit(
                             refresh: 60_000,
                         }),
                         None,
-                        Some(Scale::Fractional(LANTERN_OUTPUT_SCALE)),
+                        Some(Scale::Fractional(lantern_output_scale())),
                         None,
                     );
                     backend.window().request_redraw();

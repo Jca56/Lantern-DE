@@ -73,7 +73,7 @@ impl AppMenu {
 
         // Panel background (darker)
         painter.rect_filled(Rect::new(mx, panel_y, w, h), 0.0, palette.bg);
-        painter.rect_stroke(Rect::new(mx, panel_y, w, h), 0.0, 3.0 * scale, Color::BLACK);
+        painter.rect_stroke(Rect::new(mx, panel_y, w, h), 0.0, 3.0 * scale, crate::theme_state::popup_border());
 
         // Floating row: search bar (left) + tabs (right), above the panel
         self.draw_floating_row(painter, text, ix, palette, mx, my, w, float_h, scale, screen_w, screen_h);
@@ -168,7 +168,7 @@ impl AppMenu {
                 painter.rect_stroke(tab_rect, 0.0, 2.0 * scale, palette.accent);
             } else {
                 painter.rect_filled(tab_rect, 0.0, palette.bg);
-                painter.rect_stroke(tab_rect, 0.0, 3.0 * scale, Color::BLACK);
+                painter.rect_stroke(tab_rect, 0.0, 3.0 * scale, crate::theme_state::popup_border());
                 if state.is_hovered() {
                     painter.rect_filled(tab_rect, 0.0, palette.surface_2);
                 }
@@ -257,7 +257,7 @@ impl AppMenu {
                 painter.rect_stroke(tab_rect, 0.0, 2.0 * scale, palette.accent);
             } else {
                 painter.rect_filled(tab_rect, 0.0, palette.bg);
-                painter.rect_stroke(tab_rect, 0.0, 3.0 * scale, Color::BLACK);
+                painter.rect_stroke(tab_rect, 0.0, 3.0 * scale, crate::theme_state::popup_border());
                 if state.is_hovered() {
                     painter.rect_filled(tab_rect, 0.0, palette.surface_2);
                 }
@@ -347,10 +347,10 @@ impl AppMenu {
 
             // Background
             painter.rect_filled(btn_rect, 0.0, palette.surface);
-            painter.rect_stroke(btn_rect, 0.0, 3.0 * scale, Color::BLACK);
+            painter.rect_stroke(btn_rect, 0.0, 3.0 * scale, crate::theme_state::popup_border());
             if state.is_hovered() {
                 painter.rect_filled(btn_rect, 0.0, palette.surface_2);
-                painter.rect_stroke(btn_rect, 0.0, 3.0 * scale, Color::BLACK);
+                painter.rect_stroke(btn_rect, 0.0, 3.0 * scale, crate::theme_state::popup_border());
             }
 
             // Icon centered in button

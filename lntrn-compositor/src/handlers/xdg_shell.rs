@@ -78,7 +78,7 @@ impl XdgShellHandler for Lantern {
 
             let was_snapped = self.is_snapped(wl_surface);
             let was_maximized = self.is_maximized(wl_surface);
-            let was_tiled = self.tiling.contains(wl_surface);
+            let was_tiled = self.workspaces.contains(wl_surface);
             let grab = MoveSurfaceGrab {
                 start_data,
                 window,

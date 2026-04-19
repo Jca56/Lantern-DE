@@ -14,6 +14,7 @@ pub struct BarSettings {
     pub lava_lamp: bool,
     pub position_top: bool,
     pub tray_left: bool,
+    pub lantern_theme: bool,
     pub pinned_procs: Vec<String>,
 }
 
@@ -27,6 +28,7 @@ impl Default for BarSettings {
             lava_lamp: false,
             position_top: false,
             tray_left: false,
+            lantern_theme: false,
             pinned_procs: Vec::new(),
         }
     }
@@ -55,6 +57,7 @@ impl BarSettings {
                     "lava_lamp" => s.lava_lamp = val == "true",
                     "position_top" => s.position_top = val == "true",
                     "tray_left" => s.tray_left = val == "true",
+                    "lantern_theme" => s.lantern_theme = val == "true",
                     "pinned_procs" => {
                         if let Some(start) = val.find('[') {
                             if let Some(end) = val.find(']') {
@@ -87,9 +90,11 @@ impl BarSettings {
              lava_lamp = {}\n\
              position_top = {}\n\
              tray_left = {}\n\
+             lantern_theme = {}\n\
              pinned_procs = [{}]\n",
             self.floating, self.auto_hide, self.height,
             self.opacity, self.lava_lamp, self.position_top, self.tray_left,
+            self.lantern_theme,
             procs.join(", "),
         );
         let _ = std::fs::create_dir_all(crate::bar_config_dir());

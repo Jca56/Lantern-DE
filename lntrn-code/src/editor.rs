@@ -78,6 +78,12 @@ pub struct Editor {
     pub scrollbar: ScrollbarState,
     undo_stack: Vec<Snapshot>,
     redo_stack: Vec<Snapshot>,
+    /// True after any edit — the main loop flushes an LSP `didChange` when
+    /// it sees this set, then clears it.
+    pub lsp_dirty: bool,
+    /// True the first time we open a new file so the main loop fires an
+    /// LSP `didOpen` on the next tick.
+    pub lsp_just_opened: bool,
 }
 
 impl Editor {
@@ -103,7 +109,14 @@ impl Editor {
             scrollbar: ScrollbarState::new(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
+            lsp_dirty: false,
+            lsp_just_opened: false,
         }
+    }
+
+    /// Full document text as one string — what LSP `didChange` expects.
+    pub fn full_text(&self) -> String {
+        self.lines.join("\n")
     }
 
     pub fn title(&self) -> String {
@@ -206,6 +219,7 @@ impl Editor {
         self.set_cursor(start);
         self.sel_anchor = None;
         self.modified = true;
+        self.lsp_dirty = true;
     }
 
     pub fn clear_selection(&mut self) {
@@ -265,6 +279,7 @@ impl Editor {
         self.set_cursor(snap.cursor);
         self.sel_anchor = snap.sel_anchor;
         self.modified = true;
+        self.lsp_dirty = true;
     }
 
     // ── File I/O ───────────────────────────────────────────────────────
@@ -292,6 +307,8 @@ impl Editor {
         self.scroll_target = 0.0;
         self.undo_stack.clear();
         self.redo_stack.clear();
+        self.lsp_just_opened = true;
+        self.lsp_dirty = false;
         Ok(())
     }
 
@@ -366,6 +383,7 @@ impl Editor {
             self.cursor_col += len;
         }
         self.modified = true;
+        self.lsp_dirty = true;
     }
 
     pub fn insert_str(&mut self, s: &str) {
@@ -392,6 +410,7 @@ impl Editor {
             }
         }
         self.modified = true;
+        self.lsp_dirty = true;
     }
 
     pub fn backspace(&mut self) {
@@ -410,6 +429,7 @@ impl Editor {
             self.lines[self.cursor_line].remove(prev);
             self.cursor_col = prev;
             self.modified = true;
+            self.lsp_dirty = true;
         } else if self.cursor_line > 0 {
             let removed_fmts = self.formats.remove_line(self.cursor_line);
             let removed = self.lines.remove(self.cursor_line);
@@ -418,6 +438,7 @@ impl Editor {
             self.formats.get_mut(self.cursor_line).append(removed_fmts, self.cursor_col);
             self.lines[self.cursor_line].push_str(&removed);
             self.modified = true;
+            self.lsp_dirty = true;
         }
     }
 
@@ -435,6 +456,7 @@ impl Editor {
                 .delete_range(self.cursor_col, self.cursor_col + ch_len);
             self.lines[self.cursor_line].remove(self.cursor_col);
             self.modified = true;
+            self.lsp_dirty = true;
         } else if self.cursor_line + 1 < self.lines.len() {
             let next_fmts = self.formats.remove_line(self.cursor_line + 1);
             let next = self.lines.remove(self.cursor_line + 1);
@@ -442,6 +464,7 @@ impl Editor {
             self.formats.get_mut(self.cursor_line).append(next_fmts, cur_len);
             self.lines[self.cursor_line].push_str(&next);
             self.modified = true;
+            self.lsp_dirty = true;
         }
     }
 
@@ -516,6 +539,7 @@ impl Editor {
                 start.line, start.col, end.line, end.col, &line_lens, &toggle_fn,
             );
             self.modified = true;
+            self.lsp_dirty = true;
         } else {
             // No selection — toggle pending attrs for next character
             let base = self.pending_attrs.unwrap_or_else(|| {

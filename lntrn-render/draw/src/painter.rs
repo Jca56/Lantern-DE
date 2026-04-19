@@ -19,6 +19,10 @@ const SHAPE_ARC: f32 = 10.0;
 const SHAPE_DASHED_LINE: f32 = 11.0;
 const SHAPE_INNER_SHADOW: f32 = 12.0;
 const SHAPE_RECT_STROKE_PROGRESS: f32 = 13.0;
+const SHAPE_TAPERED_PILL: f32 = 14.0;
+const SHAPE_TAPERED_PILL_SHADOW: f32 = 15.0;
+const SHAPE_TAPERED_PILL_INNER_SHADOW: f32 = 16.0;
+const SHAPE_ROUNDED_RING: f32 = 17.0;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -492,6 +496,22 @@ impl Painter {
         });
     }
 
+    /// CSS-style rounded-rect border. Outer corner is `outer_radius`, inner
+    /// corner is `outer_radius - width` (clamped ≥ 0), so thickness stays
+    /// constant along straight edges AND the inner corner stays cleanly
+    /// rounded for any thickness — unlike `rect_stroke_sdf` which collapses
+    /// to a square inner corner once width approaches the outer radius.
+    pub fn rect_border(&mut self, rect: Rect, outer_radius: f32, width: f32, color: Color) {
+        if color.a < 0.004 || width <= 0.0 { return; }
+        let expanded = rect.expand(2.0);
+        self.instances.push(Instance {
+            bounds: [expanded.x, expanded.y, expanded.w, expanded.h],
+            color: [color.r, color.g, color.b, color.a],
+            params: [outer_radius, width, 0.0, SHAPE_ROUNDED_RING],
+            color_b: [0.0; 4],
+        });
+    }
+
     /// SDF rounded-rect stroke masked by a clockwise progress value.
     ///
     /// `progress` ranges from 1.0 (full border) to 0.0 (invisible),
@@ -564,6 +584,55 @@ impl Painter {
             color: [color.r, color.g, color.b, color.a],
             params: [corner_radius, sigma, 0.0, SHAPE_INNER_SHADOW],
             color_b: [offset_x, offset_y, 0.0, 0.0],
+        });
+    }
+
+    /// Filled tapered pill — a single shape whose right portion is `taper_amt`
+    /// shorter than the left, joined by a smooth step-down at `split_x`
+    /// (measured from `rect.x`). `corner_radius` rounds both ends; the
+    /// transition arc uses `taper_curve` so the curve length is independent
+    /// of the end radii (pass ≥ `corner_radius`).
+    pub fn tapered_pill(
+        &mut self, rect: Rect, corner_radius: f32, split_x: f32, taper_amt: f32,
+        taper_curve: f32, color: Color,
+    ) {
+        if color.a < 0.004 { return; }
+        self.instances.push(Instance {
+            bounds: [rect.x, rect.y, rect.w, rect.h],
+            color: [color.r, color.g, color.b, color.a],
+            params: [corner_radius, split_x, taper_amt, SHAPE_TAPERED_PILL],
+            color_b: [0.0, 0.0, 0.0, taper_curve],
+        });
+    }
+
+    /// Soft drop shadow for a tapered pill.
+    pub fn tapered_pill_shadow(
+        &mut self, rect: Rect, corner_radius: f32, split_x: f32, taper_amt: f32,
+        taper_curve: f32, sigma: f32, color: Color, offset_x: f32, offset_y: f32,
+    ) {
+        if color.a < 0.004 { return; }
+        let expand = sigma * 3.0;
+        let shifted = Rect::new(rect.x + offset_x, rect.y + offset_y, rect.w, rect.h);
+        let expanded = shifted.expand(expand);
+        self.instances.push(Instance {
+            bounds: [expanded.x, expanded.y, expanded.w, expanded.h],
+            color: [color.r, color.g, color.b, color.a],
+            params: [corner_radius, split_x, taper_amt, SHAPE_TAPERED_PILL_SHADOW],
+            color_b: [sigma, 0.0, 0.0, taper_curve],
+        });
+    }
+
+    /// Inset shadow for a tapered pill — bevel that follows the taper curve.
+    pub fn tapered_pill_inner_shadow(
+        &mut self, rect: Rect, corner_radius: f32, split_x: f32, taper_amt: f32,
+        taper_curve: f32, sigma: f32, color: Color, offset_x: f32, offset_y: f32,
+    ) {
+        if color.a < 0.004 { return; }
+        self.instances.push(Instance {
+            bounds: [rect.x, rect.y, rect.w, rect.h],
+            color: [color.r, color.g, color.b, color.a],
+            params: [corner_radius, split_x, taper_amt, SHAPE_TAPERED_PILL_INNER_SHADOW],
+            color_b: [sigma, offset_x, offset_y, taper_curve],
         });
     }
 

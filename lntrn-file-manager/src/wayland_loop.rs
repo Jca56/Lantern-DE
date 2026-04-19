@@ -25,6 +25,7 @@ use crate::{
     ClickAction, Gpu, CTX_NEW_FOLDER_BLUE, CTX_NEW_FOLDER_GREEN, CTX_NEW_FOLDER_ORANGE,
     CTX_NEW_FOLDER_PURPLE, CTX_NEW_FOLDER_RED, CTX_NEW_FOLDER_YELLOW,
     VIEW_SLIDER_ID, VIEW_OPACITY_SLIDER_ID, VIEW_SHOW_HIDDEN_ID,
+    VIEW_THEME_FOX_DARK, VIEW_THEME_FOX_LIGHT, VIEW_THEME_LANTERN, VIEW_THEME_NIGHT_SKY,
     ZONE_DROP_CANCEL, ZONE_DROP_COPY, ZONE_DROP_MOVE,
 };
 
@@ -38,7 +39,7 @@ pub(crate) fn run_loop(
     toplevel: &Option<xdg_toplevel::XdgToplevel>,
     viewport: &Option<wp_viewport::WpViewport>,
     gpu: &mut Gpu,
-    palette: &FoxPalette,
+    palette: &mut FoxPalette,
     view_menu: &mut ContextMenu,
     context_menu: &mut ContextMenu,
     open_with_apps: &mut Vec<DesktopApp>,
@@ -363,7 +364,7 @@ pub(crate) fn run_loop(
                     let action = handle_click(
                         input, app, view_menu, &mut state.popup_backend,
                         &mut last_tab_click, &mut tab_drag_press, s,
-                        settings.bg_opacity,
+                        settings.bg_opacity, &settings.theme,
                     );
                     match action {
                         ClickAction::None => {
@@ -543,6 +544,19 @@ pub(crate) fn run_loop(
                         app.show_hidden = checked;
                         settings.show_hidden = checked;
                         app.reload();
+                    }
+                } else if let MenuEvent::RadioSelected { id, .. } = evt {
+                    let new_theme = match id {
+                        VIEW_THEME_FOX_DARK => Some("fox-dark"),
+                        VIEW_THEME_FOX_LIGHT => Some("fox-light"),
+                        VIEW_THEME_LANTERN => Some("lantern"),
+                        VIEW_THEME_NIGHT_SKY => Some("night-sky"),
+                        _ => None,
+                    };
+                    if let Some(name) = new_theme {
+                        settings.theme = name.into();
+                        settings.save();
+                        *palette = FoxPalette::from_variant(settings.theme_variant());
                     }
                 } else if matches!(evt, MenuEvent::Action(_)) {
                     view_menu.close_popups(backend);
