@@ -120,7 +120,7 @@ impl SystemMonitor {
 
         // ── Cores toggle ──
         let arrow = if self.cores_expanded { "v" } else { ">" };
-        let cores_label = format!("{arrow}  Cores ({})", self.per_core.len());
+        let cores_label = format!("{arrow}  Threads ({})", self.per_core.len());
         let toggle_h = sf + pad;
         let toggle_rect = Rect::new(x, y, w, toggle_h);
         let ts = ix.add_zone(ZONE_CORES_TOGGLE, toggle_rect);

@@ -97,32 +97,61 @@ pub fn read_input_setting_f64(key: &str, default: f64) -> f64 {
     s.parse::<f64>().unwrap_or(default)
 }
 
+/// Resolve a command to an absolute path, preferring `~/.lantern/bin/<cmd>`
+/// so spawns work even when the compositor's PATH is incomplete (e.g. when
+/// session-manager was launched directly from a TTY without a login shell).
+fn resolve_lantern_bin(cmd: &str) -> std::path::PathBuf {
+    if cmd.starts_with('/') || cmd.starts_with("./") {
+        return std::path::PathBuf::from(cmd);
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+    let candidate = std::path::PathBuf::from(&home).join(".lantern/bin").join(cmd);
+    if candidate.exists() {
+        return candidate;
+    }
+    std::path::PathBuf::from(cmd)
+}
+
 fn spawn_detached(cmd: &str, wayland_display: &std::ffi::OsStr) {
     use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
     crate::reap_zombies();
+    let resolved = resolve_lantern_bin(cmd);
+    tracing::info!("spawn_detached: launching {}", resolved.display());
     match unsafe {
-        Command::new(cmd)
+        Command::new(&resolved)
             .env("WAYLAND_DISPLAY", wayland_display)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .pre_exec(|| {
-                // New process group so children don't get compositor signals
+                // New session + process group so child is fully detached and
+                // never gets the compositor's controlling-tty signals.
+                libc::setsid();
                 libc::setpgid(0, 0);
                 Ok(())
             })
             .spawn()
     } {
-        Ok(_) => {}
+        Ok(child) => tracing::info!("spawn_detached: spawned {} (pid {})", cmd, child.id()),
         Err(e) => tracing::error!("Failed to spawn {}: {}", cmd, e),
     }
 }
 
 fn spawn_detached_args(cmd: &str, args: &[&str], wayland_display: &std::ffi::OsStr) {
     use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
     crate::reap_zombies();
+    let resolved = resolve_lantern_bin(cmd);
     match unsafe {
-        Command::new(cmd)
+        Command::new(&resolved)
             .args(args)
             .env("WAYLAND_DISPLAY", wayland_display)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .pre_exec(|| {
+                libc::setsid();
                 libc::setpgid(0, 0);
                 Ok(())
             })

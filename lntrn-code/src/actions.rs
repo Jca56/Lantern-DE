@@ -32,8 +32,18 @@ pub fn save_file_dialog(handler: &mut TextHandler) {
         crate::lsp::glue::notify_did_save(handler);
         return;
     }
+    save_file_as_dialog(handler);
+}
+
+/// Always prompt for a destination, then save. Used by the Save As menu.
+pub fn save_file_as_dialog(handler: &mut TextHandler) {
+    let title = if handler.editor().file_path.is_some() {
+        "Save As"
+    } else {
+        "Save File"
+    };
     let output = std::process::Command::new("lntrn-file-manager")
-        .args(["--pick-save", "--title", "Save File"])
+        .args(["--pick-save", "--title", title])
         .output();
     if let Ok(out) = output {
         if out.status.success() {

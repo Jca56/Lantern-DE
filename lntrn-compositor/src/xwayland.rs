@@ -51,6 +51,9 @@ pub fn start_xwayland(state: &mut Lantern) {
     let result = state
         .loop_handle
         .insert_source(xwayland, move |event, _, state: &mut Lantern| {
+            if state.debug_counters.enabled {
+                state.debug_counters.xwayland_fires += 1;
+            }
             match event {
                 XWaylandEvent::Ready {
                     x11_socket,

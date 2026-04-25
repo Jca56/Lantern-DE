@@ -61,8 +61,8 @@ pub fn draw_window_bg(
         WindowMode::Lantern => {
             painter.rect_filled(full, r, bg_color);
             if !maximized {
-                let amber = Color::from_rgba8(230, 160, 50, 255);
-                painter.rect_border(full, CORNER_RADIUS, BORDER_THICK, amber);
+                let black = Color::from_rgba8(0, 0, 0, 255);
+                painter.rect_border(full, CORNER_RADIUS, BORDER_THICK, black);
             }
         }
     }

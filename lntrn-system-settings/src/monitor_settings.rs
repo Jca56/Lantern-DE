@@ -4,6 +4,7 @@
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{FoxPalette, InteractionContext};
 
+use crate::config::{LanternConfig, MonitorEntry};
 use crate::output_manager::OutputManagerClient;
 
 // ── Zone IDs ───────────────────────────────────────────────────────
@@ -351,6 +352,52 @@ fn draw_dropdown_button(
     let cs = 4.0 * s;
     painter.line(chev_x - cs, chev_y - cs * 0.6, chev_x, chev_y + cs * 0.4, 1.5 * s, fox.text_secondary);
     painter.line(chev_x, chev_y + cs * 0.4, chev_x + cs, chev_y - cs * 0.6, 1.5 * s, fox.text_secondary);
+}
+
+// ── Persistence ────────────────────────────────────────────────────
+
+/// Write the selected scale/resolution/refresh-rate for `head_name` into
+/// `config.monitors`, creating the entry if missing. Ensures that the next
+/// `config.save()` persists display settings to lantern.toml, and the
+/// compositor picks them up on next start.
+pub fn persist_monitor_settings(
+    config: &mut LanternConfig,
+    output_mgr: &OutputManagerClient,
+    head_idx: usize,
+    head_name: &str,
+    selected_scale: Option<f64>,
+    selected_mode_idx: Option<usize>,
+) {
+    let entry = match config.monitors.iter_mut().find(|m| m.name == head_name) {
+        Some(e) => e,
+        None => {
+            let (x, y) = output_mgr.heads.get(head_idx)
+                .map(|h| h.position)
+                .unwrap_or((0, 0));
+            config.monitors.push(MonitorEntry {
+                name: head_name.to_string(),
+                x,
+                y,
+                resolution: String::new(),
+                refresh_rate: String::new(),
+                scale: 1.25,
+                wallpaper: String::new(),
+            });
+            config.monitors.last_mut().unwrap()
+        }
+    };
+
+    if let Some(scale) = selected_scale {
+        entry.scale = scale as f32;
+    }
+    if let Some(mi) = selected_mode_idx {
+        if let Some(head) = output_mgr.heads.get(head_idx) {
+            if let Some(mode) = head.modes.get(mi) {
+                entry.resolution = format!("{}x{}", mode.width, mode.height);
+                entry.refresh_rate = mode.refresh.to_string();
+            }
+        }
+    }
 }
 
 fn draw_dropdown_item(

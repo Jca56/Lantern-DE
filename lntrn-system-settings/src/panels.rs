@@ -30,6 +30,7 @@ const ROW_H: f32 = 48.0;
 const LABEL_SIZE: f32 = 18.0;
 const VALUE_SIZE: f32 = 16.0;
 const SLIDER_H: f32 = 36.0;
+const SLIDER_W: f32 = 320.0;
 const TOGGLE_H: f32 = 36.0;
 const PAD_RIGHT: f32 = 32.0;
 const LABEL_W: f32 = 200.0;
@@ -242,12 +243,13 @@ pub fn draw_wm_panel(
     let card_inner_x = card_x + CARD_INNER_PAD_H * s;
     let card_inner_w = card_w - CARD_INNER_PAD_H * 2.0 * s;
 
-    // Inner control layout — labels, slider, value column inside the card
+    // Inner control layout — labels, fixed-width slider, value column inside the card
     let label_w = LABEL_W * s;
     let value_w = VALUE_W * s;
     let label_x = card_inner_x;
     let ctrl_x = card_inner_x + label_w;
-    let ctrl_w = (card_inner_w - label_w - value_w - 12.0 * s).max(80.0 * s);
+    let avail = (card_inner_w - label_w - value_w - 12.0 * s).max(80.0 * s);
+    let ctrl_w = (SLIDER_W * s).min(avail);
     let value_x = ctrl_x + ctrl_w + 8.0 * s;
 
     // Row counts per card

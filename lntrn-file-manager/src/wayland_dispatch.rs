@@ -6,6 +6,9 @@ use wayland_client::{
     },
     Connection, Dispatch, QueueHandle, WEnum,
 };
+use wayland_protocols::wp::cursor_shape::v1::client::{
+    wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1,
+};
 use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
@@ -44,6 +47,9 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 }
                 "zwlr_layer_shell_v1" => {
                     state.layer_shell = Some(registry.bind(name, version.min(4), qh, ()));
+                }
+                "wp_cursor_shape_manager_v1" => {
+                    state.cursor_shape_mgr = Some(registry.bind(name, version.min(1), qh, ()));
                 }
                 _ => {}
             }
@@ -142,12 +148,16 @@ impl Dispatch<wl_callback::WlCallback, ()> for State {
 
 impl Dispatch<wl_seat::WlSeat, ()> for State {
     fn event(
-        _: &mut Self, seat: &wl_seat::WlSeat,
+        state: &mut Self, seat: &wl_seat::WlSeat,
         event: wl_seat::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>,
     ) {
         if let wl_seat::Event::Capabilities { capabilities: WEnum::Value(cap) } = event {
             if cap.contains(wl_seat::Capability::Pointer) {
-                seat.get_pointer(qh, ());
+                let ptr = seat.get_pointer(qh, ());
+                if let Some(mgr) = &state.cursor_shape_mgr {
+                    state.cursor_shape_device = Some(mgr.get_pointer(&ptr, qh, ()));
+                }
+                state.pointer = Some(ptr);
             }
             if cap.contains(wl_seat::Capability::Keyboard) {
                 seat.get_keyboard(qh, ());
@@ -162,10 +172,12 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
         event: wl_pointer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
     ) {
         match event {
-            wl_pointer::Event::Enter { surface, surface_x, surface_y, .. } => {
+            wl_pointer::Event::Enter { serial, surface, surface_x, surface_y, .. } => {
                 state.pointer_in_surface = true;
                 state.cursor_x = surface_x;
                 state.cursor_y = surface_y;
+                state.pointer_enter_serial = serial;
+                state.current_cursor_shape = None;
                 state.pointer_surface = Some(surface);
                 state.frame_done = true;
             }
@@ -226,6 +238,15 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
             _ => {}
         }
     }
+}
+
+// ── Cursor shape Dispatch impls ─────────────────────────────────────────────
+
+impl Dispatch<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1, ()> for State {
+    fn event(_: &mut Self, _: &wp_cursor_shape_manager_v1::WpCursorShapeManagerV1, _: wp_cursor_shape_manager_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
+impl Dispatch<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1, ()> for State {
+    fn event(_: &mut Self, _: &wp_cursor_shape_device_v1::WpCursorShapeDeviceV1, _: wp_cursor_shape_device_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
 }
 
 // ── DnD Dispatch impls ──────────────────────────────────────────────────────

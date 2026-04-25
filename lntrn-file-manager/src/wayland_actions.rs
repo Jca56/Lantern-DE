@@ -5,6 +5,7 @@ use lntrn_ui::gpu::{
     ContextMenu, InteractionContext, MenuEvent, MenuItem,
     WaylandPopupBackend,
 };
+use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1;
 use wayland_protocols::xdg::shell::client::xdg_toplevel;
 
 use crate::app::{App, ContextTarget};
@@ -45,6 +46,23 @@ pub(crate) fn edge_resize(cx: f32, cy: f32, w: f32, h: f32, border: f32) -> Opti
         (_, _, true, _) => Some(xdg_toplevel::ResizeEdge::Top),
         (_, _, _, true) => Some(xdg_toplevel::ResizeEdge::Bottom),
         _ => None,
+    }
+}
+
+pub(crate) fn resize_edge_to_cursor_shape(
+    edge: xdg_toplevel::ResizeEdge,
+) -> wp_cursor_shape_device_v1::Shape {
+    use wp_cursor_shape_device_v1::Shape;
+    match edge {
+        xdg_toplevel::ResizeEdge::Top => Shape::NResize,
+        xdg_toplevel::ResizeEdge::Bottom => Shape::SResize,
+        xdg_toplevel::ResizeEdge::Left => Shape::WResize,
+        xdg_toplevel::ResizeEdge::Right => Shape::EResize,
+        xdg_toplevel::ResizeEdge::TopLeft => Shape::NwResize,
+        xdg_toplevel::ResizeEdge::TopRight => Shape::NeResize,
+        xdg_toplevel::ResizeEdge::BottomLeft => Shape::SwResize,
+        xdg_toplevel::ResizeEdge::BottomRight => Shape::SeResize,
+        _ => Shape::Default,
     }
 }
 

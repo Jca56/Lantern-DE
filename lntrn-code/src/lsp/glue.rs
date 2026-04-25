@@ -82,6 +82,12 @@ fn handle_one(handler: &mut TextHandler, server_id: ServerId, msg: ServerMessage
             handler.needs_redraw = true;
         }
         ServerMessage::LogMessage(text) => {
+            // Filter pyright's "No source files found" — it just means there's
+            // no pyrightconfig.json / pyproject.toml in scope. The open file
+            // still gets typechecked, so surfacing this scares users for nothing.
+            if text.contains("No source files found") {
+                return;
+            }
             handler.lsp_status = format!("{}: {}", server_id.label(), text);
             handler.needs_redraw = true;
         }

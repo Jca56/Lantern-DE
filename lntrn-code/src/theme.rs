@@ -89,40 +89,52 @@ impl Theme {
     }
 
     /// Per-token-kind color for syntax highlighting.
+    ///
+    /// Dark themes follow VS Code Dark+ conventions (the de-facto standard
+    /// most newcomers recognize): magenta keywords, salmon strings, pale-green
+    /// numbers, olive comments, teal types, soft-yellow functions, blue
+    /// booleans. Paper mirrors VS Code Light+.
     pub fn syntax_color(&self, kind: TokenKind) -> Color {
         match self {
+            // VS Code Light+ palette.
             Theme::Paper => match kind {
-                TokenKind::Keyword => Color::from_rgb8(170, 50, 110),
-                TokenKind::String => Color::from_rgb8(40, 130, 50),
-                TokenKind::Number => Color::from_rgb8(140, 80, 30),
-                TokenKind::Comment => Color::from_rgb8(150, 145, 135),
-                TokenKind::Type => Color::from_rgb8(80, 100, 180),
-                TokenKind::Function => Color::from_rgb8(50, 100, 160),
-                TokenKind::Macro => Color::from_rgb8(150, 70, 130),
-                TokenKind::Lifetime => Color::from_rgb8(180, 90, 50),
-                TokenKind::Decorator => Color::from_rgb8(150, 70, 130),
+                TokenKind::Keyword => Color::from_rgb8(175, 0, 219),    // #AF00DB
+                TokenKind::String => Color::from_rgb8(163, 21, 21),     // #A31515
+                TokenKind::Number => Color::from_rgb8(9, 134, 88),      // #098658
+                TokenKind::Comment => Color::from_rgb8(0, 128, 0),      // #008000
+                TokenKind::Type => Color::from_rgb8(38, 127, 153),      // #267F99
+                TokenKind::Function => Color::from_rgb8(121, 94, 38),   // #795E26
+                TokenKind::Boolean => Color::from_rgb8(0, 0, 255),      // #0000FF
+                TokenKind::Macro => Color::from_rgb8(175, 0, 219),
+                TokenKind::Lifetime => Color::from_rgb8(0, 0, 255),
+                TokenKind::Decorator => Color::from_rgb8(121, 94, 38),
             },
+            // Dark+ tinted toward the existing purple accent so it blends
+            // with the rest of the Night Sky chrome.
             Theme::NightSky => match kind {
-                TokenKind::Keyword => Color::from_rgb8(220, 130, 200),
-                TokenKind::String => Color::from_rgb8(150, 220, 150),
-                TokenKind::Number => Color::from_rgb8(240, 180, 100),
-                TokenKind::Comment => Color::from_rgb8(110, 120, 145),
-                TokenKind::Type => Color::from_rgb8(140, 200, 240),
-                TokenKind::Function => Color::from_rgb8(170, 160, 240),
-                TokenKind::Macro => Color::from_rgb8(220, 130, 200),
-                TokenKind::Lifetime => Color::from_rgb8(240, 180, 100),
-                TokenKind::Decorator => Color::from_rgb8(220, 130, 200),
+                TokenKind::Keyword => Color::from_rgb8(197, 134, 192),  // C586C0
+                TokenKind::String => Color::from_rgb8(206, 145, 120),   // CE9178
+                TokenKind::Number => Color::from_rgb8(181, 206, 168),   // B5CEA8
+                TokenKind::Comment => Color::from_rgb8(110, 130, 150),
+                TokenKind::Type => Color::from_rgb8(120, 200, 220),
+                TokenKind::Function => Color::from_rgb8(220, 220, 170), // DCDCAA
+                TokenKind::Boolean => Color::from_rgb8(140, 180, 240),
+                TokenKind::Macro => Color::from_rgb8(197, 134, 192),
+                TokenKind::Lifetime => Color::from_rgb8(140, 180, 240),
+                TokenKind::Decorator => Color::from_rgb8(220, 220, 170),
             },
+            // VS Code Dark+ palette, near-verbatim.
             Theme::Dark => match kind {
-                TokenKind::Keyword => Color::from_rgb8(220, 100, 130),
-                TokenKind::String => Color::from_rgb8(160, 200, 130),
-                TokenKind::Number => Color::from_rgb8(220, 170, 100),
-                TokenKind::Comment => Color::from_rgb8(120, 120, 115),
-                TokenKind::Type => Color::from_rgb8(130, 180, 220),
-                TokenKind::Function => Color::from_rgb8(180, 170, 220),
-                TokenKind::Macro => Color::from_rgb8(220, 100, 130),
-                TokenKind::Lifetime => Color::from_rgb8(220, 170, 100),
-                TokenKind::Decorator => Color::from_rgb8(220, 100, 130),
+                TokenKind::Keyword => Color::from_rgb8(197, 134, 192),  // #C586C0
+                TokenKind::String => Color::from_rgb8(206, 145, 120),   // #CE9178
+                TokenKind::Number => Color::from_rgb8(181, 206, 168),   // #B5CEA8
+                TokenKind::Comment => Color::from_rgb8(106, 153, 85),   // #6A9955
+                TokenKind::Type => Color::from_rgb8(78, 201, 176),      // #4EC9B0
+                TokenKind::Function => Color::from_rgb8(220, 220, 170), // #DCDCAA
+                TokenKind::Boolean => Color::from_rgb8(86, 156, 214),   // #569CD6
+                TokenKind::Macro => Color::from_rgb8(197, 134, 192),
+                TokenKind::Lifetime => Color::from_rgb8(86, 156, 214),
+                TokenKind::Decorator => Color::from_rgb8(220, 220, 170),
             },
         }
     }

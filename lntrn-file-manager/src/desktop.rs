@@ -119,18 +119,30 @@ fn clean_exec(exec: &str) -> String {
 }
 
 /// Launch an app by its exec string, passing the file path as an argument.
+/// Detaches stdio so the child survives the parent and silent-spawn failures
+/// surface in the lntrn log instead of vanishing.
 pub fn launch_app(exec: &str, file_path: &Path) {
+    use std::process::Stdio;
     let path = file_path.to_path_buf();
     let exec = exec.to_string();
     std::thread::spawn(move || {
         let mut parts = exec.split_whitespace();
-        let Some(bin) = parts.next() else { return };
+        let Some(bin) = parts.next() else {
+            eprintln!("[fox] launch_app: empty exec string");
+            return;
+        };
         let mut cmd = std::process::Command::new(bin);
         for arg in parts {
             cmd.arg(arg);
         }
         cmd.arg(&path);
-        let _ = cmd.spawn();
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        match cmd.spawn() {
+            Ok(_child) => {}
+            Err(e) => eprintln!("[fox] launch_app: failed to spawn {bin:?}: {e}"),
+        }
     });
 }
 

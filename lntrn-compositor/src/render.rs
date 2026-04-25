@@ -56,7 +56,7 @@ fn send_presentation_feedback(
     output: &smithay::output::Output,
     rendered: bool,
 ) {
-    use smithay::wayland::compositor::with_states;
+    use smithay::wayland::compositor::SurfaceData;
     use smithay::wayland::presentation::{PresentationFeedbackCachedState, Refresh};
     use smithay::reexports::wayland_protocols::wp::presentation_time::server::wp_presentation_feedback;
 
@@ -68,16 +68,17 @@ fn send_presentation_feedback(
     let refresh = Refresh::fixed(Duration::from_nanos(refresh_ns));
     let seq = 0u64;
 
-    let drain = |surface: &WlSurface| {
-        let feedbacks = with_states(surface, |states| {
-            std::mem::take(
-                &mut states
-                    .cached_state
-                    .get::<PresentationFeedbackCachedState>()
-                    .current()
-                    .callbacks,
-            )
-        });
+    // Use the SurfaceData passed by with_surfaces_surface_tree directly —
+    // re-entering with_states from inside its callback deadlocks on the
+    // surface state mutex (caused freeze on first toplevel map).
+    let drain = |_surface: &WlSurface, states: &SurfaceData| {
+        let feedbacks = std::mem::take(
+            &mut states
+                .cached_state
+                .get::<PresentationFeedbackCachedState>()
+                .current()
+                .callbacks,
+        );
         for feedback in feedbacks {
             if rendered {
                 feedback.presented(output, timestamp, refresh, seq, wp_presentation_feedback::Kind::Vsync);
@@ -92,11 +93,11 @@ fn send_presentation_feedback(
         .filter_map(|w| crate::window_ext::WindowExt::get_wl_surface(w))
         .collect();
     for s in &surfaces {
-        smithay::desktop::utils::with_surfaces_surface_tree(s, |sub, _| drain(sub));
+        smithay::desktop::utils::with_surfaces_surface_tree(s, drain);
     }
     for ls in layer_surfaces {
         if ls.alive() {
-            smithay::desktop::utils::with_surfaces_surface_tree(ls.wl_surface(), |sub, _| drain(sub));
+            smithay::desktop::utils::with_surfaces_surface_tree(ls.wl_surface(), drain);
         }
     }
 }
@@ -460,7 +461,10 @@ pub fn render_surface(
         let is_opening = state.animations.get(&surface)
             .map(|a| a.kind == crate::animation::AnimationKind::Open)
             .unwrap_or(false);
-        if !is_fullscreen && !is_opening {
+        // Throttle snapshot to ~10Hz: it's only used for the close-animation
+        // fallback when a client dies, and a stale-by-100ms frame is fine.
+        // Capturing every frame burns CPU on synchronous GPU sync via frame.finish().
+        if !is_fullscreen && !is_opening && state.wallpaper_frame_counter % 6 == 0 {
             if let Some(snap) = capture_window_snapshot(renderer, window, win_geo.size, output_scale) {
                 state.window_snapshots.insert(surface.clone(), snap);
             }
@@ -645,6 +649,7 @@ pub fn render_surface(
     }
 
     let elements_elapsed = t_elements.elapsed();
+    let t_post_loop = Instant::now();
 
     // Build combined elements front-to-back: cursor, switcher overlay, top layers, windows, bottom layers, wallpaper.
     let mut elements: Vec<CustomRenderElements> =
@@ -882,6 +887,8 @@ pub fn render_surface(
 
     // (window_elements and bottom_layer_elements extended after blur pipeline below)
 
+    let t_after_chrome = Instant::now();
+
     // Periodically check if wallpaper config changed
     state.wallpaper_frame_counter += 1;
     if state.wallpaper_frame_counter >= 300 {
@@ -906,6 +913,8 @@ pub fn render_surface(
         state.focus_glow_intensity = crate::read_config("window_manager", "focus_glow_intensity", "0.2")
             .parse::<f32>().unwrap_or(0.2).clamp(0.0, 0.6);
     }
+
+    let t_after_config = Instant::now();
 
     // ── Blur pipeline: render background, dual-kawase blur, insert backdrops ──
     let output_phys = Size::<i32, Physical>::from((
@@ -952,11 +961,35 @@ pub fn render_surface(
                 };
 
                 let blur_state = udev.blur_state.as_mut().unwrap();
-                match crate::blur::render_and_blur(
-                    renderer, blur_state, &element_groups, BG_COLOR.into(),
-                    output_phys, output_scale, down_shader, up_shader,
-                    tint_rgba, blur_darken,
-                ) {
+
+                // Throttle blur: re-render at most every 100ms unless an
+                // animation is actively changing the background. The previous
+                // frame's blur result is reused when we skip — visually
+                // imperceptible since the wallpaper + non-transparent windows
+                // don't move during cursor motion or transparent-window
+                // re-renders. Saves ~30ms of GPU sync per skipped frame.
+                let any_anim_active = state.animations.has_active()
+                    || state.tiling_anim.has_active()
+                    || state.workspace_anim.is_active();
+                let needs_reblur = blur_state.last_blur.map_or(true, |t| {
+                    any_anim_active || t.elapsed() >= std::time::Duration::from_millis(100)
+                });
+
+                let blur_result = if needs_reblur {
+                    let r = crate::blur::render_and_blur(
+                        renderer, blur_state, &element_groups, BG_COLOR.into(),
+                        output_phys, output_scale, down_shader, up_shader,
+                        tint_rgba, blur_darken,
+                    );
+                    if r.is_ok() {
+                        blur_state.last_blur = Some(std::time::Instant::now());
+                    }
+                    r
+                } else {
+                    Ok(())
+                };
+
+                match blur_result {
                     Ok(()) => {
                         let ctx_id = {
                             use smithay::backend::renderer::Renderer as _;
@@ -1089,16 +1122,29 @@ pub fn render_surface(
 
     // Only submit to DRM when there's actual damage — skip the atomic
     // commit when nothing changed (saves GPU and bus bandwidth).
+    let mut queued = false;
     if rendered {
         surface.frame_pending = true;
+        surface.frame_pending_since = Some(Instant::now());
         trace!("render: queue_frame starting");
         if let Err(e) = surface.drm_output.queue_frame(()) {
             surface.frame_pending = false;
+            surface.frame_pending_since = None;
             warn!("Failed to queue frame: {:?}", e);
+        } else {
+            queued = true;
         }
         trace!("render: queue_frame done");
     } else if frame_is_empty {
         trace!("render: frame is empty, skipping queue_frame");
+    }
+
+    // Vblank watchdog: arm a recovery timer in case the page-flip we just
+    // queued never produces a vblank (e.g. DRM master timing during early
+    // session activation). Without this, frame_pending would stay true
+    // forever and the compositor would visually freeze.
+    if queued {
+        crate::udev::arm_vblank_watchdog(state);
     }
 
     state.record_render(frame_callback_count);
@@ -1118,12 +1164,23 @@ pub fn render_surface(
 
     let total_elapsed = render_start.elapsed();
     if total_elapsed > Duration::from_millis(8) {
+        let prelude_ms = (t_elements - render_start).as_secs_f64() * 1000.0;
+        let chrome_ms = (t_after_chrome - t_post_loop).as_secs_f64() * 1000.0;
+        let config_ms = (t_after_config - t_after_chrome).as_secs_f64() * 1000.0;
+        let blur_ms = (t_render - t_after_config).as_secs_f64() * 1000.0;
         warn!(
             total_ms = total_elapsed.as_secs_f64() * 1000.0,
+            prelude_ms,
             elements_ms = elements_elapsed.as_secs_f64() * 1000.0,
+            chrome_ms,    // cursor + switcher + layer surfaces
+            config_ms,    // wallpaper reload + config reread
+            blur_ms,      // blur pipeline + element list assembly
             render_ms = render_elapsed.as_secs_f64() * 1000.0,
             "Slow render detected"
         );
+    }
+    if state.debug_counters.enabled {
+        state.debug_counters.render_micros += total_elapsed.as_micros() as u64;
     }
 }
 

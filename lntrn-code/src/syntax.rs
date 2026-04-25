@@ -30,6 +30,9 @@ pub enum TokenKind {
     Macro,
     Lifetime,
     Decorator,
+    /// `True`/`False`/`None` (Python) or `true`/`false` (Rust). Most editors
+    /// give booleans/null a distinct color from control-flow keywords.
+    Boolean,
 }
 
 /// A single classified slice of a line, in byte offsets.
@@ -242,7 +245,9 @@ fn tokenize_rust(text: &str) -> Vec<Token> {
                 i = end;
                 continue;
             }
-            let kind = if RUST_KEYWORDS.contains(&word) {
+            let kind = if matches!(word, "true" | "false") {
+                TokenKind::Boolean
+            } else if RUST_KEYWORDS.contains(&word) {
                 TokenKind::Keyword
             } else if RUST_PRIMITIVES.contains(&word)
                 || word.chars().next().map_or(false, |c| c.is_uppercase())
@@ -363,7 +368,9 @@ fn tokenize_python(text: &str) -> Vec<Token> {
                 i += 1;
             }
             let word = &text[start..i];
-            let kind = if PYTHON_KEYWORDS.contains(&word) {
+            let kind = if matches!(word, "True" | "False" | "None") {
+                TokenKind::Boolean
+            } else if PYTHON_KEYWORDS.contains(&word) {
                 TokenKind::Keyword
             } else if PYTHON_BUILTINS.contains(&word) {
                 TokenKind::Type

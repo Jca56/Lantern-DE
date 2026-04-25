@@ -36,6 +36,10 @@ impl CompositorHandler for Lantern {
     }
 
     fn commit(&mut self, surface: &WlSurface) {
+        let commit_start = if self.debug_counters.enabled {
+            self.debug_counters.commits += 1;
+            Some(std::time::Instant::now())
+        } else { None };
         on_commit_buffer_handler::<Self>(surface);
         if !is_sync_subsurface(surface) {
             let mut root = surface.clone();
@@ -174,6 +178,9 @@ impl CompositorHandler for Lantern {
         }
 
         self.schedule_client_render();
+        if let Some(t) = commit_start {
+            self.debug_counters.commit_micros += t.elapsed().as_micros() as u64;
+        }
     }
 }
 

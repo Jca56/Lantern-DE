@@ -31,6 +31,10 @@ pub struct BlurState {
     pub result: GlesTexture,
     pub full_size: Size<i32, Physical>,
     pub passes: usize,
+    /// Time of last full blur. Used to throttle blur to ~10Hz when nothing
+    /// behind transparent windows is changing — re-blurring on every frame
+    /// (60Hz) wastes 30+ms/frame on full GPU sync without visible benefit.
+    pub last_blur: Option<std::time::Instant>,
 }
 
 /// Ensure blur textures exist and match the output size / pass count.
@@ -90,7 +94,10 @@ pub fn ensure_textures(
         }
     };
 
-    *existing = Some(BlurState { scene, textures, result, full_size: phys_size, passes });
+    *existing = Some(BlurState {
+        scene, textures, result, full_size: phys_size, passes,
+        last_blur: None,
+    });
     true
 }
 

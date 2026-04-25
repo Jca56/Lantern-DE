@@ -7,18 +7,26 @@ use crate::sidebar::SidebarMode;
 
 impl App {
     /// Detect the git repo from the active pane's CWD and open it in the worker.
+    /// Safe to call on every PTY output — early-returns when the repo is unchanged.
     pub(crate) fn open_git_repo(&mut self) {
         let cwd = self.active_pane_cwd();
-        if let Some(root) = git::ops::find_git_root(std::path::Path::new(&cwd)) {
-            // Skip if already on this repo
-            if self.git_sidebar.repo_path.as_ref() == Some(&root) {
-                return;
-            }
-            self.git_sidebar.repo_path = Some(root.clone());
-            if let Some(ref tx) = self.git_cmd_tx {
-                tx.send(git::worker::GitCmd::OpenRepo(root)).ok();
-                tx.send(git::worker::GitCmd::FetchGraph(50)).ok();
-            }
+        let root = git::ops::find_git_root(std::path::Path::new(&cwd));
+
+        eprintln!("[git-sidebar] open_git_repo cwd={cwd:?} root={root:?} prev={:?}", self.git_sidebar.repo_path);
+
+        if root == self.git_sidebar.repo_path {
+            return;
+        }
+
+        self.git_sidebar.repo_path = root.clone();
+        self.git_sidebar.status = None;
+        self.git_sidebar.branches.clear();
+        self.git_sidebar.graph.clear();
+        self.sidebar.git_marks.clear();
+
+        if let (Some(root), Some(tx)) = (root, self.git_cmd_tx.as_ref()) {
+            tx.send(git::worker::GitCmd::OpenRepo(root)).ok();
+            tx.send(git::worker::GitCmd::FetchGraph(50)).ok();
         }
     }
 
@@ -88,8 +96,10 @@ impl App {
             None => return,
         };
         while let Ok(event) = rx.try_recv() {
+            eprintln!("[git-sidebar] got event");
             match event {
                 git::worker::GitEvent::Status(status) => {
+                    eprintln!("[git-sidebar] Status: branch={} files={}", status.branch, status.files.len());
                     // Update file sidebar git marks
                     if let Some(ref repo) = self.git_sidebar.repo_path {
                         self.sidebar.git_marks = status.files.iter().map(|f| {

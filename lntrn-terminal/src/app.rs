@@ -580,6 +580,10 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::PtyOutput => {
                 self.drain_pty();
 
+                if self.sidebar.visible && self.sidebar.mode == sidebar::SidebarMode::Git {
+                    self.open_git_repo();
+                }
+
                 // Remove dead panes
                 for tab in &mut self.tabs {
                     let mut i = 0;

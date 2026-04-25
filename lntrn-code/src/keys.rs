@@ -7,7 +7,6 @@ use winit::keyboard::{Key, ModifiersState, NamedKey};
 use crate::actions;
 use crate::auto_pair;
 use crate::lsp;
-use crate::term_panel::TermPanel;
 use crate::TextHandler;
 
 /// Result of handling a key. Lets `main.rs` decide whether to redraw or quit.
@@ -86,26 +85,7 @@ pub fn handle_key(
     if ctrl && !shift && !alt {
         if let Key::Character(s) = key {
             if s.as_str() == "`" {
-                if let Some(panel) = &mut handler.term_panel {
-                    if panel.visible {
-                        // Toggle focus, or hide if already focused
-                        if panel.focused {
-                            panel.visible = false;
-                            panel.focused = false;
-                        } else {
-                            panel.focused = true;
-                        }
-                    } else {
-                        panel.visible = true;
-                        panel.focused = true;
-                    }
-                } else {
-                    // First time — spawn the terminal
-                    match TermPanel::new(handler.proxy.clone()) {
-                        Ok(panel) => handler.term_panel = Some(panel),
-                        Err(e) => eprintln!("[lntrn-code] terminal spawn failed: {e}"),
-                    }
-                }
+                crate::term_panel::toggle_focus(&mut handler.term_panel, &handler.proxy);
                 return KeyAction::Consumed;
             }
         }
@@ -118,6 +98,12 @@ pub fn handle_key(
                 return KeyAction::Consumed;
             }
         }
+    }
+
+    // ── F5 → run active file ─────────────────────────────────────────
+    if matches!(key, Key::Named(NamedKey::F5)) {
+        crate::run::run_active_file(handler);
+        return KeyAction::Consumed;
     }
 
     // ── LSP shortcuts ────────────────────────────────────────────────
@@ -233,6 +219,10 @@ pub fn handle_key(
             }
             "B" | "b" => {
                 handler.sidebar.toggle_visible();
+                KeyAction::Consumed
+            }
+            "S" | "s" => {
+                actions::save_file_as_dialog(handler);
                 KeyAction::Consumed
             }
             _ => KeyAction::Ignored,

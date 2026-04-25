@@ -64,10 +64,18 @@ pub(crate) struct OutputSurface {
         DrmDeviceFd,
     >,
     pub frame_pending: bool,
+    /// When `frame_pending` was set. If a vblank doesn't arrive within
+    /// VBLANK_TIMEOUT, we assume the page-flip was dropped (e.g. DRM master
+    /// not held during early startup) and force a recovery render.
+    pub frame_pending_since: Option<Instant>,
     pub pending_render: bool,
     pub pending_interval: Duration,
     pub cooldown_until: Instant,
 }
+
+/// If a frame stays "pending" longer than this without a vblank, assume the
+/// page-flip got silently dropped and recover.
+pub const VBLANK_TIMEOUT: Duration = Duration::from_millis(100);
 
 pub(crate) struct GpuBackend {
     pub(crate) drm_output_manager: DrmOutputManager<
@@ -224,15 +232,37 @@ pub fn init_udev(
     libinput_context.udev_assign_seat(&seat_name).unwrap();
     let libinput_backend = LibinputInputBackend::new(libinput_context.clone());
 
-    event_loop
-        .handle()
-        .insert_source(libinput_backend, move |event, _, state| {
-            state.process_input_event(event);
-        })?;
+    let no_libinput = std::env::var_os("LNTRN_NO_LIBINPUT").is_some()
+        || crate::lantern_home().join("log/no-libinput").exists();
+    if no_libinput {
+        tracing::warn!("LIBINPUT DISABLED via LNTRN_NO_LIBINPUT — input dead, auto-exit in 30s");
+        // Auto-exit timer so the user isn't stranded with no input.
+        let _ = event_loop.handle().insert_source(
+            Timer::from_duration(std::time::Duration::from_secs(30)),
+            |_, _, state| {
+                tracing::warn!("LNTRN_NO_LIBINPUT diagnostic — auto-exit firing");
+                state.loop_signal.stop();
+                TimeoutAction::Drop
+            },
+        );
+    } else {
+        event_loop
+            .handle()
+            .insert_source(libinput_backend, move |event, _, state| {
+                if state.debug_counters.enabled {
+                    state.debug_counters.libinput_fires += 1;
+                }
+                state.process_input_event(event);
+            })?;
+    }
 
     event_loop
         .handle()
-        .insert_source(notifier, move |event, _, state| match event {
+        .insert_source(notifier, move |event, _, state| {
+            if state.debug_counters.enabled {
+                state.debug_counters.session_fires += 1;
+            }
+            match event {
             SessionEvent::PauseSession => {
                 info!("Session paused");
                 libinput_context.suspend();
@@ -260,11 +290,16 @@ pub fn init_udev(
                     }
                 }
             }
+            }
         })?;
 
     event_loop
         .handle()
-        .insert_source(udev_backend, move |event, _, state| match event {
+        .insert_source(udev_backend, move |event, _, state| {
+            if state.debug_counters.enabled {
+                state.debug_counters.udev_fires += 1;
+            }
+            match event {
             UdevEvent::Added { device_id, path } => {
                 if let Ok(node) = DrmNode::from_dev_id(device_id) {
                     if let Err(e) = device_added(state, node, &path) {
@@ -282,9 +317,14 @@ pub fn init_udev(
                     device_removed(state, node);
                 }
             }
+            }
         })?;
 
     event_loop.run(None, state, |state| {
+        let loop_start = if state.debug_counters.enabled {
+            state.debug_counters.loop_iters += 1;
+            Some(std::time::Instant::now())
+        } else { None };
         // Handle dead windows: animate client-initiated closes, clean up compositor-initiated ones.
         let dead_windows: Vec<_> = state.space.elements()
             .filter(|w| !w.alive())
@@ -314,7 +354,16 @@ pub fn init_udev(
         state.check_exclusive_zone_change();
         state.tick_audio_repeat();
         crate::reap_zombies();
+        let flush_start = if state.debug_counters.enabled {
+            Some(std::time::Instant::now())
+        } else { None };
         let _ = state.display_handle.flush_clients();
+        if let Some(t) = flush_start {
+            state.debug_counters.flush_micros += t.elapsed().as_micros() as u64;
+        }
+        if let Some(t) = loop_start {
+            state.debug_counters.loop_micros += t.elapsed().as_micros() as u64;
+        }
     })?;
 
     Ok(())
@@ -338,6 +387,7 @@ pub(crate) fn frame_finish(state: &mut Lantern, node: DrmNode, crtc: crtc::Handl
     };
 
     surface.frame_pending = false;
+    surface.frame_pending_since = None;
 
     trace!("vblank: frame_submitted starting");
     let submit_result = surface.drm_output.frame_submitted();
@@ -350,7 +400,10 @@ pub(crate) fn frame_finish(state: &mut Lantern, node: DrmNode, crtc: crtc::Handl
         }
     };
 
-    if surface.pending_render && Instant::now() >= surface.cooldown_until {
+    // Vblank IS the pacing source — if a render is pending, do it now.
+    // The cooldown check is for the timer-driven path; here we already know
+    // a frame just completed, so we have a full vblank budget for the next.
+    if surface.pending_render {
         render_surface(state, node, crtc);
     }
 }
@@ -358,6 +411,38 @@ pub(crate) fn frame_finish(state: &mut Lantern, node: DrmNode, crtc: crtc::Handl
 /// Trigger a re-render on all outputs (e.g. after cursor movement)
 pub fn schedule_render_all(state: &mut Lantern) {
     schedule_render(state, false);
+}
+
+/// Arm a one-shot timer that will run shortly after VBLANK_TIMEOUT, so that
+/// `flush_pending_renders` gets a chance to detect a dropped page-flip and
+/// recover. Called from the render path right after `queue_frame` succeeds.
+pub fn arm_vblank_watchdog(state: &mut Lantern) {
+    let udev = match state.udev.as_mut() {
+        Some(u) => u,
+        None => return,
+    };
+    if udev.render_timer.is_some() {
+        return; // an existing timer will already wake us up
+    }
+    let delay = VBLANK_TIMEOUT + Duration::from_millis(20);
+    let token = state.loop_handle.insert_source(
+        Timer::from_duration(delay),
+        |_, _, state| {
+            if state.debug_counters.enabled {
+                state.debug_counters.timer_fires += 1;
+            }
+            if let Some(udev) = state.udev.as_mut() {
+                udev.render_timer = None;
+            }
+            flush_pending_renders(state, false);
+            TimeoutAction::Drop
+        },
+    );
+    if let Ok(token) = token {
+        if let Some(udev) = state.udev.as_mut() {
+            udev.render_timer = Some(token);
+        }
+    }
 }
 
 /// Force a re-render even if a frame is pending (for cursor motion)
@@ -435,6 +520,20 @@ fn flush_pending_renders(state: &mut Lantern, force: bool) {
     let mut earliest_retry: Option<Instant> = None;
     for (node, backend) in &mut udev.backends {
         for (crtc, surface) in &mut backend.surfaces {
+            // Vblank watchdog: if a frame's been "pending" longer than
+            // VBLANK_TIMEOUT, the page-flip was almost certainly dropped
+            // (DRM master not held, driver glitch, etc.) — clear the flag
+            // so we don't wedge forever waiting for a vblank that won't come.
+            if surface.frame_pending {
+                if let Some(since) = surface.frame_pending_since {
+                    if now.duration_since(since) > VBLANK_TIMEOUT {
+                        warn!("Vblank watchdog: page-flip dropped, recovering");
+                        surface.frame_pending = false;
+                        surface.frame_pending_since = None;
+                        surface.pending_render = true;
+                    }
+                }
+            }
             if surface.pending_render {
                 if force || (!surface.frame_pending && now >= surface.cooldown_until) {
                     targets.push((*node, *crtc));

@@ -80,9 +80,18 @@ pub fn current_branch(repo: &Path) -> String {
         .args(["branch", "--show-current"])
         .current_dir(repo)
         .output();
-    output
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_else(|_| "unknown".into())
+    match output {
+        Ok(o) => {
+            let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            eprintln!("[git-ops] branch repo={repo:?} status={} stdout={s:?} stderr={:?}",
+                o.status, String::from_utf8_lossy(&o.stderr));
+            if s.is_empty() { "detached".into() } else { s }
+        }
+        Err(e) => {
+            eprintln!("[git-ops] branch repo={repo:?} spawn err: {e}");
+            "unknown".into()
+        }
+    }
 }
 
 pub fn ahead_behind(repo: &Path) -> (u32, u32) {
@@ -116,6 +125,11 @@ pub fn status(repo: &Path) -> RepoStatus {
         .output();
 
     let mut files = Vec::new();
+    match &output {
+        Ok(o) => eprintln!("[git-ops] status repo={repo:?} status={} stdout_len={} stderr={:?}",
+            o.status, o.stdout.len(), String::from_utf8_lossy(&o.stderr)),
+        Err(e) => eprintln!("[git-ops] status repo={repo:?} spawn err: {e}"),
+    }
     if let Ok(output) = output {
         let stdout = String::from_utf8_lossy(&output.stdout);
         for line in stdout.lines() {

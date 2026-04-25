@@ -14,6 +14,7 @@ use crate::icon_panel;
 use crate::icons;
 use crate::input_panel;
 use crate::monitor_arrange;
+use crate::monitor_settings::persist_monitor_settings;
 use crate::panels::{self, PanelState};
 use crate::text_edit::{KeyboardState, keycode_to_char};
 use crate::wayland_state::WaylandHandle;
@@ -366,11 +367,8 @@ pub fn run() -> Result<()> {
                             let wifi_changed =
                                 config.power.wifi_power_save != saved_config.power.wifi_power_save
                                 || config.power.wifi_power_scheme != saved_config.power.wifi_power_scheme;
-                            config.save();
-                            if wifi_changed {
-                                config.apply_wifi_power();
-                            }
-                            // Apply output settings via wlr-output-management
+                            // Apply output settings via wlr-output-management first so
+                            // the new values are folded into config.monitors before save.
                             if display_state.monitor_settings.dirty {
                                 if let Some(selected_name) = display_state.monitor_arrange.selected_output_name() {
                                     if let Some(hi) = state.output_mgr.heads.iter().position(|h| h.name == selected_name) {
@@ -381,9 +379,21 @@ pub fn run() -> Result<()> {
                                             scale: display_state.monitor_settings.selected_scale,
                                         }];
                                         crate::output_manager::apply_config(&state, &qh, &changes);
+                                        persist_monitor_settings(
+                                            &mut config,
+                                            &state.output_mgr,
+                                            hi,
+                                            &selected_name,
+                                            display_state.monitor_settings.selected_scale,
+                                            display_state.monitor_settings.selected_mode_idx,
+                                        );
                                         display_state.monitor_settings.dirty = false;
                                     }
                                 }
+                            }
+                            config.save();
+                            if wifi_changed {
+                                config.apply_wifi_power();
                             }
                             saved_config = config.clone();
                         }
@@ -429,7 +439,7 @@ pub fn run() -> Result<()> {
             if monitor_arrange::is_dragging(&display_state.monitor_arrange) {
                 monitor_arrange::handle_arrange_release(&mut display_state.monitor_arrange);
                 if display_state.monitor_arrange.dirty {
-                    config.monitors = display_state.monitor_arrange.to_config();
+                    config.monitors = display_state.monitor_arrange.to_config(&config.monitors);
                 }
             }
             if let Some(pid) = pointer_on_popup {
@@ -455,6 +465,16 @@ pub fn run() -> Result<()> {
                         scale: display_state.monitor_settings.selected_scale,
                     }];
                     crate::output_manager::apply_config(&state, &qh, &changes);
+                    persist_monitor_settings(
+                        &mut config,
+                        &state.output_mgr,
+                        hi,
+                        &selected_name,
+                        display_state.monitor_settings.selected_scale,
+                        display_state.monitor_settings.selected_mode_idx,
+                    );
+                    config.save();
+                    saved_config = config.clone();
                     display_state.monitor_settings.dirty = false;
                 }
             }

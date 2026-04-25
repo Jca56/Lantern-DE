@@ -536,6 +536,7 @@ pub fn run() -> Result<()> {
 
     tracing::info!(logical_w = state.width, bar_h = bar_height, "bar configured");
 
+    tracing::info!("BC startup: setting buffer scale + viewport");
     surface.set_buffer_scale(1);
     let viewport = state.viewporter.as_ref().map(|vp| {
         let vp = vp.get_viewport(&surface, &qh, ());
@@ -557,10 +558,13 @@ pub fn run() -> Result<()> {
 
     let phys_w = state.phys_width().max(1);
     let phys_h = state.phys_height().max(1);
+    tracing::info!("BC startup: initializing wgpu (phys={}x{})", phys_w, phys_h);
     let mut gpu = GpuContext::from_window(&wl_handle, phys_w, phys_h)
         .map_err(|e| anyhow!("GPU init failed: {e}"))?;
+    tracing::info!("BC startup: wgpu ready");
     let mut painter = Painter::new(&gpu);
     let mut text = TextRenderer::new(&gpu);
+    tracing::info!("BC startup: painter+text ready");
 
     let mut palette = FoxPalette::dark();
     palette.bg = bar_theme_bg(lantern_theme);
@@ -571,22 +575,30 @@ pub fn run() -> Result<()> {
     let mut last_frame = Instant::now();
 
     let tex_pass = TexturePass::new(&gpu);
+    tracing::info!("BC startup: starting system tray");
     let mut system_tray = crate::tray::SystemTray::start();
+    tracing::info!("BC startup: system tray started");
     let mut pending_tray_menu_pos: Option<(f32, f32)> = None;
     let mut tray_menu_bus: Option<String> = None;
     let mut tray_menu_path: Option<String> = None;
     let mut pending_dbusmenu_click: Option<i32> = None;
     let mut tray_menu_just_opened: bool = false;
 
+    tracing::info!("BC startup: building icon cache");
     let mut icon_cache = IconCache::new();
+    tracing::info!("BC startup: creating battery");
     let mut battery = Battery::new();
     if battery.is_some() {
         tracing::info!("battery widget active");
     }
+    tracing::info!("BC startup: creating temperature");
     let mut temperature = Temperature::new();
     tracing::info!("temperature widget active");
+    tracing::info!("BC startup: creating wifi");
     let mut wifi = Wifi::new();
+    tracing::info!("BC startup: creating bluetooth");
     let mut bluetooth = Bluetooth::new();
+    tracing::info!("BC startup: creating audio");
     let mut audio = Audio::new();
     tracing::info!("wifi + bluetooth + audio widgets active");
 

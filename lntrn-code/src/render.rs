@@ -16,9 +16,9 @@ use crate::tab_strip::{draw_tab_strip, TabDragState, TabLabel, TAB_STRIP_H};
 use crate::theme::Theme;
 use crate::title_bar::{draw_window_controls, title_content_rect, TITLE_BAR_H};
 use crate::{
-    Gpu, MENU_NEW, MENU_OPEN, MENU_SAVE, MENU_THEME_DARK, MENU_THEME_NIGHT, MENU_THEME_PAPER,
-    MENU_TOGGLE_MINIMAP, MENU_TOGGLE_WRAP,
-    ZONE_EDITOR, ZONE_EDITOR_SCROLL_THUMB, ZONE_MINIMAP, ZONE_SIDEBAR_SCROLL_THUMB,
+    Gpu, MENU_NEW, MENU_OPEN, MENU_RUN, MENU_SAVE, MENU_SAVE_AS, MENU_THEME_DARK,
+    MENU_THEME_NIGHT, MENU_THEME_PAPER, MENU_TOGGLE_MINIMAP, MENU_TOGGLE_TERMINAL, MENU_TOGGLE_WRAP,
+    ZONE_EDITOR, ZONE_EDITOR_SCROLL_THUMB, ZONE_MINIMAP, ZONE_SIDEBAR_SCROLL_THUMB, ZONE_TERM,
 };
 
 pub const STATUS_BAR_H: f32 = 30.0;
@@ -44,6 +44,7 @@ pub fn file_menu_items() -> Vec<(&'static str, Vec<MenuItem>)> {
                 MenuItem::action_with(MENU_NEW, "New", "Ctrl+N"),
                 MenuItem::action_with(MENU_OPEN, "Open", "Ctrl+O"),
                 MenuItem::action_with(MENU_SAVE, "Save", "Ctrl+S"),
+                MenuItem::action_with(MENU_SAVE_AS, "Save As\u{2026}", "Ctrl+Shift+S"),
             ],
         ),
         (
@@ -51,9 +52,16 @@ pub fn file_menu_items() -> Vec<(&'static str, Vec<MenuItem>)> {
             vec![
                 MenuItem::action_with(MENU_TOGGLE_WRAP, "Toggle Word Wrap", "Alt+Z"),
                 MenuItem::action_with(MENU_TOGGLE_MINIMAP, "Toggle Minimap", "Alt+M"),
+                MenuItem::action_with(MENU_TOGGLE_TERMINAL, "Toggle Terminal", "Ctrl+`"),
                 MenuItem::action_with(MENU_THEME_PAPER, "Theme: Paper", ""),
                 MenuItem::action_with(MENU_THEME_NIGHT, "Theme: Night Sky", ""),
                 MenuItem::action_with(MENU_THEME_DARK, "Theme: Dark", ""),
+            ],
+        ),
+        (
+            "Run",
+            vec![
+                MenuItem::action_with(MENU_RUN, "Run File", "F5"),
             ],
         ),
     ]
@@ -160,6 +168,9 @@ pub fn render_frame(
     let er = Rect::new(editor_full.x, editor_full.y, (editor_full.w - minimap_w).max(0.0), editor_full.h);
     let minimap_rect = Rect::new(er.x + er.w, er.y, minimap_w, er.h);
     input.add_zone(ZONE_EDITOR, er);
+    if let Some(rect) = term_rect {
+        input.add_zone(ZONE_TERM, rect);
+    }
 
     let font_size = editor::FONT_SIZE * s;
     let line_h = editor::FONT_SIZE * editor::LINE_HEIGHT * s;
@@ -503,7 +514,7 @@ pub fn render_frame(
         .map(|p| lsp_manager.diagnostic_counts(&lsp::path_to_uri(p)))
         .unwrap_or((0, 0, 0, 0));
     crate::status_bar::draw_status_bar(
-        editor, painter, text, pal, wf, hf, s, w, h, diag_summary, lsp_status,
+        editor, painter, text, input, pal, wf, hf, s, w, h, diag_summary, lsp_status,
     );
 
     // ── Context menu (dropdown from menu bar) — overlay layer ──────────

@@ -36,6 +36,39 @@ pub struct TermPanel {
     rows: usize,
 }
 
+/// Cycle keyboard focus between editor and terminal — bound to Ctrl+`.
+/// Spawns the panel on first use; reveals it if hidden. Never hides
+/// the panel — use `toggle_visible` for that.
+pub fn toggle_focus(panel: &mut Option<TermPanel>, proxy: &EventLoopProxy<UserEvent>) {
+    if let Some(p) = panel {
+        if !p.visible {
+            p.visible = true;
+            p.focused = true;
+        } else {
+            p.focused = !p.focused;
+        }
+    } else {
+        match TermPanel::new(proxy.clone()) {
+            Ok(p) => *panel = Some(p),
+            Err(e) => eprintln!("[lntrn-code] terminal spawn failed: {e}"),
+        }
+    }
+}
+
+/// Show or hide the terminal panel — bound to the View → Toggle Terminal menu.
+/// Spawns the panel on first use.
+pub fn toggle_visible(panel: &mut Option<TermPanel>, proxy: &EventLoopProxy<UserEvent>) {
+    if let Some(p) = panel {
+        p.visible = !p.visible;
+        p.focused = p.visible;
+    } else {
+        match TermPanel::new(proxy.clone()) {
+            Ok(p) => *panel = Some(p),
+            Err(e) => eprintln!("[lntrn-code] terminal spawn failed: {e}"),
+        }
+    }
+}
+
 impl TermPanel {
     /// Spawn a new terminal panel. The PTY reader thread sends `UserEvent::PtyOutput`
     /// via the proxy to wake the event loop when new output arrives.

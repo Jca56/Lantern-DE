@@ -100,12 +100,17 @@ pub fn device_added(
 
     let drm_registration = state
         .loop_handle
-        .insert_source(drm_notifier, move |event, _metadata, state| match event {
-            DrmEvent::VBlank(crtc) => {
-                crate::udev::frame_finish(state, node, crtc);
+        .insert_source(drm_notifier, move |event, _metadata, state| {
+            if state.debug_counters.enabled {
+                state.debug_counters.drm_fires += 1;
             }
-            DrmEvent::Error(err) => {
-                error!("DRM error: {:?}", err);
+            match event {
+                DrmEvent::VBlank(crtc) => {
+                    crate::udev::frame_finish(state, node, crtc);
+                }
+                DrmEvent::Error(err) => {
+                    error!("DRM error: {:?}", err);
+                }
             }
         })?;
 
@@ -431,6 +436,7 @@ fn connector_connected(
             global,
             drm_output,
             frame_pending: false,
+            frame_pending_since: None,
             pending_render: false,
             pending_interval: RENDER_INTERVAL,
             cooldown_until: Instant::now(),

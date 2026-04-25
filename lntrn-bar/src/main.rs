@@ -41,13 +41,34 @@ pub(crate) fn lantern_icons_dir() -> PathBuf {
 }
 
 fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .try_init()
+    // Write logs to ~/.lantern/log/lntrn-bar.log (truncated each session)
+    // so we can diagnose startup hangs even when stdout is unattached.
+    let log_dir = lantern_home().join("log");
+    let _ = std::fs::create_dir_all(&log_dir);
+    let log_path = log_dir.join("lntrn-bar.log");
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&log_path)
         .ok();
+
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+    if let Some(file) = log_file {
+        tracing_subscriber::fmt()
+            .with_writer(std::sync::Mutex::new(file))
+            .with_ansi(false)
+            .with_env_filter(env_filter)
+            .try_init()
+            .ok();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(env_filter)
+            .try_init()
+            .ok();
+    }
 
     layershell::run()
 }

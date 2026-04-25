@@ -8,6 +8,7 @@ use wayland_client::{
     protocol::{wl_data_device_manager, wl_surface},
     Connection, EventQueue, QueueHandle,
 };
+use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1;
 use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::shell::client::xdg_toplevel;
 
@@ -19,7 +20,7 @@ use crate::settings::Settings;
 use crate::wayland::State;
 use crate::wayland_actions::{
     handle_click, handle_ctx_event, handle_drop, handle_key, handle_right_click,
-    update_rubber_band, copy_dir_recursive, edge_resize,
+    update_rubber_band, copy_dir_recursive, edge_resize, resize_edge_to_cursor_shape,
 };
 use crate::{
     ClickAction, Gpu, CTX_NEW_FOLDER_BLUE, CTX_NEW_FOLDER_GREEN, CTX_NEW_FOLDER_ORANGE,
@@ -126,6 +127,25 @@ pub(crate) fn run_loop(
         if let Some(backend) = &mut state.popup_backend {
             let active = if state.pointer_in_surface { pointer_on_popup } else { None };
             backend.route_cursor(active, cx, cy);
+        }
+
+        // ── Cursor shape (resize edges) ─────────────────────────────────
+        if state.pointer_in_surface && pointer_on_popup.is_none() {
+            let desired = if toplevel.is_some() && !state.maximized {
+                let border = 10.0 * s;
+                match edge_resize(cx, cy, wf, hf, border) {
+                    Some(edge) => resize_edge_to_cursor_shape(edge),
+                    None => wp_cursor_shape_device_v1::Shape::Default,
+                }
+            } else {
+                wp_cursor_shape_device_v1::Shape::Default
+            };
+            if state.current_cursor_shape != Some(desired) {
+                if let Some(dev) = &state.cursor_shape_device {
+                    dev.set_shape(state.pointer_enter_serial, desired);
+                }
+                state.current_cursor_shape = Some(desired);
+            }
         }
 
         // Set pointer depth for submenu close logic

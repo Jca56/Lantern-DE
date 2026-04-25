@@ -13,10 +13,13 @@ use raw_window_handle::{
 };
 use wayland_client::{
     protocol::{
-        wl_compositor, wl_data_device, wl_data_device_manager,
+        wl_compositor, wl_data_device, wl_data_device_manager, wl_pointer,
         wl_seat, wl_surface,
     },
     Connection, EventQueue, Proxy,
+};
+use wayland_protocols::wp::cursor_shape::v1::client::{
+    wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1,
 };
 use wayland_protocols::wp::viewporter::client::wp_viewporter;
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
@@ -80,7 +83,13 @@ pub(crate) struct State {
     pub(crate) right_clicked: bool,
     pub(crate) scroll_delta: f32,
     pub(crate) pointer_serial: u32,
+    pub(crate) pointer_enter_serial: u32,
+    pub(crate) pointer: Option<wl_pointer::WlPointer>,
     pub(crate) pointer_surface: Option<wl_surface::WlSurface>,
+    // Cursor shape (wp_cursor_shape_v1)
+    pub(crate) cursor_shape_mgr: Option<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1>,
+    pub(crate) cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
+    pub(crate) current_cursor_shape: Option<wp_cursor_shape_device_v1::Shape>,
     // Keyboard
     pub(crate) ctrl: bool,
     pub(crate) shift: bool,
@@ -115,7 +124,10 @@ impl State {
             layer_shell: None, layer_surface: None,
             cursor_x: 0.0, cursor_y: 0.0, pointer_in_surface: false,
             left_pressed: false, left_released: false, right_clicked: false,
-            scroll_delta: 0.0, pointer_serial: 0, pointer_surface: None,
+            scroll_delta: 0.0, pointer_serial: 0, pointer_enter_serial: 0,
+            pointer: None, pointer_surface: None,
+            cursor_shape_mgr: None, cursor_shape_device: None,
+            current_cursor_shape: None,
             ctrl: false, shift: false, key_pressed: None,
             held_key: None, repeat_deadline: std::time::Instant::now(), repeat_started: false,
             popup_backend: None, popup_closed: false,

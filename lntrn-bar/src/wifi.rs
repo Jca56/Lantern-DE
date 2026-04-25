@@ -615,8 +615,23 @@ fn poll_status() -> WifiState {
     let output = Command::new("nmcli")
         .args(["-t", "-f", "TYPE,STATE,CONNECTION", "device"])
         .output();
-    let Ok(output) = output else { return WifiState::Off };
+    let output = match output {
+        Ok(o) => o,
+        Err(e) => {
+            tracing::warn!(?e, "wifi: nmcli spawn failed");
+            return WifiState::Off;
+        }
+    };
+    if !output.status.success() {
+        tracing::warn!(
+            status = ?output.status,
+            stderr = %String::from_utf8_lossy(&output.stderr),
+            "wifi: nmcli failed"
+        );
+        return WifiState::Off;
+    }
     let stdout = String::from_utf8_lossy(&output.stdout);
+    tracing::info!(stdout = %stdout.replace('\n', " | "), "wifi: nmcli stdout");
 
     let mut wifi_connected = false;
     let mut ssid = String::new();
@@ -632,9 +647,12 @@ fn poll_status() -> WifiState {
     }
     if !wifi_connected {
         let has_wifi = stdout.lines().any(|l| l.starts_with("wifi:"));
-        return if has_wifi { WifiState::Disconnected } else { WifiState::Off };
+        let s = if has_wifi { WifiState::Disconnected } else { WifiState::Off };
+        tracing::info!(state = ?s, "wifi: poll_status (no connection)");
+        return s;
     }
     let signal = get_signal_strength(&ssid);
+    tracing::info!(ssid = %ssid, signal, "wifi: poll_status (connected)");
     WifiState::Connected { ssid, signal }
 }
 

@@ -15,7 +15,9 @@ use tabs::TabBar;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-const HOME_URL: &str = "https://www.google.com";
+const HOME_URL: &str = "https://duckduckgo.com";
+const SEARCH_URL: &str = "https://duckduckgo.com/?q=";
+const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const BAR_H: i32 = 40;
 
 fn main() {
@@ -57,6 +59,7 @@ fn main() {
     if let Some(settings) = WebViewExt::settings(&webview) {
         settings.set_hardware_acceleration_policy(HardwareAccelerationPolicy::Never);
         settings.set_enable_smooth_scrolling(true);
+        settings.set_user_agent(Some(USER_AGENT));
     }
 
     overlay.add(&webview);
@@ -99,13 +102,17 @@ fn main() {
     nav_bar.pack_end(&btn_max, false, false, 0);
     nav_bar.pack_end(&btn_min, false, false, 0);
 
-    bars.pack_start(&nav_bar, false, false, 0);
+    let nav_wrap = gtk::EventBox::new();
+    nav_wrap.add(&nav_bar);
+    bars.pack_start(&nav_wrap, false, false, 0);
 
     // ── Tab bar ─────────────────────────────────────────────────────────────
     let tab_bar = TabBar::new();
     tab_bar.container.style_context().add_class("toolbar");
     tab_bar.container.set_size_request(-1, 34);
-    bars.pack_start(&tab_bar.container, false, false, 0);
+    let tab_wrap = gtk::EventBox::new();
+    tab_wrap.add(&tab_bar.container);
+    bars.pack_start(&tab_wrap, false, false, 0);
 
     // ── Hit zone for showing bars (transparent strip at top) ────────────────
     let hit_zone = gtk::EventBox::new();
@@ -137,19 +144,31 @@ fn main() {
         glib::Propagation::Proceed
     });
 
-    // Drag empty toolbar area to move window
-    let w = window.clone();
-    nav_bar.connect_button_press_event(move |_, event| {
-        if event.button() == 1 {
-            w.begin_move_drag(
-                event.button() as i32,
-                event.root().0 as i32,
-                event.root().1 as i32,
-                event.time(),
-            );
+    // Drag empty toolbar area to move window; double-click to maximize
+    let drag_handler = |w: gtk::Window| {
+        move |_: &gtk::EventBox, event: &gdk::EventButton| {
+            if event.button() != 1 {
+                return glib::Propagation::Proceed;
+            }
+            match event.event_type() {
+                gdk::EventType::DoubleButtonPress => {
+                    if w.is_maximized() { w.unmaximize(); } else { w.maximize(); }
+                }
+                gdk::EventType::ButtonPress => {
+                    w.begin_move_drag(
+                        event.button() as i32,
+                        event.root().0 as i32,
+                        event.root().1 as i32,
+                        event.time(),
+                    );
+                }
+                _ => {}
+            }
+            glib::Propagation::Proceed
         }
-        glib::Propagation::Proceed
-    });
+    };
+    nav_wrap.connect_button_press_event(drag_handler(window.clone()));
+    tab_wrap.connect_button_press_event(drag_handler(window.clone()));
 
     window.add(&overlay);
 
@@ -279,7 +298,7 @@ fn normalize_url(text: &str) -> String {
     } else if text.contains('.') && !text.contains(' ') {
         format!("https://{}", text)
     } else {
-        format!("https://www.google.com/search?q={}", text.replace(' ', "+"))
+        format!("{}{}", SEARCH_URL, text.replace(' ', "+"))
     }
 }
 

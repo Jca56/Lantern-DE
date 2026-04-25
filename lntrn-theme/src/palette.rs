@@ -20,9 +20,9 @@ pub struct Palette {
 // ── Fox Dark ─────────────────────────────────────────────────────────────────
 
 pub const FOX_DARK: Palette = Palette {
-    bg: Rgba::rgb(44, 44, 44),
-    surface: Rgba::rgb(56, 56, 56),
-    surface_2: Rgba::rgb(63, 63, 63),
+    bg: Rgba::rgb(24, 24, 24),
+    surface: Rgba::rgb(36, 36, 36),
+    surface_2: Rgba::rgb(44, 44, 44),
     sidebar: Rgba::rgb(66, 66, 72),
     sidebar_text: Rgba::rgb(210, 210, 216),
     text: Rgba::rgb(236, 236, 236),

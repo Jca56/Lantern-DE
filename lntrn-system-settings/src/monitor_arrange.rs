@@ -113,16 +113,32 @@ impl MonitorArrangeState {
         }
     }
 
-    /// Export current arrangement as config entries.
-    pub fn to_config(&self) -> Vec<MonitorEntry> {
-        self.rects.iter().map(|r| MonitorEntry {
-            name: r.name.clone(),
-            x: r.out_x,
-            y: r.out_y,
-            resolution: String::new(),
-            refresh_rate: String::new(),
-            scale: 1.25,
-            wallpaper: String::new(),
+    /// Export current arrangement as config entries, preserving scale/wallpaper
+    /// and other fields from the existing config for monitors that already have
+    /// entries. Only position is updated from the arrangement canvas.
+    pub fn to_config(&self, existing: &[MonitorEntry]) -> Vec<MonitorEntry> {
+        self.rects.iter().map(|r| {
+            if let Some(prev) = existing.iter().find(|m| m.name == r.name) {
+                MonitorEntry {
+                    name: r.name.clone(),
+                    x: r.out_x,
+                    y: r.out_y,
+                    resolution: prev.resolution.clone(),
+                    refresh_rate: prev.refresh_rate.clone(),
+                    scale: prev.scale,
+                    wallpaper: prev.wallpaper.clone(),
+                }
+            } else {
+                MonitorEntry {
+                    name: r.name.clone(),
+                    x: r.out_x,
+                    y: r.out_y,
+                    resolution: String::new(),
+                    refresh_rate: String::new(),
+                    scale: 1.25,
+                    wallpaper: String::new(),
+                }
+            }
         }).collect()
     }
 

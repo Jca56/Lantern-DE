@@ -200,16 +200,14 @@ fn main() {
         let _ = signal::sigaction(Signal::SIGHUP, &sa);
     }
 
-    // Ignore SIGCHLD with SA_NOCLDWAIT so the kernel automatically reaps
-    // child processes instead of leaving zombies.
-    let sa_chld = SigAction::new(
-        SigHandler::SigIgn,
-        SaFlags::SA_NOCLDWAIT | SaFlags::SA_RESTART,
-        SigSet::empty(),
-    );
-    unsafe {
-        let _ = signal::sigaction(Signal::SIGCHLD, &sa_chld);
-    }
+    // DO NOT install SA_NOCLDWAIT. Signal dispositions are inherited across
+    // exec() to all spawned children (bar, portal, notifyd, compositor, ...).
+    // SA_NOCLDWAIT makes the kernel auto-reap children, which causes Rust
+    // std's Command::output() / Command::spawn() to fail with ECHILD when
+    // they try to waitpid() the spawned subprocess. Result: every nmcli /
+    // wpctl / bluetoothctl call from the bar fails → widgets show
+    // "unavailable". Instead, we explicitly reap zombies in the main loop
+    // below using waitpid(WNOHANG).
 
     // Set desktop environment variables
     std::env::set_var("XDG_CURRENT_DESKTOP", "Lantern");
@@ -248,7 +246,12 @@ fn main() {
         .expect("Failed to create compositor log file");
     let compositor_err = compositor_log.try_clone().expect("Failed to clone log file handle");
 
-    let mut compositor = match Command::new("lntrn-compositor")
+    let compositor_path = {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+        PathBuf::from(home).join(".lantern").join("bin").join("lntrn-compositor")
+    };
+    log(&format!("🏮 Compositor binary: {}", compositor_path.display()));
+    let mut compositor = match Command::new(&compositor_path)
         .arg("--udev")
         .env("RUST_BACKTRACE", "1")
         .env_remove("DISPLAY")

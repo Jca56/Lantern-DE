@@ -2,6 +2,7 @@ mod actions;
 mod auto_pair;
 mod bracket_match;
 mod clipboard;
+mod consts;
 mod editor;
 mod find_bar;
 mod format;
@@ -10,6 +11,7 @@ mod lsp;
 mod markdown;
 mod minimap;
 mod mouse;
+mod run;
 mod term;
 mod term_panel;
 mod render;
@@ -54,28 +56,7 @@ pub enum UserEvent {
     LspMessage,
 }
 
-// ── Hit zone IDs ────────────────────────────────────────────────────────────
-
-pub(crate) const ZONE_CLOSE: u32 = 1;
-pub(crate) const ZONE_MAXIMIZE: u32 = 2;
-pub(crate) const ZONE_MINIMIZE: u32 = 3;
-pub(crate) const ZONE_EDITOR: u32 = 10;
-pub(crate) const ZONE_EDITOR_SCROLL_THUMB: u32 = 4000;
-pub(crate) const ZONE_EDITOR_SCROLL_TRACK: u32 = 4001;
-pub(crate) const ZONE_SIDEBAR_SCROLL_THUMB: u32 = 4002;
-pub(crate) const ZONE_SIDEBAR_SCROLL_TRACK: u32 = 4003;
-pub(crate) const ZONE_MINIMAP: u32 = 5000;
-
-// ── Menu item IDs ───────────────────────────────────────────────────────────
-
-pub(crate) const MENU_NEW: u32 = 100;
-pub(crate) const MENU_OPEN: u32 = 101;
-pub(crate) const MENU_SAVE: u32 = 102;
-pub(crate) const MENU_THEME_PAPER: u32 = 200;
-pub(crate) const MENU_THEME_NIGHT: u32 = 201;
-pub(crate) const MENU_THEME_DARK: u32 = 202;
-pub(crate) const MENU_TOGGLE_WRAP: u32 = 210;
-pub(crate) const MENU_TOGGLE_MINIMAP: u32 = 211;
+pub(crate) use consts::*;
 
 // ── Main ────────────────────────────────────────────────────────────────────
 
@@ -364,7 +345,7 @@ impl ApplicationHandler<UserEvent> for TextHandler {
 
         self.gpu = Some(Gpu {
             painter: Painter::new(&gpu_ctx),
-            text: TextRenderer::new(&gpu_ctx),
+            text: TextRenderer::new_monospace(&gpu_ctx),
             ctx: gpu_ctx,
         });
         self.window = Some(window);
@@ -596,6 +577,10 @@ impl ApplicationHandler<UserEvent> for TextHandler {
                             self.menu_bar.close();
                             actions::save_file_dialog(self);
                         }
+                        MenuEvent::Action(MENU_SAVE_AS) => {
+                            self.menu_bar.close();
+                            actions::save_file_as_dialog(self);
+                        }
                         MenuEvent::Action(MENU_THEME_PAPER) => {
                             self.menu_bar.close();
                             self.set_theme(Theme::Paper);
@@ -616,6 +601,14 @@ impl ApplicationHandler<UserEvent> for TextHandler {
                         MenuEvent::Action(MENU_TOGGLE_MINIMAP) => {
                             self.menu_bar.close();
                             self.minimap_visible = !self.minimap_visible;
+                        }
+                        MenuEvent::Action(MENU_TOGGLE_TERMINAL) => {
+                            self.menu_bar.close();
+                            term_panel::toggle_visible(&mut self.term_panel, &self.proxy);
+                        }
+                        MenuEvent::Action(MENU_RUN) => {
+                            self.menu_bar.close();
+                            run::run_active_file(self);
                         }
                         _ => {}
                     }

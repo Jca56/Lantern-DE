@@ -12,6 +12,11 @@ pub fn apply_css() {
 }
 
 const CSS: &str = r#"
+* {
+    outline: none;
+    -gtk-outline-radius: 0;
+}
+
 window {
     background-color: rgb(24, 24, 24);
 }
@@ -26,9 +31,18 @@ window {
     border-bottom: 1px solid rgb(20, 20, 20);
 }
 
-.nav-btn {
-    background: none;
+button.nav-btn,
+button.nav-btn:focus,
+button.nav-btn:hover,
+button.nav-btn:active,
+button.nav-btn:checked,
+button.nav-btn:backdrop {
+    background-image: none;
+    background-color: transparent;
     border: none;
+    box-shadow: none;
+    outline: none;
+    text-shadow: none;
     border-radius: 6px;
     color: rgb(200, 200, 200);
     font-size: 18px;
@@ -37,13 +51,15 @@ window {
     padding: 0;
 }
 
-.nav-btn:hover {
+button.nav-btn:hover {
     background-color: rgb(51, 51, 51);
 }
 
 .tab-btn {
-    background: none;
+    background: transparent;
     border: none;
+    box-shadow: none;
+    outline: none;
     border-radius: 6px;
     color: rgb(144, 144, 144);
     font-size: 13px;
@@ -62,9 +78,18 @@ window {
     color: rgb(236, 236, 236);
 }
 
-.tab-close {
-    background: none;
+button.tab-close,
+button.tab-close:focus,
+button.tab-close:hover,
+button.tab-close:active,
+button.tab-close:checked,
+button.tab-close:backdrop {
+    background-image: none;
+    background-color: transparent;
     border: none;
+    box-shadow: none;
+    outline: none;
+    text-shadow: none;
     color: rgb(100, 100, 100);
     font-size: 11px;
     min-width: 16px;
@@ -74,14 +99,23 @@ window {
     border-radius: 6px;
 }
 
-.tab-close:hover {
+button.tab-close:hover {
     background-color: rgb(255, 100, 100);
     color: white;
 }
 
-.new-tab-btn {
-    background: none;
+button.new-tab-btn,
+button.new-tab-btn:focus,
+button.new-tab-btn:hover,
+button.new-tab-btn:active,
+button.new-tab-btn:checked,
+button.new-tab-btn:backdrop {
+    background-image: none;
+    background-color: transparent;
     border: none;
+    box-shadow: none;
+    outline: none;
+    text-shadow: none;
     color: rgb(144, 144, 144);
     font-size: 16px;
     min-width: 28px;
@@ -90,7 +124,7 @@ window {
     border-radius: 6px;
 }
 
-.new-tab-btn:hover {
+button.new-tab-btn:hover {
     background-color: rgb(51, 51, 51);
     color: rgb(34, 197, 94);
 }

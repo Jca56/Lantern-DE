@@ -212,6 +212,7 @@ pub(crate) fn read_monitor_configs() -> Vec<MonitorConfig> {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     install_child_reaper();
+    ensure_lantern_bin_on_path();
     let log_file = setup_persistent_log();
     init_logging(log_file);
     setup_panic_hook();
@@ -236,7 +237,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Backend::Udev => {
             std::env::set_var("WAYLAND_DISPLAY", &state.socket_name);
-            crate::xwayland::start_xwayland(&mut state);
+            let no_xwayland = std::env::var_os("LNTRN_NO_XWAYLAND").is_some()
+                || lantern_home().join("log/no-xwayland").exists();
+            if no_xwayland {
+                tracing::warn!("XWAYLAND DISABLED via LNTRN_NO_XWAYLAND flag");
+            } else {
+                crate::xwayland::start_xwayland(&mut state);
+            }
             // Daemons/clients are spawned from handle_xwayland_ready()
             // so DISPLAY is guaranteed to be set for X11 apps.
 
@@ -305,12 +312,28 @@ fn init_logging(log_file: Option<std::fs::File>) {
 /// zombies. Without this, every `Command::new(...).spawn()` that isn't
 /// explicitly `wait()`-ed on leaves a zombie in the process table.
 fn install_child_reaper() {
-    unsafe {
-        let mut sa: libc::sigaction = std::mem::zeroed();
-        sa.sa_sigaction = libc::SIG_DFL;
-        sa.sa_flags = libc::SA_NOCLDWAIT;
-        libc::sigaction(libc::SIGCHLD, &sa, std::ptr::null_mut());
+    // Previously set SA_NOCLDWAIT on SIGCHLD so the kernel auto-reaped children.
+    // Rust std >=1.77 panics inside Command::spawn() when the kernel has already
+    // reaped the child (ECHILD from internal waitid). We now reap zombies
+    // explicitly via reap_zombies() at every spawn site instead.
+}
+
+/// Prepend ~/.lantern/bin to PATH so `Command::new("lntrn-terminal")` etc. resolve
+/// regardless of how the compositor was launched (session manager vs. bare TTY).
+fn ensure_lantern_bin_on_path() {
+    let bin = lantern_home().join("bin");
+    let bin_str = bin.to_string_lossy().to_string();
+    let current = std::env::var("PATH").unwrap_or_default();
+    if current.split(':').any(|p| p == bin_str) {
+        return;
     }
+    let new_path = if current.is_empty() {
+        bin_str
+    } else {
+        format!("{}:{}", bin_str, current)
+    };
+    // Safe: single-threaded at startup, before any spawn or thread creation.
+    unsafe { std::env::set_var("PATH", new_path); }
 }
 
 /// Actively reap any zombie children. Call this periodically since SA_NOCLDWAIT

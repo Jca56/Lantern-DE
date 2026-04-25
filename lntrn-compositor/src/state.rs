@@ -94,6 +94,23 @@ pub struct DebugCounters {
     pub(crate) scheduled_renders: u64,
     pub(crate) forced_renders: u64,
     pub(crate) winit_redraw_requests: u64,
+    pub(crate) commits: u64,
+    pub(crate) dispatch_iters: u64,
+    pub(crate) dispatch_events: u64,
+    pub(crate) dispatch_micros: u64,
+    pub(crate) commit_micros: u64,
+    pub(crate) render_micros: u64,
+    pub(crate) loop_iters: u64,
+    pub(crate) loop_micros: u64,
+    pub(crate) flush_micros: u64,
+    pub(crate) libinput_fires: u64,
+    pub(crate) drm_fires: u64,
+    pub(crate) timer_fires: u64,
+    pub(crate) wayland_fires: u64,
+    pub(crate) listener_fires: u64,
+    pub(crate) udev_fires: u64,
+    pub(crate) session_fires: u64,
+    pub(crate) xwayland_fires: u64,
 }
 
 impl DebugCounters {
@@ -111,6 +128,23 @@ impl DebugCounters {
             scheduled_renders: 0,
             forced_renders: 0,
             winit_redraw_requests: 0,
+            commits: 0,
+            dispatch_iters: 0,
+            dispatch_events: 0,
+            dispatch_micros: 0,
+            commit_micros: 0,
+            render_micros: 0,
+            loop_iters: 0,
+            loop_micros: 0,
+            flush_micros: 0,
+            libinput_fires: 0,
+            drm_fires: 0,
+            timer_fires: 0,
+            wayland_fires: 0,
+            listener_fires: 0,
+            udev_fires: 0,
+            session_fires: 0,
+            xwayland_fires: 0,
         }
     }
 
@@ -132,6 +166,23 @@ impl DebugCounters {
             scheduled_renders_per_sec = self.scheduled_renders as f64 / secs,
             forced_renders_per_sec = self.forced_renders as f64 / secs,
             winit_redraw_requests_per_sec = self.winit_redraw_requests as f64 / secs,
+            commits_per_sec = self.commits as f64 / secs,
+            dispatch_iters_per_sec = self.dispatch_iters as f64 / secs,
+            dispatch_events_per_sec = self.dispatch_events as f64 / secs,
+            dispatch_pct = (self.dispatch_micros as f64 / 1_000_000.0 / secs) * 100.0,
+            commit_pct = (self.commit_micros as f64 / 1_000_000.0 / secs) * 100.0,
+            render_pct = (self.render_micros as f64 / 1_000_000.0 / secs) * 100.0,
+            loop_iters_per_sec = self.loop_iters as f64 / secs,
+            loop_pct = (self.loop_micros as f64 / 1_000_000.0 / secs) * 100.0,
+            flush_pct = (self.flush_micros as f64 / 1_000_000.0 / secs) * 100.0,
+            libinput_fires_per_sec = self.libinput_fires as f64 / secs,
+            drm_fires_per_sec = self.drm_fires as f64 / secs,
+            timer_fires_per_sec = self.timer_fires as f64 / secs,
+            wayland_fires_per_sec = self.wayland_fires as f64 / secs,
+            listener_fires_per_sec = self.listener_fires as f64 / secs,
+            udev_fires_per_sec = self.udev_fires as f64 / secs,
+            session_fires_per_sec = self.session_fires as f64 / secs,
+            xwayland_fires_per_sec = self.xwayland_fires as f64 / secs,
             "lntrn-compositor counters"
         );
 
@@ -141,6 +192,23 @@ impl DebugCounters {
         self.scheduled_renders = 0;
         self.forced_renders = 0;
         self.winit_redraw_requests = 0;
+        self.commits = 0;
+        self.dispatch_iters = 0;
+        self.dispatch_events = 0;
+        self.dispatch_micros = 0;
+        self.commit_micros = 0;
+        self.render_micros = 0;
+        self.loop_iters = 0;
+        self.loop_micros = 0;
+        self.flush_micros = 0;
+        self.libinput_fires = 0;
+        self.drm_fires = 0;
+        self.timer_fires = 0;
+        self.wayland_fires = 0;
+        self.listener_fires = 0;
+        self.udev_fires = 0;
+        self.session_fires = 0;
+        self.xwayland_fires = 0;
     }
 }
 
@@ -416,6 +484,9 @@ impl Lantern {
 
         loop_handle
             .insert_source(listening_socket, move |client_stream, _, state| {
+                if state.debug_counters.enabled {
+                    state.debug_counters.listener_fires += 1;
+                }
                 state
                     .display_handle
                     .insert_client(client_stream, Arc::new(ClientState::default()))
@@ -427,10 +498,41 @@ impl Lantern {
             .insert_source(
                 Generic::new(display, Interest::READ, Mode::Level),
                 |_, display, state| {
-                    // Safety: we don't drop the display
-                    if let Err(e) = unsafe { display.get_mut().dispatch_clients(state) } {
-                        tracing::error!("dispatch_clients failed: {:?}", e);
+                    // Drain to completion: dispatch_clients returns the number
+                    // of events it dispatched. Loop until 0 so the underlying
+                    // epoll fd transitions to "not readable" — otherwise level
+                    // mode keeps re-firing this callback and other event
+                    // sources (input, render timer) get starved into freeze.
+                    // Cap the loop to prevent runaway in case a client spams
+                    // events faster than we can dispatch.
+                    let mut iters = 0;
+                    if state.debug_counters.enabled {
+                        state.debug_counters.wayland_fires += 1;
                     }
+                    let dispatch_start = if state.debug_counters.enabled {
+                        Some(std::time::Instant::now())
+                    } else { None };
+                    loop {
+                        let n = match unsafe { display.get_mut().dispatch_clients(state) } {
+                            Ok(n) => n,
+                            Err(e) => {
+                                tracing::error!("dispatch_clients failed: {:?}", e);
+                                break;
+                            }
+                        };
+                        iters += 1;
+                        if state.debug_counters.enabled {
+                            state.debug_counters.dispatch_iters += 1;
+                            state.debug_counters.dispatch_events += n as u64;
+                        }
+                        if n == 0 || iters >= 64 {
+                            break;
+                        }
+                    }
+                    if let Some(t) = dispatch_start {
+                        state.debug_counters.dispatch_micros += t.elapsed().as_micros() as u64;
+                    }
+                    state.debug_counters.maybe_report();
                     Ok(PostAction::Continue)
                 },
             )

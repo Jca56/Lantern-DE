@@ -17,8 +17,8 @@ use crate::title_bar::TITLE_BAR_H;
 use crate::minimap;
 use crate::{
     TextHandler, ZONE_CLOSE, ZONE_EDITOR, ZONE_EDITOR_SCROLL_THUMB, ZONE_EDITOR_SCROLL_TRACK,
-    ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_MINIMAP, ZONE_SIDEBAR_SCROLL_THUMB,
-    ZONE_SIDEBAR_SCROLL_TRACK,
+    ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_MINIMAP, ZONE_RUN_BTN, ZONE_SIDEBAR_SCROLL_THUMB,
+    ZONE_SIDEBAR_SCROLL_TRACK, ZONE_TERM,
 };
 
 /// Result of a mouse event — same shape as `KeyAction` so callers can decide
@@ -76,6 +76,10 @@ fn handle_left_press(handler: &mut TextHandler, event_loop: &ActiveEventLoop) ->
                 }
             }
             ZONE_EDITOR => {
+                // Clicking the editor body returns focus from the terminal.
+                if let Some(panel) = handler.term_panel.as_mut() {
+                    panel.focused = false;
+                }
                 // Ctrl+Left click → goto-definition at the clicked position.
                 // The click still moves the caret so the LSP sees the right
                 // cursor location for the request.
@@ -92,6 +96,14 @@ fn handle_left_press(handler: &mut TextHandler, event_loop: &ActiveEventLoop) ->
                         handler.dragging = true;
                     }
                 }
+            }
+            ZONE_TERM => {
+                if let Some(panel) = handler.term_panel.as_mut() {
+                    panel.focused = true;
+                }
+            }
+            ZONE_RUN_BTN => {
+                crate::run::run_active_file(handler);
             }
             ZONE_NEW_TAB => {
                 handler.new_tab();
