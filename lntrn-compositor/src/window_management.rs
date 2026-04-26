@@ -3,9 +3,10 @@
 use smithay::{
     desktop::Window,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
-    utils::{Logical, Point, Rectangle, Serial},
+    utils::{Logical, Point, Rectangle, Serial, Size},
 };
 
+use crate::minimize_anim::MinimizeKind;
 use crate::state::{FullscreenWindow, Lantern, MaximizedWindow, MinimizedWindow};
 use crate::window_ext::WindowExt;
 
@@ -178,6 +179,8 @@ impl Lantern {
         self.window_snapshots.remove(surface);
         self.animations.remove(surface);
         self.tiling_anim.remove(surface);
+        self.window_state_anim.remove(surface);
+        self.minimize_anim.remove(surface);
         let was_tiled = self.workspaces.contains(surface);
         self.workspaces.remove(surface);
         self.unmapped_windows.remove(surface);
@@ -541,10 +544,16 @@ impl Lantern {
         };
         tracing::info!("maximize_surface: configuring to {:?}", output_geo);
 
+        // Capture pre-maximize rect for animation start; if a previous rect
+        // anim is already running for this surface, redirect from its current
+        // interpolated rect instead.
+        let anim_start = self.window_state_anim.current_rect(surface).unwrap_or(restore);
+
         window.set_maximized(true);
         window.configure_rect(output_geo);
 
         self.space.map_element(window.clone(), output_geo.loc, true);
+        self.window_state_anim.animate_default(surface, anim_start, output_geo);
         self.update_foreign_toplevel_states(surface);
         if serial != Serial::from(0) {
             self.focus_window(&window, serial);
@@ -567,10 +576,16 @@ impl Lantern {
             return false;
         };
 
+        // Animation start = current visible rect (handles redirect mid-maximize).
+        let current_loc = self.space.element_location(&window).unwrap_or(restore.loc);
+        let current_rect = Rectangle::new(current_loc, window.geometry().size);
+        let anim_start = self.window_state_anim.current_rect(surface).unwrap_or(current_rect);
+
         window.set_maximized(false);
         window.configure_rect(restore);
 
         self.space.map_element(window.clone(), restore.loc, true);
+        self.window_state_anim.animate_default(surface, anim_start, restore);
         self.update_foreign_toplevel_states(surface);
         if serial != Serial::from(0) {
             self.focus_window(&window, serial);
@@ -580,8 +595,42 @@ impl Lantern {
         true
     }
 
+    /// Compute the rect a window should minimize to / unminimize from. Prefers
+    /// the bar's tray-icon rect for this app_id; falls back to a 48px square
+    /// at the bottom-center of the output containing the window.
+    pub(crate) fn minimize_target_for(&self, window: &Window) -> Rectangle<i32, Logical> {
+        let app_id = window.get_app_id();
+        if !app_id.is_empty() {
+            if let Some(rect) = self.hover_preview.tray_icon_rect(&app_id) {
+                return rect;
+            }
+        }
+        // Fallback: bottom-center of the output containing the window.
+        let output_geo = self
+            .output_for_window(window)
+            .or_else(|| self.space.outputs().next().cloned())
+            .and_then(|o| self.space.output_geometry(&o))
+            .unwrap_or_else(|| Rectangle::new((0, 0).into(), (1920, 1080).into()));
+        let icon_size = 48;
+        let cx = output_geo.loc.x + output_geo.size.w / 2;
+        let by = output_geo.loc.y + output_geo.size.h - icon_size - 16;
+        Rectangle::new(
+            (cx - icon_size / 2, by).into(),
+            Size::from((icon_size, icon_size)),
+        )
+    }
+
     pub(crate) fn minimize_surface(&mut self, surface: &WlSurface, serial: Serial) -> bool {
         if self.minimized_windows.iter().any(|entry| entry.surface == *surface) {
+            return false;
+        }
+        // If a Minimize anim is already in flight, leave it alone.
+        if self
+            .minimize_anim
+            .get(surface)
+            .map(|a| a.kind == MinimizeKind::Minimize)
+            .unwrap_or(false)
+        {
             return false;
         }
 
@@ -590,16 +639,43 @@ impl Lantern {
         };
 
         let location = self.space.element_location(&window).unwrap_or_default();
+        let source_rect = Rectangle::new(location, window.geometry().size);
+        let target_rect = self.minimize_target_for(&window);
+
+        // Start the animation; the window stays mapped and renders during
+        // the anim. `finish_minimize_animation` does the actual unmap when
+        // the anim's tick reports it as finished.
+        self.minimize_anim.start_minimize(surface, source_rect, target_rect);
+
+        // Clear focus immediately so the window doesn't look "active" while
+        // it shrinks toward the tray icon.
+        if serial != Serial::from(0) {
+            self.clear_focus(serial);
+        } else {
+            self.focused_surface = None;
+        }
+        window.set_activated(false);
+
+        self.schedule_render();
+        true
+    }
+
+    /// Called by the render loop when a minimize animation has finished.
+    /// Performs the actual unmap and bookkeeping that was deferred so the
+    /// window could keep rendering during the shrink.
+    pub fn finish_minimize_animation(&mut self, surface: &WlSurface) {
+        let Some(window) = self.find_mapped_window(surface) else {
+            return;
+        };
+        let location = self.space.element_location(&window).unwrap_or_default();
         self.minimized_windows.push(MinimizedWindow {
             surface: surface.clone(),
             window: window.clone(),
             location,
         });
-        window.set_activated(false);
         window.send_pending_configure();
         self.space.unmap_elem(&window);
 
-        // Remove from tiling tree so remaining windows reflow
         let was_tiled = self.workspaces.contains(surface);
         self.workspaces.remove(surface);
         self.tiling_anim.remove(surface);
@@ -607,19 +683,8 @@ impl Lantern {
             self.apply_tiling_layout();
         }
 
-        // Clear focus BEFORE broadcasting foreign-toplevel state so the
-        // minimized window is no longer marked as activated. We must do
-        // this before update_foreign_toplevel_states because the window
-        // is already unmapped and clear_focus can't reach it via space.
-        if serial != Serial::from(0) {
-            self.clear_focus(serial);
-        } else {
-            self.focused_surface = None;
-        }
-
         self.update_foreign_toplevel_states(surface);
         self.schedule_client_render();
-        true
     }
 
     /// Public alias for foreign-toplevel unset_minimized.
@@ -649,6 +714,14 @@ impl Lantern {
         };
 
         self.space.map_element(entry.window.clone(), location, true);
+
+        // Start the unminimize animation: emerge from the tray icon rect and
+        // grow into the restored position.
+        let source_rect = Rectangle::new(location, entry.window.geometry().size);
+        let target_rect = self.minimize_target_for(&entry.window);
+        self.minimize_anim
+            .start_unminimize(&entry.surface, source_rect, target_rect);
+        self.schedule_render();
 
         // Re-insert into tiling tree if tiling is active
         if self.workspaces.tiling_active && !self.workspaces.contains(&entry.surface) {
@@ -770,10 +843,17 @@ impl Lantern {
             restore,
         });
 
+        // Capture animation start (or redirect from in-flight anim).
+        let anim_start = self
+            .window_state_anim
+            .current_rect(surface)
+            .unwrap_or_else(|| Rectangle::new(location, window.geometry().size));
+
         window.set_fullscreen(true);
         window.configure_rect(output_geo);
 
         self.space.map_element(window.clone(), output_geo.loc, true);
+        self.window_state_anim.animate_default(surface, anim_start, output_geo);
         self.update_foreign_toplevel_states(surface);
         if serial != Serial::from(0) {
             self.focus_window(&window, serial);
@@ -794,10 +874,15 @@ impl Lantern {
             return false;
         };
 
+        let current_loc = self.space.element_location(&window).unwrap_or(restore.loc);
+        let current_rect = Rectangle::new(current_loc, window.geometry().size);
+        let anim_start = self.window_state_anim.current_rect(surface).unwrap_or(current_rect);
+
         window.set_fullscreen(false);
         window.configure_rect(restore);
 
         self.space.map_element(window.clone(), restore.loc, true);
+        self.window_state_anim.animate_default(surface, anim_start, restore);
         self.update_foreign_toplevel_states(surface);
         if serial != Serial::from(0) {
             self.focus_window(&window, serial);

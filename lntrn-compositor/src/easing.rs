@@ -39,6 +39,31 @@ pub fn ease_out_back(t: f64, overshoot: f64) -> f64 {
     1.0 + c * inv * inv * inv + overshoot * inv * inv
 }
 
+/// Ease-in-out quintic: very slow start and finish, fast middle.
+/// Cinematic feel — used for big window-state transitions (maximize, minimize, fullscreen).
+pub fn ease_in_out_quint(t: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    if t < 0.5 {
+        16.0 * t * t * t * t * t
+    } else {
+        let inv = -2.0 * t + 2.0;
+        1.0 - inv.powi(5) / 2.0
+    }
+}
+
+/// Ease-in-out exponential: even more dramatic than quintic.
+/// Use for the showiest transitions; can feel sluggish at long durations.
+pub fn ease_in_out_expo(t: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    if t == 0.0 { return 0.0; }
+    if t >= 1.0 { return 1.0; }
+    if t < 0.5 {
+        2f64.powf(20.0 * t - 10.0) / 2.0
+    } else {
+        (2.0 - 2f64.powf(-20.0 * t + 10.0)) / 2.0
+    }
+}
+
 /// Damped spring: critically/under-damped oscillation that settles to 1.0.
 ///
 /// - `damping`: 0.3..0.8 typical. Lower = more bouncy. 1.0 = critically damped.

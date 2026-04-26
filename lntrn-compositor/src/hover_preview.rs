@@ -4,7 +4,10 @@
 //! Protocol (newline-delimited UTF-8 over `/run/user/{uid}/lntrn-hover.sock`):
 //!   "hover:{app_id}:{icon_x}:{icon_w}:{bar_h}"  — bar is hovering icon
 //!   "unhover"                                      — cursor left the icon
+//!   "tray:{app_id}:{x}:{y}:{w}:{h}"               — tray icon position update
+//!   "tray-clear:{app_id}"                          — app removed from tray
 
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, ErrorKind};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -13,7 +16,7 @@ use std::time::Instant;
 use smithay::{
     backend::renderer::element::solid::{SolidColorBuffer, SolidColorRenderElement},
     reexports::wayland_server::protocol::wl_surface::WlSurface,
-    utils::{Logical, Physical, Point, Size},
+    utils::{Logical, Physical, Point, Rectangle, Size},
 };
 
 // ── Layout constants (logical pixels) ────────────────────────────────
@@ -72,6 +75,9 @@ pub struct HoverPreview {
     cross_buf_b: SolidColorBuffer,
     /// Number of windows currently being previewed (for card sizing).
     window_count: i32,
+    /// Bar tray-icon positions, keyed by app_id. Used by the minimize
+    /// animation to know where each app's icon sits.
+    tray_icons: HashMap<String, Rectangle<i32, Logical>>,
 }
 
 /// Info the render loop needs to draw the thumbnail.
@@ -114,7 +120,13 @@ impl HoverPreview {
             cross_buf_a: SolidColorBuffer::new((2, 16), [1.0, 1.0, 1.0, 0.95]),
             cross_buf_b: SolidColorBuffer::new((2, 16), [1.0, 1.0, 1.0, 0.95]),
             window_count: 1,
+            tray_icons: HashMap::new(),
         }
+    }
+
+    /// Look up a bar tray-icon rect by app_id (for minimize/unminimize anim).
+    pub fn tray_icon_rect(&self, app_id: &str) -> Option<Rectangle<i32, Logical>> {
+        self.tray_icons.get(app_id).copied()
     }
 
     /// Poll for incoming IPC messages. Non-blocking.
@@ -175,6 +187,22 @@ impl HoverPreview {
                                 self.fade_start = Some(Instant::now());
                             }
                         }
+                    } else if let Some(rest) = msg.strip_prefix("tray:") {
+                        // Format: "tray:{app_id}:{x}:{y}:{w}:{h}"
+                        let parts: Vec<&str> = rest.splitn(5, ':').collect();
+                        if parts.len() >= 5 {
+                            let app_id = parts[0].to_string();
+                            let x: i32 = parts[1].parse().unwrap_or(0);
+                            let y: i32 = parts[2].parse().unwrap_or(0);
+                            let w: i32 = parts[3].parse().unwrap_or(48);
+                            let h: i32 = parts[4].parse().unwrap_or(48);
+                            self.tray_icons.insert(
+                                app_id,
+                                Rectangle::new((x, y).into(), (w.max(1), h.max(1)).into()),
+                            );
+                        }
+                    } else if let Some(rest) = msg.strip_prefix("tray-clear:") {
+                        self.tray_icons.remove(rest);
                     }
                 }
                 Err(e) if e.kind() == ErrorKind::WouldBlock => break,

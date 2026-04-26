@@ -1,5 +1,12 @@
+use std::time::{Duration, Instant};
+
 use super::charwidth::char_width;
 use super::grid::{Cell, Color8, TerminalState, Wide, ANSI_COLORS};
+
+/// Fallback timeout for synchronized output mode 2026. If the app never sends
+/// the closing `CSI ? 2026 l` (or sends one we miss), we recover after this
+/// long instead of freezing the screen forever. Matches contour/iTerm2.
+const SYNC_OUTPUT_TIMEOUT: Duration = Duration::from_millis(250);
 
 // ── VTE Performer ───────────────────────────────────────────────────────────
 // Bridges the `vte` parser events into our TerminalState grid.
@@ -12,84 +19,7 @@ impl vte::Perform for Performer<'_> {
     // ── Printable character ──────────────────────────────────────────────
 
     fn print(&mut self, c: char) {
-        let s = &mut *self.state;
-        let width = char_width(c);
-
-        // Zero-width characters (combining marks, ZWJ, etc.) — skip
-        if width == 0 {
-            return;
-        }
-
-        // If wrap_next is pending, perform the deferred wrap now
-        if s.wrap_next {
-            s.wrap_next = false;
-            s.cursor_col = 0;
-            s.cursor_row += 1;
-            if s.cursor_row > s.scroll_bottom {
-                s.cursor_row = s.scroll_bottom;
-                s.scroll_up();
-            }
-        }
-
-        // Wide character needs 2 cols — if only 1 left, pad and wrap
-        if width == 2 && s.cursor_col + 1 >= s.cols {
-            if s.cursor_col < s.cols {
-                s.grid[s.cursor_row][s.cursor_col] = s.default_cell();
-            }
-            s.cursor_col = 0;
-            s.cursor_row += 1;
-            if s.cursor_row > s.scroll_bottom {
-                s.cursor_row = s.scroll_bottom;
-                s.scroll_up();
-            }
-        }
-
-        if s.cursor_row < s.rows && s.cursor_col < s.cols {
-            let (fg, bg) = if s.attr_reverse {
-                (s.attr_bg, s.attr_fg)
-            } else {
-                (s.attr_fg, s.attr_bg)
-            };
-            let bg = if s.attr_reverse && bg.a == 0 {
-                s.default_fg
-            } else {
-                bg
-            };
-
-            let wide_flag = if width == 2 { Wide::Head } else { Wide::No };
-            s.grid[s.cursor_row][s.cursor_col] = Cell {
-                c,
-                fg,
-                bg,
-                bold: s.attr_bold,
-                italic: s.attr_italic,
-                underline: s.attr_underline,
-                wide: wide_flag,
-                hyperlink: s.active_hyperlink,
-            };
-            s.cursor_col += 1;
-
-            // Place continuation (tail) cell for wide characters
-            if width == 2 && s.cursor_col < s.cols {
-                s.grid[s.cursor_row][s.cursor_col] = Cell {
-                    c: ' ',
-                    fg,
-                    bg,
-                    bold: false,
-                    italic: false,
-                    underline: false,
-                    wide: Wide::Tail,
-                    hyperlink: s.active_hyperlink,
-                };
-                s.cursor_col += 1;
-            }
-
-            // If we just filled the last column, defer the wrap
-            if s.cursor_col >= s.cols {
-                s.cursor_col = s.cols - 1;
-                s.wrap_next = true;
-            }
-        }
+        do_print(self.state, c);
     }
 
     // ── Control characters ───────────────────────────────────────────────
@@ -328,6 +258,17 @@ impl vte::Perform for Performer<'_> {
                     }
                 }
             }
+            'b' => {
+                // REP — repeat preceding graphic character n times. Drives
+                // the same do_print path so wide-char handling, autowrap,
+                // and wrap_next stay consistent.
+                let n = p(0, 1) as usize;
+                if let Some(c) = s.last_print {
+                    for _ in 0..n {
+                        do_print(s, c);
+                    }
+                }
+            }
             'm' => {
                 apply_sgr(s, &params_vec);
             }
@@ -397,6 +338,15 @@ impl vte::Perform for Performer<'_> {
                                 // DECCKM — application cursor keys
                                 s.application_cursor = set;
                             }
+                            7 => {
+                                // DECAWM — autowrap. When off, writes past
+                                // the last column overwrite the last cell
+                                // instead of advancing to the next line.
+                                s.auto_wrap = set;
+                                if !set {
+                                    s.wrap_next = false;
+                                }
+                            }
                             25 => {
                                 // DECTCEM — cursor visibility
                                 s.cursor_hidden = !set;
@@ -416,8 +366,16 @@ impl vte::Perform for Performer<'_> {
                                 }
                             }
                             2026 => {
-                                // Synchronized output — suppress rendering during batch updates
+                                // Synchronized output — suppress rendering
+                                // during batch updates. Set a fallback
+                                // deadline so a missing closing sequence
+                                // can't freeze the screen.
                                 s.sync_update = set;
+                                s.sync_deadline = if set {
+                                    Some(Instant::now() + SYNC_OUTPUT_TIMEOUT)
+                                } else {
+                                    None
+                                };
                             }
                             _ => {}
                         }
@@ -619,6 +577,101 @@ impl vte::Perform for Performer<'_> {
     fn put(&mut self, _byte: u8) {}
 
     fn unhook(&mut self) {}
+}
+
+// ── Printable character core ────────────────────────────────────────────────
+// Free function so CSI Pn b (REP) can drive the same logic without re-borrow
+// gymnastics inside the Performer impl.
+
+fn do_print(s: &mut TerminalState, c: char) {
+    let width = char_width(c);
+
+    // Zero-width characters (combining marks, ZWJ, etc.) — skip; do not
+    // touch last_print since REP only repeats characters that advanced the
+    // cursor.
+    if width == 0 {
+        return;
+    }
+
+    // Deferred wrap from a previous print that filled the last column
+    if s.wrap_next {
+        s.wrap_next = false;
+        s.cursor_col = 0;
+        s.cursor_row += 1;
+        if s.cursor_row > s.scroll_bottom {
+            s.cursor_row = s.scroll_bottom;
+            s.scroll_up();
+        }
+    }
+
+    // Wide char at last column: only wrap if autowrap is on, otherwise drop
+    if width == 2 && s.cursor_col + 1 >= s.cols {
+        if !s.auto_wrap {
+            return;
+        }
+        if s.cursor_col < s.cols {
+            s.grid[s.cursor_row][s.cursor_col] = s.default_cell();
+        }
+        s.cursor_col = 0;
+        s.cursor_row += 1;
+        if s.cursor_row > s.scroll_bottom {
+            s.cursor_row = s.scroll_bottom;
+            s.scroll_up();
+        }
+    }
+
+    if s.cursor_row < s.rows && s.cursor_col < s.cols {
+        let (fg, bg) = if s.attr_reverse {
+            (s.attr_bg, s.attr_fg)
+        } else {
+            (s.attr_fg, s.attr_bg)
+        };
+        let bg = if s.attr_reverse && bg.a == 0 {
+            s.default_fg
+        } else {
+            bg
+        };
+
+        let wide_flag = if width == 2 { Wide::Head } else { Wide::No };
+        s.grid[s.cursor_row][s.cursor_col] = Cell {
+            c,
+            fg,
+            bg,
+            bold: s.attr_bold,
+            italic: s.attr_italic,
+            underline: s.attr_underline,
+            wide: wide_flag,
+            hyperlink: s.active_hyperlink,
+        };
+        s.cursor_col += 1;
+
+        if width == 2 && s.cursor_col < s.cols {
+            s.grid[s.cursor_row][s.cursor_col] = Cell {
+                c: ' ',
+                fg,
+                bg,
+                bold: false,
+                italic: false,
+                underline: false,
+                wide: Wide::Tail,
+                hyperlink: s.active_hyperlink,
+            };
+            s.cursor_col += 1;
+        }
+
+        // If we just filled the last column, defer the wrap (only when
+        // autowrap is enabled — otherwise the cursor sticks at last col and
+        // the next print overwrites it).
+        if s.cursor_col >= s.cols {
+            s.cursor_col = s.cols - 1;
+            if s.auto_wrap {
+                s.wrap_next = true;
+            }
+        }
+
+        // Remember this character for REP (CSI Pn b)
+        s.last_print = Some(c);
+    }
 }
 
 // ── SGR (Select Graphic Rendition) handler ──────────────────────────────────

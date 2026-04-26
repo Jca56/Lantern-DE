@@ -61,9 +61,11 @@ use crate::switcher::AltTabSwitcher;
 use crate::workspace_anim::WorkspaceAnimState;
 use crate::workspace_ipc::WorkspaceIpc;
 use crate::workspaces::PerOutputWorkspaces;
+use crate::minimize_anim::MinimizeAnimState;
 use crate::tiling_anim::TilingAnimationState;
 use crate::udev::UdevData;
 use crate::wallpaper::WallpaperState;
+use crate::window_state_anim::WindowStateAnimState;
 
 const COUNTER_REPORT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 
@@ -295,6 +297,8 @@ pub struct Lantern {
     pub window_snapshots: HashMap<WlSurface, (GlesTexture, Size<i32, Physical>)>,
     pub workspaces: PerOutputWorkspaces,
     pub tiling_anim: TilingAnimationState,
+    pub window_state_anim: WindowStateAnimState,
+    pub minimize_anim: MinimizeAnimState,
     pub workspace_anim: WorkspaceAnimState,
     pub workspace_ipc: WorkspaceIpc,
     /// Windows temporarily removed from `space` because their workspace is
@@ -454,6 +458,8 @@ impl Lantern {
             window_snapshots: HashMap::new(),
             workspaces: PerOutputWorkspaces::new(),
             tiling_anim: TilingAnimationState::new(),
+            window_state_anim: WindowStateAnimState::new(),
+            minimize_anim: MinimizeAnimState::new(),
             workspace_anim: WorkspaceAnimState::new(),
             workspace_ipc: WorkspaceIpc::new(),
             unmapped_windows: HashMap::new(),

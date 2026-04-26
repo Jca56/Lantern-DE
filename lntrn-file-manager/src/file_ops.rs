@@ -237,9 +237,17 @@ impl App {
         }
         for &i in &selected {
             let path = self.entries[i].path.clone();
-            std::thread::spawn(move || {
-                let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
-            });
+            let ext = self.entries[i].extension();
+            // Try our extension → MIME → default-app lookup first; this beats
+            // xdg-open's content-sniffing for short code files that get
+            // mis-classified as text/plain.
+            if let Some(app) = crate::desktop::default_app_for_extension(&ext) {
+                crate::desktop::launch_app(&app.exec, &path);
+            } else {
+                std::thread::spawn(move || {
+                    let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
+                });
+            }
         }
     }
 

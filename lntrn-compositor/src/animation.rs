@@ -6,19 +6,22 @@ use smithay::utils::{Logical, Point, Size};
 
 use crate::easing;
 
-const OPEN_DURATION: Duration = Duration::from_millis(300);
-const CLOSE_DURATION: Duration = Duration::from_millis(250);
+const OPEN_DURATION: Duration = Duration::from_millis(480);
+const CLOSE_DURATION: Duration = Duration::from_millis(420);
 
-/// Scale range for open: starts at 0.85, overshoots slightly via ease-out-back
-const OPEN_SCALE_START: f64 = 0.85;
-/// Scale range for close: 1.0 -> 0.85
-const CLOSE_SCALE_END: f64 = 0.85;
-/// Alpha fade-in delay for open (scale pops first, then alpha catches up)
-const OPEN_ALPHA_DELAY: f64 = 0.15; // fraction of duration
-/// How far the window slides down during close (logical pixels)
-const CLOSE_SLIDE_DOWN: f64 = 30.0;
-/// Overshoot amount for ease-out-back on open
-const OPEN_OVERSHOOT: f64 = 1.4;
+/// Scale range for open: starts smaller for a more cinematic grow.
+const OPEN_SCALE_START: f64 = 0.78;
+/// Scale range for close: 1.0 -> 0.82 (slightly bigger residual scale than the
+/// previous 0.85 because the longer fade hides the rest).
+const CLOSE_SCALE_END: f64 = 0.82;
+/// Alpha fade-in delay for open (scale pops first, then alpha catches up).
+const OPEN_ALPHA_DELAY: f64 = 0.12;
+/// How far the window slides down during close (logical pixels).
+const CLOSE_SLIDE_DOWN: f64 = 36.0;
+/// Spring damping for open (lower = more bounce). 0.78 keeps the overshoot
+/// feel of the old ease-out-back without going wobbly at long durations.
+const OPEN_SPRING_DAMPING: f64 = 0.78;
+const OPEN_SPRING_FREQUENCY: f64 = 4.0;
 
 /// Animation render parameters: alpha, scale, and vertical offset.
 pub struct AnimParams {
@@ -88,28 +91,28 @@ impl WindowAnimation {
         let t = self.raw_progress();
         match self.kind {
             AnimationKind::Open => {
-                // Scale: ease-out-back (springy overshoot)
-                let scale_p = easing::ease_out_back(t, OPEN_OVERSHOOT);
+                // Scale: damped spring (bouncy settle without harsh overshoot
+                // at the longer cinematic duration).
+                let scale_p = easing::spring(t, OPEN_SPRING_DAMPING, OPEN_SPRING_FREQUENCY);
                 let scale = self.start_scale + (1.0 - self.start_scale) * scale_p;
 
-                // Alpha: ease-out-cubic, delayed start (scale pops first)
+                // Alpha: ease-in-out-quint, delayed start (scale pops first).
                 let alpha_t = ((t - OPEN_ALPHA_DELAY) / (1.0 - OPEN_ALPHA_DELAY)).max(0.0);
-                let alpha_p = easing::ease_out_cubic(alpha_t);
+                let alpha_p = easing::ease_in_out_quint(alpha_t);
                 let alpha = self.start_alpha + (1.0 - self.start_alpha) * alpha_p as f32;
 
                 AnimParams { alpha, scale, y_offset: 0.0 }
             }
             AnimationKind::Close => {
-                // Scale: ease-in-cubic (accelerates away)
-                let scale_p = easing::ease_in_cubic(t);
-                let scale = self.start_scale - (self.start_scale - CLOSE_SCALE_END) * scale_p;
+                // Scale + alpha use ease-in-out-quint so the close decelerates
+                // out of view rather than yanking abruptly.
+                let p = easing::ease_in_out_quint(t);
+                let scale = self.start_scale - (self.start_scale - CLOSE_SCALE_END) * p;
+                let alpha = self.start_alpha * (1.0 - p) as f32;
 
-                // Alpha: ease-in-cubic
-                let alpha_p = easing::ease_in_cubic(t);
-                let alpha = self.start_alpha * (1.0 - alpha_p) as f32;
-
-                // Slide down: accelerates with ease-in
-                let y_offset = CLOSE_SLIDE_DOWN * scale_p;
+                // Slide down accelerates more (ease-in) so the window appears
+                // to fall away as it fades.
+                let y_offset = CLOSE_SLIDE_DOWN * easing::ease_in_cubic(t);
 
                 AnimParams { alpha, scale, y_offset }
             }

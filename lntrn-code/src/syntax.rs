@@ -33,6 +33,18 @@ pub enum TokenKind {
     /// `True`/`False`/`None` (Python) or `true`/`false` (Rust). Most editors
     /// give booleans/null a distinct color from control-flow keywords.
     Boolean,
+    /// `{` and `}` braces inside Python f-strings. Most editors highlight
+    /// these distinctly from the string literal so the interpolation slots
+    /// stand out at a glance.
+    Interpolation,
+    /// Identifiers that didn't match any other rule (user-defined names like
+    /// `name`, `has_hp`, function parameters, etc.). VS Code colors these
+    /// light-blue; we follow the same convention.
+    Variable,
+    /// `(`, `)`, `[`, `]`, `{`, `}` — the matched-pair brackets. Most editors
+    /// give these gold/yellow so the structure of nested calls and blocks
+    /// is easy to scan.
+    Bracket,
 }
 
 /// A single classified slice of a line, in byte offsets.
@@ -256,11 +268,16 @@ fn tokenize_rust(text: &str) -> Vec<Token> {
             } else if i < bytes.len() && bytes[i] == b'(' {
                 TokenKind::Function
             } else {
-                // Identifiers without highlighting fall through to default text color
-                i = start + word.len();
-                continue;
+                TokenKind::Variable
             };
             tokens.push(Token { start, end: i, kind });
+            continue;
+        }
+
+        // Brackets / parens / braces — gold/yellow.
+        if matches!(c, b'(' | b')' | b'[' | b']' | b'{' | b'}') {
+            tokens.push(Token { start: i, end: i + 1, kind: TokenKind::Bracket });
+            i += 1;
             continue;
         }
 
@@ -330,9 +347,18 @@ fn tokenize_python(text: &str) -> Vec<Token> {
                 i + 1
             };
             if bytes[after_prefix] == b'"' || bytes[after_prefix] == b'\'' {
-                let start = i;
-                i = consume_python_string(bytes, after_prefix);
-                tokens.push(Token { start, end: i, kind: TokenKind::String });
+                // f-strings get their interpolation slots highlighted; plain
+                // r/b/rb prefixes fall through to the simple consumer.
+                let has_f = bytes[i..after_prefix]
+                    .iter()
+                    .any(|&b| b == b'f' || b == b'F');
+                if has_f {
+                    i = tokenize_python_fstring(text, i, after_prefix, &mut tokens);
+                } else {
+                    let start = i;
+                    i = consume_python_string(bytes, after_prefix);
+                    tokens.push(Token { start, end: i, kind: TokenKind::String });
+                }
                 continue;
             }
         }
@@ -368,20 +394,31 @@ fn tokenize_python(text: &str) -> Vec<Token> {
                 i += 1;
             }
             let word = &text[start..i];
+            // Order matters here: a builtin like `print` followed by `(` is a
+            // function CALL (yellow) rather than a type reference (teal). We
+            // check the call shape first so `print(...)`, `len(...)`, etc.
+            // get the function color users expect from VS Code / PyCharm.
             let kind = if matches!(word, "True" | "False" | "None") {
                 TokenKind::Boolean
             } else if PYTHON_KEYWORDS.contains(&word) {
                 TokenKind::Keyword
+            } else if i < bytes.len() && bytes[i] == b'(' {
+                TokenKind::Function
             } else if PYTHON_BUILTINS.contains(&word) {
                 TokenKind::Type
             } else if word.chars().next().map_or(false, |c| c.is_uppercase()) {
                 TokenKind::Type
-            } else if i < bytes.len() && bytes[i] == b'(' {
-                TokenKind::Function
             } else {
-                continue;
+                TokenKind::Variable
             };
             tokens.push(Token { start, end: i, kind });
+            continue;
+        }
+
+        // Brackets / parens / braces — gold/yellow.
+        if matches!(c, b'(' | b')' | b'[' | b']' | b'{' | b'}') {
+            tokens.push(Token { start: i, end: i + 1, kind: TokenKind::Bracket });
+            i += 1;
             continue;
         }
 
@@ -389,6 +426,131 @@ fn tokenize_python(text: &str) -> Vec<Token> {
     }
 
     tokens
+}
+
+/// Tokenize a Python f-string starting at `prefix_start` with its quote at
+/// `quote_start`. Pushes a mix of `String` tokens for the literal segments,
+/// `Interpolation` tokens for the `{` and `}` braces, and recursively
+/// tokenizes the expression between each pair of braces. Returns the byte
+/// position one past the closing quote.
+fn tokenize_python_fstring(
+    text: &str,
+    prefix_start: usize,
+    quote_start: usize,
+    tokens: &mut Vec<Token>,
+) -> usize {
+    let bytes = text.as_bytes();
+    let q = bytes[quote_start];
+    let triple = quote_start + 2 < bytes.len()
+        && bytes[quote_start + 1] == q
+        && bytes[quote_start + 2] == q;
+    let body_start = if triple { quote_start + 3 } else { quote_start + 1 };
+
+    // Each literal "segment" runs from `seg_start` up to the next `{` (or the
+    // closing quote). The first segment includes the prefix + opening quote.
+    let mut seg_start = prefix_start;
+    let mut i = body_start;
+
+    while i < bytes.len() {
+        // Backslash escapes step over two bytes.
+        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            i += 2;
+            continue;
+        }
+        // Closing quote ends the string.
+        if bytes[i] == q {
+            if triple {
+                if i + 2 < bytes.len() && bytes[i + 1] == q && bytes[i + 2] == q {
+                    let end = i + 3;
+                    if seg_start < end {
+                        tokens.push(Token { start: seg_start, end, kind: TokenKind::String });
+                    }
+                    return end;
+                }
+                i += 1;
+                continue;
+            }
+            let end = i + 1;
+            if seg_start < end {
+                tokens.push(Token { start: seg_start, end, kind: TokenKind::String });
+            }
+            return end;
+        }
+        // `{{` and `}}` are escaped braces — keep them in the literal segment.
+        if bytes[i] == b'{' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+            i += 2;
+            continue;
+        }
+        if bytes[i] == b'}' && i + 1 < bytes.len() && bytes[i + 1] == b'}' {
+            i += 2;
+            continue;
+        }
+        // Real interpolation: emit the literal segment so far, then `{`,
+        // then recurse on the expression, then `}`.
+        if bytes[i] == b'{' {
+            if seg_start < i {
+                tokens.push(Token { start: seg_start, end: i, kind: TokenKind::String });
+            }
+            tokens.push(Token { start: i, end: i + 1, kind: TokenKind::Interpolation });
+            i += 1;
+            let expr_start = i;
+            // Walk to the matching `}`, tracking brace depth and skipping over
+            // nested string literals inside the expression.
+            let mut depth = 1;
+            while i < bytes.len() && depth > 0 {
+                match bytes[i] {
+                    b'{' => depth += 1,
+                    b'}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    nq @ (b'\'' | b'"') => {
+                        i += 1;
+                        while i < bytes.len() {
+                            if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                                i += 2;
+                                continue;
+                            }
+                            if bytes[i] == nq {
+                                break;
+                            }
+                            i += 1;
+                        }
+                    }
+                    _ => {}
+                }
+                if i < bytes.len() {
+                    i += 1;
+                }
+            }
+            let expr_end = i;
+            if expr_end > expr_start {
+                let inner = &text[expr_start..expr_end];
+                for t in tokenize_python(inner) {
+                    tokens.push(Token {
+                        start: t.start + expr_start,
+                        end: t.end + expr_start,
+                        kind: t.kind,
+                    });
+                }
+            }
+            if i < bytes.len() && bytes[i] == b'}' {
+                tokens.push(Token { start: i, end: i + 1, kind: TokenKind::Interpolation });
+                i += 1;
+            }
+            seg_start = i;
+            continue;
+        }
+        i += 1;
+    }
+
+    // Unterminated f-string — emit whatever we have as a String segment.
+    if seg_start < bytes.len() {
+        tokens.push(Token { start: seg_start, end: bytes.len(), kind: TokenKind::String });
+    }
+    bytes.len()
 }
 
 /// Consume a python string starting at `start` (which must point at a quote

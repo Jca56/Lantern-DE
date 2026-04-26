@@ -5,12 +5,12 @@
 //!
 //! During a transition the render loop offsets windows of both the
 //! outgoing and incoming workspaces along X by the eased progress.
-//! Ease-out-cubic over 280ms — snappy but not abrupt.
+//! Ease-in-out-quint over 460ms — cinematic but still daily-driver-friendly.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-const SLIDE_DURATION: Duration = Duration::from_millis(280);
+const SLIDE_DURATION: Duration = Duration::from_millis(460);
 
 pub struct WorkspaceTransition {
     pub from_ws: u32,
@@ -28,7 +28,7 @@ impl WorkspaceTransition {
     }
 
     pub fn eased(&self, now: Instant) -> f64 {
-        crate::easing::ease_out_cubic(self.progress(now))
+        crate::easing::ease_in_out_quint(self.progress(now))
     }
 
     pub fn is_done(&self, now: Instant) -> bool {

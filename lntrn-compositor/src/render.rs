@@ -200,6 +200,11 @@ pub fn render_surface(
     }
     state.tiling_anim.tick();
     state.workspace_anim.tick();
+    state.window_state_anim.tick();
+    let finished_minimizes = state.minimize_anim.tick();
+    for surface in &finished_minimizes {
+        state.finish_minimize_animation(surface);
+    }
     state.poll_workspace_ipc();
 
     // Get cursor position relative to this output (logical -> physical)
@@ -357,11 +362,37 @@ pub fn render_surface(
             }
         }
 
-        // Apply tiling animation: slide from old position/size to target
+        // ── Active-animation rect resolution ─────────────────────────────
+        // Priority: minimize > window_state (maximize/fullscreen/snap) > tiling.
+        // window.geometry().size is the surface's "true" rendered size; the
+        // animation overrides where/how it's drawn on screen.
+        let win_size = window.geometry().size;
         let tiling_anim_rect = state.tiling_anim.current_rect(&surface);
-        if let Some(ref anim_rect) = tiling_anim_rect {
-            location = anim_rect.loc;
-        }
+        let state_anim_rect = state.window_state_anim.current_rect(&surface);
+        let minimize_params = state.minimize_anim.get(&surface).map(|m| m.render_params());
+
+        // Effective top-left in logical screen coords + anisotropic scale.
+        let (effective_loc_x, effective_loc_y, effective_scale_x, effective_scale_y, minimize_alpha) =
+            if let Some(p) = &minimize_params {
+                let sx = p.scale.0;
+                let sy = p.scale.1;
+                (p.render_loc.x, p.render_loc.y, sx, sy, p.alpha)
+            } else if let Some(rect) = state_anim_rect {
+                let sx = if win_size.w > 0 { rect.size.w as f64 / win_size.w as f64 } else { 1.0 };
+                let sy = if win_size.h > 0 { rect.size.h as f64 / win_size.h as f64 } else { 1.0 };
+                (rect.loc.x as f64, rect.loc.y as f64, sx, sy, 1.0)
+            } else if let Some(ref rect) = tiling_anim_rect {
+                let sx = if win_size.w > 0 { rect.size.w as f64 / win_size.w as f64 } else { 1.0 };
+                let sy = if win_size.h > 0 { rect.size.h as f64 / win_size.h as f64 } else { 1.0 };
+                (rect.loc.x as f64, rect.loc.y as f64, sx, sy, 1.0)
+            } else {
+                (location.x as f64, location.y as f64, 1.0, 1.0, 1.0)
+            };
+
+        let location = Point::<i32, Logical>::from((
+            effective_loc_x.round() as i32,
+            effective_loc_y.round() as i32,
+        ));
         let render_location = location - window.geometry().loc;
         let is_fullscreen = fullscreen_surfaces.iter().any(|e| e.surface == surface);
         let win_app_id = crate::window_ext::WindowExt::get_app_id(window);
@@ -377,12 +408,12 @@ pub fn render_surface(
         }
         let zoom = state.window_zoom.get(&surface).copied().unwrap_or(1.0);
 
-        // Compute combined scale: animation scale * zoom
+        // Compute combined scale: open/close anim scale * zoom * effective rect scale.
         let anim_params = state.animations.get(&surface).map(|a| a.render_params());
         let anim_alpha = anim_params.as_ref().map(|p| p.alpha).unwrap_or(1.0);
         let anim_scale = anim_params.as_ref().map(|p| p.scale).unwrap_or(1.0);
         let anim_y_offset = anim_params.as_ref().map(|p| p.y_offset).unwrap_or(0.0);
-        let alpha = base_alpha * anim_alpha;
+        let alpha = base_alpha * anim_alpha * minimize_alpha;
 
         // Center the scale transform around the window's center
         let win_geo = window.geometry();
@@ -390,32 +421,46 @@ pub fn render_surface(
         let rel_x = render_location.x as f64 - output_geo.loc.x as f64 + ws_slide_offset;
         let rel_y = render_location.y as f64 - output_geo.loc.y as f64 + anim_y_offset;
 
-        let combined_scale = anim_scale * zoom;
+        let combined_scale_x = anim_scale * zoom * effective_scale_x;
+        let combined_scale_y = anim_scale * zoom * effective_scale_y;
 
-        let phys_loc: Point<i32, Physical> = if (combined_scale - 1.0).abs() > f64::EPSILON {
-            let center_x = rel_x + win_geo.size.w as f64 / 2.0;
-            let center_y = rel_y + win_geo.size.h as f64 / 2.0;
-            let scaled_x = center_x - (win_geo.size.w as f64 / 2.0) * combined_scale;
-            let scaled_y = center_y - (win_geo.size.h as f64 / 2.0) * combined_scale;
-            (
-                (scaled_x * output_scale).round() as i32,
-                (scaled_y * output_scale).round() as i32,
-            ).into()
-        } else {
-            (
-                (rel_x * output_scale).round() as i32,
-                (rel_y * output_scale).round() as i32,
-            ).into()
-        };
+        let phys_loc: Point<i32, Physical> =
+            if (combined_scale_x - 1.0).abs() > f64::EPSILON || (combined_scale_y - 1.0).abs() > f64::EPSILON {
+                let center_x = rel_x + win_geo.size.w as f64 / 2.0;
+                let center_y = rel_y + win_geo.size.h as f64 / 2.0;
+                let scaled_x = center_x - (win_geo.size.w as f64 / 2.0) * combined_scale_x;
+                let scaled_y = center_y - (win_geo.size.h as f64 / 2.0) * combined_scale_y;
+                (
+                    (scaled_x * output_scale).round() as i32,
+                    (scaled_y * output_scale).round() as i32,
+                ).into()
+            } else {
+                (
+                    (rel_x * output_scale).round() as i32,
+                    (rel_y * output_scale).round() as i32,
+                ).into()
+            };
 
-        let render_scale = smithay::utils::Scale::from(output_scale * combined_scale);
+        let render_scale = smithay::utils::Scale::from((
+            output_scale * combined_scale_x,
+            output_scale * combined_scale_y,
+        ));
 
         let win_geo = window.geometry();
-        // Use animated size for shadow/SSD bounds during tiling transitions
-        let effective_size = tiling_anim_rect
-            .as_ref()
-            .map(|r| r.size)
-            .unwrap_or(win_geo.size);
+        // Use animated size for shadow/SSD bounds. Prefer minimize params,
+        // then window_state, then tiling.
+        let effective_size = if let Some(p) = &minimize_params {
+            smithay::utils::Size::<i32, Logical>::from((
+                ((win_geo.size.w as f64) * p.scale.0).round() as i32,
+                ((win_geo.size.h as f64) * p.scale.1).round() as i32,
+            ))
+        } else if let Some(rect) = state_anim_rect {
+            rect.size
+        } else if let Some(ref rect) = tiling_anim_rect {
+            rect.size
+        } else {
+            win_geo.size
+        };
         let has_ssd = state.ssd.has_ssd(&surface);
 
         // Determine corner rounding based on window state
@@ -971,7 +1016,9 @@ pub fn render_surface(
                 // re-renders. Saves ~30ms of GPU sync per skipped frame.
                 let any_anim_active = state.animations.has_active()
                     || state.tiling_anim.has_active()
-                    || state.workspace_anim.is_active();
+                    || state.workspace_anim.is_active()
+                    || state.window_state_anim.has_active()
+                    || state.minimize_anim.has_active();
                 let needs_reblur = blur_state.last_blur.map_or(true, |t| {
                     any_anim_active || t.elapsed() >= std::time::Duration::from_millis(100)
                 });
@@ -1156,6 +1203,8 @@ pub fn render_surface(
     let needs_anim_redraw = state.animations.has_active()
         || state.tiling_anim.has_active()
         || state.workspace_anim.is_active()
+        || state.window_state_anim.has_active()
+        || state.minimize_anim.has_active()
         || state.alt_tab_switcher.needs_redraw()
         || state.hover_preview.needs_redraw()
         || switcher_pending;

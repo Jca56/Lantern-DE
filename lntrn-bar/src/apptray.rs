@@ -596,6 +596,42 @@ impl AppTray {
         slots.get(idx).map(|s| s.app_id.clone())
     }
 
+    /// Return per-icon (app_id, physical x, y, w, h) for the current tray
+    /// layout, matching draw()'s math. Used to report tray icon positions to
+    /// the compositor for the minimize animation target.
+    pub fn slot_rects(
+        &self,
+        toplevels: &[ToplevelInfo],
+        bar_x: f32,
+        bar_y: f32,
+        bar_w: f32,
+        bar_h: f32,
+        scale: f32,
+        left_x: Option<f32>,
+    ) -> Vec<(String, f32, f32, f32, f32)> {
+        let slots = self.build_slots(toplevels);
+        if slots.is_empty() {
+            return Vec::new();
+        }
+        let icon_size = (bar_h * 0.75).max(36.0);
+        let gap = ICON_GAP * scale;
+        let stride = icon_size + gap;
+        let total_w = slots.len() as f32 * stride - gap;
+        let start_x = match left_x {
+            Some(x) => x,
+            None => bar_x + (bar_w - total_w) / 2.0,
+        };
+        let center_y = bar_y + (bar_h - icon_size) / 2.0;
+        slots
+            .iter()
+            .enumerate()
+            .map(|(i, slot)| {
+                let x = start_x + i as f32 * stride;
+                (slot.app_id.clone(), x, center_y, icon_size, icon_size)
+            })
+            .collect()
+    }
+
     /// Return the hovered app_id and its (x, w) in physical pixels, if any.
     /// Must be called after draw() so zones are registered.
     pub fn hovered_app(

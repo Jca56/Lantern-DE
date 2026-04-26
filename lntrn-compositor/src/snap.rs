@@ -215,9 +215,18 @@ impl Lantern {
             restore,
         });
 
+        // Capture animation start before reconfiguring.
+        let current_loc = self.space.element_location(&window).unwrap_or(target.loc);
+        let current_rect = Rectangle::new(current_loc, window.geometry().size);
+        let anim_start = self
+            .window_state_anim
+            .current_rect(surface)
+            .unwrap_or(current_rect);
+
         crate::window_ext::WindowExt::configure_size(&window, target.size);
 
         self.space.map_element(window, target.loc, true);
+        self.window_state_anim.animate_default(surface, anim_start, target);
         self.schedule_client_render();
         tracing::info!(?zone, "Snapped window to zone");
         true
@@ -234,9 +243,17 @@ impl Lantern {
             return false;
         };
 
+        let current_loc = self.space.element_location(&window).unwrap_or(snap.restore.loc);
+        let current_rect = Rectangle::new(current_loc, window.geometry().size);
+        let anim_start = self
+            .window_state_anim
+            .current_rect(surface)
+            .unwrap_or(current_rect);
+
         crate::window_ext::WindowExt::configure_size(&window, snap.restore.size);
 
         self.space.map_element(window, snap.restore.loc, true);
+        self.window_state_anim.animate_default(surface, anim_start, snap.restore);
         self.schedule_client_render();
         true
     }

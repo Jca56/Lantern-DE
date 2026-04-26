@@ -11,6 +11,65 @@ pub struct DesktopApp {
     pub desktop_id: String,
 }
 
+/// Resolve the user's preferred app for a given file extension by mapping
+/// extension → MIME → `xdg-mime query default`. Bypasses `xdg-open`'s
+/// content-sniffing, which mis-classifies short scripts (e.g. a one-line
+/// `.py` file) as `text/plain` and routes them to the wrong editor.
+pub fn default_app_for_extension(ext: &str) -> Option<DesktopApp> {
+    let mime = mime_from_extension(ext);
+    if mime.is_empty() {
+        return None;
+    }
+    let output = std::process::Command::new("xdg-mime")
+        .args(["query", "default", &mime])
+        .output()
+        .ok()?;
+    let desktop_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if desktop_id.is_empty() {
+        return None;
+    }
+    for dir in desktop_dirs() {
+        let path = dir.join(&desktop_id);
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Some(app) = parse_desktop_unfiltered(&path, &content) {
+                return Some(app);
+            }
+        }
+    }
+    None
+}
+
+/// Parse a `.desktop` file unconditionally (no MIME-type filtering). Used by
+/// `default_app_for_extension` once we already know the desktop file we want.
+fn parse_desktop_unfiltered(path: &Path, content: &str) -> Option<DesktopApp> {
+    let mut name = None;
+    let mut exec = None;
+    let mut in_desktop_entry = false;
+    for line in content.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_desktop_entry = line == "[Desktop Entry]";
+            continue;
+        }
+        if !in_desktop_entry {
+            continue;
+        }
+        if let Some(val) = line.strip_prefix("Name=") {
+            if name.is_none() {
+                name = Some(val.to_string());
+            }
+        } else if let Some(val) = line.strip_prefix("Exec=") {
+            exec = Some(val.to_string());
+        }
+    }
+    let exec_raw = exec?;
+    Some(DesktopApp {
+        name: name?,
+        exec: clean_exec(&exec_raw),
+        desktop_id: path.file_stem()?.to_string_lossy().to_string(),
+    })
+}
+
 /// Find apps that can open the given file extension.
 /// Returns a deduplicated, alphabetically sorted list.
 pub fn apps_for_extension(ext: &str) -> Vec<DesktopApp> {
@@ -119,8 +178,9 @@ fn clean_exec(exec: &str) -> String {
 }
 
 /// Launch an app by its exec string, passing the file path as an argument.
-/// Detaches stdio so the child survives the parent and silent-spawn failures
-/// surface in the lntrn log instead of vanishing.
+/// Detaches stdin/stdout but routes the child's stderr into
+/// `~/.lantern/log/fox-launch.log` so silent-spawn failures or child panics
+/// surface somewhere we can find them.
 pub fn launch_app(exec: &str, file_path: &Path) {
     use std::process::Stdio;
     let path = file_path.to_path_buf();
@@ -131,6 +191,18 @@ pub fn launch_app(exec: &str, file_path: &Path) {
             eprintln!("[fox] launch_app: empty exec string");
             return;
         };
+        let log_path = std::env::var("HOME")
+            .map(|h| std::path::PathBuf::from(h).join(".lantern/log/fox-launch.log"))
+            .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/fox-launch.log"));
+        if let Some(parent) = log_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let stderr_dest = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .map(Stdio::from)
+            .unwrap_or_else(|_| Stdio::null());
         let mut cmd = std::process::Command::new(bin);
         for arg in parts {
             cmd.arg(arg);
@@ -138,7 +210,11 @@ pub fn launch_app(exec: &str, file_path: &Path) {
         cmd.arg(&path);
         cmd.stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stderr(stderr_dest);
+        // Detach process group so the child outlives the parent and doesn't
+        // receive the parent's signals (SIGHUP on close, etc.).
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
         match cmd.spawn() {
             Ok(_child) => {}
             Err(e) => eprintln!("[fox] launch_app: failed to spawn {bin:?}: {e}"),

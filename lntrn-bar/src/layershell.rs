@@ -625,6 +625,9 @@ pub fn run() -> Result<()> {
     let mut hover_client = crate::hover::HoverClient::new();
     let mut hover_pending: Option<(String, f32, f32, f32)> = None; // (app_id, icon_x, icon_w, bar_h)
     let mut hover_debounce = Instant::now();
+    // Last-known tray icon app_ids — used to send `tray-clear` for apps that
+    // dropped out of the tray since the previous frame.
+    let mut prev_tray_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     // Track widget positions for popup alignment
     let mut bat_draw_x: f32 = 0.0;
     let mut bat_draw_w: f32 = 0.0;
@@ -1447,6 +1450,29 @@ pub fn run() -> Result<()> {
                 tray_left_x,
             );
             app_tray_tex_draws = draws;
+
+            // Tray icon position reporting — used by the compositor as the
+            // minimize/unminimize animation target. Convert physical → logical
+            // so the compositor doesn't have to know about scale.
+            let slot_rects = app_tray.slot_rects(
+                &toplevels,
+                vis_x, vis_y, vis_w, vis_h,
+                scale_f,
+                tray_left_x,
+            );
+            let mut current_tray_ids = std::collections::HashSet::new();
+            for (app_id, x, y, w, h) in &slot_rects {
+                let lx = (*x / scale_f).round() as i32;
+                let ly = (*y / scale_f).round() as i32;
+                let lw = (*w / scale_f).round() as i32;
+                let lh = (*h / scale_f).round() as i32;
+                hover_client.tray(app_id, lx, ly, lw, lh);
+                current_tray_ids.insert(app_id.clone());
+            }
+            for old in prev_tray_ids.difference(&current_tray_ids) {
+                hover_client.tray_clear(old);
+            }
+            prev_tray_ids = current_tray_ids;
 
             // Hover preview — debounced to avoid spamming the compositor
             let hovered = if state.pointer_in_surface {

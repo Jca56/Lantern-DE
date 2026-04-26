@@ -190,9 +190,17 @@ pub(crate) fn handle_click(
                         app.toggle_tree_expand(path);
                     } else {
                         let path = te.entry.path.clone();
-                        std::thread::spawn(move || {
-                            let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
-                        });
+                        let ext = path.extension()
+                            .and_then(|e| e.to_str())
+                            .map(|s| s.to_lowercase())
+                            .unwrap_or_default();
+                        if let Some(app) = desktop::default_app_for_extension(&ext) {
+                            desktop::launch_app(&app.exec, &path);
+                        } else {
+                            std::thread::spawn(move || {
+                                let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
+                            });
+                        }
                     }
                 }
             }
@@ -208,10 +216,18 @@ pub(crate) fn handle_click(
                             app.navigate_to(entry.path);
                         } else {
                             let path = entry.path.clone();
-                            std::thread::spawn(move || {
-                                let _ = std::process::Command::new("xdg-open")
-                                    .arg(&path).spawn();
-                            });
+                            let ext = path.extension()
+                                .and_then(|e| e.to_str())
+                                .map(|s| s.to_lowercase())
+                                .unwrap_or_default();
+                            if let Some(app) = desktop::default_app_for_extension(&ext) {
+                                desktop::launch_app(&app.exec, &path);
+                            } else {
+                                std::thread::spawn(move || {
+                                    let _ = std::process::Command::new("xdg-open")
+                                        .arg(&path).spawn();
+                                });
+                            }
                         }
                     }
                 } else {

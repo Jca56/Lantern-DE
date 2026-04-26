@@ -82,10 +82,15 @@ fn handle_one(handler: &mut TextHandler, server_id: ServerId, msg: ServerMessage
             handler.needs_redraw = true;
         }
         ServerMessage::LogMessage(text) => {
-            // Filter pyright's "No source files found" — it just means there's
-            // no pyrightconfig.json / pyproject.toml in scope. The open file
-            // still gets typechecked, so surfacing this scares users for nothing.
-            if text.contains("No source files found") {
+            // Filter pyright noise that doesn't represent real problems:
+            //   * "No source files found"  — just no pyrightconfig.json in scope.
+            //   * "<default workspace root>" — leftover when the client only
+            //     sent rootUri (we now also send workspaceFolders, but old
+            //     servers/edge cases can still surface this).
+            // The open file still gets full type-checking either way.
+            if text.contains("No source files found")
+                || text.contains("<default workspace root>")
+            {
                 return;
             }
             handler.lsp_status = format!("{}: {}", server_id.label(), text);

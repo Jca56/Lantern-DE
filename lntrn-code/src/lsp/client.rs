@@ -175,9 +175,19 @@ impl LspClient {
                 "workDoneProgress": false,
             },
         });
+        // Derive a friendly folder name from the URI's last path segment.
+        let folder_name = root_uri
+            .rsplit('/')
+            .find(|s| !s.is_empty())
+            .unwrap_or("workspace")
+            .to_string();
         let params = InitializeParams {
             process_id: Some(std::process::id()),
             root_uri: Some(root_uri.to_string()),
+            workspace_folders: Some(vec![super::protocol::WorkspaceFolder {
+                uri: root_uri.to_string(),
+                name: folder_name,
+            }]),
             capabilities: caps,
             client_info: ClientInfo { name: "lntrn-code", version: env!("CARGO_PKG_VERSION") },
             trace: "off",

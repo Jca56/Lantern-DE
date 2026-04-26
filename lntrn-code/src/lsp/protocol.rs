@@ -97,10 +97,21 @@ pub struct InitializeParams<'a> {
     pub process_id: Option<u32>,
     #[serde(rename = "rootUri")]
     pub root_uri: Option<String>,
+    /// Modern LSP servers (pyright in particular) prefer this over `rootUri`.
+    /// When omitted, pyright invents a "<default workspace root>" placeholder
+    /// and complains it can't find files under it.
+    #[serde(rename = "workspaceFolders", skip_serializing_if = "Option::is_none")]
+    pub workspace_folders: Option<Vec<WorkspaceFolder>>,
     pub capabilities: Value,
     #[serde(rename = "clientInfo")]
     pub client_info: ClientInfo<'a>,
     pub trace: &'static str,
+}
+
+#[derive(Serialize)]
+pub struct WorkspaceFolder {
+    pub uri: String,
+    pub name: String,
 }
 
 #[derive(Serialize)]

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Instant;
 
 use super::images::ImageManager;
 use super::performer::Performer;
@@ -177,7 +178,19 @@ pub struct TerminalState {
 
     // Synchronized output (Mode 2026) — when true, suppress rendering until
     // the application sends CSI ? 2026 l to end the synchronized update.
+    // `sync_deadline` is a fallback wakeup so a stuck flag doesn't freeze
+    // the screen if the closing sequence never arrives (250ms, matching
+    // contour/iTerm2). The app loop must check `is_syncing()` before redraw.
     pub sync_update: bool,
+    pub sync_deadline: Option<Instant>,
+
+    // DEC autowrap mode (DECAWM, mode 7). When false, writing past the last
+    // column overwrites the last cell instead of advancing to the next row.
+    pub auto_wrap: bool,
+
+    // Last printed graphic character — used by CSI Pn b (REP) to repeat the
+    // previous character. None until the first printable char.
+    pub last_print: Option<char>,
 
     // OSC 8 hyperlinks — registry of URL strings keyed by u16 ID.
     // ID 0 means "no link". Active hyperlink is applied to new cells.
@@ -236,6 +249,9 @@ impl TerminalState {
             selection_end: None,
             wrap_next: false,
             sync_update: false,
+            sync_deadline: None,
+            auto_wrap: true,
+            last_print: None,
             hyperlinks: HashMap::new(),
             active_hyperlink: 0,
             hyperlink_next_id: 1,
@@ -434,6 +450,12 @@ impl TerminalState {
     }
 
     pub fn enter_alt_screen(&mut self) {
+        // Guard against re-entry — a second `CSI ? 1049 h` while already on
+        // the alt screen would otherwise overwrite the saved main grid with
+        // the alt grid and lose the main screen permanently.
+        if self.alt_grid.is_some() {
+            return;
+        }
         let saved_grid = self.grid.clone();
         self.alt_grid = Some(saved_grid);
         self.alt_cursor = Some((self.cursor_row, self.cursor_col));
@@ -450,6 +472,19 @@ impl TerminalState {
         if let Some((r, c)) = self.alt_cursor.take() {
             self.cursor_row = r;
             self.cursor_col = c;
+        }
+    }
+
+    /// True iff the app is mid synchronized-update batch (mode 2026) and the
+    /// fallback deadline has not yet passed. The render loop should suppress
+    /// redraws while this is true to avoid showing the partial frame.
+    pub fn is_syncing(&self) -> bool {
+        if !self.sync_update {
+            return false;
+        }
+        match self.sync_deadline {
+            Some(d) => Instant::now() < d,
+            None => false,
         }
     }
 

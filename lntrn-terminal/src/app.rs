@@ -279,6 +279,7 @@ impl App {
         const MAX_BYTES_PER_FRAME: usize = 64 * 1024;
 
         let mut had_output = false;
+        let mut any_syncing = false;
         for tab in &mut self.tabs {
             for pane in &mut tab.panes {
                 if let Some((data, has_more)) = pane.pty.read(MAX_BYTES_PER_FRAME) {
@@ -306,6 +307,10 @@ impl App {
                 for (title, body) in pane.terminal.pending_notifications.drain(..) {
                     fire_desktop_notification(title, body);
                 }
+
+                if pane.terminal.is_syncing() {
+                    any_syncing = true;
+                }
             }
         }
 
@@ -313,8 +318,13 @@ impl App {
             self.cursor_visible = true;
             self.cursor_blink_deadline = Instant::now() + CURSOR_BLINK_INTERVAL;
 
-            if let Some(ref window) = self.window {
-                window.request_redraw();
+            // Suppress redraw while any pane is mid synchronized-update
+            // batch (mode 2026). about_to_wait will fire a redraw once the
+            // sync flag clears or the fallback deadline passes.
+            if !any_syncing {
+                if let Some(ref window) = self.window {
+                    window.request_redraw();
+                }
             }
         }
     }
@@ -624,6 +634,31 @@ impl ApplicationHandler<UserEvent> for App {
             self.request_redraw();
         }
 
+        // Synchronized output (mode 2026) deadline check. When a pane has
+        // sync_update set but the deadline has expired, force-clear it and
+        // redraw — recovers from a missing/lost CSI?2026l. Track the
+        // earliest pending deadline so we can wake up exactly when it fires.
+        let mut earliest_sync: Option<Instant> = None;
+        let mut sync_expired = false;
+        for tab in &mut self.tabs {
+            for pane in &mut tab.panes {
+                if let Some(deadline) = pane.terminal.sync_deadline {
+                    if now >= deadline {
+                        pane.terminal.sync_update = false;
+                        pane.terminal.sync_deadline = None;
+                        sync_expired = true;
+                    } else {
+                        earliest_sync = Some(
+                            earliest_sync.map_or(deadline, |e| e.min(deadline)),
+                        );
+                    }
+                }
+            }
+        }
+        if sync_expired {
+            self.request_redraw();
+        }
+
         // Clear git status messages after timeout
         if self.git_sidebar.check_message_timeout() {
             self.request_redraw();
@@ -648,13 +683,14 @@ impl ApplicationHandler<UserEvent> for App {
         }
         self.last_frame_time = now;
 
+        let mut deadline = self.cursor_blink_deadline;
         if self.scroll_animating {
-            let next = now + Duration::from_millis(8);
-            let deadline = next.min(self.cursor_blink_deadline);
-            event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
-        } else {
-            event_loop.set_control_flow(ControlFlow::WaitUntil(self.cursor_blink_deadline));
+            deadline = deadline.min(now + Duration::from_millis(8));
         }
+        if let Some(s) = earliest_sync {
+            deadline = deadline.min(s);
+        }
+        event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
     }
 }
 
