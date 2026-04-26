@@ -44,11 +44,19 @@ impl ManagedProcess {
         wayland_display: &str,
         x11_display: Option<&str>,
     ) -> Result<Self, String> {
+        use std::process::Stdio;
         let mut command = Command::new(cmd);
         command.env("WAYLAND_DISPLAY", wayland_display);
         if let Some(d) = x11_display {
             command.env("DISPLAY", d);
         }
+        // Redirect child stdio away from the TTY: clients write tracing output
+        // to their own log files (lntrn-bar.log etc.). Without this, "Broken
+        // pipe (os error 32)" errors flood the TTY when the compositor exits
+        // and clients lose their wayland connection mid-write.
+        command.stdin(Stdio::null());
+        command.stdout(Stdio::null());
+        command.stderr(Stdio::null());
         let child = command
             .spawn()
             .map_err(|e| format!("Failed to start {name}: {e}"))?;

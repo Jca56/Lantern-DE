@@ -40,13 +40,21 @@ impl WallpaperState {
     }
 
     /// Check if any wallpaper config changed and reload if so.
+    /// Compares only paths — image decoding only happens on actual change.
+    /// Previously this decoded all wallpapers every 300 frames, causing
+    /// 30+ms render stalls.
     pub fn reload_if_changed(&mut self) {
         let new_path = read_wallpaper_setting();
-        let new_per = load_per_output_wallpapers();
+        let new_per_paths: Vec<(String, String)> = crate::read_monitor_configs()
+            .into_iter()
+            .filter_map(|cfg| cfg.wallpaper.filter(|w| !w.is_empty()).map(|w| (cfg.name, w)))
+            .collect();
+
         let global_changed = new_path != self.current_path;
-        let per_changed = new_per.iter().any(|(name, (_, path))| {
-            self.per_output.get(name).map(|(_, p)| p != path).unwrap_or(true)
-        }) || self.per_output.len() != new_per.len();
+        let per_changed = new_per_paths.len() != self.per_output.len()
+            || new_per_paths.iter().any(|(name, path)| {
+                self.per_output.get(name).map(|(_, p)| p != path).unwrap_or(true)
+            });
 
         if global_changed || per_changed {
             tracing::info!("[wallpaper] config changed, reloading");
@@ -159,24 +167,23 @@ fn resize_to_fill(image: &DynamicImage, width: u32, height: u32) -> DynamicImage
 
 /// Read the global wallpaper path from the Lantern config.
 fn read_wallpaper_setting() -> String {
-    let path = crate::lantern_config_path();
-    if let Ok(contents) = std::fs::read_to_string(&path) {
-        let mut in_appearance = false;
-        for line in contents.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with('[') {
-                in_appearance = trimmed == "[appearance]";
-                continue;
-            }
-            if in_appearance {
-                if let Some(rest) = trimmed.strip_prefix("wallpaper") {
-                    let first_char = rest.chars().next().unwrap_or('=');
-                    if first_char == '=' || first_char == ' ' || first_char == '\t' {
-                        let rest = rest.trim_start_matches(|c: char| c == ' ' || c == '\t');
-                        if let Some(rest) = rest.strip_prefix('=') {
-                            let val = rest.trim().trim_matches('"');
-                            return val.to_string();
-                        }
+    let contents = crate::cached_lantern_toml();
+    if contents.is_empty() { return String::new(); }
+    let mut in_appearance = false;
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_appearance = trimmed == "[appearance]";
+            continue;
+        }
+        if in_appearance {
+            if let Some(rest) = trimmed.strip_prefix("wallpaper") {
+                let first_char = rest.chars().next().unwrap_or('=');
+                if first_char == '=' || first_char == ' ' || first_char == '\t' {
+                    let rest = rest.trim_start_matches(|c: char| c == ' ' || c == '\t');
+                    if let Some(rest) = rest.strip_prefix('=') {
+                        let val = rest.trim().trim_matches('"');
+                        return val.to_string();
                     }
                 }
             }

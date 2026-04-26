@@ -259,6 +259,10 @@ pub struct Lantern {
     pub winit_redraw_requested: Arc<AtomicBool>,
     pub pending_client_frame_callbacks: bool,
     pub last_pointer_render_location: Option<(i32, i32)>,
+    /// Last time we sent frame callbacks. Used to keep the vblank stream
+    /// running at 60Hz while clients are actively rendering, so wgpu FIFO
+    /// presentation doesn't get throttled by sparse vblank events.
+    pub last_callback_render: std::time::Instant,
     pub debug_counters: DebugCounters,
     pub focused_surface: Option<WlSurface>,
     pub window_mru: Vec<WlSurface>,
@@ -420,6 +424,7 @@ impl Lantern {
             winit_redraw_requested: Arc::new(AtomicBool::new(false)),
             pending_client_frame_callbacks: false,
             last_pointer_render_location: None,
+            last_callback_render: std::time::Instant::now() - std::time::Duration::from_secs(60),
             debug_counters: DebugCounters::from_env(),
             focused_surface: None,
             window_mru: Vec::new(),

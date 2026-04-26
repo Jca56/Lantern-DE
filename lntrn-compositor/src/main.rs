@@ -51,13 +51,32 @@ pub(crate) fn lantern_config_path() -> std::path::PathBuf {
     new_path
 }
 
+/// Cached lantern.toml contents, invalidated by mtime. Avoids re-reading the
+/// file on every read_config call — periodic reloads in the render path were
+/// causing 33ms stalls every 300 frames (visible as cursor/animation lag).
+pub(crate) fn cached_lantern_toml() -> std::sync::Arc<String> {
+    use std::sync::{Arc, Mutex, OnceLock};
+    use std::time::SystemTime;
+    static CACHE: OnceLock<Mutex<(Option<SystemTime>, Arc<String>)>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new((None, Arc::new(String::new()))));
+
+    let path = lantern_config_path();
+    let mtime = std::fs::metadata(&path).ok().and_then(|m| m.modified().ok());
+
+    let mut guard = cache.lock().unwrap();
+    if guard.0 != mtime {
+        match std::fs::read_to_string(&path) {
+            Ok(c) => { guard.0 = mtime; guard.1 = Arc::new(c); }
+            Err(_) => { /* keep previous cache on read error */ }
+        }
+    }
+    Arc::clone(&guard.1)
+}
+
 /// Read a string setting from a given [section] in lantern.toml.
 pub(crate) fn read_config(section: &str, key: &str, default: &str) -> String {
-    let path = lantern_config_path();
-    let contents = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(_) => return default.to_string(),
-    };
+    let contents = cached_lantern_toml();
+    if contents.is_empty() { return default.to_string(); }
     let section_header = format!("[{}]", section);
     let mut in_section = false;
     for line in contents.lines() {

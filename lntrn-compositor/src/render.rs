@@ -921,11 +921,12 @@ pub fn render_surface(
         (output_geo.size.w as f64 * output_scale).round() as i32,
         (output_geo.size.h as f64 * output_scale).round() as i32,
     ));
-    if !blur_backdrops.is_empty() {
+    let blur_intensity = crate::read_config_f32("blur_intensity", 0.8);
+    let blur_enabled = blur_intensity >= 0.05;
+    if !blur_backdrops.is_empty() && blur_enabled {
         if let (Some(ref down_shader), Some(ref up_shader)) =
             (&udev.blur_down_shader, &udev.blur_up_shader)
         {
-            let blur_intensity = crate::read_config_f32("blur_intensity", 0.8);
             let blur_tint = crate::read_config_f32("blur_tint", 0.15);
             let blur_darken = crate::read_config_f32("blur_darken", 0.0);
             let passes = if blur_intensity < 0.3 { 2usize }
@@ -1152,18 +1153,32 @@ pub fn render_surface(
     // Keep rendering while animations are active
     // Also keep rendering while switcher is silently waiting for hold threshold
     let switcher_pending = state.alt_tab_switcher.is_active() && !state.alt_tab_switcher.is_visible();
-    if state.animations.has_active()
+    let needs_anim_redraw = state.animations.has_active()
         || state.tiling_anim.has_active()
         || state.workspace_anim.is_active()
         || state.alt_tab_switcher.needs_redraw()
         || state.hover_preview.needs_redraw()
-        || switcher_pending
-    {
+        || switcher_pending;
+
+    // If we sent frame callbacks this frame, keep the vblank stream going at
+    // 60Hz for the next ~500ms. Without this, the DRM driver only emits
+    // vblank events for queued page flips — so vblanks were firing at the
+    // CLIENT'S commit rate, which was ~10Hz when terminals waited on FIFO
+    // present (chicken-and-egg between client commits and our vblanks).
+    // Keeping pending_render true means: vblank → render → callback →
+    // client renders → commits → vblank → ... at a stable 60Hz.
+    if frame_callback_count > 0 {
+        state.last_callback_render = Instant::now();
+    }
+    let recently_active_clients = state.last_callback_render.elapsed()
+        < Duration::from_millis(500);
+
+    if needs_anim_redraw || recently_active_clients {
         state.schedule_render();
     }
 
     let total_elapsed = render_start.elapsed();
-    if total_elapsed > Duration::from_millis(8) {
+    if total_elapsed > Duration::from_millis(4) {
         let prelude_ms = (t_elements - render_start).as_secs_f64() * 1000.0;
         let chrome_ms = (t_after_chrome - t_post_loop).as_secs_f64() * 1000.0;
         let config_ms = (t_after_config - t_after_chrome).as_secs_f64() * 1000.0;
