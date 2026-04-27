@@ -82,6 +82,33 @@ impl GifAnimation {
     }
 }
 
+// ── Tiny PRNG (xorshift64) ──────────────────────────────────────────────────
+
+struct XorShift64 { state: u64 }
+
+impl XorShift64 {
+    fn from_time() -> Self {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0xa5a5_5a5a_a5a5_5a5a);
+        Self { state: if nanos == 0 { 0xdead_beef_cafe_babe } else { nanos } }
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let mut x = self.state;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.state = x;
+        x
+    }
+
+    fn below(&mut self, n: usize) -> usize {
+        (self.next_u64() as usize) % n
+    }
+}
+
 // ── App state ───────────────────────────────────────────────────────────────
 
 pub struct App {
@@ -98,6 +125,11 @@ pub struct App {
     // Directory navigation
     pub dir_files: Vec<PathBuf>,
     pub dir_index: usize,
+    // Shuffle playback
+    pub shuffle: bool,
+    shuffle_order: Vec<usize>,
+    shuffle_pos: usize,
+    rng: XorShift64,
     // GIF animation
     pub gif: Option<GifAnimation>,
 }
@@ -117,6 +149,10 @@ impl App {
             dimensions_text: String::new(),
             dir_files: Vec::new(),
             dir_index: 0,
+            shuffle: false,
+            shuffle_order: Vec::new(),
+            shuffle_pos: 0,
+            rng: XorShift64::from_time(),
             gif: None,
         }
     }
@@ -144,6 +180,14 @@ impl App {
             // Find current file in the list
             if let Some(idx) = self.dir_files.iter().position(|f| f == &abs) {
                 self.dir_index = idx;
+            }
+            // Keep shuffle ordering in sync
+            if self.shuffle {
+                if should_rescan || self.shuffle_order.len() != self.dir_files.len() {
+                    self.regenerate_shuffle();
+                } else if let Some(p) = self.shuffle_order.iter().position(|&i| i == self.dir_index) {
+                    self.shuffle_pos = p;
+                }
             }
         }
 
@@ -209,20 +253,60 @@ impl App {
 
     pub fn next_image(&mut self, gpu: &GpuContext, tex_pass: &TexturePass) {
         if self.dir_files.is_empty() { return; }
-        self.dir_index = (self.dir_index + 1) % self.dir_files.len();
+        if self.shuffle && !self.shuffle_order.is_empty() {
+            self.shuffle_pos += 1;
+            if self.shuffle_pos >= self.shuffle_order.len() {
+                // Reached end of shuffled playlist — reshuffle for the next pass
+                self.regenerate_shuffle();
+                self.shuffle_pos = 0;
+            }
+            self.dir_index = self.shuffle_order[self.shuffle_pos];
+        } else {
+            self.dir_index = (self.dir_index + 1) % self.dir_files.len();
+        }
         let path = self.dir_files[self.dir_index].to_string_lossy().to_string();
         self.open_image(gpu, tex_pass, &path);
     }
 
     pub fn prev_image(&mut self, gpu: &GpuContext, tex_pass: &TexturePass) {
         if self.dir_files.is_empty() { return; }
-        self.dir_index = if self.dir_index == 0 {
-            self.dir_files.len() - 1
+        if self.shuffle && !self.shuffle_order.is_empty() {
+            self.shuffle_pos = if self.shuffle_pos == 0 {
+                self.shuffle_order.len() - 1
+            } else {
+                self.shuffle_pos - 1
+            };
+            self.dir_index = self.shuffle_order[self.shuffle_pos];
         } else {
-            self.dir_index - 1
-        };
+            self.dir_index = if self.dir_index == 0 {
+                self.dir_files.len() - 1
+            } else {
+                self.dir_index - 1
+            };
+        }
         let path = self.dir_files[self.dir_index].to_string_lossy().to_string();
         self.open_image(gpu, tex_pass, &path);
+    }
+
+    pub fn toggle_shuffle(&mut self) {
+        self.shuffle = !self.shuffle;
+        if self.shuffle {
+            self.regenerate_shuffle();
+        }
+    }
+
+    fn regenerate_shuffle(&mut self) {
+        let n = self.dir_files.len();
+        self.shuffle_order = (0..n).collect();
+        // Fisher-Yates
+        for i in (1..n).rev() {
+            let j = self.rng.below(i + 1);
+            self.shuffle_order.swap(i, j);
+        }
+        self.shuffle_pos = self.shuffle_order
+            .iter()
+            .position(|&idx| idx == self.dir_index)
+            .unwrap_or(0);
     }
 
     /// Tick GIF animation — re-uploads texture if frame changed. Returns true if needs redraw.

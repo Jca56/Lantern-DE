@@ -1,8 +1,11 @@
-use lntrn_render::{Color, Rect, TextPass, TextureDraw};
+use lntrn_render::{Color, Painter, Rect, TextPass, TextureDraw};
 use lntrn_ui::gpu::{FontSize, FoxPalette, InteractionContext, TextLabel, TitleBar};
 
 use crate::app::App;
-use crate::{Gpu, ZONE_CANVAS, ZONE_CLOSE, ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_NAV_PREV, ZONE_NAV_NEXT};
+use crate::{
+    Gpu, ZONE_CANVAS, ZONE_CLOSE, ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_NAV_PREV, ZONE_NAV_NEXT,
+    ZONE_SHUFFLE,
+};
 
 pub fn render_frame(
     gpu: &mut Gpu,
@@ -37,6 +40,25 @@ pub fn render_frame(
         .maximize_hovered(max_state.is_hovered())
         .minimize_hovered(min_state.is_hovered())
         .draw(painter, palette);
+
+    // Shuffle toggle — sits just left of the minimize button.
+    let min_rect = TitleBar::new(title_rect).scale(s).minimize_button_rect();
+    let shuffle_rect = Rect::new(min_rect.x - min_rect.w, title_rect.y, min_rect.w, title_rect.h);
+    let shuffle_state = input.add_zone(ZONE_SHUFFLE, shuffle_rect);
+    let shuffle_hovered = shuffle_state.is_hovered();
+    if app.shuffle {
+        painter.rect_filled(shuffle_rect, 0.0, palette.accent.with_alpha(0.18));
+    } else if shuffle_hovered {
+        painter.rect_filled(shuffle_rect, 0.0, Color::WHITE.with_alpha(0.06));
+    }
+    let icon_color = if app.shuffle {
+        palette.accent
+    } else if shuffle_hovered {
+        Color::from_rgba8(255, 255, 255, 230)
+    } else {
+        Color::from_rgba8(236, 236, 236, 200)
+    };
+    draw_shuffle_icon(painter, shuffle_rect, icon_color, s);
 
     // ── Canvas area (image display) ─────────────────────────────────
     let canvas = Rect::new(0.0, title_h, wf, hf - title_h - status_h);
@@ -132,4 +154,36 @@ pub fn render_frame(
         }
         Err(e) => eprintln!("[image-viewer] render error: {e}"),
     }
+}
+
+// ── Shuffle icon ────────────────────────────────────────────────────────────
+
+fn draw_shuffle_icon(painter: &mut Painter, rect: Rect, color: Color, s: f32) {
+    let cx = rect.center_x();
+    let cy = rect.center_y();
+    let half_w = 9.0 * s;
+    let half_h = 6.0 * s;
+    let stroke = 2.0 * s;
+    let l = cx - half_w;
+    let r = cx + half_w;
+    let t = cy - half_h;
+    let b = cy + half_h;
+    let bend = 1.5 * s;
+
+    // Path A: top-left ── ╲ to bottom-right
+    painter.line(l, t, cx - bend, t, stroke, color);
+    painter.line(cx - bend, t, cx + bend, b, stroke, color);
+    painter.line(cx + bend, b, r, b, stroke, color);
+
+    // Path B: bottom-left ── ╱ to top-right
+    painter.line(l, b, cx - bend, b, stroke, color);
+    painter.line(cx - bend, b, cx + bend, t, stroke, color);
+    painter.line(cx + bend, t, r, t, stroke, color);
+
+    // Arrow tips at right ends
+    let tip = 3.0 * s;
+    painter.line(r, t, r - tip, t + tip * 0.5, stroke, color);
+    painter.line(r, t, r - tip * 0.5, t + tip * 0.9, stroke, color);
+    painter.line(r, b, r - tip, b - tip * 0.5, stroke, color);
+    painter.line(r, b, r - tip * 0.5, b - tip * 0.9, stroke, color);
 }

@@ -12,6 +12,7 @@ pub const ZONE_MINIMIZE: u32 = 3;
 pub const ZONE_CANVAS: u32 = 10;
 pub const ZONE_NAV_PREV: u32 = 11;
 pub const ZONE_NAV_NEXT: u32 = 12;
+pub const ZONE_SHUFFLE: u32 = 13;
 
 // ── Shared types ────────────────────────────────────────────────────────────
 

@@ -330,7 +330,7 @@ pub fn render_surface(
     let mut window_elements: Vec<CustomRenderElements> = Vec::new();
     let mut fullscreen_elements: Vec<CustomRenderElements> = Vec::new();
     // Blur backdrop tracking: (insert index, screen-logical rect)
-    let mut blur_backdrops: Vec<(usize, Rectangle<i32, Logical>)> = Vec::new();
+    let mut blur_backdrops: Vec<(usize, Rectangle<i32, Logical>, f32)> = Vec::new();
 
     let output_name_str = output.name();
     let ws_transition_now = std::time::Instant::now();
@@ -549,21 +549,42 @@ pub fn render_surface(
             );
         }
 
-        // Track transparent windows for blur backdrop
+        // Track transparent windows for blur backdrop.
+        // Match the rendered window's animated geometry exactly: same
+        // center-pivot scale used for phys_loc above, plus the open/close
+        // anim_scale baked into combined_scale_*. Without this the backdrop
+        // floats at the resting size while the window scales, producing the
+        // "two windows" ghost during open/close/minimize.
         if !is_fullscreen && alpha < 0.99 {
             let ssd_bar = if has_ssd { crate::ssd::SsdManager::bar_height() } else { 0 };
-            // Screen-logical rect (rel_x/rel_y are already in screen-logical space)
+            let unscaled_w = win_geo.size.w as f64;
+            let unscaled_h = (win_geo.size.h + ssd_bar) as f64;
+            let scaled_w = unscaled_w * combined_scale_x;
+            let scaled_h = unscaled_h * combined_scale_y;
+            // rel_x/rel_y is the window's surface origin; the SSD bar sits
+            // above it, so the unscaled top-left of the decorated window is
+            // (rel_x, rel_y - ssd_bar). Pivot the scale around its center.
+            let unscaled_top = rel_y - ssd_bar as f64;
+            let center_x = rel_x + unscaled_w / 2.0;
+            let center_y = unscaled_top + unscaled_h / 2.0;
             let log_rect = Rectangle::<i32, Logical>::new(
                 Point::from((
-                    rel_x.round() as i32,
-                    (rel_y - ssd_bar as f64).round() as i32,
+                    (center_x - scaled_w / 2.0).round() as i32,
+                    (center_y - scaled_h / 2.0).round() as i32,
                 )),
                 Size::from((
-                    effective_size.w,
-                    effective_size.h + ssd_bar,
+                    scaled_w.round() as i32,
+                    scaled_h.round() as i32,
                 )),
             );
-            blur_backdrops.push((window_elements.len(), log_rect));
+            // Backdrop fades with the window. base_alpha is the user's
+            // resting transparency preference — that's already what makes
+            // the window count as transparent, so the blur underlay should
+            // sit at full opacity at rest. Multiply only the animation
+            // contributions (anim_alpha + minimize_alpha) so open/close and
+            // minimize fade the blur in lockstep with the window itself.
+            let blur_alpha = (anim_alpha * minimize_alpha).clamp(0.0, 1.0);
+            blur_backdrops.push((window_elements.len(), log_rect, blur_alpha));
         }
 
         // Window drop shadow / focus glow (behind window, so pushed after = lower z)
@@ -983,7 +1004,7 @@ pub fn render_surface(
                 // Blur source: everything behind transparent windows.
                 // List is front-to-back, so take elements after the topmost
                 // transparent window's insert point (behind = higher indices).
-                let top_idx = blur_backdrops.iter().map(|(i, _)| *i).min().unwrap_or(0);
+                let top_idx = blur_backdrops.iter().map(|(i, _, _)| *i).min().unwrap_or(0);
                 let below_windows = &window_elements[top_idx..];
 
                 let mut wp_elements: Vec<CustomRenderElements> = Vec::new();
@@ -1050,10 +1071,10 @@ pub fn render_surface(
                         let blur_tex_w = (output_phys.w / 2).max(1) as f32;
                         let blur_tex_h = (output_phys.h / 2).max(1) as f32;
 
-                        for (idx, log_rect) in blur_backdrops.iter().rev() {
+                        for (idx, log_rect, alpha) in blur_backdrops.iter().rev() {
                             let backdrop = crate::blur::create_backdrop(
                                 blur_state, ctx_id.clone(), *log_rect,
-                                output_logical, output_scale,
+                                output_logical, output_scale, *alpha,
                             );
                             // Wrap in rounded backdrop with SDF corner masking
                             if let Some(ref shader) = udev.backdrop_shader {

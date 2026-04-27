@@ -9,6 +9,7 @@ use lntrn_ui::gpu::{FoxPalette, InteractionContext, Toggle};
 
 use crate::bluetooth_worker::{BtCmd, BtDevice, BtEvent};
 use crate::bluetooth_transfer::{Transfer, TransferCmd, TransferDir, TransferEvent};
+use crate::bluetooth_ui::{format_bytes, icon_btn, step_anim, PopupSizes};
 use crate::svg_icon::IconCache;
 
 // Zone IDs
@@ -47,6 +48,12 @@ pub struct Bluetooth {
     transfers: Vec<Transfer>,
     pick_child: Option<(String, Child)>,
     obex_available: bool,
+    /// Temp zips waiting for their matching `Started` event so we can claim
+    /// the transfer id and remember to delete the archive on completion.
+    expected_temp_zips: Vec<String>,
+    /// (transfer id → temp zip path) — deleted on Complete/Failed.
+    active_temp_zips: Vec<(u32, String)>,
+    next_temp_id: u32,
     // Pairing
     pair_request: Option<(String, u32)>, // (device_name, passkey) — 0 means no passkey
     // Incoming file authorization
@@ -85,6 +92,9 @@ impl Bluetooth {
             transfers: Vec::new(),
             pick_child: None,
             obex_available: true,
+            expected_temp_zips: Vec::new(),
+            active_temp_zips: Vec::new(),
+            next_temp_id: 0,
             pair_request: None,
             incoming_request: None,
         }
@@ -137,6 +147,15 @@ impl Bluetooth {
             changed = true;
             match event {
                 TransferEvent::Started { id, filename, total, direction } => {
+                    if direction == TransferDir::Send {
+                        if let Some(pos) = self.expected_temp_zips.iter().position(|p| {
+                            std::path::Path::new(p).file_name()
+                                .and_then(|n| n.to_str()) == Some(filename.as_str())
+                        }) {
+                            let path = self.expected_temp_zips.remove(pos);
+                            self.active_temp_zips.push((id, path));
+                        }
+                    }
                     self.transfers.push(Transfer {
                         id, filename, total, transferred: 0, direction, done: false,
                     });
@@ -155,10 +174,12 @@ impl Bluetooth {
                     if let Some(p) = final_path {
                         tracing::info!("bluetooth: received file saved to {p}");
                     }
+                    self.cleanup_temp_zip(id);
                 }
                 TransferEvent::Failed { id, error } => {
                     self.transfers.retain(|t| t.id != id);
                     self.connect_error = Some(error);
+                    self.cleanup_temp_zip(id);
                 }
                 TransferEvent::ObexUnavailable => {
                     self.obex_available = false;
@@ -182,12 +203,16 @@ impl Bluetooth {
                     if let Some(ref mut out) = child.stdout {
                         let _ = out.read_to_string(&mut stdout);
                     }
-                    let path = stdout.trim();
-                    if !path.is_empty() {
-                        let _ = self.transfer_cmd_tx.send(TransferCmd::SendFile {
-                            mac: mac.clone(),
-                            file_path: path.to_string(),
-                        });
+                    let paths: Vec<String> = stdout.lines()
+                        .map(|l| l.trim().to_string())
+                        .filter(|l| !l.is_empty())
+                        .collect();
+                    if !paths.is_empty() {
+                        let mac = mac.clone();
+                        crate::bluetooth_send::dispatch_paths(
+                            &mac, paths, &self.transfer_cmd_tx,
+                            &mut self.expected_temp_zips, &mut self.next_temp_id,
+                        );
                     }
                 }
                 self.pick_child = None;
@@ -277,7 +302,8 @@ impl Bluetooth {
     fn spawn_file_picker(&mut self, mac: &str) {
         if self.pick_child.is_some() { return; } // already picking
         let child = ProcessCommand::new("lntrn-file-manager")
-            .arg("--pick")
+            .arg("--pick-any")
+            .arg("--pick-multiple")
             .arg("--title")
             .arg("Send via Bluetooth")
             .stdout(Stdio::piped())
@@ -285,6 +311,14 @@ impl Bluetooth {
         match child {
             Ok(c) => { self.pick_child = Some((mac.to_string(), c)); }
             Err(e) => { self.connect_error = Some(format!("File picker failed: {e}")); }
+        }
+    }
+
+    /// Remove a finished transfer's temp zip from disk (no-op if not a zip).
+    fn cleanup_temp_zip(&mut self, id: u32) {
+        if let Some(pos) = self.active_temp_zips.iter().position(|(tid, _)| *tid == id) {
+            let (_, p) = self.active_temp_zips.remove(pos);
+            let _ = std::fs::remove_file(&p);
         }
     }
 
@@ -632,51 +666,3 @@ impl Bluetooth {
     }
 }
 
-fn icon_btn(
-    p: &mut Painter, t: &mut TextRenderer, ix: &mut InteractionContext,
-    zone: u32, label: &str, font: f32, color: Color,
-    x: f32, row_y: f32, size: f32, row_h: f32, sc: f32, sw: u32, sh: u32,
-) {
-    let by = row_y + (row_h - size) / 2.0;
-    let r = Rect::new(x, by, size, size);
-    if ix.add_zone(zone, r).is_hovered() { p.rect_filled(r, 4.0 * sc, color.with_alpha(0.2)); }
-    t.queue(label, font, x + (size - font * 0.6) / 2.0, by + (size - font) / 2.0,
-        color, size, sw, sh);
-}
-
-fn format_bytes(n: u64) -> String {
-    const KB: u64 = 1024;
-    const MB: u64 = KB * 1024;
-    const GB: u64 = MB * 1024;
-    if n >= GB { format!("{:.2} GB", n as f64 / GB as f64) }
-    else if n >= MB { format!("{:.1} MB", n as f64 / MB as f64) }
-    else if n >= KB { format!("{:.0} KB", n as f64 / KB as f64) }
-    else { format!("{} B", n) }
-}
-
-fn step_anim(anim: &mut f32, on: bool, step: f32) -> bool {
-    let target = if on { 1.0 } else { 0.0 };
-    if (*anim - target).abs() < 0.001 { *anim = target; return false; }
-    *anim = if *anim < target { (*anim + step).min(1.0) } else { (*anim - step).max(0.0) };
-    true
-}
-
-// ── Layout sizes (shared between draw_popup and popup_rect) ────────────────
-
-struct PopupSizes {
-    pad: f32, corner_r: f32, gap: f32, popup_w: f32,
-    title_font: f32, body_font: f32, small_font: f32,
-    row_h: f32, section_gap: f32, toggle_h: f32, scan_h: f32,
-    max_visible: usize,
-}
-
-impl PopupSizes {
-    fn new(scale: f32) -> Self {
-        Self {
-            pad: 20.0 * scale, corner_r: 12.0 * scale, gap: 8.0 * scale,
-            popup_w: 380.0 * scale, title_font: 24.0 * scale, body_font: 20.0 * scale,
-            small_font: 16.0 * scale, row_h: 48.0 * scale, section_gap: 12.0 * scale,
-            toggle_h: 28.0 * scale, scan_h: 36.0 * scale, max_visible: 6,
-        }
-    }
-}

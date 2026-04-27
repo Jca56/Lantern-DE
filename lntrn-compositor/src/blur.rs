@@ -258,6 +258,7 @@ pub fn create_backdrop(
     win_log_rect: Rectangle<i32, smithay::utils::Logical>,
     output_logical: Size<i32, smithay::utils::Logical>,
     output_scale: f64,
+    alpha: f32,
 ) -> TextureRenderElement<GlesTexture> {
     let half_w = (state.full_size.w / 2).max(1) as f64;
     let half_h = (state.full_size.h / 2).max(1) as f64;
@@ -282,7 +283,7 @@ pub fn create_backdrop(
         state.result.clone(),
         1,
         Transform::Normal,
-        Some(1.0),
+        Some(alpha.clamp(0.0, 1.0)),
         Some(Rectangle::new(
             Point::from((src_x, src_y)),
             Size::from((src_w, src_h)),

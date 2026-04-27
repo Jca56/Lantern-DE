@@ -116,6 +116,7 @@ pub struct App {
 
     places: Vec<Place>,
     pub drives: Vec<fs::Drive>,
+    pub phones: Vec<fs::Phone>,
 
     // Rubber band selection
     pub rubber_band_start: Option<(f32, f32)>,
@@ -211,6 +212,7 @@ impl App {
             sort_by: SortBy::Name,
             places,
             drives: fs::detect_drives(),
+            phones: fs::detect_phones(),
             rubber_band_start: None,
             rubber_band_end: None,
             context_target: None,
@@ -387,6 +389,19 @@ impl App {
         }
     }
 
+    #[allow(dead_code)]
+    pub fn refresh_phones(&mut self) {
+        self.phones = fs::detect_phones();
+    }
+
+    pub fn on_phone_click(&mut self, index: usize) {
+        let Some(phone) = self.phones.get(index).cloned() else { return; };
+        match fs::mount_phone(&phone) {
+            Ok(()) => self.navigate_to(phone.mount_point),
+            Err(msg) => eprintln!("phone mount failed: {msg}"),
+        }
+    }
+
     pub fn is_active_place(&self, index: usize) -> bool {
         self.places.get(index).map_or(false, |p| p.path == self.current_dir)
     }
@@ -402,18 +417,21 @@ impl App {
         self.last_click_idx = Some(index);
 
         let is_dir = self.entries[index].is_dir;
-        let is_dir_pick = self.pick.as_ref().map_or(false, |p| p.mode == PickType::Directory);
+        let allow_dir_select = self.pick.as_ref().map_or(false, |p| {
+            matches!(p.mode, PickType::Directory | PickType::Mixed)
+        });
         let is_pick = self.pick.is_some();
         let multi = self.pick.as_ref().map_or(false, |p| p.multiple);
 
-        // Navigate into directories (always, except dir-pick single click)
-        if is_dir && !(is_dir_pick && !is_double) {
+        // Navigate into directories (always, except when single-clicking a dir
+        // in a mode that allows selecting dirs — then single-click selects).
+        if is_dir && !(allow_dir_select && !is_double) {
             let path = self.entries[index].path.clone();
             self.navigate_to(path);
             return;
         }
-        // Dir-pick single click: select the directory
-        if is_dir_pick && is_dir && !is_double {
+        // Dir-select single click: toggle selection of the directory
+        if allow_dir_select && is_dir && !is_double {
             if !multi { for e in &mut self.entries { e.selected = false; } }
             self.entries[index].selected = !self.entries[index].selected;
             return;
@@ -461,6 +479,15 @@ impl App {
             PickType::Open => {
                 let selected: Vec<PathBuf> = self.entries.iter()
                     .filter(|e| e.selected && !e.is_dir)
+                    .map(|e| e.path.clone())
+                    .collect();
+                if !selected.is_empty() {
+                    self.pick_result = Some(PickResult::Selected(selected));
+                }
+            }
+            PickType::Mixed => {
+                let selected: Vec<PathBuf> = self.entries.iter()
+                    .filter(|e| e.selected)
                     .map(|e| e.path.clone())
                     .collect();
                 if !selected.is_empty() {
@@ -750,6 +777,14 @@ impl App {
                     Err(_) => break,
                 }
             }
+        }
+    }
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        for phone in &self.phones {
+            fs::unmount_phone(phone);
         }
     }
 }

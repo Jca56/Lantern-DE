@@ -394,8 +394,16 @@ pub fn render_frame(
         let state = input.add_zone(zone_id, item_rect);
         drive_hovered.push(state.is_hovered());
     }
+    let num_drives = app.drives.len();
+    let mut phone_hovered = Vec::with_capacity(app.phones.len());
+    for i in 0..app.phones.len() {
+        let item_rect = phone_item_rect(i, num_places, num_drives, s);
+        let zone_id = crate::ZONE_PHONE_ITEM_BASE + i as u32;
+        let state = input.add_zone(zone_id, item_rect);
+        phone_hovered.push(state.is_hovered());
+    }
     let dragging = app.drag_item.is_some();
-    draw_sidebar(painter, text, pal, app, sidebar, &sidebar_hovered, &drive_hovered, dragging, (w, h), s);
+    draw_sidebar(painter, text, pal, app, sidebar, &sidebar_hovered, &drive_hovered, &phone_hovered, dragging, (w, h), s);
 
     // ── Content area ───────────────────────────────────────────────────
     input.add_zone(ZONE_CONTENT, content);

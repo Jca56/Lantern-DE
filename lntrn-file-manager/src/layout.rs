@@ -132,6 +132,14 @@ pub fn drive_item_rect(index: usize, num_places: usize, s: f32) -> Rect {
     Rect::new(4.0 * s, y, (SIDEBAR_W - 12.0) * s, 64.0 * s)
 }
 
+/// Phones live below drives in the same DEVICES section.
+pub fn phone_item_rect(index: usize, num_places: usize, num_drives: usize, s: f32) -> Rect {
+    let header_y = drives_section_y(num_places, s) + 30.0 * s;
+    let drives_h = num_drives as f32 * 64.0 * s;
+    let y = header_y + drives_h + index as f32 * 56.0 * s;
+    Rect::new(4.0 * s, y, (SIDEBAR_W - 12.0) * s, 56.0 * s)
+}
+
 pub fn content_rect(width: f32, height: f32, s: f32) -> Rect {
     let top = content_top(s);
     let bottom = content_bottom(height, s);

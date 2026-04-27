@@ -41,6 +41,7 @@ pub fn draw_pick_bar(
         PickType::Open => "Open",
         PickType::Save => "Save",
         PickType::Directory => "Select",
+        PickType::Mixed => "Select",
     };
     let confirm_x = w - pad - btn_w_confirm;
     let confirm_rect = Rect::new(confirm_x, btn_y, btn_w_confirm, btn_h);

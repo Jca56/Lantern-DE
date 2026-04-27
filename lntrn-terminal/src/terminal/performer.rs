@@ -273,22 +273,26 @@ impl vte::Perform for Performer<'_> {
                 apply_sgr(s, &params_vec);
             }
             'r' => {
-                s.wrap_next = false;
-                let top = p(0, 1) as usize;
-                let bottom = p(1, s.rows as u16) as usize;
-                let new_top = (top - 1).min(s.rows - 1);
-                let new_bottom = (bottom - 1).min(s.rows - 1);
-                // Only apply if top < bottom (invalid regions are ignored)
-                if new_top < new_bottom {
-                    s.scroll_top = new_top;
-                    s.scroll_bottom = new_bottom;
-                } else {
-                    // Reset to full screen on invalid region
-                    s.scroll_top = 0;
-                    s.scroll_bottom = s.rows - 1;
+                // DECSTBM only — `CSI ? Pm r` (XTRESTORE, restore DEC private
+                // modes) shares the final byte but must NOT slam the cursor to
+                // home. Misinterpreting it that way is exactly the kind of
+                // thing that makes a TUI's diff-based updates leak old content.
+                if intermediates.is_empty() {
+                    s.wrap_next = false;
+                    let top = p(0, 1) as usize;
+                    let bottom = p(1, s.rows as u16) as usize;
+                    let new_top = (top - 1).min(s.rows - 1);
+                    let new_bottom = (bottom - 1).min(s.rows - 1);
+                    if new_top < new_bottom {
+                        s.scroll_top = new_top;
+                        s.scroll_bottom = new_bottom;
+                    } else {
+                        s.scroll_top = 0;
+                        s.scroll_bottom = s.rows - 1;
+                    }
+                    s.cursor_row = 0;
+                    s.cursor_col = 0;
                 }
-                s.cursor_row = 0;
-                s.cursor_col = 0;
             }
             'c' => {
                 if intermediates == [b'>'] {
@@ -308,10 +312,14 @@ impl vte::Perform for Performer<'_> {
                 }
             }
             'u' => {
-                if let Some((row, col, wrap)) = s.saved_cursor {
-                    s.cursor_row = row.min(s.rows.saturating_sub(1));
-                    s.cursor_col = col.min(s.cols.saturating_sub(1));
-                    s.wrap_next = wrap;
+                // SCORC (restore cursor) only when no intermediates. `CSI ? u`
+                // is a kitty keyboard-protocol query — must not move cursor.
+                if intermediates.is_empty() {
+                    if let Some((row, col, wrap)) = s.saved_cursor {
+                        s.cursor_row = row.min(s.rows.saturating_sub(1));
+                        s.cursor_col = col.min(s.cols.saturating_sub(1));
+                        s.wrap_next = wrap;
+                    }
                 }
             }
             'n' => {

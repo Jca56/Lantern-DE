@@ -19,7 +19,10 @@ use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
 use crate::app::App;
-use crate::{Gpu, ZONE_CANVAS, ZONE_CLOSE, ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_NAV_PREV, ZONE_NAV_NEXT};
+use crate::{
+    Gpu, ZONE_CANVAS, ZONE_CLOSE, ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_NAV_PREV, ZONE_NAV_NEXT,
+    ZONE_SHUFFLE,
+};
 
 // ── WaylandHandle for wgpu ──────────────────────────────────────────────────
 
@@ -449,6 +452,7 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
                     }
                     ZONE_NAV_PREV => { app.prev_image(&gpu.ctx, &gpu.tex_pass); }
                     ZONE_NAV_NEXT => { app.next_image(&gpu.ctx, &gpu.tex_pass); }
+                    ZONE_SHUFFLE => { app.toggle_shuffle(); }
                     _ => {}
                 }
             } else {
@@ -526,6 +530,7 @@ const KEY_Q: u32 = 16;
 const KEY_0: u32 = 11;
 const KEY_EQUAL: u32 = 13; // =/+ key
 const KEY_MINUS: u32 = 12;
+const KEY_S: u32 = 31;
 const KEY_LEFT: u32 = 105;
 const KEY_RIGHT: u32 = 106;
 
@@ -533,6 +538,7 @@ fn handle_key(app: &mut App, gpu: &mut Gpu, key: u32, ctrl: bool) {
     match key {
         KEY_LEFT => { app.prev_image(&gpu.ctx, &gpu.tex_pass); }
         KEY_RIGHT => { app.next_image(&gpu.ctx, &gpu.tex_pass); }
+        KEY_S if !ctrl => { app.toggle_shuffle(); }
         _ if ctrl => match key {
             KEY_Q => std::process::exit(0),
             KEY_EQUAL => { app.zoom = (app.zoom * 1.05).min(50.0); }

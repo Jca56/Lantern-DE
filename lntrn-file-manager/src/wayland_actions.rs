@@ -26,7 +26,7 @@ use crate::{
     ZONE_CLOSE, ZONE_FILE_ITEM_BASE, ZONE_MAXIMIZE, ZONE_MENU_VIEW, ZONE_MINIMIZE,
     ZONE_NAV_BACK, ZONE_NAV_FORWARD, ZONE_NAV_UP, ZONE_NAV_SEARCH, ZONE_NAV_VIEW_TOGGLE,
     ZONE_PATH_INPUT, ZONE_SIDEBAR_ITEM_BASE, ZONE_TAB_BASE, ZONE_TAB_CLOSE_BASE, ZONE_TAB_NEW,
-    ZONE_BREADCRUMB_BASE, ZONE_DRIVE_ITEM_BASE, ZONE_TREE_ITEM_BASE,
+    ZONE_BREADCRUMB_BASE, ZONE_DRIVE_ITEM_BASE, ZONE_PHONE_ITEM_BASE, ZONE_TREE_ITEM_BASE,
 };
 
 // ── Helper functions ────────────────────────────────────────────────────────
@@ -244,9 +244,13 @@ pub(crate) fn handle_click(
                 let idx = (id - ZONE_SIDEBAR_ITEM_BASE) as usize;
                 app.on_sidebar_click(idx);
             }
-            id if id >= ZONE_DRIVE_ITEM_BASE && id < ZONE_TAB_BASE => {
+            id if id >= ZONE_DRIVE_ITEM_BASE && id < ZONE_PHONE_ITEM_BASE => {
                 let idx = (id - ZONE_DRIVE_ITEM_BASE) as usize;
                 app.on_drive_click(idx);
+            }
+            id if id >= ZONE_PHONE_ITEM_BASE && id < ZONE_TAB_BASE => {
+                let idx = (id - ZONE_PHONE_ITEM_BASE) as usize;
+                app.on_phone_click(idx);
             }
             crate::ZONE_PICK_CONFIRM => {
                 app.confirm_pick();

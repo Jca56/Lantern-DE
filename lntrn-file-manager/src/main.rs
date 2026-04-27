@@ -45,6 +45,7 @@ pub const VIEW_THEME_LANTERN: u32 = 12;
 pub const VIEW_THEME_NIGHT_SKY: u32 = 13;
 pub const ZONE_SIDEBAR_ITEM_BASE: u32 = 100;
 pub const ZONE_DRIVE_ITEM_BASE: u32 = 200;
+pub const ZONE_PHONE_ITEM_BASE: u32 = 400;
 pub const ZONE_TAB_BASE: u32 = 500;
 pub const ZONE_TAB_CLOSE_BASE: u32 = 550;
 pub const ZONE_TAB_NEW: u32 = 599;
@@ -142,6 +143,8 @@ pub enum PickType {
     Open,
     Save,
     Directory,
+    /// Files and/or folders mixed.
+    Mixed,
 }
 
 #[derive(Clone, Debug)]
@@ -161,6 +164,7 @@ impl PickConfig {
             PickType::Open => "Open File",
             PickType::Save => "Save File",
             PickType::Directory => "Select Folder",
+            PickType::Mixed => "Select Files & Folders",
         }
     }
 }
@@ -194,6 +198,7 @@ fn parse_args() -> Option<PickConfig> {
             "--pick" => mode = Some(PickType::Open),
             "--pick-save" => mode = Some(PickType::Save),
             "--pick-directory" => mode = Some(PickType::Directory),
+            "--pick-any" => mode = Some(PickType::Mixed),
             "--pick-multiple" => multiple = true,
             "--title" => { i += 1; title = args.get(i).cloned(); }
             "--start-dir" => { i += 1; start_dir = args.get(i).map(PathBuf::from); }
