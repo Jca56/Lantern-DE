@@ -249,10 +249,17 @@ impl Lantern {
                                 data.super_clean_tap = false;
                             }
                         }
-                        // Super released — if no combo was used, cycle desktop panel
+                        // Super released — if no combo was used, toggle Command Center.
+                        // (`cycle_desktop_panel` remains defined in state.rs but is no
+                        // longer wired to Super-tap; nothing in this project is deleted.)
                         if !_modifiers.logo && was_super && data.super_clean_tap {
                             data.super_clean_tap = false;
-                            data.cycle_desktop_panel();
+                            tracing::info!("Super tap → toggling lntrn-command-center");
+                            spawn_detached_args(
+                                "lntrn-command-center",
+                                &["--toggle"],
+                                &data.socket_name,
+                            );
                         }
 
                         if event.state() == KeyState::Pressed

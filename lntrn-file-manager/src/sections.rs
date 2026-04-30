@@ -486,39 +486,53 @@ pub fn draw_sidebar(
                 .max_width(sw - 56.0 * s)
                 .draw(text, screen.0, screen.1);
 
-            // Usage text: "XXX GB free of YYY GB"
-            let usage_text = format!("{} free of {}", drive.free_display(), drive.total_display());
-            TextLabel::new(&usage_text, 38.0 * s, sy + 32.0 * s)
-                .size(FontSize::Custom(16.0 * s))
-                .color(palette.muted)
-                .max_width(sw - 56.0 * s)
-                .draw(text, screen.0, screen.1);
+            if drive.mounted {
+                // Usage text: "XXX GB free of YYY GB"
+                let usage_text = format!("{} free of {}", drive.free_display(), drive.total_display());
+                TextLabel::new(&usage_text, 38.0 * s, sy + 32.0 * s)
+                    .size(FontSize::Custom(16.0 * s))
+                    .color(palette.muted)
+                    .max_width(sw - 56.0 * s)
+                    .draw(text, screen.0, screen.1);
 
-            // Usage bar
-            let bar_x = 38.0 * s;
-            let bar_y = sy + 52.0 * s;
-            let bar_w = sw - 52.0 * s;
-            let bar_h = 6.0 * s;
-            let frac = drive.usage_fraction();
+                // Usage bar
+                let bar_x = 38.0 * s;
+                let bar_y = sy + 52.0 * s;
+                let bar_w = sw - 52.0 * s;
+                let bar_h = 6.0 * s;
+                let frac = drive.usage_fraction();
 
-            // Track
-            painter.rect_filled(
-                Rect::new(bar_x, bar_y, bar_w, bar_h),
-                bar_h * 0.5, palette.surface_2,
-            );
-            // Fill
-            let fill_w = (bar_w * frac).max(bar_h);
-            let fill_color = if frac > 0.9 {
-                palette.danger
-            } else if frac > 0.75 {
-                palette.warning
+                // Track
+                painter.rect_filled(
+                    Rect::new(bar_x, bar_y, bar_w, bar_h),
+                    bar_h * 0.5, palette.surface_2,
+                );
+                // Fill
+                let fill_w = (bar_w * frac).max(bar_h);
+                let fill_color = if frac > 0.9 {
+                    palette.danger
+                } else if frac > 0.75 {
+                    palette.warning
+                } else {
+                    palette.accent
+                };
+                painter.rect_filled(
+                    Rect::new(bar_x, bar_y, fill_w, bar_h),
+                    bar_h * 0.5, fill_color,
+                );
             } else {
-                palette.accent
-            };
-            painter.rect_filled(
-                Rect::new(bar_x, bar_y, fill_w, bar_h),
-                bar_h * 0.5, fill_color,
-            );
+                // Unmounted: "Tap to mount · 8.0 GB · vfat"
+                let subtitle = format!(
+                    "Tap to mount · {} · {}",
+                    drive.total_display(),
+                    drive.fstype,
+                );
+                TextLabel::new(&subtitle, 38.0 * s, sy + 32.0 * s)
+                    .size(FontSize::Custom(16.0 * s))
+                    .color(palette.accent)
+                    .max_width(sw - 56.0 * s)
+                    .draw(text, screen.0, screen.1);
+            }
 
             sy += drive_item_h;
 

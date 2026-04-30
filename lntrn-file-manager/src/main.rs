@@ -1,6 +1,7 @@
 mod app;
 mod clipboard;
 mod desktop;
+mod dialogs;
 pub mod undo;
 mod file_info;
 mod file_ops;
@@ -103,6 +104,18 @@ pub const ZONE_PICK_CONFIRM: u32 = 40;
 pub const ZONE_PICK_CANCEL: u32 = 41;
 pub const ZONE_PICK_FILENAME: u32 = 42;
 pub const ZONE_PICK_FILTER: u32 = 43;
+
+// Drive context menu
+pub const CTX_DRIVE_EJECT: u32 = 110;
+pub const CTX_DRIVE_FORMAT: u32 = 111;
+pub const CTX_DRIVE_PROPERTIES: u32 = 112;
+pub const CTX_DRIVE_RENAME_LABEL: u32 = 113;
+
+// Drive dialog (confirm + properties)
+pub const ZONE_DRIVE_DIALOG_CANCEL: u32 = 47;
+pub const ZONE_DRIVE_DIALOG_CONFIRM: u32 = 48;
+pub const ZONE_DRIVE_DIALOG_OK: u32 = 49;
+pub const ZONE_DRIVE_DIALOG_SCRIM: u32 = 53;
 
 // Drop confirmation modal
 pub const ZONE_DROP_MOVE: u32 = 44;

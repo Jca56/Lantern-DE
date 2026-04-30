@@ -11,11 +11,12 @@ use wayland_protocols::xdg::shell::client::xdg_toplevel;
 use crate::app::{App, ContextTarget};
 use crate::desktop::{self, DesktopApp};
 use crate::fs::SortBy;
-use crate::layout::{content_rect, file_item_rect, grid_columns};
+use crate::layout::{content_rect, drive_item_rect, file_item_rect, grid_columns};
 use crate::settings::Settings;
 use crate::wayland::State;
 use crate::{
     ClickAction, CTX_CHANGE_ICON, CTX_COMPRESS, CTX_COPY, CTX_COPY_NAME, CTX_COPY_PATH, CTX_CUT,
+    CTX_DRIVE_EJECT, CTX_DRIVE_FORMAT, CTX_DRIVE_PROPERTIES,
     CTX_DUPLICATE, CTX_EXTRACT, CTX_NEW_FILE, CTX_NEW_FOLDER, CTX_NEW_FOLDER_BLUE,
     CTX_NEW_FOLDER_GREEN, CTX_NEW_FOLDER_ORANGE, CTX_NEW_FOLDER_PLAIN, CTX_NEW_FOLDER_PURPLE,
     CTX_NEW_FOLDER_RED, CTX_NEW_FOLDER_YELLOW, CTX_OPEN, CTX_OPEN_AS_ROOT, CTX_OPEN_LOCATION,
@@ -26,7 +27,8 @@ use crate::{
     ZONE_CLOSE, ZONE_FILE_ITEM_BASE, ZONE_MAXIMIZE, ZONE_MENU_VIEW, ZONE_MINIMIZE,
     ZONE_NAV_BACK, ZONE_NAV_FORWARD, ZONE_NAV_UP, ZONE_NAV_SEARCH, ZONE_NAV_VIEW_TOGGLE,
     ZONE_PATH_INPUT, ZONE_SIDEBAR_ITEM_BASE, ZONE_TAB_BASE, ZONE_TAB_CLOSE_BASE, ZONE_TAB_NEW,
-    ZONE_BREADCRUMB_BASE, ZONE_DRIVE_ITEM_BASE, ZONE_PHONE_ITEM_BASE, ZONE_TREE_ITEM_BASE,
+    ZONE_BREADCRUMB_BASE, ZONE_DRIVE_DIALOG_CANCEL, ZONE_DRIVE_DIALOG_CONFIRM, ZONE_DRIVE_DIALOG_OK,
+    ZONE_DRIVE_DIALOG_SCRIM, ZONE_DRIVE_ITEM_BASE, ZONE_PHONE_ITEM_BASE, ZONE_TREE_ITEM_BASE,
 };
 
 // ── Helper functions ────────────────────────────────────────────────────────
@@ -78,6 +80,17 @@ pub(crate) fn handle_click(
     current_theme: &str,
 ) -> ClickAction {
     if let Some(zone_id) = input.on_left_pressed() {
+        // ── Drive dialog: capture all clicks while open ─────────────
+        if app.drive_dialog.is_some() {
+            match zone_id {
+                ZONE_DRIVE_DIALOG_CONFIRM => app.confirm_drive_format(),
+                ZONE_DRIVE_DIALOG_OK | ZONE_DRIVE_DIALOG_CANCEL | ZONE_DRIVE_DIALOG_SCRIM => {
+                    app.dismiss_drive_dialog();
+                }
+                _ => {}
+            }
+            return ClickAction::None;
+        }
         // If path editing, commit on any click outside the path input
         // (breadcrumb clicks cancel edit and fall through to navigate)
         if app.path_editing && zone_id != ZONE_PATH_INPUT {
@@ -284,6 +297,38 @@ pub(crate) fn handle_right_click(
     wf: f32, hf: f32, s: f32,
 ) {
     let Some((cx, cy)) = input.cursor() else { return };
+
+    // ── Sidebar drives: right-click → eject / format / properties ───────
+    let num_places = app.sidebar_places().len();
+    for i in 0..app.drives.len() {
+        if drive_item_rect(i, num_places, s).contains(cx, cy) {
+            let drive = app.drives[i].clone();
+            let mut items = vec![
+                MenuItem::action(CTX_DRIVE_FORMAT, "Format to ext4…"),
+                MenuItem::separator(),
+                MenuItem::action(CTX_DRIVE_PROPERTIES, "Properties"),
+            ];
+            if drive.mounted && drive.removable {
+                items.insert(0, MenuItem::action(CTX_DRIVE_EJECT, "Eject"));
+                items.insert(1, MenuItem::separator());
+            }
+            // Internal "System"/"Boot" drives: properties only
+            if !drive.removable {
+                items = vec![MenuItem::action(CTX_DRIVE_PROPERTIES, "Properties")];
+            }
+            app.context_target = Some(ContextTarget::Drive(i));
+            context_menu.set_scale(s);
+            if let Some(backend) = popup_backend {
+                let lx = (cx / s) as f32;
+                let ly = (cy / s) as f32;
+                context_menu.open_popup(lx, ly, items, backend);
+            } else {
+                context_menu.open(cx, cy, items);
+            }
+            return;
+        }
+    }
+
     let cr = content_rect(wf, hf, s);
     if !cr.contains(cx, cy) { return; }
 
@@ -534,26 +579,47 @@ pub(crate) fn handle_ctx_event(
                     }
                 }
                 CTX_PROPERTIES => {
-                    let path = if let Some(ref target) = app.context_target {
-                        match target {
-                            crate::app::ContextTarget::Item(idx) => {
-                                if *idx < app.entries.len() {
-                                    Some(app.entries[*idx].path.clone())
-                                } else { None }
+                    // Drive context → drive properties dialog
+                    if let Some(ContextTarget::Drive(idx)) = app.context_target.clone() {
+                        app.open_drive_properties(idx);
+                    } else {
+                        let path = if let Some(ref target) = app.context_target {
+                            match target {
+                                crate::app::ContextTarget::Item(idx) => {
+                                    if *idx < app.entries.len() {
+                                        Some(app.entries[*idx].path.clone())
+                                    } else { None }
+                                }
+                                crate::app::ContextTarget::SearchItem(idx) => {
+                                    app.search_results.get(*idx).map(|e| e.path.clone())
+                                }
+                                crate::app::ContextTarget::Empty => {
+                                    Some(app.current_dir.clone())
+                                }
+                                crate::app::ContextTarget::Drive(_) => None,
                             }
-                            crate::app::ContextTarget::SearchItem(idx) => {
-                                app.search_results.get(*idx).map(|e| e.path.clone())
-                            }
-                            crate::app::ContextTarget::Empty => {
-                                Some(app.current_dir.clone())
+                        } else { None };
+                        if let Some(path) = path {
+                            if let Some(mut props) = crate::properties::FileProperties::from_path(&path) {
+                                props.populate_media_info(file_info);
+                                app.properties = Some(props);
                             }
                         }
-                    } else { None };
-                    if let Some(path) = path {
-                        if let Some(mut props) = crate::properties::FileProperties::from_path(&path) {
-                            props.populate_media_info(file_info);
-                            app.properties = Some(props);
-                        }
+                    }
+                }
+                CTX_DRIVE_EJECT => {
+                    if let Some(ContextTarget::Drive(idx)) = app.context_target.clone() {
+                        app.eject_drive(idx);
+                    }
+                }
+                CTX_DRIVE_FORMAT => {
+                    if let Some(ContextTarget::Drive(idx)) = app.context_target.clone() {
+                        app.open_drive_format_dialog(idx);
+                    }
+                }
+                CTX_DRIVE_PROPERTIES => {
+                    if let Some(ContextTarget::Drive(idx)) = app.context_target.clone() {
+                        app.open_drive_properties(idx);
                     }
                 }
                 CTX_NEW_FOLDER => {
@@ -817,6 +883,22 @@ pub(crate) fn handle_key(
     key: u32, ctrl: bool, shift: bool,
     running: &mut bool,
 ) {
+    // Drive dialog — ESC dismisses, ENTER confirms (Format only)
+    if app.drive_dialog.is_some() {
+        match key {
+            KEY_ESC => app.dismiss_drive_dialog(),
+            KEY_ENTER => {
+                if matches!(app.drive_dialog, Some(crate::dialogs::DriveDialog::ConfirmFormat { .. })) {
+                    app.confirm_drive_format();
+                } else {
+                    app.dismiss_drive_dialog();
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+
     // Drop confirmation modal — ESC cancels
     if app.pending_drop.is_some() {
         if key == KEY_ESC {

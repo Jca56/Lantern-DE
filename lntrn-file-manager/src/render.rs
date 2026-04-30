@@ -650,6 +650,9 @@ pub fn render_frame(
     if let Some(ref drop) = app.pending_drop {
         draw_drop_modal(drop, painter, text, input, pal, wf, hf, s, w, h);
     }
+    if let Some(ref dialog) = app.drive_dialog {
+        crate::dialogs::draw(dialog, painter, text, pal, input, (w, h), s);
+    }
 
     // ── Inline context menu (desktop mode) ─────────────────────────
     let mut inline_menu_event = None;

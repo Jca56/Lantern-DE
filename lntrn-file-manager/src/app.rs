@@ -43,6 +43,8 @@ pub enum ContextTarget {
     SearchItem(usize),
     /// Right-clicked on empty content area
     Empty,
+    /// Right-clicked on a sidebar drive entry (index into app.drives)
+    Drive(usize),
 }
 
 /// Clipboard operation pending a paste.
@@ -125,6 +127,9 @@ pub struct App {
     // Context menu
     pub context_target: Option<ContextTarget>,
     pub clipboard: Option<ClipboardOp>,
+
+    // Drive dialog overlay (Format confirm / Properties)
+    pub drive_dialog: Option<crate::dialogs::DriveDialog>,
 
     // Click-to-open deferred to release (so drag works)
     pub pending_open: Option<usize>,
@@ -217,6 +222,7 @@ impl App {
             rubber_band_end: None,
             context_target: None,
             clipboard: None,
+            drive_dialog: None,
             pending_open: None,
             press_pos: None,
             last_click_time: None,
@@ -377,21 +383,77 @@ impl App {
         &self.places
     }
 
-    #[allow(dead_code)]
     pub fn refresh_drives(&mut self) {
         self.drives = fs::detect_drives();
     }
 
     pub fn on_drive_click(&mut self, index: usize) {
-        if let Some(drive) = self.drives.get(index) {
-            let path = drive.mount_point.clone();
-            self.navigate_to(path);
+        let Some(drive) = self.drives.get(index).cloned() else { return; };
+        if drive.mounted {
+            self.navigate_to(drive.mount_point);
+            return;
+        }
+        match fs::mount_drive(&drive) {
+            Ok(mount) => {
+                self.refresh_drives();
+                self.navigate_to(mount);
+            }
+            Err(msg) => eprintln!("drive mount failed: {msg}"),
         }
     }
 
-    #[allow(dead_code)]
     pub fn refresh_phones(&mut self) {
         self.phones = fs::detect_phones();
+    }
+
+    pub fn eject_drive(&mut self, index: usize) {
+        let Some(drive) = self.drives.get(index).cloned() else { return; };
+        if let Err(msg) = fs::unmount_drive(&drive) {
+            eprintln!("eject failed: {msg}");
+            return;
+        }
+        // If we were viewing it, navigate home
+        if self.current_dir.starts_with(&drive.mount_point) {
+            if let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) {
+                self.navigate_to(home);
+            }
+        }
+        self.refresh_drives();
+    }
+
+    pub fn open_drive_format_dialog(&mut self, index: usize) {
+        let Some(drive) = self.drives.get(index).cloned() else { return; };
+        if !drive.removable { return; }
+        self.drive_dialog = Some(crate::dialogs::DriveDialog::ConfirmFormat {
+            drive,
+            error: None,
+        });
+    }
+
+    pub fn open_drive_properties(&mut self, index: usize) {
+        let Some(drive) = self.drives.get(index).cloned() else { return; };
+        self.drive_dialog = Some(crate::dialogs::DriveDialog::Properties { drive });
+    }
+
+    pub fn dismiss_drive_dialog(&mut self) {
+        self.drive_dialog = None;
+    }
+
+    /// Confirm the active Format dialog. Runs the format and either dismisses
+    /// the dialog on success, or stores the error message into the dialog.
+    pub fn confirm_drive_format(&mut self) {
+        let Some(crate::dialogs::DriveDialog::ConfirmFormat { drive, .. }) = self.drive_dialog.clone() else { return; };
+        match fs::format_drive_ext4(&drive, "") {
+            Ok(()) => {
+                self.drive_dialog = None;
+                self.refresh_drives();
+            }
+            Err(msg) => {
+                if let Some(crate::dialogs::DriveDialog::ConfirmFormat { error, .. }) = self.drive_dialog.as_mut() {
+                    *error = Some(msg);
+                }
+            }
+        }
     }
 
     pub fn on_phone_click(&mut self, index: usize) {

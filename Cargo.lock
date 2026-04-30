@@ -2361,6 +2361,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "lntrn-command-center"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "libc",
+ "lntrn-dbus",
+ "lntrn-icons",
+ "lntrn-render",
+ "lntrn-ui",
+ "png 0.17.16",
+ "raw-window-handle",
+ "resvg 0.45.1",
+ "tracing",
+ "tracing-subscriber",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-protocols-wlr",
+ "wgpu",
+]
+
+[[package]]
 name = "lntrn-compositor"
 version = "0.1.0"
 dependencies = [

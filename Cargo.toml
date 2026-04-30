@@ -36,6 +36,7 @@ members = [
     "lntrn-screencopy",
     "lntrn-video-editor",
     "lntrn-lava-lamp",
+    "lntrn-command-center",
 ]
 
 [profile.release]

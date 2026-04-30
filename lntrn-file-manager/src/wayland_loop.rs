@@ -55,6 +55,7 @@ pub(crate) fn run_loop(
     let mut last_dir_check = Instant::now();
     let mut last_dir_mtime: Option<std::time::SystemTime> = None;
     let mut last_dir_path = app.current_dir.clone();
+    let mut last_devices_check = Instant::now();
     let mut last_tab_click: Option<(usize, Instant)> = None;
     // Pinned tab drag reorder state
     let mut tab_drag: Option<usize> = None;          // index of tab being dragged
@@ -676,6 +677,13 @@ pub(crate) fn run_loop(
                 last_dir_mtime = current_mtime;
                 app.reload();
             }
+        }
+
+        // ── Devices: poll for hot-plugged USB drives + phones every 2s ──
+        if last_devices_check.elapsed() >= Duration::from_secs(2) {
+            last_devices_check = Instant::now();
+            app.refresh_drives();
+            app.refresh_phones();
         }
 
         needs_anim = view_menu.is_open() || context_menu.is_open()
