@@ -158,6 +158,78 @@ pub(crate) struct MonitorConfig {
     pub wallpaper: Option<String>,
 }
 
+/// A per-app window sizing rule from `[[window_rules]]` in lantern.toml.
+#[derive(Debug, Clone)]
+pub(crate) struct WindowRule {
+    pub app_id: String,
+    pub width: i32,
+    pub height: i32,
+}
+
+/// Default window size from `[windows] default_width/default_height`.
+/// Returns None if either is unset.
+pub(crate) fn default_window_size() -> Option<(i32, i32)> {
+    let w = read_config("windows", "default_width", "");
+    let h = read_config("windows", "default_height", "");
+    if w.is_empty() || h.is_empty() { return None; }
+    Some((w.parse().ok()?, h.parse().ok()?))
+}
+
+/// Read all `[[window_rules]]` entries from lantern.toml.
+pub(crate) fn read_window_rules() -> Vec<WindowRule> {
+    let contents = cached_lantern_toml();
+    if contents.is_empty() { return Vec::new(); }
+
+    let mut rules = Vec::new();
+    let mut in_rule = false;
+    let mut app_id = String::new();
+    let mut width: Option<i32> = None;
+    let mut height: Option<i32> = None;
+
+    let flush = |app_id: &mut String, width: &mut Option<i32>, height: &mut Option<i32>, rules: &mut Vec<WindowRule>| {
+        if !app_id.is_empty() {
+            if let (Some(w), Some(h)) = (width.take(), height.take()) {
+                rules.push(WindowRule { app_id: std::mem::take(app_id), width: w, height: h });
+            } else {
+                app_id.clear();
+            }
+        }
+    };
+
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed == "[[window_rules]]" {
+            flush(&mut app_id, &mut width, &mut height, &mut rules);
+            in_rule = true;
+            continue;
+        }
+        if trimmed.starts_with('[') {
+            if in_rule {
+                flush(&mut app_id, &mut width, &mut height, &mut rules);
+            }
+            in_rule = false;
+            continue;
+        }
+        if in_rule {
+            if let Some((k, v)) = trimmed.split_once('=') {
+                let k = k.trim();
+                let v = v.trim().trim_matches('"');
+                match k {
+                    "app_id" => app_id = v.to_string(),
+                    "width" => width = v.parse().ok(),
+                    "height" => height = v.parse().ok(),
+                    _ => {}
+                }
+            }
+        }
+    }
+    if in_rule {
+        flush(&mut app_id, &mut width, &mut height, &mut rules);
+    }
+
+    rules
+}
+
 /// Read all `[[monitors]]` entries from lantern.toml.
 pub(crate) fn read_monitor_configs() -> Vec<MonitorConfig> {
     let path = lantern_config_path();

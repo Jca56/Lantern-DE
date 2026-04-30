@@ -7,19 +7,24 @@
 use std::process::Command;
 use std::time::Instant;
 
+use crate::controls::{Controls, TileId};
 use crate::launcher::Launcher;
 use crate::search::apps::{AppsProvider, DesktopEntry};
 use crate::search::input::KeyEffect;
 use crate::search::Search;
 
 /// Logical width of the panel (centered in the fullscreen surface).
-pub const PANEL_W_LOGICAL: f32 = 880.0;
+pub const PANEL_W_LOGICAL: f32 = 1000.0;
 /// Margin from the top edge, in logical pixels. A touch of breathing
 /// room so the panel doesn't kiss the screen edge.
 pub const PANEL_TOP_MARGIN_LOGICAL: f32 = 32.0;
-/// Initial logical height. Sized to fit the search input + ~8 result
-/// rows. Later phases compute this dynamically from search + controls + grid.
-pub const PANEL_H_LOGICAL_PHASE1: f32 = 560.0;
+/// Initial logical height. Sized to fit:
+/// - controls row (`controls::total_logical_height()`)
+/// - search input row + underline
+/// - ~10 launcher result rows or pinned tile section
+/// The controls row stays at its fixed logical height so it reads as
+/// proportionally smaller relative to the rest as the panel grows.
+pub const PANEL_H_LOGICAL_PHASE1: f32 = 740.0;
 /// Corner radius in logical pixels.
 pub const PANEL_CORNER_RADIUS: f32 = 24.0;
 /// Animation duration (open and close), seconds.
@@ -35,6 +40,35 @@ pub enum Visibility {
     Opening,
     Visible,
     Closing,
+}
+
+/// Which content view fills the area below the controls row.
+///
+/// The panel is conceptually in one of two states:
+/// - `Launcher` — the search input + pinned apps + ranked results
+/// - `Control(TileId)` — the full-content view for one of the
+///   controls (clock calendar, battery details, audio panel, …)
+///
+/// Switching modes never resizes the panel; the content area is a
+/// fixed slot that just paints different things based on the mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PanelMode {
+    Launcher,
+    Control(TileId),
+}
+
+/// What the user is currently dragging with the mouse. Set on a
+/// `left_pressed` event over a draggable widget; cleared on
+/// `left_released`. While `Some`, the render loop converts every
+/// pointer-motion event into a value update.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DragTarget {
+    /// Audio output slider — frac in [0, 1] derived from cursor x.
+    AudioOutputSlider,
+    /// Audio input (mic) slider.
+    AudioInputSlider,
+    /// Backlight brightness slider.
+    BrightnessSlider,
 }
 
 /// Currently-highlighted entry in either the result list or pinned row.
@@ -63,9 +97,16 @@ pub struct AppState {
     pub search: Search,
     pub launcher: Launcher,
     pub apps: AppsProvider,
-    /// Highlighted entry. Reset to a sensible default on every open
-    /// and on every input change.
+    pub controls: Controls,
+    /// Highlighted launcher entry. Only relevant when mode is `Launcher`.
     pub selection: Selection,
+    /// Which content view is currently filling the panel. Defaults to
+    /// `Launcher` and resets to it on every fresh open.
+    pub mode: PanelMode,
+    /// Set while the user is mid-drag on a slider. Cleared when the
+    /// left button is released. The render loop translates pointer
+    /// motion into volume updates while this is `Some`.
+    pub dragging: Option<DragTarget>,
 }
 
 impl AppState {
@@ -76,7 +117,10 @@ impl AppState {
             search: Search::new(),
             launcher: Launcher::new(),
             apps: AppsProvider::scan(),
+            controls: Controls::new(),
             selection: Selection::Pin(0),
+            mode: PanelMode::Launcher,
+            dragging: None,
         }
     }
 
@@ -95,6 +139,7 @@ impl AppState {
                 // Fresh open: start the animation at 0.
                 self.search.reset();
                 self.selection = Selection::Pin(0);
+                self.mode = PanelMode::Launcher;
                 self.visibility = Visibility::Opening;
                 self.anim_start = now;
             }
@@ -104,12 +149,41 @@ impl AppState {
                 // open animation we'd be" and back into wall-clock time.
                 self.search.reset();
                 self.selection = Selection::Pin(0);
+                self.mode = PanelMode::Launcher;
                 let close_p = self.progress(now);
                 let open_p = (1.0 - close_p).clamp(0.0, 1.0);
                 self.visibility = Visibility::Opening;
                 self.anim_start = now
                     - std::time::Duration::from_secs_f32(ANIM_DURATION_SECS * open_p);
             }
+        }
+    }
+
+    /// Switch the panel into a control's full-content view. If we're
+    /// already showing that control, return to `Launcher` (toggle).
+    pub fn show_control(&mut self, id: TileId) {
+        self.mode = if self.mode == PanelMode::Control(id) {
+            PanelMode::Launcher
+        } else {
+            PanelMode::Control(id)
+        };
+    }
+
+    /// Esc behavior: pop one layer off the back-stack.
+    /// 1. If a control modal is open → close it.
+    /// 2. Else if we're in a control view → back to launcher.
+    /// 3. Else → close the whole panel.
+    pub fn handle_esc(&mut self) {
+        if self.controls.wifi.prompt.is_some() {
+            self.controls.wifi.close_prompt();
+        } else if self.controls.bluetooth.incoming_request.is_some() {
+            self.controls.bluetooth.incoming_reject();
+        } else if self.controls.bluetooth.pair_prompt.is_some() {
+            self.controls.bluetooth.pair_cancel();
+        } else if self.mode != PanelMode::Launcher {
+            self.mode = PanelMode::Launcher;
+        } else {
+            self.close();
         }
     }
 
@@ -267,6 +341,7 @@ impl AppState {
         let label_gap = PIN_LABEL_GAP * scale;
 
         let row_top = panel_rect.y
+            + crate::controls::total_logical_height() * scale
             + (SEARCH_HORIZONTAL_PAD * 0.5 + SEARCH_ROW_HEIGHT) * scale
             + PIN_ROW_TOP_MARGIN * scale
             + section_label_font
@@ -319,6 +394,7 @@ impl AppState {
         }
 
         let list_y_start = panel_rect.y
+            + crate::controls::total_logical_height() * scale
             + (SEARCH_HORIZONTAL_PAD * 0.5 + SEARCH_ROW_HEIGHT) * scale
             + RESULT_TOP_MARGIN * scale;
 
@@ -510,7 +586,9 @@ pub struct PanelRect {
 
 impl PanelRect {
     /// Compute panel rect at the given scale, centered horizontally,
-    /// `PANEL_TOP_MARGIN_LOGICAL` below the top edge.
+    /// `PANEL_TOP_MARGIN_LOGICAL` below the top edge. The panel size is
+    /// fixed — the content area below the controls row swaps modes
+    /// instead of growing to fit different views.
     pub fn compute(surface_w: u32, scale: f32) -> Self {
         let w = PANEL_W_LOGICAL * scale;
         let h = PANEL_H_LOGICAL_PHASE1 * scale;

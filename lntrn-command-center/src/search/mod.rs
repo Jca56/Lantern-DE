@@ -70,9 +70,8 @@ const RESULT_ICON_SIZE: f32 = 36.0;
 const RESULT_ICON_PAD_LEFT: f32 = 12.0;
 const RESULT_TEXT_PAD_LEFT: f32 = 16.0;
 
-/// Studio tan #e8dcc8 — passed through `Color::from_rgb8` so the sRGB
-/// surface format (`Bgra8UnormSrgb`) gets the gamma right.
-const TEXT_RGB: (u8, u8, u8) = (0xe8, 0xdc, 0xc8);
+/// White text — user prefers white over the Studio tan everywhere.
+const TEXT_RGB: (u8, u8, u8) = (0xff, 0xff, 0xff);
 /// Accent gold #C8860A.
 const ACCENT_RGB: (u8, u8, u8) = (0xc8, 0x86, 0x0a);
 const SECONDARY_ALPHA: f32 = 0.55;
@@ -88,7 +87,9 @@ fn accent_color(alpha: f32) -> Color {
 /// Y-coordinate (physical px) where content beneath the search input
 /// should start. Helper so launcher and result-list use the same offset.
 pub fn content_top_y(panel: Rect, scale: f32) -> f32 {
-    panel.y + (input::SEARCH_HORIZONTAL_PAD * 0.5 + input::SEARCH_ROW_HEIGHT) * scale
+    panel.y
+        + crate::controls::total_logical_height() * scale
+        + (input::SEARCH_HORIZONTAL_PAD * 0.5 + input::SEARCH_ROW_HEIGHT) * scale
 }
 
 /// Draw the search input row at the top of the panel.

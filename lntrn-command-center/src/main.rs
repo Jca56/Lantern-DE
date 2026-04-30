@@ -5,6 +5,7 @@
 //! command (`T`/`S`/`H`) and exit. See `ipc.rs`.
 
 mod app;
+mod controls;
 mod ipc;
 mod launcher;
 mod layershell;

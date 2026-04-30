@@ -112,9 +112,14 @@ pub fn draw_panel(
     })
 }
 
-/// Draw all panel content (search, launcher, controls). Called only when
-/// `draw_panel` returned `Some`. Returns a Vec of icon requests that
-/// the render loop turns into `TextureDraw`s.
+/// Draw all panel content. Called only when `draw_panel` returned `Some`.
+/// Returns a Vec of icon requests that the render loop turns into
+/// `TextureDraw`s.
+///
+/// Layout: the controls row + underline always sits at the top. Below
+/// it, exactly one of two views fills the rest of the panel:
+/// - `PanelMode::Launcher` → search input + pinned/results
+/// - `PanelMode::Control(id)` → that control's full-content view
 pub fn draw_content(
     painter: &mut Painter,
     text: &mut TextRenderer,
@@ -125,11 +130,18 @@ pub fn draw_content(
 ) -> Vec<IconRequest> {
     let mut icons = Vec::new();
 
-    // Always draw the search input.
-    crate::search::draw_input(
+    // Highlight the tile whose view is currently showing.
+    let selected_tile = match state.mode {
+        crate::app::PanelMode::Control(id) => Some(id),
+        crate::app::PanelMode::Launcher => None,
+    };
+
+    // 1. Controls row + underline (always).
+    crate::controls::draw_row(
         painter,
         text,
-        &state.search,
+        &state.controls,
+        selected_tile,
         panel.rect,
         panel.scale_factor,
         panel.alpha,
@@ -137,47 +149,74 @@ pub fn draw_content(
         surface_h,
     );
 
-    // Below the input: pinned favorites when the query is empty,
-    // ranked results when the user is typing.
-    let selected_pin = match state.selection {
-        crate::app::Selection::Pin(i) => Some(i),
-        _ => None,
-    };
-    let selected_result = match state.selection {
-        crate::app::Selection::Result(i) => Some(i),
-        _ => None,
-    };
+    // 2. Body of the panel, based on mode.
+    match state.mode {
+        crate::app::PanelMode::Launcher => {
+            crate::search::draw_input(
+                painter,
+                text,
+                &state.search,
+                panel.rect,
+                panel.scale_factor,
+                panel.alpha,
+                surface_w,
+                surface_h,
+            );
 
-    if state.search.input.is_empty() {
-        let top_y = crate::search::content_top_y(panel.rect, panel.scale_factor);
-        crate::launcher::draw(
-            painter,
-            text,
-            &mut icons,
-            &state.launcher,
-            &state.apps,
-            selected_pin,
-            panel.rect,
-            top_y,
-            panel.scale_factor,
-            panel.alpha,
-            surface_w,
-            surface_h,
-        );
-    } else {
-        crate::search::draw_results(
-            painter,
-            text,
-            &mut icons,
-            &state.search,
-            &state.apps,
-            selected_result,
-            panel.rect,
-            panel.scale_factor,
-            panel.alpha,
-            surface_w,
-            surface_h,
-        );
+            let selected_pin = match state.selection {
+                crate::app::Selection::Pin(i) => Some(i),
+                _ => None,
+            };
+            let selected_result = match state.selection {
+                crate::app::Selection::Result(i) => Some(i),
+                _ => None,
+            };
+
+            if state.search.input.is_empty() {
+                let top_y = crate::search::content_top_y(panel.rect, panel.scale_factor);
+                crate::launcher::draw(
+                    painter,
+                    text,
+                    &mut icons,
+                    &state.launcher,
+                    &state.apps,
+                    selected_pin,
+                    panel.rect,
+                    top_y,
+                    panel.scale_factor,
+                    panel.alpha,
+                    surface_w,
+                    surface_h,
+                );
+            } else {
+                crate::search::draw_results(
+                    painter,
+                    text,
+                    &mut icons,
+                    &state.search,
+                    &state.apps,
+                    selected_result,
+                    panel.rect,
+                    panel.scale_factor,
+                    panel.alpha,
+                    surface_w,
+                    surface_h,
+                );
+            }
+        }
+        crate::app::PanelMode::Control(tile_id) => {
+            crate::controls::draw_view(
+                painter,
+                text,
+                &state.controls,
+                tile_id,
+                panel.rect,
+                panel.scale_factor,
+                panel.alpha,
+                surface_w,
+                surface_h,
+            );
+        }
     }
 
     icons

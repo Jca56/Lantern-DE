@@ -90,6 +90,10 @@ struct WlState {
     /// Set when the user clicked the left mouse button; consumed by
     /// the render loop, which then hit-tests against the panel rect.
     left_clicked: bool,
+    /// Whether the left button is currently held down. Tracked
+    /// separately from `left_clicked` so the render loop can run a
+    /// drag-to-scrub interaction (e.g. the audio slider).
+    left_held: bool,
     /// Set when the user right-clicked. Used by Phase 2.6 to toggle
     /// pin/unpin on whatever tile/row is under the cursor.
     right_clicked: bool,
@@ -120,6 +124,7 @@ impl WlState {
             pointer_in_surface: false,
             esc_pressed: false,
             left_clicked: false,
+            left_held: false,
             right_clicked: false,
             shift_held: false,
             pending_key: None,
@@ -297,8 +302,14 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WlState {
             wl_pointer::Event::Button { button, state: btn_state, .. } => {
                 use wayland_client::WEnum;
                 let pressed = WEnum::Value(wl_pointer::ButtonState::Pressed);
-                if button == BTN_LEFT && btn_state == pressed {
-                    state.left_clicked = true;
+                let released = WEnum::Value(wl_pointer::ButtonState::Released);
+                if button == BTN_LEFT {
+                    if btn_state == pressed {
+                        state.left_clicked = true;
+                        state.left_held = true;
+                    } else if btn_state == released {
+                        state.left_held = false;
+                    }
                 }
                 if button == BTN_RIGHT && btn_state == pressed {
                     state.right_clicked = true;
@@ -490,6 +501,21 @@ pub fn run(sock: UnixDatagram, initial_visible: bool) -> Result<()> {
             // Non-blocking dispatch: process anything queued, then sleep.
             event_queue.dispatch_pending(&mut wl)?;
             event_queue.flush()?;
+
+            // While hidden, still tick the bluetooth control so an
+            // incoming-file request can wake the panel and switch us
+            // into the BT view. Other controls don't need the wake-up
+            // path so we keep this cheap and BT-specific.
+            app.controls.bluetooth.tick();
+            if app.controls.bluetooth.incoming_request.is_some() {
+                tracing::info!("incoming BT file → auto-opening panel to BT view");
+                app.mode = crate::app::PanelMode::Control(
+                    crate::controls::TileId::Bluetooth,
+                );
+                app.open();
+                continue;
+            }
+
             std::thread::sleep(IDLE_TICK);
             continue;
         }
@@ -504,31 +530,104 @@ pub fn run(sock: UnixDatagram, initial_visible: bool) -> Result<()> {
         // every ~16ms while visible so this won't stall noticeably.
         event_queue.blocking_dispatch(&mut wl)?;
 
-        // Tick the animation state machine.
+        // Tick the animation state machine + control backends (battery
+        // sysfs poll, etc.). Both are cheap; rate limiting lives inside
+        // each tile's `tick`.
+        let was_hidden_before_tick = app.is_hidden();
         app.tick();
+        // If `app.tick()` just flipped us from Closing → Hidden, the
+        // close animation has fully drained. Skip the rest of the
+        // render path for this iteration — we don't want to submit a
+        // last-minute alpha-0 frame that could race with the
+        // commit_transparent / null-buffer hide below. Doing both can
+        // leave the compositor displaying a transparent (but still
+        // present) surface — the "ghost" panel.
+        if !was_hidden_before_tick && app.is_hidden() {
+            tracing::debug!("close animation finished — committing null buffer");
+            commit_transparent(&mut gpu, &surface);
+            // Drop input grab immediately so the ghost surface can't
+            // eat clicks even if the compositor is slow to unmap.
+            set_active_input(&surface, &layer_surface, &empty_region, false);
+            input_active = false;
+            continue;
+        }
+        let bt_incoming_before = app.controls.bluetooth.incoming_request.is_some();
+        app.controls.tick();
+        let bt_incoming_after = app.controls.bluetooth.incoming_request.is_some();
+        // Fresh incoming-file request → jump straight to the BT view so
+        // the modal isn't hidden behind whatever the user was looking at.
+        if bt_incoming_after && !bt_incoming_before {
+            tracing::info!("incoming BT file while panel visible → switching to BT view");
+            app.mode =
+                crate::app::PanelMode::Control(crate::controls::TileId::Bluetooth);
+        }
 
         // Handle Esc → close.
         if wl.esc_pressed {
             wl.esc_pressed = false;
-            tracing::debug!("Esc pressed → close");
-            app.close();
+            tracing::debug!(?app.mode, "Esc pressed");
+            app.handle_esc();
         }
 
-        // Dispatch the next pending keypress: navigation/launch keys
-        // are intercepted here; everything else falls through to the
-        // search input as a typing event.
+        // Dispatch the next pending keypress.
+        //
+        // Routing priority:
+        //   1. WiFi password modal — typed chars into its buffer; Enter submits.
+        //   2. BT pair-prompt modal — depends on prompt kind:
+        //        Confirm/Authorize → Enter = Yes, no other typing accepted.
+        //        Enter passkey → typed chars into the passkey buffer; Enter submits.
+        //   3. Launcher-mode navigation (Up/Down/Left/Right/Enter).
+        //   4. Else: key falls through to the launcher search input.
         if let Some(key) = wl.pending_key.take() {
             use crate::search::input::*;
-            match key {
-                KEY_UP => app.select_up(),
-                KEY_DOWN => app.select_down(),
-                KEY_LEFT if app.search.input.is_empty() => app.select_left(),
-                KEY_RIGHT if app.search.input.is_empty() => app.select_right(),
-                KEY_ENTER | KEY_KP_ENTER => {
-                    app.launch_selected();
+            use crate::controls::bluetooth::PairPromptKind;
+
+            if app.controls.wifi.prompt.is_some() {
+                match key {
+                    KEY_ENTER | KEY_KP_ENTER => app.controls.wifi.submit_prompt(),
+                    other => {
+                        if let Some(prompt) = app.controls.wifi.prompt.as_mut() {
+                            let _ = prompt.input.on_key(other, wl.shift_held);
+                        }
+                    }
                 }
-                _ => {
-                    let _ = app.forward_key(key, wl.shift_held);
+            } else if let Some(kind) = app
+                .controls
+                .bluetooth
+                .pair_prompt
+                .as_ref()
+                .map(|p| p.kind.clone())
+            {
+                match (key, kind) {
+                    (KEY_ENTER | KEY_KP_ENTER, PairPromptKind::Confirm(_))
+                    | (KEY_ENTER | KEY_KP_ENTER, PairPromptKind::Authorize(_)) => {
+                        app.controls.bluetooth.pair_confirm_yes();
+                    }
+                    (KEY_ENTER | KEY_KP_ENTER, PairPromptKind::Enter) => {
+                        app.controls.bluetooth.pair_submit_passkey();
+                    }
+                    (other, PairPromptKind::Enter) => {
+                        if let Some(prompt) = app.controls.bluetooth.pair_prompt.as_mut() {
+                            let _ = prompt.passkey_input.on_key(other, wl.shift_held);
+                        }
+                    }
+                    _ => {
+                        // Confirm/Authorize: only Enter is accepted as
+                        // a key shortcut. Y/N typing isn't wired (yet).
+                    }
+                }
+            } else {
+                match key {
+                    KEY_UP => app.select_up(),
+                    KEY_DOWN => app.select_down(),
+                    KEY_LEFT if app.search.input.is_empty() => app.select_left(),
+                    KEY_RIGHT if app.search.input.is_empty() => app.select_right(),
+                    KEY_ENTER | KEY_KP_ENTER => {
+                        app.launch_selected();
+                    }
+                    _ => {
+                        let _ = app.forward_key(key, wl.shift_held);
+                    }
                 }
             }
         }
@@ -542,6 +641,15 @@ pub fn run(sock: UnixDatagram, initial_visible: bool) -> Result<()> {
             let panel = PanelRect::compute(phys_w, scale_f);
             let phys_cx = wl.cursor_x as f32 * scale_f;
             let phys_cy = wl.cursor_y as f32 * scale_f;
+            let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+
+            // First: if a control's full-content view is up, see if the
+            // click hit one of its interactive widgets (battery toggle,
+            // audio slider, audio device list).
+            let consumed_by_view = handle_control_view_click(
+                &mut app, panel_rect, scale_f, phys_cx, phys_cy,
+            );
+
             if !panel.contains(phys_cx, phys_cy) {
                 tracing::debug!(
                     cursor = ?(phys_cx, phys_cy),
@@ -549,16 +657,28 @@ pub fn run(sock: UnixDatagram, initial_visible: bool) -> Result<()> {
                     "click outside panel → close"
                 );
                 app.close();
-            } else if let Some(target) = app.hit_test_launcher(panel, scale_f, phys_cx, phys_cy) {
-                tracing::debug!(?target, "left-click on launcher entry → activate");
-                app.activate_at(target);
+            } else if consumed_by_view {
+                // Already handled.
+            } else if let Some(tile_id) = app.controls.hit_test(
+                panel_rect,
+                scale_f,
+                phys_cx,
+                phys_cy,
+            ) {
+                tracing::debug!(?tile_id, "left-click on controls tile → switch view");
+                app.show_control(tile_id);
+            } else if matches!(app.mode, crate::app::PanelMode::Launcher) {
+                if let Some(target) = app.hit_test_launcher(panel, scale_f, phys_cx, phys_cy) {
+                    tracing::debug!(?target, "left-click on launcher entry → activate");
+                    app.activate_at(target);
+                }
             }
             // Click inside the panel but not on a clickable entity is
-            // a no-op (e.g., hitting blank space between tiles or above
-            // the first result row).
+            // a no-op.
         }
 
-        // Right-click: toggle pin/unpin on whichever tile/row was hit.
+        // Right-click:
+        //   • Launcher mode: toggle pin/unpin on the hovered tile/row.
         if wl.right_clicked {
             wl.right_clicked = false;
             let scale_f = wl.fractional_scale() as f32;
@@ -566,9 +686,51 @@ pub fn run(sock: UnixDatagram, initial_visible: bool) -> Result<()> {
             let panel = PanelRect::compute(phys_w, scale_f);
             let phys_cx = wl.cursor_x as f32 * scale_f;
             let phys_cy = wl.cursor_y as f32 * scale_f;
-            if let Some(target) = app.hit_test_launcher(panel, scale_f, phys_cx, phys_cy) {
-                tracing::debug!(?target, "right-click → toggle pin");
-                app.toggle_pin_at(target);
+            match app.mode {
+                crate::app::PanelMode::Launcher => {
+                    if let Some(target) =
+                        app.hit_test_launcher(panel, scale_f, phys_cx, phys_cy)
+                    {
+                        tracing::debug!(?target, "right-click → toggle pin");
+                        app.toggle_pin_at(target);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Drag continuation: while the user has a slider grabbed, every
+        // pointer-motion event re-computes the slider value from the
+        // current cursor x. Released → end the drag.
+        if !wl.left_held {
+            app.dragging = None;
+        }
+        if let Some(target) = app.dragging {
+            let scale_f = wl.fractional_scale() as f32;
+            let phys_w = wl.phys_width().max(1);
+            let panel = PanelRect::compute(phys_w, scale_f);
+            let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+            let view_top_y = crate::controls::content_top_y(panel_rect, scale_f);
+            let phys_cx = wl.cursor_x as f32 * scale_f;
+
+            use crate::app::DragTarget;
+            use crate::controls::audio::Direction;
+            let track = match target {
+                DragTarget::AudioOutputSlider => crate::controls::audio::slider_rect_for(
+                    panel_rect, view_top_y, Direction::Output, scale_f,
+                ),
+                DragTarget::AudioInputSlider => crate::controls::audio::slider_rect_for(
+                    panel_rect, view_top_y, Direction::Input, scale_f,
+                ),
+                DragTarget::BrightnessSlider => crate::controls::brightness::slider_rect(
+                    panel_rect, view_top_y, scale_f,
+                ),
+            };
+            let frac = ((phys_cx - track.x) / track.w).clamp(0.0, 1.0);
+            match target {
+                DragTarget::AudioOutputSlider => app.controls.audio.set_volume(frac),
+                DragTarget::AudioInputSlider => app.controls.audio.set_input_volume(frac),
+                DragTarget::BrightnessSlider => app.controls.brightness.set_fraction(frac),
             }
         }
 
@@ -627,11 +789,37 @@ pub fn run(sock: UnixDatagram, initial_visible: bool) -> Result<()> {
         match gpu.begin_frame("CommandCenter") {
             Ok(mut frame) => {
                 let view = frame.view().clone();
-                painter.render_pass(&gpu, frame.encoder_mut(), &view, Color::TRANSPARENT);
+
+                // Layered render so modals (BT pair, BT incoming, WiFi
+                // password) draw over previously-queued text. Layer 0 is
+                // base content; layer 1 is overlays. See
+                // lntrn-render/TEXT_OCCLUSION_FIX.md.
+                let layers = painter.layer_count().max(text.layer_count());
+
+                // Layer 0: base painter, textures, base text.
+                painter.render_layer(
+                    0,
+                    &gpu,
+                    frame.encoder_mut(),
+                    &view,
+                    Some(Color::TRANSPARENT),
+                );
                 if !tex_draws.is_empty() {
                     tex_pass.render_pass(&gpu, frame.encoder_mut(), &view, &tex_draws, None);
                 }
-                text.render_queued(&gpu, frame.encoder_mut(), &view);
+                text.render_layer(0, &gpu, frame.encoder_mut(), &view);
+
+                // Overlay layers (modals).
+                if layers > 1 {
+                    // Flush so the next layer's text prepare() doesn't
+                    // stomp on layer-0 vertices still in the queue.
+                    frame.flush(&gpu);
+                    for li in 1..layers {
+                        painter.render_layer(li, &gpu, frame.encoder_mut(), &view, None);
+                        text.render_layer(li, &gpu, frame.encoder_mut(), &view);
+                    }
+                }
+
                 frame.submit(&gpu.queue);
             }
             Err(SurfaceError::Lost | SurfaceError::Outdated) => {
@@ -659,6 +847,259 @@ pub fn run(sock: UnixDatagram, initial_visible: bool) -> Result<()> {
 /// keyboard + pointer) and "passthrough" (hidden, pointer events fall
 /// through to windows below, no keyboard focus).
 ///
+/// Dispatch a left-click that landed inside the panel while a control's
+/// full-content view is showing. Returns `true` if the click was
+/// consumed (so the caller should skip launcher hit-tests).
+///
+/// Currently the battery toggle, audio slider, and audio device list
+/// are interactive; future controls plug in here.
+fn handle_control_view_click(
+    app: &mut AppState,
+    panel: lntrn_render::Rect,
+    scale: f32,
+    phys_x: f32,
+    phys_y: f32,
+) -> bool {
+    let crate::app::PanelMode::Control(tile_id) = app.mode else { return false };
+    // The control view starts immediately beneath the controls-row underline.
+    let view_top_y = crate::controls::content_top_y(panel, scale);
+
+    match tile_id {
+        crate::controls::TileId::Battery => {
+            let toggle = crate::controls::battery::toggle_rect(panel, view_top_y, scale);
+            if phys_x >= toggle.x
+                && phys_x <= toggle.x + toggle.w
+                && phys_y >= toggle.y
+                && phys_y <= toggle.y + toggle.h
+            {
+                app.controls.battery.toggle_charge_limit();
+                return true;
+            }
+            false
+        }
+        crate::controls::TileId::Audio => {
+            use crate::controls::audio::Direction;
+
+            // Sliders — try each direction's track. A slider click both
+            // sets the volume immediately and starts a drag so motion
+            // events keep updating until the button is released.
+            for dir in [Direction::Output, Direction::Input] {
+                let track =
+                    crate::controls::audio::slider_rect_for(panel, view_top_y, dir, scale);
+                let row_top = track.y - track.h * 2.0;
+                let row_bot = track.y + track.h * 3.0;
+                if phys_x >= track.x
+                    && phys_x <= track.x + track.w
+                    && phys_y >= row_top
+                    && phys_y <= row_bot
+                {
+                    let frac = ((phys_x - track.x) / track.w).clamp(0.0, 1.0);
+                    match dir {
+                        Direction::Output => {
+                            app.controls.audio.set_volume(frac);
+                            app.dragging = Some(crate::app::DragTarget::AudioOutputSlider);
+                        }
+                        Direction::Input => {
+                            app.controls.audio.set_input_volume(frac);
+                            app.dragging = Some(crate::app::DragTarget::AudioInputSlider);
+                        }
+                    }
+                    return true;
+                }
+            }
+
+            // Speaker / mic icon click → toggle that direction's mute.
+            if let Some(dir) = crate::controls::audio::hit_test_icon(
+                panel, view_top_y, scale, phys_x, phys_y,
+            ) {
+                match dir {
+                    Direction::Output => app.controls.audio.toggle_mute(),
+                    Direction::Input => app.controls.audio.toggle_input_mute(),
+                }
+                return true;
+            }
+
+            // Device lists — click a row to set that device as default.
+            if let Some((dir, dev_id)) = crate::controls::audio::hit_test_device_dir(
+                &app.controls.audio,
+                panel,
+                view_top_y,
+                scale,
+                phys_x,
+                phys_y,
+            ) {
+                match dir {
+                    Direction::Output => app.controls.audio.set_default_sink(dev_id),
+                    Direction::Input => app.controls.audio.set_default_source(dev_id),
+                }
+                return true;
+            }
+            false
+        }
+        crate::controls::TileId::Brightness => {
+            let track =
+                crate::controls::brightness::slider_rect(panel, view_top_y, scale);
+            let row_top = track.y - track.h * 2.0;
+            let row_bot = track.y + track.h * 3.0;
+            if phys_x >= track.x
+                && phys_x <= track.x + track.w
+                && phys_y >= row_top
+                && phys_y <= row_bot
+            {
+                let frac = ((phys_x - track.x) / track.w).clamp(0.0, 1.0);
+                app.controls.brightness.set_fraction(frac);
+                app.dragging = Some(crate::app::DragTarget::BrightnessSlider);
+                return true;
+            }
+            false
+        }
+        crate::controls::TileId::Bluetooth => {
+            use crate::controls::bluetooth::{
+                BtClick, IncomingModalHit, PairModalHit, PairPromptKind,
+            };
+
+            // Incoming-file modal sits highest in priority.
+            if app.controls.bluetooth.incoming_request.is_some() {
+                let hit = crate::controls::bluetooth::hit_test_incoming_modal(
+                    panel, view_top_y, scale, phys_x, phys_y,
+                );
+                match hit {
+                    IncomingModalHit::Accept => app.controls.bluetooth.incoming_accept(),
+                    IncomingModalHit::Reject | IncomingModalHit::Backdrop => {
+                        app.controls.bluetooth.incoming_reject();
+                    }
+                    IncomingModalHit::Box => {}
+                }
+                return true;
+            }
+
+            // If the pair-prompt modal is up, every click in the BT
+            // view goes to the modal first.
+            if let Some(prompt) = app.controls.bluetooth.pair_prompt.as_ref() {
+                let kind = prompt.kind.clone();
+                let hit = crate::controls::bluetooth::hit_test_pair_modal(
+                    prompt, panel, view_top_y, scale, phys_x, phys_y,
+                );
+                match hit {
+                    PairModalHit::Primary => match kind {
+                        PairPromptKind::Confirm(_) | PairPromptKind::Authorize(_) => {
+                            app.controls.bluetooth.pair_confirm_yes();
+                        }
+                        PairPromptKind::Enter => {
+                            app.controls.bluetooth.pair_submit_passkey();
+                        }
+                    },
+                    PairModalHit::Secondary | PairModalHit::Backdrop => {
+                        match kind {
+                            PairPromptKind::Confirm(_) | PairPromptKind::Authorize(_) => {
+                                app.controls.bluetooth.pair_confirm_no();
+                            }
+                            PairPromptKind::Enter => {
+                                app.controls.bluetooth.pair_cancel();
+                            }
+                        }
+                    }
+                    PairModalHit::Field | PairModalHit::Box => {
+                        // Inside the modal but not on a button — no-op.
+                    }
+                }
+                return true;
+            }
+
+            if let Some(hit) = crate::controls::bluetooth::hit_test(
+                &app.controls.bluetooth,
+                panel,
+                view_top_y,
+                scale,
+                phys_x,
+                phys_y,
+            ) {
+                match hit {
+                    BtClick::PowerToggle => app.controls.bluetooth.toggle_power(),
+                    BtClick::DiscoverableToggle => {
+                        app.controls.bluetooth.toggle_discoverable();
+                    }
+                    BtClick::ScanToggle => app.controls.bluetooth.toggle_scan(),
+                    BtClick::DeviceRow(mac) => {
+                        let is_paired = app
+                            .controls
+                            .bluetooth
+                            .devices()
+                            .iter()
+                            .any(|d| d.mac == mac && d.paired);
+                        if is_paired {
+                            app.controls.bluetooth.toggle_connection(&mac);
+                        } else {
+                            app.controls.bluetooth.pair(&mac);
+                        }
+                    }
+                    BtClick::SendButton(mac) => {
+                        app.controls.bluetooth.send_file(&mac);
+                    }
+                }
+                return true;
+            }
+            false
+        }
+        crate::controls::TileId::Wifi => {
+            // If the password modal is up, every click in the WiFi
+            // view goes to the modal first.
+            if app.controls.wifi.prompt.is_some() {
+                use crate::controls::wifi::ModalHit;
+                let hit = crate::controls::wifi::hit_test_modal(
+                    panel, view_top_y, scale, phys_x, phys_y,
+                );
+                match hit {
+                    ModalHit::Connect => {
+                        app.controls.wifi.submit_prompt();
+                    }
+                    ModalHit::Cancel | ModalHit::Backdrop => {
+                        app.controls.wifi.close_prompt();
+                    }
+                    ModalHit::Field | ModalHit::Box => {
+                        // No-op — clicks inside the box just dismiss
+                        // pending hover state in a future iteration.
+                    }
+                }
+                return true;
+            }
+
+            // Normal network-row click.
+            if let Some(ssid) = crate::controls::wifi::hit_test_network(
+                &app.controls.wifi,
+                panel,
+                view_top_y,
+                scale,
+                phys_x,
+                phys_y,
+            ) {
+                // Find the network entry to decide: open + saved → connect
+                // immediately; secured + unsaved → open password prompt.
+                let net = app.controls.wifi.networks()
+                    .iter()
+                    .find(|n| n.ssid == ssid)
+                    .cloned();
+                let needs_password = match &net {
+                    Some(n) => {
+                        let secured = !n.security.is_empty() && n.security != "--";
+                        secured && !n.saved && !n.in_use
+                    }
+                    None => false,
+                };
+                if needs_password {
+                    app.controls.wifi.open_prompt(&ssid);
+                } else {
+                    app.controls.wifi.connect(&ssid, None);
+                }
+                tracing::debug!(%ssid, needs_password, "wifi: row clicked");
+                return true;
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
 /// Called on visibility transitions, not every frame. Layer-shell takes
 /// effect on the next surface commit, no configure cycle needed.
 fn set_active_input(
@@ -683,8 +1124,14 @@ fn set_active_input(
     surface.commit();
 }
 
-/// Submit a single fully-transparent frame so the surface goes away
-/// visually without us destroying it. Lets us re-show instantly later.
+/// Hide the surface from the compositor without destroying it. We first
+/// submit a fully-transparent wgpu frame (so any in-flight buffer is
+/// cleanly transparent), then explicitly attach a NULL buffer to the
+/// `wl_surface`. Per Wayland spec, attaching a NULL buffer + committing
+/// unmaps the surface — the compositor stops compositing it and any
+/// "ghost" of the previous visible buffer disappears immediately.
+/// Re-mapping is automatic on the next `attach + commit` with a real
+/// buffer (which wgpu's `present()` does for us when the user reopens).
 fn commit_transparent(gpu: &mut GpuContext, surface: &wl_surface::WlSurface) {
     if let Ok(mut frame) = gpu.begin_frame("CommandCenter:hidden") {
         let view = frame.view().clone();
@@ -693,5 +1140,7 @@ fn commit_transparent(gpu: &mut GpuContext, surface: &wl_surface::WlSurface) {
         painter.render_pass(gpu, frame.encoder_mut(), &view, Color::TRANSPARENT);
         frame.submit(&gpu.queue);
     }
+    // Detach buffer → tells the compositor to unmap the surface entirely.
+    surface.attach(None, 0, 0);
     surface.commit();
 }

@@ -70,8 +70,8 @@ pub const PIN_LABEL_GAP: f32 = 8.0;
 #[allow(dead_code)] // exported for future layout calculations (recents row, etc.)
 pub const PIN_ROW_HEIGHT: f32 = PIN_ROW_TOP_MARGIN + PIN_TILE_SIZE + PIN_LABEL_GAP + PIN_LABEL_FONT;
 
-/// Studio tan #e8dcc8 (sRGB-aware via from_rgb8).
-const TEXT_RGB: (u8, u8, u8) = (0xe8, 0xdc, 0xc8);
+/// White text — user prefers white over the Studio tan everywhere.
+const TEXT_RGB: (u8, u8, u8) = (0xff, 0xff, 0xff);
 /// Accent gold #C8860A.
 const ACCENT_RGB: (u8, u8, u8) = (0xc8, 0x86, 0x0a);
 const TILE_BG_ALPHA: f32 = 0.10;

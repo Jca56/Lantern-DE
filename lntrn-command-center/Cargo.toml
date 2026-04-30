@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1"
+chrono = "0.4"
 libc = "0.2"
 lntrn-dbus = { path = "../lntrn-dbus" }
 lntrn-icons = { path = "../lntrn-icons" }

@@ -98,6 +98,53 @@ impl Lantern {
         self.space.map_element(window, Point::from((x, y)), false);
     }
 
+    /// Inject a configured initial size into a toplevel's pending state before
+    /// its first configure is sent. Per-app rules from `[[window_rules]]`
+    /// override the global `[windows] default_width/default_height` default.
+    /// Skips: scratchpad, surfaces with maximized/fullscreen pending, surfaces
+    /// whose initial configure has already been sent, and tiling-mode windows.
+    pub fn apply_initial_window_size(&mut self, surface: &WlSurface) {
+        use smithay::wayland::compositor::with_states;
+        use smithay::wayland::shell::xdg::XdgToplevelSurfaceData;
+        use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
+
+        if self.scratchpad_surface.as_ref() == Some(surface) { return; }
+        if self.workspaces.tiling_active { return; }
+
+        let Some(window) = self.space.elements()
+            .find(|w| w.get_wl_surface().as_ref() == Some(surface))
+            .cloned()
+        else { return };
+        let Some(toplevel) = window.toplevel().cloned() else { return };
+
+        let (already_sent, app_id, has_size_state) = with_states(surface, |states| {
+            let data = states.data_map.get::<XdgToplevelSurfaceData>().unwrap().lock().unwrap();
+            (
+                data.initial_configure_sent,
+                data.app_id.clone().unwrap_or_default(),
+                false,
+            )
+        });
+        if already_sent { return; }
+        let _ = has_size_state;
+
+        let skip = toplevel.with_pending_state(|state| {
+            state.states.contains(xdg_toplevel::State::Maximized)
+                || state.states.contains(xdg_toplevel::State::Fullscreen)
+                || state.size.is_some()
+        });
+        if skip { return; }
+
+        let rule_size = self.window_rules.iter()
+            .find(|r| r.app_id == app_id)
+            .map(|r| (r.width, r.height));
+        let Some((w, h)) = rule_size.or(self.default_window_size) else { return };
+
+        toplevel.with_pending_state(|state| {
+            state.size = Some(Size::from((w, h)));
+        });
+    }
+
     pub fn map_new_window(&mut self, window: Window) {
         let serial = smithay::utils::SERIAL_COUNTER.next_serial();
         let Some(surface) = window.get_wl_surface() else { return };

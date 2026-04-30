@@ -175,12 +175,19 @@ impl Input {
 
     /// True when the blinking cursor should currently be drawn.
     /// 1Hz blink: 500ms on, 500ms off. Resets to "on" briefly after edits.
-    fn cursor_visible(&self) -> bool {
+    pub fn cursor_visible(&self) -> bool {
         let since_edit = self.last_edit.elapsed().as_millis();
         if since_edit < 250 {
             return true;
         }
         ((since_edit / 500) % 2) == 0
+    }
+
+    /// Cursor byte offset into the buffer. Always lies on a UTF-8 char
+    /// boundary. Exposed for external draw routines (e.g. the password
+    /// modal) that need to compute cursor x.
+    pub fn cursor_byte(&self) -> usize {
+        self.cursor
     }
 }
 
@@ -245,7 +252,7 @@ pub const SEARCH_HORIZONTAL_PAD: f32 = 24.0;
 const PLACEHOLDER: &str = "Search apps, files, web…";
 /// Studio tan text — #e8dcc8. The wgpu surface is sRGB so we go through
 /// `Color::from_rgb8` (with `with_alpha` later) to get the gamma right.
-const TEXT_RGB: (u8, u8, u8) = (0xe8, 0xdc, 0xc8);
+const TEXT_RGB: (u8, u8, u8) = (0xff, 0xff, 0xff);
 const PLACEHOLDER_ALPHA: f32 = 0.45;
 const UNDERLINE_ALPHA: f32 = 0.18;
 /// Accent gold — #C8860A.
@@ -271,7 +278,8 @@ pub fn draw(
     let font_size = SEARCH_FONT_SIZE * scale;
 
     let row_x = panel.x + pad;
-    let row_y = panel.y + pad * 0.5;
+    // Search row sits beneath the controls row + its underline.
+    let row_y = panel.y + crate::controls::total_logical_height() * scale + pad * 0.5;
     let row_w = panel.w - pad * 2.0;
 
     let underline_y = row_y + row_h - 2.0 * scale;

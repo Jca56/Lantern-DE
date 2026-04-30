@@ -281,6 +281,10 @@ pub struct Lantern {
     pub default_window_opacity: f32,
     /// App IDs that skip blur backdrop and use full opacity.
     pub blur_exclude: Vec<String>,
+    /// Global default initial window size (logical px). None = let client choose.
+    pub default_window_size: Option<(i32, i32)>,
+    /// Per-app initial window size overrides from `[[window_rules]]`.
+    pub window_rules: Vec<crate::WindowRule>,
     pub window_zoom: HashMap<WlSurface, f64>,
     pub focus_glow: bool,
     pub focus_glow_color: [f32; 4],
@@ -444,6 +448,8 @@ impl Lantern {
             window_opacity: HashMap::new(),
             default_window_opacity: crate::read_config_f32("window_opacity", 1.0),
             blur_exclude: crate::read_config_list("windows", "blur_exclude"),
+            default_window_size: crate::default_window_size(),
+            window_rules: crate::read_window_rules(),
             window_zoom: HashMap::new(),
             focus_glow: crate::read_config("window_manager", "focus_glow", "true") == "true",
             focus_glow_color: crate::parse_glow_color(&crate::read_config("window_manager", "focus_glow_color", "#4A9EFF")),
