@@ -30,6 +30,7 @@ use tracing::{error, info, warn};
 use crate::render::{render_surface, CustomRenderElements};
 use crate::shaders::{
     CORNER_SHADER_SRC, HOT_CORNER_GLOW_SHADER_SRC, ROUNDED_TEX_SHADER_SRC, SHADOW_SHADER_SRC,
+    TOP_CENTER_GLOW_SHADER_SRC,
 };
 use crate::udev::{
     GpuBackend, OutputSurface, UdevOutputId, lantern_output_scale, RENDER_INTERVAL,
@@ -187,6 +188,21 @@ fn compile_shaders(udev: &mut crate::udev::UdevData) {
             info!("Hot corner glow shader compiled");
         }
         Err(e) => warn!("Failed to compile hot corner glow shader: {:?}", e),
+    }
+
+    match renderer.compile_custom_pixel_shader(
+        TOP_CENTER_GLOW_SHADER_SRC,
+        &[
+            UniformName::new("glow_color", UniformType::_4f),
+            UniformName::new("sigma", UniformType::_1f),
+            UniformName::new("line_half_len", UniformType::_1f),
+        ],
+    ) {
+        Ok(shader) => {
+            udev.top_center_glow_shader = Some(shader);
+            info!("Top-center glow shader compiled");
+        }
+        Err(e) => warn!("Failed to compile top-center glow shader: {:?}", e),
     }
 
     match renderer.compile_custom_pixel_shader(

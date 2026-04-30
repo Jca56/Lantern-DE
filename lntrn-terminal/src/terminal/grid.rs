@@ -93,6 +93,24 @@ impl Default for Cell {
     }
 }
 
+/// Snapshot of main-screen DEC state taken on alt-screen entry so the
+/// shell's prompt isn't poisoned by attributes the TUI set inside the
+/// alt buffer.
+#[derive(Clone)]
+pub struct AltSavedState {
+    pub attr_fg: Color8,
+    pub attr_bg: Color8,
+    pub attr_bold: bool,
+    pub attr_italic: bool,
+    pub attr_underline: bool,
+    pub attr_reverse: bool,
+    pub scroll_top: usize,
+    pub scroll_bottom: usize,
+    pub wrap_next: bool,
+    pub auto_wrap: bool,
+    pub active_hyperlink: u16,
+}
+
 /// APC interception state — Kitty graphics uses ESC _ G ... ESC \
 #[derive(Clone, Copy, PartialEq)]
 enum ApcState {
@@ -148,9 +166,17 @@ pub struct TerminalState {
     // Working directory reported by OSC 7
     pub osc7_cwd: Option<String>,
 
-    // Alternate screen buffer
+    // Alternate screen buffer.
+    //
+    // When entering the alt screen (DECSET 1049/1047/47) we snapshot enough
+    // of the main-screen DEC state that leaving the alt screen restores a
+    // pristine main-screen context. Saving the grid + cursor alone leaks
+    // SGR colors, the scroll region, and the deferred-wrap flag back into
+    // the shell's prompt — that's how you get "letters in wrong cells"
+    // after a TUI exits.
     pub alt_grid: Option<Vec<Vec<Cell>>>,
     pub alt_cursor: Option<(usize, usize)>,
+    pub alt_saved_state: Option<AltSavedState>,
 
     // Responses to write back to the PTY (DA, DSR, etc.)
     pub pending_responses: Vec<Vec<u8>>,
@@ -240,6 +266,7 @@ impl TerminalState {
             osc7_cwd: None,
             alt_grid: None,
             alt_cursor: None,
+            alt_saved_state: None,
             pending_responses: Vec::new(),
             bell: false,
             osc99_title: String::new(),
@@ -459,19 +486,81 @@ impl TerminalState {
         let saved_grid = self.grid.clone();
         self.alt_grid = Some(saved_grid);
         self.alt_cursor = Some((self.cursor_row, self.cursor_col));
+        self.alt_saved_state = Some(AltSavedState {
+            attr_fg: self.attr_fg,
+            attr_bg: self.attr_bg,
+            attr_bold: self.attr_bold,
+            attr_italic: self.attr_italic,
+            attr_underline: self.attr_underline,
+            attr_reverse: self.attr_reverse,
+            scroll_top: self.scroll_top,
+            scroll_bottom: self.scroll_bottom,
+            wrap_next: self.wrap_next,
+            auto_wrap: self.auto_wrap,
+            active_hyperlink: self.active_hyperlink,
+        });
+
+        // Reset DEC state for a fresh alt screen. xterm/contour reset the
+        // scroll region, clear the deferred wrap, drop SGR, and home the
+        // cursor — anything less leaks state INTO the TUI's first frame.
         let def = self.default_cell();
         self.grid = vec![vec![def; self.cols]; self.rows];
         self.cursor_row = 0;
         self.cursor_col = 0;
+        self.scroll_top = 0;
+        self.scroll_bottom = self.rows.saturating_sub(1);
+        self.wrap_next = false;
+        self.auto_wrap = true;
+        self.attr_fg = self.default_fg;
+        self.attr_bg = self.default_bg;
+        self.attr_bold = self.default_bold;
+        self.attr_italic = false;
+        self.attr_underline = false;
+        self.attr_reverse = false;
+        self.active_hyperlink = 0;
     }
 
     pub fn leave_alt_screen(&mut self) {
-        if let Some(grid) = self.alt_grid.take() {
-            self.grid = grid;
-        }
+        // Only restore if we were actually on the alt screen — otherwise a
+        // stray `CSI ? 1049 l` would silently zero the cursor on the main
+        // screen and trash the prompt.
+        let Some(grid) = self.alt_grid.take() else {
+            return;
+        };
+        self.grid = grid;
         if let Some((r, c)) = self.alt_cursor.take() {
-            self.cursor_row = r;
-            self.cursor_col = c;
+            self.cursor_row = r.min(self.rows.saturating_sub(1));
+            self.cursor_col = c.min(self.cols.saturating_sub(1));
+        }
+        if let Some(st) = self.alt_saved_state.take() {
+            self.attr_fg = st.attr_fg;
+            self.attr_bg = st.attr_bg;
+            self.attr_bold = st.attr_bold;
+            self.attr_italic = st.attr_italic;
+            self.attr_underline = st.attr_underline;
+            self.attr_reverse = st.attr_reverse;
+            self.scroll_top = st.scroll_top.min(self.rows.saturating_sub(1));
+            self.scroll_bottom = st
+                .scroll_bottom
+                .min(self.rows.saturating_sub(1))
+                .max(self.scroll_top);
+            self.wrap_next = st.wrap_next;
+            self.auto_wrap = st.auto_wrap;
+            self.active_hyperlink = st.active_hyperlink;
+        } else {
+            // Fallback if state somehow went missing — at least don't carry
+            // alt-screen SGR/scroll-region into the prompt.
+            self.scroll_top = 0;
+            self.scroll_bottom = self.rows.saturating_sub(1);
+            self.wrap_next = false;
+            self.auto_wrap = true;
+            self.attr_fg = self.default_fg;
+            self.attr_bg = self.default_bg;
+            self.attr_bold = self.default_bold;
+            self.attr_italic = false;
+            self.attr_underline = false;
+            self.attr_reverse = false;
+            self.active_hyperlink = 0;
         }
     }
 

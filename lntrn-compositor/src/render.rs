@@ -29,7 +29,11 @@ use smithay::{
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use tracing::{trace, warn};
 
-use crate::shaders::{HOT_CORNER_GLOW_COLOR, HOT_CORNER_GLOW_SIGMA, HOT_CORNER_GLOW_SIZE};
+use crate::shaders::{
+    HOT_CORNER_GLOW_COLOR, HOT_CORNER_GLOW_SIGMA, HOT_CORNER_GLOW_SIZE,
+    TOP_CENTER_GLOW_COLOR, TOP_CENTER_GLOW_HEIGHT, TOP_CENTER_GLOW_LINE_HALF,
+    TOP_CENTER_GLOW_SIGMA, TOP_CENTER_GLOW_WIDTH,
+};
 use crate::udev::{frame_callback_interval, UdevOutputId, BG_COLOR, RENDER_INTERVAL};
 use crate::Lantern;
 
@@ -305,6 +309,7 @@ pub fn render_surface(
 
     let shadow_shader = &udev.shadow_shader;
     let hot_corner_glow_shader = &udev.hot_corner_glow_shader;
+    let top_center_glow_shader = &udev.top_center_glow_shader;
     let ssd_icon_shader = &udev.ssd_icon_shader;
     let ssd_header_shader = &udev.ssd_header_shader;
     let corner_shader = &udev.corner_shader;
@@ -753,32 +758,69 @@ pub fn render_surface(
     // Hot corner glow feedback (above windows, below cursor)
     if let (Some(corner), Some(ref glow_shader)) = (hot_corner, &hot_corner_glow_shader) {
         use crate::hot_corners::ScreenCorner;
-        let glow_size = HOT_CORNER_GLOW_SIZE;
-        let (corner_uniform, pos_x, pos_y) = match corner {
+        // Top-center: dedicated shader handles the wide horizontal
+        // bloom in a single draw call. Distance is measured to a
+        // horizontal line segment so the band is uniformly bright in
+        // the middle and fades toward the ends.
+        if corner == ScreenCorner::TopCenter {
+            if let Some(ref shader) = top_center_glow_shader {
+                let pos_x = output_pos.loc.x + output_pos.size.w / 2 - TOP_CENTER_GLOW_WIDTH / 2;
+                let pos_y = output_pos.loc.y;
+                let area = Rectangle::new(
+                    (pos_x, pos_y).into(),
+                    (TOP_CENTER_GLOW_WIDTH, TOP_CENTER_GLOW_HEIGHT).into(),
+                );
+                let elem = PixelShaderElement::new(
+                    shader.clone(),
+                    area,
+                    None,
+                    1.0,
+                    vec![
+                        Uniform::new("glow_color", TOP_CENTER_GLOW_COLOR),
+                        Uniform::new("sigma", TOP_CENTER_GLOW_SIGMA),
+                        Uniform::new("line_half_len", TOP_CENTER_GLOW_LINE_HALF),
+                    ],
+                    Kind::Unspecified,
+                );
+                elements.push(CustomRenderElements::Shader(elem));
+            }
+            // Suppress unused-var warning when only this branch is taken.
+            let _ = glow_shader;
+        } else {
+        let (glow_w, glow_h, corner_uniform, pos_x, pos_y, color, sigma) = match corner {
             ScreenCorner::TopLeft => (
+                HOT_CORNER_GLOW_SIZE, HOT_CORNER_GLOW_SIZE,
                 [0.0f32, 0.0],
                 output_pos.loc.x,
                 output_pos.loc.y,
+                HOT_CORNER_GLOW_COLOR, HOT_CORNER_GLOW_SIGMA,
             ),
             ScreenCorner::TopRight => (
+                HOT_CORNER_GLOW_SIZE, HOT_CORNER_GLOW_SIZE,
                 [1.0, 0.0],
-                output_pos.loc.x + output_pos.size.w - glow_size,
+                output_pos.loc.x + output_pos.size.w - HOT_CORNER_GLOW_SIZE,
                 output_pos.loc.y,
+                HOT_CORNER_GLOW_COLOR, HOT_CORNER_GLOW_SIGMA,
             ),
             ScreenCorner::BottomLeft => (
+                HOT_CORNER_GLOW_SIZE, HOT_CORNER_GLOW_SIZE,
                 [0.0, 1.0],
                 output_pos.loc.x,
-                output_pos.loc.y + output_pos.size.h - glow_size,
+                output_pos.loc.y + output_pos.size.h - HOT_CORNER_GLOW_SIZE,
+                HOT_CORNER_GLOW_COLOR, HOT_CORNER_GLOW_SIGMA,
             ),
             ScreenCorner::BottomRight => (
+                HOT_CORNER_GLOW_SIZE, HOT_CORNER_GLOW_SIZE,
                 [1.0, 1.0],
-                output_pos.loc.x + output_pos.size.w - glow_size,
-                output_pos.loc.y + output_pos.size.h - glow_size,
+                output_pos.loc.x + output_pos.size.w - HOT_CORNER_GLOW_SIZE,
+                output_pos.loc.y + output_pos.size.h - HOT_CORNER_GLOW_SIZE,
+                HOT_CORNER_GLOW_COLOR, HOT_CORNER_GLOW_SIGMA,
             ),
+            ScreenCorner::TopCenter => unreachable!("handled above"),
         };
         let glow_area = Rectangle::new(
             (pos_x, pos_y).into(),
-            (glow_size, glow_size).into(),
+            (glow_w, glow_h).into(),
         );
         let glow_elem = PixelShaderElement::new(
             glow_shader.clone(),
@@ -787,12 +829,13 @@ pub fn render_surface(
             1.0,  // alpha
             vec![
                 Uniform::new("corner", corner_uniform),
-                Uniform::new("glow_color", HOT_CORNER_GLOW_COLOR),
-                Uniform::new("sigma", HOT_CORNER_GLOW_SIGMA),
+                Uniform::new("glow_color", color),
+                Uniform::new("sigma", sigma),
             ],
             Kind::Unspecified,
         );
         elements.push(CustomRenderElements::Shader(glow_elem));
+        }
     }
 
     // Alt+Tab switcher: elements are ordered front-to-back (first = highest Z).

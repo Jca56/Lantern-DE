@@ -4,6 +4,8 @@
 //! beneath the search input. As the user types, the search/results
 //! module takes over the same vertical space.
 
+pub mod context_menu;
+pub mod hidden;
 pub mod icons;
 pub mod pins;
 
@@ -12,22 +14,36 @@ use lntrn_render::{Color, Painter, Rect, TextRenderer};
 use crate::render::IconRequest;
 use crate::search::apps::{AppsProvider, DesktopEntry};
 use crate::search::input;
+use self::hidden::Hidden;
 use self::pins::Pins;
 
 pub struct Launcher {
     pins: Pins,
+    hidden: Hidden,
 }
 
 impl Launcher {
     pub fn new() -> Self {
         Self {
             pins: Pins::load(),
+            hidden: Hidden::load(),
         }
     }
 
     #[allow(dead_code)] // used by Phase 2.6 right-click pin/unpin handler
     pub fn pins(&self) -> &Pins {
         &self.pins
+    }
+
+    pub fn hidden(&self) -> &Hidden {
+        &self.hidden
+    }
+
+    /// Toggle hidden state for an app_id. Returns whether the app is now hidden.
+    pub fn toggle_hidden(&mut self, app_id: &str) -> bool {
+        let now_hidden = self.hidden.toggle(app_id);
+        tracing::info!(app_id, now_hidden, "hidden toggled");
+        now_hidden
     }
 
     /// Look up the pinned app's `DesktopEntry` from the apps provider.
@@ -59,11 +75,11 @@ impl Launcher {
 
 /// Pinned tile dimensions (logical px). Phase 2.5 will swap the
 /// placeholder rectangle for an actual icon; the tile size stays.
-pub const PIN_TILE_SIZE: f32 = 88.0;
-pub const PIN_TILE_GAP: f32 = 16.0;
-pub const PIN_LABEL_FONT: f32 = 20.0;
-pub const PIN_ROW_TOP_MARGIN: f32 = 20.0;
-pub const PIN_LABEL_GAP: f32 = 8.0;
+pub const PIN_TILE_SIZE: f32 = 120.0;
+pub const PIN_TILE_GAP: f32 = 32.0;
+pub const PIN_LABEL_FONT: f32 = 18.0;
+pub const PIN_ROW_TOP_MARGIN: f32 = 24.0;
+pub const PIN_LABEL_GAP: f32 = 12.0;
 
 /// Total vertical space the pinned row needs (logical px), including
 /// the top margin from the search underline.
@@ -74,7 +90,9 @@ pub const PIN_ROW_HEIGHT: f32 = PIN_ROW_TOP_MARGIN + PIN_TILE_SIZE + PIN_LABEL_G
 const TEXT_RGB: (u8, u8, u8) = (0xff, 0xff, 0xff);
 /// Accent gold #C8860A.
 const ACCENT_RGB: (u8, u8, u8) = (0xc8, 0x86, 0x0a);
+#[allow(dead_code)]
 const TILE_BG_ALPHA: f32 = 0.10;
+#[allow(dead_code)]
 const TILE_BORDER_ALPHA: f32 = 0.06;
 const SECTION_LABEL_ALPHA: f32 = 0.55;
 const SECTION_LABEL_FONT: f32 = 14.0;
@@ -145,27 +163,21 @@ pub fn draw(
         let tile_rect = Rect::new(x, y, tile_size, tile_size);
         let is_selected = selected_pin == Some(i);
 
-        // Soft background plate behind the icon. Selected tiles get a
-        // brighter accent fill + slightly thicker accent border.
-        let (bg, border) = if is_selected {
-            (accent_color(0.22 * alpha), accent_color(0.55 * alpha))
-        } else {
-            (
-                Color::rgba(1.0, 1.0, 1.0, TILE_BG_ALPHA * alpha),
-                Color::rgba(1.0, 1.0, 1.0, TILE_BORDER_ALPHA * alpha),
-            )
-        };
-        painter.rect_filled(tile_rect, 12.0 * scale, bg);
-        painter.rect_stroke_sdf(
-            tile_rect,
-            12.0 * scale,
-            if is_selected { 2.0 * scale } else { 1.0 * scale },
-            border,
-        );
+        // No background plate — icons sit directly on the panel. Only
+        // the selected tile gets a soft accent ring so keyboard nav
+        // stays visible.
+        if is_selected {
+            painter.rect_stroke_sdf(
+                tile_rect,
+                16.0 * scale,
+                2.0 * scale,
+                accent_color(0.55 * alpha),
+            );
+        }
 
-        // Defer the icon to the texture pass. We inset the icon a touch
-        // inside the tile so it doesn't kiss the rounded corners.
-        let inset = tile_size * 0.10;
+        // Defer the icon to the texture pass. Larger icon (smaller
+        // inset) since there's no plate framing it anymore.
+        let inset = tile_size * 0.04;
         icons.push(IconRequest {
             app_id: entry.app_id.clone(),
             icon_name: entry.icon_name.clone(),
@@ -173,6 +185,7 @@ pub fn draw(
             y: y + inset,
             size: tile_size - inset * 2.0,
             opacity: alpha,
+            clip: None,
         });
 
         // Label below tile — truncated app name.

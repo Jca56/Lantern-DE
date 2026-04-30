@@ -12,10 +12,21 @@ pub enum ScreenCorner {
     TopRight,
     BottomLeft,
     BottomRight,
+    /// Top-center edge strip — opens Command Center.
+    TopCenter,
 }
 
-/// Dwell duration before a hot corner fires.
+/// Dwell duration before a corner action fires.
 const DWELL: std::time::Duration = std::time::Duration::from_millis(300);
+/// Dwell duration for top-center → Command Center.
+const DWELL_TOP_CENTER: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Top-center hover strip dimensions (logical px). Wide and tall enough
+/// that a cursor coming in from below will stably enter the zone — a
+/// thin strip caused subpixel jitter that re-armed the dwell timer
+/// repeatedly.
+pub const TOP_CENTER_ZONE_WIDTH: f64 = 400.0;
+pub const TOP_CENTER_ZONE_HEIGHT: f64 = 12.0;
 
 /// Tracks pointer dwell state for hot corner detection.
 pub struct HotCornerState {
@@ -56,7 +67,22 @@ impl Lantern {
             (_, true, true, _) => Some(ScreenCorner::TopRight),
             (true, _, _, true) => Some(ScreenCorner::BottomLeft),
             (_, true, _, true) => Some(ScreenCorner::BottomRight),
-            _ => None,
+            _ => {
+                // Top-center strip: a thin band along the top edge centered
+                // horizontally on the output. Wider than the corner zones
+                // but only fires when nothing else matched, so corners win.
+                let dy = pos.y - (geo.loc.y as f64);
+                let center_x = geo.loc.x as f64 + (geo.size.w as f64) * 0.5;
+                let dx = (pos.x - center_x).abs();
+                if dy >= 0.0
+                    && dy < TOP_CENTER_ZONE_HEIGHT
+                    && dx <= TOP_CENTER_ZONE_WIDTH * 0.5
+                {
+                    Some(ScreenCorner::TopCenter)
+                } else {
+                    None
+                }
+            }
         }
     }
 
@@ -92,7 +118,11 @@ impl Lantern {
 
         // Start a new timer if we entered a corner
         if let Some(which) = corner {
-            let timer = Timer::from_duration(DWELL);
+            let dwell = match which {
+                ScreenCorner::TopCenter => DWELL_TOP_CENTER,
+                _ => DWELL,
+            };
+            let timer = Timer::from_duration(dwell);
             if let Ok(token) = self.loop_handle.insert_source(timer, move |_, _, state| {
                 if state.hot_corner.corner == Some(which) && !state.hot_corner.triggered {
                     state.hot_corner.triggered = true;
@@ -119,8 +149,24 @@ impl Lantern {
             ScreenCorner::TopRight | ScreenCorner::BottomLeft => {
                 // Reserved for future use
             }
+            ScreenCorner::TopCenter => {
+                tracing::info!("Hot edge: top-center → toggle Command Center");
+                self.open_command_center();
+            }
         }
         self.schedule_render();
+    }
+
+    /// Spawn `lntrn-command-center --toggle`. Mirrors the Super-tap path
+    /// in `input.rs` so behavior is identical regardless of how the
+    /// panel was summoned.
+    fn open_command_center(&mut self) {
+        let socket = self.socket_name.clone();
+        crate::input::spawn_detached_args(
+            "lntrn-command-center",
+            &["--toggle"],
+            &socket,
+        );
     }
 
     /// Toggle peek-desktop: make all windows nearly transparent so the

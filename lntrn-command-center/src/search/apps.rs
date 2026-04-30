@@ -100,9 +100,9 @@ impl AppsProvider {
     }
 
     /// Rank all entries against `query`. Returns matches sorted by
-    /// descending score. Filters out `NoDisplay=true` entries.
+    /// descending score. Filters out `NoDisplay=true` and user-hidden entries.
     /// `limit` caps the result count.
-    pub fn rank(&self, query: &str, limit: usize) -> Vec<RankedEntry> {
+    pub fn rank(&self, query: &str, limit: usize, hidden: &crate::launcher::hidden::Hidden) -> Vec<RankedEntry> {
         if query.is_empty() {
             return Vec::new();
         }
@@ -110,7 +110,10 @@ impl AppsProvider {
         let mut hits: Vec<RankedEntry> = self
             .index
             .iter()
-            .filter(|ix| !self.entries[ix.entry_idx].no_display)
+            .filter(|ix| {
+                let e = &self.entries[ix.entry_idx];
+                !e.no_display && !hidden.is_hidden(&e.app_id)
+            })
             .filter_map(|ix| {
                 // Score against name, app_id, and keywords; take the best.
                 let s_name = fuzzy::score(query, &ix.name);

@@ -133,7 +133,7 @@ fn spawn_detached(cmd: &str, wayland_display: &std::ffi::OsStr) {
     }
 }
 
-fn spawn_detached_args(cmd: &str, args: &[&str], wayland_display: &std::ffi::OsStr) {
+pub(crate) fn spawn_detached_args(cmd: &str, args: &[&str], wayland_display: &std::ffi::OsStr) {
     use std::os::unix::process::CommandExt;
     use std::process::Stdio;
     crate::reap_zombies();

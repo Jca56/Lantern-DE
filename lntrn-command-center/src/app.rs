@@ -8,6 +8,7 @@ use std::process::Command;
 use std::time::Instant;
 
 use crate::controls::{Controls, TileId};
+use crate::launcher::context_menu::{ContextMenu, MenuAction, MenuItem};
 use crate::launcher::Launcher;
 use crate::search::apps::{AppsProvider, DesktopEntry};
 use crate::search::input::KeyEffect;
@@ -107,6 +108,8 @@ pub struct AppState {
     /// left button is released. The render loop translates pointer
     /// motion into volume updates while this is `Some`.
     pub dragging: Option<DragTarget>,
+    /// Right-click context menu, if currently open. `None` = closed.
+    pub context_menu: Option<ContextMenu>,
 }
 
 impl AppState {
@@ -121,6 +124,7 @@ impl AppState {
             selection: Selection::Pin(0),
             mode: PanelMode::Launcher,
             dragging: None,
+            context_menu: None,
         }
     }
 
@@ -174,7 +178,9 @@ impl AppState {
     /// 2. Else if we're in a control view → back to launcher.
     /// 3. Else → close the whole panel.
     pub fn handle_esc(&mut self) {
-        if self.controls.wifi.prompt.is_some() {
+        if self.context_menu.is_some() {
+            self.context_menu = None;
+        } else if self.controls.wifi.prompt.is_some() {
             self.controls.wifi.close_prompt();
         } else if self.controls.bluetooth.incoming_request.is_some() {
             self.controls.bluetooth.incoming_reject();
@@ -182,6 +188,8 @@ impl AppState {
             self.controls.bluetooth.pair_cancel();
         } else if self.mode != PanelMode::Launcher {
             self.mode = PanelMode::Launcher;
+        } else if self.search.all_apps_mode {
+            self.search.reset();
         } else {
             self.close();
         }
@@ -194,7 +202,7 @@ impl AppState {
         let was_empty = self.search.input.is_empty();
         let effect = self.search.input.on_key(key, shift);
         if effect == KeyEffect::ContentChanged {
-            self.search.refresh_results(&self.apps);
+            self.search.refresh_results(&self.apps, self.launcher.hidden());
             // Selection follows context: when the user starts typing,
             // jump from Pin(*) to Result(0); when they delete back to
             // empty, return to Pin(0).
@@ -312,7 +320,7 @@ impl AppState {
         phys_x: f32,
         phys_y: f32,
     ) -> Option<HitTarget> {
-        if self.search.input.is_empty() {
+        if self.search.input.is_empty() && !self.search.all_apps_mode {
             self.hit_test_pins(panel_rect, scale, phys_x, phys_y)
         } else {
             self.hit_test_results(panel_rect, scale, phys_x, phys_y)
@@ -384,8 +392,6 @@ impl AppState {
         const RESULT_TOP_MARGIN: f32 = 16.0;
 
         let pad = SEARCH_HORIZONTAL_PAD * scale;
-        let row_h = RESULT_ROW_HEIGHT * scale;
-        let gap = RESULT_GAP * scale;
 
         let list_x = panel_rect.x + pad;
         let list_w = panel_rect.w - pad * 2.0;
@@ -399,8 +405,36 @@ impl AppState {
             + RESULT_TOP_MARGIN * scale;
 
         let results = self.search.results();
+        let scroll = self.search.scroll_offset;
+
+        if self.search.all_apps_mode {
+            use crate::search::{GRID_COLS, GRID_LABEL_FONT, GRID_LABEL_GAP, GRID_ROW_GAP, GRID_TILE_GAP, GRID_TILE_SIZE};
+            let tile = GRID_TILE_SIZE * scale;
+            let tile_gap = GRID_TILE_GAP * scale;
+            let row_gap = GRID_ROW_GAP * scale;
+            let label_gap = GRID_LABEL_GAP * scale;
+            let label_font = GRID_LABEL_FONT * scale;
+            let cell_h = tile + label_gap + label_font;
+            let cols_total = GRID_COLS as f32 * tile + (GRID_COLS as f32 - 1.0) * tile_gap;
+            let grid_x0 = list_x + (list_w - cols_total).max(0.0) / 2.0;
+            for i in 0..results.len() {
+                let col = i % GRID_COLS;
+                let row = i / GRID_COLS;
+                let cell_x = grid_x0 + col as f32 * (tile + tile_gap);
+                let cell_y = list_y_start + row as f32 * (cell_h + row_gap) - scroll;
+                if phys_x >= cell_x && phys_x <= cell_x + tile
+                    && phys_y >= cell_y && phys_y <= cell_y + tile
+                {
+                    return Some(HitTarget::Result(i));
+                }
+            }
+            return None;
+        }
+
+        let row_h = RESULT_ROW_HEIGHT * scale;
+        let gap = RESULT_GAP * scale;
         for i in 0..results.len() {
-            let row_y = list_y_start + (i as f32) * (row_h + gap);
+            let row_y = list_y_start + (i as f32) * (row_h + gap) - scroll;
             if phys_y >= row_y && phys_y <= row_y + row_h {
                 return Some(HitTarget::Result(i));
             }
@@ -410,6 +444,91 @@ impl AppState {
 
     /// Toggle pin/unpin on whichever entry is at the given index in the
     /// current context (pin or result). Persists the change to disk.
+    /// Build the items list for a context menu on the given app_id.
+    /// Centralized so future entry points (grid, pinned row, search
+    /// results) all get the same menu.
+    fn menu_items_for(&self, app_id: &str) -> Vec<MenuItem> {
+        let pinned = self.launcher.pins().is_pinned(app_id);
+        let hidden = self.launcher.hidden().is_hidden(app_id);
+        vec![
+            MenuItem {
+                label: "Open".into(),
+                action: MenuAction::Launch,
+            },
+            MenuItem {
+                label: if pinned { "Unpin".into() } else { "Pin to launcher".into() },
+                action: MenuAction::TogglePin,
+            },
+            MenuItem {
+                label: if hidden { "Unhide".into() } else { "Hide from grid".into() },
+                action: MenuAction::ToggleHidden,
+            },
+        ]
+    }
+
+    /// Open the right-click context menu anchored at (`phys_x`, `phys_y`)
+    /// for the entry at `target`. No-op if the target doesn't resolve
+    /// to an app_id.
+    pub fn open_context_menu_at(&mut self, target: HitTarget, phys_x: f32, phys_y: f32) {
+        let app_id = match target {
+            HitTarget::Pin(i) => self
+                .launcher
+                .pinned_entries(&self.apps)
+                .get(i)
+                .map(|e| e.app_id.clone()),
+            HitTarget::Result(i) => self
+                .search
+                .results()
+                .get(i)
+                .and_then(|r| self.apps.get(r.entry_idx))
+                .map(|e| e.app_id.clone()),
+        };
+        let Some(app_id) = app_id else { return };
+        let items = self.menu_items_for(&app_id);
+        self.context_menu = Some(ContextMenu {
+            app_id,
+            anchor_x: phys_x,
+            anchor_y: phys_y,
+            items,
+        });
+    }
+
+    /// Run the given menu action against the menu's stored app_id, then
+    /// close the menu. Called by the layershell when a click lands on
+    /// an item.
+    pub fn run_menu_action(&mut self, action: MenuAction) {
+        let Some(menu) = self.context_menu.take() else { return };
+        match action {
+            MenuAction::TogglePin => {
+                self.launcher.toggle_pin(&menu.app_id);
+            }
+            MenuAction::ToggleHidden => {
+                self.launcher.toggle_hidden(&menu.app_id);
+                // Refresh whichever launcher view is up so the hidden
+                // app immediately disappears (or reappears) without
+                // needing to reopen the panel.
+                if self.search.all_apps_mode {
+                    self.search.show_all_apps(&self.apps, self.launcher.hidden());
+                } else if !self.search.input.is_empty() {
+                    self.search.refresh_results(&self.apps, self.launcher.hidden());
+                }
+            }
+            MenuAction::Launch => {
+                if let Some(entry) = (0..self.apps.count())
+                    .filter_map(|i| self.apps.get(i))
+                    .find(|e| e.app_id == menu.app_id)
+                {
+                    let exec = entry.exec.clone();
+                    let app_id = entry.app_id.clone();
+                    let _ = Command::new("sh").arg("-c").arg(&exec).spawn();
+                    tracing::info!(%app_id, %exec, "launched app via context menu");
+                    self.close();
+                }
+            }
+        }
+    }
+
+    #[allow(dead_code)]
     pub fn toggle_pin_at(&mut self, target: HitTarget) {
         let app_id = match target {
             HitTarget::Pin(i) => self
@@ -443,6 +562,7 @@ impl AppState {
     /// Same interruption math as `open` in reverse.
     pub fn close(&mut self) {
         let now = Instant::now();
+        self.context_menu = None;
         match self.visibility {
             Visibility::Hidden | Visibility::Closing => {}
             Visibility::Visible => {

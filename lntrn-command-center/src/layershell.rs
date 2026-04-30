@@ -104,6 +104,9 @@ struct WlState {
     /// Single key per dispatch is fine; we just remember the most recent
     /// one and let the loop handle it.
     pending_key: Option<u32>,
+    /// Accumulated vertical scroll delta (Wayland axis units, ≈ pixels)
+    /// since the last render-loop drain. Positive = scroll down.
+    scroll_delta_v: f64,
 }
 
 impl WlState {
@@ -128,6 +131,7 @@ impl WlState {
             right_clicked: false,
             shift_held: false,
             pending_key: None,
+            scroll_delta_v: 0.0,
         }
     }
 
@@ -313,6 +317,16 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WlState {
                 }
                 if button == BTN_RIGHT && btn_state == pressed {
                     state.right_clicked = true;
+                }
+            }
+            wl_pointer::Event::Axis { axis, value, .. } => {
+                use wayland_client::WEnum;
+                if axis == WEnum::Value(wl_pointer::Axis::VerticalScroll) {
+                    // libinput reports `value` in axis units that
+                    // approximate pixels for high-res scroll wheels and
+                    // ~10 per notch for discrete wheels. Accumulate
+                    // raw; the render loop scales it.
+                    state.scroll_delta_v += value;
                 }
             }
             _ => {}
@@ -569,6 +583,31 @@ pub fn run(sock: UnixDatagram, initial_visible: bool) -> Result<()> {
             app.handle_esc();
         }
 
+        // Drain accumulated scroll delta and apply to the launcher
+        // result list when there's a query. We only scroll the result
+        // list — control views handle their own scrolling if/when they
+        // need it (none do today). Always reset the accumulator so
+        // stale deltas don't leak into the next mode.
+        if wl.scroll_delta_v.abs() > 0.0 {
+            let dy = wl.scroll_delta_v as f32;
+            wl.scroll_delta_v = 0.0;
+            if matches!(app.mode, crate::app::PanelMode::Launcher)
+                && (!app.search.input.is_empty() || app.search.all_apps_mode)
+                && !app.search.results().is_empty()
+            {
+                let scale_f = wl.fractional_scale() as f32;
+                let phys_w = wl.phys_width().max(1);
+                let panel = PanelRect::compute(phys_w, scale_f);
+                let panel_rect =
+                    lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+                let max = crate::search::max_scroll(&app.search, panel_rect, scale_f);
+                // libinput hi-res wheel reports ~15 per notch, low-res ~10.
+                // Scaling by scale_f keeps "one notch ≈ one row" feel.
+                let new_offset = (app.search.scroll_offset + dy * scale_f).clamp(0.0, max);
+                app.search.scroll_offset = new_offset;
+            }
+        }
+
         // Dispatch the next pending keypress.
         //
         // Routing priority:
@@ -643,14 +682,31 @@ pub fn run(sock: UnixDatagram, initial_visible: bool) -> Result<()> {
             let phys_cy = wl.cursor_y as f32 * scale_f;
             let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
 
+            // Context menu intercepts every left-click while open: a
+            // click on an item runs that action; anywhere else dismisses.
+            let menu_consumed = if let Some(menu) = app.context_menu.clone() {
+                if let Some(action) = crate::launcher::context_menu::hit_test(
+                    &menu, panel_rect, scale_f, phys_cx, phys_cy,
+                ) {
+                    app.run_menu_action(action);
+                } else {
+                    app.context_menu = None;
+                }
+                true
+            } else {
+                false
+            };
+
             // First: if a control's full-content view is up, see if the
             // click hit one of its interactive widgets (battery toggle,
             // audio slider, audio device list).
-            let consumed_by_view = handle_control_view_click(
+            let consumed_by_view = !menu_consumed && handle_control_view_click(
                 &mut app, panel_rect, scale_f, phys_cx, phys_cy,
             );
 
-            if !panel.contains(phys_cx, phys_cy) {
+            if menu_consumed {
+                // Already handled by the menu — fall through to render.
+            } else if !panel.contains(phys_cx, phys_cy) {
                 tracing::debug!(
                     cursor = ?(phys_cx, phys_cy),
                     panel = ?(panel.x, panel.y, panel.w, panel.h),
@@ -668,7 +724,21 @@ pub fn run(sock: UnixDatagram, initial_visible: bool) -> Result<()> {
                 tracing::debug!(?tile_id, "left-click on controls tile → switch view");
                 app.show_control(tile_id);
             } else if matches!(app.mode, crate::app::PanelMode::Launcher) {
-                if let Some(target) = app.hit_test_launcher(panel, scale_f, phys_cx, phys_cy) {
+                // Waffle "all apps" button on the search bar.
+                let waffle = crate::search::input::waffle_rect(panel_rect, scale_f);
+                if phys_cx >= waffle.x
+                    && phys_cx <= waffle.x + waffle.w
+                    && phys_cy >= waffle.y
+                    && phys_cy <= waffle.y + waffle.h
+                {
+                    tracing::debug!("waffle click → show all apps");
+                    if app.search.all_apps_mode {
+                        // Toggle off — back to pinned launcher.
+                        app.search.reset();
+                    } else {
+                        app.search.show_all_apps(&app.apps, app.launcher.hidden());
+                    }
+                } else if let Some(target) = app.hit_test_launcher(panel, scale_f, phys_cx, phys_cy) {
                     tracing::debug!(?target, "left-click on launcher entry → activate");
                     app.activate_at(target);
                 }
@@ -691,8 +761,11 @@ pub fn run(sock: UnixDatagram, initial_visible: bool) -> Result<()> {
                     if let Some(target) =
                         app.hit_test_launcher(panel, scale_f, phys_cx, phys_cy)
                     {
-                        tracing::debug!(?target, "right-click → toggle pin");
-                        app.toggle_pin_at(target);
+                        tracing::debug!(?target, "right-click → open context menu");
+                        app.open_context_menu_at(target, phys_cx, phys_cy);
+                    } else {
+                        // Right-click on empty space dismisses any open menu.
+                        app.context_menu = None;
                     }
                 }
                 _ => {}
@@ -781,6 +854,7 @@ pub fn run(sock: UnixDatagram, initial_visible: bool) -> Result<()> {
                 icon_cache.peek(&req.app_id).map(|tex| {
                     let mut d = TextureDraw::new(tex, req.x, req.y, req.size, req.size);
                     d.opacity = req.opacity;
+                    d.clip = req.clip;
                     d
                 })
             })

@@ -46,6 +46,10 @@ pub struct IconRequest {
     pub y: f32,
     pub size: f32,
     pub opacity: f32,
+    /// Optional scissor `[x, y, w, h]` in physical pixels. Used by the
+    /// scrollable grid so icons crossing the viewport edge get clipped
+    /// instead of bleeding into the search bar / panel chrome.
+    pub clip: Option<[f32; 4]>,
 }
 
 /// Draw the Command Center chrome at the current animation state.
@@ -172,7 +176,7 @@ pub fn draw_content(
                 _ => None,
             };
 
-            if state.search.input.is_empty() {
+            if state.search.input.is_empty() && !state.search.all_apps_mode {
                 let top_y = crate::search::content_top_y(panel.rect, panel.scale_factor);
                 crate::launcher::draw(
                     painter,
@@ -217,6 +221,24 @@ pub fn draw_content(
                 surface_h,
             );
         }
+    }
+
+    // 3. Right-click context menu — drawn on layer 1 so it sits above
+    //    grid tiles, labels, and any other panel content.
+    if let Some(menu) = &state.context_menu {
+        painter.set_layer(1);
+        text.set_layer(1);
+        crate::launcher::context_menu::draw(
+            painter,
+            text,
+            menu,
+            panel.rect,
+            panel.scale_factor,
+            surface_w,
+            surface_h,
+        );
+        painter.set_layer(0);
+        text.set_layer(0);
     }
 
     icons

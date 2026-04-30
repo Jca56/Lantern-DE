@@ -245,9 +245,27 @@ pub fn keycode_to_char(key: u32, shift: bool) -> Option<char> {
 // ── Drawing ─────────────────────────────────────────────────────────────────
 
 /// Layout constants (logical pixels).
-pub const SEARCH_FONT_SIZE: f32 = 28.0;
-pub const SEARCH_ROW_HEIGHT: f32 = 64.0;
+pub const SEARCH_FONT_SIZE: f32 = 22.0;
+pub const SEARCH_ROW_HEIGHT: f32 = 48.0;
 pub const SEARCH_HORIZONTAL_PAD: f32 = 24.0;
+
+/// Waffle (all-apps) icon geometry — 9 dots in 3 cols × 3 rows on the
+/// right end of the search bar.
+const WAFFLE_BTN_SIZE: f32 = 48.0;
+const WAFFLE_DOT_RADIUS: f32 = 3.5;
+const WAFFLE_DOT_PITCH: f32 = 11.0;
+
+/// Compute the waffle hit/draw rect in physical pixels. Lives at the
+/// far right of the search row, vertically centered.
+pub fn waffle_rect(panel: Rect, scale: f32) -> Rect {
+    let pad = SEARCH_HORIZONTAL_PAD * scale;
+    let row_h = SEARCH_ROW_HEIGHT * scale;
+    let row_y = panel.y + crate::controls::total_logical_height() * scale + pad * 0.5;
+    let btn = WAFFLE_BTN_SIZE * scale;
+    let x = panel.x + panel.w - pad - btn;
+    let y = row_y + (row_h - btn) / 2.0;
+    Rect::new(x, y, btn, btn)
+}
 
 const PLACEHOLDER: &str = "Search apps, files, web…";
 /// Studio tan text — #e8dcc8. The wgpu surface is sRGB so we go through
@@ -272,6 +290,7 @@ pub fn draw(
     alpha: f32,
     surface_w: u32,
     surface_h: u32,
+    waffle_active: bool,
 ) {
     let pad = SEARCH_HORIZONTAL_PAD * scale;
     let row_h = SEARCH_ROW_HEIGHT * scale;
@@ -281,6 +300,9 @@ pub fn draw(
     // Search row sits beneath the controls row + its underline.
     let row_y = panel.y + crate::controls::total_logical_height() * scale + pad * 0.5;
     let row_w = panel.w - pad * 2.0;
+    // Text shouldn't run under the waffle button.
+    let waffle = waffle_rect(panel, scale);
+    let text_w = (waffle.x - row_x - 8.0 * scale).max(0.0);
 
     let underline_y = row_y + row_h - 2.0 * scale;
     painter.rect_filled(
@@ -288,6 +310,29 @@ pub fn draw(
         1.0 * scale,
         Color::rgba(1.0, 1.0, 1.0, UNDERLINE_ALPHA * alpha),
     );
+
+    // Waffle "all apps" button — 6 dots in 2 cols × 3 rows.
+    let dot_r = WAFFLE_DOT_RADIUS * scale;
+    let pitch = WAFFLE_DOT_PITCH * scale;
+    let span = pitch * 2.0;
+    let dots_x0 = waffle.x + (waffle.w - span) / 2.0 - dot_r;
+    let dots_y0 = waffle.y + (waffle.h - span) / 2.0 - dot_r;
+    let dot_color = if waffle_active {
+        Color::from_rgb8(ACCENT_RGB.0, ACCENT_RGB.1, ACCENT_RGB.2).with_alpha(alpha)
+    } else {
+        Color::from_rgb8(TEXT_RGB.0, TEXT_RGB.1, TEXT_RGB.2).with_alpha(0.55 * alpha)
+    };
+    for col in 0..3 {
+        for row in 0..3 {
+            let cx = dots_x0 + col as f32 * pitch;
+            let cy = dots_y0 + row as f32 * pitch;
+            painter.rect_filled(
+                Rect::new(cx, cy, dot_r * 2.0, dot_r * 2.0),
+                dot_r,
+                dot_color,
+            );
+        }
+    }
 
     let text_y = row_y + (row_h - font_size) / 2.0;
 
@@ -310,7 +355,7 @@ pub fn draw(
         row_x,
         text_y,
         color,
-        row_w,
+        text_w,
         surface_w,
         surface_h,
     );

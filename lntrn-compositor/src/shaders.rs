@@ -109,6 +109,51 @@ pub const HOT_CORNER_GLOW_SIZE: i32 = 100; // logical pixels per side
 pub const HOT_CORNER_GLOW_SIGMA: f32 = 40.0; // falloff softness (logical px)
 pub const HOT_CORNER_GLOW_COLOR: [f32; 4] = [1.0, 0.75, 0.0, 0.6]; // amber accent
 
+// Top-center bloom (Command Center hover hint).
+// Wider, shorter band than the corner glow; bloom spreads more horizontally.
+/// Top-center bloom dimensions (logical px). Width is sized to match
+/// the Command Center panel so the glow telegraphs where it'll appear.
+pub const TOP_CENTER_GLOW_WIDTH: i32 = 1000;
+pub const TOP_CENTER_GLOW_HEIGHT: i32 = 60;
+/// Vertical falloff softness — controls how far the bloom reaches down.
+pub const TOP_CENTER_GLOW_SIGMA: f32 = 18.0;
+/// Half-length of the horizontal "line origin" in px. Inside this band
+/// the glow has constant intensity; outside it decays toward the ends.
+pub const TOP_CENTER_GLOW_LINE_HALF: f32 = 380.0;
+pub const TOP_CENTER_GLOW_COLOR: [f32; 4] = [1.0, 0.78, 0.18, 0.85];
+
+/// Pixel shader for the top-center hover bloom. Distance is measured
+/// to a horizontal line *segment* of length 2*line_half_len anchored at
+/// the top of the element rect — producing a wide, soft band that
+/// fades downward and tapers at the ends, instead of a circular blob.
+pub const TOP_CENTER_GLOW_SHADER_SRC: &str = r#"
+precision mediump float;
+varying vec2 v_coords;
+uniform float alpha;
+uniform vec2 size;
+uniform vec4 glow_color;
+uniform float sigma;
+uniform float line_half_len;
+
+#if defined(DEBUG_FLAGS)
+uniform float tint;
+#endif
+
+void main() {
+    vec2 pos = v_coords * size;
+    float center_x = size.x * 0.5;
+    float dx = max(abs(pos.x - center_x) - line_half_len, 0.0);
+    float dy = pos.y; // origin is the top edge (y = 0)
+    float dist = sqrt(dx * dx + dy * dy);
+    float norm = dist / sigma;
+    float glow = exp(-0.5 * norm * norm);
+    if (glow < 0.004) discard;
+
+    float a = glow_color.a * glow * alpha;
+    gl_FragColor = vec4(glow_color.rgb * a, a);
+}
+"#;
+
 /// Pixel shader for hot corner feedback glow.
 /// Renders a radial gradient emanating from a screen corner.
 /// `corner` uniform: (0,0)=TL, (1,0)=TR, (0,1)=BL, (1,1)=BR
