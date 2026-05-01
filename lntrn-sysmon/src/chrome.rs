@@ -2,38 +2,26 @@
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
-// Night sky palette (base colors — opacity applied from config at runtime)
-const BG_DEEP: Color       = Color::rgb(0.003, 0.001, 0.014);
-const BG_SURFACE: Color    = Color::rgb(0.008, 0.003, 0.028);
-const GLOW_PINK: Color     = Color::rgba(0.45, 0.14, 0.32, 0.07);
-const GLOW_CYAN: Color     = Color::rgba(0.14, 0.35, 0.52, 0.07);
-pub const TEXT_PRIMARY: Color   = Color::rgb(0.80, 0.76, 0.90);
-pub const TEXT_SECONDARY: Color = Color::rgb(0.45, 0.40, 0.58);
-pub const BORDER_SUBTLE: Color  = Color::rgba(0.30, 0.20, 0.50, 0.15);
-const CLOSE_BG: Color       = Color::rgb(0.45, 0.02, 0.02);
-const CLOSE_HOVER: Color    = Color::rgba(0.45, 0.02, 0.02, 0.35);
-const CONTROL_HOVER: Color  = Color::rgba(0.50, 0.38, 0.70, 0.25);
-const CONTROL_ICON: Color   = Color::rgb(0.55, 0.50, 0.68);
+// Fox dark-grey palette — matches lntrn-system-settings (linear-space values
+// for sRGB 24,24,24 etc.).
+const FOX_BG: Color             = Color::rgb(0.01032, 0.01032, 0.01032); // sRGB 24,24,24
+pub const TEXT_PRIMARY: Color   = Color::rgb(0.84, 0.84, 0.84);          // sRGB ~236
+pub const TEXT_SECONDARY: Color = Color::rgb(0.38, 0.38, 0.38);          // sRGB ~167
+pub const BORDER_SUBTLE: Color  = Color::rgba(1.0, 1.0, 1.0, 0.08);
+const CLOSE_BG: Color           = Color::rgb(0.56, 0.013, 0.013);        // sRGB ~200,30,30
+const CLOSE_HOVER: Color        = Color::rgba(0.56, 0.013, 0.013, 0.45);
+const CONTROL_HOVER: Color      = Color::rgba(1.0, 1.0, 1.0, 0.12);
+const CONTROL_ICON: Color       = Color::rgb(0.45, 0.45, 0.45);          // sRGB ~180
 
 pub const TITLE_BAR_H: f32 = 40.0;
 pub const CORNER_RADIUS: f32 = 16.0;
 
-/// Draw background gradient + radial glows. Reads global opacity from config.
+/// Draw background — solid Fox dark-grey fill. Reads global opacity from config.
 pub fn draw_background(p: &mut Painter, wf: f32, hf: f32, r: f32) {
     let opacity = lntrn_theme::background_opacity();
-    p.rect_gradient_linear(
+    p.rect_filled(
         Rect::new(0.0, 0.0, wf, hf), r,
-        std::f32::consts::FRAC_PI_2,
-        BG_DEEP.with_alpha(opacity),
-        BG_SURFACE.with_alpha(opacity),
-    );
-    p.rect_gradient_radial(
-        Rect::new(-wf * 0.35, hf * 0.5, wf * 0.8, hf * 0.8), 0.0,
-        GLOW_PINK, Color::TRANSPARENT,
-    );
-    p.rect_gradient_radial(
-        Rect::new(wf * 0.5, -hf * 0.25, wf * 0.8, hf * 0.7), 0.0,
-        GLOW_CYAN, Color::TRANSPARENT,
+        FOX_BG.with_alpha(opacity),
     );
 }
 
@@ -42,7 +30,7 @@ pub fn draw_title(
     t: &mut TextRenderer, title: &str, s: f32,
     wf: f32, title_h: f32, sw: u32, sh: u32,
 ) {
-    let sz = 20.0 * s;
+    let sz = 22.0 * s;
     let tw = sz * 0.55 * title.len() as f32;
     t.queue(title, sz, (wf - tw) * 0.5, (title_h - sz) * 0.5, TEXT_SECONDARY, wf, sw, sh);
 }

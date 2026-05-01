@@ -9,9 +9,25 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, ErrorKind};
+use std::os::fd::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::time::Instant;
+
+fn peer_uid(stream: &UnixStream) -> Option<u32> {
+    let mut ucred: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let ret = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            &mut ucred as *mut _ as *mut libc::c_void,
+            &mut len,
+        )
+    };
+    (ret == 0).then_some(ucred.uid)
+}
 
 use smithay::{
     backend::renderer::element::solid::{SolidColorBuffer, SolidColorRenderElement},
@@ -135,8 +151,19 @@ impl HoverPreview {
         if let Some(ref listener) = self.listener {
             match listener.accept() {
                 Ok((stream, _)) => {
-                    stream.set_nonblocking(true).ok();
-                    self.client = Some(BufReader::new(stream));
+                    let our_uid = unsafe { libc::getuid() };
+                    match peer_uid(&stream) {
+                        Some(uid) if uid == our_uid => {
+                            stream.set_nonblocking(true).ok();
+                            self.client = Some(BufReader::new(stream));
+                        }
+                        other => {
+                            tracing::warn!(
+                                ?other,
+                                "rejecting hover IPC connection from foreign uid"
+                            );
+                        }
+                    }
                 }
                 Err(e) if e.kind() == ErrorKind::WouldBlock => {}
                 Err(e) => {

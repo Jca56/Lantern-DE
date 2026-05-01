@@ -54,6 +54,8 @@ const MENU_OPACITY_SLIDER: u32 = 6;
 const MENU_MOVE_POSITION: u32 = 7;
 const MENU_LAVA_LAMP: u32 = 7;
 const MENU_TRAY_LEFT: u32 = 8;
+const MENU_DOCK_TOGGLE: u32 = 9;
+const DOCK_PADDING_LOGICAL: u32 = 12;
 const MENU_THEME_FOX_DARK: u32 = 20;
 const MENU_THEME_LANTERN: u32 = 21;
 const MENU_THEME_GROUP: u32 = 100;
@@ -99,6 +101,10 @@ pub(crate) struct State {
     height: u32,
     scale: i32,
     output_phys_width: u32,
+    /// Logical width of the full output (set when surface fills the screen).
+    /// Used to compute fractional_scale even when the surface itself is narrower
+    /// (dock mode), so we don't infer a wildly-wrong scale from a small surface.
+    output_logical_width: u32,
     compositor: Option<wl_compositor::WlCompositor>,
     layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
     viewporter: Option<wp_viewporter::WpViewporter>,
@@ -127,7 +133,7 @@ impl State {
         Self {
             running: true, configured: false, frame_done: true, input_dirty: false,
             width: 0, height: BAR_HEIGHT_DEFAULT + MENU_OVERFLOW + SHADOW_PAD,
-            scale: 1, output_phys_width: 0,
+            scale: 1, output_phys_width: 0, output_logical_width: 0,
             compositor: None, layer_shell: None, viewporter: None,
             surface: None, layer_surface: None, seat: None,
             cursor_x: 0.0, cursor_y: 0.0, pointer_in_surface: false,
@@ -139,7 +145,11 @@ impl State {
     }
 
     fn fractional_scale(&self) -> f64 {
-        if self.output_phys_width > 0 && self.width > 0 {
+        // Prefer the cached output logical width — stays valid in dock mode
+        // when the surface itself is narrower than the screen.
+        if self.output_phys_width > 0 && self.output_logical_width > 0 {
+            self.output_phys_width as f64 / self.output_logical_width as f64
+        } else if self.output_phys_width > 0 && self.width > 0 {
             self.output_phys_width as f64 / self.width as f64
         } else {
             self.scale.max(1) as f64
@@ -391,8 +401,17 @@ fn apply_layer_config(
     layer_surface: &zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
     bar_height: u32, anim_t: f32, auto_hide: bool,
     position_top: bool,
+    dock_mode: bool, dock_width: u32,
 ) {
     use zwlr_layer_surface_v1::Anchor;
+    if dock_mode {
+        // Bottom-only anchor auto-centers the surface horizontally on wlroots.
+        layer_surface.set_anchor(Anchor::Bottom);
+        layer_surface.set_margin(0, 0, 0, 0);
+        layer_surface.set_size(dock_width.max(1), surface_height(bar_height));
+        layer_surface.set_exclusive_zone(0);
+        return;
+    }
     let gap = (FLOAT_GAP * (1.0 - anim_t)).round() as i32;
     // Surface extends past the bar by SHADOW_PAD for the shadow to render into,
     // so subtract it from the margin to keep the bar's visual position unchanged.
@@ -467,12 +486,13 @@ fn bar_theme_bg(lantern: bool) -> Color {
 fn save_settings(
     style: BarStyle, auto_hide: bool, height: u32, opacity: f32,
     lava_lamp: bool, position_top: bool, tray_left: bool, lantern_theme: bool,
+    dock_mode: bool,
     pinned: &[crate::appmenu::sysmon::PinnedProcess],
 ) {
     let s = crate::bar_settings::BarSettings {
         floating: style == BarStyle::Floating,
         auto_hide, height, opacity, lava_lamp, position_top, tray_left,
-        lantern_theme,
+        lantern_theme, dock_mode,
         pinned_procs: pinned.iter().map(|p| p.name.clone()).collect(),
     };
     s.save();
@@ -508,6 +528,17 @@ pub fn run() -> Result<()> {
     let mut position_top = saved.position_top;
     let mut tray_left = saved.tray_left;
     let mut lantern_theme = saved.lantern_theme;
+    let mut dock_mode = saved.dock_mode;
+    // Seed with a reasonable minimum so the first commit isn't 1px wide.
+    // The per-frame loop refines this once toplevels are known.
+    let mut dock_width: u32 = 200;
+    let mut prev_dock_width: u32 = 0;
+    if dock_mode {
+        user_style = BarStyle::Floating;
+        anim_t = 0.0;
+        auto_hide = true;
+        position_top = false;
+    }
     let mut bar_opacity: f32 = saved.opacity.clamp(0.0, 1.0);
     let mut lava = crate::lava::LavaLamp::new();
     lava.enabled = saved.lava_lamp;
@@ -519,7 +550,11 @@ pub fn run() -> Result<()> {
         &surface, None, zwlr_layer_shell_v1::Layer::Top,
         "lntrn-bar".to_string(), &qh, (),
     );
-    apply_layer_config(&layer_surface, bar_height, anim_t, auto_hide, position_top);
+    // Always do the first configure in bar mode so we can cache the full
+    // output width for fractional_scale(). If dock_mode is saved as true, we
+    // switch to it after the cache is set below.
+    let pending_dock_after_init = dock_mode;
+    apply_layer_config(&layer_surface, bar_height, anim_t, auto_hide, position_top, false, dock_width);
     set_bar_input_region(&surface, &input_region, bar_height, auto_hide, 0.0, anim_t, position_top);
     surface.commit();
 
@@ -532,6 +567,9 @@ pub fn run() -> Result<()> {
     if state.width == 0 {
         return Err(anyhow!("compositor sent zero-width configure"));
     }
+    // Cache the full-output logical width before any dock_mode shrink could
+    // alter the surface size. fractional_scale() relies on this being stable.
+    state.output_logical_width = state.width;
     event_queue.roundtrip(&mut state)?;
 
     tracing::info!(logical_w = state.width, bar_h = bar_height, "bar configured");
@@ -544,7 +582,7 @@ pub fn run() -> Result<()> {
         vp
     });
 
-    apply_layer_config(&layer_surface, bar_height, anim_t, auto_hide, position_top);
+    apply_layer_config(&layer_surface, bar_height, anim_t, auto_hide, position_top, false, dock_width);
     set_bar_input_region(&surface, &input_region, bar_height, auto_hide, 0.0, anim_t, position_top);
     surface.commit();
 
@@ -642,6 +680,15 @@ pub fn run() -> Result<()> {
 
     tracing::info!("bar ready, entering render loop");
 
+    // If saved settings had dock_mode=true, apply it now that wgpu and
+    // output_logical_width are initialized at full-bar dimensions.
+    if pending_dock_after_init {
+        dock_mode = true;
+        apply_layer_config(&layer_surface, bar_height, anim_t, auto_hide, position_top, dock_mode, dock_width);
+        set_bar_input_region(&surface, &input_region, bar_height, auto_hide, 0.0, anim_t, position_top);
+        surface.commit();
+    }
+
     let mut needs_anim = false;
     while state.running {
         if needs_anim {
@@ -712,6 +759,21 @@ pub fn run() -> Result<()> {
                 vp.set_destination(state.width as i32, state.height as i32);
             }
             context_menu.set_scale(scale_f);
+        }
+
+        // ── Dock mode: recompute hugged width each frame ─────────────
+        if dock_mode {
+            let toplevels = state.tracker.toplevels();
+            let bar_h_phys = bar_height as f32 * scale_f;
+            let measured_phys = app_tray.measure_width(&toplevels, bar_h_phys, scale_f);
+            let measured_logical = (measured_phys / scale_f).ceil() as u32;
+            let new_dock_width = measured_logical.max(1) + 2 * DOCK_PADDING_LOGICAL;
+            if new_dock_width != prev_dock_width {
+                dock_width = new_dock_width;
+                apply_layer_config(&layer_surface, bar_height, anim_t, auto_hide, position_top, dock_mode, dock_width);
+                surface.commit();
+                prev_dock_width = new_dock_width;
+            }
         }
 
         // ── Animation ────────────────────────────────────────────────
@@ -1049,6 +1111,8 @@ pub fn run() -> Result<()> {
                 ]));
                 let pos_label = if position_top { "Move to Bottom" } else { "Move to Top" };
                 items.push(MenuItem::action(MENU_MOVE_POSITION, pos_label));
+                let dock_label = if dock_mode { "Switch to Bar" } else { "Switch to Dock" };
+                items.push(MenuItem::action(MENU_DOCK_TOGGLE, dock_label));
                 items.push(MenuItem::checkbox(MENU_FLOAT_CHECKBOX, "Float", is_floating));
                 items.push(MenuItem::checkbox(MENU_AUTOHIDE_CHECKBOX, "Auto Hide", auto_hide));
                 items.push(MenuItem::checkbox(MENU_LAVA_LAMP, "Lava Lamp", lava.enabled));
@@ -1145,10 +1209,11 @@ pub fn run() -> Result<()> {
         // ── Draw ─────────────────────────────────────────────────────
         painter.clear();
 
-        // Visual bar rect with animated gap
-        let vis_x = gap_phys;
+        // Visual bar rect with animated gap. In dock mode the surface IS
+        // the dock — no horizontal gap, fill width.
+        let vis_x = if dock_mode { 0.0 } else { gap_phys };
         let vis_y = bar_y_offset;
-        let vis_w = phys_w_f - gap_phys * 2.0;
+        let vis_w = if dock_mode { phys_w_f } else { phys_w_f - gap_phys * 2.0 };
 
         // Drag motion — feed cursor to app tray every frame while dragging
         {
@@ -1174,7 +1239,7 @@ pub fn run() -> Result<()> {
         // region shorter than the rest using a single tapered-pill SDF shape.
         // Fill, shadow, and inner-shadow all share the same SDF so the bevel
         // follows the taper curve cleanly.
-        let taper = if is_floating && !lava.enabled {
+        let taper = if is_floating && !lava.enabled && !dock_mode {
             let widget_gap = 6.0 * scale_f;
             let clock_w = clock.measure_width(vis_h);
             let temp_w = temperature.measure(vis_h, scale_f);
@@ -1241,23 +1306,30 @@ pub fn run() -> Result<()> {
         }
 
         // ── Left: launcher button ─────────────────────────────────
-        let launcher_w = app_menu.draw_button(
-            &mut painter, &mut ix, &palette,
-            vis_x, vis_y, vis_h, scale_f,
-        );
+        let launcher_w = if !dock_mode {
+            app_menu.draw_button(
+                &mut painter, &mut ix, &palette,
+                vis_x, vis_y, vis_h, scale_f,
+            )
+        } else { 0.0 };
 
         // ── Workspace pills, just after launcher ─────────────────
-        workspaces.poll();
-        let ws_w = workspaces.draw(
-            &mut painter, &mut text, &mut ix, &palette,
-            vis_x + launcher_w, vis_y, vis_h, scale_f,
-            phys_w, total_phys_h,
-        );
+        let ws_w = if !dock_mode {
+            workspaces.poll();
+            workspaces.draw(
+                &mut painter, &mut text, &mut ix, &palette,
+                vis_x + launcher_w, vis_y, vis_h, scale_f,
+                phys_w, total_phys_h,
+            )
+        } else { 0.0 };
 
         // ── Left-side widgets (app tray left mode swaps order) ───
         let left_after_launcher = vis_x + launcher_w + ws_w + 8.0 * scale_f;
         let tray_left_x;
-        if tray_left {
+        if dock_mode {
+            // Dock fills its own surface flush — apptray gets full width.
+            tray_left_x = Some(vis_x);
+        } else if tray_left {
             // Compute app tray width to position pinned processes after it
             let toplevels = state.tracker.toplevels();
             let tray_w = app_tray.measure_width(&toplevels, vis_h, scale_f);
@@ -1284,13 +1356,15 @@ pub fn run() -> Result<()> {
         let widget_gap = 6.0 * scale_f;
 
         // Clock (rightmost) — two-line: time on top, date below
-        let clock_w = clock.measure_width(vis_h);
-        clock.draw(
-            &mut text, &mut ix, 0.0, palette.text,
-            vis_w, vis_h, vis_x, vis_y,
-            phys_w, total_phys_h,
-        );
-        right_used += clock_w + 10.0 * scale_f; // extra gap before system tray
+        if !dock_mode {
+            let clock_w = clock.measure_width(vis_h);
+            clock.draw(
+                &mut text, &mut ix, 0.0, palette.text,
+                vis_w, vis_h, vis_x, vis_y,
+                phys_w, total_phys_h,
+            );
+            right_used += clock_w + 10.0 * scale_f; // extra gap before system tray
+        }
 
         // Load icons & tick widgets (mutable icon_cache borrows here)
         {
@@ -1335,8 +1409,8 @@ pub fn run() -> Result<()> {
         app_menu.load_icons(&mut icon_cache, &tex_pass, &gpu, scale_f);
 
         // Temperature (left of clock, right of battery)
-        let temp_tex_draws;
-        {
+        let mut temp_tex_draws = Vec::new();
+        if !dock_mode {
             let tw = temperature.measure(vis_h, scale_f);
             let tx = vis_x + vis_w - right_used - widget_gap - tw;
             temp_draw_x = tx;
@@ -1351,22 +1425,24 @@ pub fn run() -> Result<()> {
 
         // Battery (left of temperature)
         let mut battery_tex_draws = Vec::new();
-        if let Some(bat) = &mut battery {
-            let bw = bat.measure(vis_h, scale_f);
-            let bx = vis_x + vis_w - right_used - widget_gap - bw;
-            bat_draw_x = bx;
-            bat_draw_w = bw;
-            let (_, draws) = bat.draw(
-                &mut painter, &mut text, &mut ix, &icon_cache, &palette,
-                bx, vis_y, vis_h, scale_f, phys_w, total_phys_h,
-            );
-            battery_tex_draws = draws;
-            right_used += bw + widget_gap;
+        if !dock_mode {
+            if let Some(bat) = &mut battery {
+                let bw = bat.measure(vis_h, scale_f);
+                let bx = vis_x + vis_w - right_used - widget_gap - bw;
+                bat_draw_x = bx;
+                bat_draw_w = bw;
+                let (_, draws) = bat.draw(
+                    &mut painter, &mut text, &mut ix, &icon_cache, &palette,
+                    bx, vis_y, vis_h, scale_f, phys_w, total_phys_h,
+                );
+                battery_tex_draws = draws;
+                right_used += bw + widget_gap;
+            }
         }
 
         // WiFi (left of battery) — extra gap to separate from battery
-        let wifi_tex_draws;
-        {
+        let mut wifi_tex_draws = Vec::new();
+        if !dock_mode {
             let bat_wifi_gap = widget_gap;
             let ww = wifi.measure(vis_h, scale_f);
             let wx = vis_x + vis_w - right_used - bat_wifi_gap - ww;
@@ -1381,8 +1457,8 @@ pub fn run() -> Result<()> {
         }
 
         // Bluetooth (left of wifi)
-        let bt_tex_draws;
-        {
+        let mut bt_tex_draws = Vec::new();
+        if !dock_mode {
             let bw = bluetooth.measure(vis_h, scale_f);
             let btx = vis_x + vis_w - right_used - widget_gap - bw;
             bt_draw_x = btx;
@@ -1396,8 +1472,8 @@ pub fn run() -> Result<()> {
         }
 
         // Audio (left of bluetooth)
-        let audio_tex_draws;
-        {
+        let mut audio_tex_draws = Vec::new();
+        if !dock_mode {
             let aw = audio.measure(vis_h, scale_f);
             let aud_x = vis_x + vis_w - right_used - widget_gap - aw;
             audio_draw_x = aud_x;
@@ -1412,7 +1488,7 @@ pub fn run() -> Result<()> {
 
         // System tray (left of audio)
         let mut tray_tex_draws = Vec::new();
-        if let Some(tray) = &mut system_tray {
+        if !dock_mode { if let Some(tray) = &mut system_tray {
             tray.poll(&tex_pass, &gpu);
             // Check for dbusmenu ready events
             if let Some(event) = tray.poll_event() {
@@ -1436,7 +1512,7 @@ pub fn run() -> Result<()> {
             );
             tray_tex_draws = draws;
             let _ = right_used + tw;
-        }
+        } }
 
         // ── App tray ─────────────────────────────────────────────────
         let app_tray_tex_draws;
@@ -1511,55 +1587,57 @@ pub fn run() -> Result<()> {
 
         let mut menu_icon_draws = Vec::new();
         let mut menu_modal_icon_draws = Vec::new();
-        app_menu.draw(
-            &mut painter, &mut text, &mut ix, &icon_cache, &palette,
-            vis_x, bar_y_offset, scale_f, phys_w, total_phys_h,
-            &mut menu_icon_draws, &mut menu_modal_icon_draws,
-        );
+        if !dock_mode {
+            app_menu.draw(
+                &mut painter, &mut text, &mut ix, &icon_cache, &palette,
+                vis_x, bar_y_offset, scale_f, phys_w, total_phys_h,
+                &mut menu_icon_draws, &mut menu_modal_icon_draws,
+            );
 
-        // Calendar popup
-        clock.draw_calendar(
-            &mut painter, &mut text, &mut ix, &palette,
-            phys_w_f, bar_y_offset, bar_h_f, position_top, scale_f,
-            phys_w, total_phys_h,
-        );
-
-        // Battery popup
-        if let Some(bat) = &battery {
-            bat.draw_popup(
+            // Calendar popup
+            clock.draw_calendar(
                 &mut painter, &mut text, &mut ix, &palette,
-                bat_draw_x, bat_draw_w, bar_y_offset, bar_h_f, position_top, scale_f,
+                phys_w_f, bar_y_offset, bar_h_f, position_top, scale_f,
+                phys_w, total_phys_h,
+            );
+
+            // Battery popup
+            if let Some(bat) = &battery {
+                bat.draw_popup(
+                    &mut painter, &mut text, &mut ix, &palette,
+                    bat_draw_x, bat_draw_w, bar_y_offset, bar_h_f, position_top, scale_f,
+                    phys_w, total_phys_h,
+                );
+            }
+
+            // Temperature popup
+            temperature.draw_popup(
+                &mut painter, &mut text, &mut ix, &palette,
+                temp_draw_x, temp_draw_w, bar_y_offset, bar_h_f, position_top, scale_f,
+                phys_w, total_phys_h,
+            );
+
+            // WiFi popup
+            wifi.draw_popup(
+                &mut painter, &mut text, &mut ix, &palette,
+                wifi_draw_x, wifi_draw_w, bar_y_offset, bar_h_f, position_top, scale_f,
+                phys_w, total_phys_h,
+            );
+
+            // Bluetooth popup
+            bluetooth.draw_popup(
+                &mut painter, &mut text, &mut ix, &palette,
+                bt_draw_x, bt_draw_w, bar_y_offset, bar_h_f, position_top, scale_f,
+                phys_w, total_phys_h,
+            );
+
+            // Audio popup
+            audio.draw_popup(
+                &mut painter, &mut text, &mut ix, &palette,
+                audio_draw_x, audio_draw_w, bar_y_offset, bar_h_f, position_top, scale_f,
                 phys_w, total_phys_h,
             );
         }
-
-        // Temperature popup
-        temperature.draw_popup(
-            &mut painter, &mut text, &mut ix, &palette,
-            temp_draw_x, temp_draw_w, bar_y_offset, bar_h_f, position_top, scale_f,
-            phys_w, total_phys_h,
-        );
-
-        // WiFi popup
-        wifi.draw_popup(
-            &mut painter, &mut text, &mut ix, &palette,
-            wifi_draw_x, wifi_draw_w, bar_y_offset, bar_h_f, position_top, scale_f,
-            phys_w, total_phys_h,
-        );
-
-        // Bluetooth popup
-        bluetooth.draw_popup(
-            &mut painter, &mut text, &mut ix, &palette,
-            bt_draw_x, bt_draw_w, bar_y_offset, bar_h_f, position_top, scale_f,
-            phys_w, total_phys_h,
-        );
-
-        // Audio popup
-        audio.draw_popup(
-            &mut painter, &mut text, &mut ix, &palette,
-            audio_draw_x, audio_draw_w, bar_y_offset, bar_h_f, position_top, scale_f,
-            phys_w, total_phys_h,
-        );
 
         // Context menu (layer 2 — always on top of popups)
         painter.set_layer(2);
@@ -1569,7 +1647,7 @@ pub fn run() -> Result<()> {
             match event {
                 MenuEvent::CheckboxToggled { id: MENU_FLOAT_CHECKBOX, checked } => {
                     user_style = if checked { BarStyle::Floating } else { BarStyle::Docked };
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, dock_mode, &app_menu.sysmon.pinned);
                     context_menu.close();
                 }
                 MenuEvent::CheckboxToggled { id: MENU_AUTOHIDE_CHECKBOX, checked } => {
@@ -1577,10 +1655,10 @@ pub fn run() -> Result<()> {
                     if !checked {
                         hide_t = 0.0;
                         hide_timer = 0.0;
-                        apply_layer_config(&layer_surface, bar_height, anim_t, auto_hide, position_top);
+                        apply_layer_config(&layer_surface, bar_height, anim_t, auto_hide, position_top, dock_mode, dock_width);
                         surface.commit();
                     }
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, dock_mode, &app_menu.sysmon.pinned);
                     context_menu.close();
                 }
                 MenuEvent::Action(MENU_OPEN_TERMINAL) => {
@@ -1628,58 +1706,82 @@ pub fn run() -> Result<()> {
                 }
                 MenuEvent::Action(MENU_PROC_PIN) => {
                     app_menu.sysmon.pin_right_clicked();
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, dock_mode, &app_menu.sysmon.pinned);
                     context_menu.close();
                 }
                 MenuEvent::Action(MENU_PROC_UNPIN) => {
                     if let Some((name, _)) = app_menu.sysmon.right_clicked_proc.clone() {
                         app_menu.sysmon.unpin(&name);
                     }
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, dock_mode, &app_menu.sysmon.pinned);
                     context_menu.close();
                 }
                 MenuEvent::Action(MENU_PROC_KILL) => {
                     app_menu.sysmon.kill_right_clicked();
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, dock_mode, &app_menu.sysmon.pinned);
                     context_menu.close();
                 }
                 MenuEvent::CheckboxToggled { id: MENU_LAVA_LAMP, checked } => {
                     lava.enabled = checked;
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, dock_mode, &app_menu.sysmon.pinned);
                     context_menu.close();
                 }
                 MenuEvent::RadioSelected { group: MENU_THEME_GROUP, id } => {
                     lantern_theme = id == MENU_THEME_LANTERN;
                     palette.bg = bar_theme_bg(lantern_theme);
                     crate::theme_state::set_lantern(lantern_theme);
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, dock_mode, &app_menu.sysmon.pinned);
                     context_menu.close();
                 }
                 MenuEvent::CheckboxToggled { id: MENU_TRAY_LEFT, checked } => {
                     tray_left = checked;
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, dock_mode, &app_menu.sysmon.pinned);
                     context_menu.close();
                 }
                 MenuEvent::SliderChanged { id: MENU_OPACITY_SLIDER, value } => {
                     bar_opacity = value.clamp(0.0, 1.0);
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, dock_mode, &app_menu.sysmon.pinned);
                 }
                 MenuEvent::SliderChanged { id: MENU_HEIGHT_SLIDER, value } => {
                     bar_height = slider_to_height(value);
                     state.height = surface_height(bar_height);
-                    apply_layer_config(&layer_surface, bar_height, anim_t, auto_hide, position_top);
+                    apply_layer_config(&layer_surface, bar_height, anim_t, auto_hide, position_top, dock_mode, dock_width);
                     gpu.resize(state.phys_width().max(1), state.phys_height().max(1));
                     if let Some(vp) = &viewport {
                         vp.set_destination(state.width as i32, state.height as i32);
                     }
                     surface.commit();
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, dock_mode, &app_menu.sysmon.pinned);
                 }
                 MenuEvent::Action(MENU_MOVE_POSITION) => {
                     position_top = !position_top;
-                    apply_layer_config(&layer_surface, bar_height, anim_t, auto_hide, position_top);
+                    apply_layer_config(&layer_surface, bar_height, anim_t, auto_hide, position_top, dock_mode, dock_width);
                     surface.commit();
-                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, &app_menu.sysmon.pinned);
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, dock_mode, &app_menu.sysmon.pinned);
+                    context_menu.close();
+                }
+                MenuEvent::Action(MENU_DOCK_TOGGLE) => {
+                    dock_mode = !dock_mode;
+                    if dock_mode {
+                        user_style = BarStyle::Floating;
+                        anim_t = 0.0;
+                        auto_hide = true;
+                        position_top = false;
+                        // Pre-compute dock_width from current toplevels so the
+                        // first commit has a sane size, not 1px.
+                        let toplevels = state.tracker.toplevels();
+                        let bar_h_phys = bar_height as f32 * scale_f;
+                        let measured_phys = app_tray.measure_width(&toplevels, bar_h_phys, scale_f);
+                        let measured_logical = (measured_phys / scale_f).ceil() as u32;
+                        dock_width = measured_logical.max(1) + 2 * DOCK_PADDING_LOGICAL;
+                        prev_dock_width = dock_width;
+                    } else {
+                        prev_dock_width = 0;
+                    }
+                    apply_layer_config(&layer_surface, bar_height, anim_t, auto_hide, position_top, dock_mode, dock_width);
+                    set_bar_input_region(&surface, &input_region, bar_height, auto_hide, hide_t, anim_t, position_top);
+                    surface.commit();
+                    save_settings(user_style, auto_hide, bar_height, bar_opacity, lava.enabled, position_top, tray_left, lantern_theme, dock_mode, &app_menu.sysmon.pinned);
                     context_menu.close();
                 }
                 MenuEvent::Action(id) if id >= crate::dbusmenu::DBUSMENU_ID_BASE => {
@@ -1788,7 +1890,7 @@ pub fn run() -> Result<()> {
         if needs_anim {
             surface.frame(&qh, ());
         }
-        apply_layer_config(&layer_surface, bar_height, anim_t, auto_hide, position_top);
+        apply_layer_config(&layer_surface, bar_height, anim_t, auto_hide, position_top, dock_mode, dock_width);
         surface.commit();
     }
 

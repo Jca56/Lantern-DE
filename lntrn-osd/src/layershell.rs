@@ -1,9 +1,25 @@
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::os::unix::net::UnixDatagram;
-use std::path::Path;
+use std::io::{ErrorKind, Read};
+use std::os::fd::AsRawFd;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::ptr::NonNull;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+fn peer_uid(stream: &UnixStream) -> Option<u32> {
+    let mut ucred: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let ret = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            &mut ucred as *mut _ as *mut libc::c_void,
+            &mut len,
+        )
+    };
+    (ret == 0).then_some(ucred.uid)
+}
 
 use anyhow::{anyhow, Result};
 use lntrn_render::{Color, GpuContext, GpuTexture, Painter, Rect, SurfaceError, TextRenderer, TexturePass, TextureDraw};
@@ -287,7 +303,7 @@ fn draw_osd<'a>(
 
 // ── Entry point ─────────────────────────────────────────────────────────────
 
-pub fn run(mut mode: OsdMode, sock: UnixDatagram) -> Result<()> {
+pub fn run(mut mode: OsdMode, sock: UnixListener) -> Result<()> {
     let conn = Connection::connect_to_env()?;
     let display = conn.display();
     let mut event_queue: EventQueue<State> = conn.new_event_queue();
@@ -365,17 +381,35 @@ pub fn run(mut mode: OsdMode, sock: UnixDatagram) -> Result<()> {
 
     let mut last_update = Instant::now();
     let mut recv_buf = [0u8; 64];
+    let our_uid = unsafe { libc::getuid() };
 
     while state.running {
         event_queue.blocking_dispatch(&mut state)?;
         if !state.frame_done { continue; }
         state.frame_done = false;
 
-        // Poll socket for updates (non-blocking)
-        while let Ok(n) = sock.recv(&mut recv_buf) {
-            if let Ok(msg) = std::str::from_utf8(&recv_buf[..n]) {
-                mode = crate::parse_message(msg);
-                last_update = Instant::now();
+        // Poll listener for new commands (non-blocking accept loop).
+        loop {
+            match sock.accept() {
+                Ok((mut stream, _)) => {
+                    match peer_uid(&stream) {
+                        Some(uid) if uid == our_uid => {}
+                        other => {
+                            eprintln!("[lntrn-osd] rejecting connection from foreign uid: {other:?}");
+                            continue;
+                        }
+                    }
+                    // Bound the read so a wedged client can't stall the OSD.
+                    let _ = stream.set_read_timeout(Some(Duration::from_millis(50)));
+                    if let Ok(n) = stream.read(&mut recv_buf) {
+                        if let Ok(msg) = std::str::from_utf8(&recv_buf[..n]) {
+                            mode = crate::parse_message(msg);
+                            last_update = Instant::now();
+                        }
+                    }
+                }
+                Err(e) if e.kind() == ErrorKind::WouldBlock => break,
+                Err(_) => break,
             }
         }
 
@@ -431,6 +465,6 @@ pub fn run(mut mode: OsdMode, sock: UnixDatagram) -> Result<()> {
     }
 
     // Clean up socket
-    let _ = std::fs::remove_file(crate::SOCK_PATH);
+    let _ = std::fs::remove_file(crate::socket_path());
     Ok(())
 }

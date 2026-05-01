@@ -15,6 +15,10 @@ pub enum MenuAction {
     TogglePin,
     ToggleHidden,
     Launch,
+    /// Close the foreign-toplevel window stored in `ContextMenu.window_title`.
+    WindowClose,
+    /// Minimize the foreign-toplevel window stored in `ContextMenu.window_title`.
+    WindowMinimize,
 }
 
 #[derive(Debug, Clone)]
@@ -29,6 +33,8 @@ pub struct MenuItem {
 #[derive(Debug, Clone)]
 pub struct ContextMenu {
     pub app_id: String,
+    /// For window-targeted menus (Open section). Empty for app menus.
+    pub window_title: String,
     pub anchor_x: f32,
     pub anchor_y: f32,
     pub items: Vec<MenuItem>,

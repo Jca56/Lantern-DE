@@ -54,31 +54,62 @@ pub struct PendingScreencopy {
 
 // ── GlobalDispatch: Manager ─────────────────────────────────────────
 
+/// Per-manager-resource data: tracks whether the binding client was
+/// trusted at the moment it bound. Stored on each `ZwlrScreencopyManagerV1`
+/// resource so the request handler can silently no-op on untrusted ones.
+#[derive(Clone, Copy)]
+pub struct ScreencopyManagerData {
+    pub trusted: bool,
+}
+
 impl GlobalDispatch<ZwlrScreencopyManagerV1, (), Lantern> for Lantern {
     fn bind(
         _state: &mut Lantern,
         _dh: &DisplayHandle,
-        _client: &Client,
+        client: &Client,
         resource: New<ZwlrScreencopyManagerV1>,
         _data: &(),
         data_init: &mut DataInit<'_, Lantern>,
     ) {
-        data_init.init(resource, ());
+        // We MUST still init the resource — failing to do so panics
+        // wayland-server. Instead, mark it as untrusted; subsequent
+        // requests are dropped without informing the client (silent
+        // reject, per security model).
+        let trusted = crate::security::is_trusted_client(client);
+        data_init.init(resource, ScreencopyManagerData { trusted });
     }
 }
 
 // ── Dispatch: Manager requests ──────────────────────────────────────
 
-impl Dispatch<ZwlrScreencopyManagerV1, (), Lantern> for Lantern {
+impl Dispatch<ZwlrScreencopyManagerV1, ScreencopyManagerData, Lantern> for Lantern {
     fn request(
         state: &mut Lantern,
         _client: &Client,
         _manager: &ZwlrScreencopyManagerV1,
         request: zwlr_screencopy_manager_v1::Request,
-        _data: &(),
+        data: &ScreencopyManagerData,
         _dh: &DisplayHandle,
         data_init: &mut DataInit<'_, Lantern>,
     ) {
+        if !data.trusted {
+            // Silent reject: don't post a protocol error (don't tip
+            // off the attacker that screencopy is gated). For Capture
+            // requests we still must consume the `New<frame>` — wayland
+            // panics if you drop one without init — so we init it with
+            // empty per-data and immediately send `failed()` so the
+            // client sees a normal "screencopy unavailable" outcome,
+            // indistinguishable from e.g. "no buffer format available".
+            match request {
+                zwlr_screencopy_manager_v1::Request::CaptureOutput { frame, .. }
+                | zwlr_screencopy_manager_v1::Request::CaptureOutputRegion { frame, .. } => {
+                    let frame_obj = data_init.init(frame, None);
+                    frame_obj.failed();
+                }
+                _ => {}
+            }
+            return;
+        }
         match request {
             zwlr_screencopy_manager_v1::Request::CaptureOutput {
                 frame,

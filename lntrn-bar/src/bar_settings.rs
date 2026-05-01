@@ -15,6 +15,7 @@ pub struct BarSettings {
     pub position_top: bool,
     pub tray_left: bool,
     pub lantern_theme: bool,
+    pub dock_mode: bool,
     pub pinned_procs: Vec<String>,
 }
 
@@ -29,6 +30,7 @@ impl Default for BarSettings {
             position_top: false,
             tray_left: false,
             lantern_theme: false,
+            dock_mode: false,
             pinned_procs: Vec::new(),
         }
     }
@@ -58,6 +60,7 @@ impl BarSettings {
                     "position_top" => s.position_top = val == "true",
                     "tray_left" => s.tray_left = val == "true",
                     "lantern_theme" => s.lantern_theme = val == "true",
+                    "dock_mode" => s.dock_mode = val == "true",
                     "pinned_procs" => {
                         if let Some(start) = val.find('[') {
                             if let Some(end) = val.find(']') {
@@ -91,10 +94,11 @@ impl BarSettings {
              position_top = {}\n\
              tray_left = {}\n\
              lantern_theme = {}\n\
+             dock_mode = {}\n\
              pinned_procs = [{}]\n",
             self.floating, self.auto_hide, self.height,
             self.opacity, self.lava_lamp, self.position_top, self.tray_left,
-            self.lantern_theme,
+            self.lantern_theme, self.dock_mode,
             procs.join(", "),
         );
         let _ = std::fs::create_dir_all(crate::bar_config_dir());

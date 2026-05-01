@@ -73,7 +73,7 @@ pub fn draw_panel(
     // Scale: ANIM_SCALE_START → 1.0 as factor goes 0 → 1.
     let s = ANIM_SCALE_START + (1.0 - ANIM_SCALE_START) * factor;
 
-    let base = PanelRect::compute(surface_w, scale);
+    let base = PanelRect::compute_with_height(surface_w, scale, state.desired_panel_h_logical());
 
     // Scale the rect around its own center so it grows from the middle.
     let cx = base.x + base.w / 2.0;
@@ -178,7 +178,7 @@ pub fn draw_content(
 
             if state.search.input.is_empty() && !state.search.all_apps_mode {
                 let top_y = crate::search::content_top_y(panel.rect, panel.scale_factor);
-                crate::launcher::draw(
+                let pins_bottom = crate::launcher::draw(
                     painter,
                     text,
                     &mut icons,
@@ -187,6 +187,24 @@ pub fn draw_content(
                     selected_pin,
                     panel.rect,
                     top_y,
+                    panel.scale_factor,
+                    panel.alpha,
+                    surface_w,
+                    surface_h,
+                );
+                let selected_open = match state.selection {
+                    crate::app::Selection::OpenWindow(i) => Some(i),
+                    _ => None,
+                };
+                crate::launcher::open::draw(
+                    painter,
+                    text,
+                    &mut icons,
+                    &state.toplevels,
+                    &state.apps,
+                    selected_open,
+                    panel.rect,
+                    pins_bottom,
                     panel.scale_factor,
                     panel.alpha,
                     surface_w,
@@ -229,6 +247,24 @@ pub fn draw_content(
         painter.set_layer(1);
         text.set_layer(1);
         crate::launcher::context_menu::draw(
+            painter,
+            text,
+            menu,
+            panel.rect,
+            panel.scale_factor,
+            surface_w,
+            surface_h,
+        );
+        painter.set_layer(0);
+        text.set_layer(0);
+    }
+
+    // 4. Calendar event context menu — same overlay layer so it sits
+    //    above the day-detail panel.
+    if let Some(menu) = &state.controls.clock.event_menu {
+        painter.set_layer(1);
+        text.set_layer(1);
+        crate::controls::clock::draw_event_menu(
             painter,
             text,
             menu,

@@ -339,6 +339,9 @@ pub struct Lantern {
     // Hover preview (bar → compositor IPC for window thumbnails)
     pub hover_preview: crate::hover_preview::HoverPreview,
 
+    // Command Center thumbnails (CC → compositor IPC for in-tile thumbs)
+    pub cc_thumbs: crate::cc_thumbs::CcThumbnails,
+
     // XWayland support
     pub xwayland_state: crate::xwayland::XWaylandState,
     pub xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState,
@@ -364,9 +367,16 @@ impl Lantern {
         let popups = PopupManager::default();
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
         let data_device_state = DataDeviceState::new::<Self>(&dh);
-        let data_control_state = DataControlState::new::<Self, _>(&dh, None, |_| true);
+        let data_control_state = DataControlState::new::<Self, _>(
+            &dh,
+            None,
+            |client| crate::security::is_trusted_client(client),
+        );
         let cursor_shape_manager_state = CursorShapeManagerState::new::<Self>(&dh);
-        let layer_shell_state = WlrLayerShellState::new::<Self>(&dh);
+        let layer_shell_state = WlrLayerShellState::new_with_filter::<Self, _>(
+            &dh,
+            |client| crate::security::is_trusted_client(client),
+        );
         let xdg_decoration_state = XdgDecorationState::new::<Self>(&dh);
         let xdg_activation_state = XdgActivationState::new::<Self>(&dh);
         let idle_inhibit_manager_state = IdleInhibitManagerState::new::<Self>(&dh);
@@ -482,6 +492,7 @@ impl Lantern {
             cursor_theme_name: crate::input::read_input_setting("cursor_theme", "default"),
             input_config_counter: 0,
             hover_preview: crate::hover_preview::HoverPreview::new(),
+            cc_thumbs: crate::cc_thumbs::CcThumbnails::new(),
             xwayland_state: crate::xwayland::XWaylandState::new(),
             xwayland_shell_state,
             override_redirect_windows: Vec::new(),
@@ -504,9 +515,18 @@ impl Lantern {
                 if state.debug_counters.enabled {
                     state.debug_counters.listener_fires += 1;
                 }
+                // Compute trust BEFORE handing the stream to Wayland — we
+                // want the SO_PEERCRED read to capture the connecting
+                // process at its connect-time identity, not whatever it
+                // execs into later.
+                let is_trusted = crate::security::compute_trust_at_connect(&client_stream);
+                let client_state = ClientState {
+                    is_trusted,
+                    ..ClientState::default()
+                };
                 state
                     .display_handle
-                    .insert_client(client_stream, Arc::new(ClientState::default()))
+                    .insert_client(client_stream, Arc::new(client_state))
                     .unwrap();
             })
             .expect("Failed to init the wayland event source.");
@@ -871,6 +891,11 @@ impl Lantern {
 #[derive(Default)]
 pub struct ClientState {
     pub compositor_state: CompositorClientState,
+    /// Whether this client is allowed to bind privileged protocols
+    /// (clipboard, screencopy, foreign-toplevel, layer-shell). Computed
+    /// once at connect time from `/proc/<pid>/exe` via `SO_PEERCRED`.
+    /// See `crate::security::compute_trust_at_connect`.
+    pub is_trusted: bool,
 }
 
 impl ClientData for ClientState {

@@ -7,6 +7,7 @@
 pub mod context_menu;
 pub mod hidden;
 pub mod icons;
+pub mod open;
 pub mod pins;
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
@@ -80,11 +81,36 @@ pub const PIN_TILE_GAP: f32 = 32.0;
 pub const PIN_LABEL_FONT: f32 = 18.0;
 pub const PIN_ROW_TOP_MARGIN: f32 = 24.0;
 pub const PIN_LABEL_GAP: f32 = 12.0;
+/// Vertical gap between pinned rows when pins wrap to multiple rows.
+pub const PIN_ROW_GAP: f32 = 20.0;
 
 /// Total vertical space the pinned row needs (logical px), including
 /// the top margin from the search underline.
 #[allow(dead_code)] // exported for future layout calculations (recents row, etc.)
 pub const PIN_ROW_HEIGHT: f32 = PIN_ROW_TOP_MARGIN + PIN_TILE_SIZE + PIN_LABEL_GAP + PIN_LABEL_FONT;
+
+/// Bottom-y of the rendered pinned section. Mirrors the math inside
+/// `draw` so callers (hit-testing, layout for the Open section) stay in
+/// sync without needing to re-render.
+pub fn pins_section_bottom(panel: Rect, top_y: f32, scale: f32, num_pins: usize) -> f32 {
+    if num_pins == 0 {
+        return top_y;
+    }
+    let pad = input::SEARCH_HORIZONTAL_PAD * scale;
+    let tile_size = PIN_TILE_SIZE * scale;
+    let tile_gap = PIN_TILE_GAP * scale;
+    let label_font = PIN_LABEL_FONT * scale;
+    let label_gap = PIN_LABEL_GAP * scale;
+    let section_label_font = SECTION_LABEL_FONT * scale;
+    let row_gap = PIN_ROW_GAP * scale;
+    let avail_w = panel.w - pad * 2.0;
+    let cols = ((avail_w + tile_gap) / (tile_size + tile_gap)).floor() as usize;
+    let cols = cols.max(1);
+    let cell_h = tile_size + label_gap + label_font;
+    let row_top = top_y + PIN_ROW_TOP_MARGIN * scale + section_label_font + label_gap;
+    let rows = num_pins.div_ceil(cols);
+    row_top + rows as f32 * cell_h + (rows.saturating_sub(1)) as f32 * row_gap
+}
 
 /// White text — user prefers white over the Studio tan everywhere.
 const TEXT_RGB: (u8, u8, u8) = (0xff, 0xff, 0xff);
@@ -152,13 +178,19 @@ pub fn draw(
     );
     y += section_label_font + label_gap;
 
-    // Tile row.
-    let mut x = panel.x + pad;
-    let max_x = panel.x + panel.w - pad;
+    // Tile grid. Compute columns from available width so pins wrap
+    // onto additional rows instead of being clipped at the edge.
+    let row_gap = PIN_ROW_GAP * scale;
+    let avail_w = panel.w - pad * 2.0;
+    let cols = ((avail_w + tile_gap) / (tile_size + tile_gap)).floor() as usize;
+    let cols = cols.max(1);
+    let cell_h = tile_size + label_gap + label_font;
+    let row_top = y;
     for (i, entry) in entries.iter().enumerate() {
-        if x + tile_size > max_x {
-            break;
-        }
+        let col = i % cols;
+        let row = i / cols;
+        let x = panel.x + pad + col as f32 * (tile_size + tile_gap);
+        let y = row_top + row as f32 * (cell_h + row_gap);
 
         let tile_rect = Rect::new(x, y, tile_size, tile_size);
         let is_selected = selected_pin == Some(i);
@@ -201,11 +233,10 @@ pub fn draw(
             surface_w,
             surface_h,
         );
-
-        x += tile_size + tile_gap;
     }
 
-    y + tile_size + label_gap + label_font
+    let rows_used = entries.len().div_ceil(cols);
+    row_top + rows_used as f32 * cell_h + (rows_used.saturating_sub(1)) as f32 * row_gap
 }
 
 const SECONDARY_LABEL_ALPHA: f32 = 0.85;

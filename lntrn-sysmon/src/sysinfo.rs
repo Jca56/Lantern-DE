@@ -247,5 +247,18 @@ fn motherboard() -> String {
     let vendor = read_line("/sys/devices/virtual/dmi/id/board_vendor");
     if name.is_empty() { return "unknown".into(); }
     if vendor.is_empty() { return name; }
-    format!("{} {}", vendor, name)
+    // Trim verbose corporate suffixes so the value fits the info card column.
+    let v = vendor.trim();
+    let short = v
+        .trim_end_matches('.')
+        .trim_end_matches(" CO., LTD")
+        .trim_end_matches(" Co., Ltd")
+        .trim_end_matches(" COMPUTER INC")
+        .trim_end_matches(" Computer Inc")
+        .trim_end_matches(" Corporation")
+        .trim_end_matches(" CORP")
+        .trim_end_matches(" Inc")
+        .trim_end_matches(" INC")
+        .trim();
+    format!("{} {}", short, name)
 }

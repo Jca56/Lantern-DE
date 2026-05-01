@@ -506,6 +506,18 @@ impl ApplicationHandler<UserEvent> for App {
             }
 
             WindowEvent::RedrawRequested => {
+                // If any pane is mid synchronized-update batch (mode 2026)
+                // we MUST NOT paint — the grid is in a half-written state
+                // and rendering it produces visible tearing (floating
+                // letters, duplicated lines). The redraw will be re-armed
+                // when drain_pty observes sync clear, or when the fallback
+                // deadline expires in about_to_wait.
+                let syncing = self.tabs.iter().any(|tab| {
+                    tab.panes.iter().any(|pane| pane.terminal.is_syncing())
+                });
+                if syncing {
+                    return;
+                }
                 self.render_frame();
                 // Process any menu events that occurred during rendering
                 if let Some(action) = self.pending_menu_event.take() {

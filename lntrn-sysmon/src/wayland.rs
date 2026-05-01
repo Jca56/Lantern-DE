@@ -175,8 +175,8 @@ pub fn run() -> Result<()> {
     let wm_base = state.wm_base.clone()
         .ok_or_else(|| anyhow!("xdg_wm_base not available"))?;
 
-    if state.width == 0 { state.width = 960; }
-    if state.height == 0 { state.height = 640; }
+    if state.width == 0 { state.width = 1280; }
+    if state.height == 0 { state.height = 860; }
 
     let surface = compositor.create_surface(&qh, ());
     let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
@@ -225,18 +225,18 @@ pub fn run() -> Result<()> {
     let mut painter = Painter::new(&gpu);
     let mut text = TextRenderer::new(&gpu);
     let mut ix = InteractionContext::new();
-    let fox = FoxPalette::night_sky();
+    let fox = FoxPalette::dark();
     let mut menu_bar = MenuBar::new(&fox);
     let ctx_style = lntrn_ui::gpu::ContextMenuStyle {
         palette: fox.clone(),
-        bg: Color::from_rgba8(18, 12, 40, 240),
-        bg_hover: Color::from_rgba8(50, 120, 200, 50),
-        text: Color::from_rgb8(210, 200, 230),
-        text_muted: Color::from_rgb8(120, 110, 150),
-        text_disabled: Color::from_rgb8(80, 70, 100),
-        separator: Color::from_rgba8(100, 70, 160, 40),
-        border: Color::from_rgba8(80, 55, 140, 50),
-        accent: Color::from_rgb8(65, 165, 230),
+        bg: Color::from_rgba8(28, 28, 28, 240),
+        bg_hover: Color::from_rgba8(255, 255, 255, 18),
+        text: Color::from_rgb8(214, 214, 214),
+        text_muted: Color::from_rgb8(140, 140, 140),
+        text_disabled: Color::from_rgb8(80, 80, 80),
+        separator: Color::from_rgba8(255, 255, 255, 24),
+        border: Color::from_rgba8(255, 255, 255, 30),
+        accent: Color::from_rgb8(232, 180, 75), // gold
         corner_radius: 12.0,
         padding: 5.0,
         item_height: 38.0,
@@ -276,9 +276,13 @@ pub fn run() -> Result<()> {
     // Gather system info once at startup
     let sys = crate::sysinfo::SystemInfo::gather();
     let mut active_tab: usize = 0;
-    let mut proc_list = crate::processes::read_processes();
+    let mut proc_sampler = crate::processes::ProcessSampler::new();
+    let mut proc_sort = crate::processes::Sort::default();
+    let mut proc_list = proc_sampler.sample(proc_sort);
+    let mut selected_pid: Option<u32> = None;
     let mut perf_state = crate::performance::PerfState::new();
     let mut frame_counter: u32 = 0;
+    let mut proc_frame_counter: u32 = 0;
     let mut scroll_y: f32 = 0.0;
     let mut prev_tab: usize = active_tab;
 
@@ -423,6 +427,33 @@ pub fn run() -> Result<()> {
                 // Menu bar consumed the click
             } else if crate::tabs::handle_click(cx, cy, s, title_h + 4.0 * s, &mut active_tab) {
                 // Tab switch
+            } else if active_tab == 1 {
+                // Processes click: select a row or fire the kill button.
+                let tab_h = 44.0 * s;
+                let content_start = title_h + 4.0 * s + tab_h + 1.0 * s;
+                let scrolled_start = content_start - scroll_y;
+                use crate::processes::ProcessAction;
+                match crate::processes::handle_click(
+                    cx, cy, s, scrolled_start, wf, &proc_list, selected_pid,
+                ) {
+                    ProcessAction::Select(pid) => { selected_pid = Some(pid); }
+                    ProcessAction::Kill(pid) => {
+                        let ok = crate::processes::kill_pid(pid);
+                        eprintln!("[sysmon] kill {} -> {}", pid, if ok { "ok" } else { "failed" });
+                        selected_pid = None;
+                        proc_list = proc_sampler.sample(proc_sort);
+                        proc_frame_counter = 0;
+                    }
+                    ProcessAction::SortBy(key) => {
+                        proc_sort.toggle(key);
+                        // Reorder the existing snapshot immediately; next sample will follow.
+                        crate::processes::resort(&mut proc_list, proc_sort);
+                    }
+                    ProcessAction::None => {
+                        selected_pid = None;
+                        ix.on_left_pressed();
+                    }
+                }
             } else {
                 ix.on_left_pressed();
             }
@@ -500,6 +531,7 @@ pub fn run() -> Result<()> {
         // Reset scroll on tab switch
         if active_tab != prev_tab {
             scroll_y = 0.0;
+            selected_pid = None;
             prev_tab = active_tab;
         }
 
@@ -539,12 +571,16 @@ pub fn run() -> Result<()> {
             active_tab, sw, sh,
         );
 
-        // Refresh data periodically (~1s at 60fps)
+        // Refresh perf every ~1s, processes every ~3s (less jumpy when sorting).
         frame_counter += 1;
         if frame_counter >= 60 {
             frame_counter = 0;
-            if active_tab == 1 { proc_list = crate::processes::read_processes(); }
             perf_state.update();
+        }
+        proc_frame_counter += 1;
+        if proc_frame_counter >= 180 {
+            proc_frame_counter = 0;
+            if active_tab == 1 { proc_list = proc_sampler.sample(proc_sort); }
         }
         // Update perf every frame for smooth graphs
         if active_tab == 2 && frame_counter % 4 == 0 {
@@ -579,13 +615,13 @@ pub fn run() -> Result<()> {
         // Hostname as big header under logo
         let header_y = content_y + logo_h + 12.0 * s;
         let hostname = &sys.entries[0].1;
-        let header_sz = 32.0 * s;
+        let header_sz = 40.0 * s;
         let header_w = header_sz * 0.55 * hostname.len() as f32;
         text.queue(hostname, header_sz, (wf - header_w) * 0.5, header_y,
             crate::chrome::TEXT_PRIMARY, wf, sw, sh);
 
         // Accent color labels for specific entries
-        let accent_cyan = Color::from_rgb8(65, 165, 230);
+        let accent_cyan = Color::from_rgb8(232, 180, 75); // gold
         let accent_pink = Color::from_rgb8(230, 90, 140);
         let accent_green = Color::from_rgb8(75, 200, 130);
 
@@ -598,15 +634,20 @@ pub fn run() -> Result<()> {
             }
         }
 
-        // Info card background
+        // Info card — two columns, distributed left-to-right
         let card_pad = 24.0 * s;
-        let info_w = 560.0 * s;
+        let col_w = 460.0 * s;
+        let col_gap = 32.0 * s;
+        let info_w = col_w * 2.0 + col_gap;
         let info_x = (wf - info_w) * 0.5;
-        let row_height = 34.0 * s;
+        let row_height = 40.0 * s;
         let card_y = header_y + header_sz + 16.0 * s;
         // Skip hostname (index 0) since it's the header
-        let row_count = sys.entries.len() - 1;
-        let card_h = row_count as f32 * row_height + card_pad * 2.0;
+        let total_rows = sys.entries.len() - 1;
+        let left_rows = (total_rows + 1) / 2;
+        let right_rows = total_rows - left_rows;
+        let rows_per_col = left_rows.max(right_rows);
+        let card_h = rows_per_col as f32 * row_height + card_pad * 2.0;
 
         content_bottom = card_y + card_h + 24.0 * s;
         {
@@ -618,7 +659,7 @@ pub fn run() -> Result<()> {
             // Card bg
             painter.rect_filled(
                 Rect::new(info_x - card_pad, card_y, info_w + card_pad * 2.0, card_h),
-                12.0 * s, Color::rgba(0.04, 0.02, 0.10, 0.35),
+                12.0 * s, Color::rgba(1.0, 1.0, 1.0, 0.03),
             );
             painter.rect_stroke_sdf(
                 Rect::new(info_x - card_pad, card_y, info_w + card_pad * 2.0, card_h),
@@ -626,23 +667,27 @@ pub fn run() -> Result<()> {
             );
         }
 
-        let label_col_w = 180.0 * s;
-        let label_sz = 20.0 * s;
-        let value_sz = 20.0 * s;
+        let label_col_w = 170.0 * s;
+        let label_sz = 24.0 * s;
+        let value_sz = 24.0 * s;
 
         for (i, (label, value)) in sys.entries.iter().skip(1).enumerate() {
-            let y = card_y + card_pad + i as f32 * row_height;
+            let (col_idx, row_idx) = if i < left_rows { (0, i) } else { (1, i - left_rows) };
+            let col_x = info_x + col_idx as f32 * (col_w + col_gap);
+            let y = card_y + card_pad + row_idx as f32 * row_height;
 
             let lc = label_color(label, accent_cyan, accent_pink, accent_green, crate::chrome::TEXT_SECONDARY);
-            text.queue(label, label_sz, info_x, y, lc, wf, sw, sh);
-            text.queue(value, value_sz, info_x + label_col_w, y,
+            text.queue(label, label_sz, col_x, y, lc, wf, sw, sh);
+            text.queue(value, value_sz, col_x + label_col_w, y,
                 crate::chrome::TEXT_PRIMARY, wf, sw, sh);
 
-            // Subtle separator
-            if i < row_count - 1 {
+            // Subtle row separator within column (skip last row in each column)
+            let is_last_in_col = (col_idx == 0 && row_idx == left_rows - 1)
+                || (col_idx == 1 && row_idx == right_rows.saturating_sub(1));
+            if !is_last_in_col {
                 painter.rect_filled(
-                    Rect::new(info_x, y + row_height - 2.0 * s, info_w, 1.0 * s), 0.0,
-                    Color::rgba(0.30, 0.20, 0.50, 0.08),
+                    Rect::new(col_x, y + row_height - 2.0 * s, col_w, 1.0 * s), 0.0,
+                    Color::rgba(1.0, 1.0, 1.0, 0.04),
                 );
             }
         }
@@ -651,12 +696,13 @@ pub fn run() -> Result<()> {
             // ── Processes ───────────────────────────────────────────────
             crate::processes::draw(
                 &mut painter, &mut text, cx, cy, s, scrolled_start,
-                &proc_list, wf, hf, sw, sh,
+                &proc_list, selected_pid, proc_sort, wf, hf, sw, sh,
             );
-            // Estimate content height: header + rows
-            let row_h = 30.0 * s;
-            let header_h = 34.0 * s;
-            content_bottom = content_start + 10.0 * s + header_h + 4.0 * s
+            // Estimate content height: toolbar + header + rows (match processes::draw)
+            let row_h = 40.0 * s;
+            let header_h = 42.0 * s;
+            let toolbar_h = 50.0 * s;
+            content_bottom = content_start + 10.0 * s + toolbar_h + header_h + 4.0 * s
                 + proc_list.len() as f32 * row_h + 16.0 * s;
         } else if active_tab == 2 {
             // ── Performance ─────────────────────────────────────────────

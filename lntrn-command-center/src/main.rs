@@ -11,6 +11,8 @@ mod launcher;
 mod layershell;
 mod render;
 mod search;
+mod thumbs;
+mod toplevel;
 
 fn main() {
     tracing_subscriber::fmt()

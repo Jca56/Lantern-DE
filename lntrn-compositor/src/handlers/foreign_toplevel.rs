@@ -179,6 +179,15 @@ impl ForeignToplevelManagerState {
             .collect()
     }
 
+    /// Return (surface, app_id, title) for all active toplevels.
+    pub fn surface_app_id_titles(&self) -> Vec<(WlSurface, String, String)> {
+        self.toplevels
+            .iter()
+            .filter(|e| !e.closed)
+            .map(|e| (e.surface.clone(), e.app_id.clone(), e.title.clone()))
+            .collect()
+    }
+
     /// Update the state flags for a toplevel and broadcast.
     pub fn set_states(&mut self, surface: &WlSurface, new_states: Vec<u32>) {
         if let Some(entry) = self
@@ -206,6 +215,14 @@ impl GlobalDispatch<ZwlrForeignToplevelManagerV1, (), Lantern> for Lantern {
         data_init: &mut DataInit<'_, Lantern>,
     ) {
         let mgr = data_init.init(resource, ());
+
+        // Silent reject for untrusted clients: init the resource (must,
+        // or wayland-server panics), but do NOT announce any toplevels
+        // and do NOT register the manager for future broadcasts. From
+        // the client's perspective the compositor just has zero windows.
+        if !crate::security::is_trusted_client(client) {
+            return;
+        }
 
         // Announce all existing toplevels to the new client.
         let ftm = &mut state.foreign_toplevel_state;

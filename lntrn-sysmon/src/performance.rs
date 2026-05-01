@@ -1,12 +1,12 @@
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
-const TEXT_PRIMARY: Color   = Color::rgb(0.88, 0.85, 0.95);
-const TEXT_MUTED: Color     = Color::rgb(0.50, 0.45, 0.62);
-const ACCENT_CYAN: Color    = Color::rgb(0.25, 0.65, 0.90);
+const TEXT_PRIMARY: Color   = Color::rgb(0.85, 0.85, 0.85);
+const TEXT_MUTED: Color     = Color::rgb(0.55, 0.55, 0.55);
+const ACCENT_CYAN: Color    = Color::rgb(0.78, 0.45, 0.06); // gold (CPU graph)
 const ACCENT_PINK: Color    = Color::rgb(0.90, 0.35, 0.55);
 const ACCENT_GREEN: Color   = Color::rgb(0.30, 0.80, 0.50);
-const GRAPH_BG: Color       = Color::rgba(0.04, 0.02, 0.10, 0.35);
-const BORDER: Color         = Color::rgba(0.30, 0.20, 0.50, 0.15);
+const GRAPH_BG: Color       = Color::rgba(1.0, 1.0, 1.0, 0.04);
+const BORDER: Color         = Color::rgba(1.0, 1.0, 1.0, 0.08);
 
 const HISTORY_LEN: usize = 60;
 
@@ -106,8 +106,8 @@ fn draw_graph(
     );
 
     // Label + current value
-    t.queue(label, 18.0 * s, x + 16.0 * s, y + 10.0 * s, color, wf, sw, sh);
-    t.queue(current_val, 18.0 * s, x + w - 80.0 * s, y + 10.0 * s, TEXT_PRIMARY, wf, sw, sh);
+    t.queue(label, 22.0 * s, x + 18.0 * s, y + 10.0 * s, color, wf, sw, sh);
+    t.queue(current_val, 22.0 * s, x + w - 96.0 * s, y + 10.0 * s, TEXT_PRIMARY, wf, sw, sh);
 }
 
 pub fn draw(
@@ -142,6 +142,6 @@ pub fn draw(
     let info_y = mem_y + graph_h + graph_gap;
     let load = std::fs::read_to_string("/proc/loadavg").unwrap_or_default();
     let load_str = load.split_whitespace().take(3).collect::<Vec<_>>().join("  ");
-    t.queue("Load Average", 16.0 * s, pad, info_y, TEXT_MUTED, wf, sw, sh);
-    t.queue(&load_str, 18.0 * s, pad + 160.0 * s, info_y, ACCENT_GREEN, wf, sw, sh);
+    t.queue("Load Average", 20.0 * s, pad, info_y, TEXT_MUTED, wf, sw, sh);
+    t.queue(&load_str, 22.0 * s, pad + 200.0 * s, info_y, ACCENT_GREEN, wf, sw, sh);
 }

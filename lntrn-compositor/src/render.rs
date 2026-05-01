@@ -299,6 +299,39 @@ pub fn render_surface(
         Vec::new()
     };
 
+    // ── Command Center thumbnail pre-computation ─────────────────────
+    state.cc_thumbs.poll();
+    let cc_slots_and_windows: Vec<(crate::cc_thumbs::ThumbSlot, Window)> = {
+        let slots = state.cc_thumbs.slots();
+        if slots.is_empty() {
+            Vec::new()
+        } else {
+            let toplevels = state.foreign_toplevel_state.surface_app_id_titles();
+            slots
+                .iter()
+                .filter_map(|slot| {
+                    // Prefer (app_id, title) match; fall back to app_id-only if
+                    // title doesn't match (e.g. title raced an update).
+                    let surf = toplevels
+                        .iter()
+                        .find(|(_, a, t)| a == &slot.app_id && t == &slot.title)
+                        .or_else(|| toplevels.iter().find(|(_, a, _)| a == &slot.app_id))
+                        .map(|(s, _, _)| s.clone())?;
+                    let win = state
+                        .find_mapped_window(&surf)
+                        .or_else(|| {
+                            state
+                                .minimized_windows
+                                .iter()
+                                .find(|m| m.surface == surf)
+                                .map(|m| m.window.clone())
+                        })?;
+                    Some((slot.clone(), win))
+                })
+                .collect()
+        }
+    };
+
     // Decay cursor spin-to-grow scale each frame (must be before udev borrow)
     let spin_needs_redraw = state.cursor.tick_spin_decay();
 
@@ -956,6 +989,52 @@ pub fn render_surface(
         // Card background (behind thumbnails)
         for card_elem in hover_card {
             elements.push(CustomRenderElements::Overlay(card_elem));
+        }
+    }
+
+    // ── Command Center in-tile thumbnails ─────────────────────────────
+    // Pushed BEFORE layer-surface insertion (later in this fn) so they
+    // sit IN FRONT of the CC panel layer surface in z-order (Smithay
+    // renders elements front-to-back from index 0).
+    if !cc_slots_and_windows.is_empty() {
+        for (ref slot, ref win) in &cc_slots_and_windows {
+            let win_geo = win.geometry();
+            if win_geo.size.w <= 0 || win_geo.size.h <= 0 {
+                continue;
+            }
+            let scale_x = slot.rect.size.w as f64 / win_geo.size.w as f64;
+            let scale_y = slot.rect.size.h as f64 / win_geo.size.h as f64;
+            let thumb_scale = scale_x.min(scale_y);
+            let rendered_w = (win_geo.size.w as f64 * thumb_scale).round() as i32;
+            let rendered_h = (win_geo.size.h as f64 * thumb_scale).round() as i32;
+            let offset_x = (slot.rect.size.w - rendered_w) / 2;
+            let offset_y = (slot.rect.size.h - rendered_h) / 2;
+            let content_phys: Point<i32, Physical> = (
+                ((slot.rect.loc.x + offset_x) as f64 * output_scale).round() as i32,
+                ((slot.rect.loc.y + offset_y) as f64 * output_scale).round() as i32,
+            )
+                .into();
+            let geo_loc = win_geo.loc;
+            let base_phys: Point<i32, Physical> = (
+                content_phys.x - (geo_loc.x as f64 * output_scale).round() as i32,
+                content_phys.y - (geo_loc.y as f64 * output_scale).round() as i32,
+            )
+                .into();
+            let full_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> = win
+                .render_elements(
+                    renderer,
+                    base_phys,
+                    smithay::utils::Scale::from(output_scale),
+                    1.0,
+                );
+            for elem in full_elements {
+                let rescaled = RescaleRenderElement::from_element(
+                    elem,
+                    content_phys,
+                    smithay::utils::Scale::from(thumb_scale),
+                );
+                elements.push(CustomRenderElements::Rescaled(rescaled));
+            }
         }
     }
 

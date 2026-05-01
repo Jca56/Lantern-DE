@@ -80,13 +80,14 @@ pub enum DragTarget {
 pub enum Selection {
     Pin(usize),
     Result(usize),
+    OpenWindow(usize),
 }
 
 impl Selection {
     #[allow(dead_code)] // utility for future controls/grid navigation
     pub fn idx(self) -> usize {
         match self {
-            Selection::Pin(i) | Selection::Result(i) => i,
+            Selection::Pin(i) | Selection::Result(i) | Selection::OpenWindow(i) => i,
         }
     }
 }
@@ -110,6 +111,26 @@ pub struct AppState {
     pub dragging: Option<DragTarget>,
     /// Right-click context menu, if currently open. `None` = closed.
     pub context_menu: Option<ContextMenu>,
+    /// Snapshot of currently-open windows from the foreign_toplevel
+    /// client. Refreshed by the render loop each frame.
+    pub toplevels: Vec<crate::toplevel::ToplevelInfo>,
+    /// Pending window actions queued by the click handlers, drained by
+    /// the render loop and dispatched against the live toplevel handles.
+    pub window_actions: Vec<WindowAction>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WindowAction {
+    pub app_id: String,
+    pub title: String,
+    pub kind: WindowActionKind,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum WindowActionKind {
+    Activate,
+    Close,
+    Minimize,
 }
 
 impl AppState {
@@ -125,7 +146,40 @@ impl AppState {
             mode: PanelMode::Launcher,
             dragging: None,
             context_menu: None,
+            toplevels: Vec::new(),
+            window_actions: Vec::new(),
         }
+    }
+
+    /// Desired panel height (logical px) for the current content. Grows
+    /// past `PANEL_H_LOGICAL_PHASE1` when the launcher's pinned/open
+    /// sections need more rows than the default fits. Falls back to the
+    /// default for non-launcher modes.
+    pub fn desired_panel_h_logical(&self) -> f32 {
+        if !matches!(self.mode, PanelMode::Launcher) {
+            return PANEL_H_LOGICAL_PHASE1;
+        }
+        if !self.search.input.is_empty() || self.search.all_apps_mode {
+            return PANEL_H_LOGICAL_PHASE1;
+        }
+
+        // Offset from panel top to the start of the launcher content.
+        let top_offset = crate::controls::total_logical_height()
+            + crate::search::input::SEARCH_HORIZONTAL_PAD * 0.5
+            + crate::search::input::SEARCH_ROW_HEIGHT;
+
+        // Pinned section height at scale=1: reuse the same math the
+        // renderer uses by computing bottom - top with top=0.
+        let logical_panel = lntrn_render::Rect::new(0.0, 0.0, PANEL_W_LOGICAL, 0.0);
+        let pinned_count = self.launcher.pinned_entries(&self.apps).len();
+        let pin_h = crate::launcher::pins_section_bottom(logical_panel, 0.0, 1.0, pinned_count);
+
+        let open_count = crate::launcher::open::visible_entries(&self.toplevels).len();
+        let open_h = crate::launcher::open::section_height_logical(PANEL_W_LOGICAL, open_count);
+
+        const BOTTOM_PAD: f32 = 24.0;
+        let needed = top_offset + pin_h + open_h + BOTTOM_PAD;
+        needed.max(PANEL_H_LOGICAL_PHASE1)
     }
 
     /// Trigger an open animation. No-op if already opening or visible.
@@ -180,6 +234,14 @@ impl AppState {
     pub fn handle_esc(&mut self) {
         if self.context_menu.is_some() {
             self.context_menu = None;
+        } else if self.controls.clock.event_menu.is_some() {
+            self.controls.clock.event_menu = None;
+        } else if self.controls.clock.add_event_input.is_some() {
+            self.controls.clock.add_event_input = None;
+        } else if self.controls.clock.selected_day.is_some()
+            && self.mode == PanelMode::Control(crate::controls::TileId::Clock)
+        {
+            self.controls.clock.selected_day = None;
         } else if self.controls.wifi.prompt.is_some() {
             self.controls.wifi.close_prompt();
         } else if self.controls.bluetooth.incoming_request.is_some() {
@@ -239,10 +301,8 @@ impl AppState {
                     self.selection = Selection::Result(i + 1);
                 }
             }
-            Selection::Pin(_) => {
-                // Pins live in a single row — Down has no effect; a
-                // future controls row would be reachable via Down.
-            }
+            Selection::Pin(_) => {}
+            Selection::OpenWindow(_) => {}
         }
     }
 
@@ -284,6 +344,7 @@ impl AppState {
                 .results()
                 .get(i)
                 .and_then(|r| self.apps.get(r.entry_idx)),
+            Selection::OpenWindow(_) => None,
         }
     }
 
@@ -322,9 +383,49 @@ impl AppState {
     ) -> Option<HitTarget> {
         if self.search.input.is_empty() && !self.search.all_apps_mode {
             self.hit_test_pins(panel_rect, scale, phys_x, phys_y)
+                .or_else(|| self.hit_test_open(panel_rect, scale, phys_x, phys_y))
         } else {
             self.hit_test_results(panel_rect, scale, phys_x, phys_y)
         }
+    }
+
+    fn hit_test_open(
+        &self,
+        panel_rect: PanelRect,
+        scale: f32,
+        phys_x: f32,
+        phys_y: f32,
+    ) -> Option<HitTarget> {
+        use crate::launcher::open;
+        use crate::search::input::{SEARCH_HORIZONTAL_PAD, SEARCH_ROW_HEIGHT};
+        use lntrn_render::Rect;
+
+        let panel = Rect::new(panel_rect.x, panel_rect.y, panel_rect.w, panel_rect.h);
+        let pad = SEARCH_HORIZONTAL_PAD * scale;
+        let pin_top_y = panel.y
+            + crate::controls::total_logical_height() * scale
+            + (SEARCH_HORIZONTAL_PAD * 0.5 + SEARCH_ROW_HEIGHT) * scale;
+        let pinned_count = self.launcher.pinned_entries(&self.apps).len();
+        let pins_bottom =
+            crate::launcher::pins_section_bottom(panel, pin_top_y, scale, pinned_count);
+
+        let visible = open::visible_entries(&self.toplevels);
+        if visible.is_empty() {
+            let _ = pad; // silence unused if list empty
+            return None;
+        }
+
+        let row_top = pins_bottom
+            + open::OPEN_SECTION_TOP_MARGIN * scale
+            + crate::launcher::open::heading_advance(scale);
+
+        for (i, _entry) in visible.iter().enumerate() {
+            let r = open::tile_rect(panel, row_top, scale, i);
+            if phys_x >= r.x && phys_x <= r.x + r.w && phys_y >= r.y && phys_y <= r.y + r.h {
+                return Some(HitTarget::OpenWindow(i));
+            }
+        }
+        None
     }
 
     fn hit_test_pins(
@@ -334,7 +435,7 @@ impl AppState {
         phys_x: f32,
         phys_y: f32,
     ) -> Option<HitTarget> {
-        use crate::launcher::{PIN_LABEL_FONT, PIN_LABEL_GAP, PIN_ROW_TOP_MARGIN, PIN_TILE_GAP, PIN_TILE_SIZE};
+        use crate::launcher::{PIN_LABEL_FONT, PIN_LABEL_GAP, PIN_ROW_GAP, PIN_ROW_TOP_MARGIN, PIN_TILE_GAP, PIN_TILE_SIZE};
         use crate::search::input::{SEARCH_HORIZONTAL_PAD, SEARCH_ROW_HEIGHT};
 
         let pad = SEARCH_HORIZONTAL_PAD * scale;
@@ -354,24 +455,28 @@ impl AppState {
             + PIN_ROW_TOP_MARGIN * scale
             + section_label_font
             + label_gap;
-        let row_bottom = row_top + tile_size;
-
-        if phys_y < row_top || phys_y > row_bottom {
-            return None;
-        }
 
         let pinned = self.launcher.pinned_entries(&self.apps);
         if pinned.is_empty() {
             return None;
         }
 
-        let mut x = panel_rect.x + pad;
+        let row_gap = PIN_ROW_GAP * scale;
+        let avail_w = panel_rect.w - pad * 2.0;
+        let cols = ((avail_w + tile_gap) / (tile_size + tile_gap)).floor() as usize;
+        let cols = cols.max(1);
+        let cell_h = tile_size + label_gap + section_label_font;
+
         for (i, _entry) in pinned.iter().enumerate() {
-            let tile_right = x + tile_size;
-            if phys_x >= x && phys_x <= tile_right {
+            let col = i % cols;
+            let row = i / cols;
+            let x = panel_rect.x + pad + col as f32 * (tile_size + tile_gap);
+            let y = row_top + row as f32 * (cell_h + row_gap);
+            if phys_x >= x && phys_x <= x + tile_size
+                && phys_y >= y && phys_y <= y + tile_size
+            {
                 return Some(HitTarget::Pin(i));
             }
-            x = tile_right + tile_gap;
         }
         None
     }
@@ -482,11 +587,31 @@ impl AppState {
                 .get(i)
                 .and_then(|r| self.apps.get(r.entry_idx))
                 .map(|e| e.app_id.clone()),
+            HitTarget::OpenWindow(i) => {
+                let visible = crate::launcher::open::visible_entries(&self.toplevels);
+                if let Some(t) = visible.get(i) {
+                    let title = t.title.clone();
+                    let app_id = t.app_id.clone();
+                    let items = vec![
+                        MenuItem { label: "Close".into(), action: MenuAction::WindowClose },
+                        MenuItem { label: "Minimize".into(), action: MenuAction::WindowMinimize },
+                    ];
+                    self.context_menu = Some(ContextMenu {
+                        app_id,
+                        window_title: title,
+                        anchor_x: phys_x,
+                        anchor_y: phys_y,
+                        items,
+                    });
+                }
+                return;
+            }
         };
         let Some(app_id) = app_id else { return };
         let items = self.menu_items_for(&app_id);
         self.context_menu = Some(ContextMenu {
             app_id,
+            window_title: String::new(),
             anchor_x: phys_x,
             anchor_y: phys_y,
             items,
@@ -512,6 +637,21 @@ impl AppState {
                 } else if !self.search.input.is_empty() {
                     self.search.refresh_results(&self.apps, self.launcher.hidden());
                 }
+            }
+            MenuAction::WindowClose => {
+                self.window_actions.push(WindowAction {
+                    app_id: menu.app_id.clone(),
+                    title: menu.window_title.clone(),
+                    kind: WindowActionKind::Close,
+                });
+            }
+            MenuAction::WindowMinimize => {
+                self.window_actions.push(WindowAction {
+                    app_id: menu.app_id.clone(),
+                    title: menu.window_title.clone(),
+                    kind: WindowActionKind::Minimize,
+                });
+                self.close();
             }
             MenuAction::Launch => {
                 if let Some(entry) = (0..self.apps.count())
@@ -542,6 +682,7 @@ impl AppState {
                 .get(i)
                 .and_then(|r| self.apps.get(r.entry_idx))
                 .map(|e| e.app_id.clone()),
+            HitTarget::OpenWindow(_) => None,
         };
         if let Some(id) = app_id {
             self.launcher.toggle_pin(&id);
@@ -551,11 +692,29 @@ impl AppState {
     /// Activate (launch) the entry at `target`, no matter what selection
     /// was previously highlighted. Used by left-click in the panel.
     pub fn activate_at(&mut self, target: HitTarget) -> bool {
-        self.selection = match target {
-            HitTarget::Pin(i) => Selection::Pin(i),
-            HitTarget::Result(i) => Selection::Result(i),
-        };
-        self.launch_selected()
+        match target {
+            HitTarget::Pin(i) => {
+                self.selection = Selection::Pin(i);
+                self.launch_selected()
+            }
+            HitTarget::Result(i) => {
+                self.selection = Selection::Result(i);
+                self.launch_selected()
+            }
+            HitTarget::OpenWindow(i) => {
+                let visible = crate::launcher::open::visible_entries(&self.toplevels);
+                if let Some(t) = visible.get(i) {
+                    self.window_actions.push(WindowAction {
+                        app_id: t.app_id.clone(),
+                        title: t.title.clone(),
+                        kind: WindowActionKind::Activate,
+                    });
+                    self.close();
+                    return true;
+                }
+                false
+            }
+        }
     }
 
     /// Trigger a close animation. No-op if already closing or hidden.
@@ -563,6 +722,9 @@ impl AppState {
     pub fn close(&mut self) {
         let now = Instant::now();
         self.context_menu = None;
+        // Calendar always reopens on the current month — drop any
+        // forward/back navigation the user did before closing.
+        self.controls.clock.reset_month();
         match self.visibility {
             Visibility::Hidden | Visibility::Closing => {}
             Visibility::Visible => {
@@ -652,6 +814,7 @@ impl AppState {
 pub enum HitTarget {
     Pin(usize),
     Result(usize),
+    OpenWindow(usize),
 }
 
 /// Spawn a detached child process from a `.desktop` `Exec=` line.
@@ -706,12 +869,21 @@ pub struct PanelRect {
 
 impl PanelRect {
     /// Compute panel rect at the given scale, centered horizontally,
-    /// `PANEL_TOP_MARGIN_LOGICAL` below the top edge. The panel size is
-    /// fixed — the content area below the controls row swaps modes
-    /// instead of growing to fit different views.
+    /// `PANEL_TOP_MARGIN_LOGICAL` below the top edge. Height defaults to
+    /// `PANEL_H_LOGICAL_PHASE1`; callers that need dynamic growth (e.g.
+    /// the launcher's Open section spilling onto more rows) should use
+    /// [`PanelRect::compute_with_height`].
+    #[allow(dead_code)] // kept for callers that don't need dynamic height
     pub fn compute(surface_w: u32, scale: f32) -> Self {
+        Self::compute_with_height(surface_w, scale, PANEL_H_LOGICAL_PHASE1)
+    }
+
+    /// Same as [`compute`] but with the logical height supplied by the
+    /// caller — used to grow the panel when content (open windows,
+    /// pinned rows, etc.) exceeds the default.
+    pub fn compute_with_height(surface_w: u32, scale: f32, h_logical: f32) -> Self {
         let w = PANEL_W_LOGICAL * scale;
-        let h = PANEL_H_LOGICAL_PHASE1 * scale;
+        let h = h_logical * scale;
         let x = (surface_w as f32 - w) / 2.0;
         let y = PANEL_TOP_MARGIN_LOGICAL * scale;
         Self { x, y, w, h }

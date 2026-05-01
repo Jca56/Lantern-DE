@@ -41,6 +41,16 @@ pub struct Network {
     pub security: String,
     pub in_use: bool,
     pub saved: bool,
+    /// AP hardware MAC, e.g. "AA:BB:CC:DD:EE:FF". Empty if unknown.
+    pub bssid: String,
+    /// e.g. "Infra" / "Mesh".
+    pub mode: String,
+    /// Channel number as a string (kept as-is from nmcli).
+    pub channel: String,
+    /// Frequency, e.g. "5180 MHz".
+    pub frequency: String,
+    /// Negotiated bitrate, e.g. "270 Mbit/s".
+    pub rate: String,
 }
 
 /// Commands sent from the render thread → worker thread.
@@ -73,6 +83,18 @@ pub struct Wifi {
     /// When `Some`, all keyboard input goes into the modal's `Input`
     /// instead of the launcher's search field.
     pub prompt: Option<PasswordPrompt>,
+    /// SSID of the network we're currently trying to connect to, or
+    /// `None` if no connect attempt is in flight. Drives the
+    /// "Connecting…" status text + lets the click handler debounce
+    /// duplicate clicks while a connect is pending.
+    connecting_ssid: Option<String>,
+    /// SSID under the pointer, used for the subtle hover-highlight on
+    /// network rows. Set externally by the layershell pointer-motion
+    /// handler; cleared when the cursor leaves the WiFi view.
+    pub hovered_ssid: Option<String>,
+    /// SSID of the row currently expanded to show details + Connect.
+    /// Only one row may be expanded at a time. None = collapsed list.
+    pub expanded_ssid: Option<String>,
 }
 
 /// State for the password-entry modal that overlays the WiFi view.
@@ -121,7 +143,15 @@ impl Wifi {
             cmd_tx,
             event_rx,
             prompt: None,
+            connecting_ssid: None,
+            hovered_ssid: None,
+            expanded_ssid: None,
         }
+    }
+
+    /// True if a connect attempt to `ssid` is currently in flight.
+    pub fn is_connecting_to(&self, ssid: &str) -> bool {
+        self.connecting_ssid.as_deref() == Some(ssid)
     }
 
     pub fn is_present(&self) -> bool {
@@ -151,6 +181,7 @@ impl Wifi {
                     self.last_error = None;
                     // Successful connect → clear the modal if any.
                     self.prompt = None;
+                    self.connecting_ssid = None;
                 }
                 WifiEvent::ConnectFail(msg) => {
                     self.last_error = Some(msg);
@@ -158,6 +189,7 @@ impl Wifi {
                         // Stay in the modal so the user can retry.
                         p.connecting = false;
                     }
+                    self.connecting_ssid = None;
                 }
             }
         }
@@ -187,6 +219,7 @@ impl Wifi {
         let password = prompt.input.query().to_string();
         prompt.connecting = true;
         self.last_error = None;
+        self.connecting_ssid = Some(ssid.clone());
         let _ = self.cmd_tx.send(WifiCmd::Connect {
             ssid,
             password: Some(password),
@@ -202,7 +235,9 @@ impl Wifi {
 
     /// Attempt to connect to `ssid`. If `password` is `None`, the worker
     /// tries the saved connection first, then a bare open-network connect.
-    pub fn connect(&self, ssid: &str, password: Option<String>) {
+    pub fn connect(&mut self, ssid: &str, password: Option<String>) {
+        self.connecting_ssid = Some(ssid.to_string());
+        self.last_error = None;
         let _ = self.cmd_tx.send(WifiCmd::Connect {
             ssid: ssid.to_string(),
             password,
@@ -357,8 +392,12 @@ fn signal_for_ssid(ssid: &str) -> u32 {
 fn scan_networks() -> Vec<Network> {
     let out = Command::new("nmcli")
         .args([
-            "-t", "-f", "SSID,SIGNAL,SECURITY,IN-USE",
-            "dev", "wifi", "list",
+            "-t",
+            "-f",
+            "SSID,BSSID,MODE,CHAN,FREQ,RATE,SIGNAL,SECURITY,IN-USE",
+            "dev",
+            "wifi",
+            "list",
         ])
         .output();
     let Ok(out) = out else { return Vec::new() };
@@ -372,9 +411,9 @@ fn scan_networks() -> Vec<Network> {
             String::from_utf8_lossy(&o.stdout)
                 .lines()
                 .filter_map(|l| {
-                    let parts: Vec<&str> = l.split(':').collect();
+                    let parts = split_nmcli_t(l);
                     if parts.len() >= 2 && parts[1] == "802-11-wireless" {
-                        Some(parts[0].to_string())
+                        Some(parts[0].clone())
                     } else {
                         None
                     }
@@ -386,19 +425,35 @@ fn scan_networks() -> Vec<Network> {
     let mut nets = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for line in stdout.lines() {
-        let parts: Vec<&str> = line.split(':').collect();
-        if parts.len() < 4 {
+        let parts = split_nmcli_t(line);
+        if parts.len() < 9 {
             continue;
         }
-        let ssid = parts[0].to_string();
+        let ssid = parts[0].clone();
         if ssid.is_empty() || !seen.insert(ssid.clone()) {
             continue;
         }
-        let signal: u32 = parts[1].parse().unwrap_or(0);
-        let security = parts[2].to_string();
-        let in_use = parts[3] == "*";
+        let bssid = parts[1].clone();
+        let mode = parts[2].clone();
+        let channel = parts[3].clone();
+        let frequency = parts[4].clone();
+        let rate = parts[5].clone();
+        let signal: u32 = parts[6].parse().unwrap_or(0);
+        let security = parts[7].clone();
+        let in_use = parts[8] == "*";
         let saved = saved.iter().any(|n| n == &ssid);
-        nets.push(Network { ssid, signal, security, in_use, saved });
+        nets.push(Network {
+            ssid,
+            signal,
+            security,
+            in_use,
+            saved,
+            bssid,
+            mode,
+            channel,
+            frequency,
+            rate,
+        });
     }
 
     // Sort: in-use first, then saved, then by signal desc.
@@ -409,6 +464,33 @@ fn scan_networks() -> Vec<Network> {
             .then(b.signal.cmp(&a.signal))
     });
     nets
+}
+
+/// Split a single line of `nmcli -t` output, respecting backslash
+/// escapes so colons inside fields (like BSSIDs) survive intact.
+fn split_nmcli_t(line: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                // Escape: take the next char literally.
+                if let Some(&next) = chars.peek() {
+                    cur.push(next);
+                    chars.next();
+                } else {
+                    cur.push(c);
+                }
+            }
+            ':' => {
+                out.push(std::mem::take(&mut cur));
+            }
+            _ => cur.push(c),
+        }
+    }
+    out.push(cur);
+    out
 }
 
 // ── Inline tile ─────────────────────────────────────────────────────────────
@@ -497,14 +579,101 @@ const ROW_SIGNAL_GAP: f32 = 16.0;
 const ROW_LOCK_SIZE: f32 = 20.0;
 const ROW_RIGHT_GAP: f32 = 12.0;
 const MAX_NETWORK_ROWS: usize = 6;
+/// Logical px reserved for the expanded detail+button area beneath
+/// the row header. One detail line per displayed property.
+const EXPAND_PAD_TOP: f32 = 8.0;
+const EXPAND_PAD_BOTTOM: f32 = 12.0;
+const EXPAND_LINE_GAP: f32 = 4.0;
+const EXPAND_DETAIL_FONT: f32 = 16.0;
+const EXPAND_LABEL_W_FRAC: f32 = 0.28;
+const EXPAND_BUTTON_TOP_GAP: f32 = 12.0;
+const EXPAND_BUTTON_H: f32 = 38.0;
+const EXPAND_BUTTON_FONT: f32 = 18.0;
+const EXPAND_BUTTON_W: f32 = 140.0;
 
 /// Y-coordinate (physical px) of the first network row.
 fn row_list_top_y(panel_top_y: f32, scale: f32) -> f32 {
     panel_top_y + VIEW_TOP_PAD * scale + VIEW_HEADER_FONT * scale + VIEW_HEADER_BOTTOM_GAP * scale
 }
 
-/// Hit-test a click against the network list. Returns the SSID at the
-/// clicked row (cloned), if any.
+/// All non-empty detail rows for an expanded network, as
+/// (label, value) pairs. Order is the order rendered top-to-bottom.
+fn detail_rows(net: &Network) -> Vec<(&'static str, String)> {
+    let mut rows: Vec<(&'static str, String)> = Vec::new();
+    rows.push(("Status", if net.in_use { "Connected".into() } else if net.saved { "Saved".into() } else { "Not saved".into() }));
+    rows.push(("Signal", format!("{}%", net.signal)));
+    let security = if net.security.is_empty() || net.security == "--" {
+        "Open".to_string()
+    } else {
+        net.security.clone()
+    };
+    rows.push(("Security", security));
+    if !net.bssid.is_empty() {
+        rows.push(("BSSID", net.bssid.clone()));
+    }
+    if !net.mode.is_empty() {
+        rows.push(("Mode", net.mode.clone()));
+    }
+    if !net.channel.is_empty() {
+        rows.push(("Channel", net.channel.clone()));
+    }
+    if !net.frequency.is_empty() {
+        // Append the band label (2.4 / 5 / 6 GHz) when we can parse
+        // the MHz value — friendlier than the raw channel frequency.
+        let display = if let Some(band) = band_label(&net.frequency) {
+            format!("{} ({})", net.frequency, band)
+        } else {
+            net.frequency.clone()
+        };
+        rows.push(("Frequency", display));
+    }
+    if !net.rate.is_empty() {
+        rows.push(("Rate", net.rate.clone()));
+    }
+    rows
+}
+
+/// Map an nmcli frequency string (e.g. "5180 MHz" or "5180") to a
+/// friendly band label. Returns None if we can't parse a number out.
+fn band_label(freq: &str) -> Option<&'static str> {
+    let mhz: u32 = freq
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()?;
+    Some(match mhz {
+        2400..=2500 => "2.4 GHz",
+        4900..=5900 => "5 GHz",
+        5925..=7125 => "6 GHz",
+        _ => return None,
+    })
+}
+
+/// Total expanded-section height in physical px (header excluded —
+/// this is purely the part that's added when the row opens).
+fn expanded_extra_height(net: &Network, scale: f32) -> f32 {
+    let n = detail_rows(net).len() as f32;
+    let line_h = EXPAND_DETAIL_FONT * scale + EXPAND_LINE_GAP * scale;
+    EXPAND_PAD_TOP * scale
+        + n * line_h
+        + EXPAND_BUTTON_TOP_GAP * scale
+        + EXPAND_BUTTON_H * scale
+        + EXPAND_PAD_BOTTOM * scale
+}
+
+/// What was clicked inside the WiFi network list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NetworkHit {
+    /// The header part of a row (any area outside the Connect button
+    /// in the expanded section). Caller toggles the expanded ssid.
+    Row(String),
+    /// The Connect / Disconnect button inside the expanded section.
+    ConnectButton(String),
+}
+
+/// Hit-test a click against the network list. Walks rows top-to-
+/// bottom honoring per-row variable height so the expanded section
+/// doesn't shadow rows below it.
 pub fn hit_test_network(
     wifi: &Wifi,
     panel: Rect,
@@ -512,7 +681,7 @@ pub fn hit_test_network(
     scale: f32,
     x: f32,
     y: f32,
-) -> Option<String> {
+) -> Option<NetworkHit> {
     let pad = crate::controls::ROW_HORIZONTAL_PAD * scale;
     let inner_x = panel.x + pad;
     let inner_w = panel.w - pad * 2.0;
@@ -520,15 +689,48 @@ pub fn hit_test_network(
         return None;
     }
 
-    let row_h = ROW_HEIGHT * scale;
-    let list_top = row_list_top_y(panel_top_y, scale);
-    for (i, net) in wifi.networks().iter().take(MAX_NETWORK_ROWS).enumerate() {
-        let row_y = list_top + i as f32 * row_h;
-        if y >= row_y && y <= row_y + row_h {
-            return Some(net.ssid.clone());
+    let header_h = ROW_HEIGHT * scale;
+    let mut row_y = row_list_top_y(panel_top_y, scale);
+    for net in wifi.networks().iter().take(MAX_NETWORK_ROWS) {
+        let is_expanded = wifi.expanded_ssid.as_deref() == Some(net.ssid.as_str());
+        let extra = if is_expanded { expanded_extra_height(net, scale) } else { 0.0 };
+
+        // Header area first.
+        if y >= row_y && y <= row_y + header_h {
+            return Some(NetworkHit::Row(net.ssid.clone()));
         }
+        // Expanded area: check for Connect-button hit, otherwise
+        // treat as a Row click so clicking inside the panel away
+        // from the button doesn't leak through to the next row.
+        if is_expanded {
+            let body_top = row_y + header_h;
+            let body_bottom = row_y + header_h + extra;
+            if y >= body_top && y <= body_bottom {
+                let btn = connect_button_rect(net, inner_x, inner_w, body_top, scale);
+                if x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h {
+                    return Some(NetworkHit::ConnectButton(net.ssid.clone()));
+                }
+                return Some(NetworkHit::Row(net.ssid.clone()));
+            }
+        }
+
+        row_y += header_h + extra;
     }
     None
+}
+
+/// Compute the Connect button rect for an expanded row body that
+/// starts at `body_top` (just under the row header). Mirrors the
+/// layout in `draw_view`'s expanded-section code.
+fn connect_button_rect(net: &Network, inner_x: f32, inner_w: f32, body_top: f32, scale: f32) -> Rect {
+    let n = detail_rows(net).len() as f32;
+    let line_h = EXPAND_DETAIL_FONT * scale + EXPAND_LINE_GAP * scale;
+    let after_details = body_top + EXPAND_PAD_TOP * scale + n * line_h;
+    let btn_y = after_details + EXPAND_BUTTON_TOP_GAP * scale;
+    let btn_w = EXPAND_BUTTON_W * scale;
+    let btn_h = EXPAND_BUTTON_H * scale;
+    let btn_x = inner_x + inner_w - btn_w - EXPAND_PAD_TOP * scale;
+    Rect::new(btn_x, btn_y, btn_w, btn_h)
 }
 
 pub fn draw_view(
@@ -596,17 +798,26 @@ pub fn draw_view(
         return msg_y + row_font;
     }
 
+    let mut row_y = row_list_top_y(panel_top_y, scale);
     for (i, net) in wifi.networks().iter().take(MAX_NETWORK_ROWS).enumerate() {
-        let row_y = row_list_top_y(panel_top_y, scale) + i as f32 * row_h;
+        let is_expanded = wifi.expanded_ssid.as_deref() == Some(net.ssid.as_str());
+        let extra_h = if is_expanded { expanded_extra_height(net, scale) } else { 0.0 };
+        let total_h = row_h + extra_h;
+        // The full container (header + expanded body) — used for
+        // bg fill so the expanded body and header share a plate.
+        let container_rect = Rect::new(inner_x, row_y, inner_w, total_h);
+        // Header-only rect — used for the gold tint on the in-use
+        // row (we don't tint the whole expanded panel).
         let row_rect = Rect::new(inner_x, row_y, inner_w, row_h);
 
         // Subtle row-stripe for readability + brighter highlight on the
         // currently-connected row.
-        if net.in_use {
+        let is_hovered = wifi.hovered_ssid.as_deref() == Some(net.ssid.as_str());
+        if is_expanded {
             painter.rect_filled(
-                row_rect,
-                8.0 * scale,
-                gold.with_alpha(0.18 * alpha),
+                container_rect,
+                10.0 * scale,
+                white.with_alpha(0.06 * alpha),
             );
         } else if i % 2 == 0 {
             painter.rect_filled(
@@ -615,20 +826,62 @@ pub fn draw_view(
                 white.with_alpha(0.04 * alpha),
             );
         }
+        if net.in_use {
+            painter.rect_filled(
+                row_rect,
+                8.0 * scale,
+                gold.with_alpha(0.18 * alpha),
+            );
+        }
+        // Hover highlight sits on top of the stripe so it reads
+        // consistently across odd/even rows. Skipped for the in-use
+        // row since the gold tint already signals selection clearly,
+        // and skipped while expanded since the container plate
+        // already differentiates the row.
+        if is_hovered && !net.in_use && !is_expanded {
+            painter.rect_filled(
+                row_rect,
+                8.0 * scale,
+                white.with_alpha(0.10 * alpha),
+            );
+        }
 
-        // Signal icon (left).
-        let icon_x = inner_x + signal_gap;
+        // Signal % to the left of the bars icon. Sized smaller than
+        // the SSID so it reads as metadata, not a focal element.
+        let pct_str = format!("{}%", net.signal);
+        let pct_font = row_font * 0.75;
+        let pct_w = text.measure_width(&pct_str, pct_font);
+
+        let pct_x = inner_x + signal_gap;
+        text.queue(
+            &pct_str,
+            pct_font,
+            pct_x,
+            row_y + (row_h - pct_font) / 2.0,
+            muted,
+            pct_w,
+            surface_w,
+            surface_h,
+        );
+
+        // Signal icon, just to the right of the percent.
+        let icon_x = pct_x + pct_w + signal_gap * 0.6;
         let icon_y = row_y + (row_h - signal_size) / 2.0;
         let bars = signal_to_bars(net.signal);
         draw_signal_icon(painter, icon_x, icon_y, signal_size, signal_size, bars, alpha);
 
-        // SSID label.
+        // SSID label. The connected network gets a larger, gold label
+        // so it stands out at a glance even before reading the badge.
         let label_x = icon_x + signal_size + signal_gap;
-        let label_y = row_y + (row_h - row_font) / 2.0;
-        let ssid_color = if net.in_use { white.with_alpha(alpha) } else { white.with_alpha(0.86 * alpha) };
+        let (ssid_font, ssid_color) = if net.in_use {
+            (row_font * 1.20, gold.with_alpha(alpha))
+        } else {
+            (row_font, white.with_alpha(0.86 * alpha))
+        };
+        let label_y = row_y + (row_h - ssid_font) / 2.0;
         text.queue(
             &net.ssid,
-            row_font,
+            ssid_font,
             label_x,
             label_y,
             ssid_color,
@@ -637,54 +890,138 @@ pub fn draw_view(
             surface_h,
         );
 
-        // Right side: lock for secured + status badge.
+        // Right side, walking R→L: lock first (right-most), then
+        // Saved/Connected/Connecting status text to its left.
         let mut right_x = inner_x + inner_w - right_gap;
-        if !net.in_use && net.saved {
-            // "Saved" hint to the right of the lock — small muted text.
-            let saved_text = "Saved";
-            let saved_w = text.measure_width(saved_text, row_font * 0.7);
-            right_x -= saved_w;
-            text.queue(
-                saved_text,
-                row_font * 0.7,
-                right_x,
-                row_y + (row_h - row_font * 0.7) / 2.0,
-                muted,
-                saved_w,
-                surface_w,
-                surface_h,
-            );
-            right_x -= right_gap;
-        }
-        if net.in_use {
-            let conn_text = "Connected";
-            let conn_w = text.measure_width(conn_text, row_font * 0.8);
-            right_x -= conn_w;
-            text.queue(
-                conn_text,
-                row_font * 0.8,
-                right_x,
-                row_y + (row_h - row_font * 0.8) / 2.0,
-                gold.with_alpha(alpha),
-                conn_w,
-                surface_w,
-                surface_h,
-            );
-            right_x -= right_gap;
-        }
         if !net.security.is_empty() && net.security != "--" {
             let lock_x = right_x - lock_size;
             let lock_y = row_y + (row_h - lock_size) / 2.0;
             draw_lock(painter, lock_x, lock_y, lock_size, lock_size, alpha);
-            right_x -= lock_size + right_gap;
+            right_x = lock_x - right_gap;
+        }
+        // Status text: "Connecting…" wins over Connected/Saved while
+        // a connect attempt is in flight to that ssid.
+        let connecting_now = wifi.is_connecting_to(&net.ssid);
+        if connecting_now {
+            let s = "Connecting…";
+            let f = row_font * 0.8;
+            let w = text.measure_width(s, f);
+            right_x -= w;
+            text.queue(
+                s,
+                f,
+                right_x,
+                row_y + (row_h - f) / 2.0,
+                gold.with_alpha(alpha),
+                w,
+                surface_w,
+                surface_h,
+            );
+        } else if net.in_use {
+            let s = "Connected";
+            let f = row_font * 0.8;
+            let w = text.measure_width(s, f);
+            right_x -= w;
+            text.queue(
+                s,
+                f,
+                right_x,
+                row_y + (row_h - f) / 2.0,
+                gold.with_alpha(alpha),
+                w,
+                surface_w,
+                surface_h,
+            );
+        } else if net.saved {
+            let s = "Saved";
+            let f = row_font * 0.7;
+            let w = text.measure_width(s, f);
+            right_x -= w;
+            text.queue(
+                s,
+                f,
+                right_x,
+                row_y + (row_h - f) / 2.0,
+                muted,
+                w,
+                surface_w,
+                surface_h,
+            );
         }
         let _ = right_x;
+
+        // Expanded section: details list + Connect button.
+        if is_expanded {
+            let body_top = row_y + row_h;
+            let detail_font = EXPAND_DETAIL_FONT * scale;
+            let line_h = detail_font + EXPAND_LINE_GAP * scale;
+            let label_w = inner_w * EXPAND_LABEL_W_FRAC;
+            let mut dy = body_top + EXPAND_PAD_TOP * scale;
+            let label_x = inner_x + 16.0 * scale;
+            let value_x = label_x + label_w;
+
+            for (label, value) in detail_rows(net) {
+                text.queue(
+                    label,
+                    detail_font,
+                    label_x,
+                    dy,
+                    muted,
+                    label_w,
+                    surface_w,
+                    surface_h,
+                );
+                text.queue(
+                    &value,
+                    detail_font,
+                    value_x,
+                    dy,
+                    white.with_alpha(0.92 * alpha),
+                    inner_w - (value_x - inner_x) - 16.0 * scale,
+                    surface_w,
+                    surface_h,
+                );
+                dy += line_h;
+            }
+
+            // Connect button.
+            let btn = connect_button_rect(net, inner_x, inner_w, body_top, scale);
+            let connecting_now = wifi.is_connecting_to(&net.ssid);
+            let label = if connecting_now {
+                "Connecting…"
+            } else if net.in_use {
+                "Connected"
+            } else {
+                "Connect"
+            };
+            let btn_font = EXPAND_BUTTON_FONT * scale;
+            let btn_radius = 10.0 * scale;
+            let bg = if connecting_now {
+                gold.with_alpha(0.35 * alpha)
+            } else if net.in_use {
+                gold.with_alpha(0.30 * alpha)
+            } else {
+                gold.with_alpha(0.95 * alpha)
+            };
+            painter.rect_filled(btn, btn_radius, bg);
+            let lw = text.measure_width(label, btn_font);
+            text.queue(
+                label,
+                btn_font,
+                btn.x + (btn.w - lw) / 2.0,
+                btn.y + (btn.h - btn_font) / 2.0,
+                Color::rgba(0.0, 0.0, 0.0, alpha),
+                btn.w,
+                surface_w,
+                surface_h,
+            );
+        }
+
+        row_y += row_h + extra_h;
     }
 
     if let Some(err) = wifi.last_error() {
-        let err_y = row_list_top_y(panel_top_y, scale)
-            + wifi.networks().len().min(MAX_NETWORK_ROWS) as f32 * row_h
-            + row_font * 0.5;
+        let err_y = row_y + row_font * 0.5;
         let red = Color::from_rgb8(0xe0, 0x40, 0x40).with_alpha(alpha);
         text.queue(
             err,

@@ -13,8 +13,30 @@
 //! Multiple bars may connect simultaneously (multi-monitor).
 
 use std::io::{BufRead, BufReader, ErrorKind, Write};
+use std::os::fd::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
+
+/// Read SO_PEERCRED on a stream socket. Returns the peer's uid, or
+/// `None` if the lookup fails (treat as untrusted).
+fn peer_uid(stream: &UnixStream) -> Option<u32> {
+    let mut ucred: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let ret = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            &mut ucred as *mut _ as *mut libc::c_void,
+            &mut len,
+        )
+    };
+    (ret == 0).then_some(ucred.uid)
+}
+
+fn our_uid() -> u32 {
+    unsafe { libc::getuid() }
+}
 
 pub fn socket_path() -> PathBuf {
     let uid = unsafe { libc::getuid() };
@@ -68,6 +90,21 @@ impl WorkspaceIpc {
             loop {
                 match listener.accept() {
                     Ok((stream, _)) => {
+                        // Reject any peer whose uid doesn't match ours.
+                        // $XDG_RUNTIME_DIR is mode 0700 in normal sessions, but
+                        // belt-and-suspenders: we never want a different local
+                        // user (or sandboxed app under a different uid) issuing
+                        // workspace commands.
+                        match peer_uid(&stream) {
+                            Some(uid) if uid == our_uid() => {}
+                            other => {
+                                tracing::warn!(
+                                    ?other,
+                                    "rejecting workspace IPC connection from foreign uid"
+                                );
+                                continue;
+                            }
+                        }
                         stream.set_nonblocking(true).ok();
                         let writer = match stream.try_clone() {
                             Ok(w) => w,

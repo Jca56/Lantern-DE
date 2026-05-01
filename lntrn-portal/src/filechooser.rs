@@ -1,11 +1,22 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use tokio::process::Command;
+use zbus::message::Header;
+use zbus::names::UniqueName;
 use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 use zbus::{interface, Connection};
 
 use crate::request::{ActivePids, PortalRequest};
+
+/// Minimum gap between two picker spawns from the same D-Bus sender.
+/// Prevents a misbehaving (or malicious) peer from spamming pickers.
+const PICKER_RATE_LIMIT: Duration = Duration::from_secs(1);
+
+/// Per-sender last-spawn timestamps for rate limiting. Pruned lazily.
+type RateMap = Arc<Mutex<HashMap<String, Instant>>>;
 
 // ── Global connection for dynamic Request object registration ──────────────
 
@@ -43,12 +54,63 @@ const HEX: [u8; 16] = *b"0123456789ABCDEF";
 
 pub struct FileChooserService {
     pids: ActivePids,
+    rate: RateMap,
 }
 
 impl FileChooserService {
     pub fn new() -> Self {
         Self {
             pids: Arc::new(Mutex::new(HashMap::new())),
+            rate: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
+/// Resolve the D-Bus unique name of the sender to its process pid via
+/// `org.freedesktop.DBus.GetConnectionUnixProcessID`, then read
+/// `/proc/<pid>/exe` so we can log who actually invoked the picker.
+async fn resolve_sender(sender: &UniqueName<'_>) -> (Option<u32>, Option<PathBuf>) {
+    let pid: Option<u32> = match conn()
+        .call_method(
+            Some("org.freedesktop.DBus"),
+            "/org/freedesktop/DBus",
+            Some("org.freedesktop.DBus"),
+            "GetConnectionUnixProcessID",
+            &(sender.as_str()),
+        )
+        .await
+    {
+        Ok(reply) => reply.body().deserialize::<u32>().ok(),
+        Err(e) => {
+            eprintln!("[lntrn-portal] could not resolve pid for {sender}: {e}");
+            None
+        }
+    };
+
+    let exe = pid.and_then(|p| std::fs::read_link(format!("/proc/{p}/exe")).ok());
+    (pid, exe)
+}
+
+/// Returns true if `sender` is allowed to spawn a picker right now. If
+/// allowed, records the timestamp so the next call within
+/// `PICKER_RATE_LIMIT` will be denied.
+fn check_rate_limit(rate: &RateMap, sender: &str) -> bool {
+    let mut map = match rate.lock() {
+        Ok(m) => m,
+        Err(_) => return true, // poisoned lock — fail open, log on next acquire
+    };
+
+    let now = Instant::now();
+
+    // Prune entries older than 60s while we have the lock — keeps the
+    // map from growing unbounded for short-lived senders.
+    map.retain(|_, t| now.duration_since(*t) < Duration::from_secs(60));
+
+    match map.get(sender) {
+        Some(last) if now.duration_since(*last) < PICKER_RATE_LIMIT => false,
+        _ => {
+            map.insert(sender.to_string(), now);
+            true
         }
     }
 }
@@ -57,8 +119,9 @@ impl FileChooserService {
 impl FileChooserService {
     async fn open_file(
         &self,
+        #[zbus(header)] hdr: Header<'_>,
         handle: ObjectPath<'_>,
-        _app_id: &str,
+        app_id: &str,
         _parent_window: &str,
         title: &str,
         options: HashMap<String, Value<'_>>,
@@ -69,13 +132,14 @@ impl FileChooserService {
             args.push("--title".into());
             args.push(title.into());
         }
-        self.run_picker(&handle, args).await
+        self.run_picker(&hdr, &handle, app_id, "OpenFile", args).await
     }
 
     async fn save_file(
         &self,
+        #[zbus(header)] hdr: Header<'_>,
         handle: ObjectPath<'_>,
-        _app_id: &str,
+        app_id: &str,
         _parent_window: &str,
         title: &str,
         options: HashMap<String, Value<'_>>,
@@ -87,13 +151,14 @@ impl FileChooserService {
             args.push("--title".into());
             args.push(title.into());
         }
-        self.run_picker(&handle, args).await
+        self.run_picker(&hdr, &handle, app_id, "SaveFile", args).await
     }
 
     async fn save_files(
         &self,
+        #[zbus(header)] hdr: Header<'_>,
         handle: ObjectPath<'_>,
-        _app_id: &str,
+        app_id: &str,
         _parent_window: &str,
         title: &str,
         options: HashMap<String, Value<'_>>,
@@ -105,18 +170,45 @@ impl FileChooserService {
             args.push("--title".into());
             args.push(title.into());
         }
-        self.run_picker(&handle, args).await
+        self.run_picker(&hdr, &handle, app_id, "SaveFiles", args).await
     }
 }
 
 impl FileChooserService {
     async fn run_picker(
         &self,
+        hdr: &Header<'_>,
         handle: &ObjectPath<'_>,
+        app_id: &str,
+        method: &str,
         args: Vec<String>,
     ) -> (u32, HashMap<String, OwnedValue>) {
         let handle_str = handle.to_string();
-        eprintln!("[lntrn-portal] spawning: lntrn-file-manager {}", args.join(" "));
+
+        // Audit log: who is calling, what they claim to be, what we're
+        // about to spawn. App_id is caller-supplied and untrustworthy
+        // (currently no portal in the world enforces it), but the
+        // /proc/<pid>/exe lookup gives us the ground truth.
+        let sender_name = hdr.sender().map(|s| s.to_string()).unwrap_or_default();
+        let (sender_pid, sender_exe) = if let Some(s) = hdr.sender() {
+            resolve_sender(s).await
+        } else {
+            (None, None)
+        };
+        eprintln!(
+            "[lntrn-portal] {method} from sender={sender_name} pid={sender_pid:?} exe={sender_exe:?} app_id={app_id:?} args={args:?}"
+        );
+
+        // Rate limit per sender: drop a 2nd request that arrives within
+        // PICKER_RATE_LIMIT of the previous one.
+        if !sender_name.is_empty() && !check_rate_limit(&self.rate, &sender_name) {
+            eprintln!(
+                "[lntrn-portal] rate-limited {method} from {sender_name} (exe={sender_exe:?})"
+            );
+            // Code 2 = "user cancelled" in xdg-portal — closest match
+            // for "we refused" without inventing a new error.
+            return (2, HashMap::new());
+        }
 
         // Register Request object at handle path for cancellation
         let request = PortalRequest {

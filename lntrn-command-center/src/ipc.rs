@@ -2,14 +2,26 @@
 //!
 //! Pattern: send-or-become-daemon. The first invocation binds the
 //! socket and becomes the long-lived daemon process; subsequent
-//! invocations send a one-byte command to that socket and exit.
+//! invocations connect, send a one-byte command, and exit.
 //!
 //! Path: `/run/user/{uid}/lntrn-command-center.sock` — matches the
 //! Lantern runtime-socket convention from `workspace_ipc.rs` and
 //! `hover_preview.rs`.
+//!
+//! ## Why SOCK_STREAM (not SOCK_DGRAM)
+//!
+//! Datagram peers cannot be authenticated via `SO_PEERCRED`, which only
+//! works on connected stream sockets. Switching to stream lets the
+//! daemon reject any peer whose uid doesn't match ours, even if
+//! `$XDG_RUNTIME_DIR` perms are misconfigured.
 
-use std::os::unix::net::UnixDatagram;
+use std::fs;
+use std::io::{ErrorKind, Read, Write};
+use std::os::fd::AsRawFd;
+use std::os::unix::fs::PermissionsExt;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::Result;
 
@@ -35,37 +47,93 @@ pub fn send(msg: &[u8]) -> Result<bool> {
     if !path.exists() {
         return Ok(false);
     }
-    let client = UnixDatagram::unbound()?;
-    match client.send_to(msg, &path) {
+    // Connect with a short timeout so we don't hang if the daemon is wedged.
+    let mut stream = match UnixStream::connect(&path) {
+        Ok(s) => s,
+        Err(_) => return Ok(false),
+    };
+    stream.set_write_timeout(Some(Duration::from_millis(500)))?;
+    match stream.write_all(msg) {
         Ok(_) => Ok(true),
         Err(_) => Ok(false),
     }
 }
 
 /// Bind the socket and become the daemon. Caller is responsible for
-/// keeping the returned `UnixDatagram` alive for the daemon's lifetime
+/// keeping the returned `UnixListener` alive for the daemon's lifetime
 /// and for polling it (non-blocking) on each render-loop iteration.
-pub fn bind_daemon() -> Result<UnixDatagram> {
+pub fn bind_daemon() -> Result<UnixListener> {
     let path = socket_path();
     // Stale socket from a crashed previous daemon — clear it.
-    let _ = std::fs::remove_file(&path);
-    let sock = UnixDatagram::bind(&path)?;
+    let _ = fs::remove_file(&path);
+    let sock = UnixListener::bind(&path)?;
     sock.set_nonblocking(true)?;
+    // Belt-and-suspenders: $XDG_RUNTIME_DIR is already 0700, but make
+    // the socket itself 0600 too so an unusual umask can't expose it.
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
     tracing::info!(?path, "command-center daemon bound socket");
     Ok(sock)
 }
 
-/// Drain all queued messages from the socket. Each is a single command
-/// byte (see `cmd::*`). Returns the most recent command if any arrived.
-pub fn drain(sock: &UnixDatagram) -> Option<Cmd> {
-    let mut buf = [0u8; 32];
+/// Read SO_PEERCRED on a connected stream. Returns `None` on failure.
+fn peer_uid(stream: &UnixStream) -> Option<u32> {
+    let mut ucred: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    let ret = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            &mut ucred as *mut _ as *mut libc::c_void,
+            &mut len,
+        )
+    };
+    (ret == 0).then_some(ucred.uid)
+}
+
+/// Accept all pending connections, read their command bytes, and
+/// return the most recent valid command.
+///
+/// Each connection is expected to send 1+ command bytes and close.
+/// Connections from a uid different from ours are dropped silently
+/// (and logged at warn level once per occurrence).
+pub fn drain(sock: &UnixListener) -> Option<Cmd> {
+    let our_uid = unsafe { libc::getuid() };
     let mut latest: Option<Cmd> = None;
-    while let Ok(n) = sock.recv(&mut buf) {
-        if n == 0 {
-            continue;
+
+    loop {
+        match sock.accept() {
+            Ok((mut stream, _)) => {
+                match peer_uid(&stream) {
+                    Some(uid) if uid == our_uid => {}
+                    other => {
+                        tracing::warn!(
+                            ?other,
+                            "rejecting command-center IPC connection from foreign uid"
+                        );
+                        continue;
+                    }
+                }
+                stream
+                    .set_read_timeout(Some(Duration::from_millis(50)))
+                    .ok();
+                let mut buf = [0u8; 32];
+                if let Ok(n) = stream.read(&mut buf) {
+                    for b in buf.iter().take(n) {
+                        if let Some(c) = Cmd::parse(*b) {
+                            latest = Some(c);
+                        }
+                    }
+                }
+            }
+            Err(e) if e.kind() == ErrorKind::WouldBlock => break,
+            Err(e) => {
+                tracing::warn!(?e, "command-center accept error");
+                break;
+            }
         }
-        latest = Cmd::parse(buf[0]);
     }
+
     latest
 }
 
@@ -91,5 +159,5 @@ impl Cmd {
 /// Best-effort cleanup on daemon shutdown — remove the socket file so
 /// the next invocation doesn't try to connect to a dead one.
 pub fn cleanup() {
-    let _ = std::fs::remove_file(socket_path());
+    let _ = fs::remove_file(socket_path());
 }

@@ -18,6 +18,7 @@ pub mod battery;
 pub mod bluetooth;
 pub mod brightness;
 pub mod clock;
+pub mod events;
 pub mod tile;
 pub mod wifi;
 
@@ -28,6 +29,7 @@ use self::battery::Battery;
 use self::bluetooth::Bluetooth;
 use self::brightness::Brightness;
 use self::clock::Clock;
+use self::events::Events;
 use self::wifi::Wifi;
 
 /// Total logical height the controls row reserves at the top of the
@@ -60,6 +62,7 @@ pub enum TileId {
 /// per-control backends + tile rendering.
 pub struct Controls {
     pub clock: Clock,
+    pub events: Events,
     pub audio: Audio,
     pub brightness: Brightness,
     pub wifi: Wifi,
@@ -71,6 +74,7 @@ impl Controls {
     pub fn new() -> Self {
         Self {
             clock: Clock::new(),
+            events: Events::load(),
             audio: Audio::new(),
             brightness: Brightness::new(),
             wifi: Wifi::new(),
@@ -243,7 +247,7 @@ pub fn draw_view(
     let top_y = content_top_y(panel, scale);
     let _bottom = match tile_id {
         TileId::Clock => clock::draw_view(
-            painter, text, &controls.clock, panel, top_y, scale, alpha, surface_w, surface_h,
+            painter, text, &controls.clock, &controls.events, panel, top_y, scale, alpha, surface_w, surface_h,
         ),
         TileId::Audio => audio::draw_view(
             painter, text, &controls.audio, panel, top_y, scale, alpha, surface_w, surface_h,

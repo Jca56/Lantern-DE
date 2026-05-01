@@ -14,7 +14,7 @@
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
-use std::os::unix::net::UnixDatagram;
+use std::os::unix::net::UnixListener;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
@@ -31,7 +31,12 @@ use wayland_client::{
     Connection, Dispatch, EventQueue, Proxy, QueueHandle,
 };
 use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
+use wayland_protocols_wlr::foreign_toplevel::v1::client::{
+    zwlr_foreign_toplevel_handle_v1, zwlr_foreign_toplevel_manager_v1,
+};
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
+
+use crate::toplevel::ToplevelTracker;
 
 use crate::app::{AppState, PanelRect};
 use crate::ipc::{self, Cmd};
@@ -107,6 +112,11 @@ struct WlState {
     /// Accumulated vertical scroll delta (Wayland axis units, ≈ pixels)
     /// since the last render-loop drain. Positive = scroll down.
     scroll_delta_v: f64,
+    /// Foreign toplevel tracker — list of open windows.
+    toplevels: ToplevelTracker,
+    /// Last seat we saw — needed to call `activate(seat)` on a toplevel
+    /// handle when the user clicks an Open tile.
+    seat: Option<wl_seat::WlSeat>,
 }
 
 impl WlState {
@@ -132,6 +142,8 @@ impl WlState {
             shift_held: false,
             pending_key: None,
             scroll_delta_v: 0.0,
+            toplevels: ToplevelTracker::new(),
+            seat: None,
         }
     }
 
@@ -177,7 +189,12 @@ impl Dispatch<wl_registry::WlRegistry, ()> for WlState {
                     let _: wl_output::WlOutput = registry.bind(name, version.min(4), qh, ());
                 }
                 "wl_seat" => {
-                    let _: wl_seat::WlSeat = registry.bind(name, version.min(9), qh, ());
+                    let seat: wl_seat::WlSeat = registry.bind(name, version.min(9), qh, ());
+                    state.seat = Some(seat);
+                }
+                "zwlr_foreign_toplevel_manager_v1" => {
+                    let _: zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1 =
+                        registry.bind(name, version.min(3), qh, ());
                 }
                 _ => {}
             }
@@ -377,6 +394,56 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WlState {
     }
 }
 
+// ── Foreign toplevel manager ───────────────────────────────────────────────
+
+impl Dispatch<zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1, ()> for WlState {
+    fn event(
+        state: &mut Self,
+        _: &zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1,
+        event: zwlr_foreign_toplevel_manager_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let zwlr_foreign_toplevel_manager_v1::Event::Toplevel { toplevel } = event {
+            state.toplevels.on_new(toplevel);
+        }
+    }
+    wayland_client::event_created_child!(WlState, zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1, [
+        0 => (zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1, ())
+    ]);
+}
+
+impl Dispatch<zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1, ()> for WlState {
+    fn event(
+        state: &mut Self,
+        handle: &zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1,
+        event: zwlr_foreign_toplevel_handle_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            zwlr_foreign_toplevel_handle_v1::Event::AppId { app_id } => {
+                state.toplevels.on_app_id(handle, app_id);
+            }
+            zwlr_foreign_toplevel_handle_v1::Event::Title { title } => {
+                state.toplevels.on_title(handle, title);
+            }
+            zwlr_foreign_toplevel_handle_v1::Event::State { state: bytes } => {
+                state.toplevels.on_state(handle, &bytes);
+            }
+            zwlr_foreign_toplevel_handle_v1::Event::Done => {
+                state.toplevels.on_done(handle);
+            }
+            zwlr_foreign_toplevel_handle_v1::Event::Closed => {
+                state.toplevels.on_closed(handle);
+            }
+            _ => {}
+        }
+    }
+}
+
 // ── Entry point ─────────────────────────────────────────────────────────────
 
 /// Idle tick when the panel is hidden — bound the loop to ~20Hz so we
@@ -386,7 +453,7 @@ const IDLE_TICK: Duration = Duration::from_millis(50);
 
 /// Run the daemon. `initial_visible == true` opens the panel on startup
 /// (e.g., when the user just typed `lntrn-command-center --show`).
-pub fn run(sock: UnixDatagram, initial_visible: bool) -> Result<()> {
+pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
     let conn = Connection::connect_to_env()?;
     let display = conn.display();
     let mut event_queue: EventQueue<WlState> = conn.new_event_queue();
@@ -476,6 +543,7 @@ pub fn run(sock: UnixDatagram, initial_visible: bool) -> Result<()> {
     // `set_active_input` below.
     let mut app = AppState::new();
     let mut input_active = false;
+    let mut thumbs = crate::thumbs::CcThumbsClient::new();
 
     if initial_visible {
         app.open();
@@ -493,6 +561,29 @@ pub fn run(sock: UnixDatagram, initial_visible: bool) -> Result<()> {
                 Cmd::Toggle => app.toggle(),
                 Cmd::Show => app.open(),
                 Cmd::Hide => app.close(),
+            }
+        }
+
+        // Refresh toplevel snapshot for the renderer.
+        app.toplevels = wl.toplevels.toplevels();
+
+        // Dispatch any pending window actions queued by click handlers.
+        if !app.window_actions.is_empty() {
+            for act in app.window_actions.drain(..) {
+                use crate::app::WindowActionKind;
+                match act.kind {
+                    WindowActionKind::Activate => {
+                        if let Some(seat) = wl.seat.as_ref() {
+                            wl.toplevels.activate(&act.app_id, &act.title, seat);
+                        }
+                    }
+                    WindowActionKind::Close => {
+                        wl.toplevels.close(&act.app_id, &act.title);
+                    }
+                    WindowActionKind::Minimize => {
+                        wl.toplevels.set_minimized(&act.app_id, &act.title, true);
+                    }
+                }
             }
         }
 
@@ -567,6 +658,31 @@ pub fn run(sock: UnixDatagram, initial_visible: bool) -> Result<()> {
         }
         let bt_incoming_before = app.controls.bluetooth.incoming_request.is_some();
         app.controls.tick();
+
+        // Update WiFi row hover so the highlight tracks the cursor.
+        // Cheap (a few rect tests) and only does work when the WiFi
+        // view is open.
+        if matches!(app.mode, crate::app::PanelMode::Control(crate::controls::TileId::Wifi)) {
+            let scale_f = wl.fractional_scale() as f32;
+            let phys_w = wl.phys_width().max(1);
+            let panel = PanelRect::compute_with_height(phys_w, scale_f, app.desired_panel_h_logical());
+            let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+            let view_top_y = crate::controls::content_top_y(panel_rect, scale_f);
+            let phys_cx = wl.cursor_x as f32 * scale_f;
+            let phys_cy = wl.cursor_y as f32 * scale_f;
+            let new_hover = match crate::controls::wifi::hit_test_network(
+                &app.controls.wifi, panel_rect, view_top_y, scale_f, phys_cx, phys_cy,
+            ) {
+                Some(crate::controls::wifi::NetworkHit::Row(s))
+                | Some(crate::controls::wifi::NetworkHit::ConnectButton(s)) => Some(s),
+                None => None,
+            };
+            if app.controls.wifi.hovered_ssid != new_hover {
+                app.controls.wifi.hovered_ssid = new_hover;
+            }
+        } else if app.controls.wifi.hovered_ssid.is_some() {
+            app.controls.wifi.hovered_ssid = None;
+        }
         let bt_incoming_after = app.controls.bluetooth.incoming_request.is_some();
         // Fresh incoming-file request → jump straight to the BT view so
         // the modal isn't hidden behind whatever the user was looking at.
@@ -597,7 +713,7 @@ pub fn run(sock: UnixDatagram, initial_visible: bool) -> Result<()> {
             {
                 let scale_f = wl.fractional_scale() as f32;
                 let phys_w = wl.phys_width().max(1);
-                let panel = PanelRect::compute(phys_w, scale_f);
+                let panel = PanelRect::compute_with_height(phys_w, scale_f, app.desired_panel_h_logical());
                 let panel_rect =
                     lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
                 let max = crate::search::max_scroll(&app.search, panel_rect, scale_f);
@@ -655,6 +771,29 @@ pub fn run(sock: UnixDatagram, initial_visible: bool) -> Result<()> {
                         // a key shortcut. Y/N typing isn't wired (yet).
                     }
                 }
+            } else if app.controls.clock.add_event_input.is_some()
+                && matches!(app.mode, crate::app::PanelMode::Control(crate::controls::TileId::Clock))
+            {
+                // Calendar add-event input has focus.
+                match key {
+                    KEY_ENTER | KEY_KP_ENTER => {
+                        if let (Some(date), Some(input)) = (
+                            app.controls.clock.selected_day,
+                            app.controls.clock.add_event_input.as_ref(),
+                        ) {
+                            let title = input.query().to_string();
+                            if !title.trim().is_empty() {
+                                app.controls.events.add(date, title);
+                            }
+                        }
+                        app.controls.clock.add_event_input = None;
+                    }
+                    other => {
+                        if let Some(input) = app.controls.clock.add_event_input.as_mut() {
+                            let _ = input.on_key(other, wl.shift_held);
+                        }
+                    }
+                }
             } else {
                 match key {
                     KEY_UP => app.select_up(),
@@ -677,7 +816,7 @@ pub fn run(sock: UnixDatagram, initial_visible: bool) -> Result<()> {
             wl.left_clicked = false;
             let scale_f = wl.fractional_scale() as f32;
             let phys_w = wl.phys_width().max(1);
-            let panel = PanelRect::compute(phys_w, scale_f);
+            let panel = PanelRect::compute_with_height(phys_w, scale_f, app.desired_panel_h_logical());
             let phys_cx = wl.cursor_x as f32 * scale_f;
             let phys_cy = wl.cursor_y as f32 * scale_f;
             let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
@@ -693,6 +832,17 @@ pub fn run(sock: UnixDatagram, initial_visible: bool) -> Result<()> {
                     app.context_menu = None;
                 }
                 true
+            } else if let Some(event_menu) = app.controls.clock.event_menu.clone() {
+                // Event-row menu intercepts: Delete row → remove event.
+                if crate::controls::clock::event_menu_hit_delete(
+                    &event_menu, panel_rect, scale_f, phys_cx, phys_cy,
+                ) {
+                    app.controls
+                        .events
+                        .remove_at(event_menu.date, event_menu.idx_in_date);
+                }
+                app.controls.clock.event_menu = None;
+                true
             } else {
                 false
             };
@@ -701,7 +851,7 @@ pub fn run(sock: UnixDatagram, initial_visible: bool) -> Result<()> {
             // click hit one of its interactive widgets (battery toggle,
             // audio slider, audio device list).
             let consumed_by_view = !menu_consumed && handle_control_view_click(
-                &mut app, panel_rect, scale_f, phys_cx, phys_cy,
+                &mut app, &mut text, panel_rect, scale_f, phys_cx, phys_cy,
             );
 
             if menu_consumed {
@@ -753,7 +903,7 @@ pub fn run(sock: UnixDatagram, initial_visible: bool) -> Result<()> {
             wl.right_clicked = false;
             let scale_f = wl.fractional_scale() as f32;
             let phys_w = wl.phys_width().max(1);
-            let panel = PanelRect::compute(phys_w, scale_f);
+            let panel = PanelRect::compute_with_height(phys_w, scale_f, app.desired_panel_h_logical());
             let phys_cx = wl.cursor_x as f32 * scale_f;
             let phys_cy = wl.cursor_y as f32 * scale_f;
             match app.mode {
@@ -764,8 +914,38 @@ pub fn run(sock: UnixDatagram, initial_visible: bool) -> Result<()> {
                         tracing::debug!(?target, "right-click → open context menu");
                         app.open_context_menu_at(target, phys_cx, phys_cy);
                     } else {
-                        // Right-click on empty space dismisses any open menu.
                         app.context_menu = None;
+                    }
+                }
+                crate::app::PanelMode::Control(crate::controls::TileId::Clock) => {
+                    let panel_rect =
+                        lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+                    let view_top_y = crate::controls::content_top_y(panel_rect, scale_f);
+                    if app.controls.clock.selected_day.is_some() {
+                        if let Some(crate::controls::clock::DetailHit::EventRow(idx)) =
+                            crate::controls::clock::hit_test_detail(
+                                panel_rect,
+                                view_top_y,
+                                scale_f,
+                                &app.controls.clock,
+                                &app.controls.events,
+                                &mut text,
+                                phys_cx,
+                                phys_cy,
+                            )
+                        {
+                            if let Some(date) = app.controls.clock.selected_day {
+                                app.controls.clock.event_menu =
+                                    Some(crate::controls::clock::EventContextMenu {
+                                        date,
+                                        idx_in_date: idx,
+                                        anchor_x: phys_cx,
+                                        anchor_y: phys_cy,
+                                    });
+                            }
+                        } else {
+                            app.controls.clock.event_menu = None;
+                        }
                     }
                 }
                 _ => {}
@@ -781,7 +961,7 @@ pub fn run(sock: UnixDatagram, initial_visible: bool) -> Result<()> {
         if let Some(target) = app.dragging {
             let scale_f = wl.fractional_scale() as f32;
             let phys_w = wl.phys_width().max(1);
-            let panel = PanelRect::compute(phys_w, scale_f);
+            let panel = PanelRect::compute_with_height(phys_w, scale_f, app.desired_panel_h_logical());
             let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
             let view_top_y = crate::controls::content_top_y(panel_rect, scale_f);
             let phys_cx = wl.cursor_x as f32 * scale_f;
@@ -840,6 +1020,51 @@ pub fn run(sock: UnixDatagram, initial_visible: bool) -> Result<()> {
         } else {
             Vec::new()
         };
+
+        // Stream thumbnail slots to the compositor so it can paint live
+        // window content into each Open-section tile. Sent only when the
+        // panel is fully visible (not animating); cleared when hidden.
+        if let Some(p) = &panel_draw {
+            if matches!(app.visibility, crate::app::Visibility::Visible) {
+                let panel_logical = lntrn_render::Rect::new(p.rect.x, p.rect.y, p.rect.w, p.rect.h);
+                let pin_top_y = panel_logical.y
+                    + crate::controls::total_logical_height() * scale_f
+                    + (crate::search::input::SEARCH_HORIZONTAL_PAD * 0.5
+                        + crate::search::input::SEARCH_ROW_HEIGHT)
+                        * scale_f;
+                let pinned_count = app.launcher.pinned_entries(&app.apps).len();
+                let pins_bottom = crate::launcher::pins_section_bottom(
+                    panel_logical,
+                    pin_top_y,
+                    scale_f,
+                    pinned_count,
+                );
+                let visible_open = crate::launcher::open::visible_entries(&app.toplevels);
+                let row_top = pins_bottom
+                    + crate::launcher::open::OPEN_SECTION_TOP_MARGIN * scale_f
+                    + crate::launcher::open::heading_advance(scale_f);
+
+                let mut slots = Vec::with_capacity(visible_open.len());
+                for (i, t) in visible_open.iter().enumerate() {
+                    let r = crate::launcher::open::tile_rect(panel_logical, row_top, scale_f, i);
+                    // Convert physical → logical for the compositor.
+                    let inv = 1.0 / scale_f;
+                    slots.push(crate::thumbs::ThumbSlot {
+                        app_id: t.app_id.clone(),
+                        title: t.title.clone(),
+                        x: (r.x * inv).round() as i32,
+                        y: (r.y * inv).round() as i32,
+                        w: (r.w * inv).round() as i32,
+                        h: (r.h * inv).round() as i32,
+                    });
+                }
+                thumbs.update(&slots);
+            } else {
+                thumbs.clear();
+            }
+        } else {
+            thumbs.clear();
+        }
 
         // Materialize icon requests into TextureDraws in two phases so
         // we don't ask the borrow checker to juggle &mut + & on the same
@@ -929,6 +1154,7 @@ pub fn run(sock: UnixDatagram, initial_visible: bool) -> Result<()> {
 /// are interactive; future controls plug in here.
 fn handle_control_view_click(
     app: &mut AppState,
+    text: &mut TextRenderer,
     panel: lntrn_render::Rect,
     scale: f32,
     phys_x: f32,
@@ -939,6 +1165,69 @@ fn handle_control_view_click(
     let view_top_y = crate::controls::content_top_y(panel, scale);
 
     match tile_id {
+        crate::controls::TileId::Clock => {
+            // Detail panel takes priority when open.
+            if app.controls.clock.selected_day.is_some() {
+                if let Some(hit) = crate::controls::clock::hit_test_detail(
+                    panel,
+                    view_top_y,
+                    scale,
+                    &app.controls.clock,
+                    &app.controls.events,
+                    text,
+                    phys_x,
+                    phys_y,
+                ) {
+                    match hit {
+                        crate::controls::clock::DetailHit::Close => {
+                            app.controls.clock.selected_day = None;
+                            app.controls.clock.add_event_input = None;
+                            app.controls.clock.event_menu = None;
+                        }
+                        crate::controls::clock::DetailHit::OpenAddInput => {
+                            app.controls.clock.add_event_input =
+                                Some(crate::search::input::Input::new());
+                        }
+                        crate::controls::clock::DetailHit::EventRow(_) => {
+                            // Left-click on an event row currently does
+                            // nothing — delete is via right-click menu.
+                        }
+                    }
+                    return true;
+                }
+            }
+
+            if let Some(hit) = crate::controls::clock::hit_test_view(
+                panel,
+                view_top_y,
+                scale,
+                &app.controls.clock,
+                text,
+                phys_x,
+                phys_y,
+            ) {
+                match hit {
+                    crate::controls::clock::CalendarHit::PrevMonth => {
+                        app.controls.clock.prev_month();
+                    }
+                    crate::controls::clock::CalendarHit::NextMonth => {
+                        app.controls.clock.next_month();
+                    }
+                    crate::controls::clock::CalendarHit::Day(date) => {
+                        // Toggle: clicking the same day again closes.
+                        if app.controls.clock.selected_day == Some(date) {
+                            app.controls.clock.selected_day = None;
+                            app.controls.clock.add_event_input = None;
+                        } else {
+                            app.controls.clock.selected_day = Some(date);
+                            app.controls.clock.add_event_input = None;
+                        }
+                    }
+                }
+                return true;
+            }
+            false
+        }
         crate::controls::TileId::Battery => {
             let toggle = crate::controls::battery::toggle_rect(panel, view_top_y, scale);
             if phys_x >= toggle.x
@@ -1139,7 +1428,7 @@ fn handle_control_view_click(
             }
 
             // Normal network-row click.
-            if let Some(ssid) = crate::controls::wifi::hit_test_network(
+            if let Some(hit) = crate::controls::wifi::hit_test_network(
                 &app.controls.wifi,
                 panel,
                 view_top_y,
@@ -1147,30 +1436,42 @@ fn handle_control_view_click(
                 phys_x,
                 phys_y,
             ) {
-                // Find the network entry to decide: open + saved → connect
-                // immediately; secured + unsaved → open password prompt.
-                let net = app.controls.wifi.networks()
-                    .iter()
-                    .find(|n| n.ssid == ssid)
-                    .cloned();
-                let needs_password = match &net {
-                    Some(n) => {
-                        let secured = !n.security.is_empty() && n.security != "--";
-                        secured && !n.saved && !n.in_use
+                match hit {
+                    crate::controls::wifi::NetworkHit::Row(ssid) => {
+                        // Toggle: clicking the same row again collapses it.
+                        if app.controls.wifi.expanded_ssid.as_deref() == Some(ssid.as_str()) {
+                            app.controls.wifi.expanded_ssid = None;
+                        } else {
+                            app.controls.wifi.expanded_ssid = Some(ssid);
+                        }
                     }
-                    None => false,
-                };
-                if needs_password {
-                    app.controls.wifi.open_prompt(&ssid);
-                } else {
-                    app.controls.wifi.connect(&ssid, None);
+                    crate::controls::wifi::NetworkHit::ConnectButton(ssid) => {
+                        let net = app.controls.wifi.networks()
+                            .iter()
+                            .find(|n| n.ssid == ssid)
+                            .cloned();
+                        let already_in_use = net.as_ref().is_some_and(|n| n.in_use);
+                        let needs_password = match &net {
+                            Some(n) => {
+                                let secured = !n.security.is_empty() && n.security != "--";
+                                secured && !n.saved && !n.in_use
+                            }
+                            None => false,
+                        };
+                        if already_in_use {
+                            // Already connected → button is purely a label.
+                        } else if needs_password {
+                            app.controls.wifi.open_prompt(&ssid);
+                        } else {
+                            app.controls.wifi.connect(&ssid, None);
+                        }
+                        tracing::debug!(%ssid, needs_password, "wifi: connect button");
+                    }
                 }
-                tracing::debug!(%ssid, needs_password, "wifi: row clicked");
                 return true;
             }
             false
         }
-        _ => false,
     }
 }
 

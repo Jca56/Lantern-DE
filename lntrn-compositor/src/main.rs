@@ -2,6 +2,7 @@
 
 mod animation;
 mod blur;
+pub mod cc_thumbs;
 mod cursor;
 mod easing;
 mod gestures;
@@ -17,6 +18,7 @@ mod render;
 mod window_state_anim;
 mod rounded_element;
 mod screencopy_render;
+mod security;
 mod shaders;
 mod snap;
 pub mod ssd;
