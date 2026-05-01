@@ -13,8 +13,8 @@ use smithay::{
 use crate::state::Lantern;
 use crate::window_ext::WindowExt;
 
-pub const DEFAULT_GAP: i32 = 30;
-pub const DEFAULT_OUTER_GAP: i32 = 30;
+pub const DEFAULT_GAP: i32 = 8;
+pub const DEFAULT_OUTER_GAP: i32 = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SplitDirection {
@@ -327,6 +327,176 @@ impl TilingState {
         })
     }
 
+    /// Compute the rectangle a given node occupies, given the root's area.
+    /// Returns None if the node is unreachable from the root.
+    pub fn node_rect(
+        &self,
+        target_idx: usize,
+        area: Rectangle<i32, Logical>,
+    ) -> Option<Rectangle<i32, Logical>> {
+        let root = self.root?;
+        self.node_rect_walk(root, area, target_idx)
+    }
+
+    fn node_rect_walk(
+        &self,
+        idx: usize,
+        area: Rectangle<i32, Logical>,
+        target: usize,
+    ) -> Option<Rectangle<i32, Logical>> {
+        if idx == target {
+            return Some(area);
+        }
+        let TilingNode::Split { dir, ratio, left, right } = &self.nodes[idx] else {
+            return None;
+        };
+        let half_gap = self.gap / 2;
+        let (left_rect, right_rect) = match dir {
+            SplitDirection::Horizontal => {
+                let lw = ((area.size.w as f32) * ratio) as i32 - half_gap;
+                let rw = area.size.w - lw - self.gap;
+                (
+                    Rectangle::new(area.loc, Size::from((lw, area.size.h))),
+                    Rectangle::new(
+                        Point::from((area.loc.x + lw + self.gap, area.loc.y)),
+                        Size::from((rw, area.size.h)),
+                    ),
+                )
+            }
+            SplitDirection::Vertical => {
+                let th = ((area.size.h as f32) * ratio) as i32 - half_gap;
+                let bh = area.size.h - th - self.gap;
+                (
+                    Rectangle::new(area.loc, Size::from((area.size.w, th))),
+                    Rectangle::new(
+                        Point::from((area.loc.x, area.loc.y + th + self.gap)),
+                        Size::from((area.size.w, bh)),
+                    ),
+                )
+            }
+        };
+        self.node_rect_walk(*left, left_rect, target)
+            .or_else(|| self.node_rect_walk(*right, right_rect, target))
+    }
+
+    /// Find the nearest ancestor split of a leaf whose direction matches
+    /// `want_dir` AND where the leaf sits in the requested subtree side
+    /// (`want_left_side` true = leaf is in the left/top child).
+    /// Used by edge-drag resize: dragging the right edge of a leaf wants
+    /// the nearest H-split where leaf is left; dragging left edge wants
+    /// leaf in right; analog for top/bottom + V-splits.
+    pub fn find_ancestor_split(
+        &self,
+        surface: &WlSurface,
+        want_dir: SplitDirection,
+        want_left_side: bool,
+    ) -> Option<usize> {
+        let leaf = self.find_leaf(surface)?;
+        let mut cur = leaf;
+        loop {
+            let parent = self.find_parent(cur)?;
+            if let TilingNode::Split { dir, left, .. } = &self.nodes[parent] {
+                if *dir == want_dir {
+                    let is_left_side = self.subtree_contains(*left, surface);
+                    if is_left_side == want_left_side {
+                        return Some(parent);
+                    }
+                }
+                cur = parent;
+            } else {
+                return None;
+            }
+        }
+    }
+
+    /// Read a split's direction.
+    pub fn split_dir(&self, idx: usize) -> Option<SplitDirection> {
+        match self.nodes.get(idx)? {
+            TilingNode::Split { dir, .. } => Some(*dir),
+            _ => None,
+        }
+    }
+
+    /// Read a split's current ratio.
+    pub fn split_ratio(&self, idx: usize) -> Option<f32> {
+        match self.nodes.get(idx)? {
+            TilingNode::Split { ratio, .. } => Some(*ratio),
+            _ => None,
+        }
+    }
+
+    /// Set a split's ratio with a safety clamp.
+    pub fn set_split_ratio(&mut self, idx: usize, new_ratio: f32) {
+        if let Some(TilingNode::Split { ratio, .. }) = self.nodes.get_mut(idx) {
+            *ratio = new_ratio.clamp(0.05, 0.95);
+        }
+    }
+
+    /// Locate a seam (the gap between two siblings of a Split) at a logical
+    /// point. Returns the deepest matching split index plus the rect that
+    /// split occupies. `grab_radius` widens the hit zone perpendicular to
+    /// the seam axis. Recurses depth-first so child seams win over parents.
+    pub fn seam_at(
+        &self,
+        point: Point<i32, Logical>,
+        area: Rectangle<i32, Logical>,
+        grab_radius: i32,
+    ) -> Option<(usize, Rectangle<i32, Logical>)> {
+        let root = self.root?;
+        self.seam_at_walk(root, area, point, grab_radius)
+    }
+
+    fn seam_at_walk(
+        &self,
+        idx: usize,
+        area: Rectangle<i32, Logical>,
+        point: Point<i32, Logical>,
+        grab_radius: i32,
+    ) -> Option<(usize, Rectangle<i32, Logical>)> {
+        let TilingNode::Split { dir, ratio, left, right } = &self.nodes[idx] else {
+            return None;
+        };
+        let half_gap = self.gap / 2;
+        let (left_rect, right_rect, seam_min, seam_max, in_perp) = match dir {
+            SplitDirection::Horizontal => {
+                let lw = ((area.size.w as f32) * ratio) as i32 - half_gap;
+                let seam_x = area.loc.x + lw + half_gap;
+                let lr = Rectangle::new(area.loc, Size::from((lw, area.size.h)));
+                let rr = Rectangle::new(
+                    Point::from((area.loc.x + lw + self.gap, area.loc.y)),
+                    Size::from((area.size.w - lw - self.gap, area.size.h)),
+                );
+                let perp = point.y >= area.loc.y && point.y <= area.loc.y + area.size.h;
+                (lr, rr, seam_x - grab_radius, seam_x + grab_radius, perp)
+            }
+            SplitDirection::Vertical => {
+                let th = ((area.size.h as f32) * ratio) as i32 - half_gap;
+                let seam_y = area.loc.y + th + half_gap;
+                let lr = Rectangle::new(area.loc, Size::from((area.size.w, th)));
+                let rr = Rectangle::new(
+                    Point::from((area.loc.x, area.loc.y + th + self.gap)),
+                    Size::from((area.size.w, area.size.h - th - self.gap)),
+                );
+                let perp = point.x >= area.loc.x && point.x <= area.loc.x + area.size.w;
+                (lr, rr, seam_y - grab_radius, seam_y + grab_radius, perp)
+            }
+        };
+        if let Some(child) = self.seam_at_walk(*left, left_rect, point, grab_radius)
+            .or_else(|| self.seam_at_walk(*right, right_rect, point, grab_radius))
+        {
+            return Some(child);
+        }
+        let along = match dir {
+            SplitDirection::Horizontal => point.x >= seam_min && point.x <= seam_max,
+            SplitDirection::Vertical => point.y >= seam_min && point.y <= seam_max,
+        };
+        if along && in_perp {
+            Some((idx, area))
+        } else {
+            None
+        }
+    }
+
     /// Find a neighbor window in a given direction from the focused surface.
     pub fn find_adjacent(
         &self,
@@ -441,6 +611,36 @@ impl Lantern {
             self.space.map_element(window, target_rect.loc, false);
         }
 
+        self.schedule_render();
+    }
+
+    /// Same as `apply_tiling_layout` but skips the per-window animation.
+    /// Used during interactive resize so the layout follows the cursor in
+    /// real time without the rubbery feel of an animator catching up.
+    pub fn apply_tiling_layout_immediate(&mut self) {
+        if !self.workspaces.tiling_active {
+            return;
+        }
+        let outputs: Vec<Output> = self.space.outputs().cloned().collect();
+        let mut all_layout = Vec::new();
+        for output in &outputs {
+            let name = output.name();
+            let Some(area) = self.tiling_area_for_output(output) else { continue };
+            if let Some(tree) = self.workspaces.active_tiling_tree(&name) {
+                all_layout.extend(tree.compute_layout(area));
+            }
+        }
+        for (surface, target_rect) in all_layout {
+            if self.snapped_windows.iter().any(|s| s.surface == surface) {
+                continue;
+            }
+            let Some(window) = self.find_mapped_window(&surface) else { continue };
+            // Cancel any in-flight tile animation; we are tracking the cursor.
+            self.tiling_anim.remove(&surface);
+            window.set_tiled(true);
+            window.configure_size(target_rect.size);
+            self.space.map_element(window, target_rect.loc, false);
+        }
         self.schedule_render();
     }
 

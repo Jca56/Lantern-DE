@@ -274,6 +274,40 @@ impl PerOutputWorkspaces {
         ow.workspaces.get(&ow.active).map(|ws| &ws.tiling)
     }
 
+    /// Active workspace's tiling tree for an output (mutable).
+    pub fn active_tiling_tree_mut(&mut self, output_name: &str) -> Option<&mut TilingState> {
+        let ow = self.per_output.get_mut(output_name)?;
+        let active = ow.active;
+        ow.workspaces.get_mut(&active).map(|ws| &mut ws.tiling)
+    }
+
+    /// Find which output's active workspace tree contains this surface.
+    pub fn output_for_tiled_surface(&self, surface: &WlSurface) -> Option<String> {
+        for (name, ow) in &self.per_output {
+            if let Some(ws) = ow.workspaces.get(&ow.active) {
+                if ws.tiling.contains(surface) {
+                    return Some(name.clone());
+                }
+            }
+        }
+        None
+    }
+
+    /// Set a split's ratio in the tree containing `surface`.
+    pub fn set_split_ratio(&mut self, surface: &WlSurface, idx: usize, new_ratio: f32) {
+        let Some(name) = self.output_for_tiled_surface(surface) else { return };
+        if let Some(tree) = self.active_tiling_tree_mut(&name) {
+            tree.set_split_ratio(idx, new_ratio);
+        }
+    }
+
+    /// Set a split's ratio by output name + split index (no surface lookup).
+    pub fn set_split_ratio_on_output(&mut self, output_name: &str, idx: usize, new_ratio: f32) {
+        if let Some(tree) = self.active_tiling_tree_mut(output_name) {
+            tree.set_split_ratio(idx, new_ratio);
+        }
+    }
+
     // ── Workspace switching and movement ────────────────────────────────
 
     /// Switch an output to a workspace. Creates it if needed.

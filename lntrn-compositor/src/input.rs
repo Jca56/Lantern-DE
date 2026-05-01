@@ -900,17 +900,30 @@ impl Lantern {
                             if pos.y < center_y { edges |= crate::grabs::resize_grab::ResizeEdge::TOP; }
                             else { edges |= crate::grabs::resize_grab::ResizeEdge::BOTTOM; }
 
-                            let initial_rect = smithay::utils::Rectangle::new(win_loc, win_geo.size);
-                            let grab = crate::grabs::ResizeSurfaceGrab::start(
-                                start_data,
-                                window,
-                                edges,
-                                initial_rect,
-                            );
-                            pointer.set_grab(self, grab, serial, smithay::input::pointer::Focus::Clear);
-                            // Set resize cursor immediately so there's no flash to default
-                            let icon = crate::grabs::ResizeSurfaceGrab::cursor_icon_for_edges(edges);
-                            self.cursor.set_status(smithay::input::pointer::CursorImageStatus::Named(icon));
+                            // Tiled windows resize via the BSP tree, not xdg.
+                            let is_tiled = crate::window_ext::WindowExt::get_wl_surface(&window)
+                                .map(|s| self.workspaces.contains(&s))
+                                .unwrap_or(false);
+                            if is_tiled {
+                                if let Some(grab) = crate::grabs::TilingResizeGrab::for_edge(
+                                    start_data, &window, edges, self,
+                                ) {
+                                    pointer.set_grab(self, grab, serial, smithay::input::pointer::Focus::Clear);
+                                    let icon = crate::grabs::ResizeSurfaceGrab::cursor_icon_for_edges(edges);
+                                    self.cursor.set_status(smithay::input::pointer::CursorImageStatus::Named(icon));
+                                }
+                            } else {
+                                let initial_rect = smithay::utils::Rectangle::new(win_loc, win_geo.size);
+                                let grab = crate::grabs::ResizeSurfaceGrab::start(
+                                    start_data,
+                                    window,
+                                    edges,
+                                    initial_rect,
+                                );
+                                pointer.set_grab(self, grab, serial, smithay::input::pointer::Focus::Clear);
+                                let icon = crate::grabs::ResizeSurfaceGrab::cursor_icon_for_edges(edges);
+                                self.cursor.set_status(smithay::input::pointer::CursorImageStatus::Named(icon));
+                            }
                         }
 
                         pointer.frame(self);
@@ -976,6 +989,52 @@ impl Lantern {
                     }
                 }
 
+                // Tiling-seam click: pointer is in the gap between two tiles.
+                // Start a tile-resize grab for that seam directly.
+                if ButtonState::Pressed == button_state
+                    && button == BTN_LEFT
+                    && !pointer.is_grabbed()
+                    && self.workspaces.tiling_active
+                {
+                    let pos = pointer.current_location();
+                    if self.visible_element_under(pos).is_none() {
+                        const SEAM_GRAB_RADIUS: i32 = 6;
+                        let pos_i = smithay::utils::Point::<i32, smithay::utils::Logical>::from((
+                            pos.x.round() as i32, pos.y.round() as i32,
+                        ));
+                        let seam_hit = self.output_at_point(pos)
+                            .or_else(|| self.space.outputs().next().cloned())
+                            .and_then(|output| {
+                                let area = self.tiling_area_for_output(&output)?;
+                                let name = output.name();
+                                let tree = self.workspaces.active_tiling_tree(&name)?;
+                                let (idx, parent_rect) = tree.seam_at(pos_i, area, SEAM_GRAB_RADIUS)?;
+                                let axis = tree.split_dir(idx)?;
+                                let ratio = tree.split_ratio(idx)?;
+                                Some((name, idx, parent_rect, axis, ratio))
+                            });
+                        if let Some((output_name, idx, parent_rect, axis, ratio)) = seam_hit {
+                            let start_data = smithay::input::pointer::GrabStartData {
+                                focus: None,
+                                button,
+                                location: pos,
+                            };
+                            let grab = crate::grabs::TilingResizeGrab::for_seam(
+                                start_data, output_name, idx, parent_rect, axis, ratio,
+                            );
+                            pointer.set_grab(self, grab, serial, smithay::input::pointer::Focus::Clear);
+                            let icon = match axis {
+                                crate::tiling::SplitDirection::Horizontal => smithay::input::pointer::CursorIcon::EwResize,
+                                crate::tiling::SplitDirection::Vertical => smithay::input::pointer::CursorIcon::NsResize,
+                            };
+                            self.cursor.set_status(smithay::input::pointer::CursorImageStatus::Named(icon));
+                            pointer.frame(self);
+                            self.schedule_render();
+                            return;
+                        }
+                    }
+                }
+
                 // Outer resize zone: when clicking near a window edge but outside
                 // the surface, start a compositor-level resize grab. This gives
                 // CSD windows the same edge-grab feel as SSD.
@@ -1031,16 +1090,34 @@ impl Lantern {
                                 button,
                                 location: pos,
                             };
-                            let initial_rect = smithay::utils::Rectangle::new(win_loc, win_geo.size);
-                            let grab = crate::grabs::ResizeSurfaceGrab::start(
-                                start_data, window, edges, initial_rect,
-                            );
-                            pointer.set_grab(self, grab, serial, smithay::input::pointer::Focus::Clear);
-                            let icon = crate::grabs::ResizeSurfaceGrab::cursor_icon_for_edges(edges);
-                            self.cursor.set_status(smithay::input::pointer::CursorImageStatus::Named(icon));
-                            pointer.frame(self);
-                            self.schedule_render();
-                            return;
+
+                            // Tiled windows route to BSP-tree resize.
+                            let is_tiled = crate::window_ext::WindowExt::get_wl_surface(&window)
+                                .map(|s| self.workspaces.contains(&s))
+                                .unwrap_or(false);
+                            if is_tiled {
+                                if let Some(grab) = crate::grabs::TilingResizeGrab::for_edge(
+                                    start_data, &window, edges, self,
+                                ) {
+                                    pointer.set_grab(self, grab, serial, smithay::input::pointer::Focus::Clear);
+                                    let icon = crate::grabs::ResizeSurfaceGrab::cursor_icon_for_edges(edges);
+                                    self.cursor.set_status(smithay::input::pointer::CursorImageStatus::Named(icon));
+                                    pointer.frame(self);
+                                    self.schedule_render();
+                                    return;
+                                }
+                            } else {
+                                let initial_rect = smithay::utils::Rectangle::new(win_loc, win_geo.size);
+                                let grab = crate::grabs::ResizeSurfaceGrab::start(
+                                    start_data, window, edges, initial_rect,
+                                );
+                                pointer.set_grab(self, grab, serial, smithay::input::pointer::Focus::Clear);
+                                let icon = crate::grabs::ResizeSurfaceGrab::cursor_icon_for_edges(edges);
+                                self.cursor.set_status(smithay::input::pointer::CursorImageStatus::Named(icon));
+                                pointer.frame(self);
+                                self.schedule_render();
+                                return;
+                            }
                         }
                     }
                 }

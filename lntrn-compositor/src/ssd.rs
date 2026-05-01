@@ -23,6 +23,8 @@ const BAR_HEIGHT: i32 = 34;
 const BTN_W: i32 = 46;
 /// Corner radius for floating (non-tiled) windows.
 pub const CORNER_RADIUS: f32 = 18.0;
+/// Corner radius for tiled windows — minimal, just softens the edge.
+pub const TILED_CORNER_RADIUS: f32 = 6.0;
 
 fn phys_pt(x: i32, y: i32) -> Point<i32, Physical> {
     Point::from((x, y))
@@ -172,6 +174,7 @@ pub fn render_decoration(
     icon_shader: Option<&GlesPixelProgram>,
     header_shader: Option<&GlesPixelProgram>,
     corners: RoundedCorners,
+    radius_logical: f32,
 ) -> (Vec<SolidColorRenderElement>, Vec<PixelShaderElement>) {
     let mut solids = Vec::with_capacity(2);
     let mut shaders = Vec::with_capacity(4);
@@ -197,7 +200,7 @@ pub fn render_decoration(
     // Header background via shader (semi-transparent with rounded top corners)
     if let Some(shader) = header_shader {
         let corner_r = if corners.tl || corners.tr {
-            CORNER_RADIUS * scale as f32
+            radius_logical * scale as f32
         } else {
             0.0
         };
@@ -231,7 +234,7 @@ pub fn render_decoration(
             // Close hover uses header shader so it respects the rounded top-right corner
             if let Some(shader) = header_shader {
                 let btn_x = bar_lx + bar_w - BTN_W;
-                let hover_r = if corners.tr { CORNER_RADIUS * scale as f32 } else { 0.0 };
+                let hover_r = if corners.tr { radius_logical * scale as f32 } else { 0.0 };
                 let hover_area = Rectangle::<i32, Logical>::new(
                     Point::from((btn_x, bar_ly)),
                     Size::from((BTN_W, bar_h)),

@@ -368,7 +368,7 @@ pub fn render_surface(
     let mut window_elements: Vec<CustomRenderElements> = Vec::new();
     let mut fullscreen_elements: Vec<CustomRenderElements> = Vec::new();
     // Blur backdrop tracking: (insert index, screen-logical rect)
-    let mut blur_backdrops: Vec<(usize, Rectangle<i32, Logical>, f32)> = Vec::new();
+    let mut blur_backdrops: Vec<(usize, Rectangle<i32, Logical>, f32, f32)> = Vec::new();
 
     let output_name_str = output.name();
     let ws_transition_now = std::time::Instant::now();
@@ -514,6 +514,15 @@ pub fn render_surface(
             crate::ssd::RoundedCorners::all()
         };
 
+        // Tiled windows get a much smaller corner radius so they read as
+        // grid cells rather than floating cards.
+        let is_tiled_now = state.workspaces.contains(&surface);
+        let win_corner_r_logical = if is_tiled_now {
+            crate::ssd::TILED_CORNER_RADIUS
+        } else {
+            crate::ssd::CORNER_RADIUS
+        };
+
         let win_log_loc: Point<i32, Logical> = Point::from((
             rel_x as i32,
             rel_y as i32,
@@ -529,6 +538,7 @@ pub fn render_surface(
                     ssd_state, phys_loc, win_log_loc,
                     win_geo.size, output_scale, ssd_icon_shader.as_ref(),
                     ssd_header_shader.as_ref(), corners,
+                    win_corner_r_logical,
                 );
                 for elem in shader_elems {
                     window_elements.push(CustomRenderElements::Shader(elem));
@@ -559,16 +569,22 @@ pub fn render_surface(
         let target = if is_fullscreen { &mut fullscreen_elements } else { &mut window_elements };
         let win_phys_w_raw = (win_geo.size.w as f64 * output_scale) as f32;
         let win_phys_h_raw = (win_geo.size.h as f64 * output_scale) as f32;
-        let corner_r = crate::ssd::CORNER_RADIUS * output_scale as f32;
+        let corner_r = win_corner_r_logical * output_scale as f32;
         // Skip rounding when the surface is smaller than the corner diameter —
         // the SDF mask would be degenerate and tiny transient surfaces (Proton
         // bootstrap splashes etc.) can otherwise trigger GL_INVALID_VALUE when
         // their buffer resizes underneath the element.
         let too_small_for_rounding = win_phys_w_raw < corner_r * 2.0 + 1.0
             || win_phys_h_raw < corner_r * 2.0 + 1.0;
+        // Skip surface rounding when an SSD bar is present (bar+surface rounding
+        // mismatch produces a notch) or when the window is tiled (client CSD
+        // headers don't expect compositor clipping; clients receive set_tiled
+        // and can flatten their own corners).
         let needs_rounding = !is_fullscreen && !is_maximized
             && snap_zone.is_none()
             && !too_small_for_rounding
+            && !has_ssd
+            && !is_tiled_now
             && udev.rounded_tex_shader.is_some();
         if needs_rounding {
             let shader = udev.rounded_tex_shader.as_ref().unwrap();
@@ -622,7 +638,7 @@ pub fn render_surface(
             // contributions (anim_alpha + minimize_alpha) so open/close and
             // minimize fade the blur in lockstep with the window itself.
             let blur_alpha = (anim_alpha * minimize_alpha).clamp(0.0, 1.0);
-            blur_backdrops.push((window_elements.len(), log_rect, blur_alpha));
+            blur_backdrops.push((window_elements.len(), log_rect, blur_alpha, win_corner_r_logical));
         }
 
         // Window drop shadow / focus glow (behind window, so pushed after = lower z)
@@ -630,7 +646,7 @@ pub fn render_surface(
             if let Some(ref shader) = shadow_shader {
                 let is_focused = focused_surface.as_ref() == Some(&surface);
                 let shadow_expand = if is_focused { 48i32 } else { 40i32 };
-                let corner_r = crate::ssd::CORNER_RADIUS;
+                let corner_r = win_corner_r_logical;
                 let ssd_bar = if has_ssd { crate::ssd::SsdManager::bar_height() } else { 0 };
                 let win_x = rel_x.round() as i32;
                 let win_y = rel_y.round() as i32 - ssd_bar;
@@ -1126,7 +1142,7 @@ pub fn render_surface(
                 // Blur source: everything behind transparent windows.
                 // List is front-to-back, so take elements after the topmost
                 // transparent window's insert point (behind = higher indices).
-                let top_idx = blur_backdrops.iter().map(|(i, _, _)| *i).min().unwrap_or(0);
+                let top_idx = blur_backdrops.iter().map(|(i, _, _, _)| *i).min().unwrap_or(0);
                 let below_windows = &window_elements[top_idx..];
 
                 let mut wp_elements: Vec<CustomRenderElements> = Vec::new();
@@ -1189,11 +1205,11 @@ pub fn render_surface(
                         let output_logical = Size::<i32, Logical>::from((
                             output_geo.size.w, output_geo.size.h,
                         ));
-                        let corner_r = crate::ssd::CORNER_RADIUS * output_scale as f32;
                         let blur_tex_w = (output_phys.w / 2).max(1) as f32;
                         let blur_tex_h = (output_phys.h / 2).max(1) as f32;
 
-                        for (idx, log_rect, alpha) in blur_backdrops.iter().rev() {
+                        for (idx, log_rect, alpha, radius_logical) in blur_backdrops.iter().rev() {
+                            let corner_r = radius_logical * output_scale as f32;
                             let backdrop = crate::blur::create_backdrop(
                                 blur_state, ctx_id.clone(), *log_rect,
                                 output_logical, output_scale, *alpha,

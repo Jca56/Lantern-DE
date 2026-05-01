@@ -111,10 +111,12 @@ impl PointerGrab<Lantern> for MoveSurfaceGrab {
             let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(&self.window) else { return };
 
             {
-                // Check for snap zone before releasing the grab
+                // Check for snap zone before releasing the grab. Use the
+                // wider drag threshold and the eviction-aware snap so an
+                // occupied zone bumps its tenant to the largest free zone.
                 let pointer_pos = handle.current_location();
-                if let Some(zone) = data.detect_snap_zone(pointer_pos) {
-                    data.snap_window_to_zone(&surface, zone);
+                if let Some(zone) = data.detect_snap_zone_drag(pointer_pos) {
+                    data.apply_snap_with_eviction(&surface, zone);
                 } else if data.detect_top_edge(pointer_pos).is_some() {
                     // Top edge = maximize
                     if !data.is_maximized(&surface) {

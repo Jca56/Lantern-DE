@@ -106,21 +106,36 @@ pub struct SnappedWindow {
 }
 
 impl Lantern {
-    /// Detect which snap zone the pointer is in, if any.
-    /// `pos` is the pointer position in logical coordinates.
+    /// Detect which snap zone the pointer is in, if any. 8px threshold —
+    /// used for non-drag pointer queries.
     pub fn detect_snap_zone(
         &self,
         pos: Point<f64, Logical>,
     ) -> Option<SnapZone> {
-        const EDGE_THRESHOLD: f64 = 8.0;
+        self.detect_snap_zone_with_threshold(pos, 8.0)
+    }
 
+    /// Wider snap-zone detection for active drags so the user doesn't have
+    /// to slam the cursor into the very edge of the screen.
+    pub fn detect_snap_zone_drag(
+        &self,
+        pos: Point<f64, Logical>,
+    ) -> Option<SnapZone> {
+        self.detect_snap_zone_with_threshold(pos, 30.0)
+    }
+
+    fn detect_snap_zone_with_threshold(
+        &self,
+        pos: Point<f64, Logical>,
+        edge_threshold: f64,
+    ) -> Option<SnapZone> {
         let output = self.output_at_point(pos)?;
         let geo = self.space.output_geometry(&output)?;
 
-        let near_left = pos.x - geo.loc.x as f64 <= EDGE_THRESHOLD;
-        let near_right = (geo.loc.x + geo.size.w) as f64 - pos.x <= EDGE_THRESHOLD;
-        let near_top = pos.y - geo.loc.y as f64 <= EDGE_THRESHOLD;
-        let near_bottom = (geo.loc.y + geo.size.h) as f64 - pos.y <= EDGE_THRESHOLD;
+        let near_left = pos.x - geo.loc.x as f64 <= edge_threshold;
+        let near_right = (geo.loc.x + geo.size.w) as f64 - pos.x <= edge_threshold;
+        let near_top = pos.y - geo.loc.y as f64 <= edge_threshold;
+        let near_bottom = (geo.loc.y + geo.size.h) as f64 - pos.y <= edge_threshold;
 
         match (near_left, near_right, near_top, near_bottom) {
             (true, _, true, _) => Some(SnapZone::TopLeft),
@@ -386,6 +401,82 @@ impl Lantern {
 
         self.schedule_client_render();
         tracing::info!(?next, "Cycled snap zone");
+        true
+    }
+
+    /// Snap `surface` to `zone`, evicting any window whose current rect
+    /// overlaps the target. Evicted windows go to the largest free snap
+    /// zone (same logic as keyboard cycle). Used by drag-and-drop release.
+    /// Surface is popped from the BSP tree first if present.
+    pub fn apply_snap_with_eviction(&mut self, surface: &WlSurface, zone: SnapZone) -> bool {
+        let Some(window) = self.find_mapped_window(surface) else { return false };
+        let output = self.output_for_window(&window)
+            .or_else(|| self.space.outputs().next().cloned());
+        let Some(output) = output else { return false };
+        let output_name = output.name();
+        let Some(target) = self.snap_zone_geometry_on_output(&output, zone) else { return false };
+
+        // Pop from BSP if tiled — we're moving to a manual snap zone.
+        if self.workspaces.contains(surface) {
+            self.workspaces.remove(surface);
+            self.tiling_anim.remove(surface);
+        }
+
+        self.apply_snap(surface, zone, target);
+
+        let overlapping: Vec<(WlSurface, Rectangle<i32, Logical>)> = self.space.elements()
+            .filter_map(|w| {
+                let s = crate::window_ext::WindowExt::get_wl_surface(w)?;
+                if s == *surface { return None; }
+                let same_output = self.output_for_window(w)
+                    .map(|o| o.name() == output_name)
+                    .unwrap_or(false);
+                if !same_output { return None; }
+                let loc = self.space.element_location(w).unwrap_or_default();
+                let rect = Rectangle::new(loc, w.geometry().size);
+                if rects_overlap(&rect, &target) { Some((s, rect)) } else { None }
+            })
+            .collect();
+
+        let mut taken: Vec<SnapZone> = vec![zone];
+        for existing in &self.snapped_windows {
+            if existing.surface != *surface && !taken.contains(&existing.zone) {
+                taken.push(existing.zone);
+            }
+        }
+        for (other_surface, other_rect) in overlapping {
+            let Some(free) = find_free_zone(&taken) else { break };
+            let Some(other_window) = self.find_mapped_window(&other_surface) else { continue };
+            let other_output = self.output_for_window(&other_window)
+                .or_else(|| self.space.outputs().next().cloned());
+            let Some(other_output) = other_output else { continue };
+            let Some(other_target) = self.snap_zone_geometry_on_output(&other_output, free) else { continue };
+
+            // Pop evictee from BSP tree too — they're becoming a snap.
+            if self.workspaces.contains(&other_surface) {
+                self.workspaces.remove(&other_surface);
+                self.tiling_anim.remove(&other_surface);
+            }
+            let _ = self.snapped_windows.iter().position(|e| e.surface == other_surface)
+                .map(|i| self.snapped_windows.remove(i));
+            let _ = self.maximized_windows.iter().position(|e| e.surface == other_surface)
+                .map(|i| self.maximized_windows.remove(i));
+
+            self.snapped_windows.push(SnappedWindow {
+                surface: other_surface.clone(),
+                zone: free,
+                restore: Rectangle::new(other_rect.loc, other_rect.size),
+            });
+            crate::window_ext::WindowExt::configure_size(&other_window, other_target.size);
+            self.space.map_element(other_window, other_target.loc, true);
+            taken.push(free);
+        }
+
+        if self.workspaces.tiling_active {
+            self.apply_tiling_layout();
+        }
+        self.schedule_client_render();
+        tracing::info!(?zone, "Snapped via drag with eviction");
         true
     }
 
