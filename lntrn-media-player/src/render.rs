@@ -3,8 +3,9 @@ use lntrn_ui::gpu::{FontSize, FoxPalette, InteractionContext, TextLabel};
 
 use crate::app::{App, LoopMode, VisMode, VIS_BARS};
 use crate::{
-    Gpu, ZONE_CANVAS, ZONE_CONTROLS_BAR, ZONE_LOOP, ZONE_NEXT, ZONE_PLAY_PAUSE, ZONE_PREV,
-    ZONE_SEEK_BAR, ZONE_VOLUME, ZONE_VOL_SLIDER,
+    Gpu, ZONE_CANVAS, ZONE_CLOSE, ZONE_CONTROLS_BAR, ZONE_LOOP, ZONE_MAXIMIZE, ZONE_MINIMIZE,
+    ZONE_NEXT, ZONE_PLAY_PAUSE, ZONE_PREV, ZONE_SEEK_BAR, ZONE_TITLE_BAR, ZONE_VOLUME,
+    ZONE_VOL_SLIDER,
 };
 
 pub struct ControlRects {
@@ -31,22 +32,36 @@ pub fn render_frame(
     painter.clear();
     input.begin_frame();
 
-    // ── Canvas area (transparent background) ────────────────────────
-    let canvas = Rect::new(0.0, 0.0, wf, hf);
+    // Treat "no pipeline" as audio-mode visually (transparent, no title bar).
+    let video_mode = !app.audio_only && app.pipeline.is_some();
+
+    // ── Title bar (top) — only in video mode ────────────────────────
+    let title_h = if video_mode { 32.0 * s } else { 0.0 };
+    let title_rect = Rect::new(0.0, 0.0, wf, title_h);
+
+    // ── Canvas area ─────────────────────────────────────────────────
+    let bar_h = 52.0 * s;
+    let canvas_top = title_h;
+    let canvas = Rect::new(0.0, canvas_top, wf, (hf - canvas_top).max(0.0));
+    let video_canvas = if video_mode {
+        Rect::new(0.0, canvas_top, wf, (hf - canvas_top - bar_h).max(0.0))
+    } else {
+        canvas
+    };
     let _canvas_state = input.add_zone(ZONE_CANVAS, canvas);
 
     let mut tex_draws: Vec<TextureDraw> = Vec::new();
 
-    if app.audio_only {
+    if !video_mode {
         match app.vis_mode {
             VisMode::ConcentricRings => draw_concentric_rings(painter, &app.vis_bars, canvas, s),
             VisMode::ClassicBars => draw_classic_bars(painter, &app.vis_bars, canvas, s),
         }
     } else if let Some(tex) = &app.video_texture {
         if app.video_width > 0 && app.video_height > 0 {
-            let fit = aspect_fit(app.video_width, app.video_height, canvas);
+            let fit = aspect_fit(app.video_width, app.video_height, video_canvas);
             let mut draw = TextureDraw::new(tex, fit.x, fit.y, fit.w, fit.h);
-            draw.clip = Some([canvas.x, canvas.y, canvas.w, canvas.h]);
+            draw.clip = Some([video_canvas.x, video_canvas.y, video_canvas.w, video_canvas.h]);
             tex_draws.push(draw);
         }
     }
@@ -58,13 +73,12 @@ pub fn render_frame(
     let mut vol_slider_rect = Rect::new(0.0, 0.0, 0.0, 0.0);
     let mut controls_bar_rect = Rect::new(0.0, 0.0, 0.0, 0.0);
 
-    if !app.audio_only && app.controls_visible {
+    if video_mode && app.controls_visible {
         let font = FontSize::Body;
         let seek_val = if app.seeking { app.seek_value } else { app.progress_fraction() };
         let vol_str = format!("Vol {}%", (app.volume * 100.0).round() as u32);
 
         // ── Horizontal bottom bar ───────────────────────────────
-        let bar_h = 52.0 * s;
         let bar_y = hf - bar_h;
         let bar_rect = Rect::new(0.0, bar_y, wf, bar_h);
         controls_bar_rect = bar_rect;
@@ -206,11 +220,76 @@ pub fn render_frame(
         }
     }
 
+    // ── Title bar ───────────────────────────────────────────────────
+    if video_mode {
+        let font = FontSize::Caption;
+        painter.rect_filled(title_rect, 0.0, Color::rgba(0.08, 0.08, 0.10, 1.0));
+
+        let btn_w = title_h;
+        let close_rect = Rect::new(wf - btn_w, 0.0, btn_w, title_h);
+        let max_rect = Rect::new(wf - btn_w * 2.0, 0.0, btn_w, title_h);
+        let min_rect = Rect::new(wf - btn_w * 3.0, 0.0, btn_w, title_h);
+
+        let close_state = input.add_zone(ZONE_CLOSE, close_rect);
+        let max_state = input.add_zone(ZONE_MAXIMIZE, max_rect);
+        let min_state = input.add_zone(ZONE_MINIMIZE, min_rect);
+
+        let title_drag_rect = Rect::new(0.0, 0.0, wf - btn_w * 3.0, title_h);
+        input.add_zone(ZONE_TITLE_BAR, title_drag_rect);
+
+        if min_state.is_hovered() {
+            painter.rect_filled(min_rect, 0.0, palette.surface_2.with_alpha(0.4));
+        }
+        if max_state.is_hovered() {
+            painter.rect_filled(max_rect, 0.0, palette.surface_2.with_alpha(0.4));
+        }
+        if close_state.is_hovered() {
+            painter.rect_filled(close_rect, 0.0, Color::rgba(0.85, 0.2, 0.2, 0.9));
+        }
+
+        let icon_min = "\u{2013}";
+        let icon_max = "\u{25A1}";
+        let icon_close = "\u{2715}";
+        let icon_color = palette.text;
+        let cy = (title_h - font.px()) * 0.5;
+        let imw = text.measure_width(icon_min, font.px());
+        TextLabel::new(icon_min, min_rect.x + (btn_w - imw) * 0.5, cy)
+            .size(font).color(icon_color).draw(text, ctx.width(), ctx.height());
+        let imxw = text.measure_width(icon_max, font.px());
+        TextLabel::new(icon_max, max_rect.x + (btn_w - imxw) * 0.5, cy)
+            .size(font).color(icon_color).draw(text, ctx.width(), ctx.height());
+        let icw = text.measure_width(icon_close, font.px());
+        TextLabel::new(icon_close, close_rect.x + (btn_w - icw) * 0.5, cy)
+            .size(font).color(icon_color).draw(text, ctx.width(), ctx.height());
+
+        let title_text = if app.file_name.is_empty() {
+            "Lantern Media Player".to_string()
+        } else {
+            app.file_name.clone()
+        };
+        let max_title_w = (title_drag_rect.w - 16.0 * s).max(0.0);
+        let mut shown = title_text.clone();
+        while text.measure_width(&shown, font.px()) > max_title_w && shown.len() > 1 {
+            shown.pop();
+        }
+        if shown.len() < title_text.len() && shown.len() > 1 {
+            shown.pop();
+            shown.push('\u{2026}');
+        }
+        TextLabel::new(&shown, 8.0 * s, cy)
+            .size(font).color(palette.text_secondary).draw(text, ctx.width(), ctx.height());
+    }
+
     // ── Multi-pass render ───────────────────────────────────────────
     let frame = ctx.begin_frame("Media Player");
     match frame {
         Ok(mut frame) => {
-            painter.render_into(ctx, &mut frame, Color::rgba(0.0, 0.0, 0.0, 0.0));
+            let clear = if video_mode {
+                Color::rgba(0.05, 0.05, 0.06, 1.0)
+            } else {
+                Color::rgba(0.0, 0.0, 0.0, 0.0)
+            };
+            painter.render_into(ctx, &mut frame, clear);
             let view = frame.view().clone();
             if !tex_draws.is_empty() {
                 tex_pass.render_pass(ctx, frame.encoder_mut(), &view, &tex_draws, None);

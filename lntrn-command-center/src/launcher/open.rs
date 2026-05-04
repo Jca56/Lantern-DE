@@ -103,13 +103,16 @@ pub fn tile_rect(panel: Rect, top_y: f32, scale: f32, idx: usize) -> Rect {
     )
 }
 
-/// Visible (non-minimized) toplevels — what we actually draw tiles for.
+/// Toplevels shown in the Open section. Includes minimized windows so users
+/// can find and restore them; minimized tiles render dimmed.
 pub fn visible_entries(toplevels: &[ToplevelInfo]) -> Vec<&ToplevelInfo> {
     toplevels
         .iter()
-        .filter(|t| !t.minimized && !t.app_id.is_empty())
+        .filter(|t| !t.app_id.is_empty())
         .collect()
 }
+
+const MINIMIZED_ALPHA_MULT: f32 = 0.5;
 
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
@@ -170,11 +173,13 @@ pub fn draw(
 
     for (i, entry) in entries.iter().enumerate() {
         let r = tile_rect(panel, row_top, scale, i);
+        let entry_mult = if entry.minimized { MINIMIZED_ALPHA_MULT } else { 1.0 };
+        let entry_alpha = alpha * entry_mult;
 
         // Placeholder plate: subtle dark fill + faint border. The
         // compositor will (Phase B) paint a live thumbnail on top.
-        painter.rect_filled(r, radius, text(PLACEHOLDER_BG_ALPHA * alpha));
-        painter.rect_stroke_sdf(r, radius, 1.0 * scale, text(PLACEHOLDER_BORDER_ALPHA * alpha));
+        painter.rect_filled(r, radius, text(PLACEHOLDER_BG_ALPHA * entry_alpha));
+        painter.rect_stroke_sdf(r, radius, 1.0 * scale, text(PLACEHOLDER_BORDER_ALPHA * entry_alpha));
 
         // App icon centered on the placeholder so the user has a hint
         // of what's inside until live thumbs land.
@@ -188,15 +193,17 @@ pub fn draw(
             x: icon_x,
             y: icon_y,
             size: icon_size,
-            opacity: alpha * 0.85,
+            opacity: entry_alpha * 0.85,
             clip: None,
         });
 
-        // Selection / activated ring.
+        // Selection / activated ring. Selection ring uses the un-dimmed
+        // alpha so a focused minimized tile still reads as selected.
         let is_selected = selected == Some(i);
         if is_selected || entry.activated {
             let ring_alpha = if is_selected { 0.65 } else { 0.45 };
-            painter.rect_stroke_sdf(r, radius, 2.0 * scale, accent(ring_alpha * alpha));
+            let ring_base = if is_selected { alpha } else { entry_alpha };
+            painter.rect_stroke_sdf(r, radius, 2.0 * scale, accent(ring_alpha * ring_base));
         }
 
         // Title label centered under the tile.
@@ -213,7 +220,7 @@ pub fn draw(
             label_font,
             lx,
             r.y + tile_h + label_gap,
-            text(LABEL_ALPHA * alpha),
+            text(LABEL_ALPHA * entry_alpha),
             tile_w + OPEN_TILE_GAP_X * scale,
             surface_w,
             surface_h,

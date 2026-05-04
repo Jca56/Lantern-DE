@@ -82,13 +82,8 @@ impl Lantern {
         let usable_w = output_geo.size.w - left_excl - right_excl;
         let usable_h = output_geo.size.h - top_excl - bottom_excl;
 
-        let cascade_step = 36;
-        let max_offset = (usable_w / 8).max(cascade_step);
-        let offset = (self.center_cascade_counter * cascade_step) % max_offset;
-        self.center_cascade_counter += 1;
-
-        let x = usable_x + (usable_w - win_geo.size.w) / 2 + offset;
-        let y = usable_y + (usable_h - win_geo.size.h) / 2 + offset;
+        let x = usable_x + (usable_w - win_geo.size.w) / 2;
+        let y = usable_y + (usable_h - win_geo.size.h) / 2;
 
         // Clamp to stay within usable area
         let x = x.clamp(usable_x, (usable_x + usable_w - win_geo.size.w).max(usable_x));

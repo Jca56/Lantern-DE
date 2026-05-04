@@ -198,9 +198,13 @@ impl MediaPipeline {
 
     pub fn seek(&self, position_ns: u64) {
         let _ = self.pipeline.seek_simple(
-            SeekFlags::FLUSH | SeekFlags::KEY_UNIT,
+            SeekFlags::FLUSH | SeekFlags::ACCURATE,
             ClockTime::from_nseconds(position_ns),
         );
+    }
+
+    pub fn clear_eos(&mut self) {
+        self.eos = false;
     }
 
     pub fn position(&self) -> Option<u64> {

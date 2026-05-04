@@ -15,14 +15,18 @@ use wayland_client::{
     },
     Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum,
 };
+use wayland_protocols::wp::cursor_shape::v1::client::{
+    wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1,
+};
 use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
 use crate::app::App;
 use crate::mpris_server::{self, PlayerState, MprisCmd};
 use crate::{
-    Gpu, ZONE_CANVAS, ZONE_CONTROLS_BAR, ZONE_LOOP, ZONE_NEXT, ZONE_PLAY_PAUSE, ZONE_PREV,
-    ZONE_SEEK_BAR, ZONE_VOLUME, ZONE_VOL_SLIDER,
+    Gpu, ZONE_CANVAS, ZONE_CLOSE, ZONE_CONTROLS_BAR, ZONE_LOOP, ZONE_MAXIMIZE, ZONE_MINIMIZE,
+    ZONE_NEXT, ZONE_PLAY_PAUSE, ZONE_PREV, ZONE_SEEK_BAR, ZONE_TITLE_BAR, ZONE_VOLUME,
+    ZONE_VOL_SLIDER,
 };
 
 // ── WaylandHandle for wgpu ──────────────────────────────────────────────────
@@ -77,6 +81,11 @@ struct State {
     // Keyboard
     ctrl: bool,
     key_pressed: Option<u32>,
+    // Cursor shape
+    cursor_shape_mgr: Option<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1>,
+    cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
+    pointer_enter_serial: u32,
+    current_cursor_shape: Option<wp_cursor_shape_device_v1::Shape>,
 }
 
 impl State {
@@ -91,6 +100,8 @@ impl State {
             left_pressed: false, left_released: false,
             scroll_delta: 0.0, pointer_serial: 0,
             ctrl: false, key_pressed: None,
+            cursor_shape_mgr: None, cursor_shape_device: None,
+            pointer_enter_serial: 0, current_cursor_shape: None,
         }
     }
 
@@ -120,6 +131,9 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 "wp_viewporter" => { state.viewporter = Some(registry.bind(name, version.min(1), qh, ())); }
                 "wl_output" => { let _: wl_output::WlOutput = registry.bind(name, version.min(4), qh, ()); }
                 "wl_seat" => { state.seat = Some(registry.bind(name, version.min(9), qh, ())); }
+                "wp_cursor_shape_manager_v1" => {
+                    state.cursor_shape_mgr = Some(registry.bind(name, version.min(1), qh, ()));
+                }
                 _ => {}
             }
         }
@@ -206,14 +220,27 @@ impl Dispatch<wl_callback::WlCallback, ()> for State {
 
 impl Dispatch<wl_seat::WlSeat, ()> for State {
     fn event(
-        _: &mut Self, seat: &wl_seat::WlSeat,
+        state: &mut Self, seat: &wl_seat::WlSeat,
         event: wl_seat::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>,
     ) {
         if let wl_seat::Event::Capabilities { capabilities: WEnum::Value(cap) } = event {
-            if cap.contains(wl_seat::Capability::Pointer) { seat.get_pointer(qh, ()); }
+            if cap.contains(wl_seat::Capability::Pointer) {
+                let ptr = seat.get_pointer(qh, ());
+                if let Some(mgr) = &state.cursor_shape_mgr {
+                    state.cursor_shape_device = Some(mgr.get_pointer(&ptr, qh, ()));
+                }
+            }
             if cap.contains(wl_seat::Capability::Keyboard) { seat.get_keyboard(qh, ()); }
         }
     }
+}
+
+impl Dispatch<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1, ()> for State {
+    fn event(_: &mut Self, _: &wp_cursor_shape_manager_v1::WpCursorShapeManagerV1, _: wp_cursor_shape_manager_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
+
+impl Dispatch<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1, ()> for State {
+    fn event(_: &mut Self, _: &wp_cursor_shape_device_v1::WpCursorShapeDeviceV1, _: wp_cursor_shape_device_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
 }
 
 impl Dispatch<wl_pointer::WlPointer, ()> for State {
@@ -222,10 +249,12 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
         event: wl_pointer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
     ) {
         match event {
-            wl_pointer::Event::Enter { surface_x, surface_y, .. } => {
+            wl_pointer::Event::Enter { serial, surface_x, surface_y, .. } => {
                 state.pointer_in_surface = true;
                 state.cursor_x = surface_x;
                 state.cursor_y = surface_y;
+                state.pointer_enter_serial = serial;
+                state.current_cursor_shape = None;
                 state.frame_done = true;
             }
             wl_pointer::Event::Leave { .. } => {
@@ -418,6 +447,25 @@ pub fn run(
             input.on_cursor_left();
         }
 
+        // ── Cursor shape (resize edges) ────────────────────────────────
+        if state.pointer_in_surface {
+            let desired = if !state.maximized && !state.fullscreen {
+                let border = 10.0 * s;
+                match edge_resize(cx, cy, wf, hf, border) {
+                    Some(edge) => resize_edge_to_cursor_shape(edge),
+                    None => wp_cursor_shape_device_v1::Shape::Default,
+                }
+            } else {
+                wp_cursor_shape_device_v1::Shape::Default
+            };
+            if state.current_cursor_shape != Some(desired) {
+                if let Some(dev) = &state.cursor_shape_device {
+                    dev.set_shape(state.pointer_enter_serial, desired);
+                }
+                state.current_cursor_shape = Some(desired);
+            }
+        }
+
         // ── Mouse movement → show controls ────────────────────────────
         if state.pointer_in_surface {
             app.reset_controls_timer();
@@ -498,6 +546,24 @@ pub fn run(
                     ZONE_CONTROLS_BAR => {
                         // Clicks on bar background — don't drag window
                     }
+                    ZONE_TITLE_BAR => {
+                        if let Some(seat) = &state.seat {
+                            toplevel._move(seat, state.pointer_serial);
+                        }
+                    }
+                    ZONE_CLOSE => {
+                        state.running = false;
+                    }
+                    ZONE_MAXIMIZE => {
+                        if state.maximized {
+                            toplevel.unset_maximized();
+                        } else {
+                            toplevel.set_maximized();
+                        }
+                    }
+                    ZONE_MINIMIZE => {
+                        toplevel.set_minimized();
+                    }
                     ZONE_CANVAS => {
                         app.vol_showing = false;
                         if let Some(seat) = &state.seat {
@@ -567,6 +633,23 @@ fn update_title(toplevel: &xdg_toplevel::XdgToplevel, app: &App) {
         toplevel.set_title("Lantern Media Player".into());
     } else {
         toplevel.set_title(format!("{} — Lantern Media Player", app.file_name));
+    }
+}
+
+fn resize_edge_to_cursor_shape(
+    edge: xdg_toplevel::ResizeEdge,
+) -> wp_cursor_shape_device_v1::Shape {
+    use wp_cursor_shape_device_v1::Shape;
+    match edge {
+        xdg_toplevel::ResizeEdge::Top => Shape::NResize,
+        xdg_toplevel::ResizeEdge::Bottom => Shape::SResize,
+        xdg_toplevel::ResizeEdge::Left => Shape::WResize,
+        xdg_toplevel::ResizeEdge::Right => Shape::EResize,
+        xdg_toplevel::ResizeEdge::TopLeft => Shape::NwResize,
+        xdg_toplevel::ResizeEdge::TopRight => Shape::NeResize,
+        xdg_toplevel::ResizeEdge::BottomLeft => Shape::SwResize,
+        xdg_toplevel::ResizeEdge::BottomRight => Shape::SeResize,
+        _ => Shape::Default,
     }
 }
 

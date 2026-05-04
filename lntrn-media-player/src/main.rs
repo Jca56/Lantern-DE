@@ -21,6 +21,7 @@ pub const ZONE_NEXT: u32 = 24;
 pub const ZONE_PREV: u32 = 25;
 pub const ZONE_LOOP: u32 = 26;
 pub const ZONE_CONTROLS_BAR: u32 = 27;
+pub const ZONE_TITLE_BAR: u32 = 28;
 
 // ── Shared types ────────────────────────────────────────────────────────────
 

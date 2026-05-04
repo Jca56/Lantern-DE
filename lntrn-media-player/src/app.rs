@@ -228,13 +228,17 @@ impl App {
     fn handle_eos(&mut self) -> bool {
         match self.loop_mode {
             LoopMode::LoopOne => {
-                if let Some(pipe) = &self.pipeline {
+                if let Some(pipe) = &mut self.pipeline {
+                    pipe.clear_eos();
                     pipe.seek(0);
                     pipe.play();
                 }
                 true
             }
             LoopMode::Off | LoopMode::LoopAll => {
+                if let Some(pipe) = &mut self.pipeline {
+                    pipe.clear_eos();
+                }
                 self.next_track()
             }
         }
