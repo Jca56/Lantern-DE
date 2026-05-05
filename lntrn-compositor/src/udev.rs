@@ -42,8 +42,8 @@ use crate::Lantern;
 
 pub const BG_COLOR: [f32; 4] = [0.094, 0.094, 0.094, 1.0];
 pub(crate) const SUPPORTED_FORMATS: &[Fourcc] = &[Fourcc::Argb8888, Fourcc::Abgr8888];
+/// Fallback render interval when no output info is available (60Hz).
 pub const RENDER_INTERVAL: Duration = Duration::from_millis(16);
-const POINTER_RENDER_INTERVAL: Duration = Duration::from_millis(16);
 /// Compositor output scale (reads [display] scale from lantern.toml, defaults 1.0).
 pub(crate) fn lantern_output_scale() -> f64 { crate::output_scale() }
 
@@ -51,6 +51,17 @@ pub fn frame_callback_interval(output: &smithay::output::Output) -> Duration {
     let refresh = output.current_mode().map(|mode| mode.refresh).unwrap_or(60_000);
     let refresh = u64::try_from(refresh.max(1)).unwrap_or(60_000);
     Duration::from_nanos(1_000_000_000u64 / refresh)
+}
+
+/// Returns the frame interval of the fastest currently-connected output.
+/// Falls back to `RENDER_INTERVAL` (60Hz) if no outputs are present.
+pub fn fastest_output_interval(state: &Lantern) -> Duration {
+    state
+        .space
+        .outputs()
+        .map(frame_callback_interval)
+        .min()
+        .unwrap_or(RENDER_INTERVAL)
 }
 
 pub(crate) struct OutputSurface {
@@ -69,13 +80,22 @@ pub(crate) struct OutputSurface {
     /// not held during early startup) and force a recovery render.
     pub frame_pending_since: Option<Instant>,
     pub pending_render: bool,
-    pub pending_interval: Duration,
-    pub cooldown_until: Instant,
 }
 
-/// If a frame stays "pending" longer than this without a vblank, assume the
-/// page-flip got silently dropped and recover.
-pub const VBLANK_TIMEOUT: Duration = Duration::from_millis(100);
+/// Floor for the vblank watchdog timeout. The watchdog scales with the
+/// fastest output's frame interval (3× interval) so high-refresh displays
+/// don't trigger spurious recovery renders, but never drops below this so
+/// brief driver hiccups at 60Hz don't false-positive either.
+pub const VBLANK_TIMEOUT_FLOOR: Duration = Duration::from_millis(30);
+
+/// Adaptive vblank watchdog timeout: 3× the fastest output's frame interval,
+/// floored at `VBLANK_TIMEOUT_FLOOR`. At 60Hz this is ~50ms; at 170Hz it's
+/// ~30ms (floor). At 240Hz it's still 30ms. Replaces the old hardcoded 100ms
+/// which was 17 frames at 170Hz — long enough to fire mid-stride during
+/// normal vblank jitter and cause hitches.
+pub fn vblank_timeout(state: &Lantern) -> Duration {
+    (fastest_output_interval(state) * 3).max(VBLANK_TIMEOUT_FLOOR)
+}
 
 pub(crate) struct GpuBackend {
     pub(crate) drm_output_manager: DrmOutputManager<
@@ -419,6 +439,7 @@ pub fn schedule_render_all(state: &mut Lantern) {
 /// `flush_pending_renders` gets a chance to detect a dropped page-flip and
 /// recover. Called from the render path right after `queue_frame` succeeds.
 pub fn arm_vblank_watchdog(state: &mut Lantern) {
+    let timeout = vblank_timeout(state);
     let udev = match state.udev.as_mut() {
         Some(u) => u,
         None => return,
@@ -426,7 +447,7 @@ pub fn arm_vblank_watchdog(state: &mut Lantern) {
     if udev.render_timer.is_some() {
         return; // an existing timer will already wake us up
     }
-    let delay = VBLANK_TIMEOUT + Duration::from_millis(20);
+    let delay = timeout + Duration::from_millis(20);
     let token = state.loop_handle.insert_source(
         Timer::from_duration(delay),
         |_, _, state| {
@@ -453,11 +474,7 @@ pub fn schedule_render_forced(state: &mut Lantern) {
 }
 
 fn schedule_render(state: &mut Lantern, force: bool) {
-    let interval = if state.pending_client_frame_callbacks {
-        RENDER_INTERVAL
-    } else {
-        POINTER_RENDER_INTERVAL
-    };
+    let interval = fastest_output_interval(state);
 
     let udev = match state.udev.as_mut() {
         Some(u) => u,
@@ -470,7 +487,6 @@ fn schedule_render(state: &mut Lantern, force: bool) {
         for (node, backend) in &mut udev.backends {
             for (crtc, surface) in &mut backend.surfaces {
                 surface.pending_render = true;
-                surface.pending_interval = surface.pending_interval.min(interval);
                 targets.push((*node, *crtc));
             }
         }
@@ -486,7 +502,6 @@ fn schedule_render(state: &mut Lantern, force: bool) {
         for (_, backend) in &mut udev.backends {
             for (_, surface) in &mut backend.surfaces {
                 surface.pending_render = true;
-                surface.pending_interval = surface.pending_interval.min(interval);
             }
         }
 
@@ -512,6 +527,7 @@ fn schedule_render(state: &mut Lantern, force: bool) {
 }
 
 fn flush_pending_renders(state: &mut Lantern, force: bool) {
+    let timeout = vblank_timeout(state);
     let udev = match state.udev.as_mut() {
         Some(u) => u,
         None => return,
@@ -519,16 +535,16 @@ fn flush_pending_renders(state: &mut Lantern, force: bool) {
 
     let mut targets = Vec::new();
     let now = Instant::now();
-    let mut earliest_retry: Option<Instant> = None;
     for (node, backend) in &mut udev.backends {
         for (crtc, surface) in &mut backend.surfaces {
             // Vblank watchdog: if a frame's been "pending" longer than
-            // VBLANK_TIMEOUT, the page-flip was almost certainly dropped
-            // (DRM master not held, driver glitch, etc.) — clear the flag
-            // so we don't wedge forever waiting for a vblank that won't come.
+            // the adaptive timeout, the page-flip was almost certainly
+            // dropped (DRM master not held, driver glitch, etc.) — clear
+            // the flag so we don't wedge forever waiting for a vblank
+            // that won't come.
             if surface.frame_pending {
                 if let Some(since) = surface.frame_pending_since {
-                    if now.duration_since(since) > VBLANK_TIMEOUT {
+                    if now.duration_since(since) > timeout {
                         warn!("Vblank watchdog: page-flip dropped, recovering");
                         surface.frame_pending = false;
                         surface.frame_pending_since = None;
@@ -537,47 +553,20 @@ fn flush_pending_renders(state: &mut Lantern, force: bool) {
                 }
             }
             if surface.pending_render {
-                if force || (!surface.frame_pending && now >= surface.cooldown_until) {
+                // Render now if forced, or if no page-flip is in flight.
+                // The cooldown guard was a 60Hz-era safety belt to space out
+                // timer-driven renders; at high refresh it can hold a render
+                // past the next vblank. Trust the vblank handler — if a flip
+                // is in flight, that handler will re-render on completion.
+                if force || !surface.frame_pending {
                     targets.push((*node, *crtc));
-                } else if !surface.frame_pending {
-                    // Still in cooldown — remember the earliest retry time
-                    earliest_retry = Some(match earliest_retry {
-                        Some(t) => t.min(surface.cooldown_until),
-                        None => surface.cooldown_until,
-                    });
                 }
                 // If frame_pending, VBlank handler will pick it up — no timer needed
             }
         }
     }
-
     for (node, crtc) in targets {
         render_surface(state, node, crtc);
-    }
-
-    // If surfaces remain pending (in cooldown), schedule another one-shot timer
-    if let Some(retry_at) = earliest_retry {
-        if let Some(udev) = state.udev.as_mut() {
-            if udev.render_timer.is_none() {
-                let delay = retry_at.saturating_duration_since(Instant::now())
-                    .max(Duration::from_millis(1));
-                let token = state.loop_handle.insert_source(
-                    Timer::from_duration(delay),
-                    |_, _, state| {
-                        if let Some(udev) = state.udev.as_mut() {
-                            udev.render_timer = None;
-                        }
-                        flush_pending_renders(state, false);
-                        TimeoutAction::Drop
-                    },
-                );
-                if let Ok(token) = token {
-                    if let Some(udev) = state.udev.as_mut() {
-                        udev.render_timer = Some(token);
-                    }
-                }
-            }
-        }
     }
 }
 

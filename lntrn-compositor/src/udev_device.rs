@@ -3,7 +3,6 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::time::Instant;
 
 use smithay::{
     backend::{
@@ -33,8 +32,7 @@ use crate::shaders::{
     TOP_CENTER_GLOW_SHADER_SRC,
 };
 use crate::udev::{
-    GpuBackend, OutputSurface, UdevOutputId, lantern_output_scale, RENDER_INTERVAL,
-    SUPPORTED_FORMATS,
+    GpuBackend, OutputSurface, UdevOutputId, lantern_output_scale, SUPPORTED_FORMATS,
 };
 use crate::window_ext::WindowExt;
 use crate::Lantern;
@@ -371,11 +369,20 @@ fn connector_connected(
         .map(|(i, _)| i)
         .unwrap_or(preferred_idx);
     let drm_mode = connector.modes()[mode_id];
-    info!(
-        "Selected mode: {}x{}@{}Hz for {}",
-        drm_mode.size().0, drm_mode.size().1, drm_mode.vrefresh(), output_name
-    );
     let wl_mode = WlMode::from(drm_mode);
+    let frame_interval_us = if wl_mode.refresh > 0 {
+        1_000_000_000u64 / (wl_mode.refresh as u64)
+    } else {
+        16_666
+    };
+    info!(
+        "Selected mode: {}x{}@{}Hz for {} (frame interval: {:.2}ms)",
+        drm_mode.size().0,
+        drm_mode.size().1,
+        drm_mode.vrefresh(),
+        output_name,
+        frame_interval_us as f64 / 1000.0
+    );
 
     let (phys_w, phys_h) = connector.size().unwrap_or((0, 0));
     let output = Output::new(
@@ -454,8 +461,6 @@ fn connector_connected(
             frame_pending: false,
             frame_pending_since: None,
             pending_render: false,
-            pending_interval: RENDER_INTERVAL,
-            cooldown_until: Instant::now(),
         },
     );
 

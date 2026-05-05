@@ -34,7 +34,7 @@ use crate::shaders::{
     TOP_CENTER_GLOW_COLOR, TOP_CENTER_GLOW_HEIGHT, TOP_CENTER_GLOW_LINE_HALF,
     TOP_CENTER_GLOW_SIGMA, TOP_CENTER_GLOW_WIDTH,
 };
-use crate::udev::{frame_callback_interval, UdevOutputId, BG_COLOR, RENDER_INTERVAL};
+use crate::udev::{frame_callback_interval, UdevOutputId, BG_COLOR};
 use crate::Lantern;
 
 // Combined render element enum: space windows + cursor overlay
@@ -162,7 +162,7 @@ pub fn render_surface(
 
     // Clear pending state FIRST so early returns don't leave flags stuck.
     // Without this, a failure in render_elements_for_output would leave
-    // pending_render=true with no cooldown, causing a CPU-burning busy loop.
+    // pending_render=true and cause a busy loop.
     {
         let udev = match state.udev.as_mut() {
             Some(u) => u,
@@ -177,8 +177,6 @@ pub fn render_surface(
             None => return,
         };
         surface.pending_render = false;
-        surface.cooldown_until = Instant::now() + surface.pending_interval;
-        surface.pending_interval = RENDER_INTERVAL;
     }
 
     let output = match state.space.outputs().find(|o| {
