@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use std::time::Instant;
-use crate::fs::{self, FileEntry, SortBy};
+use crate::fs::{self, FileEntry, SortBy, SortDir};
 use crate::{PickConfig, PickResult, PickType};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -111,6 +111,7 @@ pub struct App {
     pub view_mode: ViewMode,
     pub show_hidden: bool,
     pub sort_by: SortBy,
+    pub sort_dir: SortDir,
 
     // Tree view state
     pub tree_expanded: std::collections::HashSet<PathBuf>,
@@ -215,6 +216,7 @@ impl App {
             view_mode: ViewMode::Grid,
             show_hidden: false,
             sort_by: SortBy::Name,
+            sort_dir: SortDir::Asc,
             places,
             drives: fs::detect_drives(),
             phones: fs::detect_phones(),
@@ -282,7 +284,7 @@ impl App {
     }
 
     pub fn reload(&mut self) {
-        self.entries = fs::list_directory(&self.current_dir, self.show_hidden, self.sort_by);
+        self.entries = fs::list_directory(&self.current_dir, self.show_hidden, self.sort_by, self.sort_dir);
         // Apply pick filter (dirs always shown, files filtered)
         if let Some(ref pick) = self.pick {
             if !pick.filters.is_empty() {
@@ -301,7 +303,7 @@ impl App {
     pub fn reload_tab(&mut self, tab_idx: usize) {
         if tab_idx < self.tabs.len() {
             let tab = &mut self.tabs[tab_idx];
-            tab.entries = fs::list_directory(&tab.path, self.show_hidden, self.sort_by);
+            tab.entries = fs::list_directory(&tab.path, self.show_hidden, self.sort_by, self.sort_dir);
         }
     }
 
@@ -705,7 +707,7 @@ impl App {
     }
 
     fn build_tree_recursive(&mut self, dir: &PathBuf, depth: usize) {
-        let entries = fs::list_directory(dir, self.show_hidden, self.sort_by);
+        let entries = fs::list_directory(dir, self.show_hidden, self.sort_by, self.sort_dir);
         for entry in entries {
             let is_expanded = entry.is_dir && self.tree_expanded.contains(&entry.path);
             let child_path = entry.path.clone();
@@ -733,7 +735,7 @@ impl App {
         self.sync_to_tab();
         let home = dirs_home();
         let mut tab = DirectoryTab::new(home.clone());
-        tab.entries = fs::list_directory(&tab.path, self.show_hidden, self.sort_by);
+        tab.entries = fs::list_directory(&tab.path, self.show_hidden, self.sort_by, self.sort_dir);
         self.tabs.push(tab);
         self.current_tab = self.tabs.len() - 1;
         self.sync_from_tab();

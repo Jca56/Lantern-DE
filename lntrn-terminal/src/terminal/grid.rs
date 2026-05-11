@@ -1,8 +1,18 @@
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use super::images::ImageManager;
 use super::performer::Performer;
+
+/// Fallback timeout for synchronized output mode 2026 (DEC mode 2026,
+/// `CSI ?2026 h` … `CSI ?2026 l`). The deadline is *sliding*: every
+/// time `process()` consumes new bytes while sync is active, we push the
+/// deadline forward by this much. As long as data is flowing the batch
+/// can run as long as it needs to (Claude Code's "thought for 11s + tool
+/// call + task widget" redraws routinely take 1–5s). We only fall back
+/// when the app stops sending bytes mid-batch — the genuinely-stuck case
+/// the deadline is meant to catch.
+pub(super) const SYNC_OUTPUT_TIMEOUT: Duration = Duration::from_millis(1000);
 
 // ── Framework-agnostic color type ───────────────────────────────────────────
 
@@ -203,10 +213,13 @@ pub struct TerminalState {
     pub wrap_next: bool,
 
     // Synchronized output (Mode 2026) — when true, suppress rendering until
-    // the application sends CSI ? 2026 l to end the synchronized update.
-    // `sync_deadline` is a fallback wakeup so a stuck flag doesn't freeze
-    // the screen if the closing sequence never arrives (250ms, matching
-    // contour/iTerm2). The app loop must check `is_syncing()` before redraw.
+    // the application sends CSI ?2026 l to end the synchronized update.
+    // `sync_deadline` is a *sliding* fallback: it gets pushed forward in
+    // `process()` every time new bytes arrive while sync_update is set, so
+    // a long, actively-streaming batch never times out. The fallback only
+    // fires when the app genuinely stops sending bytes mid-batch — the
+    // hung-app case the deadline exists to recover from. The app loop must
+    // check `is_syncing()` before redraw.
     pub sync_update: bool,
     pub sync_deadline: Option<Instant>,
 
@@ -340,6 +353,17 @@ impl TerminalState {
         }
 
         self.parser = parser;
+
+        // Sliding sync deadline. Whenever we consume bytes while mode 2026
+        // is active, push the fallback deadline forward — Claude Code's
+        // big redraws (thinking + tool call + task widget) routinely run
+        // 1–5s, far longer than any fixed timeout. As long as data keeps
+        // arriving, the batch isn't stuck and we must not render the
+        // half-written grid. The fixed timeout only fires when the app
+        // genuinely stops sending bytes mid-batch.
+        if self.sync_update && !data.is_empty() {
+            self.sync_deadline = Some(Instant::now() + SYNC_OUTPUT_TIMEOUT);
+        }
     }
 
     /// Dispatch a completed APC payload.

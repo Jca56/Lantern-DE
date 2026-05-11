@@ -383,8 +383,8 @@ pub(crate) fn run_loop(
                 }
                 if !handled_resize {
                     let action = handle_click(
-                        input, app, view_menu, &mut state.popup_backend,
-                        &mut last_tab_click, &mut tab_drag_press, s,
+                        input, app, view_menu, context_menu, &mut state.popup_backend,
+                        &mut last_tab_click, &mut tab_drag_press, wf, s,
                         settings.bg_opacity, &settings.theme,
                     );
                     match action {

@@ -10,7 +10,7 @@ use wayland_protocols::xdg::shell::client::xdg_toplevel;
 
 use crate::app::{App, ContextTarget};
 use crate::desktop::{self, DesktopApp};
-use crate::fs::SortBy;
+use crate::fs::{SortBy, SortDir};
 use crate::layout::{content_rect, drive_item_rect, file_item_rect, grid_columns};
 use crate::settings::Settings;
 use crate::wayland::State;
@@ -22,16 +22,49 @@ use crate::{
     CTX_NEW_FOLDER_RED, CTX_NEW_FOLDER_YELLOW, CTX_OPEN, CTX_OPEN_AS_ROOT, CTX_OPEN_LOCATION,
     CTX_OPEN_TERMINAL, CTX_OPEN_WITH, CTX_OPEN_WITH_BASE, CTX_PASTE, CTX_PROPERTIES,
     CTX_RENAME, CTX_SELECT_ALL, CTX_SHOW_HIDDEN, CTX_SORT_BY, CTX_SORT_DATE, CTX_SORT_NAME,
-    CTX_SORT_SIZE, CTX_SORT_TYPE, CTX_TRASH, SORT_RADIO_GROUP, VIEW_SLIDER_ID, VIEW_OPACITY_SLIDER_ID, VIEW_SHOW_HIDDEN_ID,
+    CTX_SORT_SIZE, CTX_SORT_TYPE, CTX_TRASH, VIEW_SLIDER_ID, VIEW_OPACITY_SLIDER_ID, VIEW_SHOW_HIDDEN_ID,
     VIEW_THEME_GROUP, VIEW_THEME_FOX_DARK, VIEW_THEME_FOX_LIGHT, VIEW_THEME_LANTERN, VIEW_THEME_NIGHT_SKY,
     ZONE_CLOSE, ZONE_FILE_ITEM_BASE, ZONE_MAXIMIZE, ZONE_MENU_VIEW, ZONE_MINIMIZE,
-    ZONE_NAV_BACK, ZONE_NAV_FORWARD, ZONE_NAV_UP, ZONE_NAV_SEARCH, ZONE_NAV_VIEW_TOGGLE,
+    ZONE_NAV_BACK, ZONE_NAV_FORWARD, ZONE_NAV_SORT, ZONE_NAV_UP, ZONE_NAV_SEARCH, ZONE_NAV_VIEW_TOGGLE,
     ZONE_PATH_INPUT, ZONE_SIDEBAR_ITEM_BASE, ZONE_TAB_BASE, ZONE_TAB_CLOSE_BASE, ZONE_TAB_NEW,
     ZONE_BREADCRUMB_BASE, ZONE_DRIVE_DIALOG_CANCEL, ZONE_DRIVE_DIALOG_CONFIRM, ZONE_DRIVE_DIALOG_OK,
     ZONE_DRIVE_DIALOG_SCRIM, ZONE_DRIVE_ITEM_BASE, ZONE_PHONE_ITEM_BASE, ZONE_TREE_ITEM_BASE,
 };
 
 // ── Helper functions ────────────────────────────────────────────────────────
+
+/// Build the Sort By menu items. The currently-active sort is marked with an
+/// arrow (↑ Asc / ↓ Desc); clicking the active one again flips direction.
+pub(crate) fn sort_menu_items(app: &App) -> Vec<MenuItem> {
+    let arrow = match app.sort_dir {
+        SortDir::Asc => "  \u{2191}",   // ↑
+        SortDir::Desc => "  \u{2193}",  // ↓
+    };
+    let label = |name: &str, active: bool| -> String {
+        if active { format!("{name}{arrow}") } else { name.to_string() }
+    };
+    vec![
+        MenuItem::action(CTX_SORT_NAME, &label("Name", app.sort_by == SortBy::Name)),
+        MenuItem::action(CTX_SORT_SIZE, &label("Size", app.sort_by == SortBy::Size)),
+        MenuItem::action(CTX_SORT_DATE, &label("Date Modified", app.sort_by == SortBy::Date)),
+        MenuItem::action(CTX_SORT_TYPE, &label("Type", app.sort_by == SortBy::Type)),
+    ]
+}
+
+/// Apply a sort selection: if it's the currently active sort, flip direction;
+/// otherwise switch to that sort with its natural default direction.
+pub(crate) fn apply_sort_selection(app: &mut App, settings: &mut Settings, sort: SortBy) {
+    if app.sort_by == sort {
+        app.sort_dir = app.sort_dir.flip();
+    } else {
+        app.sort_by = sort;
+        app.sort_dir = crate::fs::default_dir(sort);
+    }
+    settings.set_sort_by(app.sort_by);
+    settings.set_sort_dir(app.sort_dir);
+    app.reload();
+}
+
 
 pub(crate) fn edge_resize(cx: f32, cy: f32, w: f32, h: f32, border: f32) -> Option<xdg_toplevel::ResizeEdge> {
     let left = cx < border;
@@ -72,9 +105,11 @@ pub(crate) fn handle_click(
     input: &mut InteractionContext,
     app: &mut App,
     view_menu: &mut ContextMenu,
+    context_menu: &mut ContextMenu,
     popup_backend: &mut Option<WaylandPopupBackend<State>>,
     last_tab_click: &mut Option<(usize, Instant)>,
     tab_drag_press: &mut Option<(usize, f32)>,
+    wf: f32,
     s: f32,
     bg_opacity: f32,
     current_theme: &str,
@@ -163,6 +198,28 @@ pub(crate) fn handle_click(
                     app.close_search();
                 } else {
                     app.start_search();
+                }
+            }
+            ZONE_NAV_SORT => {
+                if context_menu.is_open() {
+                    if let Some(backend) = popup_backend {
+                        context_menu.close_popups(backend);
+                    }
+                } else {
+                    // Anchor below the sort button. Use logical coordinates for
+                    // the popup positioner — the title bar offset is in the
+                    // sort_button_rect's y already, so convert from physical.
+                    app.context_target = Some(ContextTarget::Empty);
+                    let btn = crate::layout::sort_button_rect(wf, s);
+                    let lx = (btn.x / s) as f32;
+                    let ly = ((btn.y + btn.h) / s) as f32;
+                    context_menu.set_scale(s);
+                    let items = sort_menu_items(app);
+                    if let Some(backend) = popup_backend {
+                        context_menu.open_popup(lx, ly, items, backend);
+                    } else {
+                        context_menu.open(btn.x, btn.y + btn.h, items);
+                    }
                 }
             }
             ZONE_TAB_NEW => {
@@ -444,12 +501,7 @@ pub(crate) fn handle_right_click(
             (CTX_NEW_FOLDER_PURPLE, Color::from_rgb8(160, 80, 210)),
         ]));
         v.push(MenuItem::separator());
-        v.push(MenuItem::submenu(CTX_SORT_BY, "Sort By", vec![
-            MenuItem::radio(CTX_SORT_NAME, SORT_RADIO_GROUP, "Name", app.sort_by == SortBy::Name),
-            MenuItem::radio(CTX_SORT_SIZE, SORT_RADIO_GROUP, "Size", app.sort_by == SortBy::Size),
-            MenuItem::radio(CTX_SORT_DATE, SORT_RADIO_GROUP, "Date Modified", app.sort_by == SortBy::Date),
-            MenuItem::radio(CTX_SORT_TYPE, SORT_RADIO_GROUP, "Type", app.sort_by == SortBy::Type),
-        ]));
+        v.push(MenuItem::submenu(CTX_SORT_BY, "Sort By", crate::wayland_actions::sort_menu_items(app)));
         v.push(MenuItem::separator());
         v.push(MenuItem::action(CTX_SELECT_ALL, "Select All"));
         v.push(MenuItem::action(CTX_OPEN_TERMINAL, "Open Terminal Here"));
@@ -671,6 +723,10 @@ pub(crate) fn handle_ctx_event(
                 }
                 CTX_SELECT_ALL => app.select_all(),
                 CTX_OPEN_TERMINAL => app.open_in_terminal(),
+                CTX_SORT_NAME => apply_sort_selection(app, settings, SortBy::Name),
+                CTX_SORT_SIZE => apply_sort_selection(app, settings, SortBy::Size),
+                CTX_SORT_DATE => apply_sort_selection(app, settings, SortBy::Date),
+                CTX_SORT_TYPE => apply_sort_selection(app, settings, SortBy::Type),
                 id if id >= CTX_OPEN_WITH_BASE => {
                     let app_idx = (id - CTX_OPEN_WITH_BASE) as usize;
                     if app_idx < open_with_apps.len() {
@@ -703,21 +759,6 @@ pub(crate) fn handle_ctx_event(
                 if let Some(backend) = popup_backend {
                     context_menu.close_popups(backend);
                 }
-            }
-        }
-        MenuEvent::RadioSelected { id, .. } => {
-            let sort = match id {
-                CTX_SORT_NAME => SortBy::Name,
-                CTX_SORT_SIZE => SortBy::Size,
-                CTX_SORT_DATE => SortBy::Date,
-                CTX_SORT_TYPE => SortBy::Type,
-                _ => return,
-            };
-            app.sort_by = sort;
-            settings.set_sort_by(sort);
-            app.reload();
-            if let Some(backend) = popup_backend {
-                context_menu.close_popups(backend);
             }
         }
         _ => {}

@@ -658,6 +658,12 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         }
         let bt_incoming_before = app.controls.bluetooth.incoming_request.is_some();
         app.controls.tick();
+        // Sysmon is the one control we *want* to be completely silent
+        // when the panel is closed — pass visibility through so it can
+        // drop its polling state instead of running on a timer.
+        app.controls
+            .sysmon
+            .tick(matches!(app.visibility, crate::app::Visibility::Visible));
 
         // Update WiFi row hover so the highlight tracks the cursor.
         // Cheap (a few rect tests) and only does work when the WiFi
@@ -674,7 +680,8 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                 &app.controls.wifi, panel_rect, view_top_y, scale_f, phys_cx, phys_cy,
             ) {
                 Some(crate::controls::wifi::NetworkHit::Row(s))
-                | Some(crate::controls::wifi::NetworkHit::ConnectButton(s)) => Some(s),
+                | Some(crate::controls::wifi::NetworkHit::ConnectButton(s))
+                | Some(crate::controls::wifi::NetworkHit::BandPill(s, _)) => Some(s),
                 None => None,
             };
             if app.controls.wifi.hovered_ssid != new_hover {
@@ -1023,9 +1030,15 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
 
         // Stream thumbnail slots to the compositor so it can paint live
         // window content into each Open-section tile. Sent only when the
-        // panel is fully visible (not animating); cleared when hidden.
+        // Open section is actually being drawn — i.e. fully visible,
+        // Launcher mode, and the empty/non-all-apps search state that
+        // render.rs uses to draw the section. Otherwise the compositor
+        // keeps painting thumbnails at orphaned rects.
+        let open_section_active = matches!(app.mode, crate::app::PanelMode::Launcher)
+            && app.search.input.is_empty()
+            && !app.search.all_apps_mode;
         if let Some(p) = &panel_draw {
-            if matches!(app.visibility, crate::app::Visibility::Visible) {
+            if matches!(app.visibility, crate::app::Visibility::Visible) && open_section_active {
                 let panel_logical = lntrn_render::Rect::new(p.rect.x, p.rect.y, p.rect.w, p.rect.h);
                 let pin_top_y = panel_logical.y
                     + crate::controls::total_logical_height() * scale_f
@@ -1445,6 +1458,9 @@ fn handle_control_view_click(
                             app.controls.wifi.expanded_ssid = Some(ssid);
                         }
                     }
+                    crate::controls::wifi::NetworkHit::BandPill(ssid, band) => {
+                        app.controls.wifi.select_band(&ssid, band);
+                    }
                     crate::controls::wifi::NetworkHit::ConnectButton(ssid) => {
                         let net = app.controls.wifi.networks()
                             .iter()
@@ -1466,6 +1482,32 @@ fn handle_control_view_click(
                             app.controls.wifi.connect(&ssid, None);
                         }
                         tracing::debug!(%ssid, needs_password, "wifi: connect button");
+                    }
+                }
+                return true;
+            }
+            false
+        }
+        // Temp shares its expanded view (and click behavior) with
+        // SysMon since they read from the same backend.
+        crate::controls::TileId::SysMon | crate::controls::TileId::Temp => {
+            if let Some(hit) = crate::controls::sysmon::view::hit_test_view(
+                &app.controls.sysmon,
+                panel,
+                view_top_y,
+                scale,
+                phys_x,
+                phys_y,
+            ) {
+                match hit {
+                    crate::controls::sysmon::view::SysMonHit::SelectProcess(pid) => {
+                        app.controls.sysmon.selected_pid = Some(pid);
+                    }
+                    crate::controls::sysmon::view::SysMonHit::KillProcess(pid) => {
+                        crate::controls::sysmon::view::kill_process(pid);
+                        // Clear selection so the user has to re-arm
+                        // before another kill can fire.
+                        app.controls.sysmon.selected_pid = None;
                     }
                 }
                 return true;

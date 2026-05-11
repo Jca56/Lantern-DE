@@ -5,15 +5,24 @@ use crate::wayland::State;
 
 impl Dispatch<xdg_positioner::XdgPositioner, ()> for State {
     fn event(
-        _: &mut Self, _: &xdg_positioner::XdgPositioner,
-        _: xdg_positioner::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
-    ) {}
+        _: &mut Self,
+        _: &xdg_positioner::XdgPositioner,
+        _: xdg_positioner::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 impl Dispatch<xdg_surface::XdgSurface, u32> for State {
     fn event(
-        state: &mut Self, xdg_surface: &xdg_surface::XdgSurface,
-        event: xdg_surface::Event, popup_id: &u32, _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        xdg_surface: &xdg_surface::XdgSurface,
+        event: xdg_surface::Event,
+        popup_id: &u32,
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         if let xdg_surface::Event::Configure { serial } = event {
             xdg_surface.ack_configure(serial);
@@ -27,8 +36,12 @@ impl Dispatch<xdg_surface::XdgSurface, u32> for State {
 
 impl Dispatch<xdg_popup::XdgPopup, u32> for State {
     fn event(
-        state: &mut Self, _: &xdg_popup::XdgPopup,
-        event: xdg_popup::Event, popup_id: &u32, _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        _: &xdg_popup::XdgPopup,
+        event: xdg_popup::Event,
+        popup_id: &u32,
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         match event {
             xdg_popup::Event::Configure { width, height, .. } => {

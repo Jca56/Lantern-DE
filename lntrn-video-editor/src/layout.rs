@@ -20,6 +20,10 @@ pub const STATUS_BAR_H: f32 = 32.0;
 pub const TIMELINE_MIN_H: f32 = 200.0;
 pub const DIVIDER: f32 = 1.0;
 pub const PANEL_PAD: f32 = 12.0;
+/// Width of the V1/A1 track-name gutter on the left side of the timeline.
+pub const TIMELINE_LABEL_W: f32 = 60.0;
+/// Height of the time-ruler header at the top of the timeline.
+pub const TIMELINE_HEADER_H: f32 = 28.0;
 
 /// All panel rects for a single frame, in physical (scaled) coordinates.
 pub struct Layout {
@@ -65,5 +69,17 @@ impl Layout {
             div_h_lower: Rect::new(0.0, hf - status_h - div, wf, div),
             status_bar: Rect::new(0.0, hf - status_h, wf, status_h),
         }
+    }
+
+    /// Rect inside the timeline panel that maps to seek time (x → playback
+    /// position). Excludes the V1/A1 label gutter on the left.
+    pub fn timeline_scrub_rect(&self, s: f32) -> Rect {
+        let label_w = TIMELINE_LABEL_W * s;
+        Rect::new(
+            self.timeline.x + label_w,
+            self.timeline.y,
+            self.timeline.w - label_w,
+            self.timeline.h,
+        )
     }
 }

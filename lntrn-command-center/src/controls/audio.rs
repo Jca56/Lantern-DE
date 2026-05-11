@@ -4,11 +4,16 @@
 //! volume bar. Click-expand shows a large slider you can drag to set
 //! the volume.
 //!
-//! Backend: shells out to `wpctl` (the WirePlumber CLI). We rate-limit
-//! polls to ~1Hz which is plenty for "is it muted, what's the volume"
-//! and writes happen on user interaction (immediate).
+//! Backend: shells out to `wpctl` (the WirePlumber CLI). All wpctl
+//! calls happen on a background worker thread; the main render loop
+//! only ever does `try_recv` on tick. Setters fire-and-forget commands
+//! into the worker and optimistically update local state so the UI
+//! feels instant. This keeps open/close animations smooth even when
+//! pipewire/D-Bus is contended and a wpctl call spikes to 100+ ms.
 
 use std::process::Command;
+use std::sync::mpsc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
@@ -32,6 +37,41 @@ pub struct Sink {
     pub is_default: bool,
 }
 
+/// Commands sent from the render thread → worker thread.
+enum AudioCmd {
+    /// Force an immediate re-poll of volumes + sink list. No caller
+    /// yet, but exposed so a future "refresh" affordance (device
+    /// hot-plug, manual reload) can request fresh state without
+    /// waiting for the next poll interval.
+    #[allow(dead_code)]
+    Rescan,
+    SetVolume(f32),
+    SetInputVolume(f32),
+    ToggleMute,
+    ToggleInputMute,
+    SetDefaultSink(u32),
+    SetDefaultSource(u32),
+}
+
+/// Events the worker thread emits.
+enum AudioEvent {
+    /// Output sink state. `available=false` means wpctl is unreachable
+    /// or returned garbage — the tile hides.
+    Output {
+        volume: f32,
+        muted: bool,
+        available: bool,
+    },
+    Input {
+        volume: f32,
+        muted: bool,
+    },
+    Devices {
+        sinks: Vec<Sink>,
+        sources: Vec<Sink>,
+    },
+}
+
 pub struct Audio {
     /// 0.0–1.0 normalized volume on the default sink.
     volume: f32,
@@ -49,25 +89,44 @@ pub struct Audio {
     sinks: Vec<Sink>,
     /// Available input sources (mics). Same format as `sinks`.
     sources: Vec<Sink>,
-    last_poll: Instant,
-    last_sink_list_poll: Instant,
+    cmd_tx: mpsc::Sender<AudioCmd>,
+    event_rx: mpsc::Receiver<AudioEvent>,
 }
 
 impl Audio {
     pub fn new() -> Self {
-        let mut a = Self {
+        // Availability check is the only synchronous wpctl call we do
+        // on the main thread, and only at startup. After this, every
+        // wpctl invocation lives on the worker. We probe with
+        // `get-volume @DEFAULT_AUDIO_SINK@` because wpctl has no
+        // `--version` flag — it errors out on it.
+        let available = Command::new("wpctl")
+            .args(["get-volume", "@DEFAULT_AUDIO_SINK@"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        let (cmd_tx, cmd_rx) = mpsc::channel();
+        let (event_tx, event_rx) = mpsc::channel();
+
+        if available {
+            thread::Builder::new()
+                .name("lcc-audio-poll".into())
+                .spawn(move || worker(event_tx, cmd_rx))
+                .ok();
+        }
+
+        Self {
             volume: 0.0,
             muted: false,
             input_volume: 0.0,
             input_muted: false,
-            available: false,
+            available,
             sinks: Vec::new(),
             sources: Vec::new(),
-            last_poll: Instant::now() - POLL_INTERVAL,
-            last_sink_list_poll: Instant::now() - SINK_LIST_POLL_INTERVAL,
-        };
-        a.tick();
-        a
+            cmd_tx,
+            event_rx,
+        }
     }
 
     pub fn is_present(&self) -> bool {
@@ -98,72 +157,41 @@ impl Audio {
         &self.sources
     }
 
+    /// Drain events from the worker. Non-blocking — does no I/O.
     pub fn tick(&mut self) {
-        // Output + input volume + mute (cheap, every ~750ms).
-        if self.last_poll.elapsed() >= POLL_INTERVAL {
-            self.last_poll = Instant::now();
-
-            // Output sink.
-            let out = Command::new("wpctl")
-                .args(["get-volume", "@DEFAULT_AUDIO_SINK@"])
-                .output();
-            match out {
-                Ok(o) if o.status.success() => {
-                    let s = String::from_utf8_lossy(&o.stdout);
-                    if let Some((vol, muted)) = parse_get_volume(&s) {
-                        self.volume = vol.clamp(0.0, 1.5);
-                        self.muted = muted;
-                        self.available = true;
-                    }
+        while let Ok(ev) = self.event_rx.try_recv() {
+            match ev {
+                AudioEvent::Output {
+                    volume,
+                    muted,
+                    available,
+                } => {
+                    self.volume = volume;
+                    self.muted = muted;
+                    self.available = available;
                 }
-                _ => {
-                    self.available = false;
+                AudioEvent::Input { volume, muted } => {
+                    self.input_volume = volume;
+                    self.input_muted = muted;
                 }
-            }
-
-            // Input source — failure here doesn't disable the tile,
-            // since output might still work without a usable source.
-            let out = Command::new("wpctl")
-                .args(["get-volume", "@DEFAULT_AUDIO_SOURCE@"])
-                .output();
-            if let Ok(o) = out {
-                if o.status.success() {
-                    let s = String::from_utf8_lossy(&o.stdout);
-                    if let Some((vol, muted)) = parse_get_volume(&s) {
-                        self.input_volume = vol.clamp(0.0, 1.5);
-                        self.input_muted = muted;
-                    }
-                }
-            }
-        }
-
-        // Sink + source list (more expensive, every few seconds).
-        if self.last_sink_list_poll.elapsed() >= SINK_LIST_POLL_INTERVAL {
-            self.last_sink_list_poll = Instant::now();
-            let out = Command::new("wpctl").arg("status").output();
-            if let Ok(o) = out {
-                if o.status.success() {
-                    let s = String::from_utf8_lossy(&o.stdout);
-                    self.sinks = parse_devices(&s, "Sinks:");
-                    self.sources = parse_devices(&s, "Sources:");
+                AudioEvent::Devices { sinks, sources } => {
+                    self.sinks = sinks;
+                    self.sources = sources;
                 }
             }
         }
     }
 
     /// Set the given sink ID as the default audio sink. Triggers an
-    /// immediate sink-list re-poll so the UI updates the asterisk.
+    /// immediate sink-list re-poll on the worker so the UI updates the
+    /// asterisk.
     pub fn set_default_sink(&mut self, id: u32) {
-        if let Err(e) = Command::new("wpctl")
-            .args(["set-default", &id.to_string()])
-            .status()
-        {
-            tracing::warn!(?e, sink_id = id, "wpctl set-default failed");
-            return;
+        // Optimistically flip the asterisk locally so the picker
+        // doesn't visually lag behind the click.
+        for s in &mut self.sinks {
+            s.is_default = s.id == id;
         }
-        // Force re-poll on the next tick so the UI reflects reality.
-        self.last_sink_list_poll = Instant::now() - SINK_LIST_POLL_INTERVAL;
-        self.last_poll = Instant::now() - POLL_INTERVAL;
+        let _ = self.cmd_tx.send(AudioCmd::SetDefaultSink(id));
     }
 
     /// Set the default sink to the given normalized volume. Clamps to
@@ -171,68 +199,171 @@ impl Audio {
     /// drag overshoot.
     pub fn set_volume(&mut self, v: f32) {
         let clamped = v.clamp(0.0, 1.0);
-        let arg = format!("{:.2}", clamped);
-        if let Err(e) = Command::new("wpctl")
-            .args(["set-volume", "@DEFAULT_AUDIO_SINK@", &arg])
-            .status()
-        {
-            tracing::warn!(?e, "wpctl set-volume failed");
-            return;
-        }
         self.volume = clamped;
+        let _ = self.cmd_tx.send(AudioCmd::SetVolume(clamped));
     }
 
     /// Toggle the default sink's mute state.
     #[allow(dead_code)] // wired up later when we add the click-mute hit zone
     pub fn toggle_mute(&mut self) {
-        if let Err(e) = Command::new("wpctl")
-            .args(["set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"])
-            .status()
-        {
-            tracing::warn!(?e, "wpctl set-mute failed");
-            return;
-        }
         self.muted = !self.muted;
+        let _ = self.cmd_tx.send(AudioCmd::ToggleMute);
     }
 
     /// Set the default mic to the given normalized volume.
     pub fn set_input_volume(&mut self, v: f32) {
         let clamped = v.clamp(0.0, 1.0);
-        let arg = format!("{:.2}", clamped);
-        if let Err(e) = Command::new("wpctl")
-            .args(["set-volume", "@DEFAULT_AUDIO_SOURCE@", &arg])
-            .status()
-        {
-            tracing::warn!(?e, "wpctl set-volume (input) failed");
-            return;
-        }
         self.input_volume = clamped;
+        let _ = self.cmd_tx.send(AudioCmd::SetInputVolume(clamped));
     }
 
     /// Toggle the default source's mute state.
     #[allow(dead_code)] // wired up later when we add the input mute icon hit zone
     pub fn toggle_input_mute(&mut self) {
-        if let Err(e) = Command::new("wpctl")
-            .args(["set-mute", "@DEFAULT_AUDIO_SOURCE@", "toggle"])
-            .status()
-        {
-            tracing::warn!(?e, "wpctl set-mute (input) failed");
-            return;
-        }
         self.input_muted = !self.input_muted;
+        let _ = self.cmd_tx.send(AudioCmd::ToggleInputMute);
     }
 
     /// Set the given source ID as the default audio source.
     pub fn set_default_source(&mut self, id: u32) {
-        if let Err(e) = Command::new("wpctl")
-            .args(["set-default", &id.to_string()])
-            .status()
-        {
-            tracing::warn!(?e, source_id = id, "wpctl set-default (input) failed");
-            return;
+        for s in &mut self.sources {
+            s.is_default = s.id == id;
         }
-        self.last_sink_list_poll = Instant::now() - SINK_LIST_POLL_INTERVAL;
-        self.last_poll = Instant::now() - POLL_INTERVAL;
+        let _ = self.cmd_tx.send(AudioCmd::SetDefaultSource(id));
+    }
+}
+
+// ── Worker thread ───────────────────────────────────────────────────────────
+
+fn worker(tx: mpsc::Sender<AudioEvent>, cmd_rx: mpsc::Receiver<AudioCmd>) {
+    // Prime the UI with whatever we can read right away.
+    poll_volumes(&tx);
+    poll_devices(&tx);
+
+    let mut last_poll = Instant::now();
+    let mut last_sink_list_poll = Instant::now();
+
+    loop {
+        // Drain pending commands. Any setter triggers an immediate
+        // re-poll so the cached state catches up without waiting for
+        // the next tick.
+        let mut force_volume_repoll = false;
+        let mut force_devices_repoll = false;
+        while let Ok(cmd) = cmd_rx.try_recv() {
+            match cmd {
+                AudioCmd::Rescan => {
+                    force_volume_repoll = true;
+                    force_devices_repoll = true;
+                }
+                AudioCmd::SetVolume(v) => {
+                    let arg = format!("{:.2}", v);
+                    let _ = Command::new("wpctl")
+                        .args(["set-volume", "@DEFAULT_AUDIO_SINK@", &arg])
+                        .status();
+                    force_volume_repoll = true;
+                }
+                AudioCmd::SetInputVolume(v) => {
+                    let arg = format!("{:.2}", v);
+                    let _ = Command::new("wpctl")
+                        .args(["set-volume", "@DEFAULT_AUDIO_SOURCE@", &arg])
+                        .status();
+                    force_volume_repoll = true;
+                }
+                AudioCmd::ToggleMute => {
+                    let _ = Command::new("wpctl")
+                        .args(["set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"])
+                        .status();
+                    force_volume_repoll = true;
+                }
+                AudioCmd::ToggleInputMute => {
+                    let _ = Command::new("wpctl")
+                        .args(["set-mute", "@DEFAULT_AUDIO_SOURCE@", "toggle"])
+                        .status();
+                    force_volume_repoll = true;
+                }
+                AudioCmd::SetDefaultSink(id) => {
+                    let _ = Command::new("wpctl")
+                        .args(["set-default", &id.to_string()])
+                        .status();
+                    force_volume_repoll = true;
+                    force_devices_repoll = true;
+                }
+                AudioCmd::SetDefaultSource(id) => {
+                    let _ = Command::new("wpctl")
+                        .args(["set-default", &id.to_string()])
+                        .status();
+                    force_volume_repoll = true;
+                    force_devices_repoll = true;
+                }
+            }
+        }
+
+        if force_volume_repoll || last_poll.elapsed() >= POLL_INTERVAL {
+            poll_volumes(&tx);
+            last_poll = Instant::now();
+        }
+        if force_devices_repoll || last_sink_list_poll.elapsed() >= SINK_LIST_POLL_INTERVAL {
+            poll_devices(&tx);
+            last_sink_list_poll = Instant::now();
+        }
+
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// Read default sink + source volumes from wpctl and emit events.
+fn poll_volumes(tx: &mpsc::Sender<AudioEvent>) {
+    // Output sink.
+    let out = Command::new("wpctl")
+        .args(["get-volume", "@DEFAULT_AUDIO_SINK@"])
+        .output();
+    match out {
+        Ok(o) if o.status.success() => {
+            let s = String::from_utf8_lossy(&o.stdout);
+            if let Some((vol, muted)) = parse_get_volume(&s) {
+                let _ = tx.send(AudioEvent::Output {
+                    volume: vol.clamp(0.0, 1.5),
+                    muted,
+                    available: true,
+                });
+            }
+        }
+        _ => {
+            let _ = tx.send(AudioEvent::Output {
+                volume: 0.0,
+                muted: false,
+                available: false,
+            });
+        }
+    }
+
+    // Input source — failure here doesn't disable the tile.
+    let out = Command::new("wpctl")
+        .args(["get-volume", "@DEFAULT_AUDIO_SOURCE@"])
+        .output();
+    if let Ok(o) = out {
+        if o.status.success() {
+            let s = String::from_utf8_lossy(&o.stdout);
+            if let Some((vol, muted)) = parse_get_volume(&s) {
+                let _ = tx.send(AudioEvent::Input {
+                    volume: vol.clamp(0.0, 1.5),
+                    muted,
+                });
+            }
+        }
+    }
+}
+
+/// Read sink + source device lists from `wpctl status`.
+fn poll_devices(tx: &mpsc::Sender<AudioEvent>) {
+    let out = Command::new("wpctl").arg("status").output();
+    if let Ok(o) = out {
+        if o.status.success() {
+            let s = String::from_utf8_lossy(&o.stdout);
+            let sinks = parse_devices(&s, "Sinks:");
+            let sources = parse_devices(&s, "Sources:");
+            let _ = tx.send(AudioEvent::Devices { sinks, sources });
+        }
     }
 }
 

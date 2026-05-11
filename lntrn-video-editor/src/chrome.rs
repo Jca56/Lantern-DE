@@ -9,23 +9,36 @@ const fn c(r: u8, g: u8, b: u8) -> Color {
     let rf = r as f32 / 255.0;
     let gf = g as f32 / 255.0;
     let bf = b as f32 / 255.0;
-    Color { r: rf * rf, g: gf * gf, b: bf * bf, a: 1.0 }
+    Color {
+        r: rf * rf,
+        g: gf * gf,
+        b: bf * bf,
+        a: 1.0,
+    }
 }
 
-pub const BG: Color          = c(0x12, 0x10, 0x0e);
-pub const PANEL: Color       = c(0x19, 0x12, 0x00);
-pub const PANEL_DARK: Color  = c(0x10, 0x0c, 0x00);
-pub const BUTTON: Color      = c(0x2a, 0x22, 0x18);
+pub const BG: Color = c(0x12, 0x10, 0x0e);
+pub const PANEL: Color = c(0x19, 0x12, 0x00);
+pub const PANEL_DARK: Color = c(0x10, 0x0c, 0x00);
+pub const BUTTON: Color = c(0x2a, 0x22, 0x18);
 pub const BUTTON_HOVER: Color = c(0x3d, 0x32, 0x25);
-pub const ACTIVE: Color      = c(0x4a, 0x40, 0x38);
-pub const BORDER: Color      = c(0x30, 0x28, 0x20);
-pub const INPUT_BG: Color    = c(0x15, 0x12, 0x10);
+pub const ACTIVE: Color = c(0x4a, 0x40, 0x38);
+pub const BORDER: Color = c(0x30, 0x28, 0x20);
+pub const INPUT_BG: Color = c(0x15, 0x12, 0x10);
 
 // Bright colors need proper sRGB→linear (x^2 is too inaccurate for high values)
-pub fn accent() -> Color { Color::from_rgb8(0xff, 0xc8, 0x00) }
-pub fn text() -> Color { Color::from_rgb8(0xe8, 0xdc, 0xc8) }
-pub fn text_dim() -> Color { Color::from_rgb8(0x8a, 0x7d, 0x6a) }
-pub fn close_red() -> Color { Color::from_rgb8(0xe8, 0x1d, 0x23) }
+pub fn accent() -> Color {
+    Color::from_rgb8(0xff, 0xc8, 0x00)
+}
+pub fn text() -> Color {
+    Color::from_rgb8(0xe8, 0xdc, 0xc8)
+}
+pub fn text_dim() -> Color {
+    Color::from_rgb8(0x8a, 0x7d, 0x6a)
+}
+pub fn close_red() -> Color {
+    Color::from_rgb8(0xe8, 0x1d, 0x23)
+}
 
 // Rainbow accent gradient colors
 pub fn rainbow() -> [Color; 6] {
@@ -48,9 +61,7 @@ pub fn draw_background(p: &mut Painter, wf: f32, hf: f32) {
 }
 
 /// Draw title bar background + logo text + bottom border.
-pub fn draw_title_bar(
-    p: &mut Painter, t: &mut TextRenderer, s: f32, wf: f32, sw: u32, sh: u32,
-) {
+pub fn draw_title_bar(p: &mut Painter, t: &mut TextRenderer, s: f32, wf: f32, sw: u32, sh: u32) {
     let h = TITLE_BAR_H * s;
 
     // Title bar background
@@ -68,9 +79,7 @@ pub fn draw_title_bar(
 }
 
 /// Draw menu bar labels on the left side of the title bar.
-pub fn draw_menu_labels(
-    t: &mut TextRenderer, s: f32, title_h: f32, sw: u32, sh: u32, wf: f32,
-) {
+pub fn draw_menu_labels(t: &mut TextRenderer, s: f32, title_h: f32, sw: u32, sh: u32, wf: f32) {
     let labels = ["File", "Edit", "View", "Clip", "Effects"];
     let sz = 16.0 * s;
     let y = (title_h - sz) * 0.5;
@@ -83,9 +92,7 @@ pub fn draw_menu_labels(
 }
 
 /// Draw window control buttons (minimize, maximize, close).
-pub fn draw_controls(
-    p: &mut Painter, cx: f32, cy: f32, s: f32, wf: f32, title_h: f32,
-) {
+pub fn draw_controls(p: &mut Painter, cx: f32, cy: f32, s: f32, wf: f32, title_h: f32) {
     let btn_r = 14.0 * s;
     let btn_y = title_h * 0.5;
     let close_cx = wf - 28.0 * s;
@@ -100,23 +107,45 @@ pub fn draw_controls(
 
     // Close — X
     let hov = dist(close_cx) < btn_r;
-    if hov { p.circle_filled(close_cx, btn_y, btn_r, close_red()); }
+    if hov {
+        p.circle_filled(close_cx, btn_y, btn_r, close_red());
+    }
     let ic = if hov { Color::WHITE } else { td };
-    p.line(close_cx - x_sz, btn_y - x_sz, close_cx + x_sz, btn_y + x_sz, thick, ic);
-    p.line(close_cx - x_sz, btn_y + x_sz, close_cx + x_sz, btn_y - x_sz, thick, ic);
+    p.line(
+        close_cx - x_sz,
+        btn_y - x_sz,
+        close_cx + x_sz,
+        btn_y + x_sz,
+        thick,
+        ic,
+    );
+    p.line(
+        close_cx - x_sz,
+        btn_y + x_sz,
+        close_cx + x_sz,
+        btn_y - x_sz,
+        thick,
+        ic,
+    );
 
     // Maximize — square
     let hov = dist(max_cx) < btn_r;
-    if hov { p.circle_filled(max_cx, btn_y, btn_r, Color::rgba(1.0, 1.0, 1.0, 0.15)); }
+    if hov {
+        p.circle_filled(max_cx, btn_y, btn_r, Color::rgba(1.0, 1.0, 1.0, 0.15));
+    }
     let ic = if hov { tx } else { td };
     p.rect_stroke_sdf(
         Rect::new(max_cx - x_sz, btn_y - x_sz, x_sz * 2.0, x_sz * 2.0),
-        1.5 * s, thick, ic,
+        1.5 * s,
+        thick,
+        ic,
     );
 
     // Minimize — line
     let hov = dist(min_cx) < btn_r;
-    if hov { p.circle_filled(min_cx, btn_y, btn_r, Color::rgba(1.0, 1.0, 1.0, 0.15)); }
+    if hov {
+        p.circle_filled(min_cx, btn_y, btn_r, Color::rgba(1.0, 1.0, 1.0, 0.15));
+    }
     let ic = if hov { tx } else { td };
     p.line(min_cx - x_sz, btn_y, min_cx + x_sz, btn_y, thick, ic);
 }
@@ -131,7 +160,8 @@ pub fn draw_rainbow_h(p: &mut Painter, x: f32, y: f32, w: f32, s: f32) {
     let rb = rainbow();
     let h = 4.0 * s;
     p.rect_gradient_multi(
-        Rect::new(x, y, w, h), 0.0,
+        Rect::new(x, y, w, h),
+        0.0,
         0.0, // angle 0 = left→right
         &[
             (0.0, rb[0]),

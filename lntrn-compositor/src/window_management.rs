@@ -637,27 +637,21 @@ impl Lantern {
         true
     }
 
-    /// Compute the rect a window should minimize to / unminimize from. Prefers
-    /// the bar's tray-icon rect for this app_id; falls back to a 48px square
-    /// at the bottom-center of the output containing the window.
+    /// Compute the rect a window should minimize to / unminimize from.
+    /// Bottom-middle of the output, ~80px above the bottom edge so the window
+    /// looks like it's docking into the bar.
     pub(crate) fn minimize_target_for(&self, window: &Window) -> Rectangle<i32, Logical> {
-        let app_id = window.get_app_id();
-        if !app_id.is_empty() {
-            if let Some(rect) = self.hover_preview.tray_icon_rect(&app_id) {
-                return rect;
-            }
-        }
-        // Fallback: bottom-center of the output containing the window.
         let output_geo = self
             .output_for_window(window)
             .or_else(|| self.space.outputs().next().cloned())
             .and_then(|o| self.space.output_geometry(&o))
             .unwrap_or_else(|| Rectangle::new((0, 0).into(), (1920, 1080).into()));
         let icon_size = 48;
+        let bottom_margin = 80;
         let cx = output_geo.loc.x + output_geo.size.w / 2;
-        let by = output_geo.loc.y + output_geo.size.h - icon_size - 16;
+        let cy = output_geo.loc.y + output_geo.size.h - bottom_margin;
         Rectangle::new(
-            (cx - icon_size / 2, by).into(),
+            (cx - icon_size / 2, cy - icon_size / 2).into(),
             Size::from((icon_size, icon_size)),
         )
     }

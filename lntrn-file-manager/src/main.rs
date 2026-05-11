@@ -36,6 +36,7 @@ pub const ZONE_NAV_FORWARD: u32 = 21;
 pub const ZONE_NAV_UP: u32 = 22;
 pub const ZONE_NAV_SEARCH: u32 = 23;
 pub const ZONE_MENU_VIEW: u32 = 24;
+pub const ZONE_NAV_SORT: u32 = 25;
 pub const VIEW_SLIDER_ID: u32 = 1;
 pub const VIEW_OPACITY_SLIDER_ID: u32 = 2;
 pub const VIEW_SHOW_HIDDEN_ID: u32 = 3;

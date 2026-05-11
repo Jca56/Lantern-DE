@@ -82,9 +82,11 @@ impl Pty {
 
                 let reader_fd =
                     dup(pty_pair.master.as_raw_fd()).map_err(|e| format!("dup: {e}"))?;
+                let trace_pid = child;
                 let (tx, rx) = mpsc::channel();
                 std::thread::spawn(move || {
                     let mut read_buf = vec![0u8; 4096];
+                    let mut trace_file = open_pty_trace(trace_pid);
 
                     loop {
                         let mut poll_fd = libc::pollfd {
@@ -109,6 +111,10 @@ impl Pty {
                         match result {
                             Ok(0) => break,
                             Ok(n) => {
+                                if let Some(ref mut tf) = trace_file {
+                                    use std::io::Write;
+                                    let _ = tf.write_all(&read_buf[..n]);
+                                }
                                 if tx.send(read_buf[..n].to_vec()).is_err() {
                                     break;
                                 }
@@ -201,6 +207,30 @@ impl Pty {
             );
         }
     }
+}
+
+/// Open a per-PTY raw-byte trace file when `LANTERN_TERM_TRACE` is set.
+/// Bytes flow into `~/.lantern/log/term-trace-<child-pid>.bin` (truncated at
+/// spawn). Replay with `cat trace.bin > /dev/<some-tty>` or pipe through a
+/// VTE parser to investigate desync without having to reproduce live.
+/// Disabled (returns None) when the env var is unset or `0`.
+fn open_pty_trace(child_pid: nix::unistd::Pid) -> Option<std::fs::File> {
+    let v = std::env::var("LANTERN_TERM_TRACE").ok()?;
+    if v.is_empty() || v == "0" {
+        return None;
+    }
+    let home = std::env::var("HOME").ok()?;
+    let dir = format!("{home}/.lantern/log");
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = format!("{dir}/term-trace-{}.bin", child_pid);
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&path)
+        .ok()?;
+    eprintln!("[lntrn-terminal] PTY trace -> {path}");
+    Some(file)
 }
 
 fn take_buffered_chunk(

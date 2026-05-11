@@ -286,6 +286,7 @@ pub fn run(pick: Option<PickConfig>, desktop: bool) -> Result<()> {
     app.icon_zoom = settings.icon_zoom;
     app.show_hidden = settings.show_hidden;
     app.sort_by = settings.sort_by_enum();
+    app.sort_dir = settings.sort_dir_enum();
     if let Some(ref p) = pick {
         if let Some(ref dir) = p.start_dir {
             app.navigate_to(dir.clone());
@@ -306,7 +307,7 @@ pub fn run(pick: Option<PickConfig>, desktop: bool) -> Result<()> {
                 let mut tab = crate::app::DirectoryTab::new(path.clone());
                 tab.pinned = true;
                 tab.pinned_path = Some(path.clone());
-                tab.entries = crate::fs::list_directory(&path, app.show_hidden, app.sort_by);
+                tab.entries = crate::fs::list_directory(&path, app.show_hidden, app.sort_by, app.sort_dir);
                 pinned.push(tab);
             }
         }
@@ -354,6 +355,7 @@ pub fn run(pick: Option<PickConfig>, desktop: bool) -> Result<()> {
     settings.icon_zoom = app.icon_zoom;
     settings.show_hidden = app.show_hidden;
     settings.set_sort_by(app.sort_by);
+    settings.set_sort_dir(app.sort_dir);
     settings.window_width = state.width as f32;
     settings.window_height = state.height as f32;
     settings.pinned_tabs = app.tabs.iter()

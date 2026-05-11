@@ -30,6 +30,29 @@ pub enum SortBy {
     Type,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SortDir {
+    Asc,
+    Desc,
+}
+
+impl SortDir {
+    pub fn flip(self) -> Self {
+        match self {
+            SortDir::Asc => SortDir::Desc,
+            SortDir::Desc => SortDir::Asc,
+        }
+    }
+}
+
+/// Default direction per sort column — matches what users expect.
+pub fn default_dir(sort_by: SortBy) -> SortDir {
+    match sort_by {
+        SortBy::Name | SortBy::Type => SortDir::Asc,
+        SortBy::Size | SortBy::Date => SortDir::Desc,
+    }
+}
+
 /// True when `path` is the root of a mount under /run/media/<user>/<X>,
 /// /media/<X>, or /mnt/<X>. Used to hide ext4's `lost+found` system folder.
 fn is_removable_mount_root(path: &Path) -> bool {
@@ -42,7 +65,7 @@ fn is_removable_mount_root(path: &Path) -> bool {
 }
 
 /// List a directory, returning sorted entries (dirs first, then files).
-pub fn list_directory(path: &Path, show_hidden: bool, sort_by: SortBy) -> Vec<FileEntry> {
+pub fn list_directory(path: &Path, show_hidden: bool, sort_by: SortBy, sort_dir: SortDir) -> Vec<FileEntry> {
     let Ok(read_dir) = std::fs::read_dir(path) else {
         return Vec::new();
     };
@@ -84,25 +107,25 @@ pub fn list_directory(path: &Path, show_hidden: bool, sort_by: SortBy) -> Vec<Fi
         }
     }
 
+    // Compute "ascending" ordering (smallest/earliest/A first), then flip
+    // outside the match if direction is Desc. Name tiebreak stays ascending
+    // so equal-rank items are still alphabetical.
     let sort_fn = |a: &FileEntry, b: &FileEntry| -> std::cmp::Ordering {
-        match sort_by {
+        let primary = match sort_by {
             SortBy::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-            SortBy::Size => a.size.cmp(&b.size).then_with(|| {
-                a.name.to_lowercase().cmp(&b.name.to_lowercase())
-            }),
+            SortBy::Size => a.size.cmp(&b.size),
             SortBy::Date => {
                 let at = a.modified.unwrap_or(SystemTime::UNIX_EPOCH);
                 let bt = b.modified.unwrap_or(SystemTime::UNIX_EPOCH);
-                bt.cmp(&at).then_with(|| { // newest first
-                    a.name.to_lowercase().cmp(&b.name.to_lowercase())
-                })
+                at.cmp(&bt)
             }
-            SortBy::Type => {
-                a.extension().cmp(&b.extension()).then_with(|| {
-                    a.name.to_lowercase().cmp(&b.name.to_lowercase())
-                })
-            }
-        }
+            SortBy::Type => a.extension().cmp(&b.extension()),
+        };
+        let primary = match sort_dir {
+            SortDir::Asc => primary,
+            SortDir::Desc => primary.reverse(),
+        };
+        primary.then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     };
 
     dirs.sort_by(sort_fn);

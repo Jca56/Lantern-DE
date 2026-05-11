@@ -34,6 +34,18 @@ struct TextLayoutKey {
     style: u8,
 }
 
+/// Snap a float to a 1/4-pixel grid before it lands in a cache key.
+/// Callers like the command-center animate font sizes / widths by
+/// fractional amounts each frame; without snapping every frame would
+/// be a fresh cache miss → re-shape → re-rasterize on hundreds of
+/// glyphs, which is exactly the per-frame stutter we want to avoid.
+/// A 0.25 px grid is invisible to the eye but collapses an animation
+/// into at most 4 distinct cache keys per integer size.
+#[inline]
+fn quantize_px(v: f32) -> f32 {
+    (v * 4.0).round() / 4.0
+}
+
 struct QueuedText {
     key: TextLayoutKey,
     x: f32,
@@ -192,6 +204,7 @@ impl TextRenderer {
         weight: FontWeight,
         style: FontStyle,
     ) -> f32 {
+        let font_size = quantize_px(font_size);
         let color = GlyphonColor::rgba(0, 0, 0, 0);
         let key = TextLayoutKey {
             text: text.to_string(),
@@ -251,12 +264,14 @@ impl TextRenderer {
         screen_w: u32,
         _screen_h: u32,
     ) {
+        let font_size = quantize_px(font_size);
+        let max_width = quantize_px(max_width.max(1.0));
         let srgb = color.to_srgb8();
         let glyph_color = GlyphonColor::rgba(srgb[0], srgb[1], srgb[2], srgb[3]);
         let key = TextLayoutKey {
             text: text.to_string(),
             font_size_bits: font_size.to_bits(),
-            max_width_bits: max_width.max(1.0).to_bits(),
+            max_width_bits: max_width.to_bits(),
             color: [glyph_color.r(), glyph_color.g(), glyph_color.b(), glyph_color.a()],
             weight: weight as u8,
             style: style as u8,
@@ -316,12 +331,14 @@ impl TextRenderer {
         max_width: f32,
         clip: [f32; 4],
     ) {
+        let font_size = quantize_px(font_size);
+        let max_width = quantize_px(max_width.max(1.0));
         let srgb = color.to_srgb8();
         let glyph_color = GlyphonColor::rgba(srgb[0], srgb[1], srgb[2], srgb[3]);
         let key = TextLayoutKey {
             text: text.to_string(),
             font_size_bits: font_size.to_bits(),
-            max_width_bits: max_width.max(1.0).to_bits(),
+            max_width_bits: max_width.to_bits(),
             color: [glyph_color.r(), glyph_color.g(), glyph_color.b(), glyph_color.a()],
             weight: 0,
             style: 0,

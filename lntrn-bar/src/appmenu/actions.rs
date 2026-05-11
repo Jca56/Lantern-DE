@@ -2,6 +2,10 @@
 
 use crate::desktop;
 
+fn reap(mut child: std::process::Child) {
+    std::thread::spawn(move || { let _ = child.wait(); });
+}
+
 pub(crate) fn launch_app(exec: &str) {
     let parts: Vec<&str> = exec.split_whitespace().collect();
     if parts.is_empty() { return; }
@@ -19,7 +23,10 @@ pub(crate) fn launch_app(exec: &str) {
     cmd.arg("--");
     cmd.args(&parts);
     match cmd.spawn() {
-        Ok(_) => tracing::info!("launched: {exec}"),
+        Ok(child) => {
+            reap(child);
+            tracing::info!("launched: {exec}");
+        }
         Err(e) => tracing::error!("failed to launch {exec}: {e}"),
     }
 }
@@ -63,9 +70,12 @@ pub(super) fn uninstall_app(app_id: &str) {
     if let Some(pkg) = pkg {
         // Pacman package — use pkexec for graphical sudo
         tracing::info!("uninstalling pacman package: {pkg}");
-        let _ = std::process::Command::new("pkexec")
+        if let Ok(child) = std::process::Command::new("pkexec")
             .args(["pacman", "-Rs", "--noconfirm", &pkg])
-            .spawn();
+            .spawn()
+        {
+            reap(child);
+        }
     } else {
         // Not a package — remove desktop file(s) and binary
         uninstall_unpackaged(app_id, &desktop_paths);
@@ -121,7 +131,9 @@ fn uninstall_unpackaged(app_id: &str, desktop_paths: &[std::path::PathBuf]) {
             args.extend(root_paths);
             tracing::info!("pkexec rm: {:?}", args);
             let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-            let _ = std::process::Command::new("pkexec").args(&arg_refs).spawn();
+            if let Ok(child) = std::process::Command::new("pkexec").args(&arg_refs).spawn() {
+                reap(child);
+            }
         }
     }
 

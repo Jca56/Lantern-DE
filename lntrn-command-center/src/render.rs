@@ -151,6 +151,7 @@ pub fn draw_content(
         panel.alpha,
         surface_w,
         surface_h,
+        &mut icons,
     );
 
     // 2. Body of the panel, based on mode.
@@ -192,17 +193,13 @@ pub fn draw_content(
                     surface_w,
                     surface_h,
                 );
-                let selected_open = match state.selection {
-                    crate::app::Selection::OpenWindow(i) => Some(i),
-                    _ => None,
-                };
                 crate::launcher::open::draw(
                     painter,
                     text,
                     &mut icons,
                     &state.toplevels,
                     &state.apps,
-                    selected_open,
+                    None,
                     panel.rect,
                     pins_bottom,
                     panel.scale_factor,

@@ -9,6 +9,7 @@ use crate::chrome;
 use crate::decoder::DecodedFrame;
 use crate::layout::PANEL_PAD;
 use crate::playback::{self, PlayState, Playback};
+use crate::project::{ClipTransform, Project};
 
 pub struct PreviewMonitor {
     pub tex_pass: TexturePass,
@@ -25,9 +26,11 @@ impl PreviewMonitor {
 
     /// Upload a decoded frame to the GPU as a texture.
     pub fn upload_frame(&mut self, gpu: &GpuContext, frame: &DecodedFrame) {
-        self.video_texture = Some(
-            self.tex_pass.upload(gpu, &frame.rgba, frame.width, frame.height),
-        );
+        self.video_texture =
+            Some(
+                self.tex_pass
+                    .upload(gpu, &frame.rgba, frame.width, frame.height),
+            );
     }
 
     /// Draw the preview panel: black letterbox + video frame + timecode.
@@ -80,10 +83,14 @@ impl PreviewMonitor {
             let msg_sz = 22.0 * s;
             let msg_w = msg_sz * 0.55 * msg.len() as f32;
             t.queue(
-                msg, msg_sz,
+                msg,
+                msg_sz,
                 px + (pw - msg_w) * 0.5,
                 py + (ph - msg_sz) * 0.5,
-                text_dim, preview_rect.w, sw, sh,
+                text_dim,
+                preview_rect.w,
+                sw,
+                sh,
             );
         }
 
@@ -101,18 +108,36 @@ impl PreviewMonitor {
         let ind_r = Rect::new(ind_x, ctrl_y, 32.0 * s, ctrl_h);
         p.rect_filled(ind_r, 6.0 * s, chrome::BUTTON);
         p.rect_stroke_sdf(ind_r, 6.0 * s, 1.0 * s, chrome::BORDER);
-        t.queue(state_label, 18.0 * s, ind_x + 8.0 * s, ctrl_y + 5.0 * s,
-            accent, preview_rect.w, sw, sh);
+        t.queue(
+            state_label,
+            18.0 * s,
+            ind_x + 8.0 * s,
+            ctrl_y + 5.0 * s,
+            accent,
+            preview_rect.w,
+            sw,
+            sh,
+        );
 
-        // Timecode
-        let tc = playback::format_timecode(playback.position, playback.fps.max(1.0));
+        // Timecode — show timeline position so the preview agrees with the
+        // ruler and status bar. (Source PTS still drives the decoded frame.)
+        let tc = playback::format_timecode(playback.timeline_position, playback.fps.max(1.0));
         let tc_sz = 18.0 * s;
         let tc_w = tc_sz * 0.60 * tc.len() as f32;
         let tc_x = preview_rect.x + (preview_rect.w - tc_w) * 0.5;
         let tc_bg = Rect::new(tc_x - 8.0 * s, ctrl_y, tc_w + 16.0 * s, ctrl_h);
         p.rect_filled(tc_bg, 6.0 * s, chrome::INPUT_BG);
         p.rect_stroke_sdf(tc_bg, 6.0 * s, 1.0 * s, chrome::BORDER);
-        t.queue(&tc, tc_sz, tc_x, ctrl_y + 5.0 * s, accent, preview_rect.w, sw, sh);
+        t.queue(
+            &tc,
+            tc_sz,
+            tc_x,
+            ctrl_y + 5.0 * s,
+            accent,
+            preview_rect.w,
+            sw,
+            sh,
+        );
 
         // Duration on right
         if playback.has_media() {
@@ -120,7 +145,16 @@ impl PreviewMonitor {
             let dur_sz = 16.0 * s;
             let dur_w = dur_sz * 0.60 * dur.len() as f32;
             let dur_x = preview_rect.x + preview_rect.w - pad - dur_w;
-            t.queue(&dur, dur_sz, dur_x, ctrl_y + 6.0 * s, text_dim, preview_rect.w, sw, sh);
+            t.queue(
+                &dur,
+                dur_sz,
+                dur_x,
+                ctrl_y + 6.0 * s,
+                text_dim,
+                preview_rect.w,
+                sw,
+                sh,
+            );
         }
     }
 
@@ -132,13 +166,16 @@ impl PreviewMonitor {
         view: &wgpu::TextureView,
         preview_rect: &Rect,
         playback: &Playback,
+        project: &Project,
         s: f32,
     ) {
         let tex = match &self.video_texture {
             Some(t) => t,
             None => return,
         };
-        if !playback.has_media() { return; }
+        if !playback.has_media() {
+            return;
+        }
 
         let pad = PANEL_PAD * s;
         let transport_h = 44.0 * s;
@@ -149,13 +186,26 @@ impl PreviewMonitor {
         let vh = playback.video_height as f32;
         let aspect = vw / vh;
 
-        let (pw, ph) = if avail_w / avail_h > aspect {
+        let (base_w, base_h) = if avail_w / avail_h > aspect {
             (avail_h * aspect, avail_h)
         } else {
             (avail_w, avail_w / aspect)
         };
-        let px = preview_rect.x + (preview_rect.w - pw) * 0.5;
-        let py = preview_rect.y + pad + (avail_h - ph) * 0.5;
+
+        // Pull the active clip's transform, if there is one. Falls back to
+        // identity so preview-only mode (no clip) still works.
+        let xform = playback
+            .active_clip_id
+            .and_then(|id| project.clip_by_id(id))
+            .map(|c| c.transform)
+            .unwrap_or(ClipTransform::IDENTITY);
+
+        let pw = base_w * xform.scale;
+        let ph = base_h * xform.scale;
+        let cx = preview_rect.x + preview_rect.w * 0.5 + xform.offset_x * avail_w;
+        let cy = preview_rect.y + pad + avail_h * 0.5 + xform.offset_y * avail_h;
+        let px = cx - pw * 0.5;
+        let py = cy - ph * 0.5;
 
         let draw = TextureDraw::new(tex, px, py, pw, ph);
         self.tex_pass.render_pass(gpu, encoder, view, &[draw], None);

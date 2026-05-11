@@ -18,13 +18,14 @@ use smithay::{
 use crate::easing;
 
 /// Minimize animation duration.
-pub const MIN_DURATION: Duration = Duration::from_millis(560);
+pub const MIN_DURATION: Duration = Duration::from_millis(1100);
 /// Unminimize animation duration (slightly faster — feels more responsive).
-pub const UNMIN_DURATION: Duration = Duration::from_millis(500);
+pub const UNMIN_DURATION: Duration = Duration::from_millis(950);
 /// Smallest scale applied at the end of minimize (matches a tray-icon size).
 pub const MIN_SCALE_END: f64 = 0.08;
 /// Alpha lingers at full opacity for the first portion, then fades.
-const MIN_ALPHA_HOLD: f64 = 0.25;
+/// Smaller value = alpha tracks motion more evenly (less "pop in").
+const MIN_ALPHA_HOLD: f64 = 0.10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MinimizeKind {
@@ -75,39 +76,41 @@ impl MinimizeAnim {
             MinimizeKind::Unminimize => (self.target_rect, self.source_rect, 1.0 - raw),
         };
 
-        let lerp_i = |a: i32, b: i32| -> f64 { a as f64 + (b - a) as f64 * p };
         let lerp_f = |a: f64, b: f64| -> f64 { a + (b - a) * p };
 
+        // The renderer applies a center-pivot scale: the visual top-left =
+        // render_loc + win.size/2 * (1 - scale). So we interpolate the visual
+        // rect (center + size) directly, then back-solve render_loc.
+        let win_w = self.source_rect.size.w as f64;
+        let win_h = self.source_rect.size.h as f64;
+
+        let from_cx = from.loc.x as f64 + from.size.w as f64 / 2.0;
+        let from_cy = from.loc.y as f64 + from.size.h as f64 / 2.0;
+        let to_cx = to.loc.x as f64 + to.size.w as f64 / 2.0;
+        let to_cy = to.loc.y as f64 + to.size.h as f64 / 2.0;
+
+        let visual_cx = lerp_f(from_cx, to_cx);
+        let visual_cy = lerp_f(from_cy, to_cy);
+        let visual_w = lerp_f(from.size.w as f64, to.size.w as f64);
+        let visual_h = lerp_f(from.size.h as f64, to.size.h as f64);
+
+        let scale_x = if win_w > 0.0 { visual_w / win_w } else { MIN_SCALE_END };
+        let scale_y = if win_h > 0.0 { visual_h / win_h } else { MIN_SCALE_END };
+
         let render_loc: Point<f64, Logical> = (
-            lerp_i(from.loc.x, to.loc.x),
-            lerp_i(from.loc.y, to.loc.y),
+            visual_cx - win_w / 2.0,
+            visual_cy - win_h / 2.0,
         )
             .into();
 
-        // Scale is the rect-size ratio (target / source) — anisotropic so a
-        // wide window can shrink into a narrow icon without distortion.
-        let scale_x_target = if from.size.w > 0 {
-            to.size.w as f64 / from.size.w as f64
-        } else {
-            MIN_SCALE_END
-        };
-        let scale_y_target = if from.size.h > 0 {
-            to.size.h as f64 / from.size.h as f64
-        } else {
-            MIN_SCALE_END
-        };
-        let scale = (lerp_f(1.0, scale_x_target), lerp_f(1.0, scale_y_target));
-
-        // Alpha holds full for the first MIN_ALPHA_HOLD of the animation, then
-        // fades quintic. (For unminimize, the curve is mirrored so the window
-        // pops into visibility quickly and finishes at full opacity.)
+        // Alpha tracks motion: holds full briefly, then fades quintic.
         let hold = MIN_ALPHA_HOLD;
         let fade_t = ((alpha_curve - hold) / (1.0 - hold)).clamp(0.0, 1.0);
         let alpha = (1.0 - easing::ease_in_out_quint(fade_t)) as f32;
 
         MinimizeParams {
             render_loc,
-            scale,
+            scale: (scale_x, scale_y),
             alpha,
         }
     }

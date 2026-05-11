@@ -80,14 +80,13 @@ pub enum DragTarget {
 pub enum Selection {
     Pin(usize),
     Result(usize),
-    OpenWindow(usize),
 }
 
 impl Selection {
     #[allow(dead_code)] // utility for future controls/grid navigation
     pub fn idx(self) -> usize {
         match self {
-            Selection::Pin(i) | Selection::Result(i) | Selection::OpenWindow(i) => i,
+            Selection::Pin(i) | Selection::Result(i) => i,
         }
     }
 }
@@ -156,6 +155,9 @@ impl AppState {
     /// sections need more rows than the default fits. Falls back to the
     /// default for non-launcher modes.
     pub fn desired_panel_h_logical(&self) -> f32 {
+        if matches!(self.mode, PanelMode::Control(crate::controls::TileId::SysMon)) {
+            return 880.0;
+        }
         if !matches!(self.mode, PanelMode::Launcher) {
             return PANEL_H_LOGICAL_PHASE1;
         }
@@ -302,7 +304,6 @@ impl AppState {
                 }
             }
             Selection::Pin(_) => {}
-            Selection::OpenWindow(_) => {}
         }
     }
 
@@ -344,7 +345,6 @@ impl AppState {
                 .results()
                 .get(i)
                 .and_then(|r| self.apps.get(r.entry_idx)),
-            Selection::OpenWindow(_) => None,
         }
     }
 
@@ -660,7 +660,9 @@ impl AppState {
                 {
                     let exec = entry.exec.clone();
                     let app_id = entry.app_id.clone();
-                    let _ = Command::new("sh").arg("-c").arg(&exec).spawn();
+                    if let Ok(child) = Command::new("sh").arg("-c").arg(&exec).spawn() {
+                        reap(child);
+                    }
                     tracing::info!(%app_id, %exec, "launched app via context menu");
                     self.close();
                 }
@@ -846,9 +848,16 @@ fn spawn_detached(exec: &str) {
             })
             .spawn()
     } {
-        Ok(child) => tracing::info!(pid = child.id(), exec = %exec, "spawned"),
+        Ok(child) => {
+            tracing::info!(pid = child.id(), exec = %exec, "spawned");
+            reap(child);
+        }
         Err(e) => tracing::error!(?e, exec = %exec, "spawn failed"),
     }
+}
+
+fn reap(mut child: std::process::Child) {
+    std::thread::spawn(move || { let _ = child.wait(); });
 }
 
 /// Standard ease-out cubic: 1 - (1 - t)^3.

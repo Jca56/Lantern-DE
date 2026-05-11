@@ -28,6 +28,12 @@ const DWELL_TOP_CENTER: std::time::Duration = std::time::Duration::from_millis(2
 pub const TOP_CENTER_ZONE_WIDTH: f64 = 400.0;
 pub const TOP_CENTER_ZONE_HEIGHT: f64 = 12.0;
 
+/// Master switch for the top-center hover → Command Center hot edge.
+/// When `false`, hovering the top-middle does nothing (no dwell, no glow,
+/// no activation). All supporting code (zone math, glow shader, fire arm)
+/// is preserved so flipping this back to `true` re-enables the feature.
+const TOP_CENTER_HOT_EDGE_ENABLED: bool = false;
+
 /// Tracks pointer dwell state for hot corner detection.
 pub struct HotCornerState {
     pub corner: Option<ScreenCorner>,
@@ -71,14 +77,18 @@ impl Lantern {
                 // Top-center strip: a thin band along the top edge centered
                 // horizontally on the output. Wider than the corner zones
                 // but only fires when nothing else matched, so corners win.
-                let dy = pos.y - (geo.loc.y as f64);
-                let center_x = geo.loc.x as f64 + (geo.size.w as f64) * 0.5;
-                let dx = (pos.x - center_x).abs();
-                if dy >= 0.0
-                    && dy < TOP_CENTER_ZONE_HEIGHT
-                    && dx <= TOP_CENTER_ZONE_WIDTH * 0.5
-                {
-                    Some(ScreenCorner::TopCenter)
+                if TOP_CENTER_HOT_EDGE_ENABLED {
+                    let dy = pos.y - (geo.loc.y as f64);
+                    let center_x = geo.loc.x as f64 + (geo.size.w as f64) * 0.5;
+                    let dx = (pos.x - center_x).abs();
+                    if dy >= 0.0
+                        && dy < TOP_CENTER_ZONE_HEIGHT
+                        && dx <= TOP_CENTER_ZONE_WIDTH * 0.5
+                    {
+                        Some(ScreenCorner::TopCenter)
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }

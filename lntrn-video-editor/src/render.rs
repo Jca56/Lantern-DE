@@ -1,34 +1,71 @@
-//! Drawing functions for each panel of the NLE layout.
+//! Top-level panel orchestration. Per-panel drawing lives in dedicated
+//! modules (`timeline`, `inspector`, `preview`) so this file stays narrow.
 //! Colors and patterns match lantern-studio's warm brown/gold theme.
 
-use lntrn_render::{Color, Painter, Rect, TextRenderer};
 use crate::chrome;
+use crate::inspector;
 use crate::layout::{Layout, PANEL_PAD};
+use crate::playback::{self, Playback};
+use crate::project::{MediaId, Project};
+use crate::timeline;
+use lntrn_render::{Painter, Rect, TextRenderer};
 
-// Track-specific colors
-fn clip_video() -> Color { Color::from_rgb8(0x4a, 0x80, 0xb0) }
-fn clip_audio() -> Color { Color::from_rgb8(0x50, 0x90, 0x60) }
+const MEDIA_ROW_H: f32 = 54.0;
+const MEDIA_LIST_TOP: f32 = 36.0;
+
+// Re-exports so existing call sites don't need to update.
+pub use crate::timeline::{
+    cursor_to_timeline_secs, timeline_clip_at, timeline_clip_edge_at, timeline_visible_duration,
+    track_mute_at, TrimEdge,
+};
 
 /// Draw all panels for the current frame.
 pub fn draw_panels(
-    p: &mut Painter, t: &mut TextRenderer,
-    layout: &Layout, s: f32, sw: u32, sh: u32,
+    p: &mut Painter,
+    t: &mut TextRenderer,
+    layout: &Layout,
+    project: &Project,
+    playback: &Playback,
+    s: f32,
+    sw: u32,
+    sh: u32,
 ) {
-    draw_media_browser(p, t, &layout.media_browser, s, sw, sh);
+    draw_media_browser(p, t, &layout.media_browser, project, s, sw, sh);
     // Preview is handled by preview.rs (video texture + timecode)
-    draw_properties(p, t, &layout.properties, s, sw, sh);
-    draw_timeline(p, t, &layout.timeline, s, sw, sh);
-    draw_status_bar(p, t, &layout.status_bar, s, sw, sh);
+    inspector::draw(p, t, &layout.properties, project, s, sw, sh);
+    timeline::draw(p, t, &layout.timeline, project, playback, s, sw, sh);
+    draw_status_bar(p, t, &layout.status_bar, project, playback, s, sw, sh);
     draw_dividers(p, layout, s);
+}
+
+pub fn media_item_at(project: &Project, r: &Rect, px: f32, py: f32, s: f32) -> Option<MediaId> {
+    if !r.contains(px, py) {
+        return None;
+    }
+    let pad = PANEL_PAD * s;
+    let row_h = MEDIA_ROW_H * s;
+    let start_y = r.y + MEDIA_LIST_TOP * s;
+    let x = r.x + pad;
+    let w = r.w - pad * 2.0;
+    for (i, item) in project.media.iter().enumerate() {
+        let y = start_y + i as f32 * (row_h + 6.0 * s);
+        let row = Rect::new(x, y, w, row_h);
+        if row.contains(px, py) {
+            return Some(item.id);
+        }
+    }
+    None
 }
 
 fn draw_dividers(p: &mut Painter, layout: &Layout, s: f32) {
     p.rect_filled(layout.div_left, 0.0, chrome::BORDER);
     p.rect_filled(layout.div_right, 0.0, chrome::BORDER);
-    // Rainbow gradient between upper panels and timeline
     chrome::draw_rainbow_h(
-        p, layout.div_h_upper.x, layout.div_h_upper.y,
-        layout.div_h_upper.w, s,
+        p,
+        layout.div_h_upper.x,
+        layout.div_h_upper.y,
+        layout.div_h_upper.w,
+        s,
     );
     p.rect_filled(layout.div_h_lower, 0.0, chrome::BORDER);
 }
@@ -36,11 +73,15 @@ fn draw_dividers(p: &mut Painter, layout: &Layout, s: f32) {
 // ── Media Browser ──────────────────────────────────────────────────────────
 
 fn draw_media_browser(
-    p: &mut Painter, t: &mut TextRenderer,
-    r: &Rect, s: f32, sw: u32, sh: u32,
+    p: &mut Painter,
+    t: &mut TextRenderer,
+    r: &Rect,
+    project: &Project,
+    s: f32,
+    sw: u32,
+    sh: u32,
 ) {
     p.rect_filled(*r, 0.0, chrome::PANEL);
-
     let pad = PANEL_PAD * s;
     let x = r.x + pad;
     let y = r.y + pad;
@@ -49,123 +90,93 @@ fn draw_media_browser(
     let text = chrome::text();
     let text_dim = chrome::text_dim();
 
-    // Header
     t.queue("M E D I A", 16.0 * s, x, y, accent, w, sw, sh);
-
-    // Separator
     p.rect_filled(
-        Rect::new(x, y + 24.0 * s, r.w - pad * 2.0, 1.0 * s), 0.0, chrome::BORDER,
+        Rect::new(x, y + 24.0 * s, r.w - pad * 2.0, 1.0 * s),
+        0.0,
+        chrome::BORDER,
     );
+
+    let row_h = MEDIA_ROW_H * s;
+    let row_gap = 6.0 * s;
+    let row_x = x;
+    let row_w = r.w - pad * 2.0;
+    let mut row_y = r.y + MEDIA_LIST_TOP * s;
+
+    for item in &project.media {
+        if row_y + row_h > r.y + r.h - pad {
+            break;
+        }
+        let selected = project.selected_media == Some(item.id);
+        let row = Rect::new(row_x, row_y, row_w, row_h);
+        let bg = if selected {
+            chrome::ACTIVE
+        } else {
+            chrome::PANEL_DARK
+        };
+        p.rect_filled(row, 4.0 * s, bg);
+        p.rect_stroke_sdf(
+            row,
+            4.0 * s,
+            1.0 * s,
+            if selected { accent } else { chrome::BORDER },
+        );
+        t.queue(
+            &item.name,
+            14.0 * s,
+            row_x + 8.0 * s,
+            row_y + 8.0 * s,
+            text,
+            row_w,
+            sw,
+            sh,
+        );
+        let details = format!(
+            "{}x{}  {}",
+            item.width,
+            item.height,
+            short_duration(item.duration)
+        );
+        t.queue(
+            &details,
+            12.0 * s,
+            row_x + 8.0 * s,
+            row_y + 30.0 * s,
+            text_dim,
+            row_w,
+            sw,
+            sh,
+        );
+        row_y += row_h + row_gap;
+    }
 }
 
-// ── Properties / Inspector ─────────────────────────────────────────────────
-
-fn draw_properties(
-    p: &mut Painter, t: &mut TextRenderer,
-    r: &Rect, s: f32, sw: u32, sh: u32,
-) {
-    p.rect_filled(*r, 0.0, chrome::PANEL);
-
-    let pad = PANEL_PAD * s;
-    let x = r.x + pad;
-    let y = r.y + pad;
-    let w = r.w;
-    let accent = chrome::accent();
-    let text = chrome::text();
-    let text_dim = chrome::text_dim();
-
-    // Header
-    t.queue("I N S P E C T O R", 16.0 * s, x, y, accent, w, sw, sh);
-
-    // Separator
-    p.rect_filled(
-        Rect::new(x, y + 24.0 * s, r.w - pad * 2.0, 1.0 * s), 0.0, chrome::BORDER,
-    );
-
-    // (empty — populated when a clip is selected)
-}
-
-// ── Timeline ───────────────────────────────────────────────────────────────
-
-fn draw_timeline(
-    p: &mut Painter, t: &mut TextRenderer,
-    r: &Rect, s: f32, sw: u32, sh: u32,
-) {
-    p.rect_filled(*r, 0.0, chrome::BG);
-
-    let pad = PANEL_PAD * s;
-    let x = r.x;
-    let y = r.y;
-    let w = r.w;
-    let text_dim = chrome::text_dim();
-    let playhead_color = chrome::accent();
-
-    // Time ruler header
-    let header_h = 28.0 * s;
-    p.rect_filled(Rect::new(x, y, w, header_h), 0.0, chrome::PANEL);
-    p.rect_filled(Rect::new(x, y + header_h - 1.0 * s, w, 1.0 * s), 0.0, chrome::BORDER);
-
-    let label_w = 60.0 * s;
-    let ruler_x = x + label_w;
-    let ruler_w = w - label_w;
-
-    // Time markers
-    let marks = ["0:00", "0:30", "1:00", "1:30", "2:00", "2:30", "3:00"];
-    for (i, mark) in marks.iter().enumerate() {
-        let mx = ruler_x + (i as f32 / (marks.len() - 1) as f32) * ruler_w;
-        p.rect_filled(
-            Rect::new(mx, y + header_h - 8.0 * s, 1.0 * s, 8.0 * s),
-            0.0, text_dim,
-        );
-        t.queue(mark, 14.0 * s, mx + 3.0 * s, y + 6.0 * s, text_dim, w, sw, sh);
+fn short_duration(secs: f64) -> String {
+    let secs = secs.max(0.0);
+    if secs >= 3600.0 {
+        let h = (secs / 3600.0) as u32;
+        let m = ((secs % 3600.0) / 60.0) as u32;
+        format!("{h}:{m:02}h")
+    } else {
+        let m = (secs / 60.0) as u32;
+        let s = (secs % 60.0) as u32;
+        format!("{m}:{s:02}")
     }
-
-    // Track lanes (empty — clips drawn from project state)
-    let track_y = y + header_h;
-    let track_h = 44.0 * s;
-    let track_names = ["V1", "A1"];
-
-    for (i, name) in track_names.iter().enumerate() {
-        let ty = track_y + i as f32 * (track_h + 1.0 * s);
-        let lane = Rect::new(x, ty, w, track_h);
-
-        let bg = if i % 2 == 0 { chrome::PANEL_DARK } else { chrome::INPUT_BG };
-        p.rect_filled(lane, 0.0, bg);
-
-        // Track label
-        let label_r = Rect::new(x, ty, label_w, track_h);
-        p.rect_filled(label_r, 0.0, chrome::PANEL);
-        p.rect_filled(
-            Rect::new(x + label_w - 1.0 * s, ty, 1.0 * s, track_h), 0.0, chrome::BORDER,
-        );
-        t.queue(name, 16.0 * s, x + pad, ty + (track_h - 16.0 * s) * 0.5, text_dim, w, sw, sh);
-
-        // Lane separator
-        p.rect_filled(Rect::new(x, ty + track_h, w, 1.0 * s), 0.0, chrome::BORDER);
-    }
-
-    // Playhead
-    let playhead_x = ruler_x;
-    let playhead_bot = track_y + track_names.len() as f32 * (track_h + 1.0 * s);
-    p.rect_filled(
-        Rect::new(playhead_x - 0.5 * s, y, 2.0 * s, playhead_bot - y),
-        0.0, playhead_color,
-    );
-    let diam = 10.0 * s;
-    p.rect_filled(
-        Rect::new(playhead_x - diam * 0.5, y, diam, diam * 0.7),
-        2.0 * s, playhead_color,
-    );
 }
 
 // ── Status Bar ─────────────────────────────────────────────────────────────
 
 fn draw_status_bar(
-    p: &mut Painter, t: &mut TextRenderer,
-    r: &Rect, s: f32, sw: u32, sh: u32,
+    p: &mut Painter,
+    t: &mut TextRenderer,
+    r: &Rect,
+    project: &Project,
+    playback: &Playback,
+    s: f32,
+    sw: u32,
+    sh: u32,
 ) {
     p.rect_filled(*r, 0.0, chrome::PANEL);
-
     let pad = PANEL_PAD * s;
     let text_y = r.y + (r.h - 14.0 * s) * 0.5;
     let w = r.w;
@@ -186,10 +197,44 @@ fn draw_status_bar(
     t.queue("|", font, tx, text_y, chrome::BORDER, w, sw, sh);
     tx += 16.0 * s;
 
-    t.queue("1920x1080  30fps", font, tx, text_y, text_dim, w, sw, sh);
+    let media_label = if playback.has_media() {
+        format!(
+            "{}x{}  {:.2}fps",
+            playback.video_width, playback.video_height, playback.fps
+        )
+    } else {
+        "no media".to_string()
+    };
+    t.queue(&media_label, font, tx, text_y, text_dim, w, sw, sh);
 
-    // Duration on right
-    let dur = "00:00:00:00";
-    let dur_w = font * 0.60 * dur.len() as f32;
-    t.queue(dur, font, r.x + r.w - pad - dur_w, text_y, text_dim, w, sw, sh);
+    // Optional export-progress slot fed by main loop via the global slot below.
+    if let Some(msg) = crate::export::status_message() {
+        tx += 180.0 * s;
+        t.queue("|", font, tx, text_y, chrome::BORDER, w, sw, sh);
+        tx += 16.0 * s;
+        t.queue(&msg, font, tx, text_y, chrome::accent(), w, sw, sh);
+    }
+
+    // Position / duration on the right
+    let fps = playback.fps.max(1.0);
+    let proj_dur = project.timeline_duration();
+    let dur_secs = if proj_dur > 0.0 {
+        proj_dur
+    } else {
+        playback.duration
+    };
+    let pos_tc = playback::format_timecode(playback.timeline_position, fps);
+    let dur_tc = playback::format_timecode(dur_secs, fps);
+    let dur_label = format!("{pos_tc}  /  {dur_tc}");
+    let dur_w = font * 0.60 * dur_label.len() as f32;
+    t.queue(
+        &dur_label,
+        font,
+        r.x + r.w - pad - dur_w,
+        text_y,
+        text_col,
+        w,
+        sw,
+        sh,
+    );
 }

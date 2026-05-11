@@ -11,7 +11,7 @@ use crate::sections::*;
 use crate::views::{draw_content_list, draw_content_tree};
 use lntrn_ui::gpu::controls::{Button, ButtonVariant};
 use crate::{Gpu, ZONE_CLOSE, ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_MENU_VIEW,
-    ZONE_NAV_VIEW_TOGGLE, ZONE_NAV_BACK, ZONE_NAV_FORWARD, ZONE_NAV_UP, ZONE_NAV_SEARCH,
+    ZONE_NAV_VIEW_TOGGLE, ZONE_NAV_BACK, ZONE_NAV_FORWARD, ZONE_NAV_UP, ZONE_NAV_SEARCH, ZONE_NAV_SORT,
     ZONE_SIDEBAR_ITEM_BASE, ZONE_FILE_ITEM_BASE, ZONE_CONTENT, ZONE_SCROLLBAR,
     ZONE_TAB_BASE, ZONE_TAB_CLOSE_BASE, ZONE_TAB_NEW, ZONE_RENAME_INPUT, ZONE_PATH_INPUT,
     ZONE_DRIVE_ITEM_BASE, ZONE_TREE_ITEM_BASE, ZONE_BREADCRUMB_BASE,
@@ -256,6 +256,8 @@ pub fn render_frame(
         let zone = input.add_zone(ZONE_PATH_INPUT, p_rect);
         path_hovered = zone.is_hovered();
     };
+    let sort_rect = sort_button_rect(wf, s);
+    let sort_state = input.add_zone(ZONE_NAV_SORT, sort_rect);
     let srch_rect = search_button_rect(wf, s);
     let srch_state = input.add_zone(ZONE_NAV_SEARCH, srch_rect);
     draw_nav_bar(
@@ -265,6 +267,7 @@ pub fn render_frame(
         fwd_rect, fwd_state.is_hovered(),
         up_rect, up_state.is_hovered(),
         p_rect, path_hovered, &breadcrumb_hovered,
+        sort_rect, sort_state.is_hovered(),
         srch_rect, srch_state.is_hovered(),
         (w, h), s,
     );

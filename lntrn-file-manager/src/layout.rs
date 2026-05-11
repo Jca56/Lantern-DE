@@ -78,8 +78,14 @@ pub fn path_rect(width: f32, s: f32) -> Rect {
     let x = SIDEBAR_W * s;
     let y = nav_bar_y(s);
     let path_x = x + 172.0 * s;
-    let search_space = 46.0 * s;
+    // Reserve space for both the sort and search buttons (each 38px wide + gap).
+    let search_space = 88.0 * s;
     Rect::new(path_x, y + 5.0 * s, width - path_x - search_space, 38.0 * s)
+}
+
+pub fn sort_button_rect(width: f32, s: f32) -> Rect {
+    let y = nav_bar_y(s);
+    Rect::new(width - 84.0 * s, y + 6.0 * s, 36.0 * s, 36.0 * s)
 }
 
 pub fn search_button_rect(width: f32, s: f32) -> Rect {

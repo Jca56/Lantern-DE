@@ -10,6 +10,8 @@ pub struct Settings {
     pub show_hidden: bool,
     #[serde(default = "default_sort")]
     pub sort_by: String,
+    #[serde(default = "default_sort_dir")]
+    pub sort_dir: String,
     #[serde(default)]
     pub pinned_tabs: Vec<String>,
     #[serde(default = "default_bg_opacity")]
@@ -36,6 +38,7 @@ fn default_desktop_w() -> f32 { 800.0 }
 fn default_desktop_h() -> f32 { 600.0 }
 
 fn default_sort() -> String { "name".into() }
+fn default_sort_dir() -> String { "asc".into() }
 
 impl Default for Settings {
     fn default() -> Self {
@@ -45,6 +48,7 @@ impl Default for Settings {
             window_height: 680.0,
             show_hidden: false,
             sort_by: "name".into(),
+            sort_dir: "asc".into(),
             pinned_tabs: Vec::new(),
             bg_opacity: 1.0,
             desktop_bg_opacity: 0.0,
@@ -110,6 +114,20 @@ impl Settings {
             crate::fs::SortBy::Size => "size",
             crate::fs::SortBy::Date => "date",
             crate::fs::SortBy::Type => "type",
+        }.into();
+    }
+
+    pub fn sort_dir_enum(&self) -> crate::fs::SortDir {
+        match self.sort_dir.as_str() {
+            "desc" => crate::fs::SortDir::Desc,
+            _ => crate::fs::SortDir::Asc,
+        }
+    }
+
+    pub fn set_sort_dir(&mut self, dir: crate::fs::SortDir) {
+        self.sort_dir = match dir {
+            crate::fs::SortDir::Asc => "asc",
+            crate::fs::SortDir::Desc => "desc",
         }.into();
     }
 }

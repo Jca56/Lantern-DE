@@ -179,6 +179,40 @@ fn draw_view_mode_icon(painter: &mut Painter, mode: ViewMode, r: Rect, color: Co
     }
 }
 
+/// Sort icon — three horizontal lines of decreasing length + a small arrow
+/// at the right indicating direction.
+fn draw_sort_icon(painter: &mut Painter, r: Rect, color: Color, dir: crate::fs::SortDir, s: f32) {
+    let lx = r.x + 7.0 * s;
+    let ly = r.y + 10.0 * s;
+    let gap = 5.0 * s;
+    let sw = 2.0 * s;
+    // Lines descending in length: visual cue for "sort"
+    let widths = [16.0, 12.0, 8.0];
+    for (i, w) in widths.iter().enumerate() {
+        let y = ly + i as f32 * gap;
+        painter.rect_filled(Rect::new(lx, y, w * s, sw), 1.0 * s, color);
+    }
+    // Direction arrow on the right
+    let ax = r.x + r.w - 9.0 * s;
+    let ay_top = r.y + 9.0 * s;
+    let ay_bot = r.y + 24.0 * s;
+    let head = 3.0 * s;
+    match dir {
+        crate::fs::SortDir::Asc => {
+            // Upward arrow
+            painter.line(ax, ay_top, ax, ay_bot, sw, color);
+            painter.line(ax, ay_top, ax - head, ay_top + head, sw, color);
+            painter.line(ax, ay_top, ax + head, ay_top + head, sw, color);
+        }
+        crate::fs::SortDir::Desc => {
+            // Downward arrow
+            painter.line(ax, ay_top, ax, ay_bot, sw, color);
+            painter.line(ax, ay_bot, ax - head, ay_bot - head, sw, color);
+            painter.line(ax, ay_bot, ax + head, ay_bot - head, sw, color);
+        }
+    }
+}
+
 // ── Nav bar ─────────────────────────────────────────────────────────────────
 
 pub fn draw_nav_bar(
@@ -198,6 +232,8 @@ pub fn draw_nav_bar(
     path_rect: Rect,
     _path_hovered: bool,
     breadcrumb_hovered: &[bool],
+    sort_rect: Rect,
+    sort_hovered: bool,
     search_rect: Rect,
     search_hovered: bool,
     screen: (u32, u32),
@@ -370,6 +406,13 @@ pub fn draw_nav_bar(
             cx += sw;
         }
     }
+
+    // ── Sort button ────────────────────────────────────────────────────────
+    let sort_color = if sort_hovered { palette.text } else { palette.text_secondary };
+    if sort_hovered {
+        painter.rect_filled(sort_rect, 4.0 * s, palette.surface_2.with_alpha(0.5));
+    }
+    draw_sort_icon(painter, sort_rect, sort_color, app.sort_dir, s);
 
     // ── Search button ──────────────────────────────────────────────────────
     let search_active = app.searching;

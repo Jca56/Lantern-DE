@@ -426,7 +426,14 @@ impl App {
         self.scroll_target_px = self.scroll_target_px.clamp(0.0, max_px);
 
         let line_offset = (self.scroll_current_px / cell_h) as usize;
-        let sub_pixel = self.scroll_current_px - (line_offset as f32 * cell_h);
+        let raw_sub = self.scroll_current_px - (line_offset as f32 * cell_h);
+        // Snap a near-zero residual to 0. Otherwise, when a smooth-scroll
+        // animation has just settled, the origin still gets shifted by a
+        // fraction of a pixel and `extra_rows=1` is requested — making the
+        // renderer pull one row beyond the grid edge while drawing from a
+        // shifted origin, which can visually composite with the previous
+        // frame on slow displays.
+        let sub_pixel = if raw_sub.abs() < 0.5 { 0.0 } else { raw_sub };
 
         terminal.scroll_offset = line_offset.min(terminal.scrollback.len());
         sub_pixel

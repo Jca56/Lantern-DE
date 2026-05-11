@@ -1,12 +1,7 @@
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use super::charwidth::char_width;
-use super::grid::{Cell, Color8, TerminalState, Wide, ANSI_COLORS};
-
-/// Fallback timeout for synchronized output mode 2026. If the app never sends
-/// the closing `CSI ? 2026 l` (or sends one we miss), we recover after this
-/// long instead of freezing the screen forever. Matches contour/iTerm2.
-const SYNC_OUTPUT_TIMEOUT: Duration = Duration::from_millis(250);
+use super::grid::{Cell, Color8, TerminalState, Wide, ANSI_COLORS, SYNC_OUTPUT_TIMEOUT};
 
 // ── VTE Performer ───────────────────────────────────────────────────────────
 // Bridges the `vte` parser events into our TerminalState grid.
@@ -41,10 +36,16 @@ impl vte::Perform for Performer<'_> {
             0x0A | 0x0B | 0x0C => {
                 // LF does NOT reset wrap_next — matches xterm behavior.
                 // A CR+LF sequence: CR clears it, LF just moves down.
-                s.cursor_row += 1;
-                if s.cursor_row > s.scroll_bottom {
-                    s.cursor_row = s.scroll_bottom;
+                //
+                // Scroll *only* when cursor is exactly at the region bottom.
+                // If the cursor is below the region (e.g. an app positioned
+                // it there explicitly to write past its scroll widget), LF
+                // must advance freely up to rows-1 — clamping back into the
+                // region overwrites the widget with the new content.
+                if s.cursor_row == s.scroll_bottom {
                     s.scroll_up();
+                } else if s.cursor_row + 1 < s.rows {
+                    s.cursor_row += 1;
                 }
             }
             0x0D => {
@@ -435,24 +436,29 @@ impl vte::Perform for Performer<'_> {
                 }
             }
             b'D' => {
-                if s.cursor_row >= s.scroll_bottom {
+                // IND — scroll only when exactly at scroll_bottom; outside
+                // the region, advance freely up to rows-1.
+                if s.cursor_row == s.scroll_bottom {
                     s.scroll_up();
-                } else {
+                } else if s.cursor_row + 1 < s.rows {
                     s.cursor_row += 1;
                 }
             }
             b'E' => {
+                // NEL — same boundary rule as IND, plus CR.
                 s.cursor_col = 0;
-                if s.cursor_row >= s.scroll_bottom {
+                if s.cursor_row == s.scroll_bottom {
                     s.scroll_up();
-                } else {
+                } else if s.cursor_row + 1 < s.rows {
                     s.cursor_row += 1;
                 }
             }
             b'M' => {
-                if s.cursor_row <= s.scroll_top {
+                // RI — scroll only when exactly at scroll_top; above the
+                // region, move freely up to row 0.
+                if s.cursor_row == s.scroll_top {
                     s.scroll_down();
-                } else {
+                } else if s.cursor_row > 0 {
                     s.cursor_row -= 1;
                 }
             }
@@ -601,14 +607,18 @@ fn do_print(s: &mut TerminalState, c: char) {
         return;
     }
 
-    // Deferred wrap from a previous print that filled the last column
+    // Deferred wrap from a previous print that filled the last column.
+    // Scroll only when cursor is exactly at scroll_bottom; if it's below
+    // the region (cursor positioned by an app outside its scroll widget),
+    // advance freely up to rows-1 instead of teleporting back into the
+    // region and overwriting widget content.
     if s.wrap_next {
         s.wrap_next = false;
         s.cursor_col = 0;
-        s.cursor_row += 1;
-        if s.cursor_row > s.scroll_bottom {
-            s.cursor_row = s.scroll_bottom;
+        if s.cursor_row == s.scroll_bottom {
             s.scroll_up();
+        } else if s.cursor_row + 1 < s.rows {
+            s.cursor_row += 1;
         }
     }
 
@@ -621,10 +631,10 @@ fn do_print(s: &mut TerminalState, c: char) {
             s.grid[s.cursor_row][s.cursor_col] = s.default_cell();
         }
         s.cursor_col = 0;
-        s.cursor_row += 1;
-        if s.cursor_row > s.scroll_bottom {
-            s.cursor_row = s.scroll_bottom;
+        if s.cursor_row == s.scroll_bottom {
             s.scroll_up();
+        } else if s.cursor_row + 1 < s.rows {
+            s.cursor_row += 1;
         }
     }
 

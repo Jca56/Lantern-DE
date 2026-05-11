@@ -19,6 +19,8 @@ pub mod bluetooth;
 pub mod brightness;
 pub mod clock;
 pub mod events;
+pub mod sysmon;
+pub mod temp;
 pub mod tile;
 pub mod wifi;
 
@@ -30,6 +32,7 @@ use self::bluetooth::Bluetooth;
 use self::brightness::Brightness;
 use self::clock::Clock;
 use self::events::Events;
+use self::sysmon::SysMon;
 use self::wifi::Wifi;
 
 /// Total logical height the controls row reserves at the top of the
@@ -54,6 +57,10 @@ pub enum TileId {
     Wifi,
     Bluetooth,
     Battery,
+    SysMon,
+    /// CPU package temperature. Pulls state from `controls.sysmon` so
+    /// only the sysmon worker polls /sys/class/thermal.
+    Temp,
     // Mpris, Power
 }
 
@@ -68,6 +75,7 @@ pub struct Controls {
     pub wifi: Wifi,
     pub bluetooth: Bluetooth,
     pub battery: Battery,
+    pub sysmon: SysMon,
 }
 
 impl Controls {
@@ -80,6 +88,7 @@ impl Controls {
             wifi: Wifi::new(),
             bluetooth: Bluetooth::new(),
             battery: Battery::new(),
+            sysmon: SysMon::new(),
         }
     }
 
@@ -141,6 +150,18 @@ impl Controls {
                 tile::Slot { side: tile::Side::Right, logical_width: battery::TILE_WIDTH },
             ));
         }
+        if self.sysmon.is_present() {
+            out.push((
+                TileId::SysMon,
+                tile::Slot { side: tile::Side::Right, logical_width: sysmon::TILE_WIDTH },
+            ));
+            // Right-side tiles pack right-to-left in declaration order,
+            // so Temp declared after SysMon ends up to its left.
+            out.push((
+                TileId::Temp,
+                tile::Slot { side: tile::Side::Right, logical_width: temp::TILE_WIDTH },
+            ));
+        }
         out
     }
 
@@ -180,6 +201,7 @@ pub fn draw_row(
     alpha: f32,
     surface_w: u32,
     surface_h: u32,
+    icons: &mut Vec<crate::render::IconRequest>,
 ) {
     let pad = ROW_HORIZONTAL_PAD * scale;
     let row_top = panel.y + ROW_TOP_MARGIN * scale;
@@ -214,6 +236,12 @@ pub fn draw_row(
             ),
             TileId::Battery => battery::draw_inline(
                 painter, text, &controls.battery, layout, scale, alpha, surface_w, surface_h,
+            ),
+            TileId::SysMon => sysmon::tile::draw_inline(
+                painter, text, icons, &controls.sysmon, layout, scale, alpha, surface_w, surface_h,
+            ),
+            TileId::Temp => temp::draw_inline(
+                painter, text, icons, &controls.sysmon, layout, scale, alpha, surface_w, surface_h,
             ),
         }
     }
@@ -263,6 +291,15 @@ pub fn draw_view(
         ),
         TileId::Battery => battery::draw_view(
             painter, text, &controls.battery, panel, top_y, scale, alpha, surface_w, surface_h,
+        ),
+        TileId::SysMon => sysmon::view::draw_view(
+            painter, text, &controls.sysmon, panel, top_y, scale, alpha, surface_w, surface_h,
+        ),
+        // Temp shares data + view with SysMon — clicking the temp tile
+        // opens the same expanded panel so the user gets CPU / mem /
+        // net history alongside temperature context.
+        TileId::Temp => sysmon::view::draw_view(
+            painter, text, &controls.sysmon, panel, top_y, scale, alpha, surface_w, surface_h,
         ),
     };
 }
