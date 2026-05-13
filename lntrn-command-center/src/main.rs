@@ -9,6 +9,8 @@ mod controls;
 mod ipc;
 mod launcher;
 mod layershell;
+mod mini_dock;
+mod power;
 mod render;
 mod search;
 mod thumbs;

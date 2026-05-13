@@ -1,0 +1,24 @@
+// Firebase Storage security rules for lntrn-fox-file-manager.
+//
+// Paste into: Firebase Console -> Storage -> Rules -> Publish.
+//
+// Rule: an authenticated user can only read/write blobs under their own
+// /users/{uid}/** prefix. Optional size cap of 256 MiB per object — bump if you
+// want to back up larger files.
+
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Per-user blob store — content-addressed by sha256 under blobs/.
+    match /users/{uid}/{allPaths=**} {
+      allow read: if request.auth != null
+                   && request.auth.uid == uid;
+      allow write: if request.auth != null
+                    && request.auth.uid == uid
+                    && request.resource.size < 256 * 1024 * 1024;
+    }
+
+    // Everything else denied by default.
+  }
+}

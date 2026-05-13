@@ -34,6 +34,7 @@ pub const BTN_RIGHT: u32 = 0x111;
 const KEY_ESC: u32 = 1;
 const KEY_E: u32 = 18;
 const KEY_T: u32 = 20;
+const KEY_O: u32 = 24;
 const KEY_LEFTBRACE: u32 = 26;
 const KEY_RIGHTBRACE: u32 = 27;
 const KEY_ENTER: u32 = 28;
@@ -45,8 +46,12 @@ const KEY_DELETE: u32 = 111;
 
 #[derive(Clone, Copy)]
 enum PickKind {
-    Open,
-    Import,
+    /// Picked file is a video to import into the media library.
+    ImportMedia,
+    /// Picked file is a `.lproj` to load as the current project.
+    OpenProject,
+    /// Picked file is the destination for a project save.
+    SaveProject,
 }
 
 struct PendingPick {
@@ -321,10 +326,19 @@ pub fn run() -> Result<()> {
     // Active inspector slider drag.
     let mut inspector_drag: Option<crate::inspector::FieldHit> = None;
 
-    // Open video from CLI arg if provided
-    if let Some(path) = std::env::args().nth(1) {
-        let path = std::path::PathBuf::from(path);
-        if let Err(e) = playback.open_file(&path) {
+    // CLI arg: `.lproj` → load project; anything else → open as video and
+    // drop on the timeline (the old default behavior).
+    if let Some(arg) = std::env::args().nth(1) {
+        let path = std::path::PathBuf::from(arg);
+        if path.extension().map(|e| e == "lproj").unwrap_or(false) {
+            match crate::projectio::load(&path) {
+                Ok(mut loaded) => {
+                    loaded.save_path = Some(path);
+                    project = loaded;
+                }
+                Err(e) => eprintln!("[video-editor] failed to load project: {e}"),
+            }
+        } else if let Err(e) = playback.open_file(&path) {
             eprintln!("[video-editor] failed to open {}: {e}", path.display());
         } else {
             project.import_from_playback(&path, &playback);
@@ -361,11 +375,11 @@ pub fn run() -> Result<()> {
         (
             "File",
             vec![
-                MenuItem::action(1, "New Project"),
-                MenuItem::action_with(2, "Open", "Ctrl+O"),
-                MenuItem::action_with(3, "Save", "Ctrl+S"),
+                MenuItem::action(actions::ACT_NEW_PROJECT, "New Project"),
+                MenuItem::action_with(actions::ACT_OPEN, "Open Project…", "Ctrl+O"),
+                MenuItem::action_with(actions::ACT_SAVE, "Save Project", "Ctrl+S"),
                 MenuItem::separator(),
-                MenuItem::action(4, "Import Media"),
+                MenuItem::action(actions::ACT_IMPORT_MEDIA, "Import Media…"),
                 MenuItem::separator(),
                 MenuItem::action_with(actions::ACT_EXPORT_MP4_MED, "Export MP4 (medium)", "Ctrl+E"),
                 MenuItem::action(actions::ACT_EXPORT_MP4_HIGH, "Export MP4 (high)"),
@@ -373,7 +387,7 @@ pub fn run() -> Result<()> {
                 MenuItem::action(actions::ACT_EXPORT_GIF_SMALL, "Export GIF (480px)"),
                 MenuItem::action(actions::ACT_EXPORT_GIF_LARGE, "Export GIF (720px)"),
                 MenuItem::separator(),
-                MenuItem::action_with(6, "Quit", "Ctrl+Q"),
+                MenuItem::action_with(actions::ACT_QUIT, "Quit", "Ctrl+Q"),
             ],
         ),
         (
@@ -489,13 +503,20 @@ pub fn run() -> Result<()> {
                     }
                 }
                 KEY_SPACE => playback.timeline_toggle(&project),
-                KEY_S => split_at_playhead(&mut project, &playback),
+                KEY_S => {
+                    if ctrl {
+                        trigger_save(&mut project, &mut pending_pick);
+                    } else {
+                        split_at_playhead(&mut project, &playback);
+                    }
+                }
                 KEY_DELETE => delete_selected_clip(&mut project),
                 KEY_LEFTBRACE => nudge_selected_speed(&mut project, 1.0 / 1.25),
                 KEY_RIGHTBRACE => nudge_selected_speed(&mut project, 1.25),
                 KEY_BACKSLASH => unlink_selected(&mut project),
                 KEY_M => mute_selected_clip_track(&mut project),
                 KEY_T => add_track(&mut project, crate::project::TrackKind::Video),
+                KEY_O if ctrl => trigger_open_project(&mut pending_pick),
                 KEY_E if ctrl => {
                     let req = crate::export::ExportRequest::defaults_for(
                         crate::export::ExportFormat::Mp4,
@@ -795,7 +816,7 @@ pub fn run() -> Result<()> {
                     &mut state.running,
                     &mut pending_pick,
                     &mut project,
-                    &playback,
+                    &mut playback,
                 );
                 menu_bar.close();
             }
@@ -815,24 +836,31 @@ pub fn run() -> Result<()> {
             }
         }
         if let Some((kind, path)) = picked_path {
-            if let Err(e) = playback.open_file(&path) {
-                eprintln!("[video-editor] failed to open {}: {e}", path.display());
-            } else {
-                project.import_from_playback(&path, &playback);
-                // File→Open is the "I'm going to edit this video" gesture, so
-                // drop it on the timeline immediately. Import Media is the
-                // browse-only staging path — leave the timeline alone.
-                if matches!(kind, PickKind::Open) {
-                    if let Some(new_id) = project.insert_selected_at_end() {
-                        let start = project
-                            .timeline_clips
-                            .iter()
-                            .find(|c| c.id == new_id)
-                            .map(|c| c.start)
-                            .unwrap_or(0.0);
-                        playback.activate_clip_at(start, &project);
+            match kind {
+                PickKind::ImportMedia => {
+                    if let Err(e) = playback.open_file(&path) {
+                        eprintln!(
+                            "[video-editor] failed to open {}: {e}",
+                            path.display()
+                        );
+                    } else {
+                        project.import_from_playback(&path, &playback);
                     }
                 }
+                PickKind::OpenProject => match crate::projectio::load(&path) {
+                    Ok(mut loaded) => {
+                        loaded.save_path = Some(path);
+                        project = loaded;
+                        // Drop whatever clip is in flight — the loaded project
+                        // may not even reference the currently-playing media.
+                        playback.pause();
+                    }
+                    Err(e) => eprintln!("[video-editor] open project: {e}"),
+                },
+                PickKind::SaveProject => match crate::projectio::save(&project, &path) {
+                    Ok(()) => project.save_path = Some(path),
+                    Err(e) => eprintln!("[video-editor] save project: {e}"),
+                },
             }
             pending_pick = None;
         }
@@ -875,18 +903,18 @@ fn dispatch_menu_action(
     running: &mut bool,
     pending_pick: &mut Option<PendingPick>,
     project: &mut Project,
-    playback: &Playback,
+    playback: &mut Playback,
 ) {
     match id {
-        actions::ACT_OPEN => {
-            *pending_pick = Some(PendingPick {
-                kind: PickKind::Open,
-                rx: actions::spawn_video_picker("Open Video"),
-            });
+        actions::ACT_NEW_PROJECT => {
+            *project = Project::new();
+            playback.pause();
         }
+        actions::ACT_OPEN => trigger_open_project(pending_pick),
+        actions::ACT_SAVE => trigger_save(project, pending_pick),
         actions::ACT_IMPORT_MEDIA => {
             *pending_pick = Some(PendingPick {
-                kind: PickKind::Import,
+                kind: PickKind::ImportMedia,
                 rx: actions::spawn_video_picker("Import Media"),
             });
         }
@@ -950,6 +978,28 @@ fn dispatch_menu_action(
             eprintln!("[video-editor] menu action {other} not yet wired");
         }
     }
+}
+
+fn trigger_open_project(pending_pick: &mut Option<PendingPick>) {
+    *pending_pick = Some(PendingPick {
+        kind: PickKind::OpenProject,
+        rx: actions::spawn_open_project_picker("Open Project"),
+    });
+}
+
+/// Direct-save if the project already has a path, otherwise spawn a save picker
+/// (which lands in `~/Videos/Lantern Projects/` by default).
+fn trigger_save(project: &mut Project, pending_pick: &mut Option<PendingPick>) {
+    if let Some(path) = project.save_path.clone() {
+        if let Err(e) = crate::projectio::save(project, &path) {
+            eprintln!("[video-editor] save project: {e}");
+        }
+        return;
+    }
+    *pending_pick = Some(PendingPick {
+        kind: PickKind::SaveProject,
+        rx: actions::spawn_save_project_picker("Save Project", "Untitled.lproj"),
+    });
 }
 
 fn kick_export(

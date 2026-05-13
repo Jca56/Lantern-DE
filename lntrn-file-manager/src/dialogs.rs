@@ -1,11 +1,226 @@
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
-use lntrn_ui::gpu::{FontSize, FoxPalette, InteractionContext, TextLabel};
+use lntrn_ui::gpu::{FontSize, FoxPalette, InteractionContext, TextInput, TextLabel};
 
 use crate::fs::Drive;
 use crate::{
-    ZONE_DRIVE_DIALOG_CANCEL, ZONE_DRIVE_DIALOG_CONFIRM, ZONE_DRIVE_DIALOG_OK,
-    ZONE_DRIVE_DIALOG_SCRIM,
+    ZONE_CLOUD_LOGIN_CANCEL, ZONE_CLOUD_LOGIN_EMAIL, ZONE_CLOUD_LOGIN_PASSWORD,
+    ZONE_CLOUD_LOGIN_SCRIM, ZONE_CLOUD_LOGIN_SUBMIT, ZONE_DRIVE_DIALOG_CANCEL,
+    ZONE_DRIVE_DIALOG_CONFIRM, ZONE_DRIVE_DIALOG_OK, ZONE_DRIVE_DIALOG_SCRIM,
 };
+
+// ── Cloud login dialog ─────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoginField {
+    Email,
+    Password,
+}
+
+#[derive(Clone, Debug)]
+pub struct CloudLoginDialog {
+    pub email_buf: String,
+    pub email_cursor: usize,
+    pub password_buf: String,
+    pub password_cursor: usize,
+    pub focused: LoginField,
+    pub error: Option<String>,
+    pub submitting: bool,
+}
+
+impl CloudLoginDialog {
+    pub fn new() -> Self {
+        Self {
+            email_buf: String::new(),
+            email_cursor: 0,
+            password_buf: String::new(),
+            password_cursor: 0,
+            focused: LoginField::Email,
+            error: None,
+            submitting: false,
+        }
+    }
+
+    pub fn focus_next(&mut self) {
+        self.focused = match self.focused {
+            LoginField::Email => LoginField::Password,
+            LoginField::Password => LoginField::Email,
+        };
+    }
+
+    pub fn focused_buf_mut(&mut self) -> (&mut String, &mut usize) {
+        match self.focused {
+            LoginField::Email => (&mut self.email_buf, &mut self.email_cursor),
+            LoginField::Password => (&mut self.password_buf, &mut self.password_cursor),
+        }
+    }
+
+    pub fn can_submit(&self) -> bool {
+        !self.submitting && !self.email_buf.is_empty() && !self.password_buf.is_empty()
+    }
+}
+
+pub fn draw_cloud_login(
+    dialog: &CloudLoginDialog,
+    painter: &mut Painter,
+    text: &mut TextRenderer,
+    pal: &FoxPalette,
+    input: &mut InteractionContext,
+    screen: (u32, u32),
+    s: f32,
+) {
+    let (sw, sh) = screen;
+    let screen_w = sw as f32;
+    let screen_h = sh as f32;
+
+    let pad = 24.0 * s;
+    let cr = 12.0 * s;
+    let title_font = 28.0 * s;
+    let body_font = 18.0 * s;
+    let label_font = 16.0 * s;
+    let field_h = 48.0 * s;
+    let row_gap = 14.0 * s;
+    let btn_h = 44.0 * s;
+    let btn_w = 130.0 * s;
+    let btn_gap = 12.0 * s;
+    let dialog_w = 520.0 * s;
+
+    let body_lines: f32 = 2.0; // subtitle is two lines
+    let err_lines: f32 = if dialog.error.is_some() { 1.0 } else { 0.0 };
+
+    let dialog_h = pad * 2.0
+        + title_font + pad * 0.4
+        + body_font * body_lines + row_gap
+        + (label_font + 4.0 * s + field_h + row_gap) * 2.0
+        + (err_lines * (body_font + row_gap * 0.5))
+        + pad * 0.4
+        + btn_h;
+
+    let dx = (screen_w - dialog_w) * 0.5;
+    let dy = (screen_h - dialog_h) * 0.5;
+
+    draw_overlay_with_scrim(
+        painter, input, screen_w, screen_h, dx, dy, dialog_w, dialog_h, cr, pal, s,
+        ZONE_CLOUD_LOGIN_SCRIM,
+    );
+
+    let mut cy = dy + pad;
+    TextLabel::new("Sign in to Cloud Sync", dx + pad, cy)
+        .size(FontSize::Custom(title_font))
+        .color(pal.text)
+        .max_width(dialog_w - pad * 2.0)
+        .draw(text, sw, sh);
+    cy += title_font + pad * 0.4;
+
+    TextLabel::new("Use the email + password you set in your Firebase", dx + pad, cy)
+        .size(FontSize::Custom(body_font))
+        .color(pal.text_secondary)
+        .max_width(dialog_w - pad * 2.0)
+        .draw(text, sw, sh);
+    cy += body_font + 4.0 * s;
+    TextLabel::new("project's Authentication console.", dx + pad, cy)
+        .size(FontSize::Custom(body_font))
+        .color(pal.text_secondary)
+        .max_width(dialog_w - pad * 2.0)
+        .draw(text, sw, sh);
+    cy += body_font + row_gap;
+
+    // ── Email field ────────────────────────────────────────────────────
+    TextLabel::new("Email", dx + pad, cy)
+        .size(FontSize::Custom(label_font))
+        .color(pal.text_secondary)
+        .max_width(dialog_w - pad * 2.0)
+        .draw(text, sw, sh);
+    cy += label_font + 4.0 * s;
+    let email_rect = Rect::new(dx + pad, cy, dialog_w - pad * 2.0, field_h);
+    input.add_zone(ZONE_CLOUD_LOGIN_EMAIL, email_rect);
+    TextInput::new(email_rect)
+        .text(&dialog.email_buf)
+        .placeholder("you@example.com")
+        .focused(dialog.focused == LoginField::Email)
+        .cursor_pos(dialog.email_cursor)
+        .scale(s)
+        .draw(painter, text, pal, sw, sh);
+    cy += field_h + row_gap;
+
+    // ── Password field (masked) ───────────────────────────────────────
+    TextLabel::new("Password", dx + pad, cy)
+        .size(FontSize::Custom(label_font))
+        .color(pal.text_secondary)
+        .max_width(dialog_w - pad * 2.0)
+        .draw(text, sw, sh);
+    cy += label_font + 4.0 * s;
+    let pw_rect = Rect::new(dx + pad, cy, dialog_w - pad * 2.0, field_h);
+    input.add_zone(ZONE_CLOUD_LOGIN_PASSWORD, pw_rect);
+    let masked: String = "•".repeat(dialog.password_buf.chars().count());
+    TextInput::new(pw_rect)
+        .text(&masked)
+        .placeholder("••••••••")
+        .focused(dialog.focused == LoginField::Password)
+        .cursor_pos(dialog.password_cursor)
+        .scale(s)
+        .draw(painter, text, pal, sw, sh);
+    cy += field_h + row_gap;
+
+    // ── Error message (optional) ──────────────────────────────────────
+    if let Some(err) = &dialog.error {
+        TextLabel::new(err, dx + pad, cy)
+            .size(FontSize::Custom(body_font))
+            .color(pal.danger)
+            .max_width(dialog_w - pad * 2.0)
+            .draw(text, sw, sh);
+        cy += body_font + row_gap * 0.5;
+    }
+
+    cy += pad * 0.4;
+
+    // ── Buttons ───────────────────────────────────────────────────────
+    let total_btn_w = btn_w * 2.0 + btn_gap;
+    let btn_x = dx + dialog_w - pad - total_btn_w;
+
+    let cancel_rect = Rect::new(btn_x, cy, btn_w, btn_h);
+    let cancel_state = input.add_zone(ZONE_CLOUD_LOGIN_CANCEL, cancel_rect);
+    draw_button(
+        painter, text, cancel_rect, "Cancel",
+        cancel_state.is_hovered(), pal, ButtonStyle::Secondary, sw, sh, s,
+    );
+
+    let submit_label = if dialog.submitting { "Signing in..." } else { "Sign In" };
+    let submit_rect = Rect::new(btn_x + btn_w + btn_gap, cy, btn_w, btn_h);
+    let submit_state = input.add_zone(ZONE_CLOUD_LOGIN_SUBMIT, submit_rect);
+    let submit_style = if dialog.can_submit() {
+        ButtonStyle::Primary
+    } else {
+        ButtonStyle::Secondary
+    };
+    draw_button(
+        painter, text, submit_rect, submit_label,
+        submit_state.is_hovered() && dialog.can_submit(),
+        pal, submit_style, sw, sh, s,
+    );
+}
+
+fn draw_overlay_with_scrim(
+    painter: &mut Painter,
+    input: &mut InteractionContext,
+    screen_w: f32,
+    screen_h: f32,
+    dx: f32, dy: f32,
+    dialog_w: f32, dialog_h: f32,
+    cr: f32,
+    pal: &FoxPalette,
+    s: f32,
+    scrim_zone: u32,
+) {
+    let backdrop = Rect::new(0.0, 0.0, screen_w, screen_h);
+    input.add_zone(scrim_zone, backdrop);
+    painter.rect_filled(backdrop, 0.0, Color::rgba(0.0, 0.0, 0.0, 0.55));
+
+    let panel = Rect::new(dx, dy, dialog_w, dialog_h);
+    let shadow = Rect::new(dx - 8.0 * s, dy - 4.0 * s, dialog_w + 16.0 * s, dialog_h + 16.0 * s);
+    painter.rect_filled(shadow, cr + 4.0 * s, Color::rgba(0.0, 0.0, 0.0, 0.3));
+    painter.rect_filled(panel, cr, pal.surface);
+    painter.rect_stroke_sdf(panel, cr, 1.0 * s, pal.muted.with_alpha(0.2));
+}
 
 /// Active drive dialog overlay state. Lives on App.
 #[derive(Clone, Debug)]

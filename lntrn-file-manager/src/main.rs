@@ -1,5 +1,6 @@
 mod app;
 mod clipboard;
+mod cloud;
 mod desktop;
 mod dialogs;
 pub mod undo;
@@ -37,6 +38,7 @@ pub const ZONE_NAV_UP: u32 = 22;
 pub const ZONE_NAV_SEARCH: u32 = 23;
 pub const ZONE_MENU_VIEW: u32 = 24;
 pub const ZONE_NAV_SORT: u32 = 25;
+pub const ZONE_NAV_CLOUD: u32 = 26;
 pub const VIEW_SLIDER_ID: u32 = 1;
 pub const VIEW_OPACITY_SLIDER_ID: u32 = 2;
 pub const VIEW_SHOW_HIDDEN_ID: u32 = 3;
@@ -98,6 +100,7 @@ pub const CTX_NEW_FOLDER_PLAIN: u32 = 77;
 pub const CTX_CHANGE_ICON: u32 = 78;
 // Context menu — toggles
 pub const CTX_OPEN_LOCATION: u32 = 91;
+pub const CTX_RESTORE: u32 = 92;
 pub const ZONE_BREADCRUMB_BASE: u32 = 300;
 pub const CTX_SHOW_HIDDEN: u32 = 90;
 // Pick mode action bar
@@ -117,6 +120,13 @@ pub const ZONE_DRIVE_DIALOG_CANCEL: u32 = 47;
 pub const ZONE_DRIVE_DIALOG_CONFIRM: u32 = 48;
 pub const ZONE_DRIVE_DIALOG_OK: u32 = 49;
 pub const ZONE_DRIVE_DIALOG_SCRIM: u32 = 53;
+
+// Cloud login dialog
+pub const ZONE_CLOUD_LOGIN_SCRIM: u32 = 54;
+pub const ZONE_CLOUD_LOGIN_EMAIL: u32 = 55;
+pub const ZONE_CLOUD_LOGIN_PASSWORD: u32 = 56;
+pub const ZONE_CLOUD_LOGIN_CANCEL: u32 = 57;
+pub const ZONE_CLOUD_LOGIN_SUBMIT: u32 = 58;
 
 // Drop confirmation modal
 pub const ZONE_DROP_MOVE: u32 = 44;
@@ -237,6 +247,16 @@ fn parse_args() -> Option<PickConfig> {
 // ── Main ────────────────────────────────────────────────────────────────────
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--cloud-login") {
+        std::process::exit(run_cloud_login(&args));
+    }
+    if args.iter().any(|a| a == "--cloud-logout") {
+        crate::cloud::Session::forget();
+        eprintln!("[fox-cloud] cached session forgotten");
+        std::process::exit(0);
+    }
+
     let desktop = std::env::args().any(|a| a == "--desktop");
     let pick = parse_args();
 
@@ -253,5 +273,64 @@ fn main() {
     if let Err(e) = wayland::run(pick, desktop) {
         eprintln!("[fox] fatal: {e}");
         std::process::exit(1);
+    }
+}
+
+/// Headless sign-in entry point: `lntrn-file-manager --cloud-login --email me@x.com`.
+/// Password is read from stdin (one line). Writes the session to
+/// ~/.lantern/config/fox-cloud-session.json on success.
+fn run_cloud_login(args: &[String]) -> i32 {
+    let mut email: Option<String> = None;
+    let mut password: Option<String> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--email" => { i += 1; email = args.get(i).cloned(); }
+            "--password" => { i += 1; password = args.get(i).cloned(); }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    let email = match email {
+        Some(e) => e,
+        None => {
+            eprintln!("usage: lntrn-file-manager --cloud-login --email <email> [--password <pw>]");
+            eprintln!("       (if --password is omitted, password is read from stdin)");
+            return 2;
+        }
+    };
+
+    let password = match password {
+        Some(p) => p,
+        None => {
+            eprintln!("password (will not echo on stdin):");
+            let mut buf = String::new();
+            if std::io::stdin().read_line(&mut buf).is_err() {
+                eprintln!("[fox-cloud] failed to read password from stdin");
+                return 2;
+            }
+            buf.trim_end_matches('\n').trim_end_matches('\r').to_string()
+        }
+    };
+
+    let cfg = match crate::cloud::CloudConfig::load() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[fox-cloud] config error: {e}");
+            eprintln!("            expected ~/.lantern/config/fox-cloud.json");
+            return 1;
+        }
+    };
+
+    match crate::cloud::auth::sign_in(&cfg, &email, &password) {
+        Ok(s) => {
+            eprintln!("[fox-cloud] signed in as {} (uid={})", s.email, s.uid);
+            0
+        }
+        Err(e) => {
+            eprintln!("[fox-cloud] sign-in failed: {e}");
+            1
+        }
     }
 }

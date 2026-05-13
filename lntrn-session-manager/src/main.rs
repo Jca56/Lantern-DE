@@ -361,7 +361,6 @@ fn main() {
     // Start shell components — all tracked for clean shutdown
     let mut children: Vec<ManagedProcess> = Vec::new();
     for &(name, cmd) in &[
-        ("lntrn-bar", "lntrn-bar"),
         ("lntrn-portal", "lntrn-portal"),
         ("lntrn-notifyd", "lntrn-notifyd"),
     ] {

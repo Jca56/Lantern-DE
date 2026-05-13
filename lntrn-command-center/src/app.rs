@@ -30,6 +30,8 @@ pub const PANEL_H_LOGICAL_PHASE1: f32 = 740.0;
 pub const PANEL_CORNER_RADIUS: f32 = 24.0;
 /// Animation duration (open and close), seconds.
 pub const ANIM_DURATION_SECS: f32 = 0.60;
+/// Duration of the collapse/expand height animation.
+pub const COLLAPSE_ANIM_DURATION: f32 = 0.30;
 /// Scale at the start of the open animation (and end of the close animation).
 pub const ANIM_SCALE_START: f32 = 0.95;
 
@@ -116,6 +118,37 @@ pub struct AppState {
     /// Pending window actions queued by the click handlers, drained by
     /// the render loop and dispatched against the live toplevel handles.
     pub window_actions: Vec<WindowAction>,
+    /// Power button (right-of-panel column) currently under the cursor.
+    pub power_hover: Option<crate::power::PowerAction>,
+    /// Active pin drag-reorder gesture, if any. Set on left-press over a
+    /// pin; reorders or fires a regular click on release depending on
+    /// whether the cursor moved past `PIN_DRAG_THRESHOLD`.
+    pub pin_drag: Option<PinDrag>,
+    /// When true, the panel renders as a minimal top-bar (controls row
+    /// only). Toggled by the chevron button at the top-right; opening
+    /// any control view automatically un-collapses.
+    pub collapsed: bool,
+    /// Wall-clock start of the current collapse/expand animation, if
+    /// any. `None` once the panel has fully settled into the target
+    /// state. Combined with `collapse_anim_origin/target` to produce a
+    /// smooth height/alpha curve.
+    pub collapse_anim_start: Option<Instant>,
+    /// Progress value (0..=1) the animation is interpolating *from*.
+    /// 0 = fully expanded, 1 = fully collapsed.
+    pub collapse_anim_origin: f32,
+    /// Progress value (0..=1) the animation is interpolating *to*.
+    pub collapse_anim_target: f32,
+    /// Pinned-app index currently under the cursor in the mini-dock
+    /// (the icon row that floats below the panel while collapsed).
+    pub mini_dock_hover: Option<usize>,
+    /// True when the currently-open control view was launched from a
+    /// collapsed panel. When set, clicking the same tile again collapses
+    /// the panel; otherwise we just fall back to the Launcher view.
+    pub opened_from_collapsed: bool,
+    /// When `Some`, a confirm modal is up for this power action. Cancel
+    /// or click-outside-card clears it; Confirm runs the action and
+    /// closes the panel.
+    pub power_confirm: Option<crate::power::PowerAction>,
 }
 
 #[derive(Debug, Clone)]
@@ -147,14 +180,72 @@ impl AppState {
             context_menu: None,
             toplevels: Vec::new(),
             window_actions: Vec::new(),
+            power_hover: None,
+            power_confirm: None,
+            pin_drag: None,
+            collapsed: false,
+            collapse_anim_start: None,
+            collapse_anim_origin: 0.0,
+            collapse_anim_target: 0.0,
+            mini_dock_hover: None,
+            opened_from_collapsed: false,
+        }
+    }
+
+    /// Toggle collapsed/expanded state with a smooth height/alpha
+    /// transition. Mid-flight toggles reverse direction from the
+    /// current progress so the animation never snaps.
+    pub fn toggle_collapsed(&mut self) {
+        let now = Instant::now();
+        let current = self.collapse_progress();
+        self.collapsed = !self.collapsed;
+        self.collapse_anim_origin = current;
+        self.collapse_anim_target = if self.collapsed { 1.0 } else { 0.0 };
+        self.collapse_anim_start = Some(now);
+        tracing::info!(collapsed = self.collapsed, current, "panel collapse toggled");
+    }
+
+    /// Eased animation factor for the collapse transition.
+    /// Returns 0.0 when fully expanded, 1.0 when fully collapsed,
+    /// and an eased lerp in between while the animation is in flight.
+    pub fn collapse_progress(&self) -> f32 {
+        if let Some(start) = self.collapse_anim_start {
+            let t = (start.elapsed().as_secs_f32() / COLLAPSE_ANIM_DURATION).clamp(0.0, 1.0);
+            let eased = ease_out_cubic(t);
+            self.collapse_anim_origin
+                + (self.collapse_anim_target - self.collapse_anim_origin) * eased
+        } else if self.collapsed {
+            1.0
+        } else {
+            0.0
+        }
+    }
+
+    /// True while the collapse animation is still progressing — used by
+    /// the render loop to keep requesting frame callbacks.
+    pub fn collapse_animating(&self) -> bool {
+        match self.collapse_anim_start {
+            Some(start) => start.elapsed().as_secs_f32() < COLLAPSE_ANIM_DURATION,
+            None => false,
         }
     }
 
     /// Desired panel height (logical px) for the current content. Grows
     /// past `PANEL_H_LOGICAL_PHASE1` when the launcher's pinned/open
     /// sections need more rows than the default fits. Falls back to the
-    /// default for non-launcher modes.
+    /// default for non-launcher modes. Interpolates between the expanded
+    /// and collapsed heights while the collapse animation is in flight.
     pub fn desired_panel_h_logical(&self) -> f32 {
+        let collapsed_h = crate::controls::total_logical_height();
+        let expanded_h = self.expanded_panel_h_logical();
+        let p = self.collapse_progress();
+        expanded_h + (collapsed_h - expanded_h) * p
+    }
+
+    /// The fully-expanded height the panel would use for the current
+    /// content. Used both for the static expanded case and as the
+    /// "from" value when animating into/out of collapsed.
+    fn expanded_panel_h_logical(&self) -> f32 {
         if matches!(self.mode, PanelMode::Control(crate::controls::TileId::SysMon)) {
             return 880.0;
         }
@@ -222,11 +313,31 @@ impl AppState {
     /// Switch the panel into a control's full-content view. If we're
     /// already showing that control, return to `Launcher` (toggle).
     pub fn show_control(&mut self, id: TileId) {
-        self.mode = if self.mode == PanelMode::Control(id) {
-            PanelMode::Launcher
+        if self.mode == PanelMode::Control(id) {
+            // Toggling the active tile back off. If this view was opened
+            // from a collapsed panel, fold the panel back down too —
+            // otherwise just drop to the launcher view.
+            if self.opened_from_collapsed {
+                self.opened_from_collapsed = false;
+                if !self.collapsed {
+                    self.toggle_collapsed();
+                }
+            }
+            self.mode = PanelMode::Launcher;
         } else {
-            PanelMode::Control(id)
-        };
+            // Opening (or switching to) a control view. Only update the
+            // "opened from collapsed" intent when we're coming from the
+            // Launcher mode — switching between two control views keeps
+            // the original intent so a later toggle-off still respects
+            // the panel's starting state.
+            if matches!(self.mode, PanelMode::Launcher) {
+                self.opened_from_collapsed = self.collapsed;
+                if self.collapsed {
+                    self.toggle_collapsed();
+                }
+            }
+            self.mode = PanelMode::Control(id);
+        }
     }
 
     /// Esc behavior: pop one layer off the back-stack.
@@ -234,7 +345,9 @@ impl AppState {
     /// 2. Else if we're in a control view → back to launcher.
     /// 3. Else → close the whole panel.
     pub fn handle_esc(&mut self) {
-        if self.context_menu.is_some() {
+        if self.power_confirm.is_some() {
+            self.power_confirm = None;
+        } else if self.context_menu.is_some() {
             self.context_menu = None;
         } else if self.controls.clock.event_menu.is_some() {
             self.controls.clock.event_menu = None;
@@ -419,7 +532,14 @@ impl AppState {
             + open::OPEN_SECTION_TOP_MARGIN * scale
             + crate::launcher::open::heading_advance(scale);
 
-        for (i, _entry) in visible.iter().enumerate() {
+        for i in 0..visible.len() {
+            // X close button takes precedence over the tile body.
+            let close = open::close_button_rect(panel, row_top, scale, i);
+            if phys_x >= close.x && phys_x <= close.x + close.w
+                && phys_y >= close.y && phys_y <= close.y + close.h
+            {
+                return Some(HitTarget::OpenWindowClose(i));
+            }
             let r = open::tile_rect(panel, row_top, scale, i);
             if phys_x >= r.x && phys_x <= r.x + r.w && phys_y >= r.y && phys_y <= r.y + r.h {
                 return Some(HitTarget::OpenWindow(i));
@@ -587,11 +707,12 @@ impl AppState {
                 .get(i)
                 .and_then(|r| self.apps.get(r.entry_idx))
                 .map(|e| e.app_id.clone()),
-            HitTarget::OpenWindow(i) => {
+            HitTarget::OpenWindow(i) | HitTarget::OpenWindowClose(i) => {
                 let visible = crate::launcher::open::visible_entries(&self.toplevels);
-                if let Some(t) = visible.get(i) {
-                    let title = t.title.clone();
-                    let app_id = t.app_id.clone();
+                if let Some(group) = visible.get(i) {
+                    let target_window = group.close_target().unwrap_or(group.windows[0]);
+                    let title = target_window.title.clone();
+                    let app_id = target_window.app_id.clone();
                     let items = vec![
                         MenuItem { label: "Close".into(), action: MenuAction::WindowClose },
                         MenuItem { label: "Minimize".into(), action: MenuAction::WindowMinimize },
@@ -684,7 +805,7 @@ impl AppState {
                 .get(i)
                 .and_then(|r| self.apps.get(r.entry_idx))
                 .map(|e| e.app_id.clone()),
-            HitTarget::OpenWindow(_) => None,
+            HitTarget::OpenWindow(_) | HitTarget::OpenWindowClose(_) => None,
         };
         if let Some(id) = app_id {
             self.launcher.toggle_pin(&id);
@@ -705,14 +826,30 @@ impl AppState {
             }
             HitTarget::OpenWindow(i) => {
                 let visible = crate::launcher::open::visible_entries(&self.toplevels);
-                if let Some(t) = visible.get(i) {
-                    self.window_actions.push(WindowAction {
-                        app_id: t.app_id.clone(),
-                        title: t.title.clone(),
-                        kind: WindowActionKind::Activate,
-                    });
-                    self.close();
-                    return true;
+                if let Some(group) = visible.get(i) {
+                    if let Some(target) = group.next_to_activate() {
+                        self.window_actions.push(WindowAction {
+                            app_id: target.app_id.clone(),
+                            title: target.title.clone(),
+                            kind: WindowActionKind::Activate,
+                        });
+                        self.close();
+                        return true;
+                    }
+                }
+                false
+            }
+            HitTarget::OpenWindowClose(i) => {
+                let visible = crate::launcher::open::visible_entries(&self.toplevels);
+                if let Some(group) = visible.get(i) {
+                    if let Some(target) = group.close_target() {
+                        self.window_actions.push(WindowAction {
+                            app_id: target.app_id.clone(),
+                            title: target.title.clone(),
+                            kind: WindowActionKind::Close,
+                        });
+                        return true;
+                    }
                 }
                 false
             }
@@ -816,7 +953,28 @@ impl AppState {
 pub enum HitTarget {
     Pin(usize),
     Result(usize),
+    /// Click on the body of an Open-section tile (the i-th *group*).
     OpenWindow(usize),
+    /// Click on the small X button overlaid on an Open-section tile.
+    OpenWindowClose(usize),
+}
+
+/// Pixels (physical) the cursor must move from the press point before a
+/// pin click becomes a drag-reorder.
+pub const PIN_DRAG_THRESHOLD: f32 = 8.0;
+
+/// Live state for a pin drag-reorder gesture in progress.
+#[derive(Debug, Clone, Copy)]
+pub struct PinDrag {
+    pub from_idx: usize,
+    pub press_x: f32,
+    pub press_y: f32,
+    pub current_x: f32,
+    pub current_y: f32,
+    /// True once the cursor has moved more than `PIN_DRAG_THRESHOLD` from
+    /// the press point — that's when we visually "lift" the pin and the
+    /// release commits a reorder instead of a normal click.
+    pub started: bool,
 }
 
 /// Spawn a detached child process from a `.desktop` `Exec=` line.

@@ -181,6 +181,11 @@ pub struct App {
     // Breadcrumb overflow skip (set during rendering)
     pub breadcrumb_skip: usize,
 
+    // Cloud sync (None = not signed in)
+    pub cloud: Option<crate::cloud::CloudState>,
+    pub cloud_sync: Option<crate::cloud::sync::SyncHandle>,
+    pub cloud_login: Option<crate::dialogs::CloudLoginDialog>,
+
     // Search
     pub searching: bool,
     pub search_buf: String,
@@ -194,6 +199,8 @@ impl App {
     pub fn new() -> Self {
         let home = dirs_home();
         let trash_path = home.join(".local/share/Trash/files");
+        let cloud_path = crate::cloud::cloud_root();
+        let _ = crate::cloud::ensure_cloud_dir();
         let places = vec![
             Place { name: "Home".into(), path: home.clone() },
             Place { name: "Desktop".into(), path: home.join("Desktop") },
@@ -202,6 +209,7 @@ impl App {
             Place { name: "Music".into(), path: home.join("Music") },
             Place { name: "Pictures".into(), path: home.join("Pictures") },
             Place { name: "Videos".into(), path: home.join("Videos") },
+            Place { name: "Cloud".into(), path: cloud_path },
             Place { name: "Trash".into(), path: trash_path },
         ];
 
@@ -257,7 +265,78 @@ impl App {
             root_mode: false,
             search_tx: None,
             search_rx: None,
+            cloud: None,
+            cloud_sync: None,
+            cloud_login: None,
         }
+    }
+
+    /// Called when the user clicks the Cloud button or sidebar Cloud entry.
+    /// If signed in, navigate to ~/Cloud. Otherwise open the login dialog.
+    pub fn open_cloud_or_login(&mut self) {
+        let _ = crate::cloud::ensure_cloud_dir();
+        if self.cloud.is_some() {
+            self.navigate_to(crate::cloud::cloud_root());
+        } else {
+            self.cloud_login = Some(crate::dialogs::CloudLoginDialog::new());
+        }
+    }
+
+    /// Submit the login form. Blocks the UI for the duration of the HTTP
+    /// round-trip (typically <2s). On success: starts sync, navigates to
+    /// ~/Cloud, closes the dialog. On failure: surfaces the error in-dialog.
+    pub fn submit_cloud_login(&mut self) {
+        let Some(dlg) = self.cloud_login.as_mut() else { return };
+        if !dlg.can_submit() {
+            return;
+        }
+        dlg.submitting = true;
+        dlg.error = None;
+        let email = dlg.email_buf.trim().to_string();
+        let password = dlg.password_buf.clone();
+
+        let cfg = match crate::cloud::CloudConfig::load() {
+            Ok(c) => c,
+            Err(e) => {
+                if let Some(dlg) = self.cloud_login.as_mut() {
+                    dlg.submitting = false;
+                    dlg.error = Some(format!("Config error: {e}"));
+                }
+                return;
+            }
+        };
+
+        match crate::cloud::auth::sign_in(&cfg, &email, &password) {
+            Ok(_session) => {
+                self.cloud_login = None;
+                self.init_cloud();
+                self.navigate_to(crate::cloud::cloud_root());
+            }
+            Err(e) => {
+                if let Some(dlg) = self.cloud_login.as_mut() {
+                    dlg.submitting = false;
+                    dlg.error = Some(format!("{e}"));
+                }
+            }
+        }
+    }
+
+    /// Try to bring up cloud sync from the cached session. Idempotent — safe to
+    /// call again after a sign-in. Logs to stderr; never panics.
+    pub fn init_cloud(&mut self) {
+        if self.cloud_sync.is_some() {
+            return;
+        }
+        let Some(state) = crate::cloud::CloudState::try_load() else {
+            return; // not signed in yet — UI/CLI will prompt
+        };
+        let handle = crate::cloud::sync::SyncHandle::spawn(
+            state.config.clone(),
+            state.session.clone(),
+        );
+        self.cloud = Some(state);
+        self.cloud_sync = Some(handle);
+        eprintln!("[fox-cloud] sync thread spawned");
     }
 
     // ── Navigation ────────────────────────────────────────────────────
@@ -724,6 +803,12 @@ impl App {
 
     pub fn on_sidebar_click(&mut self, index: usize) {
         if let Some(place) = self.places.get(index) {
+            // Cloud entry funnels through the auth gate so the user sees the
+            // login dialog instead of an empty folder.
+            if place.name == "Cloud" {
+                self.open_cloud_or_login();
+                return;
+            }
             let path = place.path.clone();
             self.navigate_to(path);
         }

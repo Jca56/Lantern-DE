@@ -251,19 +251,29 @@ pub const SEARCH_HORIZONTAL_PAD: f32 = 24.0;
 
 /// Waffle (all-apps) icon geometry — 9 dots in 3 cols × 3 rows on the
 /// right end of the search bar.
-const WAFFLE_BTN_SIZE: f32 = 48.0;
-const WAFFLE_DOT_RADIUS: f32 = 3.5;
-const WAFFLE_DOT_PITCH: f32 = 11.0;
+const WAFFLE_BTN_SIZE: f32 = 56.0;
+const WAFFLE_DOT_RADIUS: f32 = 5.0;
+const WAFFLE_DOT_PITCH: f32 = 15.0;
+/// Underline thickness (logical px) at the bottom of the search row.
+/// Text + waffle are centered in the content area *above* the underline.
+const SEARCH_UNDERLINE_THICKNESS: f32 = 2.0;
 
 /// Compute the waffle hit/draw rect in physical pixels. Lives at the
-/// far right of the search row, vertically centered.
+/// far right of the search row, vertically centered in the *visual*
+/// search section — i.e. the band from the bottom of the controls
+/// underline down to the top of the search underline (this includes the
+/// `pad*0.5` gap above the row, which made things look bottom-heavy when
+/// we only centered inside the row itself).
 pub fn waffle_rect(panel: Rect, scale: f32) -> Rect {
     let pad = SEARCH_HORIZONTAL_PAD * scale;
     let row_h = SEARCH_ROW_HEIGHT * scale;
     let row_y = panel.y + crate::controls::total_logical_height() * scale + pad * 0.5;
+    let section_top = panel.y + crate::controls::total_logical_height() * scale;
+    let section_bottom = row_y + row_h - SEARCH_UNDERLINE_THICKNESS * scale;
+    let section_h = section_bottom - section_top;
     let btn = WAFFLE_BTN_SIZE * scale;
     let x = panel.x + panel.w - pad - btn;
-    let y = row_y + (row_h - btn) / 2.0;
+    let y = section_top + (section_h - btn) / 2.0;
     Rect::new(x, y, btn, btn)
 }
 
@@ -334,7 +344,10 @@ pub fn draw(
         }
     }
 
-    let text_y = row_y + (row_h - font_size) / 2.0;
+    let section_top = panel.y + crate::controls::total_logical_height() * scale;
+    let section_bottom = row_y + row_h - SEARCH_UNDERLINE_THICKNESS * scale;
+    let section_h = section_bottom - section_top;
+    let text_y = section_top + (section_h - font_size) / 2.0;
 
     let (display, is_placeholder) = if input.is_empty() {
         (PLACEHOLDER, true)

@@ -115,6 +115,29 @@ pub(crate) fn handle_click(
     current_theme: &str,
 ) -> ClickAction {
     if let Some(zone_id) = input.on_left_pressed() {
+        // ── Cloud login dialog: capture all clicks while open ───────
+        if app.cloud_login.is_some() {
+            match zone_id {
+                crate::ZONE_CLOUD_LOGIN_EMAIL => {
+                    if let Some(d) = app.cloud_login.as_mut() {
+                        d.focused = crate::dialogs::LoginField::Email;
+                        d.email_cursor = d.email_buf.chars().count();
+                    }
+                }
+                crate::ZONE_CLOUD_LOGIN_PASSWORD => {
+                    if let Some(d) = app.cloud_login.as_mut() {
+                        d.focused = crate::dialogs::LoginField::Password;
+                        d.password_cursor = d.password_buf.chars().count();
+                    }
+                }
+                crate::ZONE_CLOUD_LOGIN_SUBMIT => app.submit_cloud_login(),
+                crate::ZONE_CLOUD_LOGIN_CANCEL | crate::ZONE_CLOUD_LOGIN_SCRIM => {
+                    app.cloud_login = None;
+                }
+                _ => {}
+            }
+            return ClickAction::None;
+        }
         // ── Drive dialog: capture all clicks while open ─────────────
         if app.drive_dialog.is_some() {
             match zone_id {
@@ -193,6 +216,7 @@ pub(crate) fn handle_click(
             ZONE_NAV_BACK => app.go_back(),
             ZONE_NAV_FORWARD => app.go_forward(),
             ZONE_NAV_UP => app.go_up(),
+            crate::ZONE_NAV_CLOUD => app.open_cloud_or_login(),
             ZONE_NAV_SEARCH => {
                 if app.searching {
                     app.close_search();
@@ -475,7 +499,12 @@ pub(crate) fn handle_right_click(
         v.push(MenuItem::action(CTX_COMPRESS, "Compress"));
         v.push(MenuItem::separator());
         v.push(MenuItem::action(CTX_RENAME, "Rename"));
-        v.push(MenuItem::action_danger(CTX_TRASH, "Move to Trash"));
+        if app.in_trash() {
+            v.push(MenuItem::action(crate::CTX_RESTORE, "Restore"));
+            v.push(MenuItem::action_danger(CTX_TRASH, "Delete Permanently"));
+        } else {
+            v.push(MenuItem::action_danger(CTX_TRASH, "Move to Trash"));
+        }
         v.push(MenuItem::separator());
         if is_dir {
             v.push(MenuItem::action(CTX_CHANGE_ICON, "Change Icon"));
@@ -571,7 +600,14 @@ pub(crate) fn handle_ctx_event(
                         app.start_rename(idx);
                     }
                 }
-                CTX_TRASH => app.trash_selected(),
+                CTX_TRASH => {
+                    if app.in_trash() {
+                        app.delete_selected();
+                    } else {
+                        app.trash_selected();
+                    }
+                }
+                crate::CTX_RESTORE => app.restore_selected(),
                 CTX_COPY_PATH => {
                     let text = match &app.context_target {
                         Some(ContextTarget::Item(idx)) =>
@@ -859,6 +895,7 @@ pub(crate) fn copy_dir_recursive(src: &std::path::Path, dest: &std::path::Path) 
 // Linux keycodes
 const KEY_ESC: u32 = 1;
 const KEY_BACKSPACE: u32 = 14;
+const KEY_TAB: u32 = 15;
 const KEY_ENTER: u32 = 28;
 const KEY_A: u32 = 30;
 const KEY_C: u32 = 46;
@@ -924,6 +961,77 @@ pub(crate) fn handle_key(
     key: u32, ctrl: bool, shift: bool,
     running: &mut bool,
 ) {
+    // Cloud login dialog — captures keys until dismissed.
+    if app.cloud_login.is_some() {
+        let _ = ctrl;
+        match key {
+            KEY_ESC => {
+                app.cloud_login = None;
+            }
+            KEY_ENTER => app.submit_cloud_login(),
+            KEY_TAB => {
+                if let Some(d) = app.cloud_login.as_mut() {
+                    d.focus_next();
+                }
+            }
+            KEY_BACKSPACE => {
+                if let Some(d) = app.cloud_login.as_mut() {
+                    let (buf, cur) = d.focused_buf_mut();
+                    if *cur > 0 {
+                        let byte_pos = buf.char_indices().nth(*cur - 1).map(|(i, _)| i).unwrap_or(0);
+                        buf.remove(byte_pos);
+                        *cur -= 1;
+                    }
+                }
+            }
+            KEY_DELETE => {
+                if let Some(d) = app.cloud_login.as_mut() {
+                    let (buf, cur) = d.focused_buf_mut();
+                    let char_len = buf.chars().count();
+                    if *cur < char_len {
+                        let byte_pos = buf.char_indices().nth(*cur).map(|(i, _)| i).unwrap_or(buf.len());
+                        buf.remove(byte_pos);
+                    }
+                }
+            }
+            KEY_LEFT => {
+                if let Some(d) = app.cloud_login.as_mut() {
+                    let (_buf, cur) = d.focused_buf_mut();
+                    if *cur > 0 { *cur -= 1; }
+                }
+            }
+            KEY_RIGHT => {
+                if let Some(d) = app.cloud_login.as_mut() {
+                    let (buf, cur) = d.focused_buf_mut();
+                    if *cur < buf.chars().count() { *cur += 1; }
+                }
+            }
+            KEY_HOME => {
+                if let Some(d) = app.cloud_login.as_mut() {
+                    let (_buf, cur) = d.focused_buf_mut();
+                    *cur = 0;
+                }
+            }
+            KEY_END => {
+                if let Some(d) = app.cloud_login.as_mut() {
+                    let (buf, cur) = d.focused_buf_mut();
+                    *cur = buf.chars().count();
+                }
+            }
+            _ => {
+                if let Some(ch) = keycode_to_char(key, shift) {
+                    if let Some(d) = app.cloud_login.as_mut() {
+                        let (buf, cur) = d.focused_buf_mut();
+                        let byte_pos = buf.char_indices().nth(*cur).map(|(i, _)| i).unwrap_or(buf.len());
+                        buf.insert(byte_pos, ch);
+                        *cur += 1;
+                    }
+                }
+            }
+        }
+        return;
+    }
+
     // Drive dialog — ESC dismisses, ENTER confirms (Format only)
     if app.drive_dialog.is_some() {
         match key {

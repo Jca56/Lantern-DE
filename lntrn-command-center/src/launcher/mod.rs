@@ -70,6 +70,12 @@ impl Launcher {
         let now_pinned = self.pins.toggle(app_id);
         tracing::info!(app_id, now_pinned, "pin toggled");
     }
+
+    /// Reorder pins by index — used by drag-and-drop. Persists on commit.
+    pub fn reorder_pins(&mut self, from: usize, to: usize) {
+        self.pins.reorder(from, to);
+        tracing::info!(from, to, "pins reordered");
+    }
 }
 
 // ── Drawing ─────────────────────────────────────────────────────────────────
@@ -88,6 +94,157 @@ pub const PIN_ROW_GAP: f32 = 20.0;
 /// the top margin from the search underline.
 #[allow(dead_code)] // exported for future layout calculations (recents row, etc.)
 pub const PIN_ROW_HEIGHT: f32 = PIN_ROW_TOP_MARGIN + PIN_TILE_SIZE + PIN_LABEL_GAP + PIN_LABEL_FONT;
+
+/// Physical-pixel y where the first row of pin TILES starts (below the
+/// section heading). `top_y` is the y the pinned section claims (just
+/// under the search underline).
+pub fn pins_row_top_y(top_y: f32, scale: f32) -> f32 {
+    let label_gap = PIN_LABEL_GAP * scale;
+    let section_label_font = SECTION_LABEL_FONT * scale;
+    top_y + PIN_ROW_TOP_MARGIN * scale + section_label_font + label_gap
+}
+
+/// Logical-pixel rect for the i-th pin tile. Layout mirrors `draw`.
+#[allow(dead_code)] // kept for future hit-test consumers (drag-snap, hover)
+pub fn pin_tile_rect(
+    panel: Rect,
+    scale: f32,
+    row_top: f32,
+    idx: usize,
+) -> Rect {
+    let pad = input::SEARCH_HORIZONTAL_PAD * scale;
+    let tile_size = PIN_TILE_SIZE * scale;
+    let tile_gap = PIN_TILE_GAP * scale;
+    let row_gap = PIN_ROW_GAP * scale;
+    let label_font = PIN_LABEL_FONT * scale;
+    let label_gap = PIN_LABEL_GAP * scale;
+    let cell_h = tile_size + label_gap + label_font;
+    let avail_w = panel.w - pad * 2.0;
+    let cols = ((avail_w + tile_gap) / (tile_size + tile_gap)).floor() as usize;
+    let cols = cols.max(1);
+    let col = idx % cols;
+    let row = idx / cols;
+    let x = panel.x + pad + col as f32 * (tile_size + tile_gap);
+    let y = row_top + row as f32 * (cell_h + row_gap);
+    Rect::new(x, y, tile_size, tile_size)
+}
+
+/// Draw the visual feedback for a pin drag-reorder in progress: a
+/// translucent ghost icon following the cursor + a vertical insertion
+/// indicator at the drop slot.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_pin_drag_overlay(
+    painter: &mut Painter,
+    icons: &mut Vec<crate::render::IconRequest>,
+    launcher: &Launcher,
+    apps: &AppsProvider,
+    drag: &crate::app::PinDrag,
+    panel: Rect,
+    row_top: f32,
+    scale: f32,
+    alpha: f32,
+) {
+    if !drag.started {
+        return;
+    }
+    let pinned = launcher.pinned_entries(apps);
+    if pinned.is_empty() || drag.from_idx >= pinned.len() {
+        return;
+    }
+    let entry = pinned[drag.from_idx];
+
+    // Drop indicator: a vertical accent-gold pill between two tiles
+    // (or at the row's edge for first/last positions).
+    let to = pin_drop_slot(panel, scale, row_top, pinned.len(), drag.current_x, drag.current_y);
+    let pad = input::SEARCH_HORIZONTAL_PAD * scale;
+    let tile_size = PIN_TILE_SIZE * scale;
+    let tile_gap = PIN_TILE_GAP * scale;
+    let avail_w = panel.w - pad * 2.0;
+    let cols = (((avail_w + tile_gap) / (tile_size + tile_gap)).floor() as usize).max(1);
+    let indicator_row = if to == pinned.len() { (to.saturating_sub(1)) / cols } else { to / cols };
+    let indicator_col = if to == pinned.len() {
+        (pinned.len() - indicator_row * cols).min(cols)
+    } else {
+        to % cols
+    };
+    let label_font = PIN_LABEL_FONT * scale;
+    let label_gap = PIN_LABEL_GAP * scale;
+    let row_gap = PIN_ROW_GAP * scale;
+    let cell_h = tile_size + label_gap + label_font;
+    let row_y = row_top + indicator_row as f32 * (cell_h + row_gap);
+    let col_with_gap = tile_size + tile_gap;
+    let indicator_x = panel.x + pad + indicator_col as f32 * col_with_gap - tile_gap * 0.5 - 1.5 * scale;
+    let indicator = Rect::new(
+        indicator_x,
+        row_y,
+        3.0 * scale,
+        tile_size,
+    );
+    painter.rect_filled(indicator, 1.5 * scale, accent_color(0.85 * alpha));
+
+    // Ghost icon following the cursor — slightly smaller + translucent.
+    let ghost_size = tile_size * 0.85;
+    let gx = drag.current_x - ghost_size / 2.0;
+    let gy = drag.current_y - ghost_size / 2.0;
+    icons.push(crate::render::IconRequest {
+        app_id: entry.app_id.clone(),
+        icon_name: entry.icon_name.clone(),
+        x: gx,
+        y: gy,
+        size: ghost_size,
+        opacity: 0.85 * alpha,
+        clip: None,
+    });
+}
+
+/// Compute the drop-target index (0..=`num_pins`) for a drag whose
+/// cursor is at `(px, py)` in physical pixels. `row_top` should come
+/// from [`pins_row_top_y`]. Wraps with the same column count `draw`
+/// uses, so visual layout and drop math stay in sync.
+pub fn pin_drop_slot(
+    panel: Rect,
+    scale: f32,
+    row_top: f32,
+    num_pins: usize,
+    px: f32,
+    py: f32,
+) -> usize {
+    if num_pins == 0 {
+        return 0;
+    }
+    let pad = input::SEARCH_HORIZONTAL_PAD * scale;
+    let tile_size = PIN_TILE_SIZE * scale;
+    let tile_gap = PIN_TILE_GAP * scale;
+    let row_gap = PIN_ROW_GAP * scale;
+    let label_font = PIN_LABEL_FONT * scale;
+    let label_gap = PIN_LABEL_GAP * scale;
+    let cell_h = tile_size + label_gap + label_font;
+    let avail_w = panel.w - pad * 2.0;
+    let cols = ((avail_w + tile_gap) / (tile_size + tile_gap)).floor() as usize;
+    let cols = cols.max(1);
+
+    let y_offset = py - row_top;
+    let row = if y_offset < 0.0 {
+        0
+    } else {
+        let row_with_gap = cell_h + row_gap;
+        (y_offset / row_with_gap).floor() as usize
+    };
+    let max_row = num_pins.div_ceil(cols).saturating_sub(1);
+    let row = row.min(max_row);
+
+    let row_x_start = panel.x + pad;
+    let x_offset = px - row_x_start;
+    let col_with_gap = tile_size + tile_gap;
+    // Adding half a tile flips drop-side at each tile midpoint, giving
+    // insertion-point semantics (left half → before tile, right half →
+    // after tile).
+    let col = ((x_offset + tile_size * 0.5) / col_with_gap).floor();
+    let col = col.max(0.0) as usize;
+    let row_pin_count = (num_pins - row * cols).min(cols);
+    let col_clamped = col.min(row_pin_count);
+    (row * cols + col_clamped).min(num_pins)
+}
 
 /// Bottom-y of the rendered pinned section. Mirrors the math inside
 /// `draw` so callers (hit-testing, layout for the Open section) stay in
@@ -209,7 +366,7 @@ pub fn draw(
 
         // Defer the icon to the texture pass. Larger icon (smaller
         // inset) since there's no plate framing it anymore.
-        let inset = tile_size * 0.04;
+        let inset = tile_size * 0.13;
         icons.push(IconRequest {
             app_id: entry.app_id.clone(),
             icon_name: entry.icon_name.clone(),

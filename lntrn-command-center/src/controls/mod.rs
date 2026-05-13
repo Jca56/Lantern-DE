@@ -18,6 +18,7 @@ pub mod battery;
 pub mod bluetooth;
 pub mod brightness;
 pub mod clock;
+pub mod collapse;
 pub mod events;
 pub mod sysmon;
 pub mod temp;
@@ -61,6 +62,9 @@ pub enum TileId {
     /// CPU package temperature. Pulls state from `controls.sysmon` so
     /// only the sysmon worker polls /sys/class/thermal.
     Temp,
+    /// Chevron button that toggles the panel between full and
+    /// just-the-row "mini" modes. Special-cased in click handling.
+    Collapse,
     // Mpris, Power
 }
 
@@ -107,6 +111,12 @@ impl Controls {
     /// dock to the left, battery to the right.
     fn tile_slots(&self) -> Vec<(TileId, tile::Slot)> {
         let mut out: Vec<(TileId, tile::Slot)> = Vec::new();
+        // Collapse chevron — declared first on the right side so it
+        // ends up rightmost (right tiles pack right-to-left).
+        out.push((
+            TileId::Collapse,
+            tile::Slot { side: tile::Side::Right, logical_width: collapse::TILE_WIDTH },
+        ));
         out.push((
             TileId::Clock,
             tile::Slot { side: tile::Side::Left, logical_width: clock::TILE_WIDTH },
@@ -177,6 +187,19 @@ impl Controls {
         }
         None
     }
+
+    /// Resolved physical-pixel layout for a specific tile, if it's
+    /// currently present in the row.
+    pub fn tile_layout(&self, id: TileId, panel: Rect, scale: f32) -> Option<tile::TileLayout> {
+        let slots = self.tile_slots();
+        let just_slots: Vec<_> = slots.iter().map(|(_, s)| *s).collect();
+        let layouts = tile::pack(panel, scale, &just_slots);
+        slots
+            .iter()
+            .zip(layouts.iter())
+            .find(|((tid, _), _)| *tid == id)
+            .map(|(_, layout)| *layout)
+    }
 }
 
 // ── Drawing ─────────────────────────────────────────────────────────────────
@@ -243,6 +266,7 @@ pub fn draw_row(
             TileId::Temp => temp::draw_inline(
                 painter, text, icons, &controls.sysmon, layout, scale, alpha, surface_w, surface_h,
             ),
+            TileId::Collapse => {} // drawn separately so we can pass `collapsed` state
         }
     }
 
@@ -301,5 +325,8 @@ pub fn draw_view(
         TileId::Temp => sysmon::view::draw_view(
             painter, text, &controls.sysmon, panel, top_y, scale, alpha, surface_w, surface_h,
         ),
+        // Collapse has no expanded view — clicks are toggled in the
+        // event handler before reaching draw_view.
+        TileId::Collapse => top_y,
     };
 }

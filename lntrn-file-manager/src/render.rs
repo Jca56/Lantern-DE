@@ -201,6 +201,8 @@ pub fn render_frame(
     let fwd_state = input.add_zone(ZONE_NAV_FORWARD, fwd_rect);
     let up_rect = up_button_rect(s);
     let up_state = input.add_zone(ZONE_NAV_UP, up_rect);
+    let cloud_rect = crate::layout::cloud_button_rect(s);
+    let cloud_state = input.add_zone(crate::ZONE_NAV_CLOUD, cloud_rect);
     let p_rect = path_rect(wf, s);
     let mut breadcrumb_hovered = Vec::new();
     let path_hovered;
@@ -266,6 +268,7 @@ pub fn render_frame(
         back_rect, back_state.is_hovered(),
         fwd_rect, fwd_state.is_hovered(),
         up_rect, up_state.is_hovered(),
+        cloud_rect, cloud_state.is_hovered(),
         p_rect, path_hovered, &breadcrumb_hovered,
         sort_rect, sort_state.is_hovered(),
         srch_rect, srch_state.is_hovered(),
@@ -508,7 +511,15 @@ pub fn render_frame(
         crate::pick_bar::draw_pick_bar(app, painter, text, pal, input, wf, bar_y, s, (w, h));
     } else {
         let status = status_rect(wf, hf, s);
-        draw_status_bar(painter, text, pal, status, &app.entries, file_info, (w, h), s);
+        // Only surface sync status while the user is actually inside ~/Cloud,
+        // so the pill doesn't follow them around the filesystem.
+        let in_cloud = app.current_dir.starts_with(crate::cloud::cloud_root());
+        let cloud_status = if in_cloud {
+            app.cloud_sync.as_ref().map(|h| h.status())
+        } else {
+            None
+        };
+        draw_status_bar(painter, text, pal, status, &app.entries, file_info, cloud_status, (w, h), s);
     }
 
     // ── Rubber band selection overlay ─────────────────────────────────
@@ -655,6 +666,9 @@ pub fn render_frame(
     }
     if let Some(ref dialog) = app.drive_dialog {
         crate::dialogs::draw(dialog, painter, text, pal, input, (w, h), s);
+    }
+    if let Some(ref dialog) = app.cloud_login {
+        crate::dialogs::draw_cloud_login(dialog, painter, text, pal, input, (w, h), s);
     }
 
     // ── Inline context menu (desktop mode) ─────────────────────────

@@ -99,6 +99,9 @@ struct WlState {
     /// separately from `left_clicked` so the render loop can run a
     /// drag-to-scrub interaction (e.g. the audio slider).
     left_held: bool,
+    /// Set on the frame the left button is released; consumed by the
+    /// render loop so pin drag-reorder can commit on release.
+    left_released_this_frame: bool,
     /// Set when the user right-clicked. Used by Phase 2.6 to toggle
     /// pin/unpin on whatever tile/row is under the cursor.
     right_clicked: bool,
@@ -137,6 +140,7 @@ impl WlState {
             pointer_in_surface: false,
             esc_pressed: false,
             left_clicked: false,
+            left_released_this_frame: false,
             left_held: false,
             right_clicked: false,
             shift_held: false,
@@ -330,6 +334,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WlState {
                         state.left_held = true;
                     } else if btn_state == released {
                         state.left_held = false;
+                        state.left_released_this_frame = true;
                     }
                 }
                 if button == BTN_RIGHT && btn_state == pressed {
@@ -690,6 +695,36 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         } else if app.controls.wifi.hovered_ssid.is_some() {
             app.controls.wifi.hovered_ssid = None;
         }
+
+        // Power-column hover tracking (buttons live to the right of the
+        // panel). Skipped when the panel is collapsed — the column is
+        // hidden then and we don't want a phantom hover ring.
+        if app.collapsed {
+            app.power_hover = None;
+        } else {
+            let scale_f = wl.fractional_scale() as f32;
+            let phys_w = wl.phys_width().max(1);
+            let panel = PanelRect::compute_with_height(phys_w, scale_f, app.desired_panel_h_logical());
+            let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+            let phys_cx = wl.cursor_x as f32 * scale_f;
+            let phys_cy = wl.cursor_y as f32 * scale_f;
+            app.power_hover = crate::power::hit_test(panel_rect, scale_f, phys_cx, phys_cy);
+        }
+
+        // Mini-dock hover tracking — only meaningful while the dock is
+        // actually rendered, which is when collapse progress is > 0.
+        if app.collapse_progress() <= 0.005 {
+            app.mini_dock_hover = None;
+        } else {
+            let scale_f = wl.fractional_scale() as f32;
+            let phys_w = wl.phys_width().max(1);
+            let panel = PanelRect::compute_with_height(phys_w, scale_f, app.desired_panel_h_logical());
+            let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+            let phys_cx = wl.cursor_x as f32 * scale_f;
+            let phys_cy = wl.cursor_y as f32 * scale_f;
+            let pin_count = app.launcher.pinned_entries(&app.apps).len();
+            app.mini_dock_hover = crate::mini_dock::hit_test(panel_rect, scale_f, pin_count, phys_cx, phys_cy);
+        }
         let bt_incoming_after = app.controls.bluetooth.incoming_request.is_some();
         // Fresh incoming-file request → jump straight to the BT view so
         // the modal isn't hidden behind whatever the user was looking at.
@@ -856,13 +891,63 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
 
             // First: if a control's full-content view is up, see if the
             // click hit one of its interactive widgets (battery toggle,
-            // audio slider, audio device list).
-            let consumed_by_view = !menu_consumed && handle_control_view_click(
-                &mut app, &mut text, panel_rect, scale_f, phys_cx, phys_cy,
-            );
+            // audio slider, audio device list). Skip when an overlay
+            // (context menu, power confirm) has the click.
+            let consumed_by_view = !menu_consumed && app.power_confirm.is_none()
+                && handle_control_view_click(
+                    &mut app, &mut text, panel_rect, scale_f, phys_cx, phys_cy,
+                );
 
-            if menu_consumed {
-                // Already handled by the menu — fall through to render.
+            // Power confirm modal intercepts every click while open.
+            let confirm_consumed = if let Some(pending) = app.power_confirm {
+                let surface_w_px = wl.phys_width().max(1);
+                let surface_h_px = wl.phys_height().max(1);
+                match crate::power::hit_test_confirm(
+                    surface_w_px, surface_h_px, scale_f, phys_cx, phys_cy,
+                ) {
+                    Some(crate::power::ConfirmHit::Confirm) => {
+                        tracing::debug!(?pending, "power confirm → run");
+                        crate::power::run(pending);
+                        app.power_confirm = None;
+                        app.close();
+                    }
+                    Some(crate::power::ConfirmHit::Cancel) => {
+                        tracing::debug!(?pending, "power confirm → cancel");
+                        app.power_confirm = None;
+                    }
+                    Some(crate::power::ConfirmHit::CardBody) => {
+                        // Click inside the card but missed the buttons — eat it.
+                    }
+                    None => {
+                        // Click outside the card → treat as cancel.
+                        tracing::debug!(?pending, "power confirm → click-out cancel");
+                        app.power_confirm = None;
+                    }
+                }
+                true
+            } else {
+                false
+            };
+
+            let power_btn = if app.collapsed {
+                None
+            } else {
+                crate::power::hit_test(panel_rect, scale_f, phys_cx, phys_cy)
+            };
+            let dock_pin = if app.collapse_progress() > 0.005 {
+                let pin_count = app.launcher.pinned_entries(&app.apps).len();
+                crate::mini_dock::hit_test(panel_rect, scale_f, pin_count, phys_cx, phys_cy)
+            } else {
+                None
+            };
+            if menu_consumed || confirm_consumed {
+                // Already handled by an overlay — fall through to render.
+            } else if let Some(action) = power_btn {
+                tracing::debug!(?action, "power button click → open confirm modal");
+                app.power_confirm = Some(action);
+            } else if let Some(pin_idx) = dock_pin {
+                tracing::debug!(pin = pin_idx, "mini-dock click → launch");
+                app.activate_at(crate::app::HitTarget::Pin(pin_idx));
             } else if !panel.contains(phys_cx, phys_cy) {
                 tracing::debug!(
                     cursor = ?(phys_cx, phys_cy),
@@ -878,8 +963,13 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                 phys_cx,
                 phys_cy,
             ) {
-                tracing::debug!(?tile_id, "left-click on controls tile → switch view");
-                app.show_control(tile_id);
+                if matches!(tile_id, crate::controls::TileId::Collapse) {
+                    tracing::debug!("collapse chevron click → toggle");
+                    app.toggle_collapsed();
+                } else {
+                    tracing::debug!(?tile_id, "left-click on controls tile → switch view");
+                    app.show_control(tile_id);
+                }
             } else if matches!(app.mode, crate::app::PanelMode::Launcher) {
                 // Waffle "all apps" button on the search bar.
                 let waffle = crate::search::input::waffle_rect(panel_rect, scale_f);
@@ -896,12 +986,76 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                         app.search.show_all_apps(&app.apps, app.launcher.hidden());
                     }
                 } else if let Some(target) = app.hit_test_launcher(panel, scale_f, phys_cx, phys_cy) {
-                    tracing::debug!(?target, "left-click on launcher entry → activate");
-                    app.activate_at(target);
+                    // Pin tiles defer activation until release — that way
+                    // a press-and-drag can reorder instead of launching.
+                    if let crate::app::HitTarget::Pin(i) = target {
+                        tracing::debug!(pin = i, "pin press → start drag candidate");
+                        app.pin_drag = Some(crate::app::PinDrag {
+                            from_idx: i,
+                            press_x: phys_cx,
+                            press_y: phys_cy,
+                            current_x: phys_cx,
+                            current_y: phys_cy,
+                            started: false,
+                        });
+                    } else {
+                        tracing::debug!(?target, "left-click on launcher entry → activate");
+                        app.activate_at(target);
+                    }
                 }
             }
             // Click inside the panel but not on a clickable entity is
             // a no-op.
+        }
+
+        // Pin drag — update current cursor each frame, promote to
+        // "started" once movement exceeds the threshold.
+        if let Some(drag) = app.pin_drag.as_mut() {
+            let scale_f = wl.fractional_scale() as f32;
+            let phys_cx = wl.cursor_x as f32 * scale_f;
+            let phys_cy = wl.cursor_y as f32 * scale_f;
+            drag.current_x = phys_cx;
+            drag.current_y = phys_cy;
+            if !drag.started {
+                let dx = phys_cx - drag.press_x;
+                let dy = phys_cy - drag.press_y;
+                let threshold = crate::app::PIN_DRAG_THRESHOLD * scale_f;
+                if (dx * dx + dy * dy).sqrt() > threshold {
+                    drag.started = true;
+                }
+            }
+        }
+
+        // Pin drag — release commits a reorder when the drag actually
+        // started, otherwise treats it as a plain click on the pin.
+        if wl.left_released_this_frame {
+            wl.left_released_this_frame = false;
+            if let Some(drag) = app.pin_drag.take() {
+                let scale_f = wl.fractional_scale() as f32;
+                let phys_w = wl.phys_width().max(1);
+                let panel = PanelRect::compute_with_height(
+                    phys_w, scale_f, app.desired_panel_h_logical(),
+                );
+                let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+                if drag.started {
+                    let pin_top_y = panel_rect.y
+                        + crate::controls::total_logical_height() * scale_f
+                        + (crate::search::input::SEARCH_HORIZONTAL_PAD * 0.5
+                            + crate::search::input::SEARCH_ROW_HEIGHT)
+                            * scale_f;
+                    let row_top = crate::launcher::pins_row_top_y(pin_top_y, scale_f);
+                    let num_pins = app.launcher.pinned_entries(&app.apps).len();
+                    let to = crate::launcher::pin_drop_slot(
+                        panel_rect, scale_f, row_top, num_pins,
+                        drag.current_x, drag.current_y,
+                    );
+                    tracing::info!(from = drag.from_idx, to, "pin drag commit");
+                    app.launcher.reorder_pins(drag.from_idx, to);
+                } else {
+                    // Treat as a plain click on the pin.
+                    app.activate_at(crate::app::HitTarget::Pin(drag.from_idx));
+                }
+            }
         }
 
         // Right-click:
@@ -1036,7 +1190,9 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         // keeps painting thumbnails at orphaned rects.
         let open_section_active = matches!(app.mode, crate::app::PanelMode::Launcher)
             && app.search.input.is_empty()
-            && !app.search.all_apps_mode;
+            && !app.search.all_apps_mode
+            && !app.collapsed
+            && !app.collapse_animating();
         if let Some(p) = &panel_draw {
             if matches!(app.visibility, crate::app::Visibility::Visible) && open_section_active {
                 let panel_logical = lntrn_render::Rect::new(p.rect.x, p.rect.y, p.rect.w, p.rect.h);
@@ -1058,17 +1214,28 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                     + crate::launcher::open::heading_advance(scale_f);
 
                 let mut slots = Vec::with_capacity(visible_open.len());
-                for (i, t) in visible_open.iter().enumerate() {
+                for (i, group) in visible_open.iter().enumerate() {
+                    // Paint the most-relevant window's live thumbnail per
+                    // group — activated takes precedence, then first.
+                    let Some(rep) = group.close_target() else { continue };
                     let r = crate::launcher::open::tile_rect(panel_logical, row_top, scale_f, i);
-                    // Convert physical → logical for the compositor.
+                    // Convert physical → logical for the compositor and
+                    // carve a strip off the top so the X + ×N badge
+                    // (drawn by us) stay visible over the compositor's
+                    // thumbnail overlay.
                     let inv = 1.0 / scale_f;
+                    let toolbar_h = crate::launcher::open::OPEN_TILE_TOOLBAR_H * scale_f;
+                    let thumb_x = r.x;
+                    let thumb_y = r.y + toolbar_h;
+                    let thumb_w = r.w;
+                    let thumb_h = (r.h - toolbar_h).max(1.0);
                     slots.push(crate::thumbs::ThumbSlot {
-                        app_id: t.app_id.clone(),
-                        title: t.title.clone(),
-                        x: (r.x * inv).round() as i32,
-                        y: (r.y * inv).round() as i32,
-                        w: (r.w * inv).round() as i32,
-                        h: (r.h * inv).round() as i32,
+                        app_id: rep.app_id.clone(),
+                        title: rep.title.clone(),
+                        x: (thumb_x * inv).round() as i32,
+                        y: (thumb_y * inv).round() as i32,
+                        w: (thumb_w * inv).round() as i32,
+                        h: (thumb_h * inv).round() as i32,
                     });
                 }
                 thumbs.update(&slots);
@@ -1514,6 +1681,9 @@ fn handle_control_view_click(
             }
             false
         }
+        // No expanded view — click handling is shortcut in the press
+        // path (toggle_collapsed), so we never reach here.
+        crate::controls::TileId::Collapse => false,
     }
 }
 

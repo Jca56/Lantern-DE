@@ -287,6 +287,7 @@ pub fn run(pick: Option<PickConfig>, desktop: bool) -> Result<()> {
     app.show_hidden = settings.show_hidden;
     app.sort_by = settings.sort_by_enum();
     app.sort_dir = settings.sort_dir_enum();
+    app.init_cloud();
     if let Some(ref p) = pick {
         if let Some(ref dir) = p.start_dir {
             app.navigate_to(dir.clone());

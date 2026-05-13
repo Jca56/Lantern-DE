@@ -419,7 +419,7 @@ fn draw_results_grid(
             );
         }
 
-        let inset = tile * 0.04;
+        let inset = tile * 0.13;
         icons.push(IconRequest {
             app_id: entry.app_id.clone(),
             icon_name: entry.icon_name.clone(),

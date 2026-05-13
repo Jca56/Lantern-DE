@@ -65,6 +65,22 @@ impl Pins {
         now_pinned
     }
 
+    /// Move the pin at `from` to position `to`. Clamps both to the
+    /// current item range. Persists on success. No-op when `from == to`
+    /// or the index is out of bounds.
+    pub fn reorder(&mut self, from: usize, to: usize) {
+        if from >= self.items.len() || to > self.items.len() || from == to {
+            return;
+        }
+        let item = self.items.remove(from);
+        // After removing `from`, indexes ≥ `from` shifted left by one —
+        // adjust the destination accordingly.
+        let dest = if to > from { to - 1 } else { to };
+        let dest = dest.min(self.items.len());
+        self.items.insert(dest, item);
+        self.save();
+    }
+
     fn save(&self) {
         let body = render(&self.items);
         if let Some(parent) = self.path.parent() {

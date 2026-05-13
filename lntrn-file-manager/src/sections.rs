@@ -110,6 +110,13 @@ fn draw_place_icon(painter: &mut Painter, name: &str, cx: f32, cy: f32, color: C
             painter.line(cx - 2.0*u, cy - 3.0*u, cx + 4.0*u, cy + 1.0*u, sw, color);
             painter.line(cx + 4.0*u, cy + 1.0*u, cx - 2.0*u, cy + 5.0*u, sw, color);
         }
+        "Cloud" => {
+            // Cloud silhouette: two bumps + flat bottom.
+            painter.circle_filled(cx - 4.0*u, cy - 1.0*u, 4.0*u, color);
+            painter.circle_filled(cx + 1.0*u, cy - 3.0*u, 5.0*u, color);
+            painter.circle_filled(cx + 5.0*u, cy, 3.5*u, color);
+            painter.rect_filled(Rect::new(cx - 7.0*u, cy - 1.0*u, 14.0*u, 5.0*u), 2.0*u, color);
+        }
         "Trash" => {
             // Lid
             painter.line(cx - 6.0*u, cy - 5.0*u, cx + 6.0*u, cy - 5.0*u, sw, color);
@@ -229,6 +236,8 @@ pub fn draw_nav_bar(
     forward_hovered: bool,
     up_rect: Rect,
     up_hovered: bool,
+    cloud_rect: Rect,
+    cloud_hovered: bool,
     path_rect: Rect,
     _path_hovered: bool,
     breadcrumb_hovered: &[bool],
@@ -251,6 +260,30 @@ pub fn draw_nav_bar(
     // Vertical divider
     painter.rect_filled(
         Rect::new(view_toggle_rect.x + view_toggle_rect.w + 2.0 * s, nav_rect.y + 12.0 * s, 1.0, 24.0 * s),
+        0.0,
+        Color::WHITE.with_alpha(0.08),
+    );
+
+    // ── Cloud quick-link button ───────────────────────────────────────────
+    let cloud_color = if cloud_hovered { palette.text } else { palette.text_secondary };
+    if cloud_hovered {
+        painter.rect_filled(cloud_rect, 5.0 * s, palette.surface_2.with_alpha(0.5));
+    }
+    {
+        // Cloud silhouette sized for a 44×44 button — ~30% larger than the
+        // sidebar version so it reads as the marquee shortcut it is.
+        let cx = cloud_rect.center_x();
+        let cy = cloud_rect.center_y();
+        let u = s * 1.4; // unit scale for icon strokes
+        painter.circle_filled(cx - 4.0*u, cy - 1.0*u, 4.0*u, cloud_color);
+        painter.circle_filled(cx + 1.0*u, cy - 3.5*u, 5.5*u, cloud_color);
+        painter.circle_filled(cx + 5.0*u, cy,         4.0*u, cloud_color);
+        painter.rect_filled(Rect::new(cx - 7.0*u, cy - 1.0*u, 14.0*u, 5.0*u), 2.0*u, cloud_color);
+    }
+
+    // Vertical divider between cloud and back
+    painter.rect_filled(
+        Rect::new(cloud_rect.x + cloud_rect.w + 4.0 * s, nav_rect.y + 12.0 * s, 1.0, 24.0 * s),
         0.0,
         Color::WHITE.with_alpha(0.08),
     );
@@ -836,6 +869,7 @@ pub fn draw_status_bar(
     status_rect: Rect,
     entries: &[FileEntry],
     file_info: &mut crate::file_info::FileInfoCache,
+    cloud_status: Option<crate::cloud::sync::SyncStatus>,
     screen: (u32, u32),
     s: f32,
 ) {
@@ -855,8 +889,36 @@ pub fn draw_status_bar(
     let font = FontSize::Custom(20.0 * s);
     let dot_sep = " \u{2022} ";
     let mut x = 12.0 * s;
-    let y = status_rect.y + 4.0 * s;
+    // Vertically center 20px text inside a 34px bar.
+    let y = status_rect.y + (status_rect.h - 20.0 * s) * 0.5;
     let cw = 9.0 * s; // approximate char width
+
+    // ── Cloud sync pill (right-aligned) ────────────────────────────────
+    if let Some(status) = cloud_status {
+        use crate::cloud::sync::SyncStatus;
+        let (label, color) = match status {
+            SyncStatus::Idle    => ("Synced",     palette.text_secondary),
+            SyncStatus::Syncing => ("Syncing\u{2026}", palette.accent),
+            SyncStatus::Error   => ("Sync error", palette.danger),
+            SyncStatus::Offline => ("Offline",    palette.muted),
+        };
+        let label_w = label.chars().count() as f32 * cw;
+        let icon_w  = 22.0 * s;
+        let gap     = 6.0 * s;
+        let right_pad = 14.0 * s;
+        let label_x = status_rect.x + status_rect.w - right_pad - label_w;
+        let icon_cx = label_x - gap - icon_w * 0.5;
+        let icon_cy = status_rect.y + status_rect.h * 0.5;
+        let u = s * 0.85;
+        painter.circle_filled(icon_cx - 4.0*u, icon_cy - 1.0*u, 4.0*u, color);
+        painter.circle_filled(icon_cx + 1.0*u, icon_cy - 3.5*u, 5.5*u, color);
+        painter.circle_filled(icon_cx + 5.0*u, icon_cy,         4.0*u, color);
+        painter.rect_filled(Rect::new(icon_cx - 7.0*u, icon_cy - 1.0*u, 14.0*u, 5.0*u), 2.0*u, color);
+        TextLabel::new(label, label_x, y)
+            .size(font)
+            .color(color)
+            .draw(text, screen.0, screen.1);
+    }
 
     let counts = format!("{dirs} folders, {files} files");
     TextLabel::new(&counts, x, y)

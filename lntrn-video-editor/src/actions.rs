@@ -59,16 +59,92 @@ pub const ACT_EXPORT_GIF_LARGE: u32 = 54;
 const VIDEO_FILTERS: &str =
     "Video:*.mp4,*.mov,*.mkv,*.webm,*.avi,*.m4v,*.mpg,*.mpeg,*.flv,*.wmv,*.ogv|All:*";
 
+const PROJECT_FILTERS: &str = "Lantern Project:*.lproj|All:*";
+
+/// Default directory for projects. Created on first save.
+pub fn default_projects_dir() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    PathBuf::from(home).join("Videos").join("Lantern Projects")
+}
+
 /// Spawn `lntrn-file-manager --pick` on a background thread, returning a
 /// receiver that yields the chosen path (or nothing on cancel/error).
 pub fn spawn_video_picker(title: &str) -> Receiver<PathBuf> {
+    spawn_open_picker(title, VIDEO_FILTERS, None)
+}
+
+/// Open-picker for `.lproj` project files.
+pub fn spawn_open_project_picker(title: &str) -> Receiver<PathBuf> {
+    let dir = default_projects_dir();
+    spawn_open_picker(title, PROJECT_FILTERS, Some(dir))
+}
+
+/// Save-picker that defaults to `~/Videos/Lantern Projects/Untitled.lproj`.
+pub fn spawn_save_project_picker(title: &str, default_name: &str) -> Receiver<PathBuf> {
     let (tx, rx) = bounded::<PathBuf>(1);
     let title = title.to_string();
+    let default_name = default_name.to_string();
+    let dir = default_projects_dir();
     thread::spawn(move || {
+        // Make sure the dir exists so the picker actually opens there.
+        let _ = std::fs::create_dir_all(&dir);
+        let dir_s = dir.display().to_string();
         let output = Command::new("lntrn-file-manager")
-            .args(["--pick", "--title", &title, "--filters", VIDEO_FILTERS])
+            .args([
+                "--pick-save",
+                "--title",
+                &title,
+                "--filters",
+                PROJECT_FILTERS,
+                "--start-dir",
+                &dir_s,
+                "--save-name",
+                &default_name,
+            ])
             .output();
         let Ok(out) = output else {
+            return;
+        };
+        if !out.status.success() {
+            return;
+        }
+        let chosen = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if chosen.is_empty() {
+            return;
+        }
+        let mut path = PathBuf::from(chosen);
+        // Force `.lproj` extension so Save → re-Open round-trips even if the
+        // user typed a bare name.
+        if path.extension().map(|e| e != "lproj").unwrap_or(true) {
+            path.set_extension("lproj");
+        }
+        let _ = tx.send(path);
+    });
+    rx
+}
+
+fn spawn_open_picker(
+    title: &str,
+    filters: &str,
+    start_dir: Option<PathBuf>,
+) -> Receiver<PathBuf> {
+    let (tx, rx) = bounded::<PathBuf>(1);
+    let title = title.to_string();
+    let filters = filters.to_string();
+    thread::spawn(move || {
+        let mut args: Vec<String> = vec![
+            "--pick".into(),
+            "--title".into(),
+            title,
+            "--filters".into(),
+            filters,
+        ];
+        if let Some(dir) = start_dir {
+            let _ = std::fs::create_dir_all(&dir);
+            args.push("--start-dir".into());
+            args.push(dir.display().to_string());
+        }
+        let Ok(out) = Command::new("lntrn-file-manager").args(&args).output() else {
             return;
         };
         if !out.status.success() {

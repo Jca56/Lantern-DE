@@ -9,6 +9,7 @@ mod playback;
 mod popup_backend;
 mod preview;
 mod project;
+mod projectio;
 mod render;
 mod timeline;
 mod wayland;

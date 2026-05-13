@@ -127,6 +127,8 @@ pub struct Project {
     pub timeline_clips: Vec<TimelineClip>,
     pub selected_media: Option<MediaId>,
     pub selected_clip: Option<ClipId>,
+    /// Path the project was loaded from / last saved to. `None` until first save.
+    pub save_path: Option<PathBuf>,
     next_media_id: MediaId,
     next_clip_id: ClipId,
     next_track_id: TrackId,
@@ -140,6 +142,7 @@ impl Project {
             timeline_clips: Vec::new(),
             selected_media: None,
             selected_clip: None,
+            save_path: None,
             next_media_id: 1,
             next_clip_id: 1,
             next_track_id: 1,
@@ -150,6 +153,43 @@ impl Project {
         p.add_track(TrackKind::Audio);
         p.add_track(TrackKind::Audio);
         p
+    }
+
+    // ── Persistence accessors / constructor (used by projectio) ───────────
+
+    pub fn next_media_id(&self) -> MediaId {
+        self.next_media_id
+    }
+    pub fn next_clip_id(&self) -> ClipId {
+        self.next_clip_id
+    }
+    pub fn next_track_id(&self) -> TrackId {
+        self.next_track_id
+    }
+
+    /// Build a project from deserialized parts. Callers (the on-disk loader)
+    /// are responsible for the contents being internally consistent.
+    pub fn from_loaded(
+        media: Vec<MediaItem>,
+        tracks: Vec<Track>,
+        timeline_clips: Vec<TimelineClip>,
+        selected_media: Option<MediaId>,
+        selected_clip: Option<ClipId>,
+        next_media_id: MediaId,
+        next_clip_id: ClipId,
+        next_track_id: TrackId,
+    ) -> Self {
+        Self {
+            media,
+            tracks,
+            timeline_clips,
+            selected_media,
+            selected_clip,
+            save_path: None,
+            next_media_id,
+            next_clip_id,
+            next_track_id,
+        }
     }
 
     // ── Track management ──────────────────────────────────────────────────

@@ -12,25 +12,27 @@ use crate::search::input;
 use crate::toplevel::ToplevelInfo;
 
 /// 16:9 thumbnail tile dimensions (logical px).
-pub const OPEN_TILE_W: f32 = 144.0;
-pub const OPEN_TILE_H: f32 = 81.0;
-pub const OPEN_TILE_GAP_X: f32 = 24.0;
-pub const OPEN_TILE_GAP_Y: f32 = 24.0;
-pub const OPEN_LABEL_FONT: f32 = 15.0;
-pub const OPEN_LABEL_GAP: f32 = 8.0;
+pub const OPEN_TILE_W: f32 = 208.0;
+pub const OPEN_TILE_H: f32 = 117.0;
+/// Height (logical px) of the slim control strip across the top of
+/// each tile. We deliberately shrink the live-thumbnail rect by this
+/// much from the top so the X close button + ×N badge stay visible on
+/// top of the compositor's thumbnail overlay.
+pub const OPEN_TILE_TOOLBAR_H: f32 = 32.0;
+pub const OPEN_TILE_GAP_X: f32 = 36.0;
+pub const OPEN_TILE_GAP_Y: f32 = 36.0;
+pub const OPEN_LABEL_FONT: f32 = 18.0;
+pub const OPEN_LABEL_GAP: f32 = 10.0;
 pub const OPEN_SECTION_TOP_MARGIN: f32 = 24.0;
 pub const OPEN_HEADING_GAP: f32 = 12.0;
-pub const OPEN_TILE_RADIUS: f32 = 10.0;
+pub const OPEN_TILE_RADIUS: f32 = 12.0;
 pub const OPEN_DIVIDER_GAP_BELOW: f32 = 18.0;
 pub const OPEN_DIVIDER_THICKNESS: f32 = 1.0;
 
 const HEADING_FONT: f32 = 14.0;
 const HEADING_ALPHA: f32 = 0.55;
 const LABEL_ALPHA: f32 = 0.85;
-const PLACEHOLDER_BG_ALPHA: f32 = 0.10;
-const PLACEHOLDER_BORDER_ALPHA: f32 = 0.06;
 const ACCENT_RGB: (u8, u8, u8) = (0xc8, 0x86, 0x0a);
-const ICON_INSET_FRAC: f32 = 0.30;
 const DIVIDER_ALPHA: f32 = 0.10;
 
 fn text(alpha: f32) -> Color {
@@ -103,16 +105,84 @@ pub fn tile_rect(panel: Rect, top_y: f32, scale: f32, idx: usize) -> Rect {
     )
 }
 
-/// Toplevels shown in the Open section. Includes minimized windows so users
-/// can find and restore them; minimized tiles render dimmed.
-pub fn visible_entries(toplevels: &[ToplevelInfo]) -> Vec<&ToplevelInfo> {
-    toplevels
-        .iter()
-        .filter(|t| !t.app_id.is_empty())
-        .collect()
+/// One renderable Open-section tile, representing all windows of a
+/// single app. The `windows` vec is in compositor-reported order (first
+/// = oldest); cycling activation walks it.
+#[derive(Debug, Clone)]
+pub struct AppGroup<'a> {
+    pub app_id: &'a str,
+    pub windows: Vec<&'a ToplevelInfo>,
+}
+
+impl<'a> AppGroup<'a> {
+    /// True when at least one window in the group is currently activated.
+    pub fn any_activated(&self) -> bool {
+        self.windows.iter().any(|w| w.activated)
+    }
+    /// True when *every* window in the group is minimized — the tile is
+    /// dimmed in that case so the user can spot it as "all minimized".
+    pub fn all_minimized(&self) -> bool {
+        !self.windows.is_empty() && self.windows.iter().all(|w| w.minimized)
+    }
+    /// Choose the next window to activate on click. Cycles past whichever
+    /// window is currently activated; falls back to the first window.
+    pub fn next_to_activate(&self) -> Option<&'a ToplevelInfo> {
+        if self.windows.is_empty() {
+            return None;
+        }
+        if let Some(cur) = self.windows.iter().position(|w| w.activated) {
+            Some(self.windows[(cur + 1) % self.windows.len()])
+        } else {
+            Some(self.windows[0])
+        }
+    }
+    /// Pick which window the X button should close. Prefers the currently
+    /// activated window; falls back to the first.
+    pub fn close_target(&self) -> Option<&'a ToplevelInfo> {
+        self.windows
+            .iter()
+            .find(|w| w.activated)
+            .copied()
+            .or_else(|| self.windows.first().copied())
+    }
+}
+
+/// Toplevels shown in the Open section, grouped by app_id. Includes
+/// minimized windows so users can find and restore them; tiles render
+/// dimmed when every window of an app is minimized.
+pub fn visible_entries(toplevels: &[ToplevelInfo]) -> Vec<AppGroup<'_>> {
+    let mut groups: Vec<AppGroup> = Vec::new();
+    for t in toplevels.iter().filter(|t| !t.app_id.is_empty()) {
+        if let Some(g) = groups.iter_mut().find(|g| g.app_id == t.app_id.as_str()) {
+            g.windows.push(t);
+        } else {
+            groups.push(AppGroup { app_id: t.app_id.as_str(), windows: vec![t] });
+        }
+    }
+    groups
 }
 
 const MINIMIZED_ALPHA_MULT: f32 = 0.5;
+
+// ── X close button geometry ─────────────────────────────────────────────────
+
+/// X close button size and inset from the tile's top-right corner.
+pub const CLOSE_BTN_SIZE: f32 = 22.0;
+pub const CLOSE_BTN_INSET: f32 = 6.0;
+
+/// Hit-rect for the X close button of the i-th tile (in physical px).
+pub fn close_button_rect(panel: Rect, top_y: f32, scale: f32, idx: usize) -> Rect {
+    let tile = tile_rect(panel, top_y, scale, idx);
+    let size = CLOSE_BTN_SIZE * scale;
+    let inset = CLOSE_BTN_INSET * scale;
+    Rect::new(tile.x + tile.w - size - inset, tile.y + inset, size, size)
+}
+
+// ── Badge geometry ──────────────────────────────────────────────────────────
+
+const BADGE_FONT: f32 = 14.0;
+const BADGE_H: f32 = 22.0;
+const BADGE_INSET: f32 = 6.0;
 
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
@@ -171,46 +241,61 @@ pub fn draw(
     let cell_h = tile_h + label_gap + label_font;
     let gap_y = OPEN_TILE_GAP_Y * scale;
 
-    for (i, entry) in entries.iter().enumerate() {
+    for (i, group) in entries.iter().enumerate() {
         let r = tile_rect(panel, row_top, scale, i);
-        let entry_mult = if entry.minimized { MINIMIZED_ALPHA_MULT } else { 1.0 };
-        let entry_alpha = alpha * entry_mult;
+        let dim = group.all_minimized();
+        let group_mult = if dim { MINIMIZED_ALPHA_MULT } else { 1.0 };
+        let group_alpha = alpha * group_mult;
+        let is_activated = group.any_activated();
 
-        // Placeholder plate: subtle dark fill + faint border. The
-        // compositor will (Phase B) paint a live thumbnail on top.
-        painter.rect_filled(r, radius, text(PLACEHOLDER_BG_ALPHA * entry_alpha));
-        painter.rect_stroke_sdf(r, radius, 1.0 * scale, text(PLACEHOLDER_BORDER_ALPHA * entry_alpha));
-
-        // App icon centered on the placeholder so the user has a hint
-        // of what's inside until live thumbs land.
-        let icon_size = (tile_h.min(tile_w) * (1.0 - ICON_INSET_FRAC)).max(32.0 * scale);
+        // No placeholder plate — the app icon floats on the panel until
+        // live thumbnails (Phase B) replace it.
+        let icon_size = tile_h;
         let icon_x = r.x + (tile_w - icon_size) / 2.0;
         let icon_y = r.y + (tile_h - icon_size) / 2.0;
-        let icon_name = Some(lookup_icon_name(apps, &entry.app_id));
+        let icon_name = Some(lookup_icon_name(apps, group.app_id));
         icons.push(IconRequest {
-            app_id: entry.app_id.clone(),
+            app_id: group.app_id.to_string(),
             icon_name,
             x: icon_x,
             y: icon_y,
             size: icon_size,
-            opacity: entry_alpha * 0.85,
+            opacity: group_alpha * 0.85,
             clip: None,
         });
 
-        // Selection / activated ring. Selection ring uses the un-dimmed
-        // alpha so a focused minimized tile still reads as selected.
+        // Selection / activated ring.
         let is_selected = selected == Some(i);
-        if is_selected || entry.activated {
+        if is_selected || is_activated {
             let ring_alpha = if is_selected { 0.65 } else { 0.45 };
-            let ring_base = if is_selected { alpha } else { entry_alpha };
+            let ring_base = if is_selected { alpha } else { group_alpha };
             painter.rect_stroke_sdf(r, radius, 2.0 * scale, accent(ring_alpha * ring_base));
         }
 
-        // Title label centered under the tile.
-        let label = if entry.title.is_empty() {
-            entry.app_id.clone()
+        // ×N counter badge top-left when grouped.
+        if group.windows.len() > 1 {
+            draw_count_badge(
+                painter,
+                text_r,
+                r,
+                group.windows.len(),
+                scale,
+                group_alpha,
+                surface_w,
+                surface_h,
+            );
+        }
+
+        // X close button top-right.
+        draw_close_button(painter, r, scale, group_alpha);
+
+        // Title label centered under the tile. When the group has one
+        // window we show its title; with multiple we show the app name.
+        let label = if group.windows.len() == 1 {
+            let t = group.windows[0];
+            if t.title.is_empty() { group.app_id.to_string() } else { t.title.clone() }
         } else {
-            entry.title.clone()
+            group.app_id.to_string()
         };
         let label = truncate_label(&label, 28);
         let lw = text_r.measure_width(&label, label_font);
@@ -220,7 +305,7 @@ pub fn draw(
             label_font,
             lx,
             r.y + tile_h + label_gap,
-            text(LABEL_ALPHA * entry_alpha),
+            text(LABEL_ALPHA * group_alpha),
             tile_w + OPEN_TILE_GAP_X * scale,
             surface_w,
             surface_h,
@@ -229,6 +314,62 @@ pub fn draw(
 
     let rows = entries.len().div_ceil(cols);
     row_top + rows as f32 * cell_h + (rows.saturating_sub(1)) as f32 * gap_y
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_count_badge(
+    painter: &mut Painter,
+    text_r: &mut TextRenderer,
+    tile: Rect,
+    count: usize,
+    scale: f32,
+    alpha: f32,
+    surface_w: u32,
+    surface_h: u32,
+) {
+    let label = format!("×{count}");
+    let badge_font = BADGE_FONT * scale;
+    let badge_h = BADGE_H * scale;
+    let pad_x = 8.0 * scale;
+    let lw = text_r.measure_width(&label, badge_font);
+    let badge_w = lw + pad_x * 2.0;
+    let inset = BADGE_INSET * scale;
+    let bx = tile.x + inset;
+    let by = tile.y + inset;
+    let radius = badge_h * 0.5;
+    painter.rect_filled(
+        Rect::new(bx, by, badge_w, badge_h),
+        radius,
+        accent(0.85 * alpha),
+    );
+    text_r.queue(
+        &label,
+        badge_font,
+        bx + pad_x,
+        by + (badge_h - badge_font) / 2.0,
+        Color::BLACK.with_alpha(alpha),
+        lw,
+        surface_w,
+        surface_h,
+    );
+}
+
+fn draw_close_button(painter: &mut Painter, tile: Rect, scale: f32, alpha: f32) {
+    let size = CLOSE_BTN_SIZE * scale;
+    let inset = CLOSE_BTN_INSET * scale;
+    let bx = tile.x + tile.w - size - inset;
+    let by = tile.y + inset;
+    let bg = Color::BLACK.with_alpha(0.55 * alpha);
+    painter.rect_filled(Rect::new(bx, by, size, size), size * 0.5, bg);
+
+    // Draw a small X using two thin rounded lines.
+    let cx = bx + size * 0.5;
+    let cy = by + size * 0.5;
+    let arm = size * 0.26;
+    let stroke = (2.0 * scale).max(1.5);
+    let xcol = text(0.92 * alpha);
+    painter.line_round(cx - arm, cy - arm, cx + arm, cy + arm, stroke, xcol);
+    painter.line_round(cx - arm, cy + arm, cx + arm, cy - arm, stroke, xcol);
 }
 
 fn lookup_icon_name(apps: &AppsProvider, app_id: &str) -> String {

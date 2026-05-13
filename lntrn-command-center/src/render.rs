@@ -22,7 +22,7 @@ use crate::app::{AppState, PanelRect, ANIM_SCALE_START, PANEL_CORNER_RADIUS};
 /// display way too bright (about #5d5d5d on screen).
 const SURFACE_BYTES: (u8, u8, u8) = (24, 24, 24);
 /// Surface alpha when fully open. Fully opaque — matches the terminal.
-const SURFACE_ALPHA: f32 = 1.0;
+const SURFACE_ALPHA: f32 = 0.92;
 
 /// Result of `draw_panel` — the (animated) panel rect and alpha, so
 /// content layers can position themselves over the same region.
@@ -154,7 +154,72 @@ pub fn draw_content(
         &mut icons,
     );
 
-    // 2. Body of the panel, based on mode.
+    // 1b. Power column floating to the right of the panel. Fades with
+    //     the collapse animation so the side rail disappears at the
+    //     same rate as the body content.
+    let collapse_p = state.collapse_progress();
+    let chrome_alpha_mult = (1.0 - collapse_p).clamp(0.0, 1.0);
+    if chrome_alpha_mult > 0.005 {
+        crate::power::draw(
+            painter,
+            &mut icons,
+            panel.rect,
+            panel.scale_factor,
+            panel.alpha * chrome_alpha_mult,
+            state.power_hover,
+        );
+    }
+
+    // 1d. Mini-dock of pinned apps under the panel — visible while
+    //     collapsed (or fading in/out of collapse). Lives outside the
+    //     main panel rect so it stays a single click away when the bar
+    //     is in tiny mode.
+    {
+        let dock_alpha_mult = collapse_p.clamp(0.0, 1.0);
+        if dock_alpha_mult > 0.005 {
+            let pinned = state.launcher.pinned_entries(&state.apps);
+            crate::mini_dock::draw(
+                painter,
+                &mut icons,
+                &pinned,
+                panel.rect,
+                panel.scale_factor,
+                panel.alpha * dock_alpha_mult,
+                state.mini_dock_hover,
+                &state.apps,
+            );
+        }
+    }
+
+    // 1c. Collapse chevron (top-right of the row). Drawn separately so
+    //     it can read the `collapsed` state from AppState.
+    if let Some(layout) = state.controls.tile_layout(
+        crate::controls::TileId::Collapse,
+        panel.rect,
+        panel.scale_factor,
+    ) {
+        crate::controls::collapse::draw_inline(
+            painter,
+            text,
+            state.collapsed,
+            &layout,
+            panel.scale_factor,
+            panel.alpha,
+        );
+    }
+
+    // 2. Body of the panel, based on mode. Faded out during collapse
+    //    so the content gracefully disappears as the panel shrinks
+    //    (and back in on expand).
+    if chrome_alpha_mult < 0.005 {
+        return icons;
+    }
+    let body_panel = PanelDraw {
+        rect: panel.rect,
+        alpha: panel.alpha * chrome_alpha_mult,
+        scale_factor: panel.scale_factor,
+    };
+    let panel = &body_panel;
     match state.mode {
         crate::app::PanelMode::Launcher => {
             crate::search::draw_input(
@@ -207,6 +272,23 @@ pub fn draw_content(
                     surface_w,
                     surface_h,
                 );
+
+                // Pin drag overlay (ghost + drop indicator) — drawn over
+                // the regular pinned row, under the open section.
+                if let Some(drag) = state.pin_drag.as_ref() {
+                    let row_top = crate::launcher::pins_row_top_y(top_y, panel.scale_factor);
+                    crate::launcher::draw_pin_drag_overlay(
+                        painter,
+                        &mut icons,
+                        &state.launcher,
+                        &state.apps,
+                        drag,
+                        panel.rect,
+                        row_top,
+                        panel.scale_factor,
+                        panel.alpha,
+                    );
+                }
             } else {
                 crate::search::draw_results(
                     painter,
@@ -269,6 +351,24 @@ pub fn draw_content(
             panel.scale_factor,
             surface_w,
             surface_h,
+        );
+        painter.set_layer(0);
+        text.set_layer(0);
+    }
+
+    // 5. Power confirm modal — overlay so it sits above everything.
+    if let Some(action) = state.power_confirm {
+        painter.set_layer(1);
+        text.set_layer(1);
+        crate::power::draw_confirm(
+            painter,
+            text,
+            &mut icons,
+            action,
+            surface_w,
+            surface_h,
+            panel.scale_factor,
+            panel.alpha,
         );
         painter.set_layer(0);
         text.set_layer(0);

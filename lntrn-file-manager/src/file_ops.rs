@@ -149,6 +149,61 @@ impl App {
         self.reload();
     }
 
+    /// True if the current directory lives inside the user's trash.
+    pub fn in_trash(&self) -> bool {
+        let trash_files = trash_dir().join("files");
+        self.current_dir.starts_with(&trash_files)
+    }
+
+    /// Restore every selected item back to its original location, using the
+    /// XDG Trash spec's `info/{name}.trashinfo` sidecar to recover the path.
+    /// If a destination collides, append a counter suffix to the basename.
+    pub fn restore_selected(&mut self) {
+        let trash = trash_dir();
+        let info_dir = trash.join("info");
+        let files_dir = trash.join("files");
+        let mut restored = 0usize;
+
+        for entry in &self.entries {
+            if !entry.selected {
+                continue;
+            }
+            // Only files that actually sit under .../Trash/files are restorable
+            // via the trashinfo flow — defensively skip anything else.
+            let Ok(rel) = entry.path.strip_prefix(&files_dir) else { continue };
+            let top = match rel.iter().next() {
+                Some(c) => c.to_string_lossy().into_owned(),
+                None => continue,
+            };
+            let info_path = info_dir.join(format!("{top}.trashinfo"));
+            let Some(original) = read_trashinfo_path(&info_path) else {
+                eprintln!("[fox] restore: missing or unreadable {}", info_path.display());
+                continue;
+            };
+
+            let dest = pick_restore_dest(&original);
+            if let Some(parent) = dest.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+
+            let trashed_path = files_dir.join(&top);
+            match std::fs::rename(&trashed_path, &dest) {
+                Ok(()) => {
+                    let _ = std::fs::remove_file(&info_path);
+                    restored += 1;
+                }
+                Err(e) => {
+                    eprintln!("[fox] restore failed for {}: {e}", trashed_path.display());
+                }
+            }
+        }
+
+        if restored > 0 {
+            eprintln!("[fox] restored {restored} item(s) from trash");
+        }
+        self.reload();
+    }
+
     pub fn trash_selected(&mut self) {
         if self.root_mode {
             self.delete_selected();
@@ -462,4 +517,56 @@ impl App {
 
 pub(crate) fn _wl_copy(_text: String) {
     // Deprecated — native Wayland clipboard (clipboard.rs) is used instead.
+}
+
+/// Parse the Path= line out of a `.trashinfo` file (XDG Trash spec).
+/// Values are URL-encoded per spec; we decode percent-escapes so paths with
+/// spaces and unicode come back correctly.
+fn read_trashinfo_path(info_path: &std::path::Path) -> Option<PathBuf> {
+    let raw = std::fs::read_to_string(info_path).ok()?;
+    for line in raw.lines() {
+        if let Some(rest) = line.strip_prefix("Path=") {
+            let decoded = percent_decode(rest);
+            return Some(PathBuf::from(decoded));
+        }
+    }
+    None
+}
+
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(h), Some(l)) = (hi, lo) {
+                out.push(((h << 4) | l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| s.to_string())
+}
+
+/// If the original path already exists, append " (restored N)" before the
+/// extension to avoid clobbering whatever's there now.
+fn pick_restore_dest(original: &std::path::Path) -> PathBuf {
+    if !original.exists() {
+        return original.to_path_buf();
+    }
+    let parent = original.parent().unwrap_or(std::path::Path::new("/"));
+    let stem = original.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let ext = original.extension().map(|s| format!(".{}", s.to_string_lossy())).unwrap_or_default();
+    for n in 1u32..1000 {
+        let candidate = parent.join(format!("{stem} (restored {n}){ext}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    parent.join(format!("{stem} (restored){ext}"))
 }
