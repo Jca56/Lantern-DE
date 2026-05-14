@@ -544,12 +544,15 @@ pub fn render_frame(
             // with `app.entries` indices because of expand state.
             let renaming_path = app.renaming.and_then(|i| app.entries.get(i)).map(|e| e.path.clone());
             // Build per-tree-row selected flags by looking up each tree
-            // entry's path in `app.entries`. Nested rows that aren't in
-            // app.entries can't be selected (no state), so they stay false.
-            let selected_paths: std::collections::HashSet<&std::path::Path> = app.entries.iter()
+            // entry's path in both `app.entries` (top-level rows) and
+            // `app.pick_tree_selection` (pick-mode nested rows).
+            let mut selected_paths: std::collections::HashSet<&std::path::Path> = app.entries.iter()
                 .filter(|e| e.selected)
                 .map(|e| e.path.as_path())
                 .collect();
+            for p in &app.pick_tree_selection {
+                selected_paths.insert(p.as_path());
+            }
             let tree_selected: Vec<bool> = tree_entries.iter()
                 .map(|te| selected_paths.contains(te.entry.path.as_path()))
                 .collect();

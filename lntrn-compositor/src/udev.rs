@@ -28,10 +28,11 @@ use smithay::{
             EventLoop, RegistrationToken,
         },
         drm::control::crtc,
-        input::Libinput,
+        input::{AccelProfile, Device as LibinputDevice, Libinput},
         wayland_server::DisplayHandle,
     },
 };
+use smithay::backend::input::InputEvent;
 use smithay::utils::IsAlive;
 use smithay_drm_extras::drm_scanner::DrmScanner;
 use tracing::{error, info, trace, warn};
@@ -273,6 +274,17 @@ pub fn init_udev(
             .insert_source(libinput_backend, move |event, _, state| {
                 if state.debug_counters.enabled {
                     state.debug_counters.libinput_fires += 1;
+                }
+                match &event {
+                    InputEvent::DeviceAdded { device } => {
+                        apply_pointer_accel(device, state.pointer_acceleration);
+                        state.libinput_devices.push(device.clone());
+                    }
+                    InputEvent::DeviceRemoved { device } => {
+                        let removed = device.sysname().to_string();
+                        state.libinput_devices.retain(|d| d.sysname() != removed);
+                    }
+                    _ => {}
                 }
                 state.process_input_event(event);
             })?;
@@ -567,6 +579,19 @@ fn flush_pending_renders(state: &mut Lantern, force: bool) {
     }
     for (node, crtc) in targets {
         render_surface(state, node, crtc);
+    }
+}
+
+/// Apply the configured pointer acceleration profile to a libinput device.
+/// Pointer-only — keyboard/touch devices reject this silently.
+pub fn apply_pointer_accel(device: &LibinputDevice, adaptive: bool) {
+    let mut device = device.clone();
+    if device.config_accel_profiles().is_empty() {
+        return;
+    }
+    let profile = if adaptive { AccelProfile::Adaptive } else { AccelProfile::Flat };
+    if let Err(e) = device.config_accel_set_profile(profile) {
+        warn!("Failed to set accel profile on {}: {:?}", device.sysname(), e);
     }
 }
 

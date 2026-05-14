@@ -99,7 +99,6 @@ const SECTION_HEADER_BOTTOM_GAP: f32 = 6.0;
 const SECTION_GAP: f32 = 12.0;
 
 const ROW_HEIGHT: f32 = 56.0;
-const ROW_FONT: f32 = 22.0;
 const ROW_INNER_PAD: f32 = 16.0;
 const ROW_RIGHT_GAP: f32 = 12.0;
 const MAX_PAIRED_ROWS: usize = 4;
@@ -177,11 +176,194 @@ pub enum BtClick {
     PowerToggle,
     DiscoverableToggle,
     ScanToggle,
-    /// Click on a paired-or-discovered device row. Caller decides
-    /// connect-vs-pair based on its `paired` state.
+    /// Click on the **header** row of a device — toggles the expanded
+    /// detail panel.
     DeviceRow(String),
-    /// Click on the small "Send" button on a paired device row.
+    /// Click on the Connect / Disconnect / Pair button inside the
+    /// expanded panel.
+    ConnectButton(String),
+    /// Click on the Send-file button inside the expanded panel. Only
+    /// fires when the device exposes an OBEX push profile.
     SendButton(String),
+}
+
+// ── Expanded-row constants ─────────────────────────────────────────────
+/// Padding inside the expanded panel.
+const EXPAND_PAD_TOP: f32 = 10.0;
+const EXPAND_PAD_BOTTOM: f32 = 14.0;
+const EXPAND_LINE_GAP: f32 = 6.0;
+const EXPAND_LABEL_W_FRAC: f32 = 0.30;
+const EXPAND_BUTTON_TOP_GAP: f32 = 14.0;
+const EXPAND_BUTTON_H: f32 = 44.0;
+const EXPAND_BUTTON_W: f32 = 180.0;
+const EXPAND_BUTTON_GAP: f32 = 12.0;
+
+/// Body font for the expanded view, scaled off the user's Text Size
+/// setting. We use the setting directly so the device-detail rows
+/// honour what the user picked in Settings.
+fn body_font(text_size: f32, scale: f32) -> f32 {
+    (text_size.max(12.0)) * scale
+}
+
+fn label_font(text_size: f32, scale: f32) -> f32 {
+    (text_size.max(12.0)) * 0.82 * scale
+}
+
+/// Visible detail lines for `dev` in the order they're rendered.
+/// Returns `(label, value)` pairs; only lines with a value are included.
+fn detail_lines(dev: &Device) -> Vec<(&'static str, String)> {
+    let mut out: Vec<(&'static str, String)> = Vec::new();
+    out.push(("Address", dev.mac.clone()));
+    if !dev.alias.is_empty() && dev.alias != dev.name {
+        out.push(("Alias", dev.alias.clone()));
+    }
+    if !dev.address_type.is_empty() {
+        out.push(("Type", dev.address_type.clone()));
+    }
+    if !dev.icon.is_empty() {
+        out.push(("Kind", dev.icon.clone()));
+    }
+    if !dev.class.is_empty() {
+        out.push(("Class", dev.class.clone()));
+    }
+    if let Some(pct) = dev.battery_percent {
+        out.push(("Battery", format!("{}%", pct)));
+    }
+    if let Some(r) = dev.rssi {
+        out.push(("Signal", format!("{} dBm", r)));
+    }
+    out.push((
+        "Status",
+        format!(
+            "{}{}{}{}",
+            if dev.paired { "paired" } else { "unpaired" },
+            if dev.connected { " · connected" } else { "" },
+            if dev.trusted { " · trusted" } else { "" },
+            if dev.blocked { " · blocked" } else { "" },
+        ),
+    ));
+    if !dev.uuids.is_empty() {
+        // Cap the profile list so a chatty device doesn't blow the
+        // panel up — the user can still get the gist.
+        let preview: Vec<&String> = dev.uuids.iter().take(8).collect();
+        let mut joined = preview
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        if dev.uuids.len() > 8 {
+            joined.push_str(&format!(" + {} more", dev.uuids.len() - 8));
+        }
+        out.push(("Profiles", joined));
+    }
+    out
+}
+
+/// Height (in physical px) of the expanded detail block for a single
+/// device. Shared by the renderer and the hit-tester so geometry stays
+/// in sync.
+fn expanded_extra_height(dev: &Device, text_size: f32, scale: f32) -> f32 {
+    let lines = detail_lines(dev);
+    let body = body_font(text_size, scale);
+    let gap = EXPAND_LINE_GAP * scale;
+    let detail_h = lines.len() as f32 * (body + gap) - gap.max(0.0);
+    let mut h = EXPAND_PAD_TOP * scale + detail_h.max(0.0);
+    h += EXPAND_BUTTON_TOP_GAP * scale + EXPAND_BUTTON_H * scale;
+    h += EXPAND_PAD_BOTTOM * scale;
+    h
+}
+
+fn header_row_rect(inner_x: f32, inner_w: f32, row_y: f32, scale: f32) -> Rect {
+    Rect::new(inner_x, row_y, inner_w, ROW_HEIGHT * scale)
+}
+
+/// Compute the Connect button rect inside `dev`'s expanded panel.
+fn connect_button_rect(
+    inner_x: f32,
+    _inner_w: f32,
+    expanded_top: f32,
+    dev: &Device,
+    text_size: f32,
+    scale: f32,
+) -> Rect {
+    let extra = expanded_extra_height(dev, text_size, scale);
+    let btn_h = EXPAND_BUTTON_H * scale;
+    let btn_w = EXPAND_BUTTON_W * scale;
+    let btn_y = expanded_top + extra - EXPAND_PAD_BOTTOM * scale - btn_h;
+    Rect::new(inner_x, btn_y, btn_w, btn_h)
+}
+
+/// Compute the Send button rect inside `dev`'s expanded panel. `None`
+/// when the device doesn't expose an OBEX push profile.
+fn send_button_rect_expanded(
+    inner_x: f32,
+    inner_w: f32,
+    expanded_top: f32,
+    dev: &Device,
+    text_size: f32,
+    scale: f32,
+) -> Option<Rect> {
+    if !dev.supports_file_transfer() {
+        return None;
+    }
+    let connect = connect_button_rect(inner_x, inner_w, expanded_top, dev, text_size, scale);
+    let btn_w = EXPAND_BUTTON_W * scale;
+    let gap = EXPAND_BUTTON_GAP * scale;
+    Some(Rect::new(connect.x + connect.w + gap, connect.y, btn_w, connect.h))
+}
+
+/// Walk the device list top-to-bottom, mirroring the renderer's layout,
+/// and invoke `visit` for each device with its header rect, expanded-top
+/// y, and a reference to the device. `visit` returns `true` to stop
+/// iteration early (used by hit-testing).
+fn walk_devices(
+    bt: &Bluetooth,
+    panel: Rect,
+    panel_top_y: f32,
+    text_size: f32,
+    scale: f32,
+    mut visit: impl FnMut(&Device, Rect, f32) -> bool,
+) {
+    let pad = crate::controls::ROW_HORIZONTAL_PAD * scale;
+    let inner_x = panel.x + pad;
+    let inner_w = panel.w - pad * 2.0;
+    let row_h = ROW_HEIGHT * scale;
+    let section_header_h = SECTION_HEADER_FONT * scale + SECTION_HEADER_BOTTOM_GAP * scale;
+    let section_gap = SECTION_GAP * scale;
+
+    let mut cy = list_top_y(panel_top_y, scale);
+
+    let paired = bt.paired_devices();
+    if !paired.is_empty() {
+        cy += section_header_h;
+        for dev in paired.iter().take(MAX_PAIRED_ROWS) {
+            let header = header_row_rect(inner_x, inner_w, cy, scale);
+            let expanded_top = cy + row_h;
+            if visit(dev, header, expanded_top) {
+                return;
+            }
+            cy += row_h;
+            if bt.expanded_mac.as_deref() == Some(dev.mac.as_str()) {
+                cy += expanded_extra_height(dev, text_size, scale);
+            }
+        }
+        cy += section_gap;
+    }
+    let unpaired = bt.unpaired_devices();
+    if !unpaired.is_empty() {
+        cy += section_header_h;
+        for dev in unpaired.iter().take(MAX_UNPAIRED_ROWS) {
+            let header = header_row_rect(inner_x, inner_w, cy, scale);
+            let expanded_top = cy + row_h;
+            if visit(dev, header, expanded_top) {
+                return;
+            }
+            cy += row_h;
+            if bt.expanded_mac.as_deref() == Some(dev.mac.as_str()) {
+                cy += expanded_extra_height(dev, text_size, scale);
+            }
+        }
+    }
 }
 
 /// Hit-test all interactive regions in the BT view.
@@ -190,6 +372,7 @@ pub fn hit_test(
     panel: Rect,
     panel_top_y: f32,
     scale: f32,
+    text_size: f32,
     x: f32,
     y: f32,
 ) -> Option<BtClick> {
@@ -210,186 +393,36 @@ pub fn hit_test(
             return Some(BtClick::ScanToggle);
         }
     }
-    // Send button (paired rows only) — checked before the row action
-    // zone so the click doesn't fall through to Connect/Disconnect.
-    // Also gated on no in-flight transfer for the row, matching the
-    // draw-side logic.
-    for dev in bt.paired_devices().iter().take(MAX_PAIRED_ROWS) {
-        if bt.send_state.contains_key(&dev.mac) {
-            continue;
-        }
-        if let Some(rect) = paired_row_send_rect(bt, panel, panel_top_y, scale, &dev.mac) {
-            if inside(rect) {
-                return Some(BtClick::SendButton(dev.mac.clone()));
-            }
-        }
-    }
-    if let Some(mac) = hit_test_device(bt, panel, panel_top_y, scale, x, y) {
-        return Some(BtClick::DeviceRow(mac));
-    }
-    None
-}
 
-/// Width (logical px) of the right-side action zone in each device
-/// row. Click here = connect / disconnect / pair. Click elsewhere on
-/// the row = nothing. Sized generously so the user doesn't have to be
-/// pixel-precise on the small badge text.
-pub const ROW_ACTION_ZONE_WIDTH: f32 = 200.0;
-
-/// Send-button geometry on a paired device row.
-const SEND_BTN_W: f32 = 76.0;
-const SEND_BTN_H: f32 = 36.0;
-/// Distance (logical px) from the row's right edge to the Send button's
-/// right edge. Smaller = Send button further right.
-const SEND_BTN_RIGHT_OFFSET: f32 = 120.0;
-
-/// Compute the Send-button rect for a row whose top-left is `(inner_x, row_y)`
-/// and whose width is `inner_w`. Anchored from the right edge so the
-/// position stays fixed regardless of badge text width.
-fn send_button_rect(inner_x: f32, inner_w: f32, row_y: f32, scale: f32) -> Rect {
-    let row_h = ROW_HEIGHT * scale;
-    let btn_w = SEND_BTN_W * scale;
-    let btn_h = SEND_BTN_H * scale;
-    let right_edge = inner_x + inner_w - SEND_BTN_RIGHT_OFFSET * scale;
-    let btn_x = right_edge - btn_w;
-    let btn_y = row_y + (row_h - btn_h) / 2.0;
-    Rect::new(btn_x, btn_y, btn_w, btn_h)
-}
-
-/// Walk paired rows and return the rect of the Send button for the row
-/// matching `mac`, if any.
-fn paired_row_send_rect(
-    bt: &Bluetooth,
-    panel: Rect,
-    panel_top_y: f32,
-    scale: f32,
-    mac: &str,
-) -> Option<Rect> {
-    let pad = crate::controls::ROW_HORIZONTAL_PAD * scale;
-    let inner_x = panel.x + pad;
-    let inner_w = panel.w - pad * 2.0;
-    let row_h = ROW_HEIGHT * scale;
-    let section_header_h = SECTION_HEADER_FONT * scale + SECTION_HEADER_BOTTOM_GAP * scale;
-
-    let mut cy = list_top_y(panel_top_y, scale);
-    let paired = bt.paired_devices();
-    if paired.is_empty() {
-        return None;
-    }
-    cy += section_header_h;
-    for dev in paired.iter().take(MAX_PAIRED_ROWS) {
-        if dev.mac == mac {
-            return Some(send_button_rect(inner_x, inner_w, cy, scale));
-        }
-        cy += row_h;
-    }
-    None
-}
-
-/// Hit-test the device list, restricted to the **action zone** on the
-/// right side of each row. Click on the device name area is a no-op so
-/// the user can right-click for "Send file" without accidentally
-/// flipping the connection.
-pub fn hit_test_device(
-    bt: &Bluetooth,
-    panel: Rect,
-    panel_top_y: f32,
-    scale: f32,
-    x: f32,
-    y: f32,
-) -> Option<String> {
     let pad = crate::controls::ROW_HORIZONTAL_PAD * scale;
     let inner_x = panel.x + pad;
     let inner_w = panel.w - pad * 2.0;
     if x < inner_x || x > inner_x + inner_w {
         return None;
     }
-    // Restrict click target to the right-side action zone.
-    let action_w = ROW_ACTION_ZONE_WIDTH * scale;
-    let action_left = inner_x + inner_w - action_w;
-    if x < action_left {
-        return None;
-    }
 
-    let row_h = ROW_HEIGHT * scale;
-    let section_header_h = SECTION_HEADER_FONT * scale + SECTION_HEADER_BOTTOM_GAP * scale;
-    let section_gap = SECTION_GAP * scale;
-
-    let mut cy = list_top_y(panel_top_y, scale);
-
-    // Paired section.
-    let paired = bt.paired_devices();
-    if !paired.is_empty() {
-        cy += section_header_h;
-        for dev in paired.iter().take(MAX_PAIRED_ROWS) {
-            if y >= cy && y <= cy + row_h {
-                return Some(dev.mac.clone());
-            }
-            cy += row_h;
+    let mut hit: Option<BtClick> = None;
+    walk_devices(bt, panel, panel_top_y, text_size, scale, |dev, header, expanded_top| {
+        if inside(header) {
+            hit = Some(BtClick::DeviceRow(dev.mac.clone()));
+            return true;
         }
-        cy += section_gap;
-    }
-
-    // Available section (unpaired, only meaningful while scanning).
-    let unpaired = bt.unpaired_devices();
-    if !unpaired.is_empty() {
-        cy += section_header_h;
-        for dev in unpaired.iter().take(MAX_UNPAIRED_ROWS) {
-            if y >= cy && y <= cy + row_h {
-                return Some(dev.mac.clone());
+        if bt.expanded_mac.as_deref() == Some(dev.mac.as_str()) {
+            let connect = connect_button_rect(inner_x, inner_w, expanded_top, dev, text_size, scale);
+            if inside(connect) {
+                hit = Some(BtClick::ConnectButton(dev.mac.clone()));
+                return true;
             }
-            cy += row_h;
-        }
-    }
-    None
-}
-
-/// Hit-test the **whole row** (left side too). Used for actions that
-/// should land anywhere on the row. Kept for future gestures (e.g. a
-/// long-press / context menu); the current Send-button UI doesn't need
-/// it.
-#[allow(dead_code)]
-pub fn hit_test_device_row_anywhere(
-    bt: &Bluetooth,
-    panel: Rect,
-    panel_top_y: f32,
-    scale: f32,
-    x: f32,
-    y: f32,
-) -> Option<String> {
-    let pad = crate::controls::ROW_HORIZONTAL_PAD * scale;
-    let inner_x = panel.x + pad;
-    let inner_w = panel.w - pad * 2.0;
-    if x < inner_x || x > inner_x + inner_w {
-        return None;
-    }
-    let row_h = ROW_HEIGHT * scale;
-    let section_header_h = SECTION_HEADER_FONT * scale + SECTION_HEADER_BOTTOM_GAP * scale;
-    let section_gap = SECTION_GAP * scale;
-
-    let mut cy = list_top_y(panel_top_y, scale);
-    let paired = bt.paired_devices();
-    if !paired.is_empty() {
-        cy += section_header_h;
-        for dev in paired.iter().take(MAX_PAIRED_ROWS) {
-            if y >= cy && y <= cy + row_h {
-                return Some(dev.mac.clone());
+            if let Some(send) = send_button_rect_expanded(inner_x, inner_w, expanded_top, dev, text_size, scale) {
+                if inside(send) {
+                    hit = Some(BtClick::SendButton(dev.mac.clone()));
+                    return true;
+                }
             }
-            cy += row_h;
         }
-        cy += section_gap;
-    }
-    let unpaired = bt.unpaired_devices();
-    if !unpaired.is_empty() {
-        cy += section_header_h;
-        for dev in unpaired.iter().take(MAX_UNPAIRED_ROWS) {
-            if y >= cy && y <= cy + row_h {
-                return Some(dev.mac.clone());
-            }
-            cy += row_h;
-        }
-    }
-    None
+        false
+    });
+    hit
 }
 
 pub fn draw_view(
@@ -400,6 +433,7 @@ pub fn draw_view(
     panel_top_y: f32,
     scale: f32,
     alpha: f32,
+    text_size: f32,
     surface_w: u32,
     surface_h: u32,
 ) -> f32 {
@@ -408,7 +442,9 @@ pub fn draw_view(
     let inner_w = panel.w - pad * 2.0;
 
     let header_font = VIEW_HEADER_FONT * scale;
-    let row_font = ROW_FONT * scale;
+    // Body rows respect the user's Text Size setting; header stays at
+    // its own constant so the "Bluetooth" title doesn't grow huge.
+    let row_font = body_font(text_size, scale);
 
     let white = Color::from_rgb8(0xff, 0xff, 0xff);
     let muted = white.with_alpha(0.55 * alpha);
@@ -455,7 +491,7 @@ pub fn draw_view(
     if !paired.is_empty() {
         cy = draw_section(
             painter, text, bt, "Paired", &paired, MAX_PAIRED_ROWS,
-            inner_x, inner_w, cy, scale, alpha, surface_w, surface_h,
+            inner_x, inner_w, cy, scale, alpha, text_size, surface_w, surface_h,
         );
         cy += SECTION_GAP * scale;
     }
@@ -464,7 +500,7 @@ pub fn draw_view(
         let header = if bt.is_scanning() { "Available" } else { "Recently seen" };
         cy = draw_section(
             painter, text, bt, header, &unpaired, MAX_UNPAIRED_ROWS,
-            inner_x, inner_w, cy, scale, alpha, surface_w, surface_h,
+            inner_x, inner_w, cy, scale, alpha, text_size, surface_w, surface_h,
         );
     } else if paired.is_empty() && bt.is_scanning() {
         text.queue(
@@ -591,6 +627,7 @@ fn draw_toggles_row(
 
 /// Draw one device-list section ("Paired" or "Available"). Returns the
 /// y-coordinate where the section ends.
+#[allow(clippy::too_many_arguments)]
 fn draw_section(
     painter: &mut Painter,
     text: &mut TextRenderer,
@@ -603,13 +640,14 @@ fn draw_section(
     start_y: f32,
     scale: f32,
     alpha: f32,
+    text_size: f32,
     surface_w: u32,
     surface_h: u32,
 ) -> f32 {
     let header_font = SECTION_HEADER_FONT * scale;
     let header_gap = SECTION_HEADER_BOTTOM_GAP * scale;
     let row_h = ROW_HEIGHT * scale;
-    let row_font = ROW_FONT * scale;
+    let row_font = body_font(text_size, scale);
     let row_pad = ROW_INNER_PAD * scale;
     let right_gap = ROW_RIGHT_GAP * scale;
 
@@ -632,14 +670,27 @@ fn draw_section(
     let mut cy = start_y + header_font + header_gap;
 
     for (i, dev) in devices.iter().take(max_rows).enumerate() {
+        let is_expanded = bt.expanded_mac.as_deref() == Some(dev.mac.as_str());
+        let is_hovered = bt.hovered_mac.as_deref() == Some(dev.mac.as_str());
         let row_rect = Rect::new(inner_x, cy, inner_w, row_h);
 
-        // Subtle alternating-row stripe; connected rows use the same
-        // muted bg so only the gold "Connected" badge marks state.
-        if i % 2 == 0 {
+        if is_expanded {
+            // Container plate behind the header + expanded body —
+            // darker grey to match the Wi-Fi pattern.
+            let total_h = row_h + expanded_extra_height(dev, text_size, scale);
+            painter.rect_filled(
+                Rect::new(inner_x, cy, inner_w, total_h),
+                10.0 * scale,
+                Color::rgba(0.0, 0.0, 0.0, 0.35 * alpha),
+            );
+        } else if i % 2 == 0 {
             painter.rect_filled(row_rect, 8.0 * scale, white.with_alpha(0.04 * alpha));
         }
+        if is_hovered && !is_expanded {
+            painter.rect_filled(row_rect, 8.0 * scale, white.with_alpha(0.10 * alpha));
+        }
 
+        // ── Header row: device name + status badge ──
         let name_y = cy + (row_h - row_font) / 2.0;
         let name_color = if dev.connected { white.with_alpha(alpha) } else { white.with_alpha(0.88 * alpha) };
         let display_name = if dev.name.is_empty() { dev.mac.as_str() } else { dev.name.as_str() };
@@ -654,8 +705,6 @@ fn draw_section(
             surface_h,
         );
 
-        // Status badge on the right. If an outgoing transfer is in
-        // flight or recently finished/failed, show its state instead.
         let send_state = bt.send_state.get(&dev.mac);
         let in_flight = Some(dev.mac.as_str()) == bt.pending();
         let badge_text: String = if let Some(s) = send_state {
@@ -685,9 +734,9 @@ fn draw_section(
         } else if dev.connected {
             "Connected".into()
         } else if dev.paired {
-            "Connect".into()
+            "Paired".into()
         } else {
-            "Pair".into()
+            "Available".into()
         };
         let badge_font = row_font * 0.85;
         let badge_w = text.measure_width(&badge_text, badge_font);
@@ -718,33 +767,107 @@ fn draw_section(
             surface_h,
         );
 
-        // Send button (paired rows only, hidden while any send-state
-        // entry exists for this device — its filename / progress badge
-        // takes the visual slot).
-        if dev.paired && send_state.is_none() {
-            let btn = send_button_rect(inner_x, inner_w, cy, scale);
-            painter.rect_filled(btn, btn.h * 0.5, white.with_alpha(0.10 * alpha));
-            let label = "Send";
-            let label_font = row_font * 0.78;
-            let label_w = text.measure_width(label, label_font);
-            let lx = btn.x + (btn.w - label_w) / 2.0;
-            let ly = btn.y + (btn.h - label_font) / 2.0;
-            text.queue(
-                label,
-                label_font,
-                lx,
-                ly,
-                gold.with_alpha(0.95 * alpha),
-                label_w,
-                surface_w,
-                surface_h,
+        cy += row_h;
+
+        if is_expanded {
+            cy += draw_expanded(
+                painter, text, dev, bt, inner_x, inner_w, cy, scale, alpha,
+                text_size, surface_w, surface_h,
             );
         }
-
-        cy += row_h;
     }
 
     cy
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_expanded(
+    painter: &mut Painter,
+    text: &mut TextRenderer,
+    dev: &Device,
+    bt: &Bluetooth,
+    inner_x: f32,
+    inner_w: f32,
+    top_y: f32,
+    scale: f32,
+    alpha: f32,
+    text_size: f32,
+    surface_w: u32,
+    surface_h: u32,
+) -> f32 {
+    let white = Color::from_rgb8(0xff, 0xff, 0xff);
+    let muted = white.with_alpha(0.55 * alpha);
+    let gold = Color::from_rgb8(0xc8, 0x86, 0x0a);
+    let body = body_font(text_size, scale);
+    let lbl_font = label_font(text_size, scale);
+    let pad_l = ROW_INNER_PAD * scale;
+    let pad_t = EXPAND_PAD_TOP * scale;
+    let gap = EXPAND_LINE_GAP * scale;
+    let label_w = inner_w * EXPAND_LABEL_W_FRAC;
+
+    let mut cy = top_y + pad_t;
+    for (label, value) in detail_lines(dev) {
+        text.queue(
+            label, lbl_font, inner_x + pad_l, cy + (body - lbl_font) / 2.0,
+            muted, label_w - pad_l, surface_w, surface_h,
+        );
+        let value_x = inner_x + pad_l + label_w;
+        text.queue(
+            &value, body, value_x, cy, white.with_alpha(0.92 * alpha),
+            inner_w - (label_w + pad_l + ROW_RIGHT_GAP * scale),
+            surface_w, surface_h,
+        );
+        cy += body + gap;
+    }
+
+    // ── Action buttons ──
+    let expanded_top = top_y;
+    let connect = connect_button_rect(inner_x, inner_w, expanded_top, dev, text_size, scale);
+    let connect_label = if !dev.paired {
+        "Pair"
+    } else if dev.connected {
+        "Disconnect"
+    } else {
+        "Connect"
+    };
+    draw_pill_button(painter, text, connect, connect_label, body, gold, alpha, scale, surface_w, surface_h);
+
+    if let Some(send) = send_button_rect_expanded(inner_x, inner_w, expanded_top, dev, text_size, scale) {
+        let label = if bt.send_state.contains_key(&dev.mac) {
+            "Sending…"
+        } else {
+            "Send file"
+        };
+        draw_pill_button(painter, text, send, label, body, gold, alpha, scale, surface_w, surface_h);
+    }
+
+    expanded_extra_height(dev, text_size, scale)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_pill_button(
+    painter: &mut Painter,
+    text: &mut TextRenderer,
+    rect: Rect,
+    label: &str,
+    font: f32,
+    accent: Color,
+    alpha: f32,
+    scale: f32,
+    surface_w: u32,
+    surface_h: u32,
+) {
+    let radius = rect.h * 0.5;
+    let bg = Color::rgba(1.0, 1.0, 1.0, 0.10 * alpha);
+    painter.rect_filled(rect, radius, bg);
+    painter.rect_stroke_sdf(rect, radius, 1.5 * scale, accent.with_alpha(0.55 * alpha));
+    let lw = text.measure_width(label, font);
+    let lx = rect.x + (rect.w - lw) / 2.0;
+    let ly = rect.y + (rect.h - font) / 2.0;
+    text.queue(
+        label, font, lx, ly, accent.with_alpha(0.95 * alpha),
+        lw, surface_w, surface_h,
+    );
 }
 
 /// Truncate a filename or error message to fit visual width.

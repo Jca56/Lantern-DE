@@ -17,21 +17,15 @@ use crate::toplevel::ToplevelInfo;
 pub const OPEN_TILE_W: f32 = 256.0;
 pub const OPEN_TILE_H: f32 = 144.0;
 /// Deprecated — kept as 0 so existing math falls through cleanly. The
-/// close button is now rendered by the compositor over the thumbnail
-/// so no strip needs to be carved out of the thumbnail rect.
-pub const OPEN_TILE_TOOLBAR_H: f32 = 0.0;
 pub const OPEN_TILE_GAP_X: f32 = 36.0;
 pub const OPEN_TILE_GAP_Y: f32 = 36.0;
 pub const OPEN_LABEL_FONT: f32 = 18.0;
 pub const OPEN_LABEL_GAP: f32 = 10.0;
 pub const OPEN_SECTION_TOP_MARGIN: f32 = 24.0;
-pub const OPEN_HEADING_GAP: f32 = 12.0;
 pub const OPEN_TILE_RADIUS: f32 = 12.0;
 pub const OPEN_DIVIDER_GAP_BELOW: f32 = 18.0;
 pub const OPEN_DIVIDER_THICKNESS: f32 = 1.0;
 
-const HEADING_FONT: f32 = 14.0;
-const HEADING_ALPHA: f32 = 0.55;
 const LABEL_ALPHA: f32 = 0.85;
 const ACCENT_RGB: (u8, u8, u8) = (0xc8, 0x86, 0x0a);
 const DIVIDER_ALPHA: f32 = 0.10;
@@ -181,9 +175,9 @@ const BADGE_INSET: f32 = 6.0;
 pub fn draw(
     painter: &mut Painter,
     text_r: &mut TextRenderer,
-    icons: &mut Vec<IconRequest>,
+    _icons: &mut Vec<IconRequest>,
     toplevels: &[ToplevelInfo],
-    apps: &AppsProvider,
+    _apps: &AppsProvider,
     selected: Option<usize>,
     panel: Rect,
     top_y: f32,
@@ -340,19 +334,6 @@ fn draw_close_button(painter: &mut Painter, tile: Rect, scale: f32, alpha: f32) 
     let xcol = text(0.92 * alpha);
     painter.line_round(cx - arm, cy - arm, cx + arm, cy + arm, stroke, xcol);
     painter.line_round(cx - arm, cy + arm, cx + arm, cy - arm, stroke, xcol);
-}
-
-fn lookup_icon_name(apps: &AppsProvider, app_id: &str) -> String {
-    for i in 0..apps.count() {
-        if let Some(e) = apps.get(i) {
-            if e.app_id.eq_ignore_ascii_case(app_id) {
-                if let Some(n) = e.icon_name.as_ref() {
-                    return n.clone();
-                }
-            }
-        }
-    }
-    app_id.to_string()
 }
 
 fn truncate_label(s: &str, max: usize) -> String {

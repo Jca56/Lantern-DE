@@ -9,15 +9,15 @@ use crate::controls::tile::TileLayout;
 use crate::render::IconRequest;
 
 /// Logical width reserved for the sysmon tile in the controls row.
-pub const TILE_WIDTH: f32 = 150.0;
+pub const TILE_WIDTH: f32 = 180.0;
 
 /// Logical width of one sparkline column (the other half mirrors).
-const SPARK_W: f32 = 66.0;
+const SPARK_W: f32 = 80.0;
 /// Vertical fraction of the row that a sparkline occupies.
 const SPARK_H_FRAC: f32 = 0.62;
-const SPARK_GAP: f32 = 6.0;
+const SPARK_GAP: f32 = 8.0;
 
-const LABEL_FONT: f32 = 14.0;
+const LABEL_FONT: f32 = 16.0;
 const LABEL_GAP: f32 = 2.0;
 
 const CPU_COLOR_RGB: (u8, u8, u8) = (0xff, 0x9a, 0x3c); // warm orange
@@ -81,14 +81,19 @@ pub fn draw_inline(
     let label_y = spark_top - label_font - label_gap;
     let white = Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(alpha * 0.85);
 
+    // Left-align each label to its sparkline's left edge so they line
+    // up vertically with the mini monitor below them. Pass a padded
+    // max_width to the text engine: handing it exactly the measured
+    // width occasionally wraps the trailing "%" to a second line when
+    // the glyph metrics sit right on the boundary.
     let cpu_w = text.measure_width(&cpu_label, label_font);
     text.queue(
         &cpu_label,
         label_font,
-        start_x + (spark_w - cpu_w) / 2.0,
+        start_x,
         label_y.max(layout.y),
         white,
-        cpu_w,
+        cpu_w + 8.0 * scale,
         surface_w,
         surface_h,
     );
@@ -97,10 +102,10 @@ pub fn draw_inline(
     text.queue(
         &mem_label,
         label_font,
-        mem_x + (spark_w - mem_w) / 2.0,
+        mem_x,
         label_y.max(layout.y),
         white,
-        mem_w,
+        mem_w + 8.0 * scale,
         surface_w,
         surface_h,
     );

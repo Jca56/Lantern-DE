@@ -131,8 +131,8 @@ pub fn run() -> Result<()> {
     let wm_base = state.wm_base.clone()
         .ok_or_else(|| anyhow!("xdg_wm_base not available"))?;
 
-    if state.width == 0 { state.width = 960; }
-    if state.height == 0 { state.height = 700; }
+    if state.width == 0 { state.width = 1500; }
+    if state.height == 0 { state.height = 1000; }
 
     let surface = compositor.create_surface(&qh, ());
     let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
@@ -294,10 +294,7 @@ pub fn run() -> Result<()> {
             };
 
             // Let focused text inputs consume the key first
-            let consumed = display_panel::handle_display_key(
-                &mut config, &mut display_state, sym, utf8.clone(),
-            );
-            let consumed = consumed || icon_panel_state.handle_key(sym, utf8);
+            let consumed = icon_panel_state.handle_key(sym, utf8);
             if !consumed && key == KEY_ESC {
                 state.running = false;
             }
@@ -653,7 +650,6 @@ pub fn run() -> Result<()> {
                 );
             }
             Panel::Display => {
-                display_state.sync_from_config(&config);
                 let panel_h = hf - panel_y;
                 display_panel::draw_display_panel(
                     &mut config, &mut display_state,

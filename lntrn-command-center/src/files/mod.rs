@@ -279,18 +279,6 @@ impl FilesState {
         self.refresh();
     }
 
-    pub fn go_up(&mut self) {
-        if let Some(parent) = self.cwd.parent() {
-            let parent = parent.to_path_buf();
-            self.history.push(self.cwd.clone());
-            self.cwd = parent;
-            self.scroll = 0.0;
-            self.filter.clear();
-            self.filter_active = false;
-            self.refresh();
-        }
-    }
-
     pub fn go_back(&mut self) {
         if let Some(prev) = self.history.pop() {
             self.cwd = prev;

@@ -3,6 +3,36 @@ use std::time::Instant;
 use crate::fs::{self, FileEntry, SortBy, SortDir};
 use crate::{PickConfig, PickResult, PickType};
 
+/// Read `[input].double_click_to_open` from ~/.lantern/config/lantern.toml.
+/// Defaults to false (single-click opens) on any error or missing key.
+fn read_double_click_to_open() -> bool {
+    let home = match std::env::var("HOME") {
+        Ok(h) => h,
+        Err(_) => return false,
+    };
+    let path = format!("{}/.lantern/config/lantern.toml", home);
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let mut in_input = false;
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_input = trimmed == "[input]";
+            continue;
+        }
+        if in_input {
+            if let Some((k, v)) = trimmed.split_once('=') {
+                if k.trim() == "double_click_to_open" {
+                    return v.trim().trim_matches('"') == "true";
+                }
+            }
+        }
+    }
+    false
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ViewMode {
     Grid,
@@ -41,6 +71,10 @@ pub enum ContextTarget {
     Item(usize),
     /// Right-clicked on a search result (index into search_results)
     SearchItem(usize),
+    /// Right-clicked on a path that doesn't live in `app.entries` — used for
+    /// nested tree rows (inside expanded subfolders) where we only have the
+    /// absolute path, not an `entries` index.
+    Path(PathBuf),
     /// Right-clicked on empty content area
     Empty,
     /// Right-clicked on a sidebar drive entry (index into app.drives)
@@ -122,6 +156,21 @@ pub struct App {
     // Tree view state
     pub tree_expanded: std::collections::HashSet<PathBuf>,
     pub tree_entries: Vec<TreeEntry>,
+    /// Optional fixed root for `rebuild_tree`. When `Some`, the tree is built
+    /// from this path instead of `current_dir`. Used by pick mode so the user
+    /// can change `current_dir` by clicking folders without re-rooting the tree.
+    pub tree_root: Option<PathBuf>,
+    /// Pick-mode tree selection. Tree rows may include files inside expanded
+    /// subfolders that don't live in `entries`, so they can't be tracked via
+    /// `entries[].selected`. This set is the source of truth for pick mode.
+    pub pick_tree_selection: std::collections::HashSet<PathBuf>,
+    /// Most recently clicked tree row path — used for tree double-click
+    /// (path comparison, since indices into `entries` don't reach nested rows).
+    pub last_click_path: Option<PathBuf>,
+    /// Set when a tree pick-mode click selects a row; tells the loop to skip
+    /// starting a rubber-band on this press (it would clear the selection).
+    /// Cleared on left release.
+    pub suppress_rubber_band: bool,
 
     places: Vec<Place>,
     pub drives: Vec<fs::Drive>,
@@ -133,6 +182,11 @@ pub struct App {
 
     // Context menu
     pub context_target: Option<ContextTarget>,
+    /// When non-empty, overrides `selected_paths()` for the next CTX action.
+    /// Used when right-clicking a tree row that's not in `app.entries` (nested),
+    /// so cut/copy/trash/etc. operate on the clicked path instead of the empty
+    /// entries-based selection.
+    pub context_override_paths: Vec<PathBuf>,
     pub clipboard: Option<ClipboardOp>,
 
     // Drive dialog overlay (Format confirm / Properties)
@@ -149,6 +203,11 @@ pub struct App {
     // Double-click tracking
     pub last_click_time: Option<Instant>,
     pub last_click_idx: Option<usize>,
+
+    /// If true, files and folders require a double-click to open/navigate.
+    /// If false (default), a single click is enough. Read once at startup
+    /// from lantern.toml — toggle in System Settings → Mouse → Clicking.
+    pub double_click_to_open: bool,
 
     /// Anchor for Shift+Click range select — the last entry the user
     /// clicked or range-extended from.
@@ -254,6 +313,7 @@ impl App {
             rubber_band_start: None,
             rubber_band_end: None,
             context_target: None,
+            context_override_paths: Vec::new(),
             clipboard: None,
             drive_dialog: None,
             pending_open: None,
@@ -262,6 +322,7 @@ impl App {
             press_ctrl: false,
             last_click_time: None,
             last_click_idx: None,
+            double_click_to_open: read_double_click_to_open(),
             selection_anchor: None,
             drag_item: None,
             drag_pos: None,
@@ -275,6 +336,10 @@ impl App {
             path_selection: None,
             tree_expanded: std::collections::HashSet::new(),
             tree_entries: Vec::new(),
+            tree_root: None,
+            pick_tree_selection: std::collections::HashSet::new(),
+            last_click_path: None,
+            suppress_rubber_band: false,
             pick: None,
             pick_result: None,
             save_name_buf: String::new(),
@@ -387,6 +452,8 @@ impl App {
         tab.scroll_offset = 0.0;
         self.current_dir = path;
         self.scroll_offset = 0.0;
+        self.pick_tree_selection.clear();
+        self.last_click_path = None;
         self.reload();
     }
 
@@ -594,33 +661,46 @@ impl App {
         let is_pick = self.pick.is_some();
         let multi = self.pick.as_ref().map_or(false, |p| p.multiple);
 
-        // Navigate into directories (always, except when single-clicking a dir
-        // in a mode that allows selecting dirs — then single-click selects).
-        if is_dir && !(allow_dir_select && !is_double) {
-            let path = self.entries[index].path.clone();
-            self.navigate_to(path);
-            return;
-        }
-        // Dir-select single click: toggle selection of the directory
-        if allow_dir_select && is_dir && !is_double {
+        // "Activate" means navigate (for dirs) or open (for files). When
+        // double_click_to_open is true a double-click is required; otherwise
+        // a single click is enough. Modifier-held clicks are always selection
+        // operations, regardless of the setting.
+        let mod_select = self.press_shift || self.press_ctrl;
+        let wants_activate = !mod_select
+            && (is_double || !self.double_click_to_open);
+
+        // Directory branch
+        if is_dir {
+            // Dir-pick modes use clicks for selection, double-click to confirm.
+            // Don't navigate in those modes unless a real double-click happened.
+            if allow_dir_select && !is_double {
+                if !multi { for e in &mut self.entries { e.selected = false; } }
+                self.entries[index].selected = !self.entries[index].selected;
+                return;
+            }
+            if wants_activate {
+                let path = self.entries[index].path.clone();
+                self.navigate_to(path);
+                return;
+            }
+            // Single-click on a dir in double-click mode (non-pick) → select.
             if !multi { for e in &mut self.entries { e.selected = false; } }
             self.entries[index].selected = !self.entries[index].selected;
             return;
         }
-        // File handling
-        if !is_dir {
-            if is_double && is_pick {
-                for e in &mut self.entries { e.selected = false; }
-                self.entries[index].selected = true;
-                self.confirm_pick();
-            } else if is_double && !is_pick {
-                for e in &mut self.entries { e.selected = false; }
-                self.entries[index].selected = true;
-                self.open_selected();
-            } else {
-                if !multi { for e in &mut self.entries { e.selected = false; } }
-                self.entries[index].selected = !self.entries[index].selected;
-            }
+
+        // File branch — pick mode confirms on double-click only.
+        if is_double && is_pick {
+            for e in &mut self.entries { e.selected = false; }
+            self.entries[index].selected = true;
+            self.confirm_pick();
+        } else if wants_activate && !is_pick {
+            for e in &mut self.entries { e.selected = false; }
+            self.entries[index].selected = true;
+            self.open_selected();
+        } else {
+            if !multi { for e in &mut self.entries { e.selected = false; } }
+            self.entries[index].selected = !self.entries[index].selected;
         }
     }
 
@@ -628,47 +708,64 @@ impl App {
 
     pub fn confirm_pick(&mut self) {
         let Some(ref pick) = self.pick else { return };
+        // Gather both entries[].selected (List/Grid + top-level Tree rows)
+        // and pick_tree_selection (nested Tree rows). Dedup by path.
+        let mut paths: Vec<PathBuf> = Vec::new();
+        let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+        let push = |p: PathBuf, paths: &mut Vec<PathBuf>, seen: &mut std::collections::HashSet<PathBuf>| {
+            if seen.insert(p.clone()) { paths.push(p); }
+        };
         match pick.mode {
             PickType::Save => {
                 if !self.save_name_buf.is_empty() {
                     let path = self.current_dir.join(&self.save_name_buf);
                     self.pick_result = Some(PickResult::Selected(vec![path]));
                 }
+                self.pick_tree_selection.clear();
+                return;
             }
             PickType::Directory => {
-                let selected: Vec<PathBuf> = self.entries.iter()
-                    .filter(|e| e.selected && e.is_dir)
-                    .map(|e| e.path.clone())
-                    .collect();
-                if selected.is_empty() {
+                for e in self.entries.iter().filter(|e| e.selected && e.is_dir) {
+                    push(e.path.clone(), &mut paths, &mut seen);
+                }
+                for p in &self.pick_tree_selection {
+                    if p.is_dir() { push(p.clone(), &mut paths, &mut seen); }
+                }
+                if paths.is_empty() {
                     // No dir selected — use current directory
                     self.pick_result = Some(PickResult::Selected(vec![self.current_dir.clone()]));
                 } else {
-                    self.pick_result = Some(PickResult::Selected(selected));
+                    self.pick_result = Some(PickResult::Selected(paths));
                 }
             }
             PickType::Open => {
-                let selected: Vec<PathBuf> = self.entries.iter()
-                    .filter(|e| e.selected && !e.is_dir)
-                    .map(|e| e.path.clone())
-                    .collect();
-                if !selected.is_empty() {
-                    self.pick_result = Some(PickResult::Selected(selected));
+                for e in self.entries.iter().filter(|e| e.selected && !e.is_dir) {
+                    push(e.path.clone(), &mut paths, &mut seen);
+                }
+                for p in &self.pick_tree_selection {
+                    if !p.is_dir() { push(p.clone(), &mut paths, &mut seen); }
+                }
+                if !paths.is_empty() {
+                    self.pick_result = Some(PickResult::Selected(paths));
                 }
             }
             PickType::Mixed => {
-                let selected: Vec<PathBuf> = self.entries.iter()
-                    .filter(|e| e.selected)
-                    .map(|e| e.path.clone())
-                    .collect();
-                if !selected.is_empty() {
-                    self.pick_result = Some(PickResult::Selected(selected));
+                for e in self.entries.iter().filter(|e| e.selected) {
+                    push(e.path.clone(), &mut paths, &mut seen);
+                }
+                for p in &self.pick_tree_selection {
+                    push(p.clone(), &mut paths, &mut seen);
+                }
+                if !paths.is_empty() {
+                    self.pick_result = Some(PickResult::Selected(paths));
                 }
             }
         }
+        self.pick_tree_selection.clear();
     }
 
     pub fn cancel_pick(&mut self) {
+        self.pick_tree_selection.clear();
         self.pick_result = Some(PickResult::Cancelled);
     }
 
@@ -676,6 +773,28 @@ impl App {
         let Some(ref mut pick) = self.pick else { return };
         if pick.filters.is_empty() { return; }
         pick.active_filter = (pick.active_filter + 1) % pick.filters.len();
+
+        // In save mode, swap the filename's extension to match the new
+        // filter so the saved file ends up in the format the user picked.
+        // Preserves whatever basename they typed.
+        if pick.mode == PickType::Save {
+            if let Some(new_ext) = first_filter_ext_of(pick) {
+                let current = std::mem::take(&mut self.save_name_buf);
+                let p = std::path::Path::new(&current);
+                let stem = p
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| current.clone());
+                self.save_name_buf = if stem.is_empty() {
+                    format!("Untitled.{new_ext}")
+                } else {
+                    format!("{stem}.{new_ext}")
+                };
+                self.save_name_cursor = self.save_name_buf.len();
+                self.save_name_selection = None;
+            }
+        }
+
         self.reload();
     }
 
@@ -709,6 +828,9 @@ impl App {
     }
 
     pub fn selected_paths(&self) -> Vec<PathBuf> {
+        if !self.context_override_paths.is_empty() {
+            return self.context_override_paths.clone();
+        }
         self.entries.iter().filter(|e| e.selected).map(|e| e.path.clone()).collect()
     }
 
@@ -854,7 +976,8 @@ impl App {
 
     pub fn rebuild_tree(&mut self) {
         self.tree_entries.clear();
-        self.build_tree_recursive(&self.current_dir.clone(), 0);
+        let root = self.tree_root.clone().unwrap_or_else(|| self.current_dir.clone());
+        self.build_tree_recursive(&root, 0);
     }
 
     fn build_tree_recursive(&mut self, dir: &PathBuf, depth: usize) {
@@ -1064,6 +1187,22 @@ pub fn dirs_home() -> PathBuf {
     std::env::var("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("/"))
+}
+
+/// Pull the first concrete file extension out of the active filter's
+/// patterns (e.g. ["*.jpg", "*.jpeg"] → "jpg"). Returns None for
+/// wildcard-only filters where no specific extension applies.
+fn first_filter_ext_of(pick: &PickConfig) -> Option<String> {
+    let filter = pick.filters.get(pick.active_filter).or_else(|| pick.filters.first())?;
+    for pat in &filter.patterns {
+        if pat == "*" || pat == "*.*" { continue; }
+        if let Some(ext) = pat.strip_prefix("*.") {
+            if !ext.is_empty() && !ext.contains('*') {
+                return Some(ext.to_string());
+            }
+        }
+    }
+    None
 }
 
 fn matches_filter(name: &str, patterns: &[String]) -> bool {

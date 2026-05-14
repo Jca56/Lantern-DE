@@ -579,7 +579,11 @@ impl Lantern {
             tracing::warn!("maximize_surface: no output geometry");
             return false;
         };
-        tracing::info!("maximize_surface: configuring to {:?}", output_geo);
+        let geo = window.geometry();
+        tracing::info!(
+            "maximize_surface: location={:?} geometry={:?} restore={:?} target={:?}",
+            location, geo, restore, output_geo
+        );
 
         self.maximized_windows.push(MaximizedWindow {
             surface: surface.clone(),
@@ -590,7 +594,9 @@ impl Lantern {
         // Capture pre-maximize rect for animation start; if a previous rect
         // anim is already running for this surface, redirect from its current
         // interpolated rect instead.
-        let anim_start = self.window_state_anim.current_rect(surface).unwrap_or(restore);
+        let existing_anim = self.window_state_anim.current_rect(surface);
+        let anim_start = existing_anim.unwrap_or(restore);
+        tracing::info!("maximize_surface: existing_anim={:?} anim_start={:?}", existing_anim, anim_start);
 
         window.set_maximized(true);
         window.configure_rect(output_geo);
@@ -616,8 +622,14 @@ impl Lantern {
 
         // Animation start = current visible rect (handles redirect mid-maximize).
         let current_loc = self.space.element_location(&window).unwrap_or(restore.loc);
-        let current_rect = Rectangle::new(current_loc, window.geometry().size);
-        let anim_start = self.window_state_anim.current_rect(surface).unwrap_or(current_rect);
+        let geo = window.geometry();
+        let current_rect = Rectangle::new(current_loc, geo.size);
+        let existing_anim = self.window_state_anim.current_rect(surface);
+        let anim_start = existing_anim.unwrap_or(current_rect);
+        tracing::info!(
+            "unmaximize_surface: current_loc={:?} geometry={:?} current_rect={:?} restore={:?} existing_anim={:?} anim_start={:?}",
+            current_loc, geo, current_rect, restore, existing_anim, anim_start
+        );
 
         window.set_maximized(false);
         window.configure_rect(restore);

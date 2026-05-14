@@ -477,7 +477,10 @@ pub(crate) fn run_loop(
                                     if let Some(seat) = &state.seat {
                                         toplevel._move(seat, state.pointer_serial);
                                     }
-                                } else if app.pending_open.is_none() && app.preview_drag.is_none() {
+                                } else if app.pending_open.is_none()
+                                    && app.preview_drag.is_none()
+                                    && !app.suppress_rubber_band
+                                {
                                     let cr = active_content_rect(app, wf, hf, s);
                                     if cr.contains(cx, cy) {
                                         app.clear_selection();
@@ -485,7 +488,10 @@ pub(crate) fn run_loop(
                                         app.rubber_band_end = Some((cx, cy));
                                     }
                                 }
-                            } else if app.pending_open.is_none() && app.preview_drag.is_none() {
+                            } else if app.pending_open.is_none()
+                                && app.preview_drag.is_none()
+                                && !app.suppress_rubber_band
+                            {
                                 let cr = active_content_rect(app, wf, hf, s);
                                 if cr.contains(cx, cy) {
                                     app.clear_selection();
@@ -584,6 +590,7 @@ pub(crate) fn run_loop(
                 app.press_shift = false;
                 app.press_ctrl = false;
                 app.press_pos = None;
+                app.suppress_rubber_band = false;
                 tab_drag_press = None;
                 input.on_left_released();
             }

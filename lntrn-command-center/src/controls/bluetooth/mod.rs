@@ -32,12 +32,50 @@ pub use render::{
     BtClick, TILE_WIDTH,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Device {
     pub mac: String,
     pub name: String,
     pub connected: bool,
     pub paired: bool,
+    /// Preferred display name from `bluetoothctl info` (falls back to
+    /// `name` for unpaired devices we haven't probed yet).
+    pub alias: String,
+    /// Icon hint from BlueZ (e.g. "phone", "audio-headphones",
+    /// "input-keyboard", "computer"). Empty when unknown.
+    pub icon: String,
+    /// Class of Device hex string from `Class: 0x...`. Empty when
+    /// unknown.
+    pub class: String,
+    /// Address type — "public" / "random".
+    pub address_type: String,
+    pub trusted: bool,
+    pub bonded: bool,
+    pub blocked: bool,
+    /// Optional battery percentage exposed by the device's HID
+    /// battery service. `None` when unsupported / unreported.
+    pub battery_percent: Option<u8>,
+    /// Optional RSSI from the last advertisement (unpaired/discovered
+    /// devices only).
+    pub rssi: Option<i32>,
+    /// Human-friendly UUID profile names — "A2DP Sink", "Hands-Free",
+    /// "OBEX Object Push", etc.
+    pub uuids: Vec<String>,
+}
+
+impl Device {
+    /// True when the device exposes the OBEX Object Push profile and is
+    /// therefore capable of *receiving* a file from us. Headphones, mice,
+    /// keyboards etc. return false even though they're paired.
+    pub fn supports_file_transfer(&self) -> bool {
+        self.uuids.iter().any(|u| {
+            let u = u.to_ascii_lowercase();
+            u.contains("obex object push")
+                || u.contains("obex file transfer")
+                || u.starts_with("00001105-")
+                || u.starts_with("00001106-")
+        })
+    }
 }
 
 enum BtCmd {
@@ -137,6 +175,12 @@ pub struct Bluetooth {
     pub incoming_request: Option<IncomingRequest>,
     /// Last successfully received file (cleared when a new request arrives).
     pub last_received: Option<IncomingReceived>,
+    /// MAC of the device whose detail row is currently expanded. `None`
+    /// = list collapsed. Mirrors the Wi-Fi pattern.
+    pub expanded_mac: Option<String>,
+    /// MAC of the device the cursor is currently over. Used for a
+    /// subtle hover highlight on rows.
+    pub hovered_mac: Option<String>,
     cmd_tx: mpsc::Sender<BtCmd>,
     event_rx: mpsc::Receiver<BtEvent>,
 }
@@ -228,8 +272,19 @@ impl Bluetooth {
             send_state: std::collections::HashMap::new(),
             incoming_request: None,
             last_received: None,
+            expanded_mac: None,
+            hovered_mac: None,
             cmd_tx,
             event_rx,
+        }
+    }
+
+    /// Toggle the expanded-detail row for a device.
+    pub fn toggle_expanded(&mut self, mac: &str) {
+        if self.expanded_mac.as_deref() == Some(mac) {
+            self.expanded_mac = None;
+        } else {
+            self.expanded_mac = Some(mac.to_string());
         }
     }
 

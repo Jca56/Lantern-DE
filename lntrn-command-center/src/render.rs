@@ -357,13 +357,15 @@ pub fn draw_content(
         state.home_hover,
     );
     // Grow button reflects the state it would toggle: collapsed → bar's
-    // grown flag, expanded → window's grown flag. Keeps the icon honest
-    // about what a click would do.
-    let grown_visual = if state.collapsed {
-        state.bar_grown
+    // size step, expanded → window's size step. Show "shrink" arrows
+    // (inward) only when the next click wraps back to small — i.e. when
+    // already at the largest step.
+    let size_idx = if state.collapsed {
+        state.bar_size_idx
     } else {
-        state.panel_grown
+        state.panel_size_idx
     };
+    let grown_visual = size_idx >= crate::app::GROW_MAX_STEP;
     crate::view_indicator::draw_grow(
         painter,
         panel.rect,
@@ -708,6 +710,7 @@ pub fn draw_content(
                         r,
                         panel.scale_factor,
                         alpha,
+                        state.config.text_size,
                         surface_w,
                         surface_h,
                     );

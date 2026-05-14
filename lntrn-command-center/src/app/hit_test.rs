@@ -4,14 +4,12 @@
 //! module stays close to the 700-line guideline.
 
 use std::process::Command;
-use std::time::Instant;
 
 use crate::app::{
-    AppState, HitTarget, MenuAction, PanelMode, PanelRect, PanelView, Selection, WindowAction,
+    AppState, HitTarget, MenuAction, PanelRect, PanelView, Selection, WindowAction,
     WindowActionKind,
 };
 use crate::launcher::context_menu::{ContextMenu, MenuItem};
-use crate::search::apps::DesktopEntry;
 
 use super::{reap, spawn_detached};
 
@@ -222,6 +220,57 @@ impl AppState {
         ]
     }
 
+    /// Build and show the right-click menu for a dock icon. `app_id` is
+    /// the dock entry's app id; `dock_pinned` reflects whether the icon
+    /// is currently in the pinned section (controls Pin vs Unpin label).
+    pub fn open_dock_context_menu(
+        &mut self,
+        app_id: String,
+        dock_pinned: bool,
+        phys_x: f32,
+        phys_y: f32,
+    ) {
+        // Pick the window the "Close" item targets: prefer the
+        // currently-activated window, fall back to the first.
+        let windows: Vec<&crate::toplevel::ToplevelInfo> =
+            self.toplevels.iter().filter(|t| t.app_id == app_id).collect();
+        let close_title = windows
+            .iter()
+            .find(|w| w.activated)
+            .or_else(|| windows.first())
+            .map(|w| w.title.clone());
+
+        let mut items: Vec<MenuItem> = Vec::with_capacity(4);
+        if let Some(_title) = &close_title {
+            items.push(MenuItem {
+                label: "Close".into(),
+                action: MenuAction::WindowClose,
+            });
+        }
+        items.push(MenuItem {
+            label: "Open New Window".into(),
+            action: MenuAction::DockLaunchNew,
+        });
+        if app_id.eq_ignore_ascii_case("firefox") {
+            items.push(MenuItem {
+                label: "New Private Window".into(),
+                action: MenuAction::FirefoxPrivate,
+            });
+        }
+        items.push(MenuItem {
+            label: if dock_pinned { "Unpin".into() } else { "Pin".into() },
+            action: MenuAction::TogglePin,
+        });
+
+        self.context_menu = Some(ContextMenu {
+            app_id,
+            window_title: close_title.unwrap_or_default(),
+            anchor_x: phys_x,
+            anchor_y: phys_y,
+            items,
+        });
+    }
+
     /// Open the right-click context menu anchored at (`phys_x`, `phys_y`)
     /// for the entry at `target`. No-op if the target doesn't resolve
     /// to an app_id.
@@ -369,6 +418,25 @@ impl AppState {
             MenuAction::FilesSortBySize => self.files.set_sort(crate::files::SortBy::Size),
             MenuAction::FilesSortByDate => self.files.set_sort(crate::files::SortBy::Modified),
             MenuAction::FilesSortByType => self.files.set_sort(crate::files::SortBy::Type),
+            MenuAction::DockLaunchNew => {
+                if let Some(entry) = (0..self.apps.count())
+                    .filter_map(|i| self.apps.get(i))
+                    .find(|e| e.app_id == menu.app_id)
+                {
+                    let exec = entry.exec.clone();
+                    let app_id = entry.app_id.clone();
+                    if let Ok(child) = Command::new("sh").arg("-c").arg(&exec).spawn() {
+                        reap(child);
+                    }
+                    tracing::info!(%app_id, %exec, "dock → open new window");
+                    self.close();
+                }
+            }
+            MenuAction::FirefoxPrivate => {
+                spawn_detached("firefox --private-window");
+                tracing::info!("dock → firefox --private-window");
+                self.close();
+            }
         }
     }
 

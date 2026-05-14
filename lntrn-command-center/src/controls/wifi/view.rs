@@ -46,6 +46,12 @@ const BAND_PILL_GAP: f32 = 8.0;
 const BAND_PILL_FONT: f32 = 18.0;
 const BAND_LABEL_FONT: f32 = 18.0;
 
+/// "VPN: ON/OFF" pill on the right edge of the header row.
+const VPN_LABEL_FONT: f32 = 22.0;
+/// Hit-zone padding around the VPN label so it's comfortable to click.
+const VPN_HIT_PAD_X: f32 = 8.0;
+const VPN_HIT_PAD_Y: f32 = 4.0;
+
 /// Width fraction (of the expanded inner row) for the left column
 /// (details + band pills + Connect button). The right column hosts
 /// the top-BSSID cards.
@@ -344,6 +350,27 @@ pub enum NetworkHit {
     ProfileActivate(String, String), // (ssid, name)
     /// Click on the delete X overlaid on a profile card.
     ProfileDelete(String, String), // (ssid, uuid)
+    /// VPN ON/OFF indicator on the header row.
+    ToggleVpn,
+}
+
+/// Rect for the VPN ON/OFF indicator on the header row. Returns `None`
+/// when the indicator isn't being drawn (Mullvad CLI absent). Anchored
+/// to the right edge of the panel; width is generous so "VPN: OFF" fits
+/// comfortably without measuring text from the hit-test path.
+pub fn vpn_hit_rect(wifi: &Wifi, panel: Rect, panel_top_y: f32, scale: f32) -> Option<Rect> {
+    wifi.vpn_connected?;
+    let pad = crate::controls::ROW_HORIZONTAL_PAD * scale;
+    let header_font = VIEW_HEADER_FONT * scale;
+    let label_font = VPN_LABEL_FONT * scale;
+    let header_y = panel_top_y + VIEW_TOP_PAD * scale;
+    // Approximate width — wide enough for "VPN: OFF" at any plausible
+    // scale plus a comfy hit pad.
+    let w = label_font * 5.5 + VPN_HIT_PAD_X * 2.0 * scale;
+    let h = header_font + VPN_HIT_PAD_Y * 2.0 * scale;
+    let x = panel.x + panel.w - pad - w + VPN_HIT_PAD_X * scale;
+    let y = header_y - VPN_HIT_PAD_Y * scale;
+    Some(Rect::new(x, y, w, h))
 }
 
 /// Hit-test a click against the network list. Walks rows top-to-
@@ -362,6 +389,14 @@ pub fn hit_test_network(
     let inner_w = panel.w - pad * 2.0;
     if x < inner_x || x > inner_x + inner_w {
         return None;
+    }
+
+    // VPN indicator sits above the network list, on the header row, so
+    // check it BEFORE the `y < list_top` early-return below.
+    if let Some(r) = vpn_hit_rect(wifi, panel, panel_top_y, scale) {
+        if x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h {
+            return Some(NetworkHit::ToggleVpn);
+        }
     }
 
     let header_h = ROW_HEIGHT * scale;
@@ -565,6 +600,28 @@ pub fn draw_view(
         surface_h,
     );
 
+    // VPN ON/OFF indicator on the far right of the header row. Only
+    // rendered when the `mullvad` CLI is present; otherwise the slot is
+    // simply empty.
+    if let Some(connected) = wifi.vpn_connected {
+        let vpn_label = if connected { "VPN: ON" } else { "VPN: OFF" };
+        let vpn_color = if connected {
+            Color::from_rgb8(0x4c, 0xd9, 0x64).with_alpha(alpha)
+        } else {
+            Color::from_rgb8(0xff, 0x4d, 0x4d).with_alpha(alpha)
+        };
+        let vpn_font = VPN_LABEL_FONT * scale;
+        let lbl_w = text.measure_width(vpn_label, vpn_font);
+        let lbl_x = panel.x + panel.w - pad - lbl_w;
+        // Vertically center the VPN label against the header text's
+        // visual mid-line (header_y is the text top edge).
+        let lbl_y = header_y + (header_font - vpn_font) / 2.0;
+        text.queue(
+            vpn_label, vpn_font, lbl_x, lbl_y, vpn_color, lbl_w,
+            surface_w, surface_h,
+        );
+    }
+
     // ── Network rows ──
     let list_top = header_y + header_font + header_gap;
     let _ = list_top; // keep symmetry with the layout helper above
@@ -613,10 +670,12 @@ pub fn draw_view(
         // currently-connected row.
         let is_hovered = wifi.hovered_ssid.as_deref() == Some(net.ssid.as_str());
         if is_expanded {
+            // Darker grey plate behind the expanded card so the BSSID
+            // grid + Connect button read clearly against the panel bg.
             painter.rect_filled(
                 container_rect,
                 10.0 * scale,
-                white.with_alpha(0.06 * alpha),
+                Color::rgba(0.0, 0.0, 0.0, 0.35 * alpha),
             );
         } else if i % 2 == 0 {
             painter.rect_filled(
@@ -650,6 +709,10 @@ pub fn draw_view(
         let pct_str = format!("{}%", net.signal);
         let pct_font = row_font * 0.75;
         let pct_w = text.measure_width(&pct_str, pct_font);
+        // Pass a slightly padded max_width so the trailing "%" never
+        // wraps to a second line when the measured width sits right on
+        // the glyph boundary.
+        let pct_box = pct_w + 6.0 * scale;
 
         let pct_x = inner_x + signal_gap;
         text.queue(
@@ -658,13 +721,14 @@ pub fn draw_view(
             pct_x,
             row_y + (row_h - pct_font) / 2.0,
             muted,
-            pct_w,
+            pct_box,
             surface_w,
             surface_h,
         );
 
-        // Signal icon, just to the right of the percent.
-        let icon_x = pct_x + pct_w + signal_gap * 0.6;
+        // Signal icon, just to the right of the percent (use the
+        // padded box width so spacing stays consistent).
+        let icon_x = pct_x + pct_box + signal_gap * 0.6;
         let icon_y = row_y + (row_h - signal_size) / 2.0;
         let bars = signal_to_bars(net.signal);
         draw_signal_icon(painter, icon_x, icon_y, signal_size, signal_size, bars, alpha);

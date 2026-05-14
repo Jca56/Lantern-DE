@@ -1183,15 +1183,29 @@ pub fn render_surface(
         state.wallpaper.reload_if_changed();
     }
 
-    // Periodically reload input config (mouse speed, cursor theme)
+    // Periodically reload input config (mouse speed, cursor theme).
+    // ~0.5s at 60Hz; reads are mtime-cached so this is just a stat() most of
+    // the time — keep snappy so System Settings changes feel instant.
     state.input_config_counter += 1;
-    if state.input_config_counter >= 300 {
+    if state.input_config_counter >= 30 {
         state.input_config_counter = 0;
         state.mouse_speed = crate::input::read_input_setting_f64("mouse_speed", 0.0);
+        state.scroll_speed = crate::input::read_input_setting_f64("scroll_speed", 1.0);
+        let new_accel = crate::input::read_input_setting("pointer_acceleration", "true") == "true";
+        if new_accel != state.pointer_acceleration {
+            state.pointer_acceleration = new_accel;
+            for device in &state.libinput_devices {
+                crate::udev::apply_pointer_accel(device, new_accel);
+            }
+        }
         let new_theme = crate::input::read_input_setting("cursor_theme", "default");
         if new_theme != state.cursor_theme_name {
             state.cursor_theme_name = new_theme.clone();
             state.cursor.set_custom_theme(&new_theme);
+        }
+        let new_size = crate::input::read_input_setting_f64("cursor_size", 24.0).round() as u32;
+        if new_size != state.cursor.cursor_size() {
+            state.cursor.set_cursor_size(new_size);
         }
         state.default_window_opacity = crate::read_config_f32("window_opacity", 1.0);
         state.blur_exclude = crate::read_config_list("windows", "blur_exclude");

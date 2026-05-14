@@ -10,8 +10,9 @@ anyhow = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
 libc = "0.2"
 lntrn-render = { path = "../lntrn-render" }
-lntrn-ui = { path = "../lntrn-ui" }
+raw-window-handle = "0.6"
+wayland-backend = { version = "0.3", features = ["client_system"] }
 wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 wgpu = "28"
-winit = { version = "0.30", default-features = false, features = ["rwh_06", "wayland", "x11"] }

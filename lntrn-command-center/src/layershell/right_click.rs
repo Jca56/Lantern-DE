@@ -21,6 +21,41 @@ pub(super) fn handle_right_click(
     let panel = PanelRect::compute_with_dims(phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical());
     let phys_cx = wl.cursor_x as f32 * scale_f;
     let phys_cy = wl.cursor_y as f32 * scale_f;
+
+    // Mini-dock right-click — the dock floats outside the panel rect
+    // and is visible while collapsed, so it needs to be checked
+    // before falling through to the panel-view dispatch below.
+    if app.collapse_progress() > 0.005
+        && app.panel_view == crate::app::PanelView::Default
+    {
+        let pinned = app.launcher.pinned_entries(&app.apps);
+        let phys_h_f = wl.phys_height().max(1) as f32;
+        let panel_rect =
+            lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+        if let Some(layout) = crate::mini_dock::compute_layout(
+            panel_rect,
+            phys_h_f,
+            scale_f,
+            &pinned,
+            &app.toplevels,
+            &app.apps,
+            Some((phys_cx, phys_cy)),
+        ) {
+            if let Some(idx) = crate::mini_dock::hit_test(&layout, phys_cx, phys_cy) {
+                if let Some(entry) = layout.entries.get(idx).cloned() {
+                    tracing::debug!(
+                        app_id = %entry.app_id, pinned = entry.pinned,
+                        "dock right-click → open menu",
+                    );
+                    app.open_dock_context_menu(
+                        entry.app_id, entry.pinned, phys_cx, phys_cy,
+                    );
+                    return;
+                }
+            }
+        }
+    }
+
     match app.mode {
         crate::app::PanelMode::Launcher
         if app.panel_view == crate::app::PanelView::Default =>

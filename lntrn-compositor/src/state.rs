@@ -344,8 +344,12 @@ pub struct Lantern {
 
     // Input settings (read from lantern.toml)
     pub mouse_speed: f64,
+    pub scroll_speed: f64,
+    pub pointer_acceleration: bool,
     pub cursor_theme_name: String,
     pub input_config_counter: u32,
+    /// Tracked libinput devices, used to re-apply config on live setting changes.
+    pub libinput_devices: Vec<smithay::reexports::input::Device>,
 
     // Hover preview (bar → compositor IPC for window thumbnails)
     pub hover_preview: crate::hover_preview::HoverPreview,
@@ -510,8 +514,11 @@ impl Lantern {
             last_exclusive_offsets: (0, 0, 0, 0),
             ssd: SsdManager::new(),
             mouse_speed: crate::input::read_input_setting_f64("mouse_speed", 0.0),
+            scroll_speed: crate::input::read_input_setting_f64("scroll_speed", 1.0),
+            pointer_acceleration: crate::input::read_input_setting("pointer_acceleration", "true") == "true",
             cursor_theme_name: crate::input::read_input_setting("cursor_theme", "default"),
             input_config_counter: 0,
+            libinput_devices: Vec::new(),
             hover_preview: crate::hover_preview::HoverPreview::new(),
             cc_thumbs: crate::cc_thumbs::CcThumbnails::new(),
             xwayland_state: crate::xwayland::XWaylandState::new(),
@@ -616,7 +623,12 @@ impl Lantern {
                     .map_or(false, |o| o == output)
             });
             let output_geo = self.space.output_geometry(&output).unwrap_or_default();
-            for ls in &self.layer_surfaces {
+            // Iterate Top/Overlay layer surfaces newest-first so the most
+            // recently created surface (e.g. lntrn-screenshot opening while
+            // CC is up) receives pointer events instead of an older surface
+            // on the same layer eating the click. Same-layer stacking order
+            // is implementation-defined per the layer-shell spec.
+            for ls in self.layer_surfaces.iter().rev() {
                 if output_has_fullscreen { break; }
                 if !ls.alive() {
                     continue;

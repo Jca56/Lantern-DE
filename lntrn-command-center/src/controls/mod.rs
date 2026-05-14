@@ -66,7 +66,9 @@ pub enum TileId {
     /// Chevron button that toggles the panel between full and
     /// just-the-row "mini" modes. Special-cased in click handling.
     Collapse,
-    /// "Clear" button (Terminal view header).
+    /// "Clear" button (Terminal view header). Reserved — pattern-matched
+    /// for future wiring but not currently constructed anywhere.
+    #[allow(dead_code)]
     TerminalClear,
 }
 
@@ -344,6 +346,7 @@ pub fn draw_view(
     panel: Rect,
     scale: f32,
     alpha: f32,
+    text_size: f32,
     surface_w: u32,
     surface_h: u32,
 ) {
@@ -362,19 +365,19 @@ pub fn draw_view(
             painter, text, &controls.wifi, panel, top_y, scale, alpha, surface_w, surface_h,
         ),
         TileId::Bluetooth => bluetooth::draw_view(
-            painter, text, &controls.bluetooth, panel, top_y, scale, alpha, surface_w, surface_h,
+            painter, text, &controls.bluetooth, panel, top_y, scale, alpha, text_size, surface_w, surface_h,
         ),
         TileId::Battery => battery::draw_view(
             painter, text, &controls.battery, panel, top_y, scale, alpha, surface_w, surface_h,
         ),
         TileId::SysMon => sysmon::view::draw_view(
-            painter, text, &controls.sysmon, panel, top_y, scale, alpha, surface_w, surface_h,
+            painter, text, &controls.sysmon, panel, top_y, scale, alpha, text_size, surface_w, surface_h,
         ),
         // Temp shares data + view with SysMon — clicking the temp tile
         // opens the same expanded panel so the user gets CPU / mem /
         // net history alongside temperature context.
         TileId::Temp => sysmon::view::draw_view(
-            painter, text, &controls.sysmon, panel, top_y, scale, alpha, surface_w, surface_h,
+            painter, text, &controls.sysmon, panel, top_y, scale, alpha, text_size, surface_w, surface_h,
         ),
         // Tiles that don't open an expanded view — their clicks are
         // intercepted in the input handler before reaching here.

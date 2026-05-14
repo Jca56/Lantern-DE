@@ -30,7 +30,7 @@ pub(super) fn track_hovers(wl: &mut super::WlState, app: &mut crate::app::AppSta
             | Some(crate::controls::wifi::NetworkHit::LockBssid(s, _))
             | Some(crate::controls::wifi::NetworkHit::ProfileActivate(s, _))
             | Some(crate::controls::wifi::NetworkHit::ProfileDelete(s, _)) => Some(s),
-            None => None,
+            Some(crate::controls::wifi::NetworkHit::ToggleVpn) | None => None,
         };
         if app.controls.wifi.hovered_ssid != new_hover {
             app.controls.wifi.hovered_ssid = new_hover;

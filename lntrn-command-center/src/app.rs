@@ -8,10 +8,9 @@ use std::process::Command;
 use std::time::Instant;
 
 use crate::controls::{Controls, TileId};
-use crate::launcher::context_menu::{ContextMenu, MenuAction, MenuItem};
+use crate::launcher::context_menu::{ContextMenu, MenuAction};
 use crate::launcher::Launcher;
-use crate::search::apps::{AppsProvider, DesktopEntry};
-use crate::search::input::KeyEffect;
+use crate::search::apps::AppsProvider;
 use crate::search::Search;
 
 mod anim;
@@ -37,16 +36,29 @@ pub const ANIM_DURATION_SECS: f32 = 0.60;
 /// Duration of the collapse/expand height animation.
 /// Duration of the grow / shrink animation (panel width + height).
 pub const GROW_ANIM_DURATION: f32 = 1.00;
-/// Extra height (logical px) the panel grows by when the user toggles
-/// the grow button. Adds the same fixed amount on top of whatever the
-/// view + mode would normally request.
-pub const GROW_BONUS_LOGICAL: f32 = 360.0;
-/// Duration of the side-to-side view-switch slide.
-/// Default slide duration if no config has loaded yet.
-pub const VIEW_ANIM_DURATION_DEFAULT: f32 = 1.20;
-/// Extra width (logical px) when grown. Pairs with `GROW_BONUS_LOGICAL`
-/// so the grown panel scales nicely on both axes.
-pub const GROW_BONUS_W_LOGICAL: f32 = 240.0;
+/// Bonus height (logical px) added at each grow step. Index 0 = small
+/// (no bonus), index 1 = medium, index 2 = large. Large keeps medium's
+/// height — only the width keeps growing — so the panel doesn't run
+/// past the screen edge at the largest step.
+pub const GROW_H_STEPS: [f32; 3] = [0.0, 360.0, 360.0];
+/// Bonus width (logical px) added at each grow step. Pairs with
+/// [`GROW_H_STEPS`] so the grown panel scales nicely on both axes.
+pub const GROW_W_STEPS: [f32; 3] = [0.0, 240.0, 400.0];
+/// Maximum grow step index (so the cycle wraps small → medium → large
+/// → small).
+pub const GROW_MAX_STEP: u8 = 2;
+
+/// Linearly interpolate between consecutive `steps` entries using
+/// `progress` (0.0..=2.0). Used to map an animating grow progress into
+/// a concrete bonus dimension.
+pub fn lerp_steps(progress: f32, steps: [f32; 3]) -> f32 {
+    let p = progress.clamp(0.0, GROW_MAX_STEP as f32);
+    let i = p.floor() as usize;
+    let f = p - i as f32;
+    let i = i.min(2);
+    let next = (i + 1).min(2);
+    steps[i] + (steps[next] - steps[i]) * f
+}
 /// Scale at the start of the open animation (and end of the close animation).
 pub const ANIM_SCALE_START: f32 = 0.95;
 
@@ -192,24 +204,23 @@ pub struct AppState {
     /// While the user is mid-drag on a settings slider, this points to
     /// which one so motion events route correctly.
     pub settings_drag: Option<crate::settings::SettingKey>,
-    /// Window-state grown flag — when the panel is *expanded*, this
-    /// adds the grow bonus to both width and height. Independent of
-    /// [`bar_grown`] so the user can have e.g. a long bar + short
-    /// window.
-    pub panel_grown: bool,
-    /// Animation state for the window's grow/shrink toggle.
+    /// Window-state grow step (0 = small, 1 = medium, 2 = large) used
+    /// when the panel is *expanded*. Independent of [`bar_size_idx`] so
+    /// the user can have e.g. a long bar + small window.
+    pub panel_size_idx: u8,
+    /// Animation state for the window's grow toggle.
     /// `grow_anim_origin` is the progress at the moment the user
-    /// clicked; `target` is where the animation is heading. The lerp
-    /// gives a smooth 1s ease.
+    /// clicked; `target` is where the animation is heading (one of
+    /// 0.0/1.0/2.0). The lerp gives a smooth ease.
     pub grow_anim_start: Option<std::time::Instant>,
     pub grow_anim_origin: f32,
     pub grow_anim_target: f32,
-    /// Collapsed-bar grown flag — controls whether the bar uses the
-    /// wider footprint when fully collapsed. Independent of
-    /// [`panel_grown`]; toggled by the grow button while collapsed.
-    pub bar_grown: bool,
-    /// Animation state for the bar's grow/shrink toggle. Same shape as
-    /// the window grow anim fields but tracks the bar's width.
+    /// Collapsed-bar grow step (0/1/2) — controls the bar's width when
+    /// fully collapsed. Independent of [`panel_size_idx`]; cycled by the
+    /// grow button while collapsed.
+    pub bar_size_idx: u8,
+    /// Animation state for the bar's grow toggle. Same shape as the
+    /// window grow anim fields but tracks the bar's width.
     pub bar_grow_anim_start: Option<std::time::Instant>,
     pub bar_grow_anim_origin: f32,
     pub bar_grow_anim_target: f32,
@@ -318,11 +329,11 @@ impl AppState {
             settings_open: false,
             config: crate::settings::Config::load(),
             settings_drag: None,
-            panel_grown: false,
+            panel_size_idx: 0,
             grow_anim_start: None,
             grow_anim_origin: 0.0,
             grow_anim_target: 0.0,
-            bar_grown: false,
+            bar_size_idx: 0,
             bar_grow_anim_start: None,
             bar_grow_anim_origin: 0.0,
             bar_grow_anim_target: 0.0,
@@ -372,17 +383,6 @@ impl AppState {
             to: self.panel_view,
             to_offset: dir * (1.0 - p),
         })
-    }
-
-    /// Backwards-compatible helper: returns either the lone displayed
-    /// view (no animation active) or — if mid-slide — the "to" view
-    /// with its current offset. Used by sites that don't need to
-    /// double-render.
-    pub fn body_view_with_offset(&self) -> (PanelView, f32) {
-        match self.view_slide() {
-            Some(s) => (s.to, s.to_offset),
-            None => (self.panel_view, 0.0),
-        }
     }
 
     pub fn view_animating(&self) -> bool {

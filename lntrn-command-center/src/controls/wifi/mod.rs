@@ -196,8 +196,6 @@ pub(crate) enum WifiCmd {
 pub struct Profile {
     pub name: String,
     pub uuid: String,
-    /// SSID this profile points at (decoded from `802-11-wireless.ssid`).
-    pub ssid: String,
     /// `802-11-wireless.bssid` field on the profile, if any.
     pub pinned_bssid: Option<String>,
     /// `802-11-wireless.band` value ("bg", "a", or empty).
@@ -215,6 +213,9 @@ pub(crate) enum WifiEvent {
     Networks(Vec<Network>),
     ConnectOk,
     ConnectFail(String),
+    /// Mullvad VPN tunnel state. `None` = CLI unavailable, hide indicator;
+    /// `Some(true)` = Connected; `Some(false)` = anything else.
+    VpnStatus(Option<bool>),
 }
 
 pub struct Wifi {
@@ -246,6 +247,8 @@ pub struct Wifi {
     /// the layershell wheel handler; clamped to `[0, max_scroll]` in
     /// `draw_view` so resizes / network-list changes can't strand it.
     pub scroll: f32,
+    /// Mullvad VPN status — `None` if the CLI isn't installed.
+    pub vpn_connected: Option<bool>,
 }
 
 /// State for the password-entry modal that overlays the WiFi view.
@@ -298,7 +301,20 @@ impl Wifi {
             hovered_ssid: None,
             expanded_ssid: None,
             scroll: 0.0,
+            vpn_connected: None,
         }
+    }
+
+    /// Toggle Mullvad VPN by shelling out to the `mullvad` CLI.
+    /// Fire-and-forget — the worker's next status poll will pick up the
+    /// new state and update the indicator.
+    pub fn toggle_vpn(&mut self) {
+        let next = !self.vpn_connected.unwrap_or(false);
+        let cmd = if next { "mullvad connect" } else { "mullvad disconnect" };
+        crate::app::spawn_detached(cmd);
+        // Optimistic flip so the label changes immediately; the next
+        // worker tick will confirm or correct it.
+        self.vpn_connected = Some(next);
     }
 
     /// True if a connect attempt to `ssid` is currently in flight.
@@ -374,6 +390,9 @@ impl Wifi {
                         p.connecting = false;
                     }
                     self.connecting_ssid = None;
+                }
+                WifiEvent::VpnStatus(s) => {
+                    self.vpn_connected = s;
                 }
             }
         }

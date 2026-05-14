@@ -5,8 +5,8 @@
 use std::time::Instant;
 
 use crate::app::{
-    ease_out_cubic, AppState, PanelMode, PanelView, ViewSlide,
-    GROW_ANIM_DURATION, GROW_BONUS_LOGICAL, GROW_BONUS_W_LOGICAL, PANEL_H_LOGICAL_PHASE1,
+    ease_out_cubic, lerp_steps, AppState, PanelMode, PanelView,
+    GROW_ANIM_DURATION, GROW_H_STEPS, GROW_MAX_STEP, GROW_W_STEPS, PANEL_H_LOGICAL_PHASE1,
     PANEL_W_LOGICAL,
 };
 
@@ -15,49 +15,44 @@ impl AppState {
         let now = std::time::Instant::now();
         if self.collapsed {
             let current = self.bar_grow_progress();
-            self.bar_grown = !self.bar_grown;
+            self.bar_size_idx = (self.bar_size_idx + 1) % (GROW_MAX_STEP + 1);
             self.bar_grow_anim_origin = current;
-            self.bar_grow_anim_target = if self.bar_grown { 1.0 } else { 0.0 };
+            self.bar_grow_anim_target = self.bar_size_idx as f32;
             self.bar_grow_anim_start = Some(now);
-            tracing::info!(bar_grown = self.bar_grown, current, "bar grow toggled");
+            tracing::info!(bar_size = self.bar_size_idx, current, "bar grow cycled");
         } else {
             let current = self.grow_progress();
-            self.panel_grown = !self.panel_grown;
+            self.panel_size_idx = (self.panel_size_idx + 1) % (GROW_MAX_STEP + 1);
             self.grow_anim_origin = current;
-            self.grow_anim_target = if self.panel_grown { 1.0 } else { 0.0 };
+            self.grow_anim_target = self.panel_size_idx as f32;
             self.grow_anim_start = Some(now);
-            tracing::info!(grown = self.panel_grown, current, "panel grow toggled");
+            tracing::info!(panel_size = self.panel_size_idx, current, "panel grow cycled");
         }
     }
 
-    /// Eased window-grow progress (0 = base size, 1 = fully grown).
-    /// Handles mid-flight reversal — if the user toggles again before
-    /// the previous animation finishes, the new motion starts from the
-    /// current visual value (no snap).
+    /// Eased window-grow progress as a float in `0.0..=2.0` — 0 = small,
+    /// 1 = medium, 2 = large. Handles mid-flight reversal so re-clicking
+    /// during an animation continues smoothly from the current visual.
     pub fn grow_progress(&self) -> f32 {
         if let Some(start) = self.grow_anim_start {
             let t = (start.elapsed().as_secs_f32() / GROW_ANIM_DURATION).clamp(0.0, 1.0);
             let eased = ease_out_cubic(t);
             self.grow_anim_origin + (self.grow_anim_target - self.grow_anim_origin) * eased
-        } else if self.panel_grown {
-            1.0
         } else {
-            0.0
+            self.panel_size_idx as f32
         }
     }
 
     /// Eased bar-grow progress. Same shape as [`grow_progress`] but for
-    /// the collapsed-bar's independent grown state.
+    /// the collapsed-bar's independent size step.
     pub fn bar_grow_progress(&self) -> f32 {
         if let Some(start) = self.bar_grow_anim_start {
             let t = (start.elapsed().as_secs_f32() / GROW_ANIM_DURATION).clamp(0.0, 1.0);
             let eased = ease_out_cubic(t);
             self.bar_grow_anim_origin
                 + (self.bar_grow_anim_target - self.bar_grow_anim_origin) * eased
-        } else if self.bar_grown {
-            1.0
         } else {
-            0.0
+            self.bar_size_idx as f32
         }
     }
 
@@ -66,8 +61,8 @@ impl AppState {
     /// is driven by `bar_grow_progress`; the expanded window's width
     /// uses `grow_progress`.
     fn endpoint_widths_logical(&self) -> (f32, f32) {
-        let bar_w = PANEL_W_LOGICAL + GROW_BONUS_W_LOGICAL * self.bar_grow_progress();
-        let win_w = PANEL_W_LOGICAL + GROW_BONUS_W_LOGICAL * self.grow_progress();
+        let bar_w = PANEL_W_LOGICAL + lerp_steps(self.bar_grow_progress(), GROW_W_STEPS);
+        let win_w = PANEL_W_LOGICAL + lerp_steps(self.grow_progress(), GROW_W_STEPS);
         (bar_w, win_w)
     }
 
@@ -245,7 +240,7 @@ impl AppState {
     /// content. Used both for the static expanded case and as the
     /// "from" value when animating into/out of collapsed.
     fn expanded_panel_h_logical(&self) -> f32 {
-        let bonus = GROW_BONUS_LOGICAL * self.grow_progress();
+        let bonus = lerp_steps(self.grow_progress(), GROW_H_STEPS);
         if matches!(self.mode, PanelMode::Control(crate::controls::TileId::SysMon)) {
             return 880.0 + bonus;
         }

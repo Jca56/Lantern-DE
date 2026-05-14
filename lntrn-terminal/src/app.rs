@@ -458,6 +458,7 @@ impl ApplicationHandler<UserEvent> for App {
         let mut attrs = WindowAttributes::default()
             .with_name("lntrn-terminal", "lntrn-terminal")
             .with_title("Lantern Terminal")
+            .with_inner_size(LogicalSize::new(1500.0, 1000.0))
             .with_min_inner_size(LogicalSize::new(480.0, 320.0))
             .with_decorations(false)
             .with_transparent(true);

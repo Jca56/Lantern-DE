@@ -1,12 +1,13 @@
 //! Top-strip icons above the panel.
 //!
 //! Layout (from left to right, in the margin above the panel):
-//!   LEFT  : [Home] [Grow] [Gear]
+//!   LEFT  : [Gear (Settings)] [Home] [Grow (Size)] [Clock]
 //!   CENTER: view dots
-//!   RIGHT : [Emoji] [Clipboard] [Notes]
+//!   RIGHT : [Usage (Claude)] [Emoji] [Clipboard] [Notes]
 //!
-//! The Claude-usage button floats under the right view arrow — see
-//! `usage_button.rs`, not in this module.
+//! Clock + Usage glyphs themselves are drawn by `clock_toggle.rs` and
+//! `usage_button.rs`; this module owns their rects so all top-strip
+//! buttons line up against the same horizontal baseline.
 
 use lntrn_render::{Color, Painter, Rect};
 
@@ -85,42 +86,51 @@ fn right_slot_at(panel: Rect, scale: f32, right_logical_pad: f32, size: f32) -> 
     Rect::new(x, y, s, s)
 }
 
-/// X offset (logical, from panel left edge) of each left-side slot.
+/// Per-slot logical sizes for the LEFT strip in render order.
+/// 0 = Gear (Settings), 1 = Home, 2 = Grow (Size), 3 = Clock.
+const LEFT_SLOT_SIZES: [f32; 4] = [GEAR_SIZE, BTN_SIZE, BTN_SIZE, BTN_SIZE];
+
+/// X offset (logical, from panel left edge) of slot `idx`'s left edge.
+/// Walks the slot list cumulatively so a smaller gear at the front
+/// doesn't push the later slots off-center.
 fn left_slot_x_logical(idx: usize) -> f32 {
-    // Home (BTN_SIZE) → Grow (BTN_SIZE) → Gear (GEAR_SIZE)
-    match idx {
-        0 => SIDE_PAD,
-        1 => SIDE_PAD + BTN_SIZE + BTN_GAP,
-        // Pad gear by half the size delta so its center lines up with
-        // the other two glyphs visually.
-        _ => SIDE_PAD + BTN_SIZE + BTN_GAP + BTN_SIZE + BTN_GAP + (BTN_SIZE - GEAR_SIZE) / 2.0,
+    let mut x = SIDE_PAD;
+    for i in 0..idx.min(LEFT_SLOT_SIZES.len()) {
+        x += LEFT_SLOT_SIZES[i] + BTN_GAP;
     }
+    x
 }
 
 /// X offset (logical, from panel right edge) of each right-side slot.
-/// idx 0 = rightmost (Notes), then Clipboard, then Emojis.
+/// idx 0 = rightmost (Notes), then Clipboard, Emoji, Usage.
 fn right_slot_pad_logical(idx: usize) -> f32 {
     SIDE_PAD + idx as f32 * (BTN_SIZE + BTN_GAP)
 }
 
-pub fn home_rect(panel: Rect, scale: f32) -> Rect {
-    left_slot_at(panel, scale, left_slot_x_logical(0), BTN_SIZE)
+pub fn gear_rect(panel: Rect, scale: f32) -> Rect {
+    left_slot_at(panel, scale, left_slot_x_logical(0), GEAR_SIZE)
 }
-pub fn grow_rect(panel: Rect, scale: f32) -> Rect {
+pub fn home_rect(panel: Rect, scale: f32) -> Rect {
     left_slot_at(panel, scale, left_slot_x_logical(1), BTN_SIZE)
 }
-pub fn gear_rect(panel: Rect, scale: f32) -> Rect {
-    left_slot_at(panel, scale, left_slot_x_logical(2), GEAR_SIZE)
+pub fn grow_rect(panel: Rect, scale: f32) -> Rect {
+    left_slot_at(panel, scale, left_slot_x_logical(2), BTN_SIZE)
+}
+pub fn clock_rect(panel: Rect, scale: f32) -> Rect {
+    left_slot_at(panel, scale, left_slot_x_logical(3), BTN_SIZE)
 }
 
-pub fn emoji_rect(panel: Rect, scale: f32) -> Rect {
-    right_slot_at(panel, scale, right_slot_pad_logical(2), BTN_SIZE)
+pub fn notes_rect(panel: Rect, scale: f32) -> Rect {
+    right_slot_at(panel, scale, right_slot_pad_logical(0), BTN_SIZE)
 }
 pub fn clipboard_rect(panel: Rect, scale: f32) -> Rect {
     right_slot_at(panel, scale, right_slot_pad_logical(1), BTN_SIZE)
 }
-pub fn notes_rect(panel: Rect, scale: f32) -> Rect {
-    right_slot_at(panel, scale, right_slot_pad_logical(0), BTN_SIZE)
+pub fn emoji_rect(panel: Rect, scale: f32) -> Rect {
+    right_slot_at(panel, scale, right_slot_pad_logical(2), BTN_SIZE)
+}
+pub fn usage_rect(panel: Rect, scale: f32) -> Rect {
+    right_slot_at(panel, scale, right_slot_pad_logical(3), BTN_SIZE)
 }
 
 fn point_in(r: Rect, px: f32, py: f32) -> bool {

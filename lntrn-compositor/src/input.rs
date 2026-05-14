@@ -1150,18 +1150,23 @@ impl Lantern {
             }
             InputEvent::PointerAxis { event, .. } => {
                 let source = event.source();
+                let scroll_mult = self.scroll_speed;
                 let horizontal_amount = event
                     .amount(Axis::Horizontal)
                     .unwrap_or_else(|| {
                         event.amount_v120(Axis::Horizontal).unwrap_or(0.0) * 15.0 / 120.
-                    });
+                    }) * scroll_mult;
                 let vertical_amount = event
                     .amount(Axis::Vertical)
                     .unwrap_or_else(|| {
                         event.amount_v120(Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.
-                    });
-                let horizontal_amount_discrete = event.amount_v120(Axis::Horizontal);
-                let vertical_amount_discrete = event.amount_v120(Axis::Vertical);
+                    }) * scroll_mult;
+                let horizontal_amount_discrete = event
+                    .amount_v120(Axis::Horizontal)
+                    .map(|v| v * scroll_mult);
+                let vertical_amount_discrete = event
+                    .amount_v120(Axis::Vertical)
+                    .map(|v| v * scroll_mult);
 
                 let mut frame = AxisFrame::new(event.time_msec()).source(source);
                 if horizontal_amount != 0.0 {

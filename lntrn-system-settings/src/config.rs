@@ -55,7 +55,6 @@ pub struct AppearanceConfig {
     pub font_family: String,
     pub font_size: f32,
     pub wallpaper: String,
-    pub wallpaper_directory: String,
     /// Visual style of app windows: "fox" or "night_sky"
     #[serde(default = "default_window_style")]
     pub window_style: String,
@@ -65,14 +64,12 @@ fn default_window_style() -> String { "fox".into() }
 
 impl Default for AppearanceConfig {
     fn default() -> Self {
-        let home = std::env::var("HOME").unwrap_or_default();
         Self {
             theme: "fox".into(),
             accent_color: "#C8860A".into(),
             font_family: "sans-serif".into(),
             font_size: 16.0,
             wallpaper: String::new(),
-            wallpaper_directory: format!("{}/Pictures/Wallpapers", home),
             window_style: default_window_style(),
         }
     }
@@ -124,6 +121,7 @@ pub struct WindowsConfig {
     pub blur_tint: f32,
     pub blur_darken: f32,
     pub background_opacity: f32,
+    pub blur_exclude: Vec<String>,
 }
 
 impl Default for WindowsConfig {
@@ -134,6 +132,7 @@ impl Default for WindowsConfig {
             blur_tint: 0.15,
             blur_darken: 0.0,
             background_opacity: 1.0,
+            blur_exclude: Vec::new(),
         }
     }
 }
@@ -148,9 +147,9 @@ pub struct InputConfig {
     pub pointer_acceleration: bool,
     /// Scroll wheel speed multiplier (0.25 – 3.0, default 1.0).
     pub scroll_speed: f32,
-    /// File-manager click behavior: true = activate on single click,
-    /// false = activate on double click.
-    pub single_click_activate: bool,
+    /// File-manager click behavior: true = require double-click to open files
+    /// and folders, false = single-click opens.
+    pub double_click_to_open: bool,
     /// Cursor size in pixels (16 – 64, default 24).
     pub cursor_size: u32,
     pub cursor_theme: String,
@@ -162,7 +161,7 @@ impl Default for InputConfig {
             mouse_speed: 0.0,
             pointer_acceleration: true,
             scroll_speed: 1.0,
-            single_click_activate: false,
+            double_click_to_open: false,
             cursor_size: 24,
             cursor_theme: "default".into(),
         }
@@ -174,16 +173,14 @@ impl Default for InputConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DisplayConfig {
-    pub resolution: String,
-    pub refresh_rate: String,
+    /// Global default scale, used by the compositor when an output has no
+    /// per-monitor `[[monitors]] scale` entry.
     pub scale: f32,
 }
 
 impl Default for DisplayConfig {
     fn default() -> Self {
         Self {
-            resolution: "auto".into(),
-            refresh_rate: "auto".into(),
             scale: 1.0,
         }
     }

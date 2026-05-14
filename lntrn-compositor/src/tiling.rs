@@ -15,6 +15,9 @@ use crate::window_ext::WindowExt;
 
 pub const DEFAULT_GAP: i32 = 8;
 pub const DEFAULT_OUTER_GAP: i32 = 8;
+/// Larger outer gap used when the active tiling tree has exactly one window,
+/// so a solo tiled window doesn't sit flush against the screen edges.
+pub const SINGLE_WINDOW_OUTER_GAP: i32 = 40;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SplitDirection {
@@ -556,7 +559,16 @@ impl Lantern {
         area.loc.y += top_excl;
         area.size.w -= left_excl + right_excl;
         area.size.h -= top_excl + bottom_excl;
-        let gap = self.workspaces.outer_gap;
+        let single_window = self
+            .workspaces
+            .active_tiling_tree(&output.name())
+            .map(|t| t.leaf_count() == 1)
+            .unwrap_or(false);
+        let gap = if single_window {
+            SINGLE_WINDOW_OUTER_GAP
+        } else {
+            self.workspaces.outer_gap
+        };
         area.loc.x += gap;
         area.loc.y += gap;
         area.size.w -= gap * 2;

@@ -325,7 +325,14 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, WlSurface, Lantern> for Lantern {
             }
             zwlr_foreign_toplevel_handle_v1::Request::Close => {
                 tracing::info!("Foreign toplevel: close requested");
-                if let Some(window) = state.find_mapped_window(surface) {
+                let window = state.find_mapped_window(surface).or_else(|| {
+                    state
+                        .minimized_windows
+                        .iter()
+                        .find(|m| m.surface == *surface)
+                        .map(|m| m.window.clone())
+                });
+                if let Some(window) = window {
                     crate::window_ext::WindowExt::request_close(&window);
                 }
             }

@@ -85,6 +85,7 @@ impl Input {
 
     // ── Selection API ──────────────────────────────────────────────────────
 
+    #[allow(dead_code)]
     pub fn has_selection(&self) -> bool {
         self.selection_range().is_some()
     }
@@ -124,6 +125,7 @@ impl Input {
         self.touch();
     }
 
+    #[allow(dead_code)]
     pub fn place_cursor(&mut self, byte: usize) {
         let byte = clamp_boundary(&self.buf, byte);
         self.cursor = byte;

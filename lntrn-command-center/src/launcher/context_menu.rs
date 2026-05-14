@@ -38,6 +38,12 @@ pub enum MenuAction {
     FilesSortBySize,
     FilesSortByDate,
     FilesSortByType,
+    /// Dock: launch a new instance of the app in `ContextMenu.app_id`,
+    /// regardless of whether it already has windows open.
+    DockLaunchNew,
+    /// Dock: open Firefox in a private window. Only added to the menu
+    /// when the right-clicked app is Firefox.
+    FirefoxPrivate,
 }
 
 #[derive(Debug, Clone)]

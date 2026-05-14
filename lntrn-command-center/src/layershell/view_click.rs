@@ -228,6 +228,7 @@ pub(super) fn handle_control_view_click(
                 panel,
                 view_top_y,
                 scale,
+                app.config.text_size,
                 phys_x,
                 phys_y,
             ) {
@@ -238,6 +239,9 @@ pub(super) fn handle_control_view_click(
                     }
                     BtClick::ScanToggle => app.controls.bluetooth.toggle_scan(),
                     BtClick::DeviceRow(mac) => {
+                        app.controls.bluetooth.toggle_expanded(&mac);
+                    }
+                    BtClick::ConnectButton(mac) => {
                         let is_paired = app
                             .controls
                             .bluetooth
@@ -311,6 +315,9 @@ pub(super) fn handle_control_view_click(
                     crate::controls::wifi::NetworkHit::ProfileDelete(_, uuid) => {
                         app.controls.wifi.delete_profile(&uuid);
                     }
+                    crate::controls::wifi::NetworkHit::ToggleVpn => {
+                        app.controls.wifi.toggle_vpn();
+                    }
                     crate::controls::wifi::NetworkHit::ConnectButton(ssid) => {
                         let net = app.controls.wifi.networks()
                             .iter()
@@ -346,6 +353,7 @@ pub(super) fn handle_control_view_click(
                 panel,
                 view_top_y,
                 scale,
+                app.config.text_size,
                 phys_x,
                 phys_y,
             ) {

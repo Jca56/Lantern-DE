@@ -18,22 +18,16 @@ use std::os::unix::net::UnixListener;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
-use lntrn_render::{Color, GpuContext, Painter, SurfaceError, TextRenderer, TextureDraw, TexturePass};
+use lntrn_render::{GpuContext, Painter, TextRenderer, TexturePass};
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
     RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle, WindowHandle,
 };
 use wayland_client::{
-    protocol::{
-        wl_callback, wl_compositor, wl_keyboard, wl_output, wl_pointer, wl_region, wl_registry,
-        wl_seat, wl_surface,
-    },
-    Connection, Dispatch, EventQueue, Proxy, QueueHandle,
+    protocol::{wl_compositor, wl_seat},
+    Connection, EventQueue, Proxy,
 };
-use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
-use wayland_protocols_wlr::foreign_toplevel::v1::client::{
-    zwlr_foreign_toplevel_handle_v1, zwlr_foreign_toplevel_manager_v1,
-};
+use wayland_protocols::wp::viewporter::client::wp_viewporter;
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
 use crate::toplevel::ToplevelTracker;

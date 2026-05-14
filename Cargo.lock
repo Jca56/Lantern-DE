@@ -2809,7 +2809,6 @@ dependencies = [
  "anyhow",
  "libc",
  "lntrn-render",
- "lntrn-ui",
  "nix",
  "raw-window-handle",
  "tokio",
@@ -2878,11 +2877,12 @@ dependencies = [
  "image",
  "libc",
  "lntrn-render",
- "lntrn-ui",
+ "raw-window-handle",
+ "wayland-backend",
  "wayland-client",
+ "wayland-protocols",
  "wayland-protocols-wlr",
  "wgpu",
- "winit",
 ]
 
 [[package]]

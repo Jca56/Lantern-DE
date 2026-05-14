@@ -6,7 +6,7 @@ use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
 use crate::controls::sysmon::{ProcessRow, SysMon};
 
-use super::view::{queue_left, queue_right, ROW_FONT};
+use super::view::{queue_left, queue_right};
 
 pub const PROC_HEADER_FONT: f32 = 17.0;
 pub const PROC_ROW_HEIGHT: f32 = 42.0;
@@ -47,19 +47,23 @@ pub struct ProcessListLayout {
 /// Compute the section's layout without drawing. Used by `draw` and
 /// `hit_test_view` so the hit geometry never drifts from what the
 /// renderer paints.
-pub fn layout(sysmon: &SysMon, rect: Rect, scale: f32) -> ProcessListLayout {
+pub fn layout(sysmon: &SysMon, rect: Rect, scale: f32, text_size: f32) -> ProcessListLayout {
     let strip_h = FILTER_STRIP_H * scale;
     let strip_gap = FILTER_STRIP_GAP * scale;
     let header_font = PROC_HEADER_FONT * scale;
-    let row_h = PROC_ROW_HEIGHT * scale;
+    // Row height grows with the configured Text Size so larger fonts
+    // don't run rows into each other vertically.
+    let row_h = (PROC_ROW_HEIGHT.max(text_size + 20.0)) * scale;
 
     let pad_r = 8.0 * scale;
     let kill_w = (PROC_ROW_HEIGHT - 12.0) * scale;
-    let cpu_col_w = 90.0 * scale;
-    let mem_col_w = 110.0 * scale;
+    // Tight CPU/MEM columns + small inter-column gaps so the process
+    // name has as much room as possible to spell itself out.
+    let cpu_col_w = 70.0 * scale;
+    let mem_col_w = 88.0 * scale;
     let kill_x = rect.x + rect.w - kill_w - pad_r;
-    let mem_x = kill_x - 16.0 * scale - mem_col_w;
-    let cpu_x = mem_x - 16.0 * scale - cpu_col_w;
+    let mem_x = kill_x - 12.0 * scale - mem_col_w;
+    let cpu_x = mem_x - 12.0 * scale - cpu_col_w;
 
     let filter_rect = Rect::new(rect.x, rect.y, rect.w, strip_h);
     let clear_btn = if !sysmon.filter.query().is_empty() {
@@ -126,12 +130,16 @@ pub fn draw(
     rect: Rect,
     scale: f32,
     alpha: f32,
+    text_size: f32,
     surface_w: u32,
     surface_h: u32,
 ) -> ProcessListLayout {
-    let lay = layout(sysmon, rect, scale);
+    let lay = layout(sysmon, rect, scale, text_size);
     let header_font = PROC_HEADER_FONT * scale;
-    let row_font = ROW_FONT * scale;
+    // Row font respects the user's Text Size config — defaults to
+    // their settings value, falling back to ROW_FONT if it's missing
+    // or absurdly small.
+    let row_font = text_size.max(12.0) * scale;
     let header_color = Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(alpha * 0.55);
     let row_color = Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(alpha * 0.95);
     let cpu_col_w = lay.cpu_header_rect.w;
@@ -369,9 +377,17 @@ fn draw_row(
     surface_h: u32,
 ) {
     let baseline = y + (h - font) / 2.0;
-    let max_name_w = cpu_x - x - 8.0 * scale;
-    let name = super::view::truncate_to_width(text, &p.comm, font, max_name_w);
-    queue_left(text, &name, font, x, baseline, row_color, surface_w, surface_h);
+    // No truncation — push a clip rect spanning the full name cell so
+    // long names just visually clip at the CPU column instead of being
+    // shortened with an ellipsis (the empty space to the right was
+    // a usability gripe). The clip is popped after the queue so the
+    // numeric columns aren't affected.
+    let name_clip_w = (cpu_x - x - 4.0 * scale).max(0.0);
+    let name_clip = Rect::new(x, y, name_clip_w, h);
+    text.push_clip([name_clip.x, name_clip.y, name_clip.w, name_clip.h]);
+    let full_w = text.measure_width(&p.comm, font);
+    text.queue(&p.comm, font, x, baseline, row_color, full_w + 8.0 * scale, surface_w, surface_h);
+    text.pop_clip();
 
     let cpu_str = format!("{:.1}%", p.cpu_load * 100.0);
     queue_right(text, &cpu_str, font, cpu_x + cpu_w, baseline, row_color, surface_w, surface_h);
@@ -379,29 +395,27 @@ fn draw_row(
     let mem_str = super::proc::format_bytes(p.rss_bytes);
     queue_right(text, &mem_str, font, mem_x + mem_w, baseline, row_color, surface_w, surface_h);
 
-    let btn_y = y + (h - kill_w) / 2.0;
-    let btn_rect = Rect::new(kill_x, btn_y, kill_w, kill_w);
-    let body = if selected {
-        Color::rgba(1.0, 0.30, 0.36, 0.95 * alpha)
-    } else {
-        Color::rgba(0.55, 0.58, 0.65, 0.55 * alpha)
-    };
-    painter.rect_filled(btn_rect, kill_w * 0.25, body);
+    // Kill button only appears on the highlighted (selected) row so
+    // the list reads clean while idle.
     if selected {
+        let btn_y = y + (h - kill_w) / 2.0;
+        let btn_rect = Rect::new(kill_x, btn_y, kill_w, kill_w);
+        let body = Color::rgba(1.0, 0.30, 0.36, 0.95 * alpha);
+        painter.rect_filled(btn_rect, kill_w * 0.25, body);
         let ring = Color::rgba(1.0, 1.0, 1.0, 0.65 * alpha);
         painter.rect_stroke(btn_rect, kill_w * 0.25, 1.5 * scale, ring);
+        let icon_pad = kill_w * 0.30;
+        let line_w = (kill_w * 0.14).max(1.8 * scale);
+        let white = Color::rgba(1.0, 1.0, 1.0, alpha);
+        painter.line(
+            kill_x + icon_pad, btn_y + icon_pad,
+            kill_x + kill_w - icon_pad, btn_y + kill_w - icon_pad,
+            line_w, white,
+        );
+        painter.line(
+            kill_x + kill_w - icon_pad, btn_y + icon_pad,
+            kill_x + icon_pad, btn_y + kill_w - icon_pad,
+            line_w, white,
+        );
     }
-    let icon_pad = kill_w * 0.30;
-    let line_w = (kill_w * 0.14).max(1.8 * scale);
-    let white = Color::rgba(1.0, 1.0, 1.0, alpha);
-    painter.line(
-        kill_x + icon_pad, btn_y + icon_pad,
-        kill_x + kill_w - icon_pad, btn_y + kill_w - icon_pad,
-        line_w, white,
-    );
-    painter.line(
-        kill_x + kill_w - icon_pad, btn_y + icon_pad,
-        kill_x + icon_pad, btn_y + kill_w - icon_pad,
-        line_w, white,
-    );
 }

@@ -24,6 +24,7 @@ const SCAN_INTERVAL: Duration = Duration::from_secs(8);
 pub(super) fn run(tx: mpsc::Sender<WifiEvent>, cmd_rx: mpsc::Receiver<WifiCmd>) {
     // Prime the UI with whatever we can read right away.
     let _ = tx.send(WifiEvent::Status(poll_status()));
+    let _ = tx.send(WifiEvent::VpnStatus(poll_vpn_status()));
     let _ = tx.send(WifiEvent::Networks(scan_networks()));
 
     let mut last_status = Instant::now();
@@ -169,8 +170,10 @@ pub(super) fn run(tx: mpsc::Sender<WifiEvent>, cmd_rx: mpsc::Receiver<WifiCmd>) 
         }
 
         // Quick status poll → toolbar icon stays fresh every second.
+        // Mullvad VPN status is cheap (~10ms IPC) so we piggyback it here.
         if last_status.elapsed() >= STATUS_INTERVAL {
             let _ = tx.send(WifiEvent::Status(poll_status()));
+            let _ = tx.send(WifiEvent::VpnStatus(poll_vpn_status()));
             last_status = Instant::now();
         }
         // Full scan → expanded network list. Slow (radio rescan), so
@@ -219,6 +222,22 @@ fn poll_status() -> WifiState {
     }
     let signal = signal_for_ssid(&ssid);
     WifiState::Connected { ssid, signal }
+}
+
+/// Check Mullvad VPN connection state. Returns `None` if the `mullvad`
+/// CLI isn't installed or the daemon isn't responding (so the indicator
+/// can hide cleanly). `Some(true)` = Connected, `Some(false)` = anything
+/// else (Disconnected, Connecting, Blocked).
+fn poll_vpn_status() -> Option<bool> {
+    let out = Command::new("mullvad").arg("status").output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // First non-empty line is the tunnel state — typically "Connected",
+    // "Disconnected", or "Connecting…".
+    let first = stdout.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+    Some(first.trim().starts_with("Connected"))
 }
 
 fn signal_for_ssid(ssid: &str) -> u32 {
@@ -464,7 +483,6 @@ fn fetch_profiles_by_ssid() -> HashMap<String, Vec<Profile>> {
         let profile = Profile {
             name,
             uuid,
-            ssid: ssid_str.clone(),
             pinned_bssid: pinned_bssid.filter(|s| !s.is_empty()),
             pinned_band: pinned_band.filter(|s| !s.is_empty()),
             timestamp,

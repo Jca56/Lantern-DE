@@ -449,35 +449,42 @@ pub(super) fn handle_clicks(
                 }
             }
         } else if let Some(dock_idx) = dock_pin {
-            // Pinned slot → launch a new instance (original
-            // behavior). Unpinned-running slot → activate that
-            // app's most-recent window. Hover preview is still
-            // available for switching to specific windows.
+            // Click on a dock icon: if the app has open windows,
+            // cycle focus to the next one (after whichever is
+            // currently activated). With no windows, launch a new
+            // instance — but only for pinned slots; running-only
+            // slots vanish when their last window closes so this
+            // branch only fires while at least one window exists.
             let entry = dock_layout
                 .as_ref()
                 .and_then(|l| l.entries.get(dock_idx))
                 .cloned();
             if let Some(entry) = entry {
-                if entry.pinned {
-                    tracing::debug!(pin = dock_idx, "mini-dock click → launch");
+                let windows = crate::mini_dock::windows_for_app(
+                    &app.toplevels, &entry.app_id,
+                );
+                if windows.is_empty() && entry.pinned {
+                    tracing::debug!(pin = dock_idx, "mini-dock click → launch (no windows)");
                     app.activate_at(crate::app::HitTarget::Pin(dock_idx));
-                } else {
-                    let windows = crate::mini_dock::windows_for_app(
-                        &app.toplevels, &entry.app_id,
-                    );
-                    if let Some(target) =
-                        crate::mini_dock::preview_target_window(&windows)
+                } else if !windows.is_empty() {
+                    let target = if let Some(cur) =
+                        windows.iter().position(|w| w.activated)
                     {
-                        tracing::debug!(
-                            app_id = %entry.app_id, "mini-dock click → activate window"
-                        );
-                        app.window_actions.push(crate::app::WindowAction {
-                            app_id: target.app_id.clone(),
-                            title: target.title.clone(),
-                            kind: crate::app::WindowActionKind::Activate,
-                        });
-                        app.close();
-                    }
+                        windows[(cur + 1) % windows.len()]
+                    } else {
+                        windows[0]
+                    };
+                    tracing::debug!(
+                        app_id = %entry.app_id,
+                        total = windows.len(),
+                        "mini-dock click → cycle to next window",
+                    );
+                    app.window_actions.push(crate::app::WindowAction {
+                        app_id: target.app_id.clone(),
+                        title: target.title.clone(),
+                        kind: crate::app::WindowActionKind::Activate,
+                    });
+                    app.close();
                 }
             }
         } else if !panel.contains(phys_cx, phys_cy) {

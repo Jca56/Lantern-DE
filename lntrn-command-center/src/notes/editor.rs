@@ -58,6 +58,7 @@ impl Editor {
 
     // ── Selection API ──────────────────────────────────────────────────────
 
+    #[allow(dead_code)]
     pub fn has_selection(&self) -> bool {
         self.selection_range().is_some()
     }
@@ -84,6 +85,7 @@ impl Editor {
         self.touch();
     }
 
+    #[allow(dead_code)]
     pub fn clear_selection(&mut self) {
         self.anchor = None;
     }
@@ -106,6 +108,7 @@ impl Editor {
 
     /// Move cursor without changing the anchor — used for click-to-place.
     /// If no drag follows, the selection ends up empty.
+    #[allow(dead_code)]
     pub fn place_cursor(&mut self, byte: usize) {
         let byte = clamp_to_char_boundary(&self.buf, byte);
         self.cursor = byte;

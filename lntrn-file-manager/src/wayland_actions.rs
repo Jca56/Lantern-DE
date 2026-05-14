@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::time::Instant;
 
 use lntrn_render::{Color, Rect};
@@ -291,13 +292,25 @@ pub(crate) fn handle_click(
                 if idx < app.tree_entries.len() {
                     let te = &app.tree_entries[idx];
                     if te.entry.is_dir && !ctrl && !shift {
-                        // Plain click on a folder still toggles expansion.
-                        // Ctrl/Shift will treat folders like files (select).
+                        // Plain click on a folder toggles expansion in all modes.
+                        // Ctrl/Shift treats folders like files (select) — useful in
+                        // Mixed/Directory pick types.
                         let path = te.entry.path.clone();
-                        app.toggle_tree_expand(path);
+                        app.toggle_tree_expand(path.clone());
+                        // In pick mode, also point current_dir at this folder so
+                        // the path bar follows the click and Save targets it.
+                        // `tree_root` keeps the tree anchored at the initial pick
+                        // dir, so changing current_dir doesn't re-root the tree.
+                        if app.pick.is_some() {
+                            app.tabs[app.current_tab].path = path.clone();
+                            app.current_dir = path;
+                        }
                     } else {
                         let path = te.entry.path.clone();
                         let entry_idx = app.entries.iter().position(|e| e.path == path);
+                        let is_pick = app.pick.is_some();
+                        let multi = app.pick.as_ref().map_or(false, |p| p.multiple);
+
                         if ctrl || shift {
                             // Mark the press so the rubber-band branch in the
                             // loop doesn't clear our selection.
@@ -306,6 +319,10 @@ pub(crate) fn handle_click(
                             }
                             if let Some(i) = entry_idx {
                                 app.pending_open = Some(i);
+                            } else {
+                                // Nested rows have no entries index — guard the
+                                // rubber-band via a dedicated flag instead.
+                                app.suppress_rubber_band = true;
                             }
                             app.press_shift = shift;
                             app.press_ctrl = ctrl;
@@ -315,39 +332,56 @@ pub(crate) fn handle_click(
                                 app.entries[i].selected = !app.entries[i].selected;
                                 app.selection_anchor = Some(i);
                             }
+                            if is_pick {
+                                if app.pick_tree_selection.contains(&path) {
+                                    app.pick_tree_selection.remove(&path);
+                                } else {
+                                    app.pick_tree_selection.insert(path.clone());
+                                }
+                            }
                         } else if shift {
                             if let Some(i) = entry_idx {
                                 let anchor = app.selection_anchor.unwrap_or(i);
                                 app.select_range(anchor, i);
                                 app.selection_anchor = Some(i);
                             }
+                        } else if is_pick {
+                            // Pick mode single-click: select this row.
+                            // Track via pick_tree_selection so nested rows work.
+                            let now = std::time::Instant::now();
+                            let is_double = app.last_click_path.as_ref().map_or(false, |p| p == &path)
+                                && app.last_click_time.map_or(false, |t| now.duration_since(t).as_millis() < 400);
+                            app.last_click_time = Some(now);
+                            app.last_click_path = Some(path.clone());
+
+                            if !multi {
+                                app.clear_selection();
+                                app.pick_tree_selection.clear();
+                            }
+                            app.pick_tree_selection.insert(path.clone());
+                            if let Some(i) = entry_idx {
+                                app.entries[i].selected = true;
+                                app.selection_anchor = Some(i);
+                            }
+                            app.suppress_rubber_band = true;
+                            if let Some((cx, cy)) = input.cursor() {
+                                app.press_pos = Some((cx, cy));
+                            }
+                            if is_double {
+                                app.confirm_pick();
+                            }
                         } else {
-                            // In pick mode, single-click selects rather than
-                            // launching — otherwise the user can't pick a file
-                            // from the tree. Outside pick mode, click opens
-                            // (use Ctrl+Click to add to selection / drive the
-                            // preview pane).
-                            let select_only = app.pick.is_some();
-                            if select_only {
-                                if let Some(i) = entry_idx {
-                                    app.select_item(i);
-                                    app.selection_anchor = Some(i);
-                                }
-                            } else if te.entry.is_dir {
-                                let path = te.entry.path.clone();
-                                app.toggle_tree_expand(path);
+                            // Non-pick plain click on a file: launch.
+                            let ext = path.extension()
+                                .and_then(|e| e.to_str())
+                                .map(|s| s.to_lowercase())
+                                .unwrap_or_default();
+                            if let Some(app) = desktop::default_app_for_extension(&ext) {
+                                desktop::launch_app(&app.exec, &path);
                             } else {
-                                let ext = path.extension()
-                                    .and_then(|e| e.to_str())
-                                    .map(|s| s.to_lowercase())
-                                    .unwrap_or_default();
-                                if let Some(app) = desktop::default_app_for_extension(&ext) {
-                                    desktop::launch_app(&app.exec, &path);
-                                } else {
-                                    std::thread::spawn(move || {
-                                        let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
-                                    });
-                                }
+                                std::thread::spawn(move || {
+                                    let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
+                                });
                             }
                         }
                     }
@@ -437,6 +471,57 @@ pub(crate) fn handle_click(
     ClickAction::None
 }
 
+/// Build the standard right-click menu for a single file/folder. Shared
+/// between the Item (entries-index) and Path (nested tree row) branches.
+fn build_item_menu(
+    is_dir: bool,
+    is_archive: bool,
+    allow_rename: bool,
+    in_trash: bool,
+    has_clipboard: bool,
+    open_with_apps: &[DesktopApp],
+) -> Vec<MenuItem> {
+    let mut v = vec![MenuItem::action(CTX_OPEN, "Open")];
+    if !is_dir && !open_with_apps.is_empty() {
+        let children: Vec<MenuItem> = open_with_apps.iter().enumerate()
+            .map(|(i, a)| MenuItem::action(CTX_OPEN_WITH_BASE + i as u32, &a.name))
+            .collect();
+        v.push(MenuItem::submenu(CTX_OPEN_WITH, "Open With", children));
+    }
+    v.push(MenuItem::action(CTX_OPEN_AS_ROOT, "Open as Root"));
+    v.push(MenuItem::separator());
+    v.push(MenuItem::action_with(CTX_CUT, "Cut", "Ctrl+X"));
+    v.push(MenuItem::action_with(CTX_COPY, "Copy", "Ctrl+C"));
+    if has_clipboard {
+        v.push(MenuItem::action_with(CTX_PASTE, "Paste", "Ctrl+V"));
+    }
+    v.push(MenuItem::action(CTX_DUPLICATE, "Duplicate"));
+    v.push(MenuItem::separator());
+    v.push(MenuItem::action(CTX_COPY_PATH, "Copy Path"));
+    v.push(MenuItem::action(CTX_COPY_NAME, "Copy Name"));
+    v.push(MenuItem::separator());
+    if is_archive {
+        v.push(MenuItem::action(CTX_EXTRACT, "Extract Here"));
+    }
+    v.push(MenuItem::action(CTX_COMPRESS, "Compress"));
+    v.push(MenuItem::separator());
+    if allow_rename {
+        v.push(MenuItem::action(CTX_RENAME, "Rename"));
+    }
+    if in_trash {
+        v.push(MenuItem::action(crate::CTX_RESTORE, "Restore"));
+        v.push(MenuItem::action_danger(CTX_TRASH, "Delete Permanently"));
+    } else {
+        v.push(MenuItem::action_danger(CTX_TRASH, "Move to Trash"));
+    }
+    v.push(MenuItem::separator());
+    if is_dir {
+        v.push(MenuItem::action(CTX_CHANGE_ICON, "Change Icon"));
+    }
+    v.push(MenuItem::action(CTX_PROPERTIES, "Properties"));
+    v
+}
+
 pub(crate) fn handle_right_click(
     app: &mut App,
     context_menu: &mut ContextMenu,
@@ -524,87 +609,101 @@ pub(crate) fn handle_right_click(
         return;
     }
 
-    let zoom = app.icon_zoom;
-    let cols = grid_columns(cr.w, s, zoom);
-    let base_y = cr.y - app.scroll_offset;
+    // Clear any leftover override from a previous right-click — every press
+    // starts from a clean slate (selection-based by default).
+    app.context_override_paths.clear();
 
-    let clicked_item = (0..app.entries.len()).find(|&i| {
-        file_item_rect(i, cols, cr.x, base_y, s, zoom).contains(cx, cy)
-    });
-
-    let has_clipboard = app.clipboard.is_some();
-    let items = if let Some(idx) = clicked_item {
-        app.select_item(idx);
-        app.context_target = Some(ContextTarget::Item(idx));
-        let is_dir = app.entries[idx].is_dir;
-        let mut v = vec![MenuItem::action(CTX_OPEN, "Open")];
-        if !is_dir {
-            // Discover apps for this file's MIME type
-            let ext = app.entries[idx].extension();
-            *open_with_apps = desktop::apps_for_extension(&ext);
-            if !open_with_apps.is_empty() {
-                let children: Vec<MenuItem> = open_with_apps.iter().enumerate()
-                    .map(|(i, a)| MenuItem::action(CTX_OPEN_WITH_BASE + i as u32, &a.name))
-                    .collect();
-                v.push(MenuItem::submenu(CTX_OPEN_WITH, "Open With", children));
+    // Use the zones registered by render.rs so the hit-test matches the
+    // current view's actual row geometry. The previous grid-only math
+    // (file_item_rect) picked the wrong row in List/Tree views because
+    // their rows are taller than a grid cell.
+    enum ClickedRow {
+        Item(usize),
+        NestedPath(PathBuf, bool),  // (path, is_dir) for tree rows not in entries
+        None,
+    }
+    let clicked_row = match input.zone_at(cx, cy) {
+        Some(zone) if zone >= crate::ZONE_TREE_ITEM_BASE => {
+            let ti = (zone - crate::ZONE_TREE_ITEM_BASE) as usize;
+            if let Some(te) = app.tree_entries.get(ti) {
+                let path = te.entry.path.clone();
+                let is_dir = te.entry.is_dir;
+                if let Some(idx) = app.entries.iter().position(|e| e.path == path) {
+                    ClickedRow::Item(idx)
+                } else {
+                    ClickedRow::NestedPath(path, is_dir)
+                }
+            } else {
+                ClickedRow::None
             }
         }
-        v.push(MenuItem::action(CTX_OPEN_AS_ROOT, "Open as Root"));
-        v.push(MenuItem::separator());
-        v.push(MenuItem::action_with(CTX_CUT, "Cut", "Ctrl+X"));
-        v.push(MenuItem::action_with(CTX_COPY, "Copy", "Ctrl+C"));
-        if has_clipboard {
-            v.push(MenuItem::action_with(CTX_PASTE, "Paste", "Ctrl+V"));
+        Some(zone) if zone >= crate::ZONE_FILE_ITEM_BASE && zone < crate::ZONE_TREE_ITEM_BASE => {
+            let fi = (zone - crate::ZONE_FILE_ITEM_BASE) as usize;
+            if fi < app.entries.len() { ClickedRow::Item(fi) } else { ClickedRow::None }
         }
-        v.push(MenuItem::action(CTX_DUPLICATE, "Duplicate"));
-        v.push(MenuItem::separator());
-        v.push(MenuItem::action(CTX_COPY_PATH, "Copy Path"));
-        v.push(MenuItem::action(CTX_COPY_NAME, "Copy Name"));
-        v.push(MenuItem::separator());
-        if !is_dir && crate::file_ops::is_archive(&app.entries[idx].path) {
-            v.push(MenuItem::action(CTX_EXTRACT, "Extract Here"));
+        _ => ClickedRow::None,
+    };
+
+    let has_clipboard = app.clipboard.is_some();
+    let items = match clicked_row {
+        ClickedRow::Item(idx) => {
+            app.select_item(idx);
+            app.context_target = Some(ContextTarget::Item(idx));
+            let is_dir = app.entries[idx].is_dir;
+            let is_archive = !is_dir && crate::file_ops::is_archive(&app.entries[idx].path);
+            let ext = if !is_dir { app.entries[idx].extension() } else { String::new() };
+            if !is_dir {
+                *open_with_apps = desktop::apps_for_extension(&ext);
+            }
+            build_item_menu(is_dir, is_archive, true, app.in_trash(), has_clipboard, open_with_apps)
         }
-        v.push(MenuItem::action(CTX_COMPRESS, "Compress"));
-        v.push(MenuItem::separator());
-        v.push(MenuItem::action(CTX_RENAME, "Rename"));
-        if app.in_trash() {
-            v.push(MenuItem::action(crate::CTX_RESTORE, "Restore"));
-            v.push(MenuItem::action_danger(CTX_TRASH, "Delete Permanently"));
-        } else {
-            v.push(MenuItem::action_danger(CTX_TRASH, "Move to Trash"));
+        ClickedRow::NestedPath(path, is_dir) => {
+            // Nested tree row — clear any entries-based selection so the
+            // path override is the sole source of truth for this action.
+            app.clear_selection();
+            app.context_override_paths = vec![path.clone()];
+            app.context_target = Some(ContextTarget::Path(path.clone()));
+            let is_archive = !is_dir && crate::file_ops::is_archive(&path);
+            let ext = if !is_dir {
+                path.extension()
+                    .and_then(|e| e.to_str())
+                    .map(|s| s.to_lowercase())
+                    .unwrap_or_default()
+            } else { String::new() };
+            if !is_dir {
+                *open_with_apps = desktop::apps_for_extension(&ext);
+            }
+            // `allow_rename = false` — rename UI keys off an entries index and
+            // doesn't have a path-based variant yet, so we hide it for nested rows.
+            build_item_menu(is_dir, is_archive, false, app.in_trash(), has_clipboard, open_with_apps)
         }
-        v.push(MenuItem::separator());
-        if is_dir {
-            v.push(MenuItem::action(CTX_CHANGE_ICON, "Change Icon"));
-        }
-        v.push(MenuItem::action(CTX_PROPERTIES, "Properties"));
-        v
-    } else {
-        app.clear_selection();
-        app.context_target = Some(ContextTarget::Empty);
-        let mut v = Vec::new();
-        if has_clipboard {
-            v.push(MenuItem::action_with(CTX_PASTE, "Paste", "Ctrl+V"));
+        ClickedRow::None => {
+            app.clear_selection();
+            app.context_target = Some(ContextTarget::Empty);
+            let mut v = Vec::new();
+            if has_clipboard {
+                v.push(MenuItem::action_with(CTX_PASTE, "Paste", "Ctrl+V"));
+                v.push(MenuItem::separator());
+            }
+            v.push(MenuItem::action(CTX_NEW_FILE, "New File"));
+            v.push(MenuItem::color_swatches("New Folder", vec![
+                (CTX_NEW_FOLDER_PLAIN,  Color::from_rgb8(140, 140, 140)),
+                (CTX_NEW_FOLDER_RED,    Color::from_rgb8(220, 60, 60)),
+                (CTX_NEW_FOLDER_ORANGE, Color::from_rgb8(230, 150, 40)),
+                (CTX_NEW_FOLDER_YELLOW, Color::from_rgb8(220, 200, 50)),
+                (CTX_NEW_FOLDER_GREEN,  Color::from_rgb8(70, 180, 80)),
+                (CTX_NEW_FOLDER_BLUE,   Color::from_rgb8(60, 130, 220)),
+                (CTX_NEW_FOLDER_PURPLE, Color::from_rgb8(160, 80, 210)),
+            ]));
             v.push(MenuItem::separator());
+            v.push(MenuItem::submenu(CTX_SORT_BY, "Sort By", crate::wayland_actions::sort_menu_items(app)));
+            v.push(MenuItem::separator());
+            v.push(MenuItem::action(CTX_SELECT_ALL, "Select All"));
+            v.push(MenuItem::action(CTX_OPEN_TERMINAL, "Open Terminal Here"));
+            v.push(MenuItem::separator());
+            v.push(MenuItem::checkbox(CTX_SHOW_HIDDEN, "Show Hidden Files", app.show_hidden));
+            v
         }
-        v.push(MenuItem::action(CTX_NEW_FILE, "New File"));
-        v.push(MenuItem::color_swatches("New Folder", vec![
-            (CTX_NEW_FOLDER_PLAIN,  Color::from_rgb8(140, 140, 140)),
-            (CTX_NEW_FOLDER_RED,    Color::from_rgb8(220, 60, 60)),
-            (CTX_NEW_FOLDER_ORANGE, Color::from_rgb8(230, 150, 40)),
-            (CTX_NEW_FOLDER_YELLOW, Color::from_rgb8(220, 200, 50)),
-            (CTX_NEW_FOLDER_GREEN,  Color::from_rgb8(70, 180, 80)),
-            (CTX_NEW_FOLDER_BLUE,   Color::from_rgb8(60, 130, 220)),
-            (CTX_NEW_FOLDER_PURPLE, Color::from_rgb8(160, 80, 210)),
-        ]));
-        v.push(MenuItem::separator());
-        v.push(MenuItem::submenu(CTX_SORT_BY, "Sort By", crate::wayland_actions::sort_menu_items(app)));
-        v.push(MenuItem::separator());
-        v.push(MenuItem::action(CTX_SELECT_ALL, "Select All"));
-        v.push(MenuItem::action(CTX_OPEN_TERMINAL, "Open Terminal Here"));
-        v.push(MenuItem::separator());
-        v.push(MenuItem::checkbox(CTX_SHOW_HIDDEN, "Show Hidden Files", app.show_hidden));
-        v
     };
 
     context_menu.set_scale(s);
@@ -645,6 +744,16 @@ pub(crate) fn handle_ctx_event(
                                 });
                             }
                         }
+                    } else if let Some(ContextTarget::Path(path)) = app.context_target.clone() {
+                        // Nested tree row — open via xdg-open (dirs navigate, files launch)
+                        if path.is_dir() {
+                            app.navigate_to(path);
+                        } else {
+                            std::thread::spawn(move || {
+                                let _ = std::process::Command::new("xdg-open")
+                                    .arg(&path).spawn();
+                            });
+                        }
                     } else {
                         app.open_selected();
                     }
@@ -682,6 +791,8 @@ pub(crate) fn handle_ctx_event(
                             app.entries.get(*idx).map(|e| e.path.display().to_string()),
                         Some(ContextTarget::SearchItem(idx)) =>
                             app.search_results.get(*idx).map(|e| e.path.display().to_string()),
+                        Some(ContextTarget::Path(path)) =>
+                            Some(path.display().to_string()),
                         _ => None,
                     };
                     if let Some(text) = text {
@@ -696,6 +807,8 @@ pub(crate) fn handle_ctx_event(
                             app.entries.get(*idx).map(|e| e.name.clone()),
                         Some(ContextTarget::SearchItem(idx)) =>
                             app.search_results.get(*idx).map(|e| e.name.clone()),
+                        Some(ContextTarget::Path(path)) =>
+                            path.file_name().map(|n| n.to_string_lossy().to_string()),
                         _ => None,
                     };
                     if let Some(text) = text {
@@ -710,28 +823,33 @@ pub(crate) fn handle_ctx_event(
                 CTX_OPEN_AS_ROOT => app.open_as_root(),
                 CTX_CHANGE_ICON => {
                     // Spawn a file picker to choose an icon image
-                    if let Some(crate::app::ContextTarget::Item(idx)) = app.context_target.clone() {
-                        if idx < app.entries.len() && app.entries[idx].is_dir {
-                            let folder_path = app.entries[idx].path.clone();
-                            std::thread::spawn(move || {
-                                let output = std::process::Command::new("lntrn-file-manager")
-                                    .args([
-                                        "--pick",
-                                        "--title", "Choose Folder Icon",
-                                        "--filters", "Images:*.png,*.svg,*.jpg,*.jpeg,*.webp,*.ico",
-                                    ])
-                                    .output();
-                                if let Ok(out) = output {
-                                    if out.status.success() {
-                                        let chosen = String::from_utf8_lossy(&out.stdout)
-                                            .trim().to_string();
-                                        if !chosen.is_empty() {
-                                            crate::icons::set_folder_icon(&folder_path, &chosen);
-                                        }
+                    let folder_path = match app.context_target.clone() {
+                        Some(crate::app::ContextTarget::Item(idx))
+                            if idx < app.entries.len() && app.entries[idx].is_dir =>
+                                Some(app.entries[idx].path.clone()),
+                        Some(crate::app::ContextTarget::Path(path)) if path.is_dir() =>
+                                Some(path),
+                        _ => None,
+                    };
+                    if let Some(folder_path) = folder_path {
+                        std::thread::spawn(move || {
+                            let output = std::process::Command::new("lntrn-file-manager")
+                                .args([
+                                    "--pick",
+                                    "--title", "Choose Folder Icon",
+                                    "--filters", "Images:*.png,*.svg,*.jpg,*.jpeg,*.webp,*.ico",
+                                ])
+                                .output();
+                            if let Ok(out) = output {
+                                if out.status.success() {
+                                    let chosen = String::from_utf8_lossy(&out.stdout)
+                                        .trim().to_string();
+                                    if !chosen.is_empty() {
+                                        crate::icons::set_folder_icon(&folder_path, &chosen);
                                     }
                                 }
-                            });
-                        }
+                            }
+                        });
                     }
                 }
                 CTX_PROPERTIES => {
@@ -748,6 +866,9 @@ pub(crate) fn handle_ctx_event(
                                 }
                                 crate::app::ContextTarget::SearchItem(idx) => {
                                     app.search_results.get(*idx).map(|e| e.path.clone())
+                                }
+                                crate::app::ContextTarget::Path(path) => {
+                                    Some(path.clone())
                                 }
                                 crate::app::ContextTarget::Empty => {
                                     Some(app.current_dir.clone())
@@ -847,18 +968,20 @@ pub(crate) fn handle_ctx_event(
                                 desktop::launch_app(&open_with_apps[app_idx].exec, &entry.path);
                             }
                         } else {
-                            let selected: Vec<_> = app.entries.iter()
-                                .filter(|e| e.selected)
-                                .map(|e| e.path.clone())
-                                .collect();
-                            for file_path in &selected {
-                                desktop::launch_app(&open_with_apps[app_idx].exec, file_path);
+                            // Uses `selected_paths()` so the path override from a
+                            // nested-tree-row right-click is honored too.
+                            for file_path in app.selected_paths() {
+                                desktop::launch_app(&open_with_apps[app_idx].exec, &file_path);
                             }
                         }
                     }
                 }
                 _ => {}
             }
+            // Action consumed — clear the path-override so the next
+            // selection-based op (cut/copy/paste from kbd, etc.) uses
+            // the entries-based selection again.
+            app.context_override_paths.clear();
             if let Some(backend) = popup_backend {
                 context_menu.close_popups(backend);
             }

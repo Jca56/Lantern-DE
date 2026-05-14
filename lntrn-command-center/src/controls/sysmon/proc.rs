@@ -47,9 +47,6 @@ impl MemInfo {
     pub fn used_kb(&self) -> u64 {
         self.mem_total_kb.saturating_sub(self.mem_available_kb)
     }
-    pub fn swap_used_kb(&self) -> u64 {
-        self.swap_total_kb.saturating_sub(self.swap_free_kb)
-    }
     /// 0..1 fraction of RAM in use.
     pub fn used_fraction(&self) -> f32 {
         if self.mem_total_kb == 0 {

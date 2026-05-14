@@ -921,12 +921,21 @@ fn read_devices() -> Vec<Device> {
             name: name.clone(),
             connected: connected_macs.contains(&mac),
             paired: paired_macs.contains(&mac),
+            ..Device::default()
         });
         // Prefer the longer/non-MAC-style name when both lookups give
         // different strings (paired list usually has the real name).
         if entry.name.is_empty() || entry.name == entry.mac {
             entry.name = name;
         }
+    }
+
+    // Enrich each device with `bluetoothctl info <MAC>` — cheap (~10ms
+    // per call) and only paired/visible devices, so worst case a handful.
+    // We need this for OBEX/profile detection so the Send button knows
+    // whether to render.
+    for dev in by_mac.values_mut() {
+        merge_device_info(dev);
     }
 
     let mut out: Vec<Device> = by_mac.into_values().collect();
@@ -938,6 +947,68 @@ fn read_devices() -> Vec<Device> {
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
     out
+}
+
+/// Run `bluetoothctl info <mac>` and fold its output into `dev`. Skips
+/// silently on any failure so the basic name/connected state we already
+/// have stays usable.
+fn merge_device_info(dev: &mut Device) {
+    let out = Command::new("bluetoothctl").args(["info", &dev.mac]).output();
+    let Ok(out) = out else { return };
+    if !out.status.success() {
+        return;
+    }
+    let s = String::from_utf8_lossy(&out.stdout);
+    let mut uuids = Vec::new();
+    for raw in s.lines() {
+        let line = raw.trim_start();
+        if let Some(rest) = raw.strip_prefix("Device ") {
+            // "Device F0:05:1B:BE:1B:52 (public)"
+            if let Some(open) = rest.find('(') {
+                let close = rest[open..].find(')').map(|i| open + i).unwrap_or(rest.len());
+                dev.address_type = rest[open + 1..close].to_string();
+            }
+            continue;
+        }
+        if let Some(v) = line.strip_prefix("Alias:") {
+            dev.alias = v.trim().to_string();
+        } else if let Some(v) = line.strip_prefix("Icon:") {
+            dev.icon = v.trim().to_string();
+        } else if let Some(v) = line.strip_prefix("Class:") {
+            dev.class = v.trim().to_string();
+        } else if let Some(v) = line.strip_prefix("Trusted:") {
+            dev.trusted = v.trim() == "yes";
+        } else if let Some(v) = line.strip_prefix("Bonded:") {
+            dev.bonded = v.trim() == "yes";
+        } else if let Some(v) = line.strip_prefix("Blocked:") {
+            dev.blocked = v.trim() == "yes";
+        } else if let Some(v) = line.strip_prefix("RSSI:") {
+            dev.rssi = v.trim().parse().ok();
+        } else if let Some(v) = line.strip_prefix("Battery Percentage:") {
+            // Format: "0x55 (85)" — prefer the parenthesised decimal.
+            let trimmed = v.trim();
+            if let Some(open) = trimmed.find('(') {
+                let inside = &trimmed[open + 1..];
+                if let Some(close) = inside.find(')') {
+                    dev.battery_percent = inside[..close].trim().parse().ok();
+                }
+            }
+        } else if let Some(v) = line.strip_prefix("UUID:") {
+            // Format: "Audio Source              (0000110a-...)"
+            // Take the human-friendly name (everything before the '(').
+            let trimmed = v.trim();
+            let name = match trimmed.find('(') {
+                Some(i) => trimmed[..i].trim().to_string(),
+                None => trimmed.to_string(),
+            };
+            if !name.is_empty() {
+                uuids.push(name);
+            }
+        }
+    }
+    if !uuids.is_empty() {
+        dev.uuids = uuids;
+    }
 }
 
 fn run_devices(args: &[&str]) -> Vec<(String, String)> {

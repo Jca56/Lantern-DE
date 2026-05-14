@@ -37,6 +37,7 @@ pub enum SysMonHit {
     ClearFilter,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw_view(
     painter: &mut Painter,
     text: &mut TextRenderer,
@@ -45,6 +46,7 @@ pub fn draw_view(
     top_y: f32,
     scale: f32,
     alpha: f32,
+    text_size: f32,
     surface_w: u32,
     surface_h: u32,
 ) -> f32 {
@@ -72,13 +74,21 @@ pub fn draw_view(
     );
     y += graph_h + gap;
 
-    // Memory section — use a bar + label rather than a sparkline so the
-    // used/total numeric is the focal point. Swap is shown if non-zero.
-    draw_memory_block(
+    // RAM section — same sparkline shape as CPU + Network for visual
+    // consistency. Value shows "used / total" so the numeric headline
+    // is still informative; swap is omitted (not configured on this box).
+    let used = sysmon.mem.used_kb();
+    let total = sysmon.mem.mem_total_kb;
+    let ram_value = format!("{} / {}", format_kb(used), format_kb(total));
+    draw_metric_block(
         painter,
         text,
         Rect::new(inner_x, y, inner_w, graph_h),
-        sysmon,
+        "RAM",
+        &ram_value,
+        sysmon.mem_history.samples(),
+        100.0,
+        Color::from_rgb8(MEM_COLOR_RGB.0, MEM_COLOR_RGB.1, MEM_COLOR_RGB.2),
         scale,
         alpha,
         surface_w,
@@ -102,7 +112,7 @@ pub fn draw_view(
     // Process list section — filter strip + sortable headers + rows.
     let proc_rect = Rect::new(inner_x, y, inner_w, panel.y + panel.h - y - pad);
     let lay = process_list::draw(
-        painter, text, sysmon, proc_rect, scale, alpha, surface_w, surface_h,
+        painter, text, sysmon, proc_rect, scale, alpha, text_size, surface_w, surface_h,
     );
     y = lay.rows_top + lay.row_h * lay.visible_rows as f32;
     y
@@ -117,6 +127,7 @@ pub fn hit_test_view(
     panel: Rect,
     top_y: f32,
     scale: f32,
+    text_size: f32,
     phys_x: f32,
     phys_y: f32,
 ) -> Option<SysMonHit> {
@@ -129,7 +140,7 @@ pub fn hit_test_view(
     let proc_rect = Rect::new(
         inner_x, y_proc_top, inner_w, panel.y + panel.h - y_proc_top - pad,
     );
-    let lay = process_list::layout(sysmon, proc_rect, scale);
+    let lay = process_list::layout(sysmon, proc_rect, scale, text_size);
     let hit = process_list::hit_test(sysmon, &lay, phys_x, phys_y)?;
     Some(match hit {
         ProcessHit::Select(pid) => SysMonHit::SelectProcess(pid),
@@ -176,7 +187,9 @@ fn draw_metric_block(
     let label_font = HEADER_FONT * scale;
     let value_font = VALUE_FONT * scale;
 
-    // Label (top-left), big value (top-right).
+    // Label (top-left), big value (top-right). Pad max_width past the
+    // measured width so the text engine doesn't wrap the trailing
+    // glyph when measurement sits right on the wrap boundary.
     let label_color = Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(alpha * 0.7);
     let value_color = color.with_alpha(alpha);
     let label_w = text.measure_width(label, label_font);
@@ -186,7 +199,7 @@ fn draw_metric_block(
         rect.x + pad_in,
         rect.y + pad_in * 0.5,
         label_color,
-        label_w,
+        label_w + 8.0 * scale,
         surface_w,
         surface_h,
     );
@@ -197,7 +210,7 @@ fn draw_metric_block(
         rect.x + rect.w - pad_in - val_w,
         rect.y + pad_in * 0.5,
         value_color,
-        val_w,
+        val_w + 8.0 * scale,
         surface_w,
         surface_h,
     );
@@ -211,86 +224,6 @@ fn draw_metric_block(
         rect.y + rect.h - spark_top - pad_in * 0.6,
     );
     draw_sparkline(painter, spark_rect, history, scale_max, color.with_alpha(alpha), scale);
-}
-
-fn draw_memory_block(
-    painter: &mut Painter,
-    text: &mut TextRenderer,
-    rect: Rect,
-    sysmon: &SysMon,
-    scale: f32,
-    alpha: f32,
-    surface_w: u32,
-    surface_h: u32,
-) {
-    panel_card(painter, rect, scale, alpha);
-    let pad_in = 12.0 * scale;
-    let label_font = HEADER_FONT * scale;
-    let value_font = VALUE_FONT * scale;
-    let row_font = ROW_FONT * scale;
-    let label_color = Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(alpha * 0.7);
-    let mem_color = Color::from_rgb8(MEM_COLOR_RGB.0, MEM_COLOR_RGB.1, MEM_COLOR_RGB.2);
-
-    let used = sysmon.mem.used_kb();
-    let total = sysmon.mem.mem_total_kb;
-    let value = format!("{} / {}", format_kb(used), format_kb(total));
-
-    let ram_w = text.measure_width("RAM", label_font);
-    text.queue(
-        "RAM",
-        label_font,
-        rect.x + pad_in,
-        rect.y + pad_in * 0.5,
-        label_color,
-        ram_w,
-        surface_w,
-        surface_h,
-    );
-    let val_w = text.measure_width(&value, value_font);
-    text.queue(
-        &value,
-        value_font,
-        rect.x + rect.w - pad_in - val_w,
-        rect.y + pad_in * 0.5,
-        mem_color.with_alpha(alpha),
-        val_w,
-        surface_w,
-        surface_h,
-    );
-
-    // Big bar
-    let bar_top = rect.y + label_font + pad_in;
-    let bar_h = (rect.y + rect.h - bar_top - pad_in - row_font - 4.0 * scale).max(8.0 * scale);
-    let bar_rect = Rect::new(rect.x + pad_in, bar_top, rect.w - pad_in * 2.0, bar_h);
-    let track = Color::rgba(1.0, 1.0, 1.0, 0.10 * alpha);
-    painter.rect_filled(bar_rect, bar_h * 0.45, track);
-    let frac = sysmon.mem.used_fraction();
-    if frac > 0.0 {
-        let fill_w = (bar_rect.w * frac).max(bar_h);
-        let fill_rect = Rect::new(bar_rect.x, bar_rect.y, fill_w, bar_rect.h);
-        painter.rect_filled(fill_rect, bar_h * 0.45, mem_color.with_alpha(alpha * 0.9));
-    }
-
-    // Footer row: swap, if any.
-    let swap_total = sysmon.mem.swap_total_kb;
-    let swap_used = sysmon.mem.swap_used_kb();
-    let swap_text = if swap_total == 0 {
-        "Swap not configured".to_string()
-    } else {
-        format!("Swap {} / {}", format_kb(swap_used), format_kb(swap_total))
-    };
-    let footer_y = bar_rect.y + bar_rect.h + 4.0 * scale;
-    let swap_w = text.measure_width(&swap_text, row_font);
-    text.queue(
-        &swap_text,
-        row_font,
-        rect.x + pad_in,
-        footer_y,
-        label_color,
-        swap_w,
-        surface_w,
-        surface_h,
-    );
 }
 
 fn draw_network_block(
@@ -472,18 +405,3 @@ pub(super) fn queue_right(
     text.queue(s, font, right_x - w, y, color, w, surface_w, surface_h);
 }
 
-pub(super) fn truncate_to_width(text: &mut TextRenderer, s: &str, font: f32, max_w: f32) -> String {
-    if text.measure_width(s, font) <= max_w {
-        return s.to_string();
-    }
-    let ellipsis = "…";
-    let mut chars: Vec<char> = s.chars().collect();
-    while !chars.is_empty() {
-        chars.pop();
-        let candidate: String = chars.iter().collect::<String>() + ellipsis;
-        if text.measure_width(&candidate, font) <= max_w {
-            return candidate;
-        }
-    }
-    ellipsis.to_string()
-}

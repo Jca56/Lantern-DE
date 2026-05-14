@@ -6,6 +6,18 @@
 
 set -euo pipefail
 
+# ── Flag parsing ──────────────────────────────────────────────────────────────
+LIVE_MODE=0
+NO_ANIM=0
+for arg in "$@"; do
+    case "$arg" in
+        --live)    LIVE_MODE=1 ;;
+        --no-anim) NO_ANIM=1 ;;
+    esac
+done
+export LNTRN_LIVE="$LIVE_MODE"
+export LNTRN_NO_ANIM="$NO_ANIM"
+
 # ── System monitor mode ──────────────────────────────────────────────────────
 if [[ "${1:-}" == "--sysmon" ]]; then
     # Handoff to the fancy Python TUI dashboard (installed or dev-tree)
@@ -139,27 +151,47 @@ for drm_dir in /sys/class/drm/card*-*/; do
     res=$(head -1 "$drm_dir/modes" 2>/dev/null)
     res=${res:-"?"}
 
-    # Parse EDID for monitor model name
+    # Parse EDID for monitor model name + refresh rate (from preferred DTD)
     mon_name=""
+    refresh=""
     if [[ -f "$drm_dir/edid" ]]; then
-        mon_name=$(python3 -c "
+        edid_out=$(python3 -c "
 import sys
 try:
     with open(sys.argv[1], 'rb') as f:
         edid = f.read()
+    name = ''
     if len(edid) >= 128:
         for i in range(4):
             off = 54 + i * 18
             if edid[off+3] == 0xFC:
-                print(edid[off+5:off+18].decode('ascii', errors='ignore').strip())
+                name = edid[off+5:off+18].decode('ascii', errors='ignore').strip()
+                break
+        if not name:
+            m = (edid[8] << 8) | edid[9]
+            name = chr(((m>>10)&0x1F)+64) + chr(((m>>5)&0x1F)+64) + chr((m&0x1F)+64)
+        # Preferred DTD at offset 54 — extract refresh rate
+        d = edid[54:72]
+        pclk = (d[0] | (d[1] << 8)) * 10000  # Hz
+        if pclk:
+            h_act = d[2] | ((d[4] & 0xF0) << 4)
+            h_blk = d[3] | ((d[4] & 0x0F) << 8)
+            v_act = d[5] | ((d[7] & 0xF0) << 4)
+            v_blk = d[6] | ((d[7] & 0x0F) << 8)
+            h_tot, v_tot = h_act + h_blk, v_act + v_blk
+            if h_tot and v_tot:
+                hz = pclk / (h_tot * v_tot)
+                print(name)
+                print(f'{hz:.0f}')
                 sys.exit()
-        # Fallback: manufacturer code
-        m = (edid[8] << 8) | edid[9]
-        mfg = chr(((m>>10)&0x1F)+64) + chr(((m>>5)&0x1F)+64) + chr((m&0x1F)+64)
-        print(mfg)
+    print(name)
 except: pass
 " "$drm_dir/edid" 2>/dev/null)
+        mon_name=$(echo "$edid_out" | sed -n '1p')
+        refresh=$(echo "$edid_out" | sed -n '2p')
     fi
+
+    [[ -n "$refresh" ]] && res="${res}@${refresh}Hz"
 
     if [[ -n "$mon_name" ]]; then
         entry="$mon_name ($output) $res"
@@ -265,22 +297,45 @@ def px(x, y):
     i = (y * W + x) * 4
     return (raw[i], raw[i+1], raw[i+2], raw[i+3])
 
-art_lines = []
-for y in range(0, H, 2):
-    parts = []
+# Flame mask: warm-bright pixels that should flicker
+flame_mask = [[False] * W for _ in range(H)]
+for y in range(H):
     for x in range(W):
-        top = px(x, y)
-        bot = px(x, y + 1) if y + 1 < H else (0, 0, 0, 0)
-        ta, ba = top[3], bot[3]
-        if ta > 80 and ba > 80:
-            parts.append(f"\033[48;2;{top[0]};{top[1]};{top[2]}m\033[38;2;{bot[0]};{bot[1]};{bot[2]}m▄")
-        elif ta > 80:
-            parts.append(f"\033[0m\033[38;2;{top[0]};{top[1]};{top[2]}m▀")
-        elif ba > 80:
-            parts.append(f"\033[0m\033[38;2;{bot[0]};{bot[1]};{bot[2]}m▄")
-        else:
-            parts.append("\033[0m ")
-    art_lines.append("".join(parts) + "\033[0m")
+        r, g, b, a = px(x, y)
+        if a > 80 and r > 150 and g > 60 and r > b + 40:
+            flame_mask[y][x] = True
+
+def _shade(c, factor):
+    return (min(255, int(c[0] * factor)),
+            min(255, int(c[1] * factor)),
+            min(255, int(c[2] * factor)),
+            c[3])
+
+def render_art(flicker=1.0):
+    lines = []
+    for y in range(0, H, 2):
+        parts = []
+        for x in range(W):
+            top = px(x, y)
+            bot = px(x, y + 1) if y + 1 < H else (0, 0, 0, 0)
+            if flicker != 1.0:
+                if flame_mask[y][x]:
+                    top = _shade(top, flicker)
+                if y + 1 < H and flame_mask[y + 1][x]:
+                    bot = _shade(bot, flicker)
+            ta, ba = top[3], bot[3]
+            if ta > 80 and ba > 80:
+                parts.append(f"\033[48;2;{top[0]};{top[1]};{top[2]}m\033[38;2;{bot[0]};{bot[1]};{bot[2]}m▄")
+            elif ta > 80:
+                parts.append(f"\033[0m\033[38;2;{top[0]};{top[1]};{top[2]}m▀")
+            elif ba > 80:
+                parts.append(f"\033[0m\033[38;2;{bot[0]};{bot[1]};{bot[2]}m▄")
+            else:
+                parts.append("\033[0m ")
+        lines.append("".join(parts) + "\033[0m")
+    return lines
+
+art_lines = render_art(1.0)
 
 O = "\033[38;2;212;160;32m"
 B = "\033[1m"
@@ -390,6 +445,21 @@ grad_dots = [sample_gradient(gradient_stops, i / max(1, n_grad - 1)) for i in ra
 info.append("")
 info.append(dot_row(amber_dots, max_dots))
 info.append(dot_row(grad_dots, max_dots))
+DOT_AMBER_IDX = len(info) - 2
+DOT_GRAD_IDX  = len(info) - 1
+
+def animated_dot_rows(t):
+    beat = 0.5 + 0.5 * math.sin(t * 1.4)
+    amber_now = [
+        tuple(min(255, int(c * (0.65 + 0.55 * beat))) for c in color)
+        for color in amber_dots
+    ]
+    shift = (t * 0.12) % 1.0
+    grad_now = [
+        sample_gradient(gradient_stops, ((i / max(1, n_grad - 1)) + shift) % 1.0)
+        for i in range(n_grad)
+    ]
+    return dot_row(amber_now, max_dots), dot_row(grad_now, max_dots)
 
 print()
 
@@ -422,19 +492,99 @@ def truncate_info(line, max_visible):
     result.append(R)
     return "".join(result)
 
-if info_avail >= 20:
-    # Side-by-side layout
-    total_lines = max(len(art_lines), len(info))
-    for i in range(total_lines):
-        art = art_lines[i] if i < len(art_lines) else ""
-        inf = truncate_info(info[i], info_avail) if i < len(info) else ""
-        print(f"  {art}\033[{COL}G{inf}")
+import random, time, signal
+
+live_mode    = os.environ.get('LNTRN_LIVE') == '1'
+no_anim      = os.environ.get('LNTRN_NO_ANIM') == '1'
+animate      = (info_avail >= 20) and not no_anim
+STARTUP_SECS = 4.0
+FRAME_DELAY  = 0.09
+
+def flicker_value(t):
+    # Smooth slow drift (sine layers) + small noise — candle-like
+    base  = 1.0
+    base += 0.12 * math.sin(t * 2.2)
+    base += 0.07 * math.sin(t * 4.7 + 1.3)
+    base += 0.04 * math.sin(t * 8.1 + 2.6)
+    return base + (random.random() - 0.5) * 0.06
+
+def print_line(line, col_count):
+    sys.stdout.write(line + "\033[K\n")
+
+def render_block(art, info_now):
+    out = []
+    if info_avail >= 20:
+        total = max(len(art), len(info_now))
+        for i in range(total):
+            a = art[i] if i < len(art) else ""
+            inf_line = truncate_info(info_now[i], info_avail) if i < len(info_now) else ""
+            out.append(f"  {a}\033[{COL}G{inf_line}\033[K")
+    else:
+        for line in art:
+            out.append(f"  {line}\033[K")
+        for line in info_now:
+            out.append(truncate_info(line, term_cols - 2) + "\033[K")
+    return out
+
+total_lines = (max(len(art_lines), len(info)) if info_avail >= 20
+               else len(art_lines) + len(info))
+
+def frame_state(t, flicker):
+    art_now = render_art(flicker) if flicker != 1.0 else art_lines
+    info_now = info[:]
+    if animate and DOT_AMBER_IDX < len(info_now):
+        a_row, g_row = animated_dot_rows(t)
+        info_now[DOT_AMBER_IDX] = a_row
+        info_now[DOT_GRAD_IDX]  = g_row
+    return art_now, info_now
+
+def _cleanup(*_):
+    sys.stdout.write("\033[?25h")
+    sys.stdout.flush()
+    print()
+    sys.exit(0)
+
+if not animate:
+    art_now, info_now = frame_state(0.0, 1.0)
+    for line in render_block(art_now, info_now):
+        sys.stdout.write(line + "\n")
+    print()
 else:
-    # Stacked layout for very narrow terminals
-    for line in art_lines:
-        print(f"  {line}")
-    for line in info:
-        print(truncate_info(line, term_cols - 2))
-print()
+    signal.signal(signal.SIGINT, _cleanup)
+    sys.stdout.write("\033[?25l")
+    art_now, info_now = frame_state(0.0, 1.0)
+    for line in render_block(art_now, info_now):
+        sys.stdout.write(line + "\n")
+    sys.stdout.flush()
+    start = time.time()
+    try:
+        while True:
+            time.sleep(FRAME_DELAY)
+            t = time.time() - start
+            if not live_mode and t > STARTUP_SECS:
+                break
+            sys.stdout.write(f"\033[{total_lines}A\033[1G")
+            if live_mode:
+                intensity = 1.0
+            else:
+                tail = 0.9
+                if t < STARTUP_SECS - tail:
+                    intensity = 1.0
+                else:
+                    intensity = max(0.0, (STARTUP_SECS - t) / tail)
+            flicker = 1.0 + (flicker_value(t) - 1.0) * intensity
+            art_now, info_now = frame_state(t, flicker)
+            for line in render_block(art_now, info_now):
+                sys.stdout.write(line + "\n")
+            sys.stdout.flush()
+    except KeyboardInterrupt:
+        pass
+    sys.stdout.write(f"\033[{total_lines}A\033[1G")
+    art_now, info_now = frame_state(0.0, 1.0)
+    for line in render_block(art_now, info_now):
+        sys.stdout.write(line + "\n")
+    sys.stdout.write("\033[?25h")
+    sys.stdout.flush()
+    print()
 PYEOF
 

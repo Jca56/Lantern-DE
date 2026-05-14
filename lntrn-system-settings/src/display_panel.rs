@@ -1,5 +1,5 @@
 use lntrn_render::{Painter, Rect, TextureDraw, TexturePass, TextRenderer};
-use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea, Scrollbar, TextInput};
+use lntrn_ui::gpu::{Button, ButtonVariant, FoxPalette, InteractionContext, ScrollArea, Scrollbar};
 
 use crate::config::LanternConfig;
 use crate::monitor_arrange::{self, MonitorArrangeState};
@@ -10,13 +10,12 @@ use crate::panels::{
     CARD_GAP, CARD_HEADER_H, CARD_INNER_PAD_H, CARD_INNER_PAD_V,
     CARD_OUTER_PAD_H, CARD_OUTER_PAD_V,
 };
-use crate::text_edit::TextBuffer;
 use crate::wayland::OutputInfo;
 use crate::wallpaper_picker::WallpaperPicker;
 
 // ── Zone IDs ────────────────────────────────────────────────────────────────
 
-pub const ZONE_DIR_INPUT: u32 = 600;
+pub const ZONE_OPEN_FOLDER: u32 = 601;
 const ZONE_THUMB_BASE: u32 = 610;
 const MAX_THUMBS: u32 = 200;
 
@@ -24,18 +23,26 @@ const MAX_THUMBS: u32 = 200;
 
 const ROW_H: f32 = 48.0;
 const LABEL_SIZE: f32 = 18.0;
-const THUMB_GAP: f32 = 12.0;
-const THUMB_W: f32 = 192.0;
-const THUMB_H: f32 = 120.0;
-const INPUT_H: f32 = 44.0;
+const CURRENT_LABEL_SIZE: f32 = 24.0;
+const CURRENT_VALUE_SIZE: f32 = 22.0;
+const CURRENT_ROW_H: f32 = 56.0;
+const THUMB_GAP: f32 = 22.0;
+const THUMB_W: f32 = 240.0;
+const THUMB_H: f32 = 150.0;
 const SELECTED_BORDER: f32 = 3.0;
 const NAME_FONT: f32 = 14.0;
+const OPEN_FOLDER_BTN_W: f32 = 160.0;
+const OPEN_FOLDER_BTN_H: f32 = 40.0;
+
+/// Canonical Lantern wallpaper directory.
+pub fn wallpaper_dir() -> String {
+    let home = std::env::var("HOME").unwrap_or_default();
+    format!("{}/.lantern/wallpapers", home)
+}
 
 /// Display panel state (persists across frames).
 pub struct DisplayPanelState {
     pub picker: WallpaperPicker,
-    pub dir_buffer: TextBuffer,
-    pub dir_focused: bool,
     pub scroll_offset: f32,
     pub needs_reload: bool,
     pub monitor_arrange: MonitorArrangeState,
@@ -61,11 +68,9 @@ pub struct DisplayPanelState {
 }
 
 impl DisplayPanelState {
-    pub fn new(config: &LanternConfig) -> Self {
+    pub fn new(_config: &LanternConfig) -> Self {
         Self {
             picker: WallpaperPicker::new(),
-            dir_buffer: TextBuffer::new(&config.appearance.wallpaper_directory),
-            dir_focused: false,
             scroll_offset: 0.0,
             needs_reload: true,
             monitor_arrange: MonitorArrangeState::new(),
@@ -79,16 +84,8 @@ impl DisplayPanelState {
             grid_x: 0.0,
             grid_w: 0.0,
             content_height: 0.0,
-            last_arrange_h: 330.0, // estimate: matches monitor_arrange canvas + padding
+            last_arrange_h: 330.0,
             last_settings_h: 0.0,
-        }
-    }
-
-    /// Sync the text buffer if config changed externally (e.g. cancel/load).
-    pub fn sync_from_config(&mut self, config: &LanternConfig) {
-        if self.dir_buffer.text != config.appearance.wallpaper_directory {
-            self.dir_buffer.set(&config.appearance.wallpaper_directory);
-            self.needs_reload = true;
         }
     }
 }
@@ -136,7 +133,7 @@ pub fn draw_display_panel(
     // Load thumbnails if needed
     if dps.needs_reload {
         dps.needs_reload = false;
-        dps.picker.load_directory(&dps.dir_buffer.text, tex_pass, gpu, true);
+        dps.picker.load_directory(&wallpaper_dir(), tex_pass, gpu, true);
     }
 
     // ── Card geometry ──────────────────────────────────────────────
@@ -148,8 +145,8 @@ pub fn draw_display_panel(
     let card_chrome_h = CARD_HEADER_H * s + CARD_INNER_PAD_V * 2.0 * s;
 
     // ── Wallpaper card sizing ──────────────────────────────────────
-    let header_row_h = ROW_H * s;       // current wallpaper label row
-    let input_row_h = ROW_H * s + 8.0 * s; // directory input + gap
+    let header_row_h = CURRENT_ROW_H * s;       // current wallpaper label row
+    let input_row_h = OPEN_FOLDER_BTN_H * s + 12.0 * s; // open-folder button + gap
     let thumb_w = THUMB_W * s;
     let thumb_h = THUMB_H * s;
     let gap = THUMB_GAP * s;
@@ -182,7 +179,7 @@ pub fn draw_display_panel(
 
     // ── Single ScrollArea wrapping the whole panel ─────────────────
     if scroll_delta != 0.0 {
-        ScrollArea::apply_scroll(&mut dps.scroll_offset, scroll_delta * 40.0, content_height, h);
+        ScrollArea::apply_scroll(&mut dps.scroll_offset, scroll_delta * 20.0, content_height, h);
     }
 
     let viewport = Rect::new(x, y, w, h);
@@ -231,10 +228,14 @@ pub fn draw_display_panel(
     );
     let mut cy = wp_inner_y;
 
-    // Row 1: Current wallpaper label
+    // Row 1: Current wallpaper label (bigger text)
     {
-        let label_y = cy + (ROW_H * s - lsz) / 2.0;
-        text.queue("Current", lsz, card_inner_x, label_y, fox.text, 140.0 * s, sw, sh);
+        let label_sz = CURRENT_LABEL_SIZE * s;
+        let value_sz = CURRENT_VALUE_SIZE * s;
+        let row_h = CURRENT_ROW_H * s;
+        let label_w = 160.0 * s;
+        let label_y = cy + (row_h - label_sz) / 2.0;
+        text.queue("Current", label_sz, card_inner_x, label_y, fox.text, label_w, sw, sh);
         let val = if config.appearance.wallpaper.is_empty() {
             "(default)"
         } else {
@@ -243,20 +244,32 @@ pub fn draw_display_panel(
                 .and_then(|n| n.to_str())
                 .unwrap_or(&config.appearance.wallpaper)
         };
-        let val_x = card_inner_x + 140.0 * s;
-        text.queue(val, lsz, val_x, label_y, fox.text_secondary,
-            card_inner_w - 140.0 * s, sw, sh);
-        cy += ROW_H * s;
+        let val_x = card_inner_x + label_w;
+        let val_y = cy + (row_h - value_sz) / 2.0;
+        text.queue(val, value_sz, val_x, val_y, fox.text_secondary,
+            card_inner_w - label_w, sw, sh);
+        cy += row_h;
     }
 
-    // Row 2: Directory input
-    draw_dir_input_in_card(config, dps, painter, text, ix, fox,
-        card_inner_x, cy, card_inner_w, s, sw, sh);
-    cy += ROW_H * s + 8.0 * s;
+    // Row 2: Open Folder button
+    {
+        let btn_w = OPEN_FOLDER_BTN_W * s;
+        let btn_h = OPEN_FOLDER_BTN_H * s;
+        let btn_rect = Rect::new(card_inner_x, cy, btn_w, btn_h);
+        let zone = ix.add_zone(ZONE_OPEN_FOLDER, btn_rect);
+        Button::new(btn_rect, "Open Folder")
+            .variant(ButtonVariant::Ghost)
+            .hovered(zone.is_hovered())
+            .pressed(zone.is_active())
+            .scale(s)
+            .draw(painter, text, fox, sw, sh);
+        cy += btn_h + 12.0 * s;
+    }
 
     // ── Thumbnail grid (or empty-state message) ────────────────────
     if entry_count == 0 {
-        let msg = if !std::path::Path::new(&dps.dir_buffer.text).is_dir() {
+        let dir = wallpaper_dir();
+        let msg = if !std::path::Path::new(&dir).is_dir() {
             "Directory not found"
         } else {
             "No images found"
@@ -327,39 +340,6 @@ pub fn draw_display_panel(
     }
 }
 
-/// Draw the directory text input row laid out within a card.
-fn draw_dir_input_in_card(
-    config: &LanternConfig,
-    dps: &mut DisplayPanelState,
-    painter: &mut Painter,
-    text: &mut TextRenderer,
-    ix: &mut InteractionContext,
-    fox: &FoxPalette,
-    inner_x: f32, cy: f32, inner_w: f32, s: f32, sw: u32, sh: u32,
-) {
-    let _ = config;
-    let lsz = LABEL_SIZE * s;
-    let label_y = cy + (ROW_H * s - lsz) / 2.0;
-    text.queue("Directory", lsz, inner_x, label_y, fox.text, 140.0 * s, sw, sh);
-
-    let input_x = inner_x + 140.0 * s;
-    let input_w = inner_w - 140.0 * s;
-    let input_h = INPUT_H * s;
-    let input_y = cy + (ROW_H * s - input_h) / 2.0;
-    let input_rect = Rect::new(input_x, input_y, input_w, input_h);
-    let zone = ix.add_zone(ZONE_DIR_INPUT, input_rect);
-
-    let mut ti = TextInput::new(input_rect)
-        .text(&dps.dir_buffer.text)
-        .placeholder("~/Pictures/Wallpapers")
-        .focused(dps.dir_focused)
-        .hovered(zone.is_hovered());
-    if dps.dir_focused {
-        ti = ti.cursor_pos(dps.dir_buffer.cursor);
-    }
-    ti.scale(s).draw(painter, text, fox, sw, sh);
-}
-
 /// Collect texture draws for thumbnail images. Call after draw_display_panel.
 pub fn collect_thumb_draws<'a>(
     dps: &'a DisplayPanelState,
@@ -416,18 +396,12 @@ pub fn handle_display_click(
         }
     }
 
-    if zone_id == ZONE_DIR_INPUT {
-        dps.dir_focused = true;
+    if zone_id == ZONE_OPEN_FOLDER {
+        let dir = wallpaper_dir();
+        let _ = std::process::Command::new("xdg-open")
+            .arg(&dir)
+            .spawn();
         return;
-    }
-
-    // Clicking anywhere else unfocuses the text input
-    if dps.dir_focused {
-        dps.dir_focused = false;
-        if dps.dir_buffer.text != config.appearance.wallpaper_directory {
-            config.appearance.wallpaper_directory = dps.dir_buffer.text.clone();
-            dps.needs_reload = true;
-        }
     }
 
     // Thumbnail click — write to per-monitor config if a monitor is selected
@@ -447,47 +421,3 @@ pub fn handle_display_click(
     }
 }
 
-/// Handle keyboard input when the directory text input is focused.
-/// Returns true if the key was consumed.
-pub fn handle_display_key(
-    config: &mut LanternConfig,
-    dps: &mut DisplayPanelState,
-    sym: xkbcommon::xkb::Keysym,
-    utf8: Option<String>,
-) -> bool {
-    if !dps.dir_focused {
-        return false;
-    }
-
-    match sym.raw() {
-        0xff0d | 0xff8d => {
-            // Return/Enter — apply directory change
-            dps.dir_focused = false;
-            if dps.dir_buffer.text != config.appearance.wallpaper_directory {
-                config.appearance.wallpaper_directory = dps.dir_buffer.text.clone();
-                dps.needs_reload = true;
-            }
-            true
-        }
-        0xff1b => {
-            // Escape — cancel editing, revert
-            dps.dir_focused = false;
-            dps.dir_buffer.set(&config.appearance.wallpaper_directory);
-            true
-        }
-        0xff08 => { dps.dir_buffer.backspace(); true }
-        0xffff => { dps.dir_buffer.delete(); true }
-        0xff51 => { dps.dir_buffer.left(); true }
-        0xff53 => { dps.dir_buffer.right(); true }
-        0xff50 => { dps.dir_buffer.home(); true }
-        0xff57 => { dps.dir_buffer.end(); true }
-        _ => {
-            if let Some(ch) = utf8 {
-                dps.dir_buffer.insert(&ch);
-                true
-            } else {
-                false
-            }
-        }
-    }
-}

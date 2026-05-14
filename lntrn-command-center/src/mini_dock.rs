@@ -334,7 +334,7 @@ pub fn draw(
         // (possibly magnified) icon top edge so it tracks the wave.
         let has_window = toplevels.iter().any(|t| t.app_id == entry.app_id);
         if has_window {
-            let indicator_w = (r.w * 0.5).max(18.0 * scale);
+            let indicator_w = r.w;
             let indicator_h = INDICATOR_BAR_H * scale;
             let indicator_x = r.x + (r.w - indicator_w) / 2.0;
             let indicator_y = r.y - INDICATOR_GAP_ABOVE_ICON * scale - indicator_h;
@@ -558,12 +558,6 @@ fn truncate(s: &str, max: usize) -> String {
     let mut out: String = s.chars().take(take).collect();
     out.push('…');
     out
-}
-
-/// Pick the window in `windows` whose live thumbnail should fill the
-/// hover preview — prefer the activated one, else the first.
-pub fn preview_target_window<'a>(windows: &[&'a ToplevelInfo]) -> Option<&'a ToplevelInfo> {
-    windows.iter().find(|w| w.activated).copied().or_else(|| windows.first().copied())
 }
 
 /// All windows whose `app_id` matches the given pinned app's id.

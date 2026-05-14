@@ -318,6 +318,9 @@ pub fn run(pick: Option<PickConfig>, desktop: bool) -> Result<()> {
         }
         app.pick = Some(p.clone());
         app.view_mode = crate::app::ViewMode::Tree;
+        // Anchor the tree at the start dir so clicking folders can update
+        // current_dir (path bar / save target) without re-rooting the tree.
+        app.tree_root = Some(app.current_dir.clone());
         app.rebuild_tree();
         if let Some(ref name) = p.save_name {
             app.save_name_buf = name.clone();

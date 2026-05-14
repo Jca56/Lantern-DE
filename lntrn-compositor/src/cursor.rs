@@ -37,10 +37,15 @@ pub struct CursorState {
 
 impl CursorState {
     pub fn new(initial_theme: &str) -> Self {
+        // XCURSOR_SIZE env var takes precedence (legacy override); otherwise read
+        // from [input].cursor_size in lantern.toml, default 24.
         let cursor_size = std::env::var("XCURSOR_SIZE")
             .ok()
             .and_then(|s| s.parse::<u32>().ok())
-            .unwrap_or(24);
+            .unwrap_or_else(|| {
+                crate::input::read_input_setting_f64("cursor_size", 24.0).round() as u32
+            })
+            .clamp(16, 128);
         let theme_name = std::env::var("XCURSOR_THEME")
             .unwrap_or_else(|_| "default".to_string());
         let mut state = Self {
@@ -160,6 +165,29 @@ impl CursorState {
                 tracing::warn!("Failed to read SVG cursor {}: {}", svg_path.display(), e);
                 self.custom_loaded = false;
             }
+        }
+    }
+
+    pub fn cursor_size(&self) -> u32 {
+        self.cursor_size
+    }
+
+    /// Update the cursor pixel size and force a reload of the current icon.
+    pub fn set_cursor_size(&mut self, size: u32) {
+        let size = size.clamp(16, 128);
+        if size == self.cursor_size {
+            return;
+        }
+        self.cursor_size = size;
+        // Force the next set_status to re-rasterize at the new size.
+        self.loaded_icon_key = None;
+        self.custom_loaded = false;
+        if self.custom_theme != "default" {
+            let theme = self.custom_theme.clone();
+            self.set_custom_theme(&theme);
+        }
+        if !self.custom_loaded {
+            self.load_xcursor(CursorIcon::Default);
         }
     }
 

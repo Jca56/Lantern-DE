@@ -1,5 +1,6 @@
 mod layershell;
 mod notifications;
+mod render;
 
 use notifications::{NotificationService, NotifyEvent};
 use tokio::sync::mpsc;

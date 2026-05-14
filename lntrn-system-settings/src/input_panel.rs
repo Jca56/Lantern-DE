@@ -13,7 +13,7 @@ use crate::panels::{
 const ZONE_MOUSE_SPEED: u32 = 800;
 const ZONE_POINTER_ACCEL: u32 = 801;
 const ZONE_SCROLL_SPEED: u32 = 802;
-const ZONE_SINGLE_CLICK: u32 = 803;
+const ZONE_DOUBLE_CLICK: u32 = 803;
 const ZONE_CURSOR_SIZE: u32 = 804;
 const ZONE_CURSOR_BASE: u32 = 810;
 
@@ -305,12 +305,12 @@ pub fn draw_input_panel<'a>(
             card_x, cy_top, card_w, clicking_card_h, s, sw, sh,
         );
 
-        // Single-click activate toggle (true = single click, false = double click)
+        // Double-click toggle (true = double-click required, false = single-click)
         let rect = Rect::new(card_inner_x, cy, card_inner_w, TOGGLE_H * s);
-        let toggle = Toggle::new(rect, config.input.single_click_activate)
-            .label("Single-click to activate").scale(s);
+        let toggle = Toggle::new(rect, config.input.double_click_to_open)
+            .label("Double-click to open").scale(s);
         let track = toggle.track_rect();
-        let zone = ix.add_zone(ZONE_SINGLE_CLICK, track);
+        let zone = ix.add_zone(ZONE_DOUBLE_CLICK, track);
         toggle.hovered(zone.is_hovered()).draw(painter, text, fox, sw, sh);
     }
 
@@ -435,8 +435,8 @@ pub fn handle_input_click(config: &mut LanternConfig, state: &InputPanelState, z
         ZONE_POINTER_ACCEL => {
             config.input.pointer_acceleration = !config.input.pointer_acceleration;
         }
-        ZONE_SINGLE_CLICK => {
-            config.input.single_click_activate = !config.input.single_click_activate;
+        ZONE_DOUBLE_CLICK => {
+            config.input.double_click_to_open = !config.input.double_click_to_open;
         }
         id if id >= ZONE_CURSOR_BASE => {
             let idx = (id - ZONE_CURSOR_BASE) as usize;

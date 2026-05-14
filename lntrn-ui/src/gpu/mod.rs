@@ -18,7 +18,6 @@ pub mod tabs;
 pub mod text;
 pub mod text_input;
 pub mod title_bar;
-pub mod toast;
 pub mod toggle;
 pub mod tooltip;
 
@@ -42,6 +41,5 @@ pub use tabs::TabBar;
 pub use text::{FontSize, TextLabel};
 pub use text_input::TextInput;
 pub use title_bar::{ResizeEdge, TitleBar, WindowControlHover};
-pub use toast::{ToastAnchor, ToastItem, ToastStack, ToastVariant};
 pub use toggle::Toggle;
 pub use tooltip::Tooltip;

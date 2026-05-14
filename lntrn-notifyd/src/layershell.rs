@@ -5,20 +5,23 @@ use std::time::Instant;
 
 use anyhow::{anyhow, Result};
 use lntrn_render::{Color, GpuContext, Painter, SurfaceError, TextRenderer};
-use lntrn_ui::gpu::{FoxPalette, ToastAnchor, ToastItem, ToastStack, ToastVariant};
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
     RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle, WindowHandle,
 };
 use tokio::sync::mpsc;
 use wayland_client::{
-    protocol::{wl_callback, wl_compositor, wl_output, wl_region, wl_registry, wl_surface},
-    Connection, Dispatch, EventQueue, Proxy, QueueHandle,
+    protocol::{
+        wl_callback, wl_compositor, wl_output, wl_pointer, wl_region, wl_registry, wl_seat,
+        wl_surface,
+    },
+    Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum,
 };
 use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
 use crate::notifications::{NotifyEvent, Notification, Urgency};
+use crate::render::{Toast, ToastStack};
 
 const DISPLAY_SECS: f32 = 5.0;
 const SLIDE_IN_SECS: f32 = 0.5;
@@ -76,6 +79,10 @@ struct State {
     compositor: Option<wl_compositor::WlCompositor>,
     layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
     viewporter: Option<wp_viewporter::WpViewporter>,
+    // Pointer state — logical surface coords; click queued for main-loop hit-test.
+    pointer_x: f64,
+    pointer_y: f64,
+    pending_click: Option<(f64, f64)>,
 }
 
 impl State {
@@ -85,6 +92,7 @@ impl State {
             width: 0, height: 0,
             scale: 1, output_phys_width: 0,
             compositor: None, layer_shell: None, viewporter: None,
+            pointer_x: 0.0, pointer_y: 0.0, pending_click: None,
         }
     }
 
@@ -121,6 +129,9 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 "wl_output" => {
                     let _: wl_output::WlOutput = registry.bind(name, version.min(4), qh, ());
                 }
+                "wl_seat" => {
+                    let _: wl_seat::WlSeat = registry.bind(name, version.min(7), qh, ());
+                }
                 _ => {}
             }
         }
@@ -144,6 +155,44 @@ impl Dispatch<wp_viewport::WpViewport, ()> for State {
 }
 impl Dispatch<zwlr_layer_shell_v1::ZwlrLayerShellV1, ()> for State {
     fn event(_: &mut Self, _: &zwlr_layer_shell_v1::ZwlrLayerShellV1, _: zwlr_layer_shell_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
+
+const BTN_LEFT: u32 = 0x110;
+
+impl Dispatch<wl_seat::WlSeat, ()> for State {
+    fn event(
+        _: &mut Self, seat: &wl_seat::WlSeat, event: wl_seat::Event,
+        _: &(), _: &Connection, qh: &QueueHandle<Self>,
+    ) {
+        if let wl_seat::Event::Capabilities { capabilities: WEnum::Value(caps) } = event {
+            if caps.contains(wl_seat::Capability::Pointer) {
+                seat.get_pointer(qh, ());
+            }
+        }
+    }
+}
+
+impl Dispatch<wl_pointer::WlPointer, ()> for State {
+    fn event(
+        state: &mut Self, _: &wl_pointer::WlPointer, event: wl_pointer::Event,
+        _: &(), _: &Connection, _: &QueueHandle<Self>,
+    ) {
+        match event {
+            wl_pointer::Event::Enter { surface_x, surface_y, .. }
+            | wl_pointer::Event::Motion { surface_x, surface_y, .. } => {
+                state.pointer_x = surface_x;
+                state.pointer_y = surface_y;
+            }
+            wl_pointer::Event::Button { button, state: btn_state, .. } => {
+                if button == BTN_LEFT
+                    && btn_state == WEnum::Value(wl_pointer::ButtonState::Pressed)
+                {
+                    state.pending_click = Some((state.pointer_x, state.pointer_y));
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 impl Dispatch<wl_output::WlOutput, ()> for State {
@@ -187,7 +236,9 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for State {
 // ── Active notification tracking ────────────────────────────────────────────
 
 struct ActiveNotification {
-    toast: ToastItem,
+    title: String,
+    body: String,
+    urgency: Urgency,
     spawned: Instant,
     display_secs: f32,
     id: u32,
@@ -195,12 +246,6 @@ struct ActiveNotification {
 
 impl ActiveNotification {
     fn from_notification(notif: &Notification) -> Self {
-        let variant = match notif.urgency {
-            Urgency::Low => ToastVariant::Info,
-            Urgency::Normal => ToastVariant::Info,
-            Urgency::Critical => ToastVariant::Error,
-        };
-
         let display = if notif.urgency == Urgency::Critical {
             CRITICAL_DISPLAY_SECS
         } else if notif.timeout_ms > 0 {
@@ -210,10 +255,22 @@ impl ActiveNotification {
         };
 
         Self {
-            toast: ToastItem::new(notif.summary.clone(), notif.body.clone(), variant),
+            title: notif.summary.clone(),
+            body: notif.body.clone(),
+            urgency: notif.urgency,
             spawned: Instant::now(),
             display_secs: display,
             id: notif.id,
+        }
+    }
+
+    fn to_toast(&self) -> Toast {
+        Toast {
+            title: self.title.clone(),
+            body: self.body.clone(),
+            urgency: self.urgency,
+            progress: self.progress(),
+            slide: self.slide(),
         }
     }
 
@@ -243,6 +300,16 @@ impl ActiveNotification {
 
     fn is_expired(&self) -> bool {
         self.elapsed() >= self.display_secs + SLIDE_OUT_SECS
+    }
+
+    /// Trigger an early slide-out. Pulls `spawned` back so `elapsed`
+    /// already equals `display_secs`, putting the toast at the start of
+    /// its slide-out animation.
+    fn dismiss(&mut self) {
+        if self.elapsed() < self.display_secs {
+            self.spawned = Instant::now()
+                - std::time::Duration::from_secs_f32(self.display_secs);
+        }
     }
 }
 
@@ -321,7 +388,6 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>) -> Result<()> {
         .map_err(|e| anyhow!("GPU init failed: {e}"))?;
     let mut painter = Painter::new(&gpu);
     let mut text = TextRenderer::new(&gpu);
-    let palette = FoxPalette::dark();
 
     let mut active: Vec<ActiveNotification> = Vec::new();
     let mut needs_clear = true; // Force an initial transparent frame on first loop iteration
@@ -358,18 +424,33 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>) -> Result<()> {
             }
         }
 
-        // Remove expired
+        // Read + dispatch wayland events (non-blocking via prepare_read)
+        if let Some(guard) = event_queue.prepare_read() {
+            let _ = guard.read();
+        }
+        event_queue.dispatch_pending(&mut state)?;
+
+        // Handle a queued pointer click — hit-test in logical surface coords.
+        if let Some((px, py)) = state.pending_click.take() {
+            let toasts_hit: Vec<Toast> = active.iter().map(|a| a.to_toast()).collect();
+            let stack_hit = ToastStack::new(&toasts_hit).scale(1.0).margin(60.0);
+            let sw = state.width as f32;
+            for (i, a) in active.iter_mut().enumerate() {
+                let r = stack_hit.close_button_rect(i, &toasts_hit[i], sw);
+                if r.contains(px as f32, py as f32) {
+                    a.dismiss();
+                    break;
+                }
+            }
+        }
+
+        // Remove expired (after click handling so dismissed toasts still draw their slide-out)
         let had_toasts = !active.is_empty();
         active.retain(|a| !a.is_expired());
         if had_toasts && active.is_empty() {
             needs_clear = true;
         }
 
-        // Read + dispatch wayland events (non-blocking via prepare_read)
-        if let Some(guard) = event_queue.prepare_read() {
-            let _ = guard.read();
-        }
-        event_queue.dispatch_pending(&mut state)?;
         event_queue.flush()?;
 
         if active.is_empty() && !needs_clear {
@@ -394,21 +475,27 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>) -> Result<()> {
         let pw = state.phys_w();
         let ph = state.phys_h();
 
-        // Build toast items with updated progress
-        let toasts: Vec<ToastItem> = active.iter().map(|a| {
-            let mut t = a.toast.clone();
-            t.progress = a.progress();
-            t.slide = a.slide();
-            t
-        }).collect();
+        // Build toast snapshots with current progress + slide.
+        let toasts: Vec<Toast> = active.iter().map(|a| a.to_toast()).collect();
 
         painter.clear();
 
         ToastStack::new(&toasts)
-            .anchor(ToastAnchor::TopRight)
             .scale(scale_f)
             .margin(60.0)
-            .draw(&mut painter, &mut text, &palette, pw, ph);
+            .draw(&mut painter, &mut text, pw, ph);
+
+        // Update input region to the union of close-X hit areas (logical coords),
+        // so only those pixels capture clicks — the rest of the layer is pass-through.
+        let region = state.compositor.as_ref().unwrap().create_region(&qh, ());
+        let logical_stack = ToastStack::new(&toasts).scale(1.0).margin(60.0);
+        let sw = state.width as f32;
+        for (i, t) in toasts.iter().enumerate() {
+            let r = logical_stack.close_button_rect(i, t, sw);
+            region.add(r.x as i32, r.y as i32, r.w as i32, r.h as i32);
+        }
+        surface.set_input_region(Some(&region));
+        region.destroy();
 
         match gpu.begin_frame("Notifications") {
             Ok(mut frame) => {
