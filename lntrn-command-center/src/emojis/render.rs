@@ -98,7 +98,8 @@ fn draw_filter_bar(
     // Text input.
     let pad_left = glyph_pad + glyph_r * 2.0 + 14.0 * scale;
     let font = (text_size * scale).max(14.0);
-    let baseline = bar.y + (bar.h - font) / 2.0 + font * 0.82;
+    // `text.queue` treats `y` as the TOP of the glyph row, not the baseline.
+    let text_top = bar.y + (bar.h - font) / 2.0;
 
     let q = state.filter.query();
     let (display, is_placeholder) = if q.is_empty() {
@@ -113,7 +114,7 @@ fn draw_filter_bar(
     };
     let text_x = bar.x + pad_left;
     let text_max_w = (bar.w - pad_left - 14.0 * scale).max(0.0);
-    text.queue(&display, font, text_x, baseline, color, text_max_w, surface_w, surface_h);
+    text.queue(&display, font, text_x, text_top, color, text_max_w, surface_w, surface_h);
 
     // Count badge (filtered total) on the right.
     let visible_n = state.visible_indices().len();
@@ -122,8 +123,8 @@ fn draw_filter_bar(
     let cw = text.measure_width(&count, cf);
     let cx_pad = 16.0 * scale;
     let cx_x = bar.x + bar.w - cx_pad - cw;
-    let cb = bar.y + (bar.h - cf) / 2.0 + cf * 0.82;
-    text.queue(&count, cf, cx_x, cb, white(0.55 * alpha), cw + 4.0 * scale, surface_w, surface_h);
+    let cy = bar.y + (bar.h - cf) / 2.0;
+    text.queue(&count, cf, cx_x, cy, white(0.55 * alpha), cw + 4.0 * scale, surface_w, surface_h);
 
     // Caret blink for the input. Only blink when there's actual text or
     // we're considered "focused" — the overlay is always the active

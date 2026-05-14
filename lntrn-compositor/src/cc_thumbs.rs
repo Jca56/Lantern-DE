@@ -18,6 +18,7 @@
 
 use std::io::{BufRead, BufReader, ErrorKind};
 use std::os::fd::AsRawFd;
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 
@@ -136,6 +137,9 @@ impl CcThumbnails {
         let listener = match UnixListener::bind(&path) {
             Ok(l) => {
                 l.set_nonblocking(true).ok();
+                if let Err(e) = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)) {
+                    tracing::warn!(?e, "failed to chmod 0600 on cc thumbs socket");
+                }
                 tracing::info!(?path, "cc thumbs socket listening");
                 Some(l)
             }

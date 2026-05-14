@@ -1,184 +1,151 @@
-use lntrn_render::Rect;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
-// Base design values (at 1x scale)
-const NAV_BAR_H: f32 = 48.0;
-const FILE_TAB_H: f32 = 46.0;
-const SIDEBAR_W: f32 = 200.0;
-const STATUS_BAR_H: f32 = 28.0;
-const ITEM_SIZE: f32 = 80.0;
-const ICON_SIZE: f32 = 48.0;
-const ITEM_PAD: f32 = 8.0;
-const LIST_ROW_H: f32 = 40.0;
-const TREE_ROW_H: f32 = 36.0;
-const TREE_INDENT: f32 = 24.0;
+/// Grid cell dimensions in logical pixels. Big for the user's eyesight.
+pub const CELL_W: f32 = 140.0;
+pub const CELL_H: f32 = 160.0;
+pub const ICON_PX: f32 = 96.0;
+pub const LABEL_PX: f32 = 16.0;
+pub const PAD_TOP: f32 = 24.0;
+pub const PAD_LEFT: f32 = 24.0;
 
-/// Zoom 0.0 → 1.8x, 0.5 → 2.9x, 1.0 → 4.0x
-pub fn zoom_multiplier(zoom: f32) -> f32 {
-    1.8 + zoom * 2.2
+/// (column, row) in the grid.
+pub type Cell = (i32, i32);
+
+/// Persistent position map: filename (just the basename) -> cell.
+#[derive(Default, Serialize, Deserialize)]
+pub struct PositionMap {
+    #[serde(default)]
+    pub positions: HashMap<String, [i32; 2]>,
 }
 
-pub fn sidebar_w(s: f32) -> f32 { SIDEBAR_W * s }
-pub fn item_size(s: f32, zoom: f32) -> f32 { (ITEM_SIZE * zoom_multiplier(zoom)).max(60.0) * s }
-pub fn icon_size(s: f32, zoom: f32) -> f32 { ICON_SIZE * s * zoom_multiplier(zoom) }
-pub fn item_pad(s: f32) -> f32 { ITEM_PAD * s }
-
-/// Y where panel content begins (top of screen — no chrome)
-pub fn panel_top(_s: f32) -> f32 { 0.0 }
-
-// ── Files panel layout (below panel_top) ──────────────────────────────────
-
-/// Nav bar Y (first thing in the files panel content)
-pub fn nav_bar_y(s: f32) -> f32 { panel_top(s) }
-
-pub fn nav_bar_rect(width: f32, s: f32) -> Rect {
-    let x = SIDEBAR_W * s;
-    Rect::new(x, nav_bar_y(s), width - x, NAV_BAR_H * s)
+impl PositionMap {
+    pub fn get(&self, name: &str) -> Option<Cell> {
+        self.positions.get(name).map(|a| (a[0], a[1]))
+    }
+    pub fn set(&mut self, name: &str, cell: Cell) {
+        self.positions.insert(name.to_string(), [cell.0, cell.1]);
+    }
+    pub fn remove(&mut self, name: &str) {
+        self.positions.remove(name);
+    }
+    pub fn load(path: &Path) -> Self {
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    }
+    pub fn save(&self, path: &Path) {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(s) = serde_json::to_string_pretty(self) {
+            let _ = std::fs::write(path, s);
+        }
+    }
 }
 
-pub fn view_toggle_rect(s: f32) -> Rect {
-    let x = SIDEBAR_W * s;
-    let y = nav_bar_y(s);
-    Rect::new(x + 6.0 * s, y + 6.0 * s, 36.0 * s, 36.0 * s)
+pub fn position_map_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    PathBuf::from(home).join(".lantern/config/desktop-icons.json")
 }
 
-pub fn back_button_rect(s: f32) -> Rect {
-    let x = SIDEBAR_W * s;
-    let y = nav_bar_y(s);
-    Rect::new(x + 48.0 * s, y + 6.0 * s, 36.0 * s, 36.0 * s)
+/// Convert a cell to the top-left pixel of its icon area in logical coords.
+pub fn cell_origin(cell: Cell) -> (f32, f32) {
+    (
+        PAD_LEFT + cell.0 as f32 * CELL_W,
+        PAD_TOP + cell.1 as f32 * CELL_H,
+    )
 }
 
-pub fn forward_button_rect(s: f32) -> Rect {
-    let x = SIDEBAR_W * s;
-    let y = nav_bar_y(s);
-    Rect::new(x + 86.0 * s, y + 6.0 * s, 36.0 * s, 36.0 * s)
+/// Convert a logical pixel position to the nearest grid cell.
+pub fn pixel_to_cell(x: f32, y: f32) -> Cell {
+    let col = ((x - PAD_LEFT + CELL_W * 0.5) / CELL_W).floor() as i32;
+    let row = ((y - PAD_TOP + CELL_H * 0.5) / CELL_H).floor() as i32;
+    (col.max(0), row.max(0))
 }
 
-pub fn up_button_rect(s: f32) -> Rect {
-    let x = SIDEBAR_W * s;
-    let y = nav_bar_y(s);
-    Rect::new(x + 124.0 * s, y + 6.0 * s, 36.0 * s, 36.0 * s)
+/// How many columns / rows fit in the surface.
+pub fn grid_dims(surface_w: f32, surface_h: f32) -> (i32, i32) {
+    let cols = ((surface_w - PAD_LEFT) / CELL_W).floor().max(1.0) as i32;
+    let rows = ((surface_h - PAD_TOP) / CELL_H).floor().max(1.0) as i32;
+    (cols, rows)
 }
 
-pub fn path_rect(width: f32, s: f32) -> Rect {
-    let x = SIDEBAR_W * s;
-    let y = nav_bar_y(s);
-    let path_x = x + 172.0 * s;
-    let search_space = 46.0 * s;
-    Rect::new(path_x, y + 5.0 * s, width - path_x - search_space, 38.0 * s)
+/// Find the first empty cell, scanning column-first (top→bottom, then right).
+/// Skips cells already in `occupied`.
+pub fn first_empty_cell(occupied: &std::collections::HashSet<Cell>, dims: (i32, i32)) -> Cell {
+    let (cols, rows) = dims;
+    for c in 0..cols {
+        for r in 0..rows {
+            let cell = (c, r);
+            if !occupied.contains(&cell) {
+                return cell;
+            }
+        }
+    }
+    // Overflow off-screen; just stack at the end
+    (cols.max(1) - 1, rows.max(1))
 }
 
-pub fn search_button_rect(width: f32, s: f32) -> Rect {
-    let y = nav_bar_y(s);
-    Rect::new(width - 42.0 * s, y + 6.0 * s, 36.0 * s, 36.0 * s)
+/// Assign cells to items, respecting saved positions first, then filling empty cells.
+/// Returns a Vec aligned with `items` indices: items[i] is at returned[i].
+pub fn assign_cells(
+    items: &[crate::icons::DesktopItem],
+    positions: &mut PositionMap,
+    dims: (i32, i32),
+) -> Vec<Cell> {
+    use std::collections::HashSet;
+    let mut occupied: HashSet<Cell> = HashSet::new();
+    let mut assigned: Vec<Option<Cell>> = vec![None; items.len()];
+
+    // First pass: respect saved positions (skip collisions — first wins).
+    for (i, item) in items.iter().enumerate() {
+        if let Some(cell) = positions.get(&item.name) {
+            if !occupied.contains(&cell) {
+                occupied.insert(cell);
+                assigned[i] = Some(cell);
+            }
+        }
+    }
+    // Second pass: fill empties.
+    for (i, item) in items.iter().enumerate() {
+        if assigned[i].is_none() {
+            let cell = first_empty_cell(&occupied, dims);
+            occupied.insert(cell);
+            assigned[i] = Some(cell);
+            positions.set(&item.name, cell);
+        }
+    }
+    assigned.into_iter().map(|c| c.unwrap_or((0, 0))).collect()
 }
 
-/// File tab bar Y (below nav bar)
-pub fn tab_bar_y(s: f32) -> f32 {
-    panel_top(s) + NAV_BAR_H * s
+/// Hit-test a point against the icon cells. Returns the item index, if any.
+/// We hit the union of the icon image and its label.
+pub fn hit_test(x: f32, y: f32, cells: &[Cell]) -> Option<usize> {
+    for (i, cell) in cells.iter().enumerate() {
+        let (ox, oy) = cell_origin(*cell);
+        if x >= ox && x < ox + CELL_W && y >= oy && y < oy + CELL_H {
+            return Some(i);
+        }
+    }
+    None
 }
 
-pub fn tab_bar_rect(width: f32, s: f32) -> Rect {
-    let x = SIDEBAR_W * s;
-    Rect::new(x, tab_bar_y(s), width - x, FILE_TAB_H * s)
-}
-
-/// Content area top (below nav bar + file tabs)
-pub fn content_top(s: f32) -> f32 {
-    panel_top(s) + NAV_BAR_H * s + FILE_TAB_H * s
-}
-
-/// Bottom of the content area. Leaves room for the status bar.
-/// The extra 8px margin ensures the status bar doesn't overlap the taskbar.
-pub fn content_bottom(height: f32, s: f32) -> f32 {
-    height - STATUS_BAR_H * s - 18.0 * s
-}
-
-pub fn content_rect_with_bottom(width: f32, bottom: f32, s: f32) -> Rect {
-    let top = content_top(s);
-    Rect::new(SIDEBAR_W * s, top, width - SIDEBAR_W * s, bottom - top)
-}
-
-pub fn sidebar_rect(height: f32, s: f32) -> Rect {
-    let top = panel_top(s);
-    Rect::new(0.0, top, SIDEBAR_W * s, height - top)
-}
-
-/// Y where sidebar items start (below nav bar + gradient + PLACES header)
-fn sidebar_items_top(s: f32) -> f32 {
-    // Must match sidebar.rs: nav_bar_y + 48 (nav) + 4 (gradient) + 12 (margin) + 34 (header+gap)
-    nav_bar_y(s) + (48.0 + 4.0 + 12.0 + 34.0) * s
-}
-
-const SIDEBAR_ITEM_H: f32 = 44.0;
-
-pub fn sidebar_item_rect(index: usize, s: f32) -> Rect {
-    let y = sidebar_items_top(s) + index as f32 * SIDEBAR_ITEM_H * s;
-    Rect::new(4.0 * s, y, (SIDEBAR_W - 12.0) * s, SIDEBAR_ITEM_H * s)
-}
-
-pub fn drives_section_y(num_places: usize, s: f32) -> f32 {
-    sidebar_items_top(s) + num_places as f32 * SIDEBAR_ITEM_H * s + 28.0 * s
-}
-
-pub fn drive_item_rect(index: usize, num_places: usize, s: f32) -> Rect {
-    let mut y = drives_section_y(num_places, s) + 34.0 * s;
-    y += index as f32 * 64.0 * s;
-    Rect::new(4.0 * s, y, (SIDEBAR_W - 12.0) * s, 64.0 * s)
-}
-
-pub fn content_rect(width: f32, height: f32, s: f32) -> Rect {
-    let top = content_top(s);
-    let bottom = content_bottom(height, s);
-    Rect::new(SIDEBAR_W * s, top, width - SIDEBAR_W * s, bottom - top)
-}
-
-pub fn status_rect(width: f32, height: f32, s: f32) -> Rect {
-    let bottom = content_bottom(height, s);
-    Rect::new(SIDEBAR_W * s, bottom, width - SIDEBAR_W * s, STATUS_BAR_H * s)
-}
-
-pub fn list_row_h(s: f32) -> f32 { LIST_ROW_H * s }
-pub fn tree_row_h(s: f32) -> f32 { TREE_ROW_H * s }
-pub fn tree_indent(s: f32) -> f32 { TREE_INDENT * s }
-
-pub fn list_content_height(entry_count: usize, s: f32) -> f32 {
-    entry_count as f32 * LIST_ROW_H * s
-}
-
-pub fn tree_content_height(entry_count: usize, s: f32) -> f32 {
-    entry_count as f32 * TREE_ROW_H * s
-}
-
-pub fn list_row_rect(index: usize, content_x: f32, content_w: f32, base_y: f32, s: f32) -> Rect {
-    let y = base_y + index as f32 * LIST_ROW_H * s;
-    Rect::new(content_x, y, content_w, LIST_ROW_H * s)
-}
-
-pub fn tree_row_rect(index: usize, depth: usize, content_x: f32, content_w: f32, base_y: f32, s: f32) -> Rect {
-    let y = base_y + index as f32 * TREE_ROW_H * s;
-    let indent = depth as f32 * TREE_INDENT * s;
-    Rect::new(content_x + indent, y, content_w - indent, TREE_ROW_H * s)
-}
-
-pub fn grid_columns(content_width: f32, s: f32, zoom: f32) -> usize {
-    let item = item_size(s, zoom);
-    let pad = ITEM_PAD * s;
-    ((content_width - pad) / (item + pad)).max(1.0) as usize
-}
-
-pub fn grid_content_height(entry_count: usize, cols: usize, s: f32, zoom: f32) -> f32 {
-    let item = item_size(s, zoom);
-    let pad = ITEM_PAD * s;
-    let rows = (entry_count + cols.saturating_sub(1)) / cols.max(1);
-    rows as f32 * (item + pad) + pad
-}
-
-pub fn file_item_rect(index: usize, cols: usize, content_x: f32, base_y: f32, s: f32, zoom: f32) -> Rect {
-    let item = item_size(s, zoom);
-    let pad = ITEM_PAD * s;
-    let col = index % cols.max(1);
-    let row = index / cols.max(1);
-    let x = content_x + pad + col as f32 * (item + pad);
-    let y = base_y + pad + row as f32 * (item + pad);
-    Rect::new(x, y, item, item)
+/// Hit-test any items intersected by a rect (used for rubber-band selection).
+pub fn rect_hits(rect: (f32, f32, f32, f32), cells: &[Cell]) -> Vec<usize> {
+    let (rx, ry, rw, rh) = rect;
+    let (rx2, ry2) = (rx + rw, ry + rh);
+    let mut hits = Vec::new();
+    for (i, cell) in cells.iter().enumerate() {
+        let (ox, oy) = cell_origin(*cell);
+        let (ox2, oy2) = (ox + CELL_W, oy + CELL_H);
+        let overlap_x = rx < ox2 && rx2 > ox;
+        let overlap_y = ry < oy2 && ry2 > oy;
+        if overlap_x && overlap_y {
+            hits.push(i);
+        }
+    }
+    hits
 }

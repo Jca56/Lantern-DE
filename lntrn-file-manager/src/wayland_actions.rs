@@ -101,6 +101,7 @@ pub(crate) fn resize_edge_to_cursor_shape(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn handle_click(
     input: &mut InteractionContext,
     app: &mut App,
@@ -113,6 +114,8 @@ pub(crate) fn handle_click(
     s: f32,
     bg_opacity: f32,
     current_theme: &str,
+    ctrl: bool,
+    shift: bool,
 ) -> ClickAction {
     if let Some(zone_id) = input.on_left_pressed() {
         // ── Cloud login dialog: capture all clicks while open ───────
@@ -179,7 +182,7 @@ pub(crate) fn handle_click(
                         view_menu.open_popup(
                             label_x as f32, label_y,
                             vec![
-                                MenuItem::slider(VIEW_SLIDER_ID, "Icon Size", app.icon_zoom),
+                                MenuItem::slider(VIEW_SLIDER_ID, "Scale", app.icon_zoom),
                                 MenuItem::slider(VIEW_OPACITY_SLIDER_ID, "Opacity", bg_opacity),
                                 MenuItem::checkbox(VIEW_SHOW_HIDDEN_ID, "Show Hidden Files", app.show_hidden),
                                 MenuItem::separator(),
@@ -200,6 +203,14 @@ pub(crate) fn handle_click(
             }
             ZONE_NAV_VIEW_TOGGLE => {
                 app.cycle_view_mode();
+            }
+            crate::ZONE_NAV_PREVIEW_TOGGLE => {
+                app.preview_open = !app.preview_open;
+            }
+            crate::ZONE_PREVIEW_RESIZE => {
+                if let Some((cx, _)) = input.cursor() {
+                    app.preview_drag = Some((cx, app.preview_width));
+                }
             }
             ZONE_PATH_INPUT => {
                 if !app.path_editing {
@@ -279,21 +290,65 @@ pub(crate) fn handle_click(
                 let idx = (id - ZONE_TREE_ITEM_BASE) as usize;
                 if idx < app.tree_entries.len() {
                     let te = &app.tree_entries[idx];
-                    if te.entry.is_dir {
+                    if te.entry.is_dir && !ctrl && !shift {
+                        // Plain click on a folder still toggles expansion.
+                        // Ctrl/Shift will treat folders like files (select).
                         let path = te.entry.path.clone();
                         app.toggle_tree_expand(path);
                     } else {
                         let path = te.entry.path.clone();
-                        let ext = path.extension()
-                            .and_then(|e| e.to_str())
-                            .map(|s| s.to_lowercase())
-                            .unwrap_or_default();
-                        if let Some(app) = desktop::default_app_for_extension(&ext) {
-                            desktop::launch_app(&app.exec, &path);
+                        let entry_idx = app.entries.iter().position(|e| e.path == path);
+                        if ctrl || shift {
+                            // Mark the press so the rubber-band branch in the
+                            // loop doesn't clear our selection.
+                            if let Some((cx, cy)) = input.cursor() {
+                                app.press_pos = Some((cx, cy));
+                            }
+                            if let Some(i) = entry_idx {
+                                app.pending_open = Some(i);
+                            }
+                            app.press_shift = shift;
+                            app.press_ctrl = ctrl;
+                        }
+                        if ctrl {
+                            if let Some(i) = entry_idx {
+                                app.entries[i].selected = !app.entries[i].selected;
+                                app.selection_anchor = Some(i);
+                            }
+                        } else if shift {
+                            if let Some(i) = entry_idx {
+                                let anchor = app.selection_anchor.unwrap_or(i);
+                                app.select_range(anchor, i);
+                                app.selection_anchor = Some(i);
+                            }
                         } else {
-                            std::thread::spawn(move || {
-                                let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
-                            });
+                            // In pick mode, single-click selects rather than
+                            // launching — otherwise the user can't pick a file
+                            // from the tree. Outside pick mode, click opens
+                            // (use Ctrl+Click to add to selection / drive the
+                            // preview pane).
+                            let select_only = app.pick.is_some();
+                            if select_only {
+                                if let Some(i) = entry_idx {
+                                    app.select_item(i);
+                                    app.selection_anchor = Some(i);
+                                }
+                            } else if te.entry.is_dir {
+                                let path = te.entry.path.clone();
+                                app.toggle_tree_expand(path);
+                            } else {
+                                let ext = path.extension()
+                                    .and_then(|e| e.to_str())
+                                    .map(|s| s.to_lowercase())
+                                    .unwrap_or_default();
+                                if let Some(app) = desktop::default_app_for_extension(&ext) {
+                                    desktop::launch_app(&app.exec, &path);
+                                } else {
+                                    std::thread::spawn(move || {
+                                        let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
+                                    });
+                                }
+                            }
                         }
                     }
                 }
@@ -324,13 +379,26 @@ pub(crate) fn handle_click(
                             }
                         }
                     }
-                } else {
-                    if idx < app.entries.len() {
+                } else if idx < app.entries.len() {
+                    // Always record `pending_open` so the rubber-band branch
+                    // below (which fires for ClickAction::None when no
+                    // pending_open is set) doesn't kick in and clear the
+                    // selection we just made. The release handler uses the
+                    // press_* modifiers to decide what to actually do.
+                    app.pending_open = Some(idx);
+                    if let Some((cx, cy)) = input.cursor() {
+                        app.press_pos = Some((cx, cy));
+                    }
+                    app.press_shift = shift;
+                    app.press_ctrl = ctrl;
+                    if ctrl {
+                        // Toggle this entry's selection immediately so the user
+                        // sees feedback. Release will skip on_item_click.
+                        app.entries[idx].selected = !app.entries[idx].selected;
+                        app.selection_anchor = Some(idx);
+                    } else if !shift {
                         app.select_item(idx);
-                        app.pending_open = Some(idx);
-                        if let Some((cx, cy)) = input.cursor() {
-                            app.press_pos = Some((cx, cy));
-                        }
+                        app.selection_anchor = Some(idx);
                     }
                 }
             }
@@ -415,8 +483,8 @@ pub(crate) fn handle_right_click(
 
     // Search mode: use list-based hit detection against search_results
     if app.searching && !app.search_buf.is_empty() {
-        let row_h = crate::layout::search_list_row_h(s);
-        let hdr_h = 32.0 * s;
+        let row_h = crate::layout::search_list_row_h(s, app.icon_zoom);
+        let hdr_h = 32.0 * crate::layout::list_zoom_multiplier(app.icon_zoom) * s;
         let base_y = cr.y - app.scroll_offset;
         let clicked_idx = (0..app.search_results.len()).find(|&i| {
             let y = base_y + hdr_h + i as f32 * row_h;
@@ -718,8 +786,12 @@ pub(crate) fn handle_ctx_event(
                     } else {
                         let _ = std::fs::create_dir(&target);
                     }
-                    app.undo_stack.push(crate::undo::UndoAction::Create(vec![target]));
+                    app.undo_stack.push(crate::undo::UndoAction::Create(vec![target.clone()]));
                     app.reload();
+                    if let Some(idx) = app.entries.iter().position(|e| e.path == target) {
+                        app.select_item(idx);
+                        app.start_rename(idx);
+                    }
                 }
                 CTX_NEW_FOLDER_PLAIN | CTX_NEW_FOLDER_RED | CTX_NEW_FOLDER_ORANGE
                 | CTX_NEW_FOLDER_YELLOW | CTX_NEW_FOLDER_GREEN | CTX_NEW_FOLDER_BLUE
@@ -743,8 +815,12 @@ pub(crate) fn handle_ctx_event(
                     if !color.is_empty() {
                         crate::icons::set_folder_color(&target, color);
                     }
-                    app.undo_stack.push(crate::undo::UndoAction::Create(vec![target]));
+                    app.undo_stack.push(crate::undo::UndoAction::Create(vec![target.clone()]));
                     app.reload();
+                    if let Some(idx) = app.entries.iter().position(|e| e.path == target) {
+                        app.select_item(idx);
+                        app.start_rename(idx);
+                    }
                 }
                 CTX_NEW_FILE => {
                     let target = app.current_dir.join("New File");
@@ -1177,32 +1253,55 @@ pub(crate) fn handle_key(
 
     // ── Rename mode ─────────────────────────────────────────────────
     if app.renaming.is_some() {
+        if ctrl {
+            match key {
+                KEY_A => {
+                    let len = app.rename_buf.len();
+                    app.rename_selection = Some((0, len));
+                    app.rename_cursor = len;
+                }
+                _ => {}
+            }
+            return;
+        }
         match key {
             KEY_ENTER => app.commit_rename(),
             KEY_ESC => app.cancel_rename(),
             KEY_BACKSPACE => {
-                if app.rename_cursor > 0 {
+                if !app.rename_delete_selection() && app.rename_cursor > 0 {
                     app.rename_cursor -= 1;
                     app.rename_buf.remove(app.rename_cursor);
                 }
+                app.rename_selection = None;
             }
             KEY_DELETE => {
-                if app.rename_cursor < app.rename_buf.len() {
+                if !app.rename_delete_selection() && app.rename_cursor < app.rename_buf.len() {
                     app.rename_buf.remove(app.rename_cursor);
                 }
+                app.rename_selection = None;
             }
             KEY_LEFT => {
-                if app.rename_cursor > 0 { app.rename_cursor -= 1; }
+                if let Some((a, b)) = app.rename_selection.take() {
+                    app.rename_cursor = a.min(b);
+                } else if app.rename_cursor > 0 {
+                    app.rename_cursor -= 1;
+                }
             }
             KEY_RIGHT => {
-                if app.rename_cursor < app.rename_buf.len() { app.rename_cursor += 1; }
+                if let Some((a, b)) = app.rename_selection.take() {
+                    app.rename_cursor = a.max(b).min(app.rename_buf.len());
+                } else if app.rename_cursor < app.rename_buf.len() {
+                    app.rename_cursor += 1;
+                }
             }
-            KEY_HOME => app.rename_cursor = 0,
-            KEY_END => app.rename_cursor = app.rename_buf.len(),
+            KEY_HOME => { app.rename_cursor = 0; app.rename_selection = None; }
+            KEY_END => { app.rename_cursor = app.rename_buf.len(); app.rename_selection = None; }
             _ => {
                 if let Some(ch) = keycode_to_char(key, shift) {
+                    app.rename_delete_selection();
                     app.rename_buf.insert(app.rename_cursor, ch);
-                    app.rename_cursor += 1;
+                    app.rename_cursor += ch.len_utf8();
+                    app.rename_selection = None;
                 }
             }
         }
@@ -1211,6 +1310,14 @@ pub(crate) fn handle_key(
 
     // ── Pick mode: save name editing ───────────────────────────────
     if app.save_name_editing {
+        if ctrl {
+            if key == KEY_A {
+                let len = app.save_name_buf.len();
+                app.save_name_selection = Some((0, len));
+                app.save_name_cursor = len;
+            }
+            return;
+        }
         match key {
             KEY_ENTER => {
                 app.save_name_editing = false;
@@ -1219,30 +1326,43 @@ pub(crate) fn handle_key(
             }
             KEY_ESC => {
                 app.save_name_editing = false;
+                app.save_name_selection = None;
             }
             KEY_BACKSPACE => {
-                if app.save_name_cursor > 0 {
+                if !app.save_name_delete_selection() && app.save_name_cursor > 0 {
                     app.save_name_cursor -= 1;
                     app.save_name_buf.remove(app.save_name_cursor);
                 }
+                app.save_name_selection = None;
             }
             KEY_DELETE => {
-                if app.save_name_cursor < app.save_name_buf.len() {
+                if !app.save_name_delete_selection() && app.save_name_cursor < app.save_name_buf.len() {
                     app.save_name_buf.remove(app.save_name_cursor);
                 }
+                app.save_name_selection = None;
             }
             KEY_LEFT => {
-                if app.save_name_cursor > 0 { app.save_name_cursor -= 1; }
+                if let Some((a, b)) = app.save_name_selection.take() {
+                    app.save_name_cursor = a.min(b);
+                } else if app.save_name_cursor > 0 {
+                    app.save_name_cursor -= 1;
+                }
             }
             KEY_RIGHT => {
-                if app.save_name_cursor < app.save_name_buf.len() { app.save_name_cursor += 1; }
+                if let Some((a, b)) = app.save_name_selection.take() {
+                    app.save_name_cursor = a.max(b).min(app.save_name_buf.len());
+                } else if app.save_name_cursor < app.save_name_buf.len() {
+                    app.save_name_cursor += 1;
+                }
             }
-            KEY_HOME => app.save_name_cursor = 0,
-            KEY_END => app.save_name_cursor = app.save_name_buf.len(),
+            KEY_HOME => { app.save_name_cursor = 0; app.save_name_selection = None; }
+            KEY_END => { app.save_name_cursor = app.save_name_buf.len(); app.save_name_selection = None; }
             _ => {
                 if let Some(ch) = keycode_to_char(key, shift) {
+                    app.save_name_delete_selection();
                     app.save_name_buf.insert(app.save_name_cursor, ch);
-                    app.save_name_cursor += 1;
+                    app.save_name_cursor += ch.len_utf8();
+                    app.save_name_selection = None;
                 }
             }
         }

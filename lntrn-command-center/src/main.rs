@@ -5,6 +5,8 @@
 //! command (`T`/`S`/`H`) and exit. See `ipc.rs`.
 
 mod app;
+mod clipboard;
+mod clock_toggle;
 mod controls;
 mod emojis;
 mod files;
@@ -12,6 +14,7 @@ mod ipc;
 mod launcher;
 mod layershell;
 mod mini_dock;
+mod notes;
 mod power;
 mod render;
 mod search;
@@ -19,6 +22,8 @@ mod settings;
 mod terminal;
 mod thumbs;
 mod toplevel;
+mod usage;
+mod usage_button;
 mod view_arrows;
 mod view_indicator;
 

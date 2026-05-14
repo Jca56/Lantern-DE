@@ -4,6 +4,9 @@
 //!   LEFT  : [Home] [Grow] [Gear]
 //!   CENTER: view dots
 //!   RIGHT : [Emoji] [Clipboard] [Notes]
+//!
+//! The Claude-usage button floats under the right view arrow — see
+//! `usage_button.rs`, not in this module.
 
 use lntrn_render::{Color, Painter, Rect};
 
@@ -437,3 +440,4 @@ pub fn draw_notes(
         painter.line_round(line_x, y, line_x + w, y, stroke * 0.85, color);
     }
 }
+

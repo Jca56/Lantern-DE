@@ -150,6 +150,22 @@ impl State {
     pub(crate) fn phys_height(&self) -> u32 { (self.height as f64 * self.fractional_scale()).round() as u32 }
 }
 
+/// Extract a usable extension from the first pattern of the first filter
+/// (e.g. "Images:*.png,*.jpg" → "png"). Returns None when nothing concrete
+/// is available — e.g. for "*" / "*.*" wildcards, or when no filters are set.
+fn first_filter_ext(pick: &PickConfig) -> Option<String> {
+    let filter = pick.filters.get(pick.active_filter).or_else(|| pick.filters.first())?;
+    for pat in &filter.patterns {
+        if pat == "*" || pat == "*.*" { continue; }
+        if let Some(ext) = pat.strip_prefix("*.") {
+            if !ext.is_empty() && !ext.contains('*') {
+                return Some(ext.to_string());
+            }
+        }
+    }
+    None
+}
+
 // ── Entry point ─────────────────────────────────────────────────────────────
 
 pub fn run(pick: Option<PickConfig>, desktop: bool) -> Result<()> {
@@ -287,6 +303,12 @@ pub fn run(pick: Option<PickConfig>, desktop: bool) -> Result<()> {
     app.show_hidden = settings.show_hidden;
     app.sort_by = settings.sort_by_enum();
     app.sort_dir = settings.sort_dir_enum();
+    app.preview_open = settings.preview_open;
+    app.preview_width = settings.preview_width;
+    // Pick mode forces Tree below; outside pick mode, restore last view.
+    if pick.is_none() {
+        app.view_mode = settings.view_mode_enum();
+    }
     app.init_cloud();
     if let Some(ref p) = pick {
         if let Some(ref dir) = p.start_dir {
@@ -295,8 +317,23 @@ pub fn run(pick: Option<PickConfig>, desktop: bool) -> Result<()> {
             app.navigate_to_home();
         }
         app.pick = Some(p.clone());
+        app.view_mode = crate::app::ViewMode::Tree;
+        app.rebuild_tree();
         if let Some(ref name) = p.save_name {
             app.save_name_buf = name.clone();
+        } else if p.mode == crate::PickType::Save {
+            // Auto-suggest "Untitled" + the first active filter's first
+            // extension. The "Untitled" portion is pre-selected so the user
+            // can just start typing — the extension stays put.
+            let ext = first_filter_ext(p);
+            let basename = "Untitled";
+            app.save_name_buf = match ext {
+                Some(ref e) => format!("{}.{}", basename, e),
+                None => basename.to_string(),
+            };
+            app.save_name_selection = Some((0, basename.len()));
+            app.save_name_cursor = basename.len();
+            app.save_name_editing = true;
         }
     } else {
         app.navigate_to_home();

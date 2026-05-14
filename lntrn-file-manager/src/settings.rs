@@ -28,7 +28,16 @@ pub struct Settings {
     pub desktop_y: i32,
     #[serde(default = "default_theme")]
     pub theme: String,
+    #[serde(default)]
+    pub preview_open: bool,
+    #[serde(default = "default_preview_width")]
+    pub preview_width: f32,
+    #[serde(default = "default_view_mode")]
+    pub view_mode: String,
 }
+
+fn default_preview_width() -> f32 { 360.0 }
+fn default_view_mode() -> String { "grid".into() }
 
 fn default_theme() -> String { "fox-dark".into() }
 
@@ -57,6 +66,9 @@ impl Default for Settings {
             desktop_x: 0,
             desktop_y: 0,
             theme: "fox-dark".into(),
+            preview_open: false,
+            preview_width: 360.0,
+            view_mode: "grid".into(),
         }
     }
 }
@@ -88,6 +100,22 @@ impl Settings {
         if let Ok(json) = serde_json::to_string_pretty(self) {
             let _ = std::fs::write(&path, json);
         }
+    }
+
+    pub fn view_mode_enum(&self) -> crate::app::ViewMode {
+        match self.view_mode.as_str() {
+            "list" => crate::app::ViewMode::List,
+            "tree" => crate::app::ViewMode::Tree,
+            _ => crate::app::ViewMode::Grid,
+        }
+    }
+
+    pub fn set_view_mode(&mut self, view: crate::app::ViewMode) {
+        self.view_mode = match view {
+            crate::app::ViewMode::Grid => "grid",
+            crate::app::ViewMode::List => "list",
+            crate::app::ViewMode::Tree => "tree",
+        }.into();
     }
 
     pub fn sort_by_enum(&self) -> crate::fs::SortBy {

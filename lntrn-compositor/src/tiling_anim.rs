@@ -14,7 +14,7 @@ use smithay::{
 use crate::rect_anim::{Curve, RectAnim};
 
 /// Cinematic spring duration for tiling reflows.
-const ANIM_DURATION: Duration = Duration::from_millis(520);
+const ANIM_DURATION: Duration = Duration::from_millis(1000);
 /// Spring damping (lower = more bouncy, 1.0 = critically damped).
 /// Bumped up from 0.7 → 0.82 so the longer cinematic duration doesn't wobble.
 const SPRING_DAMPING: f64 = 0.82;

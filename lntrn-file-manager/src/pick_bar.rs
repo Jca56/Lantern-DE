@@ -83,6 +83,7 @@ pub fn draw_pick_bar(
             TextInput::new(input_rect)
                 .text(&app.save_name_buf)
                 .cursor_pos(app.save_name_cursor)
+                .selection(app.save_name_selection)
                 .focused(app.save_name_editing)
                 .placeholder("filename.ext")
                 .scale(s)

@@ -109,6 +109,12 @@ pub struct App {
 
     pub icon_zoom: f32,
     pub view_mode: ViewMode,
+    /// Preview pane shown on the right edge in List/Tree views.
+    pub preview_open: bool,
+    /// Preview pane width in logical px (resizable via drag handle).
+    pub preview_width: f32,
+    /// While the user is dragging the resize handle: (press_x, original_width).
+    pub preview_drag: Option<(f32, f32)>,
     pub show_hidden: bool,
     pub sort_by: SortBy,
     pub sort_dir: SortDir,
@@ -135,10 +141,18 @@ pub struct App {
     // Click-to-open deferred to release (so drag works)
     pub pending_open: Option<usize>,
     pub press_pos: Option<(f32, f32)>,
+    /// Modifiers held at the moment of press — used by the release/drag
+    /// handlers to decide between range-select, rubber-band, and open.
+    pub press_shift: bool,
+    pub press_ctrl: bool,
 
     // Double-click tracking
     pub last_click_time: Option<Instant>,
     pub last_click_idx: Option<usize>,
+
+    /// Anchor for Shift+Click range select — the last entry the user
+    /// clicked or range-extended from.
+    pub selection_anchor: Option<usize>,
 
     // Drag
     pub drag_item: Option<usize>,
@@ -148,6 +162,9 @@ pub struct App {
     pub renaming: Option<usize>,
     pub rename_buf: String,
     pub rename_cursor: usize,
+    /// Selection range (char offsets). When Some, text between start..end is
+    /// selected and will be replaced on next character input.
+    pub rename_selection: Option<(usize, usize)>,
 
     // Path bar editing
     pub path_editing: bool,
@@ -162,6 +179,9 @@ pub struct App {
     pub save_name_buf: String,
     pub save_name_cursor: usize,
     pub save_name_editing: bool,
+    /// Selection range (byte offsets) in `save_name_buf`. Used to pre-highlight
+    /// the basename of an auto-suggested "Untitled.ext" so typing replaces it.
+    pub save_name_selection: Option<(usize, usize)>,
 
     // Properties dialog
     pub properties: Option<crate::properties::FileProperties>,
@@ -222,6 +242,9 @@ impl App {
             scroll_offset: 0.0,
             icon_zoom: 0.5,
             view_mode: ViewMode::Grid,
+            preview_open: false,
+            preview_width: 360.0,
+            preview_drag: None,
             show_hidden: false,
             sort_by: SortBy::Name,
             sort_dir: SortDir::Asc,
@@ -235,13 +258,17 @@ impl App {
             drive_dialog: None,
             pending_open: None,
             press_pos: None,
+            press_shift: false,
+            press_ctrl: false,
             last_click_time: None,
             last_click_idx: None,
+            selection_anchor: None,
             drag_item: None,
             drag_pos: None,
             renaming: None,
             rename_buf: String::new(),
             rename_cursor: 0,
+            rename_selection: None,
             path_editing: false,
             path_buf: String::new(),
             path_cursor: 0,
@@ -253,6 +280,7 @@ impl App {
             save_name_buf: String::new(),
             save_name_cursor: 0,
             save_name_editing: false,
+            save_name_selection: None,
             properties: None,
             pending_drop: None,
             wayland_clipboard: crate::clipboard::Clipboard::new(),
@@ -664,6 +692,18 @@ impl App {
         for e in &mut self.entries { e.selected = true; }
     }
 
+    /// Mark every entry in the inclusive range [start..=end] as selected.
+    /// Existing selection is preserved (additive). Useful for Shift+Click.
+    pub fn select_range(&mut self, start: usize, end: usize) {
+        let lo = start.min(end);
+        let hi = start.max(end).min(self.entries.len().saturating_sub(1));
+        for i in lo..=hi {
+            if i < self.entries.len() {
+                self.entries[i].selected = true;
+            }
+        }
+    }
+
     pub fn clear_selection(&mut self) {
         for e in &mut self.entries { e.selected = false; }
     }
@@ -677,15 +717,20 @@ impl App {
     pub fn start_rename(&mut self, index: usize) {
         if index >= self.entries.len() { return; }
         self.rename_buf = self.entries[index].name.clone();
-        if !self.entries[index].is_dir {
-            if let Some(dot_pos) = self.rename_buf.rfind('.') {
-                self.rename_cursor = dot_pos;
-            } else {
-                self.rename_cursor = self.rename_buf.len();
-            }
+        // Files: select the basename (everything before the final '.'). If
+        // there's no extension or it's a dotfile, select all. Folders: select all.
+        // Selection and cursor use byte offsets — same units the rest of the
+        // rename input uses.
+        let select_end = if self.entries[index].is_dir {
+            self.rename_buf.len()
         } else {
-            self.rename_cursor = self.rename_buf.len();
-        }
+            match self.rename_buf.rfind('.') {
+                Some(0) | None => self.rename_buf.len(),
+                Some(dot) => dot,
+            }
+        };
+        self.rename_selection = if select_end > 0 { Some((0, select_end)) } else { None };
+        self.rename_cursor = select_end;
         self.renaming = Some(index);
     }
 
@@ -715,6 +760,7 @@ impl App {
             }
             self.rename_buf.clear();
             self.rename_cursor = 0;
+            self.rename_selection = None;
             self.reload();
         }
     }
@@ -723,6 +769,32 @@ impl App {
         self.renaming = None;
         self.rename_buf.clear();
         self.rename_cursor = 0;
+        self.rename_selection = None;
+    }
+
+    /// Delete the currently selected text in the save-name buffer (if any).
+    /// Returns true if anything was deleted. Mirrors `rename_delete_selection`.
+    pub fn save_name_delete_selection(&mut self) -> bool {
+        let Some((a, b)) = self.save_name_selection.take() else { return false };
+        let start = a.min(b).min(self.save_name_buf.len());
+        let end = a.max(b).min(self.save_name_buf.len());
+        if start == end { return false; }
+        self.save_name_buf.replace_range(start..end, "");
+        self.save_name_cursor = start;
+        true
+    }
+
+    /// Delete the currently selected text in the rename buffer (if any).
+    /// Returns true if anything was deleted. Cursor lands at the start of the
+    /// former selection. Selection offsets are byte indices.
+    pub fn rename_delete_selection(&mut self) -> bool {
+        let Some((a, b)) = self.rename_selection.take() else { return false };
+        let start = a.min(b).min(self.rename_buf.len());
+        let end = a.max(b).min(self.rename_buf.len());
+        if start == end { return false; }
+        self.rename_buf.replace_range(start..end, "");
+        self.rename_cursor = start;
+        true
     }
 
     // ── Path bar editing ──────────────────────────────────────────────

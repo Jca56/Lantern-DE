@@ -12,6 +12,7 @@ use crate::views::{draw_content_list, draw_content_tree};
 use lntrn_ui::gpu::controls::{Button, ButtonVariant};
 use crate::{Gpu, ZONE_CLOSE, ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_MENU_VIEW,
     ZONE_NAV_VIEW_TOGGLE, ZONE_NAV_BACK, ZONE_NAV_FORWARD, ZONE_NAV_UP, ZONE_NAV_SEARCH, ZONE_NAV_SORT,
+    ZONE_NAV_PREVIEW_TOGGLE, ZONE_PREVIEW_RESIZE,
     ZONE_SIDEBAR_ITEM_BASE, ZONE_FILE_ITEM_BASE, ZONE_CONTENT, ZONE_SCROLLBAR,
     ZONE_TAB_BASE, ZONE_TAB_CLOSE_BASE, ZONE_TAB_NEW, ZONE_RENAME_INPUT, ZONE_PATH_INPUT,
     ZONE_DRIVE_ITEM_BASE, ZONE_TREE_ITEM_BASE, ZONE_BREADCRUMB_BASE,
@@ -48,7 +49,7 @@ pub fn render_frame(
     // ── Compute content geometry per view mode ─────────────────────────
     icon_cache.ensure_dir(&app.current_dir);
     icon_cache.poll_video_thumbs(ctx, tex_pass);
-    let content = if app.pick.is_some() {
+    let full_content = if app.pick.is_some() {
         let bottom = hf - crate::pick_bar::PICK_BAR_H * s;
         content_rect_with_bottom(wf, bottom, s)
     } else {
@@ -63,16 +64,33 @@ pub fn render_frame(
         &app.entries
     };
     let view_mode = if is_searching { ViewMode::List } else { app.view_mode };
+    // Preview pane: only shown in List/Tree (and during search, which renders as List).
+    let preview_supported = matches!(view_mode, ViewMode::List | ViewMode::Tree);
+    let preview_w_px = if preview_supported {
+        preview_effective_w(full_content.w, app.preview_width, app.preview_open, s)
+    } else {
+        0.0
+    };
+    // Clamp the persisted logical width back to a valid range when in use, so
+    // future toggles remember the constrained value.
+    if preview_w_px > 0.0 {
+        app.preview_width = (preview_w_px / s).max(PREVIEW_MIN_W);
+    }
+    let content = if preview_w_px > 0.0 {
+        Rect::new(full_content.x, full_content.y, full_content.w - preview_w_px, full_content.h)
+    } else {
+        full_content
+    };
 
     // Grid-specific vars (used for grid mode + icon loading)
     let cols = grid_columns(content.w, s, zoom);
     let total_content_h = match view_mode {
         ViewMode::Grid => grid_content_height(entries.len(), cols, s, zoom),
         ViewMode::List => {
-            let rh = if is_searching { search_list_row_h(s) } else { list_row_h(s) };
-            entries.len() as f32 * rh + 32.0 * s // +header
+            let rh = if is_searching { search_list_row_h(s, zoom) } else { list_row_h(s, zoom) };
+            entries.len() as f32 * rh + 32.0 * list_zoom_multiplier(zoom) * s // +header
         }
-        ViewMode::Tree => tree_content_height(app.tree_entries.len(), s),
+        ViewMode::Tree => tree_content_height(app.tree_entries.len(), s, zoom),
     };
     let scroll_area = ScrollArea::new(content, total_content_h, &mut app.scroll_offset);
     let base_y = scroll_area.content_y();
@@ -95,8 +113,8 @@ pub fn render_frame(
                 .collect()
         }
         ViewMode::List => {
-            let row_h = if is_searching { search_list_row_h(s) } else { list_row_h(s) };
-            let hdr_h = 32.0 * s;
+            let row_h = if is_searching { search_list_row_h(s, zoom) } else { list_row_h(s, zoom) };
+            let hdr_h = 32.0 * list_zoom_multiplier(zoom) * s;
             for i in 0..entries.len() {
                 let y = base_y + hdr_h + i as f32 * row_h;
                 if y + row_h >= content.y && y <= content.y + content.h {
@@ -111,7 +129,7 @@ pub fn render_frame(
                 .collect()
         }
         ViewMode::Tree => {
-            let row_h = tree_row_h(s);
+            let row_h = tree_row_h(s, zoom);
             let tree_entries = &app.tree_entries;
             for i in 0..tree_entries.len() {
                 let y = base_y + i as f32 * row_h;
@@ -258,6 +276,14 @@ pub fn render_frame(
         let zone = input.add_zone(ZONE_PATH_INPUT, p_rect);
         path_hovered = zone.is_hovered();
     };
+    let preview_btn_rect = preview_toggle_rect(wf, s);
+    // Only register the preview toggle zone when the active view supports it,
+    // so it can't be clicked in Grid mode.
+    let preview_btn_state = if preview_supported {
+        input.add_zone(ZONE_NAV_PREVIEW_TOGGLE, preview_btn_rect)
+    } else {
+        lntrn_ui::gpu::InteractionState::Idle
+    };
     let sort_rect = sort_button_rect(wf, s);
     let sort_state = input.add_zone(ZONE_NAV_SORT, sort_rect);
     let srch_rect = search_button_rect(wf, s);
@@ -270,6 +296,7 @@ pub fn render_frame(
         up_rect, up_state.is_hovered(),
         cloud_rect, cloud_state.is_hovered(),
         p_rect, path_hovered, &breadcrumb_hovered,
+        preview_btn_rect, preview_btn_state.is_hovered(), preview_supported,
         sort_rect, sort_state.is_hovered(),
         srch_rect, srch_state.is_hovered(),
         (w, h), s,
@@ -449,6 +476,7 @@ pub fn render_frame(
                     TextInput::new(input_rect)
                         .text(&app.rename_buf)
                         .cursor_pos(app.rename_cursor)
+                        .selection(app.rename_selection)
                         .focused(true)
                         .scale(s)
                         .draw(painter, text, pal, w, h);
@@ -456,8 +484,8 @@ pub fn render_frame(
             }
         }
         ViewMode::List => {
-            let row_h = if is_searching { search_list_row_h(s) } else { list_row_h(s) };
-            let hdr_h = 32.0 * s;
+            let row_h = if is_searching { search_list_row_h(s, zoom) } else { list_row_h(s, zoom) };
+            let hdr_h = 32.0 * list_zoom_multiplier(zoom) * s;
             let mut item_hovered = Vec::with_capacity(entries.len());
             for i in 0..entries.len() {
                 let row_rect = Rect::new(content.x, base_y + hdr_h + i as f32 * row_h, content.w, row_h);
@@ -473,11 +501,32 @@ pub fn render_frame(
             draw_content_list(
                 painter, text, pal, content, entries,
                 &scroll_area, &item_hovered, &has_icon, app.drag_item, app.renaming,
-                search_root, (w, h), s,
+                search_root, (w, h), s, zoom,
             );
+
+            // Inline rename input (list mode)
+            if let Some(rename_idx) = app.renaming {
+                if rename_idx < entries.len() {
+                    let m = list_zoom_multiplier(zoom);
+                    let y = base_y + hdr_h + rename_idx as f32 * row_h;
+                    let input_x = content.x + 42.0 * m * s;
+                    let input_w = (content.x + content.w - input_x - 12.0 * m * s).max(120.0 * s);
+                    let input_h = (row_h - 4.0 * s).max(28.0 * s);
+                    let input_y = y + (row_h - input_h) * 0.5;
+                    let input_rect = Rect::new(input_x, input_y, input_w, input_h);
+                    input.add_zone(ZONE_RENAME_INPUT, input_rect);
+                    TextInput::new(input_rect)
+                        .text(&app.rename_buf)
+                        .cursor_pos(app.rename_cursor)
+                        .selection(app.rename_selection)
+                        .focused(true)
+                        .scale(s)
+                        .draw(painter, text, pal, w, h);
+                }
+            }
         }
         ViewMode::Tree => {
-            let row_h = tree_row_h(s);
+            let row_h = tree_row_h(s, zoom);
             let tree_entries = &app.tree_entries;
             let mut item_hovered = Vec::with_capacity(tree_entries.len());
             for i in 0..tree_entries.len() {
@@ -490,10 +539,49 @@ pub fn render_frame(
                 };
                 item_hovered.push(hovered);
             }
+            // Determine which tree row (if any) corresponds to the currently
+            // renamed file by matching the path. Tree indices don't line up
+            // with `app.entries` indices because of expand state.
+            let renaming_path = app.renaming.and_then(|i| app.entries.get(i)).map(|e| e.path.clone());
+            // Build per-tree-row selected flags by looking up each tree
+            // entry's path in `app.entries`. Nested rows that aren't in
+            // app.entries can't be selected (no state), so they stay false.
+            let selected_paths: std::collections::HashSet<&std::path::Path> = app.entries.iter()
+                .filter(|e| e.selected)
+                .map(|e| e.path.as_path())
+                .collect();
+            let tree_selected: Vec<bool> = tree_entries.iter()
+                .map(|te| selected_paths.contains(te.entry.path.as_path()))
+                .collect();
             draw_content_tree(
                 painter, text, pal, content, tree_entries,
-                &scroll_area, &item_hovered, &has_icon, (w, h), s,
+                &scroll_area, &item_hovered, &has_icon, &tree_selected,
+                renaming_path.as_deref(), (w, h), s, zoom,
             );
+
+            // Inline rename input (tree mode)
+            if let Some(ref path) = renaming_path {
+                if let Some((ti, te)) = tree_entries.iter().enumerate().find(|(_, t)| t.entry.path == *path) {
+                    let m = list_zoom_multiplier(zoom);
+                    let indent = 28.0 * m * s;
+                    let icon_sz = 24.0 * m * s;
+                    let row_left = content.x + 8.0 * m * s + te.depth as f32 * indent + 16.0 * m * s;
+                    let input_x = row_left + icon_sz + 8.0 * m * s;
+                    let y = base_y + ti as f32 * row_h;
+                    let input_w = (content.x + content.w - input_x - 12.0 * m * s).max(120.0 * s);
+                    let input_h = (row_h - 4.0 * s).max(28.0 * s);
+                    let input_y = y + (row_h - input_h) * 0.5;
+                    let input_rect = Rect::new(input_x, input_y, input_w, input_h);
+                    input.add_zone(ZONE_RENAME_INPUT, input_rect);
+                    TextInput::new(input_rect)
+                        .text(&app.rename_buf)
+                        .cursor_pos(app.rename_cursor)
+                        .selection(app.rename_selection)
+                        .focused(true)
+                        .scale(s)
+                        .draw(painter, text, pal, w, h);
+                }
+            }
         }
     }
 
@@ -503,6 +591,28 @@ pub fn render_frame(
         input.add_zone(ZONE_SCROLLBAR, scrollbar.thumb);
         let sb_state = input.zone_state(ZONE_SCROLLBAR);
         draw_scrollbar(painter, &scrollbar, sb_state, pal);
+    }
+
+    // ── Preview pane ───────────────────────────────────────────────────
+    let mut preview_thumb_rect: Option<Rect> = None;
+    let mut preview_thumb_entry: Option<crate::fs::FileEntry> = None;
+    if preview_w_px > 0.0 {
+        let pane = preview_pane_rect(full_content, preview_w_px);
+        let handle = preview_handle_rect(full_content, preview_w_px, s);
+        let handle_state = input.add_zone(ZONE_PREVIEW_RESIZE, handle);
+        let entry = crate::preview::preview_entry(entries);
+        // Ensure the thumbnail icon is loaded.
+        if let Some(e) = entry {
+            icon_cache.get_or_load(e, ctx, tex_pass);
+        }
+        preview_thumb_rect = crate::preview::draw_preview_pane(
+            painter, text, pal, file_info,
+            pane, entry, handle,
+            handle_state.is_hovered(),
+            app.preview_drag.is_some(),
+            (w, h), s,
+        );
+        preview_thumb_entry = entry.cloned();
     }
 
     // ── Status bar / Pick bar ──────────────────────────────────────────
@@ -582,14 +692,15 @@ pub fn render_frame(
                 .collect()
         }
         ViewMode::List => {
-            let row_h = if is_searching { search_list_row_h(s) } else { list_row_h(s) };
-            let hdr_h = 32.0 * s;
-            let list_icon_sz = 28.0 * s;
+            let m = list_zoom_multiplier(zoom);
+            let row_h = if is_searching { search_list_row_h(s, zoom) } else { list_row_h(s, zoom) };
+            let hdr_h = 32.0 * m * s;
+            let list_icon_sz = 28.0 * m * s;
             (0..entries.len())
                 .filter(|&i| has_icon[i])
                 .filter_map(|i| {
                     let y = base_y + hdr_h + i as f32 * row_h;
-                    let icon_x = content.x + 8.0 * s;
+                    let icon_x = content.x + 8.0 * m * s;
                     let icon_y = y + (row_h - list_icon_sz) * 0.5;
                     let tex = icon_cache.get(&entries[i])?;
                     let (dx, dy, dw, dh) = icons::fit_in_box(tex, icon_x, icon_y, list_icon_sz, list_icon_sz);
@@ -601,9 +712,10 @@ pub fn render_frame(
                 .collect()
         }
         ViewMode::Tree => {
-            let row_h = tree_row_h(s);
-            let tree_indent = 28.0 * s;
-            let tree_icon_sz = 24.0 * s;
+            let m = list_zoom_multiplier(zoom);
+            let row_h = tree_row_h(s, zoom);
+            let tree_indent = 28.0 * m * s;
+            let tree_icon_sz = 24.0 * m * s;
             let tree_entries = &app.tree_entries;
             (0..tree_entries.len())
                 .filter(|&i| has_icon[i])
@@ -611,7 +723,7 @@ pub fn render_frame(
                     let te = &tree_entries[i];
                     let y = base_y + i as f32 * row_h;
                     let x_offset = te.depth as f32 * tree_indent;
-                    let icon_x = content.x + 8.0 * s + x_offset + 16.0 * s;
+                    let icon_x = content.x + 8.0 * m * s + x_offset + 16.0 * m * s;
                     let icon_y = y + (row_h - tree_icon_sz) * 0.5;
                     let tex = icon_cache.get(&te.entry)?;
                     let (dx, dy, dw, dh) = icons::fit_in_box(tex, icon_x, icon_y, tree_icon_sz, tree_icon_sz);
@@ -633,6 +745,14 @@ pub fn render_frame(
                 let (bx, by, bw, bh) = icons::fit_in_box(tex, gx, gy, ghost_sz, ghost_sz);
                 tex_draws.push(TextureDraw::new(tex, bx, by, bw, bh));
             }
+        }
+    }
+
+    // Preview pane thumbnail texture
+    if let (Some(thumb), Some(ref entry)) = (preview_thumb_rect, preview_thumb_entry) {
+        if let Some(tex) = icon_cache.get(entry) {
+            let (bx, by, bw, bh) = icons::fit_in_box(tex, thumb.x, thumb.y, thumb.w, thumb.h);
+            tex_draws.push(TextureDraw::new(tex, bx, by, bw, bh));
         }
     }
 

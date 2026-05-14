@@ -274,7 +274,7 @@ impl TerminalState {
 
 /// Translate an evdev keycode (+ shift) into a byte sequence the PTY
 /// expects. Returns None for keys we don't handle.
-pub fn keycode_to_bytes(key: u32, shift: bool, ctrl: bool) -> Option<Vec<u8>> {
+pub fn keycode_to_bytes(key: u32, shift: bool, ctrl: bool, caps_lock: bool) -> Option<Vec<u8>> {
     use crate::search::input::*;
     match key {
         KEY_ENTER | KEY_KP_ENTER => Some(b"\r".to_vec()),
@@ -288,7 +288,7 @@ pub fn keycode_to_bytes(key: u32, shift: bool, ctrl: bool) -> Option<Vec<u8>> {
         KEY_END => Some(b"\x1b[F".to_vec()),
         KEY_TAB => Some(b"\t".to_vec()),
         other => {
-            let ch = keycode_to_char(other, shift)?;
+            let ch = keycode_to_char(other, shift, caps_lock)?;
             if ctrl && ch.is_ascii_alphabetic() {
                 // Ctrl-letter → control byte.
                 let upper = ch.to_ascii_uppercase() as u8;

@@ -574,17 +574,18 @@ impl Lantern {
             return false;
         };
         let restore = Rectangle::new(location, window.geometry().size);
-        self.maximized_windows.push(MaximizedWindow {
-            surface: surface.clone(),
-            restore,
-        });
 
         let Some(output_geo) = self.window_output_geometry(&window) else {
             tracing::warn!("maximize_surface: no output geometry");
-            self.maximized_windows.retain(|entry| entry.surface != *surface);
             return false;
         };
         tracing::info!("maximize_surface: configuring to {:?}", output_geo);
+
+        self.maximized_windows.push(MaximizedWindow {
+            surface: surface.clone(),
+            restore,
+            target: output_geo,
+        });
 
         // Capture pre-maximize rect for animation start; if a previous rect
         // anim is already running for this surface, redirect from its current
@@ -606,15 +607,10 @@ impl Lantern {
     }
 
     pub(crate) fn unmaximize_surface(&mut self, surface: &WlSurface, serial: Serial) -> bool {
-        let Some(restore) = self.take_maximized_restore(surface) else {
+        let Some(window) = self.find_mapped_window(surface) else {
             return false;
         };
-
-        let Some(window) = self.find_mapped_window(surface) else {
-            self.maximized_windows.push(MaximizedWindow {
-                surface: surface.clone(),
-                restore,
-            });
+        let Some(restore) = self.take_maximized_restore(surface) else {
             return false;
         };
 
@@ -877,6 +873,7 @@ impl Lantern {
         self.fullscreen_windows.push(FullscreenWindow {
             surface: surface.clone(),
             restore,
+            target: output_geo,
         });
 
         // Capture animation start (or redirect from in-flight anim).

@@ -363,6 +363,7 @@ fn main() {
     for &(name, cmd) in &[
         ("lntrn-portal", "lntrn-portal"),
         ("lntrn-notifyd", "lntrn-notifyd"),
+        ("lntrn-desktop", "lntrn-desktop"),
     ] {
         log(&format!("🏮 Starting {name}..."));
         match ManagedProcess::spawn_wayland(name, cmd, &wayland_socket, x11_display.as_deref()) {

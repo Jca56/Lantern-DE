@@ -42,7 +42,7 @@ pub use modal::{hit_test_modal, ModalHit};
 #[allow(unused_imports)]
 pub use modal::{modal_regions, ModalRegions};
 pub use tile::{draw_inline, TILE_WIDTH};
-pub use view::{draw_view, hit_test_network, NetworkHit};
+pub use view::{draw_view, hit_test_network, max_scroll, row_list_top_y, NetworkHit};
 
 // ── State types ─────────────────────────────────────────────────────────────
 
@@ -140,11 +140,29 @@ pub struct Network {
     pub frequency: String,
     /// Strongest band's negotiated bitrate, e.g. "270 Mbit/s".
     pub rate: String,
+    /// Saved NetworkManager profiles whose `802-11-wireless.ssid`
+    /// matches this network. Multiple is the common case when the user
+    /// has reconnected with different settings (Wi-Fi password change,
+    /// a band/BSSID pin, etc.) — surfacing them in the UI gives them a
+    /// way to clean up duplicates.
+    pub profiles: Vec<Profile>,
     /// All radios this SSID is advertised on, sorted by signal desc.
+    /// One entry per band, holding the strongest BSSID for that band —
+    /// drives the band-selector pills.
     pub bands: Vec<BandEntry>,
+    /// EVERY BSSID broadcasting this SSID (any band, any AP), sorted by
+    /// signal desc. Used by the BSSID column in the expanded panel.
+    pub aps: Vec<BandEntry>,
     /// Band the user has selected for connecting. Defaults to the
     /// strongest band; persists across rescans (see `Wifi::tick`).
     pub selected_band: Band,
+    /// BSSID the user has pinned via the lock icon. When `Some`, future
+    /// connect attempts will force this specific access point via
+    /// `nmcli` `wifi.bssid=<mac>`. Persists in memory across rescans.
+    pub pinned_bssid: Option<String>,
+    /// Encryption flags (e.g. "WPA2 WPA3 PSK CCMP"). Built from
+    /// SECURITY + WPA-FLAGS + RSN-FLAGS during the scan.
+    pub flags_summary: String,
 }
 
 /// Commands sent from the render thread → worker thread.
@@ -159,7 +177,36 @@ pub(crate) enum WifiCmd {
         ssid: String,
         password: Option<String>,
         band: Option<Band>,
+        /// When `Some`, force the connection to a specific access point
+        /// by writing `wifi.bssid=<mac>` onto the profile. `"--"` is
+        /// passed by the worker when the user explicitly unpins (clearing
+        /// the field).
+        bssid: Option<String>,
     },
+    /// `nmcli connection delete uuid <uuid>` — purge a saved profile.
+    DeleteProfile { uuid: String },
+    /// `nmcli connection up id <name>` — switch to this saved profile.
+    ActivateProfile { name: String },
+}
+
+/// A saved NetworkManager profile. We attach a `Vec<Profile>` per
+/// `Network` so the expanded panel can list duplicates / per-SSID
+/// variations and offer delete + activate actions.
+#[derive(Debug, Clone)]
+pub struct Profile {
+    pub name: String,
+    pub uuid: String,
+    /// SSID this profile points at (decoded from `802-11-wireless.ssid`).
+    pub ssid: String,
+    /// `802-11-wireless.bssid` field on the profile, if any.
+    pub pinned_bssid: Option<String>,
+    /// `802-11-wireless.band` value ("bg", "a", or empty).
+    pub pinned_band: Option<String>,
+    /// Unix seconds (`connection.timestamp`) — last time NM activated
+    /// the profile. Zero when never activated.
+    pub timestamp: i64,
+    /// True when this profile is the currently-active connection.
+    pub active: bool,
 }
 
 /// Events the worker thread emits.
@@ -195,6 +242,10 @@ pub struct Wifi {
     /// SSID of the row currently expanded to show details + Connect.
     /// Only one row may be expanded at a time. None = collapsed list.
     pub expanded_ssid: Option<String>,
+    /// Vertical scroll offset of the network list in logical px. Set by
+    /// the layershell wheel handler; clamped to `[0, max_scroll]` in
+    /// `draw_view` so resizes / network-list changes can't strand it.
+    pub scroll: f32,
 }
 
 /// State for the password-entry modal that overlays the WiFi view.
@@ -246,6 +297,7 @@ impl Wifi {
             connecting_ssid: None,
             hovered_ssid: None,
             expanded_ssid: None,
+            scroll: 0.0,
         }
     }
 
@@ -277,17 +329,33 @@ impl Wifi {
             match ev {
                 WifiEvent::Status(s) => self.state = s,
                 WifiEvent::Networks(mut n) => {
-                    // Preserve the user's band selection across rescans
-                    // when the chosen band is still being broadcast.
-                    let prev: HashMap<String, Band> = self
+                    // Preserve the user's band selection + pinned BSSID
+                    // across rescans when they're still valid (the band
+                    // is still being broadcast / the BSSID is still on
+                    // the list).
+                    let prev_band: HashMap<String, Band> = self
                         .networks
                         .iter()
                         .map(|net| (net.ssid.clone(), net.selected_band))
                         .collect();
+                    let prev_pin: HashMap<String, String> = self
+                        .networks
+                        .iter()
+                        .filter_map(|net| {
+                            net.pinned_bssid
+                                .as_ref()
+                                .map(|b| (net.ssid.clone(), b.clone()))
+                        })
+                        .collect();
                     for net in n.iter_mut() {
-                        if let Some(b) = prev.get(&net.ssid) {
+                        if let Some(b) = prev_band.get(&net.ssid) {
                             if net.bands.iter().any(|e| e.band == *b) {
                                 net.selected_band = *b;
+                            }
+                        }
+                        if let Some(mac) = prev_pin.get(&net.ssid) {
+                            if net.aps.iter().any(|a| &a.bssid == mac) {
+                                net.pinned_bssid = Some(mac.clone());
                             }
                         }
                     }
@@ -337,11 +405,73 @@ impl Wifi {
         self.last_error = None;
         self.connecting_ssid = Some(ssid.clone());
         let band = self.band_pref_for(&ssid);
+        let bssid = self.bssid_pref_for(&ssid);
         let _ = self.cmd_tx.send(WifiCmd::Connect {
             ssid,
             password: Some(password),
             band,
+            bssid,
         });
+    }
+
+    /// Return the BSSID to force for `ssid` if the user pinned one.
+    fn bssid_pref_for(&self, ssid: &str) -> Option<String> {
+        let net = self.networks.iter().find(|n| n.ssid == ssid)?;
+        net.pinned_bssid.clone()
+    }
+
+    /// Toggle a pin on `bssid` for `ssid`. Setting `Some(mac)` pins, the
+    /// same mac again unpins. Also snaps `selected_band` to the pinned
+    /// AP's band so the band-selector pill agrees with the lock state,
+    /// and — when the SSID is currently saved — immediately reapplies
+    /// the change to the NetworkManager profile (reconnecting to the
+    /// new BSSID, or clearing the pin from the profile on unpin).
+    pub fn toggle_pinned_bssid(&mut self, ssid: &str, bssid: &str) {
+        let (new_pin, snap_band, saved, in_use) = {
+            let Some(net) = self.networks.iter_mut().find(|n| n.ssid == ssid) else {
+                return;
+            };
+            let was_pinned_here = net.pinned_bssid.as_deref() == Some(bssid);
+            let new_pin = if was_pinned_here {
+                None
+            } else {
+                Some(bssid.to_string())
+            };
+            // When pinning, sync selected_band to the AP's band so
+            // wifi.band on the profile agrees with wifi.bssid.
+            let snap_band = if !was_pinned_here {
+                net.aps.iter().find(|a| a.bssid == bssid).map(|a| a.band)
+            } else {
+                None
+            };
+            net.pinned_bssid = new_pin.clone();
+            if let Some(b) = snap_band {
+                net.selected_band = b;
+            }
+            (new_pin, snap_band, net.saved || net.in_use, net.in_use)
+        };
+        let _ = snap_band;
+        // Auto-apply on the live profile when possible. For unsaved
+        // networks there's no profile to modify yet; the pin still gets
+        // applied next time the user clicks Connect (and we'll write
+        // wifi.bssid then).
+        if saved {
+            self.connecting_ssid = if in_use { Some(ssid.to_string()) } else { self.connecting_ssid.clone() };
+            self.last_error = None;
+            let band = self.band_pref_for(ssid);
+            // On unpin, pass `Some("")` so the worker writes an empty
+            // value to wifi.bssid (i.e. clears the field on the profile).
+            let bssid_arg = match &new_pin {
+                Some(mac) => Some(mac.clone()),
+                None => Some(String::new()),
+            };
+            let _ = self.cmd_tx.send(WifiCmd::Connect {
+                ssid: ssid.to_string(),
+                password: None,
+                band,
+                bssid: bssid_arg,
+            });
+        }
     }
 
     /// Return the band to force for `ssid`, if the user effectively has
@@ -381,10 +511,12 @@ impl Wifi {
         self.connecting_ssid = Some(ssid.to_string());
         self.last_error = None;
         let band = self.band_pref_for(ssid);
+        let bssid = self.bssid_pref_for(ssid);
         let _ = self.cmd_tx.send(WifiCmd::Connect {
             ssid: ssid.to_string(),
             password,
             band,
+            bssid,
         });
     }
 
@@ -399,5 +531,18 @@ impl Wifi {
     /// Most recent connect-fail message, if any.
     pub fn last_error(&self) -> Option<&str> {
         self.last_error.as_deref()
+    }
+
+    /// Delete a saved NM profile by UUID. Refreshed via the next scan.
+    pub fn delete_profile(&mut self, uuid: &str) {
+        let _ = self.cmd_tx.send(WifiCmd::DeleteProfile { uuid: uuid.to_string() });
+    }
+
+    /// Activate the saved profile with `name` (NM's `connection.id`).
+    /// Useful when multiple profiles target the same SSID and the user
+    /// wants to pick a specific one.
+    pub fn activate_profile(&mut self, name: &str) {
+        self.last_error = None;
+        let _ = self.cmd_tx.send(WifiCmd::ActivateProfile { name: name.to_string() });
     }
 }

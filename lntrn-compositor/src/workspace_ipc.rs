@@ -14,6 +14,7 @@
 
 use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::os::fd::AsRawFd;
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 
@@ -68,6 +69,9 @@ impl WorkspaceIpc {
         let listener = match UnixListener::bind(&path) {
             Ok(l) => {
                 l.set_nonblocking(true).ok();
+                if let Err(e) = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)) {
+                    tracing::warn!(?e, "failed to chmod 0600 on workspaces IPC socket");
+                }
                 tracing::info!(?path, "workspaces IPC socket listening");
                 Some(l)
             }

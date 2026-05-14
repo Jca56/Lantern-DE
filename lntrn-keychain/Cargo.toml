@@ -1,0 +1,26 @@
+[package]
+name = "lntrn-keychain"
+version = "0.1.0"
+edition = "2021"
+description = "Lantern DE - Secret Service keychain daemon"
+authors = ["Jca56"]
+
+[[bin]]
+name = "lntrn-keychain"
+path = "src/main.rs"
+
+[dependencies]
+lntrn-dbus = { path = "../lntrn-dbus" }
+libc = "0.2"
+
+# Crypto (RustCrypto stack - audited primitives)
+aes-gcm = "0.10"
+argon2 = "0.5"
+hkdf = "0.12"
+sha2 = "0.10"
+rand = "0.8"
+zeroize = { version = "1.8", features = ["derive"] }
+
+# On-disk format
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

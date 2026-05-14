@@ -242,55 +242,77 @@ pub fn draw_content(
     // 1d. Mini-dock of pinned apps under the panel. Fades with collapse
     //     progress AND with `default_visibility` so it cross-fades
     //     during a view slide instead of popping. Skipped entirely
-    //     when the user has disabled the collapsed-dock in settings.
+    //     when the user has disabled the collapsed-dock in settings,
+    //     OR when any full-page overlay is open — those replace the
+    //     panel body and the hover-preview tile would float on top.
     {
-        let dock_alpha_mult = collapse_p.clamp(0.0, 1.0) * default_visibility;
+        let any_overlay_open = state.settings_open
+            || state.emojis.open
+            || state.clipboard.open
+            || state.notes.open
+            || state.usage.open;
+        let dock_alpha_mult = if any_overlay_open {
+            0.0
+        } else {
+            collapse_p.clamp(0.0, 1.0) * default_visibility
+        };
         if dock_alpha_mult > 0.005 && state.config.show_dock_collapsed {
             let pinned = state.launcher.pinned_entries(&state.apps);
-            crate::mini_dock::draw(
-                painter,
-                &mut icons,
+            let layout = crate::mini_dock::compute_layout(
+                panel.rect,
+                surface_h as f32,
+                panel.scale_factor,
                 &pinned,
                 &state.toplevels,
-                panel.rect,
-                panel.scale_factor,
-                panel.alpha * dock_alpha_mult,
-                state.mini_dock_hover,
                 &state.apps,
+                Some(state.cursor_phys),
             );
+            if let Some(layout) = layout {
+                crate::mini_dock::draw(
+                    painter,
+                    &mut icons,
+                    &layout,
+                    &state.toplevels,
+                    panel.alpha * dock_alpha_mult,
+                    state.mini_dock_hover,
+                );
 
-            // Hover preview tile under the icon when that pinned app
-            // has at least one open window. Suppressed in alternate
-            // top-level views (Music, Assistant) so the preview doesn't
-            // collide with their bodies.
-            let preview_hover = if state.panel_view == crate::app::PanelView::Default {
-                state.mini_dock_hover
-            } else {
-                None
-            };
-            if let Some(hover_idx) = preview_hover {
-                if let Some(entry) = pinned.get(hover_idx) {
-                    let windows = crate::mini_dock::windows_for_app(
-                        &state.toplevels, &entry.app_id,
-                    );
-                    if !windows.is_empty() {
-                        let tiles = crate::mini_dock::preview_tile_rects(
-                            panel.rect, panel.scale_factor, pinned.len(),
-                            hover_idx, windows.len(),
+                // Hover preview tile above the icon when the hovered app
+                // has at least one open window. Suppressed in alternate
+                // top-level views (Music, Assistant) so the preview
+                // doesn't collide with their bodies.
+                let preview_hover = if state.panel_view == crate::app::PanelView::Default {
+                    state.mini_dock_hover
+                } else {
+                    None
+                };
+                if let Some(hover_idx) = preview_hover {
+                    if let Some(entry) = layout.entries.get(hover_idx) {
+                        let windows = crate::mini_dock::windows_for_app(
+                            &state.toplevels,
+                            &entry.app_id,
                         );
-                        if !tiles.is_empty() {
-                            crate::mini_dock::draw_preview(
-                                painter,
-                                text,
-                                &mut icons,
-                                entry,
-                                &windows,
-                                &tiles,
-                                panel.scale_factor,
-                                panel.alpha * dock_alpha_mult,
-                                surface_w,
-                                surface_h,
+                        if !windows.is_empty() {
+                            let tiles = crate::mini_dock::preview_tile_rects(
+                                &layout,
+                                panel.rect,
+                                hover_idx,
+                                windows.len(),
                             );
+                            if !tiles.is_empty() {
+                                crate::mini_dock::draw_preview(
+                                    painter,
+                                    text,
+                                    &mut icons,
+                                    entry,
+                                    &windows,
+                                    &tiles,
+                                    panel.scale_factor,
+                                    panel.alpha * dock_alpha_mult,
+                                    surface_w,
+                                    surface_h,
+                                );
+                            }
                         }
                     }
                 }
@@ -309,6 +331,16 @@ pub fn draw_content(
         state.view_arrow_hover,
     );
 
+    // 1f. Clock toggle button — floats under the left arrow, same column.
+    crate::clock_toggle::draw(
+        painter,
+        panel.rect,
+        panel.scale_factor,
+        panel.alpha,
+        state.clock_toggle_hover,
+        state.clock_enabled,
+    );
+
     // 1g. View dots + Home button in the strip above the panel.
     crate::view_indicator::draw_dots(
         painter,
@@ -324,12 +356,20 @@ pub fn draw_content(
         panel.alpha,
         state.home_hover,
     );
+    // Grow button reflects the state it would toggle: collapsed → bar's
+    // grown flag, expanded → window's grown flag. Keeps the icon honest
+    // about what a click would do.
+    let grown_visual = if state.collapsed {
+        state.bar_grown
+    } else {
+        state.panel_grown
+    };
     crate::view_indicator::draw_grow(
         painter,
         panel.rect,
         panel.scale_factor,
         panel.alpha,
-        state.panel_grown,
+        grown_visual,
         state.grow_hover,
     );
     crate::view_indicator::draw_gear(
@@ -363,6 +403,17 @@ pub fn draw_content(
         panel.alpha,
         false,
         state.notes_hover,
+    );
+    // Claude-usage button — floats under the right arrow (mirrors
+    // clock_toggle under the left arrow).
+    crate::usage_button::draw(
+        painter,
+        panel.rect,
+        panel.scale_factor,
+        panel.alpha,
+        state.usage_hover,
+        state.usage.open,
+        &mut icons,
     );
 
     // 1f + 1c. Per-view chevron and (Terminal-only) cursor-row mirror.
@@ -489,6 +540,58 @@ pub fn draw_content(
             text,
             &mut icons,
             &state.emojis,
+            panel.rect,
+            top_y,
+            panel.scale_factor,
+            state.config.text_size,
+            body_alpha_base,
+            surface_w,
+            surface_h,
+        );
+        return icons;
+    }
+    // Clipboard History overlay short-circuits the per-view body draw.
+    if state.clipboard.open {
+        let top_y = crate::controls::content_top_y(panel.rect, panel.scale_factor);
+        crate::clipboard::render::draw(
+            painter,
+            text,
+            &mut icons,
+            &state.clipboard,
+            panel.rect,
+            top_y,
+            panel.scale_factor,
+            state.config.text_size,
+            body_alpha_base,
+            surface_w,
+            surface_h,
+        );
+        return icons;
+    }
+    // Quick Notes overlay short-circuits the per-view body draw.
+    if state.notes.open {
+        let top_y = crate::controls::content_top_y(panel.rect, panel.scale_factor);
+        crate::notes::render::draw(
+            painter,
+            text,
+            &state.notes,
+            panel.rect,
+            top_y,
+            panel.scale_factor,
+            state.config.text_size,
+            body_alpha_base,
+            surface_w,
+            surface_h,
+        );
+        return icons;
+    }
+    // Claude-usage overlay.
+    if state.usage.open {
+        let top_y = crate::controls::content_top_y(panel.rect, panel.scale_factor);
+        crate::usage::view::draw(
+            painter,
+            text,
+            &state.usage.stats,
             panel.rect,
             top_y,
             panel.scale_factor,

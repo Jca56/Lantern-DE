@@ -81,12 +81,19 @@ pub struct MinimizedWindow {
 pub struct FullscreenWindow {
     pub surface: WlSurface,
     pub restore: Rectangle<i32, Logical>,
+    /// Output geometry at the time of fullscreen — used as the render fallback
+    /// after the state animation finishes but before the client has acked the
+    /// new size. Without it, the render would briefly fall back to the
+    /// stale `window.geometry().size` and the window would visually snap.
+    pub target: Rectangle<i32, Logical>,
 }
 
 #[derive(Clone)]
 pub struct MaximizedWindow {
     pub surface: WlSurface,
     pub restore: Rectangle<i32, Logical>,
+    /// Output geometry at the time of maximize — see [`FullscreenWindow::target`].
+    pub target: Rectangle<i32, Logical>,
 }
 
 pub struct DebugCounters {
@@ -236,6 +243,7 @@ pub struct Lantern {
     pub data_control_state: WlrDataControlState,
     pub ext_data_control_state: ExtDataControlState,
     pub clipboard_manager: crate::clipboard_manager::ClipboardManager,
+    pub clipboard_ipc: crate::clipboard_ipc::ClipboardIpc,
     pub cursor_shape_manager_state: CursorShapeManagerState,
     pub layer_shell_state: WlrLayerShellState,
     pub xdg_decoration_state: XdgDecorationState,
@@ -381,6 +389,7 @@ impl Lantern {
             |client| crate::security::is_trusted_client(client),
         );
         let clipboard_manager = crate::clipboard_manager::ClipboardManager::new();
+        let clipboard_ipc = crate::clipboard_ipc::ClipboardIpc::new();
         let cursor_shape_manager_state = CursorShapeManagerState::new::<Self>(&dh);
         let layer_shell_state = WlrLayerShellState::new_with_filter::<Self, _>(
             &dh,
@@ -430,6 +439,7 @@ impl Lantern {
             data_control_state,
             ext_data_control_state,
             clipboard_manager,
+            clipboard_ipc,
             cursor_shape_manager_state,
             layer_shell_state,
             xdg_decoration_state,

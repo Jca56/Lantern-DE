@@ -103,6 +103,10 @@ pub struct SnappedWindow {
     pub surface: WlSurface,
     pub zone: SnapZone,
     pub restore: Rectangle<i32, Logical>,
+    /// Target rect (snap-zone geometry) — used as the render fallback after
+    /// the state animation finishes but before the client has acked the new
+    /// size, so the window doesn't briefly snap to its stale buffer size.
+    pub target: Rectangle<i32, Logical>,
 }
 
 impl Lantern {
@@ -228,6 +232,7 @@ impl Lantern {
             surface: surface.clone(),
             zone,
             restore,
+            target,
         });
 
         // Capture animation start before reconfiguring.
@@ -393,6 +398,7 @@ impl Lantern {
                 surface: other_surface.clone(),
                 zone: free,
                 restore: Rectangle::new(other_rect.loc, other_rect.size),
+                target: other_target,
             });
             crate::window_ext::WindowExt::configure_size(&other_window, other_target.size);
             self.space.map_element(other_window, other_target.loc, true);
@@ -466,6 +472,7 @@ impl Lantern {
                 surface: other_surface.clone(),
                 zone: free,
                 restore: Rectangle::new(other_rect.loc, other_rect.size),
+                target: other_target,
             });
             crate::window_ext::WindowExt::configure_size(&other_window, other_target.size);
             self.space.map_element(other_window, other_target.loc, true);
@@ -503,6 +510,7 @@ impl Lantern {
             surface: surface.clone(),
             zone,
             restore,
+            target,
         });
 
         crate::window_ext::WindowExt::configure_size(&window, target.size);

@@ -24,38 +24,48 @@ pub fn draw_content_list(
     search_root: Option<&Path>,
     screen: (u32, u32),
     s: f32,
+    zoom: f32,
 ) {
     let searching = search_root.is_some();
-    let row_h = if searching { 56.0 * s } else { 40.0 * s };
-    let font = FontSize::Custom(24.0 * s);
-    let small_font = FontSize::Custom(20.0 * s);
-    let path_font = FontSize::Custom(16.0 * s);
+    let m = crate::layout::list_zoom_multiplier(zoom);
+    let row_h = if searching { 56.0 * m * s } else { 40.0 * m * s };
+    let font = FontSize::Custom(24.0 * m * s);
+    let small_font = FontSize::Custom(20.0 * m * s);
+    let path_font = FontSize::Custom(16.0 * m * s);
 
     painter.rect_filled(content_rect, 0.0, palette.bg);
 
     // Column header
     let hdr_y = content_rect.y;
-    let hdr_h = 32.0 * s;
+    let hdr_h = 32.0 * m * s;
     painter.rect_filled(
         Rect::new(content_rect.x, hdr_y, content_rect.w, hdr_h),
         0.0, palette.surface,
     );
-    let name_x = content_rect.x + 42.0 * s;
-    let size_x = content_rect.x + content_rect.w - 220.0 * s;
-    let date_x = content_rect.x + content_rect.w - 120.0 * s;
-    TextLabel::new("Name", name_x, hdr_y + 5.0 * s)
-        .size(FontSize::Custom(20.0 * s)).color(palette.text_secondary)
+    let name_x = content_rect.x + 42.0 * m * s;
+    // Reserve enough room on the right for the date column ("Sep 30, 2026" is
+    // 12 chars at font 20*m; rendered width is ~10.4px/char so we need
+    // ~125*m px just for the date string, plus a small right gutter so it
+    // doesn't kiss the preview pane / window edge).
+    let right_pad = 12.0 * m * s;
+    let date_w = 180.0 * m * s;
+    let size_w = 110.0 * m * s;
+    let date_x = content_rect.x + content_rect.w - right_pad - date_w;
+    let size_x = date_x - size_w;
+    let hdr_font = FontSize::Custom(20.0 * m * s);
+    TextLabel::new("Name", name_x, hdr_y + 5.0 * m * s)
+        .size(hdr_font).color(palette.text_secondary)
         .draw(text, screen.0, screen.1);
     if searching {
-        TextLabel::new("Location", size_x, hdr_y + 5.0 * s)
-            .size(FontSize::Custom(20.0 * s)).color(palette.text_secondary)
+        TextLabel::new("Location", size_x, hdr_y + 5.0 * m * s)
+            .size(hdr_font).color(palette.text_secondary)
             .draw(text, screen.0, screen.1);
     } else {
-        TextLabel::new("Size", size_x, hdr_y + 5.0 * s)
-            .size(FontSize::Custom(20.0 * s)).color(palette.text_secondary)
+        TextLabel::new("Size", size_x, hdr_y + 5.0 * m * s)
+            .size(hdr_font).color(palette.text_secondary)
             .draw(text, screen.0, screen.1);
-        TextLabel::new("Modified", date_x, hdr_y + 5.0 * s)
-            .size(FontSize::Custom(20.0 * s)).color(palette.text_secondary)
+        TextLabel::new("Modified", date_x, hdr_y + 5.0 * m * s)
+            .size(hdr_font).color(palette.text_secondary)
             .draw(text, screen.0, screen.1);
     }
 
@@ -89,26 +99,26 @@ pub fn draw_content_list(
 
         // Mini icon (fallback when no texture icon loaded)
         if !has_icon.get(index).copied().unwrap_or(false) {
-            let icon_x = content_rect.x + 8.0 * s;
-            let icon_y = y + (row_h - 24.0 * s) * 0.5;
-            let icon_sz = 24.0 * s;
+            let icon_x = content_rect.x + 8.0 * m * s;
+            let icon_sz = 24.0 * m * s;
+            let icon_y = y + (row_h - icon_sz) * 0.5;
             if entry.is_dir {
-                painter.rect_filled(Rect::new(icon_x, icon_y + 4.0*s, icon_sz, icon_sz - 6.0*s), 2.0*s, palette.accent.with_alpha(0.5 * alpha));
-                painter.rect_filled(Rect::new(icon_x, icon_y + 2.0*s, icon_sz * 0.45, 4.0*s), 1.0*s, palette.accent.with_alpha(0.5 * alpha));
+                painter.rect_filled(Rect::new(icon_x, icon_y + 4.0*m*s, icon_sz, icon_sz - 6.0*m*s), 2.0*s, palette.accent.with_alpha(0.5 * alpha));
+                painter.rect_filled(Rect::new(icon_x, icon_y + 2.0*m*s, icon_sz * 0.45, 4.0*m*s), 1.0*s, palette.accent.with_alpha(0.5 * alpha));
             } else {
-                painter.rect_filled(Rect::new(icon_x + 2.0*s, icon_y, icon_sz - 4.0*s, icon_sz), 2.0*s, Color::from_rgb8(72, 72, 72).with_alpha(alpha));
+                painter.rect_filled(Rect::new(icon_x + 2.0*m*s, icon_y, icon_sz - 4.0*m*s, icon_sz), 2.0*s, Color::from_rgb8(72, 72, 72).with_alpha(alpha));
             }
         }
 
         if searching {
             // Search mode: name on top, path below
-            let name_y = y + 6.0 * s;
-            let max_name_w = content_rect.w - 50.0 * s;
+            let name_y = y + 6.0 * m * s;
+            let max_name_w = content_rect.w - 50.0 * m * s;
             let name_color = palette.text.with_alpha(alpha);
             let display = if entry.selected {
                 entry.name.clone()
             } else {
-                truncate_with_ellipsis(&entry.name, max_name_w, 24.0 * s * 0.52)
+                truncate_with_ellipsis(&entry.name, max_name_w, 24.0 * m * s * 0.52)
             };
             TextLabel::new(&display, name_x, name_y)
                 .size(font).color(name_color).max_width(if entry.selected { 9999.0 } else { max_name_w })
@@ -124,21 +134,21 @@ pub fn draw_content_list(
                 parent.to_string_lossy().to_string()
             };
             let path_display = if rel_path.is_empty() { "./".to_string() } else { format!("./{rel_path}") };
-            let path_y = name_y + 26.0 * s;
-            let max_path_w = content_rect.w - 50.0 * s;
+            let path_y = name_y + 26.0 * m * s;
+            let max_path_w = content_rect.w - 50.0 * m * s;
             TextLabel::new(&path_display, name_x, path_y)
                 .size(path_font).color(palette.muted.with_alpha(alpha * 0.7))
                 .max_width(max_path_w)
                 .draw(text, screen.0, screen.1);
         } else {
             // Normal mode: name, size, date columns
-            let text_y = y + (row_h - 24.0 * s) * 0.5;
-            let max_name_w = size_x - name_x - 12.0 * s;
+            let text_y = y + (row_h - 24.0 * m * s) * 0.5;
+            let max_name_w = size_x - name_x - 12.0 * m * s;
             let name_color = palette.text.with_alpha(alpha);
             let display = if entry.selected {
                 entry.name.clone()
             } else {
-                truncate_with_ellipsis(&entry.name, max_name_w, 24.0 * s * 0.52)
+                truncate_with_ellipsis(&entry.name, max_name_w, 24.0 * m * s * 0.52)
             };
             TextLabel::new(&display, name_x, text_y)
                 .size(font).color(name_color).max_width(if entry.selected { 9999.0 } else { max_name_w })
@@ -148,18 +158,20 @@ pub fn draw_content_list(
             let size_str = if entry.is_dir { "--".to_string() } else { format_bytes(entry.size) };
             TextLabel::new(&size_str, size_x, text_y)
                 .size(small_font).color(palette.muted.with_alpha(alpha))
+                .max_width(size_w - 8.0 * m * s)
                 .draw(text, screen.0, screen.1);
 
             // Modified date
             let date_str = format_date(entry.modified);
             TextLabel::new(&date_str, date_x, text_y)
                 .size(small_font).color(palette.muted.with_alpha(alpha))
+                .max_width(date_w)
                 .draw(text, screen.0, screen.1);
         }
 
         // Divider
         painter.rect_filled(
-            Rect::new(content_rect.x + 8.0*s, y + row_h - 0.5*s, content_rect.w - 16.0*s, 0.5*s),
+            Rect::new(content_rect.x + 8.0*m*s, y + row_h - 0.5*s, content_rect.w - 16.0*m*s, 0.5*s),
             0.0, Color::WHITE.with_alpha(0.05),
         );
     }
@@ -177,12 +189,16 @@ pub fn draw_content_tree(
     area: &ScrollArea,
     hovered: &[bool],
     has_icon: &[bool],
+    selected: &[bool],
+    renaming_path: Option<&std::path::Path>,
     screen: (u32, u32),
     s: f32,
+    zoom: f32,
 ) {
-    let row_h = 36.0 * s;
-    let indent = 28.0 * s;
-    let font = FontSize::Custom(24.0 * s);
+    let m = crate::layout::list_zoom_multiplier(zoom);
+    let row_h = 36.0 * m * s;
+    let indent = 28.0 * m * s;
+    let font = FontSize::Custom(24.0 * m * s);
 
     painter.rect_filled(content_rect, 0.0, palette.bg);
     area.begin(painter, text);
@@ -195,26 +211,29 @@ pub fn draw_content_tree(
         if y + row_h < content_top || y > content_bottom { continue; }
 
         let x_offset = te.depth as f32 * indent;
-        let row_x = content_rect.x + 8.0 * s + x_offset;
+        let row_x = content_rect.x + 8.0 * m * s + x_offset;
         let row_rect = Rect::new(content_rect.x, y, content_rect.w, row_h);
 
-        // Hover
-        if hovered.get(index).copied().unwrap_or(false) {
+        // Selection (drawn before hover so hover still tints when both)
+        if selected.get(index).copied().unwrap_or(false) {
+            let tint = crate::sections::selection_tint(palette);
+            painter.rect_filled(row_rect, 0.0, tint.with_alpha(0.22));
+        } else if hovered.get(index).copied().unwrap_or(false) {
             painter.rect_filled(row_rect, 0.0, palette.surface_2.with_alpha(0.3));
         }
 
         // Draw tree guide lines
         if te.depth > 0 {
-            let guide_x = content_rect.x + 8.0 * s + (te.depth as f32 - 1.0) * indent + 8.0 * s;
+            let guide_x = content_rect.x + 8.0 * m * s + (te.depth as f32 - 1.0) * indent + 8.0 * m * s;
             painter.line(guide_x, y, guide_x, y + row_h * 0.5, 1.0 * s, palette.muted.with_alpha(0.2));
             painter.line(guide_x, y + row_h * 0.5, guide_x + indent * 0.6, y + row_h * 0.5, 1.0 * s, palette.muted.with_alpha(0.2));
         }
 
         // Expand/collapse arrow for directories
         if te.entry.is_dir {
-            let arrow_x = row_x + 2.0 * s;
+            let arrow_x = row_x + 2.0 * m * s;
             let arrow_y = y + row_h * 0.5;
-            let ar = 4.0 * s;
+            let ar = 4.0 * m * s;
             let arrow_color = palette.text_secondary;
             if te.is_expanded {
                 // Down arrow (▼)
@@ -228,22 +247,25 @@ pub fn draw_content_tree(
         }
 
         // Icon (fallback when no texture icon loaded)
-        let icon_x = row_x + 16.0 * s;
-        let icon_y = y + (row_h - 20.0 * s) * 0.5;
-        let icon_sz = 20.0 * s;
+        let icon_x = row_x + 16.0 * m * s;
+        let icon_sz = 20.0 * m * s;
+        let icon_y = y + (row_h - icon_sz) * 0.5;
         if !has_icon.get(index).copied().unwrap_or(false) {
             if te.entry.is_dir {
-                painter.rect_filled(Rect::new(icon_x, icon_y + 3.0*s, icon_sz, icon_sz - 5.0*s), 2.0*s, palette.accent.with_alpha(0.5));
-                painter.rect_filled(Rect::new(icon_x, icon_y + 1.0*s, icon_sz * 0.4, 3.0*s), 1.0*s, palette.accent.with_alpha(0.5));
+                painter.rect_filled(Rect::new(icon_x, icon_y + 3.0*m*s, icon_sz, icon_sz - 5.0*m*s), 2.0*s, palette.accent.with_alpha(0.5));
+                painter.rect_filled(Rect::new(icon_x, icon_y + 1.0*m*s, icon_sz * 0.4, 3.0*m*s), 1.0*s, palette.accent.with_alpha(0.5));
             } else {
-                painter.rect_filled(Rect::new(icon_x + 1.0*s, icon_y, icon_sz - 2.0*s, icon_sz), 2.0*s, Color::from_rgb8(72, 72, 72));
+                painter.rect_filled(Rect::new(icon_x + 1.0*m*s, icon_y, icon_sz - 2.0*m*s, icon_sz), 2.0*s, Color::from_rgb8(72, 72, 72));
             }
         }
 
-        // Name
-        let name_x = icon_x + icon_sz + 8.0 * s;
-        let text_y = y + (row_h - 24.0 * s) * 0.5;
-        let max_w = content_rect.x + content_rect.w - name_x - 12.0 * s;
+        // Name (skip if this row is being renamed — TextInput is drawn over it)
+        if renaming_path.map_or(false, |p| p == te.entry.path.as_path()) {
+            continue;
+        }
+        let name_x = icon_x + icon_sz + 8.0 * m * s;
+        let text_y = y + (row_h - 24.0 * m * s) * 0.5;
+        let max_w = content_rect.x + content_rect.w - name_x - 12.0 * m * s;
         let name_color = if te.entry.is_dir { palette.text } else { palette.text };
         TextLabel::new(&te.entry.name, name_x, text_y)
             .size(font).color(name_color).max_width(max_w)

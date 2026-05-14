@@ -35,3 +35,5 @@ wayland-protocols = { version = "0.32", features = ["server", "unstable"] }
 wayland-protocols-wlr = { version = "0.3", features = ["server"] }
 rand = { version = "0.8", default-features = false, features = ["std", "std_rng"] }
 resvg = "0.47"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

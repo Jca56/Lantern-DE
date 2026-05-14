@@ -12,51 +12,114 @@ use super::{Band, Network, Wifi, WifiState};
 // ── Click-expand view ───────────────────────────────────────────────────────
 
 const VIEW_TOP_PAD: f32 = 24.0;
-const VIEW_HEADER_FONT: f32 = 22.0;
+const VIEW_HEADER_FONT: f32 = 26.0;
 const VIEW_HEADER_BOTTOM_GAP: f32 = 12.0;
-const ROW_HEIGHT: f32 = 56.0;
-const ROW_FONT: f32 = 22.0;
-const ROW_SIGNAL_SIZE: f32 = 28.0;
+const ROW_HEIGHT: f32 = 64.0;
+const ROW_FONT: f32 = 26.0;
+const ROW_SIGNAL_SIZE: f32 = 32.0;
 const ROW_SIGNAL_GAP: f32 = 16.0;
-const ROW_LOCK_SIZE: f32 = 20.0;
+const ROW_LOCK_SIZE: f32 = 22.0;
 const ROW_RIGHT_GAP: f32 = 12.0;
-const MAX_NETWORK_ROWS: usize = 6;
+/// Cap on rendered network rows. We scroll past this, so it's purely a
+/// "don't try to lay out the entire 200-AP city scan" sanity bound.
+const MAX_NETWORK_ROWS: usize = 64;
+/// Bottom padding the list reserves so the last row doesn't hug the
+/// panel edge.
+const LIST_BOTTOM_PAD: f32 = 16.0;
 /// Logical px reserved for the expanded detail+button area beneath
 /// the row header. One detail line per displayed property.
-const EXPAND_PAD_TOP: f32 = 8.0;
-const EXPAND_PAD_BOTTOM: f32 = 12.0;
-const EXPAND_LINE_GAP: f32 = 4.0;
-const EXPAND_DETAIL_FONT: f32 = 16.0;
+const EXPAND_PAD_TOP: f32 = 12.0;
+const EXPAND_PAD_BOTTOM: f32 = 14.0;
+const EXPAND_LINE_GAP: f32 = 8.0;
+const EXPAND_DETAIL_FONT: f32 = 19.0;
 const EXPAND_LABEL_W_FRAC: f32 = 0.28;
-const EXPAND_BUTTON_TOP_GAP: f32 = 12.0;
-const EXPAND_BUTTON_H: f32 = 38.0;
-const EXPAND_BUTTON_FONT: f32 = 18.0;
-const EXPAND_BUTTON_W: f32 = 140.0;
+const EXPAND_BUTTON_TOP_GAP: f32 = 14.0;
+const EXPAND_BUTTON_H: f32 = 44.0;
+const EXPAND_BUTTON_FONT: f32 = 22.0;
+const EXPAND_BUTTON_W: f32 = 160.0;
 /// Band-selector pills sit between the details list and the Connect
 /// button. Shown only when an SSID is advertised on multiple bands.
-const BAND_ROW_TOP_GAP: f32 = 12.0;
-const BAND_PILL_H: f32 = 32.0;
-const BAND_PILL_W: f32 = 64.0;
+const BAND_ROW_TOP_GAP: f32 = 14.0;
+const BAND_PILL_H: f32 = 36.0;
+const BAND_PILL_W: f32 = 72.0;
 const BAND_PILL_GAP: f32 = 8.0;
-const BAND_PILL_FONT: f32 = 16.0;
-const BAND_LABEL_FONT: f32 = 16.0;
+const BAND_PILL_FONT: f32 = 18.0;
+const BAND_LABEL_FONT: f32 = 18.0;
 
-/// Y-coordinate (physical px) of the first network row.
-fn row_list_top_y(panel_top_y: f32, scale: f32) -> f32 {
+/// Width fraction (of the expanded inner row) for the left column
+/// (details + band pills + Connect button). The right column hosts
+/// the top-BSSID cards.
+const LEFT_COL_FRAC: f32 = 0.58;
+/// Column-gutter padding between left and right columns.
+const COL_GUTTER: f32 = 14.0;
+/// BSSID card constants (right column).
+const BSSID_HEADER_FONT: f32 = 18.0;
+const BSSID_HEADER_BOTTOM_GAP: f32 = 6.0;
+const BSSID_CARD_H: f32 = 56.0;
+const BSSID_CARD_GAP: f32 = 6.0;
+const BSSID_MAC_FONT: f32 = 17.0;
+const BSSID_META_FONT: f32 = 14.0;
+const BSSID_LOCK_SIZE: f32 = 22.0;
+const BSSID_LOCK_PAD: f32 = 10.0;
+const MAX_BSSID_CARDS: usize = 5;
+
+/// Saved-profile card constants.
+const PROFILE_SECTION_TOP_GAP: f32 = 12.0;
+const PROFILE_HEADER_FONT: f32 = 18.0;
+const PROFILE_HEADER_BOTTOM_GAP: f32 = 6.0;
+const PROFILE_CARD_H: f32 = 56.0;
+const PROFILE_CARD_GAP: f32 = 6.0;
+const PROFILE_NAME_FONT: f32 = 17.0;
+const PROFILE_META_FONT: f32 = 14.0;
+const PROFILE_DELETE_SIZE: f32 = 22.0;
+const PROFILE_DELETE_PAD: f32 = 10.0;
+const PROFILE_ACTIVE_DOT: f32 = 8.0;
+const MAX_PROFILE_CARDS: usize = 6;
+
+/// Y-coordinate (physical px) of the first network row, BEFORE scroll
+/// is applied. Header sits above the list and doesn't scroll.
+pub fn row_list_top_y(panel_top_y: f32, scale: f32) -> f32 {
     panel_top_y + VIEW_TOP_PAD * scale + VIEW_HEADER_FONT * scale + VIEW_HEADER_BOTTOM_GAP * scale
+}
+
+/// Total content height of the visible-network list in physical px,
+/// including any expanded rows. Used to compute scrollbar geometry +
+/// the max scroll offset.
+pub fn content_height(wifi: &Wifi, scale: f32) -> f32 {
+    let row_h = ROW_HEIGHT * scale;
+    let mut total = 0.0;
+    for net in wifi.networks().iter().take(MAX_NETWORK_ROWS) {
+        let is_expanded = wifi.expanded_ssid.as_deref() == Some(net.ssid.as_str());
+        let extra = if is_expanded { expanded_extra_height(net, scale) } else { 0.0 };
+        total += row_h + extra;
+    }
+    total
+}
+
+/// Maximum logical-px scroll offset given a viewport height in physical
+/// px. Returns logical px so the wheel handler can clamp directly to it.
+pub fn max_scroll(wifi: &Wifi, viewport_h: f32, scale: f32) -> f32 {
+    let total = content_height(wifi, scale);
+    let extra = (total - viewport_h).max(0.0);
+    extra / scale
 }
 
 /// All non-empty detail rows for an expanded network, as
 /// (label, value) pairs. Pulls per-band fields from the currently
 /// selected band so the panel updates when the user flips pills.
 fn detail_rows(net: &Network) -> Vec<(&'static str, String)> {
-    // The entry matching `selected_band`, falling back to the strongest
-    // (which is `bands[0]` after `scan_networks` finalization).
-    let entry = net
+    // When the user has pinned a BSSID, prefer it for headline details;
+    // otherwise show the strongest BSSID of the selected band.
+    let pinned_entry = net
+        .pinned_bssid
+        .as_ref()
+        .and_then(|mac| net.aps.iter().find(|a| &a.bssid == mac));
+    let band_entry = net
         .bands
         .iter()
         .find(|b| b.band == net.selected_band)
         .or_else(|| net.bands.first());
+    let entry = pinned_entry.or(band_entry);
 
     let mut rows: Vec<(&'static str, String)> = Vec::new();
     rows.push((
@@ -71,10 +134,14 @@ fn detail_rows(net: &Network) -> Vec<(&'static str, String)> {
     ));
     let signal = entry.map(|e| e.signal).unwrap_or(net.signal);
     rows.push(("Signal", format!("{}%", signal)));
-    let security = if net.security.is_empty() || net.security == "--" {
-        "Open".to_string()
+    let security = if net.flags_summary.is_empty() {
+        if net.security.is_empty() || net.security == "--" {
+            "Open".to_string()
+        } else {
+            net.security.clone()
+        }
     } else {
-        net.security.clone()
+        net.flags_summary.clone()
     };
     rows.push(("Security", security));
     if let Some(e) = entry {
@@ -99,6 +166,14 @@ fn detail_rows(net: &Network) -> Vec<(&'static str, String)> {
             rows.push(("Rate", e.rate.clone()));
         }
     }
+    // Access-point summary — only meaningful when we heard more than one.
+    if net.aps.len() > 1 {
+        rows.push(("Access pts", format!("{} BSSIDs", net.aps.len())));
+    }
+    // Show the pin status explicitly so it doesn't surprise the user.
+    if let Some(mac) = &net.pinned_bssid {
+        rows.push(("Pinned to", mac.clone()));
+    }
     rows
 }
 
@@ -118,9 +193,8 @@ fn band_row_height(net: &Network, scale: f32) -> f32 {
     }
 }
 
-/// Total expanded-section height in physical px (header excluded —
-/// this is purely the part that's added when the row opens).
-fn expanded_extra_height(net: &Network, scale: f32) -> f32 {
+/// Logical height of the left-column body inside the expand panel.
+fn left_column_height(net: &Network, scale: f32) -> f32 {
     let n = detail_rows(net).len() as f32;
     let line_h = EXPAND_DETAIL_FONT * scale + EXPAND_LINE_GAP * scale;
     EXPAND_PAD_TOP * scale
@@ -128,7 +202,128 @@ fn expanded_extra_height(net: &Network, scale: f32) -> f32 {
         + band_row_height(net, scale)
         + EXPAND_BUTTON_TOP_GAP * scale
         + EXPAND_BUTTON_H * scale
-        + EXPAND_PAD_BOTTOM * scale
+}
+
+/// Number of BSSID cards that'll render in the right column.
+fn visible_bssid_card_count(net: &Network) -> usize {
+    net.aps.len().min(MAX_BSSID_CARDS)
+}
+
+fn visible_profile_card_count(net: &Network) -> usize {
+    net.profiles.len().min(MAX_PROFILE_CARDS)
+}
+
+/// Logical height of just the BSSID block in the right column.
+fn bssid_block_height(net: &Network, scale: f32) -> f32 {
+    let n = visible_bssid_card_count(net);
+    if n == 0 {
+        return 0.0;
+    }
+    BSSID_HEADER_FONT * scale
+        + BSSID_HEADER_BOTTOM_GAP * scale
+        + (n as f32) * BSSID_CARD_H * scale
+        + ((n.saturating_sub(1)) as f32) * BSSID_CARD_GAP * scale
+}
+
+/// Logical height of just the profile block in the right column.
+fn profile_block_height(net: &Network, scale: f32) -> f32 {
+    let n = visible_profile_card_count(net);
+    if n == 0 {
+        return 0.0;
+    }
+    PROFILE_HEADER_FONT * scale
+        + PROFILE_HEADER_BOTTOM_GAP * scale
+        + (n as f32) * PROFILE_CARD_H * scale
+        + ((n.saturating_sub(1)) as f32) * PROFILE_CARD_GAP * scale
+}
+
+/// Logical height of the right-column body (BSSIDs + Profiles).
+fn right_column_height(net: &Network, scale: f32) -> f32 {
+    let bssid = bssid_block_height(net, scale);
+    let profile = profile_block_height(net, scale);
+    if bssid <= 0.0 && profile <= 0.0 {
+        return 0.0;
+    }
+    let gap = if bssid > 0.0 && profile > 0.0 {
+        PROFILE_SECTION_TOP_GAP * scale
+    } else {
+        0.0
+    };
+    EXPAND_PAD_TOP * scale + bssid + gap + profile
+}
+
+/// Total expanded-section height in physical px (header excluded —
+/// this is purely the part that's added when the row opens). Uses the
+/// taller of the two columns so neither gets clipped.
+fn expanded_extra_height(net: &Network, scale: f32) -> f32 {
+    let body = left_column_height(net, scale).max(right_column_height(net, scale));
+    body + EXPAND_PAD_BOTTOM * scale
+}
+
+/// Rect of the i-th BSSID card inside the expanded body's right column.
+fn bssid_card_rect(
+    inner_x: f32,
+    inner_w: f32,
+    body_top: f32,
+    scale: f32,
+    i: usize,
+) -> Rect {
+    let gutter = COL_GUTTER * scale;
+    let left_w = inner_w * LEFT_COL_FRAC;
+    let right_x = inner_x + left_w + gutter;
+    let right_w = (inner_x + inner_w) - right_x - 6.0 * scale;
+    let top = body_top
+        + EXPAND_PAD_TOP * scale
+        + BSSID_HEADER_FONT * scale
+        + BSSID_HEADER_BOTTOM_GAP * scale;
+    let stride = BSSID_CARD_H * scale + BSSID_CARD_GAP * scale;
+    Rect::new(right_x, top + i as f32 * stride, right_w, BSSID_CARD_H * scale)
+}
+
+/// Rect of the lock toggle inside a BSSID card.
+fn bssid_lock_rect(card: Rect, scale: f32) -> Rect {
+    let size = BSSID_LOCK_SIZE * scale;
+    let pad = BSSID_LOCK_PAD * scale;
+    let x = card.x + card.w - size - pad;
+    let y = card.y + (card.h - size) / 2.0;
+    Rect::new(x, y, size, size)
+}
+
+/// Rect of the i-th saved-profile card. Sits below the BSSID cards in
+/// the right column with a section gap between them.
+fn profile_card_rect(
+    inner_x: f32,
+    inner_w: f32,
+    body_top: f32,
+    scale: f32,
+    bssid_count: usize,
+    i: usize,
+) -> Rect {
+    let gutter = COL_GUTTER * scale;
+    let left_w = inner_w * LEFT_COL_FRAC;
+    let right_x = inner_x + left_w + gutter;
+    let right_w = (inner_x + inner_w) - right_x - 6.0 * scale;
+
+    let mut y = body_top + EXPAND_PAD_TOP * scale;
+    if bssid_count > 0 {
+        y += BSSID_HEADER_FONT * scale + BSSID_HEADER_BOTTOM_GAP * scale;
+        y += bssid_count as f32 * BSSID_CARD_H * scale
+            + (bssid_count.saturating_sub(1)) as f32 * BSSID_CARD_GAP * scale;
+        y += PROFILE_SECTION_TOP_GAP * scale;
+    }
+    // Account for the profile-section header before the cards.
+    y += PROFILE_HEADER_FONT * scale + PROFILE_HEADER_BOTTOM_GAP * scale;
+    let stride = PROFILE_CARD_H * scale + PROFILE_CARD_GAP * scale;
+    Rect::new(right_x, y + i as f32 * stride, right_w, PROFILE_CARD_H * scale)
+}
+
+/// Rect of the delete-X button on a profile card.
+fn profile_delete_rect(card: Rect, scale: f32) -> Rect {
+    let size = PROFILE_DELETE_SIZE * scale;
+    let pad = PROFILE_DELETE_PAD * scale;
+    let x = card.x + card.w - size - pad;
+    let y = card.y + (card.h - size) / 2.0;
+    Rect::new(x, y, size, size)
 }
 
 /// What was clicked inside the WiFi network list.
@@ -141,6 +336,14 @@ pub enum NetworkHit {
     ConnectButton(String),
     /// A band-selector pill inside the expanded section.
     BandPill(String, Band),
+    /// The lock toggle on a specific BSSID card. Caller toggles the
+    /// pinned BSSID for this SSID.
+    LockBssid(String, String),
+    /// Click on a saved-profile card (anywhere except the delete X).
+    /// Caller activates that profile via `nmcli connection up`.
+    ProfileActivate(String, String), // (ssid, name)
+    /// Click on the delete X overlaid on a profile card.
+    ProfileDelete(String, String), // (ssid, uuid)
 }
 
 /// Hit-test a click against the network list. Walks rows top-to-
@@ -162,7 +365,14 @@ pub fn hit_test_network(
     }
 
     let header_h = ROW_HEIGHT * scale;
-    let mut row_y = row_list_top_y(panel_top_y, scale);
+    let list_top = row_list_top_y(panel_top_y, scale);
+    // Reject clicks above the first row (header area) so the SSID
+    // labels there don't grab clicks meant for scrollbar drag etc.
+    if y < list_top {
+        return None;
+    }
+    let scroll_px = wifi.scroll * scale;
+    let mut row_y = list_top - scroll_px;
     for net in wifi.networks().iter().take(MAX_NETWORK_ROWS) {
         let is_expanded = wifi.expanded_ssid.as_deref() == Some(net.ssid.as_str());
         let extra = if is_expanded { expanded_extra_height(net, scale) } else { 0.0 };
@@ -178,10 +388,54 @@ pub fn hit_test_network(
             let body_top = row_y + header_h;
             let body_bottom = row_y + header_h + extra;
             if y >= body_top && y <= body_bottom {
+                // BSSID lock toggles (right column).
+                let card_n = visible_bssid_card_count(net);
+                for i in 0..card_n {
+                    let card = bssid_card_rect(inner_x, inner_w, body_top, scale, i);
+                    let lock = bssid_lock_rect(card, scale);
+                    if x >= lock.x
+                        && x <= lock.x + lock.w
+                        && y >= lock.y
+                        && y <= lock.y + lock.h
+                    {
+                        let mac = net.aps[i].bssid.clone();
+                        return Some(NetworkHit::LockBssid(net.ssid.clone(), mac));
+                    }
+                }
+                // Profile cards (delete X first; otherwise activate).
+                let profile_n = visible_profile_card_count(net);
+                for i in 0..profile_n {
+                    let card = profile_card_rect(
+                        inner_x, inner_w, body_top, scale, card_n, i,
+                    );
+                    let del = profile_delete_rect(card, scale);
+                    if x >= del.x
+                        && x <= del.x + del.w
+                        && y >= del.y
+                        && y <= del.y + del.h
+                    {
+                        let uuid = net.profiles[i].uuid.clone();
+                        return Some(NetworkHit::ProfileDelete(
+                            net.ssid.clone(),
+                            uuid,
+                        ));
+                    }
+                    if x >= card.x
+                        && x <= card.x + card.w
+                        && y >= card.y
+                        && y <= card.y + card.h
+                    {
+                        let name = net.profiles[i].name.clone();
+                        return Some(NetworkHit::ProfileActivate(
+                            net.ssid.clone(),
+                            name,
+                        ));
+                    }
+                }
                 if has_band_selector(net) {
                     for entry in &net.bands {
                         if let Some(pill) =
-                            band_pill_rect(net, entry.band, inner_x, body_top, scale)
+                            band_pill_rect(net, entry.band, inner_x, inner_w, body_top, scale)
                         {
                             if x >= pill.x
                                 && x <= pill.x + pill.w
@@ -218,6 +472,11 @@ fn band_row_top(net: &Network, body_top: f32, scale: f32) -> f32 {
     body_top + EXPAND_PAD_TOP * scale + n * line_h
 }
 
+/// Logical width of the left column inside the expanded body.
+fn left_col_width(inner_w: f32) -> f32 {
+    inner_w * LEFT_COL_FRAC
+}
+
 /// Rect of a specific band pill within an expanded row body. Pills are
 /// laid out left-to-right in the order they appear in `net.bands`
 /// (strongest first), starting after a small "Band" label.
@@ -225,6 +484,7 @@ fn band_pill_rect(
     net: &Network,
     band: Band,
     inner_x: f32,
+    inner_w: f32,
     body_top: f32,
     scale: f32,
 ) -> Option<Rect> {
@@ -238,21 +498,24 @@ fn band_pill_rect(
     let gap = BAND_PILL_GAP * scale;
     // Label column eats the same indent as the detail rows so the
     // pills line up under the values.
-    let pills_x = inner_x + 16.0 * scale + 80.0 * scale;
+    let label_w = left_col_width(inner_w) * EXPAND_LABEL_W_FRAC;
+    let pills_x = inner_x + 16.0 * scale + label_w;
     let x = pills_x + idx as f32 * (pill_w + gap);
     Some(Rect::new(x, row_top, pill_w, pill_h))
 }
 
 /// Compute the Connect button rect for an expanded row body that
-/// starts at `body_top` (just under the row header). Mirrors the
-/// layout in `draw_view`'s expanded-section code.
+/// starts at `body_top` (just under the row header). The button sits
+/// at the bottom-right of the LEFT column so it doesn't overlap the
+/// BSSID list on the right.
 fn connect_button_rect(net: &Network, inner_x: f32, inner_w: f32, body_top: f32, scale: f32) -> Rect {
     let after_details = band_row_top(net, body_top, scale);
     let after_bands = after_details + band_row_height(net, scale);
     let btn_y = after_bands + EXPAND_BUTTON_TOP_GAP * scale;
     let btn_w = EXPAND_BUTTON_W * scale;
     let btn_h = EXPAND_BUTTON_H * scale;
-    let btn_x = inner_x + inner_w - btn_w - EXPAND_PAD_TOP * scale;
+    let left_w = left_col_width(inner_w);
+    let btn_x = inner_x + left_w - btn_w - EXPAND_PAD_TOP * scale;
     Rect::new(btn_x, btn_y, btn_w, btn_h)
 }
 
@@ -321,7 +584,20 @@ pub fn draw_view(
         return msg_y + row_font;
     }
 
-    let mut row_y = row_list_top_y(panel_top_y, scale);
+    // List clip: from row_list_top_y down to the bottom of the panel
+    // (minus a small bottom pad). Rows that scroll out of this rect
+    // get clipped rather than bleeding into chrome below.
+    let list_top = row_list_top_y(panel_top_y, scale);
+    let list_bottom = panel.y + panel.h - LIST_BOTTOM_PAD * scale;
+    let viewport_h = (list_bottom - list_top).max(0.0);
+    let max = max_scroll(wifi, viewport_h, scale);
+    let scroll_clamped = wifi.scroll.clamp(0.0, max);
+    let scroll_px = scroll_clamped * scale;
+    let list_clip = Rect::new(panel.x, list_top, panel.w, viewport_h);
+    painter.push_clip(list_clip);
+    text.push_clip([list_clip.x, list_clip.y, list_clip.w, list_clip.h]);
+
+    let mut row_y = list_top - scroll_px;
     for (i, net) in wifi.networks().iter().take(MAX_NETWORK_ROWS).enumerate() {
         let is_expanded = wifi.expanded_ssid.as_deref() == Some(net.ssid.as_str());
         let extra_h = if is_expanded { expanded_extra_height(net, scale) } else { 0.0 };
@@ -473,12 +749,14 @@ pub fn draw_view(
         }
         let _ = right_x;
 
-        // Expanded section: details list + Connect button.
+        // Expanded section: details list + Connect button (left column)
+        // and Top-BSSID list (right column).
         if is_expanded {
             let body_top = row_y + row_h;
             let detail_font = EXPAND_DETAIL_FONT * scale;
             let line_h = detail_font + EXPAND_LINE_GAP * scale;
-            let label_w = inner_w * EXPAND_LABEL_W_FRAC;
+            let left_w = left_col_width(inner_w);
+            let label_w = left_w * EXPAND_LABEL_W_FRAC;
             let mut dy = body_top + EXPAND_PAD_TOP * scale;
             let label_x = inner_x + 16.0 * scale;
             let value_x = label_x + label_w;
@@ -500,12 +778,18 @@ pub fn draw_view(
                     value_x,
                     dy,
                     white.with_alpha(0.92 * alpha),
-                    inner_w - (value_x - inner_x) - 16.0 * scale,
+                    left_w - (value_x - inner_x) - 16.0 * scale,
                     surface_w,
                     surface_h,
                 );
                 dy += line_h;
             }
+
+            // ── Right column: top BSSIDs ──
+            draw_right_column(
+                painter, text, net, inner_x, inner_w, body_top, scale, alpha,
+                surface_w, surface_h,
+            );
 
             // Band-selector pills (only when 2+ bands available).
             if has_band_selector(net) {
@@ -526,7 +810,7 @@ pub fn draw_view(
                     surface_h,
                 );
                 for entry in &net.bands {
-                    let Some(pill) = band_pill_rect(net, entry.band, inner_x, body_top, scale)
+                    let Some(pill) = band_pill_rect(net, entry.band, inner_x, inner_w, body_top, scale)
                     else {
                         continue;
                     };
@@ -609,8 +893,31 @@ pub fn draw_view(
         );
     }
 
-    let bottom = row_list_top_y(panel_top_y, scale)
-        + wifi.networks().len().min(MAX_NETWORK_ROWS) as f32 * row_h;
+    painter.pop_clip();
+    text.pop_clip();
+
+    // Scrollbar — thin track on the right side of the panel.
+    if max > 0.0 {
+        let track_w = 4.0 * scale;
+        let track_x = panel.x + panel.w - track_w - 6.0 * scale;
+        painter.rect_filled(
+            Rect::new(track_x, list_top, track_w, viewport_h),
+            track_w / 2.0,
+            white.with_alpha(0.06 * alpha),
+        );
+        let thumb_h = (viewport_h * viewport_h / (viewport_h + max * scale))
+            .max(24.0 * scale);
+        let thumb_y = list_top
+            + (viewport_h - thumb_h)
+                * (scroll_px / (max * scale)).clamp(0.0, 1.0);
+        painter.rect_filled(
+            Rect::new(track_x, thumb_y, track_w, thumb_h),
+            track_w / 2.0,
+            white.with_alpha(0.30 * alpha),
+        );
+    }
+
+    let bottom = list_bottom;
 
     // Draw the password prompt on top of the network list when active.
     // Layer 1 so the modal's painter rects can occlude already-queued
@@ -633,6 +940,272 @@ pub fn draw_view(
     }
 
     bottom
+}
+
+/// Right column of the expanded panel: BSSID cards on top, saved-profile
+/// cards below (each with delete X + click-to-activate).
+#[allow(clippy::too_many_arguments)]
+fn draw_right_column(
+    painter: &mut Painter,
+    text: &mut TextRenderer,
+    net: &Network,
+    inner_x: f32,
+    inner_w: f32,
+    body_top: f32,
+    scale: f32,
+    alpha: f32,
+    surface_w: u32,
+    surface_h: u32,
+) {
+    let n = visible_bssid_card_count(net);
+    let profile_n = visible_profile_card_count(net);
+    if n == 0 && profile_n == 0 {
+        return;
+    }
+    let gutter = COL_GUTTER * scale;
+    let left_w = left_col_width(inner_w);
+    let right_x = inner_x + left_w + gutter;
+    let right_w = (inner_x + inner_w) - right_x - 6.0 * scale;
+
+    let white = Color::from_rgb8(0xff, 0xff, 0xff);
+    let muted = white.with_alpha(0.55 * alpha);
+    let gold = Color::from_rgb8(0xc8, 0x86, 0x0a);
+
+    // BSSID column header.
+    if n > 0 {
+        let header_font = BSSID_HEADER_FONT * scale;
+        let header_y = body_top + EXPAND_PAD_TOP * scale;
+        text.queue(
+            if n == 1 { "Access point" } else { "Top access points" },
+            header_font,
+            right_x,
+            header_y,
+            muted,
+            right_w,
+            surface_w,
+            surface_h,
+        );
+    }
+
+    let mac_font = BSSID_MAC_FONT * scale;
+    let meta_font = BSSID_META_FONT * scale;
+
+    for i in 0..n {
+        let ap = &net.aps[i];
+        let card = bssid_card_rect(inner_x, inner_w, body_top, scale, i);
+        let pinned = net.pinned_bssid.as_deref() == Some(ap.bssid.as_str());
+        let radius = 10.0 * scale;
+
+        // Card background — gold tint when pinned, otherwise neutral.
+        let bg = if pinned {
+            gold.with_alpha(0.20 * alpha)
+        } else {
+            white.with_alpha(0.06 * alpha)
+        };
+        painter.rect_filled(card, radius, bg);
+        if pinned {
+            painter.rect_stroke_sdf(card, radius, 1.4 * scale, gold.with_alpha(0.80 * alpha));
+        } else {
+            painter.rect_stroke_sdf(card, radius, 1.0 * scale, white.with_alpha(0.14 * alpha));
+        }
+
+        // BSSID MAC.
+        let mac_x = card.x + 10.0 * scale;
+        let mac_y = card.y + 8.0 * scale;
+        text.queue(
+            &ap.bssid,
+            mac_font,
+            mac_x,
+            mac_y,
+            white.with_alpha(0.95 * alpha),
+            card.w - 16.0 * scale - BSSID_LOCK_SIZE * scale - BSSID_LOCK_PAD * scale,
+            surface_w,
+            surface_h,
+        );
+
+        // Meta line: signal + channel + band.
+        let meta = format!(
+            "{}%  ·  ch {}  ·  {}",
+            ap.signal,
+            ap.channel,
+            ap.band.short_label()
+        );
+        let meta_y = mac_y + mac_font + 4.0 * scale;
+        text.queue(
+            &meta,
+            meta_font,
+            mac_x,
+            meta_y,
+            muted,
+            card.w - 16.0 * scale - BSSID_LOCK_SIZE * scale - BSSID_LOCK_PAD * scale,
+            surface_w,
+            surface_h,
+        );
+
+        // Lock-pin button: gold-filled when pinned, neutral outline otherwise.
+        let lock = bssid_lock_rect(card, scale);
+        if pinned {
+            painter.rect_filled(lock, lock.w / 2.0, gold.with_alpha(0.85 * alpha));
+        }
+        draw_lock(
+            painter,
+            lock.x,
+            lock.y,
+            lock.w,
+            lock.h,
+            if pinned { 1.6 * alpha } else { alpha },
+        );
+    }
+
+    // ── Saved profiles section ──
+    if profile_n > 0 {
+        // Section header: align under the BSSID block plus a gap.
+        let mut header_y = body_top + EXPAND_PAD_TOP * scale;
+        if n > 0 {
+            header_y += BSSID_HEADER_FONT * scale + BSSID_HEADER_BOTTOM_GAP * scale;
+            header_y += n as f32 * BSSID_CARD_H * scale
+                + (n.saturating_sub(1)) as f32 * BSSID_CARD_GAP * scale;
+            header_y += PROFILE_SECTION_TOP_GAP * scale;
+        }
+        let p_header_font = PROFILE_HEADER_FONT * scale;
+        let label = if profile_n == 1 {
+            "Saved profile".to_string()
+        } else {
+            format!("Saved profiles ({})", net.profiles.len())
+        };
+        text.queue(
+            &label,
+            p_header_font,
+            right_x,
+            header_y,
+            muted,
+            right_w,
+            surface_w,
+            surface_h,
+        );
+
+        let p_name_font = PROFILE_NAME_FONT * scale;
+        let p_meta_font = PROFILE_META_FONT * scale;
+        for i in 0..profile_n {
+            let p = &net.profiles[i];
+            let card = profile_card_rect(inner_x, inner_w, body_top, scale, n, i);
+            let radius = 10.0 * scale;
+
+            let bg = if p.active {
+                gold.with_alpha(0.18 * alpha)
+            } else {
+                white.with_alpha(0.06 * alpha)
+            };
+            painter.rect_filled(card, radius, bg);
+            if p.active {
+                painter.rect_stroke_sdf(
+                    card,
+                    radius,
+                    1.4 * scale,
+                    gold.with_alpha(0.80 * alpha),
+                );
+            } else {
+                painter.rect_stroke_sdf(
+                    card,
+                    radius,
+                    1.0 * scale,
+                    white.with_alpha(0.14 * alpha),
+                );
+            }
+
+            // Active dot on the left.
+            let dot_d = PROFILE_ACTIVE_DOT * scale;
+            let dot_cx = card.x + 12.0 * scale + dot_d / 2.0;
+            let dot_cy = card.y + card.h / 2.0;
+            let dot_color = if p.active {
+                gold.with_alpha(0.95 * alpha)
+            } else {
+                white.with_alpha(0.20 * alpha)
+            };
+            painter.rect_filled(
+                Rect::new(
+                    dot_cx - dot_d / 2.0,
+                    dot_cy - dot_d / 2.0,
+                    dot_d,
+                    dot_d,
+                ),
+                dot_d / 2.0,
+                dot_color,
+            );
+
+            // Name + meta.
+            let text_x = dot_cx + dot_d / 2.0 + 10.0 * scale;
+            let text_max_w =
+                card.w - (text_x - card.x) - PROFILE_DELETE_SIZE * scale - PROFILE_DELETE_PAD * scale - 6.0 * scale;
+            let name_y = card.y + 8.0 * scale;
+            text.queue(
+                &p.name,
+                p_name_font,
+                text_x,
+                name_y,
+                white.with_alpha(0.95 * alpha),
+                text_max_w.max(0.0),
+                surface_w,
+                surface_h,
+            );
+
+            // Meta line — band/bssid pins, or "tap to switch" hint when no pins.
+            let mut meta = String::new();
+            if let Some(b) = &p.pinned_band {
+                meta.push_str(match b.as_str() {
+                    "bg" => "Band: 2.4 GHz",
+                    "a" => "Band: 5/6 GHz",
+                    _ => "",
+                });
+            }
+            if let Some(mac) = &p.pinned_bssid {
+                if !meta.is_empty() {
+                    meta.push_str(" · ");
+                }
+                meta.push_str("BSSID ");
+                meta.push_str(mac);
+            }
+            if meta.is_empty() {
+                meta = if p.active {
+                    "Active".to_string()
+                } else {
+                    "Tap to activate".to_string()
+                };
+            }
+            let meta_y = name_y + p_name_font + 4.0 * scale;
+            text.queue(
+                &meta,
+                p_meta_font,
+                text_x,
+                meta_y,
+                muted,
+                text_max_w.max(0.0),
+                surface_w,
+                surface_h,
+            );
+
+            // Delete X chip.
+            let del = profile_delete_rect(card, scale);
+            painter.rect_filled(
+                del,
+                del.w / 2.0,
+                Color::from_rgb8(0xd0, 0x4a, 0x4a).with_alpha(0.18 * alpha),
+            );
+            painter.rect_stroke_sdf(
+                del,
+                del.w / 2.0,
+                1.0 * scale,
+                Color::from_rgb8(0xd0, 0x4a, 0x4a).with_alpha(0.65 * alpha),
+            );
+            let arm = del.w * 0.28;
+            let cx = del.x + del.w / 2.0;
+            let cy = del.y + del.h / 2.0;
+            let stroke = 1.8 * scale;
+            let red = Color::from_rgb8(0xd0, 0x4a, 0x4a).with_alpha(0.95 * alpha);
+            painter.line_round(cx - arm, cy - arm, cx + arm, cy + arm, stroke, red);
+            painter.line_round(cx + arm, cy - arm, cx - arm, cy + arm, stroke, red);
+        }
+    }
 }
 
 /// Tiny lock icon — body rect + shackle arch. Pure shapes.

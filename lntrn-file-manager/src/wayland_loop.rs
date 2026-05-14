@@ -132,7 +132,28 @@ pub(crate) fn run_loop(
 
         // ── Cursor shape (resize edges) ─────────────────────────────────
         if state.pointer_in_surface && pointer_on_popup.is_none() {
-            let desired = if toplevel.is_some() && !state.maximized {
+            // Preview-pane resize handle takes priority over window-edge resize
+            // so the user gets an EW cursor right on the divider.
+            let on_preview_handle = app.preview_drag.is_some() || {
+                let view = if app.searching && !app.search_buf.is_empty() {
+                    crate::app::ViewMode::List
+                } else { app.view_mode };
+                let supported = matches!(view, crate::app::ViewMode::List | crate::app::ViewMode::Tree);
+                if supported && app.preview_open {
+                    let full = if app.pick.is_some() {
+                        let bottom = hf - crate::pick_bar::PICK_BAR_H * s;
+                        crate::layout::content_rect_with_bottom(wf, bottom, s)
+                    } else {
+                        content_rect(wf, hf, s)
+                    };
+                    let pw = crate::layout::preview_effective_w(full.w, app.preview_width, true, s);
+                    let h_rect = crate::layout::preview_handle_rect(full, pw, s);
+                    h_rect.contains(cx, cy)
+                } else { false }
+            };
+            let desired = if on_preview_handle {
+                wp_cursor_shape_device_v1::Shape::EwResize
+            } else if toplevel.is_some() && !state.maximized {
                 let border = 10.0 * s;
                 match edge_resize(cx, cy, wf, hf, border) {
                     Some(edge) => resize_edge_to_cursor_shape(edge),
@@ -164,10 +185,43 @@ pub(crate) fn run_loop(
             view_menu.set_pointer_depth(vdepth);
         }
 
-        // ── Rubber band update ──────────────────────────────────────────
+        // ── Rubber band update + edge auto-scroll ────────────────────────
         if state.pointer_in_surface && app.rubber_band_start.is_some() {
             app.rubber_band_end = Some((cx, cy));
+            let cr = active_content_rect(app, wf, hf, s);
+            let edge_zone = 50.0 * s;
+            let max_speed = 1400.0 * s; // physical px / second at full pull
+            let mut scroll_delta = 0.0_f32;
+            if cy < cr.y + edge_zone {
+                let t = ((cr.y + edge_zone - cy) / edge_zone).clamp(0.0, 1.0);
+                scroll_delta = -max_speed * t * t * dt;
+            } else if cy > cr.y + cr.h - edge_zone {
+                let t = ((cy - (cr.y + cr.h - edge_zone)) / edge_zone).clamp(0.0, 1.0);
+                scroll_delta = max_speed * t * t * dt;
+            }
+            if scroll_delta != 0.0 {
+                let zoom = app.icon_zoom;
+                let total_h = match app.view_mode {
+                    crate::app::ViewMode::Grid => {
+                        let cols = grid_columns(cr.w, s, zoom);
+                        grid_content_height(app.entries.len(), cols, s, zoom)
+                    }
+                    crate::app::ViewMode::List => list_content_height(app.entries.len(), s, zoom),
+                    crate::app::ViewMode::Tree => tree_content_height(app.tree_entries.len(), s, zoom),
+                };
+                ScrollArea::apply_scroll(&mut app.scroll_offset, scroll_delta, total_h, cr.h);
+            }
             update_rubber_band(app, wf, hf, s);
+        }
+
+        // ── Preview pane resize drag ────────────────────────────────────
+        if let Some((press_x, start_w)) = app.preview_drag {
+            // Dragging LEFT widens the pane (handle is on its left edge).
+            let delta_px = press_x - cx;
+            let new_w = (start_w + delta_px / s)
+                .max(crate::layout::PREVIEW_MIN_W)
+                .min((wf / s) * crate::layout::PREVIEW_MAX_FRACTION);
+            app.preview_width = new_w;
         }
 
         // ── Drag detection ──────────────────────────────────────────────
@@ -175,22 +229,34 @@ pub(crate) fn run_loop(
             if let (Some(idx), Some((px, py))) = (app.pending_open, app.press_pos) {
                 let dist = ((cx - px).powi(2) + (cy - py).powi(2)).sqrt();
                 if dist > 5.0 {
-                    app.drag_item = Some(idx);
-                    app.drag_pos = Some((cx, cy));
-                    app.pending_open = None;
-                    app.press_pos = None;
+                    if app.press_shift {
+                        // Shift+Drag: start a rubber-band from the press
+                        // position instead of dragging the file. Replaces
+                        // any existing selection so the band defines it.
+                        app.clear_selection();
+                        app.rubber_band_start = Some((px, py));
+                        app.rubber_band_end = Some((cx, cy));
+                        app.pending_open = None;
+                        app.press_pos = None;
+                        update_rubber_band(app, wf, hf, s);
+                    } else {
+                        app.drag_item = Some(idx);
+                        app.drag_pos = Some((cx, cy));
+                        app.pending_open = None;
+                        app.press_pos = None;
 
-                    // Prepare DnD paths (Wayland DnD starts when cursor leaves window)
-                    let paths: Vec<std::path::PathBuf> = {
-                        let selected = app.selected_paths();
-                        if selected.is_empty() || !app.entries[idx].selected {
-                            vec![app.entries[idx].path.clone()]
-                        } else {
-                            selected
-                        }
-                    };
-                    state.dnd_paths = paths;
-                    state.dnd_serial = state.pointer_serial;
+                        // Prepare DnD paths (Wayland DnD starts when cursor leaves window)
+                        let paths: Vec<std::path::PathBuf> = {
+                            let selected = app.selected_paths();
+                            if selected.is_empty() || !app.entries[idx].selected {
+                                vec![app.entries[idx].path.clone()]
+                            } else {
+                                selected
+                            }
+                        };
+                        state.dnd_paths = paths;
+                        state.dnd_serial = state.pointer_serial;
+                    }
                 }
             }
 
@@ -274,8 +340,8 @@ pub(crate) fn run_loop(
                     let cols = grid_columns(content.w, s, zoom);
                     grid_content_height(app.entries.len(), cols, s, zoom)
                 }
-                crate::app::ViewMode::List => list_content_height(app.entries.len(), s),
-                crate::app::ViewMode::Tree => tree_content_height(app.tree_entries.len(), s),
+                crate::app::ViewMode::List => list_content_height(app.entries.len(), s, zoom),
+                crate::app::ViewMode::Tree => tree_content_height(app.tree_entries.len(), s, zoom),
             };
             ScrollArea::apply_scroll(&mut app.scroll_offset, scroll, total_h, content.h);
             state.scroll_delta = 0.0;
@@ -382,11 +448,26 @@ pub(crate) fn run_loop(
                     }
                 }
                 if !handled_resize {
+                    let prev_preview_open = app.preview_open;
+                    let prev_view = app.view_mode;
                     let action = handle_click(
                         input, app, view_menu, context_menu, &mut state.popup_backend,
                         &mut last_tab_click, &mut tab_drag_press, wf, s,
                         settings.bg_opacity, &settings.theme,
+                        state.ctrl, state.shift,
                     );
+                    let mut settings_dirty = false;
+                    if app.preview_open != prev_preview_open {
+                        settings.preview_open = app.preview_open;
+                        settings_dirty = true;
+                    }
+                    // Don't persist the forced Tree view from pick mode — it's
+                    // a transient launch decision, not a user preference.
+                    if app.view_mode != prev_view && app.pick.is_none() {
+                        settings.set_view_mode(app.view_mode);
+                        settings_dirty = true;
+                    }
+                    if settings_dirty { settings.save(); }
                     match action {
                         ClickAction::None => {
                             if let Some(toplevel) = toplevel {
@@ -396,16 +477,16 @@ pub(crate) fn run_loop(
                                     if let Some(seat) = &state.seat {
                                         toplevel._move(seat, state.pointer_serial);
                                     }
-                                } else if app.pending_open.is_none() {
-                                    let cr = content_rect(wf, hf, s);
+                                } else if app.pending_open.is_none() && app.preview_drag.is_none() {
+                                    let cr = active_content_rect(app, wf, hf, s);
                                     if cr.contains(cx, cy) {
                                         app.clear_selection();
                                         app.rubber_band_start = Some((cx, cy));
                                         app.rubber_band_end = Some((cx, cy));
                                     }
                                 }
-                            } else if app.pending_open.is_none() {
-                                let cr = content_rect(wf, hf, s);
+                            } else if app.pending_open.is_none() && app.preview_drag.is_none() {
+                                let cr = active_content_rect(app, wf, hf, s);
                                 if cr.contains(cx, cy) {
                                     app.clear_selection();
                                     app.rubber_band_start = Some((cx, cy));
@@ -449,6 +530,10 @@ pub(crate) fn run_loop(
                     app.rubber_band_start = None;
                     app.rubber_band_end = None;
                 }
+                if app.preview_drag.take().is_some() {
+                    settings.preview_width = app.preview_width;
+                    settings.save();
+                }
                 // Pinned tab drag release — reorder
                 if let Some(src_idx) = tab_drag.take() {
                     let tab_bar_rect = crate::layout::tab_bar_rect(wf, s);
@@ -484,8 +569,21 @@ pub(crate) fn run_loop(
                     app.pending_open = None;
                     state.dnd_paths.clear();
                 } else if let Some(idx) = app.pending_open.take() {
-                    app.on_item_click(idx);
+                    if app.press_ctrl {
+                        // Ctrl+Click toggle already applied at press time —
+                        // do nothing on release so the toggle sticks.
+                    } else if app.press_shift {
+                        // Shift+Click finalized as a range-select (anchor → idx).
+                        let anchor = app.selection_anchor.unwrap_or(idx);
+                        app.select_range(anchor, idx);
+                        app.selection_anchor = Some(idx);
+                    } else {
+                        app.on_item_click(idx);
+                    }
                 }
+                app.press_shift = false;
+                app.press_ctrl = false;
+                app.press_pos = None;
                 tab_drag_press = None;
                 input.on_left_released();
             }
@@ -691,8 +789,33 @@ pub(crate) fn run_loop(
             || state.held_key.is_some()
             || app.search_rx.is_some()
             || tab_drag.is_some()
+            || app.preview_drag.is_some()
             || state.dnd_active;
     }
 
     Ok(())
+}
+
+/// Content rect with the preview pane subtracted (if it's open + this view
+/// supports it). Used for hit-testing the rubber-band selection so the band
+/// doesn't start inside the info pane.
+fn active_content_rect(app: &App, wf: f32, hf: f32, s: f32) -> lntrn_render::Rect {
+    let full = if app.pick.is_some() {
+        let bottom = hf - crate::pick_bar::PICK_BAR_H * s;
+        crate::layout::content_rect_with_bottom(wf, bottom, s)
+    } else {
+        content_rect(wf, hf, s)
+    };
+    let view = if app.searching && !app.search_buf.is_empty() {
+        crate::app::ViewMode::List
+    } else {
+        app.view_mode
+    };
+    let preview_supported = matches!(view, crate::app::ViewMode::List | crate::app::ViewMode::Tree);
+    let preview_w = if preview_supported {
+        crate::layout::preview_effective_w(full.w, app.preview_width, app.preview_open, s)
+    } else {
+        0.0
+    };
+    lntrn_render::Rect::new(full.x, full.y, full.w - preview_w, full.h)
 }

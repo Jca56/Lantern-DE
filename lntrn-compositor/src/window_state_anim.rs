@@ -16,7 +16,7 @@ use smithay::{
 use crate::rect_anim::{Curve, RectAnim};
 
 /// Cinematic ease-in-out used for window-state transitions.
-pub const STATE_DURATION: Duration = Duration::from_millis(520);
+pub const STATE_DURATION: Duration = Duration::from_millis(1000);
 pub const STATE_CURVE: Curve = Curve::EaseInOutQuint;
 
 pub struct WindowStateAnimState {

@@ -162,6 +162,10 @@ pub struct AppState {
     pub panel_view: PanelView,
     /// Which side arrow is under the cursor (for hover styling).
     pub view_arrow_hover: Option<crate::view_arrows::Side>,
+    /// True when the cursor is hovering the clock toggle (under the left arrow).
+    pub clock_toggle_hover: bool,
+    /// Cached state of the desktop clock widget — reloaded on each show.
+    pub clock_enabled: bool,
     /// True when the cursor is hovering the Home button above the panel.
     pub home_hover: bool,
     /// True when the cursor is hovering the grow / shrink button.
@@ -172,6 +176,8 @@ pub struct AppState {
     pub emoji_hover: bool,
     pub clipboard_hover: bool,
     pub notes_hover: bool,
+    /// Hover state for the Claude-usage button (left strip, after gear).
+    pub usage_hover: bool,
     /// When true the body is replaced by the Command Center settings
     /// page (overrides whichever view is selected).
     pub settings_open: bool,
@@ -182,15 +188,27 @@ pub struct AppState {
     /// While the user is mid-drag on a settings slider, this points to
     /// which one so motion events route correctly.
     pub settings_drag: Option<crate::settings::SettingKey>,
-    /// User has clicked the grow button — the panel uses an extra
-    /// height bonus on top of its mode-default height.
+    /// Window-state grown flag — when the panel is *expanded*, this
+    /// adds the grow bonus to both width and height. Independent of
+    /// [`bar_grown`] so the user can have e.g. a long bar + short
+    /// window.
     pub panel_grown: bool,
-    /// Animation state for the grow/shrink toggle. `grow_anim_origin`
-    /// is the progress at the moment the user clicked; `target` is
-    /// where the animation is heading. The lerp gives a smooth 1s ease.
+    /// Animation state for the window's grow/shrink toggle.
+    /// `grow_anim_origin` is the progress at the moment the user
+    /// clicked; `target` is where the animation is heading. The lerp
+    /// gives a smooth 1s ease.
     pub grow_anim_start: Option<std::time::Instant>,
     pub grow_anim_origin: f32,
     pub grow_anim_target: f32,
+    /// Collapsed-bar grown flag — controls whether the bar uses the
+    /// wider footprint when fully collapsed. Independent of
+    /// [`panel_grown`]; toggled by the grow button while collapsed.
+    pub bar_grown: bool,
+    /// Animation state for the bar's grow/shrink toggle. Same shape as
+    /// the window grow anim fields but tracks the bar's width.
+    pub bar_grow_anim_start: Option<std::time::Instant>,
+    pub bar_grow_anim_origin: f32,
+    pub bar_grow_anim_target: f32,
     /// Active view-switch animation: the view we're transitioning
     /// *from*, plus the wall-clock start. `panel_view` is already set
     /// to the destination; the body crossfades from `from` to `panel_view`
@@ -220,7 +238,14 @@ pub struct AppState {
     /// whole CC so the background thread stays alive between copy ops —
     /// otherwise a per-click `WaylandClipboard::new()` lets the thread
     /// die before the compositor's eager-capture finishes reading.
-    pub clipboard: Option<lntrn_terminal::clipboard::WaylandClipboard>,
+    pub clipboard_handle: Option<lntrn_terminal::clipboard::WaylandClipboard>,
+    /// Clipboard History overlay state (entries, filter, hover, scroll).
+    pub clipboard: crate::clipboard::ClipboardState,
+    /// Quick Notes overlay state (notes, filter, editor focus, selection).
+    pub notes: crate::notes::NotesState,
+    /// Claude-usage overlay state. Background scanner walks
+    /// ~/.claude/projects/**/*.jsonl and aggregates token totals.
+    pub usage: crate::usage::UsageState,
     /// Bytes queued to be written to the terminal PTY on the next loop
     /// iteration. Used by Files "Open in Terminal tab" to defer the
     /// `cd` until the PTY has been spawned.
@@ -229,6 +254,12 @@ pub struct AppState {
     /// or click-outside-card clears it; Confirm runs the action and
     /// closes the panel.
     pub power_confirm: Option<crate::power::PowerAction>,
+    /// Last-known cursor position in *physical* pixels. Plumbed in once
+    /// per tick from the wayland-state cursor (which is in surface logical
+    /// px) so the renderer can drive cursor-sensitive effects — the dock
+    /// magnification wave, primarily — without reaching back into the
+    /// wayland layer.
+    pub cursor_phys: (f32, f32),
 }
 
 #[derive(Debug, Clone)]
@@ -271,12 +302,15 @@ impl AppState {
             opened_from_collapsed: false,
             panel_view: PanelView::Default,
             view_arrow_hover: None,
+            clock_toggle_hover: false,
+            clock_enabled: crate::clock_toggle::load().clock_enabled,
             home_hover: false,
             grow_hover: false,
             gear_hover: false,
             emoji_hover: false,
             clipboard_hover: false,
             notes_hover: false,
+            usage_hover: false,
             settings_open: false,
             config: crate::settings::Config::load(),
             settings_drag: None,
@@ -284,6 +318,11 @@ impl AppState {
             grow_anim_start: None,
             grow_anim_origin: 0.0,
             grow_anim_target: 0.0,
+            bar_grown: false,
+            bar_grow_anim_start: None,
+            bar_grow_anim_origin: 0.0,
+            bar_grow_anim_target: 0.0,
+            cursor_phys: (0.0, 0.0),
             view_anim_from: None,
             view_anim_start: None,
             view_anim_dir: 1,
@@ -292,7 +331,18 @@ impl AppState {
             terminal: crate::terminal::TerminalState::new(),
             files: crate::files::FilesState::new(),
             emojis: crate::emojis::EmojisState::default(),
-            clipboard: lntrn_terminal::clipboard::WaylandClipboard::new(),
+            clipboard_handle: lntrn_terminal::clipboard::WaylandClipboard::new(),
+            clipboard: crate::clipboard::ClipboardState::default(),
+            notes: {
+                let mut s = crate::notes::NotesState::default();
+                s.load_from_disk();
+                s
+            },
+            usage: {
+                let mut s = crate::usage::UsageState::default();
+                s.start_worker();
+                s
+            },
             pending_terminal_input: None,
         }
     }
@@ -344,6 +394,10 @@ impl AppState {
         // Settings is mutually exclusive with other overlays.
         if self.settings_open {
             self.emojis.open = false;
+            self.clipboard.open = false;
+            self.notes.flush_edits_to_selected();
+            self.notes.open = false;
+            self.usage.open = false;
         }
         tracing::info!(open = self.settings_open, "settings toggled");
     }
@@ -353,28 +407,108 @@ impl AppState {
         self.emojis.open = !self.emojis.open;
         if self.emojis.open {
             self.settings_open = false;
+            self.clipboard.open = false;
+            self.notes.flush_edits_to_selected();
+            self.notes.open = false;
+            self.usage.open = false;
             self.emojis.filter.clear();
             self.emojis.reset_scroll();
         }
         tracing::info!(open = self.emojis.open, "emojis toggled");
     }
 
-    /// Toggle the panel "grown" mode — adds a fixed bonus to both
-    /// width and height on top of whatever the current view + mode
-    /// would normally request. Animates over `GROW_ANIM_DURATION`.
-    pub fn toggle_grow(&mut self) {
-        let now = std::time::Instant::now();
-        let current = self.grow_progress();
-        self.panel_grown = !self.panel_grown;
-        self.grow_anim_origin = current;
-        self.grow_anim_target = if self.panel_grown { 1.0 } else { 0.0 };
-        self.grow_anim_start = Some(now);
-        tracing::info!(grown = self.panel_grown, current, "panel grow toggled");
+    /// Toggle the Clipboard History overlay page.
+    pub fn toggle_clipboard(&mut self) {
+        self.clipboard.open = !self.clipboard.open;
+        if self.clipboard.open {
+            self.settings_open = false;
+            self.emojis.open = false;
+            self.notes.open = false;
+            self.usage.open = false;
+            self.clipboard.filter.clear();
+            self.clipboard.reset_scroll();
+            self.clipboard.confirm_clear = false;
+            self.refresh_clipboard();
+        }
+        tracing::info!(open = self.clipboard.open, "clipboard toggled");
     }
 
-    /// Eased grow progress (0 = base size, 1 = fully grown). Handles
-    /// mid-flight reversal — if the user toggles again before the
-    /// previous animation finishes, the new motion starts from the
+    /// Toggle the Claude-usage overlay page.
+    pub fn toggle_usage(&mut self) {
+        self.usage.open = !self.usage.open;
+        if self.usage.open {
+            self.settings_open = false;
+            self.emojis.open = false;
+            self.clipboard.open = false;
+            self.notes.flush_edits_to_selected();
+            self.notes.open = false;
+            self.usage.scroll = 0.0;
+            // Ensure background scanner is alive (no-op if already spawned).
+            self.usage.start_worker();
+        }
+        tracing::info!(open = self.usage.open, "usage toggled");
+    }
+
+    /// Toggle the Quick Notes overlay page.
+    pub fn toggle_notes(&mut self) {
+        self.notes.open = !self.notes.open;
+        if self.notes.open {
+            self.settings_open = false;
+            self.emojis.open = false;
+            self.clipboard.open = false;
+            self.usage.open = false;
+            self.notes.filter.clear();
+            self.notes.list_scroll = 0.0;
+            self.notes.confirm_delete = false;
+            self.notes.flash_text = None;
+            self.notes.drag_field = None;
+            // If nothing is currently selected, jump to the most recent.
+            if self.notes.selected_id.is_none() {
+                if let Some(first) = self.notes.notes.first() {
+                    let id = first.id;
+                    self.notes.select(id);
+                }
+            }
+        } else {
+            // Closing flushes any pending edits to disk.
+            self.notes.flush_edits_to_selected();
+        }
+        tracing::info!(open = self.notes.open, "notes toggled");
+    }
+
+    /// Pull the latest history snapshot from the compositor's IPC. No-op
+    /// if the socket isn't there (compositor restart in progress, etc.).
+    pub fn refresh_clipboard(&mut self) {
+        self.clipboard.entries = crate::clipboard::ipc::list();
+    }
+
+    /// Toggle the panel "grown" mode. While collapsed this toggles the
+    /// *bar's* grown state (width-only); while expanded it toggles the
+    /// *window's* grown state (width + height). Each side is remembered
+    /// independently, so e.g. you can run with a long bar + short window.
+    /// Animates over `GROW_ANIM_DURATION`.
+    pub fn toggle_grow(&mut self) {
+        let now = std::time::Instant::now();
+        if self.collapsed {
+            let current = self.bar_grow_progress();
+            self.bar_grown = !self.bar_grown;
+            self.bar_grow_anim_origin = current;
+            self.bar_grow_anim_target = if self.bar_grown { 1.0 } else { 0.0 };
+            self.bar_grow_anim_start = Some(now);
+            tracing::info!(bar_grown = self.bar_grown, current, "bar grow toggled");
+        } else {
+            let current = self.grow_progress();
+            self.panel_grown = !self.panel_grown;
+            self.grow_anim_origin = current;
+            self.grow_anim_target = if self.panel_grown { 1.0 } else { 0.0 };
+            self.grow_anim_start = Some(now);
+            tracing::info!(grown = self.panel_grown, current, "panel grow toggled");
+        }
+    }
+
+    /// Eased window-grow progress (0 = base size, 1 = fully grown).
+    /// Handles mid-flight reversal — if the user toggles again before
+    /// the previous animation finishes, the new motion starts from the
     /// current visual value (no snap).
     pub fn grow_progress(&self) -> f32 {
         if let Some(start) = self.grow_anim_start {
@@ -388,10 +522,84 @@ impl AppState {
         }
     }
 
-    /// Desired panel width (logical px). Adds the grow bonus scaled
-    /// by the current animation progress.
+    /// Eased bar-grow progress. Same shape as [`grow_progress`] but for
+    /// the collapsed-bar's independent grown state.
+    pub fn bar_grow_progress(&self) -> f32 {
+        if let Some(start) = self.bar_grow_anim_start {
+            let t = (start.elapsed().as_secs_f32() / GROW_ANIM_DURATION).clamp(0.0, 1.0);
+            let eased = ease_out_cubic(t);
+            self.bar_grow_anim_origin
+                + (self.bar_grow_anim_target - self.bar_grow_anim_origin) * eased
+        } else if self.bar_grown {
+            1.0
+        } else {
+            0.0
+        }
+    }
+
+    /// Width (logical px) at each collapse endpoint, using the current
+    /// (possibly animating) grow progresses. The collapsed bar's width
+    /// is driven by `bar_grow_progress`; the expanded window's width
+    /// uses `grow_progress`.
+    fn endpoint_widths_logical(&self) -> (f32, f32) {
+        let bar_w = PANEL_W_LOGICAL + GROW_BONUS_W_LOGICAL * self.bar_grow_progress();
+        let win_w = PANEL_W_LOGICAL + GROW_BONUS_W_LOGICAL * self.grow_progress();
+        (bar_w, win_w)
+    }
+
+    /// True when the bar and window widths differ enough that a collapse
+    /// animation should run in two visible phases (width + height
+    /// changing sequentially rather than simultaneously).
+    fn widths_differ(&self) -> bool {
+        let (bar_w, win_w) = self.endpoint_widths_logical();
+        (bar_w - win_w).abs() > 0.5
+    }
+
+    /// Desired panel width (logical px). When the bar's and window's
+    /// grown states match (or there's no collapse anim in flight), this
+    /// just picks the appropriate endpoint. When they differ during a
+    /// collapse animation, the width transitions over the second half
+    /// (collapsing) / first half (expanding) of the animation so the
+    /// motion reads as "shrink then drop" / "rise then widen".
     pub fn desired_panel_w_logical(&self) -> f32 {
-        PANEL_W_LOGICAL + GROW_BONUS_W_LOGICAL * self.grow_progress()
+        let (bar_w, win_w) = self.endpoint_widths_logical();
+        if !self.widths_differ() {
+            return bar_w;
+        }
+        match self.collapse_anim_start {
+            None => if self.collapsed { bar_w } else { win_w },
+            Some(start) => {
+                let dur = self.config.view_anim_duration.max(0.05);
+                let phase_dur = dur / 2.0;
+                let elapsed = start.elapsed().as_secs_f32();
+                let going_to_collapsed = self.collapse_anim_target > 0.5;
+                if going_to_collapsed {
+                    // Phase 1 (height shrinks at window width); phase 2
+                    // (width animates from window → bar at bar height).
+                    if elapsed <= phase_dur {
+                        win_w
+                    } else if elapsed >= dur {
+                        bar_w
+                    } else {
+                        let t = ((elapsed - phase_dur) / phase_dur).clamp(0.0, 1.0);
+                        let e = ease_out_cubic(t);
+                        win_w + (bar_w - win_w) * e
+                    }
+                } else {
+                    // Phase 1 (width animates from bar → window at bar
+                    // height); phase 2 (height expands at window width).
+                    if elapsed <= 0.0 {
+                        bar_w
+                    } else if elapsed >= phase_dur {
+                        win_w
+                    } else {
+                        let t = (elapsed / phase_dur).clamp(0.0, 1.0);
+                        let e = ease_out_cubic(t);
+                        bar_w + (win_w - bar_w) * e
+                    }
+                }
+            }
+        }
     }
 
     /// Jump directly to a specific view (used by Home + dot clicks).
@@ -440,22 +648,50 @@ impl AppState {
         tracing::info!(collapsed = self.collapsed, current, "panel collapse toggled");
     }
 
-    /// Eased animation factor for the collapse transition.
-    /// Returns 0.0 when fully expanded, 1.0 when fully collapsed,
-    /// and an eased lerp in between while the animation is in flight.
-    /// Duration is the user-tunable [`Config::view_anim_duration`] so
-    /// the slide-speed setting controls both view slides and collapse.
+    /// Eased height-progress for the collapse transition. Returns 0.0
+    /// when at the expanded height, 1.0 when at the collapsed bar
+    /// height, and an eased lerp in between.
+    ///
+    /// When the bar and window have different widths the collapse runs
+    /// as a two-phase animation: width changes in one half and height
+    /// changes in the other. This method reports only the *height* half
+    /// — so during the "width is changing" phase it stays pinned at
+    /// whichever endpoint corresponds to the bar height. Chrome that
+    /// fades on collapse (power column, dock) therefore behaves the
+    /// same as in the single-phase case.
     pub fn collapse_progress(&self) -> f32 {
-        if let Some(start) = self.collapse_anim_start {
-            let dur = self.config.view_anim_duration.max(0.05);
-            let t = (start.elapsed().as_secs_f32() / dur).clamp(0.0, 1.0);
-            let eased = ease_out_cubic(t);
-            self.collapse_anim_origin
-                + (self.collapse_anim_target - self.collapse_anim_origin) * eased
-        } else if self.collapsed {
-            1.0
-        } else {
-            0.0
+        match self.collapse_anim_start {
+            None => if self.collapsed { 1.0 } else { 0.0 },
+            Some(start) => {
+                let dur = self.config.view_anim_duration.max(0.05);
+                let elapsed = start.elapsed().as_secs_f32();
+                if !self.widths_differ() {
+                    let t = (elapsed / dur).clamp(0.0, 1.0);
+                    let eased = ease_out_cubic(t);
+                    self.collapse_anim_origin
+                        + (self.collapse_anim_target - self.collapse_anim_origin) * eased
+                } else {
+                    let phase_dur = dur / 2.0;
+                    let going_to_collapsed = self.collapse_anim_target > 0.5;
+                    if going_to_collapsed {
+                        // Phase 1: height 0 → 1; phase 2: pinned at 1.
+                        if elapsed >= phase_dur {
+                            1.0
+                        } else {
+                            let t = (elapsed / phase_dur).clamp(0.0, 1.0);
+                            ease_out_cubic(t)
+                        }
+                    } else {
+                        // Phase 1: pinned at 1; phase 2: height 1 → 0.
+                        if elapsed <= phase_dur {
+                            1.0
+                        } else {
+                            let t = ((elapsed - phase_dur) / phase_dur).clamp(0.0, 1.0);
+                            1.0 - ease_out_cubic(t)
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -612,6 +848,40 @@ impl AppState {
             }
             return;
         }
+        if self.clipboard.open {
+            if self.clipboard.confirm_clear {
+                self.clipboard.confirm_clear = false;
+            } else if !self.clipboard.filter.is_empty() {
+                self.clipboard.filter.clear();
+                self.clipboard.reset_scroll();
+            } else {
+                self.clipboard.open = false;
+            }
+            return;
+        }
+        if self.notes.open {
+            if self.notes.confirm_delete {
+                self.notes.confirm_delete = false;
+            } else if self.notes.focus != crate::notes::NoteFocus::Filter
+                && (self.notes.focus == crate::notes::NoteFocus::Title
+                    || self.notes.focus == crate::notes::NoteFocus::Body)
+            {
+                // Esc out of the editor first to give the user a fast way
+                // to jump back to filtering / list navigation.
+                self.notes.flush_edits_to_selected();
+                self.notes.focus = crate::notes::NoteFocus::Filter;
+            } else if !self.notes.filter.is_empty() {
+                self.notes.filter.clear();
+            } else {
+                self.notes.flush_edits_to_selected();
+                self.notes.open = false;
+            }
+            return;
+        }
+        if self.usage.open {
+            self.usage.open = false;
+            return;
+        }
         if self.power_confirm.is_some() {
             self.power_confirm = None;
         } else if self.context_menu.is_some() {
@@ -655,9 +925,9 @@ impl AppState {
     /// Forward a keypress to the search input and refresh results when
     /// the buffer changed. Returns the input's `KeyEffect` so the render
     /// loop can react (e.g. trigger a redraw).
-    pub fn forward_key(&mut self, key: u32, shift: bool) -> KeyEffect {
+    pub fn forward_key(&mut self, key: u32, shift: bool, caps_lock: bool) -> KeyEffect {
         let was_empty = self.search.input.is_empty();
-        let effect = self.search.input.on_key(key, shift);
+        let effect = self.search.input.on_key(key, shift, caps_lock);
         if effect == KeyEffect::ContentChanged {
             self.search.refresh_results(&self.apps, self.launcher.hidden());
             // Selection follows context: when the user starts typing,
@@ -1207,6 +1477,18 @@ impl AppState {
         self.emojis.open = false;
         self.emojis.filter.clear();
         self.emojis.reset_scroll();
+        self.clipboard.open = false;
+        self.clipboard.filter.clear();
+        self.clipboard.reset_scroll();
+        self.clipboard.confirm_clear = false;
+        self.notes.flush_edits_to_selected();
+        self.notes.open = false;
+        self.notes.filter.clear();
+        self.notes.confirm_delete = false;
+        self.notes.flash_text = None;
+        self.notes.drag_field = None;
+        self.usage.open = false;
+        self.usage.scroll = 0.0;
         // And jump the panel view back to the default tab so reopening
         // always lands on the launcher / home view, regardless of which
         // tab the user was on when they closed.

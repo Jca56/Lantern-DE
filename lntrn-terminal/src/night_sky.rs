@@ -7,7 +7,6 @@ const BG_DEEP: Color = Color::rgb(0.008, 0.003, 0.020);
 const BG_SURFACE: Color = Color::rgb(0.020, 0.007, 0.045);
 const GLOW_PINK: Color = Color::rgba(0.45, 0.14, 0.32, 0.04);
 const GLOW_CYAN: Color = Color::rgba(0.14, 0.35, 0.52, 0.04);
-const BORDER_SUBTLE: Color = Color::rgba(0.55, 0.40, 0.85, 0.85);
 const CLOSE_BG: Color = Color::rgb(0.45, 0.02, 0.02);
 const CLOSE_HOVER: Color = Color::rgba(0.45, 0.02, 0.02, 0.35);
 const CONTROL_HOVER: Color = Color::rgba(0.50, 0.38, 0.70, 0.25);
@@ -141,12 +140,3 @@ pub fn hit_test_controls(cursor: (f32, f32), w: f32) -> Option<u32> {
     }
 }
 
-// ── Border ──────────────────────────────────────────────────────────────────
-
-/// Draw subtle window border (skip when maximized).
-pub fn draw_border(p: &mut Painter, w: f32, h: f32, maximized: bool) {
-    if !maximized {
-        const THICK: f32 = 3.0;
-        p.rect_border(Rect::new(0.0, 0.0, w, h), CORNER_RADIUS, THICK, BORDER_SUBTLE);
-    }
-}

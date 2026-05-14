@@ -186,6 +186,25 @@ fn draw_view_mode_icon(painter: &mut Painter, mode: ViewMode, r: Rect, color: Co
     }
 }
 
+/// Preview pane toggle icon — rectangle with a vertical bar marking the
+/// right-side info pane.
+fn draw_preview_pane_icon(painter: &mut Painter, r: Rect, color: Color, s: f32) {
+    let sw = 1.5 * s;
+    // Outer rect with rounded corners
+    let outer = Rect::new(r.x + 6.0 * s, r.y + 9.0 * s, 24.0 * s, 18.0 * s);
+    painter.rect_stroke(outer, 2.0 * s, sw, color);
+    // Vertical divider ~2/3 of the way across — marks the preview side
+    let dx = outer.x + outer.w * 0.62;
+    painter.line(dx, outer.y + 2.0 * s, dx, outer.y + outer.h - 2.0 * s, sw, color);
+    // A couple of mini "content" rows on the preview side
+    let lx = dx + 2.0 * s;
+    let lw = outer.x + outer.w - lx - 2.5 * s;
+    for i in 0..3 {
+        let y = outer.y + 4.0 * s + i as f32 * 4.0 * s;
+        painter.rect_filled(Rect::new(lx, y, lw, 1.5 * s), 0.75 * s, color);
+    }
+}
+
 /// Sort icon — three horizontal lines of decreasing length + a small arrow
 /// at the right indicating direction.
 fn draw_sort_icon(painter: &mut Painter, r: Rect, color: Color, dir: crate::fs::SortDir, s: f32) {
@@ -241,6 +260,9 @@ pub fn draw_nav_bar(
     path_rect: Rect,
     _path_hovered: bool,
     breadcrumb_hovered: &[bool],
+    preview_rect: Rect,
+    preview_hovered: bool,
+    preview_supported: bool,
     sort_rect: Rect,
     sort_hovered: bool,
     search_rect: Rect,
@@ -438,6 +460,23 @@ pub fn draw_nav_bar(
 
             cx += sw;
         }
+    }
+
+    // ── Preview pane toggle ───────────────────────────────────────────────
+    if preview_supported {
+        let pv_active = app.preview_open;
+        let pv_color = if pv_active { palette.accent }
+            else if preview_hovered { palette.text }
+            else { palette.text_secondary };
+        if preview_hovered || pv_active {
+            let bg = if pv_active { palette.accent.with_alpha(0.15) } else { palette.surface_2.with_alpha(0.5) };
+            painter.rect_filled(preview_rect, 4.0 * s, bg);
+        }
+        draw_preview_pane_icon(painter, preview_rect, pv_color, s);
+    } else {
+        // In Grid mode, fade the icon to indicate it's not available.
+        let pv_color = palette.muted.with_alpha(0.4);
+        draw_preview_pane_icon(painter, preview_rect, pv_color, s);
     }
 
     // ── Sort button ────────────────────────────────────────────────────────

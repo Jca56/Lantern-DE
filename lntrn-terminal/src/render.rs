@@ -36,34 +36,14 @@ pub fn draw_window_bg(
     maximized: bool,
     mode: &WindowMode,
 ) {
-    const BORDER_THICK: f32 = 3.0;
     let r = if maximized { 0.0 } else { CORNER_RADIUS };
     let full = Rect::new(0.0, 0.0, w, h);
     match mode {
-        WindowMode::Fox => {
+        WindowMode::Fox | WindowMode::FoxLight | WindowMode::Lantern => {
             painter.rect_filled(full, r, bg_color);
-            if !maximized {
-                let black = Color::from_rgba8(0, 0, 0, 255);
-                painter.rect_border(full, CORNER_RADIUS, BORDER_THICK, black);
-            }
-        }
-        WindowMode::FoxLight => {
-            painter.rect_filled(full, r, bg_color);
-            if !maximized {
-                let dark_grey = Color::from_rgba8(60, 60, 60, 255);
-                painter.rect_border(full, CORNER_RADIUS, BORDER_THICK, dark_grey);
-            }
         }
         WindowMode::NightSky => {
             crate::night_sky::draw_background(painter, w, h, maximized);
-            crate::night_sky::draw_border(painter, w, h, maximized);
-        }
-        WindowMode::Lantern => {
-            painter.rect_filled(full, r, bg_color);
-            if !maximized {
-                let black = Color::from_rgba8(0, 0, 0, 255);
-                painter.rect_border(full, CORNER_RADIUS, BORDER_THICK, black);
-            }
         }
     }
 }

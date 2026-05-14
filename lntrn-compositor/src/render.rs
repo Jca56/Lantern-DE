@@ -208,6 +208,7 @@ pub fn render_surface(
         state.finish_minimize_animation(surface);
     }
     state.poll_workspace_ipc();
+    crate::clipboard_ipc::poll(state);
 
     // Get cursor position relative to this output (logical -> physical)
     let pointer_location = state
@@ -416,37 +417,50 @@ pub fn render_surface(
         }
 
         // ── Active-animation rect resolution ─────────────────────────────
-        // Priority: minimize > window_state (maximize/fullscreen/snap) > tiling.
-        // window.geometry().size is the surface's "true" rendered size; the
-        // animation overrides where/how it's drawn on screen.
-        let win_size = window.geometry().size;
+        // Priority: minimize > window_state anim > tiling anim > state target > live.
+        // window.geometry() is the surface's live geometry — but it can lag
+        // when the client is slow to ack a maximize/fullscreen/snap configure.
+        // After the state animation finishes, we fall back to the *target* rect
+        // stored on the MaximizedWindow/FullscreenWindow/SnappedWindow entry so
+        // the window doesn't briefly snap to its stale pre-configure size.
+        let win_geo = window.geometry();
+        let win_size = win_geo.size;
         let tiling_anim_rect = state.tiling_anim.current_rect(&surface);
         let state_anim_rect = state.window_state_anim.current_rect(&surface);
         let minimize_params = state.minimize_anim.get(&surface).map(|m| m.render_params());
+        let state_target_rect = state.maximized_windows.iter()
+            .find(|e| e.surface == surface).map(|e| e.target)
+            .or_else(|| state.fullscreen_windows.iter()
+                .find(|e| e.surface == surface).map(|e| e.target))
+            .or_else(|| state.snapped_windows.iter()
+                .find(|e| e.surface == surface).map(|e| e.target));
 
-        // Effective top-left in logical screen coords + anisotropic scale.
-        let (effective_loc_x, effective_loc_y, effective_scale_x, effective_scale_y, minimize_alpha) =
+        // Effective rect: where the (un-zoomed, pre-open/close) visible
+        // geometry should appear on screen. (x, y, w, h) in logical coords.
+        let (eff_x, eff_y, eff_w, eff_h, minimize_alpha) =
             if let Some(p) = &minimize_params {
-                let sx = p.scale.0;
-                let sy = p.scale.1;
-                (p.render_loc.x, p.render_loc.y, sx, sy, p.alpha)
+                // MinimizeParams was historically authored assuming a center
+                // pivot on win_size; translate that back to an explicit visual
+                // rect here so the new math doesn't need to know.
+                let vw = win_size.w as f64 * p.scale.0;
+                let vh = win_size.h as f64 * p.scale.1;
+                let vx = p.render_loc.x + (win_size.w as f64 - vw) / 2.0;
+                let vy = p.render_loc.y + (win_size.h as f64 - vh) / 2.0;
+                (vx, vy, vw, vh, p.alpha)
             } else if let Some(rect) = state_anim_rect {
-                let sx = if win_size.w > 0 { rect.size.w as f64 / win_size.w as f64 } else { 1.0 };
-                let sy = if win_size.h > 0 { rect.size.h as f64 / win_size.h as f64 } else { 1.0 };
-                (rect.loc.x as f64, rect.loc.y as f64, sx, sy, 1.0)
+                (rect.loc.x as f64, rect.loc.y as f64,
+                 rect.size.w as f64, rect.size.h as f64, 1.0)
             } else if let Some(ref rect) = tiling_anim_rect {
-                let sx = if win_size.w > 0 { rect.size.w as f64 / win_size.w as f64 } else { 1.0 };
-                let sy = if win_size.h > 0 { rect.size.h as f64 / win_size.h as f64 } else { 1.0 };
-                (rect.loc.x as f64, rect.loc.y as f64, sx, sy, 1.0)
+                (rect.loc.x as f64, rect.loc.y as f64,
+                 rect.size.w as f64, rect.size.h as f64, 1.0)
+            } else if let Some(rect) = state_target_rect {
+                (rect.loc.x as f64, rect.loc.y as f64,
+                 rect.size.w as f64, rect.size.h as f64, 1.0)
             } else {
-                (location.x as f64, location.y as f64, 1.0, 1.0, 1.0)
+                (location.x as f64, location.y as f64,
+                 win_size.w as f64, win_size.h as f64, 1.0)
             };
 
-        let location = Point::<i32, Logical>::from((
-            effective_loc_x.round() as i32,
-            effective_loc_y.round() as i32,
-        ));
-        let render_location = location - window.geometry().loc;
         let is_fullscreen = fullscreen_surfaces.iter().any(|e| e.surface == surface);
         let win_app_id = crate::window_ext::WindowExt::get_app_id(window);
         let blur_excluded = state.blur_exclude.iter().any(|id| id == &win_app_id);
@@ -461,59 +475,52 @@ pub fn render_surface(
         }
         let zoom = state.window_zoom.get(&surface).copied().unwrap_or(1.0);
 
-        // Compute combined scale: open/close anim scale * zoom * effective rect scale.
+        // Open/close anim: pure scale + fade pivoted on the EFF RECT center.
         let anim_params = state.animations.get(&surface).map(|a| a.render_params());
         let anim_alpha = anim_params.as_ref().map(|p| p.alpha).unwrap_or(1.0);
         let anim_scale = anim_params.as_ref().map(|p| p.scale).unwrap_or(1.0);
-        let anim_y_offset = anim_params.as_ref().map(|p| p.y_offset).unwrap_or(0.0);
         let alpha = base_alpha * anim_alpha * minimize_alpha;
 
-        // Center the scale transform around the window's center
-        let win_geo = window.geometry();
+        // Apply zoom + open/close scale centered on the eff rect's geometry
+        // center → final visible rect on screen.
+        let extra_scale = anim_scale * zoom;
+        let final_w = eff_w * extra_scale;
+        let final_h = eff_h * extra_scale;
+        let final_x = eff_x + (eff_w - final_w) / 2.0;
+        let final_y = eff_y + (eff_h - final_h) / 2.0;
 
-        let rel_x = render_location.x as f64 - output_geo.loc.x as f64 + ws_slide_offset;
-        let rel_y = render_location.y as f64 - output_geo.loc.y as f64 + anim_y_offset;
+        // Output-relative top-left of the visible geometry (+ workspace slide).
+        let rel_x = final_x - output_geo.loc.x as f64 + ws_slide_offset;
+        let rel_y = final_y - output_geo.loc.y as f64;
 
-        let combined_scale_x = anim_scale * zoom * effective_scale_x;
-        let combined_scale_y = anim_scale * zoom * effective_scale_y;
+        // Render scale: surface tree (size = win_size) must end up at final
+        // size. Independent of the buffer-acked size jumping mid-animation:
+        // when the buffer swaps, render_scale recomputes to keep final size
+        // pinned (no teleport).
+        let combined_scale_x = if win_size.w > 0 { final_w / win_size.w as f64 } else { 1.0 };
+        let combined_scale_y = if win_size.h > 0 { final_h / win_size.h as f64 } else { 1.0 };
 
-        let phys_loc: Point<i32, Physical> =
-            if (combined_scale_x - 1.0).abs() > f64::EPSILON || (combined_scale_y - 1.0).abs() > f64::EPSILON {
-                let center_x = rel_x + win_geo.size.w as f64 / 2.0;
-                let center_y = rel_y + win_geo.size.h as f64 / 2.0;
-                let scaled_x = center_x - (win_geo.size.w as f64 / 2.0) * combined_scale_x;
-                let scaled_y = center_y - (win_geo.size.h as f64 / 2.0) * combined_scale_y;
-                (
-                    (scaled_x * output_scale).round() as i32,
-                    (scaled_y * output_scale).round() as i32,
-                ).into()
-            } else {
-                (
-                    (rel_x * output_scale).round() as i32,
-                    (rel_y * output_scale).round() as i32,
-                ).into()
-            };
+        // Surface tree origin in physical coords. The geometry sits at
+        // geo.loc within the surface tree, so phys_loc = final_top_left -
+        // geo.loc * render_scale (the offset shrinks with the scale).
+        let phys_loc_log_x = rel_x - win_geo.loc.x as f64 * combined_scale_x;
+        let phys_loc_log_y = rel_y - win_geo.loc.y as f64 * combined_scale_y;
+        let phys_loc: Point<i32, Physical> = (
+            (phys_loc_log_x * output_scale).round() as i32,
+            (phys_loc_log_y * output_scale).round() as i32,
+        ).into();
 
         let render_scale = smithay::utils::Scale::from((
             output_scale * combined_scale_x,
             output_scale * combined_scale_y,
         ));
 
-        let win_geo = window.geometry();
-        // Use animated size for shadow/SSD bounds. Prefer minimize params,
-        // then window_state, then tiling.
-        let effective_size = if let Some(p) = &minimize_params {
-            smithay::utils::Size::<i32, Logical>::from((
-                ((win_geo.size.w as f64) * p.scale.0).round() as i32,
-                ((win_geo.size.h as f64) * p.scale.1).round() as i32,
-            ))
-        } else if let Some(rect) = state_anim_rect {
-            rect.size
-        } else if let Some(ref rect) = tiling_anim_rect {
-            rect.size
-        } else {
-            win_geo.size
-        };
+        // Final on-screen visible size. Used for shadow/SSD bounds and blur
+        // backdrop tracking.
+        let effective_size = smithay::utils::Size::<i32, Logical>::from((
+            final_w.round() as i32,
+            final_h.round() as i32,
+        ));
         let has_ssd = state.ssd.has_ssd(&surface);
 
         // Determine corner rounding based on window state
@@ -546,12 +553,19 @@ pub fn render_surface(
         // Z-order (front-to-back): corner masks → SSD overlay → window → shadow
         // Elements pushed first = higher z (drawn on top).
 
-        // SSD: render header overlay on top of the window
+        // SSD: render header overlay on top of the window.
+        // Use effective_size + final top-left so the bar matches the visible
+        // (animated) window rather than the live buffer size — otherwise the
+        // bar lags during maximize/minimize.
         if has_ssd && !is_fullscreen {
             if let Some(ssd_state) = state.ssd.get_mut(&surface) {
+                let visible_phys_loc: Point<i32, Physical> = (
+                    (rel_x * output_scale).round() as i32,
+                    (rel_y * output_scale).round() as i32,
+                ).into();
                 let (solid_elems, shader_elems) = crate::ssd::render_decoration(
-                    ssd_state, phys_loc, win_log_loc,
-                    win_geo.size, output_scale, ssd_icon_shader.as_ref(),
+                    ssd_state, visible_phys_loc, win_log_loc,
+                    effective_size, output_scale, ssd_icon_shader.as_ref(),
                     ssd_header_shader.as_ref(), corners,
                     win_corner_r_logical,
                 );
@@ -618,32 +632,19 @@ pub fn render_surface(
             );
         }
 
-        // Track transparent windows for blur backdrop.
-        // Match the rendered window's animated geometry exactly: same
-        // center-pivot scale used for phys_loc above, plus the open/close
-        // anim_scale baked into combined_scale_*. Without this the backdrop
-        // floats at the resting size while the window scales, producing the
-        // "two windows" ghost during open/close/minimize.
+        // Track transparent windows for blur backdrop. The backdrop matches
+        // the visible decorated rect exactly (rel_x/rel_y is the on-screen
+        // top-left of the geometry post-animation; SSD bar sits above it).
         if !is_fullscreen && alpha < 0.99 {
             let ssd_bar = if has_ssd { crate::ssd::SsdManager::bar_height() } else { 0 };
-            let unscaled_w = win_geo.size.w as f64;
-            let unscaled_h = (win_geo.size.h + ssd_bar) as f64;
-            let scaled_w = unscaled_w * combined_scale_x;
-            let scaled_h = unscaled_h * combined_scale_y;
-            // rel_x/rel_y is the window's surface origin; the SSD bar sits
-            // above it, so the unscaled top-left of the decorated window is
-            // (rel_x, rel_y - ssd_bar). Pivot the scale around its center.
-            let unscaled_top = rel_y - ssd_bar as f64;
-            let center_x = rel_x + unscaled_w / 2.0;
-            let center_y = unscaled_top + unscaled_h / 2.0;
             let log_rect = Rectangle::<i32, Logical>::new(
                 Point::from((
-                    (center_x - scaled_w / 2.0).round() as i32,
-                    (center_y - scaled_h / 2.0).round() as i32,
+                    rel_x.round() as i32,
+                    (rel_y - ssd_bar as f64).round() as i32,
                 )),
                 Size::from((
-                    scaled_w.round() as i32,
-                    scaled_h.round() as i32,
+                    effective_size.w,
+                    effective_size.h + ssd_bar,
                 )),
             );
             // Backdrop fades with the window. base_alpha is the user's
@@ -708,7 +709,6 @@ pub fn render_surface(
             let params = anim.render_params();
             let anim_alpha = params.alpha;
             let anim_scale = params.scale;
-            let anim_y_offset = params.y_offset;
             let (snap_tex, _snap_phys_size) = match state.window_snapshots.get(&cw.surface) {
                 Some(s) => s,
                 None => continue,
@@ -716,7 +716,7 @@ pub fn render_surface(
 
             let render_location = cw.location - output_geo.loc;
             let rel_x = render_location.x as f64 - output_geo.loc.x as f64;
-            let rel_y = render_location.y as f64 - output_geo.loc.y as f64 + anim_y_offset;
+            let rel_y = render_location.y as f64 - output_geo.loc.y as f64;
 
             // SSD bar offset
             let ssd_bar = if cw.had_ssd { crate::ssd::SsdManager::bar_height() } else { 0 };

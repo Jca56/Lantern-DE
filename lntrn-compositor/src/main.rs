@@ -3,6 +3,7 @@
 mod animation;
 mod blur;
 pub mod cc_thumbs;
+pub mod clipboard_ipc;
 pub mod clipboard_manager;
 mod cursor;
 mod easing;
@@ -109,8 +110,8 @@ pub(crate) fn read_config_f32(key: &str, default: f32) -> f32 {
     s.parse::<f32>().unwrap_or(default)
 }
 
-/// Global output scale — read from `[display] scale =` in lantern.toml
-/// on first access. Falls back to 1.0 if unset.
+/// Fallback output scale — read from `[display] scale =` in lantern.toml.
+/// Used when no per-monitor entry exists. Cached for process lifetime.
 pub(crate) fn output_scale() -> f64 {
     use std::sync::OnceLock;
     static SCALE: OnceLock<f64> = OnceLock::new();
@@ -118,6 +119,18 @@ pub(crate) fn output_scale() -> f64 {
         let s = read_config("display", "scale", "1.0");
         s.parse::<f64>().unwrap_or(1.0)
     })
+}
+
+/// Per-monitor scale — looks up `[[monitors]] scale` by output name in
+/// lantern.toml. Falls back to [display] scale, then 1.0. Re-reads the config
+/// each call (cheap — mtime-cached) so a system-settings write is picked up
+/// on the next output add or scale-change request.
+pub(crate) fn monitor_scale(name: &str) -> f64 {
+    read_monitor_configs()
+        .into_iter()
+        .find(|c| c.name == name)
+        .and_then(|c| c.scale)
+        .unwrap_or_else(output_scale)
 }
 
 /// Read a string-list setting from [section] in lantern.toml.

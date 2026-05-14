@@ -1,11 +1,7 @@
-//! Minimize / unminimize animation: window scales + fades while sliding toward
-//! its bar tray-icon position (or a screen-bottom fallback when no icon is
-//! known). Reverse on unminimize.
-//!
-//! Unlike maximize/fullscreen, the window's logical size doesn't change — we
-//! visually scale the rendered window down toward the icon rect. After the
-//! animation finishes, the surface is unmapped and added to the minimized
-//! window list (or, on unminimize, mapped back to its source).
+//! Minimize / unminimize animation: pure alpha fade. The window stays in
+//! place at its source rect — no scaling, no movement to a tray-icon
+//! position. After the minimize fade finishes, the surface is unmapped and
+//! added to the minimized window list (or, on unminimize, mapped back).
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -18,14 +14,9 @@ use smithay::{
 use crate::easing;
 
 /// Minimize animation duration.
-pub const MIN_DURATION: Duration = Duration::from_millis(1100);
-/// Unminimize animation duration (slightly faster — feels more responsive).
-pub const UNMIN_DURATION: Duration = Duration::from_millis(950);
-/// Smallest scale applied at the end of minimize (matches a tray-icon size).
-pub const MIN_SCALE_END: f64 = 0.08;
-/// Alpha lingers at full opacity for the first portion, then fades.
-/// Smaller value = alpha tracks motion more evenly (less "pop in").
-const MIN_ALPHA_HOLD: f64 = 0.10;
+pub const MIN_DURATION: Duration = Duration::from_millis(1000);
+/// Unminimize animation duration.
+pub const UNMIN_DURATION: Duration = Duration::from_millis(1000);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MinimizeKind {
@@ -67,50 +58,18 @@ impl MinimizeAnim {
 
     pub fn render_params(&self) -> MinimizeParams {
         let raw = self.raw_progress();
-        // Cinematic curve: slow ends, fast middle.
-        let p = easing::ease_in_out_quint(raw);
-
-        // Choose start/end by direction.
-        let (from, to, alpha_curve) = match self.kind {
-            MinimizeKind::Minimize => (self.source_rect, self.target_rect, raw),
-            MinimizeKind::Unminimize => (self.target_rect, self.source_rect, 1.0 - raw),
+        let p = easing::ease_in_out_quint(raw) as f32;
+        let alpha = match self.kind {
+            MinimizeKind::Minimize => 1.0 - p,
+            MinimizeKind::Unminimize => p,
         };
 
-        let lerp_f = |a: f64, b: f64| -> f64 { a + (b - a) * p };
-
-        // The renderer applies a center-pivot scale: the visual top-left =
-        // render_loc + win.size/2 * (1 - scale). So we interpolate the visual
-        // rect (center + size) directly, then back-solve render_loc.
-        let win_w = self.source_rect.size.w as f64;
-        let win_h = self.source_rect.size.h as f64;
-
-        let from_cx = from.loc.x as f64 + from.size.w as f64 / 2.0;
-        let from_cy = from.loc.y as f64 + from.size.h as f64 / 2.0;
-        let to_cx = to.loc.x as f64 + to.size.w as f64 / 2.0;
-        let to_cy = to.loc.y as f64 + to.size.h as f64 / 2.0;
-
-        let visual_cx = lerp_f(from_cx, to_cx);
-        let visual_cy = lerp_f(from_cy, to_cy);
-        let visual_w = lerp_f(from.size.w as f64, to.size.w as f64);
-        let visual_h = lerp_f(from.size.h as f64, to.size.h as f64);
-
-        let scale_x = if win_w > 0.0 { visual_w / win_w } else { MIN_SCALE_END };
-        let scale_y = if win_h > 0.0 { visual_h / win_h } else { MIN_SCALE_END };
-
-        let render_loc: Point<f64, Logical> = (
-            visual_cx - win_w / 2.0,
-            visual_cy - win_h / 2.0,
-        )
-            .into();
-
-        // Alpha tracks motion: holds full briefly, then fades quintic.
-        let hold = MIN_ALPHA_HOLD;
-        let fade_t = ((alpha_curve - hold) / (1.0 - hold)).clamp(0.0, 1.0);
-        let alpha = (1.0 - easing::ease_in_out_quint(fade_t)) as f32;
+        let render_loc: Point<f64, Logical> =
+            (self.source_rect.loc.x as f64, self.source_rect.loc.y as f64).into();
 
         MinimizeParams {
             render_loc,
-            scale: (scale_x, scale_y),
+            scale: (1.0, 1.0),
             alpha,
         }
     }

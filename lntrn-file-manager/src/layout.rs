@@ -26,6 +26,13 @@ pub fn zoom_multiplier(zoom: f32) -> f32 {
     1.8 + zoom * 2.2
 }
 
+/// Gentler zoom multiplier for List/Tree rows — they're inherently dense,
+/// so we don't want them to balloon like grid items.
+/// 0.0 → 0.8x, 0.5 → 1.5x (default), 1.0 → 2.2x.
+pub fn list_zoom_multiplier(zoom: f32) -> f32 {
+    0.8 + zoom * 1.4
+}
+
 /// Scaled layout helper. All public functions return physical-pixel values.
 #[allow(dead_code)]
 pub fn title_bar_h(s: f32) -> f32 { title_bar_h_base() * s }
@@ -86,9 +93,14 @@ pub fn path_rect(width: f32, s: f32) -> Rect {
     let x = SIDEBAR_W * s;
     let y = nav_bar_y(s);
     let path_x = x + 224.0 * s;
-    // Reserve space for both the sort and search buttons (each 38px wide + gap).
-    let search_space = 88.0 * s;
-    Rect::new(path_x, y + 5.0 * s, width - path_x - search_space, 38.0 * s)
+    // Reserve space for preview-toggle, sort, and search buttons (each 36px + gap).
+    let trailing_space = 130.0 * s;
+    Rect::new(path_x, y + 5.0 * s, width - path_x - trailing_space, 38.0 * s)
+}
+
+pub fn preview_toggle_rect(width: f32, s: f32) -> Rect {
+    let y = nav_bar_y(s);
+    Rect::new(width - 126.0 * s, y + 6.0 * s, 36.0 * s, 36.0 * s)
 }
 
 pub fn sort_button_rect(width: f32, s: f32) -> Rect {
@@ -160,35 +172,62 @@ pub fn content_rect(width: f32, height: f32, s: f32) -> Rect {
     Rect::new(SIDEBAR_W * s, top, width - SIDEBAR_W * s, bottom - top)
 }
 
+/// Width of the resize handle that sits on the preview pane's left edge.
+pub const PREVIEW_HANDLE_W: f32 = 6.0;
+
+/// Min/max bounds for the preview pane width (logical px, pre-scale).
+pub const PREVIEW_MIN_W: f32 = 220.0;
+pub const PREVIEW_MAX_FRACTION: f32 = 0.6; // never more than 60% of content area
+
+/// Effective preview width in physical px, clamped to bounds for the current
+/// content area. Returns 0 if the preview is closed or would not fit.
+pub fn preview_effective_w(content_w_px: f32, preview_w_logical: f32, open: bool, s: f32) -> f32 {
+    if !open { return 0.0; }
+    let min = PREVIEW_MIN_W * s;
+    let max = (content_w_px * PREVIEW_MAX_FRACTION).max(min);
+    (preview_w_logical * s).clamp(min, max)
+}
+
+pub fn preview_pane_rect(content: Rect, preview_w: f32) -> Rect {
+    Rect::new(content.x + content.w - preview_w, content.y, preview_w, content.h)
+}
+
+pub fn preview_handle_rect(content: Rect, preview_w: f32, s: f32) -> Rect {
+    let hw = PREVIEW_HANDLE_W * s;
+    Rect::new(content.x + content.w - preview_w - hw * 0.5, content.y, hw, content.h)
+}
+
 pub fn status_rect(width: f32, height: f32, s: f32) -> Rect {
     Rect::new(0.0, height - STATUS_BAR_H * s, width, STATUS_BAR_H * s)
 }
 
-pub fn list_row_h(s: f32) -> f32 { LIST_ROW_H * s }
-pub fn search_list_row_h(s: f32) -> f32 { 56.0 * s }
-pub fn tree_row_h(s: f32) -> f32 { TREE_ROW_H * s }
+pub fn list_row_h(s: f32, zoom: f32) -> f32 { LIST_ROW_H * list_zoom_multiplier(zoom) * s }
+pub fn search_list_row_h(s: f32, zoom: f32) -> f32 { 56.0 * list_zoom_multiplier(zoom) * s }
+pub fn tree_row_h(s: f32, zoom: f32) -> f32 { TREE_ROW_H * list_zoom_multiplier(zoom) * s }
 #[allow(dead_code)]
-pub fn tree_indent(s: f32) -> f32 { TREE_INDENT * s }
+pub fn tree_indent(s: f32, zoom: f32) -> f32 { TREE_INDENT * list_zoom_multiplier(zoom) * s }
 
-pub fn list_content_height(entry_count: usize, s: f32) -> f32 {
-    entry_count as f32 * LIST_ROW_H * s
+pub fn list_content_height(entry_count: usize, s: f32, zoom: f32) -> f32 {
+    entry_count as f32 * list_row_h(s, zoom)
 }
 
-pub fn tree_content_height(entry_count: usize, s: f32) -> f32 {
-    entry_count as f32 * TREE_ROW_H * s
-}
-
-#[allow(dead_code)]
-pub fn list_row_rect(index: usize, content_x: f32, content_w: f32, base_y: f32, s: f32) -> Rect {
-    let y = base_y + index as f32 * LIST_ROW_H * s;
-    Rect::new(content_x, y, content_w, LIST_ROW_H * s)
+pub fn tree_content_height(entry_count: usize, s: f32, zoom: f32) -> f32 {
+    entry_count as f32 * tree_row_h(s, zoom)
 }
 
 #[allow(dead_code)]
-pub fn tree_row_rect(index: usize, depth: usize, content_x: f32, content_w: f32, base_y: f32, s: f32) -> Rect {
-    let y = base_y + index as f32 * TREE_ROW_H * s;
-    let indent = depth as f32 * TREE_INDENT * s;
-    Rect::new(content_x + indent, y, content_w - indent, TREE_ROW_H * s)
+pub fn list_row_rect(index: usize, content_x: f32, content_w: f32, base_y: f32, s: f32, zoom: f32) -> Rect {
+    let rh = list_row_h(s, zoom);
+    let y = base_y + index as f32 * rh;
+    Rect::new(content_x, y, content_w, rh)
+}
+
+#[allow(dead_code)]
+pub fn tree_row_rect(index: usize, depth: usize, content_x: f32, content_w: f32, base_y: f32, s: f32, zoom: f32) -> Rect {
+    let rh = tree_row_h(s, zoom);
+    let indent = depth as f32 * TREE_INDENT * list_zoom_multiplier(zoom) * s;
+    let y = base_y + index as f32 * rh;
+    Rect::new(content_x + indent, y, content_w - indent, rh)
 }
 
 pub fn grid_columns(content_width: f32, s: f32, zoom: f32) -> usize {

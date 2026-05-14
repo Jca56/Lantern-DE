@@ -36,6 +36,7 @@ members = [
     "lntrn-video-editor",
     "lntrn-lava-lamp",
     "lntrn-command-center",
+    "lntrn-keychain",
 ]
 
 [profile.release]

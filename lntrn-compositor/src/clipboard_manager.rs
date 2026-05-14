@@ -82,6 +82,8 @@ pub struct ClipboardEntry {
     pub timestamp: SystemTime,
     /// Best-effort text representation for the history UI (None for image-only).
     pub preview: Option<String>,
+    /// User-pinned entries skip the [`MAX_HISTORY`] LRU eviction.
+    pub pinned: bool,
 }
 
 impl ClipboardEntry {
@@ -155,27 +157,93 @@ impl ClipboardManager {
     /// Remove an entry from history by id. Returns true if it was found.
     pub fn forget(&mut self, id: u64) -> bool {
         if let Some(pos) = self.history.iter().position(|e| e.id == id) {
-            self.history.remove(pos);
+            let removed = self.history.remove(pos);
+            // Clean up the on-disk image cache for this entry if any.
+            if let Some(e) = removed {
+                let _ = std::fs::remove_file(image_cache_path(e.id));
+            }
             true
         } else {
             false
         }
     }
 
+    /// Toggle the pinned flag on `id`. Returns the new state, or `None`
+    /// if the entry doesn't exist.
+    pub fn set_pinned(&mut self, id: u64, value: bool) -> Option<bool> {
+        let pos = self.history.iter().position(|e| e.id == id)?;
+        let entry = &self.history[pos];
+        // Arc<Entry> needs to be cloned-modified-replaced since we don't
+        // hold &mut into the Arc itself.
+        let mut new_entry = (**entry).clone();
+        new_entry.pinned = value;
+        self.history[pos] = Arc::new(new_entry);
+        Some(value)
+    }
+
+    /// Find an entry in history and return it for republishing.
+    pub fn entry_by_id(&self, id: u64) -> Option<Arc<ClipboardEntry>> {
+        self.history.iter().find(|e| e.id == id).cloned()
+    }
+
+    /// Drop the whole history. Image cache files are cleaned up too.
+    pub fn clear(&mut self) {
+        for e in self.history.drain(..) {
+            let _ = std::fs::remove_file(image_cache_path(e.id));
+        }
+    }
+
     /// Push a completed entry to the head of history, dropping the oldest
-    /// once we exceed [`MAX_HISTORY`]. Duplicates of the most-recent text
-    /// entry are coalesced.
+    /// non-pinned once we exceed [`MAX_HISTORY`]. Duplicates of the
+    /// most-recent text entry are coalesced. Image bytes are mirrored to
+    /// `/run/user/{uid}/lntrn-clipboard/{id}.png` so the CC's image cache
+    /// can render thumbs without us shipping bytes over the IPC channel.
     fn push_history(&mut self, entry: ClipboardEntry) {
         if let (Some(latest), Some(new_text)) = (self.history.front(), entry.preview.as_ref()) {
             if latest.preview.as_deref() == Some(new_text.as_str()) {
                 return;
             }
         }
+        // Mirror image bytes to disk before we wrap in Arc.
+        if let Some(bytes) = entry
+            .mime_data
+            .get("image/png")
+            .or_else(|| entry.mime_data.get("image/jpeg"))
+        {
+            let path = image_cache_path(entry.id);
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(&path, bytes);
+        }
         self.history.push_front(Arc::new(entry));
+        // Evict from the back, skipping pinned entries.
         while self.history.len() > MAX_HISTORY {
-            self.history.pop_back();
+            // Find the oldest non-pinned entry.
+            let mut victim: Option<usize> = None;
+            for (i, e) in self.history.iter().enumerate().rev() {
+                if !e.pinned {
+                    victim = Some(i);
+                    break;
+                }
+            }
+            match victim {
+                Some(i) => {
+                    let removed = self.history.remove(i);
+                    if let Some(e) = removed {
+                        let _ = std::fs::remove_file(image_cache_path(e.id));
+                    }
+                }
+                None => break, // everything pinned — leave history slightly over cap
+            }
         }
     }
+}
+
+/// Where we cache image bytes for the CC's thumbnail loader.
+pub fn image_cache_path(id: u64) -> std::path::PathBuf {
+    let uid = unsafe { libc::getuid() };
+    std::path::PathBuf::from(format!("/run/user/{}/lntrn-clipboard/{}.png", uid, id))
 }
 
 /// Install the calloop ping source that drives [`recheck_clipboard`] from
@@ -258,6 +326,7 @@ pub fn capture_selection(state: &mut Lantern, source: &SelectionSource) {
         mime_data: HashMap::new(),
         timestamp: SystemTime::now(),
         preview: None,
+        pinned: false,
     };
     state.clipboard_manager.pending.insert(
         id,

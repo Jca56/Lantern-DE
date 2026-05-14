@@ -113,6 +113,9 @@ struct WlState {
     /// search input's keycode → char mapper.
     shift_held: bool,
     ctrl_held: bool,
+    /// Caps Lock toggle. Reported in `mods_locked` (not depressed). When
+    /// on, letter keycodes should be treated as if Shift were held too.
+    caps_lock: bool,
     /// Currently held key (raw evdev code) + the wall-clock instant
     /// at which it was pressed. Used by the render loop to synthesize
     /// auto-repeat: after a short delay, repeat the key at a steady
@@ -158,6 +161,7 @@ impl WlState {
             right_clicked: false,
             shift_held: false,
             ctrl_held: false,
+            caps_lock: false,
             held_key: None,
             last_repeat: None,
             pending_key: None,
@@ -418,7 +422,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WlState {
                     }
                 }
             }
-            wl_keyboard::Event::Modifiers { mods_depressed, .. } => {
+            wl_keyboard::Event::Modifiers { mods_depressed, mods_locked, .. } => {
                 // Shift is bit 0 of the depressed mask; refresh from this
                 // truth in case we missed a key event (e.g., the user held
                 // shift before the panel got focus).
@@ -427,6 +431,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WlState {
                 // xkb layout. Same fallback as shift: refresh from the
                 // authoritative mods state.
                 state.ctrl_held = (mods_depressed & 4) != 0;
+                // Caps Lock is a locked mod (bit 1), not a depressed one.
+                state.caps_lock = (mods_locked & 2) != 0;
             }
             wl_keyboard::Event::Enter { .. } | wl_keyboard::Event::Leave { .. } => {
                 // Focus change: any keys we previously tracked as "held"
@@ -438,6 +444,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WlState {
                 state.pending_key = None;
                 state.shift_held = false;
                 state.ctrl_held = false;
+                state.caps_lock = false;
                 state.esc_pressed = false;
             }
             _ => {}
@@ -721,6 +728,10 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         // each tile's `tick`.
         let was_hidden_before_tick = app.is_hidden();
         app.tick();
+        // Drain any pending async export result into flash_text.
+        if app.notes.open {
+            app.notes.poll_export();
+        }
         // If `app.tick()` just flipped us from Closing → Hidden, the
         // close animation has fully drained. Skip the rest of the
         // render path for this iteration — we don't want to submit a
@@ -738,6 +749,16 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
             continue;
         }
         let bt_incoming_before = app.controls.bluetooth.incoming_request.is_some();
+        // Mirror the cursor position into AppState (in physical px) so
+        // the renderer can drive cursor-aware effects (dock magnification
+        // wave) without reaching into wayland state.
+        {
+            let scale_f = wl.fractional_scale() as f32;
+            app.cursor_phys = (
+                wl.cursor_x as f32 * scale_f,
+                wl.cursor_y as f32 * scale_f,
+            );
+        }
         app.controls.tick();
         // PTY housekeeping for the Terminal view. We spawn lazily on
         // first activation and resize whenever the body geometry
@@ -758,6 +779,9 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         // Drain any pending PTY output into the grid so new bytes
         // appear in the next render.
         app.terminal.pump();
+
+        // Drain any new snapshot the usage worker has produced.
+        app.usage.pump();
 
         // Flush any queued PTY input (e.g. from Files "Open in Terminal
         // tab"). Only meaningful once the PTY has been spawned.
@@ -792,7 +816,10 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
             ) {
                 Some(crate::controls::wifi::NetworkHit::Row(s))
                 | Some(crate::controls::wifi::NetworkHit::ConnectButton(s))
-                | Some(crate::controls::wifi::NetworkHit::BandPill(s, _)) => Some(s),
+                | Some(crate::controls::wifi::NetworkHit::BandPill(s, _))
+                | Some(crate::controls::wifi::NetworkHit::LockBssid(s, _))
+                | Some(crate::controls::wifi::NetworkHit::ProfileActivate(s, _))
+                | Some(crate::controls::wifi::NetworkHit::ProfileDelete(s, _)) => Some(s),
                 None => None,
             };
             if app.controls.wifi.hovered_ssid != new_hover {
@@ -827,12 +854,14 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
             let phys_cx = wl.cursor_x as f32 * scale_f;
             let phys_cy = wl.cursor_y as f32 * scale_f;
             app.view_arrow_hover = crate::view_arrows::hit_test(panel_rect, scale_f, phys_cx, phys_cy);
+            app.clock_toggle_hover = crate::clock_toggle::hit_test(panel_rect, scale_f, phys_cx, phys_cy);
             app.home_hover = crate::view_indicator::hit_home(panel_rect, scale_f, phys_cx, phys_cy);
             app.grow_hover = crate::view_indicator::hit_grow(panel_rect, scale_f, phys_cx, phys_cy);
             app.gear_hover = crate::view_indicator::hit_gear(panel_rect, scale_f, phys_cx, phys_cy);
             app.emoji_hover = crate::view_indicator::hit_emoji(panel_rect, scale_f, phys_cx, phys_cy);
             app.clipboard_hover = crate::view_indicator::hit_clipboard(panel_rect, scale_f, phys_cx, phys_cy);
             app.notes_hover = crate::view_indicator::hit_notes(panel_rect, scale_f, phys_cx, phys_cy);
+            app.usage_hover = crate::usage_button::hit_test(panel_rect, scale_f, phys_cx, phys_cy);
             // Emoji overlay hover routing.
             if app.emojis.open {
                 let top_y = crate::controls::content_top_y(panel_rect, scale_f);
@@ -850,6 +879,36 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
             } else {
                 app.emojis.hover_entry = None;
                 app.emojis.hover_category = None;
+            }
+            // Notes overlay hover routing.
+            if app.notes.open && !app.notes.confirm_delete {
+                let top_y = crate::controls::content_top_y(panel_rect, scale_f);
+                let panel_bottom = panel_rect.y + panel_rect.h;
+                let hit = crate::notes::hit_test(
+                    &app.notes, panel_rect, top_y, scale_f, panel_bottom, phys_cx, phys_cy,
+                );
+                app.notes.hover_idx = match hit {
+                    crate::notes::Hit::ListRow(i) => Some(i),
+                    _ => None,
+                };
+            } else {
+                app.notes.hover_idx = None;
+            }
+            // Clipboard overlay hover routing.
+            if app.clipboard.open && !app.clipboard.confirm_clear {
+                let top_y = crate::controls::content_top_y(panel_rect, scale_f);
+                let panel_bottom = panel_rect.y + panel_rect.h;
+                let hit = crate::clipboard::hit_test(
+                    &app.clipboard, panel_rect, top_y, scale_f, panel_bottom, phys_cx, phys_cy,
+                );
+                app.clipboard.hover_idx = match hit {
+                    crate::clipboard::Hit::Row(i)
+                    | crate::clipboard::Hit::PinStar(i)
+                    | crate::clipboard::Hit::Delete(i) => Some(i),
+                    _ => None,
+                };
+            } else {
+                app.clipboard.hover_idx = None;
             }
             app.hovered_control_tile = app.controls.hit_test(
                 panel_rect, scale_f, phys_cx, phys_cy, app.panel_view,
@@ -900,33 +959,41 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         } else {
             let scale_f = wl.fractional_scale() as f32;
             let phys_w = wl.phys_width().max(1);
+            let phys_h_f = wl.phys_height().max(1) as f32;
             let panel = PanelRect::compute_with_dims(phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical());
             let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
             let phys_cx = wl.cursor_x as f32 * scale_f;
             let phys_cy = wl.cursor_y as f32 * scale_f;
-            let pin_count = app.launcher.pinned_entries(&app.apps).len();
-            let icon_hit = crate::mini_dock::hit_test(
-                panel_rect, scale_f, pin_count, phys_cx, phys_cy,
+            let pinned = app.launcher.pinned_entries(&app.apps);
+            let layout = crate::mini_dock::compute_layout(
+                panel_rect, phys_h_f, scale_f, &pinned, &app.toplevels, &app.apps,
+                Some((phys_cx, phys_cy)),
             );
-            if icon_hit.is_some() {
-                app.mini_dock_hover = icon_hit;
-            } else if let Some(prev) = app.mini_dock_hover {
-                // Generous zone covering icon + every preview tile so
-                // the user can drag the cursor down into any one of
-                // the per-window thumbnails without the preview
-                // disappearing under them.
-                let pinned = app.launcher.pinned_entries(&app.apps);
-                let nwin = pinned
-                    .get(prev)
-                    .map(|e| crate::mini_dock::windows_for_app(&app.toplevels, &e.app_id).len())
-                    .unwrap_or(0)
-                    .max(1);
-                let still_in_zone = crate::mini_dock::hit_test_preview_zone(
-                    panel_rect, scale_f, pin_count, prev, nwin, phys_cx, phys_cy,
-                );
-                if !still_in_zone {
-                    app.mini_dock_hover = None;
+            if let Some(layout) = layout {
+                let icon_hit = crate::mini_dock::hit_test(&layout, phys_cx, phys_cy);
+                if icon_hit.is_some() {
+                    app.mini_dock_hover = icon_hit;
+                } else if let Some(prev) = app.mini_dock_hover {
+                    // Generous zone covering icon + every preview tile
+                    // so the user can drag the cursor up into any of
+                    // the per-window thumbnails without losing it.
+                    let nwin = layout
+                        .entries
+                        .get(prev)
+                        .map(|e| {
+                            crate::mini_dock::windows_for_app(&app.toplevels, &e.app_id).len()
+                        })
+                        .unwrap_or(0)
+                        .max(1);
+                    let still_in_zone = crate::mini_dock::hit_test_preview_zone(
+                        &layout, panel_rect, prev, nwin, phys_cx, phys_cy,
+                    );
+                    if !still_in_zone {
+                        app.mini_dock_hover = None;
+                    }
                 }
+            } else {
+                app.mini_dock_hover = None;
             }
         }
         let bt_incoming_after = app.controls.bluetooth.incoming_request.is_some();
@@ -966,6 +1033,57 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                 let max = crate::emojis::max_scroll(visible.len(), per_row, grid.h, scale_f) / scale_f;
                 let new_offset = (app.emojis.scroll + dy).clamp(0.0, max);
                 app.emojis.scroll = new_offset;
+            } else if matches!(app.mode, crate::app::PanelMode::Control(crate::controls::TileId::Wifi)) {
+                let scale_f = wl.fractional_scale() as f32;
+                let phys_w = wl.phys_width().max(1);
+                let panel = PanelRect::compute_with_dims(phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical());
+                let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+                let view_top_y = crate::controls::content_top_y(panel_rect, scale_f);
+                // Viewport = first row's y down to the bottom of the panel.
+                let list_top = crate::controls::wifi::row_list_top_y(view_top_y, scale_f);
+                let viewport_h = (panel_rect.y + panel_rect.h - list_top).max(0.0);
+                let max = crate::controls::wifi::max_scroll(&app.controls.wifi, viewport_h, scale_f);
+                let new_offset = (app.controls.wifi.scroll + dy).clamp(0.0, max);
+                app.controls.wifi.scroll = new_offset;
+            } else if app.clipboard.open {
+                let scale_f = wl.fractional_scale() as f32;
+                let phys_w = wl.phys_width().max(1);
+                let panel = PanelRect::compute_with_dims(phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical());
+                let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+                let top_y = crate::controls::content_top_y(panel_rect, scale_f);
+                let panel_bottom = panel_rect.y + panel_rect.h;
+                let list = crate::clipboard::list_rect(panel_rect, top_y, scale_f, panel_bottom);
+                let max = crate::clipboard::max_scroll(&app.clipboard, list.h, scale_f) / scale_f;
+                let new_offset = (app.clipboard.scroll + dy).clamp(0.0, max);
+                app.clipboard.scroll = new_offset;
+            } else if app.notes.open {
+                let scale_f = wl.fractional_scale() as f32;
+                let phys_w = wl.phys_width().max(1);
+                let panel = PanelRect::compute_with_dims(phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical());
+                let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+                let top_y = crate::controls::content_top_y(panel_rect, scale_f);
+                let panel_bottom = panel_rect.y + panel_rect.h;
+                let editor = crate::notes::editor_rect(panel_rect, top_y, scale_f, panel_bottom);
+                let body = crate::notes::body_rect(editor, scale_f);
+                let phys_cx = wl.cursor_x as f32 * scale_f;
+                let phys_cy = wl.cursor_y as f32 * scale_f;
+                let over_body = phys_cx >= body.x && phys_cx <= body.x + body.w
+                    && phys_cy >= body.y && phys_cy <= body.y + body.h;
+                if over_body {
+                    let line_count = app.notes.body.raw().split('\n').count();
+                    let max = crate::notes::body_max_scroll(
+                        line_count, body, scale_f, app.config.text_size,
+                    );
+                    // dy is in logical pixels at this point; body_scroll is too.
+                    let new_offset = (app.notes.body_scroll + dy).clamp(0.0, max);
+                    app.notes.body_scroll = new_offset;
+                } else {
+                    let list = crate::notes::list_rect(panel_rect, top_y, scale_f, panel_bottom);
+                    let visible = app.notes.visible_indices();
+                    let max = crate::notes::list_max_scroll(visible.len(), list.h, scale_f) / scale_f;
+                    let new_offset = (app.notes.list_scroll + dy).clamp(0.0, max);
+                    app.notes.list_scroll = new_offset;
+                }
             } else if app.panel_view == crate::app::PanelView::Terminal {
                 // libinput reports negative dy on wheel-up (toward
                 // older history) and positive on wheel-down. Convert
@@ -1040,7 +1158,7 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                     KEY_ENTER | KEY_KP_ENTER => app.controls.wifi.submit_prompt(),
                     other => {
                         if let Some(prompt) = app.controls.wifi.prompt.as_mut() {
-                            let _ = prompt.input.on_key(other, wl.shift_held);
+                            let _ = prompt.input.on_key(other, wl.shift_held, wl.caps_lock);
                         }
                     }
                 }
@@ -1061,12 +1179,165 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                     }
                     (other, PairPromptKind::Enter) => {
                         if let Some(prompt) = app.controls.bluetooth.pair_prompt.as_mut() {
-                            let _ = prompt.passkey_input.on_key(other, wl.shift_held);
+                            let _ = prompt.passkey_input.on_key(other, wl.shift_held, wl.caps_lock);
                         }
                     }
                     _ => {
                         // Confirm/Authorize: only Enter is accepted as
                         // a key shortcut. Y/N typing isn't wired (yet).
+                    }
+                }
+            } else if app.notes.open {
+                if app.notes.confirm_delete {
+                    if matches!(key, KEY_ENTER | KEY_KP_ENTER) {
+                        app.notes.delete_selected();
+                        app.notes.confirm_delete = false;
+                    }
+                } else {
+                    // Ctrl chords intercept before the editor sees the
+                    // raw key (otherwise "Ctrl+V" inserts a literal 'v').
+                    use crate::search::input::keycode_to_char;
+                    let chord_ch = if wl.ctrl_held {
+                        keycode_to_char(key, false, false).map(|c| c.to_ascii_lowercase())
+                    } else {
+                        None
+                    };
+                    match chord_ch {
+                        Some('a') => {
+                            // Select all in the focused field.
+                            match app.notes.focus {
+                                crate::notes::NoteFocus::Filter => app.notes.filter.select_all(),
+                                crate::notes::NoteFocus::Title => app.notes.title.select_all(),
+                                crate::notes::NoteFocus::Body => app.notes.body.select_all(),
+                            }
+                        }
+                        Some('v') => {
+                            // Paste from clipboard into the focused field.
+                            if let Some(clip) = app.clipboard_handle.as_ref() {
+                                if let Some(text) = clip.get_text() {
+                                    match app.notes.focus {
+                                        crate::notes::NoteFocus::Filter => {
+                                            app.notes.filter.insert_str(&text);
+                                            app.notes.list_scroll = 0.0;
+                                        }
+                                        crate::notes::NoteFocus::Title => {
+                                            app.notes.title.insert_str(&text);
+                                            app.notes.flush_edits_to_selected();
+                                        }
+                                        crate::notes::NoteFocus::Body => {
+                                            app.notes.body.insert_str(&text);
+                                            app.notes.flush_edits_to_selected();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Some('c') | Some('x') => {
+                            // Copy / Cut: prefer selection if any, else
+                            // fall back to the entire field.
+                            let (selected, full) = match app.notes.focus {
+                                crate::notes::NoteFocus::Filter => (
+                                    app.notes.filter.selected_text().map(|s| s.to_string()),
+                                    app.notes.filter.query().to_string(),
+                                ),
+                                crate::notes::NoteFocus::Title => (
+                                    app.notes.title.selected_text().map(|s| s.to_string()),
+                                    app.notes.title.query().to_string(),
+                                ),
+                                crate::notes::NoteFocus::Body => (
+                                    app.notes.body.selected_text().map(|s| s.to_string()),
+                                    app.notes.body.text(),
+                                ),
+                            };
+                            let payload = selected.clone().unwrap_or(full);
+                            if !payload.is_empty() {
+                                if let Some(clip) = app.clipboard_handle.as_ref() {
+                                    clip.set_text(&payload);
+                                }
+                            }
+                            // Cut removes the selection (no-op if none).
+                            if chord_ch == Some('x') && selected.is_some() {
+                                match app.notes.focus {
+                                    crate::notes::NoteFocus::Filter => {
+                                        app.notes.filter.insert_str("");
+                                        app.notes.list_scroll = 0.0;
+                                    }
+                                    crate::notes::NoteFocus::Title => {
+                                        app.notes.title.insert_str("");
+                                        app.notes.flush_edits_to_selected();
+                                    }
+                                    crate::notes::NoteFocus::Body => {
+                                        app.notes.body.insert_str("");
+                                        app.notes.flush_edits_to_selected();
+                                    }
+                                }
+                            }
+                        }
+                        Some(_) => {
+                            // Other ctrl chords: ignore for now.
+                        }
+                        None => {
+                            // Normal key dispatch.
+                            match app.notes.focus {
+                                crate::notes::NoteFocus::Filter => {
+                                    let _ = app.notes.filter.on_key(key, wl.shift_held, wl.caps_lock);
+                                    app.notes.list_scroll = 0.0;
+                                }
+                                crate::notes::NoteFocus::Title => {
+                                    let _ = app.notes.title.on_key(key, wl.shift_held, wl.caps_lock);
+                                    app.notes.flush_edits_to_selected();
+                                }
+                                crate::notes::NoteFocus::Body => {
+                                    let _ = app.notes.body.on_key(key, wl.shift_held, wl.caps_lock);
+                                    app.notes.flush_edits_to_selected();
+                                }
+                            }
+                        }
+                    }
+                }
+                // Auto-scroll the body to keep the caret on-screen after
+                // any edit / cursor move.
+                if app.notes.focus == crate::notes::NoteFocus::Body {
+                    let scale_f = wl.fractional_scale() as f32;
+                    let phys_w = wl.phys_width().max(1);
+                    let panel = PanelRect::compute_with_dims(
+                        phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical(),
+                    );
+                    let panel_rect =
+                        lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+                    let top_y = crate::controls::content_top_y(panel_rect, scale_f);
+                    let panel_bottom = panel_rect.y + panel_rect.h;
+                    let editor = crate::notes::editor_rect(panel_rect, top_y, scale_f, panel_bottom);
+                    let body = crate::notes::body_rect(editor, scale_f);
+                    app.notes.body_scroll = crate::notes::body_scroll_for_caret(
+                        &app.notes, body, scale_f, app.config.text_size,
+                    );
+                }
+            } else if app.clipboard.open {
+                if app.clipboard.confirm_clear {
+                    if matches!(key, KEY_ENTER | KEY_KP_ENTER) {
+                        crate::clipboard::ipc::clear();
+                        app.clipboard.confirm_clear = false;
+                        app.refresh_clipboard();
+                    }
+                } else {
+                    match key {
+                        KEY_ENTER | KEY_KP_ENTER => {
+                            let visible = app.clipboard.visible_indices();
+                            if let Some(&eidx) = visible.first() {
+                                if let Some(entry) = app.clipboard.entries.get(eidx) {
+                                    let id = entry.id;
+                                    if crate::clipboard::ipc::copy(id) {
+                                        app.clipboard.recent_copy =
+                                            Some((id, std::time::Instant::now()));
+                                    }
+                                }
+                            }
+                        }
+                        other => {
+                            let _ = app.clipboard.filter.on_key(other, wl.shift_held, wl.caps_lock);
+                            app.clipboard.reset_scroll();
+                        }
                     }
                 }
             } else if app.emojis.open {
@@ -1078,14 +1349,14 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                         let visible = app.emojis.visible_indices();
                         if let Some(&entry_idx) = visible.first() {
                             let entry = &crate::emojis::data::EMOJIS[entry_idx];
-                            if let Some(clip) = app.clipboard.as_ref() {
+                            if let Some(clip) = app.clipboard_handle.as_ref() {
                                 clip.set_text(entry.glyph);
                             }
                             app.emojis.recent_copy = Some((0, std::time::Instant::now()));
                         }
                     }
                     other => {
-                        let _ = app.emojis.filter.on_key(other, wl.shift_held);
+                        let _ = app.emojis.filter.on_key(other, wl.shift_held, wl.caps_lock);
                         app.emojis.reset_scroll();
                     }
                 }
@@ -1096,7 +1367,7 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                 // shadow xterm's `Ctrl-Shift-{C,V}` convention.
                 use crate::search::input::keycode_to_char;
                 let chord = wl.ctrl_held && wl.shift_held;
-                let ch = keycode_to_char(key, false).map(|c| c.to_ascii_lowercase());
+                let ch = keycode_to_char(key, false, false).map(|c| c.to_ascii_lowercase());
                 if chord && ch == Some('c') {
                     if app.terminal.copy_selection() {
                         tracing::info!("terminal: copied selection");
@@ -1106,7 +1377,7 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                         tracing::info!("terminal: pasted from clipboard");
                     }
                 } else if let Some(bytes) =
-                    crate::terminal::keycode_to_bytes(key, wl.shift_held, wl.ctrl_held)
+                    crate::terminal::keycode_to_bytes(key, wl.shift_held, wl.ctrl_held, wl.caps_lock)
                 {
                     app.terminal.write(&bytes);
                 }
@@ -1119,7 +1390,7 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                 // Esc (handled above via esc_pressed) clears it; Enter
                 // and arrow keys are inert here.
                 if !matches!(key, KEY_ENTER | KEY_KP_ENTER | KEY_UP | KEY_DOWN | KEY_LEFT | KEY_RIGHT) {
-                    let _ = app.controls.sysmon.filter.on_key(key, wl.shift_held);
+                    let _ = app.controls.sysmon.filter.on_key(key, wl.shift_held, wl.caps_lock);
                 }
             } else if app.controls.clock.add_event_input.is_some()
                 && matches!(app.mode, crate::app::PanelMode::Control(crate::controls::TileId::Clock))
@@ -1140,7 +1411,7 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                     }
                     other => {
                         if let Some(input) = app.controls.clock.add_event_input.as_mut() {
-                            let _ = input.on_key(other, wl.shift_held);
+                            let _ = input.on_key(other, wl.shift_held, wl.caps_lock);
                         }
                     }
                 }
@@ -1150,7 +1421,7 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                 // files; Esc exits filter mode.
                 use crate::search::input::keycode_to_char;
                 let chord_ctrl_h = wl.ctrl_held
-                    && keycode_to_char(key, false).map(|c| c.to_ascii_lowercase()) == Some('h');
+                    && keycode_to_char(key, false, false).map(|c| c.to_ascii_lowercase()) == Some('h');
                 if chord_ctrl_h {
                     app.files.toggle_hidden();
                 } else {
@@ -1175,12 +1446,12 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                             // If a printable character was pressed and we're
                             // not in filter mode yet, auto-activate so the
                             // first letter shows up in the input.
-                            let printable = keycode_to_char(other, wl.shift_held).is_some();
+                            let printable = keycode_to_char(other, wl.shift_held, wl.caps_lock).is_some();
                             if printable && !app.files.filter_active {
                                 app.files.activate_filter();
                             }
                             if app.files.filter_active {
-                                let _ = app.files.filter.on_key(other, wl.shift_held);
+                                let _ = app.files.filter.on_key(other, wl.shift_held, wl.caps_lock);
                                 app.files.apply_filter();
                             }
                         }
@@ -1200,7 +1471,7 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                         app.launch_selected();
                     }
                     _ => {
-                        let _ = app.forward_key(key, wl.shift_held);
+                        let _ = app.forward_key(key, wl.shift_held, wl.caps_lock);
                     }
                 }
             }
@@ -1446,41 +1717,44 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
             let grow_hit = crate::view_indicator::hit_grow(panel_rect, scale_f, phys_cx, phys_cy);
             let gear_hit = crate::view_indicator::hit_gear(panel_rect, scale_f, phys_cx, phys_cy);
             let emoji_btn_hit = crate::view_indicator::hit_emoji(panel_rect, scale_f, phys_cx, phys_cy);
+            let clipboard_btn_hit = crate::view_indicator::hit_clipboard(panel_rect, scale_f, phys_cx, phys_cy);
+            let notes_btn_hit = crate::view_indicator::hit_notes(panel_rect, scale_f, phys_cx, phys_cy);
+            let usage_btn_hit = crate::usage_button::hit_test(panel_rect, scale_f, phys_cx, phys_cy);
             let dot_hit = crate::view_indicator::hit_test_dot(panel_rect, scale_f, phys_cx, phys_cy);
             // Mini-dock hit-tests — try preview-tile first (when hover
             // points to an app with open windows) then the icon body.
-            // (pinned_idx, window_idx_within_app, hit_kind)
+            // (dock_idx, window_idx_within_app, hit_kind)
             let mut dock_preview_hit: Option<(usize, usize, crate::mini_dock::PreviewHit)> = None;
             let mut dock_pin: Option<usize> = None;
+            let mut dock_layout: Option<crate::mini_dock::DockLayout> = None;
             // Dock is only visible (and clickable) in the Default view.
             if app.collapse_progress() > 0.005
                 && app.panel_view == crate::app::PanelView::Default
             {
                 let pinned = app.launcher.pinned_entries(&app.apps);
-                // Preview is only valid in the Default view — other
-                // top-level views own the body and shouldn't be
-                // covered by the dock preview tile.
-                let preview_enabled = app.panel_view == crate::app::PanelView::Default;
-                if preview_enabled {
+                let phys_h_f = wl.phys_height().max(1) as f32;
+                if let Some(layout) = crate::mini_dock::compute_layout(
+                    panel_rect, phys_h_f, scale_f, &pinned, &app.toplevels, &app.apps,
+                    Some((phys_cx, phys_cy)),
+                ) {
                     if let Some(hover_idx) = app.mini_dock_hover {
-                        if let Some(entry) = pinned.get(hover_idx) {
+                        if let Some(entry) = layout.entries.get(hover_idx) {
                             let windows = crate::mini_dock::windows_for_app(
                                 &app.toplevels, &entry.app_id,
                             );
                             if !windows.is_empty() {
                                 dock_preview_hit = crate::mini_dock::hit_test_preview(
-                                    panel_rect, scale_f, pinned.len(), hover_idx,
+                                    &layout, panel_rect, hover_idx,
                                     windows.len(), phys_cx, phys_cy,
                                 )
                                 .map(|(wi, h)| (hover_idx, wi, h));
                             }
                         }
                     }
-                }
-                if dock_preview_hit.is_none() {
-                    dock_pin = crate::mini_dock::hit_test(
-                        panel_rect, scale_f, pinned.len(), phys_cx, phys_cy,
-                    );
+                    if dock_preview_hit.is_none() {
+                        dock_pin = crate::mini_dock::hit_test(&layout, phys_cx, phys_cy);
+                    }
+                    dock_layout = Some(layout);
                 }
             }
             if menu_consumed || confirm_consumed {
@@ -1535,6 +1809,172 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                     app.toggle_collapsed();
                 }
                 app.toggle_emojis();
+            } else if clipboard_btn_hit {
+                if app.collapsed && !app.clipboard.open {
+                    app.toggle_collapsed();
+                }
+                app.toggle_clipboard();
+            } else if notes_btn_hit {
+                if app.collapsed && !app.notes.open {
+                    app.toggle_collapsed();
+                }
+                app.toggle_notes();
+            } else if usage_btn_hit {
+                if app.collapsed && !app.usage.open {
+                    app.toggle_collapsed();
+                }
+                app.toggle_usage();
+            } else if app.notes.open && {
+                let top_y = crate::controls::content_top_y(panel_rect, scale_f);
+                let panel_bottom = panel_rect.y + panel_rect.h;
+                if app.notes.confirm_delete {
+                    true
+                } else {
+                    let hit = crate::notes::hit_test(
+                        &app.notes, panel_rect, top_y, scale_f, panel_bottom, phys_cx, phys_cy,
+                    );
+                    match hit {
+                        crate::notes::Hit::None => false,
+                        crate::notes::Hit::Filter => {
+                            app.notes.flush_edits_to_selected();
+                            app.notes.focus = crate::notes::NoteFocus::Filter;
+                            // Begin a drag-selection in the filter input.
+                            let filter_bar = crate::notes::filter_rect(panel_rect, top_y, scale_f);
+                            let pad_left = crate::notes::filter_text_left_pad(filter_bar, scale_f);
+                            let font = (app.config.text_size * scale_f).max(14.0);
+                            let q = app.notes.filter.query().to_string();
+                            let byte = crate::notes::input_byte_at(
+                                filter_bar, pad_left, &q, font, phys_cx, &mut text,
+                            );
+                            app.notes.filter.begin_drag_at(byte);
+                            app.notes.drag_field = Some(crate::notes::DragField::Filter);
+                            true
+                        }
+                        crate::notes::Hit::NewBtn => {
+                            app.notes.new_note();
+                            true
+                        }
+                        crate::notes::Hit::ListRow(vis_idx) => {
+                            let visible = app.notes.visible_indices();
+                            if let Some(&nidx) = visible.get(vis_idx) {
+                                let id = app.notes.notes[nidx].id;
+                                app.notes.select(id);
+                            }
+                            true
+                        }
+                        crate::notes::Hit::TitleInput => {
+                            app.notes.focus = crate::notes::NoteFocus::Title;
+                            // Begin a drag-selection in the title input.
+                            let editor = crate::notes::editor_rect(panel_rect, top_y, scale_f, panel_bottom);
+                            let title_field = crate::notes::title_field_rect(editor, scale_f);
+                            let title_pad = 12.0 * scale_f;
+                            let title_font = (app.config.text_size * scale_f).max(15.0);
+                            let q = app.notes.title.query().to_string();
+                            let byte = crate::notes::input_byte_at(
+                                title_field, title_pad, &q, title_font, phys_cx, &mut text,
+                            );
+                            app.notes.title.begin_drag_at(byte);
+                            app.notes.drag_field = Some(crate::notes::DragField::Title);
+                            true
+                        }
+                        crate::notes::Hit::BodyEditor => {
+                            app.notes.focus = crate::notes::NoteFocus::Body;
+                            // Begin a drag-selection in the body editor.
+                            let editor = crate::notes::editor_rect(panel_rect, top_y, scale_f, panel_bottom);
+                            let body = crate::notes::body_rect(editor, scale_f);
+                            let pad = 12.0 * scale_f;
+                            let inner = lntrn_render::Rect::new(
+                                body.x + pad, body.y + pad, body.w - pad * 2.0, body.h - pad * 2.0,
+                            );
+                            let buf = app.notes.body.raw().to_string();
+                            let byte = crate::notes::body_byte_at(
+                                inner, &buf, app.notes.body_scroll,
+                                app.config.text_size, scale_f, phys_cx, phys_cy, &mut text,
+                            );
+                            app.notes.body.begin_drag_at(byte);
+                            app.notes.drag_field = Some(crate::notes::DragField::Body);
+                            true
+                        }
+                        crate::notes::Hit::PinAction => {
+                            app.notes.toggle_pin_selected();
+                            true
+                        }
+                        crate::notes::Hit::ExportAction => {
+                            app.notes.flush_edits_to_selected();
+                            app.notes.export_selected();
+                            true
+                        }
+                        crate::notes::Hit::DeleteAction => {
+                            if app.notes.selected_id.is_some() {
+                                app.notes.confirm_delete = true;
+                            }
+                            true
+                        }
+                    }
+                }
+            } {
+                // Handled by notes overlay.
+            } else if app.clipboard.open && {
+                let top_y = crate::controls::content_top_y(panel_rect, scale_f);
+                let panel_bottom = panel_rect.y + panel_rect.h;
+                if app.clipboard.confirm_clear {
+                    // Modal eats clicks — let Esc/Enter drive it.
+                    true
+                } else {
+                    let hit = crate::clipboard::hit_test(
+                        &app.clipboard, panel_rect, top_y, scale_f, panel_bottom, phys_cx, phys_cy,
+                    );
+                    match hit {
+                        crate::clipboard::Hit::None => false,
+                        crate::clipboard::Hit::Filter => true,
+                        crate::clipboard::Hit::ClearAll => {
+                            if !app.clipboard.entries.is_empty() {
+                                app.clipboard.confirm_clear = true;
+                            }
+                            true
+                        }
+                        crate::clipboard::Hit::Row(vis_idx) => {
+                            let visible = app.clipboard.visible_indices();
+                            if let Some(&eidx) = visible.get(vis_idx) {
+                                if let Some(entry) = app.clipboard.entries.get(eidx) {
+                                    let id = entry.id;
+                                    if crate::clipboard::ipc::copy(id) {
+                                        app.clipboard.recent_copy =
+                                            Some((id, std::time::Instant::now()));
+                                    }
+                                }
+                            }
+                            true
+                        }
+                        crate::clipboard::Hit::PinStar(vis_idx) => {
+                            let visible = app.clipboard.visible_indices();
+                            if let Some(&eidx) = visible.get(vis_idx) {
+                                if let Some(entry) = app.clipboard.entries.get(eidx) {
+                                    let id = entry.id;
+                                    let new_val = !entry.pinned;
+                                    if crate::clipboard::ipc::pin(id, new_val) {
+                                        app.refresh_clipboard();
+                                    }
+                                }
+                            }
+                            true
+                        }
+                        crate::clipboard::Hit::Delete(vis_idx) => {
+                            let visible = app.clipboard.visible_indices();
+                            if let Some(&eidx) = visible.get(vis_idx) {
+                                if let Some(entry) = app.clipboard.entries.get(eidx) {
+                                    let id = entry.id;
+                                    if crate::clipboard::ipc::delete(id) {
+                                        app.refresh_clipboard();
+                                    }
+                                }
+                            }
+                            true
+                        }
+                    }
+                }
+            } {
+                // Handled by clipboard overlay.
             } else if app.emojis.open && {
                 let top_y = crate::controls::content_top_y(panel_rect, scale_f);
                 let panel_bottom = panel_rect.y + panel_rect.h;
@@ -1556,7 +1996,7 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                         let visible = app.emojis.visible_indices();
                         if let Some(&entry_idx) = visible.get(visible_idx) {
                             let entry = &crate::emojis::data::EMOJIS[entry_idx];
-                            if let Some(clip) = app.clipboard.as_ref() {
+                            if let Some(clip) = app.clipboard_handle.as_ref() {
                                 clip.set_text(entry.glyph);
                             }
                             app.emojis.recent_copy = Some((visible_idx, std::time::Instant::now()));
@@ -1579,9 +2019,14 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                     crate::view_arrows::Side::Left => app.cycle_view_prev(),
                     crate::view_arrows::Side::Right => app.cycle_view_next(),
                 }
+            } else if crate::clock_toggle::hit_test(panel_rect, scale_f, phys_cx, phys_cy) {
+                app.clock_enabled = crate::clock_toggle::toggle_clock();
             } else if let Some((idx, window_idx, hit)) = dock_preview_hit {
-                let pinned = app.launcher.pinned_entries(&app.apps);
-                if let Some(entry) = pinned.get(idx).map(|e| (*e).clone()) {
+                let entry = dock_layout
+                    .as_ref()
+                    .and_then(|l| l.entries.get(idx))
+                    .cloned();
+                if let Some(entry) = entry {
                     let windows = crate::mini_dock::windows_for_app(
                         &app.toplevels, &entry.app_id,
                     );
@@ -1613,9 +2058,38 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                         }
                     }
                 }
-            } else if let Some(pin_idx) = dock_pin {
-                tracing::debug!(pin = pin_idx, "mini-dock click → launch");
-                app.activate_at(crate::app::HitTarget::Pin(pin_idx));
+            } else if let Some(dock_idx) = dock_pin {
+                // Pinned slot → launch a new instance (original
+                // behavior). Unpinned-running slot → activate that
+                // app's most-recent window. Hover preview is still
+                // available for switching to specific windows.
+                let entry = dock_layout
+                    .as_ref()
+                    .and_then(|l| l.entries.get(dock_idx))
+                    .cloned();
+                if let Some(entry) = entry {
+                    if entry.pinned {
+                        tracing::debug!(pin = dock_idx, "mini-dock click → launch");
+                        app.activate_at(crate::app::HitTarget::Pin(dock_idx));
+                    } else {
+                        let windows = crate::mini_dock::windows_for_app(
+                            &app.toplevels, &entry.app_id,
+                        );
+                        if let Some(target) =
+                            crate::mini_dock::preview_target_window(&windows)
+                        {
+                            tracing::debug!(
+                                app_id = %entry.app_id, "mini-dock click → activate window"
+                            );
+                            app.window_actions.push(crate::app::WindowAction {
+                                app_id: target.app_id.clone(),
+                                title: target.title.clone(),
+                                kind: crate::app::WindowActionKind::Activate,
+                            });
+                            app.close();
+                        }
+                    }
+                }
             } else if !panel.contains(phys_cx, phys_cy) {
                 tracing::debug!(
                     cursor = ?(phys_cx, phys_cy),
@@ -1952,6 +2426,64 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
             }
         }
 
+        // Continue the active mouse-drag selection in the Notes overlay.
+        // Runs every frame so the selection keeps extending as the user
+        // moves the cursor with the button held.
+        if app.notes.open && wl.left_held && app.notes.drag_field.is_some() {
+            let scale_f = wl.fractional_scale() as f32;
+            let phys_w = wl.phys_width().max(1);
+            let panel = PanelRect::compute_with_dims(
+                phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical(),
+            );
+            let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+            let top_y = crate::controls::content_top_y(panel_rect, scale_f);
+            let panel_bottom = panel_rect.y + panel_rect.h;
+            let phys_cx = wl.cursor_x as f32 * scale_f;
+            let phys_cy = wl.cursor_y as f32 * scale_f;
+            match app.notes.drag_field {
+                Some(crate::notes::DragField::Filter) => {
+                    let bar = crate::notes::filter_rect(panel_rect, top_y, scale_f);
+                    let pad_left = crate::notes::filter_text_left_pad(bar, scale_f);
+                    let font = (app.config.text_size * scale_f).max(14.0);
+                    let q = app.notes.filter.query().to_string();
+                    let byte = crate::notes::input_byte_at(
+                        bar, pad_left, &q, font, phys_cx, &mut text,
+                    );
+                    app.notes.filter.drag_to(byte);
+                }
+                Some(crate::notes::DragField::Title) => {
+                    let editor = crate::notes::editor_rect(panel_rect, top_y, scale_f, panel_bottom);
+                    let title_field = crate::notes::title_field_rect(editor, scale_f);
+                    let title_pad = 12.0 * scale_f;
+                    let title_font = (app.config.text_size * scale_f).max(15.0);
+                    let q = app.notes.title.query().to_string();
+                    let byte = crate::notes::input_byte_at(
+                        title_field, title_pad, &q, title_font, phys_cx, &mut text,
+                    );
+                    app.notes.title.drag_to(byte);
+                }
+                Some(crate::notes::DragField::Body) => {
+                    let editor = crate::notes::editor_rect(panel_rect, top_y, scale_f, panel_bottom);
+                    let body = crate::notes::body_rect(editor, scale_f);
+                    let pad = 12.0 * scale_f;
+                    let inner = lntrn_render::Rect::new(
+                        body.x + pad, body.y + pad, body.w - pad * 2.0, body.h - pad * 2.0,
+                    );
+                    let buf = app.notes.body.raw().to_string();
+                    let byte = crate::notes::body_byte_at(
+                        inner, &buf, app.notes.body_scroll,
+                        app.config.text_size, scale_f, phys_cx, phys_cy, &mut text,
+                    );
+                    app.notes.body.drag_to(byte);
+                }
+                None => {}
+            }
+        }
+        // End the drag once the button is released.
+        if !wl.left_held && app.notes.drag_field.is_some() {
+            app.notes.drag_field = None;
+        }
+
         if !wl.frame_done {
             continue;
         }
@@ -2015,7 +2547,10 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
             && !app.view_animating()
             && default_in_view
             && !app.settings_open
-            && !app.emojis.open;
+            && !app.emojis.open
+            && !app.clipboard.open
+            && !app.notes.open
+            && !app.usage.open;
         if let Some(p) = &panel_draw {
             if matches!(app.visibility, crate::app::Visibility::Visible) && open_section_active {
                 let panel_logical = lntrn_render::Rect::new(p.rect.x, p.rect.y, p.rect.w, p.rect.h);
@@ -2082,20 +2617,37 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                 && app.mini_dock_hover.is_some()
                 && app.panel_view == crate::app::PanelView::Default
                 && !app.settings_open
+                && !app.emojis.open
+                && !app.clipboard.open
+                && !app.notes.open
+                && !app.usage.open
             {
                 // Dock hover preview: one thumbnail slot per window of
-                // the hovered pinned app, arrayed horizontally.
+                // the hovered dock app, arrayed horizontally.
                 let mut slots: Vec<crate::thumbs::ThumbSlot> = Vec::new();
                 let panel_logical = lntrn_render::Rect::new(p.rect.x, p.rect.y, p.rect.w, p.rect.h);
                 let pinned = app.launcher.pinned_entries(&app.apps);
                 let idx = app.mini_dock_hover.unwrap();
-                if let Some(entry) = pinned.get(idx) {
+                let layout = crate::mini_dock::compute_layout(
+                    panel_logical,
+                    phys_h as f32,
+                    scale_f,
+                    &pinned,
+                    &app.toplevels,
+                    &app.apps,
+                    Some((
+                        wl.cursor_x as f32 * scale_f,
+                        wl.cursor_y as f32 * scale_f,
+                    )),
+                );
+                let entry = layout.as_ref().and_then(|l| l.entries.get(idx)).cloned();
+                if let (Some(layout), Some(entry)) = (layout.as_ref(), entry) {
                     let windows = crate::mini_dock::windows_for_app(
                         &app.toplevels, &entry.app_id,
                     );
                     if !windows.is_empty() {
                         let tiles = crate::mini_dock::preview_tile_rects(
-                            panel_logical, scale_f, pinned.len(), idx, windows.len(),
+                            layout, panel_logical, idx, windows.len(),
                         );
                         let inv = 1.0 / scale_f;
                         let phys_cx = wl.cursor_x as f32 * scale_f;
@@ -2565,6 +3117,15 @@ fn handle_control_view_click(
                     }
                     crate::controls::wifi::NetworkHit::BandPill(ssid, band) => {
                         app.controls.wifi.select_band(&ssid, band);
+                    }
+                    crate::controls::wifi::NetworkHit::LockBssid(ssid, bssid) => {
+                        app.controls.wifi.toggle_pinned_bssid(&ssid, &bssid);
+                    }
+                    crate::controls::wifi::NetworkHit::ProfileActivate(_, name) => {
+                        app.controls.wifi.activate_profile(&name);
+                    }
+                    crate::controls::wifi::NetworkHit::ProfileDelete(_, uuid) => {
+                        app.controls.wifi.delete_profile(&uuid);
                     }
                     crate::controls::wifi::NetworkHit::ConnectButton(ssid) => {
                         let net = app.controls.wifi.networks()

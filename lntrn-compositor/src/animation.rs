@@ -6,28 +6,15 @@ use smithay::utils::{Logical, Point, Size};
 
 use crate::easing;
 
-const OPEN_DURATION: Duration = Duration::from_millis(480);
-const CLOSE_DURATION: Duration = Duration::from_millis(420);
+const OPEN_DURATION: Duration = Duration::from_millis(1000);
+const CLOSE_DURATION: Duration = Duration::from_millis(1000);
 
-/// Scale range for open: starts smaller for a more cinematic grow.
-const OPEN_SCALE_START: f64 = 0.78;
-/// Scale range for close: 1.0 -> 0.82 (slightly bigger residual scale than the
-/// previous 0.85 because the longer fade hides the rest).
-const CLOSE_SCALE_END: f64 = 0.82;
-/// Alpha fade-in delay for open (scale pops first, then alpha catches up).
-const OPEN_ALPHA_DELAY: f64 = 0.12;
-/// How far the window slides down during close (logical pixels).
-const CLOSE_SLIDE_DOWN: f64 = 36.0;
-/// Spring damping for open (lower = more bounce). 0.78 keeps the overshoot
-/// feel of the old ease-out-back without going wobbly at long durations.
-const OPEN_SPRING_DAMPING: f64 = 0.78;
-const OPEN_SPRING_FREQUENCY: f64 = 4.0;
-
-/// Animation render parameters: alpha, scale, and vertical offset.
+/// Animation render parameters: alpha and scale (pivoted on geometry center).
+/// Scale is kept for compatibility with the renderer but is always 1.0 — open
+/// and close are pure alpha fades.
 pub struct AnimParams {
     pub alpha: f32,
     pub scale: f64,
-    pub y_offset: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,27 +30,24 @@ pub struct WindowAnimation {
     duration: Duration,
     /// Starting alpha when animation begins (for interruption: close mid-open)
     start_alpha: f32,
-    /// Starting scale when animation begins (for interruption: close mid-open)
-    start_scale: f64,
 }
 
 impl WindowAnimation {
     fn new(kind: AnimationKind) -> Self {
-        let (duration, start_alpha, start_scale) = match kind {
-            AnimationKind::Open => (OPEN_DURATION, 0.0, OPEN_SCALE_START),
-            AnimationKind::Close => (CLOSE_DURATION, 1.0, 1.0),
+        let (duration, start_alpha) = match kind {
+            AnimationKind::Open => (OPEN_DURATION, 0.0),
+            AnimationKind::Close => (CLOSE_DURATION, 1.0),
         };
         Self {
             kind,
             start_time: Instant::now(),
             duration,
             start_alpha,
-            start_scale,
         }
     }
 
     /// Create a close animation that starts from a mid-open state.
-    fn new_interrupted(current_alpha: f32, current_scale: f64) -> Self {
+    fn new_interrupted(current_alpha: f32) -> Self {
         // Duration proportional to how far along the window was
         let fraction = current_alpha as f64;
         let duration_ms = (CLOSE_DURATION.as_millis() as f64 * fraction).max(80.0) as u64;
@@ -72,7 +56,6 @@ impl WindowAnimation {
             start_time: Instant::now(),
             duration: Duration::from_millis(duration_ms),
             start_alpha: current_alpha,
-            start_scale: current_scale,
         }
     }
 
@@ -86,37 +69,15 @@ impl WindowAnimation {
         self.start_time.elapsed() >= self.duration
     }
 
-    /// Returns animation render parameters.
+    /// Returns animation render parameters. Pure alpha fade, scale fixed at 1.0.
     pub fn render_params(&self) -> AnimParams {
         let t = self.raw_progress();
-        match self.kind {
-            AnimationKind::Open => {
-                // Scale: damped spring (bouncy settle without harsh overshoot
-                // at the longer cinematic duration).
-                let scale_p = easing::spring(t, OPEN_SPRING_DAMPING, OPEN_SPRING_FREQUENCY);
-                let scale = self.start_scale + (1.0 - self.start_scale) * scale_p;
-
-                // Alpha: ease-in-out-quint, delayed start (scale pops first).
-                let alpha_t = ((t - OPEN_ALPHA_DELAY) / (1.0 - OPEN_ALPHA_DELAY)).max(0.0);
-                let alpha_p = easing::ease_in_out_quint(alpha_t);
-                let alpha = self.start_alpha + (1.0 - self.start_alpha) * alpha_p as f32;
-
-                AnimParams { alpha, scale, y_offset: 0.0 }
-            }
-            AnimationKind::Close => {
-                // Scale + alpha use ease-in-out-quint so the close decelerates
-                // out of view rather than yanking abruptly.
-                let p = easing::ease_in_out_quint(t);
-                let scale = self.start_scale - (self.start_scale - CLOSE_SCALE_END) * p;
-                let alpha = self.start_alpha * (1.0 - p) as f32;
-
-                // Slide down accelerates more (ease-in) so the window appears
-                // to fall away as it fades.
-                let y_offset = CLOSE_SLIDE_DOWN * easing::ease_in_cubic(t);
-
-                AnimParams { alpha, scale, y_offset }
-            }
-        }
+        let p = easing::ease_in_out_quint(t) as f32;
+        let alpha = match self.kind {
+            AnimationKind::Open => self.start_alpha + (1.0 - self.start_alpha) * p,
+            AnimationKind::Close => self.start_alpha * (1.0 - p),
+        };
+        AnimParams { alpha, scale: 1.0 }
     }
 }
 
@@ -162,7 +123,7 @@ impl AnimationState {
             let params = anim.render_params();
             self.animations.insert(
                 surface.clone(),
-                WindowAnimation::new_interrupted(params.alpha, params.scale),
+                WindowAnimation::new_interrupted(params.alpha),
             );
             return true;
         }

@@ -32,7 +32,7 @@ use crate::shaders::{
     TOP_CENTER_GLOW_SHADER_SRC,
 };
 use crate::udev::{
-    GpuBackend, OutputSurface, UdevOutputId, lantern_output_scale, SUPPORTED_FORMATS,
+    GpuBackend, OutputSurface, UdevOutputId, SUPPORTED_FORMATS,
 };
 use crate::window_ext::WindowExt;
 use crate::Lantern;
@@ -416,7 +416,7 @@ fn connector_connected(
     output.change_current_state(
         Some(wl_mode),
         None,
-        Some(Scale::Fractional(lantern_output_scale())),
+        Some(Scale::Fractional(crate::monitor_scale(&output_name))),
         Some((x, y).into()),
     );
     state.space.map_output(&output, (x, y));
@@ -469,7 +469,7 @@ fn connector_connected(
         &output_name,
         connector.modes(),
         mode_id,
-        lantern_output_scale(),
+        crate::monitor_scale(&output_name),
         (x, y),
         (phys_w as i32, phys_h as i32),
     );
@@ -597,7 +597,7 @@ pub fn apply_output_config(
             }
 
             output.set_preferred(wl_mode);
-            let cur_scale = change.scale.unwrap_or(lantern_output_scale());
+            let cur_scale = change.scale.unwrap_or_else(|| crate::monitor_scale(&change.output_name));
             output.change_current_state(
                 Some(wl_mode),
                 None,

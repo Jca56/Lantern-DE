@@ -1,31 +1,36 @@
 use std::ffi::c_void;
+use std::os::fd::RawFd;
 use std::ptr::NonNull;
+use std::time::Instant;
 
 use anyhow::{anyhow, Result};
-use lntrn_render::{GpuContext, Painter, TextRenderer, TexturePass};
-use lntrn_ui::gpu::{
-    ContextMenu, ContextMenuStyle, FoxPalette, InteractionContext,
-};
+use lntrn_render::{Color, GpuContext, Painter, TextRenderer, TexturePass};
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
     RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle, WindowHandle,
 };
 use wayland_client::{
-    protocol::{
-        wl_compositor, wl_seat, wl_surface,
-    },
+    protocol::{wl_compositor, wl_pointer, wl_seat},
     Connection, EventQueue, Proxy,
 };
+use wayland_protocols::wp::cursor_shape::v1::client::{
+    wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1,
+};
 use wayland_protocols::wp::viewporter::client::wp_viewporter;
-use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
+use wayland_protocols_wlr::layer_shell::v1::client::{
+    zwlr_layer_shell_v1, zwlr_layer_surface_v1,
+};
 
-use crate::app::App;
-use crate::desktop::DesktopApp;
-use crate::icons::IconCache;
-use crate::Gpu;
-use crate::settings::Settings;
+use crate::assets::IconCache;
+use crate::fs_watch::DesktopWatcher;
+use crate::input::{self, KeyAction};
+use crate::keyboard::{self, KeyboardState};
+use crate::layout::{grid_dims, ICON_PX};
+use crate::render;
+use crate::state::{DesktopState, PendingAction, RenameState};
 
-// ── WaylandHandle for wgpu ──────────────────────────────────────────────────
+pub const BTN_LEFT: u32 = 0x110;
+pub const BTN_RIGHT: u32 = 0x111;
 
 struct WaylandHandle {
     display: NonNull<c_void>,
@@ -44,74 +49,83 @@ impl HasWindowHandle for WaylandHandle {
     }
 }
 
-// ── Wayland state ───────────────────────────────────────────────────────────
-
-pub(crate) struct State {
-    pub(crate) running: bool,
-    pub(crate) configured: bool,
-    pub(crate) frame_done: bool,
-    pub(crate) width: u32,
-    pub(crate) height: u32,
-    pub(crate) scale: i32,
-    pub(crate) output_phys_width: u32,
-    // Wayland objects
-    pub(crate) compositor: Option<wl_compositor::WlCompositor>,
-    pub(crate) viewporter: Option<wp_viewporter::WpViewporter>,
-    pub(crate) surface: Option<wl_surface::WlSurface>,
-    pub(crate) seat: Option<wl_seat::WlSeat>,
-    // Layer shell
-    pub(crate) layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
-    pub(crate) layer_surface: Option<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1>,
-    // Input
-    pub(crate) cursor_x: f64,
-    pub(crate) cursor_y: f64,
-    pub(crate) pointer_in_surface: bool,
-    pub(crate) left_pressed: bool,
-    pub(crate) left_released: bool,
-    pub(crate) right_clicked: bool,
-    pub(crate) scroll_delta: f32,
-    pub(crate) pointer_serial: u32,
-    pub(crate) pointer_surface: Option<wl_surface::WlSurface>,
-    // Keyboard
-    pub(crate) ctrl: bool,
-    pub(crate) shift: bool,
-    pub(crate) alt: bool,
-    pub(crate) key_pressed: Option<u32>,
-    // Key repeat
-    pub(crate) held_key: Option<u32>,
-    pub(crate) repeat_deadline: std::time::Instant,
-    pub(crate) repeat_started: bool,
+pub struct State {
+    pub running: bool,
+    pub configured: bool,
+    pub frame_done: bool,
+    pub width: u32,
+    pub height: u32,
+    pub output_scale: i32,
+    pub output_phys_width: u32,
+    pub output_phys_height: u32,
+    pub compositor: Option<wl_compositor::WlCompositor>,
+    pub viewporter: Option<wp_viewporter::WpViewporter>,
+    pub layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
+    pub seat: Option<wl_seat::WlSeat>,
+    pub pointer: Option<wl_pointer::WlPointer>,
+    pub cursor_x: f64,
+    pub cursor_y: f64,
+    pub pointer_in_surface: bool,
+    pub pointer_serial: u32,
+    pub enter_serial: u32,
+    pub left_pressed: bool,
+    pub left_released: bool,
+    pub right_pressed: bool,
+    pub key_pressed: Option<u32>,
+    pub keymap_pending: Option<(RawFd, u32)>,
+    pub modifiers_pending: Option<(u32, u32, u32, u32)>,
+    pub cursor_shape_mgr: Option<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1>,
+    pub cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
 }
 
 impl State {
     fn new() -> Self {
         Self {
-            running: true, configured: false, frame_done: true,
-            width: 0, height: 0, scale: 1, output_phys_width: 0,
-            compositor: None, viewporter: None,
-            surface: None, seat: None,
-            layer_shell: None, layer_surface: None,
-            cursor_x: 0.0, cursor_y: 0.0, pointer_in_surface: false,
-            left_pressed: false, left_released: false, right_clicked: false,
-            scroll_delta: 0.0, pointer_serial: 0, pointer_surface: None,
-            ctrl: false, shift: false, alt: false, key_pressed: None,
-            held_key: None, repeat_deadline: std::time::Instant::now(), repeat_started: false,
+            running: true,
+            configured: false,
+            frame_done: true,
+            width: 0,
+            height: 0,
+            output_scale: 1,
+            output_phys_width: 0,
+            output_phys_height: 0,
+            compositor: None,
+            viewporter: None,
+            layer_shell: None,
+            seat: None,
+            pointer: None,
+            cursor_x: 0.0,
+            cursor_y: 0.0,
+            pointer_in_surface: false,
+            pointer_serial: 0,
+            enter_serial: 0,
+            left_pressed: false,
+            left_released: false,
+            right_pressed: false,
+            key_pressed: None,
+            keymap_pending: None,
+            modifiers_pending: None,
+            cursor_shape_mgr: None,
+            cursor_shape_device: None,
         }
     }
 
-    pub(crate) fn fractional_scale(&self) -> f64 {
+    fn fractional_scale(&self) -> f64 {
+        // Logical layer-surface width vs. output physical width.
         if self.output_phys_width > 0 && self.width > 0 {
             self.output_phys_width as f64 / self.width as f64
         } else {
-            self.scale.max(1) as f64
+            self.output_scale.max(1) as f64
         }
     }
 
-    pub(crate) fn phys_width(&self) -> u32 { (self.width as f64 * self.fractional_scale()).round() as u32 }
-    pub(crate) fn phys_height(&self) -> u32 { (self.height as f64 * self.fractional_scale()).round() as u32 }
+    fn phys_width(&self) -> u32 {
+        (self.width as f64 * self.fractional_scale()).round() as u32
+    }
+    fn phys_height(&self) -> u32 {
+        (self.height as f64 * self.fractional_scale()).round() as u32
+    }
 }
-
-// ── Entry point ─────────────────────────────────────────────────────────────
 
 pub fn run() -> Result<()> {
     let conn = Connection::connect_to_env()?;
@@ -123,51 +137,40 @@ pub fn run() -> Result<()> {
     display.get_registry(&qh, ());
     event_queue.roundtrip(&mut state)?;
 
-    let compositor = state.compositor.clone()
+    let compositor = state
+        .compositor
+        .clone()
         .ok_or_else(|| anyhow!("wl_compositor not available"))?;
-
-    let settings = Settings::load();
-    let surface = compositor.create_surface(&qh, ());
-
-    // ── Layer shell desktop mode ─────────────────────────────────
-    let layer_shell = state.layer_shell.clone()
+    let layer_shell = state
+        .layer_shell
+        .clone()
         .ok_or_else(|| anyhow!("zwlr_layer_shell_v1 not available"))?;
 
+    let surface = compositor.create_surface(&qh, ());
     let layer_surface = layer_shell.get_layer_surface(
-        &surface, None,
+        &surface,
+        None,
         zwlr_layer_shell_v1::Layer::Bottom,
         "lntrn-desktop".to_string(),
-        &qh, (),
+        &qh,
+        (),
     );
-    // Anchor all edges + size 0 = fill available space (bar's exclusive zone respected)
-    layer_surface.set_anchor(
-        zwlr_layer_surface_v1::Anchor::Top
-        | zwlr_layer_surface_v1::Anchor::Bottom
-        | zwlr_layer_surface_v1::Anchor::Left
-        | zwlr_layer_surface_v1::Anchor::Right,
-    );
+    use zwlr_layer_surface_v1::Anchor;
+    layer_surface.set_anchor(Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right);
     layer_surface.set_size(0, 0);
     layer_surface.set_exclusive_zone(0);
-    layer_surface.set_keyboard_interactivity(
-        zwlr_layer_surface_v1::KeyboardInteractivity::OnDemand,
-    );
+    layer_surface.set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::OnDemand);
     surface.commit();
 
-    state.surface = Some(surface.clone());
-    state.layer_surface = Some(layer_surface);
-
-    // Wait for initial configure
-    while !state.configured {
+    while !state.configured || state.width == 0 || state.height == 0 {
         event_queue.blocking_dispatch(&mut state)?;
     }
     state.configured = false;
 
-    let scale_f = state.fractional_scale() as f32;
-    surface.set_buffer_scale(1);
     let viewport = state.viewporter.as_ref().map(|vp| {
-        let vp = vp.get_viewport(&surface, &qh, ());
-        vp.set_destination(state.width as i32, state.height as i32);
-        vp
+        let v = vp.get_viewport(&surface, &qh, ());
+        v.set_destination(state.width as i32, state.height as i32);
+        v
     });
 
     // wgpu setup
@@ -177,78 +180,352 @@ pub fn run() -> Result<()> {
         display: NonNull::new(display_ptr).ok_or_else(|| anyhow!("null wl_display"))?,
         surface: NonNull::new(surface_ptr).ok_or_else(|| anyhow!("null wl_surface"))?,
     };
-
     let phys_w = state.phys_width().max(1);
     let phys_h = state.phys_height().max(1);
-    let gpu_ctx = GpuContext::from_window(&wl_handle, phys_w, phys_h)
+    let mut gpu = GpuContext::from_window(&wl_handle, phys_w, phys_h)
         .map_err(|e| anyhow!("GPU init failed: {e}"))?;
-    let mut gpu = Gpu {
-        painter: Painter::new(&gpu_ctx),
-        text: TextRenderer::new(&gpu_ctx),
-        mono_text: TextRenderer::new_monospace(&gpu_ctx),
-        tex_pass: TexturePass::new(&gpu_ctx),
-        ctx: gpu_ctx,
-    };
+    let mut painter = Painter::new(&gpu);
+    let mut text = TextRenderer::new(&gpu);
+    let tex_pass = TexturePass::new(&gpu);
 
-    let palette = FoxPalette::dark();
-    let mut view_menu = ContextMenu::new(ContextMenuStyle::from_palette(&palette));
-    let mut context_menu = ContextMenu::new(ContextMenuStyle::from_palette(&palette));
-    view_menu.set_scale(scale_f);
-    context_menu.set_scale(scale_f);
-    let mut open_with_apps: Vec<DesktopApp> = Vec::new();
+    let scale = state.fractional_scale() as f32;
+    let icon_px = (ICON_PX * scale) as u32;
+    let mut icons = IconCache::new(icon_px);
 
-    let mut app = App::new();
-    app.icon_zoom = settings.icon_zoom;
-    app.show_hidden = settings.show_hidden;
-    app.sort_by = settings.sort_by_enum();
-    app.navigate_to_home();
-    // Restore pinned tabs from settings (preserving saved order)
-    let mut pinned: Vec<crate::app::DirectoryTab> = Vec::new();
-    for pinned_path in &settings.pinned_tabs {
-        let path = std::path::PathBuf::from(pinned_path);
-        if path.is_dir() {
-            let mut tab = crate::app::DirectoryTab::new(path.clone());
-            tab.pinned = true;
-            tab.pinned_path = Some(path.clone());
-            tab.entries = crate::fs::list_directory(&path, app.show_hidden, app.sort_by);
-            pinned.push(tab);
+    // App state — scan desktop, assign cells, then prime only the icons we need.
+    let desktop_dir = crate::icons::ensure_desktop_dir();
+    let mut app = DesktopState::new(desktop_dir.clone());
+    let dims = grid_dims(state.width as f32, state.height as f32);
+    app.rescan(dims);
+    app.save_positions_if_dirty();
+    icons.prime_for_items(&gpu, &tex_pass, &app.items);
+
+    // Inotify watcher (we drain in the main loop alongside wayland events).
+    let watcher = DesktopWatcher::new(&desktop_dir, &crate::widgets_config::config_path());
+    if watcher.is_none() {
+        tracing::warn!("[desktop] inotify init failed; live reload disabled");
+    }
+    // Quick poll: every 500ms re-check inotify, plus a slower 30s tick for the
+    // clock so the minute display refreshes on its own.
+    let mut last_watch_check = Instant::now();
+    let mut last_clock_tick = Instant::now();
+
+    let mut kbd = KeyboardState::new();
+    let mut current_cursor_shape: Option<wp_cursor_shape_device_v1::Shape> = None;
+
+    surface.frame(&qh, ());
+    surface.commit();
+
+    while state.running {
+        if let Err(e) = event_queue.blocking_dispatch(&mut state) {
+            tracing::error!("[desktop] dispatch error: {e}");
+            break;
+        }
+
+        // Periodically drain inotify (do this even if frame_done is unset so we
+        // don't sit idle on a stale view).
+        if let Some(w) = &watcher {
+            if last_watch_check.elapsed().as_millis() > 500 {
+                last_watch_check = Instant::now();
+                let events = w.drain();
+                if events.desktop_changed {
+                    let dims = grid_dims(state.width as f32, state.height as f32);
+                    app.rescan(dims);
+                    state.frame_done = true;
+                }
+                if events.widgets_changed {
+                    app.widgets = crate::widgets_config::WidgetsConfig::load();
+                    state.frame_done = true;
+                }
+            }
+        }
+
+        // Clock tick — repaint when the displayed minute might have changed.
+        if app.widgets.clock_enabled && last_clock_tick.elapsed().as_secs() >= 15 {
+            last_clock_tick = Instant::now();
+            state.frame_done = true;
+        }
+
+        if !state.frame_done {
+            continue;
+        }
+        state.frame_done = false;
+
+        // Handle resize.
+        if state.configured {
+            state.configured = false;
+            let pw = state.phys_width().max(1);
+            let ph = state.phys_height().max(1);
+            gpu.resize(pw, ph);
+            surface.set_buffer_scale(1);
+            if let Some(vp) = &viewport {
+                vp.set_destination(state.width as i32, state.height as i32);
+            }
+            // Recompute icon texture size if scale changed.
+            let new_icon_px = (ICON_PX * state.fractional_scale() as f32) as u32;
+            if new_icon_px != icon_px {
+                icons.clear(new_icon_px);
+            }
+            let dims = grid_dims(state.width as f32, state.height as f32);
+            app.rescan(dims);
+            icons.prime_for_items(&gpu, &tex_pass, &app.items);
+        }
+
+        let s = state.fractional_scale() as f32;
+        let cx = state.cursor_x as f32;
+        let cy = state.cursor_y as f32;
+        let dims = grid_dims(state.width as f32, state.height as f32);
+
+        // Process pending keymap/modifiers.
+        if let Some((fd, size)) = state.keymap_pending.take() {
+            kbd.update_keymap(fd, size);
+        }
+        if let Some((dep, lat, lock, grp)) = state.modifiers_pending.take() {
+            kbd.update_modifiers(dep, lat, lock, grp);
+            app.ctrl_held = keyboard::ctrl_held(dep);
+            app.shift_held = keyboard::shift_held(dep);
+        }
+
+        // Pointer events.
+        if state.pointer_in_surface {
+            input::on_cursor_move(&mut app, cx, cy, dims);
+        }
+        if state.left_pressed {
+            state.left_pressed = false;
+            input::on_left_press(&mut app, cx, cy, dims);
+        }
+        if state.left_released {
+            state.left_released = false;
+            input::on_left_release(&mut app, cx, cy, dims);
+        }
+        if state.right_pressed {
+            state.right_pressed = false;
+            input::on_right_press(
+                &mut app,
+                cx,
+                cy,
+                state.width as f32,
+                state.height as f32,
+            );
+        }
+
+        // Keyboard events.
+        if let Some(key) = state.key_pressed.take() {
+            let sym = kbd.key_get_sym(key);
+            let utf8 = kbd.key_to_utf8(key);
+
+            // Renaming mode consumes input.
+            if app.renaming.is_some() {
+                let ch = utf8
+                    .as_deref()
+                    .and_then(|s| s.chars().next())
+                    .filter(|c| !c.is_control());
+                let action = match sym {
+                    keyboard::KEY_RETURN => Some(KeyAction::Enter),
+                    keyboard::KEY_ESCAPE => Some(KeyAction::Escape),
+                    keyboard::KEY_BACKSPACE => Some(KeyAction::Backspace),
+                    keyboard::KEY_LEFT => Some(KeyAction::Left),
+                    keyboard::KEY_RIGHT => Some(KeyAction::Right),
+                    keyboard::KEY_HOME => Some(KeyAction::Home),
+                    keyboard::KEY_END => Some(KeyAction::End),
+                    _ if ch.is_some() => Some(KeyAction::Char),
+                    _ => None,
+                };
+                if let Some(a) = action {
+                    input::handle_rename_key(&mut app, ch, a);
+                }
+            } else {
+                // Global shortcuts when not renaming.
+                match sym {
+                    keyboard::KEY_F2 => {
+                        if let Some(&idx) = app.selection.iter().next() {
+                            app.pending_action = Some(PendingAction::StartRename(idx));
+                        }
+                    }
+                    keyboard::KEY_F5 => {
+                        app.pending_action = Some(PendingAction::Refresh);
+                    }
+                    keyboard::KEY_DELETE => {
+                        if !app.selection.is_empty() {
+                            let idxs: Vec<usize> = app.selection.iter().copied().collect();
+                            app.pending_action = Some(PendingAction::Trash(idxs));
+                        }
+                    }
+                    keyboard::KEY_RETURN => {
+                        if let Some(&idx) = app.selection.iter().next() {
+                            app.pending_action = Some(PendingAction::Open(idx));
+                        }
+                    }
+                    keyboard::KEY_ESCAPE => {
+                        app.selection.clear();
+                        app.menu = None;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Apply any pending action.
+        let mut needs_rescan = false;
+        if let Some(action) = app.pending_action.take() {
+            apply_action(&mut app, action, &mut needs_rescan);
+        }
+        if needs_rescan {
+            app.rescan(dims);
+        }
+        app.save_positions_if_dirty();
+
+        // Cursor shape — pointer where there's an icon → pointer; otherwise default.
+        if state.pointer_in_surface {
+            let desired = if app.hover.is_some() || app.drag.is_some() {
+                wp_cursor_shape_device_v1::Shape::Pointer
+            } else {
+                wp_cursor_shape_device_v1::Shape::Default
+            };
+            if current_cursor_shape != Some(desired) {
+                if let Some(dev) = &state.cursor_shape_device {
+                    dev.set_shape(state.enter_serial, desired);
+                }
+                current_cursor_shape = Some(desired);
+            }
+        } else {
+            current_cursor_shape = None;
+        }
+
+        // Render frame.
+        painter.clear();
+        let tex_draws = render::draw_desktop(
+            &mut painter,
+            &mut text,
+            &mut icons,
+            &gpu,
+            &tex_pass,
+            &app,
+            s,
+            state.width,
+            state.height,
+        );
+
+        if let Ok(mut frame) = gpu.begin_frame("desktop") {
+            let view = frame.view().clone();
+            painter.render_pass(&gpu, frame.encoder_mut(), &view, Color::TRANSPARENT);
+            tex_pass.render_pass(&gpu, frame.encoder_mut(), &view, &tex_draws, None);
+            text.render_queued(&gpu, frame.encoder_mut(), &view);
+            frame.submit(&gpu.queue);
+        }
+
+        surface.frame(&qh, ());
+        surface.commit();
+    }
+
+    app.save_positions_if_dirty();
+    Ok(())
+}
+
+fn apply_action(app: &mut DesktopState, action: PendingAction, needs_rescan: &mut bool) {
+    match action {
+        PendingAction::Open(idx) => {
+            if let Some(item) = app.items.get(idx) {
+                crate::icons::open_with_default(&item.path);
+            }
+        }
+        PendingAction::Trash(idxs) => {
+            let mut paths: Vec<std::path::PathBuf> = idxs
+                .iter()
+                .filter_map(|&i| app.items.get(i).map(|it| it.path.clone()))
+                .collect();
+            paths.sort();
+            paths.dedup();
+            for p in &paths {
+                crate::icons::move_to_trash(p);
+            }
+            app.selection.clear();
+            *needs_rescan = true;
+        }
+        PendingAction::StartRename(idx) => {
+            if let Some(item) = app.items.get(idx) {
+                app.renaming = Some(RenameState {
+                    idx,
+                    buffer: item.name.clone(),
+                    cursor: item.name.chars().count(),
+                });
+                app.selection.clear();
+                app.selection.insert(idx);
+            }
+        }
+        PendingAction::SubmitRename => {
+            let Some(rn) = app.renaming.take() else {
+                return;
+            };
+            let old = match app.items.get(rn.idx) {
+                Some(it) => it.path.clone(),
+                None => return,
+            };
+            let trimmed = rn.buffer.trim();
+            if !trimmed.is_empty() && trimmed != old.file_name().unwrap_or_default().to_string_lossy()
+            {
+                if crate::icons::rename(&old, trimmed) {
+                    // Carry over the position to the new name.
+                    if let Some(cell) = app.positions.get(&app.items[rn.idx].name) {
+                        app.positions.remove(&app.items[rn.idx].name);
+                        app.positions.set(trimmed, cell);
+                        app.dirty_positions = true;
+                    }
+                    *needs_rescan = true;
+                }
+            }
+        }
+        PendingAction::CancelRename => {
+            app.renaming = None;
+        }
+        PendingAction::NewFolder => {
+            if let Some(new_path) = crate::icons::new_folder(&app.desktop_dir) {
+                // Place the new folder where the menu was opened (anchor) — if known.
+                let anchor_cell = app
+                    .menu
+                    .as_ref()
+                    .map(|m| crate::layout::pixel_to_cell(m.anchor_x, m.anchor_y));
+                if let (Some(cell), Some(name)) = (anchor_cell, new_path.file_name()) {
+                    app.positions
+                        .set(&name.to_string_lossy(), cell);
+                    app.dirty_positions = true;
+                }
+                *needs_rescan = true;
+            }
+        }
+        PendingAction::Refresh => {
+            *needs_rescan = true;
+        }
+        PendingAction::SelectAll => {
+            app.selection = (0..app.items.len()).collect();
+        }
+        PendingAction::OpenTerminal => {
+            let dir = app.desktop_dir.clone();
+            std::thread::spawn(move || {
+                let _ = std::process::Command::new("lntrn-terminal")
+                    .current_dir(&dir)
+                    .spawn();
+            });
+        }
+        PendingAction::CopyName(idx) => {
+            if let Some(item) = app.items.get(idx) {
+                let s = item.name.clone();
+                std::thread::spawn(move || {
+                    let _ = std::process::Command::new("wl-copy")
+                        .arg(&s)
+                        .spawn();
+                });
+            }
+        }
+        PendingAction::CopyPath(idx) => {
+            if let Some(item) = app.items.get(idx) {
+                let s = item.path.display().to_string();
+                std::thread::spawn(move || {
+                    let _ = std::process::Command::new("wl-copy")
+                        .arg(&s)
+                        .spawn();
+                });
+            }
         }
     }
-    if !pinned.is_empty() {
-        // Prepend pinned tabs before the home tab
-        pinned.append(&mut app.tabs);
-        app.tabs = pinned;
-        app.current_tab = 0;
-        app.switch_tab(0);
-    }
-
-    let mut input = InteractionContext::new();
-    let mut icon_cache = IconCache::new();
-    let mut file_info = crate::file_info::FileInfoCache::new();
-    let mut settings = settings;
-
-    crate::wayland_loop::run_loop(
-        &conn, &mut event_queue, &mut state, &qh,
-        &surface, &viewport,
-        &mut gpu, &palette, &mut view_menu, &mut context_menu,
-        &mut open_with_apps, &mut app, &mut input, &mut icon_cache,
-        &mut file_info, &mut settings,
-    )?;
-
-    eprintln!("[desktop] exited main loop");
-
-    // Save settings on exit
-    settings.icon_zoom = app.icon_zoom;
-    settings.show_hidden = app.show_hidden;
-    settings.set_sort_by(app.sort_by);
-    settings.pinned_tabs = app.tabs.iter()
-        .filter(|t| t.pinned)
-        .map(|t| {
-            t.pinned_path.as_ref().unwrap_or(&t.path)
-                .to_string_lossy().to_string()
-        })
-        .collect();
-    settings.save();
-
-    Ok(())
 }

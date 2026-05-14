@@ -42,6 +42,9 @@ pub struct Input {
     buf: String,
     /// Cursor byte offset into `buf`. Always lies on a UTF-8 char boundary.
     cursor: usize,
+    /// Selection anchor (byte offset). When `Some` AND different from
+    /// `cursor`, a range is selected.
+    anchor: Option<usize>,
     /// Wall-clock time of the last edit; drives cursor blink phase.
     last_edit: std::time::Instant,
 }
@@ -51,6 +54,7 @@ impl Input {
         Self {
             buf: String::new(),
             cursor: 0,
+            anchor: None,
             last_edit: std::time::Instant::now(),
         }
     }
@@ -66,22 +70,116 @@ impl Input {
     pub fn clear(&mut self) {
         self.buf.clear();
         self.cursor = 0;
+        self.anchor = None;
         self.touch();
+    }
+
+    /// Replace the buffer contents and park the cursor at the end.
+    pub fn set_text(&mut self, text: &str) {
+        self.buf.clear();
+        self.buf.push_str(text);
+        self.cursor = self.buf.len();
+        self.anchor = None;
+        self.touch();
+    }
+
+    // ── Selection API ──────────────────────────────────────────────────────
+
+    pub fn has_selection(&self) -> bool {
+        self.selection_range().is_some()
+    }
+
+    pub fn selection_range(&self) -> Option<(usize, usize)> {
+        let a = self.anchor?;
+        if a == self.cursor {
+            return None;
+        }
+        Some((a.min(self.cursor), a.max(self.cursor)))
+    }
+
+    pub fn selected_text(&self) -> Option<&str> {
+        let (s, e) = self.selection_range()?;
+        Some(&self.buf[s..e])
+    }
+
+    pub fn select_all(&mut self) {
+        if self.buf.is_empty() {
+            return;
+        }
+        self.anchor = Some(0);
+        self.cursor = self.buf.len();
+        self.touch();
+    }
+
+    pub fn begin_drag_at(&mut self, byte: usize) {
+        let byte = clamp_boundary(&self.buf, byte);
+        self.cursor = byte;
+        self.anchor = Some(byte);
+        self.touch();
+    }
+
+    pub fn drag_to(&mut self, byte: usize) {
+        let byte = clamp_boundary(&self.buf, byte);
+        self.cursor = byte;
+        self.touch();
+    }
+
+    pub fn place_cursor(&mut self, byte: usize) {
+        let byte = clamp_boundary(&self.buf, byte);
+        self.cursor = byte;
+        self.anchor = None;
+        self.touch();
+    }
+
+    fn delete_selection(&mut self) -> bool {
+        let Some((s, e)) = self.selection_range() else {
+            self.anchor = None;
+            return false;
+        };
+        self.buf.replace_range(s..e, "");
+        self.cursor = s;
+        self.anchor = None;
+        self.touch();
+        true
     }
 
     /// Handle a key press. Returns whether content changed, the cursor
     /// moved, or nothing happened — caller uses this to decide whether to
     /// re-rank results, reset the blink, or do nothing.
-    pub fn on_key(&mut self, key: u32, shift: bool) -> KeyEffect {
+    pub fn on_key(&mut self, key: u32, shift: bool, caps_lock: bool) -> KeyEffect {
         match key {
             KEY_BACKSPACE => self.delete_back(),
             KEY_DELETE => self.delete_forward(),
-            KEY_LEFT => self.move_left(),
-            KEY_RIGHT => self.move_right(),
-            KEY_HOME => self.move_home(),
-            KEY_END => self.move_end(),
+            KEY_LEFT => {
+                if let Some((s, _)) = self.selection_range() {
+                    self.cursor = s;
+                    self.anchor = None;
+                    self.touch();
+                    KeyEffect::CursorMoved
+                } else {
+                    self.move_left()
+                }
+            }
+            KEY_RIGHT => {
+                if let Some((_, e)) = self.selection_range() {
+                    self.cursor = e;
+                    self.anchor = None;
+                    self.touch();
+                    KeyEffect::CursorMoved
+                } else {
+                    self.move_right()
+                }
+            }
+            KEY_HOME => {
+                self.anchor = None;
+                self.move_home()
+            }
+            KEY_END => {
+                self.anchor = None;
+                self.move_end()
+            }
             _ => {
-                if let Some(ch) = keycode_to_char(key, shift) {
+                if let Some(ch) = keycode_to_char(key, shift, caps_lock) {
                     self.insert_char(ch);
                     return KeyEffect::ContentChanged;
                 }
@@ -90,13 +188,27 @@ impl Input {
         }
     }
 
+    /// Insert a string at the cursor and advance the cursor past it.
+    /// Used by paste handlers. Replaces the selection if any.
+    pub fn insert_str(&mut self, s: &str) {
+        self.delete_selection();
+        // Single-line input: strip any embedded newlines.
+        for ch in s.chars().filter(|c| *c != '\n' && *c != '\r') {
+            self.insert_char(ch);
+        }
+    }
+
     fn insert_char(&mut self, ch: char) {
+        self.delete_selection();
         self.buf.insert(self.cursor, ch);
         self.cursor += ch.len_utf8();
         self.touch();
     }
 
     fn delete_back(&mut self) -> KeyEffect {
+        if self.delete_selection() {
+            return KeyEffect::ContentChanged;
+        }
         if self.cursor == 0 {
             return KeyEffect::None;
         }
@@ -112,6 +224,9 @@ impl Input {
     }
 
     fn delete_forward(&mut self) -> KeyEffect {
+        if self.delete_selection() {
+            return KeyEffect::ContentChanged;
+        }
         if self.cursor >= self.buf.len() {
             return KeyEffect::None;
         }
@@ -191,6 +306,17 @@ impl Input {
     }
 }
 
+/// Clamp a byte offset to the nearest UTF-8 char boundary at or before
+/// it, and to the buffer length. Used by mouse hit-tests so drag math
+/// landing inside a multi-byte glyph doesn't panic.
+fn clamp_boundary(buf: &str, byte: usize) -> usize {
+    let mut b = byte.min(buf.len());
+    while b > 0 && !buf.is_char_boundary(b) {
+        b -= 1;
+    }
+    b
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyEffect {
     /// Key did nothing relevant (e.g., a modifier or unhandled keycode).
@@ -203,7 +329,14 @@ pub enum KeyEffect {
 
 // ── Evdev keycode → char ────────────────────────────────────────────────────
 
-pub fn keycode_to_char(key: u32, shift: bool) -> Option<char> {
+/// Translate an evdev keycode to a character.
+///
+/// `shift` is whether Shift is currently held; `caps_lock` is the Caps
+/// Lock toggle state. Caps Lock only affects letter rows — symbol keys
+/// ignore it (like every real keyboard layout).
+pub fn keycode_to_char(key: u32, shift: bool, caps_lock: bool) -> Option<char> {
+    // For letter keys, effective shift = shift XOR caps_lock.
+    let letter_shift = shift ^ caps_lock;
     let ch: u8 = match key {
         // Top number row.
         2..=11 => {
@@ -215,14 +348,14 @@ pub fn keycode_to_char(key: u32, shift: bool) -> Option<char> {
         // qwerty row.
         16..=25 => {
             let base = b"qwertyuiop"[(key - 16) as usize];
-            if shift { base.to_ascii_uppercase() } else { base }
+            if letter_shift { base.to_ascii_uppercase() } else { base }
         }
         26 => if shift { b'{' } else { b'[' },
         27 => if shift { b'}' } else { b']' },
         // asdf row.
         30..=38 => {
             let base = b"asdfghjkl"[(key - 30) as usize];
-            if shift { base.to_ascii_uppercase() } else { base }
+            if letter_shift { base.to_ascii_uppercase() } else { base }
         }
         39 => if shift { b':' } else { b';' },
         40 => if shift { b'"' } else { b'\'' },
@@ -231,7 +364,7 @@ pub fn keycode_to_char(key: u32, shift: bool) -> Option<char> {
         // zxcv row.
         44..=50 => {
             let base = b"zxcvbnm"[(key - 44) as usize];
-            if shift { base.to_ascii_uppercase() } else { base }
+            if letter_shift { base.to_ascii_uppercase() } else { base }
         }
         51 => if shift { b'<' } else { b',' },
         52 => if shift { b'>' } else { b'.' },
