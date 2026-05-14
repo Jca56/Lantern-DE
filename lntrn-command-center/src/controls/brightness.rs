@@ -122,6 +122,7 @@ const ICON_LEFT_PAD: f32 = 16.0;
 /// folded into our own breathing room.
 pub const TILE_WIDTH: f32 = ICON_LEFT_PAD + ICON_SIZE;
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw_inline(
     painter: &mut Painter,
     _text: &mut TextRenderer,
@@ -131,6 +132,7 @@ pub fn draw_inline(
     alpha: f32,
     _surface_w: u32,
     _surface_h: u32,
+    lit: bool,
 ) {
     if !brightness.is_present() {
         return;
@@ -139,13 +141,22 @@ pub fn draw_inline(
     let icon_size = ICON_SIZE * scale;
     let icon_x = layout.x + ICON_LEFT_PAD * scale;
     let icon_y = layout.y + (layout.h - icon_size) / 2.0;
-    draw_sun(painter, icon_x, icon_y, icon_size, icon_size, alpha);
+    let color = if lit {
+        Color::from_rgb8(0xc8, 0x86, 0x0a).with_alpha(alpha)
+    } else {
+        Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(alpha)
+    };
+    draw_sun_colored(painter, icon_x, icon_y, icon_size, icon_size, color);
 }
 
-/// Draw a stylised sun: filled circle in the middle + 8 short rays
-/// around it. Pure shapes — no SVG.
+#[allow(dead_code)]
 fn draw_sun(painter: &mut Painter, x: f32, y: f32, w: f32, h: f32, alpha: f32) {
     let color = Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(alpha);
+    draw_sun_colored(painter, x, y, w, h, color);
+}
+
+/// Draw a stylised sun with an explicit color — colorable variant.
+fn draw_sun_colored(painter: &mut Painter, x: f32, y: f32, w: f32, h: f32, color: Color) {
     let cx = x + w * 0.5;
     let cy = y + h * 0.5;
 

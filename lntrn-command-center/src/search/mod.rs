@@ -146,6 +146,7 @@ pub fn content_top_y(panel: Rect, scale: f32) -> f32 {
 }
 
 /// Draw the search input row at the top of the panel.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_input(
     painter: &mut Painter,
     text: &mut TextRenderer,
@@ -155,6 +156,7 @@ pub fn draw_input(
     alpha: f32,
     surface_w: u32,
     surface_h: u32,
+    waffle_hovered: bool,
 ) {
     input::draw(
         painter,
@@ -166,6 +168,7 @@ pub fn draw_input(
         surface_w,
         surface_h,
         search.all_apps_mode,
+        waffle_hovered,
     );
 }
 

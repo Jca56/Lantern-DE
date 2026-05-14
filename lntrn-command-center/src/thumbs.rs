@@ -26,6 +26,18 @@ pub struct ThumbSlot {
     pub y: i32,
     pub w: i32,
     pub h: i32,
+    /// Optional close-button overlay rendered by the compositor on top
+    /// of the thumbnail. Position + size in logical px + hover flag.
+    pub close: Option<CloseBtn>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CloseBtn {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+    pub hovered: bool,
 }
 
 pub struct CcThumbsClient {
@@ -61,10 +73,17 @@ impl CcThumbsClient {
             // tab-delimited line parseable on the compositor side.
             let app_id = sanitize(&s.app_id);
             let title = sanitize(&s.title);
-            buf.push_str(&format!(
-                "thumb:{}\t{}\t{}\t{}\t{}\t{}\n",
-                app_id, title, s.x, s.y, s.w, s.h
-            ));
+            match &s.close {
+                Some(c) => buf.push_str(&format!(
+                    "thumb:{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+                    app_id, title, s.x, s.y, s.w, s.h,
+                    c.x, c.y, c.w, c.h, if c.hovered { 1 } else { 0 }
+                )),
+                None => buf.push_str(&format!(
+                    "thumb:{}\t{}\t{}\t{}\t{}\t{}\n",
+                    app_id, title, s.x, s.y, s.w, s.h
+                )),
+            }
         }
         buf.push_str("commit\n");
 
@@ -74,6 +93,22 @@ impl CcThumbsClient {
                 return;
             }
             self.last_sent = slots.to_vec();
+        }
+    }
+
+    /// Send a `focus_at:x\ty` request — used when a click outside the
+    /// panel dismisses the CC. The compositor maps the point to the
+    /// topmost window and activates it so the same gesture transfers
+    /// focus (no second click needed to start typing in that window).
+    pub fn focus_at(&mut self, x_logical: i32, y_logical: i32) {
+        if !self.ensure_connected() {
+            return;
+        }
+        let line = format!("focus_at:{}\t{}\n", x_logical, y_logical);
+        if let Some(stream) = self.stream.as_mut() {
+            if stream.write_all(line.as_bytes()).is_err() {
+                self.stream = None;
+            }
         }
     }
 

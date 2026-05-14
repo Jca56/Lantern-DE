@@ -191,16 +191,19 @@ impl App {
     }
 
     /// Font size scaled to current window width.
-    /// At the configured window width (or larger), returns the full config font size.
+    /// At the reference width (or larger), returns the full config font size.
     /// As the window shrinks, the font scales down proportionally (min 10px).
     pub(crate) fn effective_font_size(&self) -> f32 {
+        const FONT_SCALE_REF_WIDTH: f32 = 1060.0;
         let base = self.config.font.size;
-        let ref_w = self.config.window.width; // logical reference width
-        let cur_w = self.gpu.as_ref().map_or(ref_w, |g| g.width() as f32);
-        if cur_w >= ref_w {
+        let cur_w = self
+            .gpu
+            .as_ref()
+            .map_or(FONT_SCALE_REF_WIDTH, |g| g.width() as f32);
+        if cur_w >= FONT_SCALE_REF_WIDTH {
             return base;
         }
-        let scaled = base * cur_w / ref_w;
+        let scaled = base * cur_w / FONT_SCALE_REF_WIDTH;
         scaled.clamp(10.0, base)
     }
 
@@ -455,10 +458,6 @@ impl ApplicationHandler<UserEvent> for App {
         let mut attrs = WindowAttributes::default()
             .with_name("lntrn-terminal", "lntrn-terminal")
             .with_title("Lantern Terminal")
-            .with_inner_size(LogicalSize::new(
-                self.config.window.width,
-                self.config.window.height,
-            ))
             .with_min_inner_size(LogicalSize::new(480.0, 320.0))
             .with_decorations(false)
             .with_transparent(true);

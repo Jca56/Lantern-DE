@@ -32,7 +32,8 @@ use smithay::{
         presentation::PresentationState,
         relative_pointer::RelativePointerManagerState,
         selection::data_device::DataDeviceState,
-        selection::wlr_data_control::DataControlState,
+        selection::ext_data_control::DataControlState as ExtDataControlState,
+        selection::wlr_data_control::DataControlState as WlrDataControlState,
         shell::{
             wlr_layer::{WlrLayerShellState, LayerSurface, LayerSurfaceCachedState, Anchor, ExclusiveZone},
             xdg::{XdgShellState, decoration::XdgDecorationState},
@@ -232,7 +233,9 @@ pub struct Lantern {
     pub output_manager_state: OutputManagerState,
     pub seat_state: SeatState<Lantern>,
     pub data_device_state: DataDeviceState,
-    pub data_control_state: DataControlState,
+    pub data_control_state: WlrDataControlState,
+    pub ext_data_control_state: ExtDataControlState,
+    pub clipboard_manager: crate::clipboard_manager::ClipboardManager,
     pub cursor_shape_manager_state: CursorShapeManagerState,
     pub layer_shell_state: WlrLayerShellState,
     pub xdg_decoration_state: XdgDecorationState,
@@ -367,11 +370,17 @@ impl Lantern {
         let popups = PopupManager::default();
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
         let data_device_state = DataDeviceState::new::<Self>(&dh);
-        let data_control_state = DataControlState::new::<Self, _>(
+        let data_control_state = WlrDataControlState::new::<Self, _>(
             &dh,
             None,
             |client| crate::security::is_trusted_client(client),
         );
+        let ext_data_control_state = ExtDataControlState::new::<Self, _>(
+            &dh,
+            None,
+            |client| crate::security::is_trusted_client(client),
+        );
+        let clipboard_manager = crate::clipboard_manager::ClipboardManager::new();
         let cursor_shape_manager_state = CursorShapeManagerState::new::<Self>(&dh);
         let layer_shell_state = WlrLayerShellState::new_with_filter::<Self, _>(
             &dh,
@@ -419,6 +428,8 @@ impl Lantern {
             seat_state,
             data_device_state,
             data_control_state,
+            ext_data_control_state,
+            clipboard_manager,
             cursor_shape_manager_state,
             layer_shell_state,
             xdg_decoration_state,
@@ -900,5 +911,11 @@ pub struct ClientState {
 
 impl ClientData for ClientState {
     fn initialized(&self, _client_id: ClientId) {}
-    fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {}
+    fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {
+        // Wake the main loop so the clipboard manager can recheck whether
+        // the disconnecting client owned the active selection.
+        if let Some(ping) = crate::clipboard_manager::RECHECK_PING.get() {
+            ping.ping();
+        }
+    }
 }

@@ -25,8 +25,14 @@ use smithay::wayland::selection::data_device::{
     set_data_device_focus, ClientDndGrabHandler, DataDeviceHandler, DataDeviceState,
     ServerDndGrabHandler,
 };
-use smithay::wayland::selection::wlr_data_control::{DataControlHandler, DataControlState};
-use smithay::wayland::selection::SelectionHandler;
+use smithay::wayland::selection::ext_data_control::{
+    DataControlHandler as ExtDataControlHandler, DataControlState as ExtDataControlState,
+};
+use smithay::wayland::selection::wlr_data_control::{
+    DataControlHandler as WlrDataControlHandler, DataControlState as WlrDataControlState,
+};
+use smithay::wayland::selection::{SelectionHandler, SelectionSource, SelectionTarget};
+use std::os::unix::io::OwnedFd;
 use smithay::wayland::tablet_manager::TabletSeatHandler;
 use smithay::wayland::shell::xdg::decoration::XdgDecorationHandler;
 use smithay::wayland::shell::xdg::ToplevelSurface;
@@ -36,10 +42,11 @@ use smithay::wayland::xdg_activation::{
 use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode;
 use smithay::{
     delegate_cursor_shape, delegate_data_control, delegate_data_device, delegate_dmabuf,
-    delegate_fractional_scale, delegate_idle_inhibit, delegate_layer_shell, delegate_output,
-    delegate_pointer_constraints, delegate_pointer_gestures, delegate_presentation,
-    delegate_relative_pointer, delegate_seat, delegate_text_input_manager, delegate_viewporter,
-    delegate_xdg_activation, delegate_xdg_decoration,
+    delegate_ext_data_control, delegate_fractional_scale, delegate_idle_inhibit,
+    delegate_layer_shell, delegate_output, delegate_pointer_constraints,
+    delegate_pointer_gestures, delegate_presentation, delegate_relative_pointer, delegate_seat,
+    delegate_text_input_manager, delegate_viewporter, delegate_xdg_activation,
+    delegate_xdg_decoration,
 };
 
 fn lantern_output_scale() -> f64 { crate::output_scale() }
@@ -62,6 +69,9 @@ impl SeatHandler for Lantern {
         let dh = &self.display_handle;
         let client = focused.and_then(|s| dh.get_client(s.id()).ok());
         set_data_device_focus(dh, seat, client);
+        // Setting focus runs smithay's internal liveness purge; if the
+        // selection just got cleared because its source died, take over.
+        crate::clipboard_manager::recheck_clipboard(self);
     }
 }
 
@@ -69,6 +79,32 @@ delegate_seat!(Lantern);
 
 impl SelectionHandler for Lantern {
     type SelectionUserData = ();
+
+    fn new_selection(
+        &mut self,
+        ty: SelectionTarget,
+        source: Option<SelectionSource>,
+        _seat: Seat<Self>,
+    ) {
+        if !matches!(ty, SelectionTarget::Clipboard) {
+            return;
+        }
+        match source {
+            Some(src) => crate::clipboard_manager::capture_selection(self, &src),
+            None => crate::clipboard_manager::on_selection_cleared(self),
+        }
+    }
+
+    fn send_selection(
+        &mut self,
+        ty: SelectionTarget,
+        mime_type: String,
+        fd: OwnedFd,
+        _seat: Seat<Self>,
+        _user_data: &Self::SelectionUserData,
+    ) {
+        crate::clipboard_manager::on_send_request(self, ty, mime_type, fd);
+    }
 }
 
 impl DataDeviceHandler for Lantern {
@@ -82,13 +118,21 @@ impl ServerDndGrabHandler for Lantern {}
 
 delegate_data_device!(Lantern);
 
-impl DataControlHandler for Lantern {
-    fn data_control_state(&self) -> &DataControlState {
+impl WlrDataControlHandler for Lantern {
+    fn data_control_state(&self) -> &WlrDataControlState {
         &self.data_control_state
     }
 }
 
 delegate_data_control!(Lantern);
+
+impl ExtDataControlHandler for Lantern {
+    fn data_control_state(&self) -> &ExtDataControlState {
+        &self.ext_data_control_state
+    }
+}
+
+delegate_ext_data_control!(Lantern);
 
 impl OutputHandler for Lantern {}
 delegate_output!(Lantern);

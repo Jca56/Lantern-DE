@@ -3,6 +3,7 @@
 mod animation;
 mod blur;
 pub mod cc_thumbs;
+pub mod clipboard_manager;
 mod cursor;
 mod easing;
 mod gestures;
@@ -319,6 +320,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut event_loop: EventLoop<Lantern> = EventLoop::try_new()?;
     let display: Display<Lantern> = Display::new()?;
     let mut state = Lantern::new(&mut event_loop, display);
+    if let Err(e) = crate::clipboard_manager::install_recheck_source(&mut state) {
+        tracing::warn!("clipboard recheck source install failed: {e}");
+    }
 
     match backend {
         Backend::Winit => {

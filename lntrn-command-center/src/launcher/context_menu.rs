@@ -19,6 +19,25 @@ pub enum MenuAction {
     WindowClose,
     /// Minimize the foreign-toplevel window stored in `ContextMenu.window_title`.
     WindowMinimize,
+    /// Terminal: copy current selection to the Wayland clipboard.
+    TerminalCopy,
+    /// Terminal: paste clipboard contents into the PTY.
+    TerminalPaste,
+    /// Terminal: clear the visible selection highlight.
+    TerminalClearSelection,
+    /// Files: open the targeted path (folder = navigate; file = xdg-open).
+    FilesOpen,
+    /// Files: switch to Terminal view and `cd` to the targeted path.
+    FilesOpenInTerminal,
+    /// Files: launch `lntrn-file-manager` at the targeted path.
+    FilesRevealInFM,
+    /// Files: put the absolute path on the Wayland clipboard.
+    FilesCopyPath,
+    /// Files sort options. Re-selecting the active field flips direction.
+    FilesSortByName,
+    FilesSortBySize,
+    FilesSortByDate,
+    FilesSortByType,
 }
 
 #[derive(Debug, Clone)]

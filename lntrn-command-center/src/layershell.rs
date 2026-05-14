@@ -55,6 +55,10 @@ const KEY_ESC: u32 = 1;
 /// the shift state to the search input's char mapper.
 const KEY_LEFTSHIFT: u32 = 42;
 const KEY_RIGHTSHIFT: u32 = 54;
+/// Left / Right Ctrl evdev keycodes. We track Ctrl so the terminal
+/// view can build Ctrl-letter chord bytes (Ctrl-C → 0x03, etc.).
+const KEY_LEFTCTRL: u32 = 29;
+const KEY_RIGHTCTRL: u32 = 97;
 /// Linux input button codes.
 const BTN_LEFT: u32 = 0x110;
 const BTN_RIGHT: u32 = 0x111;
@@ -108,6 +112,15 @@ struct WlState {
     /// Whether either Shift modifier is currently held — needed by the
     /// search input's keycode → char mapper.
     shift_held: bool,
+    ctrl_held: bool,
+    /// Currently held key (raw evdev code) + the wall-clock instant
+    /// at which it was pressed. Used by the render loop to synthesize
+    /// auto-repeat: after a short delay, repeat the key at a steady
+    /// rate so things like backspace + arrow keys can be held.
+    held_key: Option<(u32, std::time::Instant)>,
+    /// Last time we emitted a synthesized repeat for `held_key`. Reset
+    /// each time the key changes.
+    last_repeat: Option<std::time::Instant>,
     /// Queued key presses for the render loop to forward to `search.on_key`.
     /// Single key per dispatch is fine; we just remember the most recent
     /// one and let the loop handle it.
@@ -144,6 +157,9 @@ impl WlState {
             left_held: false,
             right_clicked: false,
             shift_held: false,
+            ctrl_held: false,
+            held_key: None,
+            last_repeat: None,
             pending_key: None,
             scroll_delta_v: 0.0,
             toplevels: ToplevelTracker::new(),
@@ -383,8 +399,23 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WlState {
                     } else if released {
                         state.shift_held = false;
                     }
+                } else if key == KEY_LEFTCTRL || key == KEY_RIGHTCTRL {
+                    if pressed {
+                        state.ctrl_held = true;
+                    } else if released {
+                        state.ctrl_held = false;
+                    }
                 } else if pressed && key != KEY_ESC {
                     state.pending_key = Some(key);
+                    state.held_key = Some((key, std::time::Instant::now()));
+                    state.last_repeat = None;
+                } else if released {
+                    if let Some((held, _)) = state.held_key {
+                        if held == key {
+                            state.held_key = None;
+                            state.last_repeat = None;
+                        }
+                    }
                 }
             }
             wl_keyboard::Event::Modifiers { mods_depressed, .. } => {
@@ -392,6 +423,22 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WlState {
                 // truth in case we missed a key event (e.g., the user held
                 // shift before the panel got focus).
                 state.shift_held = (mods_depressed & 1) != 0;
+                // Ctrl is bit 2 of the depressed mask under the default
+                // xkb layout. Same fallback as shift: refresh from the
+                // authoritative mods state.
+                state.ctrl_held = (mods_depressed & 4) != 0;
+            }
+            wl_keyboard::Event::Enter { .. } | wl_keyboard::Event::Leave { .. } => {
+                // Focus change: any keys we previously tracked as "held"
+                // are no longer guaranteed to be down (we won't get a
+                // Release if focus left mid-press). Drop all key state
+                // so stale auto-repeat doesn't fire on the next open.
+                state.held_key = None;
+                state.last_repeat = None;
+                state.pending_key = None;
+                state.shift_held = false;
+                state.ctrl_held = false;
+                state.esc_pressed = false;
             }
             _ => {}
         }
@@ -540,6 +587,11 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         .map_err(|e| anyhow!("GPU init failed: {e}"))?;
     let mut painter = Painter::new(&gpu);
     let mut text = TextRenderer::new(&gpu);
+    // Second, monospace-only text renderer used exclusively for the
+    // terminal grid. Keeps the rest of the panel on the sans family
+    // (where proportional metrics look right) while the terminal gets
+    // proper monospace alignment.
+    let mut mono_text = TextRenderer::new_monospace(&gpu);
     let tex_pass = TexturePass::new(&gpu);
     let mut icon_cache = IconCache::new(ICON_PHYS_SIZE);
 
@@ -562,6 +614,15 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         // Drain any queued IPC commands and apply them.
         if let Some(cmd) = ipc::drain(&sock) {
             tracing::debug!(?cmd, "ipc command received");
+            // Any externally-triggered visibility change resets the
+            // keyboard-held state. This is a safety net for the stale
+            // auto-repeat path: if a focus event was missed and a key
+            // was still recorded as "held", the very first frame after
+            // open would otherwise re-fire that key (e.g. Enter →
+            // launch Pin(0)) the instant the panel becomes visible.
+            wl.held_key = None;
+            wl.last_repeat = None;
+            wl.pending_key = None;
             match cmd {
                 Cmd::Toggle => app.toggle(),
                 Cmd::Show => app.open(),
@@ -597,7 +658,15 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         // in the search field, not the previously-focused window) and
         // release the moment we go fully hidden (so pointer events stop
         // hitting our invisible surface).
-        let want_active = !app.is_hidden();
+        // Only keep keyboard / pointer exclusivity while the panel is
+        // actually visible (or opening). Releasing during Closing lets
+        // the compositor transfer focus to whatever window the user
+        // just clicked through to (via the `focus_at` IPC) instead of
+        // forcing a second click after the animation finishes.
+        let want_active = matches!(
+            app.visibility,
+            crate::app::Visibility::Visible | crate::app::Visibility::Opening,
+        );
         if want_active != input_active {
             tracing::debug!(active = want_active, "switching input grab");
             set_active_input(&surface, &layer_surface, &empty_region, want_active);
@@ -625,6 +694,13 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                 app.open();
                 continue;
             }
+
+            // Keep the terminal grid live while the panel is hidden.
+            // The PTY reader thread is always pulling bytes into its
+            // channel — pumping them through the VTE here means
+            // long-running commands (e.g. `yay -Syu`) stay current and
+            // we don't flood the grid on next open.
+            app.terminal.pump();
 
             std::thread::sleep(IDLE_TICK);
             continue;
@@ -663,12 +739,42 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         }
         let bt_incoming_before = app.controls.bluetooth.incoming_request.is_some();
         app.controls.tick();
+        // PTY housekeeping for the Terminal view. We spawn lazily on
+        // first activation and resize whenever the body geometry
+        // changes so the child shell reflows correctly.
+        if app.panel_view == crate::app::PanelView::Terminal {
+            let scale_f = wl.fractional_scale() as f32;
+            let phys_w = wl.phys_width().max(1);
+            let panel = PanelRect::compute_with_dims(phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical());
+            let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+            let top_y = crate::controls::content_top_y(panel_rect, scale_f);
+            // Single source of truth for cell metrics + grid size so the
+            // PTY's wrap column matches what we actually paint.
+            let (_, _, _, cols, rows) = crate::terminal::body_metrics(
+                panel_rect, top_y, scale_f, app.config.text_size,
+            );
+            app.terminal.ensure_spawned(cols.max(20), rows.max(5));
+        }
+        // Drain any pending PTY output into the grid so new bytes
+        // appear in the next render.
+        app.terminal.pump();
+
+        // Flush any queued PTY input (e.g. from Files "Open in Terminal
+        // tab"). Only meaningful once the PTY has been spawned.
+        if app.terminal.is_spawned() {
+            if let Some(s) = app.pending_terminal_input.take() {
+                app.terminal.write(s.as_bytes());
+            }
+        }
         // Sysmon is the one control we *want* to be completely silent
         // when the panel is closed — pass visibility through so it can
         // drop its polling state instead of running on a timer.
-        app.controls
-            .sysmon
-            .tick(matches!(app.visibility, crate::app::Visibility::Visible));
+        // Keep sysmon polling while the panel is animating in/out too,
+        // not just at the steady Visible state — otherwise the temp
+        // icon + sparklines pop in a second after the open animation
+        // (cache wiped, waiting for first sample) and disappear before
+        // the close animation finishes (cache reset on transition).
+        app.controls.sysmon.tick(!app.is_hidden());
 
         // Update WiFi row hover so the highlight tracks the cursor.
         // Cheap (a few rect tests) and only does work when the WiFi
@@ -676,7 +782,7 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         if matches!(app.mode, crate::app::PanelMode::Control(crate::controls::TileId::Wifi)) {
             let scale_f = wl.fractional_scale() as f32;
             let phys_w = wl.phys_width().max(1);
-            let panel = PanelRect::compute_with_height(phys_w, scale_f, app.desired_panel_h_logical());
+            let panel = PanelRect::compute_with_dims(phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical());
             let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
             let view_top_y = crate::controls::content_top_y(panel_rect, scale_f);
             let phys_cx = wl.cursor_x as f32 * scale_f;
@@ -699,31 +805,129 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         // Power-column hover tracking (buttons live to the right of the
         // panel). Skipped when the panel is collapsed — the column is
         // hidden then and we don't want a phantom hover ring.
-        if app.collapsed {
+        if app.collapsed || app.panel_view != crate::app::PanelView::Default {
             app.power_hover = None;
         } else {
             let scale_f = wl.fractional_scale() as f32;
             let phys_w = wl.phys_width().max(1);
-            let panel = PanelRect::compute_with_height(phys_w, scale_f, app.desired_panel_h_logical());
+            let panel = PanelRect::compute_with_dims(phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical());
             let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
             let phys_cx = wl.cursor_x as f32 * scale_f;
             let phys_cy = wl.cursor_y as f32 * scale_f;
             app.power_hover = crate::power::hit_test(panel_rect, scale_f, phys_cx, phys_cy);
         }
 
+        // View-switcher arrow hover. Always tracked (arrows are now
+        // anchored to the row so they work in collapsed mode too).
+        {
+            let scale_f = wl.fractional_scale() as f32;
+            let phys_w = wl.phys_width().max(1);
+            let panel = PanelRect::compute_with_dims(phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical());
+            let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+            let phys_cx = wl.cursor_x as f32 * scale_f;
+            let phys_cy = wl.cursor_y as f32 * scale_f;
+            app.view_arrow_hover = crate::view_arrows::hit_test(panel_rect, scale_f, phys_cx, phys_cy);
+            app.home_hover = crate::view_indicator::hit_home(panel_rect, scale_f, phys_cx, phys_cy);
+            app.grow_hover = crate::view_indicator::hit_grow(panel_rect, scale_f, phys_cx, phys_cy);
+            app.gear_hover = crate::view_indicator::hit_gear(panel_rect, scale_f, phys_cx, phys_cy);
+            app.emoji_hover = crate::view_indicator::hit_emoji(panel_rect, scale_f, phys_cx, phys_cy);
+            app.clipboard_hover = crate::view_indicator::hit_clipboard(panel_rect, scale_f, phys_cx, phys_cy);
+            app.notes_hover = crate::view_indicator::hit_notes(panel_rect, scale_f, phys_cx, phys_cy);
+            // Emoji overlay hover routing.
+            if app.emojis.open {
+                let top_y = crate::controls::content_top_y(panel_rect, scale_f);
+                let panel_bottom = panel_rect.y + panel_rect.h;
+                let hit = crate::emojis::hit_test(
+                    &app.emojis, panel_rect, top_y, scale_f, panel_bottom, phys_cx, phys_cy,
+                );
+                app.emojis.hover_entry = None;
+                app.emojis.hover_category = None;
+                match hit {
+                    crate::emojis::Hit::Cell(idx) => app.emojis.hover_entry = Some(idx),
+                    crate::emojis::Hit::Category(c) => app.emojis.hover_category = Some(c),
+                    _ => {}
+                }
+            } else {
+                app.emojis.hover_entry = None;
+                app.emojis.hover_category = None;
+            }
+            app.hovered_control_tile = app.controls.hit_test(
+                panel_rect, scale_f, phys_cx, phys_cy, app.panel_view,
+            );
+            // Waffle "all apps" button hover (search row).
+            let waffle = crate::search::input::waffle_rect(panel_rect, scale_f);
+            app.waffle_hover = phys_cx >= waffle.x
+                && phys_cx <= waffle.x + waffle.w
+                && phys_cy >= waffle.y
+                && phys_cy <= waffle.y + waffle.h;
+
+            // Files view hover tracking — toolbar lives in the controls row,
+            // sidebar + list live in the body.
+            app.files.hover_nav = None;
+            app.files.hover_entry = None;
+            app.files.hover_crumb = None;
+            app.files.hover_location = None;
+            if app.panel_view == crate::app::PanelView::Files {
+                let top_y = crate::controls::content_top_y(panel_rect, scale_f);
+                let strip_hit = files_strip_rect(&app, panel_rect, scale_f).map(|strip| {
+                    crate::files::hit_strip(&app.files, strip, scale_f, phys_cx, phys_cy)
+                });
+                match strip_hit {
+                    Some(crate::files::FilesHit::Nav(b)) => app.files.hover_nav = Some(b),
+                    Some(crate::files::FilesHit::Crumb(i)) => app.files.hover_crumb = Some(i),
+                    _ => {
+                        match crate::files::hit_body(
+                            &app.files, panel_rect, top_y, scale_f,
+                            app.config.text_size, phys_cx, phys_cy,
+                        ) {
+                            crate::files::FilesHit::Sidebar(l) => app.files.hover_location = Some(l),
+                            crate::files::FilesHit::Entry(i) => app.files.hover_entry = Some(i),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
         // Mini-dock hover tracking — only meaningful while the dock is
-        // actually rendered, which is when collapse progress is > 0.
-        if app.collapse_progress() <= 0.005 {
+        // actually rendered: Default view AND collapse-progress > 0.
+        // The hover index sticks while the cursor is over the preview
+        // tile so users can move down onto it without it disappearing.
+        if app.collapse_progress() <= 0.005
+            || app.panel_view != crate::app::PanelView::Default
+        {
             app.mini_dock_hover = None;
         } else {
             let scale_f = wl.fractional_scale() as f32;
             let phys_w = wl.phys_width().max(1);
-            let panel = PanelRect::compute_with_height(phys_w, scale_f, app.desired_panel_h_logical());
+            let panel = PanelRect::compute_with_dims(phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical());
             let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
             let phys_cx = wl.cursor_x as f32 * scale_f;
             let phys_cy = wl.cursor_y as f32 * scale_f;
             let pin_count = app.launcher.pinned_entries(&app.apps).len();
-            app.mini_dock_hover = crate::mini_dock::hit_test(panel_rect, scale_f, pin_count, phys_cx, phys_cy);
+            let icon_hit = crate::mini_dock::hit_test(
+                panel_rect, scale_f, pin_count, phys_cx, phys_cy,
+            );
+            if icon_hit.is_some() {
+                app.mini_dock_hover = icon_hit;
+            } else if let Some(prev) = app.mini_dock_hover {
+                // Generous zone covering icon + every preview tile so
+                // the user can drag the cursor down into any one of
+                // the per-window thumbnails without the preview
+                // disappearing under them.
+                let pinned = app.launcher.pinned_entries(&app.apps);
+                let nwin = pinned
+                    .get(prev)
+                    .map(|e| crate::mini_dock::windows_for_app(&app.toplevels, &e.app_id).len())
+                    .unwrap_or(0)
+                    .max(1);
+                let still_in_zone = crate::mini_dock::hit_test_preview_zone(
+                    panel_rect, scale_f, pin_count, prev, nwin, phys_cx, phys_cy,
+                );
+                if !still_in_zone {
+                    app.mini_dock_hover = None;
+                }
+            }
         }
         let bt_incoming_after = app.controls.bluetooth.incoming_request.is_some();
         // Fresh incoming-file request → jump straight to the BT view so
@@ -749,13 +953,45 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         if wl.scroll_delta_v.abs() > 0.0 {
             let dy = wl.scroll_delta_v as f32;
             wl.scroll_delta_v = 0.0;
-            if matches!(app.mode, crate::app::PanelMode::Launcher)
+            if app.emojis.open {
+                let scale_f = wl.fractional_scale() as f32;
+                let phys_w = wl.phys_width().max(1);
+                let panel = PanelRect::compute_with_dims(phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical());
+                let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+                let top_y = crate::controls::content_top_y(panel_rect, scale_f);
+                let panel_bottom = panel_rect.y + panel_rect.h;
+                let grid = crate::emojis::grid_rect(panel_rect, top_y, scale_f, panel_bottom);
+                let visible = app.emojis.visible_indices();
+                let per_row = crate::emojis::cells_per_row(grid, scale_f);
+                let max = crate::emojis::max_scroll(visible.len(), per_row, grid.h, scale_f) / scale_f;
+                let new_offset = (app.emojis.scroll + dy).clamp(0.0, max);
+                app.emojis.scroll = new_offset;
+            } else if app.panel_view == crate::app::PanelView::Terminal {
+                // libinput reports negative dy on wheel-up (toward
+                // older history) and positive on wheel-down. Convert
+                // to lines via a soft divisor so one notch ≈ 3 lines.
+                let lines = (-dy / 16.0).round() as i32;
+                if lines != 0 {
+                    app.terminal.scroll_by(lines);
+                }
+            } else if app.panel_view == crate::app::PanelView::Files {
+                let scale_f = wl.fractional_scale() as f32;
+                let phys_w = wl.phys_width().max(1);
+                let panel = PanelRect::compute_with_dims(phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical());
+                let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+                let top_y = crate::controls::content_top_y(panel_rect, scale_f);
+                let max = crate::files::max_scroll(
+                    &app.files, panel_rect, top_y, scale_f, app.config.text_size,
+                );
+                let new_offset = (app.files.scroll + dy * scale_f).clamp(0.0, max);
+                app.files.scroll = new_offset;
+            } else if matches!(app.mode, crate::app::PanelMode::Launcher)
                 && (!app.search.input.is_empty() || app.search.all_apps_mode)
                 && !app.search.results().is_empty()
             {
                 let scale_f = wl.fractional_scale() as f32;
                 let phys_w = wl.phys_width().max(1);
-                let panel = PanelRect::compute_with_height(phys_w, scale_f, app.desired_panel_h_logical());
+                let panel = PanelRect::compute_with_dims(phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical());
                 let panel_rect =
                     lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
                 let max = crate::search::max_scroll(&app.search, panel_rect, scale_f);
@@ -775,6 +1011,26 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         //        Enter passkey → typed chars into the passkey buffer; Enter submits.
         //   3. Launcher-mode navigation (Up/Down/Left/Right/Enter).
         //   4. Else: key falls through to the launcher search input.
+        // Key auto-repeat: hold any key past `REPEAT_DELAY` and we
+        // synthesize fresh pending-key events at `REPEAT_INTERVAL`.
+        if wl.pending_key.is_none() {
+            if let Some((held, pressed_at)) = wl.held_key {
+                const REPEAT_DELAY: std::time::Duration = std::time::Duration::from_millis(420);
+                const REPEAT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(32);
+                let now = std::time::Instant::now();
+                if now.duration_since(pressed_at) >= REPEAT_DELAY {
+                    let ready = match wl.last_repeat {
+                        None => true,
+                        Some(last) => now.duration_since(last) >= REPEAT_INTERVAL,
+                    };
+                    if ready {
+                        wl.pending_key = Some(held);
+                        wl.last_repeat = Some(now);
+                    }
+                }
+            }
+        }
+
         if let Some(key) = wl.pending_key.take() {
             use crate::search::input::*;
             use crate::controls::bluetooth::PairPromptKind;
@@ -813,6 +1069,58 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                         // a key shortcut. Y/N typing isn't wired (yet).
                     }
                 }
+            } else if app.emojis.open {
+                // Emojis overlay: filter input always focused. Enter copies
+                // the first visible emoji. Tab cycles category. Esc handled
+                // elsewhere.
+                match key {
+                    KEY_ENTER | KEY_KP_ENTER => {
+                        let visible = app.emojis.visible_indices();
+                        if let Some(&entry_idx) = visible.first() {
+                            let entry = &crate::emojis::data::EMOJIS[entry_idx];
+                            if let Some(clip) = app.clipboard.as_ref() {
+                                clip.set_text(entry.glyph);
+                            }
+                            app.emojis.recent_copy = Some((0, std::time::Instant::now()));
+                        }
+                    }
+                    other => {
+                        let _ = app.emojis.filter.on_key(other, wl.shift_held);
+                        app.emojis.reset_scroll();
+                    }
+                }
+            } else if app.panel_view == crate::app::PanelView::Terminal {
+                // Copy / Paste chord keys take priority over normal PTY
+                // input. Ctrl-Shift-C copies the current selection;
+                // Ctrl-Shift-V pastes clipboard into the PTY. These
+                // shadow xterm's `Ctrl-Shift-{C,V}` convention.
+                use crate::search::input::keycode_to_char;
+                let chord = wl.ctrl_held && wl.shift_held;
+                let ch = keycode_to_char(key, false).map(|c| c.to_ascii_lowercase());
+                if chord && ch == Some('c') {
+                    if app.terminal.copy_selection() {
+                        tracing::info!("terminal: copied selection");
+                    }
+                } else if chord && ch == Some('v') {
+                    if app.terminal.paste_from_clipboard() {
+                        tracing::info!("terminal: pasted from clipboard");
+                    }
+                } else if let Some(bytes) =
+                    crate::terminal::keycode_to_bytes(key, wl.shift_held, wl.ctrl_held)
+                {
+                    app.terminal.write(&bytes);
+                }
+            } else if matches!(
+                app.mode,
+                crate::app::PanelMode::Control(crate::controls::TileId::SysMon)
+                    | crate::app::PanelMode::Control(crate::controls::TileId::Temp)
+            ) {
+                // Sysmon process filter: typed chars edit the buffer.
+                // Esc (handled above via esc_pressed) clears it; Enter
+                // and arrow keys are inert here.
+                if !matches!(key, KEY_ENTER | KEY_KP_ENTER | KEY_UP | KEY_DOWN | KEY_LEFT | KEY_RIGHT) {
+                    let _ = app.controls.sysmon.filter.on_key(key, wl.shift_held);
+                }
             } else if app.controls.clock.add_event_input.is_some()
                 && matches!(app.mode, crate::app::PanelMode::Control(crate::controls::TileId::Clock))
             {
@@ -836,12 +1144,58 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                         }
                     }
                 }
+            } else if app.panel_view == crate::app::PanelView::Files {
+                // Files view: route to the filter input when active, else
+                // typing auto-activates filter mode. Ctrl+H toggles hidden
+                // files; Esc exits filter mode.
+                use crate::search::input::keycode_to_char;
+                let chord_ctrl_h = wl.ctrl_held
+                    && keycode_to_char(key, false).map(|c| c.to_ascii_lowercase()) == Some('h');
+                if chord_ctrl_h {
+                    app.files.toggle_hidden();
+                } else {
+                    match key {
+                        KEY_LEFT if !app.files.filter_active => app.cycle_view_prev(),
+                        KEY_RIGHT if !app.files.filter_active => app.cycle_view_next(),
+                        KEY_ENTER | KEY_KP_ENTER if app.files.filter_active => {
+                            if let Some(entry) = app.files.entry_for_visible(0).cloned() {
+                                if entry.is_dir {
+                                    app.files.navigate_to(&entry.path);
+                                } else {
+                                    let exec = format!(
+                                        "xdg-open '{}'",
+                                        entry.path.to_string_lossy().replace('\'', "'\\''"),
+                                    );
+                                    crate::app::spawn_detached(&exec);
+                                    app.close();
+                                }
+                            }
+                        }
+                        other => {
+                            // If a printable character was pressed and we're
+                            // not in filter mode yet, auto-activate so the
+                            // first letter shows up in the input.
+                            let printable = keycode_to_char(other, wl.shift_held).is_some();
+                            if printable && !app.files.filter_active {
+                                app.files.activate_filter();
+                            }
+                            if app.files.filter_active {
+                                let _ = app.files.filter.on_key(other, wl.shift_held);
+                                app.files.apply_filter();
+                            }
+                        }
+                    }
+                }
             } else {
                 match key {
                     KEY_UP => app.select_up(),
                     KEY_DOWN => app.select_down(),
-                    KEY_LEFT if app.search.input.is_empty() => app.select_left(),
-                    KEY_RIGHT if app.search.input.is_empty() => app.select_right(),
+                    // Left / Right cycle the panel-view tabs (Default ↔
+                    // Terminal). Only fires when the search field is
+                    // empty, so typing letters into the launcher still
+                    // moves the text cursor instead of switching tabs.
+                    KEY_LEFT if app.search.input.is_empty() => app.cycle_view_prev(),
+                    KEY_RIGHT if app.search.input.is_empty() => app.cycle_view_next(),
                     KEY_ENTER | KEY_KP_ENTER => {
                         app.launch_selected();
                     }
@@ -852,13 +1206,166 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
             }
         }
 
+        // Terminal selection: press starts a drag-select inside the body,
+        // motion extends it, release finalizes it. We consume `left_clicked`
+        // here so the launcher hit-tests below don't also fire.
+        if app.panel_view == crate::app::PanelView::Terminal {
+            let scale_f = wl.fractional_scale() as f32;
+            let phys_w = wl.phys_width().max(1);
+            let panel = PanelRect::compute_with_dims(
+                phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical(),
+            );
+            let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+            let top_y = crate::controls::content_top_y(panel_rect, scale_f);
+            let phys_cx = wl.cursor_x as f32 * scale_f;
+            let phys_cy = wl.cursor_y as f32 * scale_f;
+            let (g_cols, g_rows) = app
+                .terminal
+                .grid()
+                .map(|g| (g.cols, g.rows))
+                .unwrap_or((0, 0));
+            let cell = crate::terminal::cell_at(
+                panel_rect, top_y, scale_f, app.config.text_size,
+                g_cols, g_rows, phys_cx, phys_cy,
+            );
+            if wl.left_clicked {
+                if let Some((row, col)) = cell {
+                    // Right-click context menu eats the click — only start
+                    // a fresh selection when the body itself was clicked
+                    // with the LEFT button.
+                    if app.context_menu.is_none() {
+                        app.terminal.begin_selection(row, col);
+                        wl.left_clicked = false;
+                    }
+                } else {
+                    // Click outside the terminal body — drop any selection
+                    // so the highlight doesn't linger after a chrome click.
+                    app.terminal.clear_selection();
+                }
+            } else if app.terminal.selecting && wl.left_held {
+                if let Some((row, col)) = cell {
+                    app.terminal.update_selection(row, col);
+                }
+            }
+            if wl.left_released_this_frame && app.terminal.selecting {
+                app.terminal.end_selection();
+            }
+        }
+
+        // Files-view click: toolbar (controls row) + body (sidebar + list).
+        if app.panel_view == crate::app::PanelView::Files && wl.left_clicked
+            && app.context_menu.is_none()
+        {
+            let scale_f = wl.fractional_scale() as f32;
+            let phys_w = wl.phys_width().max(1);
+            let panel = PanelRect::compute_with_dims(
+                phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical(),
+            );
+            let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+            let top_y = crate::controls::content_top_y(panel_rect, scale_f);
+            let phys_cx = wl.cursor_x as f32 * scale_f;
+            let phys_cy = wl.cursor_y as f32 * scale_f;
+
+            // Toolbar strip in the top-most row takes precedence.
+            let strip_hit = files_strip_rect(&app, panel_rect, scale_f).map(|s| {
+                crate::files::hit_strip(&app.files, s, scale_f, phys_cx, phys_cy)
+            });
+            if let Some(hit) = strip_hit {
+                match hit {
+                    crate::files::FilesHit::Nav(crate::files::NavButton::Back) => {
+                        app.files.go_back();
+                        wl.left_clicked = false;
+                        continue;
+                    }
+                    crate::files::FilesHit::Nav(crate::files::NavButton::ToggleHidden) => {
+                        app.files.toggle_hidden();
+                        wl.left_clicked = false;
+                        continue;
+                    }
+                    crate::files::FilesHit::Nav(crate::files::NavButton::Magnifier) => {
+                        app.files.toggle_filter();
+                        if app.files.filter_active && app.collapsed {
+                            app.toggle_collapsed();
+                        }
+                        wl.left_clicked = false;
+                        continue;
+                    }
+                    crate::files::FilesHit::Nav(crate::files::NavButton::Sort) => {
+                        let sort_r = crate::files::strip_layout(
+                            files_strip_rect(&app, panel_rect, scale_f).unwrap_or(panel_rect),
+                            scale_f,
+                        )
+                        .sort;
+                        let anchor_x = sort_r.x;
+                        let anchor_y = sort_r.y + sort_r.h + 6.0 * scale_f;
+                        app.context_menu = Some(crate::launcher::context_menu::ContextMenu {
+                            app_id: String::new(),
+                            window_title: String::new(),
+                            anchor_x,
+                            anchor_y,
+                            items: sort_menu_items(&app.files),
+                        });
+                        wl.left_clicked = false;
+                        continue;
+                    }
+                    crate::files::FilesHit::Crumb(idx) => {
+                        if let Some(p) = app.files.crumb_path(idx) {
+                            if p != app.files.cwd && p.is_dir() {
+                                app.files.navigate_to(&p);
+                            }
+                        }
+                        wl.left_clicked = false;
+                        continue;
+                    }
+                    crate::files::FilesHit::Pathbar => {
+                        // Click on the pathbar while in filter mode just
+                        // keeps focus (no-op). While in breadcrumb mode this
+                        // arm isn't reached — Crumb is returned instead.
+                        wl.left_clicked = false;
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+
+            // Body: sidebar + list.
+            match crate::files::hit_body(
+                &app.files, panel_rect, top_y, scale_f,
+                app.config.text_size, phys_cx, phys_cy,
+            ) {
+                crate::files::FilesHit::Sidebar(loc) => {
+                    let p = loc.path();
+                    if p.is_dir() {
+                        app.files.navigate_to(&p);
+                    }
+                    wl.left_clicked = false;
+                }
+                crate::files::FilesHit::Entry(idx) => {
+                    if let Some(entry) = app.files.entry_for_visible(idx).cloned() {
+                        if entry.is_dir {
+                            app.files.navigate_to(&entry.path);
+                        } else {
+                            let exec = format!(
+                                "xdg-open '{}'",
+                                entry.path.to_string_lossy().replace('\'', "'\\''"),
+                            );
+                            crate::app::spawn_detached(&exec);
+                            app.close();
+                        }
+                    }
+                    wl.left_clicked = false;
+                }
+                _ => {}
+            }
+        }
+
         // Handle left-click: if outside the panel rect → close, otherwise
         // hit-test against the launcher and launch if a tile/row was hit.
         if wl.left_clicked {
             wl.left_clicked = false;
             let scale_f = wl.fractional_scale() as f32;
             let phys_w = wl.phys_width().max(1);
-            let panel = PanelRect::compute_with_height(phys_w, scale_f, app.desired_panel_h_logical());
+            let panel = PanelRect::compute_with_dims(phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical());
             let phys_cx = wl.cursor_x as f32 * scale_f;
             let phys_cy = wl.cursor_y as f32 * scale_f;
             let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
@@ -929,22 +1436,183 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                 false
             };
 
-            let power_btn = if app.collapsed {
+            let power_btn = if app.collapsed || app.panel_view != crate::app::PanelView::Default {
                 None
             } else {
                 crate::power::hit_test(panel_rect, scale_f, phys_cx, phys_cy)
             };
-            let dock_pin = if app.collapse_progress() > 0.005 {
-                let pin_count = app.launcher.pinned_entries(&app.apps).len();
-                crate::mini_dock::hit_test(panel_rect, scale_f, pin_count, phys_cx, phys_cy)
-            } else {
-                None
-            };
+            let arrow_hit = crate::view_arrows::hit_test(panel_rect, scale_f, phys_cx, phys_cy);
+            let home_hit = crate::view_indicator::hit_home(panel_rect, scale_f, phys_cx, phys_cy);
+            let grow_hit = crate::view_indicator::hit_grow(panel_rect, scale_f, phys_cx, phys_cy);
+            let gear_hit = crate::view_indicator::hit_gear(panel_rect, scale_f, phys_cx, phys_cy);
+            let emoji_btn_hit = crate::view_indicator::hit_emoji(panel_rect, scale_f, phys_cx, phys_cy);
+            let dot_hit = crate::view_indicator::hit_test_dot(panel_rect, scale_f, phys_cx, phys_cy);
+            // Mini-dock hit-tests — try preview-tile first (when hover
+            // points to an app with open windows) then the icon body.
+            // (pinned_idx, window_idx_within_app, hit_kind)
+            let mut dock_preview_hit: Option<(usize, usize, crate::mini_dock::PreviewHit)> = None;
+            let mut dock_pin: Option<usize> = None;
+            // Dock is only visible (and clickable) in the Default view.
+            if app.collapse_progress() > 0.005
+                && app.panel_view == crate::app::PanelView::Default
+            {
+                let pinned = app.launcher.pinned_entries(&app.apps);
+                // Preview is only valid in the Default view — other
+                // top-level views own the body and shouldn't be
+                // covered by the dock preview tile.
+                let preview_enabled = app.panel_view == crate::app::PanelView::Default;
+                if preview_enabled {
+                    if let Some(hover_idx) = app.mini_dock_hover {
+                        if let Some(entry) = pinned.get(hover_idx) {
+                            let windows = crate::mini_dock::windows_for_app(
+                                &app.toplevels, &entry.app_id,
+                            );
+                            if !windows.is_empty() {
+                                dock_preview_hit = crate::mini_dock::hit_test_preview(
+                                    panel_rect, scale_f, pinned.len(), hover_idx,
+                                    windows.len(), phys_cx, phys_cy,
+                                )
+                                .map(|(wi, h)| (hover_idx, wi, h));
+                            }
+                        }
+                    }
+                }
+                if dock_preview_hit.is_none() {
+                    dock_pin = crate::mini_dock::hit_test(
+                        panel_rect, scale_f, pinned.len(), phys_cx, phys_cy,
+                    );
+                }
+            }
             if menu_consumed || confirm_consumed {
                 // Already handled by an overlay — fall through to render.
             } else if let Some(action) = power_btn {
                 tracing::debug!(?action, "power button click → open confirm modal");
                 app.power_confirm = Some(action);
+            } else if app.settings_open && {
+                // While the settings page is open all clicks inside the
+                // panel route to the settings hit-test first.
+                let top_y = crate::controls::content_top_y(panel_rect, scale_f);
+                let rows = crate::settings::layout(panel_rect, top_y, scale_f);
+                if let Some(hit) = crate::settings::hit_test(&rows, phys_cx, phys_cy) {
+                    match hit {
+                        crate::settings::SettingHit::Toggle(key) => {
+                            let cur = crate::settings::current_value(&app.config, key);
+                            if let crate::settings::SettingValue::B(b) = cur {
+                                crate::settings::apply_value(
+                                    &mut app.config,
+                                    key,
+                                    crate::settings::SettingValue::B(!b),
+                                );
+                                app.config.save();
+                            }
+                        }
+                        crate::settings::SettingHit::SliderSeek(key, value) => {
+                            crate::settings::apply_value(
+                                &mut app.config,
+                                key,
+                                crate::settings::SettingValue::F(value),
+                            );
+                            app.config.save();
+                            app.settings_drag = Some(key);
+                        }
+                    }
+                    true
+                } else {
+                    false
+                }
+            } {
+                // Already handled.
+            } else if gear_hit {
+                // Settings page is only visible in the expanded panel —
+                // un-collapse first so opening settings while collapsed
+                // actually shows the page.
+                if app.collapsed && !app.settings_open {
+                    app.toggle_collapsed();
+                }
+                app.toggle_settings();
+            } else if emoji_btn_hit {
+                if app.collapsed && !app.emojis.open {
+                    app.toggle_collapsed();
+                }
+                app.toggle_emojis();
+            } else if app.emojis.open && {
+                let top_y = crate::controls::content_top_y(panel_rect, scale_f);
+                let panel_bottom = panel_rect.y + panel_rect.h;
+                let hit = crate::emojis::hit_test(
+                    &app.emojis, panel_rect, top_y, scale_f, panel_bottom, phys_cx, phys_cy,
+                );
+                match hit {
+                    crate::emojis::Hit::None => false,
+                    crate::emojis::Hit::Filter => {
+                        // Click on filter: just focus (already focused). No-op.
+                        true
+                    }
+                    crate::emojis::Hit::Category(c) => {
+                        app.emojis.active_category = c;
+                        app.emojis.reset_scroll();
+                        true
+                    }
+                    crate::emojis::Hit::Cell(visible_idx) => {
+                        let visible = app.emojis.visible_indices();
+                        if let Some(&entry_idx) = visible.get(visible_idx) {
+                            let entry = &crate::emojis::data::EMOJIS[entry_idx];
+                            if let Some(clip) = app.clipboard.as_ref() {
+                                clip.set_text(entry.glyph);
+                            }
+                            app.emojis.recent_copy = Some((visible_idx, std::time::Instant::now()));
+                        }
+                        true
+                    }
+                }
+            } {
+                // Already handled by emojis overlay.
+            } else if home_hit {
+                app.set_view(crate::app::PanelView::Default);
+            } else if grow_hit {
+                app.toggle_grow();
+            } else if let Some(dot_idx) = dot_hit {
+                if let Some(v) = crate::app::PanelView::ALL.get(dot_idx) {
+                    app.set_view(*v);
+                }
+            } else if let Some(side) = arrow_hit {
+                match side {
+                    crate::view_arrows::Side::Left => app.cycle_view_prev(),
+                    crate::view_arrows::Side::Right => app.cycle_view_next(),
+                }
+            } else if let Some((idx, window_idx, hit)) = dock_preview_hit {
+                let pinned = app.launcher.pinned_entries(&app.apps);
+                if let Some(entry) = pinned.get(idx).map(|e| (*e).clone()) {
+                    let windows = crate::mini_dock::windows_for_app(
+                        &app.toplevels, &entry.app_id,
+                    );
+                    if let Some(target) = windows.get(window_idx).copied() {
+                        match hit {
+                            crate::mini_dock::PreviewHit::Body => {
+                                tracing::debug!(
+                                    app_id = %entry.app_id, window_idx,
+                                    "dock preview → activate"
+                                );
+                                app.window_actions.push(crate::app::WindowAction {
+                                    app_id: target.app_id.clone(),
+                                    title: target.title.clone(),
+                                    kind: crate::app::WindowActionKind::Activate,
+                                });
+                                app.close();
+                            }
+                            crate::mini_dock::PreviewHit::Close => {
+                                tracing::debug!(
+                                    app_id = %entry.app_id, window_idx,
+                                    "dock preview → close"
+                                );
+                                app.window_actions.push(crate::app::WindowAction {
+                                    app_id: target.app_id.clone(),
+                                    title: target.title.clone(),
+                                    kind: crate::app::WindowActionKind::Close,
+                                });
+                            }
+                        }
+                    }
+                }
             } else if let Some(pin_idx) = dock_pin {
                 tracing::debug!(pin = pin_idx, "mini-dock click → launch");
                 app.activate_at(crate::app::HitTarget::Pin(pin_idx));
@@ -952,8 +1620,16 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                 tracing::debug!(
                     cursor = ?(phys_cx, phys_cy),
                     panel = ?(panel.x, panel.y, panel.w, panel.h),
-                    "click outside panel → close"
+                    "click outside panel → close + focus underlying window"
                 );
+                // Ask the compositor to focus whatever toplevel is at
+                // the click point so the user doesn't need a second
+                // click to start typing in it. cursor_x/y from wayland
+                // are already in surface-logical pixels (== compositor
+                // logical for a single-output, fullscreen layer surface).
+                let logical_x = wl.cursor_x.round() as i32;
+                let logical_y = wl.cursor_y.round() as i32;
+                thumbs.focus_at(logical_x, logical_y);
                 app.close();
             } else if consumed_by_view {
                 // Already handled.
@@ -962,15 +1638,24 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                 scale_f,
                 phys_cx,
                 phys_cy,
+                app.panel_view,
             ) {
-                if matches!(tile_id, crate::controls::TileId::Collapse) {
-                    tracing::debug!("collapse chevron click → toggle");
-                    app.toggle_collapsed();
-                } else {
-                    tracing::debug!(?tile_id, "left-click on controls tile → switch view");
-                    app.show_control(tile_id);
+                match tile_id {
+                    crate::controls::TileId::Collapse => {
+                        tracing::debug!("collapse chevron click → toggle");
+                        app.toggle_collapsed();
+                    }
+                    crate::controls::TileId::TerminalClear => {
+                        app.terminal.clear();
+                    }
+                    _ => {
+                        tracing::debug!(?tile_id, "left-click on controls tile → switch view");
+                        app.show_control(tile_id);
+                    }
                 }
-            } else if matches!(app.mode, crate::app::PanelMode::Launcher) {
+            } else if matches!(app.mode, crate::app::PanelMode::Launcher)
+                && app.panel_view == crate::app::PanelView::Default
+            {
                 // Waffle "all apps" button on the search bar.
                 let waffle = crate::search::input::waffle_rect(panel_rect, scale_f);
                 if phys_cx >= waffle.x
@@ -1033,8 +1718,8 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
             if let Some(drag) = app.pin_drag.take() {
                 let scale_f = wl.fractional_scale() as f32;
                 let phys_w = wl.phys_width().max(1);
-                let panel = PanelRect::compute_with_height(
-                    phys_w, scale_f, app.desired_panel_h_logical(),
+                let panel = PanelRect::compute_with_dims(
+                    phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical(),
                 );
                 let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
                 if drag.started {
@@ -1050,7 +1735,7 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                         drag.current_x, drag.current_y,
                     );
                     tracing::info!(from = drag.from_idx, to, "pin drag commit");
-                    app.launcher.reorder_pins(drag.from_idx, to);
+                    app.launcher.reorder_pins(drag.from_idx, to, &app.apps);
                 } else {
                     // Treat as a plain click on the pin.
                     app.activate_at(crate::app::HitTarget::Pin(drag.from_idx));
@@ -1064,11 +1749,13 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
             wl.right_clicked = false;
             let scale_f = wl.fractional_scale() as f32;
             let phys_w = wl.phys_width().max(1);
-            let panel = PanelRect::compute_with_height(phys_w, scale_f, app.desired_panel_h_logical());
+            let panel = PanelRect::compute_with_dims(phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical());
             let phys_cx = wl.cursor_x as f32 * scale_f;
             let phys_cy = wl.cursor_y as f32 * scale_f;
             match app.mode {
-                crate::app::PanelMode::Launcher => {
+                crate::app::PanelMode::Launcher
+                    if app.panel_view == crate::app::PanelView::Default =>
+                {
                     if let Some(target) =
                         app.hit_test_launcher(panel, scale_f, phys_cx, phys_cy)
                     {
@@ -1078,6 +1765,99 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                         app.context_menu = None;
                     }
                 }
+                crate::app::PanelMode::Launcher
+                    if app.panel_view == crate::app::PanelView::Terminal =>
+                {
+                    // Right-click in the terminal body opens a small
+                    // Copy / Paste / Clear menu anchored at the cursor.
+                    let panel_rect =
+                        lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+                    let top_y = crate::controls::content_top_y(panel_rect, scale_f);
+                    let (g_cols, g_rows) = app
+                        .terminal
+                        .grid()
+                        .map(|g| (g.cols, g.rows))
+                        .unwrap_or((0, 0));
+                    if crate::terminal::cell_at(
+                        panel_rect, top_y, scale_f, app.config.text_size,
+                        g_cols, g_rows, phys_cx, phys_cy,
+                    )
+                    .is_some()
+                    {
+                        let mut items = Vec::new();
+                        if app.terminal.has_selection() {
+                            items.push(crate::launcher::context_menu::MenuItem {
+                                label: "Copy".into(),
+                                action: crate::launcher::context_menu::MenuAction::TerminalCopy,
+                            });
+                            items.push(crate::launcher::context_menu::MenuItem {
+                                label: "Clear selection".into(),
+                                action:
+                                    crate::launcher::context_menu::MenuAction::TerminalClearSelection,
+                            });
+                        }
+                        items.push(crate::launcher::context_menu::MenuItem {
+                            label: "Paste".into(),
+                            action: crate::launcher::context_menu::MenuAction::TerminalPaste,
+                        });
+                        app.context_menu =
+                            Some(crate::launcher::context_menu::ContextMenu {
+                                app_id: String::new(),
+                                window_title: String::new(),
+                                anchor_x: phys_cx,
+                                anchor_y: phys_cy,
+                                items,
+                            });
+                    } else {
+                        app.context_menu = None;
+                    }
+                }
+                crate::app::PanelMode::Launcher
+                    if app.panel_view == crate::app::PanelView::Files =>
+                {
+                    let panel_rect =
+                        lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+                    let top_y = crate::controls::content_top_y(panel_rect, scale_f);
+                    if let crate::files::FilesHit::Entry(idx) = crate::files::hit_body(
+                        &app.files, panel_rect, top_y, scale_f,
+                        app.config.text_size, phys_cx, phys_cy,
+                    ) {
+                        if let Some(entry) = app.files.entry_for_visible(idx) {
+                            let path_str = entry.path.to_string_lossy().into_owned();
+                            let items = vec![
+                                crate::launcher::context_menu::MenuItem {
+                                    label: "Open".into(),
+                                    action: crate::launcher::context_menu::MenuAction::FilesOpen,
+                                },
+                                crate::launcher::context_menu::MenuItem {
+                                    label: "Open in Terminal".into(),
+                                    action: crate::launcher::context_menu::MenuAction::FilesOpenInTerminal,
+                                },
+                                crate::launcher::context_menu::MenuItem {
+                                    label: "Reveal in File Manager".into(),
+                                    action: crate::launcher::context_menu::MenuAction::FilesRevealInFM,
+                                },
+                                crate::launcher::context_menu::MenuItem {
+                                    label: "Copy path".into(),
+                                    action: crate::launcher::context_menu::MenuAction::FilesCopyPath,
+                                },
+                            ];
+                            app.context_menu =
+                                Some(crate::launcher::context_menu::ContextMenu {
+                                    app_id: path_str,
+                                    window_title: String::new(),
+                                    anchor_x: phys_cx,
+                                    anchor_y: phys_cy,
+                                    items,
+                                });
+                        } else {
+                            app.context_menu = None;
+                        }
+                    } else {
+                        app.context_menu = None;
+                    }
+                }
+                crate::app::PanelMode::Launcher => {}
                 crate::app::PanelMode::Control(crate::controls::TileId::Clock) => {
                     let panel_rect =
                         lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
@@ -1118,11 +1898,35 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         // current cursor x. Released → end the drag.
         if !wl.left_held {
             app.dragging = None;
+            app.settings_drag = None;
+        }
+
+        // Settings page slider drag: while the user has a settings
+        // slider grabbed, motion events update the bound config field
+        // and persist on release.
+        if let Some(key) = app.settings_drag {
+            let scale_f = wl.fractional_scale() as f32;
+            let phys_w = wl.phys_width().max(1);
+            let panel = PanelRect::compute_with_dims(
+                phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical(),
+            );
+            let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+            let top_y = crate::controls::content_top_y(panel_rect, scale_f);
+            let rows = crate::settings::layout(panel_rect, top_y, scale_f);
+            let phys_cx = wl.cursor_x as f32 * scale_f;
+            if let Some(value) = crate::settings::hit_slider_only(&rows, key, phys_cx) {
+                crate::settings::apply_value(
+                    &mut app.config,
+                    key,
+                    crate::settings::SettingValue::F(value),
+                );
+                app.config.save();
+            }
         }
         if let Some(target) = app.dragging {
             let scale_f = wl.fractional_scale() as f32;
             let phys_w = wl.phys_width().max(1);
-            let panel = PanelRect::compute_with_height(phys_w, scale_f, app.desired_panel_h_logical());
+            let panel = PanelRect::compute_with_dims(phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical());
             let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
             let view_top_y = crate::controls::content_top_y(panel_rect, scale_f);
             let phys_cx = wl.cursor_x as f32 * scale_f;
@@ -1174,10 +1978,13 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         // after the close animation finishes.
         painter.clear();
         text.clear();
+        mono_text.clear();
 
         let panel_draw = crate::render::draw_panel(&mut painter, &app, phys_w, scale_f);
         let icon_requests = if let Some(p) = &panel_draw {
-            crate::render::draw_content(&mut painter, &mut text, &app, p, phys_w, phys_h)
+            crate::render::draw_content(
+                &mut painter, &mut text, &mut mono_text, &app, p, phys_w, phys_h,
+            )
         } else {
             Vec::new()
         };
@@ -1188,11 +1995,27 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         // Launcher mode, and the empty/non-all-apps search state that
         // render.rs uses to draw the section. Otherwise the compositor
         // keeps painting thumbnails at orphaned rects.
+        // Active whenever Default is being displayed in some form —
+        // either as the resting view OR as the from/to of an in-flight
+        // slide. The slide-x for the rect is computed below.
+        let default_in_view = app.panel_view == crate::app::PanelView::Default
+            || match app.view_slide() {
+                Some(s) => s.from == crate::app::PanelView::Default
+                    || s.to == crate::app::PanelView::Default,
+                None => false,
+            };
         let open_section_active = matches!(app.mode, crate::app::PanelMode::Launcher)
             && app.search.input.is_empty()
             && !app.search.all_apps_mode
             && !app.collapsed
-            && !app.collapse_animating();
+            && !app.collapse_animating()
+            // Skip thumbs during a view-slide so the compositor doesn't
+            // keep painting window previews that have travelled past the
+            // panel edge into empty space.
+            && !app.view_animating()
+            && default_in_view
+            && !app.settings_open
+            && !app.emojis.open;
         if let Some(p) = &panel_draw {
             if matches!(app.visibility, crate::app::Visibility::Visible) && open_section_active {
                 let panel_logical = lntrn_render::Rect::new(p.rect.x, p.rect.y, p.rect.w, p.rect.h);
@@ -1213,30 +2036,93 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                     + crate::launcher::open::OPEN_SECTION_TOP_MARGIN * scale_f
                     + crate::launcher::open::heading_advance(scale_f);
 
+                // If we're mid-slide, shift the thumbnail rects by
+                // Default's current slide offset so they glide with
+                // the rest of the body instead of popping.
+                let default_slide_offset = match app.view_slide() {
+                    Some(s) if s.from == crate::app::PanelView::Default => s.from_offset,
+                    Some(s) if s.to == crate::app::PanelView::Default => s.to_offset,
+                    _ => 0.0,
+                };
+                let slide_x = default_slide_offset * panel_logical.w;
                 let mut slots = Vec::with_capacity(visible_open.len());
+                let phys_cx = wl.cursor_x as f32 * scale_f;
+                let phys_cy = wl.cursor_y as f32 * scale_f;
                 for (i, group) in visible_open.iter().enumerate() {
-                    // Paint the most-relevant window's live thumbnail per
-                    // group — activated takes precedence, then first.
                     let Some(rep) = group.close_target() else { continue };
                     let r = crate::launcher::open::tile_rect(panel_logical, row_top, scale_f, i);
-                    // Convert physical → logical for the compositor and
-                    // carve a strip off the top so the X + ×N badge
-                    // (drawn by us) stay visible over the compositor's
-                    // thumbnail overlay.
                     let inv = 1.0 / scale_f;
-                    let toolbar_h = crate::launcher::open::OPEN_TILE_TOOLBAR_H * scale_f;
-                    let thumb_x = r.x;
-                    let thumb_y = r.y + toolbar_h;
-                    let thumb_w = r.w;
-                    let thumb_h = (r.h - toolbar_h).max(1.0);
+                    let close_btn_r = crate::launcher::open::close_button_rect(
+                        panel_logical, row_top, scale_f, i,
+                    );
+                    let close_hovered = phys_cx >= close_btn_r.x
+                        && phys_cx <= close_btn_r.x + close_btn_r.w
+                        && phys_cy >= close_btn_r.y
+                        && phys_cy <= close_btn_r.y + close_btn_r.h;
+                    let close = crate::thumbs::CloseBtn {
+                        x: ((close_btn_r.x + slide_x) * inv).round() as i32,
+                        y: (close_btn_r.y * inv).round() as i32,
+                        w: (close_btn_r.w * inv).round() as i32,
+                        h: (close_btn_r.h * inv).round() as i32,
+                        hovered: close_hovered,
+                    };
                     slots.push(crate::thumbs::ThumbSlot {
                         app_id: rep.app_id.clone(),
                         title: rep.title.clone(),
-                        x: (thumb_x * inv).round() as i32,
-                        y: (thumb_y * inv).round() as i32,
-                        w: (thumb_w * inv).round() as i32,
-                        h: (thumb_h * inv).round() as i32,
+                        x: ((r.x + slide_x) * inv).round() as i32,
+                        y: (r.y * inv).round() as i32,
+                        w: (r.w * inv).round() as i32,
+                        h: (r.h * inv).round() as i32,
+                        close: Some(close),
                     });
+                }
+                thumbs.update(&slots);
+            } else if matches!(app.visibility, crate::app::Visibility::Visible)
+                && app.collapse_progress() > 0.5
+                && app.mini_dock_hover.is_some()
+                && app.panel_view == crate::app::PanelView::Default
+                && !app.settings_open
+            {
+                // Dock hover preview: one thumbnail slot per window of
+                // the hovered pinned app, arrayed horizontally.
+                let mut slots: Vec<crate::thumbs::ThumbSlot> = Vec::new();
+                let panel_logical = lntrn_render::Rect::new(p.rect.x, p.rect.y, p.rect.w, p.rect.h);
+                let pinned = app.launcher.pinned_entries(&app.apps);
+                let idx = app.mini_dock_hover.unwrap();
+                if let Some(entry) = pinned.get(idx) {
+                    let windows = crate::mini_dock::windows_for_app(
+                        &app.toplevels, &entry.app_id,
+                    );
+                    if !windows.is_empty() {
+                        let tiles = crate::mini_dock::preview_tile_rects(
+                            panel_logical, scale_f, pinned.len(), idx, windows.len(),
+                        );
+                        let inv = 1.0 / scale_f;
+                        let phys_cx = wl.cursor_x as f32 * scale_f;
+                        let phys_cy = wl.cursor_y as f32 * scale_f;
+                        for (tile, window) in tiles.iter().zip(windows.iter()) {
+                            let close = crate::mini_dock::preview_close_button_rect(*tile, scale_f);
+                            let close_hovered = phys_cx >= close.x
+                                && phys_cx <= close.x + close.w
+                                && phys_cy >= close.y
+                                && phys_cy <= close.y + close.h;
+                            slots.push(crate::thumbs::ThumbSlot {
+                                app_id: window.app_id.clone(),
+                                title: window.title.clone(),
+                                x: (tile.x * inv).round() as i32,
+                                y: (tile.y * inv).round() as i32,
+                                w: (tile.w * inv).round() as i32,
+                                h: (tile.h * inv).round() as i32,
+                                close: Some(crate::thumbs::CloseBtn {
+                                    x: (close.x * inv).round() as i32,
+                                    y: (close.y * inv).round() as i32,
+                                    w: (close.w * inv).round() as i32,
+                                    h: (close.h * inv).round() as i32,
+                                    hovered: close_hovered,
+                                }),
+                            });
+                        }
+                    }
                 }
                 thumbs.update(&slots);
             } else {
@@ -1273,9 +2159,12 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                 // password) draw over previously-queued text. Layer 0 is
                 // base content; layer 1 is overlays. See
                 // lntrn-render/TEXT_OCCLUSION_FIX.md.
-                let layers = painter.layer_count().max(text.layer_count());
+                let layers = painter
+                    .layer_count()
+                    .max(text.layer_count())
+                    .max(mono_text.layer_count());
 
-                // Layer 0: base painter, textures, base text.
+                // Layer 0: base painter, textures, base text, mono text.
                 painter.render_layer(
                     0,
                     &gpu,
@@ -1287,6 +2176,7 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                     tex_pass.render_pass(&gpu, frame.encoder_mut(), &view, &tex_draws, None);
                 }
                 text.render_layer(0, &gpu, frame.encoder_mut(), &view);
+                mono_text.render_layer(0, &gpu, frame.encoder_mut(), &view);
 
                 // Overlay layers (modals).
                 if layers > 1 {
@@ -1296,6 +2186,7 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                     for li in 1..layers {
                         painter.render_layer(li, &gpu, frame.encoder_mut(), &view, None);
                         text.render_layer(li, &gpu, frame.encoder_mut(), &view);
+                        mono_text.render_layer(li, &gpu, frame.encoder_mut(), &view);
                     }
                 }
 
@@ -1332,6 +2223,53 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
 ///
 /// Currently the battery toggle, audio slider, and audio device list
 /// are interactive; future controls plug in here.
+/// Phys-px rect for the always-on Files quick-locations strip drawn
+/// inside the controls row. Mirrors the layout used by
+/// `files::render::draw_collapsed_strip`. Returns `None` when the
+/// collapse chevron isn't laid out (shouldn't happen in practice).
+fn files_strip_rect(
+    app: &crate::app::AppState,
+    panel_rect: lntrn_render::Rect,
+    scale: f32,
+) -> Option<lntrn_render::Rect> {
+    let chev = app.controls.tile_layout(
+        crate::controls::TileId::Collapse,
+        panel_rect,
+        scale,
+        crate::app::PanelView::Files,
+    )?;
+    let pad = crate::controls::ROW_HORIZONTAL_PAD * scale;
+    let gap = 12.0 * scale;
+    let x = panel_rect.x + pad;
+    let right_edge = chev.x - gap;
+    let w = (right_edge - x).max(0.0);
+    if w <= 0.0 {
+        return None;
+    }
+    let h = chev.h - 4.0 * scale;
+    let y = chev.y + 2.0 * scale;
+    Some(lntrn_render::Rect::new(x, y, w, h))
+}
+
+/// Build the items list for the Files sort context menu. The current
+/// sort column gets a small arrow indicator suggesting direction.
+fn sort_menu_items(
+    state: &crate::files::FilesState,
+) -> Vec<crate::launcher::context_menu::MenuItem> {
+    use crate::files::{SortBy, SortDir};
+    use crate::launcher::context_menu::{MenuAction, MenuItem};
+    let arrow = if state.sort_dir == SortDir::Asc { "↑" } else { "↓" };
+    let mark = |by: SortBy, label: &str| -> String {
+        if state.sort_by == by { format!("{}  {}", label, arrow) } else { label.to_string() }
+    };
+    vec![
+        MenuItem { label: mark(SortBy::Name, "Name"), action: MenuAction::FilesSortByName },
+        MenuItem { label: mark(SortBy::Size, "Size"), action: MenuAction::FilesSortBySize },
+        MenuItem { label: mark(SortBy::Modified, "Date Modified"), action: MenuAction::FilesSortByDate },
+        MenuItem { label: mark(SortBy::Type, "Type"), action: MenuAction::FilesSortByType },
+    ]
+}
+
 fn handle_control_view_click(
     app: &mut AppState,
     text: &mut TextRenderer,
@@ -1676,14 +2614,25 @@ fn handle_control_view_click(
                         // before another kill can fire.
                         app.controls.sysmon.selected_pid = None;
                     }
+                    crate::controls::sysmon::view::SysMonHit::SortByCpu => {
+                        let next = app.controls.sysmon.sort.toggle_cpu();
+                        app.controls.sysmon.set_sort(next);
+                    }
+                    crate::controls::sysmon::view::SysMonHit::SortByMem => {
+                        let next = app.controls.sysmon.sort.toggle_mem();
+                        app.controls.sysmon.set_sort(next);
+                    }
+                    crate::controls::sysmon::view::SysMonHit::ClearFilter => {
+                        app.controls.sysmon.filter.clear();
+                    }
                 }
                 return true;
             }
             false
         }
         // No expanded view — click handling is shortcut in the press
-        // path (toggle_collapsed), so we never reach here.
-        crate::controls::TileId::Collapse => false,
+        // path, so we never reach here for these.
+        crate::controls::TileId::Collapse | crate::controls::TileId::TerminalClear => false,
     }
 }
 

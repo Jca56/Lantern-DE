@@ -1,7 +1,11 @@
-//! Native Wayland clipboard via zwlr-data-control-v1 protocol.
+//! Native Wayland clipboard.
 //!
-//! Runs a background thread with its own Wayland connection to serve
-//! copy data on demand (Wayland's source-based clipboard model).
+//! Tries `ext-data-control-v1` first (KDE Plasma 6.2+, GNOME 47+, niri),
+//! falls back to `zwlr-data-control-v1` (wlroots / sway / Lantern DE).
+//! Both protocols are wire-identical apart from their namespace.
+//!
+//! Runs a background thread with its own Wayland connection so copy
+//! data can be served on demand (Wayland's source-based clipboard model).
 
 use std::io::{Read, Write};
 use std::os::fd::AsFd;
@@ -12,13 +16,10 @@ use nix::poll::{PollFd, PollFlags, PollTimeout};
 use nix::unistd::pipe;
 use wayland_client::protocol::{wl_registry, wl_seat};
 use wayland_client::{
-    delegate_noop, event_created_child, globals, Connection, Dispatch, EventQueue, Proxy,
-    QueueHandle,
+    delegate_noop, event_created_child, globals, Connection, Dispatch, EventQueue, QueueHandle,
 };
-use wayland_protocols_wlr::data_control::v1::client::{
-    zwlr_data_control_device_v1, zwlr_data_control_manager_v1, zwlr_data_control_offer_v1,
-    zwlr_data_control_source_v1,
-};
+use wayland_protocols::ext::data_control::v1::client as ext_dc;
+use wayland_protocols_wlr::data_control::v1::client as wlr_dc;
 
 const MIME_UTF8: &str = "text/plain;charset=utf-8";
 const MIME_PLAIN: &str = "text/plain";
@@ -66,13 +67,28 @@ impl WaylandClipboard {
 
 // -- background thread -------------------------------------------------------
 
+enum Backend {
+    Ext {
+        mgr: ext_dc::ext_data_control_manager_v1::ExtDataControlManagerV1,
+        device: ext_dc::ext_data_control_device_v1::ExtDataControlDeviceV1,
+    },
+    Wlr {
+        mgr: wlr_dc::zwlr_data_control_manager_v1::ZwlrDataControlManagerV1,
+        device: wlr_dc::zwlr_data_control_device_v1::ZwlrDataControlDeviceV1,
+    },
+}
+
+enum CurrentOffer {
+    Ext(ext_dc::ext_data_control_offer_v1::ExtDataControlOfferV1),
+    Wlr(wlr_dc::zwlr_data_control_offer_v1::ZwlrDataControlOfferV1),
+}
+
 struct ClipState {
     #[allow(dead_code)] // must stay alive to keep seat binding
-    seat: Option<wl_seat::WlSeat>,
-    mgr: Option<zwlr_data_control_manager_v1::ZwlrDataControlManagerV1>,
-    device: Option<zwlr_data_control_device_v1::ZwlrDataControlDeviceV1>,
+    seat: wl_seat::WlSeat,
+    backend: Backend,
     qh: QueueHandle<ClipState>,
-    current_offer: Option<zwlr_data_control_offer_v1::ZwlrDataControlOfferV1>,
+    current_offer: Option<CurrentOffer>,
     offer_mimes: Vec<String>,
     copied_text: Option<String>,
 }
@@ -85,14 +101,24 @@ fn clipboard_thread(rx: mpsc::Receiver<Cmd>) -> Result<(), Box<dyn std::error::E
     let qh = queue.handle();
 
     let seat: wl_seat::WlSeat = globals.bind(&qh, 1..=8, ())?;
-    let mgr: zwlr_data_control_manager_v1::ZwlrDataControlManagerV1 =
-        globals.bind(&qh, 1..=2, ())?;
-    let device = mgr.get_data_device(&seat, &qh, ());
+
+    // Prefer ext-data-control (upstream-standard, KDE Plasma 6.2+, GNOME 47+).
+    // Fall back to wlr-data-control (wlroots, Lantern DE).
+    let backend = if let Ok(mgr) = globals
+        .bind::<ext_dc::ext_data_control_manager_v1::ExtDataControlManagerV1, _, _>(&qh, 1..=1, ())
+    {
+        let device = mgr.get_data_device(&seat, &qh, ());
+        Backend::Ext { mgr, device }
+    } else {
+        let mgr: wlr_dc::zwlr_data_control_manager_v1::ZwlrDataControlManagerV1 =
+            globals.bind(&qh, 1..=2, ())?;
+        let device = mgr.get_data_device(&seat, &qh, ());
+        Backend::Wlr { mgr, device }
+    };
 
     let mut state = ClipState {
-        seat: Some(seat),
-        mgr: Some(mgr),
-        device: Some(device),
+        seat,
+        backend,
         qh: qh.clone(),
         current_offer: None,
         offer_mimes: Vec::new(),
@@ -143,15 +169,21 @@ fn clipboard_thread(rx: mpsc::Receiver<Cmd>) -> Result<(), Box<dyn std::error::E
 }
 
 fn do_copy(state: &mut ClipState, text: &str) {
-    let (mgr, device) = match (state.mgr.as_ref(), state.device.as_ref()) {
-        (Some(m), Some(d)) => (m, d),
-        _ => return,
-    };
     state.copied_text = Some(text.to_string());
-    let source = mgr.create_data_source(&state.qh, ());
-    source.offer(MIME_UTF8.to_string());
-    source.offer(MIME_PLAIN.to_string());
-    device.set_selection(Some(&source));
+    match &state.backend {
+        Backend::Ext { mgr, device } => {
+            let source = mgr.create_data_source(&state.qh, ());
+            source.offer(MIME_UTF8.to_string());
+            source.offer(MIME_PLAIN.to_string());
+            device.set_selection(Some(&source));
+        }
+        Backend::Wlr { mgr, device } => {
+            let source = mgr.create_data_source(&state.qh, ());
+            source.offer(MIME_UTF8.to_string());
+            source.offer(MIME_PLAIN.to_string());
+            device.set_selection(Some(&source));
+        }
+    }
 }
 
 fn do_paste(state: &mut ClipState, queue: &mut EventQueue<ClipState>) -> Option<String> {
@@ -165,12 +197,11 @@ fn do_paste(state: &mut ClipState, queue: &mut EventQueue<ClipState>) -> Option<
     }
 
     let (read_fd, write_fd) = pipe().ok()?;
-    offer.receive(MIME_UTF8.to_string(), write_fd.as_fd());
-
-    // Flush the receive request before closing write end
-    if let Some(mgr) = state.mgr.as_ref() {
-        let _ = mgr.id(); // just to ensure conn is alive
+    match offer {
+        CurrentOffer::Ext(o) => o.receive(MIME_UTF8.to_string(), write_fd.as_fd()),
+        CurrentOffer::Wlr(o) => o.receive(MIME_UTF8.to_string(), write_fd.as_fd()),
     }
+
     queue.roundtrip(state).ok()?;
 
     // Close write end so the source knows we're done
@@ -198,23 +229,27 @@ impl Dispatch<wl_registry::WlRegistry, globals::GlobalListContents> for ClipStat
 }
 
 delegate_noop!(ClipState: ignore wl_seat::WlSeat);
-delegate_noop!(ClipState: ignore zwlr_data_control_manager_v1::ZwlrDataControlManagerV1);
+delegate_noop!(ClipState: ignore ext_dc::ext_data_control_manager_v1::ExtDataControlManagerV1);
+delegate_noop!(ClipState: ignore wlr_dc::zwlr_data_control_manager_v1::ZwlrDataControlManagerV1);
 
-impl Dispatch<zwlr_data_control_device_v1::ZwlrDataControlDeviceV1, ()> for ClipState {
+// -- ext-data-control device + offer + source --------------------------------
+
+impl Dispatch<ext_dc::ext_data_control_device_v1::ExtDataControlDeviceV1, ()> for ClipState {
     fn event(
         state: &mut Self,
-        _proxy: &zwlr_data_control_device_v1::ZwlrDataControlDeviceV1,
-        event: zwlr_data_control_device_v1::Event,
+        _proxy: &ext_dc::ext_data_control_device_v1::ExtDataControlDeviceV1,
+        event: ext_dc::ext_data_control_device_v1::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        use ext_dc::ext_data_control_device_v1::Event;
         match event {
-            zwlr_data_control_device_v1::Event::DataOffer { id } => {
+            Event::DataOffer { id } => {
                 state.offer_mimes.clear();
-                state.current_offer = Some(id);
+                state.current_offer = Some(CurrentOffer::Ext(id));
             }
-            zwlr_data_control_device_v1::Event::Selection { id } => {
+            Event::Selection { id } => {
                 if id.is_none() {
                     state.current_offer = None;
                     state.offer_mimes.clear();
@@ -224,38 +259,38 @@ impl Dispatch<zwlr_data_control_device_v1::ZwlrDataControlDeviceV1, ()> for Clip
         }
     }
 
-    // DataOffer event (opcode 0) creates a new zwlr_data_control_offer_v1 object
-    event_created_child!(ClipState, zwlr_data_control_device_v1::ZwlrDataControlDeviceV1, [
-        0 => (zwlr_data_control_offer_v1::ZwlrDataControlOfferV1, ()),
+    event_created_child!(ClipState, ext_dc::ext_data_control_device_v1::ExtDataControlDeviceV1, [
+        0 => (ext_dc::ext_data_control_offer_v1::ExtDataControlOfferV1, ()),
     ]);
 }
 
-impl Dispatch<zwlr_data_control_offer_v1::ZwlrDataControlOfferV1, ()> for ClipState {
+impl Dispatch<ext_dc::ext_data_control_offer_v1::ExtDataControlOfferV1, ()> for ClipState {
     fn event(
         state: &mut Self,
-        _proxy: &zwlr_data_control_offer_v1::ZwlrDataControlOfferV1,
-        event: zwlr_data_control_offer_v1::Event,
+        _proxy: &ext_dc::ext_data_control_offer_v1::ExtDataControlOfferV1,
+        event: ext_dc::ext_data_control_offer_v1::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        if let zwlr_data_control_offer_v1::Event::Offer { mime_type } = event {
+        if let ext_dc::ext_data_control_offer_v1::Event::Offer { mime_type } = event {
             state.offer_mimes.push(mime_type);
         }
     }
 }
 
-impl Dispatch<zwlr_data_control_source_v1::ZwlrDataControlSourceV1, ()> for ClipState {
+impl Dispatch<ext_dc::ext_data_control_source_v1::ExtDataControlSourceV1, ()> for ClipState {
     fn event(
         state: &mut Self,
-        _proxy: &zwlr_data_control_source_v1::ZwlrDataControlSourceV1,
-        event: zwlr_data_control_source_v1::Event,
+        _proxy: &ext_dc::ext_data_control_source_v1::ExtDataControlSourceV1,
+        event: ext_dc::ext_data_control_source_v1::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        use ext_dc::ext_data_control_source_v1::Event;
         match event {
-            zwlr_data_control_source_v1::Event::Send { mime_type, fd } => {
+            Event::Send { mime_type, fd } => {
                 if mime_type.contains("text/plain") {
                     if let Some(ref text) = state.copied_text {
                         let mut file = std::fs::File::from(fd);
@@ -263,9 +298,79 @@ impl Dispatch<zwlr_data_control_source_v1::ZwlrDataControlSourceV1, ()> for Clip
                     }
                 }
             }
-            zwlr_data_control_source_v1::Event::Cancelled {} => {
-                // Another app took the clipboard — that's fine
+            Event::Cancelled {} => {}
+            _ => {}
+        }
+    }
+}
+
+// -- wlr-data-control device + offer + source --------------------------------
+
+impl Dispatch<wlr_dc::zwlr_data_control_device_v1::ZwlrDataControlDeviceV1, ()> for ClipState {
+    fn event(
+        state: &mut Self,
+        _proxy: &wlr_dc::zwlr_data_control_device_v1::ZwlrDataControlDeviceV1,
+        event: wlr_dc::zwlr_data_control_device_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        use wlr_dc::zwlr_data_control_device_v1::Event;
+        match event {
+            Event::DataOffer { id } => {
+                state.offer_mimes.clear();
+                state.current_offer = Some(CurrentOffer::Wlr(id));
             }
+            Event::Selection { id } => {
+                if id.is_none() {
+                    state.current_offer = None;
+                    state.offer_mimes.clear();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    event_created_child!(ClipState, wlr_dc::zwlr_data_control_device_v1::ZwlrDataControlDeviceV1, [
+        0 => (wlr_dc::zwlr_data_control_offer_v1::ZwlrDataControlOfferV1, ()),
+    ]);
+}
+
+impl Dispatch<wlr_dc::zwlr_data_control_offer_v1::ZwlrDataControlOfferV1, ()> for ClipState {
+    fn event(
+        state: &mut Self,
+        _proxy: &wlr_dc::zwlr_data_control_offer_v1::ZwlrDataControlOfferV1,
+        event: wlr_dc::zwlr_data_control_offer_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wlr_dc::zwlr_data_control_offer_v1::Event::Offer { mime_type } = event {
+            state.offer_mimes.push(mime_type);
+        }
+    }
+}
+
+impl Dispatch<wlr_dc::zwlr_data_control_source_v1::ZwlrDataControlSourceV1, ()> for ClipState {
+    fn event(
+        state: &mut Self,
+        _proxy: &wlr_dc::zwlr_data_control_source_v1::ZwlrDataControlSourceV1,
+        event: wlr_dc::zwlr_data_control_source_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        use wlr_dc::zwlr_data_control_source_v1::Event;
+        match event {
+            Event::Send { mime_type, fd } => {
+                if mime_type.contains("text/plain") {
+                    if let Some(ref text) = state.copied_text {
+                        let mut file = std::fs::File::from(fd);
+                        let _ = file.write_all(text.as_bytes());
+                    }
+                }
+            }
+            Event::Cancelled {} => {}
             _ => {}
         }
     }

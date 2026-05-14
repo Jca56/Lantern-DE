@@ -15,7 +15,9 @@ use super::proc::{
     list_processes, read_cpu_temp_c, read_cpu_totals, read_meminfo, read_net_total, CpuTotals,
     MemInfo, NetCounters, ProcRaw,
 };
-use super::{ProcessRow, PROCESS_LIST_LEN, PROCESS_REFRESH, SAMPLE_PERIOD};
+use super::{
+    apply_sort_in_place, ProcSort, ProcessRow, PROCESS_LIST_LEN, PROCESS_REFRESH, SAMPLE_PERIOD,
+};
 
 /// Commands sent from the render thread → worker.
 pub(super) enum SysMonCmd {
@@ -23,6 +25,9 @@ pub(super) enum SysMonCmd {
     Resume,
     /// Panel hid; drop accumulated deltas so a fresh open starts clean.
     Pause,
+    /// User clicked a column header — change the order the worker
+    /// applies before truncating + sending the next process batch.
+    SetSort(ProcSort),
 }
 
 /// Events the worker emits.
@@ -51,6 +56,7 @@ pub(super) fn run(tx: mpsc::Sender<SysMonEvent>, cmd_rx: mpsc::Receiver<SysMonCm
     let mut prev_proc: HashMap<i32, u64> = HashMap::new();
     let mut last_sample_at: Option<Instant> = None;
     let mut last_proc_refresh_at: Option<Instant> = None;
+    let mut sort = ProcSort::CpuDesc;
     // sysconf is stable for the life of the process — cache it once.
     let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) as f32 };
 
@@ -69,6 +75,9 @@ pub(super) fn run(tx: mpsc::Sender<SysMonEvent>, cmd_rx: mpsc::Receiver<SysMonCm
                     prev_proc.clear();
                     last_sample_at = None;
                     last_proc_refresh_at = None;
+                }
+                SysMonCmd::SetSort(s) => {
+                    sort = s;
                 }
             }
         }
@@ -102,7 +111,7 @@ pub(super) fn run(tx: mpsc::Sender<SysMonEvent>, cmd_rx: mpsc::Receiver<SysMonCm
                 let proc_dt = last_proc_refresh_at
                     .map(|p| now.duration_since(p).as_secs_f32())
                     .unwrap_or(PROCESS_REFRESH.as_secs_f32());
-                let rows = build_process_rows(&mut prev_proc, hz, proc_dt);
+                let rows = build_process_rows(&mut prev_proc, hz, proc_dt, sort);
                 let _ = tx.send(SysMonEvent::Processes(rows));
                 last_proc_refresh_at = Some(now);
             }
@@ -159,6 +168,7 @@ fn build_process_rows(
     prev_proc: &mut HashMap<i32, u64>,
     hz: f32,
     dt_secs: f32,
+    sort: ProcSort,
 ) -> Vec<ProcessRow> {
     let raws = list_processes();
     let mut new_prev: HashMap<i32, u64> = HashMap::with_capacity(raws.len());
@@ -187,12 +197,7 @@ fn build_process_rows(
         });
     }
     *prev_proc = new_prev;
-    rows.sort_by(|a, b| {
-        b.cpu_load
-            .partial_cmp(&a.cpu_load)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| b.rss_bytes.cmp(&a.rss_bytes))
-    });
+    apply_sort_in_place(&mut rows, sort);
     rows.truncate(PROCESS_LIST_LEN);
     rows
 }

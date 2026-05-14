@@ -13,6 +13,7 @@ const ICON_LEFT_PAD: f32 = 16.0;
 
 pub const TILE_WIDTH: f32 = ICON_LEFT_PAD + ICON_SIZE;
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw_inline(
     painter: &mut Painter,
     _text: &mut TextRenderer,
@@ -22,6 +23,7 @@ pub fn draw_inline(
     alpha: f32,
     _surface_w: u32,
     _surface_h: u32,
+    lit: bool,
 ) {
     if !wifi.is_present() {
         return;
@@ -35,7 +37,12 @@ pub fn draw_inline(
         WifiState::Disconnected => 0,
         WifiState::Off => 0,
     };
-    draw_signal_icon(painter, icon_x, icon_y, icon_size, icon_size, bars, alpha);
+    let on_color = if lit {
+        Color::from_rgb8(0xc8, 0x86, 0x0a)
+    } else {
+        Color::from_rgb8(0xff, 0xff, 0xff)
+    };
+    draw_signal_icon_colored(painter, icon_x, icon_y, icon_size, icon_size, bars, alpha, on_color);
 }
 
 /// Convert a 0-100 signal value into a 0-3 bar count. 0 means "no
@@ -60,7 +67,23 @@ pub(super) fn draw_signal_icon(
     bars: u32,
     alpha: f32,
 ) {
-    let on = Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(alpha);
+    draw_signal_icon_colored(painter, x, y, w, h, bars, alpha, Color::from_rgb8(0xff, 0xff, 0xff));
+}
+
+/// Same as `draw_signal_icon` but with an explicit "on" color so the
+/// inline tile can show gold bars when hovered or active.
+#[allow(clippy::too_many_arguments)]
+fn draw_signal_icon_colored(
+    painter: &mut Painter,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    bars: u32,
+    alpha: f32,
+    on_rgb: Color,
+) {
+    let on = Color { r: on_rgb.r, g: on_rgb.g, b: on_rgb.b, a: alpha };
     let off = Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(0.20 * alpha);
 
     // Three vertical bars, increasing height left → right.

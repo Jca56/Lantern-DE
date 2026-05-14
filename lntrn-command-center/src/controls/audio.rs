@@ -468,6 +468,7 @@ const MUTE_SLASH_RGB: (u8, u8, u8) = (0xe0, 0x40, 0x40);
 /// + small gap + 120pt bar.
 pub const TILE_WIDTH: f32 = 22.0 + 10.0 + 120.0;
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw_inline(
     painter: &mut Painter,
     _text: &mut TextRenderer,
@@ -477,6 +478,7 @@ pub fn draw_inline(
     alpha: f32,
     _surface_w: u32,
     _surface_h: u32,
+    lit: bool,
 ) {
     if !audio.is_present() {
         return;
@@ -487,12 +489,15 @@ pub fn draw_inline(
     let bar_w = BAR_WIDTH * scale;
     let bar_h = BAR_HEIGHT * scale;
 
-    // The slot is now content-sized (TILE_WIDTH), so left-align the
-    // group: speaker at slot.x, bar to its right.
     let group_x = layout.x;
 
+    let icon_color = if lit {
+        Color::from_rgb8(0xc8, 0x86, 0x0a).with_alpha(alpha)
+    } else {
+        Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(alpha)
+    };
     let icon_y = layout.y + (layout.h - icon_size) / 2.0;
-    draw_speaker(painter, group_x, icon_y, icon_size, icon_size, audio.is_muted(), alpha);
+    draw_speaker_colored(painter, group_x, icon_y, icon_size, icon_size, audio.is_muted(), icon_color);
 
     // Volume bar.
     let bar_x = group_x + icon_size + icon_bar_gap;
@@ -522,9 +527,8 @@ pub fn draw_inline(
     }
 }
 
-/// Draw a stylised speaker (cone + box). When `muted` is true, a red
-/// diagonal slash is drawn across it. Pure polygons — same approach as
-/// the lightning bolt.
+/// Original speaker draw used by the expanded view — wraps the
+/// colored variant with the default white fill.
 fn draw_speaker(
     painter: &mut Painter,
     x: f32,
@@ -534,8 +538,23 @@ fn draw_speaker(
     muted: bool,
     alpha: f32,
 ) {
-    let pt = |fx: f32, fy: f32| (x + fx * w, y + fy * h);
     let color = Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(alpha);
+    draw_speaker_colored(painter, x, y, w, h, muted, color);
+}
+
+/// Variant of [`draw_speaker`] that accepts an explicit fill color —
+/// used by the inline tile so it can recolor the icon gold when the
+/// tile is hovered or its view is active.
+fn draw_speaker_colored(
+    painter: &mut Painter,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    muted: bool,
+    color: Color,
+) {
+    let pt = |fx: f32, fy: f32| (x + fx * w, y + fy * h);
 
     // Speaker silhouette: small box on the left + flared cone on the right.
     //
@@ -584,7 +603,7 @@ fn draw_speaker(
     if muted {
         // Diagonal red slash — bottom-left to top-right corner.
         let red = Color::from_rgb8(MUTE_SLASH_RGB.0, MUTE_SLASH_RGB.1, MUTE_SLASH_RGB.2)
-            .with_alpha(alpha);
+            .with_alpha(color.a);
         let p1 = pt(0.0, 1.0);
         let p2 = pt(1.0, 0.0);
         painter.line(p1.0, p1.1, p2.0, p2.1, w * 0.12, red);

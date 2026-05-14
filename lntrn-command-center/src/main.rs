@@ -6,6 +6,8 @@
 
 mod app;
 mod controls;
+mod emojis;
+mod files;
 mod ipc;
 mod launcher;
 mod layershell;
@@ -13,8 +15,12 @@ mod mini_dock;
 mod power;
 mod render;
 mod search;
+mod settings;
+mod terminal;
 mod thumbs;
 mod toplevel;
+mod view_arrows;
+mod view_indicator;
 
 fn main() {
     tracing_subscriber::fmt()

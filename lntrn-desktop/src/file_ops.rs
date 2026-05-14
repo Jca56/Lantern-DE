@@ -420,10 +420,8 @@ impl App {
     }
 }
 
-fn wl_copy(text: String) {
-    std::thread::spawn(move || {
-        let _ = std::process::Command::new("lntrn-copy")
-            .arg(&text)
-            .spawn();
-    });
+fn wl_copy(_text: String) {
+    // TODO: route through the compositor's clipboard manager once it lands.
+    // Previously shelled out to lntrn-copy, but that binary was removed.
+    eprintln!("[file_ops] wl_copy: clipboard manager not yet implemented");
 }

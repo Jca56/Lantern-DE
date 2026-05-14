@@ -22,6 +22,7 @@ pub mod collapse;
 pub mod events;
 pub mod sysmon;
 pub mod temp;
+pub mod terminal_header;
 pub mod tile;
 pub mod wifi;
 
@@ -65,7 +66,8 @@ pub enum TileId {
     /// Chevron button that toggles the panel between full and
     /// just-the-row "mini" modes. Special-cased in click handling.
     Collapse,
-    // Mpris, Power
+    /// "Clear" button (Terminal view header).
+    TerminalClear,
 }
 
 /// Top-level controls state. The "which view is showing" decision lives
@@ -109,18 +111,37 @@ impl Controls {
     /// Ordered list of tiles currently rendered in the row, paired with
     /// their layout slot (side + width). Clock + audio + brightness
     /// dock to the left, battery to the right.
-    fn tile_slots(&self) -> Vec<(TileId, tile::Slot)> {
+    fn tile_slots(&self, panel_view: crate::app::PanelView) -> Vec<(TileId, tile::Slot)> {
         let mut out: Vec<(TileId, tile::Slot)> = Vec::new();
         // Collapse chevron — declared first on the right side so it
-        // ends up rightmost (right tiles pack right-to-left).
+        // ends up rightmost (right tiles pack right-to-left). It's
+        // panel chrome — present in every view.
         out.push((
             TileId::Collapse,
             tile::Slot { side: tile::Side::Right, logical_width: collapse::TILE_WIDTH },
         ));
-        out.push((
-            TileId::Clock,
-            tile::Slot { side: tile::Side::Left, logical_width: clock::TILE_WIDTH },
-        ));
+
+        match panel_view {
+            crate::app::PanelView::Terminal => {
+                // Terminal view: nothing on the left — the input strip
+                // is rendered inline by `draw_row` and fills the whole
+                // row from the left padding to the chevron. `clear` is
+                // a built-in shell command so we don't need a button.
+                return out;
+            }
+            crate::app::PanelView::Files => {
+                // Files view: nav + breadcrumb live in the body header,
+                // not the controls row. Only the collapse chevron stays.
+                return out;
+            }
+            crate::app::PanelView::Default => {
+                out.push((
+                    TileId::Clock,
+                    tile::Slot { side: tile::Side::Left, logical_width: clock::TILE_WIDTH },
+                ));
+            }
+        }
+
         if self.audio.is_present() {
             out.push((
                 TileId::Audio,
@@ -176,8 +197,15 @@ impl Controls {
     }
 
     /// Hit-test a click against the controls row.
-    pub fn hit_test(&self, panel: Rect, scale: f32, phys_x: f32, phys_y: f32) -> Option<TileId> {
-        let slots = self.tile_slots();
+    pub fn hit_test(
+        &self,
+        panel: Rect,
+        scale: f32,
+        phys_x: f32,
+        phys_y: f32,
+        panel_view: crate::app::PanelView,
+    ) -> Option<TileId> {
+        let slots = self.tile_slots(panel_view);
         let just_slots: Vec<_> = slots.iter().map(|(_, s)| *s).collect();
         let layouts = tile::pack(panel, scale, &just_slots);
         for ((id, _), layout) in slots.iter().zip(layouts.iter()) {
@@ -190,8 +218,14 @@ impl Controls {
 
     /// Resolved physical-pixel layout for a specific tile, if it's
     /// currently present in the row.
-    pub fn tile_layout(&self, id: TileId, panel: Rect, scale: f32) -> Option<tile::TileLayout> {
-        let slots = self.tile_slots();
+    pub fn tile_layout(
+        &self,
+        id: TileId,
+        panel: Rect,
+        scale: f32,
+        panel_view: crate::app::PanelView,
+    ) -> Option<tile::TileLayout> {
+        let slots = self.tile_slots(panel_view);
         let just_slots: Vec<_> = slots.iter().map(|(_, s)| *s).collect();
         let layouts = tile::pack(panel, scale, &just_slots);
         slots
@@ -214,48 +248,62 @@ pub fn content_top_y(panel: Rect, scale: f32) -> f32 {
 /// drawn separately by `crate::render::draw_content` based on the
 /// current `PanelMode`. `selected_tile` highlights one tile (the one
 /// whose view is currently showing).
+#[allow(clippy::too_many_arguments)]
 pub fn draw_row(
     painter: &mut Painter,
     text: &mut TextRenderer,
     controls: &Controls,
     selected_tile: Option<TileId>,
+    hovered_tile: Option<TileId>,
     panel: Rect,
     scale: f32,
     alpha: f32,
     surface_w: u32,
     surface_h: u32,
     icons: &mut Vec<crate::render::IconRequest>,
+    panel_view: crate::app::PanelView,
 ) {
     let pad = ROW_HORIZONTAL_PAD * scale;
     let row_top = panel.y + ROW_TOP_MARGIN * scale;
     let row_h = ROW_HEIGHT * scale;
     let underline_y = row_top + row_h + ROW_UNDERLINE_GAP * scale;
 
-    let slot_pairs = controls.tile_slots();
+    let slot_pairs = controls.tile_slots(panel_view);
     let just_slots: Vec<_> = slot_pairs.iter().map(|(_, s)| *s).collect();
     let layouts = tile::pack(panel, scale, &just_slots);
 
     for ((id, _), layout) in slot_pairs.iter().zip(layouts.iter()) {
-        let _is_selected = selected_tile == Some(*id);
-        // Selection highlight is currently subtle / off; a future
-        // iteration could draw a faint accent dot or underline beneath
-        // the active tile.
+        // Gold-icon highlight: a tile reads as "lit" when it's hovered
+        // OR when the panel is currently showing its expanded view.
+        // We compute it here and pass it into each tile so the icon
+        // itself recolors, matching the waffle-button pattern.
+        let is_hovered = hovered_tile == Some(*id);
+        let is_active = match id {
+            TileId::Audio => matches!(selected_tile, Some(TileId::Audio)),
+            TileId::Brightness => matches!(selected_tile, Some(TileId::Brightness)),
+            TileId::Wifi => matches!(selected_tile, Some(TileId::Wifi)),
+            TileId::Bluetooth => matches!(selected_tile, Some(TileId::Bluetooth)),
+            TileId::Battery => matches!(selected_tile, Some(TileId::Battery)),
+            TileId::Clock => matches!(selected_tile, Some(TileId::Clock)),
+            _ => false,
+        };
+        let lit = is_hovered || is_active;
 
         match id {
             TileId::Clock => clock::draw_inline(
-                painter, text, &controls.clock, layout, scale, alpha, surface_w, surface_h,
+                painter, text, &controls.clock, layout, scale, alpha, surface_w, surface_h, lit,
             ),
             TileId::Audio => audio::draw_inline(
-                painter, text, &controls.audio, layout, scale, alpha, surface_w, surface_h,
+                painter, text, &controls.audio, layout, scale, alpha, surface_w, surface_h, lit,
             ),
             TileId::Brightness => brightness::draw_inline(
-                painter, text, &controls.brightness, layout, scale, alpha, surface_w, surface_h,
+                painter, text, &controls.brightness, layout, scale, alpha, surface_w, surface_h, lit,
             ),
             TileId::Wifi => wifi::draw_inline(
-                painter, text, &controls.wifi, layout, scale, alpha, surface_w, surface_h,
+                painter, text, &controls.wifi, layout, scale, alpha, surface_w, surface_h, lit,
             ),
             TileId::Bluetooth => bluetooth::draw_inline(
-                painter, text, &controls.bluetooth, layout, scale, alpha, surface_w, surface_h,
+                painter, text, &controls.bluetooth, layout, scale, alpha, surface_w, surface_h, lit,
             ),
             TileId::Battery => battery::draw_inline(
                 painter, text, &controls.battery, layout, scale, alpha, surface_w, surface_h,
@@ -267,6 +315,9 @@ pub fn draw_row(
                 painter, text, icons, &controls.sysmon, layout, scale, alpha, surface_w, surface_h,
             ),
             TileId::Collapse => {} // drawn separately so we can pass `collapsed` state
+            TileId::TerminalClear => {
+                terminal_header::draw_inline(painter, text, layout, scale, alpha)
+            }
         }
     }
 
@@ -325,8 +376,8 @@ pub fn draw_view(
         TileId::Temp => sysmon::view::draw_view(
             painter, text, &controls.sysmon, panel, top_y, scale, alpha, surface_w, surface_h,
         ),
-        // Collapse has no expanded view — clicks are toggled in the
-        // event handler before reaching draw_view.
-        TileId::Collapse => top_y,
+        // Tiles that don't open an expanded view — their clicks are
+        // intercepted in the input handler before reaching here.
+        TileId::Collapse | TileId::TerminalClear => top_y,
     };
 }

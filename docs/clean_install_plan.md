@@ -103,9 +103,7 @@ fi
 │   ├── lntrn-session-manager
 │   ├── lntrn-browser
 │   ├── lntrn-portal
-│   ├── lntrn-git
-│   ├── lntrn-copy
-│   └── lntrn-paste
+│   └── lntrn-git
 ├── config/                 # all config files
 │   ├── compositor.toml
 │   ├── bar.toml
@@ -163,9 +161,8 @@ BINARIES := \
     lntrn-git
 
 # Crates that produce binaries with different names
-# lntrn-clipboard -> lntrn-copy, lntrn-paste
-# lntrn-snapshot  -> lntrn-snapshot, lntrn-snapshot-gui
-EXTRA_BINARIES := lntrn-copy lntrn-paste lntrn-snapshot lntrn-snapshot-gui
+# lntrn-snapshot -> lntrn-snapshot, lntrn-snapshot-gui
+EXTRA_BINARIES := lntrn-snapshot lntrn-snapshot-gui
 
 .PHONY: all build install install-bins install-config install-icons dirs clean
 

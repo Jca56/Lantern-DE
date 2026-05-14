@@ -4,7 +4,8 @@
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
 use crate::controls::sysmon::proc::{format_kb, format_rate};
-use crate::controls::sysmon::{ProcessRow, SysMon};
+use crate::controls::sysmon::process_list::{self, ProcessHit};
+use crate::controls::sysmon::SysMon;
 
 const SECTION_PAD: f32 = 24.0;
 const SECTION_GAP: f32 = 14.0;
@@ -12,9 +13,7 @@ const GRAPH_HEIGHT: f32 = 80.0;
 
 const HEADER_FONT: f32 = 18.0;
 const VALUE_FONT: f32 = 22.0;
-const ROW_FONT: f32 = 22.0;
-const PROC_HEADER_FONT: f32 = 17.0;
-const PROC_ROW_HEIGHT: f32 = 42.0;
+pub(super) const ROW_FONT: f32 = 22.0;
 
 const CPU_COLOR_RGB: (u8, u8, u8) = (0xff, 0x9a, 0x3c);
 const MEM_COLOR_RGB: (u8, u8, u8) = (0x55, 0xc6, 0xff);
@@ -30,6 +29,12 @@ pub enum SysMonHit {
     /// Click on the kill button of the **already-selected** row —
     /// SIGTERM has been requested.
     KillProcess(i32),
+    /// Click on the CPU column header — toggle CPU sort direction.
+    SortByCpu,
+    /// Click on the MEM column header — toggle MEM sort direction.
+    SortByMem,
+    /// Click on the × inside the filter strip — clear filter text.
+    ClearFilter,
 }
 
 pub fn draw_view(
@@ -94,25 +99,19 @@ pub fn draw_view(
     );
     y += graph_h + gap;
 
-    // Process list header + rows.
-    y = draw_process_list(
-        painter,
-        text,
-        sysmon,
-        Rect::new(inner_x, y, inner_w, panel.y + panel.h - y - pad),
-        scale,
-        alpha,
-        surface_w,
-        surface_h,
+    // Process list section — filter strip + sortable headers + rows.
+    let proc_rect = Rect::new(inner_x, y, inner_w, panel.y + panel.h - y - pad);
+    let lay = process_list::draw(
+        painter, text, sysmon, proc_rect, scale, alpha, surface_w, surface_h,
     );
-
+    y = lay.rows_top + lay.row_h * lay.visible_rows as f32;
     y
 }
 
-/// Hit-test a click inside the sysmon view. Returns either a
-/// `SelectProcess` (click on a row, or on the kill button of a row that
-/// isn't currently selected) or a `KillProcess` (click on the kill
-/// button of the already-selected row — the soft-confirm step).
+/// Hit-test a click inside the sysmon view. Resolves clicks against
+/// the filter strip, the sortable column headers, and the row /
+/// kill-button geometry. Returns `None` for clicks that hit nothing
+/// interactive.
 pub fn hit_test_view(
     sysmon: &SysMon,
     panel: Rect,
@@ -124,34 +123,23 @@ pub fn hit_test_view(
     let pad = SECTION_PAD * scale;
     let gap = SECTION_GAP * scale;
     let graph_h = GRAPH_HEIGHT * scale;
-    let mut y = top_y + pad + (graph_h + gap) * 3.0;
-    let row_h = PROC_ROW_HEIGHT * scale;
-    let header_h = (PROC_HEADER_FONT + 8.0) * scale;
-    y += header_h;
+    let y_proc_top = top_y + pad + (graph_h + gap) * 3.0;
     let inner_x = panel.x + pad;
     let inner_w = panel.w - pad * 2.0;
-    let kill_w = (PROC_ROW_HEIGHT - 12.0) * scale;
-    let kill_x = inner_x + inner_w - kill_w - 8.0 * scale;
-    for (i, p) in sysmon.processes.iter().enumerate() {
-        let row_y = y + row_h * i as f32;
-        if phys_y < row_y || phys_y > row_y + row_h {
-            continue;
-        }
-        if phys_x < inner_x || phys_x > inner_x + inner_w {
-            continue;
-        }
-        let kill_y = row_y + (row_h - kill_w) / 2.0;
-        let on_kill = phys_x >= kill_x
-            && phys_x <= kill_x + kill_w
-            && phys_y >= kill_y
-            && phys_y <= kill_y + kill_w;
-        if on_kill && sysmon.selected_pid == Some(p.pid) {
-            return Some(SysMonHit::KillProcess(p.pid));
-        }
-        return Some(SysMonHit::SelectProcess(p.pid));
-    }
-    None
+    let proc_rect = Rect::new(
+        inner_x, y_proc_top, inner_w, panel.y + panel.h - y_proc_top - pad,
+    );
+    let lay = process_list::layout(sysmon, proc_rect, scale);
+    let hit = process_list::hit_test(sysmon, &lay, phys_x, phys_y)?;
+    Some(match hit {
+        ProcessHit::Select(pid) => SysMonHit::SelectProcess(pid),
+        ProcessHit::Kill(pid) => SysMonHit::KillProcess(pid),
+        ProcessHit::SortByCpu => SysMonHit::SortByCpu,
+        ProcessHit::SortByMem => SysMonHit::SortByMem,
+        ProcessHit::ClearFilter => SysMonHit::ClearFilter,
+    })
 }
+
 
 /// Send `SIGTERM` to a pid. Logs at info on success, warn on failure.
 /// Returns `true` if the kernel accepted the signal.
@@ -395,140 +383,6 @@ fn draw_network_block(
     );
 }
 
-// ── Process list ────────────────────────────────────────────────────────────
-
-fn draw_process_list(
-    painter: &mut Painter,
-    text: &mut TextRenderer,
-    sysmon: &SysMon,
-    rect: Rect,
-    scale: f32,
-    alpha: f32,
-    surface_w: u32,
-    surface_h: u32,
-) -> f32 {
-    let header_font = PROC_HEADER_FONT * scale;
-    let row_font = ROW_FONT * scale;
-    let row_h = PROC_ROW_HEIGHT * scale;
-    let header_color = Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(alpha * 0.55);
-    let row_color = Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(alpha * 0.95);
-
-    let cpu_col_w = 90.0 * scale;
-    let mem_col_w = 110.0 * scale;
-    let kill_w = (PROC_ROW_HEIGHT - 12.0) * scale;
-    let pad_r = 8.0 * scale;
-    let kill_x = rect.x + rect.w - kill_w - pad_r;
-    let mem_x = kill_x - 16.0 * scale - mem_col_w;
-    let cpu_x = mem_x - 16.0 * scale - cpu_col_w;
-
-    // Header row.
-    let header_y = rect.y;
-    queue_left(text, "PROCESS", header_font, rect.x + 8.0 * scale, header_y, header_color, surface_w, surface_h);
-    queue_right(text, "CPU", header_font, cpu_x + cpu_col_w, header_y, header_color, surface_w, surface_h);
-    queue_right(text, "MEM", header_font, mem_x + mem_col_w, header_y, header_color, surface_w, surface_h);
-
-    let rows_top = header_y + header_font + 8.0 * scale;
-    for (i, p) in sysmon.processes.iter().enumerate() {
-        let y = rows_top + row_h * i as f32;
-        if y + row_h > rect.y + rect.h {
-            break;
-        }
-        let selected = sysmon.selected_pid == Some(p.pid);
-        // Background: strong tint when selected, subtle zebra otherwise.
-        if selected {
-            let sel_bg = Color::rgba(0.40, 0.65, 1.00, 0.18 * alpha);
-            painter.rect_filled(Rect::new(rect.x, y, rect.w, row_h), 6.0 * scale, sel_bg);
-            // Accent bar on the left edge so the highlight reads even
-            // at low alpha.
-            let accent = Color::rgba(0.40, 0.75, 1.00, 0.95 * alpha);
-            painter.rect_filled(
-                Rect::new(rect.x, y + 4.0 * scale, 3.0 * scale, row_h - 8.0 * scale),
-                1.5 * scale,
-                accent,
-            );
-        } else if i % 2 == 0 {
-            let band = Color::rgba(1.0, 1.0, 1.0, 0.04 * alpha);
-            painter.rect_filled(Rect::new(rect.x, y, rect.w, row_h), 4.0 * scale, band);
-        }
-        draw_process_row(
-            painter, text, p, row_font, row_color, alpha, scale, rect.x + 8.0 * scale, y, row_h,
-            cpu_x, cpu_col_w, mem_x, mem_col_w, kill_x, kill_w, selected, surface_w, surface_h,
-        );
-    }
-
-    rows_top + row_h * sysmon.processes.len() as f32
-}
-
-#[allow(clippy::too_many_arguments)]
-fn draw_process_row(
-    painter: &mut Painter,
-    text: &mut TextRenderer,
-    p: &ProcessRow,
-    font: f32,
-    row_color: Color,
-    alpha: f32,
-    scale: f32,
-    x: f32,
-    y: f32,
-    h: f32,
-    cpu_x: f32,
-    cpu_w: f32,
-    mem_x: f32,
-    mem_w: f32,
-    kill_x: f32,
-    kill_w: f32,
-    selected: bool,
-    surface_w: u32,
-    surface_h: u32,
-) {
-    let baseline = y + (h - font) / 2.0;
-    let max_name_w = cpu_x - x - 8.0 * scale;
-    let name = truncate_to_width(text, &p.comm, font, max_name_w);
-    queue_left(text, &name, font, x, baseline, row_color, surface_w, surface_h);
-
-    let cpu_str = format!("{:.1}%", p.cpu_load * 100.0);
-    queue_right(text, &cpu_str, font, cpu_x + cpu_w, baseline, row_color, surface_w, surface_h);
-
-    let mem_str = crate::controls::sysmon::proc::format_bytes(p.rss_bytes);
-    queue_right(text, &mem_str, font, mem_x + mem_w, baseline, row_color, surface_w, surface_h);
-
-    // Kill button. "Armed" when this row is selected — brighter red +
-    // a white ring outside the body to signal that the next click will
-    // actually send SIGTERM. Unarmed = muted slate (visible but clearly
-    // inert).
-    let btn_y = y + (h - kill_w) / 2.0;
-    let btn_rect = Rect::new(kill_x, btn_y, kill_w, kill_w);
-    let body = if selected {
-        Color::rgba(1.0, 0.30, 0.36, 0.95 * alpha)
-    } else {
-        Color::rgba(0.55, 0.58, 0.65, 0.55 * alpha)
-    };
-    painter.rect_filled(btn_rect, kill_w * 0.25, body);
-    if selected {
-        let ring = Color::rgba(1.0, 1.0, 1.0, 0.65 * alpha);
-        painter.rect_stroke(btn_rect, kill_w * 0.25, 1.5 * scale, ring);
-    }
-    let icon_pad = kill_w * 0.30;
-    let line_w = (kill_w * 0.14).max(1.8 * scale);
-    let white = Color::rgba(1.0, 1.0, 1.0, alpha);
-    painter.line(
-        kill_x + icon_pad,
-        btn_y + icon_pad,
-        kill_x + kill_w - icon_pad,
-        btn_y + kill_w - icon_pad,
-        line_w,
-        white,
-    );
-    painter.line(
-        kill_x + kill_w - icon_pad,
-        btn_y + icon_pad,
-        kill_x + icon_pad,
-        btn_y + kill_w - icon_pad,
-        line_w,
-        white,
-    );
-}
-
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 fn panel_card(painter: &mut Painter, rect: Rect, scale: f32, alpha: f32) {
@@ -590,7 +444,7 @@ fn sparkline_points(rect: Rect, samples: &[f32], scale_max: f32, scale: f32) -> 
         .collect()
 }
 
-fn queue_left(
+pub(super) fn queue_left(
     text: &mut TextRenderer,
     s: &str,
     font: f32,
@@ -604,7 +458,7 @@ fn queue_left(
     text.queue(s, font, x, y, color, w, surface_w, surface_h);
 }
 
-fn queue_right(
+pub(super) fn queue_right(
     text: &mut TextRenderer,
     s: &str,
     font: f32,
@@ -618,7 +472,7 @@ fn queue_right(
     text.queue(s, font, right_x - w, y, color, w, surface_w, surface_h);
 }
 
-fn truncate_to_width(text: &mut TextRenderer, s: &str, font: f32, max_w: f32) -> String {
+pub(super) fn truncate_to_width(text: &mut TextRenderer, s: &str, font: f32, max_w: f32) -> String {
     if text.measure_width(s, font) <= max_w {
         return s.to_string();
     }

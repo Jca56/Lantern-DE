@@ -124,6 +124,7 @@ const TIME_DATE_GAP: f32 = 1.0;
 /// dead space between the clock and the next tile.
 pub const TILE_WIDTH: f32 = 110.0;
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw_inline(
     _painter: &mut Painter,
     text: &mut TextRenderer,
@@ -133,6 +134,7 @@ pub fn draw_inline(
     alpha: f32,
     surface_w: u32,
     surface_h: u32,
+    lit: bool,
 ) {
     let now = Local::now();
     let time_str = format_time(now.hour(), now.minute());
@@ -144,18 +146,22 @@ pub fn draw_inline(
     let stack_h = time_font + gap + date_font;
     let cy = layout.y + (layout.h - stack_h) / 2.0;
 
-    // Time on top, left-aligned to the tile's left edge. Date centered
-    // horizontally below it (within the bounds of the time string, not
-    // the whole tile slot).
     let time_w = text.measure_width(&time_str, time_font);
     let date_w = text.measure_width(&date_str, date_font);
+
+    let primary = if lit { accent_color(alpha) } else { text_color(alpha) };
+    let secondary = if lit {
+        accent_color(SECONDARY_ALPHA * alpha)
+    } else {
+        text_color(SECONDARY_ALPHA * alpha)
+    };
 
     text.queue(
         &time_str,
         time_font,
         layout.x,
         cy,
-        text_color(alpha),
+        primary,
         layout.w,
         surface_w,
         surface_h,
@@ -165,7 +171,7 @@ pub fn draw_inline(
         date_font,
         layout.x + (time_w - date_w) / 2.0,
         cy + time_font + gap,
-        text_color(SECONDARY_ALPHA * alpha),
+        secondary,
         layout.w,
         surface_w,
         surface_h,

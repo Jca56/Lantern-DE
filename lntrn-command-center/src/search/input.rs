@@ -291,6 +291,7 @@ const ACCENT_RGB: (u8, u8, u8) = (0xc8, 0x86, 0x0a);
 /// `panel` is the (already animated) panel rect in physical pixels.
 /// `scale` is the fractional scale factor.
 /// `alpha` is the panel's animation alpha (0.0 → 1.0).
+#[allow(clippy::too_many_arguments)]
 pub fn draw(
     painter: &mut Painter,
     text: &mut TextRenderer,
@@ -301,6 +302,7 @@ pub fn draw(
     surface_w: u32,
     surface_h: u32,
     waffle_active: bool,
+    waffle_hovered: bool,
 ) {
     let pad = SEARCH_HORIZONTAL_PAD * scale;
     let row_h = SEARCH_ROW_HEIGHT * scale;
@@ -327,7 +329,7 @@ pub fn draw(
     let span = pitch * 2.0;
     let dots_x0 = waffle.x + (waffle.w - span) / 2.0 - dot_r;
     let dots_y0 = waffle.y + (waffle.h - span) / 2.0 - dot_r;
-    let dot_color = if waffle_active {
+    let dot_color = if waffle_active || waffle_hovered {
         Color::from_rgb8(ACCENT_RGB.0, ACCENT_RGB.1, ACCENT_RGB.2).with_alpha(alpha)
     } else {
         Color::from_rgb8(TEXT_RGB.0, TEXT_RGB.1, TEXT_RGB.2).with_alpha(0.55 * alpha)

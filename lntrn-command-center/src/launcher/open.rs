@@ -11,14 +11,15 @@ use crate::search::apps::AppsProvider;
 use crate::search::input;
 use crate::toplevel::ToplevelInfo;
 
-/// 16:9 thumbnail tile dimensions (logical px).
-pub const OPEN_TILE_W: f32 = 208.0;
-pub const OPEN_TILE_H: f32 = 117.0;
-/// Height (logical px) of the slim control strip across the top of
-/// each tile. We deliberately shrink the live-thumbnail rect by this
-/// much from the top so the X close button + ×N badge stay visible on
-/// top of the compositor's thumbnail overlay.
-pub const OPEN_TILE_TOOLBAR_H: f32 = 32.0;
+/// 16:9 thumbnail tile dimensions (logical px). The whole tile is the
+/// thumbnail area now — the close button is rendered by the
+/// compositor on top of the thumb (no toolbar strip).
+pub const OPEN_TILE_W: f32 = 256.0;
+pub const OPEN_TILE_H: f32 = 144.0;
+/// Deprecated — kept as 0 so existing math falls through cleanly. The
+/// close button is now rendered by the compositor over the thumbnail
+/// so no strip needs to be carved out of the thumbnail rect.
+pub const OPEN_TILE_TOOLBAR_H: f32 = 0.0;
 pub const OPEN_TILE_GAP_X: f32 = 36.0;
 pub const OPEN_TILE_GAP_Y: f32 = 36.0;
 pub const OPEN_LABEL_FONT: f32 = 18.0;
@@ -46,10 +47,7 @@ fn accent(alpha: f32) -> Color {
 /// to the first tile-row top: divider + gap + heading + heading→row gap.
 pub fn heading_advance(scale: f32) -> f32 {
     let divider_h = (OPEN_DIVIDER_THICKNESS * scale).max(1.0);
-    divider_h
-        + OPEN_DIVIDER_GAP_BELOW * scale
-        + HEADING_FONT * scale
-        + OPEN_HEADING_GAP * scale
+    divider_h + OPEN_DIVIDER_GAP_BELOW * scale
 }
 
 /// Total logical-pixel height the section occupies for `num` tiles in a
@@ -69,8 +67,6 @@ pub fn section_height_logical(panel_w_logical: f32, num: usize) -> f32 {
     OPEN_SECTION_TOP_MARGIN
         + OPEN_DIVIDER_THICKNESS
         + OPEN_DIVIDER_GAP_BELOW
-        + HEADING_FONT
-        + OPEN_HEADING_GAP
         + rows as f32 * cell_h
         + (rows.saturating_sub(1)) as f32 * OPEN_TILE_GAP_Y
 }
@@ -147,19 +143,16 @@ impl<'a> AppGroup<'a> {
     }
 }
 
-/// Toplevels shown in the Open section, grouped by app_id. Includes
-/// minimized windows so users can find and restore them; tiles render
-/// dimmed when every window of an app is minimized.
+/// Toplevels shown in the Open section. Each *window* gets its own
+/// tile — no grouping by app — so multi-window apps can be switched
+/// between without cycling. Minimized windows are included (dimmed)
+/// so users can find and restore them.
 pub fn visible_entries(toplevels: &[ToplevelInfo]) -> Vec<AppGroup<'_>> {
-    let mut groups: Vec<AppGroup> = Vec::new();
-    for t in toplevels.iter().filter(|t| !t.app_id.is_empty()) {
-        if let Some(g) = groups.iter_mut().find(|g| g.app_id == t.app_id.as_str()) {
-            g.windows.push(t);
-        } else {
-            groups.push(AppGroup { app_id: t.app_id.as_str(), windows: vec![t] });
-        }
-    }
-    groups
+    toplevels
+        .iter()
+        .filter(|t| !t.app_id.is_empty())
+        .map(|t| AppGroup { app_id: t.app_id.as_str(), windows: vec![t] })
+        .collect()
 }
 
 const MINIMIZED_ALPHA_MULT: f32 = 0.5;
@@ -205,8 +198,6 @@ pub fn draw(
     }
 
     let pad = input::SEARCH_HORIZONTAL_PAD * scale;
-    let heading_font = HEADING_FONT * scale;
-    let heading_gap = OPEN_HEADING_GAP * scale;
     let label_font = OPEN_LABEL_FONT * scale;
     let label_gap = OPEN_LABEL_GAP * scale;
     let tile_w = OPEN_TILE_W * scale;
@@ -215,7 +206,8 @@ pub fn draw(
 
     let mut y = top_y + OPEN_SECTION_TOP_MARGIN * scale;
 
-    // Divider above the heading separating Pinned from Open.
+    // Slim divider between the pinned row and the open thumbnails — no
+    // header text any more; the thumbnails themselves are the section.
     let divider_h = (OPEN_DIVIDER_THICKNESS * scale).max(1.0);
     painter.rect_filled(
         Rect::new(panel.x + pad, y, panel.w - pad * 2.0, divider_h),
@@ -223,18 +215,6 @@ pub fn draw(
         text(DIVIDER_ALPHA * alpha),
     );
     y += divider_h + OPEN_DIVIDER_GAP_BELOW * scale;
-
-    text_r.queue(
-        "Open",
-        heading_font,
-        panel.x + pad,
-        y,
-        text(HEADING_ALPHA * alpha),
-        panel.w - pad * 2.0,
-        surface_w,
-        surface_h,
-    );
-    y += heading_font + heading_gap;
 
     let row_top = y;
     let cols = columns(panel.w, scale);
@@ -248,21 +228,9 @@ pub fn draw(
         let group_alpha = alpha * group_mult;
         let is_activated = group.any_activated();
 
-        // No placeholder plate — the app icon floats on the panel until
-        // live thumbnails (Phase B) replace it.
-        let icon_size = tile_h;
-        let icon_x = r.x + (tile_w - icon_size) / 2.0;
-        let icon_y = r.y + (tile_h - icon_size) / 2.0;
-        let icon_name = Some(lookup_icon_name(apps, group.app_id));
-        icons.push(IconRequest {
-            app_id: group.app_id.to_string(),
-            icon_name,
-            x: icon_x,
-            y: icon_y,
-            size: icon_size,
-            opacity: group_alpha * 0.85,
-            clip: None,
-        });
+        // No placeholder icon — the compositor fills the entire tile
+        // with the live thumbnail and renders the close button overlay
+        // on top.
 
         // Selection / activated ring.
         let is_selected = selected == Some(i);
@@ -286,8 +254,9 @@ pub fn draw(
             );
         }
 
-        // X close button top-right.
-        draw_close_button(painter, r, scale, group_alpha);
+        // The close button is rendered by the compositor on top of the
+        // thumbnail (see `cc_thumbs` in lntrn-compositor) — nothing to
+        // draw here.
 
         // Title label centered under the tile. When the group has one
         // window we show its title; with multiple we show the app name.
@@ -354,6 +323,7 @@ fn draw_count_badge(
     );
 }
 
+#[allow(dead_code)] // compositor renders the close button now
 fn draw_close_button(painter: &mut Painter, tile: Rect, scale: f32, alpha: f32) {
     let size = CLOSE_BTN_SIZE * scale;
     let inset = CLOSE_BTN_INSET * scale;

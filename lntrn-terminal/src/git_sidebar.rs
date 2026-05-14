@@ -312,16 +312,46 @@ pub fn draw_git_sidebar(
 
     painter.pop_clip();
 
-    // ── Status toast (fixed at bottom) ──────────────────────────────
+    // ── Status toast (auto-sized, anchored to bottom) ───────────────
+    // Multi-line errors (like `git push` output) used to be clipped to a fixed
+    // 32px pill, and commit text above leaked into the same band of pixels.
+    // We now: (1) auto-size the toast to fit wrapped content, (2) tell the
+    // text renderer to occlude any earlier text that overlaps the toast, so
+    // the message is the only thing readable in that region.
     if let Some((ref msg, is_error)) = state.message {
-        let toast_h = 32.0;
+        let inner_w = sw - PAD * 2.0;
+        // Crude width estimator at SMALL_FONT — overshoots slightly, which is
+        // fine because over-estimating height never causes overlap.
+        let chars_per_line = ((inner_w / (SMALL_FONT * 0.55)).floor() as usize).max(1);
+        let mut line_count = 0usize;
+        for line in msg.lines() {
+            let n = line.chars().count().max(1);
+            line_count += n.div_ceil(chars_per_line);
+        }
+        if line_count == 0 {
+            line_count = 1;
+        }
+        line_count = line_count.min(8); // cap so a wall-of-text error doesn't take the whole sidebar
+
+        let vpad = 10.0;
+        let line_h = SMALL_FONT + 2.0;
+        let toast_h = (line_count as f32 * line_h + vpad * 2.0).max(32.0);
         let toast_y = screen_h as f32 - toast_h;
         let bg_color = if is_error { c(RED) } else { c(GREEN) };
+
+        // Hide whatever was queued earlier (recent commits, branch list, etc.)
+        // anywhere it overlaps the toast region.
+        text.occlude_rect([0.0, toast_y, sw, toast_h]);
+
         painter.rect_filled(Rect::new(0.0, toast_y, sw, toast_h), 0.0, bg_color);
+        // Push a clip that's tall enough for the wrapped lines — the default
+        // (~one font-height below y) would chop everything past line 1.
+        text.push_clip([0.0, toast_y, sw, toast_h]);
         text.queue(
-            msg, SMALL_FONT, PAD, toast_y + (toast_h - SMALL_FONT) / 2.0,
-            c(Color8::from_rgb(255, 255, 255)), sw - PAD * 2.0, screen_w, screen_h,
+            msg, SMALL_FONT, PAD, toast_y + vpad,
+            c(Color8::from_rgb(255, 255, 255)), inner_w, screen_w, screen_h,
         );
+        text.pop_clip();
     }
 }
 

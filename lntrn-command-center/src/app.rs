@@ -18,7 +18,7 @@ use crate::search::Search;
 pub const PANEL_W_LOGICAL: f32 = 1000.0;
 /// Margin from the top edge, in logical pixels. A touch of breathing
 /// room so the panel doesn't kiss the screen edge.
-pub const PANEL_TOP_MARGIN_LOGICAL: f32 = 32.0;
+pub const PANEL_TOP_MARGIN_LOGICAL: f32 = 48.0;
 /// Initial logical height. Sized to fit:
 /// - controls row (`controls::total_logical_height()`)
 /// - search input row + underline
@@ -31,7 +31,18 @@ pub const PANEL_CORNER_RADIUS: f32 = 24.0;
 /// Animation duration (open and close), seconds.
 pub const ANIM_DURATION_SECS: f32 = 0.60;
 /// Duration of the collapse/expand height animation.
-pub const COLLAPSE_ANIM_DURATION: f32 = 0.30;
+/// Duration of the grow / shrink animation (panel width + height).
+pub const GROW_ANIM_DURATION: f32 = 1.00;
+/// Extra height (logical px) the panel grows by when the user toggles
+/// the grow button. Adds the same fixed amount on top of whatever the
+/// view + mode would normally request.
+pub const GROW_BONUS_LOGICAL: f32 = 360.0;
+/// Duration of the side-to-side view-switch slide.
+/// Default slide duration if no config has loaded yet.
+pub const VIEW_ANIM_DURATION_DEFAULT: f32 = 1.20;
+/// Extra width (logical px) when grown. Pairs with `GROW_BONUS_LOGICAL`
+/// so the grown panel scales nicely on both axes.
+pub const GROW_BONUS_W_LOGICAL: f32 = 240.0;
 /// Scale at the start of the open animation (and end of the close animation).
 pub const ANIM_SCALE_START: f32 = 0.95;
 
@@ -145,6 +156,75 @@ pub struct AppState {
     /// collapsed panel. When set, clicking the same tile again collapses
     /// the panel; otherwise we just fall back to the Launcher view.
     pub opened_from_collapsed: bool,
+    /// Top-level panel view selected by the left/right floating arrows.
+    /// `Default` runs the existing Launcher / Control behavior; the
+    /// other variants replace the body with their own content.
+    pub panel_view: PanelView,
+    /// Which side arrow is under the cursor (for hover styling).
+    pub view_arrow_hover: Option<crate::view_arrows::Side>,
+    /// True when the cursor is hovering the Home button above the panel.
+    pub home_hover: bool,
+    /// True when the cursor is hovering the grow / shrink button.
+    pub grow_hover: bool,
+    /// True when the cursor is hovering the gear (settings) button.
+    pub gear_hover: bool,
+    /// Hover state for the right-side strip icons.
+    pub emoji_hover: bool,
+    pub clipboard_hover: bool,
+    pub notes_hover: bool,
+    /// When true the body is replaced by the Command Center settings
+    /// page (overrides whichever view is selected).
+    pub settings_open: bool,
+    /// Persisted settings. Loaded on startup from
+    /// `~/.lantern/config/command-center/settings.toml` and saved on
+    /// every change.
+    pub config: crate::settings::Config,
+    /// While the user is mid-drag on a settings slider, this points to
+    /// which one so motion events route correctly.
+    pub settings_drag: Option<crate::settings::SettingKey>,
+    /// User has clicked the grow button — the panel uses an extra
+    /// height bonus on top of its mode-default height.
+    pub panel_grown: bool,
+    /// Animation state for the grow/shrink toggle. `grow_anim_origin`
+    /// is the progress at the moment the user clicked; `target` is
+    /// where the animation is heading. The lerp gives a smooth 1s ease.
+    pub grow_anim_start: Option<std::time::Instant>,
+    pub grow_anim_origin: f32,
+    pub grow_anim_target: f32,
+    /// Active view-switch animation: the view we're transitioning
+    /// *from*, plus the wall-clock start. `panel_view` is already set
+    /// to the destination; the body crossfades from `from` to `panel_view`
+    /// over [`self.config.view_anim_duration`].
+    pub view_anim_from: Option<PanelView>,
+    pub view_anim_start: Option<std::time::Instant>,
+    /// Direction of the current slide. `+1` means the incoming view
+    /// comes in from the *right* (movement reads as "swiping left");
+    /// `-1` means it comes in from the left. Captured from the user's
+    /// gesture (arrow / dot index delta) rather than the views'
+    /// position in `ALL`, so wrap-around feels intuitive.
+    pub view_anim_dir: i32,
+    /// Tile currently under the cursor in the controls row — drives
+    /// the gold hover plate.
+    pub hovered_control_tile: Option<crate::controls::TileId>,
+    /// True when the cursor is hovering the waffle (all-apps) button
+    /// in the search row.
+    pub waffle_hover: bool,
+    /// Mini-terminal state — input buffer, running child output, etc.
+    /// Only meaningful while `panel_view == PanelView::Terminal`.
+    pub terminal: crate::terminal::TerminalState,
+    /// Files-tab state (cwd, entries, scroll, hover).
+    pub files: crate::files::FilesState,
+    /// Emojis overlay state (filter, category, scroll, hover).
+    pub emojis: crate::emojis::EmojisState,
+    /// Long-lived Wayland clipboard handle. We share one across the
+    /// whole CC so the background thread stays alive between copy ops —
+    /// otherwise a per-click `WaylandClipboard::new()` lets the thread
+    /// die before the compositor's eager-capture finishes reading.
+    pub clipboard: Option<lntrn_terminal::clipboard::WaylandClipboard>,
+    /// Bytes queued to be written to the terminal PTY on the next loop
+    /// iteration. Used by Files "Open in Terminal tab" to defer the
+    /// `cd` until the PTY has been spawned.
+    pub pending_terminal_input: Option<String>,
     /// When `Some`, a confirm modal is up for this power action. Cancel
     /// or click-outside-card clears it; Confirm runs the action and
     /// closes the panel.
@@ -189,7 +269,162 @@ impl AppState {
             collapse_anim_target: 0.0,
             mini_dock_hover: None,
             opened_from_collapsed: false,
+            panel_view: PanelView::Default,
+            view_arrow_hover: None,
+            home_hover: false,
+            grow_hover: false,
+            gear_hover: false,
+            emoji_hover: false,
+            clipboard_hover: false,
+            notes_hover: false,
+            settings_open: false,
+            config: crate::settings::Config::load(),
+            settings_drag: None,
+            panel_grown: false,
+            grow_anim_start: None,
+            grow_anim_origin: 0.0,
+            grow_anim_target: 0.0,
+            view_anim_from: None,
+            view_anim_start: None,
+            view_anim_dir: 1,
+            hovered_control_tile: None,
+            waffle_hover: false,
+            terminal: crate::terminal::TerminalState::new(),
+            files: crate::files::FilesState::new(),
+            emojis: crate::emojis::EmojisState::default(),
+            clipboard: lntrn_terminal::clipboard::WaylandClipboard::new(),
+            pending_terminal_input: None,
         }
+    }
+
+    /// Active view-switch slide, if any. Both views are visible at the
+    /// same time during the transition: the "from" slides out toward
+    /// `-dir` while the "to" slides in from `+dir`. Each offset is a
+    /// fraction of the panel width.
+    pub fn view_slide(&self) -> Option<ViewSlide> {
+        let (Some(from), Some(start)) = (self.view_anim_from, self.view_anim_start) else {
+            return None;
+        };
+        let elapsed = start.elapsed().as_secs_f32();
+        let t = elapsed / self.config.view_anim_duration;
+        if !(0.0..1.0).contains(&t) {
+            return None;
+        }
+        let dir = self.view_anim_dir as f32;
+        let p = ease_out_cubic(t);
+        Some(ViewSlide {
+            from,
+            from_offset: -dir * p,
+            to: self.panel_view,
+            to_offset: dir * (1.0 - p),
+        })
+    }
+
+    /// Backwards-compatible helper: returns either the lone displayed
+    /// view (no animation active) or — if mid-slide — the "to" view
+    /// with its current offset. Used by sites that don't need to
+    /// double-render.
+    pub fn body_view_with_offset(&self) -> (PanelView, f32) {
+        match self.view_slide() {
+            Some(s) => (s.to, s.to_offset),
+            None => (self.panel_view, 0.0),
+        }
+    }
+
+    pub fn view_animating(&self) -> bool {
+        match self.view_anim_start {
+            Some(start) => start.elapsed().as_secs_f32() < self.config.view_anim_duration,
+            None => false,
+        }
+    }
+
+    /// Toggle the Command Center settings page.
+    pub fn toggle_settings(&mut self) {
+        self.settings_open = !self.settings_open;
+        // Settings is mutually exclusive with other overlays.
+        if self.settings_open {
+            self.emojis.open = false;
+        }
+        tracing::info!(open = self.settings_open, "settings toggled");
+    }
+
+    /// Toggle the Emojis overlay page.
+    pub fn toggle_emojis(&mut self) {
+        self.emojis.open = !self.emojis.open;
+        if self.emojis.open {
+            self.settings_open = false;
+            self.emojis.filter.clear();
+            self.emojis.reset_scroll();
+        }
+        tracing::info!(open = self.emojis.open, "emojis toggled");
+    }
+
+    /// Toggle the panel "grown" mode — adds a fixed bonus to both
+    /// width and height on top of whatever the current view + mode
+    /// would normally request. Animates over `GROW_ANIM_DURATION`.
+    pub fn toggle_grow(&mut self) {
+        let now = std::time::Instant::now();
+        let current = self.grow_progress();
+        self.panel_grown = !self.panel_grown;
+        self.grow_anim_origin = current;
+        self.grow_anim_target = if self.panel_grown { 1.0 } else { 0.0 };
+        self.grow_anim_start = Some(now);
+        tracing::info!(grown = self.panel_grown, current, "panel grow toggled");
+    }
+
+    /// Eased grow progress (0 = base size, 1 = fully grown). Handles
+    /// mid-flight reversal — if the user toggles again before the
+    /// previous animation finishes, the new motion starts from the
+    /// current visual value (no snap).
+    pub fn grow_progress(&self) -> f32 {
+        if let Some(start) = self.grow_anim_start {
+            let t = (start.elapsed().as_secs_f32() / GROW_ANIM_DURATION).clamp(0.0, 1.0);
+            let eased = ease_out_cubic(t);
+            self.grow_anim_origin + (self.grow_anim_target - self.grow_anim_origin) * eased
+        } else if self.panel_grown {
+            1.0
+        } else {
+            0.0
+        }
+    }
+
+    /// Desired panel width (logical px). Adds the grow bonus scaled
+    /// by the current animation progress.
+    pub fn desired_panel_w_logical(&self) -> f32 {
+        PANEL_W_LOGICAL + GROW_BONUS_W_LOGICAL * self.grow_progress()
+    }
+
+    /// Jump directly to a specific view (used by Home + dot clicks).
+    /// Direction comes from the index delta in `PanelView::ALL` so a
+    /// click further "right" in the dots slides leftward (and vice
+    /// versa) — matches the spatial intuition of the row.
+    pub fn set_view(&mut self, view: PanelView) {
+        let from_i = PanelView::ALL.iter().position(|v| *v == self.panel_view).unwrap_or(0) as i32;
+        let to_i = PanelView::ALL.iter().position(|v| *v == view).unwrap_or(0) as i32;
+        let dir = if to_i >= from_i { 1 } else { -1 };
+        self.transition_to(view, dir);
+    }
+
+    /// Right arrow / next view → slide left (new comes in from right).
+    pub fn cycle_view_next(&mut self) {
+        let next = self.panel_view.next();
+        self.transition_to(next, 1);
+    }
+    /// Left arrow / previous view → slide right (new comes in from left).
+    pub fn cycle_view_prev(&mut self) {
+        let prev = self.panel_view.prev();
+        self.transition_to(prev, -1);
+    }
+
+    fn transition_to(&mut self, view: PanelView, dir: i32) {
+        if view == self.panel_view {
+            return;
+        }
+        tracing::info!(from = ?self.panel_view, to = ?view, dir, "panel view → transition");
+        self.view_anim_from = Some(self.panel_view);
+        self.view_anim_start = Some(std::time::Instant::now());
+        self.view_anim_dir = dir;
+        self.panel_view = view;
     }
 
     /// Toggle collapsed/expanded state with a smooth height/alpha
@@ -208,9 +443,12 @@ impl AppState {
     /// Eased animation factor for the collapse transition.
     /// Returns 0.0 when fully expanded, 1.0 when fully collapsed,
     /// and an eased lerp in between while the animation is in flight.
+    /// Duration is the user-tunable [`Config::view_anim_duration`] so
+    /// the slide-speed setting controls both view slides and collapse.
     pub fn collapse_progress(&self) -> f32 {
         if let Some(start) = self.collapse_anim_start {
-            let t = (start.elapsed().as_secs_f32() / COLLAPSE_ANIM_DURATION).clamp(0.0, 1.0);
+            let dur = self.config.view_anim_duration.max(0.05);
+            let t = (start.elapsed().as_secs_f32() / dur).clamp(0.0, 1.0);
             let eased = ease_out_cubic(t);
             self.collapse_anim_origin
                 + (self.collapse_anim_target - self.collapse_anim_origin) * eased
@@ -224,8 +462,9 @@ impl AppState {
     /// True while the collapse animation is still progressing — used by
     /// the render loop to keep requesting frame callbacks.
     pub fn collapse_animating(&self) -> bool {
+        let dur = self.config.view_anim_duration.max(0.05);
         match self.collapse_anim_start {
-            Some(start) => start.elapsed().as_secs_f32() < COLLAPSE_ANIM_DURATION,
+            Some(start) => start.elapsed().as_secs_f32() < dur,
             None => false,
         }
     }
@@ -246,14 +485,15 @@ impl AppState {
     /// content. Used both for the static expanded case and as the
     /// "from" value when animating into/out of collapsed.
     fn expanded_panel_h_logical(&self) -> f32 {
+        let bonus = GROW_BONUS_LOGICAL * self.grow_progress();
         if matches!(self.mode, PanelMode::Control(crate::controls::TileId::SysMon)) {
-            return 880.0;
+            return 880.0 + bonus;
         }
         if !matches!(self.mode, PanelMode::Launcher) {
-            return PANEL_H_LOGICAL_PHASE1;
+            return PANEL_H_LOGICAL_PHASE1 + bonus;
         }
         if !self.search.input.is_empty() || self.search.all_apps_mode {
-            return PANEL_H_LOGICAL_PHASE1;
+            return PANEL_H_LOGICAL_PHASE1 + bonus;
         }
 
         // Offset from panel top to the start of the launcher content.
@@ -272,7 +512,7 @@ impl AppState {
 
         const BOTTOM_PAD: f32 = 24.0;
         let needed = top_offset + pin_h + open_h + BOTTOM_PAD;
-        needed.max(PANEL_H_LOGICAL_PHASE1)
+        needed.max(PANEL_H_LOGICAL_PHASE1) + bonus
     }
 
     /// Trigger an open animation. No-op if already opening or visible.
@@ -291,8 +531,14 @@ impl AppState {
                 self.search.reset();
                 self.selection = Selection::Pin(0);
                 self.mode = PanelMode::Launcher;
+                self.files.reset_to_home();
                 self.visibility = Visibility::Opening;
                 self.anim_start = now;
+                // Honor the "open in collapsed mode" setting.
+                self.collapsed = self.config.open_collapsed;
+                self.collapse_anim_start = None;
+                self.collapse_anim_origin = if self.collapsed { 1.0 } else { 0.0 };
+                self.collapse_anim_target = self.collapse_anim_origin;
             }
             Visibility::Closing => {
                 // Mid-close interruption: current factor (in [0, 1]) is
@@ -345,6 +591,27 @@ impl AppState {
     /// 2. Else if we're in a control view → back to launcher.
     /// 3. Else → close the whole panel.
     pub fn handle_esc(&mut self) {
+        // In the Terminal view, Esc is a normal byte the shell/child
+        // wants to receive (vim mode switch, readline cancel, etc.).
+        // Forward it instead of dismissing the panel.
+        if self.panel_view == PanelView::Terminal && self.terminal.is_spawned() {
+            self.terminal.write(b"\x1b");
+            return;
+        }
+        if self.panel_view == PanelView::Files && self.files.filter_active {
+            self.files.deactivate_filter();
+            return;
+        }
+        if self.emojis.open {
+            // First Esc clears filter if there's text; otherwise closes overlay.
+            if !self.emojis.filter.is_empty() {
+                self.emojis.filter.clear();
+                self.emojis.reset_scroll();
+            } else {
+                self.emojis.open = false;
+            }
+            return;
+        }
         if self.power_confirm.is_some() {
             self.power_confirm = None;
         } else if self.context_menu.is_some() {
@@ -363,6 +630,19 @@ impl AppState {
             self.controls.bluetooth.incoming_reject();
         } else if self.controls.bluetooth.pair_prompt.is_some() {
             self.controls.bluetooth.pair_cancel();
+        } else if self.settings_open {
+            // Settings is a top-level overlay — Esc closes it without
+            // collapsing the underlying view.
+            self.settings_open = false;
+        } else if matches!(
+            self.mode,
+            PanelMode::Control(crate::controls::TileId::SysMon)
+                | PanelMode::Control(crate::controls::TileId::Temp)
+        ) && !self.controls.sysmon.filter.is_empty()
+        {
+            // Esc clears the process filter before falling back to
+            // unwinding the view stack — feels more like a text input.
+            self.controls.sysmon.filter.clear();
         } else if self.mode != PanelMode::Launcher {
             self.mode = PanelMode::Launcher;
         } else if self.search.all_apps_mode {
@@ -420,7 +700,10 @@ impl AppState {
         }
     }
 
-    /// Move the selection one slot left.
+    /// Move the selection one slot left. (Currently unused — Left/Right
+    /// arrows cycle panel-view tabs instead. Kept in case we want a
+    /// modifier-arrow shortcut to nav pins again later.)
+    #[allow(dead_code)]
     pub fn select_left(&mut self) {
         if let Selection::Pin(i) = self.selection {
             if i > 0 {
@@ -429,7 +712,8 @@ impl AppState {
         }
     }
 
-    /// Move the selection one slot right.
+    /// Move the selection one slot right. (See `select_left` note.)
+    #[allow(dead_code)]
     pub fn select_right(&mut self) {
         if let Selection::Pin(i) = self.selection {
             let max = self
@@ -562,11 +846,13 @@ impl AppState {
         let tile_size = PIN_TILE_SIZE * scale;
         let tile_gap = PIN_TILE_GAP * scale;
 
-        // Y range: section heading sits above the tile row; we treat
-        // the *whole* pinned section (heading + tiles + label) as the
-        // hit area for left-click, but for right-click we want only
-        // the tile (so the label / empty space don't toggle pin).
-        let section_label_font = PIN_LABEL_FONT * scale;
+        // Y range: section heading sits above the tile row. Match the
+        // exact font sizes the draw path uses — the heading is rendered
+        // at SECTION_LABEL_FONT (14), not PIN_LABEL_FONT (18). Using the
+        // wrong constant here shifted the hit zone 4 logical px below
+        // the rendered tiles, eating the top of each row.
+        let label_font = PIN_LABEL_FONT * scale;
+        let section_label_font = crate::launcher::SECTION_LABEL_FONT * scale;
         let label_gap = PIN_LABEL_GAP * scale;
 
         let row_top = panel_rect.y
@@ -585,7 +871,7 @@ impl AppState {
         let avail_w = panel_rect.w - pad * 2.0;
         let cols = ((avail_w + tile_gap) / (tile_size + tile_gap)).floor() as usize;
         let cols = cols.max(1);
-        let cell_h = tile_size + label_gap + section_label_font;
+        let cell_h = tile_size + label_gap + label_font;
 
         for (i, _entry) in pinned.iter().enumerate() {
             let col = i % cols;
@@ -788,6 +1074,56 @@ impl AppState {
                     self.close();
                 }
             }
+            MenuAction::TerminalCopy => {
+                let _ = self.terminal.copy_selection();
+            }
+            MenuAction::TerminalPaste => {
+                let _ = self.terminal.paste_from_clipboard();
+            }
+            MenuAction::TerminalClearSelection => {
+                self.terminal.clear_selection();
+            }
+            MenuAction::FilesOpen => {
+                let path = std::path::PathBuf::from(&menu.app_id);
+                if path.is_dir() {
+                    self.files.navigate_to(&path);
+                } else if path.exists() {
+                    let exec = format!(
+                        "xdg-open '{}'",
+                        menu.app_id.replace('\'', "'\\''"),
+                    );
+                    spawn_detached(&exec);
+                    self.close();
+                }
+            }
+            MenuAction::FilesOpenInTerminal => {
+                let path = std::path::PathBuf::from(&menu.app_id);
+                let dir = if path.is_dir() {
+                    path
+                } else {
+                    path.parent().unwrap_or(std::path::Path::new("/")).to_path_buf()
+                };
+                let s = dir.to_string_lossy().replace('\'', "'\\''");
+                self.pending_terminal_input = Some(format!("cd '{}'\n", s));
+                self.set_view(PanelView::Terminal);
+            }
+            MenuAction::FilesRevealInFM => {
+                let exec = format!(
+                    "lntrn-file-manager '{}'",
+                    menu.app_id.replace('\'', "'\\''"),
+                );
+                spawn_detached(&exec);
+                self.close();
+            }
+            MenuAction::FilesCopyPath => {
+                if let Some(clip) = lntrn_terminal::clipboard::WaylandClipboard::new() {
+                    clip.set_text(&menu.app_id);
+                }
+            }
+            MenuAction::FilesSortByName => self.files.set_sort(crate::files::SortBy::Name),
+            MenuAction::FilesSortBySize => self.files.set_sort(crate::files::SortBy::Size),
+            MenuAction::FilesSortByDate => self.files.set_sort(crate::files::SortBy::Modified),
+            MenuAction::FilesSortByType => self.files.set_sort(crate::files::SortBy::Type),
         }
     }
 
@@ -864,6 +1200,19 @@ impl AppState {
         // Calendar always reopens on the current month — drop any
         // forward/back navigation the user did before closing.
         self.controls.clock.reset_month();
+        // Settings shouldn't reappear on the next open — drop it like
+        // the calendar above. The next gear-click reopens.
+        self.settings_open = false;
+        // Same rule for the Emojis overlay: next open snaps back to Home.
+        self.emojis.open = false;
+        self.emojis.filter.clear();
+        self.emojis.reset_scroll();
+        // And jump the panel view back to the default tab so reopening
+        // always lands on the launcher / home view, regardless of which
+        // tab the user was on when they closed.
+        self.panel_view = PanelView::Default;
+        self.view_anim_start = None;
+        self.view_anim_from = None;
         match self.visibility {
             Visibility::Hidden | Visibility::Closing => {}
             Visibility::Visible => {
@@ -959,9 +1308,48 @@ pub enum HitTarget {
     OpenWindowClose(usize),
 }
 
+/// Top-level panel views cycled by the side arrows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PanelView {
+    Default,
+    Terminal,
+    Files,
+}
+
+impl PanelView {
+    pub const ALL: [PanelView; 3] = [PanelView::Default, PanelView::Terminal, PanelView::Files];
+    pub fn next(self) -> Self {
+        let idx = Self::ALL.iter().position(|v| *v == self).unwrap_or(0);
+        Self::ALL[(idx + 1) % Self::ALL.len()]
+    }
+    pub fn prev(self) -> Self {
+        let idx = Self::ALL.iter().position(|v| *v == self).unwrap_or(0);
+        Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+    #[allow(dead_code)] // used by future header-strip / breadcrumb UI
+    pub fn title(self) -> &'static str {
+        match self {
+            PanelView::Default => "Command Center",
+            PanelView::Terminal => "Terminal",
+            PanelView::Files => "Files",
+        }
+    }
+}
+
 /// Pixels (physical) the cursor must move from the press point before a
 /// pin click becomes a drag-reorder.
 pub const PIN_DRAG_THRESHOLD: f32 = 8.0;
+
+/// Active side-by-side view slide. While present, both `from` and `to`
+/// should be rendered at their respective offsets so the new view
+/// glides in as the old glides out.
+#[derive(Debug, Clone, Copy)]
+pub struct ViewSlide {
+    pub from: PanelView,
+    pub from_offset: f32,
+    pub to: PanelView,
+    pub to_offset: f32,
+}
 
 /// Live state for a pin drag-reorder gesture in progress.
 #[derive(Debug, Clone, Copy)]
@@ -983,7 +1371,7 @@ pub struct PinDrag {
 /// via `/bin/sh -c` so quoted args and shell metacharacters in `Exec=`
 /// work, then uses `setsid()` + `setpgid()` so the child outlives us
 /// and isn't killed when the panel closes.
-fn spawn_detached(exec: &str) {
+pub(crate) fn spawn_detached(exec: &str) {
     use std::os::unix::process::CommandExt;
     use std::process::Stdio;
 
@@ -1047,9 +1435,21 @@ impl PanelRect {
 
     /// Same as [`compute`] but with the logical height supplied by the
     /// caller — used to grow the panel when content (open windows,
-    /// pinned rows, etc.) exceeds the default.
+    /// pinned rows, etc.) exceeds the default. Width stays at the
+    /// default `PANEL_W_LOGICAL`.
     pub fn compute_with_height(surface_w: u32, scale: f32, h_logical: f32) -> Self {
-        let w = PANEL_W_LOGICAL * scale;
+        Self::compute_with_dims(surface_w, scale, PANEL_W_LOGICAL, h_logical)
+    }
+
+    /// Like [`compute_with_height`] but also takes a custom width — the
+    /// grow toggle uses this to add a width bonus on both sides.
+    pub fn compute_with_dims(
+        surface_w: u32,
+        scale: f32,
+        w_logical: f32,
+        h_logical: f32,
+    ) -> Self {
+        let w = w_logical * scale;
         let h = h_logical * scale;
         let x = (surface_w as f32 - w) / 2.0;
         let y = PANEL_TOP_MARGIN_LOGICAL * scale;

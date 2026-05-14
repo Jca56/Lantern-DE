@@ -121,6 +121,11 @@ fn icon_dirs() -> Vec<String> {
     // can drop overrides for any other app (matched by Icon= name).
     // Searched first so user overrides shadow system theme files.
     dirs.push(format!("{home}/.lantern/icons"));
+    // Folder icons — needed by the Files view's quick-locations
+    // sidebar (lntrn-folder-downloads.svg etc.) live under subdirs.
+    dirs.push(format!("{home}/.lantern/icons/folders/Standard"));
+    dirs.push(format!("{home}/.lantern/icons/folders/Colors"));
+    dirs.push(format!("{home}/.lantern/icons/folders/Awesome"));
 
     // User-local freedesktop themes.
     dirs.push(format!("{home}/.local/share/icons/Tela/scalable/apps"));
@@ -159,19 +164,131 @@ fn rasterize(
     path: &Path,
     size: u32,
 ) -> Option<GpuTexture> {
-    let data = std::fs::read(path).ok()?;
     let ext = path
         .extension()
         .and_then(|s| s.to_str())
         .map(|s| s.to_ascii_lowercase());
 
+    let data = std::fs::read(path).ok()?;
     let rgba = match ext.as_deref() {
         Some("svg") | Some("svgz") => rasterize_svg(&data, size, size)?,
         Some("png") => rasterize_png(&data, size, size)?,
+        Some("jpg") | Some("jpeg") | Some("gif") | Some("webp") | Some("bmp")
+        | Some("tif") | Some("tiff") | Some("ico") => rasterize_image_crate(&data, size, size)?,
         _ => return None,
     };
 
     Some(tex_pass.upload(gpu, &rgba, size, size))
+}
+
+/// Disk cache location for a video thumbnail. Keyed by hash of the
+/// absolute path so two files at the same name don't collide. Public
+/// so the Files view can probe existence before pushing an IconRequest.
+pub fn video_thumb_path(src: &Path) -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    let mut dir = std::path::PathBuf::from(home);
+    dir.push(".cache/lntrn-cc/thumbs");
+    let _ = std::fs::create_dir_all(&dir);
+    let key = simple_hash(src.to_string_lossy().as_bytes());
+    dir.push(format!("{:016x}.png", key));
+    dir
+}
+
+/// Cheap FNV-1a hash — good enough for cache keys, not cryptographic.
+fn simple_hash(bytes: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for &b in bytes {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+/// Kick off a background ffmpeg job to extract `src`'s thumbnail to
+/// the on-disk cache. Idempotent — a second call for the same path
+/// while a previous job is still running is a no-op. Returns
+/// immediately; the cache file appears whenever ffmpeg finishes.
+pub fn ensure_video_thumb_async(src: std::path::PathBuf, size: u32) {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+    static PENDING: OnceLock<Mutex<HashSet<std::path::PathBuf>>> = OnceLock::new();
+    let pending = PENDING.get_or_init(|| Mutex::new(HashSet::new()));
+    let dst = video_thumb_path(&src);
+    if dst.exists() {
+        return;
+    }
+    {
+        let mut g = pending.lock().unwrap();
+        if g.contains(&src) {
+            return;
+        }
+        g.insert(src.clone());
+    }
+    std::thread::spawn(move || {
+        let _ = extract_video_thumb(&src, &dst, size);
+        if let Ok(mut g) = pending.lock() {
+            g.remove(&src);
+        }
+    });
+}
+
+/// Shell out to ffmpeg to extract a thumbnail frame at ~1s in. PNG so
+/// our existing decoder can pick it up. Returns whether the file now
+/// exists.
+fn extract_video_thumb(src: &Path, dst: &Path, size: u32) -> bool {
+    use std::process::{Command, Stdio};
+    let scale = format!("scale={}:-1:force_original_aspect_ratio=decrease", size);
+    let status = Command::new("ffmpeg")
+        .args([
+            "-y",
+            "-ss", "1",
+            "-i",
+        ])
+        .arg(src)
+        .args(["-vframes", "1", "-vf"])
+        .arg(&scale)
+        .arg(dst)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    matches!(status, Ok(s) if s.success() && dst.exists())
+}
+
+/// Decode any image format the `image` crate handles and resize to
+/// `w × h` with letterboxing so the original aspect ratio is preserved.
+fn rasterize_image_crate(data: &[u8], w: u32, h: u32) -> Option<Vec<u8>> {
+    let img = image::load_from_memory(data).ok()?;
+    let rgba = img.to_rgba8();
+    let (sw, sh) = rgba.dimensions();
+    if sw == 0 || sh == 0 {
+        return None;
+    }
+    // Aspect-preserving fit.
+    let sx = w as f32 / sw as f32;
+    let sy = h as f32 / sh as f32;
+    let s = sx.min(sy);
+    let rw = (sw as f32 * s).round().max(1.0) as u32;
+    let rh = (sh as f32 * s).round().max(1.0) as u32;
+    let resized = image::imageops::resize(
+        &rgba,
+        rw,
+        rh,
+        image::imageops::FilterType::Triangle,
+    );
+    let mut out = vec![0u8; (w * h * 4) as usize];
+    let off_x = (w - rw) / 2;
+    let off_y = (h - rh) / 2;
+    for y in 0..rh {
+        for x in 0..rw {
+            let src_i = ((y * rw + x) * 4) as usize;
+            let dst_i = (((y + off_y) * w + x + off_x) * 4) as usize;
+            if dst_i + 3 < out.len() && src_i + 3 < resized.as_raw().len() {
+                out[dst_i..dst_i + 4].copy_from_slice(&resized.as_raw()[src_i..src_i + 4]);
+            }
+        }
+    }
+    Some(out)
 }
 
 /// Rasterize SVG/SVGZ to RGBA at the requested size, centered with

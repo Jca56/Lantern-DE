@@ -72,9 +72,49 @@ impl Launcher {
     }
 
     /// Reorder pins by index — used by drag-and-drop. Persists on commit.
-    pub fn reorder_pins(&mut self, from: usize, to: usize) {
-        self.pins.reorder(from, to);
-        tracing::info!(from, to, "pins reordered");
+    ///
+    /// `visible_from` / `visible_to` are indices into the **visible**
+    /// pin list (what the user sees and drags). `pins.items()` can
+    /// contain entries for app_ids whose DesktopEntry isn't currently
+    /// installed — those are filtered out of the visible list. We
+    /// translate to the raw items-index space before reordering so a
+    /// missing entry between two visible pins doesn't shift the move
+    /// onto an unrelated slot.
+    pub fn reorder_pins(&mut self, visible_from: usize, visible_to: usize, apps: &AppsProvider) {
+        let mapping = self.visible_to_items_mapping(apps);
+        let visible_len = mapping.len();
+        if visible_from >= visible_len {
+            return;
+        }
+        let items_from = mapping[visible_from];
+        let items_to = if visible_to >= visible_len {
+            self.pins.items().len()
+        } else {
+            mapping[visible_to]
+        };
+        self.pins.reorder(items_from, items_to);
+        tracing::info!(
+            visible_from, visible_to, items_from, items_to,
+            "pins reordered"
+        );
+    }
+
+    /// Map each *visible* pin index to the index of the same entry in
+    /// `pins.items()`. Items whose app_id has no installed DesktopEntry
+    /// are skipped in the visible list, so the two index spaces drift
+    /// whenever any pin is uninstalled.
+    fn visible_to_items_mapping(&self, apps: &AppsProvider) -> Vec<usize> {
+        self.pins
+            .items()
+            .iter()
+            .enumerate()
+            .filter_map(|(items_idx, id)| {
+                (0..apps.count())
+                    .filter_map(|i| apps.get(i))
+                    .any(|e| &e.app_id == id)
+                    .then_some(items_idx)
+            })
+            .collect()
     }
 }
 
@@ -236,10 +276,11 @@ pub fn pin_drop_slot(
     let row_x_start = panel.x + pad;
     let x_offset = px - row_x_start;
     let col_with_gap = tile_size + tile_gap;
-    // Adding half a tile flips drop-side at each tile midpoint, giving
-    // insertion-point semantics (left half → before tile, right half →
-    // after tile).
-    let col = ((x_offset + tile_size * 0.5) / col_with_gap).floor();
+    // Insertion-point semantics: boundary between slot i and slot i+1
+    // lands at tile i's center. Tile i's center sits at x_offset =
+    // i*col_with_gap + tile_size/2, so we shift x_offset so that
+    // boundaries map cleanly to integer col_with_gap multiples.
+    let col = ((x_offset + col_with_gap - tile_size * 0.5) / col_with_gap).floor();
     let col = col.max(0.0) as usize;
     let row_pin_count = (num_pins - row * cols).min(cols);
     let col_clamped = col.min(row_pin_count);
@@ -278,7 +319,7 @@ const TILE_BG_ALPHA: f32 = 0.10;
 #[allow(dead_code)]
 const TILE_BORDER_ALPHA: f32 = 0.06;
 const SECTION_LABEL_ALPHA: f32 = 0.55;
-const SECTION_LABEL_FONT: f32 = 14.0;
+pub const SECTION_LABEL_FONT: f32 = 14.0;
 
 fn text_color(alpha: f32) -> Color {
     Color::from_rgb8(TEXT_RGB.0, TEXT_RGB.1, TEXT_RGB.2).with_alpha(alpha)

@@ -83,10 +83,6 @@ pub struct FontConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WindowConfig {
-    /// Initial window width in logical pixels.
-    pub width: f32,
-    /// Initial window height in logical pixels.
-    pub height: f32,
     /// Window opacity (0.0 – 1.0).
     pub opacity: f32,
     /// Window chrome style: "fox" or "night_sky".
@@ -127,8 +123,6 @@ impl Default for FontConfig {
 impl Default for WindowConfig {
     fn default() -> Self {
         Self {
-            width: 1060.0,
-            height: 800.0,
             opacity: lntrn_theme::background_opacity(),
             mode: WindowMode::default(),
         }
@@ -189,11 +183,5 @@ impl LanternConfig {
     fn sanitize(&mut self) {
         self.font.size = self.font.size.clamp(6.0, 30.0);
         self.window.opacity = self.window.opacity.clamp(0.1, 1.0);
-        if self.window.width < 480.0 {
-            self.window.width = 480.0;
-        }
-        if self.window.height < 320.0 {
-            self.window.height = 320.0;
-        }
     }
 }

@@ -17,6 +17,7 @@ const ICON_LEFT_PAD: f32 = 16.0;
 
 pub const TILE_WIDTH: f32 = ICON_LEFT_PAD + ICON_SIZE;
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw_inline(
     painter: &mut Painter,
     _text: &mut TextRenderer,
@@ -26,6 +27,7 @@ pub fn draw_inline(
     alpha: f32,
     _surface_w: u32,
     _surface_h: u32,
+    lit: bool,
 ) {
     if !bt.is_present() {
         return;
@@ -33,17 +35,23 @@ pub fn draw_inline(
     let icon_size = ICON_SIZE * scale;
     let icon_x = layout.x + ICON_LEFT_PAD * scale;
     let icon_y = layout.y + (layout.h - icon_size) / 2.0;
-    // Faded when the controller is off so the row reads "BT is off"
-    // without needing a separate badge.
     let icon_alpha = if bt.is_powered() { alpha } else { 0.30 * alpha };
-    draw_bt_glyph(painter, icon_x, icon_y, icon_size, icon_size, icon_alpha);
+    let color = if lit {
+        Color::from_rgb8(0xc8, 0x86, 0x0a).with_alpha(icon_alpha)
+    } else {
+        Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(icon_alpha)
+    };
+    draw_bt_glyph_colored(painter, icon_x, icon_y, icon_size, icon_size, color);
 }
 
-/// The classic "B" rune: two stacked diamonds sharing the right vertex.
-/// Drawn as 4 triangles. Pure shapes, no SVG.
+#[allow(dead_code)]
 fn draw_bt_glyph(painter: &mut Painter, x: f32, y: f32, w: f32, h: f32, alpha: f32) {
-    let pt = |fx: f32, fy: f32| (x + fx * w, y + fy * h);
     let color = Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(alpha);
+    draw_bt_glyph_colored(painter, x, y, w, h, color);
+}
+
+fn draw_bt_glyph_colored(painter: &mut Painter, x: f32, y: f32, w: f32, h: f32, color: Color) {
+    let pt = |fx: f32, fy: f32| (x + fx * w, y + fy * h);
     // We render the bluetooth rune as a stroked path: top-bottom spine
     // line + four diagonal lines forming the two bowed-out shapes.
     // Stroked shapes look better than triangle-fanning a non-convex

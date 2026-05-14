@@ -32,7 +32,7 @@ BINARIES := \
 	lntrn-screencopy
 
 # Extra binaries from multi-binary crates
-EXTRA_BINARIES := lntrn-copy lntrn-paste notify-send
+EXTRA_BINARIES := notify-send
 
 .PHONY: all build install install-bins install-icons install-config \
         install-desktop install-wallpaper install-session install-portal \

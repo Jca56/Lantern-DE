@@ -2431,16 +2431,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lntrn-clipboard"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "libc",
- "wayland-client",
- "wayland-protocols-wlr",
-]
-
-[[package]]
 name = "lntrn-code"
 version = "0.1.0"
 dependencies = [
@@ -2462,10 +2452,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "image",
  "libc",
  "lntrn-dbus",
  "lntrn-icons",
  "lntrn-render",
+ "lntrn-terminal",
  "lntrn-ui",
  "png 0.17.16",
  "raw-window-handle",
@@ -2825,6 +2817,7 @@ dependencies = [
  "toml 0.8.2",
  "vte",
  "wayland-client",
+ "wayland-protocols",
  "wayland-protocols-wlr",
  "winit",
 ]

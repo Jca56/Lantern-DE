@@ -12,8 +12,10 @@ libc = "0.2"
 lntrn-dbus = { path = "../lntrn-dbus" }
 lntrn-icons = { path = "../lntrn-icons" }
 lntrn-render = { path = "../lntrn-render" }
+lntrn-terminal = { path = "../lntrn-terminal" }
 lntrn-ui = { path = "../lntrn-ui" }
 png = "0.17"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp", "tiff", "ico"] }
 raw-window-handle = "0.6"
 resvg = "0.45"
 tracing = "0.1"

@@ -240,6 +240,22 @@ pub fn render_surface(
     } else {
         Vec::new()
     };
+    // Process Command-Center IPC early so any focus-at requests
+    // (click-outside-CC → focus underlying window) commit before we
+    // take the long-lived immutable borrows below.
+    state.cc_thumbs.poll();
+    let focus_at_points = state.cc_thumbs.take_focus_at();
+    for (px, py) in focus_at_points {
+        let pos = smithay::utils::Point::<f64, smithay::utils::Logical>::from(
+            (px as f64, py as f64),
+        );
+        let target = state.visible_element_under(pos).map(|(w, _)| w.clone());
+        if let Some(window) = target {
+            let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+            state.focus_window(&window, serial);
+        }
+    }
+
     // Pre-compute fullscreen and maximized surfaces before udev borrows state.
     // Use slices for O(n) linear scan instead of HashSet allocation — these
     // lists are typically 0–2 entries so linear beats hashing overhead.
@@ -298,7 +314,8 @@ pub fn render_surface(
     };
 
     // ── Command Center thumbnail pre-computation ─────────────────────
-    state.cc_thumbs.poll();
+    // (cc_thumbs.poll + focus_at draining already ran above so we can
+    //  re-borrow state immutably here.)
     let cc_slots_and_windows: Vec<(crate::cc_thumbs::ThumbSlot, Window)> = {
         let slots = state.cc_thumbs.slots();
         if slots.is_empty() {
@@ -1011,6 +1028,73 @@ pub fn render_surface(
     // sit IN FRONT of the CC panel layer surface in z-order (Smithay
     // renders elements front-to-back from index 0).
     if !cc_slots_and_windows.is_empty() {
+        // Close button overlays — pushed FIRST so they end up at lower
+        // indices in `elements`, which means they sit in FRONT of the
+        // thumbnails (Smithay's front-most-first order).
+        let close_buttons: Vec<(crate::cc_thumbs::CloseBtn, bool)> = cc_slots_and_windows
+            .iter()
+            .filter_map(|(s, _)| s.close.map(|c| (c, c.hovered)))
+            .collect();
+        if !close_buttons.is_empty() {
+            let first_size = close_buttons[0].0.rect.size;
+            state.cc_thumbs.close_bg_idle.resize((first_size.w, first_size.h));
+            state.cc_thumbs.close_bg_hover.resize((first_size.w, first_size.h));
+            // Glyph displays at ~58% of the bg size so it has a little
+            // breathing room around it.
+            let glyph_inset = (first_size.w as f32 * 0.21).round() as i32;
+
+            for (close, hovered) in &close_buttons {
+                let phys = |x: i32, y: i32| -> smithay::utils::Point<i32, smithay::utils::Physical> {
+                    (
+                        (x as f64 * output_scale).round() as i32,
+                        (y as f64 * output_scale).round() as i32,
+                    )
+                        .into()
+                };
+                let scale = smithay::utils::Scale::from(output_scale);
+                let kind = smithay::backend::renderer::element::Kind::Unspecified;
+                let bg_buf = if *hovered {
+                    &state.cc_thumbs.close_bg_hover
+                } else {
+                    &state.cc_thumbs.close_bg_idle
+                };
+
+                // X glyph (front-most) — bitmap so the strokes can be
+                // proper diagonals, not an axis-aligned "+".
+                let glyph_phys_pos: smithay::utils::Point<f64, smithay::utils::Physical> = (
+                    (close.rect.loc.x + glyph_inset) as f64 * output_scale,
+                    (close.rect.loc.y + glyph_inset) as f64 * output_scale,
+                )
+                    .into();
+                let glyph_dst = smithay::utils::Size::<i32, smithay::utils::Logical>::from((
+                    close.rect.size.w - 2 * glyph_inset,
+                    close.rect.size.h - 2 * glyph_inset,
+                ));
+                if let Ok(x_elem) =
+                    smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement::from_buffer(
+                        renderer,
+                        glyph_phys_pos,
+                        &state.cc_thumbs.x_glyph,
+                        None,
+                        None,
+                        Some(glyph_dst),
+                        kind,
+                    )
+                {
+                    elements.push(CustomRenderElements::Memory(x_elem));
+                }
+
+                let bg = smithay::backend::renderer::element::solid::SolidColorRenderElement::from_buffer(
+                    bg_buf,
+                    phys(close.rect.loc.x, close.rect.loc.y),
+                    scale,
+                    1.0,
+                    kind,
+                );
+                elements.push(CustomRenderElements::Overlay(bg));
+            }
+        }
+
         for (ref slot, ref win) in &cc_slots_and_windows {
             let win_geo = win.geometry();
             if win_geo.size.w <= 0 || win_geo.size.h <= 0 {
@@ -1050,6 +1134,7 @@ pub fn render_surface(
                 elements.push(CustomRenderElements::Rescaled(rescaled));
             }
         }
+
     }
 
     // Fullscreen windows render above layer surfaces (e.g. above the bar).

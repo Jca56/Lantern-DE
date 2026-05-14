@@ -6,6 +6,7 @@
 //! a fresh open starts with an empty graph instead of stale data.
 
 pub mod proc;
+pub mod process_list;
 pub mod tile;
 pub mod view;
 mod worker;
@@ -14,8 +15,51 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
+use crate::search::input::Input;
+
 use self::proc::MemInfo;
 use self::worker::{SysMonCmd, SysMonEvent};
+
+/// How the process list should be ordered. The render side surfaces
+/// these via clickable column headers — clicking the active column
+/// toggles its direction; clicking the other column switches over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcSort {
+    CpuDesc,
+    CpuAsc,
+    MemDesc,
+    MemAsc,
+}
+
+impl ProcSort {
+    /// Click on the CPU header: same column toggles direction; otherwise
+    /// switch to CpuDesc.
+    pub fn toggle_cpu(self) -> Self {
+        match self {
+            ProcSort::CpuDesc => ProcSort::CpuAsc,
+            ProcSort::CpuAsc => ProcSort::CpuDesc,
+            _ => ProcSort::CpuDesc,
+        }
+    }
+
+    pub fn toggle_mem(self) -> Self {
+        match self {
+            ProcSort::MemDesc => ProcSort::MemAsc,
+            ProcSort::MemAsc => ProcSort::MemDesc,
+            _ => ProcSort::MemDesc,
+        }
+    }
+
+    pub fn is_cpu(self) -> bool {
+        matches!(self, ProcSort::CpuDesc | ProcSort::CpuAsc)
+    }
+    pub fn is_mem(self) -> bool {
+        matches!(self, ProcSort::MemDesc | ProcSort::MemAsc)
+    }
+    pub fn is_desc(self) -> bool {
+        matches!(self, ProcSort::CpuDesc | ProcSort::MemDesc)
+    }
+}
 
 /// Sample period for graphs (2 Hz).
 pub const SAMPLE_PERIOD: Duration = Duration::from_millis(500);
@@ -28,8 +72,10 @@ pub const PROCESS_REFRESH: Duration = Duration::from_secs(2);
 /// Number of samples kept in each ring buffer (30 s of history at 2 Hz).
 pub const HISTORY_LEN: usize = 60;
 
-/// Number of processes shown in the expanded view, ordered by CPU desc.
-pub const PROCESS_LIST_LEN: usize = 10;
+/// Hard cap on rows the worker forwards to the render thread. We keep
+/// this generous (well above what fits on screen) so the filter has
+/// rows to match against without re-walking /proc.
+pub const PROCESS_LIST_LEN: usize = 80;
 
 pub use self::tile::TILE_WIDTH;
 
@@ -114,6 +160,12 @@ pub struct SysMon {
     /// a soft-confirm: the kill button on the **selected** row sends
     /// SIGTERM, on any other row just selects that row instead.
     pub selected_pid: Option<i32>,
+    /// Active process-list sort order. Mirrored to the worker via
+    /// [`SysMonCmd::SetSort`] whenever it changes.
+    pub sort: ProcSort,
+    /// Live filter buffer for the process list. Empty = no filter.
+    /// Substring match against `ProcessRow::comm`, case-insensitive.
+    pub filter: Input,
 }
 
 impl SysMon {
@@ -140,11 +192,26 @@ impl SysMon {
             last_temp_c: None,
             processes: Vec::new(),
             selected_pid: None,
+            sort: ProcSort::CpuDesc,
+            filter: Input::new(),
         }
     }
 
     pub const fn is_present(&self) -> bool {
         true
+    }
+
+    /// Update the sort key and forward to the worker. The next process
+    /// refresh (≤2 s away) will arrive pre-sorted in the new order.
+    pub fn set_sort(&mut self, sort: ProcSort) {
+        if self.sort == sort {
+            return;
+        }
+        self.sort = sort;
+        let _ = self.cmd_tx.send(SysMonCmd::SetSort(sort));
+        // Also resort what we already have so the UI reflects the new
+        // order immediately instead of waiting for the next sample.
+        apply_sort_in_place(&mut self.processes, sort);
     }
 
     /// Drop everything we cached so the next open starts fresh and
@@ -160,6 +227,8 @@ impl SysMon {
         self.last_temp_c = None;
         self.processes.clear();
         self.selected_pid = None;
+        // Filter persists across opens — feels less surprising than
+        // having a typed query silently vanish. Sort persists too.
     }
 
     /// Forward visibility flips to the worker and drain any pending
@@ -211,4 +280,19 @@ impl Default for SysMon {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Sort a slice of [`ProcessRow`] in place by the given [`ProcSort`].
+/// Ties break by RSS desc (memory hogs win) so the order is stable.
+pub fn apply_sort_in_place(rows: &mut [ProcessRow], sort: ProcSort) {
+    use std::cmp::Ordering::Equal;
+    rows.sort_by(|a, b| {
+        let cmp = match sort {
+            ProcSort::CpuDesc => b.cpu_load.partial_cmp(&a.cpu_load).unwrap_or(Equal),
+            ProcSort::CpuAsc => a.cpu_load.partial_cmp(&b.cpu_load).unwrap_or(Equal),
+            ProcSort::MemDesc => b.rss_bytes.cmp(&a.rss_bytes),
+            ProcSort::MemAsc => a.rss_bytes.cmp(&b.rss_bytes),
+        };
+        cmp.then_with(|| b.rss_bytes.cmp(&a.rss_bytes))
+    });
 }
