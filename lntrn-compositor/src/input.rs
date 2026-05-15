@@ -32,33 +32,6 @@ pub struct AudioRepeat {
 const AUDIO_REPEAT_DELAY_MS: u128 = 400;
 const AUDIO_REPEAT_INTERVAL_MS: u128 = 80;
 
-/// Read a power setting from the Lantern config.
-/// Returns the value or a default if the file/key doesn't exist.
-fn read_power_setting(key: &str, default: &str) -> String {
-    let path = crate::lantern_config_path();
-    if let Ok(contents) = std::fs::read_to_string(&path) {
-        // Simple TOML parsing: find the key in [power] section
-        let mut in_power = false;
-        for line in contents.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with('[') {
-                in_power = trimmed == "[power]";
-                continue;
-            }
-            if in_power {
-                if let Some(rest) = trimmed.strip_prefix(key) {
-                    let rest = rest.trim();
-                    if let Some(val) = rest.strip_prefix('=') {
-                        let val = val.trim().trim_matches('"');
-                        return val.to_string();
-                    }
-                }
-            }
-        }
-    }
-    default.to_string()
-}
-
 /// Read a string setting from the [input] section of the Lantern config.
 /// Uses the shared lantern.toml cache so this is near-instant when the file
 /// hasn't changed (just one stat() syscall to check mtime).
@@ -224,6 +197,20 @@ impl Lantern {
     }
 
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
+        // Real user input wakes the idle clock and restores brightness.
+        if matches!(
+            &event,
+            InputEvent::Keyboard { .. }
+                | InputEvent::PointerMotion { .. }
+                | InputEvent::PointerMotionAbsolute { .. }
+                | InputEvent::PointerButton { .. }
+                | InputEvent::PointerAxis { .. }
+                | InputEvent::GestureSwipeBegin { .. }
+                | InputEvent::GesturePinchBegin { .. }
+        ) {
+            self.power.note_input();
+        }
+
         match event {
             InputEvent::Keyboard { event, .. } => {
                 let serial = SERIAL_COUNTER.next_serial();
@@ -1219,27 +1206,13 @@ impl Lantern {
                 if let Some(Switch::Lid) = event.switch() {
                     match event.state() {
                         SwitchState::On => {
-                            // Lid closed — check config for action
-                            // Use lid_close_on_ac if we had AC detection, for now use lid_close_action
-                            let action = read_power_setting("lid_close_action", "suspend");
-                            tracing::info!("Lid closed, action: {}", action);
-                            match action.as_str() {
-                                "suspend" => {
-                                    let _ = Command::new("systemctl")
-                                        .arg("suspend")
-                                        .spawn();
-                                }
-                                "hibernate" => {
-                                    let _ = Command::new("systemctl")
-                                        .arg("hibernate")
-                                        .spawn();
-                                }
-                                "lock" => {
-                                    // TODO: implement lock screen
-                                    tracing::info!("Lock screen not yet implemented");
-                                }
-                                "nothing" | _ => {}
-                            }
+                            let action = if crate::power::is_on_ac() {
+                                self.power.lid_close_on_ac.clone()
+                            } else {
+                                self.power.lid_close_action.clone()
+                            };
+                            tracing::info!("Lid closed (on_ac={}) action: {}", crate::power::is_on_ac(), action);
+                            crate::power::run_power_action(&action);
                         }
                         SwitchState::Off => {
                             tracing::info!("Lid opened");

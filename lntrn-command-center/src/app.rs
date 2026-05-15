@@ -178,10 +178,14 @@ pub struct AppState {
     pub panel_view: PanelView,
     /// Which side arrow is under the cursor (for hover styling).
     pub view_arrow_hover: Option<crate::view_arrows::Side>,
-    /// True when the cursor is hovering the clock toggle (under the left arrow).
-    pub clock_toggle_hover: bool,
-    /// Cached state of the desktop clock widget — reloaded on each show.
-    pub clock_enabled: bool,
+    /// True when the cursor is hovering the Desktop Settings button.
+    pub desktop_button_hover: bool,
+    /// Cached desktop-widgets config — reloaded on each show.
+    pub desktop_widgets: crate::desktop_settings::WidgetsConfig,
+    /// Whether the Desktop Settings popover is open.
+    pub desktop_settings_open: bool,
+    /// Which row inside the desktop settings popover the cursor is over.
+    pub desktop_settings_hover: Option<crate::desktop_settings::HoverRow>,
     /// True when the cursor is hovering the Home button above the panel.
     pub home_hover: bool,
     /// True when the cursor is hovering the grow / shrink button.
@@ -317,8 +321,10 @@ impl AppState {
             opened_from_collapsed: false,
             panel_view: PanelView::Default,
             view_arrow_hover: None,
-            clock_toggle_hover: false,
-            clock_enabled: crate::clock_toggle::load().clock_enabled,
+            desktop_button_hover: false,
+            desktop_widgets: crate::desktop_settings::load(),
+            desktop_settings_open: false,
+            desktop_settings_hover: None,
             home_hover: false,
             grow_hover: false,
             gear_hover: false,

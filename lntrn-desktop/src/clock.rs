@@ -6,9 +6,9 @@ use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
 /// Vertical offset from screen top in logical pixels.
 const TOP_OFFSET: f32 = 80.0;
-const TIME_FONT_PX: f32 = 220.0;
-const DOW_FONT_PX: f32 = 56.0;
-const DATE_FONT_PX: f32 = 42.0;
+const TIME_FONT_PX: f32 = 170.0;
+const DOW_FONT_PX: f32 = 44.0;
+const DATE_FONT_PX: f32 = 34.0;
 
 const TEXT: Color = Color {
     r: 0.96,

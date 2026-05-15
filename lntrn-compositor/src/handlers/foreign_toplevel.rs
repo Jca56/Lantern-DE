@@ -325,13 +325,14 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, WlSurface, Lantern> for Lantern {
             }
             zwlr_foreign_toplevel_handle_v1::Request::Close => {
                 tracing::info!("Foreign toplevel: close requested");
-                let window = state.find_mapped_window(surface).or_else(|| {
-                    state
-                        .minimized_windows
-                        .iter()
-                        .find(|m| m.surface == *surface)
-                        .map(|m| m.window.clone())
-                });
+                // If the window is currently minimized, restore it first
+                // so its client mainloop has frame callbacks/configure
+                // events to wake on. Otherwise GTK/Qt clients tend to
+                // queue the close event without acting until something
+                // else nudges them — manifesting as "X did nothing until
+                // I unminimized the window first".
+                let window = state.find_mapped_window(surface)
+                    .or_else(|| state.restore_minimized_by_surface(surface));
                 if let Some(window) = window {
                     crate::window_ext::WindowExt::request_close(&window);
                 }

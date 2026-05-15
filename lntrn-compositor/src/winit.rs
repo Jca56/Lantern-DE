@@ -136,12 +136,17 @@ pub fn init_winit(
                             elements.push(WinitRenderElements::Wallpaper(cursor));
                         } else if let smithay::input::pointer::CursorImageStatus::Surface(ref surface) = state.cursor.status {
                             use smithay::wayland::compositor::with_states;
-                            use smithay::input::pointer::CursorImageAttributes;
+                            use smithay::input::pointer::CursorImageSurfaceData;
+                            // See render.rs for why CursorImageSurfaceData
+                            // (= Mutex<CursorImageAttributes>) is the right
+                            // data_map key — the bare attrs type silently
+                            // falls back to (0, 0) and offsets every
+                            // client-side custom cursor.
                             let hotspot = with_states(surface, |states| {
                                 states
                                     .data_map
-                                    .get::<CursorImageAttributes>()
-                                    .map(|attrs| attrs.hotspot)
+                                    .get::<CursorImageSurfaceData>()
+                                    .map(|m| m.lock().unwrap().hotspot)
                                     .unwrap_or_default()
                             });
                             let surface_pos: Point<i32, Physical> = (

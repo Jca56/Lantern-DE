@@ -362,6 +362,33 @@ pub fn icon_power() -> Vec<PathCmd> {
     ]
 }
 
+/// Notifications — bell icon
+pub fn icon_notifications() -> Vec<PathCmd> {
+    use PathCmd::*;
+    vec![
+        // Bell body: dome on top, flaring outward to a wider lip at the bottom.
+        // Top dome
+        Move(12.0, 3.0),
+        Cubic(8.5, 3.0, 6.0, 5.8, 6.0, 9.2),
+        Line(6.0, 13.0),
+        // Flare outward to lip on left side
+        Cubic(6.0, 14.5, 5.5, 16.0, 4.0, 17.5),
+        Line(20.0, 17.5),
+        // Flare back up on right side
+        Cubic(18.5, 16.0, 18.0, 14.5, 18.0, 13.0),
+        Line(18.0, 9.2),
+        Cubic(18.0, 5.8, 15.5, 3.0, 12.0, 3.0),
+        Close,
+        // Clapper (small circle at the bottom)
+        Move(10.5, 19.0),
+        Cubic(10.5, 20.2, 11.2, 21.0, 12.0, 21.0),
+        Cubic(12.8, 21.0, 13.5, 20.2, 13.5, 19.0),
+        Line(13.5, 18.5),
+        Line(10.5, 18.5),
+        Close,
+    ]
+}
+
 /// App Icons panel icon — a grid of squares representing app icons.
 pub fn icon_app_icons() -> Vec<PathCmd> {
     use PathCmd::*;

@@ -22,6 +22,9 @@ const ZONE_WM_BG_OPACITY: u32 = 309;
 const ZONE_WM_GLOW: u32 = 310;
 const ZONE_WM_GLOW_COLOR_BASE: u32 = 311; // 311..319 for up to 9 color swatches
 const ZONE_WM_GLOW_INTENSITY: u32 = 320;
+const ZONE_WM_TEST_SPAWN: u32 = 321;
+const ZONE_WM_ANIM_ENABLE: u32 = 322;
+const ZONE_WM_ANIM_SPEED: u32 = 323;
 
 // Power panel zone IDs (400–499) and action IDs (500–599) live in
 // `power_panel.rs` now.
@@ -263,11 +266,15 @@ pub fn draw_wm_panel(
     let layout_card_h = card_chrome_h + layout_rows * row;
     let focus_card_h = card_chrome_h + focus_rows * row;
     let effects_card_h = card_chrome_h + effects_rows * row;
+    let animations_card_h = card_chrome_h + 2.0 * row;
+    let testing_card_h = card_chrome_h + row * 1.5;
 
     let content_height = CARD_OUTER_PAD_V * s
         + layout_card_h + CARD_GAP * s
         + focus_card_h + CARD_GAP * s
-        + effects_card_h + CARD_OUTER_PAD_V * 2.0 * s;
+        + effects_card_h + CARD_GAP * s
+        + animations_card_h + CARD_GAP * s
+        + testing_card_h + CARD_OUTER_PAD_V * 2.0 * s;
 
     // Handle scroll
     if scroll_delta != 0.0 {
@@ -502,6 +509,79 @@ pub fn draw_wm_panel(
         text.queue(&val, vsz, value_x, label_y, fox.text_secondary, VALUE_W * s, sw, sh);
     }
 
+    cy_top += effects_card_h + CARD_GAP * s;
+
+    // ─────────────────────────────────────────────────────────────────
+    // Card 4: Animations — master toggle + speed multiplier
+    // ─────────────────────────────────────────────────────────────────
+    {
+        let mut cy = draw_section_card(
+            painter, text, fox, "Animations",
+            card_x, cy_top, card_w, animations_card_h, s, sw, sh,
+        );
+
+        // Enabled toggle
+        {
+            let rect = Rect::new(card_inner_x, cy, card_inner_w, TOGGLE_H * s);
+            let toggle = Toggle::new(rect, config.animations.enabled)
+                .label("Enable Animations").scale(s);
+            let track = toggle.track_rect();
+            let zone = ix.add_zone(ZONE_WM_ANIM_ENABLE, track);
+            toggle.hovered(zone.is_hovered()).draw(painter, text, fox, sw, sh);
+            cy += row;
+        }
+
+        // Speed slider (0.25x – 3x). Snap to 0.05 to keep the value tidy.
+        {
+            let label_y = cy + (row - lsz) / 2.0;
+            text.queue("Speed", lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
+            let frac = ((config.animations.speed - 0.25) / 2.75).clamp(0.0, 1.0);
+            let rect = Rect::new(ctrl_x, cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
+            let zone = ix.add_zone(ZONE_WM_ANIM_SPEED, rect);
+            if let Some(f) = slider_value_from_cursor(ix, ZONE_WM_ANIM_SPEED, &rect) {
+                let raw = 0.25 + f * 2.75;
+                config.animations.speed = (raw / 0.05).round() * 0.05;
+                config.animations.speed = config.animations.speed.clamp(0.25, 3.0);
+            }
+            Slider::new(rect).value(frac).hovered(zone.is_hovered()).active(zone.is_active())
+                .draw(painter, fox);
+            let val = format!("{:.2}x", config.animations.speed);
+            text.queue(&val, vsz, value_x, label_y, fox.text_secondary, VALUE_W * s, sw, sh);
+        }
+    }
+
+    cy_top += animations_card_h + CARD_GAP * s;
+
+    // ─────────────────────────────────────────────────────────────────
+    // Card 5: Testing — spawn a blank 500x500 SSD window so the user
+    // can preview titlebar / corner-radius / border-width changes.
+    // ─────────────────────────────────────────────────────────────────
+    {
+        let cy = draw_section_card(
+            painter, text, fox, "Testing",
+            card_x, cy_top, card_w, testing_card_h, s, sw, sh,
+        );
+        let btn_w = 220.0 * s;
+        let btn_h = 44.0 * s;
+        let btn_rect = Rect::new(card_inner_x, cy, btn_w, btn_h);
+        let zone = ix.add_zone(ZONE_WM_TEST_SPAWN, btn_rect);
+        Button::new(btn_rect, "Open Test Window")
+            .variant(ButtonVariant::Ghost)
+            .hovered(zone.is_hovered())
+            .pressed(zone.is_active())
+            .scale(s)
+            .draw(painter, text, fox, sw, sh);
+
+        let hint = "Blank 500\u{00d7}500 window — uses Lantern's SSD so titlebar,";
+        let hint2 = "corner radius, and border width sliders apply.";
+        let hint_x = card_inner_x + btn_w + 16.0 * s;
+        let hint_y = cy + (btn_h - vsz * 2.0 - 4.0 * s) / 2.0;
+        text.queue(hint, vsz, hint_x, hint_y, fox.text_secondary,
+            card_inner_w - btn_w - 16.0 * s, sw, sh);
+        text.queue(hint2, vsz, hint_x, hint_y + vsz + 4.0 * s, fox.text_secondary,
+            card_inner_w - btn_w - 16.0 * s, sw, sh);
+    }
+
     scroll_area.end(painter, text);
 
     // Draw scrollbar outside the clip region
@@ -522,6 +602,13 @@ pub fn handle_wm_click(config: &mut LanternConfig, zone_id: u32) {
     {
         let idx = (zone_id - ZONE_WM_GLOW_COLOR_BASE) as usize;
         config.window_manager.focus_glow_color = GLOW_COLORS[idx].0.into();
+    } else if zone_id == ZONE_WM_ANIM_ENABLE {
+        config.animations.enabled = !config.animations.enabled;
+    } else if zone_id == ZONE_WM_TEST_SPAWN {
+        let _ = std::process::Command::new(std::env::current_exe()
+                .unwrap_or_else(|_| std::path::PathBuf::from("lntrn-system-settings")))
+            .arg("--test-window")
+            .spawn();
     }
 }
 

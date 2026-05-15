@@ -6,7 +6,7 @@
 
 mod app;
 mod clipboard;
-mod clock_toggle;
+mod desktop_settings;
 mod controls;
 mod emojis;
 mod files;

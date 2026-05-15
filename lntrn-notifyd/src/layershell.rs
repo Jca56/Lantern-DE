@@ -39,15 +39,33 @@ fn notification_sound_path() -> Option<std::path::PathBuf> {
     if path.exists() { Some(path) } else { None }
 }
 
-fn play_notification_sound() {
+fn play_notification_sound(volume: f32) {
+    if volume <= 0.0 { return; }
     if let Some(path) = notification_sound_path() {
+        let vol = volume.clamp(0.0, 1.0);
         std::thread::spawn(move || {
             let _ = std::process::Command::new("pw-play")
+                .arg(format!("--volume={}", vol))
                 .arg(&path)
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .status();
         });
+    }
+}
+
+/// Snapshot of notification settings, re-read from `lantern.toml` on each event.
+struct NotifSettings {
+    show_toasts: bool,
+    play_sound: bool,
+    volume: f32,
+}
+
+fn read_notif_settings() -> NotifSettings {
+    NotifSettings {
+        show_toasts: lntrn_theme::read_config_bool("notifications", "show_toasts", true),
+        play_sound: lntrn_theme::read_config_bool("notifications", "play_sound", true),
+        volume: lntrn_theme::read_config_f32("notifications", "volume", 0.8),
     }
 }
 
@@ -408,14 +426,17 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>) -> Result<()> {
         while let Ok(event) = rx.try_recv() {
             match event {
                 NotifyEvent::Show(notif) => {
+                    let settings = read_notif_settings();
                     let is_new = !active.iter().any(|a| a.id == notif.id);
-                    if let Some(existing) = active.iter_mut().find(|a| a.id == notif.id) {
-                        *existing = ActiveNotification::from_notification(&notif);
-                    } else {
-                        active.push(ActiveNotification::from_notification(&notif));
+                    if settings.show_toasts {
+                        if let Some(existing) = active.iter_mut().find(|a| a.id == notif.id) {
+                            *existing = ActiveNotification::from_notification(&notif);
+                        } else {
+                            active.push(ActiveNotification::from_notification(&notif));
+                        }
                     }
-                    if is_new {
-                        play_notification_sound();
+                    if is_new && settings.play_sound {
+                        play_notification_sound(settings.volume);
                     }
                 }
                 NotifyEvent::Close(id) => {

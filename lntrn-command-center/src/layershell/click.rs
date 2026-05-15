@@ -34,8 +34,14 @@ pub(super) fn handle_clicks(
         // Context menu intercepts every left-click while open: a
         // click on an item runs that action; anywhere else dismisses.
         let menu_consumed = if let Some(menu) = app.context_menu.clone() {
+            // Hit-test against the full surface — matches the bounds
+            // the menu was drawn with, so dock menus that anchor
+            // outside the panel are still clickable.
+            let surface_bounds = lntrn_render::Rect::new(
+                0.0, 0.0, wl.phys_width().max(1) as f32, wl.phys_height().max(1) as f32,
+            );
             if let Some(action) = crate::launcher::context_menu::hit_test(
-                &menu, panel_rect, scale_f, phys_cx, phys_cy,
+                &menu, surface_bounds, scale_f, phys_cx, phys_cy,
             ) {
                 app.run_menu_action(action);
             } else {
@@ -57,11 +63,40 @@ pub(super) fn handle_clicks(
             false
         };
 
+        // Desktop Settings popover intercepts clicks while open: a
+        // hit on a toggle row flips that setting; a click outside the
+        // popover (but not on the strip button — that's handled in
+        // the main cascade) closes the popover and consumes the click.
+        let popover_consumed = if !menu_consumed && app.desktop_settings_open {
+            match crate::desktop_settings::hit_test_popover(panel_rect, scale_f, phys_cx, phys_cy) {
+                crate::desktop_settings::PopoverHit::ClockToggle => {
+                    app.desktop_widgets = crate::desktop_settings::toggle_clock();
+                    true
+                }
+                crate::desktop_settings::PopoverHit::VisualizerToggle => {
+                    app.desktop_widgets = crate::desktop_settings::toggle_visualizer();
+                    true
+                }
+                crate::desktop_settings::PopoverHit::Background => {
+                    // Outside the popover — close it and let the
+                    // main click cascade run only if the click was
+                    // on the strip button (the cascade will re-open
+                    // it). Otherwise just consume so the click
+                    // doesn't, e.g., activate a dock entry the user
+                    // didn't mean to hit.
+                    app.desktop_settings_open = false;
+                    !crate::desktop_settings::hit_test_button(panel_rect, scale_f, phys_cx, phys_cy)
+                }
+            }
+        } else {
+            false
+        };
+
         // First: if a control's full-content view is up, see if the
         // click hit one of its interactive widgets (battery toggle,
         // audio slider, audio device list). Skip when an overlay
         // (context menu, power confirm) has the click.
-        let consumed_by_view = !menu_consumed && app.power_confirm.is_none()
+        let consumed_by_view = !menu_consumed && !popover_consumed && app.power_confirm.is_none()
             && handle_control_view_click(
                 app, text, panel_rect, scale_f, phys_cx, phys_cy,
             );
@@ -147,7 +182,7 @@ pub(super) fn handle_clicks(
                 dock_layout = Some(layout);
             }
         }
-        if menu_consumed || confirm_consumed {
+        if menu_consumed || confirm_consumed || popover_consumed {
             // Already handled by an overlay — fall through to render.
         } else if let Some(action) = power_btn {
             tracing::debug!(?action, "power button click → open confirm modal");
@@ -409,8 +444,13 @@ pub(super) fn handle_clicks(
                 crate::view_arrows::Side::Left => app.cycle_view_prev(),
                 crate::view_arrows::Side::Right => app.cycle_view_next(),
             }
-        } else if crate::clock_toggle::hit_test(panel_rect, scale_f, phys_cx, phys_cy) {
-            app.clock_enabled = crate::clock_toggle::toggle_clock();
+        } else if crate::desktop_settings::hit_test_button(panel_rect, scale_f, phys_cx, phys_cy) {
+            app.desktop_settings_open = !app.desktop_settings_open;
+            if app.desktop_settings_open {
+                // Refresh from disk in case another instance / file
+                // edit changed the on-disk values since last open.
+                app.desktop_widgets = crate::desktop_settings::load();
+            }
         } else if let Some((idx, window_idx, hit)) = dock_preview_hit {
             let entry = dock_layout
                 .as_ref()

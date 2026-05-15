@@ -1,6 +1,7 @@
 #![allow(irrefutable_let_patterns)]
 
 mod animation;
+mod animations;
 mod blur;
 pub mod cc_thumbs;
 pub mod clipboard_ipc;
@@ -33,6 +34,7 @@ mod workspace_ipc;
 mod workspaces;
 pub mod udev;
 mod udev_device;
+mod power;
 mod wallpaper;
 mod window_ext;
 mod window_management;

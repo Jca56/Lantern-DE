@@ -154,6 +154,13 @@ pub fn render_surface(
 ) {
     let render_start = Instant::now();
 
+    // Drain deferred relayout flag set by config-poll (e.g. WM gap change).
+    // Must run before any state borrows.
+    if state.pending_layout {
+        state.pending_layout = false;
+        state.apply_tiling_layout();
+    }
+
     // Live-reload monitor positions from config (must run before any udev borrows)
     // Uses wallpaper_frame_counter which is incremented later in this function.
     if state.wallpaper_frame_counter == 0 {
@@ -357,6 +364,8 @@ pub fn render_surface(
     };
 
     let shadow_shader = &udev.shadow_shader;
+    let border_shader = &udev.border_shader;
+    let border_width = state.border_width as i32;
     let hot_corner_glow_shader = &udev.hot_corner_glow_shader;
     let top_center_glow_shader = &udev.top_center_glow_shader;
     let ssd_icon_shader = &udev.ssd_icon_shader;
@@ -540,9 +549,9 @@ pub fn render_surface(
         // grid cells rather than floating cards.
         let is_tiled_now = state.workspaces.contains(&surface);
         let win_corner_r_logical = if is_tiled_now {
-            crate::ssd::TILED_CORNER_RADIUS
+            crate::ssd::tiled_corner_radius()
         } else {
-            crate::ssd::CORNER_RADIUS
+            crate::ssd::corner_radius()
         };
 
         let win_log_loc: Point<i32, Logical> = Point::from((
@@ -695,6 +704,42 @@ pub fn render_surface(
                 );
                 window_elements.push(CustomRenderElements::Shader(shadow_elem));
             }
+
+            // Window border — sits between shadow and window content. Skipped when
+            // border_width is 0. Color matches focus_glow_color (full alpha) so it
+            // visually ties into the same accent palette.
+            if border_width > 0 {
+                if let Some(ref shader) = border_shader {
+                    let corner_r = win_corner_r_logical;
+                    let ssd_bar = if has_ssd { crate::ssd::SsdManager::bar_height() } else { 0 };
+                    let win_x = rel_x.round() as i32;
+                    let win_y = rel_y.round() as i32 - ssd_bar;
+                    let win_w = effective_size.w;
+                    let win_h = effective_size.h + ssd_bar;
+                    // Expand by border_width + 1 so the ring isn't clipped at the edge.
+                    let pad = border_width + 1;
+                    let border_area = Rectangle::<i32, Logical>::new(
+                        (win_x - pad, win_y - pad).into(),
+                        (win_w + pad * 2, win_h + pad * 2).into(),
+                    );
+                    let mut bc = state.focus_glow_color;
+                    bc[3] = 1.0;
+                    let border_elem = PixelShaderElement::new(
+                        shader.clone(),
+                        border_area,
+                        None,
+                        alpha,
+                        vec![
+                            Uniform::new("window_size", [win_w as f32, win_h as f32]),
+                            Uniform::new("corner_radius", corner_r),
+                            Uniform::new("border_width", border_width as f32),
+                            Uniform::new("border_color", bc),
+                        ],
+                        Kind::Unspecified,
+                    );
+                    window_elements.push(CustomRenderElements::Shader(border_elem));
+                }
+            }
         }
     }
 
@@ -756,7 +801,7 @@ pub fn render_surface(
             // Shadow behind the zombie
             if let Some(ref shader) = shadow_shader {
                 let shadow_expand = 40i32;
-                let corner_r = crate::ssd::CORNER_RADIUS;
+                let corner_r = crate::ssd::corner_radius();
                 let win_x = (scaled_x).round() as i32;
                 let win_y = (scaled_y).round() as i32 - ssd_bar;
                 let shadow_w = (win_w * anim_scale).round() as i32;
@@ -795,12 +840,18 @@ pub fn render_surface(
         elements.push(CustomRenderElements::Memory(cursor_elem));
     } else if let smithay::input::pointer::CursorImageStatus::Surface(ref surface) = state.cursor.status {
         use smithay::wayland::compositor::with_states;
-        use smithay::input::pointer::CursorImageAttributes;
+        use smithay::input::pointer::CursorImageSurfaceData;
+        // Smithay stores hotspot under `Mutex<CursorImageAttributes>`
+        // (aliased as `CursorImageSurfaceData`) — querying the bare
+        // `CursorImageAttributes` type returns None and silently falls
+        // through to a (0, 0) hotspot, making every client-side custom
+        // cursor render with its top-left at the pointer position
+        // instead of its declared hotspot.
         let hotspot = with_states(surface, |states| {
             states
                 .data_map
-                .get::<CursorImageAttributes>()
-                .map(|attrs| attrs.hotspot)
+                .get::<CursorImageSurfaceData>()
+                .map(|m| m.lock().unwrap().hotspot)
                 .unwrap_or_default()
         });
         let surface_pos: Point<i32, Physical> = (
@@ -1207,12 +1258,21 @@ pub fn render_surface(
         if new_size != state.cursor.cursor_size() {
             state.cursor.set_cursor_size(new_size);
         }
+        state.power.reload_from_config();
+        state.power.tick();
+        // Gap sync runs here, but the actual relayout has to happen outside
+        // the udev borrow — set a flag the next render() pass picks up.
+        if state.workspaces.sync_gaps_from_config() {
+            state.pending_layout = true;
+        }
         state.default_window_opacity = crate::read_config_f32("window_opacity", 1.0);
         state.blur_exclude = crate::read_config_list("windows", "blur_exclude");
         state.focus_glow = crate::read_config("window_manager", "focus_glow", "true") == "true";
         state.focus_glow_color = crate::parse_glow_color(&crate::read_config("window_manager", "focus_glow_color", "#4A9EFF"));
         state.focus_glow_intensity = crate::read_config("window_manager", "focus_glow_intensity", "0.2")
             .parse::<f32>().unwrap_or(0.2).clamp(0.0, 0.6);
+        state.border_width = crate::read_config("window_manager", "border_width", "0")
+            .parse::<u32>().unwrap_or(0).clamp(0, 10);
     }
 
     let t_after_config = Instant::now();

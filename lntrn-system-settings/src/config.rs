@@ -41,8 +41,27 @@ pub struct LanternConfig {
     pub input: InputConfig,
     pub display: DisplayConfig,
     pub power: PowerConfig,
+    pub notifications: NotificationsConfig,
+    pub animations: AnimationsConfig,
     #[serde(default)]
     pub monitors: Vec<MonitorEntry>,
+}
+
+// ── Animations ───────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AnimationsConfig {
+    /// Master toggle. When false, all window animations complete instantly.
+    pub enabled: bool,
+    /// Speed multiplier. Higher = faster. 1.0 = stock cinematic.
+    pub speed: f32,
+}
+
+impl Default for AnimationsConfig {
+    fn default() -> Self {
+        Self { enabled: true, speed: 1.0 }
+    }
 }
 
 // ── Appearance ───────────────────────────────────────────────────────────────
@@ -240,6 +259,29 @@ impl Default for PowerConfig {
     }
 }
 
+// ── Notifications ───────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NotificationsConfig {
+    /// Show toast popups when notifications arrive.
+    pub show_toasts: bool,
+    /// Play the notification chime sound.
+    pub play_sound: bool,
+    /// Notification chime volume (0.0 – 1.0).
+    pub volume: f32,
+}
+
+impl Default for NotificationsConfig {
+    fn default() -> Self {
+        Self {
+            show_toasts: true,
+            play_sound: true,
+            volume: 0.8,
+        }
+    }
+}
+
 // ── Top-level default ────────────────────────────────────────────────────────
 
 impl Default for LanternConfig {
@@ -251,6 +293,8 @@ impl Default for LanternConfig {
             input: InputConfig::default(),
             display: DisplayConfig::default(),
             power: PowerConfig::default(),
+            notifications: NotificationsConfig::default(),
+            animations: AnimationsConfig::default(),
             monitors: Vec::new(),
         }
     }
@@ -377,5 +421,6 @@ impl LanternConfig {
         if !["active", "balanced", "battery"].contains(&self.power.wifi_power_scheme.as_str()) {
             self.power.wifi_power_scheme = "balanced".into();
         }
+        self.notifications.volume = self.notifications.volume.clamp(0.0, 1.0);
     }
 }

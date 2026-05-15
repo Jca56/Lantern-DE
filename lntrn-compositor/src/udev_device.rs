@@ -174,6 +174,22 @@ fn compile_shaders(udev: &mut crate::udev::UdevData) {
     }
 
     match renderer.compile_custom_pixel_shader(
+        crate::shaders::BORDER_SHADER_SRC,
+        &[
+            UniformName::new("window_size", UniformType::_2f),
+            UniformName::new("corner_radius", UniformType::_1f),
+            UniformName::new("border_width", UniformType::_1f),
+            UniformName::new("border_color", UniformType::_4f),
+        ],
+    ) {
+        Ok(shader) => {
+            udev.border_shader = Some(shader);
+            info!("Border shader compiled");
+        }
+        Err(e) => warn!("Failed to compile border shader: {:?}", e),
+    }
+
+    match renderer.compile_custom_pixel_shader(
         HOT_CORNER_GLOW_SHADER_SRC,
         &[
             UniformName::new("corner", UniformType::_2f),

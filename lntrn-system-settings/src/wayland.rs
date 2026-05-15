@@ -14,6 +14,7 @@ use crate::icon_panel;
 use crate::icons;
 use crate::input_panel;
 use crate::monitor_arrange;
+use crate::notifications_panel::{self, NotifPanelState};
 use crate::monitor_settings::persist_monitor_settings;
 use crate::panels::{self, PanelState};
 use crate::text_edit::{KeyboardState, keycode_to_char};
@@ -41,13 +42,14 @@ const MENU_MODE_NIGHT_SKY: u32 = 601;
 const MENU_MODE_GROUP: u32 = 1;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Panel { WindowManager, Input, Display, Power, AppIcons }
+enum Panel { WindowManager, Input, Display, Power, Notifications, AppIcons }
 
 const PANELS: &[(Panel, &str)] = &[
     (Panel::WindowManager, "Window Manager"),
     (Panel::Input, "Mouse"),
     (Panel::Display, "Display"),
     (Panel::Power, "Power"),
+    (Panel::Notifications, "Notifications"),
     (Panel::AppIcons, "App Icons"),
 ];
 
@@ -72,6 +74,7 @@ fn parse_panel_arg() -> Option<Panel> {
         "input" => Some(Panel::Input),
         "display" => Some(Panel::Display),
         "power" => Some(Panel::Power),
+        "notifications" => Some(Panel::Notifications),
         "app-icons" => Some(Panel::AppIcons),
         _ => None,
     }
@@ -191,11 +194,12 @@ pub fn run() -> Result<()> {
 
     // Rasterize sidebar icons into GPU textures
     let tex_pass = TexturePass::new(&gpu);
-    let icon_defs: [(Vec<icons::PathCmd>, Color); 5] = [
+    let icon_defs: [(Vec<icons::PathCmd>, Color); 6] = [
         (icons::icon_window_manager(), Color::from_rgb8(130, 170, 255)), // soft blue
         (icons::icon_input(),          Color::from_rgb8(180, 140, 220)), // lavender
         (icons::icon_display(),        Color::from_rgb8(100, 200, 180)), // teal
         (icons::icon_power(),          Color::from_rgb8(120, 210, 120)), // green
+        (icons::icon_notifications(),  Color::from_rgb8(255, 200, 100)), // amber
         (icons::icon_app_icons(),      Color::from_rgb8(230, 130, 180)), // pink
     ];
     let icon_textures: Vec<GpuTexture> = icon_defs.iter().map(|(cmds, color)| {
@@ -212,6 +216,7 @@ pub fn run() -> Result<()> {
     let mut display_state = DisplayPanelState::new(&config);
     let mut icon_panel_state = icon_panel::IconPanelState::new();
     let mut input_state = input_panel::InputPanelState::new();
+    let mut notif_state = NotifPanelState::new();
     let mut kbd = KeyboardState::new();
 
     while state.running {
@@ -417,6 +422,9 @@ pub fn run() -> Result<()> {
                                     }
                                     Panel::Input => {
                                         input_panel::handle_input_click(&mut config, &input_state, id);
+                                    }
+                                    Panel::Notifications => {
+                                        notifications_panel::handle_notifications_click(&mut config, id);
                                     }
                                     Panel::AppIcons => {
                                         icon_panel_state.on_click(id);
@@ -670,6 +678,14 @@ pub fn run() -> Result<()> {
                     &tex_pass, &fox, &gpu,
                     content_x, panel_y, content_w, panel_h, s, sw, sh,
                     frame_scroll, &mut tex_draws,
+                );
+            }
+            Panel::Notifications => {
+                let panel_h = hf - panel_y;
+                notifications_panel::draw_notifications_panel(
+                    &mut config, &mut notif_state,
+                    &mut painter, &mut text, &mut ix, &fox,
+                    content_x, panel_y, content_w, panel_h, s, sw, sh, frame_scroll,
                 );
             }
             Panel::AppIcons => {

@@ -331,14 +331,14 @@ pub fn draw_content(
         state.view_arrow_hover,
     );
 
-    // 1f. Clock toggle button — floats under the left arrow, same column.
-    crate::clock_toggle::draw(
+    // 1f. Desktop Settings button — floats under the left arrow, same column.
+    crate::desktop_settings::draw_button(
         painter,
         panel.rect,
         panel.scale_factor,
         panel.alpha,
-        state.clock_toggle_hover,
-        state.clock_enabled,
+        state.desktop_button_hover,
+        state.desktop_settings_open,
     );
 
     // 1g. View dots + Home button in the strip above the panel.
@@ -407,7 +407,7 @@ pub fn draw_content(
         state.notes_hover,
     );
     // Claude-usage button — floats under the right arrow (mirrors
-    // clock_toggle under the left arrow).
+    // desktop button under the left arrow).
     crate::usage_button::draw(
         painter,
         panel.rect,
@@ -758,15 +758,18 @@ pub fn draw_content(
     }
 
     // 3. Right-click context menu — drawn on layer 1 so it sits above
-    //    grid tiles, labels, and any other panel content.
+    //    grid tiles, labels, and any other panel content. Clamped to
+    //    the full surface (not the panel) so dock right-click menus,
+    //    which anchor outside the panel rect, can appear at the cursor.
     if let Some(menu) = &state.context_menu {
         painter.set_layer(1);
         text.set_layer(1);
+        let surface_bounds = lntrn_render::Rect::new(0.0, 0.0, surface_w as f32, surface_h as f32);
         crate::launcher::context_menu::draw(
             painter,
             text,
             menu,
-            panel.rect,
+            surface_bounds,
             panel.scale_factor,
             surface_w,
             surface_h,
@@ -806,6 +809,25 @@ pub fn draw_content(
             surface_h,
             panel.scale_factor,
             panel.alpha,
+        );
+        painter.set_layer(0);
+        text.set_layer(0);
+    }
+
+    // 6. Desktop Settings popover — floats above the strip button.
+    if state.desktop_settings_open {
+        painter.set_layer(1);
+        text.set_layer(1);
+        crate::desktop_settings::draw_popover(
+            painter,
+            text,
+            panel.rect,
+            panel.scale_factor,
+            panel.alpha,
+            &state.desktop_widgets,
+            state.desktop_settings_hover,
+            surface_w,
+            surface_h,
         );
         painter.set_layer(0);
         text.set_layer(0);

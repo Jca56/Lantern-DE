@@ -14,7 +14,7 @@ use smithay::{
 use crate::rect_anim::{Curve, RectAnim};
 
 /// Cinematic spring duration for tiling reflows.
-const ANIM_DURATION: Duration = Duration::from_millis(1000);
+fn anim_duration() -> Duration { crate::animations::tiling_duration() }
 /// Spring damping (lower = more bouncy, 1.0 = critically damped).
 /// Bumped up from 0.7 → 0.82 so the longer cinematic duration doesn't wobble.
 const SPRING_DAMPING: f64 = 0.82;
@@ -50,7 +50,7 @@ impl TilingAnimationState {
             if existing.target() == target_rect {
                 return;
             }
-            existing.redirect(target_rect, ANIM_DURATION, TILING_CURVE);
+            existing.redirect(target_rect, anim_duration(), TILING_CURVE);
             return;
         }
 
@@ -62,7 +62,7 @@ impl TilingAnimationState {
 
         self.animations.insert(
             surface.clone(),
-            RectAnim::new(current_rect, target_rect, ANIM_DURATION, TILING_CURVE),
+            RectAnim::new(current_rect, target_rect, anim_duration(), TILING_CURVE),
         );
     }
 

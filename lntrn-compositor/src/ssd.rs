@@ -17,14 +17,32 @@ use crate::snap::SnapZone;
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-/// Titlebar height in logical pixels (overlay on window top).
-const BAR_HEIGHT: i32 = 34;
 /// Window control button width.
 const BTN_W: i32 = 46;
-/// Corner radius for floating (non-tiled) windows.
-pub const CORNER_RADIUS: f32 = 18.0;
-/// Corner radius for tiled windows — minimal, just softens the edge.
-pub const TILED_CORNER_RADIUS: f32 = 6.0;
+
+/// Titlebar height in logical pixels — read from [window_manager].titlebar_height,
+/// default 34. Config reads are mtime-cached so this is essentially free.
+pub fn bar_height_px() -> i32 {
+    crate::read_config("window_manager", "titlebar_height", "34")
+        .parse::<i32>()
+        .unwrap_or(34)
+        .clamp(20, 60)
+}
+
+/// Corner radius for floating (non-tiled) windows — from
+/// [window_manager].corner_radius, default 18.
+pub fn corner_radius() -> f32 {
+    crate::read_config("window_manager", "corner_radius", "18")
+        .parse::<f32>()
+        .unwrap_or(18.0)
+        .clamp(0.0, 32.0)
+}
+
+/// Corner radius for tiled windows — derived from the configured radius
+/// (capped so tiled windows always feel tighter than floating ones).
+pub fn tiled_corner_radius() -> f32 {
+    (corner_radius() * 0.33).min(8.0)
+}
 
 fn phys_pt(x: i32, y: i32) -> Point<i32, Physical> {
     Point::from((x, y))
@@ -110,8 +128,9 @@ impl SsdManager {
     }
 
     pub fn bar_height() -> i32 {
-        BAR_HEIGHT
+        bar_height_px()
     }
+
 }
 
 // ── Geometry helpers ────────────────────────────────────────────────────────
@@ -122,8 +141,8 @@ pub fn titlebar_rect(
     win_size: Size<i32, Logical>,
 ) -> Rectangle<i32, Logical> {
     Rectangle::new(
-        Point::from((win_loc.x, win_loc.y - BAR_HEIGHT)),
-        Size::from((win_size.w, BAR_HEIGHT)),
+        Point::from((win_loc.x, win_loc.y - bar_height_px())),
+        Size::from((win_size.w, bar_height_px())),
     )
 }
 
@@ -134,7 +153,7 @@ pub fn button_rects(
     let bar = titlebar_rect(win_loc, win_size);
     let mk = |idx: i32| Rectangle::new(
         Point::from((bar.loc.x + bar.size.w - BTN_W * (idx + 1), bar.loc.y)),
-        Size::from((BTN_W, BAR_HEIGHT)),
+        Size::from((BTN_W, bar_height_px())),
     );
     (mk(0), mk(1), mk(2))
 }
@@ -181,7 +200,7 @@ pub fn render_decoration(
     let kind = smithay::backend::renderer::element::Kind::Unspecified;
 
     let bar_w = win_size.w;
-    let bar_h = BAR_HEIGHT;
+    let bar_h = bar_height_px();
     let phys_bar_h = (bar_h as f64 * scale).round() as i32;
     let bar_px = win_loc_phys.x;
     let bar_py = win_loc_phys.y - phys_bar_h; // bar sits above the window
@@ -298,9 +317,9 @@ pub fn render_corner_masks(
     alpha: f32,
     corners: RoundedCorners,
 ) -> Vec<PixelShaderElement> {
-    let r = CORNER_RADIUS.ceil() as i32;
+    let r = corner_radius().ceil() as i32;
     let kind = smithay::backend::renderer::element::Kind::Unspecified;
-    let phys_r = CORNER_RADIUS * scale as f32;
+    let phys_r = corner_radius() * scale as f32;
     let x = win_loc_logical.x;
     let y = win_loc_logical.y;
     let w = win_size.w;

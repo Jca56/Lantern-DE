@@ -351,6 +351,17 @@ pub struct Lantern {
     /// Tracked libinput devices, used to re-apply config on live setting changes.
     pub libinput_devices: Vec<smithay::reexports::input::Device>,
 
+    /// Idle/battery/power-action manager (reads [power] settings).
+    pub power: crate::power::PowerState,
+
+    /// Set when a config change makes the tiling layout stale (e.g. gap
+    /// changed). Consumed at the top of the next `render_surface` call,
+    /// outside the udev borrow.
+    pub pending_layout: bool,
+
+    /// WM border width in logical pixels (0 = no border).
+    pub border_width: u32,
+
     // Hover preview (bar → compositor IPC for window thumbnails)
     pub hover_preview: crate::hover_preview::HoverPreview,
 
@@ -519,6 +530,10 @@ impl Lantern {
             cursor_theme_name: crate::input::read_input_setting("cursor_theme", "default"),
             input_config_counter: 0,
             libinput_devices: Vec::new(),
+            power: crate::power::PowerState::new(),
+            pending_layout: false,
+            border_width: crate::read_config("window_manager", "border_width", "0")
+                .parse::<u32>().unwrap_or(0).clamp(0, 10),
             hover_preview: crate::hover_preview::HoverPreview::new(),
             cc_thumbs: crate::cc_thumbs::CcThumbnails::new(),
             xwayland_state: crate::xwayland::XWaylandState::new(),

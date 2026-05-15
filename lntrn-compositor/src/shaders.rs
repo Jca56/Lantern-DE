@@ -464,6 +464,37 @@ pub const GLOW_COLOR: [f32; 4] = [1.0, 0.75, 0.0, 0.45]; // amber accent
 /// Pixel shader for window shadow / focused glow.
 /// Covers window + spread area. Uses SDF of a rounded rectangle
 /// with gaussian-inspired falloff for soft edges.
+/// Window border shader. Draws a solid ring around the window between the
+/// window edge and (window edge + border_width). Used to wire the WM
+/// `border_width` config setting.
+///
+/// Custom uniforms: `window_size`, `corner_radius`, `border_width`, `border_color`.
+pub const BORDER_SHADER_SRC: &str = r#"
+precision mediump float;
+varying vec2 v_coords;
+uniform float alpha;
+uniform vec2 size;
+uniform vec2 window_size;
+uniform float corner_radius;
+uniform float border_width;
+uniform vec4 border_color;
+
+float roundedBoxSDF(vec2 p, vec2 half_size, float radius) {
+    vec2 q = abs(p) - half_size + vec2(radius);
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
+}
+
+void main() {
+    vec2 pos = v_coords * size;
+    vec2 center = size * 0.5;
+    vec2 half_win = window_size * 0.5;
+    float dist = roundedBoxSDF(pos - center, half_win, corner_radius);
+    if (dist <= 0.0 || dist >= border_width) discard;
+    float a = border_color.a * alpha;
+    gl_FragColor = vec4(border_color.rgb * a, a);
+}
+"#;
+
 pub const SHADOW_SHADER_SRC: &str = r#"
 precision mediump float;
 varying vec2 v_coords;

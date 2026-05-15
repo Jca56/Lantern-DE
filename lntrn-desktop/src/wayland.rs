@@ -213,6 +213,12 @@ pub fn run() -> Result<()> {
     let mut kbd = KeyboardState::new();
     let mut current_cursor_shape: Option<wp_cursor_shape_device_v1::Shape> = None;
 
+    // Audio capture starts unconditionally — the pipewire monitor stream
+    // is cheap, and we want bars to react instantly when the user
+    // toggles the visualizer on without restarting the daemon.
+    let audio = crate::audio::AudioCapture::start();
+    let mut viz = crate::visualizer::Visualizer::default();
+
     surface.frame(&qh, ());
     surface.commit();
 
@@ -244,6 +250,18 @@ pub fn run() -> Result<()> {
         if app.widgets.clock_enabled && last_clock_tick.elapsed().as_secs() >= 15 {
             last_clock_tick = Instant::now();
             state.frame_done = true;
+        }
+
+        // Visualizer drives continuous repaint while enabled. We tick
+        // it every loop iteration; the FFT + smoothing are cheap.
+        if app.widgets.visualizer_enabled {
+            viz.tick(&audio);
+            // Keep redrawing while bars are still moving (or while
+            // audio is live). Once everything decays to zero we stop
+            // forcing frames so we don't burn CPU on a silent desktop.
+            if viz.has_motion() {
+                state.frame_done = true;
+            }
         }
 
         if !state.frame_done {
@@ -405,6 +423,14 @@ pub fn run() -> Result<()> {
             state.width,
             state.height,
         );
+
+        // Visualizer bars sit at the bottom; drawn into the same
+        // painter pass so they composite under icons / context menu
+        // (rubber-band still wins because it's queued later inside
+        // draw_desktop).
+        if app.widgets.visualizer_enabled {
+            viz.draw(&mut painter, state.width, state.height, s);
+        }
 
         if let Ok(mut frame) = gpu.begin_frame("desktop") {
             let view = frame.view().clone();

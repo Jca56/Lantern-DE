@@ -13,8 +13,20 @@ use smithay::{
 use crate::state::Lantern;
 use crate::window_ext::WindowExt;
 
-pub const DEFAULT_GAP: i32 = 8;
-pub const DEFAULT_OUTER_GAP: i32 = 8;
+/// Inner gap between tiled windows — read from [window_manager].gap, default 8.
+pub fn default_gap() -> i32 {
+    crate::read_config("window_manager", "gap", "8")
+        .parse::<i32>()
+        .unwrap_or(8)
+        .clamp(0, 32)
+}
+
+/// Outer gap (between tiled windows and the screen edge). Matches the inner
+/// gap so users see one consistent value.
+pub fn default_outer_gap() -> i32 {
+    default_gap()
+}
+
 /// Larger outer gap used when the active tiling tree has exactly one window,
 /// so a solo tiled window doesn't sit flush against the screen edges.
 pub const SINGLE_WINDOW_OUTER_GAP: i32 = 40;
@@ -62,8 +74,8 @@ impl TilingState {
             nodes: Vec::new(),
             root: None,
             active: false,
-            gap: DEFAULT_GAP,
-            outer_gap: DEFAULT_OUTER_GAP,
+            gap: default_gap(),
+            outer_gap: default_outer_gap(),
         }
     }
 

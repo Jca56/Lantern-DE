@@ -16,7 +16,9 @@ use smithay::{
 use crate::rect_anim::{Curve, RectAnim};
 
 /// Cinematic ease-in-out used for window-state transitions.
-pub const STATE_DURATION: Duration = Duration::from_millis(1000);
+/// `STATE_DURATION` was a const; now it's a function that pulls from
+/// the user's `[animations]` settings.
+pub fn state_duration() -> Duration { crate::animations::state_duration() }
 pub const STATE_CURVE: Curve = Curve::EaseInOutQuint;
 
 pub struct WindowStateAnimState {
@@ -62,7 +64,7 @@ impl WindowStateAnimState {
         start: Rectangle<i32, Logical>,
         target: Rectangle<i32, Logical>,
     ) {
-        self.animate(surface, start, target, STATE_DURATION, STATE_CURVE);
+        self.animate(surface, start, target, state_duration(), STATE_CURVE);
     }
 
     pub fn current_rect(&self, surface: &WlSurface) -> Option<Rectangle<i32, Logical>> {

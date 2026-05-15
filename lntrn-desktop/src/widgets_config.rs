@@ -12,16 +12,24 @@ pub struct WidgetsConfig {
     /// Whether the desktop clock widget is visible.
     #[serde(default = "default_clock_enabled")]
     pub clock_enabled: bool,
+    /// Whether the audio visualizer bars are drawn along the bottom.
+    #[serde(default = "default_visualizer_enabled")]
+    pub visualizer_enabled: bool,
 }
 
 fn default_clock_enabled() -> bool {
     true
 }
 
+fn default_visualizer_enabled() -> bool {
+    false
+}
+
 impl Default for WidgetsConfig {
     fn default() -> Self {
         Self {
             clock_enabled: default_clock_enabled(),
+            visualizer_enabled: default_visualizer_enabled(),
         }
     }
 }

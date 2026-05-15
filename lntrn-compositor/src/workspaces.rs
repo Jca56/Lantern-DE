@@ -12,7 +12,7 @@ use smithay::{
     utils::{Logical, Rectangle},
 };
 
-use crate::tiling::{AdjacentDir, TilingState, DEFAULT_OUTER_GAP};
+use crate::tiling::{AdjacentDir, TilingState};
 
 pub struct Workspace {
     pub id: u32,
@@ -89,11 +89,35 @@ pub struct PerOutputWorkspaces {
 }
 
 impl PerOutputWorkspaces {
+    /// Reload gap values from [window_manager].gap. Returns true if anything
+    /// changed (caller should trigger a relayout).
+    pub fn sync_gaps_from_config(&mut self) -> bool {
+        let new_outer = crate::tiling::default_outer_gap();
+        let new_inner = crate::tiling::default_gap();
+        let mut changed = self.outer_gap != new_outer;
+        if changed {
+            self.outer_gap = new_outer;
+        }
+        for ow in self.per_output.values_mut() {
+            for ws in ow.workspaces.values_mut() {
+                if ws.tiling.gap != new_inner {
+                    ws.tiling.gap = new_inner;
+                    changed = true;
+                }
+                if ws.tiling.outer_gap != new_outer {
+                    ws.tiling.outer_gap = new_outer;
+                    changed = true;
+                }
+            }
+        }
+        changed
+    }
+
     pub fn new() -> Self {
         Self {
             per_output: HashMap::new(),
             tiling_active: false,
-            outer_gap: DEFAULT_OUTER_GAP,
+            outer_gap: crate::tiling::default_outer_gap(),
         }
     }
 

@@ -1,5 +1,7 @@
 mod assets;
+mod audio;
 mod clock;
+mod visualizer;
 mod context_menu;
 mod dispatch;
 mod fs_watch;

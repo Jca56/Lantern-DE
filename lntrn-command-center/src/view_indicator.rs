@@ -1,12 +1,12 @@
 //! Top-strip icons above the panel.
 //!
 //! Layout (from left to right, in the margin above the panel):
-//!   LEFT  : [Gear (Settings)] [Home] [Grow (Size)] [Clock]
+//!   LEFT  : [Gear (Settings)] [Home] [Grow (Size)] [Desktop]
 //!   CENTER: view dots
 //!   RIGHT : [Usage (Claude)] [Emoji] [Clipboard] [Notes]
 //!
-//! Clock + Usage glyphs themselves are drawn by `clock_toggle.rs` and
-//! `usage_button.rs`; this module owns their rects so all top-strip
+//! Desktop + Usage glyphs themselves are drawn by `desktop_settings.rs`
+//! and `usage_button.rs`; this module owns their rects so all top-strip
 //! buttons line up against the same horizontal baseline.
 
 use lntrn_render::{Color, Painter, Rect};
@@ -87,7 +87,7 @@ fn right_slot_at(panel: Rect, scale: f32, right_logical_pad: f32, size: f32) -> 
 }
 
 /// Per-slot logical sizes for the LEFT strip in render order.
-/// 0 = Gear (Settings), 1 = Home, 2 = Grow (Size), 3 = Clock.
+/// 0 = Gear (Settings), 1 = Home, 2 = Grow (Size), 3 = Desktop.
 const LEFT_SLOT_SIZES: [f32; 4] = [GEAR_SIZE, BTN_SIZE, BTN_SIZE, BTN_SIZE];
 
 /// X offset (logical, from panel left edge) of slot `idx`'s left edge.
@@ -116,7 +116,7 @@ pub fn home_rect(panel: Rect, scale: f32) -> Rect {
 pub fn grow_rect(panel: Rect, scale: f32) -> Rect {
     left_slot_at(panel, scale, left_slot_x_logical(2), BTN_SIZE)
 }
-pub fn clock_rect(panel: Rect, scale: f32) -> Rect {
+pub fn desktop_button_rect(panel: Rect, scale: f32) -> Rect {
     left_slot_at(panel, scale, left_slot_x_logical(3), BTN_SIZE)
 }
 

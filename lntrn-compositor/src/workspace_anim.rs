@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-const SLIDE_DURATION: Duration = Duration::from_millis(460);
+fn slide_duration() -> Duration { crate::animations::workspace_slide_duration() }
 
 pub struct WorkspaceTransition {
     pub from_ws: u32,
@@ -76,7 +76,7 @@ impl WorkspaceAnimState {
                 to_ws,
                 direction,
                 start: Instant::now(),
-                duration: SLIDE_DURATION,
+                duration: slide_duration(),
             },
         );
     }

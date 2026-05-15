@@ -175,7 +175,7 @@ impl Lantern {
 
         let (top_excl, bottom_excl, left_excl, right_excl) = self.exclusive_zone_offsets_for_output(output);
         let outer = self.workspaces.outer_gap;
-        let inner = crate::tiling::DEFAULT_GAP;
+        let inner = crate::tiling::default_gap();
         let half_inner = inner / 2;
 
         let x = geo.loc.x + left_excl + outer;

@@ -64,7 +64,12 @@ pub(super) fn track_hovers(wl: &mut super::WlState, app: &mut crate::app::AppSta
         let phys_cx = wl.cursor_x as f32 * scale_f;
         let phys_cy = wl.cursor_y as f32 * scale_f;
         app.view_arrow_hover = crate::view_arrows::hit_test(panel_rect, scale_f, phys_cx, phys_cy);
-        app.clock_toggle_hover = crate::clock_toggle::hit_test(panel_rect, scale_f, phys_cx, phys_cy);
+        app.desktop_button_hover = crate::desktop_settings::hit_test_button(panel_rect, scale_f, phys_cx, phys_cy);
+        app.desktop_settings_hover = if app.desktop_settings_open {
+            crate::desktop_settings::hovered_row(panel_rect, scale_f, phys_cx, phys_cy)
+        } else {
+            None
+        };
         app.home_hover = crate::view_indicator::hit_home(panel_rect, scale_f, phys_cx, phys_cy);
         app.grow_hover = crate::view_indicator::hit_grow(panel_rect, scale_f, phys_cx, phys_cy);
         app.gear_hover = crate::view_indicator::hit_gear(panel_rect, scale_f, phys_cx, phys_cy);

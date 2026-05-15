@@ -4,10 +4,8 @@ use std::time::{Duration, Instant};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Logical, Point, Size};
 
+use crate::animations;
 use crate::easing;
-
-const OPEN_DURATION: Duration = Duration::from_millis(1000);
-const CLOSE_DURATION: Duration = Duration::from_millis(1000);
 
 /// Animation render parameters: alpha and scale (pivoted on geometry center).
 /// Scale is kept for compatibility with the renderer but is always 1.0 — open
@@ -35,8 +33,8 @@ pub struct WindowAnimation {
 impl WindowAnimation {
     fn new(kind: AnimationKind) -> Self {
         let (duration, start_alpha) = match kind {
-            AnimationKind::Open => (OPEN_DURATION, 0.0),
-            AnimationKind::Close => (CLOSE_DURATION, 1.0),
+            AnimationKind::Open => (animations::open_duration(), 0.0),
+            AnimationKind::Close => (animations::close_duration(), 1.0),
         };
         Self {
             kind,
@@ -50,7 +48,8 @@ impl WindowAnimation {
     fn new_interrupted(current_alpha: f32) -> Self {
         // Duration proportional to how far along the window was
         let fraction = current_alpha as f64;
-        let duration_ms = (CLOSE_DURATION.as_millis() as f64 * fraction).max(80.0) as u64;
+        let duration_ms =
+            (animations::close_duration().as_millis() as f64 * fraction).max(80.0) as u64;
         Self {
             kind: AnimationKind::Close,
             start_time: Instant::now(),

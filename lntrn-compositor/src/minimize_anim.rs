@@ -13,10 +13,8 @@ use smithay::{
 
 use crate::easing;
 
-/// Minimize animation duration.
-pub const MIN_DURATION: Duration = Duration::from_millis(1000);
-/// Unminimize animation duration.
-pub const UNMIN_DURATION: Duration = Duration::from_millis(1000);
+pub fn min_duration() -> Duration { crate::animations::minimize_duration() }
+pub fn unmin_duration() -> Duration { crate::animations::unminimize_duration() }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MinimizeKind {
@@ -99,7 +97,7 @@ impl MinimizeAnimState {
                 source_rect,
                 target_rect,
                 start_time: Instant::now(),
-                duration: MIN_DURATION,
+                duration: min_duration(),
             },
         );
     }
@@ -117,7 +115,7 @@ impl MinimizeAnimState {
                 source_rect,
                 target_rect,
                 start_time: Instant::now(),
-                duration: UNMIN_DURATION,
+                duration: unmin_duration(),
             },
         );
     }
