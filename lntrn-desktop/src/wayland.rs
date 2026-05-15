@@ -218,6 +218,16 @@ pub fn run() -> Result<()> {
     // toggles the visualizer on without restarting the daemon.
     let audio = crate::audio::AudioCapture::start();
     let mut viz = crate::visualizer::Visualizer::default();
+    let mut last_viz_tick = Instant::now();
+    // ~30 Hz cap on FFT work. Broadcast-standard motion; eye can't tell
+    // the difference vs 60 Hz on a bar visualizer.
+    const VIZ_TICK_MS: u128 = 33;
+
+    // Rainbow widget animation clock. Starts at zero on launch; ~30 Hz
+    // repaint cadence while the widget is enabled.
+    let rainbow_start = Instant::now();
+    let mut last_rainbow_tick = Instant::now();
+    const RAINBOW_TICK_MS: u128 = 33;
 
     surface.frame(&qh, ());
     surface.commit();
@@ -253,15 +263,42 @@ pub fn run() -> Result<()> {
         }
 
         // Visualizer drives continuous repaint while enabled. We tick
-        // it every loop iteration; the FFT + smoothing are cheap.
+        // the FFT at ~60 Hz and only repaint when the tick produced new
+        // bar values — between ticks we'd be redrawing identical pixels.
         if app.widgets.visualizer_enabled {
-            viz.tick(&audio);
-            // Keep redrawing while bars are still moving (or while
-            // audio is live). Once everything decays to zero we stop
-            // forcing frames so we don't burn CPU on a silent desktop.
-            if viz.has_motion() {
-                state.frame_done = true;
+            if last_viz_tick.elapsed().as_millis() >= VIZ_TICK_MS {
+                last_viz_tick = Instant::now();
+                viz.tick(&audio);
+                if viz.has_motion() {
+                    state.frame_done = true;
+                }
+            } else if viz.has_motion() && !state.frame_done {
+                // Bars still animating but FFT is throttled. Keep the
+                // wakeup pump alive (re-arm the frame callback) without
+                // redoing the wgpu paint — we'd be drawing the same
+                // bars again.
+                surface.frame(&qh, ());
+                surface.commit();
+                continue;
             }
+        }
+
+        // Rainbow widget — same throttling pattern as the visualizer.
+        if app.widgets.rainbow_enabled {
+            if last_rainbow_tick.elapsed().as_millis() >= RAINBOW_TICK_MS {
+                last_rainbow_tick = Instant::now();
+                state.frame_done = true;
+            } else if !state.frame_done {
+                surface.frame(&qh, ());
+                surface.commit();
+                continue;
+            }
+        }
+
+        // Persist widget position after a drag finishes.
+        if app.widgets_dirty {
+            app.widgets.save();
+            app.widgets_dirty = false;
         }
 
         if !state.frame_done {
@@ -305,12 +342,14 @@ pub fn run() -> Result<()> {
         }
 
         // Pointer events.
+        let sw_f = state.width as f32;
+        let sh_f = state.height as f32;
         if state.pointer_in_surface {
-            input::on_cursor_move(&mut app, cx, cy, dims);
+            input::on_cursor_move(&mut app, cx, cy, dims, sw_f, sh_f);
         }
         if state.left_pressed {
             state.left_pressed = false;
-            input::on_left_press(&mut app, cx, cy, dims);
+            input::on_left_press(&mut app, cx, cy, dims, sw_f, sh_f);
         }
         if state.left_released {
             state.left_released = false;
@@ -412,6 +451,15 @@ pub fn run() -> Result<()> {
 
         // Render frame.
         painter.clear();
+
+        // Rainbow widget paints under icons so dragging it doesn't hide
+        // file labels.
+        if app.widgets.rainbow_enabled {
+            let (rx, ry) = input::resolve_rainbow_pos(&app, state.width as f32, state.height as f32);
+            let elapsed = rainbow_start.elapsed().as_secs_f32();
+            crate::rainbow::draw(&mut painter, rx, ry, s, elapsed);
+        }
+
         let tex_draws = render::draw_desktop(
             &mut painter,
             &mut text,

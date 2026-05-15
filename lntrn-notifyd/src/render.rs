@@ -48,16 +48,51 @@ pub struct Toast {
     pub slide: f32,
 }
 
-/// Stack of toasts anchored to the top-right corner.
+#[derive(Clone, Copy, Debug)]
+pub enum ToastPosition {
+    TopRight,
+    TopLeft,
+    BottomRight,
+    BottomLeft,
+}
+
+impl ToastPosition {
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "top-left" => Self::TopLeft,
+            "bottom-right" => Self::BottomRight,
+            "bottom-left" => Self::BottomLeft,
+            _ => Self::TopRight,
+        }
+    }
+
+    fn is_right(self) -> bool {
+        matches!(self, Self::TopRight | Self::BottomRight)
+    }
+
+    fn is_bottom(self) -> bool {
+        matches!(self, Self::BottomLeft | Self::BottomRight)
+    }
+}
+
+/// Stack of toasts anchored to a screen corner.
 pub struct ToastStack<'a> {
     toasts: &'a [Toast],
     margin: f32,
     scale: f32,
+    position: ToastPosition,
+    screen_h: f32,
 }
 
 impl<'a> ToastStack<'a> {
     pub fn new(toasts: &'a [Toast]) -> Self {
-        Self { toasts, margin: 60.0, scale: 1.0 }
+        Self {
+            toasts,
+            margin: 60.0,
+            scale: 1.0,
+            position: ToastPosition::TopRight,
+            screen_h: 0.0,
+        }
     }
 
     pub fn margin(mut self, margin: f32) -> Self {
@@ -70,6 +105,16 @@ impl<'a> ToastStack<'a> {
         self
     }
 
+    pub fn position(mut self, position: ToastPosition) -> Self {
+        self.position = position;
+        self
+    }
+
+    pub fn screen_h(mut self, screen_h: f32) -> Self {
+        self.screen_h = screen_h;
+        self
+    }
+
     fn s(&self, v: f32) -> f32 { v * self.scale }
 
     fn toast_pos(&self, index: usize, screen_w: f32) -> (f32, f32) {
@@ -78,14 +123,28 @@ impl<'a> ToastStack<'a> {
         let gap = self.s(TOAST_GAP);
         let margin = self.s(self.margin);
         let offset = index as f32 * (h + gap);
-        (screen_w - w - margin, margin + offset)
+        let x = if self.position.is_right() {
+            screen_w - w - margin
+        } else {
+            margin
+        };
+        let y = if self.position.is_bottom() {
+            self.screen_h - h - margin - offset
+        } else {
+            margin + offset
+        };
+        (x, y)
     }
 
     fn slid_x(&self, base_x: f32, slide: f32) -> f32 {
         let t = slide.clamp(0.0, 1.0);
         let eased = 1.0 - (1.0 - t).powi(3);
         let slide_offset = self.s(SLIDE_DISTANCE) * (1.0 - eased);
-        base_x + slide_offset
+        if self.position.is_right() {
+            base_x + slide_offset
+        } else {
+            base_x - slide_offset
+        }
     }
 
     /// Returns the close-X hit rect at `index`, accounting for slide.

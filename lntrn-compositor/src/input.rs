@@ -373,12 +373,45 @@ impl Lantern {
                             }
                         }
 
-                        // --- Tiling keybinds ---
+                        // Super+T: grow the focused window to the "solo tiled"
+                        // rect — output bounds minus exclusive zones, inset by
+                        // SINGLE_WINDOW_OUTER_GAP on all sides. Computes the inset
+                        // directly (not via tiling_area_for_output) so it works
+                        // when tiling is off.
                         if event.state() == KeyState::Pressed
                             && _modifiers.logo
                             && keysym.modified_sym().raw() == xkb::KEY_t
                         {
-                            data.toggle_tiling();
+                            use crate::window_ext::WindowExt;
+                            if let Some(focused) = data.focused_surface.clone() {
+                                if let Some(window) = data.find_mapped_window(&focused) {
+                                    let output = data
+                                        .output_for_window(&window)
+                                        .or_else(|| data.space.outputs().next().cloned());
+                                    if let Some(output) = output {
+                                        if let Some(geo) = data.space.output_geometry(&output) {
+                                            let (top, bot, left, right) =
+                                                data.exclusive_zone_offsets_for_output(&output);
+                                            let gap = crate::tiling::SINGLE_WINDOW_OUTER_GAP;
+                                            let loc = smithay::utils::Point::from((
+                                                geo.loc.x + left + gap,
+                                                geo.loc.y + top + gap,
+                                            ));
+                                            let size = smithay::utils::Size::from((
+                                                geo.size.w - left - right - gap * 2,
+                                                geo.size.h - top - bot - gap * 2,
+                                            ));
+                                            window.configure_size(size);
+                                            data.space.map_element(window, loc, true);
+                                            tracing::info!(
+                                                ?loc, ?size,
+                                                "Super+T: grew focused window"
+                                            );
+                                            data.schedule_render();
+                                        }
+                                    }
+                                }
+                            }
                             return FilterResult::Intercept(());
                         }
 

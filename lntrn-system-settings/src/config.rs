@@ -263,20 +263,31 @@ impl Default for PowerConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct NotificationsConfig {
+    /// Master mute. When true, no toasts show and no sound plays.
+    pub do_not_disturb: bool,
     /// Show toast popups when notifications arrive.
     pub show_toasts: bool,
     /// Play the notification chime sound.
     pub play_sound: bool,
     /// Notification chime volume (0.0 – 1.0).
     pub volume: f32,
+    /// Default display duration for a toast in seconds (clamp 1.0–30.0).
+    /// Apps that pass an explicit `expire_timeout > 0` override this.
+    pub default_duration_secs: f32,
+    /// Screen corner the toast stack anchors to.
+    /// One of: "top-right", "top-left", "bottom-right", "bottom-left".
+    pub position: String,
 }
 
 impl Default for NotificationsConfig {
     fn default() -> Self {
         Self {
+            do_not_disturb: false,
             show_toasts: true,
             play_sound: true,
             volume: 0.8,
+            default_duration_secs: 5.0,
+            position: "top-right".into(),
         }
     }
 }
@@ -420,5 +431,12 @@ impl LanternConfig {
             self.power.wifi_power_scheme = "balanced".into();
         }
         self.notifications.volume = self.notifications.volume.clamp(0.0, 1.0);
+        self.notifications.default_duration_secs =
+            self.notifications.default_duration_secs.clamp(1.0, 30.0);
+        if !["top-right", "top-left", "bottom-right", "bottom-left"]
+            .contains(&self.notifications.position.as_str())
+        {
+            self.notifications.position = "top-right".into();
+        }
     }
 }

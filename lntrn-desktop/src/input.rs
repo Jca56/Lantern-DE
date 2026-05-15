@@ -2,13 +2,29 @@ use std::time::{Duration, Instant};
 
 use crate::layout::{cell_origin, pixel_to_cell, rect_hits, CELL_W, ICON_PX, CELL_H};
 use crate::render;
-use crate::state::{DesktopState, DragState, MenuAction, PendingAction, RubberBand};
+use crate::state::{DesktopState, DragState, MenuAction, PendingAction, RubberBand, WidgetDrag};
 
 const DOUBLE_CLICK_MS: u64 = 400;
 const DRAG_THRESHOLD: f32 = 5.0;
 
+/// Resolve the rainbow widget's top-left position. None in config →
+/// surface-centered default.
+pub fn resolve_rainbow_pos(state: &DesktopState, surface_w: f32, surface_h: f32) -> (f32, f32) {
+    match (state.widgets.rainbow_x, state.widgets.rainbow_y) {
+        (Some(x), Some(y)) => (x, y),
+        _ => crate::rainbow::default_position(surface_w as u32, surface_h as u32),
+    }
+}
+
 /// Left mouse press (logical pixels).
-pub fn on_left_press(state: &mut DesktopState, cx: f32, cy: f32, dims: (i32, i32)) {
+pub fn on_left_press(
+    state: &mut DesktopState,
+    cx: f32,
+    cy: f32,
+    dims: (i32, i32),
+    surface_w: f32,
+    surface_h: f32,
+) {
     // If a context menu is open, decide whether the click hit it.
     if let Some(menu) = &state.menu {
         if let Some(hit) = render::menu_hit(menu, cx, cy) {
@@ -31,6 +47,19 @@ pub fn on_left_press(state: &mut DesktopState, cx: f32, cy: f32, dims: (i32, i32
         }
         state.pending_action = Some(PendingAction::SubmitRename);
         return;
+    }
+
+    // Rainbow widget hit-test runs before icon hit-test so clicks on
+    // the widget drag it instead of grabbing an icon underneath.
+    if state.widgets.rainbow_enabled {
+        let (rx, ry) = resolve_rainbow_pos(state, surface_w, surface_h);
+        if crate::rainbow::hit_test(rx, ry, cx, cy) {
+            state.widget_drag = Some(WidgetDrag {
+                offset_x: cx - rx,
+                offset_y: cy - ry,
+            });
+            return;
+        }
     }
 
     let hit = crate::layout::hit_test(cx, cy, &state.cells);
@@ -107,7 +136,27 @@ pub fn on_left_press(state: &mut DesktopState, cx: f32, cy: f32, dims: (i32, i32
     let _ = dims;
 }
 
-pub fn on_cursor_move(state: &mut DesktopState, cx: f32, cy: f32, dims: (i32, i32)) {
+pub fn on_cursor_move(
+    state: &mut DesktopState,
+    cx: f32,
+    cy: f32,
+    dims: (i32, i32),
+    surface_w: f32,
+    surface_h: f32,
+) {
+    // Widget drag wins over everything else.
+    if let Some(wd) = &state.widget_drag {
+        let new_x = (cx - wd.offset_x)
+            .max(0.0)
+            .min((surface_w - crate::rainbow::WIDGET_W).max(0.0));
+        let new_y = (cy - wd.offset_y)
+            .max(0.0)
+            .min((surface_h - crate::rainbow::WIDGET_H).max(0.0));
+        state.widgets.rainbow_x = Some(new_x);
+        state.widgets.rainbow_y = Some(new_y);
+        return;
+    }
+
     // Update hover state when no drag and no rubber band.
     state.hover = crate::layout::hit_test(cx, cy, &state.cells);
 
@@ -146,6 +195,10 @@ pub fn on_cursor_move(state: &mut DesktopState, cx: f32, cy: f32, dims: (i32, i3
 }
 
 pub fn on_left_release(state: &mut DesktopState, _cx: f32, _cy: f32, _dims: (i32, i32)) {
+    if state.widget_drag.take().is_some() {
+        state.widgets_dirty = true;
+        return;
+    }
     if let Some(drag) = state.drag.take() {
         if drag.moved {
             // Compute the drop cell for the anchor icon based on cursor position.

@@ -243,7 +243,9 @@ impl Controls {
 /// Phys-px y-coordinate where the panel's content area starts (just
 /// below the controls-row underline). Used by every "view" renderer.
 pub fn content_top_y(panel: Rect, scale: f32) -> f32 {
-    panel.y + total_logical_height() * scale
+    // Add the split-panel gap (zero in normal mode) so body content
+    // sits below the visible gap between bar and body window.
+    panel.y + total_logical_height() * scale + crate::app::split_gap_px()
 }
 
 /// Draw the controls row + underline only. The body of the panel is

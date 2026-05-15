@@ -23,7 +23,6 @@ use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_l
 use crate::notifications::{NotifyEvent, Notification, Urgency};
 use crate::render::{Toast, ToastStack};
 
-const DISPLAY_SECS: f32 = 5.0;
 const SLIDE_IN_SECS: f32 = 0.5;
 const SLIDE_OUT_SECS: f32 = 0.4;
 const CRITICAL_DISPLAY_SECS: f32 = 10.0;
@@ -56,16 +55,25 @@ fn play_notification_sound(volume: f32) {
 
 /// Snapshot of notification settings, re-read from `lantern.toml` on each event.
 struct NotifSettings {
+    do_not_disturb: bool,
     show_toasts: bool,
     play_sound: bool,
     volume: f32,
+    default_duration_secs: f32,
+    position: crate::render::ToastPosition,
 }
 
 fn read_notif_settings() -> NotifSettings {
+    let pos_str = lntrn_theme::read_config_string("notifications", "position", "top-right");
     NotifSettings {
+        do_not_disturb: lntrn_theme::read_config_bool("notifications", "do_not_disturb", false),
         show_toasts: lntrn_theme::read_config_bool("notifications", "show_toasts", true),
         play_sound: lntrn_theme::read_config_bool("notifications", "play_sound", true),
         volume: lntrn_theme::read_config_f32("notifications", "volume", 0.8),
+        default_duration_secs: lntrn_theme::read_config_f32(
+            "notifications", "default_duration_secs", 5.0,
+        ).clamp(1.0, 30.0),
+        position: crate::render::ToastPosition::from_str(&pos_str),
     }
 }
 
@@ -263,13 +271,13 @@ struct ActiveNotification {
 }
 
 impl ActiveNotification {
-    fn from_notification(notif: &Notification) -> Self {
+    fn from_notification(notif: &Notification, default_secs: f32) -> Self {
         let display = if notif.urgency == Urgency::Critical {
             CRITICAL_DISPLAY_SECS
         } else if notif.timeout_ms > 0 {
             (notif.timeout_ms as f32 / 1000.0).clamp(2.0, 30.0)
         } else {
-            DISPLAY_SECS
+            default_secs
         };
 
         Self {
@@ -422,17 +430,29 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>) -> Result<()> {
     }
 
     while state.running {
+        // Settings snapshot — re-read each loop iteration so live config
+        // changes (DND, duration, position) apply immediately.
+        let settings = read_notif_settings();
+
         // Drain D-Bus events
         while let Ok(event) = rx.try_recv() {
             match event {
                 NotifyEvent::Show(notif) => {
-                    let settings = read_notif_settings();
+                    if settings.do_not_disturb {
+                        // DND is on — silently drop. Apps still get their
+                        // D-Bus reply (notification id) from the server.
+                        continue;
+                    }
                     let is_new = !active.iter().any(|a| a.id == notif.id);
                     if settings.show_toasts {
                         if let Some(existing) = active.iter_mut().find(|a| a.id == notif.id) {
-                            *existing = ActiveNotification::from_notification(&notif);
+                            *existing = ActiveNotification::from_notification(
+                                &notif, settings.default_duration_secs,
+                            );
                         } else {
-                            active.push(ActiveNotification::from_notification(&notif));
+                            active.push(ActiveNotification::from_notification(
+                                &notif, settings.default_duration_secs,
+                            ));
                         }
                     }
                     if is_new && settings.play_sound {
@@ -454,7 +474,11 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>) -> Result<()> {
         // Handle a queued pointer click — hit-test in logical surface coords.
         if let Some((px, py)) = state.pending_click.take() {
             let toasts_hit: Vec<Toast> = active.iter().map(|a| a.to_toast()).collect();
-            let stack_hit = ToastStack::new(&toasts_hit).scale(1.0).margin(60.0);
+            let stack_hit = ToastStack::new(&toasts_hit)
+                .scale(1.0)
+                .margin(60.0)
+                .position(settings.position)
+                .screen_h(state.height as f32);
             let sw = state.width as f32;
             for (i, a) in active.iter_mut().enumerate() {
                 let r = stack_hit.close_button_rect(i, &toasts_hit[i], sw);
@@ -504,12 +528,18 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>) -> Result<()> {
         ToastStack::new(&toasts)
             .scale(scale_f)
             .margin(60.0)
+            .position(settings.position)
+            .screen_h(ph as f32)
             .draw(&mut painter, &mut text, pw, ph);
 
         // Update input region to the union of close-X hit areas (logical coords),
         // so only those pixels capture clicks — the rest of the layer is pass-through.
         let region = state.compositor.as_ref().unwrap().create_region(&qh, ());
-        let logical_stack = ToastStack::new(&toasts).scale(1.0).margin(60.0);
+        let logical_stack = ToastStack::new(&toasts)
+            .scale(1.0)
+            .margin(60.0)
+            .position(settings.position)
+            .screen_h(state.height as f32);
         let sw = state.width as f32;
         for (i, t) in toasts.iter().enumerate() {
             let r = logical_stack.close_button_rect(i, t, sw);

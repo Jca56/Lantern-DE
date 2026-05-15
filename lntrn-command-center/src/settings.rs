@@ -55,6 +55,13 @@ pub struct Config {
     pub text_size: f32,
     /// View-switch slide duration in seconds.
     pub view_anim_duration: f32,
+    /// When true, expanding the panel doesn't grow the bar — instead
+    /// a separate body window appears below the bar with a small gap.
+    /// The bar (controls row) stays put at the top.
+    pub panel_split: bool,
+    /// Vertical gap (logical px) between the bar and the body window
+    /// when split mode is active.
+    pub panel_split_gap: f32,
 }
 
 impl Default for Config {
@@ -65,6 +72,8 @@ impl Default for Config {
             show_dock_collapsed: true,
             text_size: 22.0,
             view_anim_duration: 1.20,
+            panel_split: false,
+            panel_split_gap: 50.0,
         }
     }
 }
@@ -142,6 +151,12 @@ fn parse(text: &str) -> Config {
                     cfg.view_anim_duration = v.clamp(0.10, 3.0);
                 }
             }
+            "panel_split" => cfg.panel_split = value == "true",
+            "panel_split_gap" => {
+                if let Ok(v) = value.parse::<f32>() {
+                    cfg.panel_split_gap = v.clamp(0.0, 120.0);
+                }
+            }
             _ => {}
         }
     }
@@ -150,12 +165,14 @@ fn parse(text: &str) -> Config {
 
 fn render_text(c: &Config) -> String {
     format!(
-        "# lntrn-command-center settings\npanel_opacity = {:.3}\nopen_collapsed = {}\nshow_dock_collapsed = {}\ntext_size = {:.1}\nview_anim_duration = {:.2}\n",
+        "# lntrn-command-center settings\npanel_opacity = {:.3}\nopen_collapsed = {}\nshow_dock_collapsed = {}\ntext_size = {:.1}\nview_anim_duration = {:.2}\npanel_split = {}\npanel_split_gap = {:.1}\n",
         c.panel_opacity,
         c.open_collapsed,
         c.show_dock_collapsed,
         c.text_size,
         c.view_anim_duration,
+        c.panel_split,
+        c.panel_split_gap,
     )
 }
 
@@ -168,6 +185,8 @@ pub enum SettingKey {
     PanelOpacity,
     OpenCollapsed,
     ShowDockCollapsed,
+    PanelSplit,
+    PanelSplitGap,
     TextSize,
     ViewAnimDuration,
 }
@@ -223,6 +242,16 @@ const SECTIONS: &[SectionDef] = &[
                 key: SettingKey::ShowDockCollapsed,
                 label: "Show pinned dock when collapsed",
                 kind: RowKind::Toggle,
+            },
+            RowDef {
+                key: SettingKey::PanelSplit,
+                label: "Split bar and panel into separate windows",
+                kind: RowKind::Toggle,
+            },
+            RowDef {
+                key: SettingKey::PanelSplitGap,
+                label: "Split gap",
+                kind: RowKind::Slider(0.0, 120.0, "px"),
             },
         ],
     },
@@ -338,6 +367,8 @@ pub fn current_value(cfg: &Config, key: SettingKey) -> SettingValue {
         SettingKey::PanelOpacity => SettingValue::F(cfg.panel_opacity),
         SettingKey::OpenCollapsed => SettingValue::B(cfg.open_collapsed),
         SettingKey::ShowDockCollapsed => SettingValue::B(cfg.show_dock_collapsed),
+        SettingKey::PanelSplit => SettingValue::B(cfg.panel_split),
+        SettingKey::PanelSplitGap => SettingValue::F(cfg.panel_split_gap),
         SettingKey::TextSize => SettingValue::F(cfg.text_size),
         SettingKey::ViewAnimDuration => SettingValue::F(cfg.view_anim_duration),
     }
@@ -348,6 +379,8 @@ pub fn apply_value(cfg: &mut Config, key: SettingKey, value: SettingValue) {
         (SettingKey::PanelOpacity, SettingValue::F(v)) => cfg.panel_opacity = v.clamp(0.10, 1.0),
         (SettingKey::OpenCollapsed, SettingValue::B(v)) => cfg.open_collapsed = v,
         (SettingKey::ShowDockCollapsed, SettingValue::B(v)) => cfg.show_dock_collapsed = v,
+        (SettingKey::PanelSplit, SettingValue::B(v)) => cfg.panel_split = v,
+        (SettingKey::PanelSplitGap, SettingValue::F(v)) => cfg.panel_split_gap = v.clamp(0.0, 120.0),
         (SettingKey::TextSize, SettingValue::F(v)) => cfg.text_size = v.clamp(12.0, 32.0),
         (SettingKey::ViewAnimDuration, SettingValue::F(v)) => cfg.view_anim_duration = v.clamp(0.10, 3.0),
         _ => {}

@@ -9,6 +9,7 @@ mod icons;
 mod input;
 mod keyboard;
 mod layout;
+mod rainbow;
 mod render;
 mod state;
 mod wayland;

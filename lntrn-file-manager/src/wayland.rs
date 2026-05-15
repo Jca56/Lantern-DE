@@ -397,8 +397,12 @@ pub fn run(pick: Option<PickConfig>, desktop: bool) -> Result<()> {
     settings.show_hidden = app.show_hidden;
     settings.set_sort_by(app.sort_by);
     settings.set_sort_dir(app.sort_dir);
-    settings.window_width = state.width as f32;
-    settings.window_height = state.height as f32;
+    // Intentionally do NOT persist the window size — Fox always opens at the
+    // default 1500x1000 (settings.rs) regardless of any in-session resize.
+    // Overwrite with defaults so stale values in the on-disk config get wiped.
+    let defaults = Settings::default();
+    settings.window_width = defaults.window_width;
+    settings.window_height = defaults.window_height;
     settings.pinned_tabs = app.tabs.iter()
         .filter(|t| t.pinned)
         .map(|t| {

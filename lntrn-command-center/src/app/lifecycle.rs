@@ -160,6 +160,9 @@ impl AppState {
             // Settings is a top-level overlay — Esc closes it without
             // collapsing the underlying view.
             self.settings_open = false;
+        } else if self.desktop_settings_open {
+            // Desktop Settings is a top-level overlay — Esc closes it.
+            self.desktop_settings_open = false;
         } else if matches!(
             self.mode,
             PanelMode::Control(crate::controls::TileId::SysMon)
@@ -303,6 +306,8 @@ impl AppState {
         // Settings shouldn't reappear on the next open — drop it like
         // the calendar above. The next gear-click reopens.
         self.settings_open = false;
+        // Same rule for the Desktop Settings overlay.
+        self.desktop_settings_open = false;
         // Same rule for the Emojis overlay: next open snaps back to Home.
         self.emojis.open = false;
         self.emojis.filter.clear();

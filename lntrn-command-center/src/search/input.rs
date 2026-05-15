@@ -402,8 +402,8 @@ const SEARCH_UNDERLINE_THICKNESS: f32 = 2.0;
 pub fn waffle_rect(panel: Rect, scale: f32) -> Rect {
     let pad = SEARCH_HORIZONTAL_PAD * scale;
     let row_h = SEARCH_ROW_HEIGHT * scale;
-    let row_y = panel.y + crate::controls::total_logical_height() * scale + pad * 0.5;
-    let section_top = panel.y + crate::controls::total_logical_height() * scale;
+    let row_y = crate::controls::content_top_y(panel, scale) + pad * 0.5;
+    let section_top = crate::controls::content_top_y(panel, scale);
     let section_bottom = row_y + row_h - SEARCH_UNDERLINE_THICKNESS * scale;
     let section_h = section_bottom - section_top;
     let btn = WAFFLE_BTN_SIZE * scale;
@@ -445,7 +445,7 @@ pub fn draw(
 
     let row_x = panel.x + pad;
     // Search row sits beneath the controls row + its underline.
-    let row_y = panel.y + crate::controls::total_logical_height() * scale + pad * 0.5;
+    let row_y = crate::controls::content_top_y(panel, scale) + pad * 0.5;
     let row_w = panel.w - pad * 2.0;
     // Text shouldn't run under the waffle button.
     let waffle = waffle_rect(panel, scale);

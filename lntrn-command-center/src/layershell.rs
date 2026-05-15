@@ -456,6 +456,9 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                 wl.cursor_x as f32 * scale_f,
                 wl.cursor_y as f32 * scale_f,
             );
+            // Sync the split-panel gap once per loop iteration so every
+            // hit test + render call below sees the correct offset.
+            crate::app::set_split_gap_px(crate::app::effective_split_gap_px(&app, scale_f));
         }
         app.controls.tick();
         // PTY housekeeping for the Terminal view. We spawn lazily on

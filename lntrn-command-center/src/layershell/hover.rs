@@ -66,7 +66,8 @@ pub(super) fn track_hovers(wl: &mut super::WlState, app: &mut crate::app::AppSta
         app.view_arrow_hover = crate::view_arrows::hit_test(panel_rect, scale_f, phys_cx, phys_cy);
         app.desktop_button_hover = crate::desktop_settings::hit_test_button(panel_rect, scale_f, phys_cx, phys_cy);
         app.desktop_settings_hover = if app.desktop_settings_open {
-            crate::desktop_settings::hovered_row(panel_rect, scale_f, phys_cx, phys_cy)
+            let top_y = crate::controls::content_top_y(panel_rect, scale_f);
+            crate::desktop_settings::hovered_row(panel_rect, top_y, scale_f, phys_cx, phys_cy)
         } else {
             None
         };

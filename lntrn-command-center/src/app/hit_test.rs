@@ -42,8 +42,7 @@ impl AppState {
 
         let panel = Rect::new(panel_rect.x, panel_rect.y, panel_rect.w, panel_rect.h);
         let pad = SEARCH_HORIZONTAL_PAD * scale;
-        let pin_top_y = panel.y
-            + crate::controls::total_logical_height() * scale
+        let pin_top_y = crate::controls::content_top_y(panel, scale)
             + (SEARCH_HORIZONTAL_PAD * 0.5 + SEARCH_ROW_HEIGHT) * scale;
         let pinned_count = self.launcher.pinned_entries(&self.apps).len();
         let pins_bottom =
@@ -98,8 +97,10 @@ impl AppState {
         let section_label_font = crate::launcher::SECTION_LABEL_FONT * scale;
         let label_gap = PIN_LABEL_GAP * scale;
 
-        let row_top = panel_rect.y
-            + crate::controls::total_logical_height() * scale
+        let row_top = crate::controls::content_top_y(
+            lntrn_render::Rect::new(panel_rect.x, panel_rect.y, panel_rect.w, panel_rect.h),
+            scale,
+        )
             + (SEARCH_HORIZONTAL_PAD * 0.5 + SEARCH_ROW_HEIGHT) * scale
             + PIN_ROW_TOP_MARGIN * scale
             + section_label_font
@@ -153,8 +154,10 @@ impl AppState {
             return None;
         }
 
-        let list_y_start = panel_rect.y
-            + crate::controls::total_logical_height() * scale
+        let list_y_start = crate::controls::content_top_y(
+            lntrn_render::Rect::new(panel_rect.x, panel_rect.y, panel_rect.w, panel_rect.h),
+            scale,
+        )
             + (SEARCH_HORIZONTAL_PAD * 0.5 + SEARCH_ROW_HEIGHT) * scale
             + RESULT_TOP_MARGIN * scale;
 

@@ -136,6 +136,36 @@ pub fn read_config_bool(section: &str, key: &str, default: bool) -> bool {
     default
 }
 
+/// Read a string value from a `[section]` in `lantern.toml`.
+/// Returns `default` if the file/section/key is missing.
+pub fn read_config_string(section: &str, key: &str, default: &str) -> String {
+    let path = match lantern_config_path() {
+        Some(p) => p,
+        None => return default.to_string(),
+    };
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return default.to_string(),
+    };
+    let header = format!("[{}]", section);
+    let mut in_section = false;
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_section = trimmed == header;
+            continue;
+        }
+        if in_section {
+            if let Some((k, v)) = trimmed.split_once('=') {
+                if k.trim() == key {
+                    return v.trim().trim_matches('"').to_string();
+                }
+            }
+        }
+    }
+    default.to_string()
+}
+
 /// Read the global background opacity from `[windows] background_opacity`.
 /// Apps use this to make their background transparent while keeping text opaque.
 pub fn background_opacity() -> f32 {

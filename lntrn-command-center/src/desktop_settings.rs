@@ -82,89 +82,76 @@ pub fn draw_button(
     );
 }
 
-// ── Popover layout & rendering ────────────────────────────────────────────
+// ── Full-body page layout & rendering ─────────────────────────────────────
 
-const POPOVER_W: f32 = 280.0;
-const POPOVER_H: f32 = 168.0;
-const POPOVER_PAD: f32 = 16.0;
-const TITLE_FONT: f32 = 18.0;
-const ROW_FONT: f32 = 16.0;
-const ROW_H: f32 = 44.0;
-const ROW_GAP: f32 = 8.0;
-const TOGGLE_W: f32 = 44.0;
-const TOGGLE_H: f32 = 24.0;
+const PAD: f32 = 20.0;
+const TITLE_FONT: f32 = 28.0;
+const ROW_FONT: f32 = 18.0;
+const ROW_H: f32 = 56.0;
+const ROW_GAP: f32 = 10.0;
+const TOGGLE_W: f32 = 52.0;
+const TOGGLE_H: f32 = 28.0;
 const KNOB_PAD: f32 = 3.0;
 
-const PANEL_BG: (u8, u8, u8) = (24, 22, 20);
-const PANEL_BORDER_ALPHA: f32 = 0.45;
 const ROW_BG: (u8, u8, u8) = (40, 36, 32);
 const ROW_BORDER_ALPHA: f32 = 0.10;
 
 #[derive(Copy, Clone)]
-pub enum PopoverHit {
+pub enum PageHit {
     Background,
     ClockToggle,
     VisualizerToggle,
+    RainbowToggle,
 }
 
-/// Compute the popover rect anchored above the button.
-pub fn popover_rect(panel: Rect, scale: f32) -> Rect {
-    let btn = button_rect(panel, scale);
-    let w = POPOVER_W * scale;
-    let h = POPOVER_H * scale;
-    let gap = 12.0 * scale;
-    let x = (btn.x + btn.w / 2.0 - w / 2.0)
-        .max(panel.x + 8.0 * scale)
-        .min(panel.x + panel.w - w - 8.0 * scale);
-    let y = (btn.y - gap - h).max(8.0 * scale);
-    Rect::new(x, y, w, h)
+fn clock_row_rect(panel: Rect, top_y: f32, scale: f32) -> Rect {
+    let pad = PAD * scale;
+    let body_x = panel.x + pad;
+    let body_w = panel.w - pad * 2.0;
+    let row_y = top_y + pad + TITLE_FONT * scale + 18.0 * scale;
+    Rect::new(body_x, row_y, body_w, ROW_H * scale)
 }
 
-fn clock_row_rect(panel: Rect, scale: f32) -> Rect {
-    let pop = popover_rect(panel, scale);
-    let pad = POPOVER_PAD * scale;
-    let row_y = pop.y + pad + TITLE_FONT * scale + 14.0 * scale;
-    Rect::new(
-        pop.x + pad,
-        row_y,
-        pop.w - pad * 2.0,
-        ROW_H * scale,
-    )
-}
-
-fn visualizer_row_rect(panel: Rect, scale: f32) -> Rect {
-    let clock_r = clock_row_rect(panel, scale);
+fn visualizer_row_rect(panel: Rect, top_y: f32, scale: f32) -> Rect {
+    let clock_r = clock_row_rect(panel, top_y, scale);
     Rect::new(clock_r.x, clock_r.y + clock_r.h + ROW_GAP * scale, clock_r.w, clock_r.h)
+}
+
+fn rainbow_row_rect(panel: Rect, top_y: f32, scale: f32) -> Rect {
+    let viz_r = visualizer_row_rect(panel, top_y, scale);
+    Rect::new(viz_r.x, viz_r.y + viz_r.h + ROW_GAP * scale, viz_r.w, viz_r.h)
 }
 
 fn toggle_rect_in(row: Rect, scale: f32) -> Rect {
     let w = TOGGLE_W * scale;
     let h = TOGGLE_H * scale;
-    Rect::new(row.x + row.w - w - 12.0 * scale, row.y + (row.h - h) / 2.0, w, h)
+    Rect::new(row.x + row.w - w - 16.0 * scale, row.y + (row.h - h) / 2.0, w, h)
 }
 
-pub fn hit_test_popover(panel: Rect, scale: f32, px: f32, py: f32) -> PopoverHit {
-    let pop = popover_rect(panel, scale);
-    if !point_in(pop, px, py) {
-        return PopoverHit::Background;
+pub fn hit_test_page(panel: Rect, top_y: f32, scale: f32, px: f32, py: f32) -> PageHit {
+    if point_in(clock_row_rect(panel, top_y, scale), px, py) {
+        return PageHit::ClockToggle;
     }
-    if point_in(clock_row_rect(panel, scale), px, py) {
-        return PopoverHit::ClockToggle;
+    if point_in(visualizer_row_rect(panel, top_y, scale), px, py) {
+        return PageHit::VisualizerToggle;
     }
-    if point_in(visualizer_row_rect(panel, scale), px, py) {
-        return PopoverHit::VisualizerToggle;
+    if point_in(rainbow_row_rect(panel, top_y, scale), px, py) {
+        return PageHit::RainbowToggle;
     }
-    PopoverHit::Background
+    PageHit::Background
 }
 
 /// Returns Some(rect) hovered if the cursor is inside any toggle row,
 /// for hover styling.
-pub fn hovered_row(panel: Rect, scale: f32, px: f32, py: f32) -> Option<HoverRow> {
-    if point_in(clock_row_rect(panel, scale), px, py) {
+pub fn hovered_row(panel: Rect, top_y: f32, scale: f32, px: f32, py: f32) -> Option<HoverRow> {
+    if point_in(clock_row_rect(panel, top_y, scale), px, py) {
         return Some(HoverRow::Clock);
     }
-    if point_in(visualizer_row_rect(panel, scale), px, py) {
+    if point_in(visualizer_row_rect(panel, top_y, scale), px, py) {
         return Some(HoverRow::Visualizer);
+    }
+    if point_in(rainbow_row_rect(panel, top_y, scale), px, py) {
+        return Some(HoverRow::Rainbow);
     }
     None
 }
@@ -173,6 +160,7 @@ pub fn hovered_row(panel: Rect, scale: f32, px: f32, py: f32) -> Option<HoverRow
 pub enum HoverRow {
     Clock,
     Visualizer,
+    Rainbow,
 }
 
 fn point_in(r: Rect, px: f32, py: f32) -> bool {
@@ -180,10 +168,11 @@ fn point_in(r: Rect, px: f32, py: f32) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn draw_popover(
+pub fn draw_page(
     painter: &mut Painter,
     text: &mut TextRenderer,
     panel: Rect,
+    top_y: f32,
     scale: f32,
     alpha: f32,
     cfg: &WidgetsConfig,
@@ -191,39 +180,19 @@ pub fn draw_popover(
     surface_w: u32,
     surface_h: u32,
 ) {
-    let pop = popover_rect(panel, scale);
-    let radius = 14.0 * scale;
+    let pad = PAD * scale;
+    let body_x = panel.x + pad;
+    let body_w = panel.w - pad * 2.0;
 
-    // Drop shadow.
-    painter.shadow(
-        pop,
-        radius,
-        18.0 * scale,
-        Color::from_rgba8(0, 0, 0, 140),
-        0.0,
-        6.0 * scale,
-    );
-    // Body + accent border.
-    painter.rect_filled(
-        pop,
-        radius,
-        Color::from_rgb8(PANEL_BG.0, PANEL_BG.1, PANEL_BG.2).with_alpha(0.96 * alpha),
-    );
-    painter.rect_stroke_sdf(
-        pop,
-        radius,
-        1.0 * scale,
-        Color::from_rgb8(ACCENT_RGB.0, ACCENT_RGB.1, ACCENT_RGB.2).with_alpha(PANEL_BORDER_ALPHA * alpha),
-    );
-
+    // Page title.
     let title_font = TITLE_FONT * scale;
     text.queue(
-        "Desktop",
+        "Desktop Widgets",
         title_font,
-        pop.x + POPOVER_PAD * scale,
-        pop.y + POPOVER_PAD * scale,
-        Color::from_rgb8(ACCENT_RGB.0, ACCENT_RGB.1, ACCENT_RGB.2).with_alpha(0.95 * alpha),
-        pop.w,
+        body_x,
+        top_y + pad,
+        Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(alpha),
+        body_w,
         surface_w,
         surface_h,
     );
@@ -231,7 +200,7 @@ pub fn draw_popover(
     draw_row(
         painter,
         text,
-        clock_row_rect(panel, scale),
+        clock_row_rect(panel, top_y, scale),
         "Clock",
         cfg.clock_enabled,
         hovered == Some(HoverRow::Clock),
@@ -243,10 +212,22 @@ pub fn draw_popover(
     draw_row(
         painter,
         text,
-        visualizer_row_rect(panel, scale),
+        visualizer_row_rect(panel, top_y, scale),
         "Audio Visualizer",
         cfg.visualizer_enabled,
         hovered == Some(HoverRow::Visualizer),
+        scale,
+        alpha,
+        surface_w,
+        surface_h,
+    );
+    draw_row(
+        painter,
+        text,
+        rainbow_row_rect(panel, top_y, scale),
+        "Rainbow",
+        cfg.rainbow_enabled,
+        hovered == Some(HoverRow::Rainbow),
         scale,
         alpha,
         surface_w,
@@ -327,6 +308,15 @@ pub struct WidgetsConfig {
     pub clock_enabled: bool,
     #[serde(default = "default_visualizer_enabled")]
     pub visualizer_enabled: bool,
+    #[serde(default)]
+    pub rainbow_enabled: bool,
+    /// Persisted top-left position from the desktop daemon — preserved
+    /// across CC toggles so dragging isn't lost when the user flips the
+    /// switch off and on again.
+    #[serde(default)]
+    pub rainbow_x: Option<f32>,
+    #[serde(default)]
+    pub rainbow_y: Option<f32>,
 }
 
 fn default_clock_enabled() -> bool {
@@ -341,6 +331,9 @@ impl Default for WidgetsConfig {
         Self {
             clock_enabled: default_clock_enabled(),
             visualizer_enabled: default_visualizer_enabled(),
+            rainbow_enabled: false,
+            rainbow_x: None,
+            rainbow_y: None,
         }
     }
 }
@@ -383,6 +376,13 @@ pub fn toggle_clock() -> WidgetsConfig {
 pub fn toggle_visualizer() -> WidgetsConfig {
     let mut cfg = load();
     cfg.visualizer_enabled = !cfg.visualizer_enabled;
+    save(&cfg);
+    cfg
+}
+
+pub fn toggle_rainbow() -> WidgetsConfig {
+    let mut cfg = load();
+    cfg.rainbow_enabled = !cfg.rainbow_enabled;
     save(&cfg);
     cfg
 }

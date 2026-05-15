@@ -44,6 +44,18 @@ pub struct DesktopState {
     /// Toggleable widget state (clock, etc.), loaded from
     /// `~/.lantern/config/desktop-widgets.json`.
     pub widgets: WidgetsConfig,
+
+    /// Drag state for the movable rainbow widget.
+    pub widget_drag: Option<WidgetDrag>,
+    /// True after a widget drag moves; consumed by the main loop to
+    /// persist the new position to widgets config.
+    pub widgets_dirty: bool,
+}
+
+pub struct WidgetDrag {
+    /// Cursor → widget top-left offset captured at press time.
+    pub offset_x: f32,
+    pub offset_y: f32,
 }
 
 pub struct DragState {
@@ -146,6 +158,8 @@ impl DesktopState {
             ctrl_held: false,
             shift_held: false,
             widgets: WidgetsConfig::load(),
+            widget_drag: None,
+            widgets_dirty: false,
         }
     }
 

@@ -88,7 +88,8 @@ pub(super) fn render_frame(
         && !app.emojis.open
         && !app.clipboard.open
         && !app.notes.open
-        && !app.usage.open;
+        && !app.usage.open
+        && !app.desktop_settings_open;
     if let Some(p) = &panel_draw {
         if matches!(app.visibility, crate::app::Visibility::Visible) && open_section_active {
             let panel_logical = lntrn_render::Rect::new(p.rect.x, p.rect.y, p.rect.w, p.rect.h);
@@ -159,6 +160,7 @@ pub(super) fn render_frame(
             && !app.clipboard.open
             && !app.notes.open
             && !app.usage.open
+            && !app.desktop_settings_open
         {
             // Dock hover preview: one thumbnail slot per window of
             // the hovered dock app, arrayed horizontally.

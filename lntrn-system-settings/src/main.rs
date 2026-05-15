@@ -1,3 +1,4 @@
+mod appearance_panel;
 mod chrome;
 mod config;
 mod display_panel;
@@ -16,6 +17,7 @@ mod text_edit;
 mod wallpaper_picker;
 mod wayland;
 mod wayland_state;
+mod wm_panel;
 
 fn main() {
     // --test-window spawns a minimal 500x500 blank window so the user can

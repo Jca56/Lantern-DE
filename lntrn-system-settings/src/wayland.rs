@@ -411,8 +411,8 @@ pub fn run() -> Result<()> {
                                 && panel_state.dropdown_menu.contains(cx, cy);
                             if !menu_consumed {
                                 match active_panel {
-                                    Panel::Appearance => panels::handle_appearance_click(&mut config, id),
-                                    Panel::WindowManager => panels::handle_wm_click(&mut config, id),
+                                    Panel::Appearance => crate::appearance_panel::handle_appearance_click(&mut config, id),
+                                    Panel::WindowManager => crate::wm_panel::handle_wm_click(&mut config, id),
                                     Panel::Power => {
                                         crate::power_panel::handle_power_click(
                                             &mut config, &mut panel_state, id, cx, cy,
@@ -649,14 +649,14 @@ pub fn run() -> Result<()> {
         match active_panel {
             Panel::Appearance => {
                 let panel_h = hf - panel_y;
-                panels::draw_appearance_panel(
+                crate::appearance_panel::draw_appearance_panel(
                     &mut config, &mut painter, &mut text, &mut ix, &fox,
                     content_x, panel_y, content_w, panel_h, s, sw, sh,
                 );
             }
             Panel::WindowManager => {
                 let panel_h = hf - panel_y;
-                panels::draw_wm_panel(
+                crate::wm_panel::draw_wm_panel(
                     &mut config, &mut panel_state, &mut painter, &mut text, &mut ix, &fox,
                     content_x, panel_y, content_w, panel_h, s, sw, sh, frame_scroll,
                 );

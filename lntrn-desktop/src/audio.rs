@@ -25,8 +25,9 @@ use spa::pod::Pod;
 /// Number of f32 mono samples kept in the rolling capture buffer.
 pub const RING_CAPACITY: usize = 4096;
 
-/// FFT window size — must be a power of two.
-pub const FFT_SIZE: usize = 1024;
+/// FFT window size — must be a power of two. 512 gives ~10.7ms of audio
+/// at 48 kHz, enough for the 32 log-binned bars without burning CPU.
+pub const FFT_SIZE: usize = 512;
 
 pub struct AudioCapture {
     inner: Arc<Inner>,
@@ -151,6 +152,10 @@ fn run_capture(inner: &Arc<Inner>) -> anyhow::Result<()> {
     let channels_param = Arc::clone(&channels);
     let channels_proc = Arc::clone(&channels);
 
+    // Reusable mono mixdown buffer for the realtime process callback.
+    // Avoids per-callback heap allocations on the RT audio thread.
+    let mut mono_buf: Vec<f32> = Vec::with_capacity(2048);
+
     let _listener = stream
         .add_local_listener::<()>()
         .param_changed(move |_stream, _user, id, param| {
@@ -187,7 +192,10 @@ fn run_capture(inner: &Arc<Inner>) -> anyhow::Result<()> {
                 return;
             }
             let frames = n_samples / nch as usize;
-            let mut mono = Vec::with_capacity(frames);
+            mono_buf.clear();
+            if mono_buf.capacity() < frames {
+                mono_buf.reserve(frames - mono_buf.capacity());
+            }
             for f in 0..frames {
                 let mut sum = 0.0f32;
                 for c in 0..nch as usize {
@@ -200,10 +208,10 @@ fn run_capture(inner: &Arc<Inner>) -> anyhow::Result<()> {
                         }
                     }
                 }
-                mono.push(sum / nch as f32);
+                mono_buf.push(sum / nch as f32);
             }
             if let Ok(mut ring) = inner_proc.ring.lock() {
-                ring.push_mono(&mono);
+                ring.push_mono(&mono_buf);
             }
         })
         .register()?;

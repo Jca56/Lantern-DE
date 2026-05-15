@@ -78,40 +78,11 @@ pub(super) fn handle_clicks(
             false
         };
 
-        // Desktop Settings popover intercepts clicks while open: a
-        // hit on a toggle row flips that setting; a click outside the
-        // popover (but not on the strip button — that's handled in
-        // the main cascade) closes the popover and consumes the click.
-        let popover_consumed = if !menu_consumed && app.desktop_settings_open {
-            match crate::desktop_settings::hit_test_popover(panel_rect, scale_f, phys_cx, phys_cy) {
-                crate::desktop_settings::PopoverHit::ClockToggle => {
-                    app.desktop_widgets = crate::desktop_settings::toggle_clock();
-                    true
-                }
-                crate::desktop_settings::PopoverHit::VisualizerToggle => {
-                    app.desktop_widgets = crate::desktop_settings::toggle_visualizer();
-                    true
-                }
-                crate::desktop_settings::PopoverHit::Background => {
-                    // Outside the popover — close it and let the
-                    // main click cascade run only if the click was
-                    // on the strip button (the cascade will re-open
-                    // it). Otherwise just consume so the click
-                    // doesn't, e.g., activate a dock entry the user
-                    // didn't mean to hit.
-                    app.desktop_settings_open = false;
-                    !crate::desktop_settings::hit_test_button(panel_rect, scale_f, phys_cx, phys_cy)
-                }
-            }
-        } else {
-            false
-        };
-
         // First: if a control's full-content view is up, see if the
         // click hit one of its interactive widgets (battery toggle,
         // audio slider, audio device list). Skip when an overlay
         // (context menu, power confirm) has the click.
-        let consumed_by_view = !menu_consumed && !popover_consumed && app.power_confirm.is_none()
+        let consumed_by_view = !menu_consumed && app.power_confirm.is_none()
             && handle_control_view_click(
                 app, text, panel_rect, scale_f, phys_cx, phys_cy,
             );
@@ -198,11 +169,34 @@ pub(super) fn handle_clicks(
                 dock_layout = Some(layout);
             }
         }
-        if menu_consumed || confirm_consumed || popover_consumed {
+        if menu_consumed || confirm_consumed {
             // Already handled by an overlay — fall through to render.
         } else if let Some(action) = power_btn {
             tracing::debug!(?action, "power button click → open confirm modal");
             app.power_confirm = Some(action);
+        } else if app.desktop_settings_open && {
+            // While the Desktop Widgets page is open, clicks inside the
+            // panel route to its row hit-test first.
+            let top_y = crate::controls::content_top_y(panel_rect, scale_f);
+            match crate::desktop_settings::hit_test_page(
+                panel_rect, top_y, scale_f, phys_cx, phys_cy,
+            ) {
+                crate::desktop_settings::PageHit::ClockToggle => {
+                    app.desktop_widgets = crate::desktop_settings::toggle_clock();
+                    true
+                }
+                crate::desktop_settings::PageHit::VisualizerToggle => {
+                    app.desktop_widgets = crate::desktop_settings::toggle_visualizer();
+                    true
+                }
+                crate::desktop_settings::PageHit::RainbowToggle => {
+                    app.desktop_widgets = crate::desktop_settings::toggle_rainbow();
+                    true
+                }
+                crate::desktop_settings::PageHit::Background => false,
+            }
+        } {
+            // Already handled.
         } else if app.settings_open && {
             // While the settings page is open all clicks inside the
             // panel route to the settings hit-test first.
@@ -470,12 +464,12 @@ pub(super) fn handle_clicks(
                 crate::view_arrows::Side::Right => app.cycle_view_next(),
             }
         } else if crate::desktop_settings::hit_test_button(panel_rect, scale_f, phys_cx, phys_cy) {
-            app.desktop_settings_open = !app.desktop_settings_open;
-            if app.desktop_settings_open {
-                // Refresh from disk in case another instance / file
-                // edit changed the on-disk values since last open.
-                app.desktop_widgets = crate::desktop_settings::load();
+            // Page is body-sized — uncollapse first when collapsed so
+            // the user actually sees the page they just opened.
+            if app.collapsed && !app.desktop_settings_open {
+                app.toggle_collapsed();
             }
+            app.toggle_desktop_settings();
         } else if let Some((idx, window_idx, hit)) = dock_preview_hit {
             let entry = dock_layout
                 .as_ref()

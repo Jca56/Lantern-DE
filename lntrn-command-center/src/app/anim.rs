@@ -82,6 +82,12 @@ impl AppState {
     /// motion reads as "shrink then drop" / "rise then widen".
     pub fn desired_panel_w_logical(&self) -> f32 {
         let (bar_w, win_w) = self.endpoint_widths_logical();
+        // In split mode the bar is its own detached card and shouldn't
+        // animate width during collapse / expand — pin it to the bar's
+        // own endpoint, full stop.
+        if self.config.panel_split {
+            return bar_w;
+        }
         if !self.widths_differ() {
             return bar_w;
         }
@@ -233,7 +239,16 @@ impl AppState {
         let collapsed_h = crate::controls::total_logical_height();
         let expanded_h = self.expanded_panel_h_logical();
         let p = self.collapse_progress();
-        expanded_h + (collapsed_h - expanded_h) * p
+        let base = expanded_h + (collapsed_h - expanded_h) * p;
+        // Split mode adds a vertical gap that grows in lockstep with the
+        // expand animation, so the body window slides down out of the
+        // bar instead of inflating it.
+        let split_gap = if self.config.panel_split {
+            self.config.panel_split_gap.max(0.0) * (1.0 - p)
+        } else {
+            0.0
+        };
+        base + split_gap
     }
 
     /// The fully-expanded height the panel would use for the current

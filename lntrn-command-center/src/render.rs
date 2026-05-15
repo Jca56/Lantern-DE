@@ -73,7 +73,14 @@ pub fn draw_panel(
 
     let alpha = factor;
     // Scale: ANIM_SCALE_START → 1.0 as factor goes 0 → 1.
-    let s = ANIM_SCALE_START + (1.0 - ANIM_SCALE_START) * factor;
+    // Skipped in split mode — the bar is treated as a persistent
+    // detached window so we don't want it to inflate/contract from
+    // the panel's center every time CC opens or collapses.
+    let s = if state.config.panel_split {
+        1.0
+    } else {
+        ANIM_SCALE_START + (1.0 - ANIM_SCALE_START) * factor
+    };
 
     let base = PanelRect::compute_with_dims(
         surface_w,
@@ -95,26 +102,34 @@ pub fn draw_panel(
     );
 
     let radius = PANEL_CORNER_RADIUS * scale;
-
-    // Drop shadow (pure black, soft, slightly offset down).
-    let shadow_alpha = 0.35 * alpha;
-    painter.shadow(
-        rect,
-        radius,
-        24.0 * scale,
-        Color::BLACK.with_alpha(shadow_alpha),
-        0.0,
-        4.0 * scale,
-    );
-
-    // Panel surface (matches Fox Dark terminal bg, sRGB-aware).
     let (sr, sg, sb) = SURFACE_BYTES;
     let opacity = state.config.panel_opacity.clamp(0.10, 1.0);
     let _ = SURFACE_ALPHA_DEFAULT; // silence the "unused" lint
-    let surface = Color::from_rgb8(sr, sg, sb).with_alpha(opacity * alpha);
-    painter.rect_filled(rect, radius, surface);
+    let surface_col = Color::from_rgb8(sr, sg, sb).with_alpha(opacity * alpha);
+    let shadow_alpha = 0.35 * alpha;
+    let split_gap = crate::app::split_gap_px();
 
-    // No border — keeps the panel reading as a single soft slab.
+    if split_gap > 0.01 {
+        // Split mode: draw a bar (top) + body window (below gap) as two
+        // separate cards, sharing the same width + corner radius. Each
+        // gets its own shadow so the gap reads as real space between
+        // them rather than a notch in a single slab.
+        let bar_h = crate::controls::total_logical_height() * scale * s;
+        let bar_rect = Rect::new(rect.x, rect.y, rect.w, bar_h);
+        let body_y = rect.y + bar_h + split_gap;
+        let body_h = (rect.y + rect.h - body_y).max(0.0);
+        painter.shadow(bar_rect, radius, 24.0 * scale, Color::BLACK.with_alpha(shadow_alpha), 0.0, 4.0 * scale);
+        painter.rect_filled(bar_rect, radius, surface_col);
+        if body_h > 0.5 {
+            let body_rect = Rect::new(rect.x, body_y, rect.w, body_h);
+            painter.shadow(body_rect, radius, 24.0 * scale, Color::BLACK.with_alpha(shadow_alpha), 0.0, 4.0 * scale);
+            painter.rect_filled(body_rect, radius, surface_col);
+        }
+    } else {
+        // Standard mode: one combined slab.
+        painter.shadow(rect, radius, 24.0 * scale, Color::BLACK.with_alpha(shadow_alpha), 0.0, 4.0 * scale);
+        painter.rect_filled(rect, radius, surface_col);
+    }
 
     // Scale the *content* by the same animation factor as the chrome,
     // so search/launcher/controls all grow from the panel center together.
@@ -250,7 +265,8 @@ pub fn draw_content(
             || state.emojis.open
             || state.clipboard.open
             || state.notes.open
-            || state.usage.open;
+            || state.usage.open
+            || state.desktop_settings_open;
         let dock_alpha_mult = if any_overlay_open {
             0.0
         } else {
@@ -579,6 +595,23 @@ pub fn draw_content(
         );
         return icons;
     }
+    // Desktop Widgets overlay — same short-circuit.
+    if state.desktop_settings_open {
+        let top_y = crate::controls::content_top_y(panel.rect, panel.scale_factor);
+        crate::desktop_settings::draw_page(
+            painter,
+            text,
+            panel.rect,
+            top_y,
+            panel.scale_factor,
+            body_alpha_base,
+            &state.desktop_widgets,
+            state.desktop_settings_hover,
+            surface_w,
+            surface_h,
+        );
+        return icons;
+    }
     // Emojis overlay short-circuits the per-view body draw too.
     if state.emojis.open {
         let top_y = crate::controls::content_top_y(panel.rect, panel.scale_factor);
@@ -838,24 +871,6 @@ pub fn draw_content(
         text.set_layer(0);
     }
 
-    // 6. Desktop Settings popover — floats above the strip button.
-    if state.desktop_settings_open {
-        painter.set_layer(1);
-        text.set_layer(1);
-        crate::desktop_settings::draw_popover(
-            painter,
-            text,
-            panel.rect,
-            panel.scale_factor,
-            panel.alpha,
-            &state.desktop_widgets,
-            state.desktop_settings_hover,
-            surface_w,
-            surface_h,
-        );
-        painter.set_layer(0);
-        text.set_layer(0);
-    }
 
     icons
 }

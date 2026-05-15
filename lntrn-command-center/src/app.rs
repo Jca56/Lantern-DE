@@ -414,8 +414,27 @@ impl AppState {
             self.notes.flush_edits_to_selected();
             self.notes.open = false;
             self.usage.open = false;
+            self.desktop_settings_open = false;
         }
         tracing::info!(open = self.settings_open, "settings toggled");
+    }
+
+    /// Toggle the Desktop Widgets page (clock, visualizer, rainbow…).
+    pub fn toggle_desktop_settings(&mut self) {
+        self.desktop_settings_open = !self.desktop_settings_open;
+        if self.desktop_settings_open {
+            // Refresh from disk in case another instance / file edit
+            // changed the on-disk values since last open.
+            self.desktop_widgets = crate::desktop_settings::load();
+            // Mutually exclusive with the other full-page overlays.
+            self.settings_open = false;
+            self.emojis.open = false;
+            self.clipboard.open = false;
+            self.notes.flush_edits_to_selected();
+            self.notes.open = false;
+            self.usage.open = false;
+        }
+        tracing::info!(open = self.desktop_settings_open, "desktop settings toggled");
     }
 
     /// Toggle the Emojis overlay page.
@@ -427,6 +446,7 @@ impl AppState {
             self.notes.flush_edits_to_selected();
             self.notes.open = false;
             self.usage.open = false;
+            self.desktop_settings_open = false;
             self.emojis.filter.clear();
             self.emojis.reset_scroll();
         }
@@ -441,6 +461,7 @@ impl AppState {
             self.emojis.open = false;
             self.notes.open = false;
             self.usage.open = false;
+            self.desktop_settings_open = false;
             self.clipboard.filter.clear();
             self.clipboard.reset_scroll();
             self.clipboard.confirm_clear = false;
@@ -458,6 +479,7 @@ impl AppState {
             self.clipboard.open = false;
             self.notes.flush_edits_to_selected();
             self.notes.open = false;
+            self.desktop_settings_open = false;
             self.usage.scroll = 0.0;
             // Ensure background scanner is alive (no-op if already spawned).
             self.usage.start_worker();
@@ -473,6 +495,7 @@ impl AppState {
             self.emojis.open = false;
             self.clipboard.open = false;
             self.usage.open = false;
+            self.desktop_settings_open = false;
             self.notes.filter.clear();
             self.notes.list_scroll = 0.0;
             self.notes.confirm_delete = false;
@@ -622,6 +645,45 @@ pub(super) fn reap(mut child: std::process::Child) {
 pub(super) fn ease_out_cubic(t: f32) -> f32 {
     let inv = 1.0 - t;
     1.0 - inv * inv * inv
+}
+
+// ─── Split-panel mode ──────────────────────────────────────────────────────
+//
+// In split mode, expanding the panel doesn't grow the bar — instead the
+// body content slides down into a separate window below, with a small
+// gap. Every body-positioning function reads `split_gap_px()` and adds
+// it to its content top y; that single thread-local keeps the offset
+// out of every function signature.
+//
+// We set the value once per render frame (in `render_tick`) and once at
+// the start of each event-handler tick (in `layershell`), so any code
+// running on the main loop sees the current offset.
+
+thread_local! {
+    static SPLIT_GAP_PX: std::cell::Cell<f32> = const { std::cell::Cell::new(0.0) };
+}
+
+/// Current body-content y offset in physical pixels. Returns 0 unless
+/// split mode is active AND the panel is expanding (so the gap fades
+/// in/out with the collapse animation).
+pub fn split_gap_px() -> f32 {
+    SPLIT_GAP_PX.with(|c| c.get())
+}
+
+/// Update the gap offset. Pass the physical-pixel offset (already
+/// scaled). Call this whenever app state or scale changes — typically
+/// at the start of every render frame and event dispatch.
+pub fn set_split_gap_px(px: f32) {
+    SPLIT_GAP_PX.with(|c| c.set(px));
+}
+
+/// Compute the effective gap in physical pixels for the current state.
+/// Returns 0 when split mode is off or the panel is fully collapsed.
+pub fn effective_split_gap_px(state: &AppState, scale: f32) -> f32 {
+    if !state.config.panel_split { return 0.0; }
+    let expansion = 1.0 - state.collapse_progress();
+    if expansion <= 0.001 { return 0.0; }
+    state.config.panel_split_gap.max(0.0) * scale * expansion
 }
 
 /// Where the panel's rectangle sits inside the fullscreen surface.

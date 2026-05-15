@@ -140,8 +140,7 @@ fn accent_color(alpha: f32) -> Color {
 /// Y-coordinate (physical px) where content beneath the search input
 /// should start. Helper so launcher and result-list use the same offset.
 pub fn content_top_y(panel: Rect, scale: f32) -> f32 {
-    panel.y
-        + crate::controls::total_logical_height() * scale
+    crate::controls::content_top_y(panel, scale)
         + (input::SEARCH_HORIZONTAL_PAD * 0.5 + input::SEARCH_ROW_HEIGHT) * scale
 }
 

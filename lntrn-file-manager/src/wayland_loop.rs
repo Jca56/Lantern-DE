@@ -1,3 +1,4 @@
+use std::os::fd::AsRawFd;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -65,23 +66,39 @@ pub(crate) fn run_loop(
     eprintln!("[fox] entering main loop, size={}x{}", state.width, state.height);
 
     while state.running {
-        // Event dispatch. Animation path ticks at ~60Hz; idle path ticks at
-        // 2Hz so we can live-poll `[appearance].theme` without sitting on a
-        // blocking_dispatch that never wakes when the config file changes
-        // from another process.
-        let sleep_ms = if needs_anim { 16 } else { 500 };
+        // Event dispatch. Animating: short 16ms poll for ~60Hz redraws. Idle:
+        // poll up to 500ms so we still wake periodically to live-poll
+        // `[appearance].theme` from disk. Crucially we poll() on the wayland
+        // fd instead of thread::sleep so input events wake the loop
+        // immediately — sleeping made every click/scroll feel ~500ms laggy.
+        let timeout_ms: i32 = if needs_anim { 16 } else { 500 };
         if let Err(e) = event_queue.flush() {
             eprintln!("[fox] flush error: {e}");
             break;
         }
         if let Some(guard) = event_queue.prepare_read() {
-            let _ = guard.read();
+            let fd = guard.connection_fd().as_raw_fd();
+            let mut pfd = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+            let ret = unsafe { libc::poll(&mut pfd, 1, timeout_ms) };
+            if ret > 0 {
+                let _ = guard.read();
+            } else {
+                drop(guard);
+            }
         }
         if let Err(e) = event_queue.dispatch_pending(state) {
             eprintln!("[fox] dispatch_pending error: {e}");
             break;
         }
-        std::thread::sleep(Duration::from_millis(sleep_ms));
+        // Cap rendering at ~60Hz. Pointer motion events fire at ~1000Hz on
+        // modern mice; without this cap each event triggered a render and
+        // melted the CPU. Sleeping the remaining frame budget lets queued
+        // events coalesce into one render per frame.
+        let since_last = last_frame.elapsed();
+        let frame_budget = Duration::from_millis(16);
+        if since_last < frame_budget {
+            std::thread::sleep(frame_budget - since_last);
+        }
         state.frame_done = true;
 
         // Theme live-reload poll. The palette is re-resolved every frame

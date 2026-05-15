@@ -50,8 +50,8 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             icon_zoom: 0.5,
-            window_width: 1024.0,
-            window_height: 680.0,
+            window_width: 1500.0,
+            window_height: 1000.0,
             show_hidden: false,
             sort_by: "name".into(),
             sort_dir: "asc".into(),
