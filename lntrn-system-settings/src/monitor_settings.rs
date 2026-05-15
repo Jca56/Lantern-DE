@@ -1,7 +1,7 @@
 //! Per-monitor settings UI: resolution, refresh rate, scale dropdowns.
 //! Drawn below the monitor arrangement in the Display panel.
 
-use lntrn_render::{Color, Painter, Rect, TextRenderer};
+use lntrn_render::{Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{FoxPalette, InteractionContext};
 
 use crate::config::{LanternConfig, MonitorEntry};
@@ -59,10 +59,6 @@ impl MonitorSettingsState {
             selected_scale: None,
             dirty: false,
         }
-    }
-
-    pub fn close_dropdown(&mut self) {
-        self.open_dropdown = OpenDropdown::None;
     }
 
     /// Sync from the output manager's current state for a given head.

@@ -150,8 +150,9 @@ pub fn collection_path(id: &str) -> PathBuf {
     keychain_dir().join(format!("{id}.{COLLECTION_EXT}"))
 }
 
-/// Read + decrypt a collection from disk.
-pub fn load(id: &str, passphrase: &str) -> Result<DecryptedCollection, Error> {
+/// Read + decrypt a collection from disk, returning the decrypted body
+/// alongside the derived master key (caller keeps it for subsequent saves).
+pub fn unlock(id: &str, passphrase: &str) -> Result<(DecryptedCollection, MasterKey), Error> {
     let path = collection_path(id);
     if !path.exists() {
         return Err(Error::NotFound);
@@ -162,7 +163,13 @@ pub fn load(id: &str, passphrase: &str) -> Result<DecryptedCollection, Error> {
     let plaintext = decrypt(&key, &blob.nonce, &blob.ciphertext)
         .map_err(|_| Error::BadPassphrase)?;
     let coll: DecryptedCollection = serde_json::from_slice(&plaintext)?;
-    Ok(coll)
+    Ok((coll, key))
+}
+
+/// Read + decrypt a collection from disk (key discarded — use `unlock` to
+/// keep it for subsequent saves).
+pub fn load(id: &str, passphrase: &str) -> Result<DecryptedCollection, Error> {
+    unlock(id, passphrase).map(|(c, _)| c)
 }
 
 /// Encrypt + write a collection to disk atomically (write tmp, fsync, rename).

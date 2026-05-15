@@ -683,14 +683,41 @@ impl<'a> BodyReader<'a> {
                 let inner = &sig[1..];
                 self.align(4);
                 let array_len = self.read_u32() as usize;
+                // D-Bus arrays: length is measured from the end of the
+                // element alignment padding, not from immediately after
+                // the u32 length. Align here so `array_end` is correct
+                // for inner types with stricter alignment (dicts/structs
+                // → 8, ints → 8, etc.).
+                let elem_align = match inner.as_bytes().first().copied() {
+                    Some(b'y') | Some(b'g') => 1,
+                    Some(b'n') | Some(b'q') => 2,
+                    Some(b'b') | Some(b'i') | Some(b'u')
+                    | Some(b's') | Some(b'o') | Some(b'a') => 4,
+                    Some(b'x') | Some(b't') | Some(b'd')
+                    | Some(b'(') | Some(b'{') => 8,
+                    _ => 4,
+                };
+                self.align(elem_align);
                 let array_end = self.pos + array_len;
                 if inner.starts_with('{') {
+                    // Dict entry signature: {KV} — K is a basic type (s, o, ...),
+                    // V is any single complete type. We MUST read V using its
+                    // actual signature, not assume variant.
+                    let inside = &inner[1..inner.len() - 1];
+                    let (key_sig, _) = subsig_at(inside, 0);
+                    let val_offset = key_sig.len();
+                    let (val_sig, _) = subsig_at(inside, val_offset);
                     let mut dict = HashMap::new();
-                    self.align(8);
                     while self.pos < array_end {
                         self.align(8);
-                        let key = self.read_string();
-                        if let Some(val) = self.read_value("v") {
+                        if self.pos >= array_end { break; }
+                        // Read key (basic type, always a string in our model).
+                        let key = match key_sig.as_str() {
+                            "s" | "o" | "g" => self.read_string(),
+                            _ => format!("{:?}", self.read_value(&key_sig)),
+                        };
+                        if self.pos >= array_end { break; }
+                        if let Some(val) = self.read_value(&val_sig) {
                             dict.insert(key, val);
                         }
                     }
@@ -701,6 +728,19 @@ impl<'a> BodyReader<'a> {
                     let mut arr = Vec::new();
                     while self.pos < array_end {
                         arr.push(Value::String(self.read_string()));
+                    }
+                    return Some(Value::Array(arr));
+                }
+                if inner == "y" {
+                    // ay — array of bytes. Read raw.
+                    let bytes = self.data[self.pos..array_end.min(self.data.len())].to_vec();
+                    self.pos = array_end;
+                    return Some(Value::Bytes(bytes));
+                }
+                if inner == "o" {
+                    let mut arr = Vec::new();
+                    while self.pos < array_end {
+                        arr.push(Value::ObjectPath(self.read_string()));
                     }
                     return Some(Value::Array(arr));
                 }

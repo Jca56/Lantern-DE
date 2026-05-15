@@ -3,7 +3,8 @@ use lntrn_ui::gpu::InteractionContext;
 use crate::app::App;
 use crate::layout::{content_rect, file_item_rect, grid_columns};
 use crate::{
-    ZONE_DRIVE_ITEM_BASE, ZONE_SIDEBAR_ITEM_BASE, ZONE_TAB_BASE, ZONE_TAB_CLOSE_BASE,
+    ZONE_DRIVE_ITEM_BASE, ZONE_FAVORITE_ITEM_BASE, ZONE_SIDEBAR_FAVORITES_HEADER,
+    ZONE_SIDEBAR_FAVORITES_PLUS, ZONE_SIDEBAR_ITEM_BASE, ZONE_TAB_BASE, ZONE_TAB_CLOSE_BASE,
 };
 
 pub(crate) fn handle_drop(app: &mut App, input: &InteractionContext, wf: f32, hf: f32, s: f32, drag_idx: usize) {
@@ -29,6 +30,26 @@ pub(crate) fn handle_drop(app: &mut App, input: &InteractionContext, wf: f32, hf
                 let dest_dir = app.tabs[tab_idx].path.clone();
                 app.pending_drop = Some(PendingDrop {
                     sources, dest_dir, reload_tab: Some(tab_idx),
+                });
+            }
+            return;
+        }
+        // ── Drop on the Favorites header / + button → pin folders ───
+        if zone_id == ZONE_SIDEBAR_FAVORITES_HEADER || zone_id == ZONE_SIDEBAR_FAVORITES_PLUS {
+            for src in &sources {
+                if src.is_dir() {
+                    let _ = app.add_favorite(src.clone());
+                }
+            }
+            return;
+        }
+        // ── Drop on an existing favorite ────────────────────────────
+        if zone_id >= ZONE_FAVORITE_ITEM_BASE && zone_id < ZONE_FAVORITE_ITEM_BASE + 100 {
+            let idx = (zone_id - ZONE_FAVORITE_ITEM_BASE) as usize;
+            if let Some(fav) = app.sidebar_favorites().get(idx) {
+                let dest_dir = fav.path.clone();
+                app.pending_drop = Some(PendingDrop {
+                    sources, dest_dir, reload_tab: None,
                 });
             }
             return;

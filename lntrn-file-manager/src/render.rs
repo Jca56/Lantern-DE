@@ -13,10 +13,14 @@ use lntrn_ui::gpu::controls::{Button, ButtonVariant};
 use crate::{Gpu, ZONE_CLOSE, ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_MENU_VIEW,
     ZONE_NAV_VIEW_TOGGLE, ZONE_NAV_BACK, ZONE_NAV_FORWARD, ZONE_NAV_UP, ZONE_NAV_SEARCH, ZONE_NAV_SORT,
     ZONE_NAV_PREVIEW_TOGGLE, ZONE_PREVIEW_RESIZE,
-    ZONE_SIDEBAR_ITEM_BASE, ZONE_FILE_ITEM_BASE, ZONE_CONTENT, ZONE_SCROLLBAR,
+    ZONE_SIDEBAR_ITEM_BASE, ZONE_FAVORITE_ITEM_BASE, ZONE_FILE_ITEM_BASE,
+    ZONE_CONTENT, ZONE_SCROLLBAR,
     ZONE_TAB_BASE, ZONE_TAB_CLOSE_BASE, ZONE_TAB_NEW, ZONE_RENAME_INPUT, ZONE_PATH_INPUT,
     ZONE_DRIVE_ITEM_BASE, ZONE_TREE_ITEM_BASE, ZONE_BREADCRUMB_BASE,
-    ZONE_DROP_MOVE, ZONE_DROP_COPY, ZONE_DROP_CANCEL};
+    ZONE_DROP_MOVE, ZONE_DROP_COPY, ZONE_DROP_CANCEL,
+    ZONE_SIDEBAR_PLACES_HEADER, ZONE_SIDEBAR_FAVORITES_HEADER,
+    ZONE_SIDEBAR_DEVICES_HEADER, ZONE_SIDEBAR_FAVORITES_PLUS};
+use crate::sections::SidebarHovered;
 
 /// Render a full frame.
 pub fn render_frame(
@@ -31,6 +35,7 @@ pub fn render_frame(
     view_menu: &mut ContextMenu,
     context_menu: &mut ContextMenu,
     tab_drag: Option<usize>,
+    fav_drag: Option<usize>,
     bg_opacity: f32,
     desktop_mode: bool,
 ) -> Option<MenuEvent> {
@@ -411,31 +416,54 @@ pub fn render_frame(
     // ── Sidebar ───────────────────────────────────────────────────────
     let sidebar = sidebar_rect(hf, s);
     let places = app.sidebar_places();
+    let favorites = app.sidebar_favorites();
+    let sb_layout = build_sidebar_layout(
+        s,
+        places.len(), favorites.len(),
+        app.drives.len(), app.phones.len(),
+        app.places_collapsed, app.favorites_collapsed, app.devices_collapsed,
+    );
+
+    // Section header zones (toggle collapse on click).
+    let places_header_hov = input.add_zone(ZONE_SIDEBAR_PLACES_HEADER, sb_layout.places_header).is_hovered();
+    let favorites_header_hov = input.add_zone(ZONE_SIDEBAR_FAVORITES_HEADER, sb_layout.favorites_header).is_hovered();
+    let favorites_plus_hov = input.add_zone(ZONE_SIDEBAR_FAVORITES_PLUS, sb_layout.favorites_plus).is_hovered();
+    let devices_header_hov = if sb_layout.has_devices {
+        input.add_zone(ZONE_SIDEBAR_DEVICES_HEADER, sb_layout.devices_header).is_hovered()
+    } else { false };
+
     let mut sidebar_hovered = Vec::with_capacity(places.len());
-    for i in 0..places.len() {
-        let item_rect = sidebar_item_rect(i, s);
+    for (i, item_rect) in sb_layout.place_items.iter().enumerate() {
         let zone_id = ZONE_SIDEBAR_ITEM_BASE + i as u32;
-        let state = input.add_zone(zone_id, item_rect);
-        sidebar_hovered.push(state.is_hovered());
+        sidebar_hovered.push(input.add_zone(zone_id, *item_rect).is_hovered());
     }
-    let num_places = places.len();
+    let mut favorite_hovered = Vec::with_capacity(favorites.len());
+    for (i, item_rect) in sb_layout.favorite_items.iter().enumerate() {
+        let zone_id = ZONE_FAVORITE_ITEM_BASE + i as u32;
+        favorite_hovered.push(input.add_zone(zone_id, *item_rect).is_hovered());
+    }
     let mut drive_hovered = Vec::with_capacity(app.drives.len());
-    for i in 0..app.drives.len() {
-        let item_rect = drive_item_rect(i, num_places, s);
+    for (i, item_rect) in sb_layout.drive_items.iter().enumerate() {
         let zone_id = ZONE_DRIVE_ITEM_BASE + i as u32;
-        let state = input.add_zone(zone_id, item_rect);
-        drive_hovered.push(state.is_hovered());
+        drive_hovered.push(input.add_zone(zone_id, *item_rect).is_hovered());
     }
-    let num_drives = app.drives.len();
     let mut phone_hovered = Vec::with_capacity(app.phones.len());
-    for i in 0..app.phones.len() {
-        let item_rect = phone_item_rect(i, num_places, num_drives, s);
+    for (i, item_rect) in sb_layout.phone_items.iter().enumerate() {
         let zone_id = crate::ZONE_PHONE_ITEM_BASE + i as u32;
-        let state = input.add_zone(zone_id, item_rect);
-        phone_hovered.push(state.is_hovered());
+        phone_hovered.push(input.add_zone(zone_id, *item_rect).is_hovered());
     }
     let dragging = app.drag_item.is_some();
-    draw_sidebar(painter, text, pal, app, sidebar, &sidebar_hovered, &drive_hovered, &phone_hovered, dragging, (w, h), s);
+    let hov = SidebarHovered {
+        places: &sidebar_hovered,
+        favorites: &favorite_hovered,
+        drives: &drive_hovered,
+        phones: &phone_hovered,
+        places_header: places_header_hov,
+        favorites_header: favorites_header_hov,
+        devices_header: devices_header_hov,
+        favorites_plus: favorites_plus_hov,
+    };
+    draw_sidebar(painter, text, pal, app, sidebar, &sb_layout, &hov, dragging, fav_drag, (w, h), s);
 
     // ── Content area ───────────────────────────────────────────────────
     input.add_zone(ZONE_CONTENT, content);
@@ -631,7 +659,7 @@ pub fn render_frame(
         } else {
             None
         };
-        draw_status_bar(painter, text, pal, status, &app.entries, file_info, cloud_status, (w, h), s);
+        draw_status_bar(painter, text, pal, status, &app.entries, file_info, cloud_status, app.op_progress.as_ref(), input, (w, h), s);
     }
 
     // ── Rubber band selection overlay ─────────────────────────────────
@@ -762,12 +790,31 @@ pub fn render_frame(
     painter.set_layer(1);
     text.set_layer(1);
     let mut props_tex_draws = Vec::new();
+    // Collect props action outside the &mut borrow so we can mutate
+    // app.properties / icon_cache after the dialog draws.
+    let mut props_close = false;
+    let mut props_icon_chosen: Option<(std::path::PathBuf, std::path::PathBuf)> = None;
+    let mut props_icon_reset: Option<std::path::PathBuf> = None;
+    let mut props_icon_rect_data: Option<(crate::fs::FileEntry, (f32, f32, f32, f32))> = None;
     if let Some(ref mut props) = app.properties {
-        crate::properties::draw_properties_dialog(
+        let evt = crate::properties::draw_properties_dialog(
             props, painter, text, input, pal,
             wf, hf, s, w, h,
         );
-        // Render file icon texture in the header
+        match evt {
+            Some(crate::properties::PropertiesEvent::Close) => {
+                props_close = true;
+            }
+            Some(crate::properties::PropertiesEvent::IconChosen(icon_path)) => {
+                props_icon_chosen = Some((props.path.clone(), icon_path));
+                props.picker_open = false;
+            }
+            Some(crate::properties::PropertiesEvent::IconReset) => {
+                props_icon_reset = Some(props.path.clone());
+                props.picker_open = false;
+            }
+            None => {}
+        }
         if let Some((ix, iy, iw, ih)) = props.icon_rect {
             let entry = crate::fs::FileEntry {
                 name: props.name.clone(),
@@ -777,10 +824,22 @@ pub fn render_frame(
                 modified: None,
                 selected: false,
             };
-            if let Some(tex) = icon_cache.get(&entry) {
-                let (bx, by, bw, bh) = icons::fit_in_box(tex, ix, iy, iw, ih);
-                props_tex_draws.push(TextureDraw::new(tex, bx, by, bw, bh));
-            }
+            props_icon_rect_data = Some((entry, (ix, iy, iw, ih)));
+        }
+    }
+    if props_close { app.properties = None; }
+    if let Some((folder, icon_path)) = props_icon_chosen {
+        // Defer xattr + invalidation to the next frame — icon_cache is
+        // still borrowed by tex_draws at this point in the frame.
+        app.pending_icon_apply.push((folder, Some(icon_path.to_string_lossy().to_string())));
+    }
+    if let Some(folder) = props_icon_reset {
+        app.pending_icon_apply.push((folder, None));
+    }
+    if let Some((entry, (ix, iy, iw, ih))) = props_icon_rect_data {
+        if let Some(tex) = icon_cache.get(&entry) {
+            let (bx, by, bw, bh) = icons::fit_in_box(tex, ix, iy, iw, ih);
+            props_tex_draws.push(TextureDraw::new(tex, bx, by, bw, bh));
         }
     }
     if let Some(ref drop) = app.pending_drop {
@@ -791,6 +850,12 @@ pub fn render_frame(
     }
     if let Some(ref dialog) = app.cloud_login {
         crate::dialogs::draw_cloud_login(dialog, painter, text, pal, input, (w, h), s);
+    }
+    if let Some(ref dialog) = app.sudo_prompt {
+        crate::dialogs::draw_sudo_prompt(dialog, painter, text, pal, input, (w, h), s);
+    }
+    if let Some(ref dialog) = app.conflict_dialog {
+        crate::dialogs::draw_conflict_dialog(dialog, painter, text, pal, input, (w, h), s);
     }
 
     // ── Inline context menu (desktop mode) ─────────────────────────

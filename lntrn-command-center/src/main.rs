@@ -6,6 +6,7 @@
 
 mod app;
 mod bar_sliders;
+mod chat;
 mod clipboard;
 mod desktop_settings;
 mod controls;
@@ -15,6 +16,7 @@ mod ipc;
 mod lantern_toml;
 mod launcher;
 mod layershell;
+mod mascot;
 mod mini_dock;
 mod notes;
 mod power;

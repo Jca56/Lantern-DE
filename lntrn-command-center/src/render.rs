@@ -293,6 +293,15 @@ pub fn draw_content(
                     state.mini_dock_hover,
                 );
 
+                // Decorative lantern mascot — pinned to the left side of
+                // the dock plate, so it's visible whenever the dock is.
+                crate::mascot::draw_beside_dock(
+                    &mut icons,
+                    layout.plate,
+                    panel.scale_factor,
+                    panel.alpha * dock_alpha_mult,
+                );
+
                 // Hover preview tile above the icon when the hovered app
                 // has at least one open window. Suppressed in alternate
                 // top-level views (Music, Assistant) so the preview
@@ -351,6 +360,17 @@ pub fn draw_content(
             surface_h,
         );
     }
+
+    // 1d3. Decorative lantern mascot — anchored to the bar's left
+    //      edge. Slides between the slider area (collapsed) and the
+    //      bottom-left of the expanded panel (expanded). No hit-test.
+    crate::mascot::draw(
+        &mut icons,
+        panel.rect,
+        panel.scale_factor,
+        collapse_p,
+        panel.alpha,
+    );
 
     // 1e. View-switcher arrows next to the controls row. Anchored at
     //     the top so they remain reachable while the panel is
@@ -721,7 +741,7 @@ pub fn draw_content(
 
                     if state.search.input.is_empty() && !state.search.all_apps_mode {
                         let top_y = crate::search::content_top_y(r, panel.scale_factor);
-                        let pins_bottom = crate::launcher::draw(
+                        let _pins_bottom = crate::launcher::draw(
                             painter,
                             text,
                             &mut icons,
@@ -730,20 +750,6 @@ pub fn draw_content(
                             selected_pin,
                             r,
                             top_y,
-                            panel.scale_factor,
-                            alpha,
-                            surface_w,
-                            surface_h,
-                        );
-                        crate::launcher::open::draw(
-                            painter,
-                            text,
-                            &mut icons,
-                            &state.toplevels,
-                            &state.apps,
-                            None,
-                            r,
-                            pins_bottom,
                             panel.scale_factor,
                             alpha,
                             surface_w,
@@ -816,6 +822,20 @@ pub fn draw_content(
                 text,
                 &mut icons,
                 &state.files,
+                r,
+                top_y,
+                panel.scale_factor,
+                state.config.text_size,
+                alpha,
+                surface_w,
+                surface_h,
+            );
+        } else if *view == crate::app::PanelView::Chat {
+            let top_y = crate::controls::content_top_y(r, panel.scale_factor);
+            crate::chat::draw(
+                painter,
+                text,
+                &state.chat,
                 r,
                 top_y,
                 panel.scale_factor,

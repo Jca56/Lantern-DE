@@ -73,6 +73,71 @@ pub(crate) fn handle_key(
     key: u32, ctrl: bool, shift: bool,
     running: &mut bool,
 ) {
+    // Conflict dialog — ESC = cancel paste, Enter = Replace.
+    if app.conflict_dialog.is_some() {
+        let _ = ctrl;
+        let _ = shift;
+        match key {
+            KEY_ESC => app.cancel_paste(),
+            KEY_ENTER => app.resolve_conflict(crate::conflict::ConflictAction::Replace),
+            _ => {}
+        }
+        return;
+    }
+
+    // Sudo password modal — captures keys until dismissed.
+    if app.sudo_prompt.is_some() {
+        let _ = ctrl;
+        match key {
+            KEY_ESC => app.cancel_sudo_prompt(),
+            KEY_ENTER => app.submit_sudo_prompt(),
+            KEY_BACKSPACE => {
+                if let Some(p) = app.sudo_prompt.as_mut() {
+                    if p.cursor > 0 {
+                        let byte_pos = p.password.char_indices().nth(p.cursor - 1).map(|(i, _)| i).unwrap_or(0);
+                        p.password.remove(byte_pos);
+                        p.cursor -= 1;
+                    }
+                }
+            }
+            KEY_DELETE => {
+                if let Some(p) = app.sudo_prompt.as_mut() {
+                    let char_len = p.password.chars().count();
+                    if p.cursor < char_len {
+                        let byte_pos = p.password.char_indices().nth(p.cursor).map(|(i, _)| i).unwrap_or(p.password.len());
+                        p.password.remove(byte_pos);
+                    }
+                }
+            }
+            KEY_LEFT => {
+                if let Some(p) = app.sudo_prompt.as_mut() {
+                    if p.cursor > 0 { p.cursor -= 1; }
+                }
+            }
+            KEY_RIGHT => {
+                if let Some(p) = app.sudo_prompt.as_mut() {
+                    if p.cursor < p.password.chars().count() { p.cursor += 1; }
+                }
+            }
+            KEY_HOME => {
+                if let Some(p) = app.sudo_prompt.as_mut() { p.cursor = 0; }
+            }
+            KEY_END => {
+                if let Some(p) = app.sudo_prompt.as_mut() { p.cursor = p.password.chars().count(); }
+            }
+            _ => {
+                if let Some(ch) = keycode_to_char(key, shift) {
+                    if let Some(p) = app.sudo_prompt.as_mut() {
+                        let byte_pos = p.password.char_indices().nth(p.cursor).map(|(i, _)| i).unwrap_or(p.password.len());
+                        p.password.insert(byte_pos, ch);
+                        p.cursor += 1;
+                    }
+                }
+            }
+        }
+        return;
+    }
+
     // Cloud login dialog — captures keys until dismissed.
     if app.cloud_login.is_some() {
         let _ = ctrl;

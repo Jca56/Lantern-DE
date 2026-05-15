@@ -17,8 +17,6 @@ pub enum MenuAction {
     Launch,
     /// Close the foreign-toplevel window stored in `ContextMenu.window_title`.
     WindowClose,
-    /// Minimize the foreign-toplevel window stored in `ContextMenu.window_title`.
-    WindowMinimize,
     /// Terminal: copy current selection to the Wayland clipboard.
     TerminalCopy,
     /// Terminal: paste clipboard contents into the PTY.
@@ -33,6 +31,8 @@ pub enum MenuAction {
     FilesRevealInFM,
     /// Files: put the absolute path on the Wayland clipboard.
     FilesCopyPath,
+    /// Files: toggle whether the targeted path is pinned to the main page.
+    FilesTogglePin,
     /// Files sort options. Re-selecting the active field flips direction.
     FilesSortByName,
     FilesSortBySize,

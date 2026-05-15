@@ -72,6 +72,14 @@ impl IconCache {
         self.cache.contains_key(&cache_key(entry))
     }
 
+    /// Drop any cached icon entries that involve this path. Called after
+    /// the user changes a folder's icon so the next render reads the new
+    /// xattr instead of serving the stale texture.
+    pub fn invalidate(&mut self, path: &Path) {
+        let needle = path.to_string_lossy().to_string();
+        self.cache.retain(|k, _| !k.contains(&needle));
+    }
+
     /// Read-only access to a cached icon texture.
     pub fn get(&self, entry: &FileEntry) -> Option<&GpuTexture> {
         self.cache.get(&cache_key(entry))
@@ -264,6 +272,11 @@ pub fn set_folder_icon(path: &Path, icon_path: &str) {
     write_xattr(path, XATTR_FOLDER_ICON, icon_path);
 }
 
+/// Remove a custom folder icon xattr — reverts to the default folder icon.
+pub fn clear_folder_icon(path: &Path) {
+    remove_xattr(path, XATTR_FOLDER_ICON);
+}
+
 /// Read the folder color xattr from a directory path.
 pub fn get_folder_color(path: &Path) -> Option<String> {
     read_xattr(path, XATTR_FOLDER_COLOR)
@@ -307,6 +320,13 @@ fn write_xattr(path: &Path, attr: &str, value: &str) {
             0,
         );
     }
+}
+
+fn remove_xattr(path: &Path, attr: &str) {
+    use std::ffi::CString;
+    let Some(c_path) = CString::new(path.as_os_str().as_encoded_bytes()).ok() else { return };
+    let Some(c_name) = CString::new(attr).ok() else { return };
+    unsafe { libc::removexattr(c_path.as_ptr(), c_name.as_ptr()); }
 }
 
 // ── SVG rasterization ────────────────────────────────────────────────────────

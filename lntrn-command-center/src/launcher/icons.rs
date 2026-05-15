@@ -150,6 +150,15 @@ fn icon_dirs() -> Vec<String> {
     dirs.push("/usr/share/icons/Adwaita/scalable/apps".into());
     dirs.push("/usr/share/icons/breeze/apps/48".into());
 
+    // places + mimetypes for pinned folders / files (`folder`,
+    // `text-x-generic`, `image-x-generic`, `video-x-generic`).
+    dirs.push("/usr/share/icons/Adwaita/scalable/places".into());
+    dirs.push("/usr/share/icons/Adwaita/scalable/mimetypes".into());
+    dirs.push("/usr/share/icons/hicolor/scalable/places".into());
+    dirs.push("/usr/share/icons/hicolor/scalable/mimetypes".into());
+    dirs.push("/usr/share/icons/Tela/scalable/places".into());
+    dirs.push("/usr/share/icons/Tela/scalable/mimetypes".into());
+
     // Catch-all.
     dirs.push("/usr/share/pixmaps".into());
 

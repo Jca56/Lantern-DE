@@ -142,11 +142,6 @@ impl MonitorArrangeState {
         }).collect()
     }
 
-    /// Force re-sync on next frame.
-    pub fn request_sync(&mut self) {
-        self.needs_sync = true;
-    }
-
     /// Get the name of the selected output (auto-selects if only one).
     pub fn selected_output_name(&mut self) -> Option<String> {
         if self.rects.len() == 1 {

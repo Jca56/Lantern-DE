@@ -247,7 +247,7 @@ impl AppState {
         if let Selection::Pin(i) = self.selection {
             let max = self
                 .launcher
-                .pinned_entries(&self.apps)
+                .pinned_items(&self.apps)
                 .len()
                 .saturating_sub(1);
             if i < max {
@@ -257,15 +257,15 @@ impl AppState {
     }
 
     /// Resolve the current selection to a `DesktopEntry` for launching.
-    /// Returns `None` if the selection is out of range (no results,
-    /// no pins, etc.).
+    /// Returns `None` if the selection is out of range, or if the
+    /// selected pin is a path (those are launched via xdg-open from
+    /// `activate_at`, not via the desktop-entry exec line).
     pub fn selected_entry(&self) -> Option<&DesktopEntry> {
         match self.selection {
-            Selection::Pin(i) => self
-                .launcher
-                .pinned_entries(&self.apps)
-                .get(i)
-                .copied(),
+            Selection::Pin(i) => match self.launcher.pinned_items(&self.apps).into_iter().nth(i) {
+                Some(crate::launcher::PinnedItem::App(e)) => Some(e),
+                _ => None,
+            },
             Selection::Result(i) => self
                 .search
                 .results()

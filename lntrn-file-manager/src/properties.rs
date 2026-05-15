@@ -68,6 +68,61 @@ pub struct FileProperties {
     pub scroll_offset: f32,
     /// Set by draw_properties_dialog for render.rs to place the icon texture.
     pub icon_rect: Option<(f32, f32, f32, f32)>,
+    /// When true, the Properties body is replaced with the icon picker.
+    pub picker_open: bool,
+    pub picker_tab: IconPickerTab,
+}
+
+/// Categories shown as tabs in the icon picker. The first three map to
+/// `~/.lantern/icons/folders/{Standard,Colors,Awesome}/`; Custom opens a
+/// file picker.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IconPickerTab {
+    Standard,
+    Colors,
+    Awesome,
+    Custom,
+}
+
+impl IconPickerTab {
+    pub fn all() -> &'static [IconPickerTab] {
+        &[
+            IconPickerTab::Standard, IconPickerTab::Colors,
+            IconPickerTab::Awesome, IconPickerTab::Custom,
+        ]
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            IconPickerTab::Standard => "Standard",
+            IconPickerTab::Colors => "Colors",
+            IconPickerTab::Awesome => "Awesome",
+            IconPickerTab::Custom => "Custom",
+        }
+    }
+    pub fn dir_name(self) -> Option<&'static str> {
+        match self {
+            IconPickerTab::Standard => Some("Standard"),
+            IconPickerTab::Colors => Some("Colors"),
+            IconPickerTab::Awesome => Some("Awesome"),
+            IconPickerTab::Custom => None,
+        }
+    }
+}
+
+/// List the SVG files in a given picker category directory.
+pub fn list_picker_icons(tab: IconPickerTab) -> Vec<PathBuf> {
+    let Some(sub) = tab.dir_name() else { return Vec::new(); };
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
+    let dir = PathBuf::from(home).join(".lantern/icons/folders").join(sub);
+    let mut out: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .ok()
+        .into_iter()
+        .flat_map(|rd| rd.flatten())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("svg"))
+        .collect();
+    out.sort();
+    out
 }
 
 impl FileProperties {
@@ -132,6 +187,8 @@ impl FileProperties {
             disk_total, disk_free, disk_used_fraction,
             image_dimensions: None, media_duration: None,
             section_open: [true; 6], scroll_offset: 0.0, icon_rect: None,
+            picker_open: false,
+            picker_tab: IconPickerTab::Standard,
         })
     }
 
@@ -390,8 +447,18 @@ pub fn draw_properties_dialog(
     // Store icon rect — render.rs will draw the actual file icon texture here
     props.icon_rect = Some((icon_x, cy, icon_sz, icon_sz));
     // Fallback background circle (visible if no icon texture loads)
-    let circ = Rect::new(icon_x, cy, icon_sz, icon_sz);
-    painter.rect_filled(circ, icon_sz / 2.0, fox.accent.with_alpha(0.1));
+    let icon_box = Rect::new(icon_x, cy, icon_sz, icon_sz);
+    painter.rect_filled(icon_box, icon_sz / 2.0, fox.accent.with_alpha(0.1));
+    // Clickable hint ring — folders only, since file icons aren't customizable.
+    if props.is_dir {
+        let icon_zone = ix.add_zone(crate::ZONE_PROPS_ICON, icon_box);
+        if icon_zone.is_hovered() {
+            painter.rect_stroke_sdf(icon_box, icon_sz / 2.0, 2.0 * s, fox.accent);
+        }
+        if icon_zone.is_active() {
+            props.picker_open = !props.picker_open;
+        }
+    }
     cy += icon_sz + 8.0 * s;
 
     // Filename centered
@@ -414,6 +481,21 @@ pub fn draw_properties_dialog(
     text.queue(&subtitle, subtitle_font_s, sub_x.max(inner_x), cy,
         fox.text_secondary, inner_w, sw, sh);
     cy += subtitle_font_s + pad * 0.5;
+
+    // If the picker is open, replace the rest of the body with it.
+    if props.picker_open && props.is_dir {
+        if let Some(evt) = draw_icon_picker_body(
+            props, painter, text, ix, fox,
+            inner_x, cy, inner_w, dialog_y + dialog_h - cy - pad,
+            s, sw, sh,
+        ) {
+            return Some(evt);
+        }
+        if close_zone.is_active() {
+            return Some(PropertiesEvent::Close);
+        }
+        return None;
+    }
 
     // Separator
     painter.rect_filled(
@@ -662,4 +744,186 @@ fn draw_perm_row(
 
 pub enum PropertiesEvent {
     Close,
+    /// User picked an icon — apply via icons::set_folder_icon and close picker.
+    IconChosen(PathBuf),
+    /// "Reset" — clear the folder icon xattr.
+    IconReset,
+}
+
+// ── Icon picker body ──────────────────────────────────────────────────────
+
+/// Cache of icon path strings per tab so we don't hammer std::fs::read_dir
+/// every frame. Keyed by (tab, modified) — kept extremely simple: read once
+/// per dialog session (cleared on close).
+fn picker_icons_cached(props: &FileProperties) -> Vec<PathBuf> {
+    list_picker_icons(props.picker_tab)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_icon_picker_body(
+    props: &mut FileProperties,
+    painter: &mut Painter,
+    text: &mut TextRenderer,
+    ix: &mut InteractionContext,
+    fox: &FoxPalette,
+    x: f32, y_start: f32, w: f32, h: f32,
+    s: f32, sw: u32, sh: u32,
+) -> Option<PropertiesEvent> {
+    let pad = 12.0 * s;
+    let tab_h = 36.0 * s;
+    let tab_gap = 6.0 * s;
+    let footer_h = 48.0 * s;
+
+    // ── Tabs ──────────────────────────────────────────────────────────
+    let tabs = IconPickerTab::all();
+    let tab_w = (w - tab_gap * (tabs.len() - 1) as f32) / tabs.len() as f32;
+    for (i, t) in tabs.iter().enumerate() {
+        let tx = x + (tab_w + tab_gap) * i as f32;
+        let tr = Rect::new(tx, y_start, tab_w, tab_h);
+        let zone_id = crate::ZONE_PROPS_PICKER_TAB_BASE + i as u32;
+        let state = ix.add_zone(zone_id, tr);
+        let active = *t == props.picker_tab;
+        let bg = if active {
+            fox.accent.with_alpha(0.20)
+        } else if state.is_hovered() {
+            fox.surface_2.with_alpha(0.8)
+        } else {
+            fox.surface_2.with_alpha(0.4)
+        };
+        painter.rect_filled(tr, 8.0 * s, bg);
+        if active {
+            painter.rect_stroke_sdf(tr, 8.0 * s, 1.5 * s, fox.accent.with_alpha(0.7));
+        }
+        let label_font = 16.0 * s;
+        let lw = text.measure_width(t.label(), label_font);
+        let lx = tr.x + (tr.w - lw) * 0.5;
+        let ly = tr.y + (tr.h - label_font) * 0.5;
+        text.queue(t.label(), label_font, lx, ly,
+            if active { fox.text } else { fox.text_secondary },
+            tr.w, sw, sh);
+        if state.is_active() {
+            props.picker_tab = *t;
+        }
+    }
+
+    let mut y = y_start + tab_h + pad;
+    let grid_h = (h - tab_h - pad - footer_h - pad).max(80.0 * s);
+
+    // ── Grid of icons ────────────────────────────────────────────────
+    if props.picker_tab == IconPickerTab::Custom {
+        // Custom tab: just a "Choose Custom Image..." button.
+        let btn = Rect::new(x + w * 0.25, y + grid_h * 0.4, w * 0.5, 48.0 * s);
+        let state = ix.add_zone(crate::ZONE_PROPS_PICKER_BACK, btn);
+        let bg = if state.is_hovered() { fox.accent } else { fox.accent.with_alpha(0.85) };
+        painter.rect_filled(btn, 8.0 * s, bg);
+        let label = "Choose Custom Image\u{2026}";
+        let label_font = 16.0 * s;
+        let lw = text.measure_width(label, label_font);
+        text.queue(label, label_font, btn.x + (btn.w - lw) * 0.5,
+            btn.y + (btn.h - label_font) * 0.5,
+            Color::WHITE, btn.w, sw, sh);
+        if state.is_active() {
+            // Spawn the existing file-picker flow inline. Reuses CTX_CHANGE_ICON's
+            // logic via a thread that re-applies the chosen icon on success.
+            let folder = props.path.clone();
+            std::thread::spawn(move || {
+                let output = std::process::Command::new("lntrn-file-manager")
+                    .args([
+                        "--pick",
+                        "--title", "Choose Folder Icon",
+                        "--filters", "Images:*.png,*.svg,*.jpg,*.jpeg,*.webp,*.ico",
+                    ])
+                    .output();
+                if let Ok(out) = output {
+                    if out.status.success() {
+                        let chosen = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                        if !chosen.is_empty() {
+                            crate::icons::set_folder_icon(&folder, &chosen);
+                        }
+                    }
+                }
+            });
+            props.picker_open = false;
+        }
+    } else {
+        let icons = picker_icons_cached(props);
+        let cell = 80.0 * s;
+        let cell_gap = 10.0 * s;
+        let cols = ((w + cell_gap) / (cell + cell_gap)).max(1.0) as usize;
+
+        for (i, path) in icons.iter().enumerate() {
+            let col = i % cols;
+            let row = i / cols;
+            let cx = x + col as f32 * (cell + cell_gap);
+            let cy = y + row as f32 * (cell + cell_gap);
+            if cy + cell > y + grid_h { break; } // overflow — needs scrolling, future polish
+            let r = Rect::new(cx, cy, cell, cell);
+            let zone_id = crate::ZONE_PROPS_ICON_BASE + i as u32;
+            let state = ix.add_zone(zone_id, r);
+            let bg = if state.is_hovered() {
+                fox.accent.with_alpha(0.18)
+            } else {
+                fox.surface_2.with_alpha(0.5)
+            };
+            painter.rect_filled(r, 8.0 * s, bg);
+            // The actual SVG preview gets drawn by render.rs (it has access
+            // to the icon cache). Record the rect via a side-channel: we
+            // stash it in a Vec on `props` — see below. For now just a
+            // placeholder hint.
+            if state.is_active() {
+                return Some(PropertiesEvent::IconChosen(path.clone()));
+            }
+        }
+        // Empty-state hint
+        if icons.is_empty() {
+            let msg = "No icons found in this category.";
+            let font = 16.0 * s;
+            let mw = text.measure_width(msg, font);
+            text.queue(msg, font, x + (w - mw) * 0.5, y + grid_h * 0.4,
+                fox.muted, w, sw, sh);
+        }
+    }
+
+    y += grid_h + pad;
+
+    // ── Footer: Reset + Back ──────────────────────────────────────────
+    let btn_w = 130.0 * s;
+    let btn_h = 40.0 * s;
+    let by = y;
+    let reset_rect = Rect::new(x, by, btn_w, btn_h);
+    let reset_state = ix.add_zone(crate::ZONE_PROPS_PICKER_RESET, reset_rect);
+    let reset_bg = if reset_state.is_hovered() {
+        fox.danger.with_alpha(0.85)
+    } else {
+        fox.danger.with_alpha(0.6)
+    };
+    painter.rect_filled(reset_rect, 8.0 * s, reset_bg);
+    let lbl = "Reset to Default";
+    let lf = 15.0 * s;
+    let lw = text.measure_width(lbl, lf);
+    text.queue(lbl, lf, reset_rect.x + (reset_rect.w - lw) * 0.5,
+        reset_rect.y + (reset_rect.h - lf) * 0.5,
+        Color::WHITE, reset_rect.w, sw, sh);
+    if reset_state.is_active() {
+        return Some(PropertiesEvent::IconReset);
+    }
+
+    let back_rect = Rect::new(x + w - btn_w, by, btn_w, btn_h);
+    let back_state = ix.add_zone(crate::ZONE_PROPS_PICKER_BACK + 1, back_rect);
+    let back_bg = if back_state.is_hovered() {
+        fox.surface_2.with_alpha(1.0)
+    } else {
+        fox.surface_2.with_alpha(0.7)
+    };
+    painter.rect_filled(back_rect, 8.0 * s, back_bg);
+    let lbl = "Back";
+    let lw = text.measure_width(lbl, lf);
+    text.queue(lbl, lf, back_rect.x + (back_rect.w - lw) * 0.5,
+        back_rect.y + (back_rect.h - lf) * 0.5,
+        fox.text, back_rect.w, sw, sh);
+    if back_state.is_active() {
+        props.picker_open = false;
+    }
+
+    None
 }

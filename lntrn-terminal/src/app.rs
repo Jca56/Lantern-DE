@@ -483,6 +483,20 @@ impl ApplicationHandler<UserEvent> for App {
                 .create_window(attrs)
                 .expect("Failed to create window"),
         );
+
+        // Spawn the Wayland DnD receiver. We pull the raw wl_display
+        // ptr from winit's window handle and share it with our own
+        // wl_data_device on a side queue (winit 0.30 has no Wayland
+        // DnD support of its own — only X11).
+        {
+            use winit::raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
+            if let Ok(dh) = window.display_handle() {
+                if let RawDisplayHandle::Wayland(wh) = dh.as_raw() {
+                    crate::dnd::spawn(wh.display.as_ptr(), self.proxy.clone());
+                }
+            }
+        }
+
         self.window = Some(window);
 
         self.init_gpu();
@@ -607,6 +621,25 @@ impl ApplicationHandler<UserEvent> for App {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
+            UserEvent::FilesDropped(paths) => {
+                if self.tabs.is_empty() {
+                    return;
+                }
+                let tab = &self.tabs[self.active_tab];
+                let pty = &tab.panes[tab.active_pane].pty;
+                // Bracketed paste so the shell (or Claude Code) treats
+                // the multi-path string as a single literal insertion
+                // instead of running it.
+                let joined = paths
+                    .iter()
+                    .map(|p| crate::dnd::shell_quote(p))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                pty.write(b"\x1b[200~");
+                pty.write(joined.as_bytes());
+                pty.write(b"\x1b[201~");
+                self.request_redraw();
+            }
             UserEvent::GitUpdate => {
                 self.poll_git_events();
                 self.request_redraw();

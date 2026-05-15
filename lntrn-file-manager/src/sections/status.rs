@@ -1,10 +1,13 @@
-use lntrn_render::{Painter, Rect, TextRenderer};
-use lntrn_ui::gpu::{FontSize, FoxPalette, TextLabel};
+use lntrn_render::{Color, Painter, Rect, TextRenderer};
+use lntrn_ui::gpu::{FontSize, FoxPalette, InteractionContext, TextLabel};
 
 use crate::fs::FileEntry;
+use crate::ops::OpHandle;
+use crate::{ZONE_PROGRESS_CANCEL, ZONE_PROGRESS_STRIP};
 
 // ── Status bar ──────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 pub fn draw_status_bar(
     painter: &mut Painter,
     text: &mut TextRenderer,
@@ -13,6 +16,8 @@ pub fn draw_status_bar(
     entries: &[FileEntry],
     file_info: &mut crate::file_info::FileInfoCache,
     cloud_status: Option<crate::cloud::sync::SyncStatus>,
+    op_progress: Option<&OpHandle>,
+    input: &mut InteractionContext,
     screen: (u32, u32),
     s: f32,
 ) {
@@ -144,6 +149,78 @@ pub fn draw_status_bar(
             }
         }
     }
+
+    // ── Background-op progress strip ────────────────────────────────
+    // Overlays on top of the counts (taking horizontal space from the cloud
+    // pill's left side). Renders only while a worker is active.
+    if let Some(op) = op_progress {
+        draw_progress_strip(painter, text, palette, input, status_rect, op, screen, s);
+    }
+}
+
+fn draw_progress_strip(
+    painter: &mut Painter,
+    text: &mut TextRenderer,
+    palette: &FoxPalette,
+    input: &mut InteractionContext,
+    status_rect: Rect,
+    op: &OpHandle,
+    screen: (u32, u32),
+    s: f32,
+) {
+    // Strip lives in the middle of the status bar — width caps at 360px,
+    // shrinks for narrower windows.
+    let strip_w = (status_rect.w * 0.45).min(360.0 * s).max(200.0 * s);
+    let strip_h = 22.0 * s;
+    let cancel_w = 26.0 * s;
+    let strip_x = status_rect.x + (status_rect.w - strip_w) * 0.5;
+    let strip_y = status_rect.y + (status_rect.h - strip_h) * 0.5;
+
+    // Background "pill"
+    let pill = Rect::new(strip_x, strip_y, strip_w - cancel_w - 4.0 * s, strip_h);
+    painter.rect_filled(pill, strip_h * 0.5, palette.surface_2.with_alpha(0.8));
+    // Progress fill
+    let pct = op.percent().clamp(0.0, 1.0);
+    let fill_w = pill.w * pct;
+    if fill_w > 0.0 {
+        painter.rect_filled(
+            Rect::new(pill.x, pill.y, fill_w, pill.h),
+            strip_h * 0.5,
+            palette.accent.with_alpha(0.5),
+        );
+    }
+    // Status zone (whole strip is clickable for future popover)
+    input.add_zone(ZONE_PROGRESS_STRIP, pill);
+
+    // Label inside the pill: "Copying name.ext (3 of 12)"
+    let label = if op.total == 0 {
+        op.label.to_string()
+    } else if op.current_name.is_empty() {
+        format!("{} \u{2022} {} of {}", op.label, op.index, op.total)
+    } else {
+        format!("{} \u{2022} {} ({}/{})", op.label, op.current_name, op.index + 1, op.total)
+    };
+    let font = FontSize::Custom(14.0 * s);
+    TextLabel::new(&label, pill.x + 12.0 * s, pill.y + (pill.h - 14.0 * s) * 0.5)
+        .size(font)
+        .color(palette.text)
+        .max_width(pill.w - 24.0 * s)
+        .draw(text, screen.0, screen.1);
+
+    // Cancel button — small red circle with "×"
+    let cx = strip_x + strip_w - cancel_w * 0.5;
+    let cy = strip_y + strip_h * 0.5;
+    let cancel_rect = Rect::new(cx - cancel_w * 0.5, strip_y, cancel_w, strip_h);
+    let cancel_state = input.add_zone(ZONE_PROGRESS_CANCEL, cancel_rect);
+    let bg = if cancel_state.is_hovered() { palette.danger } else { palette.danger.with_alpha(0.7) };
+    painter.circle_filled(cx, cy, strip_h * 0.5 - 1.0 * s, bg);
+    // Cross — two thin rects forming an X
+    let arm = 8.0 * s;
+    let th = 2.0 * s;
+    let white = Color::WHITE;
+    // diagonal-ish: just draw a horizontal and vertical strike for simplicity
+    painter.rect_filled(Rect::new(cx - arm * 0.5, cy - th * 0.5, arm, th), th * 0.5, white);
+    painter.rect_filled(Rect::new(cx - th * 0.5, cy - arm * 0.5, th, arm), th * 0.5, white);
 }
 
 fn format_bytes(size: u64) -> String {

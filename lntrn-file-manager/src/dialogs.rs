@@ -2,10 +2,15 @@ use lntrn_render::{Color, Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{FontSize, FoxPalette, InteractionContext, TextInput, TextLabel};
 
 use crate::fs::Drive;
+use crate::conflict::ConflictDialog;
+use crate::sudo::PendingPrivOp;
 use crate::{
     ZONE_CLOUD_LOGIN_CANCEL, ZONE_CLOUD_LOGIN_EMAIL, ZONE_CLOUD_LOGIN_PASSWORD,
-    ZONE_CLOUD_LOGIN_SCRIM, ZONE_CLOUD_LOGIN_SUBMIT, ZONE_DRIVE_DIALOG_CANCEL,
-    ZONE_DRIVE_DIALOG_CONFIRM, ZONE_DRIVE_DIALOG_OK, ZONE_DRIVE_DIALOG_SCRIM,
+    ZONE_CLOUD_LOGIN_SCRIM, ZONE_CLOUD_LOGIN_SUBMIT, ZONE_CONFLICT_APPLY_TO_ALL,
+    ZONE_CONFLICT_CANCEL, ZONE_CONFLICT_KEEP_BOTH, ZONE_CONFLICT_REPLACE, ZONE_CONFLICT_SCRIM,
+    ZONE_CONFLICT_SKIP, ZONE_DRIVE_DIALOG_CANCEL, ZONE_DRIVE_DIALOG_CONFIRM, ZONE_DRIVE_DIALOG_OK,
+    ZONE_DRIVE_DIALOG_SCRIM, ZONE_SUDO_CANCEL, ZONE_SUDO_PASSWORD, ZONE_SUDO_SCRIM,
+    ZONE_SUDO_SUBMIT,
 };
 
 // ── Cloud login dialog ─────────────────────────────────────────────────────
@@ -492,4 +497,323 @@ fn brighten(c: Color, amount: f32) -> Color {
         (c.b + amount).min(1.0),
         c.a,
     )
+}
+
+// ── Sudo password modal ────────────────────────────────────────────────────
+
+/// Modal that captures keys/clicks until dismissed. Holds the pending op so
+/// the click/key handler can retry it once the password is submitted.
+#[derive(Clone, Debug)]
+pub struct SudoPrompt {
+    pub password: String,
+    pub cursor: usize,
+    pub op: PendingPrivOp,
+    pub error: Option<String>,
+    pub submitting: bool,
+}
+
+impl SudoPrompt {
+    pub fn new(op: PendingPrivOp) -> Self {
+        Self {
+            password: String::new(),
+            cursor: 0,
+            op,
+            error: None,
+            submitting: false,
+        }
+    }
+
+    pub fn can_submit(&self) -> bool {
+        !self.submitting && !self.password.is_empty()
+    }
+}
+
+pub fn draw_sudo_prompt(
+    dialog: &SudoPrompt,
+    painter: &mut Painter,
+    text: &mut TextRenderer,
+    pal: &FoxPalette,
+    input: &mut InteractionContext,
+    screen: (u32, u32),
+    s: f32,
+) {
+    let (sw, sh) = screen;
+    let screen_w = sw as f32;
+    let screen_h = sh as f32;
+
+    let pad = 24.0 * s;
+    let cr = 12.0 * s;
+    let title_font = 26.0 * s;
+    let body_font = 18.0 * s;
+    let label_font = 16.0 * s;
+    let field_h = 48.0 * s;
+    let row_gap = 14.0 * s;
+    let btn_h = 44.0 * s;
+    let btn_w = 130.0 * s;
+    let btn_gap = 12.0 * s;
+    let dialog_w = 540.0 * s;
+
+    let action_desc = dialog.op.description();
+    let err_lines: f32 = if dialog.error.is_some() { 1.0 } else { 0.0 };
+    let dialog_h = pad * 2.0
+        + title_font + pad * 0.4
+        + body_font + row_gap
+        + label_font + 4.0 * s + field_h + row_gap
+        + (err_lines * (body_font + row_gap * 0.5))
+        + pad * 0.4
+        + btn_h;
+
+    let dx = (screen_w - dialog_w) * 0.5;
+    let dy = (screen_h - dialog_h) * 0.5;
+
+    draw_overlay_with_scrim(
+        painter, input, screen_w, screen_h, dx, dy, dialog_w, dialog_h, cr, pal, s,
+        ZONE_SUDO_SCRIM,
+    );
+
+    let mut cy = dy + pad;
+    TextLabel::new("Administrator password required", dx + pad, cy)
+        .size(FontSize::Custom(title_font))
+        .color(pal.text)
+        .max_width(dialog_w - pad * 2.0)
+        .draw(text, sw, sh);
+    cy += title_font + pad * 0.4;
+
+    TextLabel::new(&action_desc, dx + pad, cy)
+        .size(FontSize::Custom(body_font))
+        .color(pal.text_secondary)
+        .max_width(dialog_w - pad * 2.0)
+        .draw(text, sw, sh);
+    cy += body_font + row_gap;
+
+    TextLabel::new("Password", dx + pad, cy)
+        .size(FontSize::Custom(label_font))
+        .color(pal.text_secondary)
+        .max_width(dialog_w - pad * 2.0)
+        .draw(text, sw, sh);
+    cy += label_font + 4.0 * s;
+    let pw_rect = Rect::new(dx + pad, cy, dialog_w - pad * 2.0, field_h);
+    input.add_zone(ZONE_SUDO_PASSWORD, pw_rect);
+    let masked: String = "\u{2022}".repeat(dialog.password.chars().count());
+    TextInput::new(pw_rect)
+        .text(&masked)
+        .placeholder("\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}\u{2022}")
+        .focused(true)
+        .cursor_pos(dialog.cursor)
+        .scale(s)
+        .draw(painter, text, pal, sw, sh);
+    cy += field_h + row_gap;
+
+    if let Some(err) = &dialog.error {
+        TextLabel::new(err, dx + pad, cy)
+            .size(FontSize::Custom(body_font))
+            .color(pal.danger)
+            .max_width(dialog_w - pad * 2.0)
+            .draw(text, sw, sh);
+        cy += body_font + row_gap * 0.5;
+    }
+
+    cy += pad * 0.4;
+
+    let total_btn_w = btn_w * 2.0 + btn_gap;
+    let btn_x = dx + dialog_w - pad - total_btn_w;
+
+    let cancel_rect = Rect::new(btn_x, cy, btn_w, btn_h);
+    let cancel_state = input.add_zone(ZONE_SUDO_CANCEL, cancel_rect);
+    draw_button(
+        painter, text, cancel_rect, "Cancel",
+        cancel_state.is_hovered(), pal, ButtonStyle::Secondary, sw, sh, s,
+    );
+
+    let submit_label = if dialog.submitting { "Authenticating..." } else { "Authenticate" };
+    let submit_rect = Rect::new(btn_x + btn_w + btn_gap, cy, btn_w, btn_h);
+    let submit_state = input.add_zone(ZONE_SUDO_SUBMIT, submit_rect);
+    let submit_style = if dialog.can_submit() {
+        ButtonStyle::Primary
+    } else {
+        ButtonStyle::Secondary
+    };
+    draw_button(
+        painter, text, submit_rect, submit_label,
+        submit_state.is_hovered() && dialog.can_submit(),
+        pal, submit_style, sw, sh, s,
+    );
+}
+
+// ── Conflict dialog (Replace / Keep Both / Skip) ──────────────────────────
+
+pub fn draw_conflict_dialog(
+    dialog: &ConflictDialog,
+    painter: &mut Painter,
+    text: &mut TextRenderer,
+    pal: &FoxPalette,
+    input: &mut InteractionContext,
+    screen: (u32, u32),
+    s: f32,
+) {
+    let (sw, sh) = screen;
+    let screen_w = sw as f32;
+    let screen_h = sh as f32;
+
+    let pad = 24.0 * s;
+    let cr = 12.0 * s;
+    let title_font = 24.0 * s;
+    let body_font = 18.0 * s;
+    let meta_font = 15.0 * s;
+    let row_gap = 8.0 * s;
+    let section_gap = 16.0 * s;
+    let btn_h = 44.0 * s;
+    let btn_w = 130.0 * s;
+    let btn_gap = 10.0 * s;
+    let dialog_w = 600.0 * s;
+    let checkbox_size = 20.0 * s;
+
+    let name = dialog.target.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let dest_label = dialog.target.parent()
+        .map(|p| p.file_name().map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| p.display().to_string()))
+        .unwrap_or_default();
+    let title = format!("\u{201C}{name}\u{201D} already exists");
+    let subtitle = format!("in \u{201C}{dest_label}\u{201D}");
+
+    let remaining_line = if dialog.remaining_count > 0 { 1.0 } else { 0.0 };
+
+    let dialog_h = pad * 2.0
+        + title_font + row_gap
+        + body_font + section_gap
+        + body_font + row_gap  // "Existing file:" label
+        + meta_font * 2.0 + row_gap // size + date lines
+        + section_gap
+        + body_font + row_gap  // "Source file:" label
+        + meta_font * 2.0 + section_gap
+        + checkbox_size + row_gap
+        + remaining_line * (meta_font + row_gap)
+        + pad * 0.4
+        + btn_h;
+
+    let dx = (screen_w - dialog_w) * 0.5;
+    let dy = (screen_h - dialog_h) * 0.5;
+
+    draw_overlay_with_scrim(
+        painter, input, screen_w, screen_h, dx, dy, dialog_w, dialog_h, cr, pal, s,
+        ZONE_CONFLICT_SCRIM,
+    );
+
+    let mut cy = dy + pad;
+    TextLabel::new(&title, dx + pad, cy)
+        .size(FontSize::Custom(title_font)).color(pal.text)
+        .max_width(dialog_w - pad * 2.0)
+        .draw(text, sw, sh);
+    cy += title_font + row_gap;
+
+    TextLabel::new(&subtitle, dx + pad, cy)
+        .size(FontSize::Custom(body_font)).color(pal.text_secondary)
+        .max_width(dialog_w - pad * 2.0)
+        .draw(text, sw, sh);
+    cy += body_font + section_gap;
+
+    // Existing file metadata.
+    TextLabel::new("Existing", dx + pad, cy)
+        .size(FontSize::Custom(body_font)).color(pal.accent)
+        .draw(text, sw, sh);
+    cy += body_font + row_gap;
+    TextLabel::new(&format_meta_line(&dialog.target_meta), dx + pad + 12.0 * s, cy)
+        .size(FontSize::Custom(meta_font)).color(pal.text)
+        .max_width(dialog_w - pad * 2.0 - 12.0 * s).draw(text, sw, sh);
+    cy += meta_font + row_gap;
+    TextLabel::new(&format_mtime(&dialog.target_meta), dx + pad + 12.0 * s, cy)
+        .size(FontSize::Custom(meta_font)).color(pal.muted)
+        .max_width(dialog_w - pad * 2.0 - 12.0 * s).draw(text, sw, sh);
+    cy += meta_font + section_gap;
+
+    // Source metadata.
+    TextLabel::new("Replacement", dx + pad, cy)
+        .size(FontSize::Custom(body_font)).color(pal.accent)
+        .draw(text, sw, sh);
+    cy += body_font + row_gap;
+    TextLabel::new(&format_meta_line(&dialog.source_meta), dx + pad + 12.0 * s, cy)
+        .size(FontSize::Custom(meta_font)).color(pal.text)
+        .max_width(dialog_w - pad * 2.0 - 12.0 * s).draw(text, sw, sh);
+    cy += meta_font + row_gap;
+    TextLabel::new(&format_mtime(&dialog.source_meta), dx + pad + 12.0 * s, cy)
+        .size(FontSize::Custom(meta_font)).color(pal.muted)
+        .max_width(dialog_w - pad * 2.0 - 12.0 * s).draw(text, sw, sh);
+    cy += meta_font + section_gap;
+
+    // Apply-to-all checkbox.
+    if dialog.remaining_count > 0 {
+        let cbox = Rect::new(dx + pad, cy, checkbox_size, checkbox_size);
+        let hit = Rect::new(dx + pad, cy - 4.0 * s, dialog_w - pad * 2.0, checkbox_size + 8.0 * s);
+        input.add_zone(ZONE_CONFLICT_APPLY_TO_ALL, hit);
+        painter.rect_stroke_sdf(cbox, 4.0 * s, 1.5 * s, pal.muted.with_alpha(0.6));
+        if dialog.apply_to_all {
+            let inner = Rect::new(cbox.x + 4.0 * s, cbox.y + 4.0 * s,
+                cbox.w - 8.0 * s, cbox.h - 8.0 * s);
+            painter.rect_filled(inner, 2.0 * s, pal.accent);
+        }
+        let label = format!("Apply to the remaining {} conflict{}",
+            dialog.remaining_count,
+            if dialog.remaining_count == 1 { "" } else { "s" });
+        TextLabel::new(&label, dx + pad + checkbox_size + 10.0 * s, cy + 2.0 * s)
+            .size(FontSize::Custom(meta_font)).color(pal.text)
+            .draw(text, sw, sh);
+        cy += checkbox_size + row_gap;
+    }
+    cy += pad * 0.4;
+
+    // Buttons: Skip | Keep Both | Replace + Cancel (right side).
+    let total_w = btn_w * 3.0 + btn_gap * 2.0;
+    let mut bx = dx + dialog_w - pad - total_w;
+
+    let skip_rect = Rect::new(bx, cy, btn_w, btn_h);
+    let skip_hov = input.add_zone(ZONE_CONFLICT_SKIP, skip_rect).is_hovered();
+    draw_button(painter, text, skip_rect, "Skip", skip_hov, pal, ButtonStyle::Secondary, sw, sh, s);
+    bx += btn_w + btn_gap;
+
+    let kb_rect = Rect::new(bx, cy, btn_w, btn_h);
+    let kb_hov = input.add_zone(ZONE_CONFLICT_KEEP_BOTH, kb_rect).is_hovered();
+    draw_button(painter, text, kb_rect, "Keep Both", kb_hov, pal, ButtonStyle::Secondary, sw, sh, s);
+    bx += btn_w + btn_gap;
+
+    let rep_rect = Rect::new(bx, cy, btn_w, btn_h);
+    let rep_hov = input.add_zone(ZONE_CONFLICT_REPLACE, rep_rect).is_hovered();
+    draw_button(painter, text, rep_rect, "Replace", rep_hov, pal, ButtonStyle::Danger, sw, sh, s);
+
+    // Cancel sits on the left so it's not next to Replace (avoid misclick).
+    let cancel_rect = Rect::new(dx + pad, cy, btn_w, btn_h);
+    let cancel_hov = input.add_zone(ZONE_CONFLICT_CANCEL, cancel_rect).is_hovered();
+    draw_button(painter, text, cancel_rect, "Cancel All", cancel_hov, pal, ButtonStyle::Secondary, sw, sh, s);
+}
+
+fn format_meta_line(meta: &crate::conflict::ConflictMeta) -> String {
+    let kind = if meta.is_dir { "Folder" } else { "File" };
+    format!("{} \u{00B7} {}", kind, crate::fs::format_size(meta.size))
+}
+
+fn format_mtime(meta: &crate::conflict::ConflictMeta) -> String {
+    let Some(t) = meta.mtime else { return "Modified: unknown".into(); };
+    let secs = t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let days = secs / 86400;
+    let time_of_day = secs % 86400;
+    let h = time_of_day / 3600;
+    let m = (time_of_day % 3600) / 60;
+    let mut y = 1970u64;
+    let mut remaining = days;
+    loop {
+        let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+        let yd = if leap { 366 } else { 365 };
+        if remaining < yd { break; }
+        remaining -= yd;
+        y += 1;
+    }
+    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    let months = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut mo = 0usize;
+    while mo < 12 && remaining >= months[mo] as u64 {
+        remaining -= months[mo] as u64;
+        mo += 1;
+    }
+    format!("Modified: {y:04}-{:02}-{:02} {h:02}:{m:02}", mo + 1, remaining + 1)
 }

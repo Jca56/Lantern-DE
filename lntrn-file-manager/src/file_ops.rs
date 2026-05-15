@@ -79,69 +79,275 @@ impl App {
 
     pub fn paste(&mut self) {
         let Some(op) = self.clipboard.take() else { return };
-        let dest = &self.current_dir;
+        let dest = self.current_dir.clone();
+
+        // Root mode: skip the direct attempt, route straight to sudo. The
+        // sudo path doesn't need a conflict dialog — `cp -r` / `mv` handle
+        // overwrites natively (and the user already opted into elevated
+        // semantics by toggling Open as Root).
         if self.root_mode {
-            match op {
-                ClipboardOp::Copy(paths) => {
-                    for src in &paths {
-                        let name = src.file_name().unwrap_or_default();
-                        let target = dest.join(name);
-                        let src = src.clone();
-                        std::thread::spawn(move || {
-                            let _ = std::process::Command::new("pkexec")
-                                .args(["cp", "-r", "--"])
-                                .arg(&src).arg(&target)
-                                .status();
-                        });
+            let priv_op = match &op {
+                ClipboardOp::Copy(paths) => crate::sudo::PendingPrivOp::Copy {
+                    sources: paths.clone(), dest: dest.clone(),
+                },
+                ClipboardOp::Cut(paths) => crate::sudo::PendingPrivOp::Move {
+                    sources: paths.clone(), dest: dest.clone(),
+                },
+            };
+            if let ClipboardOp::Copy(_) = &op {
+                self.clipboard = Some(op);
+            }
+            self.priv_run(priv_op);
+            return;
+        }
+
+        let (mode, sources) = match op {
+            ClipboardOp::Copy(paths) => (crate::conflict::PasteMode::Copy, paths),
+            ClipboardOp::Cut(paths) => (crate::conflict::PasteMode::Cut, paths),
+        };
+        self.pending_paste = Some(crate::conflict::PendingPaste::new(mode, dest, sources));
+        self.advance_paste();
+    }
+
+    /// Drive the pending paste queue forward until either the queue is
+    /// drained or we hit a conflict that needs the dialog.
+    pub fn advance_paste(&mut self) {
+        use crate::conflict::{ConflictDialog, ConflictMeta, PasteMode, ConflictAction};
+
+        loop {
+            let Some(paste) = self.pending_paste.as_mut() else { return };
+            let Some(src) = paste.remaining.first().cloned() else {
+                // Drained — finalize.
+                self.finalize_paste();
+                return;
+            };
+
+            let Some(name) = src.file_name() else {
+                paste.remaining.remove(0);
+                continue;
+            };
+            let target = paste.dest.join(name);
+
+            // Resolve any collision before attempting the op.
+            let (effective_target, skip) = if target.exists() {
+                match paste.apply_to_all {
+                    Some(ConflictAction::Skip) => (target.clone(), true),
+                    Some(ConflictAction::Replace) => {
+                        let _ = if target.is_dir() {
+                            std::fs::remove_dir_all(&target)
+                        } else {
+                            std::fs::remove_file(&target)
+                        };
+                        (target.clone(), false)
                     }
-                    self.clipboard = Some(ClipboardOp::Copy(paths));
+                    Some(ConflictAction::KeepBoth) => {
+                        (crate::conflict::unique_keep_both_path(&target), false)
+                    }
+                    None => {
+                        // Pop the conflict dialog. Leave src at the head of
+                        // the queue so the dialog's choice handler can
+                        // re-enter advance_paste and pick up here.
+                        let dialog = ConflictDialog {
+                            source: src.clone(),
+                            target: target.clone(),
+                            source_meta: ConflictMeta::read(&src),
+                            target_meta: ConflictMeta::read(&target),
+                            apply_to_all: false,
+                            remaining_count: paste.remaining.len().saturating_sub(1),
+                            mode: paste.mode,
+                        };
+                        self.conflict_dialog = Some(dialog);
+                        return;
+                    }
                 }
-                ClipboardOp::Cut(paths) => {
-                    for src in &paths {
-                        let name = src.file_name().unwrap_or_default();
-                        let target = dest.join(name);
-                        let src = src.clone();
-                        std::thread::spawn(move || {
-                            let _ = std::process::Command::new("pkexec")
-                                .args(["mv", "--"])
-                                .arg(&src).arg(&target)
-                                .status();
-                        });
+            } else {
+                (target.clone(), false)
+            };
+
+            // Past resolution. Pop the head and perform the op.
+            paste.remaining.remove(0);
+            if skip { continue; }
+
+            match paste.mode {
+                PasteMode::Copy => {
+                    // Defer the actual copy I/O to a worker thread — we
+                    // only collect the resolved (src, target) pairs here.
+                    paste.resolved_pairs.push((src, effective_target));
+                }
+                PasteMode::Cut => {
+                    // Rename is atomic and fast; apply inline.
+                    match std::fs::rename(&src, &effective_target) {
+                        Ok(()) => paste.moves.push((src.clone(), effective_target)),
+                        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                            paste.perm_fails.push(src);
+                        }
+                        Err(_) => {}
                     }
                 }
             }
-        } else {
-            match op {
-                ClipboardOp::Copy(paths) => {
-                    let mut created = Vec::new();
-                    for src in &paths {
-                        let name = src.file_name().unwrap_or_default();
-                        let target = dest.join(name);
-                        let ok = if src.is_dir() {
-                            copy_dir_recursive(src, &target).is_ok()
-                        } else {
-                            std::fs::copy(src, &target).is_ok()
-                        };
-                        if ok { created.push(target); }
+        }
+    }
+
+    fn finalize_paste(&mut self) {
+        let Some(paste) = self.pending_paste.take() else { return };
+        use crate::conflict::PasteMode;
+
+        match paste.mode {
+            PasteMode::Cut => {
+                if !paste.moves.is_empty() {
+                    self.undo_stack.push(crate::undo::UndoAction::Move(paste.moves));
+                }
+                if !paste.perm_fails.is_empty() {
+                    self.priv_run(crate::sudo::PendingPrivOp::Move {
+                        sources: paste.perm_fails, dest: paste.dest,
+                    });
+                }
+                self.reload();
+            }
+            PasteMode::Copy => {
+                // Spawn the copy worker. The main loop will poll its
+                // progress channel and finalize undo/perm_fails when Done.
+                if paste.resolved_pairs.is_empty() {
+                    // Nothing to copy (all skipped, etc.) — re-arm clipboard, done.
+                    self.clipboard = Some(ClipboardOp::Copy(paste.originals));
+                    self.reload();
+                    return;
+                }
+                let handle = crate::ops::spawn_copy_worker(
+                    paste.resolved_pairs,
+                    paste.originals,
+                    paste.dest,
+                    "Copying",
+                );
+                self.op_progress = Some(handle);
+            }
+        }
+    }
+
+    /// Drain progress from the running copy worker. Called every frame by
+    /// the main loop. Returns true if state changed (forces a redraw).
+    pub fn poll_op_progress(&mut self) -> bool {
+        let Some(handle) = self.op_progress.as_mut() else { return false; };
+        let dirty = handle.poll();
+        if handle.finished {
+            // Finalize: push undo entries, route perm_fails through sudo.
+            let handle = self.op_progress.take().unwrap();
+            if let Some((created, perm_fails, _cancelled)) = handle.done_payload {
+                if !created.is_empty() {
+                    self.undo_stack.push(crate::undo::UndoAction::Copy {
+                        sources: handle.originals.clone(),
+                        created,
+                    });
+                }
+                self.clipboard = Some(ClipboardOp::Copy(handle.originals));
+                if !perm_fails.is_empty() {
+                    self.priv_run(crate::sudo::PendingPrivOp::Copy {
+                        sources: perm_fails, dest: handle.dest,
+                    });
+                }
+            }
+            self.reload();
+            return true;
+        }
+        dirty
+    }
+
+    pub fn cancel_op(&mut self) {
+        if let Some(h) = self.op_progress.as_ref() {
+            h.request_cancel();
+        }
+    }
+
+    /// Handle a user choice on the conflict dialog. Closes the dialog,
+    /// optionally promotes the action to apply-to-all, and resumes the
+    /// pending paste walk.
+    pub fn resolve_conflict(&mut self, action: crate::conflict::ConflictAction) {
+        let apply_to_all = self.conflict_dialog.as_ref().map(|d| d.apply_to_all).unwrap_or(false);
+        self.conflict_dialog = None;
+        if let Some(paste) = self.pending_paste.as_mut() {
+            if apply_to_all {
+                paste.apply_to_all = Some(action);
+            } else {
+                // One-shot resolution: handle the head source with this
+                // action, then continue with no apply_to_all override.
+                self.apply_single_conflict_action(action);
+                return;
+            }
+        }
+        self.advance_paste();
+    }
+
+    /// Apply `action` to just the source at the head of the paste queue,
+    /// then resume the walk. Used when the "Apply to all" checkbox is off.
+    fn apply_single_conflict_action(&mut self, action: crate::conflict::ConflictAction) {
+        use crate::conflict::{PasteMode, ConflictAction};
+        let Some(paste) = self.pending_paste.as_mut() else { return; };
+        let Some(src) = paste.remaining.first().cloned() else {
+            self.finalize_paste();
+            return;
+        };
+        let Some(name) = src.file_name() else {
+            paste.remaining.remove(0);
+            self.advance_paste();
+            return;
+        };
+        let target = paste.dest.join(name);
+
+        let effective_target = match action {
+            ConflictAction::Skip => {
+                paste.remaining.remove(0);
+                self.advance_paste();
+                return;
+            }
+            ConflictAction::Replace => {
+                let _ = if target.is_dir() {
+                    std::fs::remove_dir_all(&target)
+                } else {
+                    std::fs::remove_file(&target)
+                };
+                target
+            }
+            ConflictAction::KeepBoth => crate::conflict::unique_keep_both_path(&target),
+        };
+
+        paste.remaining.remove(0);
+        match paste.mode {
+            PasteMode::Copy => {
+                paste.resolved_pairs.push((src, effective_target));
+            }
+            PasteMode::Cut => {
+                match std::fs::rename(&src, &effective_target) {
+                    Ok(()) => paste.moves.push((src.clone(), effective_target)),
+                    Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                        paste.perm_fails.push(src);
                     }
-                    if !created.is_empty() {
+                    Err(_) => {}
+                }
+            }
+        }
+        self.advance_paste();
+    }
+
+    /// Cancel an in-progress paste (closes the dialog, discards remaining work).
+    pub fn cancel_paste(&mut self) {
+        self.conflict_dialog = None;
+        if let Some(paste) = self.pending_paste.take() {
+            // Finalize whatever already happened so the user sees those
+            // files in the destination + has undo for them.
+            use crate::conflict::PasteMode;
+            match paste.mode {
+                PasteMode::Copy => {
+                    if !paste.created.is_empty() {
                         self.undo_stack.push(crate::undo::UndoAction::Copy {
-                            sources: paths.clone(), created,
+                            sources: paste.originals.clone(),
+                            created: paste.created,
                         });
                     }
-                    self.clipboard = Some(ClipboardOp::Copy(paths));
+                    self.clipboard = Some(ClipboardOp::Copy(paste.originals));
                 }
-                ClipboardOp::Cut(paths) => {
-                    let mut moves = Vec::new();
-                    for src in &paths {
-                        let name = src.file_name().unwrap_or_default();
-                        let target = dest.join(name);
-                        if std::fs::rename(src, &target).is_ok() {
-                            moves.push((src.clone(), target));
-                        }
-                    }
-                    if !moves.is_empty() {
-                        self.undo_stack.push(crate::undo::UndoAction::Move(moves));
+                PasteMode::Cut => {
+                    if !paste.moves.is_empty() {
+                        self.undo_stack.push(crate::undo::UndoAction::Move(paste.moves));
                     }
                 }
             }
@@ -216,6 +422,7 @@ impl App {
         let _ = std::fs::create_dir_all(&trash_files_dir);
 
         let mut undo_entries = Vec::new();
+        let mut permission_failures: Vec<PathBuf> = Vec::new();
         for entry in &self.entries {
             if !entry.selected { continue; }
             let name = entry.path.file_name().unwrap_or_default().to_string_lossy().to_string();
@@ -239,39 +446,91 @@ impl App {
             let info_path = trash_info_dir.join(format!("{dest_name}.trashinfo"));
             let file_path = trash_files_dir.join(&dest_name);
             let _ = std::fs::write(&info_path, info_content);
-            if std::fs::rename(&entry.path, &file_path).is_ok() {
-                undo_entries.push((entry.path.clone(), file_path, info_path));
+            match std::fs::rename(&entry.path, &file_path) {
+                Ok(()) => {
+                    undo_entries.push((entry.path.clone(), file_path, info_path));
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                    permission_failures.push(entry.path.clone());
+                    let _ = std::fs::remove_file(&info_path);
+                }
+                Err(_) => {
+                    let _ = std::fs::remove_file(&info_path);
+                }
             }
         }
         if !undo_entries.is_empty() {
             self.undo_stack.push(crate::undo::UndoAction::Trash(undo_entries));
         }
+        // Items we couldn't trash because they're owned by root → route
+        // through the sudo prompt as a permanent delete (mv into trash would
+        // leave them root-owned in the trash dir, which is just kicking the
+        // permission can down the road).
+        if !permission_failures.is_empty() {
+            self.priv_run(crate::sudo::PendingPrivOp::Remove(permission_failures));
+        }
         self.reload();
     }
 
-    pub fn delete_selected(&mut self) {
-        if self.root_mode {
-            let paths: Vec<PathBuf> = self.entries.iter()
-                .filter(|e| e.selected)
-                .map(|e| e.path.clone())
-                .collect();
-            std::thread::spawn(move || {
-                for path in &paths {
-                    let _ = std::process::Command::new("pkexec")
-                        .args(["rm", "-rf", "--"])
-                        .arg(path)
-                        .status();
-                }
-            });
-        } else {
-            for entry in &self.entries {
-                if !entry.selected { continue; }
-                if entry.is_dir {
-                    let _ = std::fs::remove_dir_all(&entry.path);
+    /// Permanently delete every item in the XDG trash. Wipes both
+    /// `~/.local/share/Trash/files/` (the actual contents) and
+    /// `~/.local/share/Trash/info/` (the .trashinfo sidecars), so nothing
+    /// is left to "restore" afterwards. Falls back to the sudo prompt if
+    /// any item is root-owned (e.g. after a `sudo mv` into Trash earlier).
+    pub fn empty_trash(&mut self) {
+        let trash = trash_dir();
+        let mut hit_permission_denied = false;
+        for sub in ["files", "info"] {
+            let dir = trash.join(sub);
+            let Ok(entries) = std::fs::read_dir(&dir) else { continue; };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let res = if path.is_dir() {
+                    std::fs::remove_dir_all(&path)
                 } else {
-                    let _ = std::fs::remove_file(&entry.path);
+                    std::fs::remove_file(&path)
+                };
+                if let Err(e) = res {
+                    if e.kind() == std::io::ErrorKind::PermissionDenied {
+                        hit_permission_denied = true;
+                    }
                 }
             }
+        }
+        if hit_permission_denied {
+            self.priv_run(crate::sudo::PendingPrivOp::EmptyTrash);
+        }
+        if self.in_trash() {
+            self.reload();
+        }
+    }
+
+    pub fn delete_selected(&mut self) {
+        let paths: Vec<PathBuf> = self.entries.iter()
+            .filter(|e| e.selected)
+            .map(|e| e.path.clone())
+            .collect();
+        let mut permission_failures: Vec<PathBuf> = Vec::new();
+        // In root_mode we skip the direct attempt — we're already trying to
+        // operate on protected paths, so just go straight to sudo.
+        if !self.root_mode {
+            for path in &paths {
+                let res = if path.is_dir() {
+                    std::fs::remove_dir_all(path)
+                } else {
+                    std::fs::remove_file(path)
+                };
+                if let Err(e) = res {
+                    if e.kind() == std::io::ErrorKind::PermissionDenied {
+                        permission_failures.push(path.clone());
+                    }
+                }
+            }
+        } else {
+            permission_failures = paths;
+        }
+        if !permission_failures.is_empty() {
+            self.priv_run(crate::sudo::PendingPrivOp::Remove(permission_failures));
         }
         self.reload();
     }
@@ -512,6 +771,64 @@ impl App {
                 .current_dir(&dir)
                 .spawn();
         });
+    }
+
+    // ── Privileged op runner ────────────────────────────────────────────
+    //
+    // priv_run is the entry point for ops that may need root. Flow:
+    //   1. Try `sudo -n <cmd>` (uses cached ticket — no prompt).
+    //   2. If the ticket is expired/missing, stash the op into `sudo_prompt`
+    //      so the modal opens and the user can type their password.
+    //   3. On modal submit, `resume_sudo_op` runs `sudo -S <cmd>`.
+    //
+    // Callers that already attempted the direct (non-sudo) path and got
+    // PermissionDenied should call this with the op they wanted to run.
+
+    /// Attempt a privileged op. If sudo's ticket is cached, runs immediately
+    /// and reloads. Otherwise queues the op behind the password modal.
+    pub fn priv_run(&mut self, op: crate::sudo::PendingPrivOp) {
+        use crate::sudo::CachedResult;
+        match crate::sudo::try_cached(&op) {
+            CachedResult::Ok => {
+                self.reload();
+            }
+            CachedResult::NeedPassword => {
+                self.sudo_prompt = Some(crate::dialogs::SudoPrompt::new(op));
+            }
+            CachedResult::Failed(msg) => {
+                eprintln!("[fox] privileged op failed: {msg}");
+            }
+        }
+    }
+
+    /// Called from the modal Submit handler. Runs the queued op with the
+    /// supplied password. On success closes the modal + reloads; on failure
+    /// surfaces the error message in the modal.
+    pub fn submit_sudo_prompt(&mut self) {
+        let Some(prompt) = self.sudo_prompt.as_ref() else { return; };
+        if !prompt.can_submit() { return; }
+        let password = prompt.password.clone();
+        let op = prompt.op.clone();
+        // Mark submitting so the button re-labels.
+        if let Some(p) = self.sudo_prompt.as_mut() { p.submitting = true; }
+        match crate::sudo::run_with_password(&op, &password) {
+            Ok(()) => {
+                self.sudo_prompt = None;
+                self.reload();
+            }
+            Err(msg) => {
+                if let Some(p) = self.sudo_prompt.as_mut() {
+                    p.submitting = false;
+                    p.password.clear();
+                    p.cursor = 0;
+                    p.error = Some(msg);
+                }
+            }
+        }
+    }
+
+    pub fn cancel_sudo_prompt(&mut self) {
+        self.sudo_prompt = None;
     }
 }
 

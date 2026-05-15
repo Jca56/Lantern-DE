@@ -42,9 +42,9 @@ pub struct ThumbnailSlot {
 }
 
 /// Thumbnail layout constants (logical pixels).
-const THUMB_W: i32 = 400;
-const THUMB_H: i32 = 280;
-const THUMB_GAP: i32 = 20;
+const THUMB_W: i32 = 480;
+const THUMB_H: i32 = 320;
+const THUMB_GAP: i32 = 32;
 const MAX_VISIBLE: usize = 5;
 const PANEL_PADDING: i32 = 28;
 const HIGHLIGHT_BORDER: i32 = 3;

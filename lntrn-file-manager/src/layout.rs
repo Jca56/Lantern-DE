@@ -10,7 +10,7 @@ fn title_bar_h_base() -> f32 {
 const NAV_BAR_H: f32 = 48.0;
 const GRADIENT_H: f32 = 4.0;
 const TAB_BAR_H: f32 = 46.0;
-const SIDEBAR_W: f32 = 200.0;
+const SIDEBAR_W: f32 = 240.0;
 const STATUS_BAR_H: f32 = 34.0;
 const ITEM_SIZE: f32 = 80.0;
 const ICON_SIZE: f32 = 48.0;
@@ -141,29 +141,120 @@ pub fn sidebar_rect(height: f32, s: f32) -> Rect {
     Rect::new(0.0, top, SIDEBAR_W * s, bottom - top)
 }
 
-pub fn sidebar_item_rect(index: usize, s: f32) -> Rect {
-    let mut y = nav_bar_y(s) + 42.0 * s;
-    y += index as f32 * 40.0 * s;
-    Rect::new(4.0 * s, y, (SIDEBAR_W - 12.0) * s, 40.0 * s)
+// ── Sidebar layout (dynamic) ────────────────────────────────────────────────
+//
+// Sections (Places / Favorites / Devices) are collapsible and the Favorites
+// list is user-driven, so item rects can't be computed from index alone. We
+// walk the layout once per frame and hand out a struct of all hit/draw rects.
+// Both the renderer (draw) and the input pass (zone registration) consume the
+// same `SidebarLayout`, so they can't drift.
+
+const SIDEBAR_HEADER_H: f32 = 30.0;
+const SIDEBAR_HEADER_GAP: f32 = 12.0;     // gap above each section header
+const SIDEBAR_PLACE_ITEM_H: f32 = 40.0;
+const SIDEBAR_DRIVE_ITEM_H: f32 = 64.0;
+const SIDEBAR_PHONE_ITEM_H: f32 = 56.0;
+
+pub struct SidebarLayout {
+    pub places_header: Rect,
+    pub place_items: Vec<Rect>,
+    pub favorites_header: Rect,
+    pub favorites_plus: Rect,
+    pub favorite_items: Vec<Rect>,
+    pub devices_header: Rect,
+    pub drive_items: Vec<Rect>,
+    pub phone_items: Vec<Rect>,
+    /// True if the Devices section was emitted at all (hidden when no
+    /// drives + no phones are present).
+    pub has_devices: bool,
 }
 
-/// Y position where the drives section starts (after places + header gap).
-pub fn drives_section_y(num_places: usize, s: f32) -> f32 {
-    nav_bar_y(s) + 42.0 * s + num_places as f32 * 40.0 * s + 20.0 * s
-}
+#[allow(clippy::too_many_arguments)]
+pub fn build_sidebar_layout(
+    s: f32,
+    num_places: usize,
+    num_favorites: usize,
+    num_drives: usize,
+    num_phones: usize,
+    places_collapsed: bool,
+    favorites_collapsed: bool,
+    devices_collapsed: bool,
+) -> SidebarLayout {
+    let item_x = 4.0 * s;
+    let item_w = (SIDEBAR_W - 12.0) * s;
+    let header_h = SIDEBAR_HEADER_H * s;
+    let header_gap = SIDEBAR_HEADER_GAP * s;
+    let place_h = SIDEBAR_PLACE_ITEM_H * s;
+    let drive_h = SIDEBAR_DRIVE_ITEM_H * s;
+    let phone_h = SIDEBAR_PHONE_ITEM_H * s;
 
-pub fn drive_item_rect(index: usize, num_places: usize, s: f32) -> Rect {
-    let mut y = drives_section_y(num_places, s) + 30.0 * s; // after "DEVICES" header
-    y += index as f32 * 64.0 * s; // taller items for usage bar
-    Rect::new(4.0 * s, y, (SIDEBAR_W - 12.0) * s, 64.0 * s)
-}
+    let mut y = nav_bar_y(s) + header_gap;
 
-/// Phones live below drives in the same DEVICES section.
-pub fn phone_item_rect(index: usize, num_places: usize, num_drives: usize, s: f32) -> Rect {
-    let header_y = drives_section_y(num_places, s) + 30.0 * s;
-    let drives_h = num_drives as f32 * 64.0 * s;
-    let y = header_y + drives_h + index as f32 * 56.0 * s;
-    Rect::new(4.0 * s, y, (SIDEBAR_W - 12.0) * s, 56.0 * s)
+    // ── PLACES ───────────────────────────────────────────────────────
+    let places_header = Rect::new(0.0, y, SIDEBAR_W * s, header_h);
+    y += header_h;
+    let mut place_items = Vec::with_capacity(num_places);
+    if !places_collapsed {
+        for _ in 0..num_places {
+            place_items.push(Rect::new(item_x, y, item_w, place_h));
+            y += place_h;
+        }
+    }
+
+    // ── FAVORITES ────────────────────────────────────────────────────
+    y += header_gap;
+    let favorites_header = Rect::new(0.0, y, SIDEBAR_W * s, header_h);
+    // Plus button on the right side of the header.
+    let plus_sz = 24.0 * s;
+    let favorites_plus = Rect::new(
+        SIDEBAR_W * s - plus_sz - 12.0 * s,
+        y + (header_h - plus_sz) * 0.5,
+        plus_sz,
+        plus_sz,
+    );
+    y += header_h;
+    let mut favorite_items = Vec::with_capacity(num_favorites);
+    if !favorites_collapsed {
+        for _ in 0..num_favorites {
+            favorite_items.push(Rect::new(item_x, y, item_w, place_h));
+            y += place_h;
+        }
+    }
+
+    // ── DEVICES ──────────────────────────────────────────────────────
+    let has_devices = num_drives > 0 || num_phones > 0;
+    let devices_header;
+    let mut drive_items = Vec::with_capacity(num_drives);
+    let mut phone_items = Vec::with_capacity(num_phones);
+    if has_devices {
+        y += header_gap;
+        devices_header = Rect::new(0.0, y, SIDEBAR_W * s, header_h);
+        y += header_h;
+        if !devices_collapsed {
+            for _ in 0..num_drives {
+                drive_items.push(Rect::new(item_x, y, item_w, drive_h));
+                y += drive_h;
+            }
+            for _ in 0..num_phones {
+                phone_items.push(Rect::new(item_x, y, item_w, phone_h));
+                y += phone_h;
+            }
+        }
+    } else {
+        devices_header = Rect::new(0.0, 0.0, 0.0, 0.0);
+    }
+
+    SidebarLayout {
+        places_header,
+        place_items,
+        favorites_header,
+        favorites_plus,
+        favorite_items,
+        devices_header,
+        drive_items,
+        phone_items,
+        has_devices,
+    }
 }
 
 pub fn content_rect(width: f32, height: f32, s: f32) -> Rect {

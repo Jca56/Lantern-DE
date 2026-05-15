@@ -6,24 +6,25 @@ use lntrn_ui::gpu::{ContextMenu, InteractionContext, MenuEvent, MenuItem, Waylan
 use crate::app::{App, ContextTarget};
 use crate::desktop::{self, DesktopApp};
 use crate::fs::SortBy;
-use crate::layout::{content_rect, drive_item_rect};
+use crate::layout::{build_sidebar_layout, content_rect};
 use crate::settings::Settings;
 use crate::wayland::State;
 use crate::{
-    CTX_CHANGE_ICON, CTX_COMPRESS, CTX_COPY, CTX_COPY_NAME, CTX_COPY_PATH, CTX_CUT,
-    CTX_DRIVE_EJECT, CTX_DRIVE_FORMAT, CTX_DRIVE_PROPERTIES, CTX_DUPLICATE, CTX_EXTRACT,
-    CTX_NEW_FILE, CTX_NEW_FOLDER, CTX_NEW_FOLDER_BLUE, CTX_NEW_FOLDER_GREEN,
-    CTX_NEW_FOLDER_ORANGE, CTX_NEW_FOLDER_PLAIN, CTX_NEW_FOLDER_PURPLE, CTX_NEW_FOLDER_RED,
-    CTX_NEW_FOLDER_YELLOW, CTX_OPEN, CTX_OPEN_AS_ROOT, CTX_OPEN_LOCATION, CTX_OPEN_TERMINAL,
-    CTX_OPEN_WITH, CTX_OPEN_WITH_BASE, CTX_PASTE, CTX_PROPERTIES, CTX_RENAME, CTX_SELECT_ALL,
-    CTX_SHOW_HIDDEN, CTX_SORT_BY, CTX_SORT_DATE, CTX_SORT_NAME, CTX_SORT_SIZE, CTX_SORT_TYPE,
-    CTX_TRASH,
+    CTX_ADD_FAVORITE, CTX_CHANGE_ICON, CTX_COMPRESS, CTX_COPY, CTX_COPY_NAME, CTX_COPY_PATH,
+    CTX_CUT, CTX_DRIVE_EJECT, CTX_DRIVE_FORMAT, CTX_DRIVE_PROPERTIES, CTX_DUPLICATE,
+    CTX_EMPTY_TRASH, CTX_EXTRACT, CTX_NEW_FILE, CTX_NEW_FOLDER, CTX_NEW_FOLDER_BLUE,
+    CTX_NEW_FOLDER_GREEN, CTX_NEW_FOLDER_ORANGE, CTX_NEW_FOLDER_PLAIN, CTX_NEW_FOLDER_PURPLE,
+    CTX_NEW_FOLDER_RED, CTX_NEW_FOLDER_YELLOW, CTX_OPEN, CTX_OPEN_AS_ROOT, CTX_OPEN_LOCATION,
+    CTX_OPEN_TERMINAL, CTX_OPEN_WITH, CTX_OPEN_WITH_BASE, CTX_PASTE, CTX_PROPERTIES,
+    CTX_REMOVE_FAVORITE, CTX_RENAME, CTX_SELECT_ALL, CTX_SHOW_HIDDEN, CTX_SORT_BY, CTX_SORT_DATE,
+    CTX_SORT_NAME, CTX_SORT_SIZE, CTX_SORT_TYPE, CTX_TRASH,
 };
 
 use super::{apply_sort_selection, sort_menu_items};
 
 /// Build the standard right-click menu for a single file/folder. Shared
 /// between the Item (entries-index) and Path (nested tree row) branches.
+#[allow(clippy::too_many_arguments)]
 fn build_item_menu(
     is_dir: bool,
     is_archive: bool,
@@ -31,6 +32,7 @@ fn build_item_menu(
     in_trash: bool,
     has_clipboard: bool,
     open_with_apps: &[DesktopApp],
+    fav_state: FavoriteState,
 ) -> Vec<MenuItem> {
     let mut v = vec![MenuItem::action(CTX_OPEN, "Open")];
     if !is_dir && !open_with_apps.is_empty() {
@@ -67,10 +69,25 @@ fn build_item_menu(
     }
     v.push(MenuItem::separator());
     if is_dir {
-        v.push(MenuItem::action(CTX_CHANGE_ICON, "Change Icon"));
+        match fav_state {
+            FavoriteState::NotFavorite => v.push(MenuItem::action(CTX_ADD_FAVORITE, "Add to Favorites")),
+            FavoriteState::Favorite => v.push(MenuItem::action(CTX_REMOVE_FAVORITE, "Remove from Favorites")),
+            FavoriteState::NotApplicable => {}
+        }
+        // Change-icon now lives inside Properties — click the icon at the top
+        // of the dialog to open the picker.
     }
     v.push(MenuItem::action(CTX_PROPERTIES, "Properties"));
     v
+}
+
+/// Whether a right-clicked target is currently pinned. Controls which of
+/// "Add to Favorites" / "Remove from Favorites" appears in the menu.
+#[derive(Copy, Clone)]
+enum FavoriteState {
+    NotFavorite,
+    Favorite,
+    NotApplicable,
 }
 
 pub(crate) fn handle_right_click(
@@ -83,10 +100,65 @@ pub(crate) fn handle_right_click(
 ) {
     let Some((cx, cy)) = input.cursor() else { return };
 
+    // Rebuild the sidebar layout so hit-tests match what's currently on
+    // screen (collapsed sections, favorites count, etc.).
+    let sb = build_sidebar_layout(
+        s,
+        app.sidebar_places().len(),
+        app.sidebar_favorites().len(),
+        app.drives.len(),
+        app.phones.len(),
+        app.places_collapsed,
+        app.favorites_collapsed,
+        app.devices_collapsed,
+    );
+
+    // ── Sidebar places: right-click → place-specific menu ───────────────
+    // Currently only the Trash place gets a menu (Empty Trash). Other places
+    // could grow their own actions later.
+    for (i, r) in sb.place_items.iter().enumerate() {
+        if r.contains(cx, cy) {
+            let Some(place) = app.sidebar_places().get(i) else { return; };
+            if place.name != "Trash" { return; }
+            let items = vec![
+                MenuItem::action_danger(CTX_EMPTY_TRASH, "Empty Trash"),
+            ];
+            context_menu.set_scale(s);
+            if let Some(backend) = popup_backend {
+                let lx = (cx / s) as f32;
+                let ly = (cy / s) as f32;
+                context_menu.open_popup(lx, ly, items, backend);
+            } else {
+                context_menu.open(cx, cy, items);
+            }
+            return;
+        }
+    }
+
+    // ── Sidebar favorites: right-click → remove ─────────────────────────
+    for (i, r) in sb.favorite_items.iter().enumerate() {
+        if r.contains(cx, cy) {
+            app.context_target = Some(ContextTarget::Favorite(i));
+            let items = vec![
+                MenuItem::action(CTX_OPEN, "Open"),
+                MenuItem::separator(),
+                MenuItem::action_danger(CTX_REMOVE_FAVORITE, "Remove from Favorites"),
+            ];
+            context_menu.set_scale(s);
+            if let Some(backend) = popup_backend {
+                let lx = (cx / s) as f32;
+                let ly = (cy / s) as f32;
+                context_menu.open_popup(lx, ly, items, backend);
+            } else {
+                context_menu.open(cx, cy, items);
+            }
+            return;
+        }
+    }
+
     // ── Sidebar drives: right-click → eject / format / properties ───────
-    let num_places = app.sidebar_places().len();
-    for i in 0..app.drives.len() {
-        if drive_item_rect(i, num_places, s).contains(cx, cy) {
+    for (i, r) in sb.drive_items.iter().enumerate() {
+        if r.contains(cx, cy) {
             let drive = app.drives[i].clone();
             let mut items = vec![
                 MenuItem::action(CTX_DRIVE_FORMAT, "Format to ext4…"),
@@ -206,7 +278,14 @@ pub(crate) fn handle_right_click(
             if !is_dir {
                 *open_with_apps = desktop::apps_for_extension(&ext);
             }
-            build_item_menu(is_dir, is_archive, true, app.in_trash(), has_clipboard, open_with_apps)
+            let fav_state = if is_dir {
+                if app.is_favorite(&app.entries[idx].path) {
+                    FavoriteState::Favorite
+                } else {
+                    FavoriteState::NotFavorite
+                }
+            } else { FavoriteState::NotApplicable };
+            build_item_menu(is_dir, is_archive, true, app.in_trash(), has_clipboard, open_with_apps, fav_state)
         }
         ClickedRow::NestedPath(path, is_dir) => {
             // Nested tree row — clear any entries-based selection so the
@@ -224,9 +303,16 @@ pub(crate) fn handle_right_click(
             if !is_dir {
                 *open_with_apps = desktop::apps_for_extension(&ext);
             }
+            let fav_state = if is_dir {
+                if app.is_favorite(&path) {
+                    FavoriteState::Favorite
+                } else {
+                    FavoriteState::NotFavorite
+                }
+            } else { FavoriteState::NotApplicable };
             // `allow_rename = false` — rename UI keys off an entries index and
             // doesn't have a path-based variant yet, so we hide it for nested rows.
-            build_item_menu(is_dir, is_archive, false, app.in_trash(), has_clipboard, open_with_apps)
+            build_item_menu(is_dir, is_archive, false, app.in_trash(), has_clipboard, open_with_apps, fav_state)
         }
         ClickedRow::None => {
             app.clear_selection();
@@ -281,6 +367,9 @@ pub(crate) fn handle_ctx_event(
         MenuEvent::Action(id) => {
             match id {
                 CTX_OPEN => {
+                    if let Some(ContextTarget::Favorite(idx)) = app.context_target.clone() {
+                        app.on_favorite_click(idx);
+                    } else
                     // In search mode, open the search result directly
                     if let Some(ContextTarget::SearchItem(idx)) = &app.context_target {
                         if let Some(entry) = app.search_results.get(*idx) {
@@ -425,6 +514,9 @@ pub(crate) fn handle_ctx_event(
                                     Some(app.current_dir.clone())
                                 }
                                 crate::app::ContextTarget::Drive(_) => None,
+                                crate::app::ContextTarget::Favorite(idx) => {
+                                    app.sidebar_favorites().get(*idx).map(|p| p.path.clone())
+                                }
                             }
                         } else { None };
                         if let Some(path) = path {
@@ -452,59 +544,54 @@ pub(crate) fn handle_ctx_event(
                 }
                 CTX_NEW_FOLDER => {
                     let target = app.current_dir.join("New Folder");
-                    if app.root_mode {
-                        let _ = std::process::Command::new("pkexec")
-                            .args(["mkdir", "--"]).arg(&target).status();
-                    } else {
-                        let _ = std::fs::create_dir(&target);
-                    }
-                    app.undo_stack.push(crate::undo::UndoAction::Create(vec![target.clone()]));
-                    app.reload();
-                    if let Some(idx) = app.entries.iter().position(|e| e.path == target) {
-                        app.select_item(idx);
-                        app.start_rename(idx);
-                    }
+                    new_folder_or_prompt(app, target, None);
                 }
                 CTX_NEW_FOLDER_PLAIN | CTX_NEW_FOLDER_RED | CTX_NEW_FOLDER_ORANGE
                 | CTX_NEW_FOLDER_YELLOW | CTX_NEW_FOLDER_GREEN | CTX_NEW_FOLDER_BLUE
                 | CTX_NEW_FOLDER_PURPLE => {
                     let target = app.current_dir.join("New Folder");
-                    if app.root_mode {
-                        let _ = std::process::Command::new("pkexec")
-                            .args(["mkdir", "--"]).arg(&target).status();
-                    } else {
-                        let _ = std::fs::create_dir(&target);
-                    }
-                    let color = match id {
-                        CTX_NEW_FOLDER_RED => "red",
-                        CTX_NEW_FOLDER_ORANGE => "orange",
-                        CTX_NEW_FOLDER_YELLOW => "yellow",
-                        CTX_NEW_FOLDER_GREEN => "green",
-                        CTX_NEW_FOLDER_BLUE => "blue",
-                        CTX_NEW_FOLDER_PURPLE => "purple",
-                        _ => "",
+                    let color: Option<&'static str> = match id {
+                        CTX_NEW_FOLDER_RED => Some("red"),
+                        CTX_NEW_FOLDER_ORANGE => Some("orange"),
+                        CTX_NEW_FOLDER_YELLOW => Some("yellow"),
+                        CTX_NEW_FOLDER_GREEN => Some("green"),
+                        CTX_NEW_FOLDER_BLUE => Some("blue"),
+                        CTX_NEW_FOLDER_PURPLE => Some("purple"),
+                        _ => None,
                     };
-                    if !color.is_empty() {
-                        crate::icons::set_folder_color(&target, color);
-                    }
-                    app.undo_stack.push(crate::undo::UndoAction::Create(vec![target.clone()]));
-                    app.reload();
-                    if let Some(idx) = app.entries.iter().position(|e| e.path == target) {
-                        app.select_item(idx);
-                        app.start_rename(idx);
-                    }
+                    new_folder_or_prompt(app, target, color);
                 }
                 CTX_NEW_FILE => {
                     let target = app.current_dir.join("New File");
-                    if app.root_mode {
-                        let _ = std::process::Command::new("pkexec")
-                            .args(["touch", "--"]).arg(&target).status();
-                    } else {
-                        let _ = std::fs::write(&target, "");
-                    }
-                    app.undo_stack.push(crate::undo::UndoAction::Create(vec![target]));
-                    app.reload();
+                    new_file_or_prompt(app, target);
                 }
+                CTX_ADD_FAVORITE => {
+                    // Resolve the target path from whatever context fired it.
+                    let path = target_path_for_favorite(app);
+                    if let Some(p) = path {
+                        if app.add_favorite(p) {
+                            settings.favorites = app.favorites_paths();
+                            settings.save();
+                        }
+                    }
+                }
+                CTX_REMOVE_FAVORITE => {
+                    let mut changed = false;
+                    if let Some(ContextTarget::Favorite(idx)) = app.context_target.clone() {
+                        app.remove_favorite(idx);
+                        changed = true;
+                    } else if let Some(path) = target_path_for_favorite(app) {
+                        if app.is_favorite(&path) {
+                            app.remove_favorite_by_path(&path);
+                            changed = true;
+                        }
+                    }
+                    if changed {
+                        settings.favorites = app.favorites_paths();
+                        settings.save();
+                    }
+                }
+                CTX_EMPTY_TRASH => app.empty_trash(),
                 CTX_SELECT_ALL => app.select_all(),
                 CTX_OPEN_TERMINAL => app.open_in_terminal(),
                 CTX_SORT_NAME => apply_sort_selection(app, settings, SortBy::Name),
@@ -548,5 +635,64 @@ pub(crate) fn handle_ctx_event(
             }
         }
         _ => {}
+    }
+}
+
+/// Create a folder at `target`. Falls back to the sudo prompt on permission
+/// denied. On direct success: push undo, reload, focus rename. On sudo
+/// fallback: the file gets created later via sudo + a reload happens then,
+/// so we skip undo/rename (no path-of-clean-creation to track).
+fn new_folder_or_prompt(app: &mut App, target: PathBuf, color: Option<&'static str>) {
+    if app.root_mode {
+        app.priv_run(crate::sudo::PendingPrivOp::NewFolder { path: target, color });
+        return;
+    }
+    match std::fs::create_dir(&target) {
+        Ok(()) => {
+            if let Some(c) = color {
+                crate::icons::set_folder_color(&target, c);
+            }
+            app.undo_stack.push(crate::undo::UndoAction::Create(vec![target.clone()]));
+            app.reload();
+            if let Some(idx) = app.entries.iter().position(|e| e.path == target) {
+                app.select_item(idx);
+                app.start_rename(idx);
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            app.priv_run(crate::sudo::PendingPrivOp::NewFolder { path: target, color });
+        }
+        Err(_) => {}
+    }
+}
+
+fn new_file_or_prompt(app: &mut App, target: PathBuf) {
+    if app.root_mode {
+        app.priv_run(crate::sudo::PendingPrivOp::NewFile(target));
+        return;
+    }
+    match std::fs::write(&target, "") {
+        Ok(()) => {
+            app.undo_stack.push(crate::undo::UndoAction::Create(vec![target]));
+            app.reload();
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            app.priv_run(crate::sudo::PendingPrivOp::NewFile(target));
+        }
+        Err(_) => {}
+    }
+}
+
+/// Resolve the path the user is currently targeting via the context menu.
+/// Used by Add/Remove Favorite to pin the actual right-clicked folder rather
+/// than something else in the selection.
+fn target_path_for_favorite(app: &App) -> Option<PathBuf> {
+    match app.context_target.clone()? {
+        ContextTarget::Item(idx) => app.entries.get(idx).map(|e| e.path.clone()),
+        ContextTarget::Path(p) => Some(p),
+        ContextTarget::SearchItem(idx) => app.search_results.get(idx).map(|e| e.path.clone()),
+        ContextTarget::Empty => Some(app.current_dir.clone()),
+        ContextTarget::Favorite(idx) => app.sidebar_favorites().get(idx).map(|p| p.path.clone()),
+        ContextTarget::Drive(_) => None,
     }
 }

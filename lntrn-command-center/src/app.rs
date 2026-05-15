@@ -255,6 +255,8 @@ pub struct AppState {
     pub terminal: crate::terminal::TerminalState,
     /// Files-tab state (cwd, entries, scroll, hover).
     pub files: crate::files::FilesState,
+    /// Chat-tab state (threads, draft input, streaming flag, API key).
+    pub chat: crate::chat::ChatState,
     /// Emojis overlay state (filter, category, scroll, hover).
     pub emojis: crate::emojis::EmojisState,
     /// Long-lived Wayland clipboard handle. We share one across the
@@ -296,7 +298,6 @@ pub struct WindowAction {
 pub enum WindowActionKind {
     Activate,
     Close,
-    Minimize,
 }
 
 impl AppState {
@@ -357,6 +358,7 @@ impl AppState {
             waffle_hover: false,
             terminal: crate::terminal::TerminalState::new(),
             files: crate::files::FilesState::new(),
+            chat: crate::chat::ChatState::new(),
             emojis: crate::emojis::EmojisState::default(),
             clipboard_handle: lntrn_terminal::clipboard::WaylandClipboard::new(),
             clipboard: crate::clipboard::ClipboardState::default(),
@@ -395,13 +397,6 @@ impl AppState {
             to: self.panel_view,
             to_offset: dir * (1.0 - p),
         })
-    }
-
-    pub fn view_animating(&self) -> bool {
-        match self.view_anim_start {
-            Some(start) => start.elapsed().as_secs_f32() < self.config.view_anim_duration,
-            None => false,
-        }
     }
 
     /// Toggle the Command Center settings page.
@@ -537,10 +532,6 @@ impl AppState {
 pub enum HitTarget {
     Pin(usize),
     Result(usize),
-    /// Click on the body of an Open-section tile (the i-th *group*).
-    OpenWindow(usize),
-    /// Click on the small X button overlaid on an Open-section tile.
-    OpenWindowClose(usize),
 }
 
 /// Top-level panel views cycled by the side arrows.
@@ -549,10 +540,16 @@ pub enum PanelView {
     Default,
     Terminal,
     Files,
+    Chat,
 }
 
 impl PanelView {
-    pub const ALL: [PanelView; 3] = [PanelView::Default, PanelView::Terminal, PanelView::Files];
+    pub const ALL: [PanelView; 4] = [
+        PanelView::Default,
+        PanelView::Terminal,
+        PanelView::Files,
+        PanelView::Chat,
+    ];
     pub fn next(self) -> Self {
         let idx = Self::ALL.iter().position(|v| *v == self).unwrap_or(0);
         Self::ALL[(idx + 1) % Self::ALL.len()]
@@ -567,6 +564,7 @@ impl PanelView {
             PanelView::Default => "Command Center",
             PanelView::Terminal => "Terminal",
             PanelView::Files => "Files",
+            PanelView::Chat => "Chat",
         }
     }
 }

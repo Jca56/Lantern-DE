@@ -15,7 +15,7 @@ use wayland_client::{
         wl_callback, wl_compositor, wl_keyboard, wl_output, wl_pointer, wl_registry, wl_seat,
         wl_surface,
     },
-    Connection, Dispatch, Proxy, QueueHandle, WEnum,
+    Connection, Dispatch, QueueHandle, WEnum,
 };
 use wayland_protocols::wp::cursor_shape::v1::client::{
     wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1,

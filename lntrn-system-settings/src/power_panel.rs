@@ -11,7 +11,7 @@ use lntrn_ui::gpu::{
     FoxPalette, InteractionContext, MenuEvent, ScrollArea, Scrollbar, Slider, Toggle,
 };
 
-use crate::config::LanternConfig;
+use crate::config::{LanternConfig, PowerConfig};
 use crate::panels::{
     draw_section_card, draw_select_button, hidden_by_menu, make_menu_items,
     slider_value_from_cursor, PanelState,
@@ -369,4 +369,63 @@ pub fn handle_power_click(
     if panel_state.dropdown_menu.is_open() {
         panel_state.close_dropdown();
     }
+}
+
+// ── WiFi power apply ────────────────────────────────────────────────────────
+
+/// Apply WiFi power settings immediately and persist to /etc/modprobe.d/.
+/// Spawns a background thread so pkexec dialogs don't block the Wayland event loop.
+/// Auto-detects the WiFi interface and driver — skips silently if no WiFi hardware found.
+pub fn apply_wifi_power(power: &PowerConfig) {
+    let power_save = power.wifi_power_save;
+    let scheme = power.wifi_power_scheme.clone();
+
+    std::thread::spawn(move || {
+        let Some((iface, driver)) = detect_wifi_interface() else {
+            eprintln!("[settings] No WiFi interface found, skipping WiFi power settings");
+            return;
+        };
+
+        let power_save_val = if power_save { 1 } else { 0 };
+        let scheme_val = match scheme.as_str() {
+            "active" => 1,
+            "balanced" => 2,
+            "battery" => 3,
+            _ => 2,
+        };
+
+        let conf = format!(
+            "options {driver} power_save={power_save_val}\noptions {driver} power_scheme={scheme_val}\n",
+        );
+        let modprobe_path = format!("/etc/modprobe.d/{driver}.conf");
+        let script = format!(
+            "printf '{}' > {modprobe_path}",
+            conf.replace('\'', "'\\''"),
+        );
+        let _ = std::process::Command::new("pkexec")
+            .args(["sh", "-c", &script])
+            .status();
+
+        let ps_arg = if power_save { "on" } else { "off" };
+        let _ = std::process::Command::new("pkexec")
+            .args(["iw", "dev", &iface, "set", "power_save", ps_arg])
+            .status();
+    });
+}
+
+/// Detect the first wireless network interface and its kernel driver.
+fn detect_wifi_interface() -> Option<(String, String)> {
+    let net_dir = std::fs::read_dir("/sys/class/net/").ok()?;
+    for entry in net_dir.flatten() {
+        let path = entry.path();
+        if path.join("wireless").exists() {
+            let iface = entry.file_name().to_string_lossy().into_owned();
+            let driver = std::fs::read_link(path.join("device/driver"))
+                .ok()
+                .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+                .unwrap_or_else(|| "iwlwifi".to_string());
+            return Some((iface, driver));
+        }
+    }
+    None
 }

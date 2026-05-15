@@ -14,8 +14,8 @@ use crate::icon_panel;
 use crate::icons;
 use crate::input_panel;
 use crate::monitor_arrange;
-use crate::notifications_panel::{self, NotifPanelState};
 use crate::monitor_settings::persist_monitor_settings;
+use crate::notifications_panel::{self, NotifPanelState};
 use crate::panels::{self, PanelState};
 use crate::text_edit::{KeyboardState, keycode_to_char};
 use crate::wayland_state::WaylandHandle;
@@ -29,12 +29,11 @@ use wayland_protocols::xdg::shell::client::xdg_toplevel;
 const KEY_ESC: u32 = 1;
 use crate::chrome::{self, TITLE_BAR_H, CORNER_RADIUS};
 
-const SIDEBAR_W: f32 = 300.0;
-const SIDEBAR_ITEM_H: f32 = 76.0;
-const ICON_SIZE: u32 = 72; // rasterized icon size in pixels
-const SIDEBAR_ICON_DRAW: f32 = 36.0; // logical draw size for icons
+use crate::sidebar::{draw_sidebar, SIDEBAR_W};
 
-const ZONE_SIDEBAR_BASE: u32 = 200;
+const ICON_SIZE: u32 = 72; // rasterized icon size in pixels
+
+pub(crate) const ZONE_SIDEBAR_BASE: u32 = 200;
 
 // View menu actions
 const MENU_MODE_FOX: u32 = 600;
@@ -42,9 +41,9 @@ const MENU_MODE_LANTERN: u32 = 601;
 const MENU_MODE_GROUP: u32 = 1;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Panel { Appearance, WindowManager, Input, Display, Power, Notifications, AppIcons }
+pub(crate) enum Panel { Appearance, WindowManager, Input, Display, Power, Notifications, AppIcons }
 
-const PANELS: &[(Panel, &str)] = &[
+pub(crate) const PANELS: &[(Panel, &str)] = &[
     (Panel::Appearance, "Appearance"),
     (Panel::WindowManager, "Window Manager"),
     (Panel::Input, "Mouse"),
@@ -363,79 +362,25 @@ pub fn run() -> Result<()> {
                         }
                     }
                 } else if let Some(zone_id) = ix.on_left_pressed() {
-                    match zone_id {
-                        id if id >= ZONE_SIDEBAR_BASE && id < ZONE_SIDEBAR_BASE + PANELS.len() as u32 => {
-                            active_panel = PANELS[(id - ZONE_SIDEBAR_BASE) as usize].0;
-                            panel_state.close_dropdown();
-                        }
-                        panels::ZONE_SAVE => {
-                            let wifi_changed =
-                                config.power.wifi_power_save != saved_config.power.wifi_power_save
-                                || config.power.wifi_power_scheme != saved_config.power.wifi_power_scheme;
-                            // Apply output settings via wlr-output-management first so
-                            // the new values are folded into config.monitors before save.
-                            if display_state.monitor_settings.dirty {
-                                if let Some(selected_name) = display_state.monitor_arrange.selected_output_name() {
-                                    if let Some(hi) = state.output_mgr.heads.iter().position(|h| h.name == selected_name) {
-                                        let changes = vec![crate::output_manager::HeadChange {
-                                            head_idx: hi,
-                                            mode_idx: display_state.monitor_settings.selected_mode_idx,
-                                            position: None,
-                                            scale: display_state.monitor_settings.selected_scale,
-                                        }];
-                                        crate::output_manager::apply_config(&state, &qh, &changes);
-                                        persist_monitor_settings(
-                                            &mut config,
-                                            &state.output_mgr,
-                                            hi,
-                                            &selected_name,
-                                            display_state.monitor_settings.selected_scale,
-                                            display_state.monitor_settings.selected_mode_idx,
-                                        );
-                                        display_state.monitor_settings.dirty = false;
-                                    }
-                                }
-                            }
-                            config.save();
-                            if wifi_changed {
-                                config.apply_wifi_power();
-                            }
-                            saved_config = config.clone();
-                        }
-                        panels::ZONE_CANCEL => {
-                            config = saved_config.clone();
-                        }
-                        id => {
-                            // If a context menu is open, let it handle its own clicks
-                            let menu_consumed = panel_state.dropdown_menu.is_open()
-                                && panel_state.dropdown_menu.contains(cx, cy);
-                            if !menu_consumed {
-                                match active_panel {
-                                    Panel::Appearance => crate::appearance_panel::handle_appearance_click(&mut config, id),
-                                    Panel::WindowManager => crate::wm_panel::handle_wm_click(&mut config, id),
-                                    Panel::Power => {
-                                        crate::power_panel::handle_power_click(
-                                            &mut config, &mut panel_state, id, cx, cy,
-                                        );
-                                    }
-                                    Panel::Display => {
-                                        display_panel::handle_display_click(
-                                            &mut config, &mut display_state, id,
-                                            cx, cy, &state.output_mgr,
-                                        );
-                                    }
-                                    Panel::Input => {
-                                        input_panel::handle_input_click(&mut config, &input_state, id);
-                                    }
-                                    Panel::Notifications => {
-                                        notifications_panel::handle_notifications_click(&mut config, id);
-                                    }
-                                    Panel::AppIcons => {
-                                        icon_panel_state.on_click(id);
-                                    }
-                                }
-                            }
-                        }
+                    // If a context menu is open, let it handle its own clicks
+                    // first; otherwise route to sidebar / save-cancel / panel.
+                    let menu_consumed = panel_state.dropdown_menu.is_open()
+                        && panel_state.dropdown_menu.contains(cx, cy);
+                    if !menu_consumed {
+                        crate::click_router::route_zone_click(
+                            zone_id,
+                            &mut active_panel,
+                            &mut config,
+                            &mut saved_config,
+                            &mut panel_state,
+                            &mut display_state,
+                            &mut icon_panel_state,
+                            &input_state,
+                            &state,
+                            &qh,
+                            cx,
+                            cy,
+                        );
                     }
                 }
             }
@@ -551,85 +496,12 @@ pub fn run() -> Result<()> {
         menu_bar.draw_with_labels(&mut painter, &mut text, &fox, &labels, sw, sh, s);
 
         // ── Sidebar ────────────────────────────────────────────────────
-        let item_h = SIDEBAR_ITEM_H * s;
-        let label_size = 22.0 * s;
-        let icon_draw = SIDEBAR_ICON_DRAW * s;
         let mut tex_draws: Vec<TextureDraw> = Vec::new();
-
-        // Both modes: let the window background flow through the sidebar so
-        // there's no visible color seam between left and right. The active /
-        // hover highlights and the divider line provide enough delineation.
-        // Divider line between sidebar and content — subtle in both modes.
-        painter.rect_filled(
-            Rect::new(sidebar_w, body_y, 1.0 * s, hf - body_y),
-            0.0,
-            fox.muted.with_alpha(0.35),
+        draw_sidebar(
+            &mut painter, &mut text, &mut ix, &fox,
+            &icon_textures, &mut tex_draws,
+            active_panel, sidebar_w, body_y, hf, s, sw, sh,
         );
-
-        for (i, (panel, label)) in PANELS.iter().enumerate() {
-            let y = body_y + 8.0 * s + i as f32 * item_h;
-            let zone_id = ZONE_SIDEBAR_BASE + i as u32;
-            let rect = Rect::new(0.0, y, sidebar_w, item_h);
-            let zone_state = ix.add_zone(zone_id, rect);
-            let is_active = *panel == active_panel;
-
-            // Highlight active or hovered item.
-            // For active items we draw an inset rounded "pill" using a custom
-            // bright-gold color (rather than `fox.accent.with_alpha`) so the
-            // result reads as gold, not as muddy orange — low-alpha gold over
-            // a near-black background blends to brown.
-            if is_active {
-                let inset_x = 10.0 * s;
-                let inset_y = 6.0 * s;
-                let pill = Rect::new(
-                    inset_x,
-                    y + inset_y,
-                    sidebar_w - inset_x * 2.0,
-                    item_h - inset_y * 2.0,
-                );
-                let radius = 8.0 * s;
-                // Bright gold tint at high alpha — reads clearly as gold even
-                // when blended over the dark Fox bg.
-                painter.rect_filled(
-                    pill,
-                    radius,
-                    lntrn_render::Color::from_rgba8(255, 180, 30, 56),
-                );
-                // 1px gold border to define the pill edge
-                painter.rect_stroke_sdf(
-                    pill, radius, 1.0 * s,
-                    lntrn_render::Color::from_rgba8(255, 180, 30, 110),
-                );
-                // Active indicator bar on the left
-                painter.rect_filled(
-                    Rect::new(0.0, y + 8.0 * s, 4.0 * s, item_h - 16.0 * s),
-                    2.0 * s,
-                    fox.accent,
-                );
-            } else if zone_state.is_hovered() {
-                let inset_x = 10.0 * s;
-                let inset_y = 6.0 * s;
-                let pill = Rect::new(
-                    inset_x,
-                    y + inset_y,
-                    sidebar_w - inset_x * 2.0,
-                    item_h - inset_y * 2.0,
-                );
-                painter.rect_filled(pill, 8.0 * s, fox.text.with_alpha(0.06));
-            }
-
-            // Icon
-            let icon_x = 24.0 * s;
-            let icon_y = y + (item_h - icon_draw) / 2.0;
-            let draw = TextureDraw::new(&icon_textures[i], icon_x, icon_y, icon_draw, icon_draw);
-            tex_draws.push(draw);
-
-            // Label text
-            let text_x = icon_x + icon_draw + 16.0 * s;
-            let text_y = y + (item_h - label_size) / 2.0;
-            let text_color = if is_active { fox.accent } else { fox.text };
-            text.queue(label, label_size, text_x, text_y, text_color, sidebar_w - text_x, sw, sh);
-        }
 
         // ── Content area header ────────────────────────────────────────
         let header_label = PANELS.iter().find(|(p, _)| *p == active_panel).map(|(_, l)| *l).unwrap_or("");

@@ -34,6 +34,17 @@ pub struct Settings {
     pub preview_width: f32,
     #[serde(default = "default_view_mode")]
     pub view_mode: String,
+    /// Sidebar section collapse state. Persisted so the user's chosen layout
+    /// survives across launches.
+    #[serde(default)]
+    pub places_collapsed: bool,
+    #[serde(default)]
+    pub favorites_collapsed: bool,
+    #[serde(default)]
+    pub devices_collapsed: bool,
+    /// User-pinned folder paths, ordered as the user arranged them.
+    #[serde(default)]
+    pub favorites: Vec<String>,
 }
 
 fn default_preview_width() -> f32 { 360.0 }
@@ -64,6 +75,10 @@ impl Default for Settings {
             preview_open: false,
             preview_width: 360.0,
             view_mode: "grid".into(),
+            places_collapsed: false,
+            favorites_collapsed: false,
+            devices_collapsed: false,
+            favorites: Vec::new(),
         }
     }
 }

@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::process::Command;
 
 // ── Window chrome mode ───────────────────────────────────────────────────────
 
@@ -14,15 +13,6 @@ pub enum WindowMode {
 
 impl Default for WindowMode {
     fn default() -> Self { Self::Fox }
-}
-
-impl WindowMode {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Fox => "fox-dark",
-            Self::Lantern => "lantern",
-        }
-    }
 }
 
 // ── Top-level Lantern config ─────────────────────────────────────────────────
@@ -342,69 +332,6 @@ impl LanternConfig {
             std::fs::write(&path, toml_str).ok();
         }
     }
-
-    /// Apply WiFi power settings immediately and persist to /etc/modprobe.d/.
-    /// Spawns a background thread so pkexec dialogs don't block the Wayland event loop.
-    /// Auto-detects the WiFi interface and driver — skips silently if no WiFi hardware found.
-    pub fn apply_wifi_power(&self) {
-        let power_save = self.power.wifi_power_save;
-        let scheme = self.power.wifi_power_scheme.clone();
-
-        std::thread::spawn(move || {
-            // Auto-detect wireless interface and driver
-            let Some((iface, driver)) = detect_wifi_interface() else {
-                eprintln!("[settings] No WiFi interface found, skipping WiFi power settings");
-                return;
-            };
-
-            let power_save_val = if power_save { 1 } else { 0 };
-            let scheme_val = match scheme.as_str() {
-                "active" => 1,
-                "balanced" => 2,
-                "battery" => 3,
-                _ => 2,
-            };
-
-            // Write modprobe.d config via pkexec sh -c (pkexec doesn't pipe stdin)
-            let conf = format!(
-                "options {driver} power_save={power_save_val}\noptions {driver} power_scheme={scheme_val}\n",
-            );
-            let modprobe_path = format!("/etc/modprobe.d/{driver}.conf");
-            let script = format!(
-                "printf '{}' > {modprobe_path}",
-                conf.replace('\'', "'\\''"),
-            );
-            let _ = Command::new("pkexec")
-                .args(["sh", "-c", &script])
-                .status();
-
-            // Apply power save immediately via iw
-            let ps_arg = if power_save { "on" } else { "off" };
-            let _ = Command::new("pkexec")
-                .args(["iw", "dev", &iface, "set", "power_save", ps_arg])
-                .status();
-        });
-    }
-}
-
-/// Detect the first wireless network interface and its kernel driver.
-/// Returns `(interface_name, driver_name)` or None if no WiFi hardware found.
-fn detect_wifi_interface() -> Option<(String, String)> {
-    let net_dir = std::fs::read_dir("/sys/class/net/").ok()?;
-    for entry in net_dir.flatten() {
-        let path = entry.path();
-        // Wireless interfaces have /sys/class/net/<iface>/wireless/
-        if path.join("wireless").exists() {
-            let iface = entry.file_name().to_string_lossy().into_owned();
-            // Read the driver name from the device symlink
-            let driver = std::fs::read_link(path.join("device/driver"))
-                .ok()
-                .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-                .unwrap_or_else(|| "iwlwifi".to_string());
-            return Some((iface, driver));
-        }
-    }
-    None
 }
 
 impl LanternConfig {

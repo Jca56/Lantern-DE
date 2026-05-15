@@ -62,6 +62,9 @@ pub(crate) fn run_loop(
     // Pinned tab drag reorder state
     let mut tab_drag: Option<usize> = None;          // index of tab being dragged
     let mut tab_drag_press: Option<(usize, f32)> = None; // (tab_idx, press_x) for drag detection
+    // Favorite drag reorder state (mirrors tab_drag/tab_drag_press but axis is Y).
+    let mut fav_drag: Option<usize> = None;
+    let mut fav_drag_press: Option<(usize, f32)> = None;
 
     eprintln!("[fox] entering main loop, size={}x{}", state.width, state.height);
 
@@ -288,6 +291,16 @@ pub(crate) fn run_loop(
                 }
             }
 
+            // Favorite drag-to-reorder detection (Y-axis threshold).
+            if fav_drag.is_none() {
+                if let Some((fav_idx, press_y)) = fav_drag_press {
+                    if (cy - press_y).abs() > 5.0 {
+                        fav_drag = Some(fav_idx);
+                        fav_drag_press = None;
+                    }
+                }
+            }
+
             // Pinned tab drag detection
             if tab_drag.is_none() {
                 if let Some((tab_idx, press_x)) = tab_drag_press {
@@ -345,7 +358,7 @@ pub(crate) fn run_loop(
 
         // Key repeat (for text editing modes)
         if let Some(key) = state.held_key {
-            if (app.renaming.is_some() || app.path_editing || app.save_name_editing || app.searching)
+            if (app.renaming.is_some() || app.path_editing || app.save_name_editing || app.searching || app.sudo_prompt.is_some() || app.cloud_login.is_some())
                 && std::time::Instant::now() >= state.repeat_deadline
             {
                 handle_key(app, settings, context_menu, &mut state.popup_backend, key, state.ctrl, state.shift, &mut state.running);
@@ -478,15 +491,36 @@ pub(crate) fn run_loop(
                 if !handled_resize {
                     let prev_preview_open = app.preview_open;
                     let prev_view = app.view_mode;
+                    let prev_places_collapsed = app.places_collapsed;
+                    let prev_favorites_collapsed = app.favorites_collapsed;
+                    let prev_devices_collapsed = app.devices_collapsed;
+                    let prev_favorites_len = app.sidebar_favorites().len();
                     let action = handle_click(
                         input, app, view_menu, context_menu, &mut state.popup_backend,
-                        &mut last_tab_click, &mut tab_drag_press, wf, s,
+                        &mut last_tab_click, &mut tab_drag_press, &mut fav_drag_press,
+                        wf, s,
                         lntrn_theme::background_opacity(), "",
                         state.ctrl, state.shift,
                     );
                     let mut settings_dirty = false;
                     if app.preview_open != prev_preview_open {
                         settings.preview_open = app.preview_open;
+                        settings_dirty = true;
+                    }
+                    if app.places_collapsed != prev_places_collapsed {
+                        settings.places_collapsed = app.places_collapsed;
+                        settings_dirty = true;
+                    }
+                    if app.favorites_collapsed != prev_favorites_collapsed {
+                        settings.favorites_collapsed = app.favorites_collapsed;
+                        settings_dirty = true;
+                    }
+                    if app.devices_collapsed != prev_devices_collapsed {
+                        settings.devices_collapsed = app.devices_collapsed;
+                        settings_dirty = true;
+                    }
+                    if app.sidebar_favorites().len() != prev_favorites_len {
+                        settings.favorites = app.favorites_paths();
                         settings_dirty = true;
                     }
                     // Don't persist the forced Tree view from pick mode — it's
@@ -568,6 +602,33 @@ pub(crate) fn run_loop(
                     settings.preview_width = app.preview_width;
                     settings.save();
                 }
+                // Favorite drag release — reorder
+                if let Some(src_idx) = fav_drag.take() {
+                    let layout = crate::layout::build_sidebar_layout(
+                        s,
+                        app.sidebar_places().len(),
+                        app.sidebar_favorites().len(),
+                        app.drives.len(),
+                        app.phones.len(),
+                        app.places_collapsed,
+                        app.favorites_collapsed,
+                        app.devices_collapsed,
+                    );
+                    if let Some((_, cy)) = input.cursor() {
+                        // Target slot is whichever favorite row the cursor is
+                        // currently over. Off-row releases are a no-op.
+                        let target = layout.favorite_items.iter()
+                            .position(|r| cy >= r.y && cy < r.y + r.h);
+                        if let Some(target_idx) = target {
+                            if target_idx != src_idx && src_idx < app.sidebar_favorites().len() {
+                                app.reorder_favorite(src_idx, target_idx);
+                                settings.favorites = app.favorites_paths();
+                                settings.save();
+                            }
+                        }
+                    }
+                }
+                fav_drag_press = None;
                 // Pinned tab drag release — reorder
                 if let Some(src_idx) = tab_drag.take() {
                     let tab_bar_rect = crate::layout::tab_bar_rect(wf, s);
@@ -599,7 +660,12 @@ pub(crate) fn run_loop(
                         }
                     }
                 } else if let Some(drag_idx) = app.drag_item.take() {
+                    let prev_fav_len = app.sidebar_favorites().len();
                     handle_drop(app, input, wf, hf, s, drag_idx);
+                    if app.sidebar_favorites().len() != prev_fav_len {
+                        settings.favorites = app.favorites_paths();
+                        settings.save();
+                    }
                     app.pending_open = None;
                     state.dnd_paths.clear();
                 } else if let Some(idx) = app.pending_open.take() {
@@ -676,7 +742,7 @@ pub(crate) fn run_loop(
         let inline_evt = crate::render::render_frame(
             gpu, app, input, icon_cache, file_info,
             &render_palette, s, state.maximized, view_menu, context_menu,
-            tab_drag, opacity, state.desktop_mode,
+            tab_drag, fav_drag, opacity, state.desktop_mode,
         );
         // Handle inline context menu events (desktop mode)
         if let Some(evt) = inline_evt {
@@ -788,6 +854,20 @@ pub(crate) fn run_loop(
 
         // Poll search results from background thread
         app.poll_search();
+        app.poll_op_progress();
+        // Drain deferred icon-cache invalidations queued by the Properties
+        // icon picker. We can't mutate icon_cache during render_frame
+        // (tex_draws still borrows it), so we apply changes between frames.
+        if !app.pending_icon_apply.is_empty() {
+            let pending = std::mem::take(&mut app.pending_icon_apply);
+            for (folder, icon) in pending {
+                match icon {
+                    Some(path) => crate::icons::set_folder_icon(&folder, &path),
+                    None => crate::icons::clear_folder_icon(&folder),
+                }
+                icon_cache.invalidate(&folder);
+            }
+        }
 
         // ── Auto-refresh: check directory mtime every 3 seconds ─────
         if app.current_dir != last_dir_path {
@@ -819,7 +899,9 @@ pub(crate) fn run_loop(
             || state.held_key.is_some()
             || app.search_rx.is_some()
             || tab_drag.is_some()
+            || fav_drag.is_some()
             || app.preview_drag.is_some()
+            || app.op_progress.is_some()
             || state.dnd_active;
     }
 

@@ -448,7 +448,15 @@ fn draw_row(
     let icon_y = row.y + (row.h - icon_size) / 2.0;
     let icon_rect = Rect::new(icon_x, icon_y, icon_size, icon_size);
     if entry.is_dir {
-        draw_folder_glyph(painter, icon_rect, scale, alpha);
+        icons.push(IconRequest {
+            app_id: "__folder".into(),
+            icon_name: Some("folder".into()),
+            x: icon_rect.x,
+            y: icon_rect.y,
+            size: icon_size,
+            opacity: alpha,
+            clip: Some([clip.x, clip.y, clip.w, clip.h]),
+        });
     } else {
         match file_kind(entry) {
             FileKind::Image => {
@@ -503,17 +511,6 @@ fn draw_row(
     if !size.is_empty() {
         text.queue(&size, meta_font, size_x, meta_y, dim_color(alpha), size_w + 4.0 * scale, surface_w, surface_h);
     }
-}
-
-fn draw_folder_glyph(painter: &mut Painter, r: Rect, scale: f32, alpha: f32) {
-    let color = accent_color(0.85 * alpha);
-    let radius = 4.0 * scale;
-    let tab_w = r.w * 0.45;
-    let tab_h = r.h * 0.18;
-    painter.rect_filled(Rect::new(r.x, r.y + r.h * 0.18, tab_w, tab_h), radius, color);
-    let body_y = r.y + r.h * 0.30;
-    let body_h = r.h * 0.60;
-    painter.rect_filled(Rect::new(r.x, body_y, r.w, body_h), radius, color);
 }
 
 /// Subtle frame behind a thumbnail while it loads. Matches the corner

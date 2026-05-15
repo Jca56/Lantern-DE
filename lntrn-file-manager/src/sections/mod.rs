@@ -9,7 +9,7 @@ mod status;
 
 pub use grid::{draw_content_grid, draw_rubber_band};
 pub use nav::draw_nav_bar;
-pub use sidebar::draw_sidebar;
+pub use sidebar::{draw_sidebar, SidebarHovered};
 pub use status::draw_status_bar;
 
 pub fn selection_tint(_palette: &FoxPalette) -> Color {

@@ -3,8 +3,9 @@ use lntrn_ui::gpu::{Button, ButtonVariant, FoxPalette, InteractionContext, Scrol
 
 use crate::config::LanternConfig;
 use crate::panels::{
-    draw_section_card, CARD_GAP, CARD_HEADER_H, CARD_INNER_PAD_H, CARD_INNER_PAD_V,
-    CARD_OUTER_PAD_H, CARD_OUTER_PAD_V,
+    draw_section_card, slider_value_from_cursor, CARD_GAP, CARD_HEADER_H, CARD_INNER_PAD_H,
+    CARD_INNER_PAD_V, CARD_OUTER_PAD_H, CARD_OUTER_PAD_V, LABEL_SIZE, LABEL_W, ROW_H, SLIDER_H,
+    SLIDER_W, TOGGLE_H, VALUE_SIZE, VALUE_W,
 };
 
 const ZONE_NOTIF_DND: u32 = 699;
@@ -24,15 +25,6 @@ const POSITIONS: &[(u32, &str, &str)] = &[
     (ZONE_NOTIF_POS_BL, "bottom-left", "Bottom Left"),
     (ZONE_NOTIF_POS_BR, "bottom-right", "Bottom Right"),
 ];
-
-const ROW_H: f32 = 48.0;
-const LABEL_SIZE: f32 = 18.0;
-const VALUE_SIZE: f32 = 16.0;
-const SLIDER_H: f32 = 36.0;
-const SLIDER_W: f32 = 320.0;
-const TOGGLE_H: f32 = 36.0;
-const LABEL_W: f32 = 200.0;
-const VALUE_W: f32 = 60.0;
 
 pub struct NotifPanelState {
     pub scroll: f32,
@@ -153,7 +145,7 @@ pub fn draw_notifications_panel(
             let frac = ((config.notifications.default_duration_secs - 1.0) / 9.0).clamp(0.0, 1.0);
             let rect = Rect::new(ctrl_x, cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
             let zone = ix.add_zone(ZONE_NOTIF_DURATION, rect);
-            if let Some(f) = crate::panels::slider_value_from_cursor(ix, ZONE_NOTIF_DURATION, &rect) {
+            if let Some(f) = slider_value_from_cursor(ix, ZONE_NOTIF_DURATION, &rect) {
                 let raw = 1.0 + f * 9.0;
                 config.notifications.default_duration_secs = (raw * 10.0).round() / 10.0;
             }
@@ -230,7 +222,7 @@ pub fn draw_notifications_panel(
         let frac = config.notifications.volume.clamp(0.0, 1.0);
         let rect = Rect::new(ctrl_x, cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
         let zone = ix.add_zone(ZONE_NOTIF_VOLUME, rect);
-        if let Some(f) = crate::panels::slider_value_from_cursor(ix, ZONE_NOTIF_VOLUME, &rect) {
+        if let Some(f) = slider_value_from_cursor(ix, ZONE_NOTIF_VOLUME, &rect) {
             config.notifications.volume = (f * 100.0).round() / 100.0;
         }
         Slider::new(rect)

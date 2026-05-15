@@ -1,5 +1,6 @@
 //! Pinned favorites — persisted as a plain newline-delimited list of
-//! app_ids at `~/.lantern/config/command-center/pins.toml`.
+//! app_ids (or absolute paths) at
+//! `~/.lantern/config/command-center/pins.toml`.
 //!
 //! Format (human-editable):
 //!
@@ -7,6 +8,12 @@
 //!   firefox
 //!   code
 //!   lntrn-terminal
+//!   /home/alva/Documents
+//!   /home/alva/notes.md
+//!
+//! Entries that start with `/` are treated as filesystem paths and
+//! drawn alongside pinned apps on the main page. Everything else is
+//! treated as an app_id.
 //!
 //! We don't use the `toml` crate — a list of strings doesn't need a
 //! schema, and Lantern prefers minimal deps. The `.toml` extension is

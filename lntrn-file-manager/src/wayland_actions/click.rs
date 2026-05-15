@@ -8,10 +8,12 @@ use crate::wayland::State;
 use crate::{
     ClickAction, VIEW_SHOW_HIDDEN_ID, VIEW_SLIDER_ID, ZONE_BREADCRUMB_BASE, ZONE_CLOSE,
     ZONE_DRIVE_DIALOG_CANCEL, ZONE_DRIVE_DIALOG_CONFIRM, ZONE_DRIVE_DIALOG_OK,
-    ZONE_DRIVE_DIALOG_SCRIM, ZONE_DRIVE_ITEM_BASE, ZONE_FILE_ITEM_BASE, ZONE_MAXIMIZE,
-    ZONE_MENU_VIEW, ZONE_MINIMIZE, ZONE_NAV_BACK, ZONE_NAV_FORWARD, ZONE_NAV_SEARCH,
+    ZONE_DRIVE_DIALOG_SCRIM, ZONE_DRIVE_ITEM_BASE, ZONE_FAVORITE_ITEM_BASE, ZONE_FILE_ITEM_BASE,
+    ZONE_MAXIMIZE, ZONE_MENU_VIEW, ZONE_MINIMIZE, ZONE_NAV_BACK, ZONE_NAV_FORWARD, ZONE_NAV_SEARCH,
     ZONE_NAV_SORT, ZONE_NAV_UP, ZONE_NAV_VIEW_TOGGLE, ZONE_PATH_INPUT, ZONE_PHONE_ITEM_BASE,
-    ZONE_SIDEBAR_ITEM_BASE, ZONE_TAB_BASE, ZONE_TAB_CLOSE_BASE, ZONE_TAB_NEW, ZONE_TREE_ITEM_BASE,
+    ZONE_SIDEBAR_DEVICES_HEADER, ZONE_SIDEBAR_FAVORITES_HEADER, ZONE_SIDEBAR_FAVORITES_PLUS,
+    ZONE_SIDEBAR_ITEM_BASE, ZONE_SIDEBAR_PLACES_HEADER, ZONE_TAB_BASE, ZONE_TAB_CLOSE_BASE,
+    ZONE_TAB_NEW, ZONE_TREE_ITEM_BASE,
 };
 
 use super::sort_menu_items;
@@ -25,6 +27,7 @@ pub(crate) fn handle_click(
     popup_backend: &mut Option<WaylandPopupBackend<State>>,
     last_tab_click: &mut Option<(usize, Instant)>,
     tab_drag_press: &mut Option<(usize, f32)>,
+    fav_drag_press: &mut Option<(usize, f32)>,
     wf: f32,
     s: f32,
     _bg_opacity: f32,
@@ -34,6 +37,39 @@ pub(crate) fn handle_click(
 ) -> ClickAction {
     let _ = current_theme;
     if let Some(zone_id) = input.on_left_pressed() {
+        // ── Conflict dialog: captures all clicks while open ─────────
+        if app.conflict_dialog.is_some() {
+            use crate::conflict::ConflictAction;
+            match zone_id {
+                crate::ZONE_CONFLICT_APPLY_TO_ALL => {
+                    if let Some(d) = app.conflict_dialog.as_mut() {
+                        d.apply_to_all = !d.apply_to_all;
+                    }
+                }
+                crate::ZONE_CONFLICT_REPLACE => app.resolve_conflict(ConflictAction::Replace),
+                crate::ZONE_CONFLICT_KEEP_BOTH => app.resolve_conflict(ConflictAction::KeepBoth),
+                crate::ZONE_CONFLICT_SKIP => app.resolve_conflict(ConflictAction::Skip),
+                crate::ZONE_CONFLICT_CANCEL | crate::ZONE_CONFLICT_SCRIM => app.cancel_paste(),
+                _ => {}
+            }
+            return ClickAction::None;
+        }
+        // ── Sudo password modal: capture all clicks while open ──────
+        if app.sudo_prompt.is_some() {
+            match zone_id {
+                crate::ZONE_SUDO_PASSWORD => {
+                    if let Some(p) = app.sudo_prompt.as_mut() {
+                        p.cursor = p.password.chars().count();
+                    }
+                }
+                crate::ZONE_SUDO_SUBMIT => app.submit_sudo_prompt(),
+                crate::ZONE_SUDO_CANCEL | crate::ZONE_SUDO_SCRIM => {
+                    app.cancel_sudo_prompt();
+                }
+                _ => {}
+            }
+            return ClickAction::None;
+        }
         // ── Cloud login dialog: capture all clicks while open ───────
         if app.cloud_login.is_some() {
             match zone_id {
@@ -355,6 +391,32 @@ pub(crate) fn handle_click(
             id if id >= ZONE_PHONE_ITEM_BASE && id < ZONE_TAB_BASE => {
                 let idx = (id - ZONE_PHONE_ITEM_BASE) as usize;
                 app.on_phone_click(idx);
+            }
+            id if id >= ZONE_FAVORITE_ITEM_BASE && id < ZONE_FAVORITE_ITEM_BASE + 100 => {
+                let idx = (id - ZONE_FAVORITE_ITEM_BASE) as usize;
+                app.on_favorite_click(idx);
+                // Record press position so the loop can promote it to a
+                // reorder drag if the cursor moves > threshold vertically.
+                if let Some((_, cy)) = input.cursor() {
+                    *fav_drag_press = Some((idx, cy));
+                }
+            }
+            ZONE_SIDEBAR_PLACES_HEADER => {
+                app.places_collapsed = !app.places_collapsed;
+            }
+            ZONE_SIDEBAR_FAVORITES_HEADER => {
+                app.favorites_collapsed = !app.favorites_collapsed;
+            }
+            ZONE_SIDEBAR_DEVICES_HEADER => {
+                app.devices_collapsed = !app.devices_collapsed;
+            }
+            ZONE_SIDEBAR_FAVORITES_PLUS => {
+                // Pin the current directory.
+                let cur = app.current_dir.clone();
+                app.add_favorite(cur);
+            }
+            crate::ZONE_PROGRESS_CANCEL => {
+                app.cancel_op();
             }
             crate::ZONE_PICK_CONFIRM => {
                 app.confirm_pick();

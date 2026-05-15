@@ -351,9 +351,6 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                     WindowActionKind::Close => {
                         wl.toplevels.close(&act.app_id, &act.title);
                     }
-                    WindowActionKind::Minimize => {
-                        wl.toplevels.set_minimized(&act.app_id, &act.title, true);
-                    }
                 }
             }
         }

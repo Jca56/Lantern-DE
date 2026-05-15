@@ -9,7 +9,10 @@ use std::process::ExitCode;
 use lntrn_dbus::Connection;
 
 mod log;
+mod service;
 mod storage;
+
+use service::state::ServiceState;
 
 const BUS_NAME: &str = "org.freedesktop.secrets";
 
@@ -31,14 +34,14 @@ fn main() -> ExitCode {
     }
     log::info(&format!("Claimed {BUS_NAME}"));
 
-    // Phase 1: idle loop. Real dispatch lands in phase 3.
+    let mut state = ServiceState::new();
+    service::init(&mut state);
+    log::info(&format!("discovered {} collection(s) on disk", state.collections.len()));
+
     loop {
-        if let Some(msg) = conn.try_read() {
-            log::info(&format!(
-                "msg type={} member={} iface={} path={}",
-                msg.msg_type, msg.member, msg.interface, msg.path,
-            ));
+        while let Some(msg) = conn.try_read() {
+            service::handle(&mut conn, &msg, &mut state);
         }
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }

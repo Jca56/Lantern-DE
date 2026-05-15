@@ -7,8 +7,9 @@
 pub mod context_menu;
 pub mod hidden;
 pub mod icons;
-pub mod open;
 pub mod pins;
+
+use std::path::PathBuf;
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
@@ -21,6 +22,27 @@ use self::pins::Pins;
 pub struct Launcher {
     pins: Pins,
     hidden: Hidden,
+}
+
+/// One slot in the mixed pinned grid. `App` carries a `DesktopEntry`
+/// borrow (same as the legacy code path); `Path` carries a filesystem
+/// path the user pinned from the Files view.
+pub enum PinnedItem<'a> {
+    App(&'a DesktopEntry),
+    Path { path: PathBuf, is_dir: bool },
+}
+
+impl PinnedItem<'_> {
+    /// Human-visible label rendered under the tile.
+    pub fn label(&self) -> String {
+        match self {
+            PinnedItem::App(e) => e.name.clone(),
+            PinnedItem::Path { path, .. } => path
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.to_string_lossy().into_owned()),
+        }
+    }
 }
 
 impl Launcher {
@@ -50,16 +72,39 @@ impl Launcher {
     /// Look up the pinned app's `DesktopEntry` from the apps provider.
     /// Returns `None` for pinned ids that are no longer installed
     /// (e.g., the user uninstalled the app); those slots are skipped
-    /// in the rendered row.
+    /// in the rendered row. Path entries are skipped entirely.
     pub fn pinned_entries<'a>(&'a self, apps: &'a AppsProvider) -> Vec<&'a DesktopEntry> {
         self.pins
             .items()
             .iter()
+            .filter(|id| !is_path(id))
             .filter_map(|id| {
                 // Linear scan; pin counts are tiny (typically <16) so it's fine.
                 (0..apps.count())
                     .filter_map(|i| apps.get(i))
                     .find(|e| &e.app_id == id)
+            })
+            .collect()
+    }
+
+    /// Resolve the full pin list to a mixed `PinnedItem` list. App
+    /// pins whose desktop entry can't be found are skipped; path pins
+    /// are always kept.
+    pub fn pinned_items<'a>(&'a self, apps: &'a AppsProvider) -> Vec<PinnedItem<'a>> {
+        self.pins
+            .items()
+            .iter()
+            .filter_map(|id| {
+                if is_path(id) {
+                    let path = PathBuf::from(id);
+                    let is_dir = path.is_dir();
+                    Some(PinnedItem::Path { path, is_dir })
+                } else {
+                    (0..apps.count())
+                        .filter_map(|i| apps.get(i))
+                        .find(|e| &e.app_id == id)
+                        .map(PinnedItem::App)
+                }
             })
             .collect()
     }
@@ -100,21 +145,50 @@ impl Launcher {
     }
 
     /// Map each *visible* pin index to the index of the same entry in
-    /// `pins.items()`. Items whose app_id has no installed DesktopEntry
-    /// are skipped in the visible list, so the two index spaces drift
-    /// whenever any pin is uninstalled.
+    /// `pins.items()`. App-ids whose DesktopEntry isn't installed are
+    /// skipped; path entries are always visible.
     fn visible_to_items_mapping(&self, apps: &AppsProvider) -> Vec<usize> {
         self.pins
             .items()
             .iter()
             .enumerate()
             .filter_map(|(items_idx, id)| {
-                (0..apps.count())
-                    .filter_map(|i| apps.get(i))
-                    .any(|e| &e.app_id == id)
-                    .then_some(items_idx)
+                let visible = if is_path(id) {
+                    true
+                } else {
+                    (0..apps.count())
+                        .filter_map(|i| apps.get(i))
+                        .any(|e| &e.app_id == id)
+                };
+                visible.then_some(items_idx)
             })
             .collect()
+    }
+}
+
+/// Treat any entry whose first character is `/` as a filesystem path.
+pub fn is_path(item: &str) -> bool {
+    item.starts_with('/')
+}
+
+/// Pick a (cache-key, freedesktop-icon-name) pair for a pinned path
+/// tile. Folders resolve to the Lantern `folder` icon (a gold variant
+/// of Adwaita's folder shape shipped at `~/.lantern/icons/folder.svg`).
+/// Files map by extension to image/video/text-generic mime icons.
+pub fn path_icon(path: &std::path::Path, is_dir: bool) -> (String, String) {
+    if is_dir {
+        return ("__pin_folder".into(), "folder".into());
+    }
+    let ext = path
+        .extension()
+        .map(|s| s.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tif" | "tiff" | "svg"
+        | "ico" | "heic" | "heif" | "avif" => ("__pin_image".into(), "image-x-generic".into()),
+        "mp4" | "mkv" | "mov" | "avi" | "webm" | "wmv" | "flv" | "mpg" | "mpeg"
+        | "m4v" | "3gp" | "ogv" => ("__pin_video".into(), "video-x-generic".into()),
+        _ => ("__pin_file".into(), "text-x-generic".into()),
     }
 }
 
@@ -187,11 +261,11 @@ pub fn draw_pin_drag_overlay(
     if !drag.started {
         return;
     }
-    let pinned = launcher.pinned_entries(apps);
+    let pinned = launcher.pinned_items(apps);
     if pinned.is_empty() || drag.from_idx >= pinned.len() {
         return;
     }
-    let entry = pinned[drag.from_idx];
+    let entry = &pinned[drag.from_idx];
 
     // Drop indicator: a vertical accent-gold pill between two tiles
     // (or at the row's edge for first/last positions).
@@ -226,9 +300,16 @@ pub fn draw_pin_drag_overlay(
     let ghost_size = tile_size * 0.85;
     let gx = drag.current_x - ghost_size / 2.0;
     let gy = drag.current_y - ghost_size / 2.0;
+    let (cache_key, icon_name) = match entry {
+        PinnedItem::App(e) => (e.app_id.clone(), e.icon_name.clone()),
+        PinnedItem::Path { path, is_dir } => {
+            let (k, n) = path_icon(path, *is_dir);
+            (k, Some(n))
+        }
+    };
     icons.push(crate::render::IconRequest {
-        app_id: entry.app_id.clone(),
-        icon_name: entry.icon_name.clone(),
+        app_id: cache_key,
+        icon_name,
         x: gx,
         y: gy,
         size: ghost_size,
@@ -356,7 +437,7 @@ pub fn draw(
     let label_gap = PIN_LABEL_GAP * scale;
     let section_label_font = SECTION_LABEL_FONT * scale;
 
-    let entries = launcher.pinned_entries(apps);
+    let entries = launcher.pinned_items(apps);
     if entries.is_empty() {
         return top_y;
     }
@@ -408,9 +489,16 @@ pub fn draw(
         // Defer the icon to the texture pass. Larger icon (smaller
         // inset) since there's no plate framing it anymore.
         let inset = tile_size * 0.13;
+        let (cache_key, icon_name) = match entry {
+            PinnedItem::App(e) => (e.app_id.clone(), e.icon_name.clone()),
+            PinnedItem::Path { path, is_dir } => {
+                let (k, n) = path_icon(path, *is_dir);
+                (k, Some(n))
+            }
+        };
         icons.push(IconRequest {
-            app_id: entry.app_id.clone(),
-            icon_name: entry.icon_name.clone(),
+            app_id: cache_key,
+            icon_name,
             x: x + inset,
             y: y + inset,
             size: tile_size - inset * 2.0,
@@ -418,8 +506,8 @@ pub fn draw(
             clip: None,
         });
 
-        // Label below tile — truncated app name.
-        let label_text = truncate(&entry.name, 12);
+        // Label below tile — truncated name.
+        let label_text = truncate(&entry.label(), 12);
         let label_w = text.measure_width(&label_text, label_font);
         text.queue(
             &label_text,

@@ -168,7 +168,7 @@ fn first_filter_ext(pick: &PickConfig) -> Option<String> {
 
 // ── Entry point ─────────────────────────────────────────────────────────────
 
-pub fn run(pick: Option<PickConfig>, desktop: bool) -> Result<()> {
+pub fn run(pick: Option<PickConfig>, desktop: bool, start_dir: Option<std::path::PathBuf>) -> Result<()> {
     if desktop {
         crate::layout::DESKTOP_MODE.store(true, std::sync::atomic::Ordering::Relaxed);
     }
@@ -305,6 +305,10 @@ pub fn run(pick: Option<PickConfig>, desktop: bool) -> Result<()> {
     app.sort_dir = settings.sort_dir_enum();
     app.preview_open = settings.preview_open;
     app.preview_width = settings.preview_width;
+    app.places_collapsed = settings.places_collapsed;
+    app.favorites_collapsed = settings.favorites_collapsed;
+    app.devices_collapsed = settings.devices_collapsed;
+    app.load_favorites_from(&settings.favorites);
     // Pick mode forces Tree below; outside pick mode, restore last view.
     if pick.is_none() {
         app.view_mode = settings.view_mode_enum();
@@ -339,7 +343,11 @@ pub fn run(pick: Option<PickConfig>, desktop: bool) -> Result<()> {
             app.save_name_editing = true;
         }
     } else {
-        app.navigate_to_home();
+        if let Some(ref dir) = start_dir {
+            app.navigate_to(dir.clone());
+        } else {
+            app.navigate_to_home();
+        }
         // Restore pinned tabs from settings (preserving saved order)
         let mut pinned: Vec<crate::app::DirectoryTab> = Vec::new();
         for pinned_path in &settings.pinned_tabs {

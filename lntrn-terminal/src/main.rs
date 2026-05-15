@@ -1,6 +1,7 @@
 mod app;
 mod clipboard;
 mod config;
+mod dnd;
 mod events;
 mod git;
 mod git_app;
@@ -17,12 +18,15 @@ mod terminal;
 mod theme;
 mod ui_chrome;
 
+use std::path::PathBuf;
+
 use winit::event_loop::EventLoop;
 
 #[derive(Debug)]
 pub enum UserEvent {
     PtyOutput,
     GitUpdate,
+    FilesDropped(Vec<PathBuf>),
 }
 
 fn main() {

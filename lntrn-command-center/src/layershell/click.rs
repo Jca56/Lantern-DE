@@ -659,7 +659,7 @@ pub(super) fn handle_clicks(
                         + crate::search::input::SEARCH_ROW_HEIGHT)
                         * scale_f;
                 let row_top = crate::launcher::pins_row_top_y(pin_top_y, scale_f);
-                let num_pins = app.launcher.pinned_entries(&app.apps).len();
+                let num_pins = app.launcher.pinned_items(&app.apps).len();
                 let to = crate::launcher::pin_drop_slot(
                     panel_rect, scale_f, row_top, num_pins,
                     drag.current_x, drag.current_y,

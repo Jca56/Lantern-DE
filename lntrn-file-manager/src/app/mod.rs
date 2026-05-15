@@ -86,6 +86,8 @@ pub enum ContextTarget {
     Empty,
     /// Right-clicked on a sidebar drive entry (index into app.drives)
     Drive(usize),
+    /// Right-clicked on a sidebar favorite entry (index into app.favorites)
+    Favorite(usize),
 }
 
 /// Clipboard operation pending a paste.
@@ -180,8 +182,16 @@ pub struct App {
     pub suppress_rubber_band: bool,
 
     pub(super) places: Vec<Place>,
+    /// User-pinned folder shortcuts. Same shape as `places` — name + path.
+    pub(super) favorites: Vec<Place>,
     pub drives: Vec<fs::Drive>,
     pub phones: Vec<fs::Phone>,
+
+    // Sidebar collapse state. Persisted via Settings on every toggle so the
+    // user's section layout survives across launches.
+    pub places_collapsed: bool,
+    pub favorites_collapsed: bool,
+    pub devices_collapsed: bool,
 
     // Rubber band selection
     pub rubber_band_start: Option<(f32, f32)>,
@@ -255,6 +265,22 @@ pub struct App {
     // Drop confirmation modal
     pub pending_drop: Option<PendingDrop>,
 
+    // Sudo password prompt (None = no modal open).
+    pub sudo_prompt: Option<crate::dialogs::SudoPrompt>,
+
+    // Conflict dialog (Replace/Keep Both/Skip) + in-progress paste state.
+    pub conflict_dialog: Option<crate::conflict::ConflictDialog>,
+    pub pending_paste: Option<crate::conflict::PendingPaste>,
+
+    // Background copy worker (None = nothing running).
+    pub op_progress: Option<crate::ops::OpHandle>,
+
+    /// Deferred icon-cache invalidations + xattr writes triggered from the
+    /// Properties icon picker. We can't mutate icon_cache during the render
+    /// frame (it's immutably borrowed by tex_draws), so render_frame stashes
+    /// pending changes here and the wayland_loop applies them between frames.
+    pub pending_icon_apply: Vec<(std::path::PathBuf, Option<String>)>,
+
     // Root mode — file operations use pkexec for elevated privileges
     pub root_mode: bool,
 
@@ -315,6 +341,10 @@ impl App {
             sort_by: SortBy::Name,
             sort_dir: SortDir::Asc,
             places,
+            favorites: Vec::new(),
+            places_collapsed: false,
+            favorites_collapsed: false,
+            devices_collapsed: false,
             drives: fs::detect_drives(),
             phones: fs::detect_phones(),
             rubber_band_start: None,
@@ -355,6 +385,11 @@ impl App {
             save_name_selection: None,
             properties: None,
             pending_drop: None,
+            sudo_prompt: None,
+            conflict_dialog: None,
+            pending_paste: None,
+            op_progress: None,
+            pending_icon_apply: Vec::new(),
             wayland_clipboard: crate::clipboard::Clipboard::new(),
             undo_stack: crate::undo::UndoStack::new(),
             breadcrumb_skip: 0,

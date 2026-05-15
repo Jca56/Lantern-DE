@@ -99,6 +99,14 @@ impl App {
     }
 
     pub fn reload(&mut self) {
+        // Preserve an active rename across reload — the auto-refresh poll
+        // would otherwise drop the user mid-type ~3 seconds after creating
+        // a new folder. Capture the path now, re-resolve to its new index
+        // after the listing is rebuilt.
+        let renaming_path = self.renaming
+            .and_then(|idx| self.entries.get(idx))
+            .map(|e| e.path.clone());
+
         self.entries = fs::list_directory(&self.current_dir, self.show_hidden, self.sort_by, self.sort_dir);
         // Apply pick filter (dirs always shown, files filtered)
         if let Some(ref pick) = self.pick {
@@ -109,7 +117,8 @@ impl App {
             }
         }
         self.tabs[self.current_tab].entries = self.entries.clone();
-        self.renaming = None;
+        self.renaming = renaming_path
+            .and_then(|p| self.entries.iter().position(|e| e.path == p));
         if self.view_mode == ViewMode::Tree {
             self.rebuild_tree();
         }

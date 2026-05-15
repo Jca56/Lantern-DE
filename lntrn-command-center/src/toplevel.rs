@@ -16,6 +16,7 @@ pub struct ToplevelInfo {
     pub app_id: String,
     pub title: String,
     pub activated: bool,
+    #[allow(dead_code)]
     pub minimized: bool,
     #[allow(dead_code)]
     pub maximized: bool,
@@ -83,6 +84,7 @@ impl ToplevelTracker {
         }
     }
 
+    #[allow(dead_code)]
     pub fn set_minimized(&self, app_id: &str, title: &str, minimized: bool) -> bool {
         if let Some(e) = self.find(app_id, title) {
             if minimized {

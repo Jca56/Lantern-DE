@@ -21,7 +21,6 @@ const MAX_THUMBS: u32 = 200;
 
 // ── Layout constants ────────────────────────────────────────────────────────
 
-const ROW_H: f32 = 48.0;
 const LABEL_SIZE: f32 = 18.0;
 const CURRENT_LABEL_SIZE: f32 = 24.0;
 const CURRENT_VALUE_SIZE: f32 = 22.0;

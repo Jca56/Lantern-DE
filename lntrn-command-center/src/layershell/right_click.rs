@@ -125,10 +125,19 @@ pub(super) fn handle_right_click(
         ) {
             if let Some(entry) = app.files.entry_for_visible(idx) {
             let path_str = entry.path.to_string_lossy().into_owned();
+            let pinned = app.launcher.pins().is_pinned(&path_str);
             let items = vec![
                 crate::launcher::context_menu::MenuItem {
                 label: "Open".into(),
                 action: crate::launcher::context_menu::MenuAction::FilesOpen,
+                },
+                crate::launcher::context_menu::MenuItem {
+                label: if pinned {
+                    "Unpin from main page".into()
+                } else {
+                    "Pin to main page".into()
+                },
+                action: crate::launcher::context_menu::MenuAction::FilesTogglePin,
                 },
                 crate::launcher::context_menu::MenuItem {
                 label: "Open in Terminal".into(),

@@ -1,5 +1,7 @@
 //! Sidebar places, drives, phones — refresh + click handlers.
 
+use std::path::{Path, PathBuf};
+
 use crate::fs;
 
 use super::{App, Place};
@@ -7,6 +9,75 @@ use super::{App, Place};
 impl App {
     pub fn sidebar_places(&self) -> &[Place] {
         &self.places
+    }
+
+    pub fn sidebar_favorites(&self) -> &[Place] {
+        &self.favorites
+    }
+
+    /// Load favorites from persisted string paths. Drops any that no longer
+    /// exist so the sidebar doesn't accumulate dead links.
+    pub fn load_favorites_from(&mut self, paths: &[String]) {
+        self.favorites = paths.iter()
+            .map(PathBuf::from)
+            .filter(|p| p.exists())
+            .map(|p| {
+                let name = p.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| p.to_string_lossy().to_string());
+                Place { name, path: p }
+            })
+            .collect();
+    }
+
+    pub fn favorites_paths(&self) -> Vec<String> {
+        self.favorites.iter()
+            .map(|p| p.path.to_string_lossy().to_string())
+            .collect()
+    }
+
+    pub fn is_favorite(&self, path: &Path) -> bool {
+        self.favorites.iter().any(|p| p.path == path)
+    }
+
+    /// Pin a path. No-op if it's already a favorite or not a directory.
+    pub fn add_favorite(&mut self, path: PathBuf) -> bool {
+        if !path.is_dir() || self.is_favorite(&path) { return false; }
+        let name = path.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.to_string_lossy().to_string());
+        self.favorites.push(Place { name, path });
+        true
+    }
+
+    pub fn remove_favorite(&mut self, index: usize) {
+        if index < self.favorites.len() {
+            self.favorites.remove(index);
+        }
+    }
+
+    /// Move the favorite at `src` to position `dst`. Removes from src first,
+    /// then inserts at dst clamped to the (now-shorter) vector.
+    pub fn reorder_favorite(&mut self, src: usize, dst: usize) {
+        if src >= self.favorites.len() || src == dst { return; }
+        let item = self.favorites.remove(src);
+        let dst = dst.min(self.favorites.len());
+        self.favorites.insert(dst, item);
+    }
+
+    pub fn remove_favorite_by_path(&mut self, path: &Path) {
+        self.favorites.retain(|p| p.path != path);
+    }
+
+    pub fn on_favorite_click(&mut self, index: usize) {
+        if let Some(fav) = self.favorites.get(index) {
+            let path = fav.path.clone();
+            self.navigate_to(path);
+        }
+    }
+
+    pub fn is_active_favorite(&self, index: usize) -> bool {
+        self.favorites.get(index).map_or(false, |p| p.path == self.current_dir)
     }
 
     pub fn refresh_drives(&mut self) {

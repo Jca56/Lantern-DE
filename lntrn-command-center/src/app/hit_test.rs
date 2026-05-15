@@ -23,55 +23,9 @@ impl AppState {
     ) -> Option<HitTarget> {
         if self.search.input.is_empty() && !self.search.all_apps_mode {
             self.hit_test_pins(panel_rect, scale, phys_x, phys_y)
-                .or_else(|| self.hit_test_open(panel_rect, scale, phys_x, phys_y))
         } else {
             self.hit_test_results(panel_rect, scale, phys_x, phys_y)
         }
-    }
-
-    fn hit_test_open(
-        &self,
-        panel_rect: PanelRect,
-        scale: f32,
-        phys_x: f32,
-        phys_y: f32,
-    ) -> Option<HitTarget> {
-        use crate::launcher::open;
-        use crate::search::input::{SEARCH_HORIZONTAL_PAD, SEARCH_ROW_HEIGHT};
-        use lntrn_render::Rect;
-
-        let panel = Rect::new(panel_rect.x, panel_rect.y, panel_rect.w, panel_rect.h);
-        let pad = SEARCH_HORIZONTAL_PAD * scale;
-        let pin_top_y = crate::controls::content_top_y(panel, scale)
-            + (SEARCH_HORIZONTAL_PAD * 0.5 + SEARCH_ROW_HEIGHT) * scale;
-        let pinned_count = self.launcher.pinned_entries(&self.apps).len();
-        let pins_bottom =
-            crate::launcher::pins_section_bottom(panel, pin_top_y, scale, pinned_count);
-
-        let visible = open::visible_entries(&self.toplevels);
-        if visible.is_empty() {
-            let _ = pad; // silence unused if list empty
-            return None;
-        }
-
-        let row_top = pins_bottom
-            + open::OPEN_SECTION_TOP_MARGIN * scale
-            + crate::launcher::open::heading_advance(scale);
-
-        for i in 0..visible.len() {
-            // X close button takes precedence over the tile body.
-            let close = open::close_button_rect(panel, row_top, scale, i);
-            if phys_x >= close.x && phys_x <= close.x + close.w
-                && phys_y >= close.y && phys_y <= close.y + close.h
-            {
-                return Some(HitTarget::OpenWindowClose(i));
-            }
-            let r = open::tile_rect(panel, row_top, scale, i);
-            if phys_x >= r.x && phys_x <= r.x + r.w && phys_y >= r.y && phys_y <= r.y + r.h {
-                return Some(HitTarget::OpenWindow(i));
-            }
-        }
-        None
     }
 
     fn hit_test_pins(
@@ -106,7 +60,7 @@ impl AppState {
             + section_label_font
             + label_gap;
 
-        let pinned = self.launcher.pinned_entries(&self.apps);
+        let pinned = self.launcher.pinned_items(&self.apps);
         if pinned.is_empty() {
             return None;
         }
@@ -279,42 +233,35 @@ impl AppState {
     /// for the entry at `target`. No-op if the target doesn't resolve
     /// to an app_id.
     pub fn open_context_menu_at(&mut self, target: HitTarget, phys_x: f32, phys_y: f32) {
-        let app_id = match target {
-            HitTarget::Pin(i) => self
-                .launcher
-                .pinned_entries(&self.apps)
-                .get(i)
-                .map(|e| e.app_id.clone()),
-            HitTarget::Result(i) => self
-                .search
-                .results()
-                .get(i)
-                .and_then(|r| self.apps.get(r.entry_idx))
-                .map(|e| e.app_id.clone()),
-            HitTarget::OpenWindow(i) | HitTarget::OpenWindowClose(i) => {
-                let visible = crate::launcher::open::visible_entries(&self.toplevels);
-                if let Some(group) = visible.get(i) {
-                    let target_window = group.close_target().unwrap_or(group.windows[0]);
-                    let title = target_window.title.clone();
-                    let app_id = target_window.app_id.clone();
-                    let items = vec![
-                        MenuItem { label: "Close".into(), action: MenuAction::WindowClose },
-                        MenuItem { label: "Minimize".into(), action: MenuAction::WindowMinimize },
-                    ];
-                    self.context_menu = Some(ContextMenu {
-                        app_id,
-                        window_title: title,
-                        anchor_x: phys_x,
-                        anchor_y: phys_y,
-                        items,
-                        anchor_above: false,
-                    });
+        let (app_id, is_path) = match target {
+            HitTarget::Pin(i) => {
+                match self.launcher.pinned_items(&self.apps).into_iter().nth(i) {
+                    Some(crate::launcher::PinnedItem::App(e)) => (Some(e.app_id.clone()), false),
+                    Some(crate::launcher::PinnedItem::Path { path, .. }) => {
+                        (Some(path.to_string_lossy().into_owned()), true)
+                    }
+                    None => (None, false),
                 }
-                return;
             }
+            HitTarget::Result(i) => (
+                self.search
+                    .results()
+                    .get(i)
+                    .and_then(|r| self.apps.get(r.entry_idx))
+                    .map(|e| e.app_id.clone()),
+                false,
+            ),
         };
         let Some(app_id) = app_id else { return };
-        let items = self.menu_items_for(&app_id);
+        let items = if is_path {
+            vec![
+                MenuItem { label: "Open".into(), action: MenuAction::FilesOpen },
+                MenuItem { label: "Unpin from main page".into(), action: MenuAction::FilesTogglePin },
+                MenuItem { label: "Copy path".into(), action: MenuAction::FilesCopyPath },
+            ]
+        } else {
+            self.menu_items_for(&app_id)
+        };
         self.context_menu = Some(ContextMenu {
             app_id,
             window_title: String::new(),
@@ -351,14 +298,6 @@ impl AppState {
                     title: menu.window_title.clone(),
                     kind: WindowActionKind::Close,
                 });
-            }
-            MenuAction::WindowMinimize => {
-                self.window_actions.push(WindowAction {
-                    app_id: menu.app_id.clone(),
-                    title: menu.window_title.clone(),
-                    kind: WindowActionKind::Minimize,
-                });
-                self.close();
             }
             MenuAction::Launch => {
                 if let Some(entry) = (0..self.apps.count())
@@ -420,6 +359,9 @@ impl AppState {
                     clip.set_text(&menu.app_id);
                 }
             }
+            MenuAction::FilesTogglePin => {
+                self.launcher.toggle_pin(&menu.app_id);
+            }
             MenuAction::FilesSortByName => self.files.set_sort(crate::files::SortBy::Name),
             MenuAction::FilesSortBySize => self.files.set_sort(crate::files::SortBy::Size),
             MenuAction::FilesSortByDate => self.files.set_sort(crate::files::SortBy::Modified),
@@ -460,7 +402,6 @@ impl AppState {
                 .get(i)
                 .and_then(|r| self.apps.get(r.entry_idx))
                 .map(|e| e.app_id.clone()),
-            HitTarget::OpenWindow(_) | HitTarget::OpenWindowClose(_) => None,
         };
         if let Some(id) = app_id {
             self.launcher.toggle_pin(&id);
@@ -472,41 +413,40 @@ impl AppState {
     pub fn activate_at(&mut self, target: HitTarget) -> bool {
         match target {
             HitTarget::Pin(i) => {
-                self.selection = Selection::Pin(i);
-                self.launch_selected()
+                // Resolve the pin to a path (if any) without holding a
+                // borrow on self.launcher across the launch dispatch.
+                let pin_path = {
+                    let pinned = self.launcher.pinned_items(&self.apps);
+                    match pinned.get(i) {
+                        None => return false,
+                        Some(crate::launcher::PinnedItem::App(_)) => None,
+                        Some(crate::launcher::PinnedItem::Path { path, is_dir }) => {
+                            Some((path.to_string_lossy().into_owned(), *is_dir))
+                        }
+                    }
+                };
+                if let Some((p, is_dir)) = pin_path {
+                    let escaped = p.replace('\'', "'\\''");
+                    // Folders go straight to lntrn-file-manager — xdg-open
+                    // for `inode/directory` is unreliable (often grabs
+                    // Firefox or another generic handler). Files defer to
+                    // the user's xdg-mime mapping as usual.
+                    let cmd = if is_dir {
+                        format!("lntrn-file-manager '{}'", escaped)
+                    } else {
+                        format!("xdg-open '{}'", escaped)
+                    };
+                    spawn_detached(&cmd);
+                    self.close();
+                    true
+                } else {
+                    self.selection = Selection::Pin(i);
+                    self.launch_selected()
+                }
             }
             HitTarget::Result(i) => {
                 self.selection = Selection::Result(i);
                 self.launch_selected()
-            }
-            HitTarget::OpenWindow(i) => {
-                let visible = crate::launcher::open::visible_entries(&self.toplevels);
-                if let Some(group) = visible.get(i) {
-                    if let Some(target) = group.next_to_activate() {
-                        self.window_actions.push(WindowAction {
-                            app_id: target.app_id.clone(),
-                            title: target.title.clone(),
-                            kind: WindowActionKind::Activate,
-                        });
-                        self.close();
-                        return true;
-                    }
-                }
-                false
-            }
-            HitTarget::OpenWindowClose(i) => {
-                let visible = crate::launcher::open::visible_entries(&self.toplevels);
-                if let Some(group) = visible.get(i) {
-                    if let Some(target) = group.close_target() {
-                        self.window_actions.push(WindowAction {
-                            app_id: target.app_id.clone(),
-                            title: target.title.clone(),
-                            kind: WindowActionKind::Close,
-                        });
-                        return true;
-                    }
-                }
-                false
             }
         }
     }

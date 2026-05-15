@@ -136,6 +136,11 @@ impl Controls {
                 // not the controls row. Only the collapse chevron stays.
                 return out;
             }
+            crate::app::PanelView::Chat => {
+                // Chat view: only the collapse chevron stays. The body
+                // owns thread sidebar + message list + input strip.
+                return out;
+            }
             crate::app::PanelView::Default => {
                 out.push((
                     TileId::Clock,

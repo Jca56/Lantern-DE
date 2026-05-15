@@ -1,6 +1,7 @@
 mod app;
 mod clipboard;
 mod cloud;
+mod conflict;
 mod desktop;
 mod dialogs;
 pub mod undo;
@@ -9,6 +10,7 @@ mod file_ops;
 mod fs;
 mod icons;
 mod layout;
+mod ops;
 mod pick_bar;
 mod popup_backend;
 mod preview;
@@ -16,6 +18,7 @@ mod properties;
 mod render;
 mod sections;
 mod settings;
+mod sudo;
 mod views;
 mod wayland;
 mod wayland_actions;
@@ -48,6 +51,12 @@ pub const ZONE_SIDEBAR_ITEM_BASE: u32 = 100;
 pub const ZONE_DRIVE_ITEM_BASE: u32 = 200;
 pub const ZONE_PHONE_ITEM_BASE: u32 = 400;
 pub const ZONE_TAB_BASE: u32 = 500;
+pub const ZONE_FAVORITE_ITEM_BASE: u32 = 600;
+// Sidebar section headers (clickable to collapse) + Favorites' + button.
+pub const ZONE_SIDEBAR_PLACES_HEADER: u32 = 29;
+pub const ZONE_SIDEBAR_FAVORITES_HEADER: u32 = 32;
+pub const ZONE_SIDEBAR_DEVICES_HEADER: u32 = 33;
+pub const ZONE_SIDEBAR_FAVORITES_PLUS: u32 = 34;
 pub const ZONE_TAB_CLOSE_BASE: u32 = 550;
 pub const ZONE_TAB_NEW: u32 = 599;
 pub const ZONE_RENAME_INPUT: u32 = 30;
@@ -98,6 +107,9 @@ pub const CTX_CHANGE_ICON: u32 = 78;
 // Context menu — toggles
 pub const CTX_OPEN_LOCATION: u32 = 91;
 pub const CTX_RESTORE: u32 = 92;
+pub const CTX_ADD_FAVORITE: u32 = 93;
+pub const CTX_REMOVE_FAVORITE: u32 = 94;
+pub const CTX_EMPTY_TRASH: u32 = 95;
 pub const ZONE_BREADCRUMB_BASE: u32 = 300;
 pub const CTX_SHOW_HIDDEN: u32 = 90;
 // Pick mode action bar
@@ -129,6 +141,31 @@ pub const ZONE_CLOUD_LOGIN_SUBMIT: u32 = 58;
 pub const ZONE_DROP_MOVE: u32 = 44;
 pub const ZONE_DROP_COPY: u32 = 45;
 pub const ZONE_DROP_CANCEL: u32 = 46;
+
+// Sudo password modal — captures all clicks while open.
+pub const ZONE_SUDO_SCRIM: u32 = 65;
+pub const ZONE_SUDO_PASSWORD: u32 = 66;
+pub const ZONE_SUDO_CANCEL: u32 = 67;
+pub const ZONE_SUDO_SUBMIT: u32 = 68;
+
+// Conflict dialog (Replace / Keep Both / Skip when paste hits a name collision).
+pub const ZONE_CONFLICT_SCRIM: u32 = 69;
+pub const ZONE_CONFLICT_REPLACE: u32 = 70;
+pub const ZONE_CONFLICT_KEEP_BOTH: u32 = 71;
+pub const ZONE_CONFLICT_SKIP: u32 = 72;
+pub const ZONE_CONFLICT_APPLY_TO_ALL: u32 = 73;
+pub const ZONE_CONFLICT_CANCEL: u32 = 74;
+
+// Progress strip in the status bar (click to expand popover, click X to cancel).
+pub const ZONE_PROGRESS_STRIP: u32 = 75;
+pub const ZONE_PROGRESS_CANCEL: u32 = 76;
+
+// Properties icon picker (clickable icon at top of Properties dialog).
+pub const ZONE_PROPS_ICON: u32 = 77;
+pub const ZONE_PROPS_PICKER_TAB_BASE: u32 = 78;  // 78..82
+pub const ZONE_PROPS_PICKER_RESET: u32 = 83;
+pub const ZONE_PROPS_PICKER_BACK: u32 = 84;
+pub const ZONE_PROPS_ICON_BASE: u32 = 2000;  // 2000+, one per shown icon
 
 // ── Shared types ────────────────────────────────────────────────────────────
 
@@ -256,6 +293,18 @@ fn main() {
 
     let desktop = std::env::args().any(|a| a == "--desktop");
     let pick = parse_args();
+    // First positional argument that isn't a recognised flag and
+    // points at an existing directory becomes the initial cwd outside
+    // pick mode. Lets `lntrn-file-manager ~/Documents` open Fox there.
+    let start_dir = if pick.is_none() {
+        std::env::args().skip(1).find_map(|a| {
+            if a.starts_with('-') { return None; }
+            let p = PathBuf::from(&a);
+            if p.is_dir() { Some(p) } else { None }
+        })
+    } else {
+        None
+    };
 
     // Daemonize in desktop mode so it survives terminal close
     if desktop {
@@ -267,7 +316,7 @@ fn main() {
         }
     }
 
-    if let Err(e) = wayland::run(pick, desktop) {
+    if let Err(e) = wayland::run(pick, desktop, start_dir) {
         eprintln!("[fox] fatal: {e}");
         std::process::exit(1);
     }

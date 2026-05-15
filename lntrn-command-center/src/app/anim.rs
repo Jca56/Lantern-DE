@@ -220,16 +220,6 @@ impl AppState {
         }
     }
 
-    /// True while the collapse animation is still progressing — used by
-    /// the render loop to keep requesting frame callbacks.
-    pub fn collapse_animating(&self) -> bool {
-        let dur = self.config.view_anim_duration.max(0.05);
-        match self.collapse_anim_start {
-            Some(start) => start.elapsed().as_secs_f32() < dur,
-            None => false,
-        }
-    }
-
     /// Desired panel height (logical px) for the current content. Grows
     /// past `PANEL_H_LOGICAL_PHASE1` when the launcher's pinned/open
     /// sections need more rows than the default fits. Falls back to the
@@ -274,14 +264,11 @@ impl AppState {
         // Pinned section height at scale=1: reuse the same math the
         // renderer uses by computing bottom - top with top=0.
         let logical_panel = lntrn_render::Rect::new(0.0, 0.0, PANEL_W_LOGICAL, 0.0);
-        let pinned_count = self.launcher.pinned_entries(&self.apps).len();
+        let pinned_count = self.launcher.pinned_items(&self.apps).len();
         let pin_h = crate::launcher::pins_section_bottom(logical_panel, 0.0, 1.0, pinned_count);
 
-        let open_count = crate::launcher::open::visible_entries(&self.toplevels).len();
-        let open_h = crate::launcher::open::section_height_logical(PANEL_W_LOGICAL, open_count);
-
         const BOTTOM_PAD: f32 = 24.0;
-        let needed = top_offset + pin_h + open_h + BOTTOM_PAD;
+        let needed = top_offset + pin_h + BOTTOM_PAD;
         needed.max(PANEL_H_LOGICAL_PHASE1) + bonus
     }
 }

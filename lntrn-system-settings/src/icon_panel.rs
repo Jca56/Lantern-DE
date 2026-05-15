@@ -177,7 +177,6 @@ impl IconPanelState {
         }
     }
 
-    pub fn wants_keyboard(&self) -> bool { self.path_focused }
 }
 
 // ── Drawing ──────────────────────────────────────────────────────────
@@ -215,7 +214,7 @@ fn draw_grid<'a>(
     state: &'a mut IconPanelState,
     painter: &mut Painter, text: &mut TextRenderer, ix: &mut InteractionContext,
     fox: &FoxPalette,
-    x: f32, y: f32, w: f32, h: f32, s: f32, sw: u32, _sh: u32,
+    x: f32, y: f32, w: f32, h: f32, s: f32, _sw: u32, _sh: u32,
     tex_draws: &mut Vec<lntrn_render::TextureDraw<'a>>,
 ) {
     let pad = 16.0 * s;

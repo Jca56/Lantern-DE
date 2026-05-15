@@ -19,7 +19,15 @@ impl App {
         });
 
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
-        let process_cwd = std::env::var("HOME").unwrap_or_else(|_| "/".to_string());
+        // Default cwd: prefer the process's own cwd so callers that launch us
+        // via `Command::new("lntrn-terminal").current_dir(...)` (eg Fox's
+        // "Open Terminal Here") land in the right folder. Fall back to $HOME
+        // when cwd is the rootfs (typical for systemd/desktop-file launches).
+        let process_cwd = std::env::current_dir()
+            .ok()
+            .and_then(|p| p.to_str().map(|s| s.to_string()))
+            .filter(|s| s != "/")
+            .unwrap_or_else(|| std::env::var("HOME").unwrap_or_else(|_| "/".to_string()));
         let dir = cwd.unwrap_or(&process_cwd);
         let pty = Pty::spawn(&shell, Some(dir), repaint).expect("Failed to spawn PTY");
 
