@@ -1,34 +1,28 @@
-/// Render pipeline: builds render elements and submits frames to DRM outputs.
+//! The per-frame DRM-output pipeline. `render_surface` is intentionally
+//! long — see the [`super`] module doc.
 
 use std::time::{Duration, Instant};
 
 use smithay::{
     backend::{
-        allocator::Fourcc,
         drm::compositor::FrameFlags,
         renderer::{
             element::{
-                memory::MemoryRenderBufferRenderElement,
-                render_elements,
-                solid::SolidColorRenderElement,
                 surface::{render_elements_from_surface_tree, WaylandSurfaceRenderElement},
                 texture::TextureRenderElement,
                 utils::RescaleRenderElement,
-                AsRenderElements, Element, Id, Kind, RenderElement,
+                AsRenderElements, Id, Kind,
             },
-            gles::{
-                element::{PixelShaderElement, TextureShaderElement},
-                GlesRenderer, GlesTexture, Uniform,
-            },
-            Bind, Color32F, Frame, Offscreen, Renderer,
+            gles::{element::PixelShaderElement, GlesRenderer, Uniform},
+            Renderer,
         },
     },
-    desktop::space::SpaceRenderElements,
-    utils::{Buffer as BufferCoords, Logical, Physical, Point, Rectangle, Scale, Size, Transform},
+    utils::{Logical, Physical, Point, Rectangle, Scale, Size, Transform},
 };
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use tracing::{trace, warn};
 
+use crate::layer_position::layer_surface_position;
 use crate::shaders::{
     HOT_CORNER_GLOW_COLOR, HOT_CORNER_GLOW_SIGMA, HOT_CORNER_GLOW_SIZE,
     TOP_CENTER_GLOW_COLOR, TOP_CENTER_GLOW_HEIGHT, TOP_CENTER_GLOW_LINE_HALF,
@@ -37,115 +31,8 @@ use crate::shaders::{
 use crate::udev::{frame_callback_interval, UdevOutputId, BG_COLOR};
 use crate::Lantern;
 
-// Combined render element enum: space windows + cursor overlay
-render_elements! {
-    pub CustomRenderElements<=GlesRenderer>;
-    Memory=MemoryRenderBufferRenderElement<GlesRenderer>,
-    Space=SpaceRenderElements<GlesRenderer, WaylandSurfaceRenderElement<GlesRenderer>>,
-    Overlay=SolidColorRenderElement,
-    Surface=WaylandSurfaceRenderElement<GlesRenderer>,
-    Shader=PixelShaderElement,
-    Rescaled=RescaleRenderElement<WaylandSurfaceRenderElement<GlesRenderer>>,
-    TextureShader=TextureShaderElement,
-    Backdrop=TextureRenderElement<GlesTexture>,
-    RoundedBackdrop=crate::rounded_element::RoundedBackdropElement,
-    RoundedSurface=crate::rounded_element::RoundedSurfaceElement,
-}
-
-/// Capture a window's surface content into an offscreen texture for close animations.
-fn send_presentation_feedback(
-    space: &smithay::desktop::Space<smithay::desktop::Window>,
-    layer_surfaces: &[smithay::wayland::shell::wlr_layer::LayerSurface],
-    start_time: Instant,
-    output: &smithay::output::Output,
-    rendered: bool,
-) {
-    use smithay::wayland::compositor::SurfaceData;
-    use smithay::wayland::presentation::{PresentationFeedbackCachedState, Refresh};
-    use smithay::reexports::wayland_protocols::wp::presentation_time::server::wp_presentation_feedback;
-
-    let timestamp = start_time.elapsed();
-    let refresh_ns = output
-        .current_mode()
-        .map(|m| 1_000_000_000_000u64 / m.refresh.max(1) as u64)
-        .unwrap_or(16_666_666);
-    let refresh = Refresh::fixed(Duration::from_nanos(refresh_ns));
-    let seq = 0u64;
-
-    // Use the SurfaceData passed by with_surfaces_surface_tree directly —
-    // re-entering with_states from inside its callback deadlocks on the
-    // surface state mutex (caused freeze on first toplevel map).
-    let drain = |_surface: &WlSurface, states: &SurfaceData| {
-        let feedbacks = std::mem::take(
-            &mut states
-                .cached_state
-                .get::<PresentationFeedbackCachedState>()
-                .current()
-                .callbacks,
-        );
-        for feedback in feedbacks {
-            if rendered {
-                feedback.presented(output, timestamp, refresh, seq, wp_presentation_feedback::Kind::Vsync);
-            } else {
-                feedback.discarded();
-            }
-        }
-    };
-
-    let surfaces: Vec<WlSurface> = space
-        .elements()
-        .filter_map(|w| crate::window_ext::WindowExt::get_wl_surface(w))
-        .collect();
-    for s in &surfaces {
-        smithay::desktop::utils::with_surfaces_surface_tree(s, drain);
-    }
-    for ls in layer_surfaces {
-        if ls.alive() {
-            smithay::desktop::utils::with_surfaces_surface_tree(ls.wl_surface(), drain);
-        }
-    }
-}
-
-fn capture_window_snapshot(
-    renderer: &mut GlesRenderer,
-    window: &smithay::desktop::Window,
-    win_size: Size<i32, Logical>,
-    output_scale: f64,
-) -> Option<(GlesTexture, Size<i32, Physical>)> {
-    let snap_w = (win_size.w as f64 * output_scale).round() as i32;
-    let snap_h = (win_size.h as f64 * output_scale).round() as i32;
-    // Tiny surfaces (< 16px) are usually transient bootstrap buffers from
-    // Proton/Wine that resize themselves a frame later. Capturing them
-    // racing against the client's realloc triggers GL_INVALID_VALUE.
-    if snap_w < 16 || snap_h < 16 { return None; }
-
-    let snap_size = Size::<i32, Physical>::from((snap_w, snap_h));
-    let buf_size: Size<i32, BufferCoords> = Size::from((snap_w, snap_h));
-
-    let elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
-        window.render_elements(renderer, Point::from((0i32, 0i32)), Scale::from(output_scale), 1.0);
-    if elements.is_empty() { return None; }
-
-    let mut tex = Offscreen::<GlesTexture>::create_buffer(renderer, Fourcc::Abgr8888, buf_size).ok()?;
-    {
-        let mut target = renderer.bind(&mut tex).ok()?;
-        let mut frame = renderer.render(&mut target, snap_size, Transform::Normal).ok()?;
-        frame.clear(Color32F::from([0.0, 0.0, 0.0, 0.0]), &[Rectangle::from_size(snap_size)]).ok()?;
-
-        let scale = Scale::from(output_scale);
-        for elem in &elements {
-            let geo = elem.geometry(scale);
-            let src = elem.src();
-            let dst = Rectangle::<i32, Physical>::new(geo.loc, geo.size);
-            if dst.size.w > 0 && dst.size.h > 0 {
-                let _ = elem.draw(&mut frame, src, dst, &[dst], &[]);
-            }
-        }
-        let _ = frame.finish();
-    }
-
-    Some((tex, snap_size))
-}
+use super::helpers::{capture_window_snapshot, send_presentation_feedback};
+use super::CustomRenderElements;
 
 pub fn render_surface(
     state: &mut Lantern,
@@ -409,7 +296,8 @@ pub fn render_surface(
             continue;
         }
 
-        let mut location = state.space.element_location(window).unwrap_or_default();
+        let location = state.space.element_location(window).unwrap_or_default();
+        let _ = location;
         let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(window) else { continue };
 
         // Space only contains active-workspace windows (unmap/remap on switch).
@@ -466,7 +354,8 @@ pub fn render_surface(
                 (rect.loc.x as f64, rect.loc.y as f64,
                  rect.size.w as f64, rect.size.h as f64, 1.0)
             } else {
-                (location.x as f64, location.y as f64,
+                let loc = state.space.element_location(window).unwrap_or_default();
+                (loc.x as f64, loc.y as f64,
                  win_size.w as f64, win_size.h as f64, 1.0)
             };
 
@@ -1569,7 +1458,3 @@ pub fn render_surface(
         state.debug_counters.render_micros += total_elapsed.as_micros() as u64;
     }
 }
-
-// Re-export for external callers (e.g. input.rs hit testing)
-pub use crate::layer_position::layer_surface_position_logical;
-use crate::layer_position::layer_surface_position;

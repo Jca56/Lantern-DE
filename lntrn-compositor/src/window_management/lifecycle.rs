@@ -1,0 +1,275 @@
+//! Window lifecycle: tracking, placement, mapping, forgetting, close
+//! animations.
+
+use smithay::{
+    desktop::Window,
+    reexports::wayland_server::protocol::wl_surface::WlSurface,
+    utils::{Logical, Point, Size},
+};
+
+use crate::state::Lantern;
+use crate::window_ext::WindowExt;
+
+impl Lantern {
+    pub fn track_window(&mut self, window: &Window) {
+        let Some(surface) = window.get_wl_surface() else { return };
+        if !self.window_spawn_order.contains(&surface) {
+            self.window_spawn_order.push(surface.clone());
+        }
+        self.remember_window_surface(&surface);
+    }
+
+    /// Returns a temporary position at the output center.
+    /// The window will be repositioned to true center (accounting for its size)
+    /// after its first commit, via `center_pending_window`.
+    pub fn place_new_window(&mut self, _window: &Window) -> Point<i32, Logical> {
+        let pointer_pos = self.seat.get_pointer()
+            .map(|p| p.current_location())
+            .unwrap_or_default();
+        let output = self.output_at_point(pointer_pos)
+            .or_else(|| self.space.outputs().next().cloned());
+        let Some(output_geo) = output
+            .and_then(|o| self.space.output_geometry(&o))
+        else {
+            return (0, 0).into();
+        };
+
+        // Temporary: place at output center (will be refined after first commit)
+        Point::from((
+            output_geo.loc.x + output_geo.size.w / 2,
+            output_geo.loc.y + output_geo.size.h / 2,
+        ))
+    }
+
+    /// Called on commit: if a window is pending centering and now has real
+    /// geometry, reposition it to the true center of its output with a
+    /// cascade offset so stacked windows fan out.
+    pub fn center_pending_window(&mut self, surface: &WlSurface) {
+        if !self.pending_center.contains(surface) {
+            return;
+        }
+        let Some(window) = self.space.elements()
+            .find(|w| w.get_wl_surface().as_ref() == Some(surface))
+            .cloned()
+        else {
+            return;
+        };
+        let win_geo = window.geometry();
+        if win_geo.size.w == 0 || win_geo.size.h == 0 {
+            return; // Not ready yet
+        }
+
+        self.pending_center.remove(surface);
+
+        let output = self.output_for_window(&window)
+            .or_else(|| self.space.outputs().next().cloned());
+        let Some(ref out) = output else { return };
+        let Some(output_geo) = self.space.output_geometry(out) else { return };
+
+        // Account for panels/bars so we center in the usable area
+        let (top_excl, bottom_excl, left_excl, right_excl) =
+            self.exclusive_zone_offsets_for_output(out);
+        let usable_x = output_geo.loc.x + left_excl;
+        let usable_y = output_geo.loc.y + top_excl;
+        let usable_w = output_geo.size.w - left_excl - right_excl;
+        let usable_h = output_geo.size.h - top_excl - bottom_excl;
+
+        let x = usable_x + (usable_w - win_geo.size.w) / 2;
+        let y = usable_y + (usable_h - win_geo.size.h) / 2;
+
+        // Clamp to stay within usable area
+        let x = x.clamp(usable_x, (usable_x + usable_w - win_geo.size.w).max(usable_x));
+        let y = y.clamp(usable_y, (usable_y + usable_h - win_geo.size.h).max(usable_y));
+
+        tracing::info!(x, y, w = win_geo.size.w, h = win_geo.size.h, "Centering new window");
+        self.space.map_element(window, Point::from((x, y)), false);
+    }
+
+    /// Inject a configured initial size into a toplevel's pending state before
+    /// its first configure is sent. Per-app rules from `[[window_rules]]`
+    /// override the global `[windows] default_width/default_height` default.
+    /// Skips: scratchpad, surfaces with maximized/fullscreen pending, surfaces
+    /// whose initial configure has already been sent, and tiling-mode windows.
+    pub fn apply_initial_window_size(&mut self, surface: &WlSurface) {
+        use smithay::wayland::compositor::with_states;
+        use smithay::wayland::shell::xdg::XdgToplevelSurfaceData;
+        use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
+
+        if self.scratchpad_surface.as_ref() == Some(surface) { return; }
+        if self.workspaces.tiling_active { return; }
+
+        let Some(window) = self.space.elements()
+            .find(|w| w.get_wl_surface().as_ref() == Some(surface))
+            .cloned()
+        else { return };
+        let Some(toplevel) = window.toplevel().cloned() else { return };
+
+        let (already_sent, app_id, has_size_state) = with_states(surface, |states| {
+            let data = states.data_map.get::<XdgToplevelSurfaceData>().unwrap().lock().unwrap();
+            (
+                data.initial_configure_sent,
+                data.app_id.clone().unwrap_or_default(),
+                false,
+            )
+        });
+        if already_sent { return; }
+        let _ = has_size_state;
+
+        let skip = toplevel.with_pending_state(|state| {
+            state.states.contains(xdg_toplevel::State::Maximized)
+                || state.states.contains(xdg_toplevel::State::Fullscreen)
+                || state.size.is_some()
+        });
+        if skip { return; }
+
+        let rule_size = self.window_rules.iter()
+            .find(|r| r.app_id == app_id)
+            .map(|r| (r.width, r.height));
+        let Some((w, h)) = rule_size.or(self.default_window_size) else { return };
+
+        toplevel.with_pending_state(|state| {
+            state.size = Some(Size::from((w, h)));
+        });
+    }
+
+    pub fn map_new_window(&mut self, window: Window) {
+        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+        let Some(surface) = window.get_wl_surface() else { return };
+
+        // Check if this window should be claimed as the scratchpad
+        let is_scratchpad = self.scratchpad_pending;
+        if is_scratchpad {
+            self.scratchpad_pending = false;
+            self.scratchpad_surface = Some(surface.clone());
+            tracing::info!("Claimed new window as scratchpad");
+        }
+
+        let location = if is_scratchpad {
+            self.scratchpad_geometry()
+                .map(|geo| geo.loc)
+                .unwrap_or_else(|| self.place_new_window(&window))
+        } else {
+            self.place_new_window(&window)
+        };
+
+        tracing::info!(
+            x = location.x,
+            y = location.y,
+            mapped_windows = self.space.elements().count(),
+            scratchpad = is_scratchpad,
+            "Mapping new toplevel window"
+        );
+
+        self.space.map_element(window.clone(), location, true);
+        self.track_window(&window);
+
+        // Configure scratchpad size
+        if is_scratchpad {
+            if let Some(geo) = self.scratchpad_geometry() {
+                window.configure_size(geo.size);
+            }
+        }
+
+        // Mark for centering after first real commit (skip scratchpad & tiling)
+        if !is_scratchpad && !self.workspaces.tiling_active {
+            self.pending_center.insert(surface.clone());
+        }
+
+        // Attach window to its output's active workspace. Scratchpad stays global.
+        if !is_scratchpad {
+            let output_name = self.output_for_window(&window)
+                .or_else(|| self.space.outputs().next().cloned())
+                .map(|o| o.name())
+                .unwrap_or_default();
+            if self.workspaces.tiling_active {
+                self.workspaces.insert(&output_name, surface.clone(), None);
+                self.apply_tiling_layout();
+            } else {
+                self.workspaces.track_window(&output_name, surface.clone());
+            }
+        }
+
+        // Start open animation
+        self.animations.start_open(&surface);
+
+        // Announce to foreign-toplevel clients
+        let title = window.get_title();
+        let app_id = window.get_app_id();
+        self.foreign_toplevel_state.new_toplevel(&surface, &title, &app_id);
+
+        self.focus_window(&window, serial);
+        self.broadcast_workspace_state();
+    }
+
+    pub fn forget_window(&mut self, surface: &WlSurface) {
+        self.window_spawn_order.retain(|entry| entry != surface);
+        self.window_mru.retain(|entry| entry != surface);
+        self.minimized_windows.retain(|entry| entry.surface != *surface);
+        self.maximized_windows.retain(|entry| entry.surface != *surface);
+        self.fullscreen_windows.retain(|entry| entry.surface != *surface);
+        self.snapped_windows.retain(|entry| entry.surface != *surface);
+        self.pending_center.remove(surface);
+        self.window_snapshots.remove(surface);
+        self.animations.remove(surface);
+        self.tiling_anim.remove(surface);
+        self.window_state_anim.remove(surface);
+        self.minimize_anim.remove(surface);
+        let was_tiled = self.workspaces.contains(surface);
+        self.workspaces.remove(surface);
+        self.unmapped_windows.remove(surface);
+        if was_tiled && self.workspaces.tiling_active {
+            self.apply_tiling_layout();
+        }
+        self.ssd.remove(surface);
+        self.foreign_toplevel_state.toplevel_closed(surface);
+
+        // Clear scratchpad if this was it
+        if self.scratchpad_surface.as_ref() == Some(surface) {
+            self.scratchpad_surface = None;
+            tracing::info!("Scratchpad window closed, clearing reference");
+        }
+
+        self.broadcast_workspace_state();
+    }
+
+    /// Start a close animation on the focused window (Super+Q).
+    /// Returns true if the animation was started. The actual `send_close()`
+    /// happens when the animation finishes in the render loop.
+    pub fn close_focused_animated(&mut self) -> bool {
+        let Some(window) = self.focused_window() else {
+            return false;
+        };
+        let Some(surface) = window.get_wl_surface() else { return false };
+        if self.animations.start_close(&surface) {
+            tracing::info!("Close animation started for focused window");
+            self.schedule_render();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Called when a close animation finishes for a live window (Super+Q path).
+    /// Unmaps immediately (prevents flash), sends the close request, and fully
+    /// cleans up compositor state so the bar receives the toplevel Closed event.
+    pub fn finish_close_animation(&mut self, surface: &WlSurface) {
+        if let Some(window) = self.find_mapped_window(surface) {
+            tracing::info!("Close animation finished, unmapping and sending close");
+            self.space.unmap_elem(&window);
+            window.request_close();
+        }
+        // Clean up all state and notify the bar — the window is gone from the
+        // user's perspective once it's unmapped.  Previously we only set a
+        // close_done flag, but the dead-window detector never ran because the
+        // window was already removed from the space, so forget_window (and the
+        // foreign-toplevel Closed event) never fired.
+        self.forget_window(surface);
+    }
+
+    /// Called when a close animation finishes for a zombie window (client-initiated close).
+    /// The window is already dead, just clean up state.
+    pub fn finish_zombie_close(&mut self, surface: &WlSurface) {
+        self.closing_windows.retain(|cw| cw.surface != *surface);
+        self.forget_window(surface);
+    }
+}
