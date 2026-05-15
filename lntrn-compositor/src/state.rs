@@ -288,9 +288,12 @@ pub struct Lantern {
     pub wallpaper_frame_counter: u32,
     pub layer_surfaces: Vec<LayerSurface>,
     pub layer_surface_outputs: HashMap<WlSurface, Output>,
-    pub window_opacity: HashMap<WlSurface, f32>,
-    pub default_window_opacity: f32,
-    /// App IDs that skip blur backdrop and use full opacity.
+    /// System-wide background opacity from `[windows].background_opacity`.
+    /// When < 1.0, the compositor pushes a blur backdrop behind every
+    /// non-fullscreen, non-excluded window so the apps' translucent
+    /// backgrounds reveal a blurred desktop. Refreshed every poll cycle.
+    pub system_bg_opacity: f32,
+    /// App IDs that skip the blur backdrop.
     pub blur_exclude: Vec<String>,
     /// Global default initial window size (logical px). None = let client choose.
     pub default_window_size: Option<(i32, i32)>,
@@ -300,6 +303,10 @@ pub struct Lantern {
     pub focus_glow: bool,
     pub focus_glow_color: [f32; 4],
     pub focus_glow_intensity: f32,
+    pub border_color: [f32; 4],
+    /// Blur underlay tint color (premultiplied component values get scaled
+    /// by the [windows].blur_tint strength at draw time).
+    pub blur_tint_color: [f32; 4],
     pub focus_follows_mouse: bool,
     pub super_pressed: bool,
     /// True if Super was pressed and no Super+combo was used (for tap detection)
@@ -491,14 +498,15 @@ impl Lantern {
             wallpaper_frame_counter: 0,
             layer_surfaces: Vec::new(),
             layer_surface_outputs: HashMap::new(),
-            window_opacity: HashMap::new(),
-            default_window_opacity: crate::read_config_f32("window_opacity", 1.0),
+            system_bg_opacity: crate::read_config_f32("background_opacity", 1.0),
             blur_exclude: crate::read_config_list("windows", "blur_exclude"),
             default_window_size: crate::default_window_size(),
             window_rules: crate::read_window_rules(),
             window_zoom: HashMap::new(),
             focus_glow: crate::read_config("window_manager", "focus_glow", "true") == "true",
             focus_glow_color: crate::parse_glow_color(&crate::read_config("window_manager", "focus_glow_color", "#4A9EFF")),
+            border_color: crate::parse_glow_color(&crate::read_config("window_manager", "border_color", "#4A9EFF")),
+            blur_tint_color: crate::parse_glow_color(&crate::read_config("windows", "blur_tint_color", "#4A9EFF")),
             focus_glow_intensity: crate::read_config("window_manager", "focus_glow_intensity", "0.2")
                 .parse::<f32>().unwrap_or(0.2).clamp(0.0, 0.6),
             focus_follows_mouse: crate::read_config("window_manager", "focus_follows_mouse", "false") == "true",

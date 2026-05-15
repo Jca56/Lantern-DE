@@ -74,14 +74,16 @@ impl FoxPalette {
         [to_color(gs[0]), to_color(gs[1]), to_color(gs[2]), to_color(gs[3]), to_color(gs[4])]
     }
 
-    /// Return a copy with background-layer colors (`bg`, `surface`, `surface_2`,
-    /// `sidebar`) multiplied by the given opacity. Useful for window transparency.
+    /// Return a copy with the window-level `bg` alpha multiplied by `opacity`.
+    /// `surface`, `surface_2`, and `sidebar` stay fully opaque on purpose —
+    /// stacking translucent surfaces over a translucent bg compounds the
+    /// alpha (`0.95 + 0.95 * 0.05 ≈ 0.998`) and the result reads as nearly
+    /// opaque, which defeats the point of transparency. This mirrors System
+    /// Settings: translucent body shows wallpaper, opaque cards/sidebar
+    /// give text a solid surface to land on.
     pub fn with_bg_opacity(self, opacity: f32) -> Self {
         Self {
             bg: self.bg.with_alpha(self.bg.a * opacity),
-            surface: self.surface.with_alpha(self.surface.a * opacity),
-            surface_2: self.surface_2.with_alpha(self.surface_2.a * opacity),
-            sidebar: self.sidebar.with_alpha(self.sidebar.a * opacity),
             ..self
         }
     }

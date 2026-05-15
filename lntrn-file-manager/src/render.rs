@@ -146,15 +146,12 @@ pub fn render_frame(
         }
     };
 
-    // ── Window background + theme-aware accent border ─────────────────
-    // Corner radius matches the compositor mask (18) so the border traces
-    // the visible window edge cleanly.
+    // ── Window background ─────────────────────────────────────────────
+    // Borders are drawn by the compositor now via [window_manager].border_width
+    // and border_color, so the file manager no longer paints its own.
     let corner_r = if desktop_mode { 0.0 } else { 18.0 * s };
     let win_rect = Rect::new(0.0, 0.0, wf, hf);
     painter.rect_filled(win_rect, corner_r, pal.bg.with_alpha(bg_opacity));
-    if !desktop_mode {
-        painter.rect_border(win_rect, corner_r, 3.0 * s, pal.accent);
-    }
 
     // ── Title bar (window mode only) ─────────────────────────────────
     if !desktop_mode {
@@ -169,6 +166,7 @@ pub fn render_frame(
         TitleBar::new(tb_rect)
             .scale(s)
             .maximized(maximized)
+            .transparent_bg(true)
             .close_hovered(close_s.is_hovered())
             .maximize_hovered(max_s.is_hovered())
             .minimize_hovered(min_s.is_hovered())
@@ -355,6 +353,7 @@ pub fn render_frame(
         .selected(app.current_tab)
         .scale(s)
         .closable(app.tabs.len() > 1)
+        .transparent_bg(true)
         .hovered_tab(hovered_tab)
         .hovered_close(hovered_close)
         .hovered_new_tab(hovered_new)

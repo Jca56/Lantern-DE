@@ -473,12 +473,10 @@ pub fn render_surface(
         let is_fullscreen = fullscreen_surfaces.iter().any(|e| e.surface == surface);
         let win_app_id = crate::window_ext::WindowExt::get_app_id(window);
         let blur_excluded = state.blur_exclude.iter().any(|id| id == &win_app_id);
-        let mut base_alpha = if is_fullscreen || blur_excluded {
-            1.0
-        } else {
-            state.window_opacity.get(&surface).copied()
-                .unwrap_or(state.default_window_opacity)
-        };
+        // Buffers are always rendered at full alpha — translucency now comes
+        // exclusively from each client honoring [windows].background_opacity
+        // when it draws its own background.
+        let mut base_alpha = 1.0f32;
         if state.show_desktop_active {
             base_alpha *= 0.05;
         }
@@ -641,10 +639,13 @@ pub fn render_surface(
             );
         }
 
-        // Track transparent windows for blur backdrop. The backdrop matches
-        // the visible decorated rect exactly (rel_x/rel_y is the on-screen
-        // top-left of the geometry post-animation; SSD bar sits above it).
-        if !is_fullscreen && alpha < 0.99 {
+        // Push a blur backdrop behind every non-fullscreen, non-excluded
+        // window whenever the system-wide background opacity is < 1. Lantern
+        // apps draw their backgrounds at that alpha, so the blur shows
+        // through their transparent regions. Opaque clients (Firefox, etc.)
+        // simply cover the blur — no visual diff, only a small render cost,
+        // and `blur_exclude` is the escape hatch.
+        if !is_fullscreen && !blur_excluded && state.system_bg_opacity < 0.99 {
             let ssd_bar = if has_ssd { crate::ssd::SsdManager::bar_height() } else { 0 };
             let log_rect = Rectangle::<i32, Logical>::new(
                 Point::from((
@@ -722,7 +723,7 @@ pub fn render_surface(
                         (win_x - pad, win_y - pad).into(),
                         (win_w + pad * 2, win_h + pad * 2).into(),
                     );
-                    let mut bc = state.focus_glow_color;
+                    let mut bc = state.border_color;
                     bc[3] = 1.0;
                     let border_elem = PixelShaderElement::new(
                         shader.clone(),
@@ -1265,10 +1266,12 @@ pub fn render_surface(
         if state.workspaces.sync_gaps_from_config() {
             state.pending_layout = true;
         }
-        state.default_window_opacity = crate::read_config_f32("window_opacity", 1.0);
+        state.system_bg_opacity = crate::read_config_f32("background_opacity", 1.0);
         state.blur_exclude = crate::read_config_list("windows", "blur_exclude");
         state.focus_glow = crate::read_config("window_manager", "focus_glow", "true") == "true";
         state.focus_glow_color = crate::parse_glow_color(&crate::read_config("window_manager", "focus_glow_color", "#4A9EFF"));
+        state.border_color = crate::parse_glow_color(&crate::read_config("window_manager", "border_color", "#4A9EFF"));
+        state.blur_tint_color = crate::parse_glow_color(&crate::read_config("windows", "blur_tint_color", "#4A9EFF"));
         state.focus_glow_intensity = crate::read_config("window_manager", "focus_glow_intensity", "0.2")
             .parse::<f32>().unwrap_or(0.2).clamp(0.0, 0.6);
         state.border_width = crate::read_config("window_manager", "border_width", "0")
@@ -1314,10 +1317,13 @@ pub fn render_surface(
                     below_windows,
                 ];
 
-                // Compute premultiplied tint color for the shader
+                // Premultiplied tint for the shader. Color comes from the
+                // configured `blur_tint_color` (same palette the focus glow
+                // uses), scaled by `blur_tint` strength.
                 let tint_rgba = if blur_tint > 0.001 {
                     let t = blur_tint.clamp(0.0, 1.0);
-                    [48.0 / 255.0 * t, 10.0 / 255.0 * t, 72.0 / 255.0 * t, t]
+                    let c = state.blur_tint_color;
+                    [c[0] * t, c[1] * t, c[2] * t, t]
                 } else {
                     [0.0f32, 0.0, 0.0, 0.0]
                 };

@@ -270,7 +270,9 @@ pub fn draw_nav_bar(
     screen: (u32, u32),
     s: f32,
 ) {
-    painter.rect_filled(nav_rect, 0.0, palette.surface);
+    // Nav bar bg intentionally not painted — the window bg already covers
+    // this region. Stacking `palette.surface` here would compound the alpha
+    // and look opaque under transparency.
 
     // ── View mode toggle icon (changes per mode) ────────────────────────
     let vt_color = if view_toggle_hovered { palette.text } else { palette.text_secondary };
@@ -515,13 +517,12 @@ pub fn draw_sidebar(
     s: f32,
 ) {
     let sw = sidebar_w(s);
-    let r = 10.0 * s;
+    let _ = sidebar_rect;
 
-    // Sidebar with rounded bottom-left corner
-    painter.rect_filled(sidebar_rect, r, palette.sidebar);
-    painter.rect_filled(Rect::new(sidebar_rect.x, sidebar_rect.y, r, r), 0.0, palette.sidebar);
-    painter.rect_filled(Rect::new(sidebar_rect.x + sidebar_rect.w - r, sidebar_rect.y, r, r), 0.0, palette.sidebar);
-    painter.rect_filled(Rect::new(sidebar_rect.x + sidebar_rect.w - r, sidebar_rect.y + sidebar_rect.h - r, r, r), 0.0, palette.sidebar);
+    // Sidebar bg intentionally not painted — the window bg already covers
+    // this region. Painting `palette.sidebar` here would compound the alpha
+    // and read as opaque under transparency. The gradient strip on the
+    // right edge still provides a clear visual separator from the content.
 
     // Vertical gradient divider on right edge
     draw_gradient_v(painter, palette, sw - 4.0 * s, sidebar_rect.y, sidebar_rect.h, s);
@@ -763,7 +764,8 @@ pub fn draw_content_grid(
     let icsz = icon_size(s, zoom);
     let pad = 8.0 * s;
 
-    painter.rect_filled(content_rect, 0.0, palette.bg);
+    // No bg fill — window-level bg already covers this area (would otherwise
+    // compound the alpha and look near-opaque under transparency).
     area.begin(painter, text);
 
     let base_y = area.content_y();
@@ -912,11 +914,15 @@ pub fn draw_status_bar(
     screen: (u32, u32),
     s: f32,
 ) {
-    let r = 10.0 * s;
-    painter.rect_filled(status_rect, r, palette.surface);
-    painter.rect_filled(Rect::new(status_rect.x, status_rect.y, r, r), 0.0, palette.surface);
-    painter.rect_filled(Rect::new(status_rect.x + status_rect.w - r, status_rect.y, r, r), 0.0, palette.surface);
-    painter.rect_filled(Rect::new(0.0, status_rect.y, status_rect.w, 1.0), 0.0, palette.bg);
+    let _ = s;
+    // Status bar bg intentionally not painted — keeps the region transparent
+    // (matches the title bar / nav bar / tab strip). A 1px separator at the
+    // top still helps the eye delimit the bar from the content above.
+    painter.rect_filled(
+        Rect::new(status_rect.x, status_rect.y, status_rect.w, 1.0),
+        0.0,
+        palette.muted.with_alpha(0.2),
+    );
 
     let total = entries.len();
     let dirs = entries.iter().filter(|e| e.is_dir).count();

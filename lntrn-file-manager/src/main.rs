@@ -43,7 +43,6 @@ pub const ZONE_NAV_CLOUD: u32 = 26;
 pub const ZONE_NAV_PREVIEW_TOGGLE: u32 = 27;
 pub const ZONE_PREVIEW_RESIZE: u32 = 28;
 pub const VIEW_SLIDER_ID: u32 = 1;
-pub const VIEW_OPACITY_SLIDER_ID: u32 = 2;
 pub const VIEW_SHOW_HIDDEN_ID: u32 = 3;
 pub const VIEW_THEME_GROUP: u32 = 1;
 pub const VIEW_THEME_FOX_DARK: u32 = 10;

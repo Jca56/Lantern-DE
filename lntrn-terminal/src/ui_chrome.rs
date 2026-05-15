@@ -40,7 +40,6 @@ pub fn title_bar_height(_mode: &WindowMode) -> f32 {
 // ── Menu action IDs ─────────────────────────────────────────────────────────
 
 pub const MENU_FONT_SLIDER: u32 = 100;
-pub const MENU_OPACITY_SLIDER: u32 = 101;
 pub const MENU_MODE_FOX: u32 = 102;
 pub const MENU_MODE_NIGHT_SKY: u32 = 103;
 const MENU_MODE_GROUP: u32 = 1;
@@ -95,7 +94,6 @@ pub enum ClickAction {
     Maximize,
     StartDrag,
     SliderDrag,
-    OpacitySliderDrag,
     WindowModeChanged,
     SplitHorizontal,
     SplitVertical,
@@ -110,7 +108,7 @@ pub enum ClickAction {
 
 // ── Menu definitions ────────────────────────────────────────────────────────
 
-pub fn build_menus(font_size: f32, opacity: f32, _sidebar_visible: bool, mode: &WindowMode) -> Vec<(&'static str, Vec<MenuItem>)> {
+pub fn build_menus(font_size: f32, _sidebar_visible: bool, mode: &WindowMode) -> Vec<(&'static str, Vec<MenuItem>)> {
     let is_fox_dark = *mode == WindowMode::Fox;
     let is_fox_light = *mode == WindowMode::FoxLight;
     let is_night_sky = *mode == WindowMode::NightSky;
@@ -121,8 +119,6 @@ pub fn build_menus(font_size: f32, opacity: f32, _sidebar_visible: bool, mode: &
         ]),
         ("View", vec![
             MenuItem::slider(MENU_FONT_SLIDER, "Text Size", ((font_size - 6.0) / 24.0).clamp(0.0, 1.0)),
-            MenuItem::separator(),
-            MenuItem::slider(MENU_OPACITY_SLIDER, "Opacity", ((opacity - 0.1) / 0.9).clamp(0.0, 1.0)),
             MenuItem::separator(),
             MenuItem::header("Window Style"),
             MenuItem::radio(MENU_MODE_LANTERN, MENU_MODE_GROUP, "Lantern", is_lantern),
@@ -246,7 +242,6 @@ pub fn draw_chrome(
     screen_w: u32,
     screen_h: u32,
     font_size: f32,
-    opacity: f32,
     sidebar_visible: bool,
     _maximized: bool,
     scale: f32,
@@ -257,7 +252,7 @@ pub fn draw_chrome(
     let pal = &state.palette;
     let wf = screen_w as f32;
 
-    let menus = build_menus(font_size, opacity, sidebar_visible, mode);
+    let menus = build_menus(font_size, sidebar_visible, mode);
     let layout = compute_layout(&menus, wf, s, mode);
 
     // ── Window controls — same circular style, mode-specific palette ────
@@ -416,7 +411,6 @@ pub fn menu_event_to_action(event: &MenuEvent) -> ClickAction {
         },
         MenuEvent::SliderChanged { id, .. } => match *id {
             MENU_FONT_SLIDER => ClickAction::SliderDrag,
-            MENU_OPACITY_SLIDER => ClickAction::OpacitySliderDrag,
             _ => ClickAction::None,
         },
         MenuEvent::RadioSelected { id, .. } => match *id {
@@ -446,8 +440,3 @@ pub fn font_size_from_slider(value: f32) -> f32 {
     (raw * 2.0).round() / 2.0
 }
 
-/// Get the new opacity from a slider event value.
-pub fn opacity_from_slider(value: f32) -> f32 {
-    let raw = 0.1 + value * 0.9;
-    (raw * 20.0).round() / 20.0
-}

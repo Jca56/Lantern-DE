@@ -14,7 +14,6 @@ const ZONE_WM_TITLEBAR: u32 = 301;
 const ZONE_WM_GAP: u32 = 302;
 const ZONE_WM_CORNER: u32 = 303;
 const ZONE_WM_FOCUS: u32 = 304;
-const ZONE_WM_OPACITY: u32 = 305;
 const ZONE_WM_BLUR: u32 = 306;
 const ZONE_WM_TINT: u32 = 307;
 const ZONE_WM_DARKEN: u32 = 308;
@@ -25,6 +24,8 @@ const ZONE_WM_GLOW_INTENSITY: u32 = 320;
 const ZONE_WM_TEST_SPAWN: u32 = 321;
 const ZONE_WM_ANIM_ENABLE: u32 = 322;
 const ZONE_WM_ANIM_SPEED: u32 = 323;
+const ZONE_WM_BORDER_COLOR_BASE: u32 = 330; // 330..339 for swatches
+const ZONE_WM_TINT_COLOR_BASE: u32 = 340; // 340..349 for swatches
 
 // Power panel zone IDs (400–499) and action IDs (500–599) live in
 // `power_panel.rs` now.
@@ -90,6 +91,56 @@ pub(crate) fn slider_value_from_cursor(
         }
     }
     None
+}
+
+/// Render a labeled row of color-swatch picker buttons using the shared
+/// `GLOW_COLORS` palette. Zone IDs run `zone_base + 0..GLOW_COLORS.len()`.
+/// The `selected_hex` is compared case-insensitively against each swatch.
+/// `cy` is advanced by one `row` after the swatches are drawn.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draw_color_swatch_row(
+    painter: &mut Painter,
+    text: &mut TextRenderer,
+    ix: &mut InteractionContext,
+    fox: &FoxPalette,
+    label: &str,
+    zone_base: u32,
+    selected_hex: &str,
+    label_x: f32,
+    ctrl_x: f32,
+    cy: &mut f32,
+    row: f32,
+    lsz: f32,
+    s: f32,
+    sw: u32,
+    sh: u32,
+) {
+    let label_y = *cy + (row - lsz) / 2.0;
+    text.queue(label, lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
+
+    let swatch_size = 28.0 * s;
+    let swatch_gap = 8.0 * s;
+    let mut sx = ctrl_x;
+    for (i, (hex, _name)) in GLOW_COLORS.iter().enumerate() {
+        let color = Color::from_hex(hex).unwrap();
+        let zone_id = zone_base + i as u32;
+        let swatch_rect = Rect::new(sx, *cy + (row - swatch_size) / 2.0, swatch_size, swatch_size);
+        let zone = ix.add_zone(zone_id, swatch_rect);
+
+        let cx = sx + swatch_size / 2.0;
+        let cy_center = swatch_rect.y + swatch_size / 2.0;
+        let radius = swatch_size / 2.0;
+        painter.circle_filled(cx, cy_center, radius, color);
+
+        let is_selected = selected_hex.eq_ignore_ascii_case(hex);
+        if is_selected {
+            painter.circle_stroke(cx, cy_center, radius + 3.0 * s, 2.0 * s, fox.text);
+        } else if zone.is_hovered() {
+            painter.circle_stroke(cx, cy_center, radius + 2.0 * s, 1.5 * s, fox.text_secondary);
+        }
+        sx += swatch_size + swatch_gap;
+    }
+    *cy += row;
 }
 
 /// Returns true if the rect at (text_x, row_y, text_w, row_h) significantly overlaps the menu.
@@ -256,11 +307,11 @@ pub fn draw_wm_panel(
     let value_x = ctrl_x + ctrl_w + 8.0 * s;
 
     // Row counts per card
-    let layout_rows: f32 = 4.0; // border, titlebar, gap, corner
+    let layout_rows: f32 = 5.0; // border, border color, titlebar, gap, corner
     let focus_base_rows: f32 = 2.0; // focus follows mouse, focus glow toggle
     let glow_extra_rows: f32 = if config.window_manager.focus_glow { 2.0 } else { 0.0 };
     let focus_rows = focus_base_rows + glow_extra_rows;
-    let effects_rows: f32 = 5.0;
+    let effects_rows: f32 = 5.0; // blur intensity, blur tint, tint color, darken, bg opacity
 
     let card_chrome_h = CARD_HEADER_H * s + CARD_INNER_PAD_V * 2.0 * s;
     let layout_card_h = card_chrome_h + layout_rows * row;
@@ -299,43 +350,54 @@ pub fn draw_wm_panel(
             card_x, cy_top, card_w, layout_card_h, s, sw, sh,
         );
 
-        // Slider helper closure — scoped to this block so its borrows on
-        // painter/text/ix release before we draw the next card.
-        let mut slider_row = |label: &str, frac: f32, zone_id: u32, cy: &mut f32,
-                              min: f32, max: f32, suffix: &str, config_val: &mut u32| {
-            let label_y = *cy + (row - lsz) / 2.0;
-            text.queue(label, lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
-            let rect = Rect::new(ctrl_x, *cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
-            let zone = ix.add_zone(zone_id, rect);
-            if let Some(f) = slider_value_from_cursor(ix, zone_id, &rect) {
-                *config_val = (min + f * (max - min)).round() as u32;
-            }
-            Slider::new(rect).value(frac).hovered(zone.is_hovered()).active(zone.is_active())
-                .draw(painter, fox);
-            let val = format!("{}{}", *config_val, suffix);
-            text.queue(&val, vsz, value_x, label_y, fox.text_secondary, VALUE_W * s, sw, sh);
-            *cy += row;
-        };
+        // Slider closure scoped to an inner block so its mutable borrows on
+        // painter/text/ix release before we draw the swatch row that
+        // follows. `cy` stays alive — it was declared one scope up.
+        {
+            let mut slider_row = |label: &str, frac: f32, zone_id: u32, cy: &mut f32,
+                                  min: f32, max: f32, suffix: &str, config_val: &mut u32| {
+                let label_y = *cy + (row - lsz) / 2.0;
+                text.queue(label, lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
+                let rect = Rect::new(ctrl_x, *cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
+                let zone = ix.add_zone(zone_id, rect);
+                if let Some(f) = slider_value_from_cursor(ix, zone_id, &rect) {
+                    *config_val = (min + f * (max - min)).round() as u32;
+                }
+                Slider::new(rect).value(frac).hovered(zone.is_hovered()).active(zone.is_active())
+                    .draw(painter, fox);
+                let val = format!("{}{}", *config_val, suffix);
+                text.queue(&val, vsz, value_x, label_y, fox.text_secondary, VALUE_W * s, sw, sh);
+                *cy += row;
+            };
 
-        let frac = config.window_manager.border_width as f32 / 10.0;
-        let mut bw = config.window_manager.border_width;
-        slider_row("Border Width", frac, ZONE_WM_BORDER, &mut cy, 0.0, 10.0, "", &mut bw);
-        config.window_manager.border_width = bw;
+            let frac = config.window_manager.border_width as f32 / 10.0;
+            let mut bw = config.window_manager.border_width;
+            slider_row("Border Width", frac, ZONE_WM_BORDER, &mut cy, 0.0, 10.0, "", &mut bw);
+            config.window_manager.border_width = bw;
 
-        let frac = (config.window_manager.titlebar_height as f32 - 20.0) / 40.0;
-        let mut th = config.window_manager.titlebar_height;
-        slider_row("Titlebar Height", frac, ZONE_WM_TITLEBAR, &mut cy, 20.0, 60.0, "px", &mut th);
-        config.window_manager.titlebar_height = th;
+            let frac = (config.window_manager.titlebar_height as f32 - 20.0) / 40.0;
+            let mut th = config.window_manager.titlebar_height;
+            slider_row("Titlebar Height", frac, ZONE_WM_TITLEBAR, &mut cy, 20.0, 60.0, "px", &mut th);
+            config.window_manager.titlebar_height = th;
 
-        let frac = config.window_manager.gap as f32 / 32.0;
-        let mut gap = config.window_manager.gap;
-        slider_row("Window Gap", frac, ZONE_WM_GAP, &mut cy, 0.0, 32.0, "px", &mut gap);
-        config.window_manager.gap = gap;
+            let frac = config.window_manager.gap as f32 / 32.0;
+            let mut gap = config.window_manager.gap;
+            slider_row("Window Gap", frac, ZONE_WM_GAP, &mut cy, 0.0, 32.0, "px", &mut gap);
+            config.window_manager.gap = gap;
 
-        let frac = config.window_manager.corner_radius as f32 / 20.0;
-        let mut cr = config.window_manager.corner_radius;
-        slider_row("Corner Radius", frac, ZONE_WM_CORNER, &mut cy, 0.0, 20.0, "px", &mut cr);
-        config.window_manager.corner_radius = cr;
+            let frac = config.window_manager.corner_radius as f32 / 20.0;
+            let mut cr = config.window_manager.corner_radius;
+            slider_row("Corner Radius", frac, ZONE_WM_CORNER, &mut cy, 0.0, 20.0, "px", &mut cr);
+            config.window_manager.corner_radius = cr;
+        }
+
+        // Border Color swatches — same accent palette the glow uses.
+        draw_color_swatch_row(
+            painter, text, ix, fox,
+            "Border Color", ZONE_WM_BORDER_COLOR_BASE,
+            &config.window_manager.border_color,
+            label_x, ctrl_x, &mut cy, row, lsz, s, sw, sh,
+        );
     }
 
     cy_top += layout_card_h + CARD_GAP * s;
@@ -425,23 +487,6 @@ pub fn draw_wm_panel(
         card_x, cy_top, card_w, effects_card_h, s, sw, sh,
     );
 
-    // Window Opacity (0.1–1.0)
-    {
-        let label_y = cy + (row - lsz) / 2.0;
-        text.queue("Window Opacity", lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
-        let frac = (config.windows.window_opacity - 0.1) / 0.9;
-        let rect = Rect::new(ctrl_x, cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
-        let zone = ix.add_zone(ZONE_WM_OPACITY, rect);
-        if let Some(f) = slider_value_from_cursor(ix, ZONE_WM_OPACITY, &rect) {
-            config.windows.window_opacity = ((0.1 + f * 0.9) * 100.0).round() / 100.0;
-        }
-        Slider::new(rect).value(frac).hovered(zone.is_hovered()).active(zone.is_active())
-            .draw(painter, fox);
-        let val = format!("{:.0}%", config.windows.window_opacity * 100.0);
-        text.queue(&val, vsz, value_x, label_y, fox.text_secondary, VALUE_W * s, sw, sh);
-        cy += row;
-    }
-
     // Blur Intensity
     {
         let label_y = cy + (row - lsz) / 2.0;
@@ -475,6 +520,14 @@ pub fn draw_wm_panel(
         text.queue(&val, vsz, value_x, label_y, fox.text_secondary, VALUE_W * s, sw, sh);
         cy += row;
     }
+
+    // Blur Tint Color swatches — same palette as the focus glow + border.
+    draw_color_swatch_row(
+        painter, text, ix, fox,
+        "Tint Color", ZONE_WM_TINT_COLOR_BASE,
+        &config.windows.blur_tint_color,
+        label_x, ctrl_x, &mut cy, row, lsz, s, sw, sh,
+    );
 
     // Blur Darken
     {
@@ -602,6 +655,16 @@ pub fn handle_wm_click(config: &mut LanternConfig, zone_id: u32) {
     {
         let idx = (zone_id - ZONE_WM_GLOW_COLOR_BASE) as usize;
         config.window_manager.focus_glow_color = GLOW_COLORS[idx].0.into();
+    } else if zone_id >= ZONE_WM_BORDER_COLOR_BASE
+        && zone_id < ZONE_WM_BORDER_COLOR_BASE + GLOW_COLORS.len() as u32
+    {
+        let idx = (zone_id - ZONE_WM_BORDER_COLOR_BASE) as usize;
+        config.window_manager.border_color = GLOW_COLORS[idx].0.into();
+    } else if zone_id >= ZONE_WM_TINT_COLOR_BASE
+        && zone_id < ZONE_WM_TINT_COLOR_BASE + GLOW_COLORS.len() as u32
+    {
+        let idx = (zone_id - ZONE_WM_TINT_COLOR_BASE) as usize;
+        config.windows.blur_tint_color = GLOW_COLORS[idx].0.into();
     } else if zone_id == ZONE_WM_ANIM_ENABLE {
         config.animations.enabled = !config.animations.enabled;
     } else if zone_id == ZONE_WM_TEST_SPAWN {

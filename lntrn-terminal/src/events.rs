@@ -42,7 +42,6 @@ impl App {
                 .collect();
             let menus = ui_chrome::build_menus(
                 self.effective_font_size(),
-                self.config.window.opacity,
                 self.sidebar.visible,
                 &self.config.window.mode,
             );
@@ -161,7 +160,6 @@ impl App {
                 .collect();
             let menus = ui_chrome::build_menus(
                 self.effective_font_size(),
-                self.config.window.opacity,
                 self.sidebar.visible,
                 &self.config.window.mode,
             );
@@ -209,7 +207,6 @@ impl App {
         self.input.on_left_pressed();
         let menus = ui_chrome::build_menus(
             self.effective_font_size(),
-            self.config.window.opacity,
             self.sidebar.visible,
             &self.config.window.mode,
         );
@@ -271,9 +268,6 @@ impl App {
             ui_chrome::ClickAction::SliderDrag => {
                 self.config.save();
                 self.update_grid_size();
-            }
-            ui_chrome::ClickAction::OpacitySliderDrag => {
-                self.config.save();
             }
             ui_chrome::ClickAction::WindowModeChanged => {
                 // Update theme to match new mode
@@ -516,7 +510,6 @@ impl App {
             .collect();
         let menus = ui_chrome::build_menus(
             self.effective_font_size(),
-            self.config.window.opacity,
             self.sidebar.visible,
             &self.config.window.mode,
         );

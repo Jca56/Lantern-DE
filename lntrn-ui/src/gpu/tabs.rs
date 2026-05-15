@@ -41,6 +41,9 @@ pub struct TabBar<'a> {
     hovered_close: Option<usize>,
     closable: bool,
     hovered_new_tab: bool,
+    /// When true, skip the `palette.surface` bar background so the window
+    /// bg shows through. Tabs + separator still draw normally.
+    transparent_bg: bool,
 }
 
 impl<'a> TabBar<'a> {
@@ -54,7 +57,13 @@ impl<'a> TabBar<'a> {
             hovered_close: None,
             closable: true,
             hovered_new_tab: false,
+            transparent_bg: false,
         }
+    }
+
+    pub fn transparent_bg(mut self, t: bool) -> Self {
+        self.transparent_bg = t;
+        self
     }
 
     pub fn tabs(mut self, tabs: &'a [&'a str]) -> Self {
@@ -160,8 +169,10 @@ impl<'a> TabBar<'a> {
         let font = self.font_size();
         let ind_h = self.indicator_h();
 
-        // -- Bar background --
-        painter.rect_filled(self.rect, 0.0, palette.surface);
+        // -- Bar background (skipped when transparent_bg is set) --
+        if !self.transparent_bg {
+            painter.rect_filled(self.rect, 0.0, palette.surface);
+        }
 
         // -- Bottom separator line across the full bar --
         let sep_y = self.rect.y + self.rect.h - 1.0;

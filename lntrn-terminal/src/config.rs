@@ -83,8 +83,6 @@ pub struct FontConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WindowConfig {
-    /// Window opacity (0.0 – 1.0).
-    pub opacity: f32,
     /// Window chrome style: "fox" or "night_sky".
     #[serde(default)]
     pub mode: WindowMode,
@@ -123,7 +121,6 @@ impl Default for FontConfig {
 impl Default for WindowConfig {
     fn default() -> Self {
         Self {
-            opacity: lntrn_theme::background_opacity(),
             mode: WindowMode::default(),
         }
     }
@@ -182,6 +179,5 @@ impl LanternConfig {
     /// Clamp values to safe ranges.
     fn sanitize(&mut self) {
         self.font.size = self.font.size.clamp(6.0, 30.0);
-        self.window.opacity = self.window.opacity.clamp(0.1, 1.0);
     }
 }

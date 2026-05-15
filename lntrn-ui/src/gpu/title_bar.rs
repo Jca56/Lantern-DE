@@ -42,6 +42,10 @@ pub struct TitleBar {
     pub hover: WindowControlHover,
     pub maximized: bool,
     pub ui_scale: f32,
+    /// When true, skip the `palette.surface` fill so the window bg shows
+    /// through behind the controls. Lets the title bar honor a transparent
+    /// window without stacking surfaces on top of the bg.
+    pub transparent_bg: bool,
 }
 
 impl TitleBar {
@@ -51,7 +55,13 @@ impl TitleBar {
             hover: WindowControlHover::default(),
             maximized: false,
             ui_scale: 1.0,
+            transparent_bg: false,
         }
+    }
+
+    pub fn transparent_bg(mut self, t: bool) -> Self {
+        self.transparent_bg = t;
+        self
     }
 
     // ── Builder ─────────────────────────────────────────────────────────
@@ -160,18 +170,20 @@ impl TitleBar {
         let s = self.ui_scale;
         let r = if self.maximized { 0.0 } else { 10.0 * s };
 
-        // Background with rounded top corners
-        painter.rect_filled(self.rect, r, palette.surface);
-        // Square off bottom corners
-        if r > 0.0 {
-            painter.rect_filled(
-                Rect::new(self.rect.x, self.rect.y + self.rect.h - r, r, r),
-                0.0, palette.surface,
-            );
-            painter.rect_filled(
-                Rect::new(self.rect.x + self.rect.w - r, self.rect.y + self.rect.h - r, r, r),
-                0.0, palette.surface,
-            );
+        // Background with rounded top corners (skipped when transparent_bg
+        // is set — caller wants the window bg to show through).
+        if !self.transparent_bg {
+            painter.rect_filled(self.rect, r, palette.surface);
+            if r > 0.0 {
+                painter.rect_filled(
+                    Rect::new(self.rect.x, self.rect.y + self.rect.h - r, r, r),
+                    0.0, palette.surface,
+                );
+                painter.rect_filled(
+                    Rect::new(self.rect.x + self.rect.w - r, self.rect.y + self.rect.h - r, r, r),
+                    0.0, palette.surface,
+                );
+            }
         }
 
         // Window controls

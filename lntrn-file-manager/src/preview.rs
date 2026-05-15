@@ -37,9 +37,9 @@ pub fn draw_preview_pane(
     screen: (u32, u32),
     s: f32,
 ) -> Option<Rect> {
-    // Background
-    painter.rect_filled(rect, 0.0, palette.surface);
-    // Subtle left border separating from content
+    // Background intentionally not painted — the window bg already covers
+    // this region; stacking surface here would compound the alpha. The 1px
+    // left border below still gives the eye a clean visual separator.
     painter.rect_filled(
         Rect::new(rect.x, rect.y, 1.0 * s, rect.h),
         0.0,

@@ -106,6 +106,7 @@ impl AppearanceConfig {
 #[serde(default)]
 pub struct WmConfig {
     pub border_width: u32,
+    pub border_color: String,
     pub titlebar_height: u32,
     pub gap: u32,
     pub corner_radius: u32,
@@ -119,6 +120,7 @@ impl Default for WmConfig {
     fn default() -> Self {
         Self {
             border_width: 2,
+            border_color: "#4A9EFF".into(),
             titlebar_height: 36,
             gap: 8,
             corner_radius: 10,
@@ -135,9 +137,9 @@ impl Default for WmConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WindowsConfig {
-    pub window_opacity: f32,
     pub blur_intensity: f32,
     pub blur_tint: f32,
+    pub blur_tint_color: String,
     pub blur_darken: f32,
     pub background_opacity: f32,
     pub blur_exclude: Vec<String>,
@@ -146,9 +148,9 @@ pub struct WindowsConfig {
 impl Default for WindowsConfig {
     fn default() -> Self {
         Self {
-            window_opacity: 1.0,
             blur_intensity: 0.8,
             blur_tint: 0.15,
+            blur_tint_color: "#4A9EFF".into(),
             blur_darken: 0.0,
             background_opacity: 1.0,
             blur_exclude: Vec::new(),
@@ -409,7 +411,6 @@ impl LanternConfig {
         }
         self.window_manager.focus_glow_intensity =
             self.window_manager.focus_glow_intensity.clamp(0.0, 0.6);
-        self.windows.window_opacity = self.windows.window_opacity.clamp(0.1, 1.0);
         self.windows.blur_intensity = self.windows.blur_intensity.clamp(0.0, 1.0);
         self.windows.blur_tint = self.windows.blur_tint.clamp(0.0, 1.0);
         self.windows.blur_darken = self.windows.blur_darken.clamp(0.0, 1.0);

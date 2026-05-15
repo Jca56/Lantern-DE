@@ -25,7 +25,7 @@ use crate::wayland_actions::{
 use crate::{
     ClickAction, Gpu, CTX_NEW_FOLDER_BLUE, CTX_NEW_FOLDER_GREEN, CTX_NEW_FOLDER_ORANGE,
     CTX_NEW_FOLDER_PURPLE, CTX_NEW_FOLDER_RED, CTX_NEW_FOLDER_YELLOW,
-    VIEW_SLIDER_ID, VIEW_OPACITY_SLIDER_ID, VIEW_SHOW_HIDDEN_ID,
+    VIEW_SLIDER_ID, VIEW_SHOW_HIDDEN_ID,
     VIEW_THEME_FOX_DARK, VIEW_THEME_FOX_LIGHT, VIEW_THEME_LANTERN, VIEW_THEME_NIGHT_SKY,
     ZONE_DROP_CANCEL, ZONE_DROP_COPY, ZONE_DROP_MOVE,
 };
@@ -453,7 +453,7 @@ pub(crate) fn run_loop(
                     let action = handle_click(
                         input, app, view_menu, context_menu, &mut state.popup_backend,
                         &mut last_tab_click, &mut tab_drag_press, wf, s,
-                        settings.bg_opacity, &settings.theme,
+                        lntrn_theme::background_opacity(), &settings.theme,
                         state.ctrl, state.shift,
                     );
                     let mut settings_dirty = false;
@@ -632,7 +632,15 @@ pub(crate) fn run_loop(
         }
 
         // ── Render ──────────────────────────────────────────────────────
-        let opacity = if state.desktop_mode { settings.desktop_bg_opacity } else { settings.bg_opacity };
+        // In window mode use the system-wide [windows].background_opacity so
+        // every Lantern app honors a single source of truth. Desktop mode
+        // keeps its own setting because that surface is the icon canvas
+        // floating over the wallpaper, not a window.
+        let opacity = if state.desktop_mode {
+            settings.desktop_bg_opacity
+        } else {
+            lntrn_theme::background_opacity()
+        };
         let render_palette = palette.with_bg_opacity(opacity);
         let inline_evt = crate::render::render_frame(
             gpu, app, input, icon_cache, file_info,
@@ -661,9 +669,6 @@ pub(crate) fn run_loop(
                                 grid_columns(content.w, s, value), s, value),
                             content.h,
                         );
-                    } else if id == VIEW_OPACITY_SLIDER_ID {
-                        settings.bg_opacity = value.clamp(0.0, 1.0);
-                        settings.save();
                     }
                 } else if let MenuEvent::CheckboxToggled { id, checked } = evt {
                     if id == VIEW_SHOW_HIDDEN_ID {

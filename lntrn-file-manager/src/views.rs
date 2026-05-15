@@ -33,14 +33,17 @@ pub fn draw_content_list(
     let small_font = FontSize::Custom(20.0 * m * s);
     let path_font = FontSize::Custom(16.0 * m * s);
 
-    painter.rect_filled(content_rect, 0.0, palette.bg);
+    // No bg fill here — the window-level bg already covers this area, and
+    // re-painting it would double-paint the alpha and break transparency.
 
     // Column header
     let hdr_y = content_rect.y;
     let hdr_h = 32.0 * m * s;
+    // Header bg intentionally transparent — labels + the bottom 1px separator
+    // below still delimit the row from the file list.
     painter.rect_filled(
-        Rect::new(content_rect.x, hdr_y, content_rect.w, hdr_h),
-        0.0, palette.surface,
+        Rect::new(content_rect.x, hdr_y + hdr_h - 1.0, content_rect.w, 1.0),
+        0.0, palette.muted.with_alpha(0.2),
     );
     let name_x = content_rect.x + 42.0 * m * s;
     // Reserve enough room on the right for the date column ("Sep 30, 2026" is
@@ -200,7 +203,8 @@ pub fn draw_content_tree(
     let indent = 28.0 * m * s;
     let font = FontSize::Custom(24.0 * m * s);
 
-    painter.rect_filled(content_rect, 0.0, palette.bg);
+    // No bg fill — window-level bg already covers this area (avoids
+    // compounded-alpha double paint).
     area.begin(painter, text);
     let base_y = area.content_y();
     let content_top = content_rect.y;

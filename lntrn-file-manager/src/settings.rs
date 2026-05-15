@@ -14,8 +14,10 @@ pub struct Settings {
     pub sort_dir: String,
     #[serde(default)]
     pub pinned_tabs: Vec<String>,
-    #[serde(default = "default_bg_opacity")]
-    pub bg_opacity: f32,
+    /// Desktop-mode background opacity. Separate from the system-wide
+    /// `[windows].background_opacity` because desktop mode shows the
+    /// wallpaper directly and wants its own (usually fully transparent)
+    /// alpha for the file-icon canvas.
     #[serde(default = "default_desktop_opacity")]
     pub desktop_bg_opacity: f32,
     #[serde(default = "default_desktop_w")]
@@ -41,7 +43,6 @@ fn default_view_mode() -> String { "grid".into() }
 
 fn default_theme() -> String { "fox-dark".into() }
 
-fn default_bg_opacity() -> f32 { lntrn_theme::background_opacity() }
 fn default_desktop_opacity() -> f32 { 0.0 }
 fn default_desktop_w() -> f32 { 800.0 }
 fn default_desktop_h() -> f32 { 600.0 }
@@ -59,7 +60,6 @@ impl Default for Settings {
             sort_by: "name".into(),
             sort_dir: "asc".into(),
             pinned_tabs: Vec::new(),
-            bg_opacity: 1.0,
             desktop_bg_opacity: 0.0,
             desktop_width: 800.0,
             desktop_height: 600.0,

@@ -44,9 +44,17 @@ impl App {
         let screen_w = gpu.width();
         let screen_h = gpu.height();
 
-        let opacity = self.config.window.opacity;
+        // System-wide [windows].background_opacity is the single source of
+        // truth — read inline so System Settings changes apply on next paint.
+        let opacity = lntrn_theme::background_opacity();
         let bg_alpha = (opacity * 255.0).round() as u8;
         let bg = Color::from_rgba8(self.theme.bg.r, self.theme.bg.g, self.theme.bg.b, bg_alpha);
+        // Render-pass clear color: must be fully transparent. `bg` is drawn by
+        // `draw_window_bg` further down — clearing to the same colour would
+        // double-paint the alpha (0.95 + 0.95 ≈ 0.9975) and make the window
+        // effectively opaque. See System Settings + File Manager for the
+        // identical pattern.
+        let clear = Color::rgba(0.0, 0.0, 0.0, 0.0);
 
         painter.clear();
         self.input.begin_frame();
@@ -193,7 +201,6 @@ impl App {
             screen_w,
             screen_h,
             font_size,
-            self.config.window.opacity,
             self.sidebar.visible,
             maximized,
             1.0,
@@ -230,7 +237,7 @@ impl App {
             let overlay_painter = match self.overlay_painter.as_mut() {
                 Some(p) => p,
                 None => {
-                    if let Err(e) = painter.render_with_text(gpu, text, bg) {
+                    if let Err(e) = painter.render_with_text(gpu, text, clear) {
                         Self::handle_render_error(e, &mut self.gpu);
                     }
                     return;
@@ -241,7 +248,7 @@ impl App {
             let overlay_text = match self.overlay_text.as_mut() {
                 Some(t) => t,
                 None => {
-                    if let Err(e) = painter.render_with_text(gpu, text, bg) {
+                    if let Err(e) = painter.render_with_text(gpu, text, clear) {
                         Self::handle_render_error(e, &mut self.gpu);
                     }
                     return;
@@ -265,9 +272,6 @@ impl App {
                     match *id {
                         ui_chrome::MENU_FONT_SLIDER => {
                             self.config.font.size = ui_chrome::font_size_from_slider(*value);
-                        }
-                        ui_chrome::MENU_OPACITY_SLIDER => {
-                            self.config.window.opacity = ui_chrome::opacity_from_slider(*value);
                         }
                         _ => {}
                     }
@@ -318,7 +322,7 @@ impl App {
                 let view = frame.view().clone();
 
                 // Pass 1: base shapes + base text
-                painter.render_pass(gpu, frame.encoder_mut(), &view, bg);
+                painter.render_pass(gpu, frame.encoder_mut(), &view, clear);
                 text.render_queued(gpu, frame.encoder_mut(), &view);
 
                 // Pass 1.5: inline images
@@ -350,7 +354,7 @@ impl App {
                 let mut frame: Frame = gpu.begin_frame("Lantern 2D+Text")?;
                 let view = frame.view().clone();
 
-                painter.render_pass(gpu, frame.encoder_mut(), &view, bg);
+                painter.render_pass(gpu, frame.encoder_mut(), &view, clear);
                 text.render_queued(gpu, frame.encoder_mut(), &view);
 
                 // Inline images

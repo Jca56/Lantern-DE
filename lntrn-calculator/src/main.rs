@@ -123,7 +123,6 @@ struct CalcApp {
     gpu: Option<Gpu>,
     calc: Calculator,
     scale: f32,
-    bg_opacity: f32,
     needs_redraw: bool,
     cursor: Option<(f32, f32)>,
     pressed_btn: Option<usize>,
@@ -139,7 +138,6 @@ impl CalcApp {
             gpu: None,
             calc: Calculator::new(),
             scale: 1.0,
-            bg_opacity: lntrn_theme::background_opacity() * 0.8,
             needs_redraw: true,
             cursor: None,
             pressed_btn: None,
@@ -220,8 +218,12 @@ impl CalcApp {
         painter.clear();
 
         // ── Window background — frosted glass panel ──────────────────────
-        // Main glass background — alpha from system-settings opacity
-        let glass_bg = Color::rgba(GLASS_BG_R, GLASS_BG_G, GLASS_BG_B, self.bg_opacity);
+        // Main glass background — alpha from system-settings opacity.
+        // Read inline so changes apply on the next paint without a relaunch.
+        // The 0.8 multiplier keeps the calculator a bit more transparent
+        // than other apps because the glass surface depends on it visually.
+        let bg_opacity = lntrn_theme::background_opacity() * 0.8;
+        let glass_bg = Color::rgba(GLASS_BG_R, GLASS_BG_G, GLASS_BG_B, bg_opacity);
         painter.rect_filled(Rect::new(0.0, 0.0, w, h), CORNER_RADIUS * s, glass_bg);
 
         // ── Display area ─────────────────────────────────────────────────

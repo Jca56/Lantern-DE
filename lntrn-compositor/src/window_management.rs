@@ -216,7 +216,6 @@ impl Lantern {
         self.maximized_windows.retain(|entry| entry.surface != *surface);
         self.fullscreen_windows.retain(|entry| entry.surface != *surface);
         self.snapped_windows.retain(|entry| entry.surface != *surface);
-        self.window_opacity.remove(surface);
         self.pending_center.remove(surface);
         self.window_snapshots.remove(surface);
         self.animations.remove(surface);
@@ -280,20 +279,6 @@ impl Lantern {
     pub fn finish_zombie_close(&mut self, surface: &WlSurface) {
         self.closing_windows.retain(|cw| cw.surface != *surface);
         self.forget_window(surface);
-    }
-
-    pub fn get_window_opacity(&self, surface: &WlSurface) -> f32 {
-        self.window_opacity.get(surface).copied().unwrap_or(self.default_window_opacity)
-    }
-
-    pub fn adjust_window_opacity(&mut self, surface: &WlSurface, delta: f32) {
-        let current = self.get_window_opacity(surface);
-        let new = (current + delta).clamp(0.1, 1.0);
-        if (new - 1.0).abs() < f32::EPSILON {
-            self.window_opacity.remove(surface);
-        } else {
-            self.window_opacity.insert(surface.clone(), new);
-        }
     }
 
     pub fn focus_window(&mut self, window: &Window, serial: Serial) {

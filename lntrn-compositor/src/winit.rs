@@ -224,10 +224,8 @@ pub fn init_winit(
                                 ((render_location.y - output_geo.loc.y) as f64 * scale).round() as i32,
                             ).into();
                             let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(window) else { continue };
-                            let alpha = {
-                                let a = state.get_window_opacity(&surface);
-                                if switcher_visible { a * 0.3 } else { a }
-                            };
+                            let alpha = if switcher_visible { 0.3 } else { 1.0 };
+                            let _ = surface;
                             let win_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
                                 window.render_elements(
                                     renderer,

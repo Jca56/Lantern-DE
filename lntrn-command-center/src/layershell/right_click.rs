@@ -22,6 +22,13 @@ pub(super) fn handle_right_click(
     let phys_cx = wl.cursor_x as f32 * scale_f;
     let phys_cy = wl.cursor_y as f32 * scale_f;
 
+    tracing::info!(
+        cx = phys_cx, cy = phys_cy,
+        collapse_p = app.collapse_progress(),
+        panel_view = ?app.panel_view,
+        "right-click received",
+    );
+
     // Mini-dock right-click — the dock floats outside the panel rect
     // and is visible while collapsed, so it needs to be checked
     // before falling through to the panel-view dispatch below.
@@ -41,9 +48,16 @@ pub(super) fn handle_right_click(
             &app.apps,
             Some((phys_cx, phys_cy)),
         ) {
-            if let Some(idx) = crate::mini_dock::hit_test(&layout, phys_cx, phys_cy) {
+            let hit = crate::mini_dock::hit_test(&layout, phys_cx, phys_cy);
+            tracing::info!(
+                n_icons = layout.icons.len(),
+                hit = ?hit,
+                plate = ?layout.plate,
+                "dock hit-test",
+            );
+            if let Some(idx) = hit {
                 if let Some(entry) = layout.entries.get(idx).cloned() {
-                    tracing::debug!(
+                    tracing::info!(
                         app_id = %entry.app_id, pinned = entry.pinned,
                         "dock right-click → open menu",
                     );
@@ -53,6 +67,8 @@ pub(super) fn handle_right_click(
                     return;
                 }
             }
+        } else {
+            tracing::info!("dock layout returned None");
         }
     }
 

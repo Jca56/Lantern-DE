@@ -791,6 +791,13 @@ impl Lantern {
                 let button = event.button_code();
                 let button_state = event.state();
 
+                tracing::info!(
+                    button = format!("0x{:x}", button),
+                    state = ?button_state,
+                    super_pressed = self.super_pressed,
+                    "compositor PointerButton",
+                );
+
                 // Click while switcher is visible
                 if self.alt_tab_switcher.is_visible()
                     && button == BTN_LEFT
