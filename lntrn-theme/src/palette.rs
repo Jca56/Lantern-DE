@@ -72,17 +72,20 @@ pub const NIGHT_SKY: Palette = Palette {
 
 // ── Lantern (warm brown) ─────────────────────────────────────────────────────
 
+// Lantern bg matches lntrn-terminal's Theme::lantern bg so every Lantern
+// app lands on identical warm brown. Surface tones step up from bg so
+// translucent overlays (cards, sidebar accents) are actually visible.
 pub const LANTERN: Palette = Palette {
-    bg: Rgba::rgb(34, 24, 18),
-    surface: Rgba::rgb(34, 24, 18),
-    surface_2: Rgba::rgb(50, 38, 24),
+    bg: Rgba::rgb(30, 25, 20),
+    surface: Rgba::rgb(52, 42, 28),
+    surface_2: Rgba::rgb(68, 54, 34),
     sidebar: Rgba::rgb(42, 32, 22),
     sidebar_text: Rgba::rgb(210, 205, 192),
     text: Rgba::rgb(235, 230, 220),
     text_secondary: Rgba::rgb(210, 205, 192),
     muted: Rgba::rgb(170, 162, 148),
-    border: Rgba::rgba(30, 25, 18, 30),
-    separator: Rgba::rgba(18, 18, 18, 18),
+    border: Rgba::rgba(255, 230, 180, 30),
+    separator: Rgba::rgba(255, 230, 180, 24),
     close_hover: Rgba::rgb(255, 100, 100),
     control_hover: Rgba::rgb(34, 197, 94),
 };

@@ -4,11 +4,12 @@ use std::process::Command;
 
 // ── Window chrome mode ───────────────────────────────────────────────────────
 
-/// Visual style of the system-settings window chrome.
+/// Visual style of the system-settings window chrome. Maps from the unified
+/// `[appearance].theme` key onto a chrome mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowMode {
     Fox,
-    NightSky,
+    Lantern,
 }
 
 impl Default for WindowMode {
@@ -16,16 +17,10 @@ impl Default for WindowMode {
 }
 
 impl WindowMode {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "night_sky" | "nightsky" | "NightSky" => Self::NightSky,
-            _ => Self::Fox,
-        }
-    }
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::Fox => "fox",
-            Self::NightSky => "night_sky",
+            Self::Fox => "fox-dark",
+            Self::Lantern => "lantern",
         }
     }
 }
@@ -69,34 +64,36 @@ impl Default for AnimationsConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppearanceConfig {
+    /// Active theme variant — `"fox-dark"` or `"lantern"`. Read by every
+    /// Lantern app via `lntrn_theme::active_variant()`.
     pub theme: String,
-    pub accent_color: String,
+    /// Accent color override (hex). Read by `lntrn_theme::active_accent()`
+    /// and applied to `FoxPalette::current().accent` everywhere.
+    pub accent: String,
     pub font_family: String,
     pub font_size: f32,
     pub wallpaper: String,
-    /// Visual style of app windows: "fox" or "night_sky"
-    #[serde(default = "default_window_style")]
-    pub window_style: String,
 }
-
-fn default_window_style() -> String { "fox".into() }
 
 impl Default for AppearanceConfig {
     fn default() -> Self {
         Self {
-            theme: "fox".into(),
-            accent_color: "#C8860A".into(),
+            theme: "fox-dark".into(),
+            accent: "#C8860A".into(),
             font_family: "sans-serif".into(),
             font_size: 16.0,
             wallpaper: String::new(),
-            window_style: default_window_style(),
         }
     }
 }
 
 impl AppearanceConfig {
     pub fn window_mode(&self) -> WindowMode {
-        WindowMode::from_str(&self.window_style)
+        // Map the unified theme key onto the chrome's two-mode enum.
+        match self.theme.as_str() {
+            "lantern" => WindowMode::Lantern,
+            _ => WindowMode::Fox,
+        }
     }
 }
 

@@ -92,6 +92,10 @@ pub struct App {
     pub(crate) scroll_current_px: f32,
     pub(crate) scroll_animating: bool,
     pub(crate) last_frame_time: Instant,
+    /// Last time we polled `lantern.toml` for theme/accent changes. Cheap
+    /// throttle — the read isn't cached so we only check a few times per
+    /// second.
+    pub(crate) last_theme_poll: Instant,
 
     // Selection drag
     pub(crate) selecting: bool,
@@ -148,6 +152,7 @@ impl App {
             scroll_current_px: 0.0,
             scroll_animating: false,
             last_frame_time: Instant::now(),
+            last_theme_poll: Instant::now(),
             selecting: false,
             scrollbar_dragging: false,
             pending_menu_event: None,
@@ -187,7 +192,7 @@ impl App {
     /// Chrome height — tabs now live inside the title bar, so this is just
     /// the title bar height.
     pub(crate) fn chrome_height(&self) -> f32 {
-        ui_chrome::title_bar_height(&self.config.window.mode)
+        ui_chrome::title_bar_height(&crate::config::WindowMode::current())
     }
 
     /// Font size scaled to current window width.
@@ -651,6 +656,32 @@ impl ApplicationHandler<UserEvent> for App {
             self.cursor_visible = !self.cursor_visible;
             self.cursor_blink_deadline = now + CURSOR_BLINK_INTERVAL;
             self.request_redraw();
+        }
+
+        // Live-reload theme from [appearance].theme. Throttled to ~2 Hz —
+        // active_variant() is uncached so we don't want to spam stat() at
+        // animation-frame rate.
+        if now.duration_since(self.last_theme_poll).as_millis() >= 500 {
+            self.last_theme_poll = now;
+            let new_theme = crate::theme::Theme::current();
+            if new_theme.bg != self.theme.bg
+                || new_theme.terminal_fg != self.theme.terminal_fg
+                || new_theme.terminal_bold != self.theme.terminal_bold
+            {
+                self.theme = new_theme;
+                let fg = self.theme.terminal_fg;
+                let bold = self.theme.terminal_bold;
+                for tab in &mut self.tabs {
+                    for pane in &mut tab.panes {
+                        pane.terminal.set_default_colors(
+                            fg,
+                            crate::terminal::Color8::TRANSPARENT,
+                            bold,
+                        );
+                    }
+                }
+                self.request_redraw();
+            }
         }
 
         // Synchronized output (mode 2026) deadline check. When a pane has

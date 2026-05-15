@@ -320,6 +320,22 @@ pub fn draw_content(
         }
     }
 
+    // 1d2. Bar-mode sliders (Transparency + Blur) — show when CC is
+    //      collapsed enough that the dock is visible. Fade with
+    //      collapse_p so they appear/disappear in sync with the bar.
+    if collapse_p > 0.005 {
+        crate::bar_sliders::draw(
+            painter,
+            text,
+            panel.rect,
+            panel.scale_factor,
+            panel.alpha * collapse_p.clamp(0.0, 1.0),
+            state.bar_sliders,
+            surface_w,
+            surface_h,
+        );
+    }
+
     // 1e. View-switcher arrows next to the controls row. Anchored at
     //     the top so they remain reachable while the panel is
     //     collapsed — they don't fade with the body content.
@@ -373,6 +389,13 @@ pub fn draw_content(
         panel.alpha,
         grown_visual,
         state.grow_hover,
+    );
+    crate::view_indicator::draw_restart(
+        painter,
+        panel.rect,
+        panel.scale_factor,
+        panel.alpha,
+        state.restart_hover,
     );
     crate::view_indicator::draw_gear(
         painter,
@@ -506,6 +529,28 @@ pub fn draw_content(
     }
     if sliding {
         pop_panel_clip(painter, text, mono_text);
+    }
+
+    // Right-click context menu — drawn here (before the collapsed
+    // early return below) so dock-right-click menus still render in
+    // the collapsed state where the body is fully faded out. Layer 1
+    // so it sits above the dock + any panel content, and clamped to
+    // the full surface so the menu can anchor outside the panel rect.
+    if let Some(menu) = &state.context_menu {
+        painter.set_layer(1);
+        text.set_layer(1);
+        let surface_bounds = lntrn_render::Rect::new(0.0, 0.0, surface_w as f32, surface_h as f32);
+        crate::launcher::context_menu::draw(
+            painter,
+            text,
+            menu,
+            surface_bounds,
+            panel.scale_factor,
+            surface_w,
+            surface_h,
+        );
+        painter.set_layer(0);
+        text.set_layer(0);
     }
 
     // 2. Body of the panel, based on mode. Faded out during collapse
@@ -757,28 +802,7 @@ pub fn draw_content(
         clamp_body_icon_clips(&mut icons, icons_before_body, original_panel_rect);
     }
 
-    // 3. Right-click context menu — drawn on layer 1 so it sits above
-    //    grid tiles, labels, and any other panel content. Clamped to
-    //    the full surface (not the panel) so dock right-click menus,
-    //    which anchor outside the panel rect, can appear at the cursor.
-    if let Some(menu) = &state.context_menu {
-        painter.set_layer(1);
-        text.set_layer(1);
-        let surface_bounds = lntrn_render::Rect::new(0.0, 0.0, surface_w as f32, surface_h as f32);
-        crate::launcher::context_menu::draw(
-            painter,
-            text,
-            menu,
-            surface_bounds,
-            panel.scale_factor,
-            surface_w,
-            surface_h,
-        );
-        painter.set_layer(0);
-        text.set_layer(0);
-    }
-
-    // 4. Calendar event context menu — same overlay layer so it sits
+    // Calendar event context menu — overlay layer so it sits
     //    above the day-detail panel.
     if let Some(menu) = &state.controls.clock.event_menu {
         painter.set_layer(1);

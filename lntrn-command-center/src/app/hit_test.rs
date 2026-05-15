@@ -268,6 +268,7 @@ impl AppState {
             anchor_x: phys_x,
             anchor_y: phys_y,
             items,
+            anchor_above: true,
         });
     }
 
@@ -303,6 +304,7 @@ impl AppState {
                         anchor_x: phys_x,
                         anchor_y: phys_y,
                         items,
+                        anchor_above: false,
                     });
                 }
                 return;
@@ -316,6 +318,7 @@ impl AppState {
             anchor_x: phys_x,
             anchor_y: phys_y,
             items,
+            anchor_above: false,
         });
     }
 

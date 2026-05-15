@@ -141,3 +141,57 @@ pub fn read_config_bool(section: &str, key: &str, default: bool) -> bool {
 pub fn background_opacity() -> f32 {
     read_config_f32("windows", "background_opacity", 1.0)
 }
+
+/// Read the user-configured accent color from `[appearance].accent`. Returns
+/// `None` when the key is missing, the value is not a parseable hex string,
+/// or the config file is unavailable — callers fall back to the variant's
+/// built-in accent in that case.
+pub fn active_accent() -> Option<crate::Rgba> {
+    let path = lantern_config_path()?;
+    let contents = std::fs::read_to_string(&path).ok()?;
+    let mut in_appearance = false;
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_appearance = trimmed == "[appearance]";
+            continue;
+        }
+        if in_appearance {
+            if let Some((k, v)) = trimmed.split_once('=') {
+                if k.trim() == "accent" {
+                    let hex = v.trim().trim_matches('"').trim_matches('\'');
+                    return parse_hex_rgb(hex);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Parse a `#RGB`, `#RRGGBB`, or `#RRGGBBAA` hex string into `Rgba`. Returns
+/// `None` for malformed input. Alpha defaults to 255 when absent.
+fn parse_hex_rgb(s: &str) -> Option<crate::Rgba> {
+    let s = s.strip_prefix('#').unwrap_or(s);
+    let (r, g, b, a) = match s.len() {
+        3 => {
+            let r = u8::from_str_radix(&s[0..1], 16).ok()?;
+            let g = u8::from_str_radix(&s[1..2], 16).ok()?;
+            let b = u8::from_str_radix(&s[2..3], 16).ok()?;
+            (r * 17, g * 17, b * 17, 255)
+        }
+        6 => (
+            u8::from_str_radix(&s[0..2], 16).ok()?,
+            u8::from_str_radix(&s[2..4], 16).ok()?,
+            u8::from_str_radix(&s[4..6], 16).ok()?,
+            255,
+        ),
+        8 => (
+            u8::from_str_radix(&s[0..2], 16).ok()?,
+            u8::from_str_radix(&s[2..4], 16).ok()?,
+            u8::from_str_radix(&s[4..6], 16).ok()?,
+            u8::from_str_radix(&s[6..8], 16).ok()?,
+        ),
+        _ => return None,
+    };
+    Some(crate::Rgba::rgba(r, g, b, a))
+}

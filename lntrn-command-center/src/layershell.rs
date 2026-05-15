@@ -593,6 +593,7 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                             anchor_x,
                             anchor_y,
                             items: sort_menu_items(&app.files),
+                            anchor_above: false,
                         });
                         wl.left_clicked = false;
                         continue;

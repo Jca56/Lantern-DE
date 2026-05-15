@@ -2,12 +2,11 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::PathBuf;
 
-/// Window chrome style.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Window chrome style. Reflects the unified `[appearance].theme` setting in
+/// `lantern.toml` — no longer persisted in the terminal's own config.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowMode {
     Fox,
-    FoxLight,
-    NightSky,
     Lantern,
 }
 
@@ -17,35 +16,20 @@ impl Default for WindowMode {
     }
 }
 
-impl Serialize for WindowMode {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(match self {
-            Self::Fox => "fox",
-            Self::FoxLight => "fox_light",
-            Self::NightSky => "night_sky",
-            Self::Lantern => "lantern",
-        })
-    }
-}
-
-impl<'de> Deserialize<'de> for WindowMode {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let s = String::deserialize(deserializer)?;
-        Ok(match s.as_str() {
-            "night_sky" | "nightsky" | "NightSky" => Self::NightSky,
-            "fox_light" | "foxlight" | "FoxLight" => Self::FoxLight,
-            "lantern" | "Lantern" => Self::Lantern,
+impl WindowMode {
+    /// Resolve from the user's `[appearance].theme` in `lantern.toml`.
+    pub fn current() -> Self {
+        match lntrn_theme::active_variant() {
+            lntrn_theme::ThemeVariant::Lantern => Self::Lantern,
             _ => Self::Fox,
-        })
+        }
     }
 }
 
 impl fmt::Display for WindowMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Fox => write!(f, "fox"),
-            Self::FoxLight => write!(f, "fox_light"),
-            Self::NightSky => write!(f, "night_sky"),
+            Self::Fox => write!(f, "fox-dark"),
             Self::Lantern => write!(f, "lantern"),
         }
     }
@@ -63,7 +47,6 @@ pub struct PinnedTab {
 #[serde(default)]
 pub struct LanternConfig {
     pub font: FontConfig,
-    pub window: WindowConfig,
     pub general: GeneralConfig,
     #[serde(default)]
     pub pinned_tabs: Vec<PinnedTab>,
@@ -79,20 +62,12 @@ pub struct FontConfig {
     pub size: f32,
 }
 
-/// Window geometry and appearance.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct WindowConfig {
-    /// Window chrome style: "fox" or "night_sky".
-    #[serde(default)]
-    pub mode: WindowMode,
-}
-
 /// General preferences.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GeneralConfig {
-    /// Startup theme: "fox" or "lantern".
+    /// Startup theme name (reserved — terminal currently reads the unified
+    /// `[appearance].theme` from `lantern.toml` at draw time).
     pub theme: String,
 }
 
@@ -102,7 +77,6 @@ impl Default for LanternConfig {
     fn default() -> Self {
         Self {
             font: FontConfig::default(),
-            window: WindowConfig::default(),
             general: GeneralConfig::default(),
             pinned_tabs: Vec::new(),
         }
@@ -118,18 +92,10 @@ impl Default for FontConfig {
     }
 }
 
-impl Default for WindowConfig {
-    fn default() -> Self {
-        Self {
-            mode: WindowMode::default(),
-        }
-    }
-}
-
 impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
-            theme: "fox".to_string(),
+            theme: "fox-dark".to_string(),
         }
     }
 }

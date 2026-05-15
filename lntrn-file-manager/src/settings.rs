@@ -28,8 +28,6 @@ pub struct Settings {
     pub desktop_x: i32,
     #[serde(default)]
     pub desktop_y: i32,
-    #[serde(default = "default_theme")]
-    pub theme: String,
     #[serde(default)]
     pub preview_open: bool,
     #[serde(default = "default_preview_width")]
@@ -40,8 +38,6 @@ pub struct Settings {
 
 fn default_preview_width() -> f32 { 360.0 }
 fn default_view_mode() -> String { "grid".into() }
-
-fn default_theme() -> String { "fox-dark".into() }
 
 fn default_desktop_opacity() -> f32 { 0.0 }
 fn default_desktop_w() -> f32 { 800.0 }
@@ -65,7 +61,6 @@ impl Default for Settings {
             desktop_height: 600.0,
             desktop_x: 0,
             desktop_y: 0,
-            theme: "fox-dark".into(),
             preview_open: false,
             preview_width: 360.0,
             view_mode: "grid".into(),
@@ -127,13 +122,11 @@ impl Settings {
         }
     }
 
+    /// Theme variant — now reads from the unified `[appearance].theme` in
+    /// `lantern.toml`. The local `theme` field was dropped so System Settings
+    /// is the only source of truth.
     pub fn theme_variant(&self) -> lntrn_theme::ThemeVariant {
-        match self.theme.as_str() {
-            "fox-light" => lntrn_theme::ThemeVariant::FoxLight,
-            "lantern" => lntrn_theme::ThemeVariant::Lantern,
-            "night-sky" | "nightsky" | "night_sky" => lntrn_theme::ThemeVariant::NightSky,
-            _ => lntrn_theme::ThemeVariant::FoxDark,
-        }
+        lntrn_theme::active_variant()
     }
 
     pub fn set_sort_by(&mut self, sort: crate::fs::SortBy) {

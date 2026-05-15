@@ -40,11 +40,6 @@ pub fn title_bar_height(_mode: &WindowMode) -> f32 {
 // ── Menu action IDs ─────────────────────────────────────────────────────────
 
 pub const MENU_FONT_SLIDER: u32 = 100;
-pub const MENU_MODE_FOX: u32 = 102;
-pub const MENU_MODE_NIGHT_SKY: u32 = 103;
-const MENU_MODE_GROUP: u32 = 1;
-pub const MENU_MODE_FOX_LIGHT: u32 = 104;
-pub const MENU_MODE_LANTERN: u32 = 105;
 pub const MENU_SPLIT_RIGHT: u32 = 200;
 pub const MENU_SPLIT_DOWN: u32 = 201;
 pub const MENU_CLOSE_PANE: u32 = 202;
@@ -108,23 +103,13 @@ pub enum ClickAction {
 
 // ── Menu definitions ────────────────────────────────────────────────────────
 
-pub fn build_menus(font_size: f32, _sidebar_visible: bool, mode: &WindowMode) -> Vec<(&'static str, Vec<MenuItem>)> {
-    let is_fox_dark = *mode == WindowMode::Fox;
-    let is_fox_light = *mode == WindowMode::FoxLight;
-    let is_night_sky = *mode == WindowMode::NightSky;
-    let is_lantern = *mode == WindowMode::Lantern;
+pub fn build_menus(font_size: f32, _sidebar_visible: bool, _mode: &WindowMode) -> Vec<(&'static str, Vec<MenuItem>)> {
     vec![
         ("Files", vec![
             MenuItem::action(MENU_TOGGLE_SIDEBAR, "Toggle Sidebar"),
         ]),
         ("View", vec![
             MenuItem::slider(MENU_FONT_SLIDER, "Text Size", ((font_size - 6.0) / 24.0).clamp(0.0, 1.0)),
-            MenuItem::separator(),
-            MenuItem::header("Window Style"),
-            MenuItem::radio(MENU_MODE_LANTERN, MENU_MODE_GROUP, "Lantern", is_lantern),
-            MenuItem::radio(MENU_MODE_FOX, MENU_MODE_GROUP, "Fox Dark", is_fox_dark),
-            MenuItem::radio(MENU_MODE_FOX_LIGHT, MENU_MODE_GROUP, "Fox Light", is_fox_light),
-            MenuItem::radio(MENU_MODE_NIGHT_SKY, MENU_MODE_GROUP, "Night Sky", is_night_sky),
         ]),
         ("Split", vec![
             MenuItem::action_with(MENU_SPLIT_RIGHT, "Split Right", "Ctrl+Shift+D"),
@@ -277,8 +262,7 @@ pub fn draw_chrome(
 /// Draw the vertical divider between the menu bar and the tabs.
 fn draw_divider(painter: &mut Painter, x: f32, bar_h: f32, scale: f32, mode: &WindowMode) {
     let color = match mode {
-        WindowMode::Fox | WindowMode::FoxLight => Color::from_rgba8(255, 255, 255, 70),
-        WindowMode::NightSky => Color::rgba(0.55, 0.50, 0.70, 0.55),
+        WindowMode::Fox => Color::from_rgba8(255, 255, 255, 70),
         WindowMode::Lantern => Color::from_rgba8(240, 230, 210, 50),
     };
     let inset = bar_h * 0.20;
@@ -411,10 +395,6 @@ pub fn menu_event_to_action(event: &MenuEvent) -> ClickAction {
         },
         MenuEvent::SliderChanged { id, .. } => match *id {
             MENU_FONT_SLIDER => ClickAction::SliderDrag,
-            _ => ClickAction::None,
-        },
-        MenuEvent::RadioSelected { id, .. } => match *id {
-            MENU_MODE_FOX | MENU_MODE_FOX_LIGHT | MENU_MODE_NIGHT_SKY | MENU_MODE_LANTERN => ClickAction::WindowModeChanged,
             _ => ClickAction::None,
         },
         _ => ClickAction::None,

@@ -38,14 +38,8 @@ pub fn draw_window_bg(
 ) {
     let r = if maximized { 0.0 } else { CORNER_RADIUS };
     let full = Rect::new(0.0, 0.0, w, h);
-    match mode {
-        WindowMode::Fox | WindowMode::FoxLight | WindowMode::Lantern => {
-            painter.rect_filled(full, r, bg_color);
-        }
-        WindowMode::NightSky => {
-            crate::night_sky::draw_background(painter, w, h, maximized);
-        }
-    }
+    let _ = mode;
+    painter.rect_filled(full, r, bg_color);
 }
 
 /// Render the full terminal grid at the given origin.

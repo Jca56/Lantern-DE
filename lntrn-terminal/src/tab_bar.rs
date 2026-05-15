@@ -48,7 +48,7 @@ struct TabPalette {
 
 fn palette(mode: &WindowMode) -> TabPalette {
     match mode {
-        WindowMode::Fox | WindowMode::FoxLight => TabPalette {
+        WindowMode::Fox => TabPalette {
             surface: Color::from_rgba8(30, 30, 30, 255),
             tab_active: Color::from_rgba8(50, 50, 50, 255),
             tab_hover: Color::from_rgba8(45, 45, 45, 255),
@@ -70,29 +70,6 @@ fn palette(mode: &WindowMode) -> TabPalette {
             ctx_bg: Color::from_rgba8(39, 39, 39, 255),
             ctx_highlight: Color::from_rgba8(255, 255, 255, 15),
             ctx_top_line: Color::from_rgba8(255, 255, 255, 15),
-        },
-        WindowMode::NightSky => TabPalette {
-            surface: Color::rgba(0.005, 0.002, 0.020, 0.85),
-            tab_active: Color::rgba(0.06, 0.03, 0.12, 0.9),
-            tab_hover: Color::rgba(0.05, 0.025, 0.10, 0.8),
-            tab_inactive: Color::rgba(0.025, 0.012, 0.06, 0.7),
-            tab_rename: Color::rgba(0.06, 0.03, 0.12, 0.9),
-            text: Color::rgb(0.80, 0.76, 0.90),
-            muted: Color::rgb(0.45, 0.40, 0.58),
-            accent: Color::from_rgba8(200, 134, 10, 255),
-            close_hover_bg: Color::rgba(0.45, 0.02, 0.02, 0.35),
-            close_hover_fg: Color::rgb(0.85, 0.25, 0.25),
-            close_active_fg: Color::rgb(0.60, 0.18, 0.18),
-            close_inactive_fg: Color::rgb(0.40, 0.15, 0.15),
-            plus_bg: Color::rgba(0.30, 0.20, 0.50, 0.12),
-            plus_bg_hover: Color::rgba(0.30, 0.20, 0.50, 0.30),
-            plus_border: Color::rgba(0.30, 0.20, 0.50, 0.25),
-            plus_icon: Color::rgb(0.55, 0.50, 0.68),
-            plus_icon_hover: Color::rgb(0.80, 0.76, 0.90),
-            ctx_shadow: Color::rgba(0.0, 0.0, 0.0, 0.35),
-            ctx_bg: Color::rgba(0.04, 0.02, 0.08, 0.95),
-            ctx_highlight: Color::rgba(0.30, 0.20, 0.50, 0.20),
-            ctx_top_line: Color::rgba(0.30, 0.20, 0.50, 0.15),
         },
         WindowMode::Lantern => TabPalette {
             surface: Color::from_rgba8(25, 20, 16, 255),

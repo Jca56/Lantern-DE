@@ -24,7 +24,9 @@ fn to_color(c: Rgba) -> Color {
 }
 
 impl FoxPalette {
-    /// Build a palette from any `lntrn_theme` palette + variant.
+    /// Build a palette from any `lntrn_theme` palette + variant. The accent
+    /// uses the variant's built-in color — call `current()` instead if you
+    /// want the user's `[appearance].accent` override applied.
     pub fn from_theme(palette: &Palette, variant: lntrn_theme::ThemeVariant) -> Self {
         Self {
             bg: to_color(palette.bg),
@@ -47,9 +49,16 @@ impl FoxPalette {
         Self::from_theme(variant.palette(), variant)
     }
 
-    /// Build a palette from the user's active theme in the Lantern config.
+    /// Build a palette from the user's active theme + accent in the Lantern
+    /// config. Apps should call this so a theme/accent change in System
+    /// Settings is picked up on the next draw.
     pub fn current() -> Self {
-        Self::from_variant(lntrn_theme::active_variant())
+        let variant = lntrn_theme::active_variant();
+        let mut pal = Self::from_variant(variant);
+        if let Some(accent) = lntrn_theme::active_accent() {
+            pal.accent = to_color(accent);
+        }
+        pal
     }
 
     pub fn dark() -> Self {

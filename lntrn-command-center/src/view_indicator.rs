@@ -1,13 +1,16 @@
 //! Top-strip icons above the panel.
 //!
 //! Layout (from left to right, in the margin above the panel):
-//!   LEFT  : [Gear (Settings)] [Home] [Grow (Size)] [Desktop]
+//!   LEFT  : [Restart (X)] [Gear (Settings)] [Home] [Grow (Size)] [Desktop]
 //!   CENTER: view dots
 //!   RIGHT : [Usage (Claude)] [Emoji] [Clipboard] [Notes]
 //!
 //! Desktop + Usage glyphs themselves are drawn by `desktop_settings.rs`
 //! and `usage_button.rs`; this module owns their rects so all top-strip
 //! buttons line up against the same horizontal baseline.
+//!
+//! The Restart X is a dev convenience — kills the daemon and re-launches
+//! it so iteration on the binary doesn't need a separate seppuku step.
 
 use lntrn_render::{Color, Painter, Rect};
 
@@ -24,6 +27,8 @@ pub const STRIP_OFFSET: f32 = 22.0;
 pub const BTN_SIZE: f32 = 34.0;
 /// Gear is slightly smaller — gear teeth read OK at this size.
 pub const GEAR_SIZE: f32 = 27.0;
+/// Restart X (dev button) matches the gear so they sit on the same baseline.
+pub const RESTART_SIZE: f32 = 27.0;
 /// Gap between adjacent buttons on the same side.
 pub const BTN_GAP: f32 = 14.0;
 /// Outer padding from the panel edge to the first button on each side.
@@ -87,8 +92,8 @@ fn right_slot_at(panel: Rect, scale: f32, right_logical_pad: f32, size: f32) -> 
 }
 
 /// Per-slot logical sizes for the LEFT strip in render order.
-/// 0 = Gear (Settings), 1 = Home, 2 = Grow (Size), 3 = Desktop.
-const LEFT_SLOT_SIZES: [f32; 4] = [GEAR_SIZE, BTN_SIZE, BTN_SIZE, BTN_SIZE];
+/// 0 = Restart, 1 = Gear (Settings), 2 = Home, 3 = Grow (Size), 4 = Desktop.
+const LEFT_SLOT_SIZES: [f32; 5] = [RESTART_SIZE, GEAR_SIZE, BTN_SIZE, BTN_SIZE, BTN_SIZE];
 
 /// X offset (logical, from panel left edge) of slot `idx`'s left edge.
 /// Walks the slot list cumulatively so a smaller gear at the front
@@ -107,17 +112,20 @@ fn right_slot_pad_logical(idx: usize) -> f32 {
     SIDE_PAD + idx as f32 * (BTN_SIZE + BTN_GAP)
 }
 
+pub fn restart_rect(panel: Rect, scale: f32) -> Rect {
+    left_slot_at(panel, scale, left_slot_x_logical(0), RESTART_SIZE)
+}
 pub fn gear_rect(panel: Rect, scale: f32) -> Rect {
-    left_slot_at(panel, scale, left_slot_x_logical(0), GEAR_SIZE)
+    left_slot_at(panel, scale, left_slot_x_logical(1), GEAR_SIZE)
 }
 pub fn home_rect(panel: Rect, scale: f32) -> Rect {
-    left_slot_at(panel, scale, left_slot_x_logical(1), BTN_SIZE)
-}
-pub fn grow_rect(panel: Rect, scale: f32) -> Rect {
     left_slot_at(panel, scale, left_slot_x_logical(2), BTN_SIZE)
 }
-pub fn desktop_button_rect(panel: Rect, scale: f32) -> Rect {
+pub fn grow_rect(panel: Rect, scale: f32) -> Rect {
     left_slot_at(panel, scale, left_slot_x_logical(3), BTN_SIZE)
+}
+pub fn desktop_button_rect(panel: Rect, scale: f32) -> Rect {
+    left_slot_at(panel, scale, left_slot_x_logical(4), BTN_SIZE)
 }
 
 pub fn notes_rect(panel: Rect, scale: f32) -> Rect {
@@ -143,6 +151,9 @@ pub fn hit_home(panel: Rect, scale: f32, px: f32, py: f32) -> bool {
 pub fn hit_grow(panel: Rect, scale: f32, px: f32, py: f32) -> bool {
     point_in(grow_rect(panel, scale), px, py)
 }
+pub fn hit_restart(panel: Rect, scale: f32, px: f32, py: f32) -> bool {
+    point_in(restart_rect(panel, scale), px, py)
+}
 pub fn hit_gear(panel: Rect, scale: f32, px: f32, py: f32) -> bool {
     point_in(gear_rect(panel, scale), px, py)
 }
@@ -163,6 +174,29 @@ fn glyph_color(hovered: bool, active: bool, alpha: f32) -> Color {
         Color::from_rgb8(INACTIVE_RGB.0, INACTIVE_RGB.1, INACTIVE_RGB.2)
             .with_alpha(HOME_IDLE_ALPHA * alpha)
     }
+}
+
+/// Bright red X — dev restart button, intentionally garish so it never
+/// gets clicked by mistake.
+pub fn draw_restart(
+    painter: &mut Painter,
+    panel: Rect,
+    scale: f32,
+    alpha: f32,
+    hovered: bool,
+) {
+    let r = restart_rect(panel, scale);
+    let cx = r.x + r.w / 2.0;
+    let cy = r.y + r.h / 2.0;
+    let arm = r.w * 0.34;
+    let stroke = 3.0 * scale;
+    let color = if hovered {
+        Color::from_rgb8(255, 90, 90).with_alpha(alpha)
+    } else {
+        Color::from_rgb8(220, 60, 60).with_alpha(alpha * 0.85)
+    };
+    painter.line_round(cx - arm, cy - arm, cx + arm, cy + arm, stroke, color);
+    painter.line_round(cx + arm, cy - arm, cx - arm, cy + arm, stroke, color);
 }
 
 pub fn draw_gear(

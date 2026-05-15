@@ -27,6 +27,23 @@ pub(super) fn handle_drag(
     if !wl.left_held {
         app.dragging = None;
         app.settings_drag = None;
+        app.bar_sliders.dragging = None;
+    }
+
+    // Bar-mode slider drag: while a transparency / blur knob is held,
+    // map cursor x onto its track and persist the new value to
+    // lantern.toml. The compositor mtime-caches that file, so changes
+    // show up on the next render frame without a restart.
+    if let Some(slider) = app.bar_sliders.dragging {
+        let scale_f = wl.fractional_scale() as f32;
+        let phys_w = wl.phys_width().max(1);
+        let panel = PanelRect::compute_with_dims(
+            phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical(),
+        );
+        let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+        let phys_cx = wl.cursor_x as f32 * scale_f;
+        let v = crate::bar_sliders::value_at_cursor(panel_rect, scale_f, slider, phys_cx);
+        crate::bar_sliders::set_value(slider, v);
     }
 
     // Settings page slider drag: while the user has a settings slider

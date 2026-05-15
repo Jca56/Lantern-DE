@@ -1,26 +1,15 @@
 //! Window chrome: background, CSD title bar, window control buttons, border.
 //!
-//! Supports two styles: Fox (warm solid bg) and Night Sky (indigo gradient + glows).
+//! Two styles, matching the unified `[appearance].theme` setting:
+//!   * Fox (Fox Dark) — neutral dark gray bg
+//!   * Lantern        — warm brown bg
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::FoxPalette;
 
 use crate::config::WindowMode;
 
-// ── Night Sky palette (base colors — opacity applied from config at runtime) ─
-const NS_BG_DEEP: Color       = Color::rgb(0.003, 0.001, 0.014);
-const NS_BG_SURFACE: Color    = Color::rgb(0.008, 0.003, 0.028);
-const NS_GLOW_PINK: Color     = Color::rgba(0.45, 0.14, 0.32, 0.07);
-const NS_GLOW_CYAN: Color     = Color::rgba(0.14, 0.35, 0.52, 0.07);
-const NS_TEXT_PRIMARY: Color  = Color::rgb(0.80, 0.76, 0.90);
-const NS_TEXT_SECONDARY: Color= Color::rgb(0.45, 0.40, 0.58);
-const NS_BORDER_SUBTLE: Color = Color::rgba(0.30, 0.20, 0.50, 0.15);
-const NS_CLOSE_BG: Color      = Color::rgb(0.45, 0.02, 0.02);
-const NS_CLOSE_HOVER: Color   = Color::rgba(0.45, 0.02, 0.02, 0.35);
-const NS_CONTROL_HOVER: Color = Color::rgba(0.50, 0.38, 0.70, 0.25);
-const NS_CONTROL_ICON: Color  = Color::rgb(0.55, 0.50, 0.68);
-
-// ── Fox palette (warm dark) ─────────────────────────────────────────────────
+// ── Fox palette (neutral dark) ──────────────────────────────────────────────
 // `Color::rgb` stores LINEAR-space values; the comment beside each line is the
 // equivalent sRGB 8-bit value so it's easy to compare against design specs.
 //
@@ -33,6 +22,19 @@ const FOX_CLOSE_BG: Color     = Color::rgb(0.56, 0.013, 0.013);        // sRGB ~
 const FOX_CLOSE_HOVER: Color  = Color::rgba(0.56, 0.013, 0.013, 0.45);
 const FOX_CONTROL_HOVER: Color= Color::rgba(1.0, 1.0, 1.0, 0.12);
 const FOX_CONTROL_ICON: Color = Color::rgb(0.45, 0.45, 0.45);          // sRGB ~180
+
+// ── Lantern palette (warm brown) ────────────────────────────────────────────
+// LN_BG matches lntrn-terminal's Theme::lantern bg so all three apps land on
+// the same warm brown when the user picks Lantern. Use from_rgba8 so the
+// sRGB→linear conversion is exact (no hand-computed linear constants).
+fn ln_bg() -> Color           { Color::from_rgba8(30, 25, 20, 255) }
+const LN_TEXT_PRIMARY: Color  = Color::rgb(0.82, 0.79, 0.73);          // warm cream
+const LN_TEXT_SECONDARY: Color= Color::rgb(0.40, 0.36, 0.30);          // muted tan
+const LN_BORDER_SUBTLE: Color = Color::rgba(1.0, 0.85, 0.65, 0.10);
+const LN_CLOSE_BG: Color      = Color::rgb(0.56, 0.013, 0.013);
+const LN_CLOSE_HOVER: Color   = Color::rgba(0.56, 0.013, 0.013, 0.45);
+const LN_CONTROL_HOVER: Color = Color::rgba(1.0, 0.95, 0.80, 0.12);
+const LN_CONTROL_ICON: Color  = Color::rgb(0.42, 0.36, 0.28);
 
 pub const TITLE_BAR_H: f32 = 40.0;
 pub const CORNER_RADIUS: f32 = 16.0;
@@ -52,15 +54,6 @@ pub struct ChromePalette {
 impl ChromePalette {
     pub fn for_mode(mode: WindowMode) -> Self {
         match mode {
-            WindowMode::NightSky => Self {
-                text_primary: NS_TEXT_PRIMARY,
-                text_secondary: NS_TEXT_SECONDARY,
-                border: NS_BORDER_SUBTLE,
-                control_icon: NS_CONTROL_ICON,
-                control_hover: NS_CONTROL_HOVER,
-                close_bg: NS_CLOSE_BG,
-                close_hover: NS_CLOSE_HOVER,
-            },
             WindowMode::Fox => Self {
                 text_primary: FOX_TEXT_PRIMARY,
                 text_secondary: FOX_TEXT_SECONDARY,
@@ -70,48 +63,35 @@ impl ChromePalette {
                 close_bg: FOX_CLOSE_BG,
                 close_hover: FOX_CLOSE_HOVER,
             },
+            WindowMode::Lantern => Self {
+                text_primary: LN_TEXT_PRIMARY,
+                text_secondary: LN_TEXT_SECONDARY,
+                border: LN_BORDER_SUBTLE,
+                control_icon: LN_CONTROL_ICON,
+                control_hover: LN_CONTROL_HOVER,
+                close_bg: LN_CLOSE_BG,
+                close_hover: LN_CLOSE_HOVER,
+            },
         }
     }
 }
 
 /// Build a [`FoxPalette`] for the content area (sliders, toggles, text) for
-/// the given window mode. Uses shared palette definitions from `lntrn_theme`.
-pub fn content_palette(mode: WindowMode) -> FoxPalette {
-    match mode {
-        WindowMode::Fox => FoxPalette::dark(),
-        WindowMode::NightSky => FoxPalette::night_sky(),
-    }
+/// the given window mode. The accent comes from the user's
+/// `[appearance].accent` override automatically via `FoxPalette::current()`.
+pub fn content_palette(_mode: WindowMode) -> FoxPalette {
+    FoxPalette::current()
 }
 
-/// Draw the window background. Fox: solid warm-dark fill with rounded corners.
-/// Night Sky: gradient + radial glows. Opacity is read from `lntrn_theme`.
+/// Draw the window background — solid color matching the variant, opacity
+/// from `[windows].background_opacity`.
 pub fn draw_background(p: &mut Painter, mode: WindowMode, wf: f32, hf: f32, r: f32) {
     let opacity = lntrn_theme::background_opacity();
-    match mode {
-        WindowMode::Fox => {
-            p.rect_filled(
-                Rect::new(0.0, 0.0, wf, hf),
-                r,
-                FOX_BG.with_alpha(opacity),
-            );
-        }
-        WindowMode::NightSky => {
-            p.rect_gradient_linear(
-                Rect::new(0.0, 0.0, wf, hf), r,
-                std::f32::consts::FRAC_PI_2,
-                NS_BG_DEEP.with_alpha(opacity),
-                NS_BG_SURFACE.with_alpha(opacity),
-            );
-            p.rect_gradient_radial(
-                Rect::new(-wf * 0.35, hf * 0.5, wf * 0.8, hf * 0.8), 0.0,
-                NS_GLOW_PINK, Color::TRANSPARENT,
-            );
-            p.rect_gradient_radial(
-                Rect::new(wf * 0.5, -hf * 0.25, wf * 0.8, hf * 0.7), 0.0,
-                NS_GLOW_CYAN, Color::TRANSPARENT,
-            );
-        }
-    }
+    let bg = match mode {
+        WindowMode::Fox => FOX_BG,
+        WindowMode::Lantern => ln_bg(),
+    };
+    p.rect_filled(Rect::new(0.0, 0.0, wf, hf), r, bg.with_alpha(opacity));
 }
 
 /// Draw CSD title text centered. Uses the secondary text color for the palette.

@@ -15,12 +15,16 @@ pub struct Theme {
 }
 
 impl Theme {
-    pub fn from_config(config: &LanternConfig) -> Self {
+    pub fn from_config(_config: &LanternConfig) -> Self {
+        Self::current()
+    }
+
+    /// Pick the terminal's theme from the unified `[appearance].theme`.
+    pub fn current() -> Self {
         use crate::config::WindowMode;
-        match config.window.mode {
-            WindowMode::FoxLight => Self::fox_light(),
+        match WindowMode::current() {
             WindowMode::Lantern => Self::lantern(),
-            _ => Self::fox_dark(),
+            WindowMode::Fox => Self::fox_dark(),
         }
     }
 

@@ -43,13 +43,13 @@ impl App {
             let menus = ui_chrome::build_menus(
                 self.effective_font_size(),
                 self.sidebar.visible,
-                &self.config.window.mode,
+                &crate::config::WindowMode::current(),
             );
             let bounds = ui_chrome::tabs_bounds(
                 &menus,
                 screen_w as f32,
                 1.0,
-                &self.config.window.mode,
+                &crate::config::WindowMode::current(),
             );
             if let Some(action) =
                 tab_bar::handle_drag_move(&mut self.tab_bar, x, &drag_displays, bounds)
@@ -161,13 +161,13 @@ impl App {
             let menus = ui_chrome::build_menus(
                 self.effective_font_size(),
                 self.sidebar.visible,
-                &self.config.window.mode,
+                &crate::config::WindowMode::current(),
             );
             let tabs_rect = ui_chrome::tabs_bounds(
                 &menus,
                 screen_w as f32,
                 1.0,
-                &self.config.window.mode,
+                &crate::config::WindowMode::current(),
             );
             let tab_action = tab_bar::handle_click(
                 &mut self.tab_bar,
@@ -188,7 +188,7 @@ impl App {
         // opening a dropdown that captures all input.
         if let Some((x, y)) = self.cursor_pos {
             if y <= self.chrome_height() {
-                if ui_chrome::is_files_label_hit(x, &self.config.window.mode) {
+                if ui_chrome::is_files_label_hit(x, &crate::config::WindowMode::current()) {
                     self.chrome.close_all_menus();
                     match self.dispatch_chrome_action(
                         ui_chrome::ClickAction::ToggleSidebar,
@@ -208,7 +208,7 @@ impl App {
         let menus = ui_chrome::build_menus(
             self.effective_font_size(),
             self.sidebar.visible,
-            &self.config.window.mode,
+            &crate::config::WindowMode::current(),
         );
         let screen_w = self.gpu.as_ref().map_or(800, |g| g.width()) as f32;
         let action = ui_chrome::handle_click(
@@ -216,7 +216,7 @@ impl App {
             &mut self.input,
             &menus,
             1.0,
-            &self.config.window.mode,
+            &crate::config::WindowMode::current(),
             screen_w,
         );
 
@@ -270,16 +270,11 @@ impl App {
                 self.update_grid_size();
             }
             ui_chrome::ClickAction::WindowModeChanged => {
-                // Update theme to match new mode
-                use crate::config::WindowMode;
+                // Theme now comes from System Settings (`[appearance].theme`);
+                // re-resolve and propagate to every open pane's terminal.
                 use crate::theme::Theme;
                 use crate::terminal::Color8;
-                self.theme = match self.config.window.mode {
-                    WindowMode::FoxLight => Theme::fox_light(),
-                    WindowMode::Lantern => Theme::lantern(),
-                    _ => Theme::fox_dark(),
-                };
-                // Update terminal default colors for all panes
+                self.theme = Theme::current();
                 for tab in &mut self.tabs {
                     for pane in &mut tab.panes {
                         pane.terminal.set_default_colors(
@@ -511,13 +506,13 @@ impl App {
         let menus = ui_chrome::build_menus(
             self.effective_font_size(),
             self.sidebar.visible,
-            &self.config.window.mode,
+            &crate::config::WindowMode::current(),
         );
         let tabs_rect = ui_chrome::tabs_bounds(
             &menus,
             screen_w as f32,
             1.0,
-            &self.config.window.mode,
+            &crate::config::WindowMode::current(),
         );
         if tab_bar::handle_right_click(
             &mut self.tab_bar,

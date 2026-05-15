@@ -181,7 +181,6 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WlState {
                 use wayland_client::WEnum;
                 let pressed = WEnum::Value(wl_pointer::ButtonState::Pressed);
                 let released = WEnum::Value(wl_pointer::ButtonState::Released);
-                tracing::info!(button = format!("0x{:x}", button), btn_state = ?btn_state, "pointer button event");
                 if button == BTN_LEFT {
                     if btn_state == pressed {
                         state.left_clicked = true;

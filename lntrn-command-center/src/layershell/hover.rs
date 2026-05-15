@@ -73,10 +73,17 @@ pub(super) fn track_hovers(wl: &mut super::WlState, app: &mut crate::app::AppSta
         app.home_hover = crate::view_indicator::hit_home(panel_rect, scale_f, phys_cx, phys_cy);
         app.grow_hover = crate::view_indicator::hit_grow(panel_rect, scale_f, phys_cx, phys_cy);
         app.gear_hover = crate::view_indicator::hit_gear(panel_rect, scale_f, phys_cx, phys_cy);
+        app.restart_hover = crate::view_indicator::hit_restart(panel_rect, scale_f, phys_cx, phys_cy);
         app.emoji_hover = crate::view_indicator::hit_emoji(panel_rect, scale_f, phys_cx, phys_cy);
         app.clipboard_hover = crate::view_indicator::hit_clipboard(panel_rect, scale_f, phys_cx, phys_cy);
         app.notes_hover = crate::view_indicator::hit_notes(panel_rect, scale_f, phys_cx, phys_cy);
         app.usage_hover = crate::usage_button::hit_test(panel_rect, scale_f, phys_cx, phys_cy);
+        // Bar-mode sliders only hover-react while CC is collapsed.
+        app.bar_sliders.hover = if app.collapse_progress() > 0.5 {
+            crate::bar_sliders::hit_test(panel_rect, scale_f, phys_cx, phys_cy)
+        } else {
+            None
+        };
         // Emoji overlay hover routing.
         if app.emojis.open {
             let top_y = crate::controls::content_top_y(panel_rect, scale_f);

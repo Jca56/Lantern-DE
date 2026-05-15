@@ -5,12 +5,14 @@
 //! command (`T`/`S`/`H`) and exit. See `ipc.rs`.
 
 mod app;
+mod bar_sliders;
 mod clipboard;
 mod desktop_settings;
 mod controls;
 mod emojis;
 mod files;
 mod ipc;
+mod lantern_toml;
 mod launcher;
 mod layershell;
 mod mini_dock;

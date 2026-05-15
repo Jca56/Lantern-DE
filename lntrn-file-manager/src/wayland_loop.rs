@@ -26,7 +26,6 @@ use crate::{
     ClickAction, Gpu, CTX_NEW_FOLDER_BLUE, CTX_NEW_FOLDER_GREEN, CTX_NEW_FOLDER_ORANGE,
     CTX_NEW_FOLDER_PURPLE, CTX_NEW_FOLDER_RED, CTX_NEW_FOLDER_YELLOW,
     VIEW_SLIDER_ID, VIEW_SHOW_HIDDEN_ID,
-    VIEW_THEME_FOX_DARK, VIEW_THEME_FOX_LIGHT, VIEW_THEME_LANTERN, VIEW_THEME_NIGHT_SKY,
     ZONE_DROP_CANCEL, ZONE_DROP_COPY, ZONE_DROP_MOVE,
 };
 
@@ -52,6 +51,8 @@ pub(crate) fn run_loop(
 ) -> Result<()> {
     let mut last_frame = Instant::now();
     let mut needs_anim = false;
+    let mut last_theme_variant = lntrn_theme::active_variant();
+    let mut last_theme_poll = Instant::now();
     let mut last_dir_check = Instant::now();
     let mut last_dir_mtime: Option<std::time::SystemTime> = None;
     let mut last_dir_path = app.current_dir.clone();
@@ -64,25 +65,35 @@ pub(crate) fn run_loop(
     eprintln!("[fox] entering main loop, size={}x{}", state.width, state.height);
 
     while state.running {
-        // Event dispatch
-        if needs_anim {
-            if let Err(e) = event_queue.flush() {
-                eprintln!("[fox] flush error: {e}");
-                break;
-            }
-            if let Some(guard) = event_queue.prepare_read() {
-                let _ = guard.read();
-            }
-            if let Err(e) = event_queue.dispatch_pending(state) {
-                eprintln!("[fox] dispatch_pending error: {e}");
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(16));
-            state.frame_done = true;
-        } else {
-            if let Err(e) = event_queue.blocking_dispatch(state) {
-                eprintln!("[fox] blocking_dispatch error: {e}");
-                break;
+        // Event dispatch. Animation path ticks at ~60Hz; idle path ticks at
+        // 2Hz so we can live-poll `[appearance].theme` without sitting on a
+        // blocking_dispatch that never wakes when the config file changes
+        // from another process.
+        let sleep_ms = if needs_anim { 16 } else { 500 };
+        if let Err(e) = event_queue.flush() {
+            eprintln!("[fox] flush error: {e}");
+            break;
+        }
+        if let Some(guard) = event_queue.prepare_read() {
+            let _ = guard.read();
+        }
+        if let Err(e) = event_queue.dispatch_pending(state) {
+            eprintln!("[fox] dispatch_pending error: {e}");
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(sleep_ms));
+        state.frame_done = true;
+
+        // Theme live-reload poll. The palette is re-resolved every frame
+        // already (see `*palette = FoxPalette::current()` below), but we
+        // still want a redraw kick when the variant flips so the change is
+        // visible even when the user isn't actively interacting.
+        if last_theme_poll.elapsed() >= Duration::from_millis(500) {
+            last_theme_poll = Instant::now();
+            let v = lntrn_theme::active_variant();
+            if v != last_theme_variant {
+                last_theme_variant = v;
+                state.frame_done = true; // force a render this iteration
             }
         }
         if !state.frame_done { continue; }
@@ -453,7 +464,7 @@ pub(crate) fn run_loop(
                     let action = handle_click(
                         input, app, view_menu, context_menu, &mut state.popup_backend,
                         &mut last_tab_click, &mut tab_drag_press, wf, s,
-                        lntrn_theme::background_opacity(), &settings.theme,
+                        lntrn_theme::background_opacity(), "",
                         state.ctrl, state.shift,
                     );
                     let mut settings_dirty = false;
@@ -641,6 +652,9 @@ pub(crate) fn run_loop(
         } else {
             lntrn_theme::background_opacity()
         };
+        // Re-resolve every frame so System Settings → Appearance changes
+        // (theme variant + accent) take effect without relaunching.
+        *palette = FoxPalette::current();
         let render_palette = palette.with_bg_opacity(opacity);
         let inline_evt = crate::render::render_frame(
             gpu, app, input, icon_cache, file_info,
@@ -675,19 +689,6 @@ pub(crate) fn run_loop(
                         app.show_hidden = checked;
                         settings.show_hidden = checked;
                         app.reload();
-                    }
-                } else if let MenuEvent::RadioSelected { id, .. } = evt {
-                    let new_theme = match id {
-                        VIEW_THEME_FOX_DARK => Some("fox-dark"),
-                        VIEW_THEME_FOX_LIGHT => Some("fox-light"),
-                        VIEW_THEME_LANTERN => Some("lantern"),
-                        VIEW_THEME_NIGHT_SKY => Some("night-sky"),
-                        _ => None,
-                    };
-                    if let Some(name) = new_theme {
-                        settings.theme = name.into();
-                        settings.save();
-                        *palette = FoxPalette::from_variant(settings.theme_variant());
                     }
                 } else if matches!(evt, MenuEvent::Action(_)) {
                     view_menu.close_popups(backend);

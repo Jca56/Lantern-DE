@@ -26,7 +26,7 @@ impl App {
         self.upload_pending_images();
         let image_placements = self.collect_image_placements(font_size, sb_offset, chrome_h);
 
-        let mode = self.config.window.mode.clone();
+        let mode = crate::config::WindowMode::current();
         let cursor_pos = self.cursor_pos;
         let gpu = match self.gpu.as_ref() {
             Some(g) => g,
@@ -61,9 +61,8 @@ impl App {
 
         // Draw window background — square corners when maximized
         let title_bar_color = match mode {
-            crate::config::WindowMode::FoxLight => Color::from_rgba8(60, 60, 64, 255),
             crate::config::WindowMode::Lantern => Color::from_rgba8(50, 40, 30, 255),
-            _ => Color::from_rgba8(51, 51, 51, 255),
+            crate::config::WindowMode::Fox => Color::from_rgba8(51, 51, 51, 255),
         };
         let maximized = self
             .window
@@ -276,23 +275,9 @@ impl App {
                         _ => {}
                     }
                 }
-                if let MenuEvent::RadioSelected { id, .. } = event {
-                    match *id {
-                        ui_chrome::MENU_MODE_FOX => {
-                            self.config.window.mode = crate::config::WindowMode::Fox;
-                        }
-                        ui_chrome::MENU_MODE_FOX_LIGHT => {
-                            self.config.window.mode = crate::config::WindowMode::FoxLight;
-                        }
-                        ui_chrome::MENU_MODE_NIGHT_SKY => {
-                            self.config.window.mode = crate::config::WindowMode::NightSky;
-                        }
-                        ui_chrome::MENU_MODE_LANTERN => {
-                            self.config.window.mode = crate::config::WindowMode::Lantern;
-                        }
-                        _ => {}
-                    }
-                }
+                // (Theme radios removed from the menu — now lives in System
+                // Settings → Appearance. Terminal reads the active variant at
+                // draw time via `WindowMode::current()`.)
             }
 
             // Tab context menu overlay

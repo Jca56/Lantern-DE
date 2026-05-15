@@ -38,13 +38,14 @@ const ZONE_SIDEBAR_BASE: u32 = 200;
 
 // View menu actions
 const MENU_MODE_FOX: u32 = 600;
-const MENU_MODE_NIGHT_SKY: u32 = 601;
+const MENU_MODE_LANTERN: u32 = 601;
 const MENU_MODE_GROUP: u32 = 1;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Panel { WindowManager, Input, Display, Power, Notifications, AppIcons }
+enum Panel { Appearance, WindowManager, Input, Display, Power, Notifications, AppIcons }
 
 const PANELS: &[(Panel, &str)] = &[
+    (Panel::Appearance, "Appearance"),
     (Panel::WindowManager, "Window Manager"),
     (Panel::Input, "Mouse"),
     (Panel::Display, "Display"),
@@ -59,9 +60,9 @@ fn build_view_menus(mode: WindowMode) -> Vec<(&'static str, Vec<MenuItem>)> {
     let is_fox = mode == WindowMode::Fox;
     vec![
         ("View", vec![
-            MenuItem::header("Window Style"),
-            MenuItem::radio(MENU_MODE_FOX, MENU_MODE_GROUP, "Fox", is_fox),
-            MenuItem::radio(MENU_MODE_NIGHT_SKY, MENU_MODE_GROUP, "Night Sky", !is_fox),
+            MenuItem::header("Theme"),
+            MenuItem::radio(MENU_MODE_FOX, MENU_MODE_GROUP, "Fox Dark", is_fox),
+            MenuItem::radio(MENU_MODE_LANTERN, MENU_MODE_GROUP, "Lantern", !is_fox),
         ]),
     ]
 }
@@ -70,6 +71,7 @@ fn parse_panel_arg() -> Option<Panel> {
     let args: Vec<String> = std::env::args().collect();
     let idx = args.iter().position(|a| a == "--panel")?;
     match args.get(idx + 1)?.as_str() {
+        "appearance" => Some(Panel::Appearance),
         "window-manager" => Some(Panel::WindowManager),
         "input" => Some(Panel::Input),
         "display" => Some(Panel::Display),
@@ -194,7 +196,8 @@ pub fn run() -> Result<()> {
 
     // Rasterize sidebar icons into GPU textures
     let tex_pass = TexturePass::new(&gpu);
-    let icon_defs: [(Vec<icons::PathCmd>, Color); 6] = [
+    let icon_defs: [(Vec<icons::PathCmd>, Color); 7] = [
+        (icons::icon_appearance(),     Color::from_rgb8(255, 180, 120)), // warm peach
         (icons::icon_window_manager(), Color::from_rgb8(130, 170, 255)), // soft blue
         (icons::icon_input(),          Color::from_rgb8(180, 140, 220)), // lavender
         (icons::icon_display(),        Color::from_rgb8(100, 200, 180)), // teal
@@ -408,6 +411,7 @@ pub fn run() -> Result<()> {
                                 && panel_state.dropdown_menu.contains(cx, cy);
                             if !menu_consumed {
                                 match active_panel {
+                                    Panel::Appearance => panels::handle_appearance_click(&mut config, id),
                                     Panel::WindowManager => panels::handle_wm_click(&mut config, id),
                                     Panel::Power => {
                                         crate::power_panel::handle_power_click(
@@ -643,6 +647,13 @@ pub fn run() -> Result<()> {
 
         // ── Panel content ───────────────────────────────────────────────
         match active_panel {
+            Panel::Appearance => {
+                let panel_h = hf - panel_y;
+                panels::draw_appearance_panel(
+                    &mut config, &mut painter, &mut text, &mut ix, &fox,
+                    content_x, panel_y, content_w, panel_h, s, sw, sh,
+                );
+            }
             Panel::WindowManager => {
                 let panel_h = hf - panel_y;
                 panels::draw_wm_panel(
@@ -718,16 +729,16 @@ pub fn run() -> Result<()> {
         menu_bar.context_menu.update(0.016);
         if let Some(evt) = menu_bar.context_menu.draw(&mut painter, &mut text, &mut ix, sw, sh) {
             if let MenuEvent::RadioSelected { id, group: _ } = evt {
-                let new_style = match id {
-                    MENU_MODE_FOX => Some("fox"),
-                    MENU_MODE_NIGHT_SKY => Some("night_sky"),
+                let new_theme = match id {
+                    MENU_MODE_FOX => Some("fox-dark"),
+                    MENU_MODE_LANTERN => Some("lantern"),
                     _ => None,
                 };
-                if let Some(style) = new_style {
-                    if config.appearance.window_style != style {
-                        config.appearance.window_style = style.into();
+                if let Some(theme) = new_theme {
+                    if config.appearance.theme != theme {
+                        config.appearance.theme = theme.into();
                         // Persist immediately — theme changes shouldn't need the Save button.
-                        saved_config.appearance.window_style = style.into();
+                        saved_config.appearance.theme = theme.into();
                         config.save();
                     }
                     menu_bar.close();

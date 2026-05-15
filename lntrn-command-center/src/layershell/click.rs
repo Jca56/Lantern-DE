@@ -31,6 +31,21 @@ pub(super) fn handle_clicks(
         let phys_cy = wl.cursor_y as f32 * scale_f;
         let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
 
+        // Bar-mode sliders: grab one if the press lands on its track,
+        // seek the value to the cursor, and stash the dragging slider
+        // so subsequent motion events keep updating it. Bar sliders are
+        // only visible / hittable while CC is collapsed.
+        if app.collapse_progress() > 0.5 {
+            if let Some(slider) = crate::bar_sliders::hit_test(
+                panel_rect, scale_f, phys_cx, phys_cy,
+            ) {
+                let v = crate::bar_sliders::value_at_cursor(panel_rect, scale_f, slider, phys_cx);
+                crate::bar_sliders::set_value(slider, v);
+                app.bar_sliders.dragging = Some(slider);
+                return;
+            }
+        }
+
         // Context menu intercepts every left-click while open: a
         // click on an item runs that action; anywhere else dismisses.
         let menu_consumed = if let Some(menu) = app.context_menu.clone() {
@@ -141,6 +156,7 @@ pub(super) fn handle_clicks(
         let home_hit = crate::view_indicator::hit_home(panel_rect, scale_f, phys_cx, phys_cy);
         let grow_hit = crate::view_indicator::hit_grow(panel_rect, scale_f, phys_cx, phys_cy);
         let gear_hit = crate::view_indicator::hit_gear(panel_rect, scale_f, phys_cx, phys_cy);
+        let restart_hit = crate::view_indicator::hit_restart(panel_rect, scale_f, phys_cx, phys_cy);
         let emoji_btn_hit = crate::view_indicator::hit_emoji(panel_rect, scale_f, phys_cx, phys_cy);
         let clipboard_btn_hit = crate::view_indicator::hit_clipboard(panel_rect, scale_f, phys_cx, phys_cy);
         let notes_btn_hit = crate::view_indicator::hit_notes(panel_rect, scale_f, phys_cx, phys_cy);
@@ -221,6 +237,15 @@ pub(super) fn handle_clicks(
             }
         } {
             // Already handled.
+        } else if restart_hit {
+            tracing::info!("dev restart X clicked — relaunching daemon");
+            // Spawn a delayed re-launch so the new daemon starts after
+            // we've released the IPC socket. setsid in spawn_detached
+            // keeps the child alive across our exit.
+            crate::app::spawn_detached(
+                "sleep 0.3 && exec \"$HOME/.lantern/bin/lntrn-command-center\" --show",
+            );
+            std::process::exit(0);
         } else if gear_hit {
             // Settings page is only visible in the expanded panel —
             // un-collapse first so opening settings while collapsed

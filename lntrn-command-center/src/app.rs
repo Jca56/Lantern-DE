@@ -192,6 +192,10 @@ pub struct AppState {
     pub grow_hover: bool,
     /// True when the cursor is hovering the gear (settings) button.
     pub gear_hover: bool,
+    /// True when the cursor is hovering the dev restart X button.
+    pub restart_hover: bool,
+    /// Hover + drag state for the two bar-mode sliders.
+    pub bar_sliders: crate::bar_sliders::BarSliderState,
     /// Hover state for the right-side strip icons.
     pub emoji_hover: bool,
     pub clipboard_hover: bool,
@@ -328,6 +332,8 @@ impl AppState {
             home_hover: false,
             grow_hover: false,
             gear_hover: false,
+            restart_hover: false,
+            bar_sliders: crate::bar_sliders::BarSliderState::default(),
             emoji_hover: false,
             clipboard_hover: false,
             notes_hover: false,
