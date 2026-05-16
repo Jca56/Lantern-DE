@@ -53,7 +53,7 @@ pub(super) fn render_frame(
     let panel_draw = crate::render::draw_panel(painter, &app, phys_w, scale_f);
     let icon_requests = if let Some(p) = &panel_draw {
         crate::render::draw_content(
-            painter, text, mono_text, &app, p, phys_w, phys_h,
+            painter, text, mono_text, app, p, phys_w, phys_h,
         )
     } else {
         Vec::new()

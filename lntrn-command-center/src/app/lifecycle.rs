@@ -365,7 +365,8 @@ impl AppState {
     pub fn tick(&mut self) -> bool {
         let now = Instant::now();
         let p = self.progress(now);
-        match self.visibility {
+        let chat_dirty = self.chat.poll_stream();
+        let lifecycle_dirty = match self.visibility {
             Visibility::Opening if p >= 1.0 => {
                 self.visibility = Visibility::Visible;
                 true
@@ -375,7 +376,8 @@ impl AppState {
                 true
             }
             _ => false,
-        }
+        };
+        chat_dirty || lifecycle_dirty
     }
 
     /// True when the panel is fully hidden — caller may stop rendering.

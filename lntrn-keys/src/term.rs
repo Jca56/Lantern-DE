@@ -5,7 +5,7 @@
 //! - Hides the cursor while we own the screen
 //! - Restores everything in `Drop`
 
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::mem::MaybeUninit;
 use std::os::fd::AsRawFd;
 
@@ -110,8 +110,27 @@ pub fn bg(buf: &mut Vec<u8>, code: u8) {
 pub fn bold(buf: &mut Vec<u8>) { buf.extend_from_slice(b"\x1b[1m"); }
 
 /// Read one byte from stdin (blocking).
+///
+/// Uses `libc::read` directly on fd 0 instead of `std::io::stdin()` — the
+/// stdlib wraps stdin in a `BufReader`, which slurps multi-byte sequences
+/// (like a bracketed-paste `\x1b[200~…\x1b[201~`) into its internal buffer
+/// in one syscall. After that, `poll()` on fd 0 reports "no data" even
+/// though bytes are queued in user-space, so we misread escape sequences
+/// as bare Esc. Going straight to the fd keeps `poll()` honest.
 pub fn read_byte() -> io::Result<u8> {
     let mut b = [0u8; 1];
-    io::stdin().read_exact(&mut b)?;
-    Ok(b[0])
+    loop {
+        let n = unsafe { libc::read(0, b.as_mut_ptr() as *mut _, 1) };
+        if n == 1 {
+            return Ok(b[0]);
+        }
+        if n == 0 {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "stdin closed"));
+        }
+        let err = io::Error::last_os_error();
+        if err.kind() == io::ErrorKind::Interrupted {
+            continue;
+        }
+        return Err(err);
+    }
 }

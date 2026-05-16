@@ -583,6 +583,37 @@ pub(super) fn handle_clicks(
                     app.show_control(tile_id);
                 }
             }
+        } else if app.panel_view == crate::app::PanelView::Chat {
+            let top_y = crate::controls::content_top_y(panel_rect, scale_f);
+            let l = crate::chat::render::layout(panel_rect, top_y, scale_f);
+            if l.new_btn.contains(phys_cx, phys_cy) {
+                app.chat.confirm_delete = None;
+                app.chat.new_thread();
+            } else if l.send_btn.contains(phys_cx, phys_cy) {
+                app.chat.confirm_delete = None;
+                app.chat.submit_draft();
+            } else {
+                let hit = crate::chat::render::thread_hit_test(
+                    &l, app.chat.sidebar_scroll, app.chat.threads.len(),
+                    scale_f, phys_cx, phys_cy,
+                );
+                match hit {
+                    Some(crate::chat::render::ThreadHit::Delete(idx)) => {
+                        if app.chat.confirm_delete == Some(idx) {
+                            app.chat.delete_thread(idx);
+                        } else {
+                            app.chat.confirm_delete = Some(idx);
+                        }
+                    }
+                    Some(crate::chat::render::ThreadHit::Row(idx)) => {
+                        app.chat.confirm_delete = None;
+                        app.chat.select_thread(idx);
+                    }
+                    None => {
+                        app.chat.confirm_delete = None;
+                    }
+                }
+            }
         } else if matches!(app.mode, crate::app::PanelMode::Launcher)
             && app.panel_view == crate::app::PanelView::Default
         {

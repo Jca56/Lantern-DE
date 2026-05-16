@@ -152,7 +152,7 @@ pub fn draw_content(
     painter: &mut Painter,
     text: &mut TextRenderer,
     mono_text: &mut TextRenderer,
-    state: &AppState,
+    state: &mut AppState,
     panel: &PanelDraw,
     surface_w: u32,
     surface_h: u32,
@@ -835,7 +835,8 @@ pub fn draw_content(
             crate::chat::draw(
                 painter,
                 text,
-                &state.chat,
+                mono_text,
+                &mut state.chat,
                 r,
                 top_y,
                 panel.scale_factor,
