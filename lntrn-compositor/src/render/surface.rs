@@ -369,11 +369,19 @@ pub fn render_surface(
         let tiling_anim_rect = state.tiling_anim.current_rect(&surface);
         let state_anim_rect = state.window_state_anim.current_rect(&surface);
         let minimize_params = state.minimize_anim.get(&surface).map(|m| m.render_params());
+        // Configured-rect fallback used AFTER the state animation finishes,
+        // so we render against the rect we asked the client for rather than
+        // its (possibly stale) live buffer geometry. Without solo_tiled in
+        // this chain, a slow client like Firefox would post-anim collapse
+        // back to its previously-acked size for a beat — looking like a
+        // "resize after the slide" pop.
         let state_target_rect = state.maximized_windows.iter()
             .find(|e| e.surface == surface).map(|e| e.target)
             .or_else(|| state.fullscreen_windows.iter()
                 .find(|e| e.surface == surface).map(|e| e.target))
             .or_else(|| state.snapped_windows.iter()
+                .find(|e| e.surface == surface).map(|e| e.target))
+            .or_else(|| state.solo_tiled_windows.iter()
                 .find(|e| e.surface == surface).map(|e| e.target));
 
         // Effective rect: where the (un-zoomed, pre-open/close) visible
@@ -455,11 +463,27 @@ pub fn render_surface(
             output_scale * combined_scale_y,
         ));
 
-        // Final on-screen visible size. Used for shadow/SSD bounds and blur
-        // backdrop tracking.
+        // Final on-screen visible size. Used for shadow/SSD bounds + the
+        // blur backdrop.
+        //
+        // CRITICAL: this must track the *actual rendered window* size, not
+        // the animation/state-target's notional size. Smithay renders the
+        // surface tree at the buffer's native size — it does NOT
+        // anisotropically stretch the buffer to fill `combined_scale_x`.
+        // So when we configure a window to a new size and the client
+        // hasn't yet committed a buffer at that size (or refuses to —
+        // think apps with internal size constraints), the visible content
+        // stays at `win_size` while `final_w / final_h` jump to the
+        // configured size. If the frame chrome (SSD bar, border, shadow,
+        // blur) uses the configured size, it floats free of the actual
+        // window — exactly the "two windows" look the user reported.
+        //
+        // Scaling by `extra_scale` preserves the open/close animation:
+        // anim_scale ramps 0→1 so the frame grows from zero with the
+        // surface.
         let effective_size = smithay::utils::Size::<i32, Logical>::from((
-            final_w.round() as i32,
-            final_h.round() as i32,
+            (win_size.w as f64 * extra_scale).round() as i32,
+            (win_size.h as f64 * extra_scale).round() as i32,
         ));
         let has_ssd = state.ssd.has_ssd(&surface);
 

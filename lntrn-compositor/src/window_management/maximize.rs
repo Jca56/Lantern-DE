@@ -45,7 +45,18 @@ impl Lantern {
             tracing::warn!("maximize_surface: no element location");
             return false;
         };
-        let restore = Rectangle::new(location, window.geometry().size);
+        // If a state animation is already in flight (e.g. the user just
+        // pressed Super+Up to grow the window and is now mashing Up again
+        // to go straight to maximize), the live `window.geometry().size`
+        // is stale — the client may not have acked the previous configure
+        // yet. The animation's target rect is the size we *asked for*, so
+        // use that as the canonical pre-maximize rect. Without this fix,
+        // slow clients like Firefox would capture a wrong restore size,
+        // and unmaximize would teleport the window to that wrong rect.
+        let restore = self
+            .window_state_anim
+            .target_rect(surface)
+            .unwrap_or_else(|| Rectangle::new(location, window.geometry().size));
 
         let Some(output_geo) = self.window_output_geometry(&window) else {
             tracing::warn!("maximize_surface: no output geometry");

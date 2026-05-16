@@ -178,46 +178,29 @@ impl Lantern {
                     }
                 }
 
-                // Super+T: grow the focused window to the "solo tiled"
-                // rect — output bounds minus exclusive zones, inset by
-                // SINGLE_WINDOW_OUTER_GAP on all sides. Computes the inset
-                // directly (not via tiling_area_for_output) so it works
-                // when tiling is off.
+                // Super+Up / Super+Down: window-size ladder.
+                //   Up:   Normal → SoloTile → Maximized
+                //         (no focus → restore last minimized)
+                //   Down: Maximized → SoloTile → Normal → Minimized
+                // Gated to plain Super (no shift/alt/ctrl) and to non-
+                // tiling mode so tiling navigation still works when tiling
+                // is on.
                 if event.state() == KeyState::Pressed
                     && _modifiers.logo
-                    && keysym.modified_sym().raw() == xkb::KEY_t
+                    && !_modifiers.shift && !_modifiers.alt && !_modifiers.ctrl
+                    && !data.workspaces.tiling_active
                 {
-                    use crate::window_ext::WindowExt;
-                    if let Some(focused) = data.focused_surface.clone() {
-                        if let Some(window) = data.find_mapped_window(&focused) {
-                            let output = data
-                                .output_for_window(&window)
-                                .or_else(|| data.workspaces.outputs_iter().next().cloned());
-                            if let Some(output) = output {
-                                if let Some(geo) = data.workspaces.output_geometry(&output) {
-                                    let (top, bot, left, right) =
-                                        data.exclusive_zone_offsets_for_output(&output);
-                                    let gap = crate::tiling::SINGLE_WINDOW_OUTER_GAP;
-                                    let loc = smithay::utils::Point::from((
-                                        geo.loc.x + left + gap,
-                                        geo.loc.y + top + gap,
-                                    ));
-                                    let size = smithay::utils::Size::from((
-                                        geo.size.w - left - right - gap * 2,
-                                        geo.size.h - top - bot - gap * 2,
-                                    ));
-                                    window.configure_size(size);
-                                    data.remap_tracked_window(window, loc, true);
-                                    tracing::info!(
-                                        ?loc, ?size,
-                                        "Super+T: grew focused window"
-                                    );
-                                    data.schedule_render();
-                                }
-                            }
-                        }
+                    let raw = keysym.modified_sym().raw();
+                    if raw == xkb::KEY_Up {
+                        data.ladder_size_up();
+                        data.schedule_render();
+                        return FilterResult::Intercept(());
                     }
-                    return FilterResult::Intercept(());
+                    if raw == xkb::KEY_Down {
+                        data.ladder_size_down();
+                        data.schedule_render();
+                        return FilterResult::Intercept(());
+                    }
                 }
 
                 // Super+Arrow: move focus between tiled windows

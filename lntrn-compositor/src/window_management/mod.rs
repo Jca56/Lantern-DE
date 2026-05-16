@@ -11,6 +11,7 @@ mod fullscreen;
 mod lifecycle;
 mod maximize;
 mod minimize;
+mod solo_tile;
 mod ssd;
 
 /// Action to take in response to an SSD button click.

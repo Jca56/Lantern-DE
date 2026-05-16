@@ -173,10 +173,15 @@ impl PerOutputWorkspaces {
 
     /// Register an output (or update its global position) and map it into
     /// every per-workspace Space. Call this on output enable + on output
-    /// position changes.
+    /// position changes. Eagerly creates the output's Workspace 1 so
+    /// per-workspace lookups (output_geometry, etc.) work immediately,
+    /// even before any windows are mapped.
     pub fn register_output(&mut self, output: Output, loc: Point<i32, Logical>) {
         let name = output.name();
-        self.known_outputs.insert(name, (output.clone(), loc));
+        self.known_outputs.insert(name.clone(), (output.clone(), loc));
+        // Make sure this output has a Workspace 1 right away so
+        // per-workspace Space queries work before any windows exist.
+        self.ensure_output(&name);
         for ow in self.per_output.values_mut() {
             for ws in ow.workspaces.values_mut() {
                 // Smithay's map_output is idempotent — calling it twice
@@ -215,6 +220,7 @@ impl PerOutputWorkspaces {
         &self,
         output: &Output,
     ) -> Option<Rectangle<i32, Logical>> {
+        // Prefer a per-workspace Space (handles output transforms uniformly).
         for ow in self.per_output.values() {
             for ws in ow.workspaces.values() {
                 if let Some(geo) = ws.space.output_geometry(output) {
@@ -222,7 +228,16 @@ impl PerOutputWorkspaces {
                 }
             }
         }
-        None
+        // Fallback: compute from known location + output's current mode.
+        // This path matters at startup, before any workspace has windows
+        // mapped — without it the renderer early-exits and the screen
+        // stays black.
+        let loc = self.known_outputs.get(&output.name()).map(|(_, l)| *l)?;
+        let mode = output.current_mode()?;
+        let scale = output.current_scale().fractional_scale();
+        let logical_w = (mode.size.w as f64 / scale).round() as i32;
+        let logical_h = (mode.size.h as f64 / scale).round() as i32;
+        Some(Rectangle::new(loc, smithay::utils::Size::from((logical_w, logical_h))))
     }
 
     /// Find a Window's location across every per-workspace Space.

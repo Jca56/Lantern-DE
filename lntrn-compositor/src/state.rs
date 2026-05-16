@@ -96,6 +96,20 @@ pub struct MaximizedWindow {
     pub target: Rectangle<i32, Logical>,
 }
 
+/// A window currently puffed up to the "solo tile" rect (output minus
+/// exclusive zones, inset by `SINGLE_WINDOW_OUTER_GAP`). The Super+Up /
+/// Super+Down ladder drives this state. The entry persists across a
+/// subsequent maximize so unmaximize returns the window to its
+/// solo-tile rect (one rung down the ladder).
+#[derive(Clone)]
+pub struct SoloTiledWindow {
+    pub surface: WlSurface,
+    pub window: Window,
+    /// Rect to restore to when un-solo'd (the "Normal" geometry).
+    pub restore: Rectangle<i32, Logical>,
+    pub target: Rectangle<i32, Logical>,
+}
+
 pub struct DebugCounters {
     pub(crate) enabled: bool,
     window_start: std::time::Instant,
@@ -282,6 +296,8 @@ pub struct Lantern {
     pub window_spawn_order: Vec<WlSurface>,
     pub minimized_windows: Vec<MinimizedWindow>,
     pub maximized_windows: Vec<MaximizedWindow>,
+    /// Windows currently at the "solo tile" size, driven by Super+Up/Down.
+    pub solo_tiled_windows: Vec<SoloTiledWindow>,
     pub fullscreen_windows: Vec<FullscreenWindow>,
     pub alt_tab_switcher: AltTabSwitcher,
     pub wallpaper: WallpaperState,
@@ -488,6 +504,7 @@ impl Lantern {
             window_spawn_order: Vec::new(),
             minimized_windows: Vec::new(),
             maximized_windows: Vec::new(),
+            solo_tiled_windows: Vec::new(),
             fullscreen_windows: Vec::new(),
             alt_tab_switcher: AltTabSwitcher::new(),
             wallpaper: WallpaperState::load_from_config(),

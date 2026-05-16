@@ -230,6 +230,7 @@ impl Lantern {
         self.window_spawn_order.retain(|entry| entry != surface);
         self.window_mru.retain(|entry| entry != surface);
         self.minimized_windows.retain(|entry| entry.surface != *surface);
+        self.solo_tiled_windows.retain(|entry| entry.surface != *surface);
         self.maximized_windows.retain(|entry| entry.surface != *surface);
         self.fullscreen_windows.retain(|entry| entry.surface != *surface);
         self.snapped_windows.retain(|entry| entry.surface != *surface);
