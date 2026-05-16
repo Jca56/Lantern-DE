@@ -15,7 +15,9 @@ use smithay::{
 };
 
 pub struct RoundedSurfaceElement {
-    inner: WaylandSurfaceRenderElement<GlesRenderer>,
+    inner: smithay::backend::renderer::element::utils::RescaleRenderElement<
+        WaylandSurfaceRenderElement<GlesRenderer>,
+    >,
     shader: GlesTexProgram,
     tex_size: [f32; 2],
     corner_radius: f32,
@@ -23,7 +25,9 @@ pub struct RoundedSurfaceElement {
 
 impl RoundedSurfaceElement {
     pub fn new(
-        inner: WaylandSurfaceRenderElement<GlesRenderer>,
+        inner: smithay::backend::renderer::element::utils::RescaleRenderElement<
+            WaylandSurfaceRenderElement<GlesRenderer>,
+        >,
         shader: GlesTexProgram,
         tex_size: [f32; 2],
         corner_radius: f32,

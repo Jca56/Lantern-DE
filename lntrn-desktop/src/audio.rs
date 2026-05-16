@@ -25,9 +25,10 @@ use spa::pod::Pod;
 /// Number of f32 mono samples kept in the rolling capture buffer.
 pub const RING_CAPACITY: usize = 4096;
 
-/// FFT window size — must be a power of two. 512 gives ~10.7ms of audio
-/// at 48 kHz, enough for the 32 log-binned bars without burning CPU.
-pub const FFT_SIZE: usize = 512;
+/// FFT window size — must be a power of two. 1024 gives ~21.3ms of audio
+/// at 48 kHz and ~46.9 Hz/bin resolution, which is fine enough that all
+/// 32 log-spaced bars get unique bins down to the 30 Hz sub-bass floor.
+pub const FFT_SIZE: usize = 1024;
 
 pub struct AudioCapture {
     inner: Arc<Inner>,

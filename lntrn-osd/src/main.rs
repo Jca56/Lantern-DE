@@ -58,7 +58,7 @@ fn build_message(args: &[String]) -> String {
             let vol = args.get(2)
                 .and_then(|s| s.parse::<u32>().ok())
                 .unwrap_or(0)
-                .min(100);
+                .min(VOLUME_MAX);
             format!("volume {vol}")
         }
         Some("brightness") => {
@@ -72,6 +72,10 @@ fn build_message(args: &[String]) -> String {
     }
 }
 
+/// Volume range goes above 100% — wpctl is invoked with `--limit 1.2`, so the
+/// OSD must also accept up to 120 and render the over-100 region.
+pub const VOLUME_MAX: u32 = 120;
+
 #[derive(Clone, Copy)]
 pub enum OsdMode {
     Volume { level: u32, muted: bool },
@@ -83,7 +87,7 @@ pub fn parse_message(msg: &str) -> OsdMode {
     if msg == "mute" {
         OsdMode::Volume { level: 0, muted: true }
     } else if let Some(rest) = msg.strip_prefix("volume ") {
-        let vol = rest.parse::<u32>().unwrap_or(0).min(100);
+        let vol = rest.parse::<u32>().unwrap_or(0).min(VOLUME_MAX);
         OsdMode::Volume { level: vol, muted: false }
     } else if let Some(rest) = msg.strip_prefix("brightness ") {
         let val = rest.parse::<u32>().unwrap_or(50).min(100);

@@ -458,32 +458,26 @@ pub fn render_surface(
             (phys_loc_log_y * output_scale).round() as i32,
         ).into();
 
-        let render_scale = smithay::utils::Scale::from((
-            output_scale * combined_scale_x,
-            output_scale * combined_scale_y,
+        // Surface tree is always rendered at a UNIFORM `output_scale` —
+        // Smithay doesn't anisotropically stretch a Wayland surface via
+        // its render_scale parameter, so we explicitly wrap the resulting
+        // elements in a `RescaleRenderElement` below with the per-axis
+        // `combined_scale`. That gives us a true smooth-resize animation
+        // for both the pre-resize snapshot AND the live surface.
+        let render_scale = smithay::utils::Scale::from(output_scale);
+        let combined_scale = smithay::utils::Scale::from((
+            combined_scale_x,
+            combined_scale_y,
         ));
 
-        // Final on-screen visible size. Used for shadow/SSD bounds + the
-        // blur backdrop.
-        //
-        // CRITICAL: this must track the *actual rendered window* size, not
-        // the animation/state-target's notional size. Smithay renders the
-        // surface tree at the buffer's native size — it does NOT
-        // anisotropically stretch the buffer to fill `combined_scale_x`.
-        // So when we configure a window to a new size and the client
-        // hasn't yet committed a buffer at that size (or refuses to —
-        // think apps with internal size constraints), the visible content
-        // stays at `win_size` while `final_w / final_h` jump to the
-        // configured size. If the frame chrome (SSD bar, border, shadow,
-        // blur) uses the configured size, it floats free of the actual
-        // window — exactly the "two windows" look the user reported.
-        //
-        // Scaling by `extra_scale` preserves the open/close animation:
-        // anim_scale ramps 0→1 so the frame grows from zero with the
-        // surface.
+        // Final on-screen visible size = the animation's interpolated
+        // rect. Both the snapshot AND the live surface get scaled into
+        // this rect during a resize anim, with their alphas tied to
+        // anim progress so they CROSSFADE — that hides content reflow
+        // (e.g. terminal font auto-resize) instead of popping it in.
         let effective_size = smithay::utils::Size::<i32, Logical>::from((
-            (win_size.w as f64 * extra_scale).round() as i32,
-            (win_size.h as f64 * extra_scale).round() as i32,
+            final_w.round() as i32,
+            final_h.round() as i32,
         ));
         let has_ssd = state.ssd.has_ssd(&surface);
 
@@ -547,19 +541,90 @@ pub fn render_surface(
         let is_opening = state.animations.get(&surface)
             .map(|a| a.kind == crate::animation::AnimationKind::Open)
             .unwrap_or(false);
-        // Throttle snapshot to ~10Hz: it's only used for the close-animation
-        // fallback when a client dies, and a stale-by-100ms frame is fine.
-        // Capturing every frame burns CPU on synchronous GPU sync via frame.finish().
-        if !is_fullscreen && !is_opening && state.wallpaper_frame_counter % 6 == 0 {
+        // Throttle snapshot to ~10Hz: used as the close-animation fallback
+        // when a client dies AND as the source for the smooth resize
+        // transition below. Capturing every frame burns CPU on synchronous
+        // GPU sync via frame.finish().
+        //
+        // Suppress capture while a state animation is in flight so the
+        // snapshot stays frozen at its pre-animation content — that's the
+        // texture the resize anim will stretch. Without this, the snapshot
+        // would refresh mid-anim and capture the post-configure buffer,
+        // re-introducing the content pop.
+        let resize_animating = state_anim_rect.is_some();
+        if !is_fullscreen && !is_opening && !resize_animating
+            && state.wallpaper_frame_counter % 6 == 0
+        {
             if let Some(snap) = capture_window_snapshot(renderer, window, win_geo.size, output_scale) {
                 state.window_snapshots.insert(surface.clone(), snap);
             }
         }
 
-        // Window surface (behind SSD overlay, in front of shadow)
-        let win_render_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
-            window.render_elements(renderer, phys_loc, render_scale, alpha);
+        // Window surface render + crossfade with snapshot during anim.
+        //
+        // Crossfade strategy (macOS-style):
+        //   - `progress` is the eased animation progress [0..1].
+        //   - Snapshot (pre-anim content): alpha = (1 - progress).
+        //   - Live surface (post-resize content, may include reflowed
+        //     font sizes, etc.): alpha = progress.
+        //   - BOTH are rendered into the same `effective_size` rect — the
+        //     snapshot via TextureRenderElement's dst_size, the live
+        //     surface via RescaleRenderElement wrapping each element with
+        //     `combined_scale` around `phys_loc`.
+        //
+        // Out of animation, `progress` defaults to 1 (no crossfade),
+        // `combined_scale` is 1.0 (rescale is a no-op), and the snapshot
+        // branch is skipped — identical fast path to before.
         let target = if is_fullscreen { &mut fullscreen_elements } else { &mut window_elements };
+        let progress = if resize_animating {
+            state.window_state_anim.eased_progress(&surface).unwrap_or(1.0)
+        } else {
+            1.0
+        };
+        let snap_alpha = (alpha * (1.0 - progress) as f32).clamp(0.0, 1.0);
+        let live_alpha = (alpha * progress as f32).clamp(0.0, 1.0);
+
+        // 1) Snapshot (top of crossfade), fading OUT.
+        if resize_animating && snap_alpha > 0.01 {
+            if let Some((snap_tex, snap_phys)) = state.window_snapshots.get(&surface).cloned() {
+                let ctx_id = renderer.context_id();
+                let snap_loc = Point::<f64, Physical>::from((
+                    (rel_x * output_scale).round(),
+                    (rel_y * output_scale).round(),
+                ));
+                let dst_size = Size::<i32, Logical>::from((
+                    effective_size.w.max(1),
+                    effective_size.h.max(1),
+                ));
+                // Explicit src spans the full texture in *logical*
+                // coords — without this, sampling outside [0,1] UVs
+                // wraps and tiles the snapshot mid grow-animation.
+                let src_rect = smithay::utils::Rectangle::<f64, Logical>::from_size(
+                    smithay::utils::Size::from((
+                        snap_phys.w as f64 / output_scale,
+                        snap_phys.h as f64 / output_scale,
+                    )),
+                );
+                let tex_elem = smithay::backend::renderer::element::texture::TextureRenderElement::from_static_texture(
+                    smithay::backend::renderer::element::Id::new(),
+                    ctx_id,
+                    snap_loc,
+                    snap_tex,
+                    1,
+                    smithay::utils::Transform::Normal,
+                    Some(snap_alpha),
+                    Some(src_rect),
+                    Some(dst_size),
+                    None,
+                    smithay::backend::renderer::element::Kind::Unspecified,
+                );
+                target.push(CustomRenderElements::Backdrop(tex_elem));
+            }
+        }
+
+        // 2) Live surface, fading IN (and rescaled to the anim rect).
+        let win_render_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
+            window.render_elements(renderer, phys_loc, render_scale, live_alpha);
         let win_phys_w_raw = (win_geo.size.w as f64 * output_scale) as f32;
         let win_phys_h_raw = (win_geo.size.h as f64 * output_scale) as f32;
         let corner_r = win_corner_r_logical * output_scale as f32;
@@ -579,20 +644,32 @@ pub fn render_surface(
             && !has_ssd
             && !is_tiled_now
             && udev.rounded_tex_shader.is_some();
+        // Wrap each live surface element in a RescaleRenderElement so its
+        // visible footprint matches `effective_size`. `combined_scale` is
+        // 1.0 at rest so this is a no-op outside animations.
+        let rescale = |elem: WaylandSurfaceRenderElement<GlesRenderer>| {
+            smithay::backend::renderer::element::utils::RescaleRenderElement::from_element(
+                elem, phys_loc, combined_scale,
+            )
+        };
         if needs_rounding {
             let shader = udev.rounded_tex_shader.as_ref().unwrap();
-            let win_phys_w = win_phys_w_raw;
-            let win_phys_h = win_phys_h_raw;
+            // Corner mask shader uses the post-rescale texture size so
+            // the SDF mask lands at the actual visible edges.
+            let win_phys_w = (win_phys_w_raw as f64 * combined_scale_x) as f32;
+            let win_phys_h = (win_phys_h_raw as f64 * combined_scale_y) as f32;
             target.extend(win_render_elements.into_iter().map(|e| {
                 CustomRenderElements::RoundedSurface(
                     crate::rounded_element::RoundedSurfaceElement::new(
-                        e, shader.clone(), [win_phys_w, win_phys_h], corner_r,
+                        rescale(e), shader.clone(), [win_phys_w, win_phys_h], corner_r,
                     ),
                 )
             }));
         } else {
             target.extend(
-                win_render_elements.into_iter().map(CustomRenderElements::Surface),
+                win_render_elements
+                    .into_iter()
+                    .map(|e| CustomRenderElements::Rescaled(rescale(e))),
             );
         }
 

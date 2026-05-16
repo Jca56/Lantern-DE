@@ -115,11 +115,37 @@ pub(crate) fn spawn_detached_args(cmd: &str, args: &[&str], wayland_display: &st
     }
 }
 
+/// Fire the audio OSD for an action tag: `"VOL_UP"`, `"VOL_DOWN"`, or `"MUTE"`.
+///
+/// Up/Down snap to the nearest 5% boundary instead of doing `wpctl 5%+/5%-`,
+/// so a non-aligned starting volume (e.g. 1.04 after boosting past 100) lands
+/// on 1.00 going down rather than 0.99 — keeps the OSD digits at multiples of
+/// 5. Range is capped to 1.2 (120%) to match `wpctl --limit 1.2`.
 pub(super) fn fire_audio_osd(cmd: &str, wayland_display: &std::ffi::OsStr) {
+    let action = match cmd {
+        "VOL_UP" => {
+            // awk: next 5% step above current, capped at 1.20.
+            "out=$(wpctl get-volume @DEFAULT_AUDIO_SINK@); \
+             cur=$(echo \"$out\" | awk '{print $2}'); \
+             next=$(awk -v c=\"$cur\" 'BEGIN{ s=int(c/0.05 + 1e-6); n=(s+1)*0.05; if(n>1.2)n=1.2; printf \"%.2f\", n }'); \
+             wpctl set-volume --limit 1.2 @DEFAULT_AUDIO_SINK@ $next"
+        }
+        "VOL_DOWN" => {
+            // awk: largest 5% boundary strictly below current, floored at 0.
+            // (subtract ε before flooring so an exact boundary like 1.00 steps
+            // down to 0.95 instead of staying at 1.00.)
+            "out=$(wpctl get-volume @DEFAULT_AUDIO_SINK@); \
+             cur=$(echo \"$out\" | awk '{print $2}'); \
+             next=$(awk -v c=\"$cur\" 'BEGIN{ s=int((c-1e-6)/0.05); n=s*0.05; if(n<0)n=0; printf \"%.2f\", n }'); \
+             wpctl set-volume --limit 1.2 @DEFAULT_AUDIO_SINK@ $next"
+        }
+        "MUTE" => "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
+        _ => return,
+    };
     let script = format!(
-        "{cmd}; \
+        "{action}; \
          out=$(wpctl get-volume @DEFAULT_AUDIO_SINK@); \
-         vol=$(echo \"$out\" | awk '{{printf \"%d\", $2 * 100}}'); \
+         vol=$(echo \"$out\" | awk '{{printf \"%d\", ($2 * 100) + 0.5}}'); \
          if echo \"$out\" | grep -q MUTED; then \
            lntrn-osd mute; \
          else \

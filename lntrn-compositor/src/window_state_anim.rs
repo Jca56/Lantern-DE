@@ -75,6 +75,14 @@ impl WindowStateAnimState {
         self.animations.get(surface).map(|a| a.target())
     }
 
+    /// Eased animation progress, 0.0 → 1.0. Used by the resize-anim
+    /// crossfade to mix the pre-anim snapshot with the live (post-resize)
+    /// surface so content reflow (font scaling, etc.) settles smoothly
+    /// instead of popping in at the end.
+    pub fn eased_progress(&self, surface: &WlSurface) -> Option<f64> {
+        self.animations.get(surface).map(|a| a.eased())
+    }
+
     /// Drop finished animations. Returns true if any are still active.
     pub fn tick(&mut self) -> bool {
         self.animations.retain(|_, a| !a.is_finished());

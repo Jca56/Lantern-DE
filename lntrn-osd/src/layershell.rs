@@ -36,7 +36,7 @@ use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
 use crate::svg_icon;
-use crate::OsdMode;
+use crate::{OsdMode, VOLUME_MAX};
 
 
 const OSD_W: u32 = 340;
@@ -228,18 +228,21 @@ fn draw_osd<'a>(
     let radius = CORNER_RADIUS * scale_f;
     painter.rect_filled(Rect::new(0.0, 0.0, pw, ph), radius, bg);
 
-    // Extract level, label, icon key
-    let (level, label, icon_key) = match mode {
+    // Extract level, label, icon key. `level` is the fill fraction along the
+    // bar (0..1). For volume the bar spans 0..VOLUME_MAX so 100% sits at the
+    // tick position 100/VOLUME_MAX, and the over-100 region is reachable.
+    let (level, label, icon_key, tick_frac) = match mode {
         OsdMode::Volume { level, muted } => {
             let label = if muted { "MUTE".to_string() } else { format!("{}%", level) };
             let key = volume_icon_key(level, muted);
-            let effective = if muted { 0.0 } else { level as f32 / 100.0 };
-            (effective, label, key)
+            let effective = if muted { 0.0 } else { level as f32 / VOLUME_MAX as f32 };
+            let tick = 100.0 / VOLUME_MAX as f32;
+            (effective, label, key, Some(tick))
         }
         OsdMode::Brightness { level } => {
             let label = format!("{}%", level);
             let key = brightness_icon_key(level);
-            (level as f32 / 100.0, label, key)
+            (level as f32 / 100.0, label, key, None)
         }
     };
 
@@ -252,7 +255,8 @@ fn draw_osd<'a>(
     let bar_x = icon_x + icon_sz + gap;
     let track_h = 6.0 * scale_f;
     let bar_y = (ph - track_h) / 2.0;
-    let text_w = 60.0 * scale_f;
+    // 3-digit labels ("120%") need more room than the original 2-digit budget.
+    let text_w = 72.0 * scale_f;
     let bar_w = pw - bar_x - gap - text_w - pad;
 
     let fill_frac = level.clamp(0.0, 1.0);
@@ -273,6 +277,21 @@ fn draw_osd<'a>(
         painter.rect_gradient_linear(
             Rect::new(bar_x, bar_y, fill_w, track_h),
             track_r, 0.0, fill_start, fill_end,
+        );
+    }
+
+    // 100% tick mark (volume only). A short vertical line above & below the
+    // track so the over-100 region reads as "boosted past normal".
+    if let Some(tf) = tick_frac {
+        let tick_x = bar_x + bar_w * tf;
+        let tick_w = 2.0 * scale_f;
+        let tick_h = track_h * 2.6;
+        let tick_y = (ph - tick_h) / 2.0;
+        let tick_color = palette.text.with_alpha(0.55 * alpha);
+        painter.rect_filled(
+            Rect::new(tick_x - tick_w * 0.5, tick_y, tick_w, tick_h),
+            tick_w * 0.5,
+            tick_color,
         );
     }
 

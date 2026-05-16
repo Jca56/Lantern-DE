@@ -576,6 +576,19 @@ impl PerOutputWorkspaces {
         let next = ((idx as i32 + direction).rem_euclid(n)) as usize;
         ids[next]
     }
+
+    /// Like `neighbor_id` but never wraps. Returns None when there is no
+    /// workspace in the given direction (i.e. you're already at the edge).
+    /// Used by Super+Left/Right so the arrow keys never auto-create or
+    /// loop around — only existing workspaces are visited.
+    pub fn neighbor_id_no_wrap(&self, output_name: &str, direction: i32) -> Option<u32> {
+        let ow = self.per_output.get(output_name)?;
+        let ids = ow.populated_ids();
+        let idx = ids.iter().position(|id| *id == ow.active)?;
+        let next = idx as i32 + direction;
+        if next < 0 || next >= ids.len() as i32 { return None; }
+        Some(ids[next as usize])
+    }
 }
 
 // ── Lantern integration ─────────────────────────────────────────────────
@@ -725,6 +738,35 @@ impl Lantern {
         let Some(output_name) = self.focused_output_name() else { return };
         let target = self.workspaces.neighbor_id(&output_name, direction);
         self.switch_to_workspace(target);
+    }
+
+    /// Navigate Super+Left/Right: visit only existing workspaces, never wrap,
+    /// never auto-create. No-op at the edges.
+    pub fn switch_workspace_neighbor_no_wrap(&mut self, direction: i32) {
+        let Some(output_name) = self.focused_output_name() else { return };
+        let Some(target) = self.workspaces.neighbor_id_no_wrap(&output_name, direction)
+            else { return };
+        self.switch_to_workspace(target);
+    }
+
+    /// Super+Right: go to the next existing workspace, or create a new one
+    /// at `max_existing_id + 1` if we're already at the rightmost edge.
+    /// Capped at 9 so it stays consistent with the Super+1..9 number binds.
+    /// Empty source workspaces are auto-destroyed on leave, so this never
+    /// orphans empties (handled in `PerOutputWorkspaces::switch`).
+    pub fn switch_workspace_right_or_create(&mut self) {
+        let Some(output_name) = self.focused_output_name() else { return };
+        if let Some(target) = self.workspaces.neighbor_id_no_wrap(&output_name, 1) {
+            self.switch_to_workspace(target);
+            return;
+        }
+        let max_id = self
+            .workspaces
+            .output_workspaces(&output_name)
+            .map(|ow| ow.populated_ids().into_iter().max().unwrap_or(1))
+            .unwrap_or(1);
+        if max_id >= 9 { return; }
+        self.switch_to_workspace(max_id + 1);
     }
 
     /// Broadcast current workspace state on every output to connected IPC clients.

@@ -203,6 +203,27 @@ impl Lantern {
                     }
                 }
 
+                // Super+Left: previous existing workspace (no wrap, no-op at edge).
+                // Super+Right: next existing workspace, or create a new one
+                // at the right edge (capped at 9). Empty workspaces auto-die
+                // on leave so this never orphans anything. Gated to non-tiling
+                // mode — tiling-focus navigation owns Super+Arrow there.
+                if event.state() == KeyState::Pressed
+                    && _modifiers.logo
+                    && !_modifiers.shift && !_modifiers.alt && !_modifiers.ctrl
+                    && !data.workspaces.tiling_active
+                {
+                    let raw = keysym.modified_sym().raw();
+                    if raw == xkb::KEY_Left {
+                        data.switch_workspace_neighbor_no_wrap(-1);
+                        return FilterResult::Intercept(());
+                    }
+                    if raw == xkb::KEY_Right {
+                        data.switch_workspace_right_or_create();
+                        return FilterResult::Intercept(());
+                    }
+                }
+
                 // Super+Arrow: move focus between tiled windows
                 if event.state() == KeyState::Pressed
                     && _modifiers.logo && !_modifiers.shift && !_modifiers.ctrl
@@ -312,12 +333,14 @@ impl Lantern {
                     }
                 }
 
-                // Audio media keys (laptop Fn+F1/F2/F3)
+                // Audio media keys (laptop Fn+F1/F2/F3).
+                // `cmd` is an opaque action tag — fire_audio_osd builds the
+                // actual shell script so up/down can snap to 5% boundaries.
                 {
                     let audio_cmd = match keysym.modified_sym().raw() {
-                        xkb::KEY_XF86AudioRaiseVolume => Some("wpctl set-volume --limit 1.2 @DEFAULT_AUDIO_SINK@ 5%+"),
-                        xkb::KEY_XF86AudioLowerVolume => Some("wpctl set-volume --limit 1.2 @DEFAULT_AUDIO_SINK@ 5%-"),
-                        xkb::KEY_XF86AudioMute => Some("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"),
+                        xkb::KEY_XF86AudioRaiseVolume => Some("VOL_UP"),
+                        xkb::KEY_XF86AudioLowerVolume => Some("VOL_DOWN"),
+                        xkb::KEY_XF86AudioMute => Some("MUTE"),
                         _ => None,
                     };
                     if let Some(cmd) = audio_cmd {

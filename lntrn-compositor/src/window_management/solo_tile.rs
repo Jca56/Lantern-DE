@@ -132,37 +132,22 @@ impl Lantern {
 
     // ── Super+Up / Super+Down state-ladder entry points ──────────────────
 
-    /// Super+Up: walks the focused window up one rung of the size ladder.
-    /// `Normal → SoloTile → Maximized`. When there's no focused window
-    /// (e.g. right after a Super+Down minimize) the last-minimized window
-    /// is restored instead.
+    /// Super+Up: if any windows are minimized, restore the most recently
+    /// minimized one (LIFO — newest back first). Otherwise walks the focused
+    /// window up one rung of the size ladder: `Normal → SoloTile → Maximized`.
     pub fn ladder_size_up(&mut self) -> bool {
         let serial = Serial::from(0);
-        let focused = self
-            .focused_window()
-            .and_then(|w| w.get_wl_surface());
-        match focused {
-            None => {
-                // Nothing focused → unminimize the most recently minimized.
-                let Some(last) = self
-                    .minimized_windows
-                    .last()
-                    .map(|e| e.surface.clone())
-                else {
-                    return false;
-                };
-                self.restore_minimized_surface(&last).is_some()
-            }
-            Some(surface) => {
-                if self.is_maximized(&surface) {
-                    // Top of the ladder — nothing further up.
-                    false
-                } else if self.is_solo_tiled(&surface) {
-                    self.maximize_surface(&surface, serial)
-                } else {
-                    self.solo_tile_surface(&surface)
-                }
-            }
+        if let Some(last) = self.minimized_windows.last().map(|e| e.surface.clone()) {
+            return self.restore_minimized_surface(&last).is_some();
+        }
+        let Some(surface) = self.focused_window().and_then(|w| w.get_wl_surface())
+            else { return false };
+        if self.is_maximized(&surface) {
+            false
+        } else if self.is_solo_tiled(&surface) {
+            self.maximize_surface(&surface, serial)
+        } else {
+            self.solo_tile_surface(&surface)
         }
     }
 
