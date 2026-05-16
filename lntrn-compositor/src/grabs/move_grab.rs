@@ -53,7 +53,7 @@ impl PointerGrab<Lantern> for MoveSurfaceGrab {
             let new_x = event.location.x - geo.size.w as f64 / 2.0;
             let new_y = event.location.y + crate::ssd::SsdManager::bar_height() as f64 / 2.0;
             let new_loc = Point::from((new_x as i32, new_y as i32));
-            data.space.map_element(self.window.clone(), new_loc, false);
+            data.remap_tracked_window(self.window.clone(), new_loc, false);
             self.initial_window_location = new_loc;
             self.start_data.location = event.location;
             return;
@@ -76,7 +76,7 @@ impl PointerGrab<Lantern> for MoveSurfaceGrab {
                 let new_x = event.location.x - geo.size.w as f64 / 2.0;
                 let new_y = event.location.y + crate::ssd::SsdManager::bar_height() as f64 / 2.0;
                 let new_loc = Point::from((new_x as i32, new_y as i32));
-                data.space.map_element(self.window.clone(), new_loc, false);
+                data.remap_tracked_window(self.window.clone(), new_loc, false);
                 self.initial_window_location = new_loc;
                 self.start_data.location = event.location;
                 return;
@@ -85,8 +85,11 @@ impl PointerGrab<Lantern> for MoveSurfaceGrab {
 
         let delta = event.location - self.start_data.location;
         let new_location = self.initial_window_location.to_f64() + delta;
-        data.space
-            .map_element(self.window.clone(), new_location.to_i32_round(), false);
+        data.remap_tracked_window(
+            self.window.clone(),
+            new_location.to_i32_round(),
+            false,
+        );
     }
 
     fn relative_motion(
@@ -125,7 +128,7 @@ impl PointerGrab<Lantern> for MoveSurfaceGrab {
                 } else if self.was_tiled && self.has_moved && data.workspaces.tiling_active {
                     // Re-insert into tiling tree on the output where it was dropped
                     let output_name = data.output_at_point(pointer_pos)
-                        .or_else(|| data.space.outputs().next().cloned())
+                        .or_else(|| data.workspaces.outputs_iter().next().cloned())
                         .map(|o| o.name())
                         .unwrap_or_default();
                     data.workspaces.insert(&output_name, surface.clone(), None);

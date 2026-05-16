@@ -29,9 +29,9 @@ impl WlrLayerShellHandler for Lantern {
         let output = wl_output
             .and_then(|wl| Output::from_resource(&wl))
             .or_else(|| {
-                self.space.outputs()
+                self.workspaces.outputs_iter()
                     .min_by_key(|o| {
-                        let loc = self.space.output_geometry(o)
+                        let loc = self.workspaces.output_geometry(o)
                             .map(|g| g.loc)
                             .unwrap_or_default();
                         (loc.x.abs() + loc.y.abs()) as u64

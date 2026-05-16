@@ -423,7 +423,7 @@ fn connector_connected(
             .space
             .outputs()
             .fold(0, |acc, o| {
-                acc + state.space.output_geometry(o).unwrap().size.w
+                acc + state.workspaces.output_geometry(o).unwrap().size.w
             });
         (auto_x, 0)
     };
@@ -436,6 +436,7 @@ fn connector_connected(
         Some((x, y).into()),
     );
     state.space.map_output(&output, (x, y));
+    state.workspaces.register_output(output.clone(), (x, y).into());
 
     output
         .user_data()
@@ -525,6 +526,7 @@ pub fn connector_disconnected(state: &mut Lantern, node: DrmNode, crtc: crtc::Ha
         state.output_management_state.remove_head(&output.name());
         state.output_management_state.broadcast_done();
         state.space.unmap_output(&output);
+        state.workspaces.unregister_output(&output);
     }
 }
 
@@ -558,6 +560,7 @@ pub fn device_removed(state: &mut Lantern, node: DrmNode) {
 
     for output in outputs {
         state.space.unmap_output(&output);
+        state.workspaces.unregister_output(&output);
     }
 }
 
@@ -569,7 +572,7 @@ pub fn apply_output_config(
     use smithay::output::{Mode as WlMode, Scale};
 
     for change in &changes {
-        let output = match state.space.outputs().find(|o| o.name() == change.output_name).cloned() {
+        let output = match state.workspaces.outputs_iter().find(|o| o.name() == change.output_name).cloned() {
             Some(o) => o,
             None => return false,
         };
@@ -643,10 +646,11 @@ pub fn apply_output_config(
                 Some((x, y).into()),
             );
             state.space.map_output(&output, (x, y));
+            state.workspaces.register_output(output.clone(), (x, y).into());
         }
     }
 
-    if let Some(output) = state.space.outputs().next().cloned() {
+    if let Some(output) = state.workspaces.outputs_iter().next().cloned() {
         if let Some(mode) = output.current_mode() {
             let scale = output.current_scale().fractional_scale();
             let logical_w = mode.size.w as f64 / scale;
@@ -666,7 +670,7 @@ pub fn apply_output_config(
         if let Some(window) = state.find_mapped_window(surface) {
             if let Some(geo) = state.window_output_geometry(&window) {
                 window.configure_rect(geo);
-                state.space.map_element(window, geo.loc, false);
+                state.remap_tracked_window(window, geo.loc, false);
             }
         }
     }
@@ -677,11 +681,11 @@ pub fn apply_output_config(
     for surface in &fullscreen_surfaces {
         if let Some(window) = state.find_mapped_window(surface) {
             if let Some(output_geo) = state.output_for_window(&window)
-                .or_else(|| state.space.outputs().next().cloned())
-                .and_then(|o| state.space.output_geometry(&o))
+                .or_else(|| state.workspaces.outputs_iter().next().cloned())
+                .and_then(|o| state.workspaces.output_geometry(&o))
             {
                 window.configure_rect(output_geo);
-                state.space.map_element(window, output_geo.loc, false);
+                state.remap_tracked_window(window, output_geo.loc, false);
             }
         }
     }
@@ -693,7 +697,7 @@ pub fn apply_output_config(
         if let Some(target) = state.snap_zone_geometry(*zone) {
             if let Some(window) = state.find_mapped_window(&surface) {
                 window.configure_rect(target);
-                state.space.map_element(window, target.loc, false);
+                state.remap_tracked_window(window, target.loc, false);
             }
         }
     }
@@ -705,7 +709,7 @@ pub fn apply_output_config(
     let render_targets: Vec<(DrmNode, crtc::Handle)> = changes
         .iter()
         .filter_map(|change| {
-            let output = state.space.outputs().find(|o| o.name() == change.output_name)?;
+            let output = state.workspaces.outputs_iter().find(|o| o.name() == change.output_name)?;
             let oid = output.user_data().get::<UdevOutputId>()?;
             Some((oid.device_id, oid.crtc))
         })
@@ -748,12 +752,12 @@ pub fn reload_monitor_positions(state: &mut Lantern) {
     }
 
     let mut changed = false;
-    let outputs: Vec<_> = state.space.outputs().cloned().collect();
+    let outputs: Vec<_> = state.workspaces.outputs_iter().cloned().collect();
 
     for output in &outputs {
         let name = output.name();
         if let Some(cfg) = configs.iter().find(|c| c.name == name) {
-            let current_geo = state.space.output_geometry(output).unwrap_or_default();
+            let current_geo = state.workspaces.output_geometry(output).unwrap_or_default();
             if current_geo.loc.x != cfg.x || current_geo.loc.y != cfg.y {
                 output.change_current_state(
                     None,
@@ -762,6 +766,7 @@ pub fn reload_monitor_positions(state: &mut Lantern) {
                     Some((cfg.x, cfg.y).into()),
                 );
                 state.space.map_output(output, (cfg.x, cfg.y));
+                state.workspaces.register_output(output.clone(), (cfg.x, cfg.y).into());
                 info!("Live-reloaded position for {}: ({}, {})", name, cfg.x, cfg.y);
                 changed = true;
             }

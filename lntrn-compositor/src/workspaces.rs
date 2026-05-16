@@ -8,8 +8,10 @@
 use std::collections::{BTreeMap, HashMap};
 
 use smithay::{
+    desktop::{Space, Window},
+    output::Output,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
-    utils::{Logical, Rectangle},
+    utils::{Logical, Point, Rectangle},
 };
 
 use crate::tiling::{AdjacentDir, TilingState};
@@ -23,9 +25,15 @@ pub struct Workspace {
     pub mru: Vec<WlSurface>,
     /// Per-workspace wallpaper path. Falls back to output default when None.
     pub wallpaper_path: Option<String>,
-    /// Saved positions for windows while this workspace is inactive
-    /// (unmapped from space). Remapped to these locations on re-activation.
-    pub positions: std::collections::HashMap<WlSurface, smithay::utils::Point<i32, smithay::utils::Logical>>,
+    /// Saved positions for windows. Kept up to date as windows move so a
+    /// workspace can be re-activated with windows snapping back into place
+    /// after any layout dance (e.g. the Space's element ordering changes).
+    pub positions: HashMap<WlSurface, Point<i32, Logical>>,
+    /// Smithay Space dedicated to this workspace. Windows live here whether
+    /// the workspace is active or not — they're just only rendered when
+    /// the workspace is active. This is the source of truth for window
+    /// presence, position, and z-order on this workspace.
+    pub space: Space<Window>,
 }
 
 impl Workspace {
@@ -36,7 +44,8 @@ impl Workspace {
             windows: Vec::new(),
             mru: Vec::new(),
             wallpaper_path: None,
-            positions: std::collections::HashMap::new(),
+            positions: HashMap::new(),
+            space: Space::default(),
         }
     }
 
@@ -52,13 +61,41 @@ pub struct OutputWorkspaces {
 
 impl OutputWorkspaces {
     pub fn new() -> Self {
+        Self::new_with_outputs(&HashMap::new())
+    }
+
+    /// Build a fresh OutputWorkspaces, mapping every passed-in output into
+    /// the initial Workspace 1's Space at its supplied global position.
+    pub fn new_with_outputs(
+        outputs: &HashMap<String, (Output, Point<i32, Logical>)>,
+    ) -> Self {
         let mut workspaces = BTreeMap::new();
-        workspaces.insert(1, Workspace::new(1));
+        let mut ws1 = Workspace::new(1);
+        for (output, loc) in outputs.values() {
+            ws1.space.map_output(output, *loc);
+        }
+        workspaces.insert(1, ws1);
         Self { active: 1, workspaces }
     }
 
     pub fn ensure(&mut self, id: u32) -> &mut Workspace {
-        self.workspaces.entry(id).or_insert_with(|| Workspace::new(id))
+        self.ensure_with_outputs(id, &HashMap::new())
+    }
+
+    /// Get-or-insert a workspace, mapping every known output into the new
+    /// Space at construction time.
+    pub fn ensure_with_outputs(
+        &mut self,
+        id: u32,
+        outputs: &HashMap<String, (Output, Point<i32, Logical>)>,
+    ) -> &mut Workspace {
+        self.workspaces.entry(id).or_insert_with(|| {
+            let mut ws = Workspace::new(id);
+            for (output, loc) in outputs.values() {
+                ws.space.map_output(output, *loc);
+            }
+            ws
+        })
     }
 
     pub fn active_workspace(&self) -> &Workspace {
@@ -84,6 +121,11 @@ impl OutputWorkspaces {
 
 pub struct PerOutputWorkspaces {
     per_output: HashMap<String, OutputWorkspaces>,
+    /// Every output currently known to the compositor + its global position.
+    /// Used to map each output into every per-workspace Space — both
+    /// existing workspaces (immediately) and any new workspace created
+    /// later (at construction time).
+    known_outputs: HashMap<String, (Output, Point<i32, Logical>)>,
     pub tiling_active: bool,
     pub outer_gap: i32,
 }
@@ -116,15 +158,103 @@ impl PerOutputWorkspaces {
     pub fn new() -> Self {
         Self {
             per_output: HashMap::new(),
+            known_outputs: HashMap::new(),
             tiling_active: false,
             outer_gap: crate::tiling::default_outer_gap(),
         }
     }
 
     pub fn ensure_output(&mut self, output_name: &str) {
+        let known = &self.known_outputs;
         self.per_output
             .entry(output_name.to_string())
-            .or_insert_with(OutputWorkspaces::new);
+            .or_insert_with(|| OutputWorkspaces::new_with_outputs(known));
+    }
+
+    /// Register an output (or update its global position) and map it into
+    /// every per-workspace Space. Call this on output enable + on output
+    /// position changes.
+    pub fn register_output(&mut self, output: Output, loc: Point<i32, Logical>) {
+        let name = output.name();
+        self.known_outputs.insert(name, (output.clone(), loc));
+        for ow in self.per_output.values_mut() {
+            for ws in ow.workspaces.values_mut() {
+                // Smithay's map_output is idempotent — calling it twice
+                // updates the location on the second call.
+                ws.space.map_output(&output, loc);
+            }
+        }
+    }
+
+    /// Forget an output and unmap it from every per-workspace Space.
+    pub fn unregister_output(&mut self, output: &Output) {
+        let name = output.name();
+        if self.known_outputs.remove(&name).is_some() {
+            for ow in self.per_output.values_mut() {
+                for ws in ow.workspaces.values_mut() {
+                    ws.space.unmap_output(output);
+                }
+            }
+        }
+    }
+
+    /// Iterate every (Output, global location) currently known.
+    pub fn known_outputs(&self) -> impl Iterator<Item = (&Output, Point<i32, Logical>)> {
+        self.known_outputs.values().map(|(o, l)| (o, *l))
+    }
+
+    /// Iterate every Output currently known. Replaces `space.outputs()`.
+    pub fn outputs_iter(&self) -> impl Iterator<Item = &Output> {
+        self.known_outputs.values().map(|(o, _)| o)
+    }
+
+    /// Geometry (location + size) of an output in global logical coords.
+    /// Replaces `space.output_geometry(&output)`. Returns None if the
+    /// output isn't registered.
+    pub fn output_geometry(
+        &self,
+        output: &Output,
+    ) -> Option<Rectangle<i32, Logical>> {
+        for ow in self.per_output.values() {
+            for ws in ow.workspaces.values() {
+                if let Some(geo) = ws.space.output_geometry(output) {
+                    return Some(geo);
+                }
+            }
+        }
+        None
+    }
+
+    /// Find a Window's location across every per-workspace Space.
+    /// Replaces `space.element_location(&window)` for normal windows.
+    pub fn element_location(
+        &self,
+        window: &Window,
+    ) -> Option<Point<i32, Logical>> {
+        for ow in self.per_output.values() {
+            for ws in ow.workspaces.values() {
+                if let Some(loc) = ws.space.element_location(window) {
+                    return Some(loc);
+                }
+            }
+        }
+        None
+    }
+
+    /// Find a Window's bounding box across every per-workspace Space.
+    /// Replaces `space.element_bbox(&window)` for normal windows.
+    pub fn element_bbox(
+        &self,
+        window: &Window,
+    ) -> Option<Rectangle<i32, Logical>> {
+        for ow in self.per_output.values() {
+            for ws in ow.workspaces.values() {
+                if let Some(bbox) = ws.space.element_bbox(window) {
+                    return Some(bbox);
+                }
+            }
+        }
+        None
     }
 
     pub fn active_id(&self, output_name: &str) -> u32 {
@@ -148,6 +278,16 @@ impl PerOutputWorkspaces {
 
     pub fn output_workspaces_mut(&mut self, output_name: &str) -> Option<&mut OutputWorkspaces> {
         self.per_output.get_mut(output_name)
+    }
+
+    /// Iterate every (output_name, OutputWorkspaces) pair.
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &OutputWorkspaces)> {
+        self.per_output.iter()
+    }
+
+    /// Mutable iteration over (output_name, OutputWorkspaces) pairs.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&String, &mut OutputWorkspaces)> {
+        self.per_output.iter_mut()
     }
 
     /// True if the surface is in ANY workspace's tiling tree (on any output).
@@ -339,10 +479,11 @@ impl PerOutputWorkspaces {
     pub fn switch(&mut self, output_name: &str, target_id: u32) -> Option<(u32, u32)> {
         if target_id == 0 { return None; }
         self.ensure_output(output_name);
+        let known = &self.known_outputs;
         let ow = self.per_output.get_mut(output_name).unwrap();
         let old = ow.active;
         if old == target_id { return Some((old, old)); }
-        ow.ensure(target_id);
+        ow.ensure_with_outputs(target_id, known);
         ow.active = target_id;
 
         // Destroy old workspace if it's now empty (but WS 1 is always kept)
@@ -382,8 +523,9 @@ impl PerOutputWorkspaces {
 
         self.ensure_output(target_output);
         let tiling_active = self.tiling_active;
+        let known = &self.known_outputs;
         let ow = self.per_output.get_mut(target_output).unwrap();
-        let ws = ow.ensure(target_id);
+        let ws = ow.ensure_with_outputs(target_id, known);
         ws.windows.push(surface.clone());
         if had_tiling && tiling_active {
             ws.tiling.insert(surface.clone(), None);
@@ -423,94 +565,35 @@ impl PerOutputWorkspaces {
 
 // ── Lantern integration ─────────────────────────────────────────────────
 
-use smithay::desktop::Window;
-use smithay::utils::{Point, SERIAL_COUNTER};
+use smithay::utils::SERIAL_COUNTER;
 use crate::state::Lantern;
+use crate::window_ext::WindowExt;
 
 impl Lantern {
-    /// Find the topmost window under a point. Delegates to Smithay's
-    /// `space.element_under` which is input-region-aware.
+    /// Find the topmost window under a point on the active workspace of
+    /// the output containing that point. Per-workspace Spaces guarantee
+    /// hit-testing only considers visible windows; hidden-workspace windows
+    /// stay isolated even though they remain mapped in their own Space.
     ///
-    /// We rely on `unmap_hidden_workspaces` keeping only active-WS windows in
-    /// space, so no manual workspace filter is needed here.
+    /// The scratchpad is the only exception — it lives only in the legacy
+    /// global Space and floats above every workspace, so we explicitly
+    /// check for it as a final fallback.
     pub fn visible_element_under(
         &self,
         pos: Point<f64, Logical>,
     ) -> Option<(Window, Point<i32, Logical>)> {
-        self.space.element_under(pos).map(|(w, l)| (w.clone(), l))
+        if let Some(hit) = self.element_under_global(pos) {
+            return Some(hit);
+        }
+        let scratch = self.scratchpad_surface.as_ref()?;
+        self.space
+            .element_under(pos)
+            .filter(|(w, _)| {
+                crate::window_ext::WindowExt::get_wl_surface(*w).as_ref() == Some(scratch)
+            })
+            .map(|(w, l)| (w.clone(), l))
     }
 
-    /// Reconcile `self.space` with the currently-active workspace on every
-    /// output. Windows on hidden workspaces are unmapped from space and held
-    /// in `self.unmapped_windows` until their workspace becomes active again.
-    pub fn sync_space_to_workspaces(&mut self) {
-        let outputs: Vec<String> = self.space.outputs().map(|o| o.name()).collect();
-
-        // Build plans per-output without holding borrows on `self.workspaces`.
-        struct Plan {
-            to_unmap: Vec<WlSurface>,
-            to_map: Vec<WlSurface>,
-        }
-        let mut plans: Vec<(String, Plan)> = Vec::new();
-        for output_name in &outputs {
-            let active = self.workspaces.active_id(output_name);
-            let Some(ow) = self.workspaces.output_workspaces(output_name) else { continue };
-            let mut to_unmap = Vec::new();
-            let mut to_map = Vec::new();
-            for (id, ws) in &ow.workspaces {
-                if *id == active {
-                    to_map.extend(ws.windows.iter().cloned());
-                } else {
-                    to_unmap.extend(ws.windows.iter().cloned());
-                }
-            }
-            plans.push((output_name.clone(), Plan { to_unmap, to_map }));
-        }
-
-        // Phase 1: unmap hidden-workspace windows, saving their live positions.
-        for (_, plan) in &plans {
-            for surface in &plan.to_unmap {
-                let Some(window) = self.find_mapped_window(surface) else { continue };
-                // Save current position into its workspace's position map.
-                if let Some(loc) = self.space.element_location(&window) {
-                    if let Some((out, ws_id)) = self.workspaces.window_workspace(surface) {
-                        if let Some(ow) = self.workspaces.output_workspaces_mut(&out) {
-                            if let Some(ws) = ow.workspaces.get_mut(&ws_id) {
-                                ws.positions.insert(surface.clone(), loc);
-                            }
-                        }
-                    }
-                }
-                // Remove from space, stash the Window so we can re-map it later.
-                self.space.unmap_elem(&window);
-                self.unmapped_windows.insert(surface.clone(), window);
-            }
-        }
-
-        // Phase 2: map active-workspace windows back at their saved positions.
-        for (_, plan) in &plans {
-            for surface in &plan.to_map {
-                // If it's still live in space, nothing to do (already visible).
-                if self.find_mapped_window(surface).is_some() { continue; }
-
-                let Some(window) = self.unmapped_windows.remove(surface) else {
-                    // Window unknown — possibly destroyed while unmapped.
-                    continue;
-                };
-                // Fetch saved position (fallback: (0,0) which is better than losing it).
-                let loc = self.workspaces
-                    .window_workspace(surface)
-                    .and_then(|(out, id)| {
-                        self.workspaces
-                            .output_workspaces(&out)
-                            .and_then(|ow| ow.workspaces.get(&id))
-                            .and_then(|ws| ws.positions.get(surface).copied())
-                    })
-                    .unwrap_or_else(|| smithay::utils::Point::from((0, 0)));
-                self.space.map_element(window, loc, false);
-            }
-        }
-    }
 
     /// Output name the user is currently interacting with.
     /// Preference: pointer's output → focused window's output → first output.
@@ -535,14 +618,15 @@ impl Lantern {
         self.switch_workspace_on(&output_name, target_id);
     }
 
-    /// Switch a specific output to a workspace.
+    /// Switch a specific output to a workspace. With per-workspace Spaces,
+    /// the switch is effectively free: each workspace already owns its own
+    /// Space, so flipping `active` is enough to change what renders. No
+    /// unmap/remap dance, no `unmapped_windows` stash — and crucially, no
+    /// way for a window to ghost across workspaces.
     pub fn switch_workspace_on(&mut self, output_name: &str, target_id: u32) {
         let Some((old, new)) = self.workspaces.switch(output_name, target_id) else { return };
         if old == new { return; }
         tracing::info!(output = %output_name, old, new, "workspace switch");
-
-        // Unmap outgoing workspace windows, map incoming ones.
-        self.sync_space_to_workspaces();
 
         self.workspace_anim.start(output_name, old, new);
 
@@ -573,9 +657,31 @@ impl Lantern {
         if target_id == 0 { return; }
         let Some(output_name) = self.focused_output_name() else { return };
         let Some(focused) = self.focused_surface.clone() else { return };
+
+        // Snapshot pre-move state so we know which Space to remove the
+        // Window from after the tracking flip.
+        let pre_src = self.workspaces.window_workspace(&focused);
+        let window = self.find_window_anywhere(&focused);
+        let pre_loc = window.as_ref()
+            .and_then(|w| self.window_location(w))
+            .unwrap_or_else(|| Point::from((0, 0)));
+
         let moved = self.workspaces.move_window(&focused, &output_name, target_id);
         if !moved { return; }
         tracing::info!(target = target_id, output = %output_name, "window moved to workspace");
+
+        // Move the Window itself between per-workspace Spaces so it
+        // actually disappears from the source workspace and appears on
+        // the target. Without this the visual would lag behind the
+        // tracking change.
+        if let (Some((src_out, src_id)), Some(window)) = (pre_src, window) {
+            if let Some(src_space) = self.workspace_space_mut(&src_out, src_id) {
+                src_space.unmap_elem(&window);
+            }
+            if let Some(target_space) = self.workspace_space_mut(&output_name, target_id) {
+                target_space.map_element(window, pre_loc, true);
+            }
+        }
 
         // Pick a new focus from the current workspace's MRU
         let serial = SERIAL_COUNTER.next_serial();
@@ -640,8 +746,21 @@ impl Lantern {
                 crate::workspace_ipc::IpcCommand::Move { output, target } => {
                     // Move current window on that output to target ws
                     let Some(focused) = self.focused_surface.clone() else { continue };
+                    let pre_src = self.workspaces.window_workspace(&focused);
+                    let window = self.find_window_anywhere(&focused);
+                    let pre_loc = window.as_ref()
+                        .and_then(|w| self.window_location(w))
+                        .unwrap_or_else(|| Point::from((0, 0)));
                     let moved = self.workspaces.move_window(&focused, &output, target);
                     if moved {
+                        if let (Some((src_out, src_id)), Some(window)) = (pre_src, window) {
+                            if let Some(src_space) = self.workspace_space_mut(&src_out, src_id) {
+                                src_space.unmap_elem(&window);
+                            }
+                            if let Some(target_space) = self.workspace_space_mut(&output, target) {
+                                target_space.map_element(window, pre_loc, true);
+                            }
+                        }
                         if self.workspaces.tiling_active {
                             self.apply_tiling_layout();
                         }
@@ -655,5 +774,248 @@ impl Lantern {
                 }
             }
         }
+    }
+}
+
+// ── Per-workspace Space helpers ─────────────────────────────────────────
+//
+// These are the canonical accessors that replace `self.space.X` everywhere
+// in the codebase. Each per-workspace `Space<Window>` is the source of
+// truth for windows belonging to that workspace. The active workspace per
+// output is what the renderer iterates.
+
+impl Lantern {
+    /// Reference to the active workspace's Space on the given output, if any.
+    pub fn active_space_on(&self, output_name: &str) -> Option<&Space<Window>> {
+        let ow = self.workspaces.output_workspaces(output_name)?;
+        ow.workspaces.get(&ow.active).map(|ws| &ws.space)
+    }
+
+    /// Mutable reference to the active workspace's Space on the given output.
+    pub fn active_space_on_mut(&mut self, output_name: &str) -> Option<&mut Space<Window>> {
+        let ow = self.workspaces.output_workspaces_mut(output_name)?;
+        let active = ow.active;
+        ow.workspaces.get_mut(&active).map(|ws| &mut ws.space)
+    }
+
+    /// Reference to a specific (output, workspace_id) Space.
+    pub fn workspace_space(&self, output_name: &str, ws_id: u32) -> Option<&Space<Window>> {
+        self.workspaces
+            .output_workspaces(output_name)
+            .and_then(|ow| ow.workspaces.get(&ws_id))
+            .map(|ws| &ws.space)
+    }
+
+    /// Mutable reference to a specific (output, workspace_id) Space.
+    pub fn workspace_space_mut(
+        &mut self,
+        output_name: &str,
+        ws_id: u32,
+    ) -> Option<&mut Space<Window>> {
+        self.workspaces
+            .output_workspaces_mut(output_name)
+            .and_then(|ow| ow.workspaces.get_mut(&ws_id))
+            .map(|ws| &mut ws.space)
+    }
+
+    /// Find which (output, workspace) owns this surface and return a
+    /// reference to that workspace's Space.
+    pub fn space_for_surface(&self, surface: &WlSurface) -> Option<&Space<Window>> {
+        let (output_name, ws_id) = self.workspaces.window_workspace(surface)?;
+        self.workspace_space(&output_name, ws_id)
+    }
+
+    /// Mutable variant of `space_for_surface`.
+    pub fn space_for_surface_mut(
+        &mut self,
+        surface: &WlSurface,
+    ) -> Option<&mut Space<Window>> {
+        let (output_name, ws_id) = self.workspaces.window_workspace(surface)?;
+        self.workspace_space_mut(&output_name, ws_id)
+    }
+
+    /// Find a mapped Window by surface — searches every workspace's Space
+    /// (active or not). Returns a clone of the Window handle.
+    pub fn find_window_anywhere(&self, surface: &WlSurface) -> Option<Window> {
+        for (_out, ow) in self.workspaces.iter() {
+            for ws in ow.workspaces.values() {
+                if let Some(w) = ws.space.elements()
+                    .find(|w| w.get_wl_surface().as_ref() == Some(surface))
+                {
+                    return Some(w.clone());
+                }
+            }
+        }
+        None
+    }
+
+    /// Find a mapped Window on the ACTIVE workspace of any output.
+    pub fn find_window_visible(&self, surface: &WlSurface) -> Option<Window> {
+        for (_out, ow) in self.workspaces.iter() {
+            if let Some(ws) = ow.workspaces.get(&ow.active) {
+                if let Some(w) = ws.space.elements()
+                    .find(|w| w.get_wl_surface().as_ref() == Some(surface))
+                {
+                    return Some(w.clone());
+                }
+            }
+        }
+        None
+    }
+
+    /// Locate a Window across every workspace's Space. Returns its location
+    /// in global logical coordinates.
+    pub fn window_location(&self, window: &Window) -> Option<Point<i32, Logical>> {
+        for (_out, ow) in self.workspaces.iter() {
+            for ws in ow.workspaces.values() {
+                if let Some(loc) = ws.space.element_location(window) {
+                    return Some(loc);
+                }
+            }
+        }
+        None
+    }
+
+    /// Bounding box of a Window across every workspace's Space.
+    pub fn window_bbox(&self, window: &Window) -> Option<Rectangle<i32, Logical>> {
+        for (_out, ow) in self.workspaces.iter() {
+            for ws in ow.workspaces.values() {
+                if let Some(bbox) = ws.space.element_bbox(window) {
+                    return Some(bbox);
+                }
+            }
+        }
+        None
+    }
+
+    /// Hit-test a global point against visible (active-workspace) windows.
+    /// Picks the output containing the point, then queries that output's
+    /// active workspace's Space.
+    pub fn element_under_global(
+        &self,
+        pos: Point<f64, Logical>,
+    ) -> Option<(Window, Point<i32, Logical>)> {
+        let output = self.output_at_point(pos)?;
+        let space = self.active_space_on(&output.name())?;
+        space.element_under(pos).map(|(w, l)| (w.clone(), l))
+    }
+
+    /// Collect every Window currently visible (on the active workspace of
+    /// every output). Order is not guaranteed — callers must handle z-order
+    /// themselves if they care, by iterating per-output via `active_space_on`.
+    pub fn visible_windows(&self) -> Vec<Window> {
+        let mut out = Vec::new();
+        for (_name, ow) in self.workspaces.iter() {
+            if let Some(ws) = ow.workspaces.get(&ow.active) {
+                out.extend(ws.space.elements().cloned());
+            }
+        }
+        out
+    }
+
+    /// Collect every Window across every workspace's Space (visible or not).
+    pub fn all_windows(&self) -> Vec<Window> {
+        let mut out = Vec::new();
+        for (_out, ow) in self.workspaces.iter() {
+            for ws in ow.workspaces.values() {
+                out.extend(ws.space.elements().cloned());
+            }
+        }
+        out
+    }
+
+    /// `Space::refresh` on every per-workspace Space. Replaces the global
+    /// `space.refresh()` call site.
+    pub fn refresh_all_spaces(&mut self) {
+        for (_out, ow) in self.workspaces.iter_mut() {
+            for ws in ow.workspaces.values_mut() {
+                ws.space.refresh();
+            }
+        }
+    }
+
+    /// Map an output into every existing per-workspace Space at the given
+    /// position. Use whenever an output is enabled or moved.
+    pub fn map_output_into_all_workspaces(
+        &mut self,
+        output: &Output,
+        location: Point<i32, Logical>,
+    ) {
+        for (_name, ow) in self.workspaces.iter_mut() {
+            for ws in ow.workspaces.values_mut() {
+                ws.space.map_output(output, location);
+            }
+        }
+    }
+
+    /// Remove an output from every per-workspace Space. Use on disable.
+    pub fn unmap_output_from_all_workspaces(&mut self, output: &Output) {
+        for (_name, ow) in self.workspaces.iter_mut() {
+            for ws in ow.workspaces.values_mut() {
+                ws.space.unmap_output(output);
+            }
+        }
+    }
+
+    // ── Writer helpers ─────────────────────────────────────────────────
+    //
+    // These replace direct `self.space.map_element` / `unmap_elem` calls
+    // throughout the codebase. Each one writes into the appropriate
+    // per-workspace Space AND mirrors to the transitional global Space.
+    // Once readers migrate to per-workspace lookups (tasks #7–#9), the
+    // global mirror writes can be dropped.
+
+    /// Map a window into a specific workspace's Space. Caller must already
+    /// know the target output + workspace id (e.g. by querying `workspaces`).
+    pub fn map_window_in_workspace(
+        &mut self,
+        window: Window,
+        location: Point<i32, Logical>,
+        output_name: &str,
+        ws_id: u32,
+        activate: bool,
+    ) {
+        if let Some(space) = self.workspace_space_mut(output_name, ws_id) {
+            space.map_element(window.clone(), location, activate);
+        }
+        self.space.map_element(window, location, activate);
+    }
+
+    /// Re-map a window that already has a workspace assignment. Finds its
+    /// owning workspace, persists the new location, and updates per-workspace
+    /// + transitional-global Spaces.
+    pub fn remap_tracked_window(
+        &mut self,
+        window: Window,
+        location: Point<i32, Logical>,
+        activate: bool,
+    ) {
+        let surface = WindowExt::get_wl_surface(&window);
+        let ws_loc = surface.as_ref().and_then(|s| self.workspaces.window_workspace(s));
+        if let Some((output_name, ws_id)) = ws_loc {
+            if let Some(s) = surface.as_ref() {
+                if let Some(ow) = self.workspaces.output_workspaces_mut(&output_name) {
+                    if let Some(w) = ow.workspaces.get_mut(&ws_id) {
+                        w.positions.insert(s.clone(), location);
+                    }
+                }
+            }
+            if let Some(space) = self.workspace_space_mut(&output_name, ws_id) {
+                space.map_element(window.clone(), location, activate);
+            }
+        }
+        self.space.map_element(window, location, activate);
+    }
+
+    /// Unmap a window from its owning workspace's Space AND the global Space.
+    pub fn unmap_window_everywhere(&mut self, window: &Window) {
+        if let Some(surface) = WindowExt::get_wl_surface(window) {
+            if let Some((output_name, ws_id)) = self.workspaces.window_workspace(&surface) {
+                if let Some(space) = self.workspace_space_mut(&output_name, ws_id) {
+                    space.unmap_elem(window);
+                }
+            }
+        }
+        self.space.unmap_elem(window);
     }
 }

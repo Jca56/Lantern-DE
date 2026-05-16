@@ -423,6 +423,9 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         // each tile's `tick`.
         let was_hidden_before_tick = app.is_hidden();
         app.tick();
+        // Drain workspace state pushed by the compositor. Cheap (non-blocking
+        // socket); skip while hidden since nothing reads the value then.
+        app.workspace_ipc.poll();
         // Drain any pending async export result into flash_text.
         if app.notes.open {
             app.notes.poll_export();

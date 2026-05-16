@@ -46,7 +46,7 @@ const BASE_STATE: Duration = Duration::from_millis(1000);
 const BASE_MINIMIZE: Duration = Duration::from_millis(1000);
 const BASE_UNMINIMIZE: Duration = Duration::from_millis(1000);
 const BASE_TILING: Duration = Duration::from_millis(1000);
-const BASE_WORKSPACE_SLIDE: Duration = Duration::from_millis(460);
+const BASE_WORKSPACE_SLIDE: Duration = Duration::from_millis(1000);
 
 pub fn open_duration() -> Duration { scaled(BASE_OPEN) }
 pub fn close_duration() -> Duration { scaled(BASE_CLOSE) }

@@ -93,6 +93,13 @@ impl Lantern {
     }
 
     pub fn find_mapped_window(&self, surface: &WlSurface) -> Option<Window> {
+        // Look across every per-workspace Space first — windows on hidden
+        // workspaces still need to be findable for focus/animation/state
+        // tracking. Fall back to the legacy global Space so scratchpad and
+        // other un-workspaced windows are still discoverable.
+        if let Some(w) = self.find_window_anywhere(surface) {
+            return Some(w);
+        }
         self.space
             .elements()
             .find(|window| window.get_wl_surface().as_ref() == Some(surface))

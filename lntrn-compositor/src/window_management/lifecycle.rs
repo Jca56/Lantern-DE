@@ -27,9 +27,9 @@ impl Lantern {
             .map(|p| p.current_location())
             .unwrap_or_default();
         let output = self.output_at_point(pointer_pos)
-            .or_else(|| self.space.outputs().next().cloned());
+            .or_else(|| self.workspaces.outputs_iter().next().cloned());
         let Some(output_geo) = output
-            .and_then(|o| self.space.output_geometry(&o))
+            .and_then(|o| self.workspaces.output_geometry(&o))
         else {
             return (0, 0).into();
         };
@@ -62,9 +62,9 @@ impl Lantern {
         self.pending_center.remove(surface);
 
         let output = self.output_for_window(&window)
-            .or_else(|| self.space.outputs().next().cloned());
+            .or_else(|| self.workspaces.outputs_iter().next().cloned());
         let Some(ref out) = output else { return };
-        let Some(output_geo) = self.space.output_geometry(out) else { return };
+        let Some(output_geo) = self.workspaces.output_geometry(out) else { return };
 
         // Account for panels/bars so we center in the usable area
         let (top_excl, bottom_excl, left_excl, right_excl) =
@@ -82,7 +82,7 @@ impl Lantern {
         let y = y.clamp(usable_y, (usable_y + usable_h - win_geo.size.h).max(usable_y));
 
         tracing::info!(x, y, w = win_geo.size.w, h = win_geo.size.h, "Centering new window");
-        self.space.map_element(window, Point::from((x, y)), false);
+        self.remap_tracked_window(window, Point::from((x, y)), false);
     }
 
     /// Inject a configured initial size into a toplevel's pending state before
@@ -160,7 +160,41 @@ impl Lantern {
             "Mapping new toplevel window"
         );
 
-        self.space.map_element(window.clone(), location, true);
+        // Decide the owning output from the chosen location BEFORE mapping,
+        // so we can register the surface into a workspace first and then
+        // map directly into that workspace's Space.
+        let owning_output = self
+            .output_at_point(smithay::utils::Point::from((
+                location.x as f64,
+                location.y as f64,
+            )))
+            .or_else(|| self.workspaces.outputs_iter().next().cloned());
+        let output_name = owning_output.as_ref().map(|o| o.name()).unwrap_or_default();
+
+        // Attach window to its output's active workspace. Scratchpad stays
+        // global (no workspace assignment), so the helper picks no workspace
+        // and only the global mirror gets the map_element.
+        if !is_scratchpad {
+            if self.workspaces.tiling_active {
+                self.workspaces.insert(&output_name, surface.clone(), None);
+            } else {
+                self.workspaces.track_window(&output_name, surface.clone());
+            }
+        }
+
+        let active_ws_id = self.workspaces.active_id(&output_name);
+        if is_scratchpad {
+            // Scratchpad: only the global Space gets it (no workspace owns it).
+            self.space.map_element(window.clone(), location, true);
+        } else {
+            self.map_window_in_workspace(
+                window.clone(),
+                location,
+                &output_name,
+                active_ws_id,
+                true,
+            );
+        }
         self.track_window(&window);
 
         // Configure scratchpad size
@@ -175,18 +209,9 @@ impl Lantern {
             self.pending_center.insert(surface.clone());
         }
 
-        // Attach window to its output's active workspace. Scratchpad stays global.
-        if !is_scratchpad {
-            let output_name = self.output_for_window(&window)
-                .or_else(|| self.space.outputs().next().cloned())
-                .map(|o| o.name())
-                .unwrap_or_default();
-            if self.workspaces.tiling_active {
-                self.workspaces.insert(&output_name, surface.clone(), None);
-                self.apply_tiling_layout();
-            } else {
-                self.workspaces.track_window(&output_name, surface.clone());
-            }
+        // Tiling relayout only needed AFTER the window's in the workspace.
+        if !is_scratchpad && self.workspaces.tiling_active {
+            self.apply_tiling_layout();
         }
 
         // Start open animation
@@ -216,7 +241,6 @@ impl Lantern {
         self.minimize_anim.remove(surface);
         let was_tiled = self.workspaces.contains(surface);
         self.workspaces.remove(surface);
-        self.unmapped_windows.remove(surface);
         if was_tiled && self.workspaces.tiling_active {
             self.apply_tiling_layout();
         }
@@ -255,7 +279,7 @@ impl Lantern {
     pub fn finish_close_animation(&mut self, surface: &WlSurface) {
         if let Some(window) = self.find_mapped_window(surface) {
             tracing::info!("Close animation finished, unmapping and sending close");
-            self.space.unmap_elem(&window);
+            self.unmap_window_everywhere(&window);
             window.request_close();
         }
         // Clean up all state and notify the bar — the window is gone from the

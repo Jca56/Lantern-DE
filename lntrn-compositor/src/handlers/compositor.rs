@@ -87,8 +87,8 @@ impl CompositorHandler for Lantern {
                 let output_geo = self
                     .layer_surface_outputs
                     .get(surface)
-                    .or_else(|| self.space.outputs().next())
-                    .and_then(|o| self.space.output_geometry(o));
+                    .or_else(|| self.workspaces.outputs_iter().next())
+                    .and_then(|o| self.workspaces.output_geometry(o));
 
                 if let Some(geo) = output_geo {
                     let cached = with_states(surface, |states| {

@@ -70,6 +70,7 @@ pub fn init_winit(
     );
     output.set_preferred(mode);
     state.space.map_output(&output, (0, 0));
+    state.workspaces.register_output(output.clone(), (0, 0).into());
 
     let mut damage_tracker = OutputDamageTracker::from_output(&output);
     let redraw_interval = frame_callback_interval(&output);
@@ -212,7 +213,7 @@ pub fn init_winit(
                         // Render windows manually with per-window alpha
                         let windows: Vec<_> = state.space.elements().cloned().collect();
                         for window in windows.iter().rev() {
-                            let loc = state.space.element_location(&window).unwrap_or_default();
+                            let loc = state.workspaces.element_location(&window).unwrap_or_default();
                             let mut win_bbox = window.bbox();
                             win_bbox.loc += loc - window.geometry().loc;
                             if !output_geo.overlaps(win_bbox) {
@@ -280,7 +281,7 @@ pub fn init_winit(
                         .filter(|w| !w.alive())
                         .filter_map(|w| {
                             let surface = crate::window_ext::WindowExt::get_wl_surface(w)?;
-                            let location = state.space.element_location(w)?;
+                            let location = state.workspaces.element_location(w)?;
                             let size = w.geometry().size;
                             let had_ssd = state.ssd.has_ssd(&surface);
                             Some(crate::animation::ClosingWindow { surface, location, size, had_ssd })

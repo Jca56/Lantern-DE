@@ -61,7 +61,7 @@ impl Lantern {
         const ZONE: f64 = 2.0;
 
         let output = self.output_at_point(pos)?;
-        let geo = self.space.output_geometry(&output)?;
+        let geo = self.workspaces.output_geometry(&output)?;
 
         let at_left = pos.x - (geo.loc.x as f64) < ZONE;
         let at_right = (geo.loc.x + geo.size.w) as f64 - pos.x <= ZONE;
@@ -201,8 +201,8 @@ impl Lantern {
             .map(|p| p.current_location())
             .unwrap_or_default();
         let output = self.output_at_point(pointer_pos)
-            .or_else(|| self.space.outputs().next().cloned())?;
-        let geo = self.space.output_geometry(&output)?;
+            .or_else(|| self.workspaces.outputs_iter().next().cloned())?;
+        let geo = self.workspaces.output_geometry(&output)?;
 
         let (top_excl, _bottom_excl, left_excl, right_excl) = self.exclusive_zone_offsets_for_output(&output);
         let x = geo.loc.x + left_excl;
@@ -226,7 +226,7 @@ impl Lantern {
                 if let Some(window) = self.restore_minimized_surface(surface) {
                     if let Some(geo) = self.scratchpad_geometry() {
                         crate::window_ext::WindowExt::configure_size(&window, geo.size);
-                        self.space.map_element(window.clone(), geo.loc, true);
+                        self.remap_tracked_window(window.clone(), geo.loc, true);
                     }
                     self.focus_window(&window, serial);
                     tracing::info!("Scratchpad shown");

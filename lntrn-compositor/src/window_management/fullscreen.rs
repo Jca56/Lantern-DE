@@ -24,14 +24,14 @@ impl Lantern {
 
         // Get the raw output geometry (no exclusive zone subtraction)
         let Some(output_geo) = self.output_for_window(&window)
-            .or_else(|| self.space.outputs().next().cloned())
-            .and_then(|o| self.space.output_geometry(&o))
+            .or_else(|| self.workspaces.outputs_iter().next().cloned())
+            .and_then(|o| self.workspaces.output_geometry(&o))
         else {
             return false;
         };
 
         // Save restore geometry
-        let location = self.space.element_location(&window).unwrap_or_default();
+        let location = self.workspaces.element_location(&window).unwrap_or_default();
         let restore = Rectangle::new(location, window.geometry().size);
 
         // If maximized, use the maximized restore instead
@@ -63,7 +63,7 @@ impl Lantern {
         window.set_fullscreen(true);
         window.configure_rect(output_geo);
 
-        self.space.map_element(window.clone(), output_geo.loc, true);
+        self.remap_tracked_window(window.clone(), output_geo.loc, true);
         self.window_state_anim.animate_default(surface, anim_start, output_geo);
         self.update_foreign_toplevel_states(surface);
         if serial != Serial::from(0) {
@@ -85,14 +85,14 @@ impl Lantern {
             return false;
         };
 
-        let current_loc = self.space.element_location(&window).unwrap_or(restore.loc);
+        let current_loc = self.workspaces.element_location(&window).unwrap_or(restore.loc);
         let current_rect = Rectangle::new(current_loc, window.geometry().size);
         let anim_start = self.window_state_anim.current_rect(surface).unwrap_or(current_rect);
 
         window.set_fullscreen(false);
         window.configure_rect(restore);
 
-        self.space.map_element(window.clone(), restore.loc, true);
+        self.remap_tracked_window(window.clone(), restore.loc, true);
         self.window_state_anim.animate_default(surface, anim_start, restore);
         self.update_foreign_toplevel_states(surface);
         if serial != Serial::from(0) {
@@ -140,8 +140,8 @@ impl Lantern {
 
         let Some(window) = self.find_mapped_window(surface) else { return };
         let Some(output_geo) = self.output_for_window(&window)
-            .or_else(|| self.space.outputs().next().cloned())
-            .and_then(|o| self.space.output_geometry(&o))
+            .or_else(|| self.workspaces.outputs_iter().next().cloned())
+            .and_then(|o| self.workspaces.output_geometry(&o))
         else { return };
 
         // Map shifted up so titlebar goes off-screen
@@ -151,7 +151,7 @@ impl Lantern {
             output_geo.size.h + titlebar_h,
         ));
         window.configure_rect(Rectangle::new(adjusted_loc, padded_size));
-        self.space.map_element(window, adjusted_loc, true);
+        self.remap_tracked_window(window, adjusted_loc, true);
 
         tracing::info!(
             titlebar_h,

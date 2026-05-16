@@ -30,8 +30,8 @@ impl Lantern {
     pub(crate) fn minimize_target_for(&self, window: &Window) -> Rectangle<i32, Logical> {
         let output_geo = self
             .output_for_window(window)
-            .or_else(|| self.space.outputs().next().cloned())
-            .and_then(|o| self.space.output_geometry(&o))
+            .or_else(|| self.workspaces.outputs_iter().next().cloned())
+            .and_then(|o| self.workspaces.output_geometry(&o))
             .unwrap_or_else(|| Rectangle::new((0, 0).into(), (1920, 1080).into()));
         let icon_size = 48;
         let bottom_margin = 80;
@@ -61,7 +61,7 @@ impl Lantern {
             return false;
         };
 
-        let location = self.space.element_location(&window).unwrap_or_default();
+        let location = self.workspaces.element_location(&window).unwrap_or_default();
         let source_rect = Rectangle::new(location, window.geometry().size);
         let target_rect = self.minimize_target_for(&window);
 
@@ -90,14 +90,14 @@ impl Lantern {
         let Some(window) = self.find_mapped_window(surface) else {
             return;
         };
-        let location = self.space.element_location(&window).unwrap_or_default();
+        let location = self.workspaces.element_location(&window).unwrap_or_default();
         self.minimized_windows.push(MinimizedWindow {
             surface: surface.clone(),
             window: window.clone(),
             location,
         });
         window.send_pending_configure();
-        self.space.unmap_elem(&window);
+        self.unmap_window_everywhere(&window);
 
         let was_tiled = self.workspaces.contains(surface);
         self.workspaces.remove(surface);
@@ -136,7 +136,39 @@ impl Lantern {
             entry.location
         };
 
-        self.space.map_element(entry.window.clone(), location, true);
+        // Decide the output the window will live on from its restore
+        // location (it's not yet in any Space, so `output_for_window`
+        // can't help us).
+        let output_name = self
+            .output_at_point(smithay::utils::Point::from((
+                location.x as f64,
+                location.y as f64,
+            )))
+            .or_else(|| self.workspaces.outputs_iter().next().cloned())
+            .map(|o| o.name())
+            .unwrap_or_default();
+        let active_ws_id = self.workspaces.active_id(&output_name);
+
+        // Re-register the window with its workspace BEFORE mapping. This
+        // is the critical part: if we don't re-track here, the restored
+        // window becomes a ghost — it lives in the global Space but no
+        // workspace claims it, so workspace switches never hide it.
+        if self.workspaces.tiling_active {
+            if !self.workspaces.contains(&entry.surface) {
+                self.workspaces.insert(&output_name, entry.surface.clone(), None);
+            }
+        } else if self.workspaces.window_workspace(&entry.surface).is_none() {
+            self.workspaces
+                .track_window(&output_name, entry.surface.clone());
+        }
+
+        self.map_window_in_workspace(
+            entry.window.clone(),
+            location,
+            &output_name,
+            active_ws_id,
+            true,
+        );
 
         // Start the unminimize animation: emerge from the tray icon rect and
         // grow into the restored position.
@@ -146,13 +178,7 @@ impl Lantern {
             .start_unminimize(&entry.surface, source_rect, target_rect);
         self.schedule_render();
 
-        // Re-insert into tiling tree if tiling is active
-        if self.workspaces.tiling_active && !self.workspaces.contains(&entry.surface) {
-            let output_name = self.output_for_window(&entry.window)
-                .or_else(|| self.space.outputs().next().cloned())
-                .map(|o| o.name())
-                .unwrap_or_default();
-            self.workspaces.insert(&output_name, entry.surface.clone(), None);
+        if self.workspaces.tiling_active {
             self.apply_tiling_layout();
         }
 

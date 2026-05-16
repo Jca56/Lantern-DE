@@ -564,7 +564,7 @@ pub enum AdjacentDir {
 impl Lantern {
     /// Get the tiling area for a specific output.
     pub fn tiling_area_for_output(&self, output: &Output) -> Option<Rectangle<i32, Logical>> {
-        let geo = self.space.output_geometry(output)?;
+        let geo = self.workspaces.output_geometry(output)?;
         let mut area = Rectangle::new(geo.loc.into(), geo.size);
         let (top_excl, bottom_excl, left_excl, right_excl) = self.exclusive_zone_offsets_for_output(output);
         area.loc.x += left_excl;
@@ -592,7 +592,7 @@ impl Lantern {
     pub fn tiling_area_for_surface(&self, surface: &WlSurface) -> Option<Rectangle<i32, Logical>> {
         let window = self.find_mapped_window(surface)?;
         let output = self.output_for_window(&window)
-            .or_else(|| self.space.outputs().next().cloned())?;
+            .or_else(|| self.workspaces.outputs_iter().next().cloned())?;
         self.tiling_area_for_output(&output)
     }
 
@@ -603,7 +603,7 @@ impl Lantern {
         }
 
         // Collect per-output layouts from each output's active workspace
-        let outputs: Vec<Output> = self.space.outputs().cloned().collect();
+        let outputs: Vec<Output> = self.workspaces.outputs_iter().cloned().collect();
         let mut all_layout = Vec::new();
 
         for output in &outputs {
@@ -622,7 +622,7 @@ impl Lantern {
             }
             let Some(window) = self.find_mapped_window(&surface) else { continue };
 
-            let current_loc = self.space.element_location(&window).unwrap_or_default();
+            let current_loc = self.workspaces.element_location(&window).unwrap_or_default();
             let current_size = window.geometry().size;
             let current_rect = Rectangle::new(current_loc, current_size);
 
@@ -632,7 +632,7 @@ impl Lantern {
 
             window.set_tiled(true);
             window.configure_size(target_rect.size);
-            self.space.map_element(window, target_rect.loc, false);
+            self.remap_tracked_window(window, target_rect.loc, false);
         }
 
         self.schedule_render();
@@ -645,7 +645,7 @@ impl Lantern {
         if !self.workspaces.tiling_active {
             return;
         }
-        let outputs: Vec<Output> = self.space.outputs().cloned().collect();
+        let outputs: Vec<Output> = self.workspaces.outputs_iter().cloned().collect();
         let mut all_layout = Vec::new();
         for output in &outputs {
             let name = output.name();
@@ -663,7 +663,7 @@ impl Lantern {
             self.tiling_anim.remove(&surface);
             window.set_tiled(true);
             window.configure_size(target_rect.size);
-            self.space.map_element(window, target_rect.loc, false);
+            self.remap_tracked_window(window, target_rect.loc, false);
         }
         self.schedule_render();
     }
@@ -683,7 +683,7 @@ impl Lantern {
                         return None;
                     }
                     let output = self.output_for_window(w)
-                        .or_else(|| self.space.outputs().next().cloned())?;
+                        .or_else(|| self.workspaces.outputs_iter().next().cloned())?;
                     Some((s, output.name()))
                 })
                 .collect();

@@ -192,9 +192,9 @@ impl Lantern {
                         if let Some(window) = data.find_mapped_window(&focused) {
                             let output = data
                                 .output_for_window(&window)
-                                .or_else(|| data.space.outputs().next().cloned());
+                                .or_else(|| data.workspaces.outputs_iter().next().cloned());
                             if let Some(output) = output {
-                                if let Some(geo) = data.space.output_geometry(&output) {
+                                if let Some(geo) = data.workspaces.output_geometry(&output) {
                                     let (top, bot, left, right) =
                                         data.exclusive_zone_offsets_for_output(&output);
                                     let gap = crate::tiling::SINGLE_WINDOW_OUTER_GAP;
@@ -207,7 +207,7 @@ impl Lantern {
                                         geo.size.h - top - bot - gap * 2,
                                     ));
                                     window.configure_size(size);
-                                    data.space.map_element(window, loc, true);
+                                    data.remap_tracked_window(window, loc, true);
                                     tracing::info!(
                                         ?loc, ?size,
                                         "Super+T: grew focused window"

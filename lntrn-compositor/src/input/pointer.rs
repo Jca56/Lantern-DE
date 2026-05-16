@@ -36,7 +36,7 @@ impl Lantern {
         // When switcher overlay is visible, hover to highlight thumbnails
         if self.alt_tab_switcher.is_visible() {
             let output_size = self.output_at_point(pos)
-                .and_then(|o| self.space.output_geometry(&o))
+                .and_then(|o| self.workspaces.output_geometry(&o))
                 .map(|g| g.size)
                 .unwrap_or_default();
             let logical_point = smithay::utils::Point::from((pos.x, pos.y));
@@ -103,9 +103,9 @@ impl Lantern {
     pub(super) fn handle_pointer_motion_absolute<I: InputBackend>(&mut self, event: I::PointerMotionAbsoluteEvent) {
         let output = self.output_at_point(
             self.seat.get_pointer().map(|p| p.current_location()).unwrap_or_default()
-        ).or_else(|| self.space.outputs().next().cloned());
+        ).or_else(|| self.workspaces.outputs_iter().next().cloned());
         let Some(output) = output else { return };
-        let output_geo = self.space.output_geometry(&output).unwrap();
+        let output_geo = self.workspaces.output_geometry(&output).unwrap();
         let pos =
             event.position_transformed(output_geo.size) + output_geo.loc.to_f64();
 
@@ -169,7 +169,7 @@ impl Lantern {
         {
             let pos = pointer.current_location();
             let output_size = self.output_at_point(pos)
-                .and_then(|o| self.space.output_geometry(&o))
+                .and_then(|o| self.workspaces.output_geometry(&o))
                 .map(|g| g.size)
                 .unwrap_or_default();
             let logical_point = smithay::utils::Point::from((pos.x, pos.y));
@@ -197,7 +197,7 @@ impl Lantern {
         {
             let pos = pointer.current_location();
             let output_size = self.output_at_point(pos)
-                .and_then(|o| self.space.output_geometry(&o))
+                .and_then(|o| self.workspaces.output_geometry(&o))
                 .map(|g| g.size)
                 .unwrap_or_default();
             if self.hover_preview.hit_close_button(pos.x, pos.y, output_size) {
@@ -230,7 +230,7 @@ impl Lantern {
 
                 if button == BTN_LEFT {
                     if let Some(wl_surface) = crate::window_ext::WindowExt::get_wl_surface(&window) {
-                    let initial_window_location = self.space.element_location(&window).unwrap_or_default();
+                    let initial_window_location = self.workspaces.element_location(&window).unwrap_or_default();
                     let was_snapped = self.is_snapped(&wl_surface);
                     let was_maximized = self.is_maximized(&wl_surface);
                     let was_tiled = self.workspaces.contains(&wl_surface);
@@ -247,7 +247,7 @@ impl Lantern {
                     pointer.set_grab(self, grab, serial, smithay::input::pointer::Focus::Clear);
                     }
                 } else {
-                    let win_loc = self.space.element_location(&window).unwrap_or_default();
+                    let win_loc = self.workspaces.element_location(&window).unwrap_or_default();
                     let win_geo = window.geometry();
                     let center_x = win_loc.x as f64 + win_geo.size.w as f64 / 2.0;
                     let center_y = win_loc.y as f64 + win_geo.size.h as f64 / 2.0;
@@ -323,7 +323,7 @@ impl Lantern {
                             button,
                             location: pos,
                         };
-                        let initial_window_location = self.space.element_location(&window).unwrap_or_default();
+                        let initial_window_location = self.workspaces.element_location(&window).unwrap_or_default();
                         let was_snapped = self.is_snapped(&wl_surface);
                         let was_maximized = self.is_maximized(&wl_surface);
                         let was_tiled = self.workspaces.contains(&wl_surface);
@@ -361,7 +361,7 @@ impl Lantern {
                     pos.x.round() as i32, pos.y.round() as i32,
                 ));
                 let seam_hit = self.output_at_point(pos)
-                    .or_else(|| self.space.outputs().next().cloned())
+                    .or_else(|| self.workspaces.outputs_iter().next().cloned())
                     .and_then(|output| {
                         let area = self.tiling_area_for_output(&output)?;
                         let name = output.name();
@@ -416,7 +416,7 @@ impl Lantern {
                     .cloned()
                     .collect();
                 for window in visible_windows {
-                    let loc = self.space.element_location(&window).unwrap_or_default();
+                    let loc = self.workspaces.element_location(&window).unwrap_or_default();
                     let geo = window.geometry();
                     let expanded: smithay::utils::Rectangle<i32, smithay::utils::Logical> = smithay::utils::Rectangle::new(
                         smithay::utils::Point::from((

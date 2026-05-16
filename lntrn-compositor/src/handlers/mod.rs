@@ -139,7 +139,7 @@ delegate_output!(Lantern);
 
 impl FractionalScaleHandler for Lantern {
     fn new_fractional_scale(&mut self, surface: WlSurface) {
-        let scale = self.space.outputs().next()
+        let scale = self.workspaces.outputs_iter().next()
             .map(|o| o.current_scale().fractional_scale())
             .unwrap_or(lantern_output_scale());
         with_states(&surface, |states| {

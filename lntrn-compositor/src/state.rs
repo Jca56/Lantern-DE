@@ -323,10 +323,6 @@ pub struct Lantern {
     pub minimize_anim: MinimizeAnimState,
     pub workspace_anim: WorkspaceAnimState,
     pub workspace_ipc: WorkspaceIpc,
-    /// Windows temporarily removed from `space` because their workspace is
-    /// hidden. Keyed by the window's toplevel surface so we can re-map them
-    /// on workspace switch.
-    pub unmapped_windows: HashMap<WlSurface, Window>,
     pub gesture: GestureState,
 
     // Scratchpad (dropdown terminal)
@@ -522,7 +518,6 @@ impl Lantern {
             minimize_anim: MinimizeAnimState::new(),
             workspace_anim: WorkspaceAnimState::new(),
             workspace_ipc: WorkspaceIpc::new(),
-            unmapped_windows: HashMap::new(),
             gesture: GestureState::new(),
             scratchpad_surface: None,
             scratchpad_pending: false,
@@ -645,7 +640,7 @@ impl Lantern {
                     .and_then(|w| self.output_for_window(&w))
                     .map_or(false, |o| o == output)
             });
-            let output_geo = self.space.output_geometry(&output).unwrap_or_default();
+            let output_geo = self.workspaces.output_geometry(&output).unwrap_or_default();
             // Iterate Top/Overlay layer surfaces newest-first so the most
             // recently created surface (e.g. lntrn-screenshot opening while
             // CC is up) receives pointer events instead of an older surface
@@ -696,7 +691,7 @@ impl Lantern {
 
         // Check Bottom layer surfaces (below windows, above wallpaper)
         if let Some(output) = self.output_at_point(pos) {
-            let output_geo = self.space.output_geometry(&output).unwrap_or_default();
+            let output_geo = self.workspaces.output_geometry(&output).unwrap_or_default();
             for ls in &self.layer_surfaces {
                 if !ls.alive() { continue; }
                 let cached = with_states(ls.wl_surface(), |states| {
@@ -811,8 +806,8 @@ impl Lantern {
     /// Falls back to the closest output if the point is between monitors.
     pub fn output_at_point(&self, point: Point<f64, Logical>) -> Option<Output> {
         // Exact containment check
-        for output in self.space.outputs() {
-            if let Some(geo) = self.space.output_geometry(output) {
+        for output in self.workspaces.outputs_iter() {
+            if let Some(geo) = self.workspaces.output_geometry(output) {
                 if geo.to_f64().contains(point) {
                     return Some(output.clone());
                 }
@@ -822,7 +817,7 @@ impl Lantern {
         self.space
             .outputs()
             .min_by_key(|o| {
-                let geo = self.space.output_geometry(o).unwrap();
+                let geo = self.workspaces.output_geometry(o).unwrap();
                 let cx = geo.loc.x + geo.size.w / 2;
                 let cy = geo.loc.y + geo.size.h / 2;
                 let dx = point.x - cx as f64;
@@ -834,7 +829,7 @@ impl Lantern {
 
     /// Find the output a window lives on by checking which output contains its center.
     pub fn output_for_window(&self, window: &Window) -> Option<Output> {
-        let loc = self.space.element_location(window)?;
+        let loc = self.workspaces.element_location(window)?;
         let size = window.geometry().size;
         let center = Point::from((
             loc.x as f64 + size.w as f64 / 2.0,
@@ -849,8 +844,8 @@ impl Lantern {
         let mut min_y = i32::MAX;
         let mut max_x = i32::MIN;
         let mut max_y = i32::MIN;
-        for output in self.space.outputs() {
-            if let Some(geo) = self.space.output_geometry(output) {
+        for output in self.workspaces.outputs_iter() {
+            if let Some(geo) = self.workspaces.output_geometry(output) {
                 min_x = min_x.min(geo.loc.x);
                 min_y = min_y.min(geo.loc.y);
                 max_x = max_x.max(geo.loc.x + geo.size.w);

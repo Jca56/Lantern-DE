@@ -30,6 +30,7 @@ mod usage;
 mod usage_button;
 mod view_arrows;
 mod view_indicator;
+mod workspace_ipc;
 
 fn main() {
     tracing_subscriber::fmt()

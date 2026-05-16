@@ -59,6 +59,34 @@ pub(super) fn render_frame(
         Vec::new()
     };
 
+    // Big white workspace number in the top-left corner — only while
+    // the panel is on screen. Sits outside the CC card so the number is
+    // always readable on whatever the desktop is showing underneath.
+    if !app.is_hidden() {
+        if let Some(ws) = app.workspace_ipc.active_id() {
+            let alpha = app.anim_factor().clamp(0.0, 1.0);
+            if alpha > 0.01 {
+                let font_size = 180.0 * scale_f;
+                let pad_x = 32.0 * scale_f;
+                // Optical baseline tweak — cosmic-text anchors near the
+                // top of the line box, so a small inset keeps the digit
+                // visually flush with the corner rather than floating.
+                let pad_y = 8.0 * scale_f;
+                let text_str = ws.to_string();
+                text.queue(
+                    &text_str,
+                    font_size,
+                    pad_x,
+                    pad_y,
+                    Color::rgba(1.0, 1.0, 1.0, alpha),
+                    phys_w as f32 - pad_x,
+                    phys_w,
+                    phys_h,
+                );
+            }
+        }
+    }
+
     // Stream thumbnail slots to the compositor for the mini-dock
     // hover preview only. (The legacy "Open" section on the main page
     // has been retired — its thumbnail streaming logic with it.)

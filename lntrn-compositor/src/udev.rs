@@ -366,7 +366,7 @@ pub fn init_udev(
             .filter(|w| !w.alive())
             .filter_map(|w| {
                 let surface = crate::window_ext::WindowExt::get_wl_surface(w)?;
-                let location = state.space.element_location(w)?;
+                let location = state.workspaces.element_location(w)?;
                 let size = w.geometry().size;
                 let had_ssd = state.ssd.has_ssd(&surface);
                 Some(crate::animation::ClosingWindow { surface, location, size, had_ssd })
@@ -385,6 +385,7 @@ pub fn init_udev(
             }
         }
         state.space.refresh();
+        state.refresh_all_spaces();
         state.popups.cleanup();
         state.layer_surfaces.retain(|ls| ls.alive());
         state.check_exclusive_zone_change();

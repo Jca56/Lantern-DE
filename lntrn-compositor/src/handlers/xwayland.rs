@@ -131,7 +131,7 @@ impl XwmHandler for Lantern {
         // Regular managed window
         if let Some(wl_surface) = window.wl_surface() {
             if let Some(win) = self.find_mapped_window(&wl_surface) {
-                self.space.unmap_elem(&win);
+                self.unmap_window_everywhere(&win);
             }
             self.forget_window(&wl_surface);
         }
@@ -158,7 +158,7 @@ impl XwmHandler for Lantern {
         // Clean up managed windows
         if let Some(wl_surface) = window.wl_surface() {
             if let Some(win) = self.find_mapped_window(&wl_surface) {
-                self.space.unmap_elem(&win);
+                self.unmap_window_everywhere(&win);
             }
             self.forget_window(&wl_surface);
         }
@@ -322,7 +322,7 @@ impl XwmHandler for Lantern {
             location: pointer.current_location(),
         };
 
-        let initial_window_location = self.space.element_location(&win).unwrap_or_default();
+        let initial_window_location = self.workspaces.element_location(&win).unwrap_or_default();
         let initial_window_size = win.geometry().size;
 
         let edges = x11_resize_edge_to_ours(resize_edge);
@@ -355,7 +355,7 @@ impl XwmHandler for Lantern {
             location: pointer.current_location(),
         };
 
-        let initial_window_location = self.space.element_location(&win).unwrap_or_default();
+        let initial_window_location = self.workspaces.element_location(&win).unwrap_or_default();
         let was_snapped = self.is_snapped(&wl_surface);
         let was_maximized = self.is_maximized(&wl_surface);
         let was_tiled = self.workspaces.contains(&wl_surface);

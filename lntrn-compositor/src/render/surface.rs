@@ -73,7 +73,7 @@ pub fn render_surface(
         surface.pending_render = false;
     }
 
-    let output = match state.space.outputs().find(|o| {
+    let output = match state.workspaces.outputs_iter().find(|o| {
         o.user_data()
             .get::<UdevOutputId>()
             .map(|id| id.device_id == node && id.crtc == crtc)
@@ -245,6 +245,53 @@ pub fn render_surface(
     // Decay cursor spin-to-grow scale each frame (must be before udev borrow)
     let spin_needs_redraw = state.cursor.tick_spin_decay();
 
+    // Build the list of windows to render BEFORE we mutably borrow
+    // `state.udev` — that borrow is held for the rest of the function and
+    // would prevent further immutable accesses to `state.workspaces`.
+    //
+    // During a workspace transition both the outgoing and incoming
+    // workspaces contribute windows so the slide animation can show them
+    // moving in/out at the same time. Otherwise we only iterate the
+    // active workspace's windows for this output. The scratchpad (when
+    // present) is tacked on last so it stays visible across workspace
+    // switches.
+    let output_name_for_lookup = output.name();
+    let mut windows: Vec<smithay::desktop::Window> = Vec::new();
+    {
+        let active_id = state.workspaces.active_id(&output_name_for_lookup);
+        let transition = state
+            .workspace_anim
+            .get(&output_name_for_lookup)
+            .map(|t| (t.from_ws, t.to_ws));
+        let ids_to_render: Vec<u32> = match transition {
+            Some((from, to)) if from != to => vec![from, to],
+            _ => vec![active_id],
+        };
+        for ws_id in ids_to_render {
+            if let Some(space) = state.workspace_space(&output_name_for_lookup, ws_id) {
+                for w in space.elements() {
+                    if !windows.iter().any(|existing| existing == w) {
+                        windows.push(w.clone());
+                    }
+                }
+            }
+        }
+        if let Some(ref scratch_surface) = state.scratchpad_surface {
+            if let Some(scratch_win) = state.space
+                .elements()
+                .find(|w| {
+                    crate::window_ext::WindowExt::get_wl_surface(*w).as_ref()
+                        == Some(scratch_surface)
+                })
+                .cloned()
+            {
+                if !windows.iter().any(|w| w == &scratch_win) {
+                    windows.push(scratch_win);
+                }
+            }
+        }
+    }
+
     let udev = match state.udev.as_mut() {
         Some(u) => u,
         None => return,
@@ -269,14 +316,11 @@ pub fn render_surface(
     // Render windows manually with per-window alpha instead of using
     // render_elements_for_output, which applies a single alpha to all windows.
     let output_scale = output.current_scale().fractional_scale();
-    let output_geo = match state.space.output_geometry(&output) {
+    let output_geo = match state.workspaces.output_geometry(&output) {
         Some(geo) => geo,
         None => return,
     };
 
-    // Iterate windows back-to-front (space stores front-to-back, so reverse).
-    // We must collect because the loop body calls state.space.element_location().
-    let windows: Vec<_> = state.space.elements().cloned().collect();
     let mut window_elements: Vec<CustomRenderElements> = Vec::new();
     let mut fullscreen_elements: Vec<CustomRenderElements> = Vec::new();
     // Blur backdrop tracking: (insert index, screen-logical rect)
@@ -287,7 +331,7 @@ pub fn render_surface(
 
     for window in windows.iter().rev() {
         let win_bbox = {
-            let loc = state.space.element_location(window).unwrap_or_default();
+            let loc = state.workspaces.element_location(window).unwrap_or_default();
             let mut bbox = window.bbox();
             bbox.loc += loc - window.geometry().loc;
             bbox
@@ -296,7 +340,7 @@ pub fn render_surface(
             continue;
         }
 
-        let location = state.space.element_location(window).unwrap_or_default();
+        let location = state.workspaces.element_location(window).unwrap_or_default();
         let _ = location;
         let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(window) else { continue };
 
@@ -354,7 +398,7 @@ pub fn render_surface(
                 (rect.loc.x as f64, rect.loc.y as f64,
                  rect.size.w as f64, rect.size.h as f64, 1.0)
             } else {
-                let loc = state.space.element_location(window).unwrap_or_default();
+                let loc = state.workspaces.element_location(window).unwrap_or_default();
                 (loc.x as f64, loc.y as f64,
                  win_size.w as f64, win_size.h as f64, 1.0)
             };

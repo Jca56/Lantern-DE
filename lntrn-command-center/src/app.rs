@@ -285,6 +285,11 @@ pub struct AppState {
     /// magnification wave, primarily — without reaching back into the
     /// wayland layer.
     pub cursor_phys: (f32, f32),
+    /// Live workspace state pushed from the compositor over
+    /// `/run/user/{uid}/lntrn-workspaces.sock`. Used by the renderer to
+    /// draw the current workspace number in the top-left corner while
+    /// the panel is visible.
+    pub workspace_ipc: crate::workspace_ipc::WorkspaceIpc,
 }
 
 #[derive(Debug, Clone)]
@@ -373,6 +378,7 @@ impl AppState {
                 s
             },
             pending_terminal_input: None,
+            workspace_ipc: crate::workspace_ipc::WorkspaceIpc::new(),
         }
     }
 

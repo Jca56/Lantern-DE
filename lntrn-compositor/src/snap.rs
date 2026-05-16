@@ -134,7 +134,7 @@ impl Lantern {
         edge_threshold: f64,
     ) -> Option<SnapZone> {
         let output = self.output_at_point(pos)?;
-        let geo = self.space.output_geometry(&output)?;
+        let geo = self.workspaces.output_geometry(&output)?;
 
         let near_left = pos.x - geo.loc.x as f64 <= edge_threshold;
         let near_right = (geo.loc.x + geo.size.w) as f64 - pos.x <= edge_threshold;
@@ -159,7 +159,7 @@ impl Lantern {
             .map(|p| p.current_location())
             .unwrap_or_default();
         let output = self.output_at_point(pointer_pos)
-            .or_else(|| self.space.outputs().next().cloned())?;
+            .or_else(|| self.workspaces.outputs_iter().next().cloned())?;
         self.snap_zone_geometry_on_output(&output, zone)
     }
 
@@ -171,7 +171,7 @@ impl Lantern {
         output: &Output,
         zone: SnapZone,
     ) -> Option<Rectangle<i32, Logical>> {
-        let geo = self.space.output_geometry(output)?;
+        let geo = self.workspaces.output_geometry(output)?;
 
         let (top_excl, bottom_excl, left_excl, right_excl) = self.exclusive_zone_offsets_for_output(output);
         let outer = self.workspaces.outer_gap;
@@ -224,7 +224,7 @@ impl Lantern {
             // Unsnap from maximized state first
             self.maximized_windows.remove(idx).restore
         } else {
-            let location = self.space.element_location(&window).unwrap_or_default();
+            let location = self.workspaces.element_location(&window).unwrap_or_default();
             Rectangle::new(location, window.geometry().size)
         };
 
@@ -236,7 +236,7 @@ impl Lantern {
         });
 
         // Capture animation start before reconfiguring.
-        let current_loc = self.space.element_location(&window).unwrap_or(target.loc);
+        let current_loc = self.workspaces.element_location(&window).unwrap_or(target.loc);
         let current_rect = Rectangle::new(current_loc, window.geometry().size);
         let anim_start = self
             .window_state_anim
@@ -245,7 +245,7 @@ impl Lantern {
 
         crate::window_ext::WindowExt::configure_size(&window, target.size);
 
-        self.space.map_element(window, target.loc, true);
+        self.remap_tracked_window(window, target.loc, true);
         self.window_state_anim.animate_default(surface, anim_start, target);
         self.schedule_client_render();
         tracing::info!(?zone, "Snapped window to zone");
@@ -263,7 +263,7 @@ impl Lantern {
             return false;
         };
 
-        let current_loc = self.space.element_location(&window).unwrap_or(snap.restore.loc);
+        let current_loc = self.workspaces.element_location(&window).unwrap_or(snap.restore.loc);
         let current_rect = Rectangle::new(current_loc, window.geometry().size);
         let anim_start = self
             .window_state_anim
@@ -272,7 +272,7 @@ impl Lantern {
 
         crate::window_ext::WindowExt::configure_size(&window, snap.restore.size);
 
-        self.space.map_element(window, snap.restore.loc, true);
+        self.remap_tracked_window(window, snap.restore.loc, true);
         self.window_state_anim.animate_default(surface, anim_start, snap.restore);
         self.schedule_client_render();
         true
@@ -299,7 +299,7 @@ impl Lantern {
         output: &Output,
         rect: Rectangle<i32, Logical>,
     ) -> SnapZone {
-        let Some(geo) = self.space.output_geometry(output) else { return SnapZone::Full };
+        let Some(geo) = self.workspaces.output_geometry(output) else { return SnapZone::Full };
         let (top_excl, bottom_excl, left_excl, right_excl) = self.exclusive_zone_offsets_for_output(output);
         let x = geo.loc.x + left_excl;
         let y = geo.loc.y + top_excl;
@@ -333,7 +333,7 @@ impl Lantern {
         let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(&window) else { return false };
 
         let output = self.output_for_window(&window)
-            .or_else(|| self.space.outputs().next().cloned());
+            .or_else(|| self.workspaces.outputs_iter().next().cloned());
         let Some(output) = output else { return false };
         let output_name = output.name();
 
@@ -341,7 +341,7 @@ impl Lantern {
         let current = if let Some(existing) = self.snapped_windows.iter().find(|s| s.surface == surface) {
             existing.zone
         } else {
-            let loc = self.space.element_location(&window).unwrap_or_default();
+            let loc = self.workspaces.element_location(&window).unwrap_or_default();
             let rect = Rectangle::new(loc, window.geometry().size);
             self.approximate_zone_for(&output, rect)
         };
@@ -366,7 +366,7 @@ impl Lantern {
                     .map(|o| o.name() == output_name)
                     .unwrap_or(false);
                 if !same_output { return None; }
-                let loc = self.space.element_location(w).unwrap_or_default();
+                let loc = self.workspaces.element_location(w).unwrap_or_default();
                 let rect = Rectangle::new(loc, w.geometry().size);
                 if rects_overlap(&rect, &target) { Some((s, rect)) } else { None }
             })
@@ -384,7 +384,7 @@ impl Lantern {
             let Some(free) = find_free_zone(&taken) else { break };
             let Some(other_window) = self.find_mapped_window(&other_surface) else { continue };
             let other_output = self.output_for_window(&other_window)
-                .or_else(|| self.space.outputs().next().cloned());
+                .or_else(|| self.workspaces.outputs_iter().next().cloned());
             let Some(other_output) = other_output else { continue };
             let Some(other_target) = self.snap_zone_geometry_on_output(&other_output, free) else { continue };
 
@@ -401,7 +401,7 @@ impl Lantern {
                 target: other_target,
             });
             crate::window_ext::WindowExt::configure_size(&other_window, other_target.size);
-            self.space.map_element(other_window, other_target.loc, true);
+            self.remap_tracked_window(other_window, other_target.loc, true);
             taken.push(free);
         }
 
@@ -417,7 +417,7 @@ impl Lantern {
     pub fn apply_snap_with_eviction(&mut self, surface: &WlSurface, zone: SnapZone) -> bool {
         let Some(window) = self.find_mapped_window(surface) else { return false };
         let output = self.output_for_window(&window)
-            .or_else(|| self.space.outputs().next().cloned());
+            .or_else(|| self.workspaces.outputs_iter().next().cloned());
         let Some(output) = output else { return false };
         let output_name = output.name();
         let Some(target) = self.snap_zone_geometry_on_output(&output, zone) else { return false };
@@ -438,7 +438,7 @@ impl Lantern {
                     .map(|o| o.name() == output_name)
                     .unwrap_or(false);
                 if !same_output { return None; }
-                let loc = self.space.element_location(w).unwrap_or_default();
+                let loc = self.workspaces.element_location(w).unwrap_or_default();
                 let rect = Rectangle::new(loc, w.geometry().size);
                 if rects_overlap(&rect, &target) { Some((s, rect)) } else { None }
             })
@@ -454,7 +454,7 @@ impl Lantern {
             let Some(free) = find_free_zone(&taken) else { break };
             let Some(other_window) = self.find_mapped_window(&other_surface) else { continue };
             let other_output = self.output_for_window(&other_window)
-                .or_else(|| self.space.outputs().next().cloned());
+                .or_else(|| self.workspaces.outputs_iter().next().cloned());
             let Some(other_output) = other_output else { continue };
             let Some(other_target) = self.snap_zone_geometry_on_output(&other_output, free) else { continue };
 
@@ -475,7 +475,7 @@ impl Lantern {
                 target: other_target,
             });
             crate::window_ext::WindowExt::configure_size(&other_window, other_target.size);
-            self.space.map_element(other_window, other_target.loc, true);
+            self.remap_tracked_window(other_window, other_target.loc, true);
             taken.push(free);
         }
 
@@ -502,7 +502,7 @@ impl Lantern {
         } else if let Some(idx) = self.maximized_windows.iter().position(|e| e.surface == *surface) {
             self.maximized_windows.remove(idx).restore
         } else {
-            let location = self.space.element_location(&window).unwrap_or_default();
+            let location = self.workspaces.element_location(&window).unwrap_or_default();
             Rectangle::new(location, window.geometry().size)
         };
 
@@ -514,7 +514,7 @@ impl Lantern {
         });
 
         crate::window_ext::WindowExt::configure_size(&window, target.size);
-        self.space.map_element(window, target.loc, true);
+        self.remap_tracked_window(window, target.loc, true);
     }
 
     /// Check if pointer is at the top edge (for maximize-on-drag).
@@ -526,7 +526,7 @@ impl Lantern {
         const EDGE_THRESHOLD: f64 = 8.0;
 
         let output = self.output_at_point(pos)?;
-        let geo = self.space.output_geometry(&output)?;
+        let geo = self.workspaces.output_geometry(&output)?;
 
         let near_left = pos.x - geo.loc.x as f64 <= EDGE_THRESHOLD;
         let near_right = (geo.loc.x + geo.size.w) as f64 - pos.x <= EDGE_THRESHOLD;

@@ -41,7 +41,7 @@ impl Lantern {
             return false;
         }
 
-        let Some(location) = self.space.element_location(&window) else {
+        let Some(location) = self.workspaces.element_location(&window) else {
             tracing::warn!("maximize_surface: no element location");
             return false;
         };
@@ -73,7 +73,7 @@ impl Lantern {
         window.set_maximized(true);
         window.configure_rect(output_geo);
 
-        self.space.map_element(window.clone(), output_geo.loc, true);
+        self.remap_tracked_window(window.clone(), output_geo.loc, true);
         self.window_state_anim.animate_default(surface, anim_start, output_geo);
         self.update_foreign_toplevel_states(surface);
         if serial != Serial::from(0) {
@@ -93,7 +93,7 @@ impl Lantern {
         };
 
         // Animation start = current visible rect (handles redirect mid-maximize).
-        let current_loc = self.space.element_location(&window).unwrap_or(restore.loc);
+        let current_loc = self.workspaces.element_location(&window).unwrap_or(restore.loc);
         let geo = window.geometry();
         let current_rect = Rectangle::new(current_loc, geo.size);
         let existing_anim = self.window_state_anim.current_rect(surface);
@@ -106,7 +106,7 @@ impl Lantern {
         window.set_maximized(false);
         window.configure_rect(restore);
 
-        self.space.map_element(window.clone(), restore.loc, true);
+        self.remap_tracked_window(window.clone(), restore.loc, true);
         self.window_state_anim.animate_default(surface, anim_start, restore);
         self.update_foreign_toplevel_states(surface);
         if serial != Serial::from(0) {

@@ -43,8 +43,8 @@ impl Lantern {
 
     pub(crate) fn window_output_geometry(&self, window: &Window) -> Option<Rectangle<i32, Logical>> {
         let output = self.output_for_window(window)
-            .or_else(|| self.space.outputs().next().cloned())?;
-        let geo = self.space.output_geometry(&output)?;
+            .or_else(|| self.workspaces.outputs_iter().next().cloned())?;
+        let geo = self.workspaces.output_geometry(&output)?;
 
         let mut result = Rectangle::new(
             geo.loc.into(),
@@ -77,7 +77,7 @@ impl Lantern {
             if let Some(window) = self.find_mapped_window(surface) {
                 if let Some(geo) = self.window_output_geometry(&window) {
                     window.configure_rect(geo);
-                    self.space.map_element(window, geo.loc, false);
+                    self.remap_tracked_window(window, geo.loc, false);
                 }
             }
         }
@@ -91,7 +91,7 @@ impl Lantern {
             if let Some(target) = self.snap_zone_geometry(*zone) {
                 if let Some(window) = self.find_mapped_window(&surface) {
                     window.configure_rect(target);
-                    self.space.map_element(window, target.loc, false);
+                    self.remap_tracked_window(window, target.loc, false);
                 }
             }
         }
@@ -118,7 +118,7 @@ impl Lantern {
             if self.is_fullscreen(surface) {
                 continue;
             }
-            let win_loc = self.space.element_location(&window).unwrap_or_default();
+            let win_loc = self.workspaces.element_location(&window).unwrap_or_default();
             let win_size = window.geometry().size;
 
             let new_hover = match crate::ssd::hit_test(pointer_pos, win_loc, win_size) {
@@ -161,7 +161,7 @@ impl Lantern {
                     continue;
                 }
             }
-            let win_loc = self.space.element_location(&window).unwrap_or_default();
+            let win_loc = self.workspaces.element_location(&window).unwrap_or_default();
             let win_size = window.geometry().size;
 
             match crate::ssd::hit_test(pointer_pos, win_loc, win_size) {
