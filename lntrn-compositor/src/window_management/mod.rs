@@ -8,11 +8,14 @@ use smithay::desktop::Window;
 mod alt_tab;
 mod focus;
 mod fullscreen;
+mod half_pose;
 mod lifecycle;
 mod maximize;
 mod minimize;
 mod solo_tile;
 mod ssd;
+
+pub use half_pose::PoseSlot;
 
 /// Action to take in response to an SSD button click.
 pub enum SsdClickAction {

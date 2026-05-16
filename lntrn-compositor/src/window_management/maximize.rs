@@ -53,15 +53,24 @@ impl Lantern {
         // use that as the canonical pre-maximize rect. Without this fix,
         // slow clients like Firefox would capture a wrong restore size,
         // and unmaximize would teleport the window to that wrong rect.
-        let restore = self
-            .window_state_anim
-            .target_rect(surface)
-            .unwrap_or_else(|| Rectangle::new(location, window.geometry().size));
-
         let Some(output_geo) = self.window_output_geometry(&window) else {
             tracing::warn!("maximize_surface: no output geometry");
             return false;
         };
+        // If the window is currently in a pose slot (Left/Middle/Right
+        // half), the Normal rung of the ladder is the Middle 1500×1000
+        // rect, not the tall half rect — see `half_pose.rs`.
+        let restore = if self.posed_windows.contains_key(surface) {
+            let output = self.output_for_window(&window)
+                .or_else(|| self.workspaces.outputs_iter().next().cloned());
+            output.as_ref().and_then(|o| self.middle_pose_rect(o))
+                .unwrap_or_else(|| Rectangle::new(location, window.geometry().size))
+        } else {
+            self.window_state_anim
+                .target_rect(surface)
+                .unwrap_or_else(|| Rectangle::new(location, window.geometry().size))
+        };
+        self.posed_windows.remove(surface);
         let geo = window.geometry();
         tracing::info!(
             "maximize_surface: location={:?} geometry={:?} restore={:?} target={:?}",

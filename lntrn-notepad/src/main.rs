@@ -266,7 +266,7 @@ impl ApplicationHandler for TextHandler {
         let attrs = WindowAttributes::default()
             .with_name("lntrn-notepad", "lntrn-notepad")
             .with_title("lntrn-notepad")
-            .with_inner_size(winit::dpi::LogicalSize::new(900.0, 700.0))
+            .with_inner_size(winit::dpi::LogicalSize::new(900.0, 1100.0))
             .with_decorations(false)
             .with_transparent(true);
 

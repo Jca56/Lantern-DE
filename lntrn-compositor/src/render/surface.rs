@@ -97,6 +97,7 @@ pub fn render_surface(
     state.tiling_anim.tick();
     state.workspace_anim.tick();
     state.window_state_anim.tick();
+    state.process_pending_workspace_moves();
     let finished_minimizes = state.minimize_anim.tick();
     for surface in &finished_minimizes {
         state.finish_minimize_animation(surface);

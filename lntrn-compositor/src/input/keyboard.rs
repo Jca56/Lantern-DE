@@ -178,36 +178,11 @@ impl Lantern {
                     }
                 }
 
-                // Super+Up / Super+Down: window-size ladder.
-                //   Up:   Normal → SoloTile → Maximized
-                //         (no focus → restore last minimized)
-                //   Down: Maximized → SoloTile → Normal → Minimized
-                // Gated to plain Super (no shift/alt/ctrl) and to non-
-                // tiling mode so tiling navigation still works when tiling
-                // is on.
-                if event.state() == KeyState::Pressed
-                    && _modifiers.logo
-                    && !_modifiers.shift && !_modifiers.alt && !_modifiers.ctrl
-                    && !data.workspaces.tiling_active
-                {
-                    let raw = keysym.modified_sym().raw();
-                    if raw == xkb::KEY_Up {
-                        data.ladder_size_up();
-                        data.schedule_render();
-                        return FilterResult::Intercept(());
-                    }
-                    if raw == xkb::KEY_Down {
-                        data.ladder_size_down();
-                        data.schedule_render();
-                        return FilterResult::Intercept(());
-                    }
-                }
-
-                // Super+Left: previous existing workspace (no wrap, no-op at edge).
-                // Super+Right: next existing workspace, or create a new one
-                // at the right edge (capped at 9). Empty workspaces auto-die
-                // on leave so this never orphans anything. Gated to non-tiling
-                // mode — tiling-focus navigation owns Super+Arrow there.
+                // Super+Left/Right: previous / next workspace.
+                // Super+Right creates a new workspace at the right edge
+                // (capped at 9). Super+Left no-ops at WS 1. Gated to
+                // non-tiling mode — tiling-focus navigation owns Super+Arrow
+                // when tiling is on. Plain Super (no other mods).
                 if event.state() == KeyState::Pressed
                     && _modifiers.logo
                     && !_modifiers.shift && !_modifiers.alt && !_modifiers.ctrl
@@ -251,19 +226,34 @@ impl Lantern {
                     }
                 }
 
-                // Super+Shift+Arrow: cycle focused window's snap zone (3×3 grid)
+                // Shift+Super+Arrow: window control.
+                //   Left/Right: pose to Left half ↔ Middle (1500×1000) ↔ Right half.
+                //   Up:         restore most-recently-minimized OR ladder up
+                //               (Normal → SoloTile → Maximized).
+                //   Down:       ladder down (Max → SoloTile → Normal → Minimize).
                 if event.state() == KeyState::Pressed
-                    && _modifiers.logo && _modifiers.shift && !_modifiers.ctrl
+                    && _modifiers.logo && _modifiers.shift && !_modifiers.alt && !_modifiers.ctrl
+                    && !data.workspaces.tiling_active
                 {
-                    let zdir = match keysym.modified_sym().raw() {
-                        xkb::KEY_Left  => Some(crate::snap::ZoneDir::Left),
-                        xkb::KEY_Right => Some(crate::snap::ZoneDir::Right),
-                        xkb::KEY_Up    => Some(crate::snap::ZoneDir::Up),
-                        xkb::KEY_Down  => Some(crate::snap::ZoneDir::Down),
-                        _ => None,
-                    };
-                    if let Some(zdir) = zdir {
-                        data.cycle_snap_focused(zdir);
+                    let raw = keysym.modified_sym().raw();
+                    if raw == xkb::KEY_Left {
+                        data.pose_half_left();
+                        data.schedule_render();
+                        return FilterResult::Intercept(());
+                    }
+                    if raw == xkb::KEY_Right {
+                        data.pose_half_right();
+                        data.schedule_render();
+                        return FilterResult::Intercept(());
+                    }
+                    if raw == xkb::KEY_Up {
+                        data.ladder_size_up();
+                        data.schedule_render();
+                        return FilterResult::Intercept(());
+                    }
+                    if raw == xkb::KEY_Down {
+                        data.ladder_size_down();
+                        data.schedule_render();
                         return FilterResult::Intercept(());
                     }
                 }

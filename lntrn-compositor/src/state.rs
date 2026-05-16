@@ -110,6 +110,20 @@ pub struct SoloTiledWindow {
     pub target: Rectangle<i32, Logical>,
 }
 
+/// A window-to-workspace move that's mid slide-off animation. While
+/// `complete_at` hasn't elapsed the window remains in the source
+/// workspace's Space (sliding off-screen via `window_state_anim`). Once
+/// the deadline passes, the deferred unmap-from-source + remap-onto-target
+/// fires in `process_pending_workspace_moves`.
+pub struct PendingWorkspaceMove {
+    pub surface: WlSurface,
+    pub target_output: String,
+    pub target_workspace_id: u32,
+    /// Position to drop the window at on the target workspace's Space.
+    pub final_pos: Point<i32, Logical>,
+    pub complete_at: std::time::Instant,
+}
+
 pub struct DebugCounters {
     pub(crate) enabled: bool,
     window_start: std::time::Instant,
@@ -298,6 +312,15 @@ pub struct Lantern {
     pub maximized_windows: Vec<MaximizedWindow>,
     /// Windows currently at the "solo tile" size, driven by Super+Up/Down.
     pub solo_tiled_windows: Vec<SoloTiledWindow>,
+    /// Posed windows (Shift+Super+Left/Right). Tracks which pose slot a
+    /// window currently occupies so subsequent presses cycle through the
+    /// Left → Middle → Right sequence instead of jumping straight to a half.
+    pub posed_windows: HashMap<WlSurface, crate::window_management::PoseSlot>,
+    /// In-flight workspace moves (Super+Shift+N). While the slide-off
+    /// animation is running, the window stays on the source workspace's
+    /// Space. After `complete_at`, the actual unmap+remap to the target
+    /// workspace happens — see `process_pending_workspace_moves`.
+    pub pending_workspace_moves: Vec<PendingWorkspaceMove>,
     pub fullscreen_windows: Vec<FullscreenWindow>,
     pub alt_tab_switcher: AltTabSwitcher,
     pub wallpaper: WallpaperState,
@@ -505,6 +528,8 @@ impl Lantern {
             minimized_windows: Vec::new(),
             maximized_windows: Vec::new(),
             solo_tiled_windows: Vec::new(),
+            posed_windows: HashMap::new(),
+            pending_workspace_moves: Vec::new(),
             fullscreen_windows: Vec::new(),
             alt_tab_switcher: AltTabSwitcher::new(),
             wallpaper: WallpaperState::load_from_config(),

@@ -63,15 +63,20 @@ impl Lantern {
         };
 
         let cur_loc = self.workspaces.element_location(&window).unwrap_or(target.loc);
-        // Prefer the in-flight animation target as the restore rect — see
-        // the long-form rationale in `maximize_surface`. Without this, the
-        // SoloTiledWindow entry would capture the wrong pre-solo size for
-        // slow clients, and Super+Down would shrink the window back to a
-        // stale Normal-state rect.
-        let restore = self
-            .window_state_anim
-            .target_rect(surface)
-            .unwrap_or_else(|| Rectangle::new(cur_loc, window.geometry().size));
+        // If the window is currently in a pose slot (Left/Middle/Right half),
+        // the Normal rung of the ladder is the Middle 1500×1000 rect, not
+        // the tall half rect — see `half_pose.rs`. Otherwise prefer the
+        // in-flight animation target (handles slow clients mid-resize; see
+        // long-form rationale in `maximize_surface`).
+        let restore = if self.posed_windows.contains_key(surface) {
+            self.middle_pose_rect(&output)
+                .unwrap_or_else(|| Rectangle::new(cur_loc, window.geometry().size))
+        } else {
+            self.window_state_anim
+                .target_rect(surface)
+                .unwrap_or_else(|| Rectangle::new(cur_loc, window.geometry().size))
+        };
+        self.posed_windows.remove(surface);
 
         let anim_start = self
             .window_state_anim

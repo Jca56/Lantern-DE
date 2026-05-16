@@ -234,6 +234,8 @@ impl Lantern {
         self.maximized_windows.retain(|entry| entry.surface != *surface);
         self.fullscreen_windows.retain(|entry| entry.surface != *surface);
         self.snapped_windows.retain(|entry| entry.surface != *surface);
+        self.posed_windows.remove(surface);
+        self.pending_workspace_moves.retain(|m| m.surface != *surface);
         self.pending_center.remove(surface);
         self.window_snapshots.remove(surface);
         self.animations.remove(surface);

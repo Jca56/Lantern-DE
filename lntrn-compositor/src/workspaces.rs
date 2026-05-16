@@ -686,39 +686,68 @@ impl Lantern {
         let Some(output_name) = self.focused_output_name() else { return };
         let Some(focused) = self.focused_surface.clone() else { return };
 
-        // Snapshot pre-move state so we know which Space to remove the
-        // Window from after the tracking flip.
-        let pre_src = self.workspaces.window_workspace(&focused);
-        let window = self.find_window_anywhere(&focused);
-        let pre_loc = window.as_ref()
-            .and_then(|w| self.window_location(w))
-            .unwrap_or_else(|| Point::from((0, 0)));
+        let Some((src_out, src_id)) = self.workspaces.window_workspace(&focused)
+            else { return };
+        if src_out == output_name && src_id == target_id { return; }
 
-        let moved = self.workspaces.move_window(&focused, &output_name, target_id);
-        if !moved { return; }
-        tracing::info!(target = target_id, output = %output_name, "window moved to workspace");
+        let Some(window) = self.find_window_anywhere(&focused) else { return };
+        let cur_loc = self.window_location(&window).unwrap_or_else(|| Point::from((0, 0)));
+        let cur_size = window.geometry().size;
+        let current_rect = Rectangle::new(cur_loc, cur_size);
 
-        // Move the Window itself between per-workspace Spaces so it
-        // actually disappears from the source workspace and appears on
-        // the target. Without this the visual would lag behind the
-        // tracking change.
-        if let (Some((src_out, src_id)), Some(window)) = (pre_src, window) {
-            if let Some(src_space) = self.workspace_space_mut(&src_out, src_id) {
-                src_space.unmap_elem(&window);
-            }
-            if let Some(target_space) = self.workspace_space_mut(&output_name, target_id) {
-                target_space.map_element(window, pre_loc, true);
-            }
-        }
+        // Slide direction: positive when target > source (slide right toward
+        // the higher-numbered workspace), negative otherwise. Matches the
+        // workspace-switch transition direction in `workspace_anim.rs`.
+        let direction: i32 = if target_id > src_id { 1 } else { -1 };
+        let output_w = self
+            .workspaces
+            .outputs_iter()
+            .find(|o| o.name() == output_name)
+            .and_then(|o| self.workspaces.output_geometry(o))
+            .map(|g| g.size.w)
+            .unwrap_or(1920);
+        let slide_off_x = if direction > 0 {
+            cur_loc.x + output_w + 100
+        } else {
+            cur_loc.x - cur_size.w - 100
+        };
+        let slide_off = Rectangle::new(
+            Point::from((slide_off_x, cur_loc.y)),
+            cur_size,
+        );
 
-        // Pick a new focus from the current workspace's MRU
+        // Cancel any prior pending move for this surface (rapid retargeting).
+        self.pending_workspace_moves.retain(|m| m.surface != focused);
+
+        let complete_at = std::time::Instant::now()
+            + crate::window_state_anim::state_duration();
+        self.pending_workspace_moves.push(crate::state::PendingWorkspaceMove {
+            surface: focused.clone(),
+            target_output: output_name.clone(),
+            target_workspace_id: target_id,
+            final_pos: cur_loc,
+            complete_at,
+        });
+
+        let anim_start = self
+            .window_state_anim
+            .current_rect(&focused)
+            .unwrap_or(current_rect);
+        self.window_state_anim
+            .animate_default(&focused, anim_start, slide_off);
+        tracing::info!(target = target_id, output = %output_name, "window slide-to-workspace started");
+
+        // Refocus immediately so the user can keep working — but skip the
+        // surface we're sliding away (it's still tracking-wise on the
+        // source workspace until the slide completes).
         let serial = SERIAL_COUNTER.next_serial();
         let next_focus: Option<Window> = self
             .workspaces
-            .output_workspaces(&output_name)
+            .output_workspaces(&src_out)
             .and_then(|ow| {
-                let ws = ow.active_workspace();
-                ws.mru.iter().chain(ws.windows.iter().rev())
+                let ws = ow.workspaces.get(&src_id)?;
+                ws.mru.iter().filter(|s| **s != focused)
+                    .chain(ws.windows.iter().rev().filter(|s| **s != focused))
                     .find_map(|s| self.find_mapped_window(s))
             });
         if let Some(window) = next_focus {
@@ -726,6 +755,56 @@ impl Lantern {
         } else {
             self.clear_focus(serial);
         }
+        self.schedule_render();
+    }
+
+    /// Complete any pending workspace moves whose slide animation has
+    /// elapsed. Called from the render tick so the swap happens at most
+    /// one frame after the slide finishes.
+    pub fn process_pending_workspace_moves(&mut self) {
+        if self.pending_workspace_moves.is_empty() { return; }
+        let now = std::time::Instant::now();
+        let mut ready: Vec<crate::state::PendingWorkspaceMove> = Vec::new();
+        self.pending_workspace_moves.retain(|m| {
+            if now >= m.complete_at {
+                ready.push(crate::state::PendingWorkspaceMove {
+                    surface: m.surface.clone(),
+                    target_output: m.target_output.clone(),
+                    target_workspace_id: m.target_workspace_id,
+                    final_pos: m.final_pos,
+                    complete_at: m.complete_at,
+                });
+                false
+            } else {
+                true
+            }
+        });
+        if ready.is_empty() { return; }
+
+        for m in ready {
+            let pre_src = self.workspaces.window_workspace(&m.surface);
+            let window = self.find_window_anywhere(&m.surface);
+            let moved = self.workspaces.move_window(
+                &m.surface,
+                &m.target_output,
+                m.target_workspace_id,
+            );
+            if !moved { continue; }
+            if let (Some((src_out, src_id)), Some(window)) = (pre_src, window) {
+                if let Some(src_space) = self.workspace_space_mut(&src_out, src_id) {
+                    src_space.unmap_elem(&window);
+                }
+                if let Some(target_space) =
+                    self.workspace_space_mut(&m.target_output, m.target_workspace_id)
+                {
+                    target_space.map_element(window, m.final_pos, false);
+                }
+            }
+            // Clear the slide-off anim — the window is now on the target
+            // workspace at its final position and should render normally.
+            self.window_state_anim.remove(&m.surface);
+        }
+
         if self.workspaces.tiling_active {
             self.apply_tiling_layout();
         }
