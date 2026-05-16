@@ -117,6 +117,29 @@ impl IconCache {
         self.cache.get(&key)
     }
 
+    /// Eagerly load an SVG icon (no-op if cached). Used by the Properties
+    /// icon picker's two-pass render: load everything mutably, then borrow
+    /// each texture immutably to build draw calls without borrow conflicts.
+    pub fn ensure_svg_path(
+        &mut self,
+        svg_path: &Path,
+        gpu: &GpuContext,
+        tex: &TexturePass,
+    ) {
+        let key = format!("svg:{}", svg_path.display());
+        if !self.cache.contains_key(&key) {
+            if let Some(t) = rasterize_svg(svg_path, gpu, tex) {
+                self.cache.insert(key.clone(), t);
+            }
+        }
+    }
+
+    /// Immutable lookup matching `ensure_svg_path`.
+    pub fn get_svg_path(&self, svg_path: &Path) -> Option<&GpuTexture> {
+        let key = format!("svg:{}", svg_path.display());
+        self.cache.get(&key)
+    }
+
     /// Get or load a colored folder icon by color name (e.g. "red", "blue", "").
     /// Empty string means the plain/default folder.
     pub fn get_or_load_folder_color(

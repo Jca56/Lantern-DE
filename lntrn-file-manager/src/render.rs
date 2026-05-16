@@ -826,6 +826,15 @@ pub fn render_frame(
             };
             props_icon_rect_data = Some((entry, (ix, iy, iw, ih)));
         }
+        // Picker cell thumbnails: the wayland loop pre-warms the SVG cache
+        // (between frames, when icon_cache isn't borrowed by tex_draws).
+        // Here we only do immutable lookups.
+        for (path, cx, cy, cw, ch) in &props.picker_cell_rects {
+            if let Some(tex) = icon_cache.get_svg_path(path) {
+                let (bx, by, bw, bh) = icons::fit_in_box(tex, *cx, *cy, *cw, *ch);
+                props_tex_draws.push(TextureDraw::new(tex, bx, by, bw, bh));
+            }
+        }
     }
     if props_close { app.properties = None; }
     if let Some((folder, icon_path)) = props_icon_chosen {

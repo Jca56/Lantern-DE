@@ -150,39 +150,74 @@ install-system: install-session install-portal install-udev
 # ── Fresh install (full setup from scratch) ─────────────────────────────────
 
 fresh-install: build install install-system
-	@echo ""
-	@echo "🔍 Checking required packages..."
-	@for pkg in pipewire wireplumber networkmanager bluez polkit xdg-desktop-portal; do \
-		if pacman -Qi $$pkg >/dev/null 2>&1; then \
-			echo "  ✓ $$pkg"; \
-		else \
-			echo "  ✗ $$pkg (missing — sudo pacman -S $$pkg)"; \
-		fi \
-	done
-	@echo ""
-	@echo "🔍 Checking user groups..."
-	@for grp in video input; do \
-		if id -nG | grep -qw $$grp; then \
-			echo "  ✓ member of $$grp"; \
-		else \
-			echo "  ✗ not in $$grp (fix: sudo usermod -aG $$grp $$USER)"; \
-		fi \
-	done
-	@echo ""
-	@echo "📋 Remaining setup:"
-	@echo "  1. Enable services:"
-	@echo "     systemctl enable --now NetworkManager"
-	@echo "     systemctl --user enable --now pipewire wireplumber"
-	@echo ""
-	@echo "  2. Add to ~/.zprofile:"
-	@echo '     if [ -z "$$WAYLAND_DISPLAY" ] && [ "$$(tty)" = "/dev/tty1" ]; then'
-	@echo '         exec $$HOME/.lantern/bin/lntrn-session-manager'
-	@echo '     fi'
-	@echo ""
-	@echo "  3. Add to ~/.zshrc:"
-	@echo '     export PATH="$$HOME/.lantern/bin:$$PATH"'
-	@echo ""
-	@echo "🏮 Lantern DE is ready!"
+	@echo ""; \
+	echo "🔍 Detecting init system..."; \
+	if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then \
+		echo "  → systemd"; INIT=systemd; \
+	elif command -v rc-service >/dev/null 2>&1; then \
+		echo "  → OpenRC"; INIT=openrc; \
+	elif command -v sv >/dev/null 2>&1; then \
+		echo "  → runit"; INIT=runit; \
+	elif command -v dinitctl >/dev/null 2>&1; then \
+		echo "  → dinit"; INIT=dinit; \
+	elif command -v s6-rc >/dev/null 2>&1; then \
+		echo "  → s6"; INIT=s6; \
+	else \
+		echo "  → unknown — see docs/GENTOO-OPENRC.md for non-systemd setup"; INIT=unknown; \
+	fi; \
+	echo ""; \
+	echo "🔍 Checking required packages..."; \
+	if command -v pacman >/dev/null 2>&1; then \
+		for pkg in pipewire wireplumber networkmanager bluez polkit xdg-desktop-portal; do \
+			if pacman -Qi $$pkg >/dev/null 2>&1; then echo "  ✓ $$pkg"; \
+			else echo "  ✗ $$pkg (missing — sudo pacman -S $$pkg)"; fi; \
+		done; \
+	elif command -v equery >/dev/null 2>&1; then \
+		for pkg in media-video/pipewire media-video/wireplumber net-misc/networkmanager net-wireless/bluez sys-auth/polkit sys-apps/xdg-desktop-portal sys-auth/elogind; do \
+			if equery -q list $$pkg >/dev/null 2>&1; then echo "  ✓ $$pkg"; \
+			else echo "  ✗ $$pkg (missing — sudo emerge $$pkg)"; fi; \
+		done; \
+	else \
+		echo "  · unknown package manager — install: pipewire wireplumber networkmanager bluez polkit xdg-desktop-portal (+ elogind on non-systemd)"; \
+	fi; \
+	echo ""; \
+	echo "🔍 Checking user groups..."; \
+	for grp in video input seat; do \
+		if id -nG | grep -qw $$grp; then echo "  ✓ member of $$grp"; \
+		else echo "  ✗ not in $$grp (fix: sudo usermod -aG $$grp $$USER)"; fi; \
+	done; \
+	echo ""; \
+	echo "📋 Remaining setup:"; \
+	case "$$INIT" in \
+		systemd) \
+			echo "  1. Enable services:"; \
+			echo "     sudo systemctl enable --now NetworkManager"; \
+			echo "     systemctl --user enable --now pipewire wireplumber" ;; \
+		openrc) \
+			echo "  1. Enable services (OpenRC):"; \
+			echo "     sudo rc-update add elogind boot"; \
+			echo "     sudo rc-update add dbus default"; \
+			echo "     sudo rc-update add NetworkManager default"; \
+			echo "     sudo rc-service elogind start && sudo rc-service dbus start && sudo rc-service NetworkManager start"; \
+			echo "     # pipewire/wireplumber auto-launch via D-Bus on first audio access" ;; \
+		runit) \
+			echo "  1. Enable services (runit):"; \
+			echo "     sudo ln -s /etc/sv/elogind /var/service/"; \
+			echo "     sudo ln -s /etc/sv/dbus /var/service/"; \
+			echo "     sudo ln -s /etc/sv/NetworkManager /var/service/" ;; \
+		dinit|s6|unknown) \
+			echo "  1. Enable elogind, dbus, NetworkManager via your init system" ;; \
+	esac; \
+	echo ""; \
+	echo "  2. Add to ~/.zprofile:"; \
+	echo '     if [ -z "$$WAYLAND_DISPLAY" ] && [ "$$(tty)" = "/dev/tty1" ]; then'; \
+	echo '         exec $$HOME/.lantern/bin/lntrn-session-manager'; \
+	echo '     fi'; \
+	echo ""; \
+	echo "  3. Add to ~/.zshrc:"; \
+	echo '     export PATH="$$HOME/.lantern/bin:$$PATH"'; \
+	echo ""; \
+	echo "🏮 Lantern DE is ready!"
 
 # ── Full install ─────────────────────────────────────────────────────────────
 

@@ -46,7 +46,20 @@ struct TabPalette {
     ctx_top_line: Color,
 }
 
+/// Pull the user-selected accent from `[appearance].accent` in `lantern.toml`,
+/// falling back to the variant's built-in gold when unset or unparseable.
+fn accent_color(mode: &WindowMode) -> Color {
+    if let Some(rgba) = lntrn_theme::active_accent() {
+        return Color::from_rgba8(rgba.r, rgba.g, rgba.b, rgba.a);
+    }
+    match mode {
+        WindowMode::Fox => Color::from_rgba8(200, 134, 10, 255),
+        WindowMode::Lantern => Color::from_rgba8(212, 160, 32, 255),
+    }
+}
+
 fn palette(mode: &WindowMode) -> TabPalette {
+    let accent = accent_color(mode);
     match mode {
         WindowMode::Fox => TabPalette {
             surface: Color::from_rgba8(30, 30, 30, 255),
@@ -56,7 +69,7 @@ fn palette(mode: &WindowMode) -> TabPalette {
             tab_rename: Color::from_rgba8(50, 50, 50, 255),
             text: Color::from_rgba8(236, 236, 236, 255),
             muted: Color::from_rgba8(144, 144, 144, 255),
-            accent: Color::from_rgba8(200, 134, 10, 255),
+            accent,
             close_hover_bg: Color::from_rgba8(232, 50, 50, 40),
             close_hover_fg: Color::from_rgba8(232, 80, 80, 255),
             close_active_fg: Color::from_rgba8(180, 60, 60, 255),
@@ -79,7 +92,7 @@ fn palette(mode: &WindowMode) -> TabPalette {
             tab_rename: Color::from_rgba8(50, 38, 24, 255),
             text: Color::from_rgba8(240, 230, 210, 255),
             muted: Color::from_rgba8(140, 120, 90, 255),
-            accent: Color::from_rgba8(212, 160, 32, 255),
+            accent,
             close_hover_bg: Color::from_rgba8(200, 80, 20, 40),
             close_hover_fg: Color::from_rgba8(200, 80, 20, 255),
             close_active_fg: Color::from_rgba8(160, 60, 15, 255),

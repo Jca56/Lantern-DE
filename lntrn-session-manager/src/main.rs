@@ -231,21 +231,24 @@ fn main() {
         }
     }
 
-    // Push env vars into systemd user manager so services (like xdg-desktop-portal)
-    // can see XDG_CURRENT_DESKTOP=Lantern for portal backend matching
+    // Push env vars into the systemd user manager so D-Bus-activated
+    // services (xdg-desktop-portal etc.) see XDG_CURRENT_DESKTOP=Lantern.
+    // No-ops on non-systemd hosts (Gentoo/OpenRC, Artix, Void, Alpine).
     let _ = Command::new("systemctl")
         .args(["--user", "import-environment",
                "XDG_CURRENT_DESKTOP", "DESKTOP_SESSION", "XDG_SESSION_TYPE", "PATH"])
         .status();
-    // Also update D-Bus activation environment
+    // D-Bus activation env — no `--systemd` flag so this works on both
+    // systemd hosts and plain dbus-daemon / dbus-broker setups.
     let _ = Command::new("dbus-update-activation-environment")
-        .args(["--systemd",
-               "XDG_CURRENT_DESKTOP=Lantern", "DESKTOP_SESSION=lantern",
+        .args(["XDG_CURRENT_DESKTOP=Lantern", "DESKTOP_SESSION=lantern",
                "XDG_SESSION_TYPE=wayland"])
         .status();
-    // Restart xdg-desktop-portal so it picks up the new environment
-    let _ = Command::new("systemctl")
-        .args(["--user", "restart", "xdg-desktop-portal"])
+    // Kick xdg-desktop-portal so it re-reads the activation env. pkill is
+    // portable; D-Bus re-spawns the portal on next request via its .service
+    // file. (systemctl --user restart would only work on systemd.)
+    let _ = Command::new("pkill")
+        .args(["-x", "xdg-desktop-portal"])
         .status();
 
     // Start the Lantern compositor
@@ -314,7 +317,7 @@ fn main() {
         .args(["--user", "import-environment", "WAYLAND_DISPLAY"])
         .status();
     let _ = Command::new("dbus-update-activation-environment")
-        .args(["--systemd", &format!("WAYLAND_DISPLAY={wayland_socket}")])
+        .args([&format!("WAYLAND_DISPLAY={wayland_socket}")])
         .status();
 
     // Wait for XWayland to create an X11 socket so we can pass DISPLAY
@@ -347,7 +350,7 @@ fn main() {
                     .args(["--user", "import-environment", "DISPLAY"])
                     .status();
                 let _ = Command::new("dbus-update-activation-environment")
-                    .args(["--systemd", &format!("DISPLAY={d}")])
+                    .args([&format!("DISPLAY={d}")])
                     .status();
                 Some(d)
             }

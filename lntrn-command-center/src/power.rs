@@ -52,12 +52,29 @@ impl PowerAction {
         }
     }
 
+    /// Binary + subcommand for this action.
+    ///
+    /// `Lock` always uses `loginctl lock-session` (both logind impls).
+    /// The other actions split at runtime: systemd-logind ships them
+    /// on `systemctl` only, elogind ships them on `loginctl` only.
+    /// Detection: presence of `/run/systemd/system` (canonical
+    /// `sd_booted(3)` check).
     pub fn command(self) -> (&'static str, &'static [&'static str]) {
+        let systemd = std::path::Path::new("/run/systemd/system").is_dir();
         match self {
             PowerAction::Lock => ("loginctl", &["lock-session"]),
-            PowerAction::Sleep => ("systemctl", &["suspend"]),
-            PowerAction::Restart => ("systemctl", &["reboot"]),
-            PowerAction::Shutdown => ("systemctl", &["poweroff"]),
+            PowerAction::Sleep => {
+                if systemd { ("systemctl", &["suspend"]) }
+                else { ("loginctl", &["suspend"]) }
+            }
+            PowerAction::Restart => {
+                if systemd { ("systemctl", &["reboot"]) }
+                else { ("loginctl", &["reboot"]) }
+            }
+            PowerAction::Shutdown => {
+                if systemd { ("systemctl", &["poweroff"]) }
+                else { ("loginctl", &["poweroff"]) }
+            }
         }
     }
 
@@ -160,7 +177,7 @@ pub fn draw(
 }
 
 /// Spawn the system command for `action`. Logs and swallows errors —
-/// we don't want a failed `systemctl` call to crash the panel.
+/// we don't want a failed power command to crash the panel.
 pub fn run(action: PowerAction) {
     let (cmd, args) = action.command();
     match std::process::Command::new(cmd).args(args).spawn() {

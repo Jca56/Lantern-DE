@@ -71,6 +71,15 @@ pub struct FileProperties {
     /// When true, the Properties body is replaced with the icon picker.
     pub picker_open: bool,
     pub picker_tab: IconPickerTab,
+    /// Edge-detect tracking — `is_active()` returns true every frame while
+    /// the mouse is held, so a simple "if active → toggle" pumps the picker
+    /// open/closed at 60Hz. Track previous frame to fire on the press edge.
+    pub icon_was_active: bool,
+    /// Per-cell rects from the icon picker grid, exposed so render.rs can
+    /// draw the actual SVG thumbnails (icon_cache is borrowed in the
+    /// renderer; the picker body can't touch it). Cleared each frame; each
+    /// tuple is (icon_path, x, y, w, h).
+    pub picker_cell_rects: Vec<(PathBuf, f32, f32, f32, f32)>,
 }
 
 /// Categories shown as tabs in the icon picker. The first three map to
@@ -189,6 +198,8 @@ impl FileProperties {
             section_open: [true; 6], scroll_offset: 0.0, icon_rect: None,
             picker_open: false,
             picker_tab: IconPickerTab::Standard,
+            icon_was_active: false,
+            picker_cell_rects: Vec::new(),
         })
     }
 
@@ -406,6 +417,12 @@ pub fn draw_properties_dialog(
     let dialog_x = (screen_w - dialog_w) / 2.0;
     let dialog_y = (screen_h - dialog_h) / 2.0;
 
+    // Clear picker cell rects up front — stale entries from a previous
+    // frame would otherwise keep painting thumbnails over the regular body
+    // after the picker closes (the renderer doesn't know on its own that
+    // the picker isn't drawing this frame).
+    props.picker_cell_rects.clear();
+
     // Backdrop
     let backdrop = Rect::new(0.0, 0.0, screen_w, screen_h);
     ix.add_zone(ZONE_PROPS_BACKDROP, backdrop);
@@ -417,12 +434,6 @@ pub fn draw_properties_dialog(
     painter.rect_filled(shadow, corner_r + 4.0 * s, Color::rgba(0.0, 0.0, 0.0, 0.3));
     painter.rect_filled(panel, corner_r, fox.surface);
     painter.rect_stroke_sdf(panel, corner_r, 1.0 * s, fox.muted.with_alpha(0.2));
-
-    // Gradient strip across top of panel
-    let mut gradient = GradientStrip::new(dialog_x, dialog_y, dialog_w);
-    gradient.height = 4.0 * s;
-    gradient.colors = fox.file_manager_gradient_stops();
-    gradient.draw(painter);
 
     // Panel zone (clicks inside don't close)
     let _panel_zone = ix.add_zone(802, panel);
@@ -455,9 +466,11 @@ pub fn draw_properties_dialog(
         if icon_zone.is_hovered() {
             painter.rect_stroke_sdf(icon_box, icon_sz / 2.0, 2.0 * s, fox.accent);
         }
-        if icon_zone.is_active() {
+        let active = icon_zone.is_active();
+        if active && !props.icon_was_active {
             props.picker_open = !props.picker_open;
         }
+        props.icon_was_active = active;
     }
     cy += icon_sz + 8.0 * s;
 
@@ -482,6 +495,15 @@ pub fn draw_properties_dialog(
         fox.text_secondary, inner_w, sw, sh);
     cy += subtitle_font_s + pad * 0.5;
 
+    // Gradient strip as the divider between the icon header and whatever
+    // sits below (info body or icon picker). Spans the full panel width
+    // (edge-to-edge) so it reads as a section break rather than an inset rule.
+    let mut gradient = GradientStrip::new(dialog_x, cy, dialog_w);
+    gradient.height = 4.0 * s;
+    gradient.colors = fox.file_manager_gradient_stops();
+    gradient.draw(painter);
+    cy += 4.0 * s + pad * 0.25;
+
     // If the picker is open, replace the rest of the body with it.
     if props.picker_open && props.is_dir {
         if let Some(evt) = draw_icon_picker_body(
@@ -496,13 +518,6 @@ pub fn draw_properties_dialog(
         }
         return None;
     }
-
-    // Separator
-    painter.rect_filled(
-        Rect::new(inner_x, cy, inner_w, 1.0 * s), 0.0,
-        fox.muted.with_alpha(0.2),
-    );
-    cy += 1.0 * s;
 
     // ── General section ─────────────────────────────────────────────────
     cy = draw_section_header(
@@ -773,6 +788,9 @@ fn draw_icon_picker_body(
     let tab_h = 36.0 * s;
     let tab_gap = 6.0 * s;
     let footer_h = 48.0 * s;
+    // Reset per-frame so removed cells (eg after switching tab) don't leak
+    // their textures into the next frame's draw list.
+    props.picker_cell_rects.clear();
 
     // ── Tabs ──────────────────────────────────────────────────────────
     let tabs = IconPickerTab::all();
@@ -866,10 +884,15 @@ fn draw_icon_picker_body(
                 fox.surface_2.with_alpha(0.5)
             };
             painter.rect_filled(r, 8.0 * s, bg);
-            // The actual SVG preview gets drawn by render.rs (it has access
-            // to the icon cache). Record the rect via a side-channel: we
-            // stash it in a Vec on `props` — see below. For now just a
-            // placeholder hint.
+            // Stash the cell rect so render.rs can draw the SVG thumbnail
+            // (icon_cache is borrowed there; we can't touch it from here).
+            // Inset slightly so the texture doesn't paint over the rounded edge.
+            let inset = 8.0 * s;
+            props.picker_cell_rects.push((
+                path.clone(),
+                r.x + inset, r.y + inset,
+                r.w - inset * 2.0, r.h - inset * 2.0,
+            ));
             if state.is_active() {
                 return Some(PropertiesEvent::IconChosen(path.clone()));
             }

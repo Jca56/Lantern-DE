@@ -868,6 +868,15 @@ pub(crate) fn run_loop(
                 icon_cache.invalidate(&folder);
             }
         }
+        // Pre-warm SVG thumbnails for the icon picker, if open. Picker
+        // cell rects come from the previous frame's render — so the very
+        // first frame after opening shows empty cells, then thumbnails
+        // populate on the next frame (~16ms).
+        if let Some(ref props) = app.properties {
+            for (path, _, _, _, _) in &props.picker_cell_rects {
+                icon_cache.ensure_svg_path(path, &gpu.ctx, &gpu.tex_pass);
+            }
+        }
 
         // ── Auto-refresh: check directory mtime every 3 seconds ─────
         if app.current_dir != last_dir_path {

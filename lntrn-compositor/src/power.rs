@@ -286,25 +286,48 @@ fn read_power_u32(key: &str, default: u32) -> u32 {
 
 // ── action dispatch ─────────────────────────────────────────────────────────
 
+/// Are we booted under systemd? Canonical `sd_booted(3)` check: PID1
+/// creates `/run/systemd/system` on boot. Absent on elogind hosts.
+fn systemd_booted() -> bool {
+    std::path::Path::new("/run/systemd/system").is_dir()
+}
+
+/// Pick the right binary for a power-state action. `lock` is always
+/// `loginctl lock-session` (both logind impls). The rest split:
+/// systemd-logind exposes them on `systemctl` only, elogind exposes
+/// them on `loginctl` only.
+fn power_bin(action: &str) -> Option<(&'static str, &'static str)> {
+    match action {
+        "lock" => Some(("loginctl", "lock-session")),
+        "suspend" | "hibernate" => Some((
+            if systemd_booted() { "systemctl" } else { "loginctl" },
+            // verb is identical on both
+            if action == "suspend" { "suspend" } else { "hibernate" },
+        )),
+        "shutdown" => Some((
+            if systemd_booted() { "systemctl" } else { "loginctl" },
+            "poweroff",
+        )),
+        _ => None,
+    }
+}
+
 /// Run a power action: "suspend", "lock", "hibernate", "shutdown", "nothing".
 /// Spawns the command and detaches — does not wait.
+///
+/// Auto-targets systemd (Arch) or elogind (Gentoo OpenRC, Artix, Void,
+/// Alpine) at runtime so the binary works on both.
 pub fn run_power_action(action: &str) {
-    let cmd = match action {
-        "suspend" => Some(("systemctl", vec!["suspend"])),
-        "lock" => Some(("loginctl", vec!["lock-session"])),
-        "hibernate" => Some(("systemctl", vec!["hibernate"])),
-        "shutdown" => Some(("systemctl", vec!["poweroff"])),
-        "nothing" | "" => None,
-        other => {
-            tracing::warn!("Unknown power action '{}'", other);
-            None
-        }
+    if action == "nothing" || action.is_empty() {
+        return;
+    }
+    let Some((bin, verb)) = power_bin(action) else {
+        tracing::warn!("Unknown power action '{}'", action);
+        return;
     };
-    if let Some((bin, args)) = cmd {
-        match std::process::Command::new(bin).args(&args).spawn() {
-            Ok(_) => tracing::info!("Power action '{}' dispatched", action),
-            Err(e) => tracing::warn!("Failed to dispatch '{}': {}", action, e),
-        }
+    match std::process::Command::new(bin).arg(verb).spawn() {
+        Ok(_) => tracing::info!("Power action '{}' dispatched via {}", action, bin),
+        Err(e) => tracing::warn!("Failed to dispatch '{}': {}", action, e),
     }
 }
 

@@ -1,0 +1,14 @@
+[package]
+name = "lntrn-keys"
+version = "0.1.0"
+edition = "2021"
+description = "Lantern DE - Terminal UI for the keychain"
+authors = ["Jca56"]
+
+[[bin]]
+name = "lkeys"
+path = "src/main.rs"
+
+[dependencies]
+lntrn-dbus = { path = "../lntrn-dbus" }
+libc = "0.2"
