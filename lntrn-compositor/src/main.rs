@@ -174,6 +174,9 @@ pub(crate) struct MonitorConfig {
     pub refresh_rate: Option<u32>,
     pub scale: Option<f64>,
     pub wallpaper: Option<String>,
+    /// User-designated "main" monitor — UI surfaces that should always
+    /// land on one specific output (e.g. command-center) anchor here.
+    pub primary: bool,
 }
 
 /// A per-app window sizing rule from `[[window_rules]]` in lantern.toml.
@@ -265,10 +268,12 @@ pub(crate) fn read_monitor_configs() -> Vec<MonitorConfig> {
     let mut refresh_rate: Option<u32> = None;
     let mut scale: Option<f64> = None;
     let mut wallpaper: Option<String> = None;
+    let mut primary = false;
 
     let mut flush = |name: &mut String, x: &mut Option<i32>, y: &mut Option<i32>,
                      resolution: &mut Option<String>, refresh_rate: &mut Option<u32>,
                      scale: &mut Option<f64>, wallpaper: &mut Option<String>,
+                     primary: &mut bool,
                      monitors: &mut Vec<MonitorConfig>| {
         if !name.is_empty() {
             monitors.push(MonitorConfig {
@@ -279,6 +284,7 @@ pub(crate) fn read_monitor_configs() -> Vec<MonitorConfig> {
                 refresh_rate: refresh_rate.take(),
                 scale: scale.take(),
                 wallpaper: wallpaper.take(),
+                primary: std::mem::take(primary),
             });
         }
     };
@@ -286,13 +292,13 @@ pub(crate) fn read_monitor_configs() -> Vec<MonitorConfig> {
     for line in contents.lines() {
         let trimmed = line.trim();
         if trimmed == "[[monitors]]" {
-            flush(&mut name, &mut x, &mut y, &mut resolution, &mut refresh_rate, &mut scale, &mut wallpaper, &mut monitors);
+            flush(&mut name, &mut x, &mut y, &mut resolution, &mut refresh_rate, &mut scale, &mut wallpaper, &mut primary, &mut monitors);
             in_monitors = true;
             continue;
         }
         if trimmed.starts_with('[') {
             if in_monitors {
-                flush(&mut name, &mut x, &mut y, &mut resolution, &mut refresh_rate, &mut scale, &mut wallpaper, &mut monitors);
+                flush(&mut name, &mut x, &mut y, &mut resolution, &mut refresh_rate, &mut scale, &mut wallpaper, &mut primary, &mut monitors);
             }
             in_monitors = false;
             continue;
@@ -309,6 +315,7 @@ pub(crate) fn read_monitor_configs() -> Vec<MonitorConfig> {
                     "refresh_rate" => refresh_rate = v.parse().ok(),
                     "scale" => scale = v.parse().ok(),
                     "wallpaper" => wallpaper = Some(v.to_string()),
+                    "primary" => primary = v == "true",
                     _ => {}
                 }
             }
@@ -316,10 +323,20 @@ pub(crate) fn read_monitor_configs() -> Vec<MonitorConfig> {
     }
     // Flush last entry
     if in_monitors {
-        flush(&mut name, &mut x, &mut y, &mut resolution, &mut refresh_rate, &mut scale, &mut wallpaper, &mut monitors);
+        flush(&mut name, &mut x, &mut y, &mut resolution, &mut refresh_rate, &mut scale, &mut wallpaper, &mut primary, &mut monitors);
     }
 
     monitors
+}
+
+/// Name of the monitor flagged `primary = true` in lantern.toml, if any.
+/// On single-output setups (laptop) where no monitor is flagged, returns
+/// None and callers should fall back to their normal selection logic.
+pub(crate) fn primary_output_name() -> Option<String> {
+    read_monitor_configs()
+        .into_iter()
+        .find(|m| m.primary)
+        .map(|m| m.name)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

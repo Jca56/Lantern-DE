@@ -180,6 +180,24 @@ fn log(msg: &str) {
 }
 
 fn main() {
+    // If no D-Bus session bus address is set, re-exec ourselves under
+    // `dbus-run-session` so a session bus exists for the entire desktop
+    // (portals, notifications, Firefox a11y, etc.). Without this, every
+    // app that touches GDBus prints "Cannot autolaunch D-Bus without X11
+    // $DISPLAY" and falls back to a per-app autolaunched bus.
+    if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none() {
+        use std::os::unix::process::CommandExt;
+        let self_path = std::env::current_exe()
+            .unwrap_or_else(|_| PathBuf::from("lntrn-session-manager"));
+        let err = Command::new("dbus-run-session")
+            .arg("--")
+            .arg(&self_path)
+            .args(std::env::args().skip(1))
+            .exec();
+        eprintln!("🏮 FATAL: failed to re-exec under dbus-run-session: {err}");
+        std::process::exit(1);
+    }
+
     // Ensure ~/.lantern/log/ exists before any logging
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
     let lantern_log_dir = PathBuf::from(&home).join(".lantern").join("log");

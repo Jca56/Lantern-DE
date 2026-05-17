@@ -60,15 +60,21 @@ pub fn layer_surface_position_logical(
     (x, y).into()
 }
 
-/// Physical position — used for rendering layer surfaces.
+/// Physical position — used for rendering layer surfaces. Smithay's render
+/// elements expect output-LOCAL physical pixels (framebuffer-relative), so
+/// we subtract the output's compositor-space origin before scaling. Without
+/// this, surfaces on outputs placed at non-zero positions (any multi-monitor
+/// layout) render at the wrong offset and slide off-screen.
 pub fn layer_surface_position(
     cached: &LayerSurfaceCachedState,
     output_geo: Rectangle<i32, Logical>,
     scale: f64,
 ) -> Point<i32, Physical> {
     let (x, y) = compute_position(cached, output_geo);
+    let local_x = x - output_geo.loc.x;
+    let local_y = y - output_geo.loc.y;
     (
-        (x as f64 * scale).round() as i32,
-        (y as f64 * scale).round() as i32,
+        (local_x as f64 * scale).round() as i32,
+        (local_y as f64 * scale).round() as i32,
     ).into()
 }

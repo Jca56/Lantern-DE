@@ -693,6 +693,9 @@ impl Lantern {
                 if !ls.alive() {
                     continue;
                 }
+                if !self.layer_surface_on_output(ls, &output) {
+                    continue;
+                }
                 let cached = with_states(ls.wl_surface(), |states| {
                     *states.cached_state.get::<LayerSurfaceCachedState>().current()
                 });
@@ -736,6 +739,7 @@ impl Lantern {
             let output_geo = self.workspaces.output_geometry(&output).unwrap_or_default();
             for ls in &self.layer_surfaces {
                 if !ls.alive() { continue; }
+                if !self.layer_surface_on_output(ls, &output) { continue; }
                 let cached = with_states(ls.wl_surface(), |states| {
                     *states.cached_state.get::<LayerSurfaceCachedState>().current()
                 });
@@ -901,6 +905,23 @@ impl Lantern {
             (min_x, min_y).into(),
             (max_x - min_x, max_y - min_y).into(),
         )
+    }
+
+    /// Whether the given layer surface should render / receive input on
+    /// this output. Surfaces with no recorded assignment fall through to
+    /// "render everywhere" so a surface that slipped past the handler is
+    /// still visible. Match by name — Output's PartialEq is Arc::ptr_eq,
+    /// which can mis-fire if the two Outputs originated from different
+    /// code paths even when they refer to the same physical connector.
+    pub fn layer_surface_on_output(
+        &self,
+        ls: &smithay::wayland::shell::wlr_layer::LayerSurface,
+        output: &Output,
+    ) -> bool {
+        match self.layer_surface_outputs.get(ls.wl_surface()) {
+            Some(assigned) => assigned.name() == output.name(),
+            None => true,
+        }
     }
 
     /// Compute the total exclusive zone offsets from all layer surfaces.

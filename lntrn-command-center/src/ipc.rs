@@ -45,17 +45,23 @@ pub mod cmd {
 pub fn send(msg: &[u8]) -> Result<bool> {
     let path = socket_path();
     if !path.exists() {
+        tracing::debug!(?path, "no daemon socket present");
         return Ok(false);
     }
-    // Connect with a short timeout so we don't hang if the daemon is wedged.
     let mut stream = match UnixStream::connect(&path) {
         Ok(s) => s,
-        Err(_) => return Ok(false),
+        Err(e) => {
+            tracing::warn!(?e, ?path, "connect to daemon failed; treating as no daemon");
+            return Ok(false);
+        }
     };
     stream.set_write_timeout(Some(Duration::from_millis(500)))?;
     match stream.write_all(msg) {
         Ok(_) => Ok(true),
-        Err(_) => Ok(false),
+        Err(e) => {
+            tracing::warn!(?e, "write to daemon failed; treating as no daemon");
+            Ok(false)
+        }
     }
 }
 
@@ -64,8 +70,21 @@ pub fn send(msg: &[u8]) -> Result<bool> {
 /// and for polling it (non-blocking) on each render-loop iteration.
 pub fn bind_daemon() -> Result<UnixListener> {
     let path = socket_path();
-    // Stale socket from a crashed previous daemon — clear it.
-    let _ = fs::remove_file(&path);
+    // If a socket file already exists, probe before removing it. Connect
+    // success means a healthy daemon is alive on that inode — clobbering
+    // the path would orphan its listener and leave two daemons fighting
+    // for the same address (next invocation lands on whichever inode the
+    // path currently points to). Bail loudly instead.
+    if path.exists() {
+        if UnixStream::connect(&path).is_ok() {
+            anyhow::bail!(
+                "another command-center daemon is already listening at {} — refusing to clobber",
+                path.display()
+            );
+        }
+        // Connect failed → stale socket from a crashed previous daemon. Safe to clear.
+        let _ = fs::remove_file(&path);
+    }
     let sock = UnixListener::bind(&path)?;
     sock.set_nonblocking(true)?;
     // Belt-and-suspenders: $XDG_RUNTIME_DIR is already 0700, but make

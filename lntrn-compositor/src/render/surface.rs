@@ -1280,6 +1280,16 @@ pub fn render_surface(
             if !ls.alive() {
                 continue;
             }
+            // Only render on the output this surface was assigned to in
+            // the layer-shell handler. Compare by name — Output uses
+            // Arc::ptr_eq for PartialEq, which can mis-fire if the stored
+            // and current Output came from different code paths even when
+            // they refer to the same physical connector.
+            if let Some(assigned) = state.layer_surface_outputs.get(ls.wl_surface()) {
+                if assigned.name() != output.name() {
+                    continue;
+                }
+            }
             let cached = with_states(ls.wl_surface(), |states| {
                 *states.cached_state.get::<LayerSurfaceCachedState>().current()
             });
@@ -1547,16 +1557,22 @@ pub fn render_surface(
                 |_, _| Some(output.clone()),
             );
         });
+        // Frame callbacks: send from every output the layer surface is
+        // "on" (we send from all of them, mirroring how XDG toplevels are
+        // paced via `state.space.elements()`). Restricting to just the
+        // assigned output starves the client of vsync pacing whenever that
+        // output skips a render — animations stutter.
         for ls in &state.layer_surfaces {
-            if ls.alive() {
-                smithay::desktop::utils::send_frames_surface_tree(
-                    ls.wl_surface(),
-                    &output,
-                    state.start_time.elapsed(),
-                    Some(frame_callback_interval(&output)),
-                    |_, _| Some(output.clone()),
-                );
+            if !ls.alive() {
+                continue;
             }
+            smithay::desktop::utils::send_frames_surface_tree(
+                ls.wl_surface(),
+                &output,
+                state.start_time.elapsed(),
+                Some(frame_callback_interval(&output)),
+                |_, _| Some(output.clone()),
+            );
         }
         state.pending_client_frame_callbacks = false;
     }

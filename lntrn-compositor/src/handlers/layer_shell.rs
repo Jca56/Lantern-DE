@@ -24,22 +24,35 @@ impl WlrLayerShellHandler for Lantern {
         tracing::info!(namespace = %namespace, "New layer surface created");
 
         // Resolve the output this layer surface belongs to.
-        // If the client specified one, use it; otherwise pick the output
-        // closest to the origin (primary monitor).
+        //
+        // Priority:
+        //   1. Client-specified wl_output (always honored — explicit intent).
+        //   2. For "stay-put" UI like command-center: the user's configured
+        //      primary monitor from lantern.toml. Skips the focused-output
+        //      heuristic because the panel is a per-user "home base" — the
+        //      user wants it in the same physical place every time, not
+        //      following their cursor onto a side monitor.
+        //   3. Focused output (pointer → focused window → first). Used by
+        //      contextual surfaces like notifications.
+        //   4. First enumerated output (last-resort fallback).
+        let prefers_primary = namespace == "lntrn-command-center";
         let output = wl_output
             .and_then(|wl| Output::from_resource(&wl))
             .or_else(|| {
-                self.workspaces.outputs_iter()
-                    .min_by_key(|o| {
-                        let loc = self.workspaces.output_geometry(o)
-                            .map(|g| g.loc)
-                            .unwrap_or_default();
-                        (loc.x.abs() + loc.y.abs()) as u64
-                    })
-                    .cloned()
-            });
+                if !prefers_primary { return None; }
+                let primary = crate::primary_output_name()?;
+                self.workspaces.outputs_iter().find(|o| o.name() == primary).cloned()
+            })
+            .or_else(|| {
+                let name = self.focused_output_name()?;
+                self.workspaces.outputs_iter().find(|o| o.name() == name).cloned()
+            })
+            .or_else(|| self.workspaces.outputs_iter().next().cloned());
         if let Some(out) = output {
+            tracing::info!(namespace = %namespace, output = %out.name(), "Layer surface routed to output");
             self.layer_surface_outputs.insert(surface.wl_surface().clone(), out);
+        } else {
+            tracing::warn!(namespace = %namespace, "Layer surface created but no output resolved");
         }
 
         // Configure will be sent on first commit (in compositor.rs)
