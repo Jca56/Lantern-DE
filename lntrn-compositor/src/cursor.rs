@@ -47,7 +47,7 @@ impl CursorState {
             })
             .clamp(16, 128);
         let theme_name = std::env::var("XCURSOR_THEME")
-            .unwrap_or_else(|_| "default".to_string());
+            .unwrap_or_else(|_| initial_theme.to_string());
         let mut state = Self {
             status: CursorImageStatus::Named(
                 smithay::input::pointer::CursorIcon::Default,

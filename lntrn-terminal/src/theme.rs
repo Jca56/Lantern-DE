@@ -19,13 +19,18 @@ impl Theme {
         Self::current()
     }
 
-    /// Pick the terminal's theme from the unified `[appearance].theme`.
+    /// Pick the terminal's theme from the unified `[appearance].theme`,
+    /// then apply `[appearance].background_color` override if set.
     pub fn current() -> Self {
         use crate::config::WindowMode;
-        match WindowMode::current() {
+        let mut t = match WindowMode::current() {
             WindowMode::Lantern => Self::lantern(),
             WindowMode::Fox => Self::fox_dark(),
+        };
+        if let Some(bg) = lntrn_theme::active_background_color() {
+            t.bg = Color8::from_rgba(bg.r, bg.g, bg.b, bg.a);
         }
+        t
     }
 
     pub fn fox_dark() -> Self {

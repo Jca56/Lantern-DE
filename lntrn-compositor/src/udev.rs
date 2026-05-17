@@ -49,9 +49,11 @@ pub const RENDER_INTERVAL: Duration = Duration::from_millis(16);
 pub(crate) fn lantern_output_scale() -> f64 { crate::output_scale() }
 
 pub fn frame_callback_interval(output: &smithay::output::Output) -> Duration {
+    // smithay reports `mode.refresh` in millihertz (60Hz → 60_000). Period
+    // in nanoseconds is 1e12 / mHz, not 1e9 / mHz — the latter gives µs.
     let refresh = output.current_mode().map(|mode| mode.refresh).unwrap_or(60_000);
     let refresh = u64::try_from(refresh.max(1)).unwrap_or(60_000);
-    Duration::from_nanos(1_000_000_000u64 / refresh)
+    Duration::from_nanos(1_000_000_000_000u64 / refresh)
 }
 
 /// Returns the frame interval of the fastest currently-connected output.

@@ -1614,20 +1614,16 @@ pub fn render_surface(
         || state.hover_preview.needs_redraw()
         || switcher_pending;
 
-    // If we sent frame callbacks this frame, keep the vblank stream going at
-    // 60Hz for the next ~500ms. Without this, the DRM driver only emits
-    // vblank events for queued page flips — so vblanks were firing at the
-    // CLIENT'S commit rate, which was ~10Hz when terminals waited on FIFO
-    // present (chicken-and-egg between client commits and our vblanks).
-    // Keeping pending_render true means: vblank → render → callback →
-    // client renders → commits → vblank → ... at a stable 60Hz.
+    // Reschedule only for active animations. We do NOT reschedule just because
+    // a client recently received a callback — that produced ~270 redundant
+    // renders/sec on a 270Hz display, all running the full blur pipeline
+    // before the damage check let us skip the actual page-flip. Clients drive
+    // their own vblank stream by committing; each commit calls
+    // schedule_client_render, so frame callbacks still flow.
     if frame_callback_count > 0 {
         state.last_callback_render = Instant::now();
     }
-    let recently_active_clients = state.last_callback_render.elapsed()
-        < Duration::from_millis(500);
-
-    if needs_anim_redraw || recently_active_clients {
+    if needs_anim_redraw {
         state.schedule_render();
     }
 

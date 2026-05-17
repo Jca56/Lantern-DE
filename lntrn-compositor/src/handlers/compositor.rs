@@ -137,7 +137,7 @@ impl CompositorHandler for Lantern {
                         height = geo.size.h - cached.margin.top - cached.margin.bottom - excl_top - excl_bottom;
                     }
 
-                    tracing::info!(
+                    tracing::trace!(
                         width, height,
                         anchor = ?cached.anchor,
                         output_w = geo.size.w,

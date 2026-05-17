@@ -159,10 +159,13 @@ where
     ))?;
 
     let caps = surface.get_capabilities(&adapter);
+    // DIAGNOSTIC: prefer non-sRGB to test whether washed-out colors are caused
+    // by GPU re-applying linear→sRGB encoding at present time when shaders
+    // already write sRGB-encoded values. Revert this if it doesn't help.
     let format = caps
         .formats
         .iter()
-        .find(|f| f.is_srgb())
+        .find(|f| !f.is_srgb())
         .copied()
         .unwrap_or(caps.formats[0]);
 

@@ -222,6 +222,7 @@ fn main() {
     std::env::set_var("DESKTOP_SESSION", "lantern");
     std::env::set_var("XDG_SESSION_TYPE", "wayland");
 
+
     // Ensure ~/.lantern/bin is in PATH
     if let Ok(path) = std::env::var("PATH") {
         let home = std::env::var("HOME").unwrap_or_default();
@@ -366,7 +367,6 @@ fn main() {
     for &(name, cmd) in &[
         ("lntrn-portal", "lntrn-portal"),
         ("lntrn-notifyd", "lntrn-notifyd"),
-        ("lntrn-desktop", "lntrn-desktop"),
     ] {
         log(&format!("🏮 Starting {name}..."));
         match ManagedProcess::spawn_wayland(name, cmd, &wayland_socket, x11_display.as_deref()) {

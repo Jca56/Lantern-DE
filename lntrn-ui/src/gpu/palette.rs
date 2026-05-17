@@ -49,14 +49,17 @@ impl FoxPalette {
         Self::from_theme(variant.palette(), variant)
     }
 
-    /// Build a palette from the user's active theme + accent in the Lantern
-    /// config. Apps should call this so a theme/accent change in System
-    /// Settings is picked up on the next draw.
+    /// Build a palette from the user's active theme + accent + background
+    /// color in the Lantern config. Apps should call this so a theme/accent/
+    /// background change in System Settings is picked up on the next draw.
     pub fn current() -> Self {
         let variant = lntrn_theme::active_variant();
         let mut pal = Self::from_variant(variant);
         if let Some(accent) = lntrn_theme::active_accent() {
             pal.accent = to_color(accent);
+        }
+        if let Some(bg) = lntrn_theme::active_background_color() {
+            pal.bg = to_color(bg);
         }
         pal
     }

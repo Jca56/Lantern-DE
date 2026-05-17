@@ -401,6 +401,61 @@ pub fn handle_arrange_release(mas: &mut MonitorArrangeState) {
     if let Some(dy) = best_dy {
         mas.rects[idx].out_y += dy;
     }
+
+    resolve_overlap(&mut mas.rects, idx);
+}
+
+/// Push `idx` out of any monitor it overlaps, along the axis with the smallest
+/// penetration depth. Prevents saving overlapping layouts that strand windows
+/// in coordinate-space gaps between monitors.
+fn resolve_overlap(rects: &mut [MonRect], idx: usize) {
+    loop {
+        let r = rects[idx].clone();
+        let r_left = r.out_x;
+        let r_right = r.out_x + r.out_w;
+        let r_top = r.out_y;
+        let r_bottom = r.out_y + r.out_h;
+
+        let mut best: Option<(i32, i32)> = None;
+        for (i, other) in rects.iter().enumerate() {
+            if i == idx { continue; }
+            let o_left = other.out_x;
+            let o_right = other.out_x + other.out_w;
+            let o_top = other.out_y;
+            let o_bottom = other.out_y + other.out_h;
+
+            let overlap_x = r_right.min(o_right) - r_left.max(o_left);
+            let overlap_y = r_bottom.min(o_bottom) - r_top.max(o_top);
+            if overlap_x <= 0 || overlap_y <= 0 { continue; }
+
+            let push_left  = -(r_right - o_left);
+            let push_right =   o_right - r_left;
+            let push_up    = -(r_bottom - o_top);
+            let push_down  =   o_bottom - r_top;
+
+            let (dx, dy) = [
+                (push_left, 0),
+                (push_right, 0),
+                (0, push_up),
+                (0, push_down),
+            ]
+                .into_iter()
+                .min_by_key(|(dx, dy)| dx.abs() + dy.abs())
+                .unwrap();
+
+            if best.map_or(true, |(bx, by)| dx.abs() + dy.abs() > bx.abs() + by.abs()) {
+                best = Some((dx, dy));
+            }
+        }
+
+        match best {
+            Some((dx, dy)) => {
+                rects[idx].out_x += dx;
+                rects[idx].out_y += dy;
+            }
+            None => break,
+        }
+    }
 }
 
 /// Check if currently dragging.
