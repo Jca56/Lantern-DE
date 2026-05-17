@@ -148,6 +148,28 @@ pub(super) fn handle_keypress(wl: &mut WlState, app: &mut AppState) {
     use crate::controls::bluetooth::PairPromptKind;
     use crate::search::input::*;
 
+    // Global Ctrl+arrow chord shortcuts — intercept before any per-view
+    // routing so textboxes (terminal, chat, search) don't hijack them.
+    //
+    //   Ctrl+Up/Down         expand / collapse the panel
+    //   Ctrl+Left/Right      cycle panel tabs
+    //   Ctrl+Shift+Up/Down   grow / shrink the *expanded* panel  (expanded only)
+    //   Ctrl+Shift+Left/Right grow / shrink the *collapsed bar*  (collapsed only)
+    if wl.ctrl_held && matches!(key, KEY_UP | KEY_DOWN | KEY_LEFT | KEY_RIGHT) {
+        match (wl.shift_held, key) {
+            (false, KEY_UP) => app.set_collapsed(true),
+            (false, KEY_DOWN) => app.set_collapsed(false),
+            (false, KEY_LEFT) => app.cycle_view_prev(),
+            (false, KEY_RIGHT) => app.cycle_view_next(),
+            (true, KEY_DOWN) if !app.collapsed => app.inc_panel_size(),
+            (true, KEY_UP) if !app.collapsed => app.dec_panel_size(),
+            (true, KEY_RIGHT) if app.collapsed => app.inc_bar_size(),
+            (true, KEY_LEFT) if app.collapsed => app.dec_bar_size(),
+            _ => {}
+        }
+        return;
+    }
+
     if app.controls.wifi.prompt.is_some() {
         match key {
             KEY_ENTER | KEY_KP_ENTER => app.controls.wifi.submit_prompt(),

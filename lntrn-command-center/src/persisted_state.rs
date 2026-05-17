@@ -49,6 +49,8 @@ pub struct PersistedState {
     pub collapsed: bool,
     #[serde(default)]
     pub panel_size_idx: u8,
+    #[serde(default)]
+    pub bar_size_idx: u8,
 }
 
 impl Default for PanelViewKind {
@@ -61,6 +63,7 @@ impl Default for PersistedState {
             panel_view: PanelViewKind::Default,
             collapsed: false,
             panel_size_idx: 0,
+            bar_size_idx: 0,
         }
     }
 }

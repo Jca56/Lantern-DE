@@ -176,6 +176,76 @@ impl AppState {
         self.save_persisted_state();
     }
 
+    /// Set collapsed state directionally — no-op if already in that state.
+    /// Drives the same animation as [`toggle_collapsed`].
+    pub fn set_collapsed(&mut self, collapsed: bool) {
+        if self.collapsed == collapsed {
+            return;
+        }
+        self.toggle_collapsed();
+    }
+
+    /// Grow the *expanded* panel by one step (clamped at GROW_MAX_STEP).
+    /// No-op when already at max. Animates from the current visual size.
+    pub fn inc_panel_size(&mut self) {
+        if self.panel_size_idx >= GROW_MAX_STEP {
+            return;
+        }
+        let now = Instant::now();
+        let current = self.grow_progress();
+        self.panel_size_idx += 1;
+        self.grow_anim_origin = current;
+        self.grow_anim_target = self.panel_size_idx as f32;
+        self.grow_anim_start = Some(now);
+        tracing::info!(panel_size = self.panel_size_idx, current, "panel grow +1");
+        self.save_persisted_state();
+    }
+
+    /// Shrink the *expanded* panel by one step (clamped at 0).
+    pub fn dec_panel_size(&mut self) {
+        if self.panel_size_idx == 0 {
+            return;
+        }
+        let now = Instant::now();
+        let current = self.grow_progress();
+        self.panel_size_idx -= 1;
+        self.grow_anim_origin = current;
+        self.grow_anim_target = self.panel_size_idx as f32;
+        self.grow_anim_start = Some(now);
+        tracing::info!(panel_size = self.panel_size_idx, current, "panel grow -1");
+        self.save_persisted_state();
+    }
+
+    /// Widen the *collapsed bar* by one step (clamped at GROW_MAX_STEP).
+    pub fn inc_bar_size(&mut self) {
+        if self.bar_size_idx >= GROW_MAX_STEP {
+            return;
+        }
+        let now = Instant::now();
+        let current = self.bar_grow_progress();
+        self.bar_size_idx += 1;
+        self.bar_grow_anim_origin = current;
+        self.bar_grow_anim_target = self.bar_size_idx as f32;
+        self.bar_grow_anim_start = Some(now);
+        tracing::info!(bar_size = self.bar_size_idx, current, "bar grow +1");
+        self.save_persisted_state();
+    }
+
+    /// Shorten the *collapsed bar* by one step (clamped at 0).
+    pub fn dec_bar_size(&mut self) {
+        if self.bar_size_idx == 0 {
+            return;
+        }
+        let now = Instant::now();
+        let current = self.bar_grow_progress();
+        self.bar_size_idx -= 1;
+        self.bar_grow_anim_origin = current;
+        self.bar_grow_anim_target = self.bar_size_idx as f32;
+        self.bar_grow_anim_start = Some(now);
+        tracing::info!(bar_size = self.bar_size_idx, current, "bar grow -1");
+        self.save_persisted_state();
+    }
+
     /// Eased height-progress for the collapse transition. Returns 0.0
     /// when at the expanded height, 1.0 when at the collapsed bar
     /// height, and an eased lerp in between.

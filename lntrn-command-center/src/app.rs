@@ -311,6 +311,7 @@ impl AppState {
         let saved_view: PanelView = persisted.panel_view.clone().into();
         let saved_collapsed = persisted.collapsed;
         let saved_panel_size = persisted.panel_size_idx.min(GROW_MAX_STEP);
+        let saved_bar_size = persisted.bar_size_idx.min(GROW_MAX_STEP);
         Self {
             visibility: Visibility::Hidden,
             anim_start: Instant::now(),
@@ -355,10 +356,10 @@ impl AppState {
             grow_anim_start: None,
             grow_anim_origin: saved_panel_size as f32,
             grow_anim_target: saved_panel_size as f32,
-            bar_size_idx: 0,
+            bar_size_idx: saved_bar_size,
             bar_grow_anim_start: None,
-            bar_grow_anim_origin: 0.0,
-            bar_grow_anim_target: 0.0,
+            bar_grow_anim_origin: saved_bar_size as f32,
+            bar_grow_anim_target: saved_bar_size as f32,
             cursor_phys: (0.0, 0.0),
             view_anim_from: None,
             view_anim_start: None,
@@ -416,6 +417,7 @@ impl AppState {
             panel_view: self.panel_view.into(),
             collapsed: self.collapsed,
             panel_size_idx: self.panel_size_idx,
+            bar_size_idx: self.bar_size_idx,
         };
         crate::persisted_state::save(&snap);
     }
