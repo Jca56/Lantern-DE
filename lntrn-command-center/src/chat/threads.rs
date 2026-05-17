@@ -30,6 +30,45 @@ pub struct Message {
     pub content: String,
 }
 
+/// Cumulative per-thread API token usage. Survives across sessions.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Usage {
+    #[serde(default)]
+    pub input_tokens: u64,
+    #[serde(default)]
+    pub output_tokens: u64,
+    #[serde(default)]
+    pub cache_creation_input_tokens: u64,
+    #[serde(default)]
+    pub cache_read_input_tokens: u64,
+}
+
+impl Usage {
+    pub fn add(&mut self, other: &Usage) {
+        self.input_tokens += other.input_tokens;
+        self.output_tokens += other.output_tokens;
+        self.cache_creation_input_tokens += other.cache_creation_input_tokens;
+        self.cache_read_input_tokens += other.cache_read_input_tokens;
+    }
+
+    pub fn total_tokens(&self) -> u64 {
+        self.input_tokens
+            + self.output_tokens
+            + self.cache_creation_input_tokens
+            + self.cache_read_input_tokens
+    }
+
+    /// Cost in USD at Claude Haiku 4.5 rates:
+    /// $1/M input, $5/M output, $1.25/M cache write, $0.10/M cache read.
+    pub fn cost_usd(&self) -> f64 {
+        let m = 1_000_000.0;
+        (self.input_tokens as f64 / m) * 1.0
+            + (self.output_tokens as f64 / m) * 5.0
+            + (self.cache_creation_input_tokens as f64 / m) * 1.25
+            + (self.cache_read_input_tokens as f64 / m) * 0.10
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Thread {
     pub id: String,
@@ -37,6 +76,8 @@ pub struct Thread {
     pub created: u64,
     pub modified: u64,
     pub messages: Vec<Message>,
+    #[serde(default)]
+    pub usage: Usage,
 }
 
 impl Thread {
@@ -49,6 +90,7 @@ impl Thread {
             created: now,
             modified: now,
             messages: Vec::new(),
+            usage: Usage::default(),
         }
     }
 

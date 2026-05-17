@@ -292,7 +292,9 @@ pub fn init_winit(
                             state.forget_window(&cw.surface);
                         } else {
                             let surface = cw.surface.clone();
-                            state.animations.start_close(&surface);
+                            let source = smithay::utils::Rectangle::new(cw.location, cw.size);
+                            let target = state.minimize_target_at_point(cw.location);
+                            state.animations.start_close_zombie(&surface, source, target);
                             state.closing_windows.push(cw);
                             state.schedule_render();
                         }

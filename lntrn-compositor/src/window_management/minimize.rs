@@ -33,6 +33,15 @@ impl Lantern {
             .or_else(|| self.workspaces.outputs_iter().next().cloned())
             .and_then(|o| self.workspaces.output_geometry(&o))
             .unwrap_or_else(|| Rectangle::new((0, 0).into(), (1920, 1080).into()));
+        Self::minimize_target_in_output(output_geo)
+    }
+
+    /// Same trajectory as `minimize_target_for` but driven by an output
+    /// rectangle directly. Used by the zombie close path where the window is
+    /// already dead and we only have its last-known location.
+    pub(crate) fn minimize_target_in_output(
+        output_geo: Rectangle<i32, Logical>,
+    ) -> Rectangle<i32, Logical> {
         let icon_size = 48;
         let bottom_margin = 80;
         let cx = output_geo.loc.x + output_geo.size.w / 2;
@@ -41,6 +50,30 @@ impl Lantern {
             (cx - icon_size / 2, cy - icon_size / 2).into(),
             Size::from((icon_size, icon_size)),
         )
+    }
+
+    /// Look up the output that contains the given logical point (or the first
+    /// output as a fallback) and return its minimize target rect.
+    pub(crate) fn minimize_target_at_point(
+        &self,
+        point: smithay::utils::Point<i32, Logical>,
+    ) -> Rectangle<i32, Logical> {
+        let output_geo = self
+            .workspaces
+            .outputs_iter()
+            .find_map(|o| {
+                self.workspaces.output_geometry(o).and_then(|g| {
+                    if g.contains(point) { Some(g) } else { None }
+                })
+            })
+            .or_else(|| {
+                self.workspaces
+                    .outputs_iter()
+                    .next()
+                    .and_then(|o| self.workspaces.output_geometry(o))
+            })
+            .unwrap_or_else(|| Rectangle::new((0, 0).into(), (1920, 1080).into()));
+        Self::minimize_target_in_output(output_geo)
     }
 
     pub(crate) fn minimize_surface(&mut self, surface: &WlSurface, serial: Serial) -> bool {

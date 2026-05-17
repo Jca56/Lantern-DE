@@ -16,8 +16,10 @@ pub mod highlight;
 pub mod input;
 pub mod keychain;
 pub mod markdown;
+pub mod prompt;
 pub mod render;
 pub mod threads;
+pub mod tools;
 
 use std::sync::mpsc::{Receiver, TryRecvError};
 
@@ -43,6 +45,13 @@ pub struct ChatState {
     pub hover_send: bool,
     pub hover_delete: Option<usize>,
     pub confirm_delete: Option<usize>,
+    /// Wrapped line count of the draft input, clamped to [1, INPUT_MAX_LINES].
+    /// Updated each frame by `chat::render::draw`; read by click/key handlers
+    /// (one frame stale at worst).
+    pub input_lines: u32,
+    /// Internal scroll offset for the input area (pixels), used when the
+    /// draft exceeds INPUT_MAX_LINES lines.
+    pub input_scroll: f32,
 }
 
 impl Default for ChatState {
@@ -83,6 +92,8 @@ impl ChatState {
             hover_send: false,
             hover_delete: None,
             confirm_delete: None,
+            input_lines: 1,
+            input_scroll: 0.0,
         }
     }
 
@@ -103,6 +114,16 @@ impl ChatState {
             match rx.try_recv() {
                 Ok(StreamEvent::Delta(s)) => {
                     self.pending.push_str(&s);
+                    changed = true;
+                }
+                Ok(StreamEvent::Usage(u)) => {
+                    if let Some(idx) = self.active {
+                        if let Some(thread) = self.threads.get_mut(idx) {
+                            thread.usage.add(&u);
+                            // Save progressively so a crash doesn't lose totals.
+                            threads::save(thread);
+                        }
+                    }
                     changed = true;
                 }
                 Ok(StreamEvent::Done) => {
@@ -189,7 +210,8 @@ impl ChatState {
         self.pending.clear();
         self.last_error = None;
         self.streaming = true;
-        self.stream_rx = Some(api::spawn_stream(api_key, history_owned));
+        let system_prompt = prompt::load_or_default();
+        self.stream_rx = Some(api::spawn_stream(api_key, system_prompt, history_owned));
         // pin scroll to bottom on send
         self.messages_scroll = f32::MAX;
     }

@@ -300,7 +300,7 @@ impl Lantern {
             if let Some(action) = self.ssd_handle_click(pos, serial) {
                 match action {
                     SsdClickAction::Close(surface) => {
-                        if self.animations.start_close(&surface) {
+                        if self.start_close_anim(&surface) {
                             tracing::info!("SSD: close animation started");
                         } else if let Some(w) = self.find_mapped_window(&surface) {
                             crate::window_ext::WindowExt::request_close(&w);

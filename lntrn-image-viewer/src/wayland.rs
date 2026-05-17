@@ -1,4 +1,5 @@
 use std::ffi::c_void;
+use std::path::Path;
 use std::ptr::NonNull;
 
 use anyhow::{anyhow, Result};
@@ -56,6 +57,7 @@ struct State {
     height: u32,
     scale: i32,
     output_phys_width: u32,
+    output_phys_height: u32,
     maximized: bool,
     // Wayland objects
     compositor: Option<wl_compositor::WlCompositor>,
@@ -84,7 +86,8 @@ impl State {
     fn new() -> Self {
         Self {
             running: true, configured: false, frame_done: true,
-            width: 0, height: 0, scale: 1, output_phys_width: 0, maximized: false,
+            width: 0, height: 0, scale: 1,
+            output_phys_width: 0, output_phys_height: 0, maximized: false,
             compositor: None, wm_base: None, viewporter: None,
             surface: None, xdg_surface: None, toplevel: None, seat: None,
             cursor_x: 0.0, cursor_y: 0.0, pointer_in_surface: false,
@@ -189,7 +192,10 @@ impl Dispatch<wl_output::WlOutput, ()> for State {
     ) {
         match event {
             wl_output::Event::Scale { factor } => { state.scale = factor; }
-            wl_output::Event::Mode { width, .. } => { state.output_phys_width = width as u32; }
+            wl_output::Event::Mode { width, height, .. } => {
+                state.output_phys_width = width as u32;
+                state.output_phys_height = height as u32;
+            }
             _ => {}
         }
     }
@@ -286,21 +292,42 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
 
     display.get_registry(&qh, ());
     event_queue.roundtrip(&mut state)?;
+    // Second roundtrip so wl_output.Mode/Scale events arrive before we size the window.
+    event_queue.roundtrip(&mut state)?;
 
     let compositor = state.compositor.as_ref()
         .ok_or_else(|| anyhow!("wl_compositor not available"))?;
     let wm_base = state.wm_base.as_ref()
         .ok_or_else(|| anyhow!("xdg_wm_base not available"))?;
 
-    if state.width == 0 { state.width = 960; }
-    if state.height == 0 { state.height = 640; }
+    // Compute initial window size from the image's native dimensions, capped to
+    // ~85% of the output's logical size while preserving aspect ratio. Falls
+    // back to 960×640 if no image arg was given or its header is unreadable.
+    let scale_i = state.scale.max(1) as u32;
+    let screen_logical_w = if state.output_phys_width > 0 {
+        state.output_phys_width / scale_i
+    } else { 1920 };
+    let screen_logical_h = if state.output_phys_height > 0 {
+        state.output_phys_height / scale_i
+    } else { 1080 };
+
+    let (init_w, init_h) = initial_path.as_deref()
+        .and_then(|p| crate::app::peek_image_dimensions(Path::new(p)))
+        .map(|(w, h)| fit_to_screen(w, h, screen_logical_w, screen_logical_h))
+        .unwrap_or((960, 640));
+
+    if state.width == 0 { state.width = init_w; }
+    if state.height == 0 { state.height = init_h; }
 
     let surface = compositor.create_surface(&qh, ());
     let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
     let toplevel = xdg_surface.get_toplevel(&qh, ());
     toplevel.set_title("Lantern Image Viewer".into());
     toplevel.set_app_id("lntrn-image-viewer".into());
-    toplevel.set_min_size(400, 300);
+    // Compositor reads min_size as the initial size hint when no per-app rule
+    // matches. We relax this back to (400, 300) right after the first configure
+    // so the user can still resize the window down freely.
+    toplevel.set_min_size(init_w as i32, init_h as i32);
     surface.commit();
 
     state.surface = Some(surface.clone());
@@ -312,6 +339,8 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
         event_queue.blocking_dispatch(&mut state)?;
     }
     state.configured = false;
+    // Relax the size hint so the user can shrink the window below the image size.
+    toplevel.set_min_size(400, 300);
 
     surface.set_buffer_scale(1);
     let viewport = state.viewporter.as_ref().map(|vp| {
@@ -503,6 +532,22 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
     }
 
     Ok(())
+}
+
+// ── Sizing helpers ──────────────────────────────────────────────────────────
+
+/// Cap (img_w, img_h) to 85% of the screen while preserving aspect ratio.
+/// Returns native size for images that already fit.
+fn fit_to_screen(img_w: u32, img_h: u32, screen_w: u32, screen_h: u32) -> (u32, u32) {
+    let max_w = (screen_w as f32 * 0.85).max(320.0);
+    let max_h = (screen_h as f32 * 0.85).max(240.0);
+    let iw = img_w.max(1) as f32;
+    let ih = img_h.max(1) as f32;
+    if iw <= max_w && ih <= max_h {
+        return (img_w.max(1), img_h.max(1));
+    }
+    let s = (max_w / iw).min(max_h / ih);
+    ((iw * s).round() as u32, (ih * s).round() as u32)
 }
 
 // ── Input helpers ───────────────────────────────────────────────────────────

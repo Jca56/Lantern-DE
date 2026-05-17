@@ -30,6 +30,23 @@ fn is_svg(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Read just the header of an image to get its dimensions without a full decode.
+/// Used to pick the initial window size before we even create the toplevel.
+pub fn peek_image_dimensions(path: &Path) -> Option<(u32, u32)> {
+    if is_svg(path) {
+        let data = std::fs::read_to_string(path).ok()?;
+        let mut opt = resvg::usvg::Options::default();
+        opt.fontdb = svg_font_database();
+        let tree = resvg::usvg::Tree::from_str(&data, &opt).ok()?;
+        let s = tree.size();
+        Some((s.width().ceil() as u32, s.height().ceil() as u32))
+    } else {
+        image::ImageReader::open(path).ok()?
+            .with_guessed_format().ok()?
+            .into_dimensions().ok()
+    }
+}
+
 fn is_gif(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())

@@ -1,9 +1,9 @@
 //! Animation timing helpers.
 //!
 //! All window-motion durations route through this module so the user's
-//! `[animations]` settings (enabled toggle + speed multiplier) take effect
-//! across the compositor. Config reads use the existing mtime cache, so
-//! these are essentially free.
+//! `[animations]` settings (enabled toggle + speed multiplier + named preset
+//! + per-category toggles) take effect across the compositor. Config reads
+//! use the existing mtime cache, so these are essentially free.
 //!
 //! Convention: `speed` > 1.0 = faster (shorter duration), < 1.0 = slower.
 //! `duration = base / speed`. When animations are disabled, every helper
@@ -11,6 +11,8 @@
 //! zero hazards in the easing/progress code.
 
 use std::time::Duration;
+
+use crate::rect_anim::Curve;
 
 /// Master enable. Default true.
 pub fn enabled() -> bool {
@@ -25,9 +27,21 @@ pub fn speed() -> f64 {
         .clamp(0.25, 4.0)
 }
 
-/// Scale a base duration by current speed. Returns 1ms when disabled so
-/// animation code that interpolates against the duration short-circuits to
-/// "done" on the very next tick instead of dividing by zero.
+/// Active preset name. One of: cinematic, snappy, springy, linear.
+pub fn preset() -> String {
+    crate::read_config("animations", "preset", "cinematic")
+}
+
+/// Per-category toggle. Keys live alongside `enabled`/`speed`/`preset` in
+/// `[animations]`. AND'd with the master toggle.
+fn category_enabled(key: &str) -> bool {
+    if !enabled() { return false; }
+    crate::read_config("animations", key, "true") == "true"
+}
+
+/// Scale a base duration by current speed. Returns 1ms when the master
+/// toggle is off so animation code that interpolates against the duration
+/// short-circuits to "done" on the very next tick.
 pub fn scaled(base: Duration) -> Duration {
     if !enabled() {
         return Duration::from_millis(1);
@@ -36,9 +50,16 @@ pub fn scaled(base: Duration) -> Duration {
     Duration::from_millis(ms)
 }
 
+/// Same as `scaled` but also honors a per-category toggle.
+fn scaled_cat(base: Duration, key: &str) -> Duration {
+    if !category_enabled(key) {
+        return Duration::from_millis(1);
+    }
+    scaled(base)
+}
+
 // Per-category base durations. Kept private so call sites have to go through
-// the named helpers below — that way it's obvious where each comes from when
-// tweaking timing.
+// the named helpers below.
 
 const BASE_OPEN: Duration = Duration::from_millis(1000);
 const BASE_CLOSE: Duration = Duration::from_millis(1000);
@@ -48,10 +69,99 @@ const BASE_UNMINIMIZE: Duration = Duration::from_millis(1000);
 const BASE_TILING: Duration = Duration::from_millis(1000);
 const BASE_WORKSPACE_SLIDE: Duration = Duration::from_millis(1000);
 
-pub fn open_duration() -> Duration { scaled(BASE_OPEN) }
-pub fn close_duration() -> Duration { scaled(BASE_CLOSE) }
-pub fn state_duration() -> Duration { scaled(BASE_STATE) }
-pub fn minimize_duration() -> Duration { scaled(BASE_MINIMIZE) }
-pub fn unminimize_duration() -> Duration { scaled(BASE_UNMINIMIZE) }
-pub fn tiling_duration() -> Duration { scaled(BASE_TILING) }
-pub fn workspace_slide_duration() -> Duration { scaled(BASE_WORKSPACE_SLIDE) }
+pub fn open_duration() -> Duration { scaled_cat(BASE_OPEN, "open_close") }
+pub fn close_duration() -> Duration { scaled_cat(BASE_CLOSE, "open_close") }
+pub fn state_duration() -> Duration { scaled_cat(BASE_STATE, "state") }
+pub fn minimize_duration() -> Duration { scaled_cat(BASE_MINIMIZE, "minimize") }
+pub fn unminimize_duration() -> Duration { scaled_cat(BASE_UNMINIMIZE, "minimize") }
+pub fn tiling_duration() -> Duration { scaled_cat(BASE_TILING, "tiling") }
+pub fn workspace_slide_duration() -> Duration { scaled_cat(BASE_WORKSPACE_SLIDE, "workspace") }
+
+// ── Preset → curve lookup ─────────────────────────────────────────────────
+
+// Unified "springy growth" curve shared by open, state (maximize/restore),
+// and unminimize. EaseOutBack uses the full duration so the bounce reads at
+// the same pace as the other animations.
+const SPRINGY_BOUNCE: Curve = Curve::EaseOutBack { overshoot: 1.70158 };
+// Cinematic tiling spring: damping 0.82 / freq 4.0 — tuned so the longer
+// cinematic duration doesn't wobble. Springy preset trades that for bounce.
+const SPRING_TILING_CIN: Curve = Curve::Spring { damping: 0.82, frequency: 4.0 };
+const SPRING_TILING_SPRINGY: Curve = Curve::Spring { damping: 0.5, frequency: 6.0 };
+
+pub fn open_curve() -> Curve {
+    match preset().as_str() {
+        "snappy" => Curve::EaseOutCubic,
+        "springy" => SPRINGY_BOUNCE,
+        "linear" => Curve::Linear,
+        _ => Curve::EaseInOutQuint,
+    }
+}
+
+pub fn close_curve() -> Curve {
+    match preset().as_str() {
+        "snappy" => Curve::EaseInCubic,
+        "springy" => Curve::EaseInCubic,
+        "linear" => Curve::Linear,
+        _ => Curve::EaseInOutQuint,
+    }
+}
+
+pub fn state_curve() -> Curve {
+    match preset().as_str() {
+        "snappy" => Curve::EaseOutCubic,
+        "springy" => SPRINGY_BOUNCE,
+        "linear" => Curve::Linear,
+        _ => Curve::EaseInOutQuint,
+    }
+}
+
+pub fn minimize_curve() -> Curve {
+    match preset().as_str() {
+        "snappy" => Curve::EaseInCubic,
+        "springy" => Curve::EaseInCubic,
+        "linear" => Curve::Linear,
+        _ => Curve::EaseInOutQuint,
+    }
+}
+
+/// Curve used when restoring a window FROM the minimize tray (Unminimize).
+/// Distinct from `minimize_curve` because restore is a "growth" motion and
+/// benefits from a different feel per preset — Springy in particular gets a
+/// proper bounce instead of EaseInCubic.
+pub fn unminimize_curve() -> Curve {
+    match preset().as_str() {
+        "snappy" => Curve::EaseOutCubic,
+        "springy" => SPRINGY_BOUNCE,
+        "linear" => Curve::Linear,
+        _ => Curve::EaseInOutQuint,
+    }
+}
+
+pub fn tiling_curve() -> Curve {
+    match preset().as_str() {
+        "snappy" => Curve::EaseOutCubic,
+        "springy" => SPRING_TILING_SPRINGY,
+        "linear" => Curve::Linear,
+        _ => SPRING_TILING_CIN,
+    }
+}
+
+pub fn workspace_curve() -> Curve {
+    match preset().as_str() {
+        "snappy" => Curve::EaseOutCubic,
+        "linear" => Curve::Linear,
+        _ => Curve::EaseInOutQuint,
+    }
+}
+
+pub fn open_curve_eval(t: f64) -> f64 { open_curve().eval(t) }
+pub fn close_curve_eval(t: f64) -> f64 { close_curve().eval(t) }
+pub fn minimize_curve_eval(t: f64) -> f64 { minimize_curve().eval(t) }
+pub fn unminimize_curve_eval(t: f64) -> f64 { unminimize_curve().eval(t) }
+pub fn workspace_curve_eval(t: f64) -> f64 { workspace_curve().eval(t) }
+
+/// True when the active preset opens windows with a grow-from-center slide
+/// instead of pure alpha fade. Today: springy only.
+pub fn open_uses_grow() -> bool {
+    preset() == "springy"
+}

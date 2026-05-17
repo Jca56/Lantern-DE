@@ -42,12 +42,22 @@ fn builtin_color() -> Color { Color::from_rgb8(0x80, 0xc8, 0xc8) }
 fn punct_color() -> Color { Color::from_rgb8(0xc8, 0xb8, 0xa0) }
 
 pub const SIDEBAR_W: f32 = 220.0;
-pub const INPUT_H: f32 = 100.0;
 pub const PAD: f32 = 18.0;
-pub const HEADER_H: f32 = 44.0;
+pub const HEADER_H: f32 = 0.0;
 pub const THREAD_ROW_H: f32 = 56.0;
 pub const NEW_BTN_H: f32 = 44.0;
 pub const BUBBLE_GAP: f32 = 12.0;
+
+/// Vertical padding inside the input box (top + bottom each).
+pub const INPUT_PAD_V: f32 = 14.0;
+/// Reserved height under the text lines for the Send pill.
+pub const INPUT_SEND_RESERVE: f32 = 44.0;
+/// Line-height multiplier for the input draft.
+pub const INPUT_LINE_MULT: f32 = 1.4;
+/// Maximum visible line count before the input starts internal scroll.
+pub const INPUT_MAX_LINES: u32 = 5;
+/// Width of the send pill column (logical).
+pub const SEND_W: f32 = 130.0;
 
 fn alpha(c: Color, a: f32) -> Color { c.with_alpha(c.a * a) }
 
@@ -63,12 +73,16 @@ pub struct Layout {
     pub send_btn: Rect,
 }
 
-pub fn layout(panel: Rect, top_y: f32, scale: f32) -> Layout {
+pub fn layout(panel: Rect, top_y: f32, scale: f32, input_lines: u32, font: f32) -> Layout {
     let sb_w = SIDEBAR_W * scale;
-    let input_h = INPUT_H * scale;
     let header_h = HEADER_H * scale;
     let new_h = NEW_BTN_H * scale;
     let pad = PAD * scale;
+
+    let lines = input_lines.clamp(1, INPUT_MAX_LINES) as f32;
+    let line_h = font * INPUT_LINE_MULT;
+    let input_h =
+        INPUT_PAD_V * scale * 2.0 + lines * line_h + INPUT_SEND_RESERVE * scale;
 
     let sidebar = Rect::new(panel.x, top_y, sb_w, panel.h - (top_y - panel.y));
     let new_btn = Rect::new(sidebar.x + pad / 2.0, sidebar.y + pad / 2.0,
@@ -82,13 +96,25 @@ pub fn layout(panel: Rect, top_y: f32, scale: f32) -> Layout {
 
     let input = Rect::new(main_x + pad, panel.y + panel.h - input_h - pad,
                           main_w - pad * 2.0, input_h);
-    let send_w = 120.0 * scale;
-    let send_btn = Rect::new(input.x + input.w - send_w, input.y + input.h - 36.0 * scale,
-                             send_w, 32.0 * scale);
+    let send_w = SEND_W * scale;
+    let send_h = 38.0 * scale;
+    let send_btn = Rect::new(
+        input.x + input.w - send_w - 10.0 * scale,
+        input.y + input.h - send_h - 6.0 * scale,
+        send_w, send_h,
+    );
     let messages_clip = Rect::new(main_x, header.y + header.h,
                                   main_w, input.y - (header.y + header.h));
 
     Layout { sidebar, new_btn, threads_clip, header, messages_clip, input, send_btn }
+}
+
+/// Inner content width available for draft text wrapping (no send-pill subtraction).
+pub fn input_text_width(panel: Rect, scale: f32) -> f32 {
+    let sb_w = SIDEBAR_W * scale;
+    let pad = PAD * scale;
+    let inner_pad = 16.0 * scale;
+    (panel.w - sb_w - pad * 2.0 - inner_pad * 2.0).max(40.0)
 }
 
 /// Hit-test the sidebar: returns either a thread row click or X-button click.
@@ -144,10 +170,19 @@ pub fn draw(
     surface_w: u32,
     surface_h: u32,
 ) {
-    let l = layout(panel, top_y, scale);
     let font = text_size * scale;
     let mono_font = (text_size - 1.0) * scale;
     let line_h = font * 1.45;
+
+    // Pre-pass: wrap the current draft to figure out how tall the input
+    // box should be. Stash on state so click/key handlers see the same
+    // size on the next frame.
+    let wrap_w = input_text_width(panel, scale);
+    let wrapped_draft = wrap_plain_text(text, state.draft.query(), font, wrap_w);
+    let raw_lines = wrapped_draft.len().max(1) as u32;
+    state.input_lines = raw_lines.min(INPUT_MAX_LINES);
+
+    let l = layout(panel, top_y, scale, state.input_lines, font);
 
     // Sidebar background.
     painter.rect_filled(l.sidebar, 0.0, alpha(sidebar_bg(), alpha_panel));
@@ -160,12 +195,11 @@ pub fn draw(
     draw_new_button(painter, text, state, &l, scale, font, alpha_panel, surface_w, surface_h);
     draw_thread_list(painter, text, state, &l, scale, font, alpha_panel, surface_w, surface_h);
 
-    draw_header(text, state, &l, font, alpha_panel, surface_w, surface_h);
     draw_messages(
         painter, text, mono_text, state, &l, scale, font, mono_font, line_h,
         alpha_panel, surface_w, surface_h,
     );
-    draw_input(painter, text, state, &l, scale, font, alpha_panel, surface_w, surface_h);
+    draw_input(painter, text, state, &wrapped_draft, &l, scale, font, alpha_panel, surface_w, surface_h);
 
     if let Some(err) = state.last_error.as_ref() {
         let err_y = l.input.y - 28.0 * scale;
@@ -348,7 +382,11 @@ fn draw_messages(
     }
 
     let pad = 16.0 * scale;
-    let bubble_max_w = (clip.w * 0.78).min(900.0 * scale);
+    // User bubbles stay narrower so they read as "your" side; assistant
+    // bubbles use almost the full message-area width.
+    let user_max_w = (clip.w * 0.72).min(900.0 * scale);
+    let assist_max_w = clip.w - pad * 3.0;
+    let width_for = |role: Role| if role == Role::User { user_max_w } else { assist_max_w };
 
     // First measure pass to know total height, then offset by scroll.
     let mut y = pad;
@@ -361,7 +399,8 @@ fn draw_messages(
             } else {
                 vec![Block::Paragraph(parse_inlines(&m.content))]
             };
-            let h = measure_blocks(&blocks, bubble_max_w - pad * 2.0, font, mono_font, line_h, text, mono_text);
+            let w = width_for(m.role);
+            let h = measure_blocks(&blocks, w - pad * 2.0, font, mono_font, line_h, text, mono_text);
             entries.push(MsgEntry { role: m.role, blocks, h });
             y += h + pad * 2.0 + BUBBLE_GAP * scale;
         }
@@ -370,7 +409,7 @@ fn draw_messages(
     // streaming "pending" bubble
     if state.streaming {
         let blocks = parse_md(&state.pending);
-        let h = measure_blocks(&blocks, bubble_max_w - pad * 2.0, font, mono_font, line_h, text, mono_text)
+        let h = measure_blocks(&blocks, assist_max_w - pad * 2.0, font, mono_font, line_h, text, mono_text)
             .max(line_h);
         entries.push(MsgEntry { role: Role::Assistant, blocks, h });
         y += h + pad * 2.0 + BUBBLE_GAP * scale;
@@ -404,12 +443,13 @@ fn draw_messages(
     for entry in entries.iter() {
         let bubble_h = entry.h + pad * 2.0;
         let is_user = entry.role == Role::User;
+        let bw = width_for(entry.role);
         let bx = if is_user {
-            clip.x + clip.w - bubble_max_w - pad
+            clip.x + clip.w - bw - pad
         } else {
             clip.x + pad
         };
-        let bubble = Rect::new(bx, cur_y, bubble_max_w, bubble_h);
+        let bubble = Rect::new(bx, cur_y, bw, bubble_h);
 
         if cur_y + bubble_h > clip.y && cur_y < clip.y + clip.h {
             let bg = if is_user { user_bubble() } else { assist_bubble() };
@@ -450,17 +490,7 @@ fn draw_home(
 ) {
     let pad = 32.0 * scale;
     let cx = clip.x + clip.w / 2.0;
-    let mut y = clip.y + clip.h * 0.18;
-
-    let title = "Lantern Chat";
-    let tf = font * 2.2;
-    let tw = text.measure_width_styled(title, tf, FontWeight::Bold, FontStyle::Normal);
-    text.queue_styled(
-        title, tf, cx - tw / 2.0, y,
-        alpha(accent(), a), tw + 8.0,
-        FontWeight::Bold, FontStyle::Normal, sw, sh,
-    );
-    y += tf * 1.6;
+    let mut y = clip.y + clip.h * 0.22;
 
     let sub = if state.api_key.is_none() {
         "Set your API key in lntrn-keychain (name = \"Claude API\") to begin."
@@ -797,22 +827,28 @@ fn draw_code(
 ) {
     let lang = lang_from_tag(lang);
     let toks = tokenize(body, lang);
-    // Render each line as a sequence of colored tokens.
+    // Render each line as a sequence of colored tokens. We split tokens
+    // on '\n' (NOT split_inclusive) so every separator advances the
+    // cursor, even when the token is just whitespace. The previous
+    // split_inclusive + trim_end_matches('\n') + continue pattern
+    // silently swallowed pure-newline tokens, causing every code line
+    // to collapse onto a single row.
     let mut cur_x = x;
     let mut cur_y = y;
     let space_w = mono_text.measure_width(" ", font);
     for tok in toks {
-        for (idx, piece) in tok.text.split_inclusive('\n').enumerate() {
-            if idx > 0 {
+        let mut first = true;
+        for piece in tok.text.split('\n') {
+            if !first {
                 cur_x = x;
                 cur_y += line_h;
             }
-            let stripped = piece.trim_end_matches('\n');
-            if stripped.is_empty() { continue; }
+            first = false;
+            if piece.is_empty() { continue; }
             let color = tok_color(tok.kind);
-            let w = mono_text.measure_width(stripped, font);
+            let w = mono_text.measure_width(piece, font);
             mono_text.queue(
-                stripped, font, cur_x, cur_y,
+                piece, font, cur_x, cur_y,
                 alpha(color, a), (w + 4.0).max(space_w),
                 sw, sh,
             );
@@ -841,6 +877,7 @@ fn draw_input(
     painter: &mut Painter,
     text: &mut TextRenderer,
     state: &ChatState,
+    wrapped: &[String],
     l: &Layout,
     scale: f32,
     font: f32,
@@ -848,13 +885,23 @@ fn draw_input(
     sw: u32,
     sh: u32,
 ) {
-    let pad = 12.0 * scale;
+    let pad_v = INPUT_PAD_V * scale;
+    let inner_pad_h = 16.0 * scale;
     painter.rect_filled(l.input, 14.0 * scale, alpha(input_bg(), a));
     painter.rect_stroke(l.input, 14.0 * scale, 1.0 * scale, alpha(input_border(), a));
 
-    let inner_x = l.input.x + pad;
-    let inner_y = l.input.y + pad;
-    let inner_w = l.input.w - pad * 2.0 - 130.0 * scale;
+    let inner_x = l.input.x + inner_pad_h;
+    let inner_y = l.input.y + pad_v;
+    let inner_w = l.input.w - inner_pad_h * 2.0;
+    let line_h = font * INPUT_LINE_MULT;
+    let visible_lines = state.input_lines.clamp(1, INPUT_MAX_LINES) as f32;
+    let text_clip_h = visible_lines * line_h;
+
+    // Push a clip so overflowed text never bleeds into the send pill.
+    let clip = Rect::new(inner_x, inner_y, inner_w, text_clip_h);
+    let r = [clip.x, clip.y, clip.w, clip.h];
+    text.push_clip(r);
+
     let q = state.draft.query();
     if q.is_empty() {
         let hint = if state.streaming {
@@ -862,21 +909,29 @@ fn draw_input(
         } else if state.api_key.is_none() {
             "API key missing — see error below"
         } else {
-            "Type your message…  (Enter to send, Shift+Enter for newline, Ctrl+N for new chat)"
+            "Type your message…  (Enter to send, Shift+Enter for newline)"
         };
         text.queue(
             hint, font, inner_x, inner_y,
             alpha(text_dim(), a), inner_w, sw, sh,
         );
     } else {
-        // Multi-line draft: split on \n and queue each line.
-        for (i, line) in q.split('\n').enumerate() {
+        // Scroll so the last line is always visible when wrapping
+        // exceeds the visible window.
+        let total = wrapped.len() as f32;
+        let scroll_lines = (total - visible_lines).max(0.0);
+        let y0 = inner_y - scroll_lines * line_h;
+        for (i, line) in wrapped.iter().enumerate() {
+            let ly = y0 + i as f32 * line_h;
+            // Cheap vertical cull.
+            if ly + line_h < inner_y || ly > inner_y + text_clip_h { continue; }
             text.queue(
-                line, font, inner_x, inner_y + i as f32 * font * 1.4,
+                line, font, inner_x, ly,
                 alpha(text_color(), a), inner_w, sw, sh,
             );
         }
     }
+    text.pop_clip();
 
     // Send pill.
     let send_color = if state.streaming || q.trim().is_empty() {
@@ -886,7 +941,7 @@ fn draw_input(
     } else {
         alpha(accent(), a * 0.85)
     };
-    painter.rect_filled(l.send_btn, 10.0 * scale, send_color);
+    painter.rect_filled(l.send_btn, 12.0 * scale, send_color);
     let label = if state.streaming { "Sending…" } else { "Send ⏎" };
     let lw = text.measure_width(label, font);
     text.queue(
@@ -895,4 +950,71 @@ fn draw_input(
         l.send_btn.y + (l.send_btn.h - font * 1.2) / 2.0,
         alpha(send_text(), a), l.send_btn.w, sw, sh,
     );
+}
+
+/// Word-wrap a plain draft string against `max_w`. Hard newlines split
+/// lines first; each hard line is then greedy-wrapped by whitespace.
+/// Long unbreakable words fall back to character splitting.
+pub fn wrap_plain_text(
+    text: &mut TextRenderer,
+    s: &str,
+    font: f32,
+    max_w: f32,
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let space_w = text.measure_width(" ", font);
+    for hard in s.split('\n') {
+        if hard.is_empty() {
+            out.push(String::new());
+            continue;
+        }
+        let mut cur = String::new();
+        let mut cur_w = 0.0_f32;
+        for word in hard.split(' ') {
+            if word.is_empty() {
+                if !cur.is_empty() {
+                    cur.push(' ');
+                    cur_w += space_w;
+                }
+                continue;
+            }
+            let ww = text.measure_width(word, font);
+            if ww > max_w {
+                // Long unbreakable token — flush current, then split by char.
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+                let mut chunk = String::new();
+                let mut chunk_w = 0.0_f32;
+                for ch in word.chars() {
+                    let cw = text.measure_width(&ch.to_string(), font);
+                    if chunk_w + cw > max_w && !chunk.is_empty() {
+                        out.push(std::mem::take(&mut chunk));
+                        chunk_w = 0.0;
+                    }
+                    chunk.push(ch);
+                    chunk_w += cw;
+                }
+                cur = chunk;
+                cur_w = chunk_w;
+                continue;
+            }
+            let candidate_w = if cur.is_empty() { ww } else { cur_w + space_w + ww };
+            if !cur.is_empty() && candidate_w > max_w {
+                out.push(std::mem::take(&mut cur));
+                cur.push_str(word);
+                cur_w = ww;
+            } else if cur.is_empty() {
+                cur.push_str(word);
+                cur_w = ww;
+            } else {
+                cur.push(' ');
+                cur.push_str(word);
+                cur_w = candidate_w;
+            }
+        }
+        out.push(cur);
+    }
+    if out.is_empty() { out.push(String::new()); }
+    out
 }

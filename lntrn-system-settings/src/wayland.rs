@@ -41,11 +41,10 @@ const MENU_MODE_LANTERN: u32 = 601;
 const MENU_MODE_GROUP: u32 = 1;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Panel { Appearance, WindowManager, Input, Display, Power, Notifications, AppIcons }
+pub(crate) enum Panel { Appearance, Input, Display, Power, Notifications, AppIcons }
 
 pub(crate) const PANELS: &[(Panel, &str)] = &[
     (Panel::Appearance, "Appearance"),
-    (Panel::WindowManager, "Window Manager"),
     (Panel::Input, "Mouse"),
     (Panel::Display, "Display"),
     (Panel::Power, "Power"),
@@ -71,7 +70,6 @@ fn parse_panel_arg() -> Option<Panel> {
     let idx = args.iter().position(|a| a == "--panel")?;
     match args.get(idx + 1)?.as_str() {
         "appearance" => Some(Panel::Appearance),
-        "window-manager" => Some(Panel::WindowManager),
         "input" => Some(Panel::Input),
         "display" => Some(Panel::Display),
         "power" => Some(Panel::Power),
@@ -209,7 +207,7 @@ pub fn run() -> Result<()> {
         tex_pass.upload(&gpu, &rgba, ICON_SIZE, ICON_SIZE)
     }).collect();
 
-    let mut active_panel = parse_panel_arg().unwrap_or(Panel::Display);
+    let mut active_panel = parse_panel_arg().unwrap_or(Panel::Appearance);
     let mut config = LanternConfig::load();
     let mut saved_config = config.clone();
     // Seed the palette from the persisted window style.
@@ -219,6 +217,7 @@ pub fn run() -> Result<()> {
     let mut icon_panel_state = icon_panel::IconPanelState::new();
     let mut input_state = input_panel::InputPanelState::new();
     let mut notif_state = NotifPanelState::new();
+    let mut themes_state = crate::appearance_themes::ThemesPanelState::new();
     let mut kbd = KeyboardState::new();
 
     while state.running {
@@ -300,8 +299,11 @@ pub fn run() -> Result<()> {
                 (sym, utf8)
             };
 
-            // Let focused text inputs consume the key first
-            let consumed = icon_panel_state.handle_key(sym, utf8);
+            // Let focused text inputs consume the key first. Themes modal
+            // takes precedence over the icon panel's text input because it
+            // floats over everything else.
+            let consumed = themes_state.handle_key(sym, utf8.clone(), &mut config)
+                || icon_panel_state.handle_key(sym, utf8);
             if !consumed && key == KEY_ESC {
                 state.running = false;
             }
@@ -373,6 +375,7 @@ pub fn run() -> Result<()> {
                             &mut config,
                             &mut saved_config,
                             &mut panel_state,
+                            &mut themes_state,
                             &mut display_state,
                             &mut icon_panel_state,
                             &input_state,
@@ -522,16 +525,24 @@ pub fn run() -> Result<()> {
             Panel::Appearance => {
                 let panel_h = hf - panel_y;
                 crate::appearance_panel::draw_appearance_panel(
-                    &mut config, &mut painter, &mut text, &mut ix, &fox,
-                    content_x, panel_y, content_w, panel_h, s, sw, sh,
-                );
-            }
-            Panel::WindowManager => {
-                let panel_h = hf - panel_y;
-                crate::wm_panel::draw_wm_panel(
-                    &mut config, &mut panel_state, &mut painter, &mut text, &mut ix, &fox,
+                    &mut config, &mut panel_state, &mut themes_state,
+                    &mut painter, &mut text, &mut ix, &tex_pass, &gpu, &fox,
+                    &mut tex_draws,
                     content_x, panel_y, content_w, panel_h, s, sw, sh, frame_scroll,
                 );
+                // Modal first while we still have &mut themes_state available;
+                // collect_theme_thumbs below takes an immutable borrow that the
+                // tex_draws Vec holds until the render pass at the bottom of
+                // the loop.
+                if themes_state.modal_open() {
+                    crate::appearance_themes::draw_themes_modal(
+                        &mut themes_state, &mut painter, &mut text, &mut ix, &fox,
+                        wf, hf, s, sw, sh,
+                    );
+                }
+                for td in crate::appearance_themes::collect_theme_thumbs(&themes_state) {
+                    tex_draws.push(td);
+                }
             }
             Panel::Power => {
                 let panel_h = hf - panel_y;

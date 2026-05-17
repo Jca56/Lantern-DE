@@ -19,6 +19,7 @@ mod layershell;
 mod mascot;
 mod mini_dock;
 mod notes;
+mod persisted_state;
 mod power;
 mod render;
 mod search;
@@ -39,6 +40,32 @@ fn main() {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
+
+    // Panic hook → file. Daemon stderr is often disconnected (toggled from
+    // a shell that has exited), so without this, panic messages vanish.
+    std::panic::set_hook(Box::new(|info| {
+        let mut path = std::path::PathBuf::new();
+        if let Some(h) = std::env::var_os("HOME") {
+            path.push(h);
+        }
+        path.push(".lantern/log/command-center-panic.log");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let bt = std::backtrace::Backtrace::force_capture();
+        let entry = format!(
+            "\n=== panic @ unix {now} ===\n{info}\n--- backtrace ---\n{bt}\n",
+        );
+        eprintln!("{entry}");
+        if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true).append(true).open(&path)
+        {
+            use std::io::Write;
+            let _ = f.write_all(entry.as_bytes());
+        }
+    }));
 
     let mode = parse_args();
     let msg = mode.as_command();

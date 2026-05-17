@@ -172,6 +172,33 @@ pub fn background_opacity() -> f32 {
     read_config_f32("windows", "background_opacity", 1.0)
 }
 
+/// Read the user-configured background color from
+/// `[appearance].background_color`. Returns `None` when the key is missing,
+/// the value is empty/unparseable, or the config file is unavailable —
+/// callers fall back to the variant's built-in surface color in that case.
+pub fn active_background_color() -> Option<crate::Rgba> {
+    let path = lantern_config_path()?;
+    let contents = std::fs::read_to_string(&path).ok()?;
+    let mut in_appearance = false;
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_appearance = trimmed == "[appearance]";
+            continue;
+        }
+        if in_appearance {
+            if let Some((k, v)) = trimmed.split_once('=') {
+                if k.trim() == "background_color" {
+                    let hex = v.trim().trim_matches('"').trim_matches('\'');
+                    if hex.is_empty() { return None; }
+                    return parse_hex_rgb(hex);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Read the user-configured accent color from `[appearance].accent`. Returns
 /// `None` when the key is missing, the value is not a parseable hex string,
 /// or the config file is unavailable — callers fall back to the variant's

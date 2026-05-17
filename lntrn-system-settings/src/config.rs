@@ -41,11 +41,31 @@ pub struct AnimationsConfig {
     pub enabled: bool,
     /// Speed multiplier. Higher = faster. 1.0 = stock cinematic.
     pub speed: f32,
+    /// Named curve set. One of: "cinematic", "snappy", "springy", "linear".
+    /// Each preset maps to a specific easing per category in
+    /// `lntrn-compositor::animations`.
+    pub preset: String,
+    /// Per-category enables. When a category is false, that animation
+    /// completes in a single frame (1ms) — same path as the master toggle.
+    pub open_close: bool,
+    pub state: bool,
+    pub minimize: bool,
+    pub tiling: bool,
+    pub workspace: bool,
 }
 
 impl Default for AnimationsConfig {
     fn default() -> Self {
-        Self { enabled: true, speed: 1.0 }
+        Self {
+            enabled: true,
+            speed: 1.0,
+            preset: "cinematic".into(),
+            open_close: true,
+            state: true,
+            minimize: true,
+            tiling: true,
+            workspace: true,
+        }
     }
 }
 
@@ -63,6 +83,14 @@ pub struct AppearanceConfig {
     pub font_family: String,
     pub font_size: f32,
     pub wallpaper: String,
+    /// Slug of the currently-applied theme preset (set by Themes UI). Empty
+    /// when no theme has ever been applied or the preset was deleted. We
+    /// don't try to detect drift from theme — see `themes.rs` for why.
+    pub active_theme: String,
+    /// Custom window background hex override. Empty = use the variant default
+    /// from `theme`. Set by the Background Color swatch picker; chrome.rs
+    /// reads it via lntrn_theme so other apps can opt in.
+    pub background_color: String,
 }
 
 impl Default for AppearanceConfig {
@@ -73,6 +101,8 @@ impl Default for AppearanceConfig {
             font_family: "sans-serif".into(),
             font_size: 16.0,
             wallpaper: String::new(),
+            active_theme: String::new(),
+            background_color: String::new(),
         }
     }
 }
@@ -356,6 +386,12 @@ impl LanternConfig {
         self.display.scale = self.display.scale.clamp(0.5, 3.0);
         if !["active", "balanced", "battery"].contains(&self.power.wifi_power_scheme.as_str()) {
             self.power.wifi_power_scheme = "balanced".into();
+        }
+        self.animations.speed = self.animations.speed.clamp(0.25, 3.0);
+        if !["cinematic", "snappy", "springy", "linear"]
+            .contains(&self.animations.preset.as_str())
+        {
+            self.animations.preset = "cinematic".into();
         }
         self.notifications.volume = self.notifications.volume.clamp(0.0, 1.0);
         self.notifications.default_duration_secs =

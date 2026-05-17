@@ -110,11 +110,22 @@ install-desktop: dirs
 		fi \
 	done
 
-# ── Default wallpaper ────────────────────────────────────────────────────────
+# ── Wallpapers (curated ship-set) ───────────────────────────────────────────
+# Each file in wallpapers/ is copied to ~/.lantern/wallpapers/ unless a file
+# of the same name already exists — so the user's personal additions/swaps
+# are never clobbered.
 
 install-wallpaper: dirs
-	@if [ -f Lantern-DE_Wallpaper.jpeg ] && [ ! -f $(WALL_DIR)/Lantern-DE_Wallpaper.jpeg ]; then \
-		cp Lantern-DE_Wallpaper.jpeg $(WALL_DIR)/ && echo "  ✓ default wallpaper"; \
+	@if [ -d wallpapers ]; then \
+		for f in wallpapers/*; do \
+			[ -f "$$f" ] || continue; \
+			name=$$(basename "$$f"); \
+			if [ ! -f "$(WALL_DIR)/$$name" ]; then \
+				cp "$$f" "$(WALL_DIR)/" && echo "  ✓ $$name"; \
+			else \
+				echo "  · $$name (kept existing)"; \
+			fi; \
+		done; \
 	fi
 
 # ── System-level installs (require sudo) ─────────────────────────────────────

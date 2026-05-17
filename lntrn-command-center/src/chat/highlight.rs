@@ -157,8 +157,12 @@ fn tokenize_curly(
             i = j;
             continue;
         }
-        out.push(Tok { kind: TokKind::Punct, text: src[i..i + 1].to_string() });
-        i += 1;
+        // Catch-all: take ONE char (not one byte) to stay on UTF-8
+        // boundaries. Byte-slicing here would panic on emoji or any
+        // multi-byte glyph that lands in fallthrough.
+        let ch_len = src[i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+        out.push(Tok { kind: TokKind::Punct, text: src[i..i + ch_len].to_string() });
+        i += ch_len;
     }
     out
 }
@@ -200,8 +204,9 @@ fn tokenize_json(src: &str) -> Vec<Tok> {
             i = j;
             continue;
         }
-        out.push(Tok { kind: TokKind::Punct, text: src[i..i+1].into() });
-        i += 1;
+        let ch_len = src[i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+        out.push(Tok { kind: TokKind::Punct, text: src[i..i + ch_len].into() });
+        i += ch_len;
     }
     out
 }

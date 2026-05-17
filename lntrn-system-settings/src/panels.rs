@@ -3,8 +3,10 @@
 //! (sliders/swatches/select buttons/section cards) and the Save/Cancel bar.
 //!
 //! Per-panel rendering and click handling lives in:
-//!   - `appearance_panel.rs` — theme + accent
-//!   - `wm_panel.rs`         — window manager
+//!   - `appearance_panel.rs` — theme + accent + window frame + effects +
+//!                             animations + focus/glow (with sibling section
+//!                             modules `appearance_layout`,
+//!                             `appearance_animations`, `appearance_focus`)
 //!   - `display_panel.rs`    — wallpaper + scaling
 //!   - `input_panel.rs`      — mouse/keyboard
 //!   - `power_panel.rs`      — battery + idle
@@ -38,6 +40,25 @@ pub(crate) const GLOW_COLORS: &[(&str, &str)] = &[
     ("#EF4444", "Red"),
     ("#EAB308", "Gold"),
     ("#FFFFFF", "White"),
+];
+
+/// Background-color swatches for the Background Color picker. Dark variants
+/// of the accent palette plus pure Black and a warm Brown so the user has
+/// neutral picks. The hex values are what gets written to
+/// `appearance.background_color` directly — chrome reads them via
+/// `lntrn_theme::active_background_color()`.
+pub(crate) const BG_COLORS: &[(&str, &str)] = &[
+    ("#0E0E0E", "Black"),
+    ("#2A1A12", "Brown"),
+    ("#0E1A30", "Blue"),
+    ("#1A0E30", "Purple"),
+    ("#30121E", "Pink"),
+    ("#0E2030", "Cyan"),
+    ("#0E2018", "Green"),
+    ("#2A1808", "Orange"),
+    ("#2A0E0E", "Red"),
+    ("#2A1F0A", "Gold"),
+    ("#E8E8E8", "Light"),
 ];
 
 // ── Shared card layout constants (used by WM, Input, etc.) ──────────────────

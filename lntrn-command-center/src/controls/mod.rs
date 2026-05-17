@@ -271,6 +271,7 @@ pub fn draw_row(
     surface_h: u32,
     icons: &mut Vec<crate::render::IconRequest>,
     panel_view: crate::app::PanelView,
+    chat_title: Option<&str>,
 ) {
     let pad = ROW_HORIZONTAL_PAD * scale;
     let row_top = panel.y + ROW_TOP_MARGIN * scale;
@@ -330,6 +331,47 @@ pub fn draw_row(
         }
     }
 
+    // Chat title rendered into the otherwise-empty row area.
+    if panel_view == crate::app::PanelView::Chat {
+        if let Some(title) = chat_title {
+            let title = title.trim();
+            if !title.is_empty() {
+                let font = 28.0 * scale;
+                let chev_w = collapse::TILE_WIDTH * scale;
+                let right_edge = panel.x + panel.w - pad - chev_w - 12.0 * scale;
+                let left_edge = panel.x + pad;
+                let max_w = (right_edge - left_edge).max(0.0);
+                let drawn = ellipsize(text, title, font, max_w);
+
+                // Measure actual rendered width so the background plate
+                // hugs the text rather than spanning the whole row.
+                let drawn_w = text.measure_width(&drawn, font).min(max_w);
+
+                // Faint plate behind the title makes it readable on any
+                // panel-opacity setting AND makes the area obvious so
+                // we can catch mis-positioning bugs.
+                let plate_pad_x = 12.0 * scale;
+                let plate_pad_y = 6.0 * scale;
+                let plate = Rect::new(
+                    left_edge - plate_pad_x,
+                    row_top + (row_h - font - plate_pad_y * 2.0) / 2.0,
+                    drawn_w + plate_pad_x * 2.0,
+                    font + plate_pad_y * 2.0,
+                );
+                painter.rect_filled(
+                    plate, 10.0 * scale,
+                    Color::rgba(1.0, 1.0, 1.0, 0.06 * alpha),
+                );
+
+                let title_y = row_top + (row_h - font) / 2.0;
+                let color = Color::from_rgb8(0xf0, 0xe8, 0xd6).with_alpha(alpha);
+                text.queue(
+                    &drawn, font, left_edge, title_y, color, max_w, surface_w, surface_h,
+                );
+            }
+        }
+    }
+
     // Underline beneath the row.
     painter.rect_filled(
         Rect::new(
@@ -341,6 +383,28 @@ pub fn draw_row(
         1.0 * scale,
         Color::rgba(1.0, 1.0, 1.0, 0.18 * alpha),
     );
+}
+
+/// Truncate `s` with an ellipsis so it fits within `max_w` at the given
+/// font size. Returns `s` unchanged if it already fits.
+fn ellipsize(text: &mut TextRenderer, s: &str, font: f32, max_w: f32) -> String {
+    if text.measure_width(s, font) <= max_w { return s.to_string(); }
+    let ell = "…";
+    // Trim characters from the end until "<prefix>…" fits.
+    let mut end = s.len();
+    while end > 0 {
+        let mut candidate = String::from(&s[..end]);
+        candidate.push_str(ell);
+        if text.measure_width(&candidate, font) <= max_w {
+            return candidate;
+        }
+        // Step back one char boundary.
+        end -= 1;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+    }
+    ell.to_string()
 }
 
 /// Draw the full-content view for `tile_id`. This fills the panel's

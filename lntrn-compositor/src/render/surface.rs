@@ -425,10 +425,35 @@ pub fn render_surface(
         let zoom = state.window_zoom.get(&surface).copied().unwrap_or(1.0);
 
         // Open/close anim: pure scale + fade pivoted on the EFF RECT center.
-        let anim_params = state.animations.get(&surface).map(|a| a.render_params());
+        // Animations may also carry an optional `slide` — when present, it
+        // overrides the eff rect with an anisotropic shrink/grow trajectory
+        // (same path as minimize). The renderer passes its current live eff
+        // rect into render_params so endpoints marked `Live` resolve to the
+        // window's actual position even when it changes after animation start
+        // (e.g. open: pending_center fires after first commit).
+        let live_eff = smithay::utils::Rectangle::<f64, smithay::utils::Logical>::new(
+            (eff_x, eff_y).into(),
+            (eff_w, eff_h).into(),
+        );
+        let anim_params = state
+            .animations
+            .get(&surface)
+            .map(|a| a.render_params(live_eff, win_size));
         let anim_alpha = anim_params.as_ref().map(|p| p.alpha).unwrap_or(1.0);
         let anim_scale = anim_params.as_ref().map(|p| p.scale).unwrap_or(1.0);
         let alpha = base_alpha * anim_alpha * minimize_alpha;
+
+        let (eff_x, eff_y, eff_w, eff_h) =
+            if let Some(p) = anim_params.as_ref().and_then(|p| p.slide) {
+                let (loc, (sx, sy)) = p;
+                let vw = win_size.w as f64 * sx;
+                let vh = win_size.h as f64 * sy;
+                let vx = loc.x + (win_size.w as f64 - vw) / 2.0;
+                let vy = loc.y + (win_size.h as f64 - vh) / 2.0;
+                (vx, vy, vw, vh)
+            } else {
+                (eff_x, eff_y, eff_w, eff_h)
+            };
 
         // Apply zoom + open/close scale centered on the eff rect's geometry
         // center → final visible rect on screen.
@@ -787,7 +812,13 @@ pub fn render_surface(
                 Some(a) => a,
                 None => continue,
             };
-            let params = anim.render_params();
+            // Zombie has no live window — use the captured snapshot rect as
+            // the renderer's live eff.
+            let zombie_eff = smithay::utils::Rectangle::<f64, smithay::utils::Logical>::new(
+                (cw.location.x as f64, cw.location.y as f64).into(),
+                (cw.size.w as f64, cw.size.h as f64).into(),
+            );
+            let params = anim.render_params(zombie_eff, cw.size);
             let anim_alpha = params.alpha;
             let anim_scale = params.scale;
             let (snap_tex, _snap_phys_size) = match state.window_snapshots.get(&cw.surface) {
@@ -795,25 +826,38 @@ pub fn render_surface(
                 None => continue,
             };
 
-            let render_location = cw.location - output_geo.loc;
-            let rel_x = render_location.x as f64 - output_geo.loc.x as f64;
-            let rel_y = render_location.y as f64 - output_geo.loc.y as f64;
-
             // SSD bar offset
             let ssd_bar = if cw.had_ssd { crate::ssd::SsdManager::bar_height() } else { 0 };
 
-            // Centered scale transform (same logic as live windows)
+            // Compute the final visible rect. With `slide` set, follow the
+            // anisotropic shrink/slide trajectory (same as minimize). Without
+            // it, fall back to uniform centered scale around the source rect.
             let win_w = cw.size.w as f64;
             let win_h = cw.size.h as f64;
-            let center_x = rel_x + win_w / 2.0;
-            let center_y = rel_y + win_h / 2.0;
-            let scaled_x = center_x - (win_w / 2.0) * anim_scale;
-            let scaled_y = center_y - (win_h / 2.0) * anim_scale;
+            let (scaled_x, scaled_y, dst_w, dst_h) = if let Some((loc, (sx, sy))) = params.slide {
+                let vw = win_w * sx;
+                let vh = win_h * sy;
+                let vx = loc.x + (win_w - vw) / 2.0;
+                let vy = loc.y + (win_h - vh) / 2.0;
+                let rx = vx - output_geo.loc.x as f64;
+                let ry = vy - output_geo.loc.y as f64;
+                (rx, ry, vw, vh)
+            } else {
+                let render_location = cw.location - output_geo.loc;
+                let rel_x = render_location.x as f64 - output_geo.loc.x as f64;
+                let rel_y = render_location.y as f64 - output_geo.loc.y as f64;
+                let center_x = rel_x + win_w / 2.0;
+                let center_y = rel_y + win_h / 2.0;
+                let sx = center_x - (win_w / 2.0) * anim_scale;
+                let sy = center_y - (win_h / 2.0) * anim_scale;
+                (sx, sy, win_w * anim_scale, win_h * anim_scale)
+            };
+
             let phys_x = (scaled_x * output_scale).round() as i32;
             let phys_y = (scaled_y * output_scale).round() as i32;
 
-            let dst_w_log = (win_w * anim_scale).round() as i32;
-            let dst_h_log = (win_h * anim_scale).round() as i32;
+            let dst_w_log = dst_w.round() as i32;
+            let dst_h_log = dst_h.round() as i32;
             if dst_w_log <= 0 || dst_h_log <= 0 { continue; }
 
             let loc = Point::<f64, Physical>::from((phys_x as f64, phys_y as f64));
@@ -840,8 +884,8 @@ pub fn render_surface(
                 let corner_r = crate::ssd::corner_radius();
                 let win_x = (scaled_x).round() as i32;
                 let win_y = (scaled_y).round() as i32 - ssd_bar;
-                let shadow_w = (win_w * anim_scale).round() as i32;
-                let shadow_h = ((win_h + ssd_bar as f64) * anim_scale).round() as i32;
+                let shadow_w = dst_w_log;
+                let shadow_h = dst_h_log + (ssd_bar as f64 * (dst_h / win_h.max(1.0))).round() as i32;
                 let shadow_area = Rectangle::<i32, Logical>::new(
                     (win_x - shadow_expand, win_y - shadow_expand).into(),
                     (shadow_w + shadow_expand * 2, shadow_h + shadow_expand * 2).into(),
@@ -1263,9 +1307,13 @@ pub fn render_surface(
 
     let t_after_chrome = Instant::now();
 
-    // Periodically check if wallpaper config changed
+    // Check for wallpaper config changes ~2x per second. `reload_if_changed`
+    // is cheap when the path hasn't changed (path-compare only, no decode),
+    // so we can poll often. Was 300 frames (~5s) which made theme switches
+    // feel laggy — the decode-every-tick stall this counter originally
+    // guarded against is long gone.
     state.wallpaper_frame_counter += 1;
-    if state.wallpaper_frame_counter >= 300 {
+    if state.wallpaper_frame_counter >= 30 {
         state.wallpaper_frame_counter = 0;
         state.wallpaper.reload_if_changed();
     }

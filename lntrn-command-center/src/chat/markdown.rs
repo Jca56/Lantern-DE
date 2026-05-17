@@ -45,6 +45,7 @@ pub fn parse(src: &str) -> Vec<Block> {
             while i < lines.len() && !lines[i].trim_start().starts_with("```") {
                 body.push_str(lines[i]);
                 body.push('\n');
+                i += 1;
             }
             // skip closing fence (if present)
             if i < lines.len() { i += 1; }
@@ -228,5 +229,26 @@ pub fn parse_inlines(src: &str) -> Vec<Inline> {
 fn flush(out: &mut Vec<Inline>, buf: &mut String) {
     if !buf.is_empty() {
         out.push(Inline::Text(std::mem::take(buf)));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression: a code-fenced message used to infinite-loop the parser
+    /// because the inner while-loop never advanced `i`. OOM kill.
+    #[test]
+    fn fenced_code_block_parses_in_finite_time() {
+        let src = "intro\n\n```bash\necho hi\nexit 0\n```\n\noutro";
+        let blocks = parse(src);
+        assert_eq!(blocks.len(), 3);
+        match &blocks[1] {
+            Block::Code { lang, body } => {
+                assert_eq!(lang, "bash");
+                assert!(body.contains("echo hi"));
+            }
+            other => panic!("expected Code, got {other:?}"),
+        }
     }
 }

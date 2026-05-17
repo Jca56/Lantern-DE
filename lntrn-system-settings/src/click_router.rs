@@ -14,6 +14,7 @@
 
 use wayland_client::QueueHandle;
 
+use crate::appearance_themes::ThemesPanelState;
 use crate::config::LanternConfig;
 use crate::display_panel::{self, DisplayPanelState};
 use crate::icon_panel;
@@ -34,6 +35,7 @@ pub(crate) fn route_zone_click(
     config: &mut LanternConfig,
     saved_config: &mut LanternConfig,
     panel_state: &mut PanelState,
+    themes_state: &mut ThemesPanelState,
     display_state: &mut DisplayPanelState,
     icon_panel_state: &mut icon_panel::IconPanelState,
     input_state: &input_panel::InputPanelState,
@@ -42,6 +44,16 @@ pub(crate) fn route_zone_click(
     cx: f32,
     cy: f32,
 ) {
+    // ── Themes UI (always tested first when the Appearance panel is
+    // active — the modal needs to eat clicks even over sidebar zones).
+    if *active_panel == Panel::Appearance
+        && crate::appearance_themes::handle_themes_click(
+            themes_state, config, panel_state, zone_id, cx, cy,
+        )
+    {
+        return;
+    }
+
     // ── Sidebar (panel switch) ──────────────────────────────────────
     if zone_id >= ZONE_SIDEBAR_BASE && zone_id < ZONE_SIDEBAR_BASE + PANELS.len() as u32 {
         *active_panel = PANELS[(zone_id - ZONE_SIDEBAR_BASE) as usize].0;
@@ -125,8 +137,11 @@ fn route_panel_click(
     cy: f32,
 ) {
     match active_panel {
-        Panel::Appearance => crate::appearance_panel::handle_appearance_click(config, zone_id),
-        Panel::WindowManager => crate::wm_panel::handle_wm_click(config, zone_id),
+        Panel::Appearance => {
+            crate::appearance_panel::handle_appearance_click(
+                config, panel_state, zone_id, cx, cy,
+            );
+        }
         Panel::Power => {
             power_panel::handle_power_click(config, panel_state, zone_id, cx, cy);
         }

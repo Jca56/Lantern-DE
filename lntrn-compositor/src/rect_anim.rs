@@ -18,10 +18,16 @@ pub enum Curve {
     Spring { damping: f64, frequency: f64 },
     /// Ease-out cubic — fast start, decelerating finish.
     EaseOutCubic,
+    /// Ease-in cubic — slow start, accelerating finish.
+    EaseInCubic,
     /// Ease-in-out cubic — symmetric smooth-smooth.
     EaseInOutCubic,
     /// Ease-in-out quintic — slow ends, snappy middle. Cinematic.
     EaseInOutQuint,
+    /// Ease-out back — overshoots target then settles.
+    EaseOutBack { overshoot: f64 },
+    /// Linear — no easing.
+    Linear,
 }
 
 impl Curve {
@@ -30,8 +36,11 @@ impl Curve {
         match self {
             Curve::Spring { damping, frequency } => easing::spring(t, damping, frequency),
             Curve::EaseOutCubic => easing::ease_out_cubic(t),
+            Curve::EaseInCubic => easing::ease_in_cubic(t),
             Curve::EaseInOutCubic => easing::ease_in_out_cubic(t),
             Curve::EaseInOutQuint => easing::ease_in_out_quint(t),
+            Curve::EaseOutBack { overshoot } => easing::ease_out_back(t, overshoot),
+            Curve::Linear => t.clamp(0.0, 1.0),
         }
     }
 }

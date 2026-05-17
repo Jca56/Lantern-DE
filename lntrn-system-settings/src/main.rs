@@ -11,9 +11,11 @@
 //! and the common helpers (`draw_section_card`, `draw_color_swatch_row`,
 //! `slider_value_from_cursor`, `draw_save_cancel_bar`, etc.).
 //!
-//! **Per-panel modules** — `appearance_panel.rs`, `wm_panel.rs`,
-//! `display_panel.rs`, `input_panel.rs`, `power_panel.rs`,
-//! `notifications_panel.rs`, `icon_panel.rs`. Each exports:
+//! **Per-panel modules** — `appearance_panel.rs` (with its sibling section
+//! modules `appearance_layout.rs`, `appearance_animations.rs`, and
+//! `appearance_focus.rs`), `display_panel.rs`, `input_panel.rs`,
+//! `power_panel.rs`, `notifications_panel.rs`, `icon_panel.rs`. Each panel
+//! exports:
 //!   * `draw_<name>_panel(...)` — renders the panel
 //!   * `handle_<name>_click(config, zone_id, ...)` — mutates config
 //!   * Private `ZONE_*: u32` constants for hit zones
@@ -29,7 +31,11 @@
 //!    `click_router::route_panel_click`.
 //! 5. Add any new config fields to `config.rs` (with `sanitize` clamps).
 
+mod appearance_animations;
+mod appearance_focus;
+mod appearance_layout;
 mod appearance_panel;
+mod appearance_themes;
 mod chrome;
 mod click_router;
 mod config;
@@ -47,10 +53,10 @@ mod power_panel;
 mod sidebar;
 mod test_window;
 mod text_edit;
+mod themes;
 mod wallpaper_picker;
 mod wayland;
 mod wayland_state;
-mod wm_panel;
 
 fn main() {
     // --test-window spawns a minimal 500x500 blank window so the user can

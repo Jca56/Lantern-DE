@@ -92,7 +92,7 @@ impl Lantern {
     /// whose initial configure has already been sent, and tiling-mode windows.
     pub fn apply_initial_window_size(&mut self, surface: &WlSurface) {
         use smithay::wayland::compositor::with_states;
-        use smithay::wayland::shell::xdg::XdgToplevelSurfaceData;
+        use smithay::wayland::shell::xdg::{SurfaceCachedState, XdgToplevelSurfaceData};
         use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 
         if self.scratchpad_surface.as_ref() == Some(surface) { return; }
@@ -104,16 +104,20 @@ impl Lantern {
         else { return };
         let Some(toplevel) = window.toplevel().cloned() else { return };
 
-        let (already_sent, app_id, has_size_state) = with_states(surface, |states| {
+        let (already_sent, app_id, client_min) = with_states(surface, |states| {
             let data = states.data_map.get::<XdgToplevelSurfaceData>().unwrap().lock().unwrap();
-            (
-                data.initial_configure_sent,
-                data.app_id.clone().unwrap_or_default(),
-                false,
-            )
+            let already_sent = data.initial_configure_sent;
+            let app_id = data.app_id.clone().unwrap_or_default();
+            drop(data);
+            let min = states.cached_state.get::<SurfaceCachedState>().current().min_size;
+            let min_opt = if min.w > 0 && min.h > 0 {
+                Some((min.w, min.h))
+            } else {
+                None
+            };
+            (already_sent, app_id, min_opt)
         });
         if already_sent { return; }
-        let _ = has_size_state;
 
         let skip = toplevel.with_pending_state(|state| {
             state.states.contains(xdg_toplevel::State::Maximized)
@@ -122,10 +126,13 @@ impl Lantern {
         });
         if skip { return; }
 
+        // Priority: explicit [[window_rules]] entry → client-provided min_size
+        // hint → global default. The min_size path lets apps like
+        // lntrn-image-viewer request a content-fit size at startup.
         let rule_size = self.window_rules.iter()
             .find(|r| r.app_id == app_id)
             .map(|r| (r.width, r.height));
-        let Some((w, h)) = rule_size.or(self.default_window_size) else { return };
+        let Some((w, h)) = rule_size.or(client_min).or(self.default_window_size) else { return };
 
         toplevel.with_pending_state(|state| {
             state.size = Some(Size::from((w, h)));
@@ -214,8 +221,8 @@ impl Lantern {
             self.apply_tiling_layout();
         }
 
-        // Start open animation
-        self.animations.start_open(&surface);
+        // Start open animation (preset-aware: Springy grows from center).
+        self.start_open_anim(&surface);
 
         // Announce to foreign-toplevel clients
         let title = window.get_title();
@@ -259,6 +266,50 @@ impl Lantern {
         self.broadcast_workspace_state();
     }
 
+    /// Start an open animation for a newly-mapped window. On presets that ask
+    /// for grow-from-center (currently Springy), seeds the slide with a small
+    /// rect at the output center → the window's actual rect. Other presets
+    /// get a pure alpha fade.
+    pub fn start_open_anim(&mut self, surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface) {
+        use smithay::utils::{Rectangle, Size};
+        if !crate::animations::open_uses_grow() {
+            self.animations.start_open(surface);
+            return;
+        }
+        let Some(window) = self.find_mapped_window(surface) else {
+            self.animations.start_open(surface);
+            return;
+        };
+        // Use the output center as the slide source. The target is resolved
+        // live by the renderer (since win.geometry().size and element_location
+        // are both still (0,0) here — pending_center hasn't fired yet).
+        let output_geo = self
+            .output_for_window(&window)
+            .or_else(|| self.workspaces.outputs_iter().next().cloned())
+            .and_then(|o| self.workspaces.output_geometry(&o))
+            .unwrap_or_else(|| Rectangle::new((0, 0).into(), (1920, 1080).into()));
+        let cx = output_geo.loc.x + output_geo.size.w / 2;
+        let cy = output_geo.loc.y + output_geo.size.h / 2;
+        let src_size = 100;
+        let source = Rectangle::new(
+            (cx - src_size / 2, cy - src_size / 2).into(),
+            Size::from((src_size, src_size)),
+        );
+        self.animations.start_open_grow(surface, source);
+    }
+
+    /// Start a close animation for a live window (focused close, SSD click).
+    /// Computes source rect from the window's current position and target rect
+    /// from `minimize_target_for` so close + minimize share the same shrink/
+    /// slide trajectory. Returns true if the animation was started.
+    pub fn start_close_anim(&mut self, surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface) -> bool {
+        let Some(window) = self.find_mapped_window(surface) else { return false };
+        let target = self.minimize_target_for(&window);
+        let started = self.animations.start_close(surface, target);
+        if started { self.schedule_render(); }
+        started
+    }
+
     /// Start a close animation on the focused window (Super+Q).
     /// Returns true if the animation was started. The actual `send_close()`
     /// happens when the animation finishes in the render loop.
@@ -267,9 +318,8 @@ impl Lantern {
             return false;
         };
         let Some(surface) = window.get_wl_surface() else { return false };
-        if self.animations.start_close(&surface) {
+        if self.start_close_anim(&surface) {
             tracing::info!("Close animation started for focused window");
-            self.schedule_render();
             true
         } else {
             false

@@ -206,6 +206,35 @@ pub fn draw_content(
     if sliding {
         push_panel_clip(painter, text, mono_text);
     }
+    let chat_title_owned: Option<String> = {
+        let base = state.chat.active_thread()
+            .map(|th| th.title.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "Lantern Chat".to_string());
+        let usage = state.chat.active_thread().map(|th| th.usage.clone());
+        let usage_tag = match usage {
+            Some(u) if u.total_tokens() > 0 => {
+                let tok = u.total_tokens();
+                let tok_s = if tok >= 1_000_000 {
+                    format!("{:.1}M tok", tok as f64 / 1_000_000.0)
+                } else if tok >= 1000 {
+                    format!("{:.1}K tok", tok as f64 / 1000.0)
+                } else {
+                    format!("{tok} tok")
+                };
+                let cost = u.cost_usd();
+                Some(format!("· {tok_s} · ${cost:.4}"))
+            }
+            _ => None,
+        };
+        let mut t = base;
+        if state.chat.streaming { t.push_str("  ● streaming…"); }
+        if let Some(tag) = usage_tag {
+            t.push_str("   ");
+            t.push_str(&tag);
+        }
+        Some(t)
+    };
     for (view, off_frac) in &view_pairs {
         crate::controls::draw_row(
             painter,
@@ -220,6 +249,7 @@ pub fn draw_content(
             surface_h,
             &mut icons,
             *view,
+            chat_title_owned.as_deref(),
         );
     }
     if sliding {

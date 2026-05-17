@@ -28,7 +28,7 @@ impl WorkspaceTransition {
     }
 
     pub fn eased(&self, now: Instant) -> f64 {
-        crate::easing::ease_in_out_quint(self.progress(now))
+        crate::animations::workspace_curve_eval(self.progress(now))
     }
 
     pub fn is_done(&self, now: Instant) -> bool {

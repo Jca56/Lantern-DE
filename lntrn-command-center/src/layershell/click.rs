@@ -585,7 +585,10 @@ pub(super) fn handle_clicks(
             }
         } else if app.panel_view == crate::app::PanelView::Chat {
             let top_y = crate::controls::content_top_y(panel_rect, scale_f);
-            let l = crate::chat::render::layout(panel_rect, top_y, scale_f);
+            let font = app.config.text_size * scale_f;
+            let l = crate::chat::render::layout(
+                panel_rect, top_y, scale_f, app.chat.input_lines, font,
+            );
             if l.new_btn.contains(phys_cx, phys_cy) {
                 app.chat.confirm_delete = None;
                 app.chat.new_thread();

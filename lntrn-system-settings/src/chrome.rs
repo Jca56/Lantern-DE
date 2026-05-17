@@ -83,14 +83,18 @@ pub fn content_palette(_mode: WindowMode) -> FoxPalette {
     FoxPalette::current()
 }
 
-/// Draw the window background — solid color matching the variant, opacity
-/// from `[windows].background_opacity`.
+/// Draw the window background — solid color, opacity from
+/// `[windows].background_opacity`. Honors `[appearance].background_color`
+/// when set (the Background Color swatch picker); otherwise falls back to
+/// the variant default.
 pub fn draw_background(p: &mut Painter, mode: WindowMode, wf: f32, hf: f32, r: f32) {
     let opacity = lntrn_theme::background_opacity();
-    let bg = match mode {
-        WindowMode::Fox => FOX_BG,
-        WindowMode::Lantern => ln_bg(),
-    };
+    let bg = lntrn_theme::active_background_color()
+        .map(|c| Color::from_rgba8(c.r, c.g, c.b, c.a))
+        .unwrap_or_else(|| match mode {
+            WindowMode::Fox => FOX_BG,
+            WindowMode::Lantern => ln_bg(),
+        });
     p.rect_filled(Rect::new(0.0, 0.0, wf, hf), r, bg.with_alpha(opacity));
 }
 

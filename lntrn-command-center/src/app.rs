@@ -307,6 +307,10 @@ pub enum WindowActionKind {
 
 impl AppState {
     pub fn new() -> Self {
+        let persisted = crate::persisted_state::load();
+        let saved_view: PanelView = persisted.panel_view.clone().into();
+        let saved_collapsed = persisted.collapsed;
+        let saved_panel_size = persisted.panel_size_idx.min(GROW_MAX_STEP);
         Self {
             visibility: Visibility::Hidden,
             anim_start: Instant::now(),
@@ -323,13 +327,13 @@ impl AppState {
             power_hover: None,
             power_confirm: None,
             pin_drag: None,
-            collapsed: false,
+            collapsed: saved_collapsed,
             collapse_anim_start: None,
-            collapse_anim_origin: 0.0,
-            collapse_anim_target: 0.0,
+            collapse_anim_origin: if saved_collapsed { 1.0 } else { 0.0 },
+            collapse_anim_target: if saved_collapsed { 1.0 } else { 0.0 },
             mini_dock_hover: None,
             opened_from_collapsed: false,
-            panel_view: PanelView::Default,
+            panel_view: saved_view,
             view_arrow_hover: None,
             desktop_button_hover: false,
             desktop_widgets: crate::desktop_settings::load(),
@@ -347,10 +351,10 @@ impl AppState {
             settings_open: false,
             config: crate::settings::Config::load(),
             settings_drag: None,
-            panel_size_idx: 0,
+            panel_size_idx: saved_panel_size,
             grow_anim_start: None,
-            grow_anim_origin: 0.0,
-            grow_anim_target: 0.0,
+            grow_anim_origin: saved_panel_size as f32,
+            grow_anim_target: saved_panel_size as f32,
             bar_size_idx: 0,
             bar_grow_anim_start: None,
             bar_grow_anim_origin: 0.0,
@@ -403,6 +407,17 @@ impl AppState {
             to: self.panel_view,
             to_offset: dir * (1.0 - p),
         })
+    }
+
+    /// Snapshot the durable bits of UI state to `state.json` so a fresh
+    /// daemon comes back on the same tab + collapse + grow as it left.
+    pub fn save_persisted_state(&self) {
+        let snap = crate::persisted_state::PersistedState {
+            panel_view: self.panel_view.into(),
+            collapsed: self.collapsed,
+            panel_size_idx: self.panel_size_idx,
+        };
+        crate::persisted_state::save(&snap);
     }
 
     /// Toggle the Command Center settings page.

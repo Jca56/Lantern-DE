@@ -27,6 +27,7 @@ impl AppState {
             self.grow_anim_target = self.panel_size_idx as f32;
             self.grow_anim_start = Some(now);
             tracing::info!(panel_size = self.panel_size_idx, current, "panel grow cycled");
+            self.save_persisted_state();
         }
     }
 
@@ -158,6 +159,7 @@ impl AppState {
         self.view_anim_start = Some(std::time::Instant::now());
         self.view_anim_dir = dir;
         self.panel_view = view;
+        self.save_persisted_state();
     }
 
     /// Toggle collapsed/expanded state with a smooth height/alpha
@@ -171,6 +173,7 @@ impl AppState {
         self.collapse_anim_target = if self.collapsed { 1.0 } else { 0.0 };
         self.collapse_anim_start = Some(now);
         tracing::info!(collapsed = self.collapsed, current, "panel collapse toggled");
+        self.save_persisted_state();
     }
 
     /// Eased height-progress for the collapse transition. Returns 0.0

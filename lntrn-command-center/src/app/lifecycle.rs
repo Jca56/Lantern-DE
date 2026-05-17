@@ -324,10 +324,8 @@ impl AppState {
         self.notes.drag_field = None;
         self.usage.open = false;
         self.usage.scroll = 0.0;
-        // And jump the panel view back to the default tab so reopening
-        // always lands on the launcher / home view, regardless of which
-        // tab the user was on when they closed.
-        self.panel_view = PanelView::Default;
+        // Cancel any in-flight view-switch animation, but preserve which
+        // tab the user is on — reopening should land on the same view.
         self.view_anim_start = None;
         self.view_anim_from = None;
         match self.visibility {

@@ -11,20 +11,10 @@ use smithay::{
     utils::{Logical, Rectangle},
 };
 
-use crate::rect_anim::{Curve, RectAnim};
+use crate::rect_anim::RectAnim;
 
-/// Cinematic spring duration for tiling reflows.
 fn anim_duration() -> Duration { crate::animations::tiling_duration() }
-/// Spring damping (lower = more bouncy, 1.0 = critically damped).
-/// Bumped up from 0.7 → 0.82 so the longer cinematic duration doesn't wobble.
-const SPRING_DAMPING: f64 = 0.82;
-/// Spring oscillation frequency. Lowered from 5.0 → 4.0 to match cinematic feel.
-const SPRING_FREQUENCY: f64 = 4.0;
-
-const TILING_CURVE: Curve = Curve::Spring {
-    damping: SPRING_DAMPING,
-    frequency: SPRING_FREQUENCY,
-};
+fn tiling_curve() -> crate::rect_anim::Curve { crate::animations::tiling_curve() }
 
 pub struct TilingAnimationState {
     animations: HashMap<WlSurface, RectAnim>,
@@ -50,7 +40,7 @@ impl TilingAnimationState {
             if existing.target() == target_rect {
                 return;
             }
-            existing.redirect(target_rect, anim_duration(), TILING_CURVE);
+            existing.redirect(target_rect, anim_duration(), tiling_curve());
             return;
         }
 
@@ -62,7 +52,7 @@ impl TilingAnimationState {
 
         self.animations.insert(
             surface.clone(),
-            RectAnim::new(current_rect, target_rect, anim_duration(), TILING_CURVE),
+            RectAnim::new(current_rect, target_rect, anim_duration(), tiling_curve()),
         );
     }
 
