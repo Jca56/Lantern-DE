@@ -32,7 +32,6 @@ members = [
     "lntrn-sysmon",
     "lntrn-icons",
     "lntrn-screencopy",
-    "lntrn-video-editor",
     "lntrn-lava-lamp",
     "lntrn-command-center",
     "lntrn-keychain",
