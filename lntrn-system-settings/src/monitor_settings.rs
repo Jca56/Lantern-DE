@@ -62,18 +62,53 @@ impl MonitorSettingsState {
     }
 
     /// Sync from the output manager's current state for a given head.
-    pub fn sync_from_head(&mut self, output_mgr: &OutputManagerClient, head_idx: usize) {
+    /// When `config_entry` is `Some`, its values take priority over the
+    /// compositor's current mode/scale — the lantern.toml is the user's source
+    /// of truth, and showing the live wl_output state when the two disagree
+    /// looks like a lie ("I wrote 1920x1080 but settings shows 2560x1440").
+    pub fn sync_from_head(
+        &mut self,
+        output_mgr: &OutputManagerClient,
+        head_idx: usize,
+        config_entry: Option<&MonitorEntry>,
+    ) {
         let Some(head) = output_mgr.heads.get(head_idx) else { return };
+
         if self.selected_resolution.is_none() {
-            if let Some(mi) = head.current_mode {
+            let from_config = config_entry
+                .and_then(|c| parse_resolution(&c.resolution).map(|r| (r, c.refresh_rate.as_str())))
+                .and_then(|((w, h), refresh_str)| {
+                    let refresh = refresh_str.parse::<i32>().ok();
+                    // Prefer an exact (resolution, refresh) match; fall back to
+                    // any mode at the saved resolution.
+                    head.modes
+                        .iter()
+                        .position(|m| {
+                            m.width == w
+                                && m.height == h
+                                && refresh.map_or(false, |r| m.refresh == r)
+                        })
+                        .or_else(|| {
+                            head.modes.iter().position(|m| m.width == w && m.height == h)
+                        })
+                        .map(|mi| (w, h, mi))
+                });
+
+            if let Some((w, h, mi)) = from_config {
+                self.selected_resolution = Some((w, h));
+                self.selected_mode_idx = Some(mi);
+            } else if let Some(mi) = head.current_mode {
                 if let Some(mode) = head.modes.get(mi) {
                     self.selected_resolution = Some((mode.width, mode.height));
                     self.selected_mode_idx = Some(mi);
                 }
             }
         }
+
         if self.selected_scale.is_none() {
-            self.selected_scale = Some(head.scale);
+            self.selected_scale = config_entry
+                .map(|c| c.scale as f64)
+                .or(Some(head.scale));
         }
     }
 
@@ -90,10 +125,12 @@ impl MonitorSettingsState {
 // ── Draw ───────────────────────────────────────────────────────────
 
 /// Draw per-monitor settings. Returns height consumed.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_monitor_settings(
     output_mgr: &OutputManagerClient,
     mss: &mut MonitorSettingsState,
     head_idx: usize,
+    config_entry: Option<&MonitorEntry>,
     painter: &mut Painter,
     text: &mut TextRenderer,
     ix: &mut InteractionContext,
@@ -107,7 +144,7 @@ pub fn draw_monitor_settings(
     show_header: bool,
 ) -> f32 {
     let Some(head) = output_mgr.heads.get(head_idx) else { return 0.0 };
-    mss.sync_from_head(output_mgr, head_idx);
+    mss.sync_from_head(output_mgr, head_idx, config_entry);
 
     let pad = PAD * s;
     let lsz = LABEL_SIZE * s;
@@ -206,7 +243,7 @@ pub fn draw_monitor_settings(
     text.queue("Scale", lsz, label_x, scale_label_y, fox.text, label_w, sw, sh);
 
     let scales = [1.0, 1.1, 1.2, 1.3, 1.4, 1.5];
-    let cur_scale = mss.selected_scale.unwrap_or(1.25);
+    let cur_scale = mss.selected_scale.unwrap_or(1.0);
     let scale_text = if cur_scale.fract().abs() < 0.001 {
         format!("{:.0}x", cur_scale)
     } else {
@@ -324,6 +361,13 @@ pub fn handle_monitor_settings_click(
 
 // ── Drawing helpers ────────────────────────────────────────────────
 
+/// Parse a `"WxH"` resolution string from lantern.toml. Returns `None` for
+/// empty or malformed values.
+fn parse_resolution(s: &str) -> Option<(i32, i32)> {
+    let (w, h) = s.split_once('x')?;
+    Some((w.trim().parse().ok()?, h.trim().parse().ok()?))
+}
+
 fn draw_dropdown_button(
     painter: &mut Painter,
     text: &mut TextRenderer,
@@ -376,7 +420,7 @@ pub fn persist_monitor_settings(
                 y,
                 resolution: String::new(),
                 refresh_rate: String::new(),
-                scale: 1.25,
+                scale: 1.0,
                 wallpaper: String::new(),
             });
             config.monitors.last_mut().unwrap()

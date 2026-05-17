@@ -9,19 +9,21 @@
 //! a connect; secured networks the user hasn't connected to before
 //! show a password modal.
 //!
-//! Backend: shells out to `nmcli`. Scans take ~500-1500 ms so we run
-//! them on a dedicated background thread that pushes results through
-//! mpsc channels — the panel render loop just `try_recv`s on tick.
+//! Backend: autodetected at startup — iwd (over D-Bus) on the Gentoo
+//! desktop, NetworkManager (via `nmcli`) on the Arch laptop. Scans take
+//! ~500-1500 ms either way so we run them on a dedicated background
+//! thread that pushes results through mpsc channels — the panel render
+//! loop just `try_recv`s on tick.
 //!
 //! Layout of this module:
 //! - `mod.rs` (this file): public types, [`Wifi`] state struct, password
 //!   prompt, and the worker-bound enums.
-//! - `worker.rs`: the background polling thread and its nmcli shellouts.
+//! - `worker/`: the background polling thread plus the per-backend
+//!   implementations (`worker/nm.rs`, `worker/iwd.rs`).
 //! - `view.rs`: tile + click-expand drawing, hit-testing, and layout.
 //! - `modal.rs`: password-prompt drawing and hit-testing.
 
 use std::collections::HashMap;
-use std::process::Command;
 use std::sync::mpsc;
 use std::thread;
 
@@ -223,7 +225,8 @@ pub struct Wifi {
     networks: Vec<Network>,
     /// Last connect failure shown in the expanded view.
     last_error: Option<String>,
-    /// Whether `nmcli` was available at startup. False → tile draws nothing.
+    /// Whether a usable WiFi backend (iwd or NetworkManager) was detected
+    /// at startup. False → tile draws nothing.
     available: bool,
     cmd_tx: mpsc::Sender<WifiCmd>,
     event_rx: mpsc::Receiver<WifiEvent>,
@@ -271,21 +274,21 @@ impl PasswordPrompt {
 
 impl Wifi {
     pub fn new() -> Self {
-        // Quick availability check up front — if nmcli is missing we
-        // skip spawning the worker so the tile just hides.
-        let available = Command::new("nmcli")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
+        // Detect the backend up front — iwd preferred over NM when both
+        // are present (matches the Lantern preference on the Gentoo
+        // desktop). No backend at all → skip spawning the worker so the
+        // tile hides cleanly.
+        let backend = worker::Backend::detect();
+        let available = backend.is_some();
 
         let (cmd_tx, cmd_rx) = mpsc::channel();
         let (event_tx, event_rx) = mpsc::channel();
 
-        if available {
+        if let Some(backend) = backend {
+            tracing::info!(?backend, "wifi backend selected");
             thread::Builder::new()
                 .name("lcc-wifi-poll".into())
-                .spawn(move || worker::run(event_tx, cmd_rx))
+                .spawn(move || worker::run(backend, event_tx, cmd_rx))
                 .ok();
         }
 

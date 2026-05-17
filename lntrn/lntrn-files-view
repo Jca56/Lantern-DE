@@ -1,0 +1,597 @@
+#!/usr/bin/env python3
+"""lntrn-files-view — two-pane TUI file manager.
+
+Midnight Commander-style: two panes side-by-side, Tab swaps active pane,
+arrow keys navigate, function keys perform actions. Amber lantern aesthetic
+matching the rest of Lantern DE. /proc + stdlib only, no external deps.
+Launched by `lntrn --files`.
+"""
+import fcntl, os, re, select, shutil, signal, stat, sys, termios, time, tty, unicodedata
+from pathlib import Path
+
+# ── Config ─────────────────────────────────────────────────────────────────
+MIN_COLS, MIN_ROWS = 60, 16
+STATUS_DURATION   = 4.0
+
+# ── ANSI primitives ────────────────────────────────────────────────────────
+CSI = '\x1b['
+RESET, BOLD = CSI+'0m', CSI+'1m'
+HIDE_CUR, SHOW_CUR = CSI+'?25l', CSI+'?25h'
+ALT_ON,  ALT_OFF   = CSI+'?1049h', CSI+'?1049l'
+HOME, CLR_SCREEN, CLR_LINE, CLR_EOS = CSI+'H', CSI+'2J', CSI+'K', CSI+'J'
+def fg(c):  return f'{CSI}38;2;{c[0]};{c[1]};{c[2]}m'
+def bg(c):  return f'{CSI}48;2;{c[0]};{c[1]};{c[2]}m'
+def cup(r, c): return f'{CSI}{r};{c}H'
+
+# ── Theme (matches lntrn-sysmon-view) ──────────────────────────────────────
+AMBER, AMBER_HI, AMBER_DIM    = (212, 160, 32), (255, 186, 72), (135, 100, 55)
+BORDER_CLR                    = ( 95,  68, 30)
+SEL_BG, SEL_BG_DIM            = ( 90,  62, 26), (45, 32, 14)
+TEXT, TEXT_DIM, TEXT_MUTED    = (225, 205, 175), (150, 130, 100), (95, 85, 75)
+DIR_CLR, EXEC_CLR, LINK_CLR   = (100, 170, 235), (100, 205, 115), (70, 195, 210)
+HIDDEN_CLR                    = (130, 100, 70)
+RED, GREEN, YELLOW            = (240, 70, 50), (100, 205, 115), (240, 205, 70)
+
+# ── Glyphs ─────────────────────────────────────────────────────────────────
+BOX_TL, BOX_TR, BOX_BL, BOX_BR = '╭', '╮', '╰', '╯'
+BOX_H,  BOX_V                  = '─', '│'
+BOX_TD, BOX_TU, BOX_LR, BOX_RL, BOX_X = '┬', '┴', '├', '┤', '┼'
+BOLT = '⚡'
+
+# ── Visible width & truncation (ANSI-aware) ────────────────────────────────
+ANSI_RE = re.compile(r'\x1b\[[0-9;]*[A-Za-z]')
+def char_w(ch):
+    return 2 if unicodedata.east_asian_width(ch) in ('W', 'F') else 1
+def vlen(s):
+    return sum(char_w(c) for c in ANSI_RE.sub('', s))
+def vtrunc(s, n):
+    if n <= 0: return ''
+    out, vis, i, L = [], 0, 0, len(s)
+    while i < L:
+        if s[i] == '\x1b':
+            j = i + 1
+            if j < L and s[j] == '[':
+                j += 1
+                while j < L and not s[j].isalpha(): j += 1
+                if j < L: j += 1
+            out.append(s[i:j]); i = j
+        else:
+            w = char_w(s[i])
+            if vis + w > n: break
+            out.append(s[i]); vis += w; i += 1
+    out.append(RESET)
+    return ''.join(out)
+def pad_to(s, n):
+    v = vlen(s)
+    return vtrunc(s, n) if v > n else s + ' '*(n-v)
+
+# ── Formatting helpers ─────────────────────────────────────────────────────
+def home_str(p):
+    home = Path.home()
+    try:
+        rel = p.relative_to(home)
+        return '~' if str(rel) == '.' else '~/' + str(rel)
+    except ValueError:
+        return str(p)
+
+def fmt_size(n):
+    f = float(n)
+    for u in ('B', 'K', 'M', 'G', 'T'):
+        if f < 1024 or u == 'T':
+            if u == 'B': return f'{int(f):>4}{u}'
+            return f'{f:>4.1f}{u}' if f < 10 else f'{f:>4.0f}{u}'
+        f /= 1024
+    return f'{int(f)}P'
+
+def fmt_mtime(ts):
+    now = time.time()
+    if now - ts < 86400 * 180:
+        return time.strftime('%b %d %H:%M', time.localtime(ts))
+    return time.strftime('%b %d  %Y', time.localtime(ts))
+
+# ── File listing ───────────────────────────────────────────────────────────
+def list_dir(path, show_hidden):
+    try:
+        names = os.listdir(path)
+    except OSError as ex:
+        return [], str(ex)
+    entries = []
+    for n in names:
+        if not show_hidden and n.startswith('.'):
+            continue
+        full = path / n
+        try:
+            st = full.lstat()
+        except OSError:
+            continue
+        is_link = stat.S_ISLNK(st.st_mode)
+        if is_link:
+            try:
+                st_t = full.stat()
+                is_dir  = stat.S_ISDIR(st_t.st_mode)
+                is_exec = bool(st_t.st_mode & 0o111) and not is_dir
+            except OSError:
+                is_dir = False; is_exec = False
+        else:
+            is_dir  = stat.S_ISDIR(st.st_mode)
+            is_exec = bool(st.st_mode & 0o111) and not is_dir
+        entries.append({
+            'name':  n,
+            'dir':   is_dir,
+            'link':  is_link,
+            'exec':  is_exec,
+            'size':  None if is_dir else st.st_size,
+            'mtime': st.st_mtime,
+        })
+    entries.sort(key=lambda e: (not e['dir'], e['name'].lower()))
+    return entries, None
+
+def entry_color(e):
+    if e['dir']:                    return fg(DIR_CLR)
+    if e['link']:                   return fg(LINK_CLR)
+    if e['name'].startswith('.'):   return fg(HIDDEN_CLR)
+    if e['exec']:                   return fg(EXEC_CLR)
+    return fg(TEXT)
+
+# ── Pane ───────────────────────────────────────────────────────────────────
+class Pane:
+    def __init__(self, path):
+        self.cwd = Path(path).resolve()
+        self.cursor = 0
+        self.scroll = 0
+        self.entries = []
+        self.err = None
+
+    def refresh(self, show_hidden, focus_name=None):
+        self.entries, self.err = list_dir(self.cwd, show_hidden)
+        if focus_name:
+            for i, e in enumerate(self.entries):
+                if e['name'] == focus_name:
+                    self.cursor = i; break
+        if self.cursor >= len(self.entries):
+            self.cursor = max(0, len(self.entries) - 1)
+
+    def current(self):
+        return self.entries[self.cursor] if 0 <= self.cursor < len(self.entries) else None
+
+    def adjust_scroll(self, visible):
+        if self.cursor < self.scroll: self.scroll = self.cursor
+        elif self.cursor >= self.scroll + visible: self.scroll = self.cursor - visible + 1
+        self.scroll = max(0, min(max(0, len(self.entries) - visible), self.scroll))
+
+    def move(self, delta, visible):
+        if not self.entries: return
+        self.cursor = max(0, min(len(self.entries) - 1, self.cursor + delta))
+        self.adjust_scroll(visible)
+
+    def descend(self, show_hidden):
+        e = self.current()
+        if not e or not e['dir']: return False, None
+        new = (self.cwd / e['name']).resolve()
+        if not os.access(new, os.R_OK | os.X_OK):
+            return False, f"Permission denied: {e['name']}"
+        self.cwd = new
+        self.cursor = self.scroll = 0
+        self.refresh(show_hidden)
+        return True, None
+
+    def ascend(self, show_hidden):
+        parent = self.cwd.parent
+        if parent == self.cwd: return False
+        prev_name = self.cwd.name
+        self.cwd = parent
+        self.cursor = self.scroll = 0
+        self.refresh(show_hidden, focus_name=prev_name)
+        return True
+
+    def recover(self, show_hidden):
+        while not self.cwd.exists():
+            p = self.cwd.parent
+            if p == self.cwd: break
+            self.cwd = p
+        self.cursor = self.scroll = 0
+        self.refresh(show_hidden)
+
+# ── Input parsing ──────────────────────────────────────────────────────────
+def _csi_to_key(params, final):
+    simple = {'A':'UP', 'B':'DOWN', 'C':'RIGHT', 'D':'LEFT',
+              'H':'HOME', 'F':'END', 'Z':'STAB'}
+    if final in simple: return simple[final]
+    if final == '~':
+        tilde = {'1':'HOME', '2':'INS', '3':'DEL', '4':'END',
+                 '5':'PGUP', '6':'PGDN', '7':'HOME', '8':'END',
+                 '11':'F1', '12':'F2', '13':'F3', '14':'F4', '15':'F5',
+                 '17':'F6', '18':'F7', '19':'F8', '20':'F9', '21':'F10',
+                 '23':'F11', '24':'F12'}
+        p0 = params.split(';')[0] if params else ''
+        return tilde.get(p0)
+    return None
+
+def parse_key(buf):
+    """Parse one key event from buf. Return (key, remaining)
+    or (None, buf) if buf is incomplete (need more bytes)."""
+    if not buf: return None, b''
+    b0 = buf[0]
+    if b0 == 0x1b:
+        if len(buf) == 1: return 'ESC', b''
+        b1 = buf[1]
+        if b1 == ord('['):
+            i = 2
+            while i < len(buf) and (buf[i] == ord(';') or chr(buf[i]).isdigit()): i += 1
+            if i >= len(buf): return None, buf
+            return _csi_to_key(buf[2:i].decode('ascii', 'replace'), chr(buf[i])), buf[i+1:]
+        if b1 == ord('O'):
+            if len(buf) < 3: return None, buf
+            return {'P':'F1','Q':'F2','R':'F3','S':'F4','H':'HOME','F':'END'}.get(chr(buf[2])), buf[3:]
+        return 'ESC', buf[1:]
+    if b0 in (0x0d, 0x0a): return 'ENTER', buf[1:]
+    if b0 == 0x09:         return 'TAB',   buf[1:]
+    if b0 in (0x7f, 0x08): return 'BS',    buf[1:]
+    if b0 == 0x03:         return 'CTRLC', buf[1:]
+    if b0 < 0x20:          return f'CTRL{chr(b0 + 0x40)}', buf[1:]
+    if b0 < 0x80:          return chr(b0), buf[1:]
+    if b0 >= 0xc0:
+        w = 2 if b0 < 0xe0 else (3 if b0 < 0xf0 else 4)
+        if len(buf) < w: return None, buf
+        try: return buf[:w].decode('utf-8'), buf[w:]
+        except UnicodeDecodeError: return None, buf[1:]
+    return None, buf[1:]
+
+# ── Prompt (modal text / yesno on the status row) ──────────────────────────
+class Prompt:
+    def __init__(self, label, kind, initial=''):
+        self.label  = label
+        self.kind   = kind     # 'text' or 'yesno'
+        self.text   = initial
+        self.cursor = len(initial)
+        self.done   = False
+        self.result = None
+
+    def handle(self, key):
+        if self.kind == 'yesno':
+            if key in ('y', 'Y'):                   self.result = True;  self.done = True
+            elif key in ('n', 'N', 'ESC', 'CTRLC',
+                         'ENTER'):                  self.result = False; self.done = True
+            return
+        t, c = self.text, self.cursor
+        if key == 'ENTER':         self.result = t.strip(); self.done = True
+        elif key in ('ESC','CTRLC'): self.result = None; self.done = True
+        elif key == 'BS' and c > 0: self.text, self.cursor = t[:c-1] + t[c:], c - 1
+        elif key == 'DEL' and c < len(t): self.text = t[:c] + t[c+1:]
+        elif key == 'LEFT':        self.cursor = max(0, c - 1)
+        elif key == 'RIGHT':       self.cursor = min(len(t), c + 1)
+        elif key == 'HOME':        self.cursor = 0
+        elif key == 'END':         self.cursor = len(t)
+        elif (isinstance(key, str) and key and not key.startswith(('F', 'CTRL'))
+              and key not in ('UP','DOWN','PGUP','PGDN','TAB','STAB','INS')
+              and all(ch.isprintable() for ch in key)):
+            self.text = t[:c] + key + t[c:]
+            self.cursor = c + len(key)
+
+# ── App state ──────────────────────────────────────────────────────────────
+class App:
+    def __init__(self, start_path):
+        sp = Path(start_path).resolve()
+        if not sp.is_dir(): sp = Path.home()
+        self.panes  = [Pane(sp), Pane(sp)]
+        self.active = 0
+        self.show_hidden = False
+        self.status_text  = ''
+        self.status_color = TEXT_DIM
+        self.status_ts    = 0.0
+        self.prompt  = None
+        self.pending = None
+        for p in self.panes: p.refresh(self.show_hidden)
+
+    def pane(self):  return self.panes[self.active]
+    def other(self): return self.panes[1 - self.active]
+
+    def set_status(self, msg, color=None):
+        self.status_text = msg
+        self.status_color = color or TEXT_DIM
+        self.status_ts = time.monotonic()
+
+    def visible_status(self):
+        if not self.status_text: return None
+        if time.monotonic() - self.status_ts > STATUS_DURATION:
+            self.status_text = ''
+            return None
+        return self.status_text, self.status_color
+
+    def refresh_panes(self):
+        for p in self.panes:
+            if not p.cwd.exists():
+                p.recover(self.show_hidden)
+            else:
+                cur = p.current()
+                p.refresh(self.show_hidden, focus_name=cur['name'] if cur else None)
+
+    def _focus_in_active(self, name):
+        for i, e in enumerate(self.pane().entries):
+            if e['name'] == name:
+                self.pane().cursor = i; break
+
+    # ── Action starters ──
+    def start_mkdir(self):
+        self.prompt = Prompt('mkdir:', 'text'); self.pending = ('mkdir',)
+    def start_newfile(self):
+        self.prompt = Prompt('new file:', 'text'); self.pending = ('newfile',)
+    def start_rename(self):
+        e = self.pane().current()
+        if not e: return self.set_status('Nothing to rename', fg(YELLOW))
+        self.prompt = Prompt('rename to:', 'text', initial=e['name'])
+        self.pending = ('rename', e['name'])
+    def start_delete(self):
+        e = self.pane().current()
+        if not e: return self.set_status('Nothing to delete', fg(YELLOW))
+        kind = 'dir' if e['dir'] else ('link' if e['link'] else 'file')
+        self.prompt = Prompt(f"delete {kind} '{e['name']}'? [y/N]", 'yesno')
+        self.pending = ('delete', e['name'])
+
+    # ── Action finalizer ──
+    def finalize_prompt(self):
+        if not self.prompt.done: return
+        result = self.prompt.result
+        kind, *args = self.pending
+        self.prompt = None; self.pending = None
+        cwd = self.pane().cwd
+        try:
+            if kind in ('mkdir', 'newfile'):
+                if not result: return self.set_status('Cancelled', TEXT_MUTED)
+                if '/' in result: return self.set_status("name can't contain '/'", fg(RED))
+                target = cwd / result
+                if target.exists(): raise FileExistsError(f"'{result}' exists")
+                if kind == 'mkdir': target.mkdir(parents=False, exist_ok=False)
+                else: target.touch(exist_ok=False)
+                self.refresh_panes(); self._focus_in_active(result)
+                self.set_status(f"created {'dir' if kind=='mkdir' else 'file'} '{result}'", fg(GREEN))
+            elif kind == 'rename':
+                old = args[0]
+                if not result or result == old: return self.set_status('Cancelled', TEXT_MUTED)
+                if '/' in result: return self.set_status("name can't contain '/'", fg(RED))
+                dst = cwd / result
+                if dst.exists(): raise FileExistsError(f"'{result}' exists")
+                (cwd / old).rename(dst)
+                self.refresh_panes(); self._focus_in_active(result)
+                self.set_status(f"renamed to '{result}'", fg(GREEN))
+            elif kind == 'delete':
+                name = args[0]
+                if not result: return self.set_status('Cancelled', TEXT_MUTED)
+                target = cwd / name
+                if target.is_dir() and not target.is_symlink(): shutil.rmtree(target)
+                else: target.unlink()
+                self.refresh_panes()
+                p = self.pane()
+                if p.cursor >= len(p.entries):
+                    p.cursor = max(0, len(p.entries) - 1)
+                self.set_status(f"deleted '{name}'", fg(GREEN))
+        except OSError as ex:
+            self.set_status(f"{kind} failed: {ex}", fg(RED))
+
+# ── Key handling ───────────────────────────────────────────────────────────
+def handle_key(app, key, content_h):
+    if app.prompt:
+        app.prompt.handle(key)
+        if app.prompt.done: app.finalize_prompt()
+        return False
+    p = app.pane()
+    if key == 'UP':       p.move(-1, content_h)
+    elif key == 'DOWN':   p.move(1, content_h)
+    elif key == 'PGUP':   p.move(-(content_h - 1), content_h)
+    elif key == 'PGDN':   p.move(content_h - 1, content_h)
+    elif key == 'HOME':   p.cursor = 0; p.adjust_scroll(content_h)
+    elif key == 'END':    p.cursor = max(0, len(p.entries) - 1); p.adjust_scroll(content_h)
+    elif key in ('ENTER', 'RIGHT'):
+        ok, err = p.descend(app.show_hidden)
+        if err: app.set_status(err, fg(RED))
+    elif key in ('LEFT', 'BS'):  p.ascend(app.show_hidden)
+    elif key in ('TAB', 'STAB'): app.active = 1 - app.active
+    elif key == 'F6':            app.start_rename()
+    elif key == 'F7':            app.start_mkdir()
+    elif key == 'F8':            app.start_delete()
+    elif key == 'F9':            app.start_newfile()
+    elif key in ('F5', 'CTRLR'):
+        app.refresh_panes(); app.set_status('refreshed', TEXT_DIM)
+    elif key in ('CTRLH', '.'):
+        app.show_hidden = not app.show_hidden
+        app.refresh_panes()
+        app.set_status(f"hidden files {'shown' if app.show_hidden else 'hidden'}", TEXT_DIM)
+    elif key in ('F10', 'ESC', 'CTRLC', 'q', 'Q'):
+        return True
+    return False
+
+# ── Render ─────────────────────────────────────────────────────────────────
+def render_pane_title(pane, active, width):
+    path = home_str(pane.cwd)
+    clr  = (BOLD + fg(AMBER_HI)) if active else fg(AMBER_DIM)
+    return pad_to(' ' + clr + path + RESET, width)
+
+def render_row(e, width, sel, active):
+    suffix = '/' if e['dir'] else ('@' if e['link'] else ('*' if e['exec'] else ''))
+    sz   = fmt_size(e['size']) if e['size'] is not None else '   - '
+    mt   = fmt_mtime(e['mtime'])
+    right = f' {sz}  {mt} '
+    rw    = vlen(right)
+    name_w = max(1, width - rw - 1)
+    name   = e['name'] + suffix
+    if vlen(name) > name_w:
+        name = name[:name_w - 1] + '…'
+    pad_n = name_w - vlen(name)
+    clr   = entry_color(e)
+    if sel:
+        bgc = bg(SEL_BG) if active else bg(SEL_BG_DIM)
+        return (bgc + ' ' + clr + name + ' ' * pad_n
+                + fg(TEXT_DIM) + right + RESET)
+    return (' ' + clr + name + ' ' * pad_n + fg(TEXT_DIM) + right + RESET)
+
+def render_pane_body(pane, active, width, height):
+    pane.adjust_scroll(height)
+    lines = []
+    if pane.err:
+        lines.append(pad_to(' ' + fg(RED) + pane.err + RESET, width))
+    else:
+        n = len(pane.entries)
+        for i in range(height):
+            idx = pane.scroll + i
+            if idx >= n:
+                lines.append(' ' * width)
+            else:
+                e = pane.entries[idx]
+                lines.append(render_row(e, width, idx == pane.cursor, active))
+    while len(lines) < height: lines.append(' ' * width)
+    return lines
+
+def render_status_or_prompt(app, width):
+    if app.prompt:
+        p = app.prompt
+        head = ' ' + fg(AMBER_HI) + BOLD + p.label + RESET + ' '
+        body = p.text if p.kind == 'text' else ''
+        full = head + fg(TEXT) + body + RESET
+        return pad_to(full, width), len(p.label) + 3 + p.cursor  # +1 leading space, +1 space after label, +1 to 1-based
+    vis = app.visible_status()
+    if vis:
+        msg, color = vis
+        return pad_to(' ' + color + msg + RESET, width), None
+    e = app.pane().current()
+    if e:
+        sz = fmt_size(e['size']) if e['size'] is not None else '   - '
+        mt = fmt_mtime(e['mtime'])
+        info = ' ' + fg(TEXT_MUTED) + f"{e['name']}  {sz}  {mt}" + RESET
+        return pad_to(info, width), None
+    return ' ' * width, None
+
+def render(app, cols, rows):
+    if cols < MIN_COLS or rows < MIN_ROWS:
+        return HOME + CLR_SCREEN + fg(AMBER) + (
+            f'  lntrn files needs ≥ {MIN_COLS}×{MIN_ROWS} (have {cols}×{rows})' + RESET), None
+    inner_w = cols - 2
+    left_w  = (inner_w - 1) // 2
+    right_w = inner_w - 1 - left_w
+    content_h = rows - 6   # top + title + sep + bottom-sep + status + hint + bottom = 7; content = rows - 7
+    if content_h < 1: content_h = 1
+    # Total lines built below = 7 + content_h; reduce if needed
+    if 7 + content_h > rows: content_h = max(1, rows - 7)
+
+    lines = []
+    border = fg(BORDER_CLR)
+    # Top border
+    lines.append(border + BOX_TL + BOX_H * left_w + BOX_TD + BOX_H * right_w + BOX_TR + RESET)
+    # Title row
+    tl = render_pane_title(app.panes[0], app.active == 0, left_w)
+    tr = render_pane_title(app.panes[1], app.active == 1, right_w)
+    lines.append(border + BOX_V + RESET + tl + border + BOX_V + RESET + tr + border + BOX_V + RESET)
+    # Mid separator
+    lines.append(border + BOX_LR + BOX_H * left_w + BOX_X + BOX_H * right_w + BOX_RL + RESET)
+    # Body rows
+    lb = render_pane_body(app.panes[0], app.active == 0, left_w,  content_h)
+    rb = render_pane_body(app.panes[1], app.active == 1, right_w, content_h)
+    for i in range(content_h):
+        lines.append(border + BOX_V + RESET + lb[i] + border + BOX_V + RESET + rb[i] + border + BOX_V + RESET)
+    # Lower separator
+    lines.append(border + BOX_LR + BOX_H * left_w + BOX_TU + BOX_H * right_w + BOX_RL + RESET)
+    # Status / prompt row
+    status_line, cursor_col = render_status_or_prompt(app, inner_w)
+    lines.append(border + BOX_V + RESET + status_line + border + BOX_V + RESET)
+    status_row = len(lines)  # 1-based row index for cursor placement
+    # Hint row
+    hint = (f' {BOLT} ' + fg(AMBER) + 'F6' + RESET + fg(TEXT_MUTED) + ' rename · '
+            + fg(AMBER) + 'F7' + RESET + fg(TEXT_MUTED) + ' mkdir · '
+            + fg(AMBER) + 'F8' + RESET + fg(TEXT_MUTED) + ' delete · '
+            + fg(AMBER) + 'F9' + RESET + fg(TEXT_MUTED) + ' new · '
+            + fg(AMBER) + 'Tab' + RESET + fg(TEXT_MUTED) + ' swap · '
+            + fg(AMBER) + '.' + RESET + fg(TEXT_MUTED) + ' hidden · '
+            + fg(AMBER) + 'q' + RESET + fg(TEXT_MUTED) + ' quit' + RESET)
+    lines.append(border + BOX_V + RESET + pad_to(hint, inner_w) + border + BOX_V + RESET)
+    # Bottom border
+    lines.append(border + BOX_BL + BOX_H * inner_w + BOX_BR + RESET)
+
+    out = [HOME]
+    for i, line in enumerate(lines):
+        out.append(line + CLR_LINE)
+        if i < len(lines) - 1: out.append('\n')
+    out.append(CLR_EOS)
+    cursor_pos = None
+    if app.prompt and cursor_col is not None:
+        cursor_pos = (status_row, 1 + 1 + cursor_col)  # 1 for left border, +1 because cursor_col is offset within inner
+    return ''.join(out), cursor_pos
+
+# ── Main loop ──────────────────────────────────────────────────────────────
+def main():
+    start = sys.argv[1] if len(sys.argv) > 1 else os.environ.get('PWD', str(Path.cwd()))
+    app = App(start)
+
+    fd = sys.stdin.fileno()
+    old_attrs = old_fl = None
+
+    def cleanup():
+        sys.stdout.write(SHOW_CUR + ALT_OFF); sys.stdout.flush()
+        if old_attrs is not None:
+            try: termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
+            except Exception: pass
+        if old_fl is not None:
+            try: fcntl.fcntl(fd, fcntl.F_SETFL, old_fl)
+            except Exception: pass
+
+    signal.signal(signal.SIGTERM, lambda *_: (cleanup(), sys.exit(0)))
+    signal.signal(signal.SIGHUP,  lambda *_: (cleanup(), sys.exit(0)))
+    resized = [True]
+    signal.signal(signal.SIGWINCH, lambda *_: resized.__setitem__(0, True))
+
+    try: old_attrs = termios.tcgetattr(fd); tty.setcbreak(fd)
+    except Exception: pass
+    try:
+        old_fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, old_fl | os.O_NONBLOCK)
+    except Exception: pass
+
+    sys.stdout.write(ALT_ON + HIDE_CUR + CLR_SCREEN + HOME); sys.stdout.flush()
+
+    in_buf = b''
+    try:
+        while True:
+            cols, rows_ = shutil.get_terminal_size((100, 30))
+            output, cursor_pos = render(app, cols, rows_)
+            if cursor_pos:
+                output += cup(cursor_pos[0], cursor_pos[1]) + SHOW_CUR
+            else:
+                output += HIDE_CUR
+            sys.stdout.write(output); sys.stdout.flush()
+            resized[0] = False
+
+            # Wait for input with a long-ish timeout; also wake on status fade
+            timeout = 1.0 if app.status_text else 30.0
+            ready, _, _ = select.select([fd], [], [], timeout)
+            if not ready and not resized[0]: continue
+            if ready:
+                try: chunk = os.read(fd, 1024)
+                except BlockingIOError: chunk = b''
+                if not chunk: continue
+                in_buf += chunk
+                # Drain all complete key events from the buffer
+                while True:
+                    key, rest = parse_key(in_buf)
+                    if key is None:
+                        # Incomplete sequence — wait briefly for more bytes, else treat as ESC
+                        if in_buf and in_buf[0] == 0x1b and len(in_buf) > 1:
+                            # Try a tiny additional read for the tail
+                            r2, _, _ = select.select([fd], [], [], 0.02)
+                            if r2:
+                                try: in_buf += os.read(fd, 64)
+                                except BlockingIOError: pass
+                                continue
+                        in_buf = rest
+                        break
+                    in_buf = rest
+                    # Get current content_h for paging math
+                    cols, rows_ = shutil.get_terminal_size((100, 30))
+                    ch = max(1, rows_ - 7)
+                    if handle_key(app, key, ch):
+                        return
+                    if not in_buf: break
+    except KeyboardInterrupt:
+        pass
+    finally:
+        cleanup()
+
+if __name__ == '__main__':
+    main()

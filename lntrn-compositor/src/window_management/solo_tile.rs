@@ -32,13 +32,21 @@ impl Lantern {
     ) -> Option<Rectangle<i32, Logical>> {
         let geo = self.workspaces.output_geometry(output)?;
         let (top, bot, left, right) = self.exclusive_zone_offsets_for_output(output);
-        let gap = crate::tiling::SINGLE_WINDOW_OUTER_GAP;
-        let loc = Point::from((geo.loc.x + left + gap, geo.loc.y + top + gap));
-        let size = Size::from((
-            geo.size.w - left - right - gap * 2,
-            geo.size.h - top - bot - gap * 2,
-        ));
-        Some(Rectangle::new(loc, size))
+        let work_x = geo.loc.x + left;
+        let work_y = geo.loc.y + top;
+        let work_w = geo.size.w - left - right;
+        let work_h = geo.size.h - top - bot;
+        if work_w <= 0 || work_h <= 0 { return None; }
+
+        // Large rung — `size_large_pct` of the work area, centered. At 95%
+        // (default) this leaves a small visible margin around the window;
+        // pushing the slider higher essentially produces "near-fill".
+        let pct = crate::size_large_pct();
+        let w = (((work_w as f32) * pct).round() as i32).max(1).min(work_w);
+        let h = (((work_h as f32) * pct).round() as i32).max(1).min(work_h);
+        let x = work_x + (work_w - w) / 2;
+        let y = work_y + (work_h - h) / 2;
+        Some(Rectangle::new(Point::from((x, y)), Size::from((w, h))))
     }
 
     /// Move a window into solo-tile state. Captures the current rect as
@@ -210,7 +218,7 @@ impl Lantern {
                 // minimize via the ladder.
                 return self.try_uncorner_to_half();
             }
-            if slot == PoseSlot::Tiny {
+            if slot.is_tiny_variant() {
                 return self.minimize_surface(&surface, serial);
             }
             // PoseSlot::Middle falls through to the Tiny shrink below.

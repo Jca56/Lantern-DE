@@ -98,21 +98,22 @@ impl CursorState {
                         }
                     }
                 }
-                if !self.custom_loaded {
-                    // Try Lantern SVG cursor first, then fall back to xcursor
-                    if !self.load_lantern_svg(icon_key) {
-                        self.load_xcursor(icon);
-                    }
-                } else {
-                    // Custom theme active but not the default icon — use xcursor for this shape
+                // Lantern SVGs cover both the default arrow and the four
+                // resize shapes — prefer them regardless of whether a custom
+                // default-cursor theme is active. xcursor is only the
+                // last-resort fallback (and is typically the system
+                // white/blue triangle when no xcursor theme is installed).
+                if !self.load_lantern_svg(icon_key) {
                     self.load_xcursor(icon);
                 }
             }
         }
     }
 
-    /// Try to load a Lantern SVG cursor from ~/.lantern/icons/cursors/
-    /// Returns true if successfully loaded.
+    /// Try to load a Lantern SVG cursor. Looks at
+    /// `~/.lantern/icons/cursors/{file}.svg` first so the user can tweak
+    /// cursors at runtime without rebuilding, then falls back to the
+    /// embedded `lntrn_icons` bytes. Returns true on success.
     fn load_lantern_svg(&mut self, icon_key: &'static str) -> bool {
         let svg_file = match icon_key {
             "default" => "lntrn-cursor.svg",
@@ -122,10 +123,22 @@ impl CursorState {
             "nwse-resize" => "lntrn-cursor-nwse.svg",
             _ => return false,
         };
-        let data = match lntrn_icons::get(svg_file) {
-            Some(d) => d,
-            None => return false,
-        };
+
+        // Runtime override: ~/.lantern/icons/cursors/<file>
+        let runtime_path = crate::lantern_home()
+            .join("icons/cursors")
+            .join(svg_file);
+        if let Ok(data) = std::fs::read(&runtime_path) {
+            if self.rasterize_svg(&data).is_some() {
+                self.loaded_icon_key = Some(icon_key);
+                tracing::info!("Loaded Lantern cursor: {}", runtime_path.display());
+                return true;
+            }
+            tracing::warn!("Failed to rasterize Lantern cursor: {}", runtime_path.display());
+        }
+
+        // Embedded fallback.
+        let Some(data) = lntrn_icons::get(svg_file) else { return false };
         if self.rasterize_svg(data).is_some() {
             self.loaded_icon_key = Some(icon_key);
             tracing::info!("Loaded embedded Lantern cursor: {}", svg_file);

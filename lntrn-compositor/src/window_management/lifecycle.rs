@@ -11,6 +11,28 @@ use crate::state::Lantern;
 use crate::window_ext::WindowExt;
 
 impl Lantern {
+    /// Resolve the default initial size from `[windows] default_size_pct`
+    /// (a percentage of the work area). We pick a single anchor output
+    /// (cursor's output → first registered) so the dimension is stable even
+    /// though the window's final placement may end up on a different output.
+    /// Returns None if no outputs are registered yet.
+    pub(crate) fn default_initial_size_from_pct(&self) -> Option<(i32, i32)> {
+        let pointer_pos = self.seat.get_pointer()
+            .map(|p| p.current_location())
+            .unwrap_or_default();
+        let output = self.output_at_point(pointer_pos)
+            .or_else(|| self.workspaces.outputs_iter().next().cloned())?;
+        let geo = self.workspaces.output_geometry(&output)?;
+        let (top, bot, left, right) = self.exclusive_zone_offsets_for_output(&output);
+        let work_w = geo.size.w - left - right;
+        let work_h = geo.size.h - top - bot;
+        if work_w <= 0 || work_h <= 0 { return None; }
+        let pct = crate::default_size_pct();
+        let w = (((work_w as f32) * pct).round() as i32).max(1);
+        let h = (((work_h as f32) * pct).round() as i32).max(1);
+        Some((w, h))
+    }
+
     pub fn track_window(&mut self, window: &Window) {
         let Some(surface) = window.get_wl_surface() else { return };
         if !self.window_spawn_order.contains(&surface) {
@@ -127,12 +149,19 @@ impl Lantern {
         if skip { return; }
 
         // Priority: explicit [[window_rules]] entry → client-provided min_size
-        // hint → global default. The min_size path lets apps like
-        // lntrn-image-viewer request a content-fit size at startup.
+        // hint → legacy `[windows] default_width/_height` → percentage of the
+        // primary output's work area (`default_size_pct`, the new UI knob).
+        // The min_size path lets apps like lntrn-image-viewer request a
+        // content-fit size at startup.
         let rule_size = self.window_rules.iter()
             .find(|r| r.app_id == app_id)
             .map(|r| (r.width, r.height));
-        let Some((w, h)) = rule_size.or(client_min).or(self.default_window_size) else { return };
+        let pct_size = self.default_initial_size_from_pct();
+        let Some((w, h)) = rule_size
+            .or(client_min)
+            .or(self.default_window_size)
+            .or(pct_size)
+        else { return };
 
         toplevel.with_pending_state(|state| {
             state.size = Some(Size::from((w, h)));

@@ -25,9 +25,16 @@ pub(super) fn worker(tx: mpsc::Sender<AudioEvent>, cmd_rx: mpsc::Receiver<AudioC
     loop {
         // Drain pending commands. Any setter triggers an immediate
         // re-poll so the cached state catches up without waiting for
-        // the next tick.
+        // the next tick. Volume sets coalesce — slider drags emit one
+        // SetVolume per drag-pixel, and each wpctl shellout blocks for
+        // ~50ms; without coalescing the worker falls dozens of frames
+        // behind a quick drag.
         let mut force_volume_repoll = false;
         let mut force_devices_repoll = false;
+        let mut latest_sink_volume: Option<f32> = None;
+        let mut latest_source_volume: Option<f32> = None;
+        let mut toggle_mute_pending = false;
+        let mut toggle_input_mute_pending = false;
         while let Ok(cmd) = cmd_rx.try_recv() {
             match cmd {
                 AudioCmd::Rescan => {
@@ -35,30 +42,17 @@ pub(super) fn worker(tx: mpsc::Sender<AudioEvent>, cmd_rx: mpsc::Receiver<AudioC
                     force_devices_repoll = true;
                 }
                 AudioCmd::SetVolume(v) => {
-                    let arg = format!("{:.2}", v);
-                    let _ = Command::new("wpctl")
-                        .args(["set-volume", "@DEFAULT_AUDIO_SINK@", &arg])
-                        .status();
-                    force_volume_repoll = true;
+                    latest_sink_volume = Some(v);
                 }
                 AudioCmd::SetInputVolume(v) => {
-                    let arg = format!("{:.2}", v);
-                    let _ = Command::new("wpctl")
-                        .args(["set-volume", "@DEFAULT_AUDIO_SOURCE@", &arg])
-                        .status();
-                    force_volume_repoll = true;
+                    latest_source_volume = Some(v);
                 }
                 AudioCmd::ToggleMute => {
-                    let _ = Command::new("wpctl")
-                        .args(["set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"])
-                        .status();
-                    force_volume_repoll = true;
+                    // XOR pending toggle — odd count toggles, even cancels.
+                    toggle_mute_pending = !toggle_mute_pending;
                 }
                 AudioCmd::ToggleInputMute => {
-                    let _ = Command::new("wpctl")
-                        .args(["set-mute", "@DEFAULT_AUDIO_SOURCE@", "toggle"])
-                        .status();
-                    force_volume_repoll = true;
+                    toggle_input_mute_pending = !toggle_input_mute_pending;
                 }
                 AudioCmd::SetDefaultSink(id) => {
                     let _ = Command::new("wpctl")
@@ -75,6 +69,34 @@ pub(super) fn worker(tx: mpsc::Sender<AudioEvent>, cmd_rx: mpsc::Receiver<AudioC
                     force_devices_repoll = true;
                 }
             }
+        }
+        if let Some(v) = latest_sink_volume {
+            let arg = format!("{:.2}", v);
+            // `--limit 1.5` lifts wpctl's default 100 % cap so the
+            // slider can boost up to 150 %; the UI clamps itself to 120 %.
+            let _ = Command::new("wpctl")
+                .args(["set-volume", "@DEFAULT_AUDIO_SINK@", &arg, "--limit", "1.5"])
+                .status();
+            force_volume_repoll = true;
+        }
+        if let Some(v) = latest_source_volume {
+            let arg = format!("{:.2}", v);
+            let _ = Command::new("wpctl")
+                .args(["set-volume", "@DEFAULT_AUDIO_SOURCE@", &arg, "--limit", "1.5"])
+                .status();
+            force_volume_repoll = true;
+        }
+        if toggle_mute_pending {
+            let _ = Command::new("wpctl")
+                .args(["set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"])
+                .status();
+            force_volume_repoll = true;
+        }
+        if toggle_input_mute_pending {
+            let _ = Command::new("wpctl")
+                .args(["set-mute", "@DEFAULT_AUDIO_SOURCE@", "toggle"])
+                .status();
+            force_volume_repoll = true;
         }
 
         if force_volume_repoll || last_poll.elapsed() >= POLL_INTERVAL {

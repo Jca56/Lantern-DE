@@ -1120,6 +1120,12 @@ impl Lantern {
     /// Re-map a window that already has a workspace assignment. Finds its
     /// owning workspace, persists the new location, and updates per-workspace
     /// + transitional-global Spaces.
+    ///
+    /// If `location` lands on a different output than the window's current
+    /// owner (e.g. the user dragged across the monitor seam), the window's
+    /// workspace ownership is transferred to that output's active workspace
+    /// first — otherwise the window stays "owned" by the old output and
+    /// silently stops rendering once it crosses the boundary.
     pub fn remap_tracked_window(
         &mut self,
         window: Window,
@@ -1127,7 +1133,53 @@ impl Lantern {
         activate: bool,
     ) {
         let surface = WindowExt::get_wl_surface(&window);
-        let ws_loc = surface.as_ref().and_then(|s| self.workspaces.window_workspace(s));
+        let mut ws_loc = surface.as_ref().and_then(|s| self.workspaces.window_workspace(s));
+
+        // Output handoff: which output does the window now sit on? Use the
+        // window's center so a halfway-across drag commits at the seam, not
+        // when the very top-left corner crosses.
+        if let (Some(s), Some((cur_output, cur_ws))) = (surface.as_ref(), ws_loc.clone()) {
+            let geo = window.geometry().size;
+            let center = Point::<f64, Logical>::from((
+                (location.x + geo.w / 2) as f64,
+                (location.y + geo.h / 2) as f64,
+            ));
+            let target = self.output_at_point(center).map(|o| o.name());
+
+            if let Some(new_output) = target {
+                if new_output != cur_output {
+                    // Pull the window out of its current workspace's Space
+                    // and bookkeeping, then drop it into the new output's
+                    // active workspace.
+                    if let Some(old_space) = self.workspace_space_mut(&cur_output, cur_ws) {
+                        old_space.unmap_elem(&window);
+                    }
+                    if let Some(ow) = self.workspaces.output_workspaces_mut(&cur_output) {
+                        if let Some(w) = ow.workspaces.get_mut(&cur_ws) {
+                            w.windows.retain(|x| x != s);
+                            w.mru.retain(|x| x != s);
+                            w.positions.remove(s);
+                            w.tiling.remove(s);
+                        }
+                    }
+
+                    self.workspaces.ensure_output(&new_output);
+                    let new_ws_id = self.workspaces
+                        .output_workspaces(&new_output)
+                        .map(|ow| ow.active)
+                        .unwrap_or(1);
+                    if let Some(ow) = self.workspaces.output_workspaces_mut(&new_output) {
+                        if let Some(w) = ow.workspaces.get_mut(&new_ws_id) {
+                            if !w.windows.contains(s) {
+                                w.windows.push(s.clone());
+                            }
+                        }
+                    }
+                    ws_loc = Some((new_output, new_ws_id));
+                }
+            }
+        }
+
         if let Some((output_name, ws_id)) = ws_loc {
             if let Some(s) = surface.as_ref() {
                 if let Some(ow) = self.workspaces.output_workspaces_mut(&output_name) {

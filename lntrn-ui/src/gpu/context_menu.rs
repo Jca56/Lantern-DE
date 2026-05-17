@@ -178,6 +178,10 @@ pub struct ContextMenu {
     submenu_close_timer: f32,
     /// Whether the close timer is running.
     submenu_close_pending: bool,
+    /// Set by `open()`, cleared after `draw()` runs `clamp_to_screen` for the
+    /// first time. Lets callers just call `open(x, y, items)` and have the
+    /// menu auto-flip/scroll to stay on-screen.
+    needs_clamp: bool,
 }
 
 impl ContextMenu {
@@ -197,6 +201,7 @@ impl ContextMenu {
             pointer_depth: None,
             submenu_close_timer: 0.0,
             submenu_close_pending: false,
+            needs_clamp: false,
         }
     }
 
@@ -276,6 +281,10 @@ impl ContextMenu {
         self.open_submenu_ids.clear();
         self.pressed_zones.clear();
         self.scroll_offset = 0.0;
+        // `draw()` will run `clamp_to_screen` on the next frame using the
+        // surface dimensions it receives — that flips the menu above the
+        // anchor when there's no room below.
+        self.needs_clamp = true;
     }
 
     pub fn clamp_to_screen(&mut self, screen_w: f32, screen_h: f32) {
@@ -544,6 +553,19 @@ impl ContextMenu {
         screen_h: u32,
     ) -> Option<MenuEvent> {
         if !self.open { return None; }
+
+        // First draw after open: flip the menu above its anchor (or enable
+        // scrolling) so it never clips off the bottom or right edge.
+        if self.needs_clamp {
+            self.clamp_to_screen(screen_w as f32, screen_h as f32);
+            self.needs_clamp = false;
+        }
+
+        // Menu lives on an overlay layer so its background covers underlying
+        // text and shapes. Callers' renderers must iterate layers
+        // (`render_layer(0..layer_count)`) for this to take effect.
+        painter.set_layer(1);
+        text.set_layer(1);
 
         // Clear consumed presses once mouse is released
         if interaction.active_zone_id().is_none() {

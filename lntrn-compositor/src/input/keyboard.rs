@@ -250,10 +250,15 @@ impl Lantern {
                     }
                 }
 
-                // Ctrl+Shift+Super+Arrow: move a corner-posed window between
-                // the four corners (no resize). No-op if focused window isn't
-                // currently corner-posed. Must come BEFORE the Shift+Super
-                // block since that one requires `!ctrl`.
+                // Ctrl+Shift+Super+Arrow: positional move for posed windows.
+                //   - Half-posed (Left/Right): L↔R swap, or cross-monitor hop
+                //     when already at the matching edge.
+                //   - Tiny variants: walk the 5 Tiny positions (center + 4
+                //     edge midpoints), with same-direction-at-edge hopping
+                //     to the next monitor.
+                //   - Corner-posed: move between the four corners.
+                // Must come BEFORE the Shift+Super block since that one
+                // requires `!ctrl`.
                 if event.state() == KeyState::Pressed
                     && _modifiers.logo && _modifiers.shift && _modifiers.ctrl && !_modifiers.alt
                     && !data.workspaces.tiling_active
@@ -266,11 +271,8 @@ impl Lantern {
                         _ => None,
                     };
                     if let Some(dir) = dir {
-                        // Try half-side swap first (Posed L↔R, skipping
-                        // Middle). If the window isn't half-posed, fall
-                        // through to the corner mover for corner-posed
-                        // windows.
                         let handled = data.try_swap_half_side(dir)
+                            || data.try_move_tiny_focused(dir)
                             || data.move_corner_focused(dir);
                         if handled {
                             data.schedule_render();

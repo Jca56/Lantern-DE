@@ -22,9 +22,11 @@ use super::{BtCmd, BtEvent};
 mod devices;
 mod legacy_obex;
 mod pair;
+mod scan;
 
 use devices::{forward_bt_result, read_devices, read_discoverable, read_powered};
 use pair::interactive_pair;
+use scan::ScanSession;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -41,9 +43,10 @@ pub(super) fn worker(tx: mpsc::Sender<BtEvent>, cmd_rx: mpsc::Receiver<BtCmd>) {
     // never-delete rule but are no longer wired up.
     let obex_tx = obex::spawn(tx.clone());
 
-    // Long-running `bluetoothctl scan on` child, kept alive while the
-    // user has Scan toggled on. None when scan is off.
-    let mut scan_child: Option<std::process::Child> = None;
+    // Live D-Bus discovery session — `org.bluez.Adapter1.StartDiscovery`
+    // is per-client, so bluez keeps scanning as long as we hold this
+    // connection. `None` when scan is off; dropping it stops discovery.
+    let mut scan_session: Option<ScanSession> = None;
 
     let mut last_poll = Instant::now();
     // While scanning, poll the device list more often so newly
@@ -74,21 +77,10 @@ pub(super) fn worker(tx: mpsc::Sender<BtEvent>, cmd_rx: mpsc::Receiver<BtCmd>) {
                 }
                 BtCmd::SetScan(on) => {
                     if on {
-                        // Start a long-running `scan on` child (interactive).
-                        // Killing this child via `disown`-style detach isn't
-                        // necessary; we hold the Child handle and kill on
-                        // SetScan(false) or worker shutdown.
-                        if scan_child.is_none() {
-                            use std::process::Stdio;
-                            let child = Command::new("bluetoothctl")
-                                .args(["--", "scan", "on"])
-                                .stdout(Stdio::null())
-                                .stderr(Stdio::null())
-                                .stdin(Stdio::null())
-                                .spawn();
-                            match child {
-                                Ok(c) => {
-                                    scan_child = Some(c);
+                        if scan_session.is_none() {
+                            match ScanSession::start() {
+                                Ok(s) => {
+                                    scan_session = Some(s);
                                     let _ = tx.send(BtEvent::Scan(true));
                                     scan_poll = Instant::now();
                                 }
@@ -99,15 +91,8 @@ pub(super) fn worker(tx: mpsc::Sender<BtEvent>, cmd_rx: mpsc::Receiver<BtCmd>) {
                                 }
                             }
                         }
-                    } else if let Some(mut child) = scan_child.take() {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        // Tell bluetoothctl to definitely stop scanning,
-                        // since killing the interactive process can leave
-                        // discovery running on rare bluez builds.
-                        let _ = Command::new("bluetoothctl")
-                            .args(["scan", "off"])
-                            .output();
+                    } else if let Some(session) = scan_session.take() {
+                        session.stop();
                         let _ = tx.send(BtEvent::Scan(false));
                         let _ = tx.send(BtEvent::Devices(read_devices()));
                     }
@@ -202,7 +187,7 @@ pub(super) fn worker(tx: mpsc::Sender<BtEvent>, cmd_rx: mpsc::Receiver<BtCmd>) {
 
         // Faster device polling while scanning so newly discovered
         // devices appear quickly.
-        if scan_child.is_some() && scan_poll.elapsed() >= Duration::from_millis(1500) {
+        if scan_session.is_some() && scan_poll.elapsed() >= Duration::from_millis(1500) {
             let _ = tx.send(BtEvent::Devices(read_devices()));
             scan_poll = Instant::now();
         }

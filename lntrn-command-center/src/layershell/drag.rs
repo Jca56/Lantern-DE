@@ -91,7 +91,13 @@ pub(super) fn handle_drag(
                 panel_rect, view_top_y, scale_f,
             ),
         };
-        let frac = ((phys_cx - track.x) / track.w).clamp(0.0, 1.0);
+        // Audio sliders span 0..1.2 across the track (120 % boost);
+        // brightness stays at 0..1.
+        let track_max = match target {
+            DragTarget::AudioOutputSlider | DragTarget::AudioInputSlider => 1.2,
+            DragTarget::BrightnessSlider => 1.0,
+        };
+        let frac = ((phys_cx - track.x) / track.w).clamp(0.0, 1.0) * track_max;
         match target {
             DragTarget::AudioOutputSlider => app.controls.audio.set_volume(frac),
             DragTarget::AudioInputSlider => app.controls.audio.set_input_volume(frac),

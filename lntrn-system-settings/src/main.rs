@@ -36,6 +36,7 @@ mod appearance_focus;
 mod appearance_layout;
 mod appearance_panel;
 mod appearance_themes;
+mod appearance_window_sizes;
 mod chrome;
 mod click_router;
 mod config;

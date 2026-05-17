@@ -70,6 +70,14 @@ pub struct CursorPreset {
     pub cursor_theme: Option<String>,
 }
 
+/// Per-monitor wallpaper entry inside a theme. `name` matches a head from
+/// wlr-output-management (e.g. "DP-1", "HDMI-A-1").
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MonitorWallpaper {
+    pub name: String,
+    pub wallpaper: String,
+}
+
 // ── Theme file ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -80,6 +88,10 @@ pub struct ThemeFile {
     pub window_manager: WmPreset,
     pub windows: WindowsPreset,
     pub input: CursorPreset,
+    /// Optional per-output wallpapers. When present, each entry overrides the
+    /// matching `[[monitors]].wallpaper` in lantern.toml on apply.
+    #[serde(default, rename = "monitor_wallpaper", skip_serializing_if = "Vec::is_empty")]
+    pub monitor_wallpapers: Vec<MonitorWallpaper>,
 }
 
 #[derive(Debug, Clone)]
@@ -256,6 +268,17 @@ fn write_theme_file(slug: &str, file: &ThemeFile) -> io::Result<()> {
 // ── Capture / apply ─────────────────────────────────────────────────────────
 
 fn capture(name: &str, cfg: &LanternConfig) -> ThemeFile {
+    // Snapshot every connected monitor that has its own wallpaper set, so a
+    // multi-display layout round-trips through "Save theme" / "Apply theme"
+    // with each output keeping its own picture.
+    let monitor_wallpapers: Vec<MonitorWallpaper> = cfg.monitors.iter()
+        .filter(|m| !m.wallpaper.is_empty())
+        .map(|m| MonitorWallpaper {
+            name: m.name.clone(),
+            wallpaper: m.wallpaper.clone(),
+        })
+        .collect();
+
     ThemeFile {
         name: name.to_string(),
         appearance: AppearancePreset {
@@ -266,6 +289,7 @@ fn capture(name: &str, cfg: &LanternConfig) -> ThemeFile {
             wallpaper: Some(cfg.appearance.wallpaper.clone()),
             background_color: Some(cfg.appearance.background_color.clone()),
         },
+        monitor_wallpapers,
         window_manager: WmPreset {
             border_width: Some(cfg.window_manager.border_width),
             border_color: Some(cfg.window_manager.border_color.clone()),
@@ -298,7 +322,34 @@ pub fn apply_theme(preset: &ThemePreset, cfg: &mut LanternConfig) {
     apply_wm(&preset.file.window_manager, &mut cfg.window_manager);
     apply_windows(&preset.file.windows, &mut cfg.windows);
     apply_cursor(&preset.file.input, &mut cfg.input);
+    apply_monitor_wallpapers(&preset.file, cfg);
     cfg.appearance.active_theme = preset.slug.clone();
+}
+
+/// Resolve which wallpaper each connected monitor should now show, then write
+/// it into the matching `MonitorEntry`. Priority for each monitor:
+///   1. Theme's per-monitor wallpaper for this output name.
+///   2. Theme's global `appearance.wallpaper` (cascade).
+///   3. Whatever was already there (leave untouched).
+///
+/// Without this, switching themes just edits `appearance.wallpaper` while the
+/// per-monitor overrides quietly win at the compositor, so the screen never
+/// changes.
+fn apply_monitor_wallpapers(theme: &ThemeFile, cfg: &mut LanternConfig) {
+    let global = theme.appearance.wallpaper.as_deref().filter(|s| !s.is_empty());
+
+    for monitor in cfg.monitors.iter_mut() {
+        let per_output = theme.monitor_wallpapers.iter()
+            .find(|w| w.name == monitor.name)
+            .map(|w| w.wallpaper.as_str())
+            .filter(|s| !s.is_empty());
+
+        if let Some(wp) = per_output {
+            monitor.wallpaper = wp.to_string();
+        } else if let Some(wp) = global {
+            monitor.wallpaper = wp.to_string();
+        }
+    }
 }
 
 fn apply_appearance(p: &AppearancePreset, c: &mut AppearanceConfig) {

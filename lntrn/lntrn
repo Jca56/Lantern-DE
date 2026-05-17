@@ -35,6 +35,24 @@ if [[ "${1:-}" == "--sysmon" ]]; then
     exec python3 "$SYSMON_VIEW"
 fi
 
+# ── File manager mode ────────────────────────────────────────────────────────
+if [[ "${1:-}" == "--files" ]]; then
+    # Handoff to the 2-pane Python TUI file manager (installed or dev-tree)
+    if [[ -f /usr/share/lntrn/lntrn-files-view ]]; then
+        FILES_VIEW="/usr/share/lntrn/lntrn-files-view"
+    else
+        SCRIPT_PATH="$(readlink -f "$0")"
+        SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+        FILES_VIEW="$SCRIPT_DIR/lntrn-files-view"
+    fi
+    if [[ ! -f "$FILES_VIEW" ]]; then
+        echo "Error: lntrn-files-view not found (looked in /usr/share/lntrn and $SCRIPT_DIR)" >&2
+        exit 1
+    fi
+    shift
+    exec python3 "$FILES_VIEW" "$@"
+fi
+
 # ── Resolve icon path ─────────────────────────────────────────────────────────
 # Check installed location first, then dev tree
 if [[ -f /usr/share/lntrn/lntrn.png ]]; then

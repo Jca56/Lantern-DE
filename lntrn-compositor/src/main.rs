@@ -196,6 +196,21 @@ pub(crate) fn default_window_size() -> Option<(i32, i32)> {
     Some((w.parse().ok()?, h.parse().ok()?))
 }
 
+/// Percentage of an output's work area to use as a window's initial / Tiny /
+/// Middle / SoloTile size — read from `[windows]` in lantern.toml. Returns a
+/// clamped fraction in `0.05..=1.0`. Sentinel `default` (5..=100 int %)
+/// applied when the config value is missing or out of range.
+fn window_size_pct(key: &str, default: u32) -> f32 {
+    let raw = read_config("windows", key, "");
+    let parsed: u32 = raw.parse().unwrap_or(default);
+    parsed.clamp(5, 100) as f32 / 100.0
+}
+
+pub(crate) fn default_size_pct() -> f32 { window_size_pct("default_size_pct", 60) }
+pub(crate) fn size_small_pct()    -> f32 { window_size_pct("size_small_pct",   30) }
+pub(crate) fn size_medium_pct()   -> f32 { window_size_pct("size_medium_pct",  60) }
+pub(crate) fn size_large_pct()    -> f32 { window_size_pct("size_large_pct",   95) }
+
 /// Read all `[[window_rules]]` entries from lantern.toml.
 pub(crate) fn read_window_rules() -> Vec<WindowRule> {
     let contents = cached_lantern_toml();

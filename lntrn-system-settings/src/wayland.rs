@@ -396,7 +396,19 @@ pub fn run() -> Result<()> {
             if monitor_arrange::is_dragging(&display_state.monitor_arrange) {
                 monitor_arrange::handle_arrange_release(&mut display_state.monitor_arrange);
                 if display_state.monitor_arrange.dirty {
+                    // Push the new positions to the compositor so reality
+                    // matches the canvas immediately — without this the outputs
+                    // stay at their old (often overlapping) coordinates and
+                    // the cursor crosses an invisible duplicate boundary.
+                    let changes = display_state.monitor_arrange
+                        .position_changes(&state.output_mgr);
+                    if !changes.is_empty() {
+                        crate::output_manager::apply_config(&state, &qh, &changes);
+                    }
                     config.monitors = display_state.monitor_arrange.to_config(&config.monitors);
+                    config.save();
+                    saved_config = config.clone();
+                    display_state.monitor_arrange.dirty = false;
                 }
             }
             if let Some(pid) = pointer_on_popup {
@@ -630,13 +642,29 @@ pub fn run() -> Result<()> {
         }
 
         // ── Render pass ─────────────────────────────────────────────────
+        // Iterate layers so context-menu overlays (Painter+TextRenderer
+        // layer 1) fully cover the panel's text on layer 0 instead of having
+        // base-layer text render on top of the menu's background.
         if let Ok(mut frame) = gpu.begin_frame("system-settings") {
             let view = frame.view().clone();
-            painter.render_pass(&gpu, frame.encoder_mut(), &view, Color::rgba(0.0, 0.0, 0.0, 0.0));
+            let layers = painter.layer_count().max(text.layer_count());
+
+            // Layer 0: base shapes + thumbnail textures + base text.
+            painter.render_layer(
+                0, &gpu, frame.encoder_mut(), &view,
+                Some(Color::rgba(0.0, 0.0, 0.0, 0.0)),
+            );
             if !tex_draws.is_empty() {
                 tex_pass.render_pass(&gpu, frame.encoder_mut(), &view, &tex_draws, None);
             }
-            text.render_queued(&gpu, frame.encoder_mut(), &view);
+            text.render_layer(0, &gpu, frame.encoder_mut(), &view);
+
+            // Layer 1+: overlays (menus, dropdowns) composited on top.
+            for li in 1..layers {
+                painter.render_layer(li, &gpu, frame.encoder_mut(), &view, None);
+                text.render_layer(li, &gpu, frame.encoder_mut(), &view);
+            }
+
             frame.submit(&gpu.queue);
         }
 

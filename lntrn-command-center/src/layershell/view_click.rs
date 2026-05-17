@@ -110,7 +110,10 @@ pub(super) fn handle_control_view_click(
                     && phys_y >= row_top
                     && phys_y <= row_bot
                 {
-                    let frac = ((phys_x - track.x) / track.w).clamp(0.0, 1.0);
+                    // Audio sliders map 0..track_width → 0..120 % so the
+                    // user can boost quiet sinks (BT headphones especially).
+                    // Brightness keeps its 0..1 mapping below.
+                    let frac = ((phys_x - track.x) / track.w).clamp(0.0, 1.0) * 1.2;
                     match dir {
                         Direction::Output => {
                             app.controls.audio.set_volume(frac);

@@ -4,6 +4,7 @@ use lntrn_render::{Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{FoxPalette, InteractionContext};
 
 use crate::config::MonitorEntry;
+use crate::output_manager::{HeadChange, OutputManagerClient};
 use crate::wayland::OutputInfo;
 
 const ZONE_MON_BASE: u32 = 1000;
@@ -13,9 +14,6 @@ const PAD: f32 = 24.0;
 const LABEL_SIZE: f32 = 16.0;
 const NAME_SIZE: f32 = 18.0;
 const RES_SIZE: f32 = 14.0;
-
-/// Compositor output scale (must match lntrn-compositor's LANTERN_OUTPUT_SCALE).
-const OUTPUT_SCALE: f32 = 1.25;
 
 /// Monitor rectangle in the arrangement canvas (logical UI coords).
 #[derive(Clone)]
@@ -79,7 +77,17 @@ impl MonitorArrangeState {
     }
 
     /// Sync monitor rectangles from live wl_output data + saved config.
-    pub fn sync_from_outputs(&mut self, outputs: &[(u32, OutputInfo)], config: &[MonitorEntry]) {
+    ///
+    /// `output_mgr` lets us read each head's *actual* compositor scale so the
+    /// canvas's logical widths line up with what `set_position` will use.
+    /// Hardcoding a scale here causes side-by-side drops to overlap or leave
+    /// gaps when the real scale differs.
+    pub fn sync_from_outputs(
+        &mut self,
+        outputs: &[(u32, OutputInfo)],
+        config: &[MonitorEntry],
+        output_mgr: &OutputManagerClient,
+    ) {
         if !self.needs_sync || outputs.is_empty() {
             return;
         }
@@ -90,27 +98,63 @@ impl MonitorArrangeState {
             if info.name.is_empty() || info.width == 0 {
                 continue;
             }
-            // Use fractional compositor scale, not wl_output integer scale
-            let logical_w = (info.width as f32 / OUTPUT_SCALE).round() as i32;
-            let logical_h = (info.height as f32 / OUTPUT_SCALE).round() as i32;
+
+            let cfg = config.iter().find(|c| c.name == info.name);
+
+            // Prefer the resolution saved in lantern.toml — that's the user's
+            // source of truth. wl_output reports whatever mode the compositor
+            // currently has applied, which can differ from the saved config
+            // when the compositor hasn't reconciled yet.
+            let (res_w, res_h) = cfg
+                .and_then(|c| parse_resolution(&c.resolution))
+                .unwrap_or((info.width, info.height));
+
+            // Resolve the effective scale: live head.scale wins (reflects what
+            // the compositor will actually place outputs at), then config, then
+            // a 1.0 fallback. Match against head name, not wl_output name —
+            // they should be the same string in practice.
+            let scale = output_mgr.heads.iter()
+                .find(|h| h.name == info.name)
+                .map(|h| h.scale as f32)
+                .or_else(|| cfg.map(|c| c.scale))
+                .unwrap_or(1.0)
+                .max(0.01);
+
+            let logical_w = (res_w as f32 / scale).round() as i32;
+            let logical_h = (res_h as f32 / scale).round() as i32;
 
             // Use config position if available, otherwise use compositor-reported position
-            let (ox, oy) = if let Some(cfg) = config.iter().find(|c| c.name == info.name) {
-                (cfg.x, cfg.y)
+            let (ox, oy) = if let Some(c) = cfg {
+                (c.x, c.y)
             } else {
                 (info.x, info.y)
             };
 
             self.rects.push(MonRect {
                 name: info.name.clone(),
-                res_w: info.width,
-                res_h: info.height,
+                res_w,
+                res_h,
                 out_x: ox,
                 out_y: oy,
                 out_w: logical_w,
                 out_h: logical_h,
             });
         }
+    }
+
+    /// Build position-only `HeadChange`s for the compositor. One entry per
+    /// arrange-canvas rect that matches a known head; mode/scale untouched
+    /// (those are handled by monitor_settings on a separate dirty flag).
+    pub fn position_changes(&self, output_mgr: &OutputManagerClient) -> Vec<HeadChange> {
+        self.rects.iter().filter_map(|r| {
+            let head_idx = output_mgr.heads.iter().position(|h| h.name == r.name)?;
+            Some(HeadChange {
+                head_idx,
+                mode_idx: None,
+                position: Some((r.out_x, r.out_y)),
+                scale: None,
+            })
+        }).collect()
     }
 
     /// Export current arrangement as config entries, preserving scale/wallpaper
@@ -135,7 +179,7 @@ impl MonitorArrangeState {
                     y: r.out_y,
                     resolution: String::new(),
                     refresh_rate: String::new(),
-                    scale: 1.25,
+                    scale: 1.0,
                     wallpaper: String::new(),
                 }
             }
@@ -184,10 +228,12 @@ fn compute_view(rects: &[MonRect], canvas_w: f32, canvas_h: f32, s: f32) -> (f32
 }
 
 /// Draw the monitor arrangement area. Returns the height consumed.
+#[allow(clippy::too_many_arguments)]
 pub fn draw_monitor_arrange(
     mas: &mut MonitorArrangeState,
     outputs: &[(u32, OutputInfo)],
     config: &[MonitorEntry],
+    output_mgr: &OutputManagerClient,
     painter: &mut Painter,
     text: &mut TextRenderer,
     ix: &mut InteractionContext,
@@ -206,7 +252,7 @@ pub fn draw_monitor_arrange(
     let name_sz = NAME_SIZE * s;
     let res_sz = RES_SIZE * s;
 
-    mas.sync_from_outputs(outputs, config);
+    mas.sync_from_outputs(outputs, config, output_mgr);
 
     // Section label (skipped when drawn inside a card with its own header)
     let canvas_y = if show_header {
@@ -221,20 +267,27 @@ pub fn draw_monitor_arrange(
     let canvas_rect = Rect::new(x + pad, canvas_y, canvas_w, canvas_h);
     painter.rect_filled(canvas_rect, 8.0 * s, fox.surface);
 
-    // Compute view transform
-    let (vs, cx, cy) = compute_view(&mas.rects, canvas_w, canvas_h, s);
-    mas.view_scale = vs;
-    mas.canvas_offset_x = x + pad + cx;
-    mas.canvas_offset_y = canvas_y + cy;
+    // Compute view transform — frozen during an active drag. If we recomputed
+    // each frame, the dragged monitor would push the bounding box outward,
+    // shrinking view_scale and shifting canvas_offset, which (a) makes every
+    // other monitor appear to slide and (b) turns drag into a feedback loop
+    // (smaller scale → same cursor delta → bigger output-space delta → bigger
+    // box → smaller scale …) and the monitor flies off-canvas.
+    if mas.dragging < 0 {
+        let (vs, cx, cy) = compute_view(&mas.rects, canvas_w, canvas_h, s);
+        mas.view_scale = vs;
+        mas.canvas_offset_x = x + pad + cx;
+        mas.canvas_offset_y = canvas_y + cy;
+    }
 
     // Draw monitor rectangles
     for (i, r) in mas.rects.iter().enumerate() {
         if i as u32 >= MAX_MONITORS { break; }
 
-        let rx = mas.canvas_offset_x + r.out_x as f32 * vs;
-        let ry = mas.canvas_offset_y + r.out_y as f32 * vs;
-        let rw = r.out_w as f32 * vs;
-        let rh = r.out_h as f32 * vs;
+        let rx = mas.canvas_offset_x + r.out_x as f32 * mas.view_scale;
+        let ry = mas.canvas_offset_y + r.out_y as f32 * mas.view_scale;
+        let rw = r.out_w as f32 * mas.view_scale;
+        let rh = r.out_h as f32 * mas.view_scale;
 
         let zone_id = ZONE_MON_BASE + i as u32;
         let rect = Rect::new(rx, ry, rw, rh);
@@ -336,7 +389,10 @@ pub fn handle_arrange_drag(
     mas.drag_moved = true;
 }
 
-/// End drag. Snap to nearest edge of other monitors.
+/// End drag. Find the nearest *edge* to snap to (right/left/top/bottom) and
+/// then force perpendicular alignment so the two monitors sit flush. That way
+/// dropping monitor B next to A always produces a clean side-by-side or
+/// stacked layout — no accidental sliver gap, no 1-pixel overlap.
 pub fn handle_arrange_release(mas: &mut MonitorArrangeState) {
     if mas.dragging < 0 { return; }
     let idx = mas.dragging as usize;
@@ -344,62 +400,78 @@ pub fn handle_arrange_release(mas: &mut MonitorArrangeState) {
 
     if idx >= mas.rects.len() { return; }
 
-    // Snap to edges of other monitors (within 30 logical px threshold)
-    let snap_threshold = 30;
+    // Snap radius expressed in canvas pixels (what the user perceives) then
+    // mapped back to output space so the snap feel stays consistent whether
+    // you're zoomed in or out.
+    const SNAP_CANVAS_PX: f32 = 60.0;
+    let snap_threshold = ((SNAP_CANVAS_PX / mas.view_scale.max(0.01)) as i32).max(20);
+
     let r = mas.rects[idx].clone();
 
-    let mut best_dx: Option<i32> = None;
-    let mut best_dy: Option<i32> = None;
+    // Find the single closest edge across all neighbors. `which` distinguishes
+    // horizontal-edge snaps (where we then align tops/bottoms/centers
+    // vertically) from vertical-edge snaps (where we align horizontally).
+    #[derive(Clone, Copy)]
+    enum Edge { Horiz, Vert }
+    let mut best: Option<(i32, Edge, usize)> = None;
 
     for (i, other) in mas.rects.iter().enumerate() {
         if i == idx { continue; }
 
-        // Snap horizontally: right edge of other → left edge of dragged
-        let snap_right = other.out_x + other.out_w;
-        let dx1 = snap_right - r.out_x;
-        if dx1.abs() < snap_threshold {
-            if best_dx.is_none() || dx1.abs() < best_dx.unwrap().abs() {
-                best_dx = Some(dx1);
-            }
-        }
-        // Snap left edge of other → right edge of dragged
-        let dx2 = other.out_x - (r.out_x + r.out_w);
-        if dx2.abs() < snap_threshold {
-            if best_dx.is_none() || dx2.abs() < best_dx.unwrap().abs() {
-                best_dx = Some(dx2);
-            }
-        }
+        let candidates = [
+            // Place dragged to the right of other (left edge meets right edge)
+            (other.out_x + other.out_w - r.out_x,        Edge::Horiz),
+            // Place dragged to the left of other
+            (other.out_x - (r.out_x + r.out_w),          Edge::Horiz),
+            // Place dragged below other
+            (other.out_y + other.out_h - r.out_y,        Edge::Vert),
+            // Place dragged above other
+            (other.out_y - (r.out_y + r.out_h),          Edge::Vert),
+        ];
 
-        // Snap vertically: bottom of other → top of dragged
-        let snap_bottom = other.out_y + other.out_h;
-        let dy1 = snap_bottom - r.out_y;
-        if dy1.abs() < snap_threshold {
-            if best_dy.is_none() || dy1.abs() < best_dy.unwrap().abs() {
-                best_dy = Some(dy1);
-            }
-        }
-        // Snap top of other → bottom of dragged
-        let dy2 = other.out_y - (r.out_y + r.out_h);
-        if dy2.abs() < snap_threshold {
-            if best_dy.is_none() || dy2.abs() < best_dy.unwrap().abs() {
-                best_dy = Some(dy2);
-            }
-        }
-
-        // Vertical alignment: align tops
-        let dy_top = other.out_y - r.out_y;
-        if dy_top.abs() < snap_threshold {
-            if best_dy.is_none() || dy_top.abs() < best_dy.unwrap().abs() {
-                best_dy = Some(dy_top);
+        for (delta, edge) in candidates {
+            if delta.abs() < snap_threshold
+                && best.map_or(true, |(d, _, _)| delta.abs() < d.abs())
+            {
+                best = Some((delta, edge, i));
             }
         }
     }
 
-    if let Some(dx) = best_dx {
-        mas.rects[idx].out_x += dx;
-    }
-    if let Some(dy) = best_dy {
-        mas.rects[idx].out_y += dy;
+    let Some((delta, edge, other_idx)) = best else {
+        resolve_overlap(&mut mas.rects, idx);
+        return;
+    };
+
+    let other = mas.rects[other_idx].clone();
+    match edge {
+        Edge::Horiz => {
+            // Lock the touching edge.
+            mas.rects[idx].out_x += delta;
+            // Then pick the closest of three vertical alignments — top,
+            // center, or bottom — to kill any vertical sliver.
+            let r = &mas.rects[idx];
+            let align_top    = other.out_y - r.out_y;
+            let align_bottom = (other.out_y + other.out_h) - (r.out_y + r.out_h);
+            let align_center = (other.out_y + other.out_h / 2) - (r.out_y + r.out_h / 2);
+            let dy = [align_top, align_center, align_bottom]
+                .into_iter()
+                .min_by_key(|d| d.abs())
+                .unwrap();
+            mas.rects[idx].out_y += dy;
+        }
+        Edge::Vert => {
+            mas.rects[idx].out_y += delta;
+            let r = &mas.rects[idx];
+            let align_left   = other.out_x - r.out_x;
+            let align_right  = (other.out_x + other.out_w) - (r.out_x + r.out_w);
+            let align_center = (other.out_x + other.out_w / 2) - (r.out_x + r.out_w / 2);
+            let dx = [align_left, align_center, align_right]
+                .into_iter()
+                .min_by_key(|d| d.abs())
+                .unwrap();
+            mas.rects[idx].out_x += dx;
+        }
     }
 
     resolve_overlap(&mut mas.rects, idx);
@@ -461,4 +533,11 @@ fn resolve_overlap(rects: &mut [MonRect], idx: usize) {
 /// Check if currently dragging.
 pub fn is_dragging(mas: &MonitorArrangeState) -> bool {
     mas.dragging >= 0
+}
+
+/// Parse a `"WxH"` resolution string from lantern.toml. Returns `None` for
+/// empty or malformed values.
+fn parse_resolution(s: &str) -> Option<(i32, i32)> {
+    let (w, h) = s.split_once('x')?;
+    Some((w.trim().parse().ok()?, h.trim().parse().ok()?))
 }

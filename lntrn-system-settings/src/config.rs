@@ -160,7 +160,25 @@ pub struct WindowsConfig {
     pub blur_darken: f32,
     pub background_opacity: f32,
     pub blur_exclude: Vec<String>,
+    /// Initial size for newly-opened windows, as a percentage (1..=100) of
+    /// the output's work area on each axis.
+    #[serde(default = "default_pct_default")]
+    pub default_size_pct: u32,
+    /// Tiny rung of the Super+Shift+Down ladder.
+    #[serde(default = "default_pct_small")]
+    pub size_small_pct: u32,
+    /// "Normal" / Middle rung — also used as the centered Middle pose rect.
+    #[serde(default = "default_pct_medium")]
+    pub size_medium_pct: u32,
+    /// SoloTile rung — Super+Shift+Up step from Normal.
+    #[serde(default = "default_pct_large")]
+    pub size_large_pct: u32,
 }
+
+fn default_pct_default() -> u32 { 60 }
+fn default_pct_small() -> u32 { 30 }
+fn default_pct_medium() -> u32 { 60 }
+fn default_pct_large() -> u32 { 95 }
 
 impl Default for WindowsConfig {
     fn default() -> Self {
@@ -171,6 +189,10 @@ impl Default for WindowsConfig {
             blur_darken: 0.0,
             background_opacity: 1.0,
             blur_exclude: Vec::new(),
+            default_size_pct: default_pct_default(),
+            size_small_pct: default_pct_small(),
+            size_medium_pct: default_pct_medium(),
+            size_large_pct: default_pct_large(),
         }
     }
 }
@@ -241,7 +263,7 @@ pub struct MonitorEntry {
     pub wallpaper: String,
 }
 
-fn default_monitor_scale() -> f32 { 1.25 }
+fn default_monitor_scale() -> f32 { 1.0 }
 
 
 // ── Power ───────────────────────────────────────────────────────────────────

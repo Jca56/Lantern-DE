@@ -1,196 +1,154 @@
-//! Worker thread for the WiFi tile.
+//! NetworkManager (nmcli) backend for the WiFi worker.
 //!
-//! Owns all `nmcli` shellouts so the render thread never blocks on
-//! network state. Receives commands over an mpsc channel; emits state
-//! updates over another.
+//! All `nmcli` shellouts live here. The shared worker loop in
+//! [`super`] decides when to call these and how to handle the events
+//! they emit (status polls + scans on a timer; user commands on demand).
 
 use std::collections::HashMap;
 use std::process::Command;
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use super::{Band, BandEntry, Network, Profile, WifiCmd, WifiEvent, WifiState};
 
-/// Cheap status poll — drives the toolbar icon (connected ssid + bars).
-/// `nmcli device` returns instantly so we can run this often.
-const STATUS_INTERVAL: Duration = Duration::from_secs(1);
-/// Full scan — drives the expanded network list. Uses `--rescan yes`
-/// which actually re-probes the air, so it's slow (3-5s blocking) and
-/// runs less often.
-const SCAN_INTERVAL: Duration = Duration::from_secs(8);
+/// Cheap availability probe used by [`super::Backend::detect`]. Treats
+/// a missing or non-zero-exit `nmcli` as "not the right backend on this
+/// machine" — caller will try iwd first anyway.
+pub(super) fn is_available() -> bool {
+    Command::new("nmcli")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
 
-/// Worker entry point. Spawned from [`crate::controls::wifi::Wifi::new`].
-pub(super) fn run(tx: mpsc::Sender<WifiEvent>, cmd_rx: mpsc::Receiver<WifiCmd>) {
-    // Prime the UI with whatever we can read right away.
-    let _ = tx.send(WifiEvent::Status(poll_status()));
-    let _ = tx.send(WifiEvent::VpnStatus(poll_vpn_status()));
-    let _ = tx.send(WifiEvent::Networks(scan_networks()));
-
-    let mut last_status = Instant::now();
-    let mut last_scan = Instant::now();
-    loop {
-        // Drain pending commands first.
-        while let Ok(cmd) = cmd_rx.try_recv() {
-            match cmd {
-                WifiCmd::Rescan => {
-                    let _ = Command::new("nmcli").args(["dev", "wifi", "rescan"]).output();
-                    thread::sleep(Duration::from_millis(500));
-                    let _ = tx.send(WifiEvent::Networks(scan_networks()));
-                    let _ = tx.send(WifiEvent::Status(poll_status()));
-                    last_status = Instant::now();
-                    last_scan = Instant::now();
+/// Handle one command from the render thread. The shared worker loop
+/// follows every command with a `Networks` + `Status` refresh, so we
+/// only emit connect-success/failure events from here.
+pub(super) fn handle_cmd(cmd: WifiCmd, tx: &mpsc::Sender<WifiEvent>) {
+    match cmd {
+        WifiCmd::Rescan => {
+            let _ = Command::new("nmcli").args(["dev", "wifi", "rescan"]).output();
+            thread::sleep(Duration::from_millis(500));
+        }
+        WifiCmd::Connect {
+            ssid,
+            password,
+            band,
+            bssid,
+        } => {
+            // Phase 1: get a profile up. For saved networks we
+            // try `con up` first; for unsaved we let
+            // `dev wifi connect` create the profile.
+            let initial = if let Some(pw) = password {
+                Command::new("nmcli")
+                    .args(["device", "wifi", "connect", &ssid, "password", &pw])
+                    .output()
+            } else {
+                let r = Command::new("nmcli")
+                    .args(["connection", "up", "id", &ssid])
+                    .output();
+                if r.as_ref().map_or(true, |o| !o.status.success()) {
+                    Command::new("nmcli")
+                        .args(["device", "wifi", "connect", &ssid])
+                        .output()
+                } else {
+                    r
                 }
-                WifiCmd::Connect {
-                    ssid,
-                    password,
-                    band,
-                    bssid,
-                } => {
-                    // Phase 1: get a profile up. For saved networks we
-                    // try `con up` first; for unsaved we let
-                    // `dev wifi connect` create the profile.
-                    let initial = if let Some(pw) = password {
+            };
+
+            // Phase 2: pin band and/or BSSID on the (now-existing)
+            // profile and reactivate. The brief flap is acceptable;
+            // the alternative is a pre-create dance that fails
+            // when the profile name already exists.
+            let needs_reactivate = band.is_some() || bssid.is_some();
+            let result = match initial {
+                Ok(o) if o.status.success() => {
+                    if let Some(b) = band {
+                        let _ = Command::new("nmcli")
+                            .args([
+                                "connection",
+                                "modify",
+                                &ssid,
+                                "wifi.band",
+                                b.nm_band(),
+                            ])
+                            .output();
+                    }
+                    if let Some(mac) = &bssid {
+                        // `""` clears the field; specific MAC pins it.
+                        let value = if mac.is_empty() { "" } else { mac.as_str() };
+                        let _ = Command::new("nmcli")
+                            .args([
+                                "connection",
+                                "modify",
+                                &ssid,
+                                "wifi.bssid",
+                                value,
+                            ])
+                            .output();
+                    }
+                    if needs_reactivate {
                         Command::new("nmcli")
-                            .args(["device", "wifi", "connect", &ssid, "password", &pw])
+                            .args(["connection", "up", "id", &ssid])
                             .output()
                     } else {
-                        let r = Command::new("nmcli")
-                            .args(["connection", "up", "id", &ssid])
-                            .output();
-                        if r.as_ref().map_or(true, |o| !o.status.success()) {
-                            Command::new("nmcli")
-                                .args(["device", "wifi", "connect", &ssid])
-                                .output()
-                        } else {
-                            r
-                        }
-                    };
-
-                    // Phase 2: pin band and/or BSSID on the (now-existing)
-                    // profile and reactivate. The brief flap is acceptable;
-                    // the alternative is a pre-create dance that fails
-                    // when the profile name already exists.
-                    let needs_reactivate = band.is_some() || bssid.is_some();
-                    let result = match initial {
-                        Ok(o) if o.status.success() => {
-                            if let Some(b) = band {
-                                let _ = Command::new("nmcli")
-                                    .args([
-                                        "connection",
-                                        "modify",
-                                        &ssid,
-                                        "wifi.band",
-                                        b.nm_band(),
-                                    ])
-                                    .output();
-                            }
-                            if let Some(mac) = &bssid {
-                                // `""` clears the field; specific MAC pins it.
-                                let value = if mac.is_empty() { "" } else { mac.as_str() };
-                                let _ = Command::new("nmcli")
-                                    .args([
-                                        "connection",
-                                        "modify",
-                                        &ssid,
-                                        "wifi.bssid",
-                                        value,
-                                    ])
-                                    .output();
-                            }
-                            if needs_reactivate {
-                                Command::new("nmcli")
-                                    .args(["connection", "up", "id", &ssid])
-                                    .output()
-                            } else {
-                                Ok(o)
-                            }
-                        }
-                        other => other,
-                    };
-
-                    match result {
-                        Ok(o) if o.status.success() => {
-                            let _ = tx.send(WifiEvent::ConnectOk);
-                        }
-                        Ok(o) => {
-                            let stderr = String::from_utf8_lossy(&o.stderr);
-                            let msg = stderr
-                                .lines()
-                                .next()
-                                .unwrap_or("Connection failed")
-                                .to_string();
-                            let _ = tx.send(WifiEvent::ConnectFail(msg));
-                        }
-                        Err(e) => {
-                            let _ = tx.send(WifiEvent::ConnectFail(e.to_string()));
-                        }
+                        Ok(o)
                     }
-                    let _ = tx.send(WifiEvent::Networks(scan_networks()));
-                    let _ = tx.send(WifiEvent::Status(poll_status()));
-                    last_status = Instant::now();
-                    last_scan = Instant::now();
                 }
-                WifiCmd::DeleteProfile { uuid } => {
-                    let _ = Command::new("nmcli")
-                        .args(["connection", "delete", "uuid", &uuid])
-                        .output();
-                    let _ = tx.send(WifiEvent::Networks(scan_networks()));
-                    let _ = tx.send(WifiEvent::Status(poll_status()));
-                    last_status = Instant::now();
-                    last_scan = Instant::now();
+                other => other,
+            };
+
+            match result {
+                Ok(o) if o.status.success() => {
+                    let _ = tx.send(WifiEvent::ConnectOk);
                 }
-                WifiCmd::ActivateProfile { name } => {
-                    let r = Command::new("nmcli")
-                        .args(["connection", "up", "id", &name])
-                        .output();
-                    match r {
-                        Ok(o) if o.status.success() => {
-                            let _ = tx.send(WifiEvent::ConnectOk);
-                        }
-                        Ok(o) => {
-                            let stderr = String::from_utf8_lossy(&o.stderr);
-                            let msg = stderr
-                                .lines()
-                                .next()
-                                .unwrap_or("Activation failed")
-                                .to_string();
-                            let _ = tx.send(WifiEvent::ConnectFail(msg));
-                        }
-                        Err(e) => {
-                            let _ = tx.send(WifiEvent::ConnectFail(e.to_string()));
-                        }
-                    }
-                    let _ = tx.send(WifiEvent::Networks(scan_networks()));
-                    let _ = tx.send(WifiEvent::Status(poll_status()));
-                    last_status = Instant::now();
-                    last_scan = Instant::now();
+                Ok(o) => {
+                    let stderr = String::from_utf8_lossy(&o.stderr);
+                    let msg = stderr
+                        .lines()
+                        .next()
+                        .unwrap_or("Connection failed")
+                        .to_string();
+                    let _ = tx.send(WifiEvent::ConnectFail(msg));
+                }
+                Err(e) => {
+                    let _ = tx.send(WifiEvent::ConnectFail(e.to_string()));
                 }
             }
         }
-
-        // Quick status poll → toolbar icon stays fresh every second.
-        // Mullvad VPN status is cheap (~10ms IPC) so we piggyback it here.
-        if last_status.elapsed() >= STATUS_INTERVAL {
-            let _ = tx.send(WifiEvent::Status(poll_status()));
-            let _ = tx.send(WifiEvent::VpnStatus(poll_vpn_status()));
-            last_status = Instant::now();
+        WifiCmd::DeleteProfile { uuid } => {
+            let _ = Command::new("nmcli")
+                .args(["connection", "delete", "uuid", &uuid])
+                .output();
         }
-        // Full scan → expanded network list. Slow (radio rescan), so
-        // runs less often and pinches the worker thread for a few sec.
-        if last_scan.elapsed() >= SCAN_INTERVAL {
-            let _ = tx.send(WifiEvent::Networks(scan_networks()));
-            last_scan = Instant::now();
-            // The scan we just ran also drains a status snapshot; reset
-            // the status timer so we don't immediately fire another one.
-            last_status = Instant::now();
+        WifiCmd::ActivateProfile { name } => {
+            let r = Command::new("nmcli")
+                .args(["connection", "up", "id", &name])
+                .output();
+            match r {
+                Ok(o) if o.status.success() => {
+                    let _ = tx.send(WifiEvent::ConnectOk);
+                }
+                Ok(o) => {
+                    let stderr = String::from_utf8_lossy(&o.stderr);
+                    let msg = stderr
+                        .lines()
+                        .next()
+                        .unwrap_or("Activation failed")
+                        .to_string();
+                    let _ = tx.send(WifiEvent::ConnectFail(msg));
+                }
+                Err(e) => {
+                    let _ = tx.send(WifiEvent::ConnectFail(e.to_string()));
+                }
+            }
         }
-
-        thread::sleep(Duration::from_millis(150));
     }
 }
 
-fn poll_status() -> WifiState {
+pub(super) fn poll_status() -> WifiState {
     let out = Command::new("nmcli")
         .args(["-t", "-f", "TYPE,STATE,CONNECTION", "device"])
         .output();
@@ -224,22 +182,6 @@ fn poll_status() -> WifiState {
     WifiState::Connected { ssid, signal }
 }
 
-/// Check Mullvad VPN connection state. Returns `None` if the `mullvad`
-/// CLI isn't installed or the daemon isn't responding (so the indicator
-/// can hide cleanly). `Some(true)` = Connected, `Some(false)` = anything
-/// else (Disconnected, Connecting, Blocked).
-fn poll_vpn_status() -> Option<bool> {
-    let out = Command::new("mullvad").arg("status").output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    // First non-empty line is the tunnel state — typically "Connected",
-    // "Disconnected", or "Connecting…".
-    let first = stdout.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
-    Some(first.trim().starts_with("Connected"))
-}
-
 fn signal_for_ssid(ssid: &str) -> u32 {
     let out = Command::new("nmcli")
         .args(["-t", "-f", "IN-USE,SSID,SIGNAL", "dev", "wifi", "list"])
@@ -263,7 +205,7 @@ fn signal_for_ssid(ssid: &str) -> u32 {
     0
 }
 
-fn scan_networks() -> Vec<Network> {
+pub(super) fn scan_networks() -> Vec<Network> {
     // `--rescan yes` forces a fresh scan instead of using NM's cache
     // (which can hold APs for >60s after they disappear — that's why
     // the user kept seeing their phone hotspot at 100% even though the

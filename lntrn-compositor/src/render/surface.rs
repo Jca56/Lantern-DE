@@ -259,20 +259,28 @@ pub fn render_surface(
     let output_name_for_lookup = output.name();
     let mut windows: Vec<smithay::desktop::Window> = Vec::new();
     {
-        let active_id = state.workspaces.active_id(&output_name_for_lookup);
-        let transition = state
-            .workspace_anim
-            .get(&output_name_for_lookup)
-            .map(|t| (t.from_ws, t.to_ws));
-        let ids_to_render: Vec<u32> = match transition {
-            Some((from, to)) if from != to => vec![from, to],
-            _ => vec![active_id],
-        };
-        for ws_id in ids_to_render {
-            if let Some(space) = state.workspace_space(&output_name_for_lookup, ws_id) {
-                for w in space.elements() {
-                    if !windows.iter().any(|existing| existing == w) {
-                        windows.push(w.clone());
+        // Gather windows from EVERY output's active workspace, not just this
+        // output's. Windows are owned by exactly one output at a time, but a
+        // dragged window straddling the monitor seam needs to be rendered on
+        // both sides — the per-window `output_geo.overlaps(win_bbox)` check
+        // below discards anything that doesn't actually intersect this output.
+        let owning_names: Vec<String> = state.workspaces.outputs().cloned().collect();
+        for owning_name in &owning_names {
+            let active_id = state.workspaces.active_id(owning_name);
+            let transition = state
+                .workspace_anim
+                .get(owning_name)
+                .map(|t| (t.from_ws, t.to_ws));
+            let ids_to_render: Vec<u32> = match transition {
+                Some((from, to)) if from != to => vec![from, to],
+                _ => vec![active_id],
+            };
+            for ws_id in ids_to_render {
+                if let Some(space) = state.workspace_space(owning_name, ws_id) {
+                    for w in space.elements() {
+                        if !windows.iter().any(|existing| existing == w) {
+                            windows.push(w.clone());
+                        }
                     }
                 }
             }

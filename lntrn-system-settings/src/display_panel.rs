@@ -197,7 +197,7 @@ pub fn draw_display_panel(
     // monitor_arrange uses x + PAD as its content origin; PAD == 24 ==
     // CARD_INNER_PAD_H, so passing card_x lines content up with the card.
     let arrange_h = monitor_arrange::draw_monitor_arrange(
-        &mut dps.monitor_arrange, outputs, &config.monitors,
+        &mut dps.monitor_arrange, outputs, &config.monitors, output_mgr,
         painter, text, ix, fox,
         card_x, inner_y, card_w, s, sw, sh,
         false, // header is provided by the card
@@ -208,8 +208,10 @@ pub fn draw_display_panel(
     // is selected.
     let mut settings_h = 0.0;
     if let Some(hi) = selected_head_idx {
+        let cfg_entry = selected_name.as_ref()
+            .and_then(|name| config.monitors.iter().find(|m| &m.name == name));
         settings_h = monitor_settings::draw_monitor_settings(
-            output_mgr, &mut dps.monitor_settings, hi,
+            output_mgr, &mut dps.monitor_settings, hi, cfg_entry,
             painter, text, ix, fox,
             card_x, inner_y + arrange_h + 12.0 * s, card_w, s, sw, sh,
             true, // show "Settings: <name>" inline header to identify which display

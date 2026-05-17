@@ -14,6 +14,7 @@
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
+use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixListener;
 use std::time::Duration;
 
@@ -24,6 +25,7 @@ use raw_window_handle::{
     RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle, WindowHandle,
 };
 use wayland_client::{
+    backend::WaylandError,
     protocol::{wl_compositor, wl_seat},
     Connection, EventQueue, Proxy,
 };
@@ -208,6 +210,121 @@ impl WlState {
 /// or visible we use the wayland frame callback for pacing.
 const IDLE_TICK: Duration = Duration::from_millis(50);
 
+/// Safety-net upper bound on the active-path poll. When something is
+/// animating we expect frame callbacks at refresh rate, so this only
+/// matters if the compositor stops paining our surface (e.g., another
+/// fullscreen surface covers us). Without this cap the daemon would
+/// block forever in poll() — with it we wake every second to re-check
+/// `is_animating()` and subsystem state.
+const ACTIVE_POLL_CAP: Duration = Duration::from_secs(1);
+
+/// Worst-case interval between renders while the panel is visible.
+/// Even when nothing is animating and no input has arrived, we force
+/// a re-render after this long so subsystem state that updates on a
+/// timer (clock minute roll-over, sysmon sparklines sampled at 2 Hz,
+/// battery percentage, …) doesn't visibly freeze. 500 ms lines up
+/// with sysmon's sample period and is well below the minute boundary.
+const FALLBACK_REDRAW_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Drain the wayland queue with a timeout, watching both the wayland
+/// socket and our IPC listener so an IPC command (Toggle / Show / Hide)
+/// sent while the panel is settled-and-visible still wakes the loop
+/// promptly.
+///
+/// Behaviour mirrors `EventQueue::blocking_dispatch` with two changes:
+///
+/// 1. We use `prepare_read` + `libc::poll` instead of the built-in
+///    blocking read, which lets us specify a timeout AND poll a second
+///    fd at the same time.
+/// 2. Returning `Ok(())` on timeout / EINTR / IPC-only wake is fine —
+///    the outer loop will run its tick / IPC drain logic and try
+///    again next iteration.
+///
+/// Per `ReadEventsGuard` docs: the guard MUST be created before
+/// polling the socket, otherwise events arriving between prepare and
+/// poll would be lost. We honour that here — guard is held for the
+/// duration of the poll and either consumed via `read()` (when wayland
+/// has data) or dropped (when only the IPC fd fired or we timed out).
+fn dispatch_with_timeout(
+    event_queue: &mut EventQueue<WlState>,
+    ipc_fd: std::os::fd::RawFd,
+    state: &mut WlState,
+    timeout: Option<Duration>,
+) -> Result<()> {
+    // Flush any pending requests so the server can react before we
+    // potentially block. Then dispatch anything already in memory —
+    // nothing to wait on if the queue is non-empty.
+    event_queue.flush()?;
+    if event_queue.dispatch_pending(state)? > 0 {
+        return Ok(());
+    }
+
+    // Stake our claim on the next socket read. If another caller is
+    // already mid-read (multi-threaded use), prepare_read returns None;
+    // in that case the events will land in our queue shortly, so just
+    // dispatch what's there and bail.
+    let guard = match event_queue.prepare_read() {
+        Some(g) => g,
+        None => {
+            event_queue.dispatch_pending(state)?;
+            return Ok(());
+        }
+    };
+
+    let timeout_ms = timeout
+        .map(|d| d.as_millis().min(i32::MAX as u128 - 1) as i32)
+        .unwrap_or(-1);
+
+    let mut fds = [
+        libc::pollfd {
+            fd: guard.connection_fd().as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        },
+        libc::pollfd {
+            fd: ipc_fd,
+            events: libc::POLLIN,
+            revents: 0,
+        },
+    ];
+
+    let ret = unsafe {
+        libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout_ms)
+    };
+
+    if ret < 0 {
+        let err = std::io::Error::last_os_error();
+        if err.kind() != std::io::ErrorKind::Interrupted {
+            return Err(err.into());
+        }
+        // EINTR: drop the guard so the next iteration can re-prepare.
+        drop(guard);
+        return Ok(());
+    }
+
+    if fds[0].revents & libc::POLLIN != 0 {
+        // Wayland fd has data — actually read it into our queue.
+        match guard.read() {
+            Ok(_) => {}
+            Err(WaylandError::Io(io))
+                if io.kind() == std::io::ErrorKind::WouldBlock =>
+            {
+                // Spurious wakeup: poll reported ready but the socket
+                // had nothing for us once we attempted the read.
+            }
+            Err(e) => return Err(e.into()),
+        }
+        event_queue.dispatch_pending(state)?;
+    } else {
+        // Wayland fd silent — either timed out or the IPC fd fired.
+        // Dropping the guard cancels the prepared read so the next
+        // iteration's prepare_read can succeed.
+        drop(guard);
+    }
+
+    Ok(())
+}
+
 /// Run the daemon. `initial_visible == true` opens the panel on startup
 /// (e.g., when the user just typed `lntrn-command-center --show`).
 pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
@@ -306,6 +423,17 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
     let mut app = AppState::new();
     let mut input_active = false;
     let mut thumbs = crate::thumbs::CcThumbsClient::new();
+
+    // Raw fd for the IPC listener — handed to `dispatch_with_timeout`
+    // each iteration so a Toggle / Show / Hide sent while the loop is
+    // parked in poll() wakes us. The listener outlives the loop, so
+    // the fd is valid for the entire run.
+    let ipc_fd = sock.as_raw_fd();
+    // Wall-clock of the last completed render. Used to guarantee a
+    // fallback redraw every FALLBACK_REDRAW_INTERVAL while visible so
+    // timer-driven UI (clock minutes, sysmon graphs, battery %) stays
+    // current even when the user isn't touching the panel.
+    let mut last_render = std::time::Instant::now();
 
     if initial_visible {
         app.open();
@@ -408,15 +536,21 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
             continue;
         }
 
-        // Active path: block for an event with a small timeout so we
-        // still pick up IPC commands while waiting. Smithay's event_queue
-        // doesn't expose a timeout directly, but we can approximate by
-        // checking for prepared reads + dispatching pending first.
-        event_queue.dispatch_pending(&mut wl)?;
-        event_queue.flush()?;
-        // Block for the next event; the frame callback usually arrives
-        // every ~16ms while visible so this won't stall noticeably.
-        event_queue.blocking_dispatch(&mut wl)?;
+        // Active path: poll wayland AND ipc together. We pick the
+        // timeout from the current motion state — when something is
+        // animating we expect frame callbacks at refresh rate, so a
+        // 1s safety cap is fine; when nothing is in motion we cap at
+        // IDLE_TICK so subsystem state pushed by worker threads
+        // (audio / wifi / bluetooth incoming, etc.) gets a chance to
+        // tick at ~20Hz even with zero user input. Without the IPC fd
+        // in the poll set the daemon would sit on `blocking_dispatch`
+        // and miss any `--toggle` sent during idle-visible.
+        let poll_timeout = if app.is_animating() {
+            Some(ACTIVE_POLL_CAP)
+        } else {
+            Some(IDLE_TICK)
+        };
+        dispatch_with_timeout(&mut event_queue, ipc_fd, &mut wl, poll_timeout)?;
 
         // Tick the animation state machine + control backends (battery
         // sysfs poll, etc.). Both are cheap; rate limiting lives inside
@@ -661,10 +795,16 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         // Drag continuations (sliders + notes editor text drag-select).
         handle_drag(&mut wl, &mut app, &mut text);
 
-        if !wl.frame_done {
+        // Render gate: render if a wayland event signalled fresh state
+        // (frame_done), OR if FALLBACK_REDRAW_INTERVAL has elapsed
+        // since the last render so timer-driven UI (clock, sysmon)
+        // doesn't go stale while the panel is idle-visible.
+        let fallback_due = last_render.elapsed() >= FALLBACK_REDRAW_INTERVAL;
+        if !wl.frame_done && !fallback_due {
             continue;
         }
         wl.frame_done = false;
+        last_render = std::time::Instant::now();
 
         let scale_f = wl.fractional_scale() as f32;
         render_frame(

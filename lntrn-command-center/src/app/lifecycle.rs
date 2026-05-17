@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use crate::app::{
     ease_out_cubic, spawn_detached, AppState, PanelMode, PanelView, Selection, Visibility,
-    ANIM_DURATION_SECS,
+    ANIM_DURATION_SECS, GROW_ANIM_DURATION,
 };
 use crate::controls::TileId;
 use crate::search::apps::DesktopEntry;
@@ -388,6 +388,34 @@ impl AppState {
     #[allow(dead_code)] // used in Phase 1.6 by the daemon-mode render loop
     pub fn is_active(&self) -> bool {
         !self.is_hidden()
+    }
+
+    /// True when something visual is still in motion: Opening / Closing
+    /// visibility, any grow / view-slide / collapse animation within
+    /// its duration, or a chat stream pumping tokens. The render loop
+    /// uses this to pick its dispatch strategy — block on frame
+    /// callbacks when animating, poll wayland + ipc with a short
+    /// timeout when steady so a static panel doesn't burn CPU
+    /// re-rendering at refresh rate.
+    pub fn is_animating(&self) -> bool {
+        use std::time::Duration;
+
+        if matches!(self.visibility, Visibility::Opening | Visibility::Closing) {
+            return true;
+        }
+        if self.chat.streaming {
+            return true;
+        }
+
+        let in_flight = |start: Option<Instant>, secs: f32| -> bool {
+            matches!(start, Some(s) if s.elapsed() < Duration::from_secs_f32(secs))
+        };
+
+        let view = self.config.view_anim_duration.max(0.05);
+        in_flight(self.grow_anim_start, GROW_ANIM_DURATION)
+            || in_flight(self.bar_grow_anim_start, GROW_ANIM_DURATION)
+            || in_flight(self.view_anim_start, view)
+            || in_flight(self.collapse_anim_start, view)
     }
 
     /// Animation progress in `[0.0, 1.0]`. Saturates at 1.0.

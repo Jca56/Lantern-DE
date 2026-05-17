@@ -200,11 +200,11 @@ impl Audio {
         let _ = self.cmd_tx.send(AudioCmd::SetDefaultSink(id));
     }
 
-    /// Set the default sink to the given normalized volume. Clamps to
-    /// `[0.0, 1.0]` so the user can't accidentally crank to 150 % via
-    /// drag overshoot.
+    /// Set the default sink's volume. Allows up to 120 % so the user
+    /// can boost quiet sources (BT headphones, some HDMI sinks); wpctl
+    /// is invoked with `--limit 1.5` so values above 1.0 take effect.
     pub fn set_volume(&mut self, v: f32) {
-        let clamped = v.clamp(0.0, 1.0);
+        let clamped = v.clamp(0.0, 1.2);
         self.volume = clamped;
         let _ = self.cmd_tx.send(AudioCmd::SetVolume(clamped));
     }
@@ -218,7 +218,7 @@ impl Audio {
 
     /// Set the default mic to the given normalized volume.
     pub fn set_input_volume(&mut self, v: f32) {
-        let clamped = v.clamp(0.0, 1.0);
+        let clamped = v.clamp(0.0, 1.2);
         self.input_volume = clamped;
         let _ = self.cmd_tx.send(AudioCmd::SetInputVolume(clamped));
     }

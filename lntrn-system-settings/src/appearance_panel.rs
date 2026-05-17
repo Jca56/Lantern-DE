@@ -62,7 +62,27 @@ const ZONE_BG_COLOR_BASE:    u32 = 380; // +0..10 swatches (BG_COLORS, 11 entrie
 // Dropdown menu action IDs (preset selection)
 const ACT_ANIM_PRESET: u32 = 370; // +0..3
 
+// Window Sizes card — 4 picker buttons + their menu action bases.
+// IDs live well above the theme zones (400..520) to avoid the click-router's
+// shared zone namespace handing window-size hits to ZONE_THEME_TILE_BASE.
+const ZONE_WSIZE_DEFAULT_BTN: u32 = 700;
+const ZONE_WSIZE_SMALL_BTN:   u32 = 701;
+const ZONE_WSIZE_MEDIUM_BTN:  u32 = 702;
+const ZONE_WSIZE_LARGE_BTN:   u32 = 703;
+const ACT_WSIZE_DEFAULT: u32 = 710; // +0..N
+const ACT_WSIZE_SMALL:   u32 = 720; // +0..N
+const ACT_WSIZE_MEDIUM:  u32 = 730; // +0..N
+const ACT_WSIZE_LARGE:   u32 = 740; // +0..N
+
 const PRESET_OPTIONS: &[&str] = &["Cinematic", "Snappy", "Springy", "Linear"];
+
+const WSIZE_ZONES: crate::appearance_window_sizes::WindowSizeZones =
+    crate::appearance_window_sizes::WindowSizeZones {
+        default_btn: ZONE_WSIZE_DEFAULT_BTN,
+        small_btn:   ZONE_WSIZE_SMALL_BTN,
+        medium_btn:  ZONE_WSIZE_MEDIUM_BTN,
+        large_btn:   ZONE_WSIZE_LARGE_BTN,
+    };
 
 // ── Public entry ────────────────────────────────────────────────────────────
 
@@ -106,13 +126,15 @@ pub fn draw_appearance_panel(
     let focus_base_rows = 2.0;
     let glow_extra_rows = if config.window_manager.focus_glow { 2.0 } else { 0.0 };
     let focus_card_h = card_chrome_h + (focus_base_rows + glow_extra_rows) * row;
+    let wsize_card_h = card_chrome_h + crate::appearance_window_sizes::ROWS * row;
 
     let content_height = CARD_OUTER_PAD_V * s
         + themes_card_h + CARD_GAP * s
         + theme_card_h + CARD_GAP * s
         + layout_card_h + CARD_GAP * s
         + anim_card_h + CARD_GAP * s
-        + focus_card_h + CARD_OUTER_PAD_V * 2.0 * s;
+        + focus_card_h + CARD_GAP * s
+        + wsize_card_h + CARD_OUTER_PAD_V * 2.0 * s;
 
     if scroll_delta != 0.0 {
         ScrollArea::apply_scroll(
@@ -163,6 +185,14 @@ pub fn draw_appearance_panel(
         card_x, cy_top, card_w, focus_card_h, s, sw, sh,
         &ZONE_IDS_FOCUS,
     );
+    cy_top += focus_card_h + CARD_GAP * s;
+
+    // ── Card 5: Window Sizes ───────────────────────────────────────
+    crate::appearance_window_sizes::draw_window_sizes_card(
+        config, panel_state, painter, text, ix, fox,
+        card_x, cy_top, card_w, wsize_card_h, s, sw, sh,
+        &WSIZE_ZONES,
+    );
 
     scroll_area.end(painter, text);
 
@@ -179,6 +209,19 @@ pub fn draw_appearance_panel(
             if id >= ACT_ANIM_PRESET && id < ACT_ANIM_PRESET + PRESET_OPTIONS.len() as u32 {
                 config.animations.preset =
                     PRESET_OPTIONS[(id - ACT_ANIM_PRESET) as usize].to_lowercase();
+            } else if let Some((target, idx)) = wsize_action_target(id) {
+                let opts = crate::appearance_window_sizes::SIZE_PCT_OPTIONS;
+                if let Some(label) = opts.get(idx) {
+                    let pct = crate::appearance_window_sizes::parse_pct(label);
+                    if pct > 0 {
+                        match target {
+                            WSizeTarget::Default => config.windows.default_size_pct = pct,
+                            WSizeTarget::Small   => config.windows.size_small_pct   = pct,
+                            WSizeTarget::Medium  => config.windows.size_medium_pct  = pct,
+                            WSizeTarget::Large   => config.windows.size_large_pct   = pct,
+                        }
+                    }
+                }
             } else {
                 crate::appearance_themes::dispatch_theme_menu_action(
                     themes_state, config, id,
@@ -187,6 +230,30 @@ pub fn draw_appearance_panel(
             panel_state.close_dropdown();
         }
     }
+}
+
+// ── Window-size menu action routing ────────────────────────────────────────
+
+#[derive(Copy, Clone)]
+enum WSizeTarget { Default, Small, Medium, Large }
+
+/// Decode a menu action id back into (target rung, preset index). Each rung
+/// owns a contiguous 10-id block (ACT_WSIZE_*), so we just bucket on the
+/// upper digit.
+fn wsize_action_target(id: u32) -> Option<(WSizeTarget, usize)> {
+    let len = crate::appearance_window_sizes::SIZE_PCT_OPTIONS.len() as u32;
+    let bases = [
+        (ACT_WSIZE_DEFAULT, WSizeTarget::Default),
+        (ACT_WSIZE_SMALL,   WSizeTarget::Small),
+        (ACT_WSIZE_MEDIUM,  WSizeTarget::Medium),
+        (ACT_WSIZE_LARGE,   WSizeTarget::Large),
+    ];
+    for (base, target) in bases {
+        if id >= base && id < base + len {
+            return Some((target, (id - base) as usize));
+        }
+    }
+    None
 }
 
 // ── Zone-id bundles passed into section modules ────────────────────────────
@@ -376,6 +443,25 @@ pub fn handle_appearance_click(
                 );
                 panel_state.dropdown_menu.open(cursor_x, cursor_y + 16.0, items);
                 panel_state.active_dropdown = Some(ZONE_ANIM_PRESET_BTN);
+            }
+        }
+        // Window-size picker buttons — each opens a dropdown of percentage
+        // presets keyed to the matching ACT_WSIZE_* base.
+        id @ (ZONE_WSIZE_DEFAULT_BTN | ZONE_WSIZE_SMALL_BTN
+              | ZONE_WSIZE_MEDIUM_BTN | ZONE_WSIZE_LARGE_BTN) => {
+            if panel_state.active_dropdown == Some(id) {
+                panel_state.close_dropdown();
+            } else {
+                let (base, cur) = match id {
+                    ZONE_WSIZE_DEFAULT_BTN => (ACT_WSIZE_DEFAULT, config.windows.default_size_pct),
+                    ZONE_WSIZE_SMALL_BTN   => (ACT_WSIZE_SMALL,   config.windows.size_small_pct),
+                    ZONE_WSIZE_MEDIUM_BTN  => (ACT_WSIZE_MEDIUM,  config.windows.size_medium_pct),
+                    ZONE_WSIZE_LARGE_BTN   => (ACT_WSIZE_LARGE,   config.windows.size_large_pct),
+                    _ => unreachable!(),
+                };
+                let items = crate::appearance_window_sizes::build_size_menu(base, cur);
+                panel_state.dropdown_menu.open(cursor_x, cursor_y + 16.0, items);
+                panel_state.active_dropdown = Some(id);
             }
         }
         // Accent swatches

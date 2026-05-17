@@ -303,7 +303,10 @@ fn draw_section(
         ),
     };
 
-    let v = if muted { 0.0 } else { vol.min(1.0) };
+    // Slider scale runs 0..1.2 (i.e. up to 120 %) so users can boost
+    // quiet sinks. Knob/fill widths divide by 1.2 to map back to the
+    // track. The 100 % mark sits at ~83 % of track width.
+    let v = if muted { 0.0 } else { vol.min(1.2) };
     let white = Color::from_rgb8(0xff, 0xff, 0xff);
     let muted_white = white.with_alpha(0.55 * alpha);
 
@@ -338,7 +341,7 @@ fn draw_section(
     );
     let gold = Color::from_rgb8(0xc8, 0x86, 0x0a);
     if v > 0.0 {
-        let fill_w = (track.w * v).max(track.h);
+        let fill_w = (track.w * (v / 1.2)).max(track.h);
         painter.rect_filled(
             Rect::new(track.x, track.y, fill_w, track.h),
             radius,
@@ -347,7 +350,7 @@ fn draw_section(
     }
 
     // Knob — white circle at the current position.
-    let knob_cx = track.x + track.w * v;
+    let knob_cx = track.x + track.w * (v / 1.2);
     let knob_cy = track.y + track.h * 0.5;
     let knob_r = track.h * 1.6;
     painter.circle_filled(
