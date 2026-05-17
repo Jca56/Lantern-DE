@@ -226,11 +226,43 @@ impl Lantern {
                     }
                 }
 
+                // Ctrl+Shift+Super+Arrow: move a corner-posed window between
+                // the four corners (no resize). No-op if focused window isn't
+                // currently corner-posed. Must come BEFORE the Shift+Super
+                // block since that one requires `!ctrl`.
+                if event.state() == KeyState::Pressed
+                    && _modifiers.logo && _modifiers.shift && _modifiers.ctrl && !_modifiers.alt
+                    && !data.workspaces.tiling_active
+                {
+                    let dir = match keysym.modified_sym().raw() {
+                        xkb::KEY_Left  => Some(crate::window_management::CornerDir::Left),
+                        xkb::KEY_Right => Some(crate::window_management::CornerDir::Right),
+                        xkb::KEY_Up    => Some(crate::window_management::CornerDir::Up),
+                        xkb::KEY_Down  => Some(crate::window_management::CornerDir::Down),
+                        _ => None,
+                    };
+                    if let Some(dir) = dir {
+                        // Try half-side swap first (Posed L↔R, skipping
+                        // Middle). If the window isn't half-posed, fall
+                        // through to the corner mover for corner-posed
+                        // windows.
+                        let handled = data.try_swap_half_side(dir)
+                            || data.move_corner_focused(dir);
+                        if handled {
+                            data.schedule_render();
+                        }
+                        return FilterResult::Intercept(());
+                    }
+                }
+
                 // Shift+Super+Arrow: window control.
                 //   Left/Right: pose to Left half ↔ Middle (1500×1000) ↔ Right half.
-                //   Up:         restore most-recently-minimized OR ladder up
-                //               (Normal → SoloTile → Maximized).
-                //   Down:       ladder down (Max → SoloTile → Normal → Minimize).
+                //   Up:         restore most-recently-minimized; corner → half;
+                //               Tiny → Middle; half-posed → top corner;
+                //               otherwise ladder up (Normal → SoloTile → Maximized).
+                //   Down:       Max → SoloTile → Normal → Tiny → Minimize, with
+                //               half-posed taking a side-trip into the bottom
+                //               corner of that side first.
                 if event.state() == KeyState::Pressed
                     && _modifiers.logo && _modifiers.shift && !_modifiers.alt && !_modifiers.ctrl
                     && !data.workspaces.tiling_active
@@ -297,10 +329,13 @@ impl Lantern {
                     }
                 }
 
-                // F11 or Super+F: toggle fullscreen
-                // For F11, let X11 Wine windows handle it themselves
+                // F11 or Super+F: toggle fullscreen.
+                // - F11 alone fullscreens (let X11 Wine windows handle it themselves).
+                // - Super+F11 deliberately falls through so apps can bind it
+                //   (lntrn-terminal uses it for chrome-hide / "rice mode").
                 if event.state() == KeyState::Pressed {
-                    let is_f11 = keysym.modified_sym().raw() == xkb::KEY_F11;
+                    let is_f11 = !_modifiers.logo
+                        && keysym.modified_sym().raw() == xkb::KEY_F11;
                     let is_super_f = _modifiers.logo && keysym.modified_sym().raw() == xkb::KEY_f;
 
                     if is_f11 || is_super_f {

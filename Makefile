@@ -145,6 +145,7 @@ install-portal:
 
 install-udev:
 	@echo "Installing udev rules..."
+	@sudo mkdir -p /etc/udev/rules.d
 	@sudo cp system/udev/*.rules /etc/udev/rules.d/
 	@sudo udevadm control --reload-rules
 	@sudo udevadm trigger

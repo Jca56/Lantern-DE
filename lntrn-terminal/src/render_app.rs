@@ -78,27 +78,29 @@ impl App {
             &mode,
         );
 
-        // Draw sidebar (file browser or git panel)
-        sidebar::draw_sidebar(
-            painter,
-            text,
-            &self.sidebar,
-            chrome_h,
-            screen_w,
-            screen_h,
-            self.cursor_pos,
-        );
-        if self.sidebar.visible && self.sidebar.mode == sidebar::SidebarMode::Git {
-            git_sidebar::draw_git_sidebar(
+        // Draw sidebar (file browser or git panel) — skipped in rice mode.
+        if !self.chrome_hidden {
+            sidebar::draw_sidebar(
                 painter,
                 text,
-                &self.git_sidebar,
-                self.sidebar.width,
-                chrome_h + sidebar::TOGGLE_H,
+                &self.sidebar,
+                chrome_h,
                 screen_w,
                 screen_h,
                 self.cursor_pos,
             );
+            if self.sidebar.visible && self.sidebar.mode == sidebar::SidebarMode::Git {
+                git_sidebar::draw_git_sidebar(
+                    painter,
+                    text,
+                    &self.git_sidebar,
+                    self.sidebar.width,
+                    chrome_h + sidebar::TOGGLE_H,
+                    screen_w,
+                    screen_h,
+                    self.cursor_pos,
+                );
+            }
         }
 
         // Render all panes in the active tab
@@ -190,45 +192,50 @@ impl App {
             })
             .collect();
 
-        // Draw title bar (bg + menus + divider + window controls). Returns
-        // the resolved layout so we know where the tabs region is.
-        let layout = ui_chrome::draw_chrome(
-            painter,
-            text,
-            &mut self.chrome,
-            &mut self.input,
-            screen_w,
-            screen_h,
-            font_size,
-            self.sidebar.visible,
-            maximized,
-            1.0,
-            &mode,
-            cursor_pos,
-        );
+        // Draw title bar (bg + menus + divider + window controls) and tabs —
+        // skipped entirely in rice mode for a perfectly clean window.
+        if !self.chrome_hidden {
+            let layout = ui_chrome::draw_chrome(
+                painter,
+                text,
+                &mut self.chrome,
+                &mut self.input,
+                screen_w,
+                screen_h,
+                font_size,
+                self.sidebar.visible,
+                maximized,
+                1.0,
+                &mode,
+                cursor_pos,
+            );
 
-        // Draw tabs inside the title bar, in the region between the menu
-        // divider and the window controls.
-        let tabs_bounds = lntrn_render::Rect::new(
-            layout.tabs_left,
-            0.0,
-            (layout.tabs_right - layout.tabs_left).max(0.0),
-            layout.bar_h,
-        );
-        tab_bar::draw_tab_bar(
-            painter,
-            text,
-            &self.tab_bar,
-            &tab_displays,
-            self.active_tab,
-            tabs_bounds,
-            screen_w,
-            screen_h,
-            self.cursor_pos,
-            &mode,
-        );
+            // Draw tabs inside the title bar, in the region between the menu
+            // divider and the window controls.
+            let tabs_bounds = lntrn_render::Rect::new(
+                layout.tabs_left,
+                0.0,
+                (layout.tabs_right - layout.tabs_left).max(0.0),
+                layout.bar_h,
+            );
+            tab_bar::draw_tab_bar(
+                painter,
+                text,
+                &self.tab_bar,
+                &tab_displays,
+                self.active_tab,
+                tabs_bounds,
+                screen_w,
+                screen_h,
+                self.cursor_pos,
+                &mode,
+            );
+        }
 
-        let has_overlay = self.chrome.has_overlay() || self.tab_bar.has_overlay() || self.sidebar.has_overlay();
+        let has_overlay = !self.chrome_hidden
+            && (self.chrome.has_overlay()
+                || self.tab_bar.has_overlay()
+                || self.sidebar.has_overlay());
 
         if has_overlay {
             // Two-pass rendering: menus must appear ABOVE terminal text.

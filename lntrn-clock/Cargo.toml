@@ -1,0 +1,16 @@
+[package]
+name = "lntrn-clock"
+version = "0.1.0"
+edition = "2021"
+description = "Lantern DE - Big block clock for the terminal, with a config TUI"
+authors = ["Jca56"]
+
+[[bin]]
+name = "lclock"
+path = "src/main.rs"
+
+[dependencies]
+lntrn-theme = { path = "../lntrn-theme" }
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"

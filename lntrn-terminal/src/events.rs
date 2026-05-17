@@ -140,6 +140,14 @@ impl App {
             }
         }
 
+        // Rice mode: skip all chrome/tab/menubar click routing — go straight
+        // to the terminal-selection passthrough.
+        if self.chrome_hidden {
+            self.input.on_left_pressed();
+            self.request_redraw();
+            return self.handle_click_passthrough(screen_h);
+        }
+
         // When a menu overlay is open, check chrome first so
         // dropdown clicks don't fall through to tabs underneath.
         if !self.chrome.has_overlay() {
@@ -370,15 +378,22 @@ impl App {
     fn handle_click_passthrough(&mut self, screen_h: u32) -> EventResult {
         let chrome_h = self.chrome_height();
 
+        // Sidebar / git-sidebar / sidebar-file hits — all skipped in rice
+        // mode since the sidebar isn't drawn and those coordinates belong
+        // to the terminal grid.
+        let allow_sidebar_hits = !self.chrome_hidden;
+
         // Check sidebar mode toggle first
-        if let Some(new_mode) = sidebar::handle_mode_click(&mut self.sidebar, self.cursor_pos, chrome_h) {
-            self.handle_sidebar_mode_change(new_mode);
-            self.request_redraw();
-            return EventResult::Handled;
+        if allow_sidebar_hits {
+            if let Some(new_mode) = sidebar::handle_mode_click(&mut self.sidebar, self.cursor_pos, chrome_h) {
+                self.handle_sidebar_mode_change(new_mode);
+                self.request_redraw();
+                return EventResult::Handled;
+            }
         }
 
         // Git sidebar click handling
-        if self.sidebar.visible && self.sidebar.mode == sidebar::SidebarMode::Git {
+        if allow_sidebar_hits && self.sidebar.visible && self.sidebar.mode == sidebar::SidebarMode::Git {
             let git_top = chrome_h + sidebar::TOGGLE_H;
             if git_sidebar::contains(self.cursor_pos, self.sidebar.width, git_top) {
                 let action = git_sidebar::handle_click(
@@ -394,7 +409,7 @@ impl App {
         }
 
         // Check file sidebar click
-        if sidebar::contains(&self.sidebar, self.cursor_pos, chrome_h) {
+        if allow_sidebar_hits && sidebar::contains(&self.sidebar, self.cursor_pos, chrome_h) {
             let ctrl = self.modifiers.contains(ModifiersState::CONTROL);
             let result = sidebar::handle_click(
                 &mut self.sidebar,
@@ -660,6 +675,25 @@ impl App {
                 if self.chrome.has_overlay() || self.tab_bar.has_overlay() {
                     self.chrome.close_all_menus();
                     self.tab_bar.context_menu = None;
+                    self.request_redraw();
+                    return EventResult::Handled;
+                }
+            }
+
+            // Super+F11: toggle "rice mode" — hides the entire chrome
+            // (titlebar, tabs, sidebar) for screenshots / fastfetch glamour.
+            // The compositor lets Super+F11 fall through; plain F11 still
+            // toggles compositor fullscreen.
+            if self.modifiers.contains(ModifiersState::SUPER) {
+                if let winit::keyboard::Key::Named(winit::keyboard::NamedKey::F11) =
+                    &event.logical_key
+                {
+                    self.chrome_hidden = !self.chrome_hidden;
+                    if self.chrome_hidden {
+                        self.chrome.close_all_menus();
+                        self.tab_bar.context_menu = None;
+                    }
+                    self.update_grid_size();
                     self.request_redraw();
                     return EventResult::Handled;
                 }

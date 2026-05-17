@@ -36,6 +36,7 @@ members = [
     "lntrn-command-center",
     "lntrn-keychain",
     "lntrn-keys",
+    "lntrn-clock",
 ]
 
 [profile.release]

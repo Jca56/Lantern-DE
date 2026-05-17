@@ -2307,6 +2307,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "lntrn-clock"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "lntrn-theme",
+ "serde",
+ "toml 0.8.2",
+]
+
+[[package]]
 name = "lntrn-code"
 version = "0.1.0"
 dependencies = [

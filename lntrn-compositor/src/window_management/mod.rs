@@ -15,7 +15,7 @@ mod minimize;
 mod solo_tile;
 mod ssd;
 
-pub use half_pose::PoseSlot;
+pub use half_pose::{CornerDir, PoseSlot};
 
 /// Action to take in response to an SSD button click.
 pub enum SsdClickAction {

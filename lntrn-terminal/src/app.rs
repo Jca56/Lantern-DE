@@ -79,6 +79,10 @@ pub struct App {
     pub chrome: ui_chrome::ChromeState,
     pub tab_bar: tab_bar::TabBarState,
     pub input: InteractionContext,
+    /// "Rice mode" — toggled by Super+F11. When true, chrome (titlebar,
+    /// tabs, sidebar) is not drawn and click-handlers ignore those regions
+    /// so the terminal grid fills the entire window.
+    pub chrome_hidden: bool,
 
     // Cursor blink
     pub cursor_visible: bool,
@@ -145,6 +149,7 @@ impl App {
             chrome: ui_chrome::ChromeState::new(),
             tab_bar: tab_bar::TabBarState::new(),
             input: InteractionContext::new(),
+            chrome_hidden: false,
             cursor_visible: true,
             cursor_blink_deadline: Instant::now() + CURSOR_BLINK_INTERVAL,
             clipboard: clipboard::WaylandClipboard::new(),
@@ -190,8 +195,12 @@ impl App {
     }
 
     /// Chrome height — tabs now live inside the title bar, so this is just
-    /// the title bar height.
+    /// the title bar height. Returns 0 in rice mode so the terminal grid
+    /// fills from y=0.
     pub(crate) fn chrome_height(&self) -> f32 {
+        if self.chrome_hidden {
+            return 0.0;
+        }
         ui_chrome::title_bar_height(&crate::config::WindowMode::current())
     }
 
@@ -213,6 +222,9 @@ impl App {
     }
 
     pub(crate) fn sidebar_offset(&self) -> f32 {
+        if self.chrome_hidden {
+            return 0.0;
+        }
         if self.sidebar.visible {
             self.sidebar.width
         } else {

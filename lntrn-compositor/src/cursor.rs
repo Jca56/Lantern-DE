@@ -46,8 +46,13 @@ impl CursorState {
                 crate::input::read_input_setting_f64("cursor_size", 24.0).round() as u32
             })
             .clamp(16, 128);
+        // xcursor theme name is separate from `initial_theme` — the latter
+        // names a Lantern SVG (e.g. "Arch-Cursor") that only covers the
+        // default arrow. Non-default shapes (pointer, text, resize) fall
+        // through to xcursor and need a *real installed* theme like "default"
+        // or whatever XCURSOR_THEME points to. Don't mix the two.
         let theme_name = std::env::var("XCURSOR_THEME")
-            .unwrap_or_else(|_| initial_theme.to_string());
+            .unwrap_or_else(|_| "default".to_string());
         let mut state = Self {
             status: CursorImageStatus::Named(
                 smithay::input::pointer::CursorIcon::Default,
