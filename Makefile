@@ -33,7 +33,7 @@ BINARIES := \
 # Extra binaries from multi-binary crates
 EXTRA_BINARIES := notify-send
 
-.PHONY: all build install install-bins install-icons install-config \
+.PHONY: all build deploy install install-bins install-icons install-config \
         install-desktop install-wallpaper install-session install-portal \
         install-udev install-system fresh-install dirs clean deploy-%
 
@@ -246,6 +246,12 @@ install: install-bins install-config install-desktop install-wallpaper
 
 clean:
 	cargo clean
+
+# ── Deploy all binaries (build + install-bins only) ─────────────────────────
+
+deploy: build install-bins
+	@echo ""
+	@echo "🏮 All Lantern binaries deployed to $(BIN_DIR)"
 
 # ── Deploy single component ──────────────────────────────────────────────────
 
