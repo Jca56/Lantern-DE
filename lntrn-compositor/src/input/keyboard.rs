@@ -226,6 +226,30 @@ impl Lantern {
                     }
                 }
 
+                // Ctrl+Super+Left/Right (no Shift): half-swap (Posed L↔R) or
+                // corner horizontal move. Same behavior as Ctrl+Shift+Super
+                // L/R but two-finger reach instead of three. Up/Down are
+                // intentionally left unbound here — corner vertical move
+                // stays exclusive to Ctrl+Shift+Super+Up/Down.
+                if event.state() == KeyState::Pressed
+                    && _modifiers.logo && _modifiers.ctrl && !_modifiers.shift && !_modifiers.alt
+                    && !data.workspaces.tiling_active
+                {
+                    let dir = match keysym.modified_sym().raw() {
+                        xkb::KEY_Left  => Some(crate::window_management::CornerDir::Left),
+                        xkb::KEY_Right => Some(crate::window_management::CornerDir::Right),
+                        _ => None,
+                    };
+                    if let Some(dir) = dir {
+                        let handled = data.try_swap_half_side(dir)
+                            || data.move_corner_focused(dir);
+                        if handled {
+                            data.schedule_render();
+                        }
+                        return FilterResult::Intercept(());
+                    }
+                }
+
                 // Ctrl+Shift+Super+Arrow: move a corner-posed window between
                 // the four corners (no resize). No-op if focused window isn't
                 // currently corner-posed. Must come BEFORE the Shift+Super
@@ -308,25 +332,6 @@ impl Lantern {
                         }
                     }
                     return FilterResult::Intercept(());
-                }
-
-                // Super+Ctrl+Left/Right: resize tiling split
-                if event.state() == KeyState::Pressed
-                    && _modifiers.logo && _modifiers.ctrl
-                    && data.workspaces.tiling_active
-                {
-                    let delta = match keysym.modified_sym().raw() {
-                        xkb::KEY_Left => Some(-0.05f32),
-                        xkb::KEY_Right => Some(0.05f32),
-                        _ => None,
-                    };
-                    if let Some(delta) = delta {
-                        if let Some(focused) = data.focused_surface.clone() {
-                            data.workspaces.resize_split(&focused, delta);
-                            data.apply_tiling_layout();
-                        }
-                        return FilterResult::Intercept(());
-                    }
                 }
 
                 // F11 or Super+F: toggle fullscreen.

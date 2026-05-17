@@ -37,6 +37,7 @@ members = [
     "lntrn-keychain",
     "lntrn-keys",
     "lntrn-clock",
+    "lntrn-rice",
 ]
 
 [profile.release]

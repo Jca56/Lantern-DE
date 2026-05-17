@@ -2643,6 +2643,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "lntrn-rice"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "lntrn-render",
+ "lntrn-theme",
+ "raw-window-handle",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
+ "wgpu",
+]
+
+[[package]]
 name = "lntrn-screencopy"
 version = "0.1.0"
 dependencies = [

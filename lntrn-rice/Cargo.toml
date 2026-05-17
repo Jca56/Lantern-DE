@@ -1,0 +1,26 @@
+[package]
+name = "lntrn-rice"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "lntrn_rice"
+path = "src/lib.rs"
+
+[[bin]]
+name = "lntrn-rice"
+path = "src/bin/lntrn-rice.rs"
+
+[[bin]]
+name = "lntrn-rice-gradient"
+path = "src/bin/lntrn-rice-gradient.rs"
+
+[dependencies]
+anyhow = "1"
+lntrn-render = { path = "../lntrn-render" }
+lntrn-theme = { path = "../lntrn-theme" }
+raw-window-handle = "0.6"
+wayland-backend = { version = "0.3", features = ["client_system"] }
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
+wgpu = "28"
