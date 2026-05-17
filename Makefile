@@ -23,7 +23,6 @@ BINARIES := \
 	lntrn-media-player \
 	lntrn-screenshot \
 	lntrn-portal \
-	lntrn-browser \
 	lntrn-git \
 	lntrn-calculator \
 	lntrn-sysmon \
@@ -101,7 +100,6 @@ install-desktop: dirs
 		lntrn-snapshot/lntrn-snapshot-gui.desktop \
 		lntrn-calculator/lntrn-calculator.desktop \
 		lntrn-notepad/lntrn-notepad.desktop \
-		lntrn-browser/lntrn-browser.desktop \
 		lntrn-sysmon/lntrn-sysmon.desktop \
 		lntrn-git/lntrn-git.desktop \
 	; do \

@@ -23,7 +23,6 @@ members = [
     "lntrn-menu",
     "lntrn-notepad",
     "lntrn-code",
-    "lntrn-browser",
     "lntrn-snapshot",
     "lntrn-portal",
     "lntrn-git",

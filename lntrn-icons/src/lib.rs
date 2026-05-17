@@ -43,7 +43,6 @@ const BAR_TERMINAL: &[u8] = include_bytes!("../../icons/bar/terminal.svg");
 
 // ── App icons ───────────────────────────────────────────────────────────────
 
-const LNTRN_BROWSER: &[u8] = include_bytes!("../../icons/apps/lntrn-browser.svg");
 const LNTRN_CALCULATOR: &[u8] = include_bytes!("../../icons/apps/lntrn-calculator.svg");
 const LNTRN_FILE_MANAGER: &[u8] = include_bytes!("../../icons/apps/lntrn-file-manager.svg");
 const LNTRN_GIT: &[u8] = include_bytes!("../../icons/apps/lntrn-git.svg");
@@ -161,7 +160,6 @@ pub fn get(name: &str) -> Option<&'static [u8]> {
         "terminal.svg" => BAR_TERMINAL,
 
         // App icons
-        "lntrn-browser.svg" => LNTRN_BROWSER,
         "lntrn-calculator.svg" => LNTRN_CALCULATOR,
         "lntrn-file-manager.svg" => LNTRN_FILE_MANAGER,
         "lntrn-git.svg" => LNTRN_GIT,

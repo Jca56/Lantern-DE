@@ -137,7 +137,7 @@ impl WallpaperState {
 fn load_wallpaper_image(path: &str) -> Option<DynamicImage> {
     if path.is_empty() {
         tracing::info!("[wallpaper] using embedded default");
-        image::load_from_memory(include_bytes!("../../Lantern-DE_Wallpaper.jpeg")).ok()
+        image::load_from_memory(include_bytes!("../../wallpapers/Lantern-DE_Wallpaper.jpeg")).ok()
     } else {
         tracing::info!("[wallpaper] loading from '{}'", path);
         match image::open(path) {
@@ -148,7 +148,7 @@ fn load_wallpaper_image(path: &str) -> Option<DynamicImage> {
             }
             Err(e) => {
                 tracing::info!("[wallpaper] failed to load '{}': {e}, using default", path);
-                image::load_from_memory(include_bytes!("../../Lantern-DE_Wallpaper.jpeg")).ok()
+                image::load_from_memory(include_bytes!("../../wallpapers/Lantern-DE_Wallpaper.jpeg")).ok()
             }
         }
     }
