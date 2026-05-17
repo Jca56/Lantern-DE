@@ -59,6 +59,17 @@ impl CompositorHandler for Lantern {
         xdg_shell::handle_commit(&mut self.popups, &self.space, surface);
         resize_grab::handle_commit(&mut self.space, surface);
 
+        // Smooth-resize handoff: if a held visual is still in effect and
+        // this commit lands at the matching size, drop the hold so the
+        // renderer stops stretching the buffer. Looking up the window's
+        // geometry here is post-commit, so `geometry().size` already
+        // reflects whatever the client just acked.
+        if let Some(window) = self.find_mapped_window(surface) {
+            let committed_size = window.geometry().size;
+            self.window_state_anim
+                .clear_held_scale_if_matched(surface, committed_size);
+        }
+
         // Center windows that are waiting for their first real geometry
         self.center_pending_window(surface);
 

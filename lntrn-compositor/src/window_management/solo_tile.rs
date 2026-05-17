@@ -103,10 +103,7 @@ impl Lantern {
             target,
         });
 
-        window.configure_rect(target);
-        self.remap_tracked_window(window.clone(), target.loc, true);
-        self.window_state_anim
-            .animate_default(surface, anim_start, target);
+        self.animate_resize(surface, &window, anim_start, target);
         true
     }
 
@@ -131,10 +128,7 @@ impl Lantern {
             .current_rect(surface)
             .unwrap_or(current_rect);
 
-        entry.window.configure_rect(entry.restore);
-        self.remap_tracked_window(entry.window.clone(), entry.restore.loc, true);
-        self.window_state_anim
-            .animate_default(surface, anim_start, entry.restore);
+        self.animate_resize(surface, &entry.window, anim_start, entry.restore);
         true
     }
 

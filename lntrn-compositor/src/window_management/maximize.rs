@@ -90,11 +90,12 @@ impl Lantern {
         let anim_start = existing_anim.unwrap_or(restore);
         tracing::info!("maximize_surface: existing_anim={:?} anim_start={:?}", existing_anim, anim_start);
 
+        // set_maximized only modifies pending state; the size + the
+        // maximized bit are flushed together by the next configure that
+        // animate_resize sends (immediately for untrusted; deferred to
+        // anim end for trusted).
         window.set_maximized(true);
-        window.configure_rect(output_geo);
-
-        self.remap_tracked_window(window.clone(), output_geo.loc, true);
-        self.window_state_anim.animate_default(surface, anim_start, output_geo);
+        self.animate_resize(surface, &window, anim_start, output_geo);
         self.update_foreign_toplevel_states(surface);
         if serial != Serial::from(0) {
             self.focus_window(&window, serial);
@@ -124,10 +125,7 @@ impl Lantern {
         );
 
         window.set_maximized(false);
-        window.configure_rect(restore);
-
-        self.remap_tracked_window(window.clone(), restore.loc, true);
-        self.window_state_anim.animate_default(surface, anim_start, restore);
+        self.animate_resize(surface, &window, anim_start, restore);
         self.update_foreign_toplevel_states(surface);
         if serial != Serial::from(0) {
             self.focus_window(&window, serial);

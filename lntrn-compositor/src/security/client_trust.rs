@@ -177,6 +177,14 @@ pub fn is_trusted_client(client: &Client) -> bool {
         .unwrap_or(false)
 }
 
+/// Surface-level wrapper: resolves the surface's client and returns true
+/// iff that client passed the trust check at connect time. Untrusted (or
+/// no-client) surfaces return false.
+pub fn is_trusted_surface(surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface) -> bool {
+    use smithay::reexports::wayland_server::Resource;
+    surface.client().map_or(false, |c| is_trusted_client(&c))
+}
+
 /// Force-reload the extra allowlist. Useful if you want to add a runtime
 /// command later to re-read the TOML without restarting the compositor.
 /// Currently a no-op; kept here so the API exists for a future migration

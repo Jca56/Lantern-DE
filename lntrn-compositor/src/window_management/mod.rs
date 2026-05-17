@@ -12,6 +12,7 @@ mod half_pose;
 mod lifecycle;
 mod maximize;
 mod minimize;
+mod smooth_resize;
 mod solo_tile;
 mod ssd;
 

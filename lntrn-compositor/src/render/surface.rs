@@ -97,6 +97,18 @@ pub fn render_surface(
     state.tiling_anim.tick();
     state.workspace_anim.tick();
     state.window_state_anim.tick();
+    // Smooth-resize: stream a configure to every trusted in-progress
+    // surface with its CURRENT interpolated rect, so the client redraws
+    // at every intermediate size. Once the anim ends, this keeps emitting
+    // the final target until the smooth-hold is retired by the matching
+    // commit. (Smithay deduplicates: identical pending state → no actual
+    // wire send, so the steady-state cost is one configure per anim frame.)
+    let per_frame_configures = state.window_state_anim.drain_per_frame_configures();
+    for (surface, rect) in per_frame_configures {
+        if let Some(window) = state.find_mapped_window(&surface) {
+            crate::window_ext::WindowExt::configure_rect(&window, rect);
+        }
+    }
     state.process_pending_workspace_moves();
     let finished_minimizes = state.minimize_anim.tick();
     for surface in &finished_minimizes {
@@ -377,6 +389,12 @@ pub fn render_surface(
         let win_size = win_geo.size;
         let tiling_anim_rect = state.tiling_anim.current_rect(&surface);
         let state_anim_rect = state.window_state_anim.current_rect(&surface);
+        // Smooth-resize held target: bridges the 1-2 frame gap between
+        // "rect anim ended" and "client committed at the new size".
+        // Without this, the renderer would briefly fall through to the
+        // window's live geometry, which still reflects the old size.
+        let held_target_rect = state.window_state_anim.held_target_rect(&surface);
+        let is_smooth = state.window_state_anim.is_smooth(&surface);
         let minimize_params = state.minimize_anim.get(&surface).map(|m| m.render_params());
         // Configured-rect fallback used AFTER the state animation finishes,
         // so we render against the rect we asked the client for rather than
@@ -406,6 +424,13 @@ pub fn render_surface(
                 let vy = p.render_loc.y + (win_size.h as f64 - vh) / 2.0;
                 (vx, vy, vw, vh, p.alpha)
             } else if let Some(rect) = state_anim_rect {
+                (rect.loc.x as f64, rect.loc.y as f64,
+                 rect.size.w as f64, rect.size.h as f64, 1.0)
+            } else if let Some(rect) = held_target_rect {
+                // Smooth-resize bridge: anim done, client redraw at the
+                // new size pending. Pin the rect at target so the next
+                // frame's render is already in the final spot — the
+                // client commit will then collapse combined_scale to 1.0.
                 (rect.loc.x as f64, rect.loc.y as f64,
                  rect.size.w as f64, rect.size.h as f64, 1.0)
             } else if let Some(ref rect) = tiling_anim_rect {
@@ -586,6 +611,11 @@ pub fn render_surface(
         // would refresh mid-anim and capture the post-configure buffer,
         // re-introducing the content pop.
         let resize_animating = state_anim_rect.is_some();
+        // Snapshot capture is suppressed during the rect animation so the
+        // texture stays frozen at pre-resize content (used by the close
+        // animation if the client dies mid-resize). Smooth-resize path
+        // doesn't read this snapshot during rendering — it's only kept
+        // updated as a close-anim fallback.
         if !is_fullscreen && !is_opening && !resize_animating
             && state.wallpaper_frame_counter % 6 == 0
         {
@@ -615,11 +645,22 @@ pub fn render_surface(
         } else {
             1.0
         };
-        let snap_alpha = (alpha * (1.0 - progress) as f32).clamp(0.0, 1.0);
-        let live_alpha = (alpha * progress as f32).clamp(0.0, 1.0);
+        // Smooth-resize surfaces stream per-frame configures so the
+        // client redraws crisply at each intermediate size — no fading,
+        // no snapshot. Live buffer at full alpha is the entire picture.
+        let (snap_alpha, live_alpha) = if is_smooth {
+            (0.0, alpha)
+        } else {
+            (
+                (alpha * (1.0 - progress) as f32).clamp(0.0, 1.0),
+                (alpha * progress as f32).clamp(0.0, 1.0),
+            )
+        };
 
         // 1) Snapshot (top of crossfade), fading OUT.
-        if resize_animating && snap_alpha > 0.01 {
+        //    Crossfade path only — smooth path renders the live buffer
+        //    directly at every step.
+        if !is_smooth && resize_animating && snap_alpha > 0.01 {
             if let Some((snap_tex, snap_phys)) = state.window_snapshots.get(&surface).cloned() {
                 let ctx_id = renderer.context_id();
                 let snap_loc = Point::<f64, Physical>::from((
@@ -1633,6 +1674,7 @@ pub fn render_surface(
         || state.tiling_anim.has_active()
         || state.workspace_anim.is_active()
         || state.window_state_anim.has_active()
+        || state.window_state_anim.has_smooth_holds()
         || state.minimize_anim.has_active()
         || state.alt_tab_switcher.needs_redraw()
         || state.hover_preview.needs_redraw()

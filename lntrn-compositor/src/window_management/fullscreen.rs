@@ -61,10 +61,7 @@ impl Lantern {
             .unwrap_or_else(|| Rectangle::new(location, window.geometry().size));
 
         window.set_fullscreen(true);
-        window.configure_rect(output_geo);
-
-        self.remap_tracked_window(window.clone(), output_geo.loc, true);
-        self.window_state_anim.animate_default(surface, anim_start, output_geo);
+        self.animate_resize(surface, &window, anim_start, output_geo);
         self.update_foreign_toplevel_states(surface);
         if serial != Serial::from(0) {
             self.focus_window(&window, serial);
@@ -90,10 +87,7 @@ impl Lantern {
         let anim_start = self.window_state_anim.current_rect(surface).unwrap_or(current_rect);
 
         window.set_fullscreen(false);
-        window.configure_rect(restore);
-
-        self.remap_tracked_window(window.clone(), restore.loc, true);
-        self.window_state_anim.animate_default(surface, anim_start, restore);
+        self.animate_resize(surface, &window, anim_start, restore);
         self.update_foreign_toplevel_states(surface);
         if serial != Serial::from(0) {
             self.focus_window(&window, serial);

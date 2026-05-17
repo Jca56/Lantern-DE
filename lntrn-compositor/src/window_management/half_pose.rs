@@ -510,10 +510,7 @@ impl Lantern {
 
         self.posed_windows.insert(surface.clone(), slot);
 
-        window.configure_rect(target);
-        self.remap_tracked_window(window.clone(), target.loc, true);
-        self.window_state_anim
-            .animate_default(surface, anim_start, target);
+        self.animate_resize(surface, &window, anim_start, target);
         true
     }
 }
