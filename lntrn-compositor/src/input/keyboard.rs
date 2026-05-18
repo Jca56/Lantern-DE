@@ -14,7 +14,7 @@ use std::time::Instant;
 
 use crate::state::Lantern;
 
-use super::spawn::{fire_audio_osd, fire_brightness_osd, spawn_detached, spawn_detached_args, AudioRepeat};
+use super::spawn::{fire_audio_osd, fire_brightness_osd, spawn_detached, spawn_detached_args, spawn_detached_args_logged, AudioRepeat};
 
 impl Lantern {
     pub(super) fn handle_keyboard_event<I: InputBackend>(&mut self, event: I::KeyboardKeyEvent) {
@@ -47,10 +47,11 @@ impl Lantern {
                 if !_modifiers.logo && was_super && data.super_clean_tap {
                     data.super_clean_tap = false;
                     tracing::info!("Super tap → toggling lntrn-command-center");
-                    spawn_detached_args(
+                    spawn_detached_args_logged(
                         "lntrn-command-center",
                         &["--toggle"],
                         &data.socket_name,
+                        "lntrn-command-center",
                     );
                 }
 

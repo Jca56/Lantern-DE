@@ -172,10 +172,11 @@ impl Lantern {
     /// panel was summoned.
     fn open_command_center(&mut self) {
         let socket = self.socket_name.clone();
-        crate::input::spawn_detached_args(
+        crate::input::spawn_detached_args_logged(
             "lntrn-command-center",
             &["--toggle"],
             &socket,
+            "lntrn-command-center",
         );
     }
 

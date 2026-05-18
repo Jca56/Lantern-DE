@@ -274,10 +274,9 @@ impl PasswordPrompt {
 
 impl Wifi {
     pub fn new() -> Self {
-        // Detect the backend up front — iwd preferred over NM when both
-        // are present (matches the Lantern preference on the Gentoo
-        // desktop). No backend at all → skip spawning the worker so the
-        // tile hides cleanly.
+        // Detect the backend up front (honors `wifi_backend` in
+        // settings.toml — see Backend::detect). No backend at all →
+        // skip spawning the worker so the tile hides cleanly.
         let backend = worker::Backend::detect();
         let available = backend.is_some();
 

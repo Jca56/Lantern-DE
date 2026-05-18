@@ -115,6 +115,62 @@ pub(crate) fn spawn_detached_args(cmd: &str, args: &[&str], wayland_display: &st
     }
 }
 
+/// Same as [`spawn_detached_args`] but routes stdout+stderr to
+/// `~/.lantern/log/<log_name>.log` (append). Without this, children
+/// spawned with stdio=null silently swallow tracing output, so debugging
+/// daemons like `lntrn-command-center` becomes impossible.
+pub(crate) fn spawn_detached_args_logged(
+    cmd: &str,
+    args: &[&str],
+    wayland_display: &std::ffi::OsStr,
+    log_name: &str,
+) {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+    crate::reap_zombies();
+    let resolved = resolve_lantern_bin(cmd);
+
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    let log_dir = std::path::PathBuf::from(&home).join(".lantern/log");
+    let _ = std::fs::create_dir_all(&log_dir);
+    let log_path = log_dir.join(format!("{log_name}.log"));
+
+    let stdout = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path);
+    let stderr = stdout
+        .as_ref()
+        .ok()
+        .and_then(|f| f.try_clone().ok());
+
+    let (stdout_io, stderr_io) = match (stdout, stderr) {
+        (Ok(out), Some(err)) => (Stdio::from(out), Stdio::from(err)),
+        _ => {
+            tracing::warn!("could not open {} — falling back to /dev/null", log_path.display());
+            (Stdio::null(), Stdio::null())
+        }
+    };
+
+    match unsafe {
+        Command::new(&resolved)
+            .args(args)
+            .env("WAYLAND_DISPLAY", wayland_display)
+            .stdin(Stdio::null())
+            .stdout(stdout_io)
+            .stderr(stderr_io)
+            .pre_exec(|| {
+                libc::setsid();
+                libc::setpgid(0, 0);
+                Ok(())
+            })
+            .spawn()
+    } {
+        Ok(_) => {}
+        Err(e) => tracing::error!("Failed to spawn {} {:?}: {}", cmd, args, e),
+    }
+}
+
 /// Fire the audio OSD for an action tag: `"VOL_UP"`, `"VOL_DOWN"`, or `"MUTE"`.
 ///
 /// Up/Down snap to the nearest 5% boundary instead of doing `wpctl 5%+/5%-`,

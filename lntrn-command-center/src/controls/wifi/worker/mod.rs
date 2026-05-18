@@ -32,17 +32,46 @@ pub(crate) enum Backend {
 }
 
 impl Backend {
-    /// Probe what's actually installed and running. iwd wins when both
-    /// are present — that's the Lantern preference on the Gentoo desktop
-    /// and matches the autostart wired up in `/etc/runlevels/default`.
+    /// Probe what's installed and running, honoring the user's
+    /// `wifi_backend` preference from `settings.toml`. Explicit `Nm` or
+    /// `Iwd` forces that choice (only falling back if it's not present).
+    /// `Auto` prefers whichever is currently owned on the system bus —
+    /// on a NetworkManager-only host like the Arch laptop, this is NM;
+    /// on the Gentoo desktop where iwd runs, this is iwd.
     pub(crate) fn detect() -> Option<Backend> {
-        if iwd::is_available() {
-            return Some(Backend::Iwd);
+        let pref = crate::settings::Config::load().wifi_backend;
+        match pref {
+            crate::settings::WifiBackendPref::Nm => {
+                if nm::is_available() {
+                    Some(Backend::Nm)
+                } else if iwd::is_available() {
+                    Some(Backend::Iwd)
+                } else {
+                    None
+                }
+            }
+            crate::settings::WifiBackendPref::Iwd => {
+                if iwd::is_available() {
+                    Some(Backend::Iwd)
+                } else if nm::is_available() {
+                    Some(Backend::Nm)
+                } else {
+                    None
+                }
+            }
+            crate::settings::WifiBackendPref::Auto => {
+                // Matches the original heuristic: iwd wins when both are
+                // owned. Hosts where NM should win must opt-in by setting
+                // `wifi_backend = "nm"` in settings.toml.
+                if iwd::is_available() {
+                    Some(Backend::Iwd)
+                } else if nm::is_available() {
+                    Some(Backend::Nm)
+                } else {
+                    None
+                }
+            }
         }
-        if nm::is_available() {
-            return Some(Backend::Nm);
-        }
-        None
     }
 }
 
