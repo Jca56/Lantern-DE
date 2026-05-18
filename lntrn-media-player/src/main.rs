@@ -1,4 +1,5 @@
 mod app;
+mod fft;
 mod mpris_server;
 mod pipeline;
 mod position_store;
@@ -40,6 +41,16 @@ fn main() {
     let (mpris_tx, mpris_rx) = mpris_server::spawn();
 
     gstreamer::init().expect("Failed to initialize GStreamer");
+
+    // Some distros ship pipewiresink at rank=none, so autoaudiosink falls
+    // back to alsasink even when PipeWire is running. Promote it above the
+    // primary tier so autodetect picks it whenever the plugin is present.
+    if let Some(feature) =
+        gstreamer::Registry::get().lookup_feature("pipewiresink")
+    {
+        use gstreamer::prelude::*;
+        feature.set_rank(gstreamer::Rank::PRIMARY + 10);
+    }
 
     let path = std::env::args().nth(1).map(|arg| {
         if let Some(stripped) = arg.strip_prefix("file://") {

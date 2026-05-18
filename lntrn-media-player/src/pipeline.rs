@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
@@ -5,6 +6,12 @@ use gstreamer::prelude::*;
 use gstreamer::{self as gst, ClockTime, Element, SeekFlags, State as GstState};
 use gstreamer_app as gst_app;
 use gstreamer_video as gst_video;
+
+use crate::fft::SpectrumAnalyzer;
+
+const FFT_SIZE: usize = 1024;
+const FFT_SAMPLE_RATE: u32 = 44_100;
+const FFT_UPDATE_HZ: u32 = 30;
 
 // ── Video frame ─────────────────────────────────────────────────────────────
 
@@ -23,6 +30,8 @@ pub const SPECTRUM_BANDS: usize = 64;
 pub struct MediaPipeline {
     pipeline: Element,
     frame: Arc<Mutex<Option<VideoFrame>>>,
+    spectrum_shared: Arc<Mutex<Vec<f32>>>,
+    spectrum_dirty: Arc<AtomicBool>,
     spectrum: Vec<f32>,
     eos: bool,
 }
@@ -94,31 +103,106 @@ impl MediaPipeline {
                 .build(),
         );
 
-        // ── Audio spectrum bin ─────────────────────────────────────────
-        let spectrum_elem = gst::ElementFactory::make("spectrum")
-            .property("bands", SPECTRUM_BANDS as u32)
-            .property("threshold", -80i32)
-            .property("post-messages", true)
-            .property("interval", 33_333_333u64) // ~30fps
-            .property("message-magnitude", true)
+        // ── Audio bin: tee playback + FFT analysis ─────────────────────
+        // ghostpad-sink → tee ┬→ queue → autoaudiosink   (playback)
+        //                     └→ queue → audioconvert → audioresample →
+        //                          capsfilter(f32 mono 44.1k) → appsink (FFT)
+        let tee = gst::ElementFactory::make("tee")
             .build()
-            .map_err(|e| anyhow!("Failed to create spectrum element: {e}"))?;
-
-        let audioconvert = gst::ElementFactory::make("audioconvert")
+            .map_err(|e| anyhow!("Failed to create tee: {e}"))?;
+        let queue_play = gst::ElementFactory::make("queue")
             .build()
-            .map_err(|e| anyhow!("Failed to create audioconvert: {e}"))?;
-
+            .map_err(|e| anyhow!("Failed to create playback queue: {e}"))?;
         let audiosink = gst::ElementFactory::make("autoaudiosink")
             .build()
             .map_err(|e| anyhow!("Failed to create autoaudiosink: {e}"))?;
+        let queue_fft = gst::ElementFactory::make("queue")
+            .build()
+            .map_err(|e| anyhow!("Failed to create fft queue: {e}"))?;
+        let audioconvert = gst::ElementFactory::make("audioconvert")
+            .build()
+            .map_err(|e| anyhow!("Failed to create audioconvert: {e}"))?;
+        let audioresample = gst::ElementFactory::make("audioresample")
+            .build()
+            .map_err(|e| anyhow!("Failed to create audioresample: {e}"))?;
+
+        let fft_caps = gst::Caps::builder("audio/x-raw")
+            .field("format", "F32LE")
+            .field("channels", 1i32)
+            .field("rate", FFT_SAMPLE_RATE as i32)
+            .field("layout", "interleaved")
+            .build();
+        let audio_appsink = gst_app::AppSink::builder()
+            .caps(&fft_caps)
+            .max_buffers(2)
+            .drop(true)
+            .build();
+
+        let spectrum_shared: Arc<Mutex<Vec<f32>>> =
+            Arc::new(Mutex::new(vec![0.0; SPECTRUM_BANDS]));
+        let spectrum_dirty = Arc::new(AtomicBool::new(false));
+        let analyzer = Arc::new(Mutex::new(SpectrumAnalyzer::new(
+            FFT_SIZE,
+            SPECTRUM_BANDS,
+            FFT_SAMPLE_RATE,
+            FFT_UPDATE_HZ,
+        )));
+
+        let spec_ref = spectrum_shared.clone();
+        let dirty_ref = spectrum_dirty.clone();
+        let analyzer_ref = analyzer.clone();
+        audio_appsink.set_callbacks(
+            gst_app::AppSinkCallbacks::builder()
+                .new_sample(move |sink| {
+                    let sample = sink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
+                    let buffer = sample.buffer().ok_or(gst::FlowError::Error)?;
+                    let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
+                    let bytes = map.as_slice();
+                    // SAFETY: caps pin format to F32LE interleaved mono, so the
+                    // buffer is a packed array of native-endian f32 on LE hosts.
+                    let samples: &[f32] = unsafe {
+                        std::slice::from_raw_parts(
+                            bytes.as_ptr() as *const f32,
+                            bytes.len() / std::mem::size_of::<f32>(),
+                        )
+                    };
+                    if let Ok(mut a) = analyzer_ref.lock() {
+                        if let Some(bands) = a.push_samples(samples) {
+                            drop(a);
+                            if let Ok(mut s) = spec_ref.lock() {
+                                *s = bands;
+                                dirty_ref.store(true, Ordering::Release);
+                            }
+                        }
+                    }
+                    Ok(gst::FlowSuccess::Ok)
+                })
+                .build(),
+        );
 
         let audio_bin = gst::Bin::new();
-        audio_bin.add_many([&audioconvert, &spectrum_elem, &audiosink])?;
-        gst::Element::link_many([&audioconvert, &spectrum_elem, &audiosink])?;
+        let appsink_elem: &gst::Element = audio_appsink.upcast_ref();
+        audio_bin.add_many([
+            &tee,
+            &queue_play,
+            &audiosink,
+            &queue_fft,
+            &audioconvert,
+            &audioresample,
+            appsink_elem,
+        ])?;
+        gst::Element::link_many([&tee, &queue_play, &audiosink])?;
+        gst::Element::link_many([
+            &tee,
+            &queue_fft,
+            &audioconvert,
+            &audioresample,
+            appsink_elem,
+        ])?;
 
-        let pad = audioconvert
+        let pad = tee
             .static_pad("sink")
-            .ok_or_else(|| anyhow!("No sink pad on audioconvert"))?;
+            .ok_or_else(|| anyhow!("No sink pad on tee"))?;
         audio_bin
             .add_pad(&gst::GhostPad::with_target(&pad)?)
             .map_err(|e| anyhow!("Failed to add ghost pad: {e}"))?;
@@ -127,40 +211,34 @@ impl MediaPipeline {
 
         let spectrum = vec![0.0f32; SPECTRUM_BANDS];
 
-        Ok(Self { pipeline, frame, spectrum, eos: false })
+        Ok(Self {
+            pipeline,
+            frame,
+            spectrum_shared,
+            spectrum_dirty,
+            spectrum,
+            eos: false,
+        })
     }
 
-    /// Poll bus for spectrum messages. Call this each frame.
+    /// Drain pipeline bus for EOS, and pull the latest spectrum if the
+    /// audio appsink has computed a fresh one. Call this each frame.
     pub fn poll_spectrum(&mut self) -> bool {
-        let bus = match self.pipeline.bus() {
-            Some(b) => b,
-            None => return false,
-        };
-
-        let mut updated = false;
-        while let Some(msg) = bus.pop() {
-            if let gst::MessageView::Eos(_) = msg.view() {
-                self.eos = true;
-            }
-            if let gst::MessageView::Element(elem) = msg.view() {
-                if let Some(s) = elem.structure() {
-                    if s.name() == "spectrum" {
-                        if let Ok(magnitudes) = s.get::<gst::List>("magnitude") {
-                            let vals: Vec<f32> = magnitudes
-                                .iter()
-                                .take(SPECTRUM_BANDS)
-                                .filter_map(|v| v.get::<f32>().ok())
-                                .collect();
-                            if vals.len() == SPECTRUM_BANDS {
-                                self.spectrum = vals;
-                                updated = true;
-                            }
-                        }
-                    }
+        if let Some(bus) = self.pipeline.bus() {
+            while let Some(msg) = bus.pop() {
+                if let gst::MessageView::Eos(_) = msg.view() {
+                    self.eos = true;
                 }
             }
         }
-        updated
+        if self.spectrum_dirty.swap(false, Ordering::Acquire) {
+            if let Ok(s) = self.spectrum_shared.lock() {
+                self.spectrum.clone_from(&s);
+            }
+            true
+        } else {
+            false
+        }
     }
 
     /// Check playbin's n-video property to detect audio-only streams.

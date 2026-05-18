@@ -108,7 +108,10 @@ else
     MEMORY="unknown"
 fi
 
-if command -v pacman &>/dev/null; then
+if command -v emerge &>/dev/null || [[ -d /var/db/pkg ]]; then
+    PKG_COUNT=$(find /var/db/pkg -mindepth 2 -maxdepth 2 -type d 2>/dev/null | wc -l)
+    PACKAGES="${PKG_COUNT} (portage)"
+elif command -v pacman &>/dev/null; then
     PKG_COUNT=$(pacman -Q 2>/dev/null | wc -l)
     PACKAGES="${PKG_COUNT} (pacman)"
 elif command -v dpkg &>/dev/null; then
