@@ -137,6 +137,7 @@ impl App {
                 self.cursor_visible && is_focused,
                 bg,
                 extra,
+                self.config.general.cursor_style,
             );
 
             painter.pop_clip();
@@ -204,6 +205,7 @@ impl App {
                 screen_h,
                 font_size,
                 self.sidebar.visible,
+                self.config.general.cursor_style,
                 maximized,
                 1.0,
                 &mode,
@@ -280,6 +282,23 @@ impl App {
                             self.config.font.size = ui_chrome::font_size_from_slider(*value);
                         }
                         _ => {}
+                    }
+                }
+                if let MenuEvent::RadioSelected { id, group } = event {
+                    if *group == ui_chrome::CURSOR_STYLE_GROUP {
+                        let new_style = match *id {
+                            ui_chrome::MENU_CURSOR_UNDERLINE => {
+                                crate::config::CursorStylePref::Underline
+                            }
+                            ui_chrome::MENU_CURSOR_BEAM => {
+                                crate::config::CursorStylePref::Beam
+                            }
+                            _ => crate::config::CursorStylePref::Block,
+                        };
+                        if self.config.general.cursor_style != new_style {
+                            self.config.general.cursor_style = new_style;
+                            self.config.save();
+                        }
                     }
                 }
                 // (Theme radios removed from the menu — now lives in System

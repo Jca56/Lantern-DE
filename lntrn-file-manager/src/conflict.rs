@@ -49,6 +49,9 @@ pub struct PendingPaste {
     /// Resolved (src, target) pairs ready for the copy worker. Only used
     /// in Copy mode — Cut applies inline.
     pub resolved_pairs: Vec<(PathBuf, PathBuf)>,
+    /// If the paste originated from a drag-drop onto a non-current tab,
+    /// reload that tab too after the operation completes.
+    pub reload_tab: Option<usize>,
 }
 
 impl PendingPaste {
@@ -63,6 +66,7 @@ impl PendingPaste {
             moves: Vec::new(),
             perm_fails: Vec::new(),
             resolved_pairs: Vec::new(),
+            reload_tab: None,
         }
     }
 }

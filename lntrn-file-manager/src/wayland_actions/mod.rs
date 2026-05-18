@@ -108,19 +108,3 @@ pub(crate) fn update_rubber_band(app: &mut App, wf: f32, hf: f32, s: f32) {
     }
 }
 
-// ── Recursive directory copy ────────────────────────────────────────────────
-
-pub(crate) fn copy_dir_recursive(src: &std::path::Path, dest: &std::path::Path) {
-    let _ = std::fs::create_dir_all(dest);
-    if let Ok(entries) = std::fs::read_dir(src) {
-        for entry in entries.flatten() {
-            let from = entry.path();
-            let to = dest.join(entry.file_name());
-            if from.is_dir() {
-                copy_dir_recursive(&from, &to);
-            } else {
-                let _ = std::fs::copy(&from, &to);
-            }
-        }
-    }
-}

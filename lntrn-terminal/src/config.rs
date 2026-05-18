@@ -62,6 +62,23 @@ pub struct FontConfig {
     pub size: f32,
 }
 
+/// User cursor shape preference, applied when the running program hasn't
+/// explicitly requested a shape via DECSCUSR. Programs like vim/neovim that
+/// set a shape themselves are still respected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CursorStylePref {
+    Block,
+    Underline,
+    Beam,
+}
+
+impl Default for CursorStylePref {
+    fn default() -> Self {
+        Self::Block
+    }
+}
+
 /// General preferences.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -69,6 +86,9 @@ pub struct GeneralConfig {
     /// Startup theme name (reserved — terminal currently reads the unified
     /// `[appearance].theme` from `lantern.toml` at draw time).
     pub theme: String,
+    /// Default cursor shape. Used when the active program hasn't set its own
+    /// shape via DECSCUSR.
+    pub cursor_style: CursorStylePref,
 }
 
 // ── Defaults ─────────────────────────────────────────────────────────────────
@@ -96,6 +116,7 @@ impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
             theme: "fox-dark".to_string(),
+            cursor_style: CursorStylePref::default(),
         }
     }
 }

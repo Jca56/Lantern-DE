@@ -4,7 +4,7 @@ use lntrn_ui::gpu::{
     MenuEvent, MenuItem,
 };
 
-use crate::config::WindowMode;
+use crate::config::{CursorStylePref, WindowMode};
 use crate::night_sky;
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -46,6 +46,12 @@ pub const MENU_CLOSE_PANE: u32 = 202;
 pub const MENU_PREV_PANE: u32 = 203;
 pub const MENU_NEXT_PANE: u32 = 204;
 pub const MENU_TOGGLE_SIDEBAR: u32 = 300;
+
+// Cursor style radio group + items
+pub const CURSOR_STYLE_GROUP: u32 = 500;
+pub const MENU_CURSOR_BLOCK: u32 = 501;
+pub const MENU_CURSOR_UNDERLINE: u32 = 502;
+pub const MENU_CURSOR_BEAM: u32 = 503;
 
 // Context menu (right-click)
 pub const CTX_COPY: u32 = 400;
@@ -103,13 +109,26 @@ pub enum ClickAction {
 
 // ── Menu definitions ────────────────────────────────────────────────────────
 
-pub fn build_menus(font_size: f32, _sidebar_visible: bool, _mode: &WindowMode) -> Vec<(&'static str, Vec<MenuItem>)> {
+pub fn build_menus(
+    font_size: f32,
+    _sidebar_visible: bool,
+    cursor_style: CursorStylePref,
+    _mode: &WindowMode,
+) -> Vec<(&'static str, Vec<MenuItem>)> {
+    let block_sel = matches!(cursor_style, CursorStylePref::Block);
+    let underline_sel = matches!(cursor_style, CursorStylePref::Underline);
+    let beam_sel = matches!(cursor_style, CursorStylePref::Beam);
     vec![
         ("Files", vec![
             MenuItem::action(MENU_TOGGLE_SIDEBAR, "Toggle Sidebar"),
         ]),
         ("View", vec![
             MenuItem::slider(MENU_FONT_SLIDER, "Text Size", ((font_size - 6.0) / 24.0).clamp(0.0, 1.0)),
+            MenuItem::separator(),
+            MenuItem::header("Cursor Style"),
+            MenuItem::radio(MENU_CURSOR_BLOCK, CURSOR_STYLE_GROUP, "Block", block_sel),
+            MenuItem::radio(MENU_CURSOR_UNDERLINE, CURSOR_STYLE_GROUP, "Underline", underline_sel),
+            MenuItem::radio(MENU_CURSOR_BEAM, CURSOR_STYLE_GROUP, "Beam", beam_sel),
         ]),
         ("Split", vec![
             MenuItem::action_with(MENU_SPLIT_RIGHT, "Split Right", "Ctrl+Shift+D"),
@@ -228,6 +247,7 @@ pub fn draw_chrome(
     screen_h: u32,
     font_size: f32,
     sidebar_visible: bool,
+    cursor_style: CursorStylePref,
     _maximized: bool,
     scale: f32,
     mode: &WindowMode,
@@ -237,7 +257,7 @@ pub fn draw_chrome(
     let pal = &state.palette;
     let wf = screen_w as f32;
 
-    let menus = build_menus(font_size, sidebar_visible, mode);
+    let menus = build_menus(font_size, sidebar_visible, cursor_style, mode);
     let layout = compute_layout(&menus, wf, s, mode);
 
     // ── Window controls — same circular style, mode-specific palette ────

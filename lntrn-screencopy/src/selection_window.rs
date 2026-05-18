@@ -1,16 +1,12 @@
-//! Layer-shell client for the screenshot UI.
+//! Layer-shell client for the region-selection UI in `lntrn-screencopy`.
 //!
-//! Why layer-shell instead of an xdg_toplevel: a regular toplevel would
-//! (a) sit *below* the Command Center's overlay layer surface — so CC
-//! would steal focus and Ctrl+C/Enter would never reach us — and
-//! (b) be subject to the compositor's Super+drag move gesture, which
-//! lets the user accidentally drag the screenshot window around the
-//! screen revealing the desktop underneath.
-//!
-//! We open a fullscreen overlay-layer surface with
-//! `KeyboardInteractivity::Exclusive` so we always sit on top of every
-//! other surface (including CC) and always receive keyboard focus while
-//! the screenshot UI is up.
+//! Same shape as `lntrn-screenshot`'s wayland.rs: a fullscreen overlay
+//! layer surface with exclusive keyboard input so the selection always
+//! receives Esc/Enter and sits above Command Center. The surface itself
+//! is rendered with transparency by the recorder's main loop so the
+//! live desktop shows through the "hole" cut by the selection — no
+//! captured background image is needed (unlike the screenshot tool,
+//! which keeps a frozen frame underneath so the saved image is stable).
 
 use std::ffi::c_void;
 use std::ptr::NonNull;
@@ -176,8 +172,8 @@ impl WlState {
 
     /// Drain accumulated input since the last frame. Coordinates returned
     /// are in *physical* pixels (cursor position multiplied by fractional
-    /// scale) so callers can compare directly against the screenshot
-    /// texture which is in physical pixels.
+    /// scale) so callers can compare directly against the recording
+    /// region (which is also in physical pixels).
     pub fn take_frame_input(&mut self) -> FrameInput {
         let scale = self.fractional_scale() as f32;
         let out = FrameInput {
@@ -243,7 +239,7 @@ impl LayerWindow {
             &surface,
             None,
             zwlr_layer_shell_v1::Layer::Overlay,
-            "lntrn-screenshot".to_string(),
+            "lntrn-screencopy".to_string(),
             &qh,
             (),
         );
@@ -253,7 +249,7 @@ impl LayerWindow {
             layer_surface.set_size(0, 0);
             layer_surface.set_exclusive_zone(-1);
             // Steal keyboard focus from CC / any other layer surface so
-            // Esc/Enter/Ctrl+C always reach the screenshot UI.
+            // Esc/Enter/Ctrl+C always reach the selection UI.
             layer_surface.set_keyboard_interactivity(
                 zwlr_layer_surface_v1::KeyboardInteractivity::Exclusive,
             );
@@ -320,7 +316,7 @@ impl LayerWindow {
 
     /// Name of the output the layer surface was placed on, if known.
     /// Used to target the same output for screencopy capture so the
-    /// screenshot UI appears on the monitor the cursor was on.
+    /// selection UI appears on the monitor the cursor was on.
     pub fn entered_output_name(&self) -> Option<String> {
         self.state.entered_output_name()
     }

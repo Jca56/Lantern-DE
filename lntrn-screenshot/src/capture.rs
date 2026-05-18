@@ -1,9 +1,9 @@
 use anyhow::{bail, Result};
 use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
 use wayland_client::{
-    globals::{registry_queue_init, GlobalListContents},
+    globals::{registry_queue_init, GlobalList, GlobalListContents},
     protocol::{wl_buffer, wl_output, wl_registry, wl_shm, wl_shm_pool},
-    Connection, Dispatch, QueueHandle, WEnum,
+    Connection, Dispatch, Proxy, QueueHandle, WEnum,
 };
 use wayland_protocols_wlr::screencopy::v1::client::{
     zwlr_screencopy_frame_v1, zwlr_screencopy_manager_v1,
@@ -25,15 +25,23 @@ struct State {
     copy_ready: bool,
     copy_failed: bool,
     y_invert: bool,
+
+    /// All wl_outputs we've bound, keyed by their proxy id, with their
+    /// advertised name (wl_output v4 `name` event). The screenshot tool
+    /// uses this map to pick the output the layer surface entered.
+    outputs: Vec<(wl_output::WlOutput, Option<String>)>,
 }
 
-pub fn capture_screen() -> Result<ScreenCapture> {
+/// Capture the screen contents of a specific wl_output by name.
+/// When `target_name` is `None`, falls back to the first enumerated
+/// output (used only as a last resort — multi-monitor callers should
+/// always pass the output the UI surface was placed on).
+pub fn capture_screen(target_name: Option<&str>) -> Result<ScreenCapture> {
     let conn = Connection::connect_to_env()?;
     let (globals, mut queue) = registry_queue_init::<State>(&conn)?;
     let qh = queue.handle();
 
     let shm: wl_shm::WlShm = globals.bind(&qh, 1..=1, ())?;
-    let output: wl_output::WlOutput = globals.bind(&qh, 1..=4, ())?;
     let manager: zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1 =
         globals.bind(&qh, 1..=3, ())?;
 
@@ -46,7 +54,15 @@ pub fn capture_screen() -> Result<ScreenCapture> {
         copy_ready: false,
         copy_failed: false,
         y_invert: false,
+        outputs: Vec::new(),
     };
+
+    bind_all_outputs(&globals, &qh, &mut state);
+    // Roundtrip so each wl_output emits its `name` event before we
+    // attempt to match `target_name`.
+    queue.roundtrip(&mut state)?;
+
+    let output = pick_output(&state, target_name)?;
 
     // Request frame capture (0 = don't include cursor overlay)
     let frame = manager.capture_output(0, &output, &qh, ());
@@ -145,6 +161,43 @@ pub fn capture_screen() -> Result<ScreenCapture> {
     })
 }
 
+/// Bind every wl_output advertised by the registry so we can match the
+/// caller's requested output by its v4 `name` event.
+fn bind_all_outputs(globals: &GlobalList, qh: &QueueHandle<State>, state: &mut State) {
+    for global in globals.contents().clone_list() {
+        if global.interface == "wl_output" {
+            let proxy: wl_output::WlOutput = globals
+                .registry()
+                .bind(global.name, global.version.min(4), qh, ());
+            state.outputs.push((proxy, None));
+        }
+    }
+}
+
+/// Choose the wl_output that matches `target_name`. Falls back to the
+/// first enumerated output if no name was provided or the name did not
+/// match anything — this matches the prior single-output behavior.
+fn pick_output(state: &State, target_name: Option<&str>) -> Result<wl_output::WlOutput> {
+    if let Some(want) = target_name {
+        if let Some((out, _)) = state
+            .outputs
+            .iter()
+            .find(|(_, name)| name.as_deref() == Some(want))
+        {
+            return Ok(out.clone());
+        }
+        eprintln!(
+            "screenshot: requested output {:?} not found, falling back to first",
+            want
+        );
+    }
+    state
+        .outputs
+        .first()
+        .map(|(o, _)| o.clone())
+        .ok_or_else(|| anyhow::anyhow!("no wl_output advertised by compositor"))
+}
+
 fn create_shm_fd(size: usize) -> Result<OwnedFd> {
     let name = std::ffi::CString::new("lntrn-screenshot").unwrap();
     let fd = unsafe { libc::memfd_create(name.as_ptr(), libc::MFD_CLOEXEC) };
@@ -186,7 +239,21 @@ impl Dispatch<wl_buffer::WlBuffer, ()> for State {
 }
 
 impl Dispatch<wl_output::WlOutput, ()> for State {
-    fn event(_: &mut Self, _: &wl_output::WlOutput, _: wl_output::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        state: &mut Self,
+        output: &wl_output::WlOutput,
+        event: wl_output::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_output::Event::Name { name } = event {
+            let id = output.id();
+            if let Some((_, slot)) = state.outputs.iter_mut().find(|(o, _)| o.id() == id) {
+                *slot = Some(name);
+            }
+        }
+    }
 }
 
 impl Dispatch<zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1, ()> for State {

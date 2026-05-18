@@ -44,6 +44,35 @@ The flags that matter most for Lantern:
 - **`-systemd`** — globally off.
 - **`pipewire`** + **`screencast`** — for portal-backed screen capture.
 
+### Lean PipeWire build (for `lntrn-desktop`)
+
+`lntrn-desktop` links against `libpipewire-0.3` + `libspa-0.2` (both ship
+from `media-video/pipewire`) to tap the default sink monitor for the
+music-bar visualizer. It only uses the core PipeWire API, so the heavy
+optional bits can stay off:
+
+```
+media-video/pipewire   dbus pulseaudio screencast sound-server -systemd \
+                       -gstreamer -jack-sdk -extra
+```
+
+Skipped flags and what they would have pulled in:
+- **`-gstreamer`** — drops `media-libs/gstreamer` + `gst-plugins-base`
+  (GStreamer ↔ PipeWire bridge; unused by Lantern).
+- **`-jack-sdk`** — drops the JACK API shim (only useful for pro-audio
+  JACK clients).
+- **`-extra`** — drops optional modules (RTP, AVB, raop, roc,
+  echo-cancel) and the extra `pipewire-pulse` pieces.
+
+Verify after merge:
+
+```bash
+pkg-config --modversion libpipewire-0.3 libspa-0.2
+```
+
+Both should print a version; if so, `cargo build --release -p lntrn-desktop`
+will link cleanly.
+
 ## 2. Services (OpenRC)
 
 ```bash

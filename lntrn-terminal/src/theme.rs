@@ -3,7 +3,17 @@ use crate::terminal::Color8;
 
 // ── Brand palette ───────────────────────────────────────────────────────────
 
-pub const CURSOR_COLOR: Color8 = Color8::from_rgba(200, 134, 10, 180);
+/// Live cursor color — pulls from `[appearance].accent` in `lantern.toml` so
+/// the cursor follows the user's selected accent in System Settings.
+/// Alpha is fixed at 180 so the cursor stays a soft tint rather than a hard
+/// opaque block over the glyph.
+pub fn cursor_color() -> Color8 {
+    if let Some(rgba) = lntrn_theme::active_accent() {
+        return Color8::from_rgba(rgba.r, rgba.g, rgba.b, 180);
+    }
+    let v = lntrn_theme::active_variant().accent();
+    Color8::from_rgba(v.r, v.g, v.b, 180)
+}
 
 #[allow(dead_code)]
 pub struct Theme {

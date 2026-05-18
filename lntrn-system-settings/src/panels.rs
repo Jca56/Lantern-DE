@@ -31,34 +31,33 @@ pub(crate) const LABEL_W: f32 = 200.0;
 pub(crate) const VALUE_W: f32 = 60.0;
 
 pub(crate) const GLOW_COLORS: &[(&str, &str)] = &[
-    ("#4A9EFF", "Blue"),
-    ("#A855F7", "Purple"),
-    ("#EC4899", "Pink"),
-    ("#22D3EE", "Cyan"),
-    ("#22C55E", "Green"),
-    ("#F97316", "Orange"),
-    ("#EF4444", "Red"),
-    ("#EAB308", "Gold"),
+    ("#0A0A0A", "Black"),
     ("#FFFFFF", "White"),
+    ("#2563EB", "Blue"),
+    ("#8B2DEB", "Purple"),
+    ("#DB2777", "Pink"),
+    ("#0891B2", "Cyan"),
+    ("#15803D", "Green"),
+    ("#EA580C", "Orange"),
+    ("#DC2626", "Red"),
+    ("#FFC800", "Gold"),
 ];
 
-/// Background-color swatches for the Background Color picker. Dark variants
-/// of the accent palette plus pure Black and a warm Brown so the user has
-/// neutral picks. The hex values are what gets written to
-/// `appearance.background_color` directly — chrome reads them via
-/// `lntrn_theme::active_background_color()`.
+/// Background-color swatches for the Background Color picker. Punchier
+/// chromatic tints so the user can actually tell them apart at a glance —
+/// still dark enough to function as window/panel backgrounds. The hex
+/// values are what gets written to `appearance.background_color` directly.
 pub(crate) const BG_COLORS: &[(&str, &str)] = &[
     ("#0E0E0E", "Black"),
-    ("#2A1A12", "Brown"),
-    ("#0E1A30", "Blue"),
-    ("#1A0E30", "Purple"),
-    ("#30121E", "Pink"),
-    ("#0E2030", "Cyan"),
-    ("#0E2018", "Green"),
-    ("#2A1808", "Orange"),
-    ("#2A0E0E", "Red"),
-    ("#2A1F0A", "Gold"),
-    ("#E8E8E8", "Light"),
+    ("#4A2814", "Brown"),
+    ("#0F1F5C", "Blue"),
+    ("#2C0F5C", "Purple"),
+    ("#5C1230", "Pink"),
+    ("#0F3358", "Cyan"),
+    ("#0F3D24", "Green"),
+    ("#4A2608", "Orange"),
+    ("#4A0F0F", "Red"),
+    ("#4A350A", "Gold"),
 ];
 
 // ── Shared card layout constants (used by WM, Input, etc.) ──────────────────

@@ -109,6 +109,40 @@ impl App {
         self.advance_paste();
     }
 
+    /// Entry point for drag-drop. Routes the operation through the same
+    /// conflict-resolution flow as paste so an overwrite pops the Replace /
+    /// Keep Both / Skip dialog instead of silently clobbering the target.
+    pub fn start_drag_drop(
+        &mut self,
+        mode: crate::conflict::PasteMode,
+        sources: Vec<std::path::PathBuf>,
+        dest: std::path::PathBuf,
+        reload_tab: Option<usize>,
+    ) {
+        if sources.is_empty() { return; }
+
+        // Mirror the root-mode bypass from paste(): elevated cp/mv handle
+        // overwrites natively, so we skip the conflict dialog there.
+        if self.root_mode {
+            let priv_op = match mode {
+                crate::conflict::PasteMode::Copy => crate::sudo::PendingPrivOp::Copy {
+                    sources, dest,
+                },
+                crate::conflict::PasteMode::Cut => crate::sudo::PendingPrivOp::Move {
+                    sources, dest,
+                },
+            };
+            self.priv_run(priv_op);
+            if let Some(idx) = reload_tab { self.reload_tab(idx); }
+            return;
+        }
+
+        let mut paste = crate::conflict::PendingPaste::new(mode, dest, sources);
+        paste.reload_tab = reload_tab;
+        self.pending_paste = Some(paste);
+        self.advance_paste();
+    }
+
     /// Drive the pending paste queue forward until either the queue is
     /// drained or we hit a conflict that needs the dialog.
     pub fn advance_paste(&mut self) {
@@ -192,6 +226,7 @@ impl App {
         let Some(paste) = self.pending_paste.take() else { return };
         use crate::conflict::PasteMode;
 
+        let reload_tab = paste.reload_tab;
         match paste.mode {
             PasteMode::Cut => {
                 if !paste.moves.is_empty() {
@@ -203,6 +238,7 @@ impl App {
                     });
                 }
                 self.reload();
+                if let Some(idx) = reload_tab { self.reload_tab(idx); }
             }
             PasteMode::Copy => {
                 // Spawn the copy worker. The main loop will poll its
@@ -211,14 +247,16 @@ impl App {
                     // Nothing to copy (all skipped, etc.) — re-arm clipboard, done.
                     self.clipboard = Some(ClipboardOp::Copy(paste.originals));
                     self.reload();
+                    if let Some(idx) = reload_tab { self.reload_tab(idx); }
                     return;
                 }
-                let handle = crate::ops::spawn_copy_worker(
+                let mut handle = crate::ops::spawn_copy_worker(
                     paste.resolved_pairs,
                     paste.originals,
                     paste.dest,
                     "Copying",
                 );
+                handle.reload_tab = reload_tab;
                 self.op_progress = Some(handle);
             }
         }
@@ -232,6 +270,7 @@ impl App {
         if handle.finished {
             // Finalize: push undo entries, route perm_fails through sudo.
             let handle = self.op_progress.take().unwrap();
+            let reload_tab = handle.reload_tab;
             if let Some((created, perm_fails, _cancelled)) = handle.done_payload {
                 if !created.is_empty() {
                     self.undo_stack.push(crate::undo::UndoAction::Copy {
@@ -247,6 +286,7 @@ impl App {
                 }
             }
             self.reload();
+            if let Some(idx) = reload_tab { self.reload_tab(idx); }
             return true;
         }
         dirty

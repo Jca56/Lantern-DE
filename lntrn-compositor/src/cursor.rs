@@ -29,6 +29,13 @@ pub struct CursorState {
     /// "default", "custom1", "custom2" — from lantern.toml [input] cursor_theme
     custom_theme: String,
     custom_loaded: bool,
+    last_recolor_width: f32,
+    last_recolor_radius: f32,
+    /// Last `[input] cursor_fill` value seen by `tick_colors`. When the
+    /// config changes mid-session we clear `loaded_icon_key` so the next
+    /// `set_status` re-rasterizes with the new colour.
+    last_recolor_fill: String,
+    last_recolor_outline: String,
     // Spin-to-grow: cursor grows when you spin the mouse in circles
     spin_history: VecDeque<(Point<f64, Logical>, Instant)>,
     spin_scale: f64,
@@ -66,6 +73,10 @@ impl CursorState {
             loaded_icon_key: None,
             custom_theme: "default".into(),
             custom_loaded: false,
+            last_recolor_fill: crate::input::read_input_setting("cursor_fill", "#0a0a0a"),
+            last_recolor_outline: crate::input::read_input_setting("cursor_outline", "#ffffff"),
+            last_recolor_width: crate::input::read_input_setting_f64("cursor_outline_width", 3.0) as f32,
+            last_recolor_radius: crate::input::read_input_setting_f64("cursor_corner_radius", 0.0) as f32,
             spin_history: VecDeque::with_capacity(32),
             spin_scale: 1.0,
             spin_last_active: Instant::now(),
@@ -85,35 +96,65 @@ impl CursorState {
 
         if let CursorImageStatus::Named(icon) = self.status {
             let icon_key = cursor_icon_key(icon);
-            if self.loaded_icon_key != Some(icon_key) {
-                if self.custom_loaded && icon_key == "default" {
-                    // Reload the custom theme SVG for the default cursor
-                    let svg_path = crate::lantern_home()
-                        .join("config/cursors")
-                        .join(format!("{}.svg", self.custom_theme));
-                    if let Ok(data) = std::fs::read(&svg_path) {
-                        if self.rasterize_svg(&data).is_some() {
-                            self.loaded_icon_key = Some(icon_key);
-                            return;
-                        }
-                    }
-                }
-                // Lantern SVGs cover both the default arrow and the four
-                // resize shapes — prefer them regardless of whether a custom
-                // default-cursor theme is active. xcursor is only the
-                // last-resort fallback (and is typically the system
-                // white/blue triangle when no xcursor theme is installed).
-                if !self.load_lantern_svg(icon_key) {
-                    self.load_xcursor(icon);
-                }
+            if self.loaded_icon_key == Some(icon_key) {
+                return;
             }
+            // Fallback chain:
+            //   1. Shape-specific Lantern SVG (resize variants get bespoke
+            //      art; default arrow gets its dedicated SVG too).
+            //   2. User's custom-theme SVG (e.g. `lntrn-cursor-purple.svg`)
+            //      — used both for the default shape AND for any shape
+            //      without a dedicated variant (pointer, text, grab…),
+            //      so a custom-themed user keeps their cursor on links etc.
+            //   3. Embedded Lantern default arrow (already covered by step 1
+            //      for "default"; for other shapes when no custom theme is
+            //      loaded, we re-call load_lantern_svg with "default").
+            //   4. xcursor — only if every Lantern path fails.
+            let hot = hotspot_for_icon(icon_key);
+            if self.custom_loaded && icon_key == "default" {
+                if self.load_custom_theme_svg(icon_key, hot) { return; }
+            }
+            if self.load_lantern_svg(icon_key) { return; }
+            if self.custom_loaded && self.load_custom_theme_svg(icon_key, hot) { return; }
+            if self.load_lantern_svg("default") {
+                self.loaded_icon_key = Some(icon_key);
+                return;
+            }
+            self.load_xcursor(icon);
         }
     }
 
-    /// Try to load a Lantern SVG cursor. Looks at
-    /// `~/.lantern/icons/cursors/{file}.svg` first so the user can tweak
-    /// cursors at runtime without rebuilding, then falls back to the
-    /// embedded `lntrn_icons` bytes. Returns true on success.
+    /// Rasterize the user's currently-active custom cursor theme SVG
+    /// (from `~/.lantern/config/cursors/{custom_theme}.svg`) and tag it
+    /// with `icon_key`. Used as the universal fallback for any shape
+    /// when a custom theme is loaded.
+    fn load_custom_theme_svg(
+        &mut self,
+        icon_key: &'static str,
+        hotspot_viewbox: (f32, f32),
+    ) -> bool {
+        let svg_path = crate::lantern_home()
+            .join("config/cursors")
+            .join(format!("{}.svg", self.custom_theme));
+        let Ok(data) = std::fs::read(&svg_path) else { return false };
+        if self.rasterize_svg(&data, hotspot_viewbox).is_some() {
+            self.loaded_icon_key = Some(icon_key);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Try to load a shape-SPECIFIC Lantern SVG cursor — only matches the
+    /// default arrow and the four resize variants. Returns false for
+    /// every other shape (pointer, text, grab…); callers are expected
+    /// to then fall back to the user's custom theme via
+    /// `load_custom_theme_svg`, so a custom-cursored user keeps their
+    /// custom look on links, text fields, etc.
+    ///
+    /// Reads from `~/.lantern/icons/cursors/{file}.svg` first so tweaks
+    /// land at runtime without rebuilding, then falls back to the
+    /// embedded `lntrn_icons` bytes.
     fn load_lantern_svg(&mut self, icon_key: &'static str) -> bool {
         let svg_file = match icon_key {
             "default" => "lntrn-cursor.svg",
@@ -123,13 +164,17 @@ impl CursorState {
             "nwse-resize" => "lntrn-cursor-nwse.svg",
             _ => return false,
         };
+        let hot = hotspot_for_icon(icon_key);
 
-        // Runtime override: ~/.lantern/icons/cursors/<file>
+        // Runtime override: ~/.lantern/icons/cursors/<file>. Recolour is
+        // applied to the bundled-default SVGs only — custom themes loaded
+        // via `set_custom_theme` keep their authored palette.
         let runtime_path = crate::lantern_home()
             .join("icons/cursors")
             .join(svg_file);
         if let Ok(data) = std::fs::read(&runtime_path) {
-            if self.rasterize_svg(&data).is_some() {
+            let recolored = recolor_cursor_svg(&data);
+            if self.rasterize_svg(&recolored, hot).is_some() {
                 self.loaded_icon_key = Some(icon_key);
                 tracing::info!("Loaded Lantern cursor: {}", runtime_path.display());
                 return true;
@@ -139,7 +184,8 @@ impl CursorState {
 
         // Embedded fallback.
         let Some(data) = lntrn_icons::get(svg_file) else { return false };
-        if self.rasterize_svg(data).is_some() {
+        let recolored = recolor_cursor_svg(data);
+        if self.rasterize_svg(&recolored, hot).is_some() {
             self.loaded_icon_key = Some(icon_key);
             tracing::info!("Loaded embedded Lantern cursor: {}", svg_file);
             true
@@ -171,7 +217,7 @@ impl CursorState {
 
         match std::fs::read(&svg_path) {
             Ok(data) => {
-                if self.rasterize_svg(&data).is_some() {
+                if self.rasterize_svg(&data, hotspot_for_icon("default")).is_some() {
                     tracing::info!("Loaded custom SVG cursor: {}", svg_path.display());
                     self.custom_loaded = true;
                 } else {
@@ -188,6 +234,34 @@ impl CursorState {
 
     pub fn cursor_size(&self) -> u32 {
         self.cursor_size
+    }
+
+    /// Per-frame check: when any of `[input] cursor_fill`, `cursor_outline`,
+    /// `cursor_outline_width`, or `cursor_corner_radius` change in
+    /// lantern.toml, invalidate the cached cursor pixmap so the next render
+    /// re-rasterizes with the new palette / geometry. Lets users tweak the
+    /// Mouse panel and see the cursor update without a session restart.
+    pub fn tick_colors(&mut self) {
+        let fill = crate::input::read_input_setting("cursor_fill", "#0a0a0a");
+        let outline = crate::input::read_input_setting("cursor_outline", "#ffffff");
+        let width = crate::input::read_input_setting_f64("cursor_outline_width", 3.0) as f32;
+        let radius = crate::input::read_input_setting_f64("cursor_corner_radius", 0.0) as f32;
+        if fill == self.last_recolor_fill
+            && outline == self.last_recolor_outline
+            && (width - self.last_recolor_width).abs() < 0.001
+            && (radius - self.last_recolor_radius).abs() < 0.001
+        {
+            return;
+        }
+        self.last_recolor_fill = fill;
+        self.last_recolor_outline = outline;
+        self.last_recolor_width = width;
+        self.last_recolor_radius = radius;
+        // Force the next set_status to rebuild the buffer. We snapshot status
+        // first so a `Named(Default)` cursor immediately re-rasterizes.
+        let cur = self.status.clone();
+        self.loaded_icon_key = None;
+        self.set_status(cur);
     }
 
     /// Update the cursor pixel size and force a reload of the current icon.
@@ -210,9 +284,21 @@ impl CursorState {
     }
 
     /// Rasterize an SVG into RGBA pixels and load into the cursor buffer.
-    /// Returns Some(()) on success.
-    fn rasterize_svg(&mut self, svg_data: &[u8]) -> Option<()> {
-        let tree = resvg::usvg::Tree::from_data(svg_data, &resvg::usvg::Options::default()).ok()?;
+    /// Returns Some(()) on success. The caller is responsible for any
+    /// recoloring; this just renders the bytes it's given so custom (non-
+    /// Lantern) cursor SVGs keep their authored palette.
+    fn rasterize_svg(
+        &mut self,
+        svg_data: &[u8],
+        hotspot_viewbox: (f32, f32),
+    ) -> Option<()> {
+        // Boxy SVG (and a few other editors) export with
+        // `preserveAspectRatio="none"`, which stretches the path
+        // non-uniformly when the viewBox aspect doesn't match the
+        // width/height aspect — producing a skewed cursor even though
+        // our downstream scale math is uniform. Strip it before parsing.
+        let sanitized = strip_preserve_aspect_none(svg_data);
+        let tree = resvg::usvg::Tree::from_data(&sanitized, &resvg::usvg::Options::default()).ok()?;
         let size = self.cursor_size.max(32);
 
         let tree_size = tree.size();
@@ -238,7 +324,15 @@ impl CursorState {
             rgba[idx + 3] = pixels[idx + 3]; // A
         }
 
-        self.hotspot = (0, 0);
+        // Hotspot is authored in the SVG's viewBox coordinate space
+        // (e.g. (2, 2) for the arrow tip, (16, 16) for the symmetric
+        // resize crosshair). Scale by the same factor used to rasterize
+        // so the click point lands on the visible tip regardless of
+        // cursor_size or DPI scaling.
+        self.hotspot = (
+            (hotspot_viewbox.0 * scale).round() as i32,
+            (hotspot_viewbox.1 * scale).round() as i32,
+        );
         self.size = (w as i32, h as i32);
         self.buffer = MemoryRenderBuffer::from_slice(
             &rgba,
@@ -474,6 +568,21 @@ impl CursorState {
     }
 }
 
+/// Hotspot (in viewBox-space coords) for each Lantern cursor SVG.
+/// All Lantern cursor SVGs use a `0 0 32 32` viewBox; these coordinates
+/// are matched to the actual visible click point of each shape:
+///
+/// - Arrow (`default`, `pointer`, `text`, etc.) — tip at `(2, 2)`, matching
+///   `lntrn-cursor.svg`'s `M 2 2` start-of-path. Custom-theme SVGs also
+///   use this since they're drawn arrow-style.
+/// - Resize cursors — center of the symmetric double-arrow at `(16, 16)`.
+fn hotspot_for_icon(icon_key: &str) -> (f32, f32) {
+    match icon_key {
+        "ew-resize" | "ns-resize" | "nesw-resize" | "nwse-resize" => (16.0, 16.0),
+        _ => (2.0, 2.0),
+    }
+}
+
 fn cursor_icon_key(icon: CursorIcon) -> &'static str {
     match icon {
         CursorIcon::Move => "move",
@@ -514,4 +623,251 @@ fn cursor_icon_names(icon: CursorIcon) -> &'static [&'static str] {
         CursorIcon::AllResize | CursorIcon::AllScroll => &["all-scroll", "fleur", "size_all"],
         _ => &["left_ptr", "default", "arrow"],
     }
+}
+
+/// Customize a Lantern-default cursor SVG: recolor `#0a0a0a` / `#ffffff`
+/// (attribute *or* CSS form), rewrite `stroke-width` (attribute *or* CSS
+/// form), and parse the first polygon path to apply corner rounding.
+/// Reads inputs from lantern.toml. Returns the original bytes when nothing
+/// differs from the SVG's authored defaults so custom (non-Lantern) cursor
+/// SVGs round-trip untouched.
+fn recolor_cursor_svg(svg_data: &[u8]) -> Vec<u8> {
+    let fill = crate::input::read_input_setting("cursor_fill", "#0a0a0a");
+    let outline = crate::input::read_input_setting("cursor_outline", "#ffffff");
+    let width = crate::input::read_input_setting_f64("cursor_outline_width", 3.0) as f32;
+    let radius = crate::input::read_input_setting_f64("cursor_corner_radius", 0.0) as f32;
+    let fill_default = fill.eq_ignore_ascii_case("#0a0a0a");
+    let outline_default = outline.eq_ignore_ascii_case("#ffffff");
+    let width_default = (width - 3.0).abs() < 0.001;
+    let radius_default = radius.abs() < 0.001;
+    if fill_default && outline_default && width_default && radius_default {
+        return svg_data.to_vec();
+    }
+    let Ok(s) = std::str::from_utf8(svg_data) else {
+        return svg_data.to_vec();
+    };
+
+    let mut out = s.to_string();
+    if !fill_default {
+        out = out.replace("#0a0a0a", &fill).replace("#0A0A0A", &fill);
+    }
+    if !outline_default {
+        out = out.replace("#ffffff", &outline).replace("#FFFFFF", &outline);
+        let rgb = hex_to_rgb_string(&outline);
+        out = out.replace("rgb(255, 255, 255)", &rgb)
+                 .replace("rgb(255,255,255)", &rgb);
+    }
+    if !width_default {
+        out = replace_stroke_width(&out, width.max(0.0));
+    }
+    if !radius_default {
+        out = round_first_polygon_path(&out, radius);
+    }
+    out.into_bytes()
+}
+
+/// Replace the first `stroke-width="N"` attribute *and* any
+/// `stroke-width: Npx` / `stroke-width: N` rules inside `style="..."`
+/// blocks with the requested width. Leaves the rest of the SVG untouched.
+fn replace_stroke_width(svg: &str, new_width: f32) -> String {
+    let mut out = String::with_capacity(svg.len());
+    let mut rest = svg;
+    let attr = "stroke-width=\"";
+    while let Some(idx) = rest.find(attr) {
+        out.push_str(&rest[..idx]);
+        out.push_str(attr);
+        let after = &rest[idx + attr.len()..];
+        match after.find('"') {
+            Some(end) => {
+                out.push_str(&format!("{:.2}", new_width));
+                rest = &after[end..];
+            }
+            None => {
+                out.push_str(after);
+                return out;
+            }
+        }
+    }
+    out.push_str(rest);
+
+    // CSS-form occurrences inside style attributes.
+    let mut final_out = String::with_capacity(out.len());
+    let mut rest = out.as_str();
+    let css = "stroke-width:";
+    while let Some(idx) = rest.find(css) {
+        final_out.push_str(&rest[..idx]);
+        final_out.push_str(css);
+        let after = &rest[idx + css.len()..];
+        let trimmed = after.trim_start_matches(' ');
+        let leading_space = after.len() - trimmed.len();
+        let term = trimmed.find(|c: char| c == ';' || c == '"' || c == '}' || c == '\n');
+        let term_at = term.unwrap_or(trimmed.len());
+        // Detect any unit suffix (px / em / etc.) so we preserve it.
+        let value = &trimmed[..term_at];
+        let unit_start = value
+            .find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-' || c == '+'))
+            .unwrap_or(value.len());
+        let unit = &value[unit_start..];
+        for _ in 0..leading_space { final_out.push(' '); }
+        final_out.push_str(&format!("{:.2}{}", new_width, unit));
+        rest = &trimmed[term_at..];
+    }
+    final_out.push_str(rest);
+    final_out
+}
+
+/// Find the first `d="M ... Z"` polygon path in the SVG and rebuild it
+/// with rounded corners. Roundness is `r` (0..=1) scaled to a fraction of
+/// each corner's adjacent segment lengths so the effect is consistent
+/// regardless of the path's coordinate range. Non-polygon paths (curves,
+/// arcs) are left alone.
+fn round_first_polygon_path(svg: &str, r: f32) -> String {
+    let attr = "d=\"";
+    let Some(start) = svg.find(attr) else { return svg.to_string() };
+    let body_start = start + attr.len();
+    let Some(end_off) = svg[body_start..].find('"') else { return svg.to_string() };
+    let d = &svg[body_start..body_start + end_off];
+    let Some(pts) = parse_polygon_d(d) else { return svg.to_string() };
+    let new_d = round_polygon_path(&pts, r);
+    let mut out = String::with_capacity(svg.len() + 64);
+    out.push_str(&svg[..body_start]);
+    out.push_str(&new_d);
+    out.push_str(&svg[body_start + end_off..]);
+    out
+}
+
+/// Parse a polygon-style `d` attribute (only M / L / Z commands). Returns
+/// `None` for paths containing curves or arcs so we don't mangle them.
+fn parse_polygon_d(d: &str) -> Option<Vec<(f32, f32)>> {
+    let mut pts: Vec<(f32, f32)> = Vec::new();
+    let mut tokens = d.split(|c: char| c.is_whitespace() || c == ',').filter(|t| !t.is_empty());
+    while let Some(tok) = tokens.next() {
+        match tok {
+            "M" | "L" | "m" | "l" => {
+                let x: f32 = tokens.next()?.parse().ok()?;
+                let y: f32 = tokens.next()?.parse().ok()?;
+                pts.push((x, y));
+            }
+            "Z" | "z" => break,
+            _ => return None,
+        }
+    }
+    // Drop trailing duplicate of first point (manual close before Z).
+    if pts.len() > 1 {
+        let last = pts[pts.len() - 1];
+        let first = pts[0];
+        if (last.0 - first.0).abs() < 0.001 && (last.1 - first.1).abs() < 0.001 {
+            pts.pop();
+        }
+    }
+    if pts.len() < 3 { return None; }
+    Some(pts)
+}
+
+/// Rebuild a polygon path with each corner replaced by a quadratic Bezier
+/// of radius proportional to the shorter adjacent segment.
+fn round_polygon_path(pts: &[(f32, f32)], r: f32) -> String {
+    let r = r.clamp(0.0, 1.0);
+    if r < 0.001 {
+        let mut s = String::new();
+        for (i, p) in pts.iter().enumerate() {
+            let cmd = if i == 0 { "M" } else { "L" };
+            s.push_str(&format!("{} {:.3} {:.3} ", cmd, p.0, p.1));
+        }
+        s.push('Z');
+        return s;
+    }
+    let n = pts.len();
+    let mut s = String::new();
+    for i in 0..n {
+        let prev = pts[(i + n - 1) % n];
+        let cur = pts[i];
+        let next = pts[(i + 1) % n];
+        let (dx1, dy1) = (prev.0 - cur.0, prev.1 - cur.1);
+        let l1 = (dx1 * dx1 + dy1 * dy1).sqrt().max(0.001);
+        let (dx2, dy2) = (next.0 - cur.0, next.1 - cur.1);
+        let l2 = (dx2 * dx2 + dy2 * dy2).sqrt().max(0.001);
+        let r_eff = r * 0.45 * l1.min(l2);
+        let p_in = (cur.0 + dx1 / l1 * r_eff, cur.1 + dy1 / l1 * r_eff);
+        let p_out = (cur.0 + dx2 / l2 * r_eff, cur.1 + dy2 / l2 * r_eff);
+        let cmd = if i == 0 { "M" } else { "L" };
+        s.push_str(&format!("{} {:.3} {:.3} ", cmd, p_in.0, p_in.1));
+        s.push_str(&format!("Q {:.3} {:.3} {:.3} {:.3} ", cur.0, cur.1, p_out.0, p_out.1));
+    }
+    s.push('Z');
+    s
+}
+
+/// Remove `preserveAspectRatio="none"` (and single-quote / spaced variants) from
+/// an SVG byte stream. When this attribute is present and the SVG's viewBox
+/// aspect ratio differs from its width/height aspect, the path is stretched
+/// non-uniformly at parse time, distorting cursor shapes. Pass-through if the
+/// bytes aren't UTF-8 or the attribute isn't present.
+fn strip_preserve_aspect_none(svg_data: &[u8]) -> Vec<u8> {
+    let Ok(s) = std::str::from_utf8(svg_data) else {
+        return svg_data.to_vec();
+    };
+    if !s.contains("preserveAspectRatio") {
+        return svg_data.to_vec();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(idx) = rest.find("preserveAspectRatio") {
+        let (before, after) = rest.split_at(idx);
+        out.push_str(before);
+        // Skip past the attribute name
+        let after = &after["preserveAspectRatio".len()..];
+        // Skip optional whitespace and `=`
+        let trimmed = after.trim_start();
+        if let Some(eq_rest) = trimmed.strip_prefix('=') {
+            let val_start = eq_rest.trim_start();
+            let (quote, body) = match val_start.chars().next() {
+                Some('"') => ('"', &val_start[1..]),
+                Some('\'') => ('\'', &val_start[1..]),
+                _ => {
+                    // No quoted value — emit attribute name back, keep going.
+                    out.push_str("preserveAspectRatio");
+                    rest = after;
+                    continue;
+                }
+            };
+            if let Some(end) = body.find(quote) {
+                let value = body[..end].trim();
+                if value.eq_ignore_ascii_case("none") {
+                    // Drop the whole attribute. Eat any single leading space
+                    // we just emitted to keep the tag tidy.
+                    if out.ends_with(' ') {
+                        out.pop();
+                    }
+                    rest = &body[end + 1..];
+                } else {
+                    // Preserve other valid values (e.g. xMidYMid meet).
+                    out.push_str("preserveAspectRatio=");
+                    out.push(quote);
+                    out.push_str(&body[..end]);
+                    out.push(quote);
+                    rest = &body[end + 1..];
+                }
+            } else {
+                // Unterminated quote — bail and return original.
+                return svg_data.to_vec();
+            }
+        } else {
+            out.push_str("preserveAspectRatio");
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out.into_bytes()
+}
+
+fn hex_to_rgb_string(hex: &str) -> String {
+    let h = hex.trim_start_matches('#');
+    if h.len() != 6 {
+        return "rgb(255, 255, 255)".into();
+    }
+    let r = u8::from_str_radix(&h[0..2], 16).unwrap_or(255);
+    let g = u8::from_str_radix(&h[2..4], 16).unwrap_or(255);
+    let b = u8::from_str_radix(&h[4..6], 16).unwrap_or(255);
+    format!("rgb({}, {}, {})", r, g, b)
 }

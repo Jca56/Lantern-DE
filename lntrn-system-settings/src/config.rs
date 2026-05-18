@@ -213,7 +213,29 @@ pub struct InputConfig {
     /// Cursor size in pixels (16 – 64, default 24).
     pub cursor_size: u32,
     pub cursor_theme: String,
+    /// Hex fill color recolored into the Lantern default cursor SVGs at
+    /// rasterize time. Empty / missing = the SVG's literal `#0a0a0a`.
+    #[serde(default = "default_cursor_fill")]
+    pub cursor_fill: String,
+    /// Hex outline (stroke) color. Empty / missing = the SVG's literal
+    /// `#ffffff`.
+    #[serde(default = "default_cursor_outline")]
+    pub cursor_outline: String,
+    /// SVG `stroke-width` applied to the bundled default cursors. Clamped
+    /// to 0.0..=8.0 by `sanitize`. 0 hides the outline entirely.
+    #[serde(default = "default_cursor_outline_width")]
+    pub cursor_outline_width: f32,
+    /// 0..=1 corner-rounding factor for the bundled default pointer. 0 =
+    /// stock sharp tip, 1 = max-rounded pebble. Only affects
+    /// `lntrn-cursor.svg`; other cursors keep their authored geometry.
+    #[serde(default = "default_cursor_corner_radius")]
+    pub cursor_corner_radius: f32,
 }
+
+fn default_cursor_fill() -> String { "#0a0a0a".into() }
+fn default_cursor_outline() -> String { "#ffffff".into() }
+fn default_cursor_outline_width() -> f32 { 3.0 }
+fn default_cursor_corner_radius() -> f32 { 0.0 }
 
 impl Default for InputConfig {
     fn default() -> Self {
@@ -224,6 +246,10 @@ impl Default for InputConfig {
             double_click_to_open: false,
             cursor_size: 24,
             cursor_theme: "default".into(),
+            cursor_fill: default_cursor_fill(),
+            cursor_outline: default_cursor_outline(),
+            cursor_outline_width: default_cursor_outline_width(),
+            cursor_corner_radius: default_cursor_corner_radius(),
         }
     }
 }
@@ -405,6 +431,8 @@ impl LanternConfig {
         self.input.mouse_speed = self.input.mouse_speed.clamp(-1.0, 1.0);
         self.input.scroll_speed = self.input.scroll_speed.clamp(0.25, 3.0);
         self.input.cursor_size = self.input.cursor_size.clamp(16, 64);
+        self.input.cursor_outline_width = self.input.cursor_outline_width.clamp(0.0, 8.0);
+        self.input.cursor_corner_radius = self.input.cursor_corner_radius.clamp(0.0, 1.0);
         self.display.scale = self.display.scale.clamp(0.5, 3.0);
         if !["active", "balanced", "battery"].contains(&self.power.wifi_power_scheme.as_str()) {
             self.power.wifi_power_scheme = "balanced".into();

@@ -48,6 +48,12 @@ pub fn render_surface(
         state.apply_tiling_layout();
     }
 
+    // Pick up live cursor-color changes from the settings panel without
+    // requiring a session restart. Cheap — `read_input_setting` is
+    // mtime-cached, and the rebuild only fires when fill/outline actually
+    // differ from the last sampled values.
+    state.cursor.tick_colors();
+
     // Live-reload monitor positions from config (must run before any udev borrows)
     // Uses wallpaper_frame_counter which is incremented later in this function.
     if state.wallpaper_frame_counter == 0 {
@@ -168,7 +174,7 @@ pub fn render_surface(
     // Use slices for O(n) linear scan instead of HashSet allocation — these
     // lists are typically 0–2 entries so linear beats hashing overhead.
     let fullscreen_surfaces: &[_] = &state.fullscreen_windows;
-    let focused_surface = state.focused_surface.clone();
+    let _focused_surface = state.focused_surface.clone();
     let hot_corner = state.hot_corner.corner;
     // SSD state is accessed directly via state.ssd in the render loop
 
@@ -779,8 +785,11 @@ pub fn render_surface(
         // Window drop shadow / focus glow (behind window, so pushed after = lower z)
         if !is_fullscreen {
             if let Some(ref shader) = shadow_shader {
-                let is_focused = focused_surface.as_ref() == Some(&surface);
-                let shadow_expand = if is_focused { 48i32 } else { 40i32 };
+                // Shadow is focus-independent — every window gets the same
+                // drop shadow regardless of focus state. `focus_glow` is a
+                // global on/off: when enabled, ALL windows get the accent
+                // glow; when disabled, ALL get the default dark shadow.
+                let shadow_expand = 44i32;
                 let corner_r = win_corner_r_logical;
                 let ssd_bar = if has_ssd { crate::ssd::SsdManager::bar_height() } else { 0 };
                 let win_x = rel_x.round() as i32;
@@ -791,8 +800,7 @@ pub fn render_surface(
                     (win_x - shadow_expand, win_y - shadow_expand).into(),
                     (win_w + shadow_expand * 2, win_h + shadow_expand * 2).into(),
                 );
-                // Focused windows get a subtle colored glow, others get a dark shadow
-                let (sigma, shadow_color) = if is_focused && state.focus_glow {
+                let (sigma, shadow_color) = if state.focus_glow {
                     let mut c = state.focus_glow_color;
                     c[3] = state.focus_glow_intensity;
                     (14.0f32, c)
@@ -1440,7 +1448,8 @@ pub fn render_surface(
                 else if blur_intensity < 0.8 { 4 }
                 else { 5 };
 
-            if crate::blur::ensure_textures(renderer, output_phys, passes, &mut udev.blur_state) {
+            let blur_key = UdevOutputId { device_id: node, crtc };
+            if crate::blur::ensure_textures(renderer, output_phys, passes, &mut udev.blur_states, blur_key) {
                 // Blur source: everything behind transparent windows.
                 // List is front-to-back, so take elements after the topmost
                 // transparent window's insert point (behind = higher indices).
@@ -1470,7 +1479,7 @@ pub fn render_surface(
                     [0.0f32, 0.0, 0.0, 0.0]
                 };
 
-                let blur_state = udev.blur_state.as_mut().unwrap();
+                let blur_state = udev.blur_states.get_mut(&blur_key).unwrap();
 
                 // Throttle blur: re-render at most every 100ms unless an
                 // animation is actively changing the background. The previous
@@ -1478,14 +1487,41 @@ pub fn render_surface(
                 // imperceptible since the wallpaper + non-transparent windows
                 // don't move during cursor motion or transparent-window
                 // re-renders. Saves ~30ms of GPU sync per skipped frame.
-                let any_anim_active = state.animations.has_active()
-                    || state.tiling_anim.has_active()
-                    || state.workspace_anim.is_active()
-                    || state.window_state_anim.has_active()
-                    || state.minimize_anim.has_active();
-                let needs_reblur = blur_state.last_blur.map_or(true, |t| {
-                    any_anim_active || t.elapsed() >= std::time::Duration::from_millis(100)
+                // Fingerprint the blur source: if (id, commit, geometry) of
+                // every contributing element matches the last blur, the new
+                // blurred pixels would be identical — skip the shader.
+                // Animations on the blurred surface itself don't change the
+                // source (they only move what sits ON TOP); animations on
+                // windows behind it show up in geometry, so they invalidate
+                // the fingerprint automatically.
+                let fingerprint = {
+                    use std::hash::{Hash, Hasher};
+                    use smithay::backend::renderer::element::Element;
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    let scale_pt: smithay::utils::Scale<f64> = (output_scale, output_scale).into();
+                    for group in &element_groups {
+                        for elem in group.iter() {
+                            elem.id().hash(&mut h);
+                            // CommitCounter doesn't impl Hash; extract usize via distance.
+                            let cv = elem.current_commit()
+                                .distance(Some(smithay::backend::renderer::utils::CommitCounter::default()))
+                                .unwrap_or(0);
+                            cv.hash(&mut h);
+                            let g = elem.geometry(scale_pt);
+                            g.loc.x.hash(&mut h);
+                            g.loc.y.hash(&mut h);
+                            g.size.w.hash(&mut h);
+                            g.size.h.hash(&mut h);
+                        }
+                    }
+                    h.finish()
+                };
+
+                let fingerprint_changed = blur_state.last_blur_fingerprint != Some(fingerprint);
+                let throttle_ok = blur_state.last_blur.map_or(true, |t| {
+                    t.elapsed() >= std::time::Duration::from_millis(100)
                 });
+                let needs_reblur = fingerprint_changed && throttle_ok;
 
                 let blur_result = if needs_reblur {
                     let r = crate::blur::render_and_blur(
@@ -1495,6 +1531,7 @@ pub fn render_surface(
                     );
                     if r.is_ok() {
                         blur_state.last_blur = Some(std::time::Instant::now());
+                        blur_state.last_blur_fingerprint = Some(fingerprint);
                     }
                     r
                 } else {
@@ -1587,10 +1624,20 @@ pub fn render_surface(
     };
 
 
-    // Fulfill any pending screencopy requests after a successful render
+    // Fulfill any pending screencopy requests whose target output matches
+    // the one we just rendered. Other outputs' requests stay queued for
+    // their own render pass — without this filter, the first output to
+    // render would drain the entire queue and copy the wrong monitor's
+    // framebuffer (with mismatched dimensions) into every client buffer.
     if rendered && !state.pending_screencopy.is_empty() {
-        let pending: Vec<_> = state.pending_screencopy.drain(..).collect();
-        crate::screencopy_render::fulfill_screencopy(renderer, &output, pending);
+        let (matching, remaining): (Vec<_>, Vec<_>) = state
+            .pending_screencopy
+            .drain(..)
+            .partition(|p| p.output == output);
+        state.pending_screencopy = remaining;
+        if !matching.is_empty() {
+            crate::screencopy_render::fulfill_screencopy(renderer, &output, matching);
+        }
     }
 
     // Send frame callbacks even if frame is empty (clients need them to

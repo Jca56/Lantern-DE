@@ -414,6 +414,18 @@ impl Lantern {
                     }
                 }
 
+                // Super+Print Screen: toggle screen recorder (re-pressing
+                // while a recording is active signals the existing
+                // process to stop via its unix socket).
+                if event.state() == KeyState::Pressed
+                    && _modifiers.logo
+                    && keysym.modified_sym().raw() == xkb::KEY_Print
+                {
+                    tracing::info!("Super+Print pressed, toggling screencopy");
+                    spawn_detached("lntrn-screencopy", &data.socket_name);
+                    return FilterResult::Intercept(());
+                }
+
                 // Print Screen: launch screenshot tool
                 if event.state() == KeyState::Pressed
                     && keysym.modified_sym().raw() == xkb::KEY_Print

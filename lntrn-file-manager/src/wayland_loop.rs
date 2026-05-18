@@ -21,7 +21,7 @@ use crate::settings::Settings;
 use crate::wayland::State;
 use crate::wayland_actions::{
     handle_click, handle_ctx_event, handle_drop, handle_key, handle_right_click,
-    update_rubber_band, copy_dir_recursive, edge_resize, resize_edge_to_cursor_shape,
+    update_rubber_band, edge_resize, resize_edge_to_cursor_shape,
 };
 use crate::{
     ClickAction, Gpu, CTX_NEW_FOLDER_BLUE, CTX_NEW_FOLDER_GREEN, CTX_NEW_FOLDER_ORANGE,
@@ -404,38 +404,22 @@ pub(crate) fn run_loop(
                     match zone {
                         ZONE_DROP_MOVE => {
                             if let Some(drop) = app.pending_drop.take() {
-                                for src in &drop.sources {
-                                    if let Some(name) = src.file_name() {
-                                        let dest = drop.dest_dir.join(name);
-                                        let _ = std::fs::rename(src, &dest);
-                                    }
-                                }
-                                app.reload();
-                                if let Some(tab) = drop.reload_tab {
-                                    app.reload_tab(tab);
-                                }
+                                app.start_drag_drop(
+                                    crate::conflict::PasteMode::Cut,
+                                    drop.sources,
+                                    drop.dest_dir,
+                                    drop.reload_tab,
+                                );
                             }
                         }
                         ZONE_DROP_COPY => {
                             if let Some(drop) = app.pending_drop.take() {
-                                let sources = drop.sources.clone();
-                                let dest_dir = drop.dest_dir.clone();
-                                std::thread::spawn(move || {
-                                    for src in &sources {
-                                        if let Some(name) = src.file_name() {
-                                            let dest = dest_dir.join(name);
-                                            if src.is_dir() {
-                                                copy_dir_recursive(src, &dest);
-                                            } else {
-                                                let _ = std::fs::copy(src, &dest);
-                                            }
-                                        }
-                                    }
-                                });
-                                app.reload();
-                                if let Some(tab) = drop.reload_tab {
-                                    app.reload_tab(tab);
-                                }
+                                app.start_drag_drop(
+                                    crate::conflict::PasteMode::Copy,
+                                    drop.sources,
+                                    drop.dest_dir,
+                                    drop.reload_tab,
+                                );
                             }
                         }
                         ZONE_DROP_CANCEL => {

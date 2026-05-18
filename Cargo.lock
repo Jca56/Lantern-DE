@@ -2663,8 +2663,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "libc",
+ "lntrn-render",
+ "raw-window-handle",
+ "wayland-backend",
  "wayland-client",
+ "wayland-protocols",
  "wayland-protocols-wlr",
+ "wgpu",
 ]
 
 [[package]]

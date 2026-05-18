@@ -639,6 +639,12 @@ fn do_print(s: &mut TerminalState, c: char) {
     }
 
     if s.cursor_row < s.rows && s.cursor_col < s.cols {
+        // Reverse video with "default" attrs must not yield a transparent
+        // fg/bg, or the glyph (and its highlight) becomes invisible —
+        // exactly what happens when fish/zsh paint paste indicators or
+        // syntax highlights with `\x1b[7m` over an explicit fg but no bg.
+        let fg_was_default = s.attr_fg.a == 0;
+        let bg_was_default = s.attr_bg.a == 0;
         let (fg, bg) = if s.attr_reverse {
             (s.attr_bg, s.attr_fg)
         } else {
@@ -648,6 +654,21 @@ fn do_print(s: &mut TerminalState, c: char) {
             s.default_fg
         } else {
             bg
+        };
+        let fg = if s.attr_reverse && fg.a == 0 {
+            if bg_was_default && fg_was_default {
+                // \x1b[7m with no explicit colors — full inversion. Render
+                // the glyph dark against the now-light cell background.
+                Color8::from_rgb(20, 20, 20)
+            } else {
+                // bg side of the swap was default. Render the glyph in the
+                // user's text color so it stays readable on top of the
+                // now-colored cell background.
+                let f = s.default_fg;
+                Color8::from_rgb(f.r, f.g, f.b)
+            }
+        } else {
+            fg
         };
 
         let wide_flag = if width == 2 { Wide::Head } else { Wide::No };

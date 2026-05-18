@@ -43,6 +43,7 @@ impl App {
             let menus = ui_chrome::build_menus(
                 self.effective_font_size(),
                 self.sidebar.visible,
+                self.config.general.cursor_style,
                 &crate::config::WindowMode::current(),
             );
             let bounds = ui_chrome::tabs_bounds(
@@ -169,6 +170,7 @@ impl App {
             let menus = ui_chrome::build_menus(
                 self.effective_font_size(),
                 self.sidebar.visible,
+                self.config.general.cursor_style,
                 &crate::config::WindowMode::current(),
             );
             let tabs_rect = ui_chrome::tabs_bounds(
@@ -216,6 +218,7 @@ impl App {
         let menus = ui_chrome::build_menus(
             self.effective_font_size(),
             self.sidebar.visible,
+            self.config.general.cursor_style,
             &crate::config::WindowMode::current(),
         );
         let screen_w = self.gpu.as_ref().map_or(800, |g| g.width()) as f32;
@@ -521,6 +524,7 @@ impl App {
         let menus = ui_chrome::build_menus(
             self.effective_font_size(),
             self.sidebar.visible,
+            self.config.general.cursor_style,
             &crate::config::WindowMode::current(),
         );
         let tabs_rect = ui_chrome::tabs_bounds(

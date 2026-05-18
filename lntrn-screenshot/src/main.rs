@@ -55,12 +55,21 @@ fn main() -> Result<()> {
         std::thread::sleep(Duration::from_secs(delay));
     }
 
-    eprintln!("Capturing screen...");
-    let cap = capture::capture_screen()?;
-    eprintln!("Captured {}x{}", cap.width, cap.height);
-
+    // Open the layer surface *before* capturing so we can ask the
+    // compositor which output it placed us on (via wl_surface::enter),
+    // then capture that same output. Without this, on multi-monitor
+    // setups the screenshot would show whichever output the registry
+    // enumerated first — typically the wrong monitor.
+    //
+    // The layer surface has no buffer attached at this point, so it
+    // does not appear on screen and does not pollute the capture.
     eprintln!("Opening selection overlay...");
     let mut window = LayerWindow::new()?;
+
+    let target_output = window.entered_output_name();
+    eprintln!("Capturing output {:?}...", target_output);
+    let cap = capture::capture_screen(target_output.as_deref())?;
+    eprintln!("Captured {}x{}", cap.width, cap.height);
 
     let phys_w = window.state.phys_width().max(1);
     let phys_h = window.state.phys_height().max(1);

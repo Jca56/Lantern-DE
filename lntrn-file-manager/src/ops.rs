@@ -47,6 +47,9 @@ pub struct OpHandle {
     pub mode: crate::conflict::PasteMode,
     /// Buffered Done payload — captured when the Done event arrives.
     pub done_payload: Option<(Vec<PathBuf>, Vec<PathBuf>, bool)>,
+    /// If this op started from a drag-drop onto a non-current tab, reload
+    /// that tab too on completion.
+    pub reload_tab: Option<usize>,
 }
 
 impl OpHandle {
@@ -109,6 +112,7 @@ pub fn spawn_copy_worker(
         dest,
         mode: crate::conflict::PasteMode::Copy,
         done_payload: None,
+        reload_tab: None,
     }
 }
 

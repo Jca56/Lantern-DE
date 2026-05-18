@@ -35,16 +35,25 @@ pub struct BlurState {
     /// behind transparent windows is changing — re-blurring on every frame
     /// (60Hz) wastes 30+ms/frame on full GPU sync without visible benefit.
     pub last_blur: Option<std::time::Instant>,
+    /// Fingerprint of the blur source the last time we ran the shader.
+    /// Hash of (element id + commit counter + geometry) for every element
+    /// behind transparent windows. If the next frame's fingerprint matches,
+    /// the blurred pixels would be identical — skip the shader entirely.
+    pub last_blur_fingerprint: Option<u64>,
 }
 
-/// Ensure blur textures exist and match the output size / pass count.
-pub fn ensure_textures(
+/// Ensure blur textures exist and match the output size / pass count for
+/// the given output key. Each output keeps its own [`BlurState`] so the
+/// per-output throttle and fingerprint don't clobber each other across
+/// monitors with different resolutions.
+pub fn ensure_textures<K: std::hash::Hash + Eq + Copy>(
     renderer: &mut GlesRenderer,
     phys_size: Size<i32, Physical>,
     passes: usize,
-    existing: &mut Option<BlurState>,
+    states: &mut std::collections::HashMap<K, BlurState>,
+    key: K,
 ) -> bool {
-    if let Some(state) = existing {
+    if let Some(state) = states.get(&key) {
         if state.full_size == phys_size && state.passes == passes {
             return true;
         }
@@ -94,9 +103,10 @@ pub fn ensure_textures(
         }
     };
 
-    *existing = Some(BlurState {
+    states.insert(key, BlurState {
         scene, textures, result, full_size: phys_size, passes,
         last_blur: None,
+        last_blur_fingerprint: None,
     });
     true
 }

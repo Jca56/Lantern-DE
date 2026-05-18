@@ -12,7 +12,24 @@ use crate::window_ext::WindowExt;
 impl Lantern {
     pub fn focus_window(&mut self, window: &Window, serial: Serial) {
         let Some(surface) = window.get_wl_surface() else { return };
+        // Raise in BOTH the global self.space AND the window's per-workspace
+        // Space so all Z-order consumers agree. Why both:
+        //   - Rendering iterates the per-workspace Space's elements in
+        //     bottom-to-top order — raising here is what makes the window
+        //     visually appear on top.
+        //   - Click hit-tests (`visible_element_under`) also use the
+        //     per-workspace Space.
+        //   - Pointer motion hit-tests (`surface_under`) use self.space.
+        // Without raising in both, the renderer would draw window-A on top
+        // while motion/hover events would still fall through to window-B
+        // (whichever was last raised in self.space).
         self.space.raise_element(window, true);
+        let workspace_loc = self.workspaces.window_workspace(&surface);
+        if let Some((output_name, ws_id)) = workspace_loc {
+            if let Some(space) = self.workspace_space_mut(&output_name, ws_id) {
+                space.raise_element(window, true);
+            }
+        }
         self.set_focus_surface(Some(surface), serial);
     }
 

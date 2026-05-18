@@ -35,14 +35,14 @@ const ZONE_BLUR:             u32 = 306;
 const ZONE_TINT:             u32 = 307;
 const ZONE_DARKEN:           u32 = 308;
 const ZONE_BG_OPACITY:       u32 = 309;
-const ZONE_BORDER_COLOR_BASE: u32 = 330; // +0..8 swatches
-const ZONE_TINT_COLOR_BASE:   u32 = 340; // +0..8 swatches
+const ZONE_BORDER_COLOR_BASE: u32 = 330; // +0..9 swatches (10 entries)
+const ZONE_TINT_COLOR_BASE:   u32 = 340; // +0..9 swatches (10 entries)
 
 // Focus & Glow
 const ZONE_FOCUS:            u32 = 304;
 const ZONE_GLOW:             u32 = 310;
-const ZONE_GLOW_COLOR_BASE:  u32 = 311; // +0..8 swatches
-const ZONE_GLOW_INTENSITY:   u32 = 320;
+const ZONE_GLOW_COLOR_BASE:  u32 = 311; // +0..9 swatches (10 entries, 311..320)
+const ZONE_GLOW_INTENSITY:   u32 = 321;
 
 // Animations
 const ZONE_ANIM_ENABLE:      u32 = 322;
@@ -56,8 +56,8 @@ const ZONE_ANIM_T_WS:        u32 = 329;
 
 // Background + Accent
 // 350, 351 reserved (formerly Fox/Lantern radio, replaced by swatch picker)
-const ZONE_ACCENT_BASE:      u32 = 360; // +0..8 swatches (GLOW_COLORS)
-const ZONE_BG_COLOR_BASE:    u32 = 380; // +0..10 swatches (BG_COLORS, 11 entries)
+const ZONE_ACCENT_BASE:      u32 = 360; // +0..9 swatches (GLOW_COLORS, 10 entries)
+const ZONE_BG_COLOR_BASE:    u32 = 380; // +0..9 swatches (BG_COLORS, 10 entries)
 
 // Dropdown menu action IDs (preset selection)
 const ACT_ANIM_PRESET: u32 = 370; // +0..3
@@ -318,8 +318,8 @@ pub(crate) const ZONE_IDS_FOCUS: FocusZones = FocusZones {
 
 // ── Background Color card ──────────────────────────────────────────────────
 //
-// Two swatch rows: the window's background color (11 swatches incl. Black +
-// Brown) and the accent (9 swatches, the existing GLOW_COLORS palette). The
+// Two swatch rows: the window's background color (10 swatches incl. Black +
+// Brown) and the accent (10 swatches, the unified GLOW_COLORS palette). The
 // bg picker writes `appearance.background_color`; chrome.rs reads it via
 // `lntrn_theme::active_background_color()`.
 

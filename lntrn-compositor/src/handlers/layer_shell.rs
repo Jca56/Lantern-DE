@@ -50,6 +50,12 @@ impl WlrLayerShellHandler for Lantern {
             .or_else(|| self.workspaces.outputs_iter().next().cloned());
         if let Some(out) = output {
             tracing::info!(namespace = %namespace, output = %out.name(), "Layer surface routed to output");
+            // Send wl_surface::enter so clients can discover which output
+            // they were placed on (e.g. lntrn-screenshot needs this to
+            // capture pixels from the matching monitor). Without this,
+            // clients fall back to whichever output was enumerated first
+            // from the registry, which may be a different monitor.
+            out.enter(surface.wl_surface());
             self.layer_surface_outputs.insert(surface.wl_surface().clone(), out);
         } else {
             tracing::warn!(namespace = %namespace, "Layer surface created but no output resolved");

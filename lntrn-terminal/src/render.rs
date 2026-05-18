@@ -3,7 +3,7 @@ use lntrn_render::{
     TerminalGridRenderer, TextRenderer,
 };
 
-use crate::config::WindowMode;
+use crate::config::{CursorStylePref, WindowMode};
 use crate::terminal::{Color8, TerminalState, Wide};
 use crate::theme;
 
@@ -55,6 +55,7 @@ pub fn draw_terminal_ex(
     cursor_visible: bool,
     bg_color: Color,
     extra_rows: usize,
+    user_cursor_style: CursorStylePref,
 ) {
     let (cell_w, cell_h) = measure_cell(font_size);
 
@@ -162,11 +163,18 @@ pub fn draw_terminal_ex(
 
     // ── Cursor ────────────────────────────────────────────────────────
     if terminal.scroll_offset == 0 && !terminal.cursor_hidden {
-        // Map DECSCUSR value to shape enum
+        // DECSCUSR 0/1 are "default" — fall back to the user's View-menu
+        // preference. 2-6 are explicit program requests (vim/neovim etc.) and
+        // are honored as-is.
         let shape = match terminal.cursor_shape {
+            2 => CursorShape::Block,
             3 | 4 => CursorShape::Underline,
             5 | 6 => CursorShape::Beam,
-            _ => CursorShape::Block, // 0, 1, 2
+            _ => match user_cursor_style {
+                CursorStylePref::Block => CursorShape::Block,
+                CursorStylePref::Underline => CursorShape::Underline,
+                CursorStylePref::Beam => CursorShape::Beam,
+            },
         };
 
         // Steady cursors (even values >= 2) don't blink
@@ -177,7 +185,7 @@ pub fn draw_terminal_ex(
             row: terminal.cursor_row,
             col: terminal.cursor_col,
             visible,
-            color: c(theme::CURSOR_COLOR),
+            color: c(theme::cursor_color()),
             shape,
         };
 

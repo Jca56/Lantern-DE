@@ -1,2 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="-11.097 -9.355 36.164 38.71" width="64px" height="64px" preserveAspectRatio="none" xmlns:bx="https://boxy-svg.com"><defs><bx:export><bx:file format="svg" path="lntrn-cursor-gold.svg" width="64" height="64"/></bx:export></defs><path d="M -6.907 -6.322 L -0.909 26.322 L 5.597 11.318 L 21.716 8.676 C 22.433 9.174 -6.907 -6.322 -6.907 -6.322 Z" fill="#0a0a0a" stroke-linejoin="round" stroke-linecap="round" style="paint-order: stroke; stroke: rgb(255, 200, 0); stroke-width: 6px;" id="object-0"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <path d="M 2 2 L 4.5 29 L 11 17.5 L 24 17.5 Z"
+        fill="#0a0a0a" stroke="#ffffff" stroke-width="3"
+        stroke-linejoin="round" stroke-linecap="round"
+        style="paint-order: stroke;"/>
+</svg>

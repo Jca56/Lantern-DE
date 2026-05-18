@@ -81,6 +81,24 @@ impl Lantern {
             return; // Not ready yet
         }
 
+        // If the window's position is already owned by some compositor state
+        // (e.g. it requested fullscreen/maximize on startup, opened into a
+        // pose slot, or it's a tiled-mode tile), DON'T re-center — the state
+        // owner has already remapped it to the correct position, and centering
+        // to the usable-area would shift it off by the exclusive-zone size,
+        // breaking click hit-tests for the whole session.
+        if self.is_fullscreen(surface)
+            || self.is_maximized(surface)
+            || self.is_snapped(surface)
+            || self.posed_windows.contains_key(surface)
+            || self.solo_tiled_windows.iter().any(|e| e.surface == *surface)
+            || self.workspaces.contains(surface)
+            || self.window_state_anim.current_rect(surface).is_some()
+        {
+            self.pending_center.remove(surface);
+            return;
+        }
+
         self.pending_center.remove(surface);
 
         let output = self.output_for_window(&window)

@@ -130,14 +130,18 @@ pub struct UdevData {
     pub blur_down_shader: Option<GlesTexProgram>,
     pub blur_up_shader: Option<GlesTexProgram>,
     pub backdrop_shader: Option<GlesTexProgram>,
-    pub blur_state: Option<crate::blur::BlurState>,
+    /// Per-output blur state. Keyed by `UdevOutputId` so each monitor gets
+    /// its own textures + throttle/fingerprint bookkeeping — otherwise
+    /// multi-monitor with different resolutions thrashes a single shared
+    /// state every render and the fingerprint never matches.
+    pub blur_states: std::collections::HashMap<UdevOutputId, crate::blur::BlurState>,
     /// One-shot timer token for demand-driven rendering.
     /// When a render is scheduled, we insert a timer to flush it;
     /// `None` means no timer is pending (idle — zero CPU).
     pub(crate) render_timer: Option<smithay::reexports::calloop::RegistrationToken>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct UdevOutputId {
     pub device_id: DrmNode,
     pub crtc: crtc::Handle,
@@ -187,7 +191,7 @@ pub fn init_udev(
         blur_down_shader: None,
         blur_up_shader: None,
         backdrop_shader: None,
-        blur_state: None,
+        blur_states: HashMap::new(),
         render_timer: None,
     };
     state.udev = Some(udev_data);
