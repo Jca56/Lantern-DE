@@ -18,4 +18,4 @@ pub use typography::{
     FONT_ICON, FONT_CAPTION, FONT_LABEL, FAMILY_PROPORTIONAL, FAMILY_MONOSPACE,
 };
 pub use variant::ThemeVariant;
-pub use config::{active_variant, active_accent, active_background_color, parse_variant, lantern_home, lantern_config_path, read_config_f32, read_config_bool, read_config_string, background_opacity};
+pub use config::{active_variant, active_accent, active_background_color, active_window_gradient, active_window_gradient_alphas, active_window_gradient_angle, window_gradient_angle_from_str, parse_variant, lantern_home, lantern_config_path, read_config_f32, read_config_bool, read_config_string, background_opacity};

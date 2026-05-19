@@ -90,6 +90,25 @@ impl PointerGrab<Lantern> for MoveSurfaceGrab {
             new_location.to_i32_round(),
             false,
         );
+
+        // Drag-snap preview: if the pointer is near a snap zone or the
+        // top edge, compute the would-be target rect and stash it on
+        // state so the renderer can draw a translucent overlay. Cleared
+        // (set to None) when the pointer leaves the snap region.
+        let pointer_pos = event.location;
+        let preview_rect = if let Some(zone) = data.detect_snap_zone_drag(pointer_pos) {
+            data.snap_zone_geometry(zone)
+        } else if data.detect_top_edge(pointer_pos).is_some() {
+            // Top edge maps to "maximize"; preview the full output rect.
+            data.output_at_point(pointer_pos)
+                .and_then(|o| data.workspaces.output_geometry(&o))
+        } else {
+            None
+        };
+        if preview_rect != data.drag_snap_preview {
+            data.drag_snap_preview = preview_rect;
+            data.schedule_render();
+        }
     }
 
     fn relative_motion(
@@ -111,6 +130,14 @@ impl PointerGrab<Lantern> for MoveSurfaceGrab {
         handle.button(data, event);
         const BTN_LEFT: u32 = 0x110;
         if !handle.current_pressed().contains(&BTN_LEFT) {
+            // Always clear the preview overlay on release — whether or
+            // not we actually snap, the user shouldn't see a residual
+            // ghost rect after their drag finishes.
+            if data.drag_snap_preview.is_some() {
+                data.drag_snap_preview = None;
+                data.schedule_render();
+            }
+
             let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(&self.window) else { return };
 
             {
@@ -229,5 +256,12 @@ impl PointerGrab<Lantern> for MoveSurfaceGrab {
         &self.start_data
     }
 
-    fn unset(&mut self, _data: &mut Lantern) {}
+    fn unset(&mut self, data: &mut Lantern) {
+        // Belt-and-suspenders cleanup of the snap-preview overlay in
+        // case `button` didn't run (e.g. another grab took over).
+        if data.drag_snap_preview.is_some() {
+            data.drag_snap_preview = None;
+            data.schedule_render();
+        }
+    }
 }

@@ -162,6 +162,14 @@ impl Lantern {
         let button = event.button_code();
         let button_state = event.state();
 
+        // Spawn the click ripple on left-button press, regardless of which
+        // downstream branch handles the click. Position is the pointer's
+        // current logical location; the renderer scales per-output.
+        if button == BTN_LEFT && button_state == ButtonState::Pressed {
+            self.cursor.click_anim.trigger(pointer.current_location());
+            self.schedule_render();
+        }
+
         // Click while switcher is visible
         if self.alt_tab_switcher.is_visible()
             && button == BTN_LEFT

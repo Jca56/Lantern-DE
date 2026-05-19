@@ -60,7 +60,6 @@ const LNTRN_PNG: &[u8] = include_bytes!("../../icons/apps/lntrn.png");
 // ── Cursor icons ────────────────────────────────────────────────────────────
 
 const CURSOR_DEFAULT: &[u8] = include_bytes!("../../icons/cursors/lntrn-cursor.svg");
-const CURSOR_2: &[u8] = include_bytes!("../../icons/cursors/lntrn-cursor-2.svg");
 const CURSOR_EW: &[u8] = include_bytes!("../../icons/cursors/lntrn-cursor-ew.svg");
 const CURSOR_NESW: &[u8] = include_bytes!("../../icons/cursors/lntrn-cursor-nesw.svg");
 const CURSOR_NS: &[u8] = include_bytes!("../../icons/cursors/lntrn-cursor-ns.svg");
@@ -174,9 +173,11 @@ pub fn get(name: &str) -> Option<&'static [u8]> {
         "lntrn-terminal.png" => LNTRN_TERMINAL_PNG,
         "lntrn.png" => LNTRN_PNG,
 
-        // Cursor icons
+        // Cursor icons — the bundled defaults. Resize variants and the
+        // gradient default arrow all share the same canonical palette
+        // (`#ffffff`, `#ababab`, `#fab414`, `#9a6300`, `#0a0a0a`) so the
+        // 5-stop recolor system in `cursor.rs` can retint them as a set.
         "lntrn-cursor.svg" => CURSOR_DEFAULT,
-        "lntrn-cursor-2.svg" => CURSOR_2,
         "lntrn-cursor-ew.svg" => CURSOR_EW,
         "lntrn-cursor-nesw.svg" => CURSOR_NESW,
         "lntrn-cursor-ns.svg" => CURSOR_NS,

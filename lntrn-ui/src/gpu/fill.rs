@@ -7,6 +7,9 @@ pub enum Fill {
     Solid(Color),
     LinearGradient { angle: f32, start: Color, end: Color },
     RadialGradient { center: Color, edge: Color },
+    /// 3 or 4 stop linear gradient, evenly spaced. Rendered in a single draw
+    /// call via `SHAPE_GRADIENT_MULTI` — no layering, no seams.
+    MultiStopGradient { angle: f32, colors: Vec<Color> },
 }
 
 impl Fill {
@@ -27,9 +30,26 @@ impl Fill {
             end: right,
         }
     }
+
+    /// Top-to-bottom multi-stop gradient (3 or 4 evenly-spaced stops).
+    pub fn vertical_multi(colors: Vec<Color>) -> Self {
+        Self::MultiStopGradient {
+            angle: std::f32::consts::FRAC_PI_2,
+            colors,
+        }
+    }
+
+    /// Multi-stop gradient at an arbitrary angle (radians).
+    /// 0 = left→right, π/2 = top→bottom, π/4 = top-left → bottom-right.
+    pub fn linear_multi(angle: f32, colors: Vec<Color>) -> Self {
+        Self::MultiStopGradient { angle, colors }
+    }
 }
 
-pub(crate) fn draw_fill(painter: &mut Painter, rect: Rect, corner_radius: f32, fill: &Fill) {
+/// Paint a rect using any `Fill` variant. Public so chrome code can paint
+/// the window background using `FoxPalette::window_fill(...)` without
+/// constructing a `Panel`.
+pub fn draw_fill(painter: &mut Painter, rect: Rect, corner_radius: f32, fill: &Fill) {
     match fill {
         Fill::Solid(color) => painter.rect_filled(rect, corner_radius, *color),
         Fill::LinearGradient { angle, start, end } => {
@@ -38,6 +58,12 @@ pub(crate) fn draw_fill(painter: &mut Painter, rect: Rect, corner_radius: f32, f
         Fill::RadialGradient { center, edge } => {
             painter.rect_gradient_radial(rect, corner_radius, *center, *edge);
         }
+        Fill::MultiStopGradient { angle, colors } => match colors.len() {
+            0 => {}
+            1 => painter.rect_filled(rect, corner_radius, colors[0]),
+            2 => painter.rect_gradient_linear(rect, corner_radius, *angle, colors[0], colors[1]),
+            _ => painter.rect_gradient_multi_direct(rect, corner_radius, *angle, colors),
+        },
     }
 }
 

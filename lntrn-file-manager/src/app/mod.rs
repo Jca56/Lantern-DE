@@ -271,6 +271,10 @@ pub struct App {
     // Conflict dialog (Replace/Keep Both/Skip) + in-progress paste state.
     pub conflict_dialog: Option<crate::conflict::ConflictDialog>,
     pub pending_paste: Option<crate::conflict::PendingPaste>,
+    /// In-progress rename waiting on the conflict dialog. Mutually exclusive
+    /// with `pending_paste` — the dialog is shared, but only one operation
+    /// can be in flight at a time.
+    pub pending_rename: Option<crate::conflict::PendingRename>,
 
     // Background copy worker (None = nothing running).
     pub op_progress: Option<crate::ops::OpHandle>,
@@ -388,6 +392,7 @@ impl App {
             sudo_prompt: None,
             conflict_dialog: None,
             pending_paste: None,
+            pending_rename: None,
             op_progress: None,
             pending_icon_apply: Vec::new(),
             wayland_clipboard: crate::clipboard::Clipboard::new(),

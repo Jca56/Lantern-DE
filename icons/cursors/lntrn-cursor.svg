@@ -1,7 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
-  <path d="M 2 2 L 4.5 29 L 11 17.5 L 24 17.5 Z"
-        fill="#0a0a0a" stroke="#ffffff" stroke-width="3"
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="-3.8 -3.3 32 32">
+  <defs>
+    <linearGradient id="bodyGrad" gradientUnits="userSpaceOnUse"
+                    x1="6.259" y1="-11.044" x2="6.259" y2="14.799"
+                    gradientTransform="matrix(0.866019, -0.500013, 0.477267, 0.824205, 2.287521, 12.072092)">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#ababab"/>
+    </linearGradient>
+    <linearGradient id="accentGrad" gradientUnits="userSpaceOnUse"
+                    x1="14.557" y1="13.241" x2="14.557" y2="25.683"
+                    gradientTransform="matrix(0.875556, -0.483116, 0.414001, 0.776447, -6.464255, 9.992787)">
+      <stop offset="0" stop-color="#fab414"/>
+      <stop offset="1" stop-color="#9a6300"/>
+    </linearGradient>
+  </defs>
+  <!-- Gold accent (drawn underneath, 180° rotated around (14.557, 19.462)) -->
+  <path d="M 11.763 13.241 L 4.705 25.061 L 17.537 25.683 L 24.408 13.241 Z"
+        fill="url(#accentGrad)" stroke="#0a0a0a"
         stroke-linejoin="round" stroke-linecap="round"
-        style="paint-order: stroke;"/>
+        style="paint-order: stroke; stroke-width: 6px;"
+        transform="matrix(-1, 0, 0, -1, 29.114, 38.924)"/>
+  <!-- White arrow body -->
+  <path d="M 2.436 -0.16 L 4.252 25.683 L 11.739 15.862 L 24.408 13.794 Z"
+        fill="url(#bodyGrad)" stroke="#0a0a0a"
+        stroke-linejoin="round" stroke-linecap="round"
+        style="paint-order: stroke; stroke-width: 6px;"/>
 </svg>

@@ -28,25 +28,32 @@ impl App {
     pub fn commit_rename(&mut self) {
         if let Some(idx) = self.renaming.take() {
             if idx < self.entries.len() && !self.rename_buf.is_empty() {
-                let old = &self.entries[idx].path;
-                let new_path = old.parent().unwrap_or(old).join(&self.rename_buf);
-                if new_path != *old {
-                    let old_clone = old.clone();
-                    if self.root_mode {
-                        let old = old.clone();
-                        let new_path = new_path.clone();
-                        std::thread::spawn(move || {
-                            let _ = std::process::Command::new("pkexec")
-                                .args(["mv", "--"])
-                                .arg(&old).arg(&new_path)
-                                .status();
+                let old = self.entries[idx].path.clone();
+                let new_path = old.parent().unwrap_or(&old).join(&self.rename_buf);
+                if new_path != old {
+                    // Pop the shared conflict dialog if we'd clobber a real
+                    // existing entry (case-insensitive renames on the same
+                    // file are allowed through — fs::rename handles those).
+                    if new_path.exists() && !self.root_mode {
+                        let dialog = crate::conflict::ConflictDialog {
+                            source: old.clone(),
+                            target: new_path.clone(),
+                            source_meta: crate::conflict::ConflictMeta::read(&old),
+                            target_meta: crate::conflict::ConflictMeta::read(&new_path),
+                            apply_to_all: false,
+                            remaining_count: 0,
+                            mode: crate::conflict::PasteMode::Cut,
+                        };
+                        self.pending_rename = Some(crate::conflict::PendingRename {
+                            from: old, to: new_path,
                         });
-                    } else {
-                        let _ = std::fs::rename(old, &new_path);
+                        self.conflict_dialog = Some(dialog);
+                        self.rename_buf.clear();
+                        self.rename_cursor = 0;
+                        self.rename_selection = None;
+                        return;
                     }
-                    self.undo_stack.push(crate::undo::UndoAction::Rename {
-                        from: old_clone, to: new_path,
-                    });
+                    self.perform_rename(old, new_path);
                 }
             }
             self.rename_buf.clear();
@@ -54,6 +61,28 @@ impl App {
             self.rename_selection = None;
             self.reload();
         }
+    }
+
+    /// Execute a rename + push an Undo entry. Used by both the normal commit
+    /// path and the conflict-resolved Replace / Keep Both paths.
+    pub(crate) fn perform_rename(
+        &mut self,
+        from: std::path::PathBuf,
+        to: std::path::PathBuf,
+    ) {
+        if self.root_mode {
+            let from_cmd = from.clone();
+            let to_cmd = to.clone();
+            std::thread::spawn(move || {
+                let _ = std::process::Command::new("pkexec")
+                    .args(["mv", "--"])
+                    .arg(&from_cmd).arg(&to_cmd)
+                    .status();
+            });
+        } else {
+            let _ = std::fs::rename(&from, &to);
+        }
+        self.undo_stack.push(crate::undo::UndoAction::Rename { from, to });
     }
 
     pub fn cancel_rename(&mut self) {

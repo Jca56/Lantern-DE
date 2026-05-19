@@ -372,6 +372,12 @@ pub struct Lantern {
     pub hot_corner: HotCornerState,
     pub show_desktop_active: bool,
 
+    // Drag-snap preview: when a window is being dragged with a move grab
+    // and the pointer hovers near a snap edge/corner, this holds the
+    // would-be target rect so the renderer can draw a translucent
+    // overlay showing where the window will land on release.
+    pub drag_snap_preview: Option<Rectangle<i32, Logical>>,
+
     // xdg-foreign: cross-client parent-child window relationships
     pub xdg_foreign_state: XdgForeignState,
 
@@ -565,6 +571,7 @@ impl Lantern {
             scratchpad_pending: false,
             hot_corner: HotCornerState::new(),
             show_desktop_active: false,
+            drag_snap_preview: None,
             xdg_foreign_state,
             audio_repeat: None,
             last_exclusive_offsets: (0, 0, 0, 0),

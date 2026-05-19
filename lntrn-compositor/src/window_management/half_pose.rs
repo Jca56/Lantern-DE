@@ -365,28 +365,32 @@ impl Lantern {
     ) -> Option<Rectangle<i32, Logical>> {
         let geo = self.workspaces.output_geometry(output)?;
         let (top, bot, left_off, right_off) = self.exclusive_zone_offsets_for_output(output);
-        let outer = crate::tiling::SINGLE_WINDOW_OUTER_GAP;
 
-        let work_x = geo.loc.x + left_off + outer;
-        let work_y = geo.loc.y + top + outer;
-        let work_w = geo.size.w - left_off - right_off - outer * 2;
-        let work_h = geo.size.h - top - bot - outer * 2;
+        // Work area MATCHES the default-initial-size calc in
+        // `lifecycle.rs::default_initial_size_from_pct` — no SINGLE_WINDOW
+        // outer-gap subtraction — so a Middle pose at the same percentage
+        // as `default_size_pct` lands at the same on-screen footprint as a
+        // newly opened window. (The outer gap is for solo-tile only.)
+        let work_x = geo.loc.x + left_off;
+        let work_y = geo.loc.y + top;
+        let work_w = geo.size.w - left_off - right_off;
+        let work_h = geo.size.h - top - bot;
         if work_w <= 0 || work_h <= 0 { return None; }
 
-        // Middle rung = `size_medium_pct` of the work area, centered. The
-        // legacy `default_window_size` (fixed pixel `[windows]
+        // Middle rung = `size_medium_pct` of the work area, centered, at
+        // the same monitor-aspect rectangle as `default_initial_size_from_pct`.
+        // The legacy `default_window_size` (fixed pixel `[windows]
         // default_width/_height`) is honored as a hard cap so explicit
         // user-set absolute sizes still bound the result.
         let pct = crate::size_medium_pct();
         let mut w = ((work_w as f32) * pct).round() as i32;
         let mut h = ((work_h as f32) * pct).round() as i32;
         if let Some((cap_w, cap_h)) = self.default_window_size {
-            w = w.min(cap_w).min(work_w);
-            h = h.min(cap_h).min(work_h);
-        } else {
-            w = w.min(work_w);
-            h = h.min(work_h);
+            w = w.min(cap_w);
+            h = h.min(cap_h);
         }
+        let w = w.min(work_w).max(1);
+        let h = h.min(work_h).max(1);
         let x = work_x + (work_w - w) / 2;
         let y = work_y + (work_h - h) / 2;
         Some(Rectangle::new(Point::from((x, y)), Size::from((w, h))))
@@ -431,9 +435,10 @@ impl Lantern {
             | PoseSlot::TinyBottom
             | PoseSlot::TinyLeft
             | PoseSlot::TinyRight => {
-                // Small rung — sized as `size_small_pct` of the work area.
-                // `Tiny` centers; the four TinyEdge variants pin one axis to
-                // the corresponding edge and center the other.
+                // Small rung — sized as `size_small_pct` of the work area
+                // at the same monitor-aspect rectangle as Middle and
+                // Default. `Tiny` centers; the four TinyEdge variants pin
+                // one axis to the corresponding edge and center the other.
                 let pct = crate::size_small_pct();
                 let w = (((work_w as f32) * pct).round() as i32).max(1).min(work_w);
                 let h = (((work_h as f32) * pct).round() as i32).max(1).min(work_h);

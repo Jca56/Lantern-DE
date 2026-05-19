@@ -1,7 +1,7 @@
 use lntrn_render::{Color, Rect, TextureDraw};
 use lntrn_ui::gpu::{
-    ContextMenu, FontSize, FoxPalette, GradientStrip, InteractionContext, MenuEvent,
-    ScrollArea, Scrollbar, TabBar, TextInput, TextLabel, TitleBar,
+    draw_window_bg, ContextMenu, FontSize, FoxPalette, GradientStrip, InteractionContext,
+    MenuEvent, ScrollArea, Scrollbar, TabBar, TextInput, TextLabel, TitleBar,
 };
 
 use crate::app::{App, ViewMode};
@@ -153,10 +153,13 @@ pub fn render_frame(
 
     // ── Window background ─────────────────────────────────────────────
     // Borders are drawn by the compositor now via [window_manager].border_width
-    // and border_color, so the file manager no longer paints its own.
+    // and border_color. draw_window_bg paints `pal.bg.with_alpha(opacity)`
+    // and, if a window gradient is configured in System Settings, layers it
+    // on top with per-stop alphas (transparent stops reveal the solid bg
+    // underneath, not the wallpaper).
     let corner_r = if desktop_mode { 0.0 } else { 18.0 * s };
     let win_rect = Rect::new(0.0, 0.0, wf, hf);
-    painter.rect_filled(win_rect, corner_r, pal.bg.with_alpha(bg_opacity));
+    draw_window_bg(painter, win_rect, corner_r, pal, bg_opacity);
 
     // ── Title bar (window mode only) ─────────────────────────────────
     if !desktop_mode {

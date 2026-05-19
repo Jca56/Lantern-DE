@@ -11,6 +11,7 @@ BINARIES := \
 	lntrn-compositor \
 	lntrn-session-manager \
 	lntrn-bar \
+	lntrn-command-center \
 	lntrn-desktop \
 	lntrn-terminal \
 	lntrn-file-manager \

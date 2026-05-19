@@ -49,6 +49,7 @@ pub(crate) const GLOW_COLORS: &[(&str, &str)] = &[
 /// values are what gets written to `appearance.background_color` directly.
 pub(crate) const BG_COLORS: &[(&str, &str)] = &[
     ("#0E0E0E", "Black"),
+    ("#FFFFFF", "White"),
     ("#4A2814", "Brown"),
     ("#0F1F5C", "Blue"),
     ("#2C0F5C", "Purple"),

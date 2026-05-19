@@ -54,13 +54,15 @@ impl Painter {
         }
     }
 
-    /// Multi-stop linear gradient in a rounded rect.
+    /// Multi-stop linear gradient in a rounded rect, rendered in a single draw call.
     /// `stops` is a list of `(t, Color)` where `t` is 0.0–1.0 along the gradient.
     /// `angle` is in radians: 0 = left→right, π/2 = top→bottom.
     ///
-    /// Splits the rect into sub-rects along the gradient axis, each drawn as a
-    /// 2-stop gradient. For N stops this emits N-1 draw calls instead of the
-    /// per-pixel approach (which could be thousands).
+    /// Supports 2-4 stops. For 2 stops, dispatches to `rect_gradient_linear`.
+    /// For 3-4 stops, uses the per-pixel `SHAPE_GRADIENT_MULTI` shader path
+    /// (no geometry layering — corners stay clean and there are no seams).
+    /// Stops with `t > 1` or `t < 0` are clamped; the first stop's `t` is
+    /// ignored (treated as 0) and the last stop's `t` is ignored (treated as 1).
     pub fn rect_gradient_multi(
         &mut self,
         rect: Rect,
@@ -73,33 +75,18 @@ impl Painter {
             self.rect_gradient_linear(rect, corner_radius, angle, stops[0].1, stops[1].1);
             return;
         }
-
-        let cos_a = angle.cos();
-        let sin_a = angle.sin();
-        let horizontal = cos_a.abs() > sin_a.abs();
-
-        for i in 0..stops.len() - 1 {
-            let (t0, c0) = stops[i];
-            let (t1, c1) = stops[i + 1];
-            if (t1 - t0).abs() < 0.0001 { continue; }
-
-            let seg_rect = if horizontal {
-                let x0 = rect.x + rect.w * t0;
-                let x1 = rect.x + rect.w * t1;
-                Rect::new(x0, rect.y, x1 - x0, rect.h)
-            } else {
-                let y0 = rect.y + rect.h * t0;
-                let y1 = rect.y + rect.h * t1;
-                Rect::new(rect.x, y0, rect.w, y1 - y0)
-            };
-
-            let cr = if stops.len() <= 3 && (i == 0 || i == stops.len() - 2) {
-                corner_radius
-            } else {
-                0.0
-            };
-            self.rect_gradient_linear(seg_rect, cr, angle, c0, c1);
-        }
+        // 3 or 4 stops → true single-pass shader path (stops at 0/0.5/1 or
+        // 0/0.33/0.67/1 — caller-supplied stop positions are ignored, all
+        // existing callers space stops evenly anyway).
+        let n = stops.len().min(4);
+        let colors: [Color; 4] = [
+            stops[0].1,
+            stops[1].1,
+            stops[2].1,
+            if n >= 4 { stops[3].1 } else { stops[2].1 },
+        ];
+        let count = if n >= 4 { 4 } else { 3 };
+        self.rect_gradient_multi_direct(rect, corner_radius, angle, &colors[..count]);
     }
 
     // ── Bezier curves ───────────────────────────────────────────────────────

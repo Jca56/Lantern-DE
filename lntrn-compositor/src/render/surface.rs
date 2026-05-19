@@ -54,6 +54,20 @@ pub fn render_surface(
     // differ from the last sampled values.
     state.cursor.tick_colors();
 
+    // Tick the click ripple before any borrows of state fields land. Cleans
+    // up expired rings and reschedules another frame so the animation keeps
+    // progressing even without further input events.
+    let click_anim_active = state.cursor.click_anim.tick();
+    if click_anim_active {
+        state.schedule_render();
+    }
+    // The loading spinner runs as long as the cursor is in Wait/Progress;
+    // it doesn't self-expire, so we just check `is_active` and schedule
+    // another frame to keep the rotation advancing.
+    if state.cursor.loading_anim.is_active() {
+        state.schedule_render();
+    }
+
     // Live-reload monitor positions from config (must run before any udev borrows)
     // Uses wallpaper_frame_counter which is incremented later in this function.
     if state.wallpaper_frame_counter == 0 {
@@ -350,13 +364,22 @@ pub fn render_surface(
 
     let mut window_elements: Vec<CustomRenderElements> = Vec::new();
     let mut fullscreen_elements: Vec<CustomRenderElements> = Vec::new();
-    // Blur backdrop tracking: (insert index, screen-logical rect)
-    let mut blur_backdrops: Vec<(usize, Rectangle<i32, Logical>, f32, f32)> = Vec::new();
+    // Blur backdrop tracking. `surface_start` and `surface_end` bracket the
+    // transparent window's own surface elements in `window_elements`; the
+    // blur source skips this range so a translucent window never blurs its
+    // own (darker) bg back under itself — which would composite as a darker
+    // stack-up the moment another window came to the front.
+    // Tuple: (surface_start, surface_end / backdrop insert, log_rect, alpha, corner_r)
+    let mut blur_backdrops: Vec<(usize, usize, Rectangle<i32, Logical>, f32, f32)> = Vec::new();
 
     let output_name_str = output.name();
     let ws_transition_now = std::time::Instant::now();
 
     for window in windows.iter().rev() {
+        // Index where this window's contributions to `window_elements` start.
+        // Used by the blur-source builder below to skip this window's own
+        // surface so it never blurs into its own backdrop.
+        let win_start_idx = window_elements.len();
         let win_bbox = {
             let loc = state.workspaces.element_location(window).unwrap_or_default();
             let mut bbox = window.bbox();
@@ -779,7 +802,13 @@ pub fn render_surface(
             // contributions (anim_alpha + minimize_alpha) so open/close and
             // minimize fade the blur in lockstep with the window itself.
             let blur_alpha = (anim_alpha * minimize_alpha).clamp(0.0, 1.0);
-            blur_backdrops.push((window_elements.len(), log_rect, blur_alpha, win_corner_r_logical));
+            blur_backdrops.push((
+                win_start_idx,
+                window_elements.len(),
+                log_rect,
+                blur_alpha,
+                win_corner_r_logical,
+            ));
         }
 
         // Window drop shadow / focus glow (behind window, so pushed after = lower z)
@@ -1005,6 +1034,87 @@ pub fn render_surface(
                 Kind::Cursor,
             );
         elements.extend(cursor_surface_elements.into_iter().map(CustomRenderElements::Surface));
+    }
+
+    // Click ripple: under the cursor, above switcher/windows. Tick + reschedule
+    // happen earlier (before the udev borrow); here we just collect elements.
+    if click_anim_active {
+        let cursor_size_px = state.cursor.cursor_size();
+        let origin: Point<f64, Logical> =
+            (output_pos.loc.x as f64, output_pos.loc.y as f64).into();
+        let ring_elements = state
+            .cursor
+            .click_anim
+            .render_elements(renderer, cursor_size_px, origin, scale);
+        elements.extend(ring_elements.into_iter().map(CustomRenderElements::Memory));
+    }
+
+    // Loading-cursor spinner: orbit of dots around the cursor when a
+    // client sets Wait/Progress. Pushed before the cursor element above
+    // — actually it can't be, the cursor is already pushed at line ~999.
+    // Push it after instead so the spinner sits *under* the cursor body
+    // (front-to-back vec ordering: later = further back).
+    if state.cursor.loading_anim.is_active() {
+        let cursor_size_px = state.cursor.cursor_size();
+        let spinner_elements = state
+            .cursor
+            .loading_anim
+            .render_elements(renderer, cursor_pos, cursor_size_px, scale);
+        elements.extend(spinner_elements.into_iter().map(CustomRenderElements::Memory));
+    }
+
+    // Drag-snap preview overlay: a translucent accent-colored rect
+    // showing where the dragged window would land if released right
+    // now. Stored on `state.drag_snap_preview` in global Logical coords;
+    // we convert to output-local Physical here and only emit when the
+    // rect actually intersects this output (multi-monitor correctness).
+    if let Some(preview) = state.drag_snap_preview {
+        use smithay::backend::renderer::element::{solid::SolidColorRenderElement, Id};
+        use smithay::backend::renderer::utils::CommitCounter;
+        if preview.overlaps(output_pos) {
+            let left   = preview.loc.x.max(output_pos.loc.x);
+            let top    = preview.loc.y.max(output_pos.loc.y);
+            let right  = (preview.loc.x + preview.size.w).min(output_pos.loc.x + output_pos.size.w);
+            let bottom = (preview.loc.y + preview.size.h).min(output_pos.loc.y + output_pos.size.h);
+            let loc_phys: Point<i32, Physical> = (
+                ((left - output_pos.loc.x) as f64 * scale).round() as i32,
+                ((top  - output_pos.loc.y) as f64 * scale).round() as i32,
+            ).into();
+            let size_phys: smithay::utils::Size<i32, Physical> = (
+                ((right - left) as f64 * scale).round() as i32,
+                ((bottom - top) as f64 * scale).round() as i32,
+            ).into();
+            // Soft amber accent at low alpha — same family as the
+            // hot-corner glow so the visual language stays consistent.
+            let fill_color = [1.0, 0.78, 0.18, 0.18];
+            let border_color = [1.0, 0.78, 0.18, 0.65];
+            elements.push(CustomRenderElements::Overlay(SolidColorRenderElement::new(
+                Id::new(),
+                Rectangle::<i32, Physical>::new(loc_phys, size_phys),
+                CommitCounter::default(),
+                fill_color,
+                Kind::Unspecified,
+            )));
+            // 2px logical border drawn as 4 thin strips. Stays crisp on
+            // HiDPI because we multiply by the same output `scale`.
+            let border_thickness = (2.0 * scale).round().max(1.0) as i32;
+            let border_strips: [(i32, i32, i32, i32); 4] = [
+                (loc_phys.x, loc_phys.y, size_phys.w, border_thickness),
+                (loc_phys.x, loc_phys.y + size_phys.h - border_thickness, size_phys.w, border_thickness),
+                (loc_phys.x, loc_phys.y, border_thickness, size_phys.h),
+                (loc_phys.x + size_phys.w - border_thickness, loc_phys.y, border_thickness, size_phys.h),
+            ];
+            for (x, y, w, h) in border_strips {
+                if w <= 0 || h <= 0 { continue; }
+                elements.push(CustomRenderElements::Overlay(SolidColorRenderElement::new(
+                    Id::new(),
+                    Rectangle::<i32, Physical>::new((x, y).into(), (w, h).into()),
+                    CommitCounter::default(),
+                    border_color,
+                    Kind::Unspecified,
+                )));
+            }
+        }
     }
 
     // Hot corner glow feedback (above windows, below cursor)
@@ -1450,23 +1560,44 @@ pub fn render_surface(
 
             let blur_key = UdevOutputId { device_id: node, crtc };
             if crate::blur::ensure_textures(renderer, output_phys, passes, &mut udev.blur_states, blur_key) {
-                // Blur source: everything behind transparent windows.
-                // List is front-to-back, so take elements after the topmost
-                // transparent window's insert point (behind = higher indices).
-                let top_idx = blur_backdrops.iter().map(|(i, _, _, _)| *i).min().unwrap_or(0);
-                let below_windows = &window_elements[top_idx..];
+                // Blur source: wallpaper + bottom layers + every window
+                // element EXCEPT the surface contents of transparent windows.
+                // Slicing out only the topmost transparent window (the old
+                // approach) meant any other transparent window stack-up
+                // re-included it in the blur — so the moment focus moved to
+                // a frontmost transparent peer, the previously-frontmost
+                // window started seeing its own bg blurred into its
+                // backdrop, compositing darker on every paint.
+                let mut excluded_ranges: Vec<(usize, usize)> = blur_backdrops
+                    .iter()
+                    .map(|(start, end, _, _, _)| (*start, *end))
+                    .collect();
+                excluded_ranges.sort_by_key(|(s, _)| *s);
+
+                let mut included_slices: Vec<&[CustomRenderElements]> = Vec::new();
+                let mut cursor = 0usize;
+                for (start, end) in &excluded_ranges {
+                    if *start > cursor {
+                        included_slices.push(&window_elements[cursor..*start]);
+                    }
+                    cursor = (*end).max(cursor);
+                }
+                if cursor < window_elements.len() {
+                    included_slices.push(&window_elements[cursor..]);
+                }
 
                 let mut wp_elements: Vec<CustomRenderElements> = Vec::new();
                 if let Some(wp_elem) = state.wallpaper.render_element_for_output(renderer, &output.name(), output_pos.size, scale) {
                     wp_elements.push(CustomRenderElements::Memory(wp_elem));
                 }
 
-                // Back-to-front render order: wallpaper → bottom layers → windows
-                let element_groups: Vec<&[CustomRenderElements]> = vec![
-                    &wp_elements,
-                    &bottom_layer_elements,
-                    below_windows,
-                ];
+                // Back-to-front render order: wallpaper → bottom layers → windows.
+                // `included_slices` is appended in window_elements traversal
+                // order (front-to-back as the loop above builds it).
+                let mut element_groups: Vec<&[CustomRenderElements]> = Vec::with_capacity(2 + included_slices.len());
+                element_groups.push(&wp_elements);
+                element_groups.push(&bottom_layer_elements);
+                element_groups.extend(included_slices);
 
                 // Premultiplied tint for the shader. Color comes from the
                 // configured `blur_tint_color` (same palette the focus glow
@@ -1550,7 +1681,7 @@ pub fn render_surface(
                         let blur_tex_w = (output_phys.w / 2).max(1) as f32;
                         let blur_tex_h = (output_phys.h / 2).max(1) as f32;
 
-                        for (idx, log_rect, alpha, radius_logical) in blur_backdrops.iter().rev() {
+                        for (_start, idx, log_rect, alpha, radius_logical) in blur_backdrops.iter().rev() {
                             let corner_r = radius_logical * output_scale as f32;
                             let backdrop = crate::blur::create_backdrop(
                                 blur_state, ctx_id.clone(), *log_rect,

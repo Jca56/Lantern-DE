@@ -23,6 +23,7 @@ const SHAPE_TAPERED_PILL: f32 = 14.0;
 const SHAPE_TAPERED_PILL_SHADOW: f32 = 15.0;
 const SHAPE_TAPERED_PILL_INNER_SHADOW: f32 = 16.0;
 const SHAPE_ROUNDED_RING: f32 = 17.0;
+const SHAPE_GRADIENT_MULTI: f32 = 18.0;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -31,6 +32,8 @@ struct Instance {
     color: [f32; 4],
     params: [f32; 4],
     color_b: [f32; 4],
+    color_c: [f32; 4],
+    color_d: [f32; 4],
 }
 
 #[repr(C)]
@@ -138,6 +141,16 @@ impl Painter {
                     format: wgpu::VertexFormat::Float32x4,
                     offset: 48,
                     shader_location: 3,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x4,
+                    offset: 64,
+                    shader_location: 4,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x4,
+                    offset: 80,
+                    shader_location: 5,
                 },
             ],
         };
@@ -412,6 +425,8 @@ impl Painter {
             color: [color.r, color.g, color.b, color.a],
             params: [corner_radius, 0.0, 0.0, SHAPE_RECT],
             color_b: [0.0; 4],
+            color_c: [0.0; 4],
+            color_d: [0.0; 4],
         });
     }
 
@@ -423,6 +438,8 @@ impl Painter {
             color: [color.r, color.g, color.b, color.a],
             params: [0.0, 0.0, 0.0, SHAPE_CIRCLE],
             color_b: [0.0; 4],
+            color_c: [0.0; 4],
+            color_d: [0.0; 4],
         });
     }
 
@@ -433,6 +450,8 @@ impl Painter {
             color: [color.r, color.g, color.b, color.a],
             params: [width, x2, y2, SHAPE_LINE],
             color_b: [0.0; 4],
+            color_c: [0.0; 4],
+            color_d: [0.0; 4],
         });
     }
 
@@ -445,6 +464,8 @@ impl Painter {
             color: [color.r, color.g, color.b, color.a],
             params: [stroke_width, radius, 0.0, SHAPE_RING],
             color_b: [0.0; 4],
+            color_c: [0.0; 4],
+            color_d: [0.0; 4],
         });
     }
 
@@ -463,6 +484,39 @@ impl Painter {
             color: [start.r, start.g, start.b, start.a],
             params: [corner_radius, angle, 0.0, SHAPE_GRADIENT_LINEAR],
             color_b: [end.r, end.g, end.b, end.a],
+            color_c: [0.0; 4],
+            color_d: [0.0; 4],
+        });
+    }
+
+    /// Draw a rounded rect with a true multi-stop linear gradient (3 or 4 colors).
+    /// Renders in a single draw call — colors interpolate per-pixel in the shader.
+    /// Stops are evenly spaced along the gradient axis (3 colors at 0, 0.5, 1.0;
+    /// 4 colors at 0, 1/3, 2/3, 1.0). For 2 stops, prefer `rect_gradient_linear`.
+    ///
+    /// `angle` is in radians: 0 = left→right, π/2 = top→bottom.
+    pub fn rect_gradient_multi_direct(
+        &mut self,
+        rect: Rect,
+        corner_radius: f32,
+        angle: f32,
+        colors: &[Color],
+    ) {
+        if colors.len() < 3 { return; }
+        let c0 = colors[0];
+        let c1 = colors[1];
+        let c2 = colors[2];
+        let c3 = if colors.len() >= 4 { colors[3] } else { c2 };
+        // params.z carries the stop count (3.0 or 4.0) — the shader derives
+        // even spacing from it. Storing as float because params is vec4<f32>.
+        let count = if colors.len() >= 4 { 4.0 } else { 3.0 };
+        self.instances.push(Instance {
+            bounds: [rect.x, rect.y, rect.w, rect.h],
+            color: [c0.r, c0.g, c0.b, c0.a],
+            params: [corner_radius, angle, count, SHAPE_GRADIENT_MULTI],
+            color_b: [c1.r, c1.g, c1.b, c1.a],
+            color_c: [c2.r, c2.g, c2.b, c2.a],
+            color_d: [c3.r, c3.g, c3.b, c3.a],
         });
     }
 
@@ -479,6 +533,8 @@ impl Painter {
             color: [center_color.r, center_color.g, center_color.b, center_color.a],
             params: [corner_radius, 0.0, 0.0, SHAPE_GRADIENT_RADIAL],
             color_b: [edge_color.r, edge_color.g, edge_color.b, edge_color.a],
+            color_c: [0.0; 4],
+            color_d: [0.0; 4],
         });
     }
 
@@ -493,6 +549,8 @@ impl Painter {
             color: [color.r, color.g, color.b, color.a],
             params: [corner_radius, width, 0.0, SHAPE_RECT_STROKE],
             color_b: [0.0; 4],
+            color_c: [0.0; 4],
+            color_d: [0.0; 4],
         });
     }
 
@@ -509,6 +567,8 @@ impl Painter {
             color: [color.r, color.g, color.b, color.a],
             params: [outer_radius, width, 0.0, SHAPE_ROUNDED_RING],
             color_b: [0.0; 4],
+            color_c: [0.0; 4],
+            color_d: [0.0; 4],
         });
     }
 
@@ -527,6 +587,8 @@ impl Painter {
             color: [color.r, color.g, color.b, color.a],
             params: [corner_radius, width, progress.clamp(0.0, 1.0), SHAPE_RECT_STROKE_PROGRESS],
             color_b: [0.0; 4],
+            color_c: [0.0; 4],
+            color_d: [0.0; 4],
         });
     }
 
@@ -539,6 +601,8 @@ impl Painter {
             color: [color.r, color.g, color.b, color.a],
             params: [radii[0], radii[1], 0.0, SHAPE_RECT_4CORNER],
             color_b: [radii[2], radii[3], 0.0, 0.0],
+            color_c: [0.0; 4],
+            color_d: [0.0; 4],
         });
     }
 
@@ -550,6 +614,8 @@ impl Painter {
             color: [color.r, color.g, color.b, color.a],
             params: [x3, y3, 0.0, SHAPE_TRIANGLE],
             color_b: [0.0; 4],
+            color_c: [0.0; 4],
+            color_d: [0.0; 4],
         });
     }
 
@@ -568,6 +634,8 @@ impl Painter {
             color: [color.r, color.g, color.b, color.a],
             params: [corner_radius, sigma, 0.0, SHAPE_SHADOW],
             color_b: [0.0; 4],
+            color_c: [0.0; 4],
+            color_d: [0.0; 4],
         });
     }
 
@@ -584,6 +652,8 @@ impl Painter {
             color: [color.r, color.g, color.b, color.a],
             params: [corner_radius, sigma, 0.0, SHAPE_INNER_SHADOW],
             color_b: [offset_x, offset_y, 0.0, 0.0],
+            color_c: [0.0; 4],
+            color_d: [0.0; 4],
         });
     }
 
@@ -602,6 +672,8 @@ impl Painter {
             color: [color.r, color.g, color.b, color.a],
             params: [corner_radius, split_x, taper_amt, SHAPE_TAPERED_PILL],
             color_b: [0.0, 0.0, 0.0, taper_curve],
+            color_c: [0.0; 4],
+            color_d: [0.0; 4],
         });
     }
 
@@ -619,6 +691,8 @@ impl Painter {
             color: [color.r, color.g, color.b, color.a],
             params: [corner_radius, split_x, taper_amt, SHAPE_TAPERED_PILL_SHADOW],
             color_b: [sigma, 0.0, 0.0, taper_curve],
+            color_c: [0.0; 4],
+            color_d: [0.0; 4],
         });
     }
 
@@ -633,6 +707,8 @@ impl Painter {
             color: [color.r, color.g, color.b, color.a],
             params: [corner_radius, split_x, taper_amt, SHAPE_TAPERED_PILL_INNER_SHADOW],
             color_b: [sigma, offset_x, offset_y, taper_curve],
+            color_c: [0.0; 4],
+            color_d: [0.0; 4],
         });
     }
 
@@ -655,6 +731,8 @@ impl Painter {
             color: [color.r, color.g, color.b, color.a],
             params: [stroke_width, start_angle, sweep_angle, SHAPE_ARC],
             color_b: [inner_radius, 0.0, 0.0, 0.0],
+            color_c: [0.0; 4],
+            color_d: [0.0; 4],
         });
     }
 
@@ -671,6 +749,8 @@ impl Painter {
             color: [color.r, color.g, color.b, color.a],
             params: [width, x2, y2, SHAPE_DASHED_LINE],
             color_b: [dash, gap, 0.0, 0.0],
+            color_c: [0.0; 4],
+            color_d: [0.0; 4],
         });
     }
 

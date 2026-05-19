@@ -298,6 +298,36 @@ impl App {
         }
     }
 
+    /// Apply a user's conflict-dialog choice to a pending rename. The dialog
+    /// is shared with paste; this branch fires when `pending_rename` is set.
+    pub fn resolve_rename_conflict(&mut self, action: crate::conflict::ConflictAction) {
+        use crate::conflict::ConflictAction;
+        self.conflict_dialog = None;
+        let Some(pending) = self.pending_rename.take() else { return; };
+        match action {
+            ConflictAction::Skip => {}
+            ConflictAction::Replace => {
+                let _ = if pending.to.is_dir() {
+                    std::fs::remove_dir_all(&pending.to)
+                } else {
+                    std::fs::remove_file(&pending.to)
+                };
+                self.perform_rename(pending.from, pending.to);
+            }
+            ConflictAction::KeepBoth => {
+                let target = crate::conflict::unique_keep_both_path(&pending.to);
+                self.perform_rename(pending.from, target);
+            }
+        }
+        self.reload();
+    }
+
+    /// Cancel an in-progress rename waiting on the conflict dialog.
+    pub fn cancel_rename_conflict(&mut self) {
+        self.conflict_dialog = None;
+        self.pending_rename = None;
+    }
+
     /// Handle a user choice on the conflict dialog. Closes the dialog,
     /// optionally promotes the action to apply-to-all, and resumes the
     /// pending paste walk.

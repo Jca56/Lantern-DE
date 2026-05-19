@@ -11,6 +11,8 @@ struct InstanceInput {
     @location(1) color: vec4<f32>,
     @location(2) params: vec4<f32>,
     @location(3) color_b: vec4<f32>,
+    @location(4) color_c: vec4<f32>,
+    @location(5) color_d: vec4<f32>,
 };
 
 struct VertexOutput {
@@ -21,6 +23,8 @@ struct VertexOutput {
     @location(3) params: vec4<f32>,
     @location(4) local_px: vec2<f32>,
     @location(5) color_b: vec4<f32>,
+    @location(6) color_c: vec4<f32>,
+    @location(7) color_d: vec4<f32>,
 };
 
 const SHAPE_RECT: f32 = 0.0;
@@ -41,6 +45,7 @@ const SHAPE_TAPERED_PILL: f32 = 14.0;
 const SHAPE_TAPERED_PILL_SHADOW: f32 = 15.0;
 const SHAPE_TAPERED_PILL_INNER_SHADOW: f32 = 16.0;
 const SHAPE_ROUNDED_RING: f32 = 17.0;
+const SHAPE_GRADIENT_MULTI: f32 = 18.0;
 
 @vertex
 fn vs_main(@builtin(vertex_index) vi: u32, instance: InstanceInput) -> VertexOutput {
@@ -93,6 +98,8 @@ fn vs_main(@builtin(vertex_index) vi: u32, instance: InstanceInput) -> VertexOut
     out.params = instance.params;
     out.local_px = px;
     out.color_b = instance.color_b;
+    out.color_c = instance.color_c;
+    out.color_d = instance.color_d;
     return out;
 }
 
@@ -228,6 +235,46 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let rel = (in.local_px - in.bounds.xy) / in.bounds.zw - 0.5;
         let t = clamp(dot(rel, dir) + 0.5, 0.0, 1.0);
         color = mix(in.color, in.color_b, vec4<f32>(t));
+
+    } else if in.params.w == SHAPE_GRADIENT_MULTI {
+        // True multi-stop linear gradient (3 or 4 colors, evenly spaced).
+        // params: [corner_radius, angle, stop_count (3.0 or 4.0), shape_id]
+        // color = stop0, color_b = stop1, color_c = stop2, color_d = stop3.
+        let radius = in.params.x;
+        let center = in.bounds.xy + in.bounds.zw * 0.5;
+        let half_size = in.bounds.zw * 0.5;
+        let dist = sdf_rounded_rect(in.local_px, center, half_size, radius);
+        mask = 1.0 - smoothstep(-1.0, 1.0, dist);
+        let angle = in.params.y;
+        let dir = vec2<f32>(cos(angle), sin(angle));
+        let rel = (in.local_px - in.bounds.xy) / in.bounds.zw - 0.5;
+        // Project onto the gradient axis and remap so the gradient runs from
+        // one corner of the (axis-aligned) bounding rect to the opposite. The
+        // total projection range for a unit square along `dir` is
+        //   |cos(angle)| + |sin(angle)|
+        // so dividing by that span gives a t∈[0,1] covering corner-to-corner
+        // for any angle — including the diagonal 45° case that the simple
+        // `dot + 0.5` form would otherwise clip.
+        let span = max(abs(dir.x) + abs(dir.y), 0.0001);
+        let t = clamp((dot(rel, dir) / span) + 0.5, 0.0, 1.0);
+        let four_stops = in.params.z >= 3.5;
+        if four_stops {
+            // Stops at 0, 1/3, 2/3, 1
+            if t < 0.33333333 {
+                color = mix(in.color, in.color_b, vec4<f32>(t * 3.0));
+            } else if t < 0.66666666 {
+                color = mix(in.color_b, in.color_c, vec4<f32>((t - 0.33333333) * 3.0));
+            } else {
+                color = mix(in.color_c, in.color_d, vec4<f32>((t - 0.66666666) * 3.0));
+            }
+        } else {
+            // 3 stops at 0, 0.5, 1
+            if t < 0.5 {
+                color = mix(in.color, in.color_b, vec4<f32>(t * 2.0));
+            } else {
+                color = mix(in.color_b, in.color_c, vec4<f32>((t - 0.5) * 2.0));
+            }
+        }
 
     } else if in.params.w == SHAPE_GRADIENT_RADIAL {
         let radius = in.params.x;

@@ -73,13 +73,21 @@ pub(crate) fn handle_key(
     key: u32, ctrl: bool, shift: bool,
     running: &mut bool,
 ) {
-    // Conflict dialog — ESC = cancel paste, Enter = Replace.
+    // Conflict dialog — ESC = cancel, Enter = Replace. Dispatches to the
+    // rename branch when a rename is pending; otherwise the paste branch.
     if app.conflict_dialog.is_some() {
         let _ = ctrl;
         let _ = shift;
+        let is_rename = app.pending_rename.is_some();
         match key {
-            KEY_ESC => app.cancel_paste(),
-            KEY_ENTER => app.resolve_conflict(crate::conflict::ConflictAction::Replace),
+            KEY_ESC => {
+                if is_rename { app.cancel_rename_conflict(); }
+                else { app.cancel_paste(); }
+            }
+            KEY_ENTER => {
+                if is_rename { app.resolve_rename_conflict(crate::conflict::ConflictAction::Replace); }
+                else { app.resolve_conflict(crate::conflict::ConflictAction::Replace); }
+            }
             _ => {}
         }
         return;

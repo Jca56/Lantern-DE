@@ -1,5 +1,5 @@
 use lntrn_render::{Color, Frame, GpuContext, Painter, TextureDraw};
-use lntrn_ui::gpu::MenuEvent;
+use lntrn_ui::gpu::{draw_window_gradient_overlay, MenuEvent};
 
 use crate::git_sidebar;
 use crate::render;
@@ -68,6 +68,12 @@ impl App {
             .window
             .as_ref()
             .map_or(false, |w| w.is_maximized() || w.fullscreen().is_some());
+        // Solid bg first so the terminal's own theme.bg sits underneath
+        // every glyph cell, then layer the optional System Settings window
+        // gradient on top with per-stop alphas (transparent stops reveal
+        // the solid bg, not the wallpaper).
+        let win_r = if maximized { 0.0 } else { render::CORNER_RADIUS };
+        let win_rect = lntrn_render::Rect::new(0.0, 0.0, screen_w as f32, screen_h as f32);
         render::draw_window_bg(
             painter,
             title_bar_color,
@@ -77,6 +83,7 @@ impl App {
             maximized,
             &mode,
         );
+        draw_window_gradient_overlay(painter, win_rect, win_r, opacity);
 
         // Draw sidebar (file browser or git panel) — skipped in rice mode.
         if !self.chrome_hidden {

@@ -7,6 +7,8 @@ pub mod cc_thumbs;
 pub mod clipboard_ipc;
 pub mod clipboard_manager;
 mod cursor;
+mod cursor_click;
+mod cursor_loading;
 mod easing;
 mod gestures;
 mod grabs;
@@ -39,6 +41,7 @@ mod wallpaper;
 mod window_ext;
 mod window_management;
 mod winit;
+mod xcursor_export;
 mod xwayland;
 
 use smithay::reexports::{calloop::EventLoop, wayland_server::Display};
@@ -370,6 +373,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Err(e) = crate::clipboard_manager::install_recheck_source(&mut state) {
         tracing::warn!("clipboard recheck source install failed: {e}");
     }
+
+    // Generate the Lantern Xcursor theme on disk before XWayland spawns so
+    // X11 clients see our cursor instead of falling back to Adwaita / the
+    // bare X11 root cursor. Safe to call every startup — cached via a
+    // fingerprint file.
+    crate::xcursor_export::export();
 
     match backend {
         Backend::Winit => {

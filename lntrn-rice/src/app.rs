@@ -3,7 +3,9 @@ use std::ptr::NonNull;
 use std::time::Instant;
 
 use anyhow::{anyhow, Result};
-use lntrn_render::{Color, GpuContext, Painter, Rect};
+use lntrn_render::{Color, GpuContext, Painter, Rect, TextRenderer};
+
+use crate::scenes::Scene;
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
     RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle, WindowHandle,
@@ -23,17 +25,17 @@ use wayland_protocols::xdg::shell::client::{xdg_toplevel, xdg_wm_base};
 
 pub const BTN_LEFT: u32 = 0x110;
 const KEY_ESC: u32 = 1;
+const KEY_TAB: u32 = 15;
+const KEY_LEFT: u32 = 105;
+const KEY_RIGHT: u32 = 106;
 
-// ── Public API ──────────────────────────────────────────────────────────────
-
-pub struct AppConfig {
-    pub app_id: &'static str,
-    pub title: &'static str,
-    pub initial_width: u32,
-    pub initial_height: u32,
-}
+const APP_ID: &str = "lntrn-rice";
+const APP_TITLE: &str = "Rice";
+const INITIAL_W: u32 = 720;
+const INITIAL_H: u32 = 480;
 
 /// Everything a scene needs to draw a single frame.
+#[allow(dead_code)]
 pub struct FrameCtx {
     pub wf: f32,
     pub hf: f32,
@@ -167,7 +169,12 @@ fn settings_corner_radius() -> f32 {
 
 // ── Entry point ─────────────────────────────────────────────────────────────
 
-pub fn run<F: FnMut(&mut Painter, &FrameCtx)>(config: AppConfig, mut scene: F) -> Result<()> {
+pub fn run(mut scenes: Vec<Box<dyn Scene>>) -> Result<()> {
+    if scenes.is_empty() {
+        return Err(anyhow!("at least one scene is required"));
+    }
+    let mut scene_idx: usize = 0;
+
     let conn = Connection::connect_to_env()?;
     let display = conn.display();
     let mut event_queue: EventQueue<State> = conn.new_event_queue();
@@ -182,14 +189,14 @@ pub fn run<F: FnMut(&mut Painter, &FrameCtx)>(config: AppConfig, mut scene: F) -
     let wm_base = state.wm_base.clone()
         .ok_or_else(|| anyhow!("xdg_wm_base not available"))?;
 
-    if state.width == 0 { state.width = config.initial_width.max(120); }
-    if state.height == 0 { state.height = config.initial_height.max(80); }
+    if state.width == 0 { state.width = INITIAL_W.max(120); }
+    if state.height == 0 { state.height = INITIAL_H.max(80); }
 
     let surface = compositor.create_surface(&qh, ());
     let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
     let toplevel = xdg_surface.get_toplevel(&qh, ());
-    toplevel.set_title(config.title.into());
-    toplevel.set_app_id(config.app_id.into());
+    toplevel.set_title(APP_TITLE.into());
+    toplevel.set_app_id(APP_ID.into());
     toplevel.set_min_size(240, 160);
 
     if let Some(mgr) = &state.decoration_mgr {
@@ -223,11 +230,12 @@ pub fn run<F: FnMut(&mut Painter, &FrameCtx)>(config: AppConfig, mut scene: F) -
     let mut gpu = GpuContext::from_window(&wl_handle, phys_w, phys_h)
         .map_err(|e| anyhow!("GPU init failed: {e}"))?;
     let mut painter = Painter::new(&gpu);
+    let mut text = TextRenderer::new(&gpu);
     let start = Instant::now();
 
     while state.running {
         if let Err(e) = event_queue.blocking_dispatch(&mut state) {
-            eprintln!("[{}] dispatch error: {e}", config.app_id);
+            eprintln!("[{}] dispatch error: {e}", APP_ID);
             break;
         }
         if !state.frame_done { continue; }
@@ -250,7 +258,16 @@ pub fn run<F: FnMut(&mut Painter, &FrameCtx)>(config: AppConfig, mut scene: F) -
         let cy = (state.cursor_y as f32) * s;
 
         if let Some(key) = state.key_pressed.take() {
-            if key == KEY_ESC { state.running = false; }
+            match key {
+                KEY_ESC => state.running = false,
+                KEY_TAB | KEY_RIGHT => {
+                    scene_idx = (scene_idx + 1) % scenes.len();
+                }
+                KEY_LEFT => {
+                    scene_idx = (scene_idx + scenes.len() - 1) % scenes.len();
+                }
+                _ => {}
+            }
         }
 
         if state.left_pressed {
@@ -289,11 +306,13 @@ pub fn run<F: FnMut(&mut Painter, &FrameCtx)>(config: AppConfig, mut scene: F) -
         };
 
         painter.clear();
-        scene(&mut painter, &ctx);
+        text.clear();
+        scenes[scene_idx].draw(&mut painter, &mut text, &ctx);
 
-        if let Ok(mut frame) = gpu.begin_frame(config.app_id) {
+        if let Ok(mut frame) = gpu.begin_frame(APP_ID) {
             let view = frame.view().clone();
             painter.render_pass(&gpu, frame.encoder_mut(), &view, Color::TRANSPARENT);
+            text.render_queued(&gpu, frame.encoder_mut(), &view);
             frame.submit(&gpu.queue);
         }
 

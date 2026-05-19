@@ -3,20 +3,13 @@ name = "lntrn-rice"
 version = "0.1.0"
 edition = "2021"
 
-[lib]
-name = "lntrn_rice"
-path = "src/lib.rs"
-
 [[bin]]
 name = "lntrn-rice"
-path = "src/bin/lntrn-rice.rs"
-
-[[bin]]
-name = "lntrn-rice-gradient"
-path = "src/bin/lntrn-rice-gradient.rs"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+libc = "0.2"
 lntrn-render = { path = "../lntrn-render" }
 lntrn-theme = { path = "../lntrn-theme" }
 raw-window-handle = "0.6"

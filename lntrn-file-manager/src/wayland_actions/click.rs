@@ -40,16 +40,29 @@ pub(crate) fn handle_click(
         // ── Conflict dialog: captures all clicks while open ─────────
         if app.conflict_dialog.is_some() {
             use crate::conflict::ConflictAction;
+            let is_rename = app.pending_rename.is_some();
             match zone_id {
                 crate::ZONE_CONFLICT_APPLY_TO_ALL => {
                     if let Some(d) = app.conflict_dialog.as_mut() {
                         d.apply_to_all = !d.apply_to_all;
                     }
                 }
-                crate::ZONE_CONFLICT_REPLACE => app.resolve_conflict(ConflictAction::Replace),
-                crate::ZONE_CONFLICT_KEEP_BOTH => app.resolve_conflict(ConflictAction::KeepBoth),
-                crate::ZONE_CONFLICT_SKIP => app.resolve_conflict(ConflictAction::Skip),
-                crate::ZONE_CONFLICT_CANCEL | crate::ZONE_CONFLICT_SCRIM => app.cancel_paste(),
+                crate::ZONE_CONFLICT_REPLACE => {
+                    if is_rename { app.resolve_rename_conflict(ConflictAction::Replace); }
+                    else { app.resolve_conflict(ConflictAction::Replace); }
+                }
+                crate::ZONE_CONFLICT_KEEP_BOTH => {
+                    if is_rename { app.resolve_rename_conflict(ConflictAction::KeepBoth); }
+                    else { app.resolve_conflict(ConflictAction::KeepBoth); }
+                }
+                crate::ZONE_CONFLICT_SKIP => {
+                    if is_rename { app.resolve_rename_conflict(ConflictAction::Skip); }
+                    else { app.resolve_conflict(ConflictAction::Skip); }
+                }
+                crate::ZONE_CONFLICT_CANCEL | crate::ZONE_CONFLICT_SCRIM => {
+                    if is_rename { app.cancel_rename_conflict(); }
+                    else { app.cancel_paste(); }
+                }
                 _ => {}
             }
             return ClickAction::None;

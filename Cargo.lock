@@ -2648,6 +2648,7 @@ name = "lntrn-rice"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "libc",
  "lntrn-render",
  "lntrn-theme",
  "raw-window-handle",

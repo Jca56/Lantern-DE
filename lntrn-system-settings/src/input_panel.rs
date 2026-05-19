@@ -16,15 +16,22 @@ const ZONE_POINTER_ACCEL: u32 = 801;
 const ZONE_SCROLL_SPEED: u32 = 802;
 const ZONE_DOUBLE_CLICK: u32 = 803;
 const ZONE_CURSOR_SIZE: u32 = 804;
-const ZONE_CURSOR_OUTLINE_WIDTH: u32 = 805;
+const ZONE_CURSOR_OUTLINE_SCALE: u32 = 805;
 const ZONE_CURSOR_CORNER_RADIUS: u32 = 806;
+const ZONE_CLICK_ANIM_ENABLED: u32 = 807;
+const ZONE_CLICK_ANIM_SIZE: u32 = 808;
+const ZONE_CLICK_ANIM_COLOR_INHERIT: u32 = 809;
 const ZONE_CURSOR_BASE: u32 = 810;
-// IDs 900–901 are owned by the global Save / Cancel chrome buttons, so the
-// outline swatch row has to start well clear of them. Fill range stays at
-// 880..890; outline jumps to 940..950; preview tile picks up at 960.
-const ZONE_CURSOR_FILL_BASE:    u32 = 880; // +0..GLOW_COLORS.len()
-const ZONE_CURSOR_OUTLINE_BASE: u32 = 940; // +0..GLOW_COLORS.len()
+// Swatch-row ranges. Each row reserves GLOW_COLORS.len() (8 today) zone
+// IDs; chosen with generous gaps so adding palette colors won't collide.
+// IDs 900–901 are owned by the global Save / Cancel chrome buttons.
+const ZONE_CURSOR_BODY_LIGHT_BASE:   u32 = 820;
+const ZONE_CURSOR_BODY_DARK_BASE:    u32 = 840;
+const ZONE_CURSOR_ACCENT_LIGHT_BASE: u32 = 860;
+const ZONE_CURSOR_ACCENT_DARK_BASE:  u32 = 880;
+const ZONE_CURSOR_OUTLINE_BASE:      u32 = 940;
 const ZONE_CURSOR_DEFAULT_TILE: u32 = 960;
+const ZONE_CLICK_ANIM_COLOR_BASE: u32 = 970; // +0..GLOW_COLORS.len()
 const DEFAULT_PREVIEW_PX: f32 = 88.0;
 
 const ROW_H: f32 = 48.0;
@@ -59,9 +66,11 @@ pub struct InputPanelState {
     /// fill/outline/border/roundness applied. Rebuilt whenever any of the
     /// inputs change.
     default_preview_tex: Option<GpuTexture>,
-    default_preview_fill: String,
-    default_preview_outline: String,
-    default_preview_width: f32,
+    /// Snapshot of all recolor inputs at last rasterize so we know when
+    /// to rebuild the preview texture. Stored as one packed string +
+    /// scalar pair so adding a new stop later is just one field bump.
+    default_preview_palette: String,
+    default_preview_scale: f32,
     default_preview_radius: f32,
     default_preview_px: u32,
 }
@@ -73,9 +82,8 @@ impl InputPanelState {
             cursor_textures: Vec::new(), textures_loaded: false,
             scroll_offset: 0.0,
             default_preview_tex: None,
-            default_preview_fill: String::new(),
-            default_preview_outline: String::new(),
-            default_preview_width: -1.0,
+            default_preview_palette: String::new(),
+            default_preview_scale: -1.0,
             default_preview_radius: -1.0,
             default_preview_px: 0,
         }
@@ -142,17 +150,16 @@ impl InputPanelState {
         &mut self,
         tex_pass: &TexturePass,
         gpu: &GpuContext,
-        fill: &str,
-        outline: &str,
-        outline_width: f32,
+        palette: &CursorPalette,
+        outline_scale: f32,
         corner_radius: f32,
         scale: f32,
     ) {
         let target_px = (DEFAULT_PREVIEW_PX * scale).round() as u32;
+        let palette_key = palette.cache_key();
         let stale = self.default_preview_tex.is_none()
-            || self.default_preview_fill != fill
-            || self.default_preview_outline != outline
-            || (self.default_preview_width - outline_width).abs() > 0.001
+            || self.default_preview_palette != palette_key
+            || (self.default_preview_scale  - outline_scale).abs() > 0.001
             || (self.default_preview_radius - corner_radius).abs() > 0.001
             || self.default_preview_px != target_px;
         if !stale {
@@ -175,42 +182,70 @@ impl InputPanelState {
                 bundled
             }
         };
-        let customized = customize_cursor_svg(src, fill, outline, outline_width, corner_radius);
+        let customized = customize_cursor_svg(src, palette, outline_scale, corner_radius);
         self.default_preview_tex = rasterize_svg_to_texture(&customized, target_px, tex_pass, gpu);
-        self.default_preview_fill = fill.to_string();
-        self.default_preview_outline = outline.to_string();
-        self.default_preview_width = outline_width;
+        self.default_preview_palette = palette_key;
+        self.default_preview_scale = outline_scale;
         self.default_preview_radius = corner_radius;
         self.default_preview_px = target_px;
     }
 }
 
-/// Match the compositor's customize rules so the panel preview tracks
-/// reality. Recolors fill + outline (attribute *or* CSS form), rewrites
-/// `stroke-width` (attribute *or* CSS form), and parses the first polygon
-/// path to apply corner rounding.
-fn customize_cursor_svg(svg: &[u8], fill: &str, outline: &str, width: f32, radius: f32) -> Vec<u8> {
+/// Five-stop recolor palette mirroring the compositor's
+/// `recolor_cursor_svg`. Used by the preview rasterizer so the swatch
+/// row matches what the cursor actually looks like on screen.
+pub struct CursorPalette<'a> {
+    pub body_light:   &'a str,
+    pub body_dark:    &'a str,
+    pub accent_light: &'a str,
+    pub accent_dark:  &'a str,
+    pub outline:      &'a str,
+}
+
+impl<'a> CursorPalette<'a> {
+    fn cache_key(&self) -> String {
+        format!("{}|{}|{}|{}|{}",
+            self.body_light, self.body_dark,
+            self.accent_light, self.accent_dark, self.outline)
+    }
+}
+
+/// Match the compositor's recolor rules so the panel preview tracks
+/// reality. Replaces each of the five canonical hex codes with the
+/// user's palette stop and scales every `stroke-width` proportionally.
+fn customize_cursor_svg(
+    svg: &[u8],
+    palette: &CursorPalette,
+    outline_scale: f32,
+    radius: f32,
+) -> Vec<u8> {
     let Ok(s) = std::str::from_utf8(svg) else { return svg.to_vec() };
     let mut out = s.to_string();
-    out = out.replace("#0a0a0a", fill).replace("#0A0A0A", fill);
-    out = out.replace("#ffffff", outline).replace("#FFFFFF", outline);
-    let h = outline.trim_start_matches('#');
-    if h.len() == 6 {
-        let r = u8::from_str_radix(&h[0..2], 16).unwrap_or(255);
-        let g = u8::from_str_radix(&h[2..4], 16).unwrap_or(255);
-        let b = u8::from_str_radix(&h[4..6], 16).unwrap_or(255);
-        let rgb = format!("rgb({}, {}, {})", r, g, b);
-        out = out.replace("rgb(255, 255, 255)", &rgb)
-                 .replace("rgb(255,255,255)", &rgb);
+    out = replace_hex_case_insensitive(&out, "#ffffff", palette.body_light);
+    out = replace_hex_case_insensitive(&out, "#ababab", palette.body_dark);
+    out = replace_hex_case_insensitive(&out, "#fab414", palette.accent_light);
+    out = replace_hex_case_insensitive(&out, "#9a6300", palette.accent_dark);
+    out = replace_hex_case_insensitive(&out, "#0a0a0a", palette.outline);
+    if (outline_scale - 1.0).abs() > 0.001 {
+        out = scale_stroke_widths(&out, outline_scale.max(0.0));
     }
-    out = replace_stroke_width(&out, width.max(0.0));
     if radius > 0.001 {
         out = round_first_polygon_path(&out, radius);
     }
     out.into_bytes()
 }
 
-fn replace_stroke_width(svg: &str, new_width: f32) -> String {
+fn replace_hex_case_insensitive(s: &str, from_lc: &str, to: &str) -> String {
+    let mut out = s.replace(from_lc, to);
+    let upper = from_lc.to_uppercase();
+    if upper != from_lc {
+        out = out.replace(&upper, to);
+    }
+    out
+}
+
+fn scale_stroke_widths(svg: &str, scale: f32) -> String {
+    let scale = scale.max(0.0);
     let mut out = String::with_capacity(svg.len());
     let mut rest = svg;
     let attr = "stroke-width=\"";
@@ -220,7 +255,8 @@ fn replace_stroke_width(svg: &str, new_width: f32) -> String {
         let after = &rest[idx + attr.len()..];
         match after.find('"') {
             Some(end) => {
-                out.push_str(&format!("{:.2}", new_width));
+                let parsed = after[..end].trim().parse::<f32>().unwrap_or(0.0);
+                out.push_str(&format!("{:.2}", (parsed * scale).max(0.0)));
                 rest = &after[end..];
             }
             None => { out.push_str(after); return out; }
@@ -243,9 +279,11 @@ fn replace_stroke_width(svg: &str, new_width: f32) -> String {
         let unit_start = value
             .find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-' || c == '+'))
             .unwrap_or(value.len());
+        let num = &value[..unit_start];
         let unit = &value[unit_start..];
+        let parsed = num.trim().parse::<f32>().unwrap_or(0.0);
         for _ in 0..leading_space { final_out.push(' '); }
-        final_out.push_str(&format!("{:.2}{}", new_width, unit));
+        final_out.push_str(&format!("{:.2}{}", (parsed * scale).max(0.0), unit));
         rest = &trimmed[term_at..];
     }
     final_out.push_str(rest);
@@ -376,11 +414,17 @@ pub fn draw_input_panel<'a>(
 ) {
     state.scan();
     state.load_textures(tex_pass, gpu, s);
+    let palette = CursorPalette {
+        body_light:   &config.input.cursor_body_light,
+        body_dark:    &config.input.cursor_body_dark,
+        accent_light: &config.input.cursor_accent_light,
+        accent_dark:  &config.input.cursor_accent_dark,
+        outline:      &config.input.cursor_outline_color,
+    };
     state.ensure_default_preview(
         tex_pass, gpu,
-        &config.input.cursor_fill,
-        &config.input.cursor_outline,
-        config.input.cursor_outline_width,
+        &palette,
+        config.input.cursor_outline_scale,
         config.input.cursor_corner_radius,
         s,
     );
@@ -414,8 +458,11 @@ pub fn draw_input_panel<'a>(
     // Scrolling card: just Scroll Speed for now.
     let scrolling_card_h = card_chrome_h + 1.0 * row;
 
-    // Clicking card: Single-click activate toggle.
-    let clicking_card_h = card_chrome_h + 1.0 * row;
+    // Clicking card: double-click toggle, click-animation toggle, size
+    // slider, and (when enabled) a color row that defaults to "inherit
+    // outline" plus a swatch picker.
+    let click_anim_extra_rows = if config.input.click_anim_enabled { 3.0 } else { 1.0 };
+    let clicking_card_h = card_chrome_h + (1.0 + click_anim_extra_rows) * row;
 
     // Cursor Theme card: Cursor Size slider + cursor grid.
     let cursor_card_size = 100.0 * s;
@@ -430,9 +477,10 @@ pub fn draw_input_panel<'a>(
     };
     let cursor_grid_h = cursor_grid_rows as f32 * (cursor_card_size + cursor_card_gap)
         - cursor_card_gap; // last row has no trailing gap
-    // Cursor card rows: Size + Border Width + Corner Roundness sliders,
-    // Fill swatch, Outline swatch, then theme grid below.
-    let cursor_card_h = card_chrome_h + row * 5.0 + 8.0 * s
+    // Cursor card rows: Size + Outline Scale + Corner Roundness sliders
+    // (3), then 5 swatch rows (Body Light/Dark, Accent Light/Dark,
+    // Outline), then the theme grid below.
+    let cursor_card_h = card_chrome_h + row * 8.0 + 8.0 * s
         + cursor_grid_h.max(cursor_card_size);
 
     let content_height = CARD_OUTER_PAD_V * s
@@ -538,18 +586,120 @@ pub fn draw_input_panel<'a>(
     // Card 3: Clicking
     // ─────────────────────────────────────────────────────────────────
     {
-        let cy = draw_section_card(
+        let mut cy = draw_section_card(
             painter, text, fox, "Clicking",
             card_x, cy_top, card_w, clicking_card_h, s, sw, sh,
         );
 
         // Double-click toggle (true = double-click required, false = single-click)
-        let rect = Rect::new(card_inner_x, cy, card_inner_w, TOGGLE_H * s);
-        let toggle = Toggle::new(rect, config.input.double_click_to_open)
-            .label("Double-click to open").scale(s);
-        let track = toggle.track_rect();
-        let zone = ix.add_zone(ZONE_DOUBLE_CLICK, track);
-        toggle.hovered(zone.is_hovered()).draw(painter, text, fox, sw, sh);
+        {
+            let rect = Rect::new(card_inner_x, cy, card_inner_w, TOGGLE_H * s);
+            let toggle = Toggle::new(rect, config.input.double_click_to_open)
+                .label("Double-click to open").scale(s);
+            let track = toggle.track_rect();
+            let zone = ix.add_zone(ZONE_DOUBLE_CLICK, track);
+            toggle.hovered(zone.is_hovered()).draw(painter, text, fox, sw, sh);
+            cy += row;
+        }
+
+        // Click ripple toggle — compositor reads `click_anim_enabled` live
+        // from lantern.toml so this takes effect on the very next click.
+        {
+            let rect = Rect::new(card_inner_x, cy, card_inner_w, TOGGLE_H * s);
+            let toggle = Toggle::new(rect, config.input.click_anim_enabled)
+                .label("Click ripple animation").scale(s);
+            let track = toggle.track_rect();
+            let zone = ix.add_zone(ZONE_CLICK_ANIM_ENABLED, track);
+            toggle.hovered(zone.is_hovered()).draw(painter, text, fox, sw, sh);
+            cy += row;
+        }
+
+        // The size slider and color row only show when the ripple is on
+        // so the card collapses neatly when the user disables the feature.
+        if config.input.click_anim_enabled {
+            // Size slider: 0.25x..3.0x of the baseline ripple diameter.
+            {
+                let label_y = cy + (row - lsz) / 2.0;
+                text.queue("Ripple Size", lsz, label_x, label_y, fox.text,
+                    ctrl_x - label_x, sw, sh);
+                let frac = ((config.input.click_anim_size - 0.25) / 2.75).clamp(0.0, 1.0);
+                let rect = Rect::new(ctrl_x, cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
+                let zone = ix.add_zone(ZONE_CLICK_ANIM_SIZE, rect);
+                if let Some(f) = slider_value_from_cursor(ix, ZONE_CLICK_ANIM_SIZE, &rect) {
+                    let raw = 0.25 + f * 2.75;
+                    config.input.click_anim_size = (raw / 0.05).round() * 0.05;
+                    config.input.click_anim_size = config.input.click_anim_size.clamp(0.25, 3.0);
+                }
+                Slider::new(rect).value(frac).hovered(zone.is_hovered()).active(zone.is_active())
+                    .draw(painter, fox);
+                let val = format!("{:.2}x", config.input.click_anim_size);
+                text.queue(&val, vsz, value_x, label_y, fox.text_secondary,
+                    value_w, sw, sh);
+                cy += row;
+            }
+
+            // Color row: leading "Match Outline" tile (empty hex = inherit
+            // cursor_outline) then the standard GLOW_COLORS swatches.
+            {
+                let label_y = cy + (row - lsz) / 2.0;
+                text.queue("Ripple Color", lsz, label_x, label_y, fox.text,
+                    ctrl_x - label_x, sw, sh);
+
+                let swatch_size = 28.0 * s;
+                let swatch_gap = 8.0 * s;
+                let swatch_y = cy + (row - swatch_size) / 2.0;
+                let inherit_active = config.input.click_anim_color.is_empty();
+
+                // "Match Outline" tile — diamond marker if active, otherwise blank.
+                let inherit_rect = Rect::new(ctrl_x, swatch_y, swatch_size, swatch_size);
+                let inherit_zone = ix.add_zone(ZONE_CLICK_ANIM_COLOR_INHERIT, inherit_rect);
+                let inherit_r = swatch_size * 0.5;
+                // The "inherit" tile previews against the cursor body-light
+                // since that's what the ripple takes its color from.
+                let outline_color = lntrn_render::Color::from_hex(&config.input.cursor_body_light)
+                    .unwrap_or(fox.text);
+                painter.rect_filled(inherit_rect, inherit_r, fox.surface);
+                let border_w = if inherit_active { 2.5 * s } else if inherit_zone.is_hovered() {
+                    1.5 * s
+                } else { 1.0 * s };
+                let border_color = if inherit_active {
+                    fox.accent
+                } else if inherit_zone.is_hovered() {
+                    fox.text_secondary
+                } else {
+                    fox.muted
+                };
+                painter.rect_border(inherit_rect, inherit_r, border_w, border_color);
+                let dot_r = swatch_size * 0.22;
+                let dot_rect = Rect::new(
+                    inherit_rect.x + swatch_size / 2.0 - dot_r,
+                    inherit_rect.y + swatch_size / 2.0 - dot_r,
+                    dot_r * 2.0, dot_r * 2.0,
+                );
+                painter.rect_filled(dot_rect, dot_r, outline_color);
+
+                // GLOW_COLORS swatch picker.
+                for (i, (hex, _)) in GLOW_COLORS.iter().enumerate() {
+                    let sx = ctrl_x + (swatch_size + swatch_gap) * (i + 1) as f32;
+                    let rect = Rect::new(sx, swatch_y, swatch_size, swatch_size);
+                    let zone_id = ZONE_CLICK_ANIM_COLOR_BASE + i as u32;
+                    let zone = ix.add_zone(zone_id, rect);
+                    let color = lntrn_render::Color::from_hex(hex).unwrap_or(fox.accent);
+                    let is_selected = config.input.click_anim_color.eq_ignore_ascii_case(hex);
+                    let r = swatch_size * 0.5;
+                    painter.rect_filled(rect, r, color);
+                    let bw = if is_selected { 2.5 * s }
+                        else if zone.is_hovered() { 1.5 * s }
+                        else { 1.0 * s };
+                    let bc = if is_selected { fox.accent }
+                        else if zone.is_hovered() { fox.text_secondary }
+                        else { fox.muted };
+                    painter.rect_border(rect, r, bw, bc);
+                }
+                cy += row;
+            }
+        }
+        let _ = cy;
     }
 
     cy_top += clicking_card_h + CARD_GAP * s;
@@ -571,11 +721,11 @@ pub fn draw_input_panel<'a>(
         {
             let label_y = cy + (row - lsz) / 2.0;
             text.queue("Size", lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
-            let frac = ((config.input.cursor_size as f32 - 16.0) / 48.0).clamp(0.0, 1.0);
+            let frac = ((config.input.cursor_size as f32 - 16.0) / 112.0).clamp(0.0, 1.0);
             let rect = Rect::new(ctrl_x, cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
             let zone = ix.add_zone(ZONE_CURSOR_SIZE, rect);
             if let Some(f) = slider_value_from_cursor(ix, ZONE_CURSOR_SIZE, &rect) {
-                config.input.cursor_size = (16.0 + f * 48.0).round() as u32;
+                config.input.cursor_size = (16.0 + f * 112.0).round() as u32;
             }
             Slider::new(rect).value(frac).hovered(zone.is_hovered()).active(zone.is_active())
                 .draw(painter, fox);
@@ -584,21 +734,21 @@ pub fn draw_input_panel<'a>(
             cy += row;
         }
 
-        // Border Width slider (0 – 8 SVG px). Drives `stroke-width` in the
-        // recolored default-cursor SVG.
+        // Outline Scale slider (0 – 3x). Multiplier on every authored
+        // `stroke-width` in the bundled cursor SVGs.
         {
             let label_y = cy + (row - lsz) / 2.0;
-            text.queue("Border Width", lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
-            let frac = (config.input.cursor_outline_width / 8.0).clamp(0.0, 1.0);
+            text.queue("Outline", lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
+            let frac = (config.input.cursor_outline_scale / 3.0).clamp(0.0, 1.0);
             let rect = Rect::new(ctrl_x, cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
-            let zone = ix.add_zone(ZONE_CURSOR_OUTLINE_WIDTH, rect);
-            if let Some(f) = slider_value_from_cursor(ix, ZONE_CURSOR_OUTLINE_WIDTH, &rect) {
-                let raw = f * 8.0;
-                config.input.cursor_outline_width = (raw * 4.0).round() / 4.0; // snap 0.25
+            let zone = ix.add_zone(ZONE_CURSOR_OUTLINE_SCALE, rect);
+            if let Some(f) = slider_value_from_cursor(ix, ZONE_CURSOR_OUTLINE_SCALE, &rect) {
+                let raw = f * 3.0;
+                config.input.cursor_outline_scale = (raw * 20.0).round() / 20.0; // snap 0.05
             }
             Slider::new(rect).value(frac).hovered(zone.is_hovered()).active(zone.is_active())
                 .draw(painter, fox);
-            let val = format!("{:.2}", config.input.cursor_outline_width);
+            let val = format!("{:.2}x", config.input.cursor_outline_scale);
             text.queue(&val, vsz, value_x, label_y, fox.text_secondary, value_w, sw, sh);
             cy += row;
         }
@@ -621,30 +771,48 @@ pub fn draw_input_panel<'a>(
             cy += row;
         }
 
-        // Fill + Outline swatch rows — same GLOW_COLORS palette for both so
+        // Five swatch rows mapping the canonical SVG hex codes to the
+        // user's picked palette. All use the same GLOW_COLORS palette so
         // the picker reads as one consistent set of accent options.
         draw_color_swatch_row(
             painter, text, ix, fox,
-            "Fill", ZONE_CURSOR_FILL_BASE,
-            &config.input.cursor_fill,
+            "Body Light", ZONE_CURSOR_BODY_LIGHT_BASE,
+            &config.input.cursor_body_light,
             label_x, ctrl_x, &mut cy, row, lsz, s, sw, sh,
         );
-
+        draw_color_swatch_row(
+            painter, text, ix, fox,
+            "Body Dark", ZONE_CURSOR_BODY_DARK_BASE,
+            &config.input.cursor_body_dark,
+            label_x, ctrl_x, &mut cy, row, lsz, s, sw, sh,
+        );
+        draw_color_swatch_row(
+            painter, text, ix, fox,
+            "Accent Light", ZONE_CURSOR_ACCENT_LIGHT_BASE,
+            &config.input.cursor_accent_light,
+            label_x, ctrl_x, &mut cy, row, lsz, s, sw, sh,
+        );
+        draw_color_swatch_row(
+            painter, text, ix, fox,
+            "Accent Dark", ZONE_CURSOR_ACCENT_DARK_BASE,
+            &config.input.cursor_accent_dark,
+            label_x, ctrl_x, &mut cy, row, lsz, s, sw, sh,
+        );
         draw_color_swatch_row(
             painter, text, ix, fox,
             "Outline", ZONE_CURSOR_OUTLINE_BASE,
-            &config.input.cursor_outline,
+            &config.input.cursor_outline_color,
             label_x, ctrl_x, &mut cy, row, lsz, s, sw, sh,
         );
 
         // Live preview tile of the bundled default cursor with all current
-        // settings applied. Vertically centered across the full 5-row
+        // settings applied. Vertically centered across the full 8-row
         // control block so it sits near the top of the card.
         {
             let tile_px = DEFAULT_PREVIEW_PX * s;
             let swatch_run_w = GLOW_COLORS.len() as f32 * (28.0 + 8.0) * s;
             let tile_x = ctrl_x + swatch_run_w + 12.0 * s;
-            let tile_y = control_block_top + (row * 5.0 - tile_px) / 2.0;
+            let tile_y = control_block_top + (row * 8.0 - tile_px) / 2.0;
             let tile_rect = Rect::new(tile_x, tile_y, tile_px, tile_px);
             let zone = ix.add_zone(ZONE_CURSOR_DEFAULT_TILE, tile_rect);
 
@@ -762,24 +930,31 @@ fn draw_cursor_preview(painter: &mut Painter, x: f32, y: f32, size: f32, color: 
 // ── Click handling ──────────────────────────────────────────────────────────
 
 pub fn handle_input_click(config: &mut LanternConfig, state: &InputPanelState, zone_id: u32) {
-    // Cursor fill / outline swatch ranges — must be matched BEFORE the
+    // Cursor palette swatch ranges — must be matched BEFORE the
     // open-ended `id >= ZONE_CURSOR_BASE` arm or those zones get swallowed
     // by the cursor-theme grid (and lookup-misses silently no-op).
-    if zone_id >= ZONE_CURSOR_FILL_BASE
-        && zone_id < ZONE_CURSOR_FILL_BASE + GLOW_COLORS.len() as u32
-    {
-        let idx = (zone_id - ZONE_CURSOR_FILL_BASE) as usize;
-        if let Some((hex, _)) = GLOW_COLORS.get(idx) {
-            config.input.cursor_fill = (*hex).into();
+    let palette_targets: [(u32, &mut String); 5] = [
+        (ZONE_CURSOR_BODY_LIGHT_BASE,   &mut config.input.cursor_body_light),
+        (ZONE_CURSOR_BODY_DARK_BASE,    &mut config.input.cursor_body_dark),
+        (ZONE_CURSOR_ACCENT_LIGHT_BASE, &mut config.input.cursor_accent_light),
+        (ZONE_CURSOR_ACCENT_DARK_BASE,  &mut config.input.cursor_accent_dark),
+        (ZONE_CURSOR_OUTLINE_BASE,      &mut config.input.cursor_outline_color),
+    ];
+    for (base, target) in palette_targets {
+        if zone_id >= base && zone_id < base + GLOW_COLORS.len() as u32 {
+            let idx = (zone_id - base) as usize;
+            if let Some((hex, _)) = GLOW_COLORS.get(idx) {
+                *target = (*hex).into();
+            }
+            return;
         }
-        return;
     }
-    if zone_id >= ZONE_CURSOR_OUTLINE_BASE
-        && zone_id < ZONE_CURSOR_OUTLINE_BASE + GLOW_COLORS.len() as u32
+    if zone_id >= ZONE_CLICK_ANIM_COLOR_BASE
+        && zone_id < ZONE_CLICK_ANIM_COLOR_BASE + GLOW_COLORS.len() as u32
     {
-        let idx = (zone_id - ZONE_CURSOR_OUTLINE_BASE) as usize;
+        let idx = (zone_id - ZONE_CLICK_ANIM_COLOR_BASE) as usize;
         if let Some((hex, _)) = GLOW_COLORS.get(idx) {
-            config.input.cursor_outline = (*hex).into();
+            config.input.click_anim_color = (*hex).into();
         }
         return;
     }
@@ -791,13 +966,20 @@ pub fn handle_input_click(config: &mut LanternConfig, state: &InputPanelState, z
         ZONE_DOUBLE_CLICK => {
             config.input.double_click_to_open = !config.input.double_click_to_open;
         }
+        ZONE_CLICK_ANIM_ENABLED => {
+            config.input.click_anim_enabled = !config.input.click_anim_enabled;
+        }
+        ZONE_CLICK_ANIM_COLOR_INHERIT => {
+            // Empty string = inherit cursor_outline at render time.
+            config.input.click_anim_color.clear();
+        }
         ZONE_CURSOR_DEFAULT_TILE => {
             // "Use the bundled default cursor" — swatches still drive its
             // fill / outline live via the compositor's tick_colors path.
             config.input.cursor_theme = "default".into();
         }
         id if id >= ZONE_CURSOR_BASE
-            && id < ZONE_CURSOR_FILL_BASE =>
+            && id < ZONE_CURSOR_BODY_LIGHT_BASE =>
         {
             let idx = (id - ZONE_CURSOR_BASE) as usize;
             if let Some(cursor) = state.cursors.get(idx) {

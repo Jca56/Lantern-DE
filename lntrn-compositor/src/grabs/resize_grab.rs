@@ -351,19 +351,33 @@ impl ResizeSurfaceState {
     }
 }
 
-pub fn handle_commit(space: &mut Space<Window>, surface: &WlSurface) -> Option<()> {
-    let window = space
+/// Per-commit anchor adjustment for a resize-by-drag. When the user
+/// grabs the LEFT or TOP edge, the **far** edge of the window must stay
+/// pinned where it was at grab-start; only the dragged edge follows the
+/// mouse. The compositor achieves this by shifting the window's
+/// origin (top-left) so `origin + new_size == initial_origin + initial_size`
+/// for the pinned axis. RIGHT/BOTTOM drags don't need a shift — the
+/// origin is already the pinned corner.
+///
+/// `state.remap_tracked_window` is used (not bare `Space::map_element`)
+/// so the per-workspace Spaces and bookkeeping also see the new
+/// position. Without it, rendering moves but input hit-testing keeps
+/// using the stale origin — which manifested as a "cursor desync" and
+/// "resize from top moves the bottom" feeling (the visible window was
+/// at one rect, hit-testing at another).
+pub fn handle_commit(state: &mut crate::Lantern, surface: &WlSurface) -> Option<()> {
+    let window = state
+        .space
         .elements()
         .find(|w| w.get_wl_surface().as_ref() == Some(surface))
         .cloned()?;
 
-    let mut window_loc = space.element_location(&window)?;
+    let mut window_loc = state.space.element_location(&window)?;
     let geometry = window.geometry();
 
     let new_loc: Point<Option<i32>, Logical> =
-        ResizeSurfaceState::with(surface, |state| {
-            state
-                .commit()
+        ResizeSurfaceState::with(surface, |st| {
+            st.commit()
                 .and_then(|(edges, initial_rect)| {
                     edges.intersects(ResizeEdge::TOP_LEFT).then(|| {
                         let new_x = edges
@@ -388,7 +402,7 @@ pub fn handle_commit(space: &mut Space<Window>, surface: &WlSurface) -> Option<(
     }
 
     if new_loc.x.is_some() || new_loc.y.is_some() {
-        space.map_element(window, window_loc, false);
+        state.remap_tracked_window(window, window_loc, false);
     }
 
     Some(())

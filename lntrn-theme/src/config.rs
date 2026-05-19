@@ -225,6 +225,124 @@ pub fn active_accent() -> Option<crate::Rgba> {
     None
 }
 
+/// Read the configured window gradient direction. Returns radians for the
+/// `[appearance].window_gradient_direction` preset, defaulting to the
+/// TL→BR diagonal when unset.
+///
+/// Accepted values (case-insensitive):
+///   * `"diagonal"`         — π/4 (top-left → bottom-right). Default.
+///   * `"diagonal-reverse"` — 3π/4 (top-right → bottom-left)
+///   * `"vertical"`         — π/2 (top → bottom)
+///   * `"horizontal"`       — 0   (left → right)
+pub fn active_window_gradient_angle() -> f32 {
+    let raw = read_config_string("appearance", "window_gradient_direction", "diagonal");
+    window_gradient_angle_from_str(&raw)
+}
+
+/// Map a direction preset name to radians. Unknown / empty → diagonal default.
+pub fn window_gradient_angle_from_str(s: &str) -> f32 {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "horizontal" => 0.0,
+        "vertical" => std::f32::consts::FRAC_PI_2,
+        "diagonal-reverse" => 3.0 * std::f32::consts::FRAC_PI_4,
+        // "diagonal" and any unknown value fall through to the TL→BR default
+        _ => std::f32::consts::FRAC_PI_4,
+    }
+}
+
+/// Read the user-configured multi-stop window gradient from
+/// `[appearance].window_gradient_stops`. Returns the parsed list of colors
+/// when present (typically 3 or 4 hex strings); `None` when missing, empty,
+/// or unparseable — callers fall back to the solid background color.
+///
+/// Expected TOML form:
+/// ```toml
+/// [appearance]
+/// window_gradient_stops = ["#1a1a1a", "#2a1f4f", "#5a2f8f"]
+/// ```
+pub fn active_window_gradient() -> Option<Vec<crate::Rgba>> {
+    let path = lantern_config_path()?;
+    let contents = std::fs::read_to_string(&path).ok()?;
+    let mut in_appearance = false;
+    let mut lines = contents.lines().peekable();
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') && !trimmed.contains('=') {
+            // Section header, e.g. `[appearance]`. Arrays-on-one-line look
+            // like `key = [...]` and won't match this branch.
+            in_appearance = trimmed == "[appearance]";
+            continue;
+        }
+        if !in_appearance { continue; }
+        let Some((k, v)) = trimmed.split_once('=') else { continue; };
+        if k.trim() != "window_gradient_stops" { continue; }
+        // Collect array body. May be `["a","b"]` on one line, or span
+        // multiple lines (toml::to_string_pretty does this past N entries).
+        let mut buf = v.trim().to_string();
+        while !buf.contains(']') {
+            let Some(next) = lines.next() else { break; };
+            buf.push(' ');
+            buf.push_str(next.trim());
+        }
+        let inner = buf.trim().strip_prefix('[')?;
+        let inner = inner.rsplit_once(']')?.0;
+        let stops: Vec<crate::Rgba> = inner
+            .split(',')
+            .map(|s| s.trim().trim_matches('"').trim_matches('\''))
+            .filter(|s| !s.is_empty())
+            .filter_map(parse_hex_rgb)
+            .collect();
+        if stops.len() < 2 { return None; }
+        return Some(stops);
+    }
+    None
+}
+
+/// Read per-stop alpha multipliers from
+/// `[appearance].window_gradient_stop_alphas`. Returns the parsed list when
+/// present; `None` when missing, empty, or unparseable — callers treat each
+/// missing entry as 1.0 (fully opaque). Values are clamped to `0.0..=1.0`.
+///
+/// Expected TOML form (any length; one entry per stop):
+/// ```toml
+/// [appearance]
+/// window_gradient_stop_alphas = [1.0, 0.6, 0.0, 1.0]
+/// ```
+pub fn active_window_gradient_alphas() -> Option<Vec<f32>> {
+    let path = lantern_config_path()?;
+    let contents = std::fs::read_to_string(&path).ok()?;
+    let mut in_appearance = false;
+    let mut lines = contents.lines().peekable();
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') && !trimmed.contains('=') {
+            in_appearance = trimmed == "[appearance]";
+            continue;
+        }
+        if !in_appearance { continue; }
+        let Some((k, v)) = trimmed.split_once('=') else { continue; };
+        if k.trim() != "window_gradient_stop_alphas" { continue; }
+        let mut buf = v.trim().to_string();
+        while !buf.contains(']') {
+            let Some(next) = lines.next() else { break; };
+            buf.push(' ');
+            buf.push_str(next.trim());
+        }
+        let inner = buf.trim().strip_prefix('[')?;
+        let inner = inner.rsplit_once(']')?.0;
+        let alphas: Vec<f32> = inner
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| s.parse::<f32>().ok())
+            .map(|a| a.clamp(0.0, 1.0))
+            .collect();
+        if alphas.is_empty() { return None; }
+        return Some(alphas);
+    }
+    None
+}
+
 /// Parse a `#RGB`, `#RRGGBB`, or `#RRGGBBAA` hex string into `Rgba`. Returns
 /// `None` for malformed input. Alpha defaults to 255 when absent.
 fn parse_hex_rgb(s: &str) -> Option<crate::Rgba> {

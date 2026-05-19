@@ -1,8 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
-  <!-- Left-Right double arrow -->
-  <path d="M 2 16 L 10 10 L 10 13 L 22 13 L 22 10 L 30 16 L 22 22 L 22 19 L 10 19 L 10 22 Z"
-        fill="#0a0a0a" stroke="#ffffff" stroke-width="2"
-        stroke-linejoin="miter" stroke-linecap="square"
+  <defs>
+    <linearGradient id="arrowGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ababab"/>
+      <stop offset="0.38" stop-color="#ffffff"/>
+      <stop offset="0.6" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#ababab"/>
+    </linearGradient>
+    <linearGradient id="circleGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fab414"/>
+      <stop offset="1" stop-color="#9a6300"/>
+    </linearGradient>
+  </defs>
+  <path d="M 2 16 L 10 11 L 12 13 L 12 19 L 10 21 Z"
+        fill="url(#arrowGrad)" stroke="#0a0a0a" stroke-width="1"
+        stroke-linejoin="round" stroke-linecap="round"
         style="paint-order: stroke;"/>
+  <path d="M 30 16 L 22 11 L 20 13 L 20 19 L 22 21 Z"
+        fill="url(#arrowGrad)" stroke="#0a0a0a" stroke-width="1"
+        stroke-linejoin="round" stroke-linecap="round"
+        style="paint-order: stroke;"/>
+  <circle cx="16" cy="16" r="3.5"
+          fill="url(#circleGrad)" stroke="#0a0a0a" stroke-width="1"/>
 </svg>

@@ -140,21 +140,17 @@ impl Lantern {
 
     // ── Super+Up / Super+Down state-ladder entry points ──────────────────
 
-    /// Shift+Super+Up: state-grow ladder with two interjections.
+    /// Shift+Super+Up: state-grow ladder, scoped to "shape" transitions
+    /// only. Maximize / minimize / restore-minimized are intentionally
+    /// NOT reachable here — those live on bare Super+Up / Super+Down so
+    /// blind keypress can't fish a minimized window back out of the tray.
     /// Priority:
-    ///   1. Restore most-recently-minimized (LIFO) if any are minimized.
-    ///   2. Corner-posed → step out to the half-pose for that column.
-    ///   3. Tiny → step back up to Middle.
-    ///   4. Half-posed (Left/Right) → shrink into top corner of that side.
-    ///      (Per user spec: "fully L/R + Up/Down shrinks into the corner.")
-    ///      This creates an intentional Half ↔ TopCorner toggle on repeated
-    ///      Up presses; to grow past Half, cycle out via Shift+Super+L/R.
-    ///   5. Normal grow: Normal → SoloTile → Maximized.
+    ///   1. Corner-posed → step out to the half-pose for that column.
+    ///   2. Tiny → step back up to Middle.
+    ///   3. Half-posed (Left/Right) → shrink into top corner of that side
+    ///      (Half ↔ TopCorner toggle; grow past Half via Shift+Super+L/R).
+    ///   4. Normal → SoloTile. SoloTile stays SoloTile (top of the ladder).
     pub fn ladder_size_up(&mut self) -> bool {
-        let serial = Serial::from(0);
-        if let Some(last) = self.minimized_windows.last().map(|e| e.surface.clone()) {
-            return self.restore_minimized_surface(&last).is_some();
-        }
         if self.try_uncorner_to_half() {
             return true;
         }
@@ -166,40 +162,28 @@ impl Lantern {
         }
         let Some(surface) = self.focused_window().and_then(|w| w.get_wl_surface())
             else { return false };
-        if self.is_maximized(&surface) {
+        if self.is_maximized(&surface) || self.is_solo_tiled(&surface) {
+            // Already at the top of the size ladder — no-op.
             false
-        } else if self.is_solo_tiled(&surface) {
-            self.maximize_surface(&surface, serial)
         } else {
             self.solo_tile_surface(&surface)
         }
     }
 
-    /// Shift+Super+Down: state-shrink ladder. Priority:
-    ///   1. Maximized → unmax (SoloTile).
-    ///   2. SoloTile → unsolo (Normal / Middle).
-    ///   3. Half-posed (Left/Right) → shrink into bottom corner of that side.
-    ///   4. Any corner (TL/TR/BL/BR) → regrow back to its half-pose.
-    ///      Minimize from a corner is intentionally forbidden — corners are
-    ///      "rest" positions, not a shortcut into the minimize tray.
-    ///   5. Tiny (center) → Minimize. This is the ONLY way to minimize via
-    ///      the ladder ("minimize only happens from the center").
-    ///   6. Otherwise (Normal / Middle / unposed) → shrink to Tiny.
+    /// Shift+Super+Down: state-shrink ladder, also scoped to "shape" only.
+    /// Maximize/minimize entries are gone — Super+Down handles those.
+    /// Priority:
+    ///   1. SoloTile → unsolo (Normal / Middle).
+    ///   2. Half-posed (Left/Right) → shrink into bottom corner of that side.
+    ///   3. Any corner (TL/TR/BL/BR) → regrow back to its half-pose.
+    ///   4. Otherwise (Normal / Middle / unposed) → shrink to Tiny.
     pub fn ladder_size_down(&mut self) -> bool {
-        let serial = Serial::from(0);
         let Some(surface) = self
             .focused_window()
             .and_then(|w| w.get_wl_surface())
         else {
             return false;
         };
-        if self.is_maximized(&surface) {
-            // Unmaximize: window returns to maximize.restore. If the
-            // window was solo-tiled before maximize, that restore rect
-            // IS the solo-tile rect, so the next Super+Down (handled in
-            // a later press) will unsolo it back to normal.
-            return self.unmaximize_surface(&surface, serial);
-        }
         if self.is_solo_tiled(&surface) {
             return self.unsolo_tile_surface(&surface);
         }
@@ -208,14 +192,9 @@ impl Lantern {
         }
         if let Some(slot) = self.posed_windows.get(&surface).copied() {
             if slot.is_corner() {
-                // Down from a corner regrows (same as Up). Corners never
-                // minimize via the ladder.
                 return self.try_uncorner_to_half();
             }
-            if slot.is_tiny_variant() {
-                return self.minimize_surface(&surface, serial);
-            }
-            // PoseSlot::Middle falls through to the Tiny shrink below.
+            // Tiny and Middle fall through to the Tiny shrink below.
         }
         self.pose_tiny()
     }

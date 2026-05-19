@@ -32,6 +32,8 @@ struct TextLayoutKey {
     color: [u8; 4],
     weight: u8,
     style: u8,
+    /// Empty string => use the renderer's default (Monospace or SansSerif).
+    family: String,
 }
 
 /// Snap a float to a 1/4-pixel grid before it lands in a cache key.
@@ -213,6 +215,7 @@ impl TextRenderer {
             color: [0, 0, 0, 0],
             weight: weight as u8,
             style: style as u8,
+            family: String::new(),
         };
 
         self.use_tick = self.use_tick.wrapping_add(1).max(1);
@@ -225,7 +228,7 @@ impl TextRenderer {
         self.evict_one_if_needed();
         let buffer = create_styled_layout(
             &mut self.font_system, text, font_size, 10000.0, color,
-            self.monospace, weight, style,
+            self.monospace, weight, style, None,
         );
         let w = layout_width(&buffer);
         self.layouts.insert(key, CachedLayout { buffer, last_used: self.use_tick });
@@ -275,6 +278,7 @@ impl TextRenderer {
             color: [glyph_color.r(), glyph_color.g(), glyph_color.b(), glyph_color.a()],
             weight: weight as u8,
             style: style as u8,
+            family: String::new(),
         };
 
         self.use_tick = self.use_tick.wrapping_add(1).max(1);
@@ -289,7 +293,7 @@ impl TextRenderer {
             let buffer = create_styled_layout(
                 &mut self.font_system,
                 text, font_size, max_width, glyph_color,
-                self.monospace, weight, style,
+                self.monospace, weight, style, None,
             );
             self.layouts.insert(
                 key.clone(),
@@ -319,6 +323,89 @@ impl TextRenderer {
         });
     }
 
+    /// Measure text width using a specific font family (e.g. `"Digital-7"`).
+    /// Falls back to the renderer default if the family isn't installed.
+    pub fn measure_width_family(&mut self, text: &str, font_size: f32, family: &str) -> f32 {
+        let font_size = quantize_px(font_size);
+        let color = GlyphonColor::rgba(0, 0, 0, 0);
+        let key = TextLayoutKey {
+            text: text.to_string(),
+            font_size_bits: font_size.to_bits(),
+            max_width_bits: 10000.0_f32.to_bits(),
+            color: [0, 0, 0, 0],
+            weight: FontWeight::Normal as u8,
+            style: FontStyle::Normal as u8,
+            family: family.to_string(),
+        };
+        self.use_tick = self.use_tick.wrapping_add(1).max(1);
+        if let Some(layout) = self.layouts.get_mut(&key) {
+            layout.last_used = self.use_tick;
+            return layout_width(&layout.buffer);
+        }
+        self.evict_one_if_needed();
+        let buffer = create_styled_layout(
+            &mut self.font_system, text, font_size, 10000.0, color,
+            self.monospace, FontWeight::Normal, FontStyle::Normal, Some(family),
+        );
+        let w = layout_width(&buffer);
+        self.layouts.insert(key, CachedLayout { buffer, last_used: self.use_tick });
+        w
+    }
+
+    /// Queue text using a specific font family (e.g. `"Digital-7"`).
+    /// Falls back to the renderer default if the family isn't installed.
+    pub fn queue_family(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        x: f32,
+        y: f32,
+        color: Color,
+        max_width: f32,
+        family: &str,
+        screen_w: u32,
+        _screen_h: u32,
+    ) {
+        let font_size = quantize_px(font_size);
+        let max_width = quantize_px(max_width.max(1.0));
+        let srgb = color.to_srgb8();
+        let glyph_color = GlyphonColor::rgba(srgb[0], srgb[1], srgb[2], srgb[3]);
+        let key = TextLayoutKey {
+            text: text.to_string(),
+            font_size_bits: font_size.to_bits(),
+            max_width_bits: max_width.to_bits(),
+            color: [glyph_color.r(), glyph_color.g(), glyph_color.b(), glyph_color.a()],
+            weight: FontWeight::Normal as u8,
+            style: FontStyle::Normal as u8,
+            family: family.to_string(),
+        };
+        self.use_tick = self.use_tick.wrapping_add(1).max(1);
+        if let Some(layout) = self.layouts.get_mut(&key) {
+            layout.last_used = self.use_tick;
+            self.cache_hits = self.cache_hits.saturating_add(1);
+        } else {
+            self.cache_misses = self.cache_misses.saturating_add(1);
+            self.evict_one_if_needed();
+            let buffer = create_styled_layout(
+                &mut self.font_system, text, font_size, max_width, glyph_color,
+                self.monospace, FontWeight::Normal, FontStyle::Normal, Some(family),
+            );
+            self.layouts.insert(key.clone(), CachedLayout { buffer, last_used: self.use_tick });
+        }
+        let (bl, bt, br, bb) = if let Some(clip) = self.clip_stack.last() {
+            (clip[0] as i32, clip[1] as i32, (clip[0] + clip[2]) as i32, (clip[1] + clip[3]) as i32)
+        } else {
+            (0, 0, screen_w as i32, (y + font_size * 1.2).ceil() as i32)
+        };
+        self.queued.push(QueuedText {
+            key,
+            x, y,
+            line_height: font_size * 1.2,
+            bounds_left: bl, bounds_top: bt, bounds_right: br, bounds_bottom: bb,
+            default_color: GlyphonColor::rgb(255, 255, 255),
+        });
+    }
+
     /// Queue text with a clip rectangle `[x, y, w, h]` in physical pixels.
     /// Text outside the clip rect will not be rendered.
     pub fn queue_clipped(
@@ -342,6 +429,7 @@ impl TextRenderer {
             color: [glyph_color.r(), glyph_color.g(), glyph_color.b(), glyph_color.a()],
             weight: 0,
             style: 0,
+            family: String::new(),
         };
 
         self.use_tick = self.use_tick.wrapping_add(1).max(1);
@@ -573,7 +661,7 @@ fn create_layout_buffer(
 ) -> Buffer {
     create_styled_layout(
         font_system, text, font_size, max_width, color,
-        monospace, FontWeight::Normal, FontStyle::Normal,
+        monospace, FontWeight::Normal, FontStyle::Normal, None,
     )
 }
 
@@ -586,8 +674,12 @@ fn create_styled_layout(
     monospace: bool,
     weight: FontWeight,
     style: FontStyle,
+    family_name: Option<&str>,
 ) -> Buffer {
-    let family = if monospace { Family::Monospace } else { Family::SansSerif };
+    let family = match family_name {
+        Some(name) if !name.is_empty() => Family::Name(name),
+        _ => if monospace { Family::Monospace } else { Family::SansSerif },
+    };
     let w = match weight {
         FontWeight::Normal => Weight::NORMAL,
         FontWeight::Bold => Weight::BOLD,

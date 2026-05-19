@@ -30,6 +30,18 @@ impl Lantern {
                 space.raise_element(window, true);
             }
         }
+        // Keep XWayland's stacking order in sync with the compositor. Without
+        // this, X11 clients with multi-window UIs (Steam, Wine apps) deliver
+        // pointer events through whichever window happens to be top of the X
+        // server's internal stack — which can be a stale, invisible one — so
+        // clicks on the visible window are silently dropped.
+        if let Some(x11) = window.x11_surface().cloned() {
+            if let Some(xwm) = self.xwayland_state.wm.as_mut() {
+                if let Err(err) = xwm.raise_window(&x11) {
+                    tracing::warn!("X11Wm::raise_window failed: {err}");
+                }
+            }
+        }
         self.set_focus_surface(Some(surface), serial);
     }
 

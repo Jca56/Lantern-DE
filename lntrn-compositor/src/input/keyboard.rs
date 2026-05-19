@@ -227,6 +227,31 @@ impl Lantern {
                     }
                 }
 
+                // Super+Up / Super+Down (floating mode only): toggle
+                // maximize / minimize on the focused window. Restoring a
+                // minimized window is intentionally NOT bound here — it
+                // happens via the tray icon or Alt-Tab, never via blind
+                // keypress (the previous Super+Shift+Up "restore last
+                // minimized" was footgun-prone).
+                if event.state() == KeyState::Pressed
+                    && _modifiers.logo && !_modifiers.shift && !_modifiers.ctrl && !_modifiers.alt
+                    && !data.workspaces.tiling_active
+                {
+                    let raw = keysym.modified_sym().raw();
+                    if raw == xkb::KEY_Up {
+                        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+                        data.toggle_maximize_focused(serial);
+                        data.schedule_render();
+                        return FilterResult::Intercept(());
+                    }
+                    if raw == xkb::KEY_Down {
+                        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+                        data.minimize_focused(serial);
+                        data.schedule_render();
+                        return FilterResult::Intercept(());
+                    }
+                }
+
                 // Ctrl+Super+Left/Right (no Shift): half-swap (Posed L↔R) or
                 // corner horizontal move. Same behavior as Ctrl+Shift+Super
                 // L/R but two-finger reach instead of three. Up/Down are

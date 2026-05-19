@@ -19,7 +19,7 @@ pub fn measure_cell(font_size: f32) -> (f32, f32) {
 }
 
 /// Corner radius — must match the compositor's CORNER_RADIUS (18).
-const CORNER_RADIUS: f32 = 18.0;
+pub const CORNER_RADIUS: f32 = 18.0;
 
 /// Draw the window background with rounded corners matching the compositor.
 /// When maximized, corners are square (radius=0) so the bg doesn't bleed through.

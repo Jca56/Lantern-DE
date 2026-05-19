@@ -91,7 +91,28 @@ pub struct AppearanceConfig {
     /// from `theme`. Set by the Background Color swatch picker; chrome.rs
     /// reads it via lntrn_theme so other apps can opt in.
     pub background_color: String,
+    /// True multi-stop window background gradient (3 or 4 hex colors,
+    /// evenly spaced top→bottom). When set and length ≥ 2, takes precedence
+    /// over `background_color`. Empty vec = disabled (use solid bg).
+    /// Read by `lntrn_theme::active_window_gradient()`.
+    #[serde(default)]
+    pub window_gradient_stops: Vec<String>,
+    /// Per-stop alpha multipliers (0.0–1.0). One entry per stop; 0.0 = the
+    /// stop is fully transparent (lets the wallpaper / desktop show through
+    /// at that position), 1.0 = fully opaque color. Multiplied into the
+    /// final stop alpha alongside `[windows].background_opacity`. Missing
+    /// or empty = treat as all 1.0. Read by
+    /// `lntrn_theme::active_window_gradient_alphas()`.
+    #[serde(default)]
+    pub window_gradient_stop_alphas: Vec<f32>,
+    /// Window gradient direction preset. One of: "diagonal" (TL→BR, default),
+    /// "diagonal-reverse" (TR→BL), "vertical" (T→B), "horizontal" (L→R).
+    /// Read by `lntrn_theme::active_window_gradient_angle()`.
+    #[serde(default = "default_gradient_direction")]
+    pub window_gradient_direction: String,
 }
+
+fn default_gradient_direction() -> String { "diagonal".into() }
 
 impl Default for AppearanceConfig {
     fn default() -> Self {
@@ -103,6 +124,9 @@ impl Default for AppearanceConfig {
             wallpaper: String::new(),
             active_theme: String::new(),
             background_color: String::new(),
+            window_gradient_stops: Vec::new(),
+            window_gradient_stop_alphas: Vec::new(),
+            window_gradient_direction: default_gradient_direction(),
         }
     }
 }
@@ -213,29 +237,62 @@ pub struct InputConfig {
     /// Cursor size in pixels (16 – 64, default 24).
     pub cursor_size: u32,
     pub cursor_theme: String,
-    /// Hex fill color recolored into the Lantern default cursor SVGs at
-    /// rasterize time. Empty / missing = the SVG's literal `#0a0a0a`.
-    #[serde(default = "default_cursor_fill")]
-    pub cursor_fill: String,
-    /// Hex outline (stroke) color. Empty / missing = the SVG's literal
-    /// `#ffffff`.
-    #[serde(default = "default_cursor_outline")]
-    pub cursor_outline: String,
-    /// SVG `stroke-width` applied to the bundled default cursors. Clamped
-    /// to 0.0..=8.0 by `sanitize`. 0 hides the outline entirely.
-    #[serde(default = "default_cursor_outline_width")]
-    pub cursor_outline_width: f32,
+    /// Five-stop recolor palette for the bundled Lantern cursors. Each
+    /// stop maps to a canonical hex code authored into the SVGs:
+    /// `#ffffff` body-light, `#ababab` body-dark, `#fab414` accent-light,
+    /// `#9a6300` accent-dark, `#0a0a0a` outline. Custom-theme SVGs (in
+    /// `~/.lantern/config/cursors/`) are not retinted — themes ship the
+    /// look they want.
+    #[serde(default = "default_cursor_body_light")]
+    pub cursor_body_light: String,
+    #[serde(default = "default_cursor_body_dark")]
+    pub cursor_body_dark: String,
+    #[serde(default = "default_cursor_accent_light")]
+    pub cursor_accent_light: String,
+    #[serde(default = "default_cursor_accent_dark")]
+    pub cursor_accent_dark: String,
+    #[serde(default = "default_cursor_outline_color")]
+    pub cursor_outline_color: String,
+    /// Multiplier on every authored SVG `stroke-width`. 1.0 keeps the
+    /// strokes as authored; 2.0 doubles them; 0.0 hides outlines.
+    /// Clamped to 0.0..=3.0 by `sanitize`.
+    #[serde(default = "default_cursor_outline_scale")]
+    pub cursor_outline_scale: f32,
     /// 0..=1 corner-rounding factor for the bundled default pointer. 0 =
     /// stock sharp tip, 1 = max-rounded pebble. Only affects
     /// `lntrn-cursor.svg`; other cursors keep their authored geometry.
     #[serde(default = "default_cursor_corner_radius")]
     pub cursor_corner_radius: f32,
+    /// Show a ripple animation around the cursor on left-click. Compositor
+    /// reads this live; toggling here takes effect on the next click.
+    #[serde(default = "default_click_anim_enabled")]
+    pub click_anim_enabled: bool,
+    /// Scale multiplier for the click ripple. 1.0 = baseline (~70% of
+    /// cursor diameter at peak); clamped to 0.25..=3.0 by `sanitize`.
+    #[serde(default = "default_click_anim_size")]
+    pub click_anim_size: f32,
+    /// Hex color for the ripple. Empty string = inherit from
+    /// `cursor_outline` so the ripple matches the cursor stroke.
+    #[serde(default = "default_click_anim_color")]
+    pub click_anim_color: String,
+    /// Ripple style: "rings" today; reserved for future variants
+    /// ("burst", "wave", etc.) so we can swap animations without
+    /// renaming any config keys.
+    #[serde(default = "default_click_anim_style")]
+    pub click_anim_style: String,
 }
 
-fn default_cursor_fill() -> String { "#0a0a0a".into() }
-fn default_cursor_outline() -> String { "#ffffff".into() }
-fn default_cursor_outline_width() -> f32 { 3.0 }
-fn default_cursor_corner_radius() -> f32 { 0.0 }
+fn default_cursor_body_light() -> String   { "#ffffff".into() }
+fn default_cursor_body_dark() -> String    { "#ababab".into() }
+fn default_cursor_accent_light() -> String { "#fab414".into() }
+fn default_cursor_accent_dark() -> String  { "#9a6300".into() }
+fn default_cursor_outline_color() -> String { "#0a0a0a".into() }
+fn default_cursor_outline_scale() -> f32   { 1.0 }
+fn default_cursor_corner_radius() -> f32   { 0.0 }
+fn default_click_anim_enabled() -> bool { true }
+fn default_click_anim_size() -> f32 { 1.0 }
+fn default_click_anim_color() -> String { String::new() }
+fn default_click_anim_style() -> String { "rings".into() }
 
 impl Default for InputConfig {
     fn default() -> Self {
@@ -246,10 +303,17 @@ impl Default for InputConfig {
             double_click_to_open: false,
             cursor_size: 24,
             cursor_theme: "default".into(),
-            cursor_fill: default_cursor_fill(),
-            cursor_outline: default_cursor_outline(),
-            cursor_outline_width: default_cursor_outline_width(),
+            cursor_body_light:    default_cursor_body_light(),
+            cursor_body_dark:     default_cursor_body_dark(),
+            cursor_accent_light:  default_cursor_accent_light(),
+            cursor_accent_dark:   default_cursor_accent_dark(),
+            cursor_outline_color: default_cursor_outline_color(),
+            cursor_outline_scale: default_cursor_outline_scale(),
             cursor_corner_radius: default_cursor_corner_radius(),
+            click_anim_enabled: default_click_anim_enabled(),
+            click_anim_size: default_click_anim_size(),
+            click_anim_color: default_click_anim_color(),
+            click_anim_style: default_click_anim_style(),
         }
     }
 }
@@ -415,6 +479,9 @@ impl LanternConfig {
 impl LanternConfig {
     fn sanitize(&mut self) {
         self.appearance.font_size = self.appearance.font_size.clamp(10.0, 32.0);
+        for a in self.appearance.window_gradient_stop_alphas.iter_mut() {
+            *a = a.clamp(0.0, 1.0);
+        }
         self.window_manager.border_width = self.window_manager.border_width.clamp(0, 10);
         self.window_manager.titlebar_height = self.window_manager.titlebar_height.clamp(20, 60);
         self.window_manager.gap = self.window_manager.gap.clamp(0, 32);
@@ -430,9 +497,10 @@ impl LanternConfig {
         self.windows.background_opacity = self.windows.background_opacity.clamp(0.0, 1.0);
         self.input.mouse_speed = self.input.mouse_speed.clamp(-1.0, 1.0);
         self.input.scroll_speed = self.input.scroll_speed.clamp(0.25, 3.0);
-        self.input.cursor_size = self.input.cursor_size.clamp(16, 64);
-        self.input.cursor_outline_width = self.input.cursor_outline_width.clamp(0.0, 8.0);
+        self.input.cursor_size = self.input.cursor_size.clamp(16, 128);
+        self.input.cursor_outline_scale = self.input.cursor_outline_scale.clamp(0.0, 3.0);
         self.input.cursor_corner_radius = self.input.cursor_corner_radius.clamp(0.0, 1.0);
+        self.input.click_anim_size = self.input.click_anim_size.clamp(0.25, 3.0);
         self.display.scale = self.display.scale.clamp(0.5, 3.0);
         if !["active", "balanced", "battery"].contains(&self.power.wifi_power_scheme.as_str()) {
             self.power.wifi_power_scheme = "balanced".into();

@@ -71,6 +71,13 @@ impl PendingPaste {
     }
 }
 
+/// In-progress rename waiting on the conflict dialog's choice.
+#[derive(Clone, Debug)]
+pub struct PendingRename {
+    pub from: PathBuf,
+    pub to: PathBuf,
+}
+
 /// State the dialog renders from. Built when a conflict is hit.
 #[derive(Clone, Debug)]
 pub struct ConflictDialog {

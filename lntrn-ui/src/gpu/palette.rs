@@ -1,5 +1,7 @@
-use lntrn_render::Color;
+use lntrn_render::{Color, Painter, Rect};
 use lntrn_theme::{self, Rgba, palette::Palette};
+
+use crate::gpu::fill::{draw_fill, Fill};
 
 /// Fox palette expressed as linear-space `Color` values for GPU rendering.
 #[derive(Clone, Copy)]
@@ -21,6 +23,47 @@ pub struct FoxPalette {
 /// Convert a theme `Rgba` to a render `Color`.
 fn to_color(c: Rgba) -> Color {
     Color::from_rgba8(c.r, c.g, c.b, c.a)
+}
+
+/// Paint the optional multi-stop window gradient on top of an existing
+/// background. No-op when `[appearance].window_gradient_stops` is unset or
+/// has fewer than 2 entries.
+///
+/// The gradient is treated as a **decorative overlay** — per-stop alphas
+/// from `[appearance].window_gradient_stop_alphas` control how much of each
+/// stop's color blends with whatever's already painted underneath. Stop
+/// alpha 0.0 = no gradient at that band (see the bg color through); 1.0 =
+/// fully opaque gradient color. The `opacity` argument is multiplied in too
+/// so the gradient fades with the window's overall translucency.
+pub fn draw_window_gradient_overlay(
+    p: &mut Painter, rect: Rect, corner_r: f32, opacity: f32,
+) {
+    let Some(stops) = lntrn_theme::active_window_gradient() else { return };
+    if stops.len() < 2 { return; }
+    let alphas = lntrn_theme::active_window_gradient_alphas();
+    let colors: Vec<Color> = stops
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let a_mul = alphas
+                .as_ref()
+                .and_then(|v| v.get(i).copied())
+                .unwrap_or(1.0);
+            to_color(*c).with_alpha(opacity * a_mul)
+        })
+        .collect();
+    let fill = Fill::linear_multi(lntrn_theme::active_window_gradient_angle(), colors);
+    draw_fill(p, rect, corner_r, &fill);
+}
+
+/// Convenience: paint the full window background — solid `palette.bg` at
+/// `opacity` first, then the configured gradient overlay (if any) on top.
+/// Most apps should call this from their chrome's `draw_background`.
+pub fn draw_window_bg(
+    p: &mut Painter, rect: Rect, corner_r: f32, palette: &FoxPalette, opacity: f32,
+) {
+    p.rect_filled(rect, corner_r, palette.bg.with_alpha(opacity));
+    draw_window_gradient_overlay(p, rect, corner_r, opacity);
 }
 
 impl FoxPalette {
@@ -84,6 +127,17 @@ impl FoxPalette {
     pub fn file_manager_gradient_stops(&self) -> [Color; 5] {
         let gs = lntrn_theme::GRADIENT_STRIP;
         [to_color(gs[0]), to_color(gs[1]), to_color(gs[2]), to_color(gs[3]), to_color(gs[4])]
+    }
+
+    /// Solid base fill for the main window background — `self.bg` at
+    /// `opacity`. Use this together with [`draw_window_gradient_overlay`]
+    /// (or just call [`draw_window_bg`]) for the full layered look.
+    ///
+    /// `opacity` *replaces* (does not multiply) the alpha on `self.bg`, so
+    /// palettes that already had opacity baked in via `with_bg_opacity` don't
+    /// get translucent twice.
+    pub fn window_fill(&self, opacity: f32) -> Fill {
+        Fill::Solid(self.bg.with_alpha(opacity))
     }
 
     /// Return a copy with the window-level `bg` alpha multiplied by `opacity`.

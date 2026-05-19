@@ -2,11 +2,17 @@
 
 use smithay::{
     reexports::wayland_server::protocol::wl_surface::WlSurface,
-    utils::{Logical, Rectangle, Serial},
+    utils::{Logical, Point, Rectangle, Serial, Size},
 };
 
 use crate::state::{Lantern, MaximizedWindow};
 use crate::window_ext::WindowExt;
+
+/// Minimum width/height (logical px) below which a captured restore
+/// rect is treated as bogus and replaced with a sensible default.
+/// Catches the "client hasn't acked initial configure yet" case where
+/// `window.geometry().size` reports (0, 0) or similar.
+const MIN_RESTORE_DIM: i32 = 200;
 
 impl Lantern {
     pub fn toggle_maximize_focused(&mut self, serial: Serial) -> bool {
@@ -60,7 +66,7 @@ impl Lantern {
         // If the window is currently in a pose slot (Left/Middle/Right
         // half), the Normal rung of the ladder is the Middle 1500×1000
         // rect, not the tall half rect — see `half_pose.rs`.
-        let restore = if self.posed_windows.contains_key(surface) {
+        let raw_restore = if self.posed_windows.contains_key(surface) {
             let output = self.output_for_window(&window)
                 .or_else(|| self.workspaces.outputs_iter().next().cloned());
             output.as_ref().and_then(|o| self.middle_pose_rect(o))
@@ -70,6 +76,17 @@ impl Lantern {
                 .target_rect(surface)
                 .unwrap_or_else(|| Rectangle::new(location, window.geometry().size))
         };
+        // Validate: a degenerate restore (tiny/zero size from an unacked
+        // initial configure, or oversized from a stale anim target) would
+        // teleport the window on unmaximize. Fall back to a sensible
+        // centered default sized to ~70% of the output's usable area.
+        let restore = sanitize_restore_rect(raw_restore, output_geo);
+        if restore != raw_restore {
+            tracing::warn!(
+                raw = ?raw_restore, sanitized = ?restore,
+                "maximize_surface: captured restore rect was out-of-bounds; clamping"
+            );
+        }
         self.posed_windows.remove(surface);
         let geo = window.geometry();
         tracing::info!(
@@ -156,4 +173,39 @@ impl Lantern {
             .position(|entry| entry.surface == *surface)?;
         Some(self.maximized_windows.remove(index).restore)
     }
+}
+
+/// Clamp a captured pre-maximize restore rect to something the
+/// unmaximize animation can actually land. Catches two failure modes:
+///
+///   1. The client never acked its initial configure, so
+///      `window.geometry().size` reports (0, 0) — restoring there would
+///      vanish the window.
+///   2. The restore is partially or fully off the output it'll restore
+///      onto — usually a leftover from cross-monitor moves or stale
+///      animation targets.
+///
+/// Returns the input unchanged when it's already healthy.
+fn sanitize_restore_rect(
+    rect: Rectangle<i32, Logical>,
+    output_geo: Rectangle<i32, Logical>,
+) -> Rectangle<i32, Logical> {
+    // Fast path: rect is non-degenerate and overlaps the output by
+    // enough that the user can grab the titlebar.
+    let big_enough = rect.size.w >= MIN_RESTORE_DIM && rect.size.h >= MIN_RESTORE_DIM;
+    let intersects_well = rect.overlaps(output_geo)
+        && rect.size.w <= output_geo.size.w * 2
+        && rect.size.h <= output_geo.size.h * 2;
+    if big_enough && intersects_well {
+        return rect;
+    }
+
+    // Build a centered ~70% rect on the output as the fallback.
+    let w = ((output_geo.size.w as f32) * 0.7).round() as i32;
+    let h = ((output_geo.size.h as f32) * 0.7).round() as i32;
+    let w = w.max(MIN_RESTORE_DIM).min(output_geo.size.w);
+    let h = h.max(MIN_RESTORE_DIM).min(output_geo.size.h);
+    let x = output_geo.loc.x + (output_geo.size.w - w) / 2;
+    let y = output_geo.loc.y + (output_geo.size.h - h) / 2;
+    Rectangle::new(Point::from((x, y)), Size::from((w, h)))
 }
