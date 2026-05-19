@@ -62,36 +62,6 @@ pub struct Config {
     /// Vertical gap (logical px) between the bar and the body window
     /// when split mode is active.
     pub panel_split_gap: f32,
-    /// Which WiFi backend the worker should talk to. `Auto` probes both
-    /// and prefers whichever is actually owned on the system bus; `Nm`
-    /// and `Iwd` force the choice (useful on machines where iwd is
-    /// installed but inactive and we don't want it dbus-activated).
-    pub wifi_backend: WifiBackendPref,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WifiBackendPref {
-    Auto,
-    Nm,
-    Iwd,
-}
-
-impl WifiBackendPref {
-    fn from_str(s: &str) -> Self {
-        match s.to_ascii_lowercase().as_str() {
-            "nm" | "networkmanager" => Self::Nm,
-            "iwd" => Self::Iwd,
-            _ => Self::Auto,
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::Nm => "nm",
-            Self::Iwd => "iwd",
-        }
-    }
 }
 
 impl Default for Config {
@@ -104,7 +74,6 @@ impl Default for Config {
             view_anim_duration: 1.20,
             panel_split: false,
             panel_split_gap: 50.0,
-            wifi_backend: WifiBackendPref::Auto,
         }
     }
 }
@@ -176,7 +145,7 @@ fn parse(text: &str) -> Config {
                 }
             }
             // Dropped settings — silently ignore the old keys.
-            "terminal_output_size" | "files_text_size" => {}
+            "terminal_output_size" | "files_text_size" | "wifi_backend" => {}
             "view_anim_duration" => {
                 if let Ok(v) = value.parse::<f32>() {
                     cfg.view_anim_duration = v.clamp(0.10, 3.0);
@@ -188,7 +157,6 @@ fn parse(text: &str) -> Config {
                     cfg.panel_split_gap = v.clamp(0.0, 120.0);
                 }
             }
-            "wifi_backend" => cfg.wifi_backend = WifiBackendPref::from_str(value),
             _ => {}
         }
     }
@@ -197,7 +165,7 @@ fn parse(text: &str) -> Config {
 
 fn render_text(c: &Config) -> String {
     format!(
-        "# lntrn-command-center settings\npanel_opacity = {:.3}\nopen_collapsed = {}\nshow_dock_collapsed = {}\ntext_size = {:.1}\nview_anim_duration = {:.2}\npanel_split = {}\npanel_split_gap = {:.1}\nwifi_backend = \"{}\"\n",
+        "# lntrn-command-center settings\npanel_opacity = {:.3}\nopen_collapsed = {}\nshow_dock_collapsed = {}\ntext_size = {:.1}\nview_anim_duration = {:.2}\npanel_split = {}\npanel_split_gap = {:.1}\n",
         c.panel_opacity,
         c.open_collapsed,
         c.show_dock_collapsed,
@@ -205,7 +173,6 @@ fn render_text(c: &Config) -> String {
         c.view_anim_duration,
         c.panel_split,
         c.panel_split_gap,
-        c.wifi_backend.as_str(),
     )
 }
 

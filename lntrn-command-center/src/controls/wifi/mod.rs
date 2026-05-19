@@ -84,17 +84,6 @@ impl Band {
         }
     }
 
-    /// Value to set on `wifi.band` in the NM connection profile.
-    /// `bg` = 2.4 GHz only; `a` covers 5/6 GHz. (NetworkManager doesn't
-    /// distinguish 5 from 6 here — for 6 GHz-only you'd need to pin a
-    /// BSSID, which we don't do yet.)
-    pub fn nm_band(self) -> &'static str {
-        match self {
-            Band::G24 => "bg",
-            Band::G5 | Band::G6 => "a",
-        }
-    }
-
     pub(crate) fn from_mhz(mhz: u32) -> Option<Band> {
         Some(match mhz {
             2400..=2500 => Band::G24,
@@ -102,11 +91,6 @@ impl Band {
             5925..=7125 => Band::G6,
             _ => return None,
         })
-    }
-
-    pub(crate) fn from_freq_str(s: &str) -> Option<Band> {
-        let mhz: u32 = s.split_whitespace().next()?.parse().ok()?;
-        Band::from_mhz(mhz)
     }
 }
 
@@ -178,11 +162,12 @@ pub(crate) enum WifiCmd {
     Connect {
         ssid: String,
         password: Option<String>,
+        // iwd doesn't expose per-profile band / BSSID pinning yet — the
+        // worker currently drops these. Kept on the variant so the UI's
+        // pinning state has a wire path for when iwd support lands.
+        #[allow(dead_code)]
         band: Option<Band>,
-        /// When `Some`, force the connection to a specific access point
-        /// by writing `wifi.bssid=<mac>` onto the profile. `"--"` is
-        /// passed by the worker when the user explicitly unpins (clearing
-        /// the field).
+        #[allow(dead_code)]
         bssid: Option<String>,
     },
     /// `nmcli connection delete uuid <uuid>` — purge a saved profile.
@@ -202,8 +187,11 @@ pub struct Profile {
     pub pinned_bssid: Option<String>,
     /// `802-11-wireless.band` value ("bg", "a", or empty).
     pub pinned_band: Option<String>,
-    /// Unix seconds (`connection.timestamp`) — last time NM activated
-    /// the profile. Zero when never activated.
+    /// Unix seconds — last time the profile was activated. iwd's
+    /// `KnownNetwork.LastConnectedTime` populates this; zero when never
+    /// activated. Not currently surfaced in the UI but kept for future
+    /// "recent networks" ordering.
+    #[allow(dead_code)]
     pub timestamp: i64,
     /// True when this profile is the currently-active connection.
     pub active: bool,
@@ -274,20 +262,18 @@ impl PasswordPrompt {
 
 impl Wifi {
     pub fn new() -> Self {
-        // Detect the backend up front (honors `wifi_backend` in
-        // settings.toml — see Backend::detect). No backend at all →
-        // skip spawning the worker so the tile hides cleanly.
-        let backend = worker::Backend::detect();
-        let available = backend.is_some();
+        // iwd owns the airwaves on every Lantern host. Skip spawning the
+        // worker if it isn't on the bus so the tile hides cleanly.
+        let available = worker::is_available();
 
         let (cmd_tx, cmd_rx) = mpsc::channel();
         let (event_tx, event_rx) = mpsc::channel();
 
-        if let Some(backend) = backend {
-            tracing::info!(?backend, "wifi backend selected");
+        if available {
+            tracing::info!("wifi worker spawning (backend=iwd)");
             thread::Builder::new()
                 .name("lcc-wifi-poll".into())
-                .spawn(move || worker::run(backend, event_tx, cmd_rx))
+                .spawn(move || worker::run(event_tx, cmd_rx))
                 .ok();
         }
 
