@@ -37,20 +37,12 @@ pub(crate) const CATEGORIES: &[CategoryDef] = &[
     CategoryDef { cat: Category::Home,          label: "Home",          icon_idx: 0, children: &[], leaf_panel: Some(Panel::Home) },
     CategoryDef { cat: Category::Appearance,    label: "Appearance",    icon_idx: 1, leaf_panel: None, children: &[
         (Panel::Themes,     "Themes"),
-        (Panel::Colors,     "Colors"),
-        (Panel::Windows,    "Windows"),
-        (Panel::Animations, "Animations"),
-        (Panel::Focus,      "Focus"),
-    ]},
-    CategoryDef { cat: Category::Display,       label: "Display",       icon_idx: 2, leaf_panel: None, children: &[
-        (Panel::Monitors,   "Monitors"),
         (Panel::Wallpaper,  "Wallpaper"),
+        (Panel::Animations, "Animations"),
     ]},
+    CategoryDef { cat: Category::Display,       label: "Display",       icon_idx: 2, children: &[], leaf_panel: Some(Panel::Monitors) },
     CategoryDef { cat: Category::Input,         label: "Input",         icon_idx: 3, leaf_panel: None, children: &[
         (Panel::Mouse,      "Mouse"),
-        (Panel::Scrolling,  "Scrolling"),
-        (Panel::Clicking,   "Clicking"),
-        (Panel::Cursor,     "Cursor"),
     ]},
     CategoryDef { cat: Category::Notifications, label: "Notifications", icon_idx: 4, leaf_panel: None, children: &[
         (Panel::NotifBehavior, "Behavior"),
@@ -74,6 +66,9 @@ pub(crate) fn category_of(panel: Panel) -> Category {
         if cat.children.iter().any(|(p, _)| *p == panel) {
             return cat.cat;
         }
+        if cat.leaf_panel == Some(panel) {
+            return cat.cat;
+        }
     }
     Category::Home
 }
@@ -84,6 +79,9 @@ pub(crate) fn panel_label(panel: Panel) -> &'static str {
     for cat in CATEGORIES {
         for (p, label) in cat.children {
             if *p == panel { return label; }
+        }
+        if cat.leaf_panel == Some(panel) {
+            return cat.label;
         }
     }
     ""

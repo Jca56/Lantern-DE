@@ -39,8 +39,9 @@ const ZONE_BG_OPACITY:       u32 = 309;
 const ZONE_BORDER_COLOR_BASE: u32 = 330; // +0..9 swatches (10 entries)
 const ZONE_TINT_COLOR_BASE:   u32 = 340; // +0..9 swatches (10 entries)
 
-// Focus & Glow
-const ZONE_FOCUS:            u32 = 304;
+// Focus & Glow — ZONE_FOCUS is rendered on the Input/Mouse page now (Pointer
+// card) but still lives here so both modules see the same id.
+pub(crate) const ZONE_FOCUS: u32 = 304;
 const ZONE_GLOW:             u32 = 310;
 const ZONE_GLOW_COLOR_BASE:  u32 = 311; // +0..9 swatches (10 entries, 311..320)
 const ZONE_GLOW_INTENSITY:   u32 = 321;
@@ -149,27 +150,28 @@ pub fn draw_appearance_panel(
     );
     let bg_card_h = card_chrome_h + 1.6 * row + row;
     let gradient_card_h = card_chrome_h + 5.0 * row;
-    let layout_card_h = card_chrome_h + 7.0 * row;
+    let borders_card_h = card_chrome_h + crate::appearance_layout::BORDER_ROWS * row;
+    let effects_card_h = card_chrome_h + crate::appearance_layout::EFFECT_ROWS * row;
     let anim_card_h = card_chrome_h + 4.0 * row + 3.0 * (ROW_H * 0.75) * s;
-    let focus_base_rows = 2.0;
     let glow_extra_rows = if config.window_manager.focus_glow { 2.0 } else { 0.0 };
-    let focus_card_h = card_chrome_h + (focus_base_rows + glow_extra_rows) * row;
+    let focus_card_h = card_chrome_h + (1.0 + glow_extra_rows) * row;
     let wsize_card_h = card_chrome_h + crate::appearance_window_sizes::ROWS * row;
 
-    // Which cards belong to which subpanel.
-    let card_heights: Vec<f32> = match subpanel {
-        Panel::Themes     => vec![themes_card_h],
-        Panel::Colors     => vec![bg_card_h, gradient_card_h],
-        Panel::Windows    => vec![layout_card_h, wsize_card_h],
-        Panel::Animations => vec![anim_card_h],
-        Panel::Focus      => vec![focus_card_h],
-        _ => vec![],
-    };
+    // Themes page is a single mega-panel: theme presets full-width, then a
+    // two-column body. Left stack = Background Color → Borders → Window Sizes.
+    // Right stack = Blur & Effects → Window Gradient → Focus Glow.
+    let left_stack = bg_card_h + CARD_GAP * s + borders_card_h
+        + CARD_GAP * s + wsize_card_h;
+    let right_stack = effects_card_h + CARD_GAP * s + gradient_card_h
+        + CARD_GAP * s + focus_card_h;
+    let two_col_h = left_stack.max(right_stack);
 
-    let n = card_heights.len();
-    let content_height = CARD_OUTER_PAD_V * 2.0 * s
-        + card_heights.iter().sum::<f32>()
-        + CARD_GAP * s * n.saturating_sub(1) as f32;
+    let content_height = match subpanel {
+        Panel::Themes => CARD_OUTER_PAD_V * 2.0 * s + themes_card_h
+            + CARD_GAP * s + two_col_h,
+        Panel::Animations => CARD_OUTER_PAD_V * 2.0 * s + anim_card_h,
+        _ => 0.0,
+    };
 
     if scroll_delta != 0.0 {
         ScrollArea::apply_scroll(
@@ -186,33 +188,55 @@ pub fn draw_appearance_panel(
 
     match subpanel {
         Panel::Themes => {
+            // Top: theme preset grid, full width.
             crate::appearance_themes::draw_themes_card(
                 themes_state, config, painter, text, ix, tex_pass, gpu, fox, tex_draws,
                 card_x, cy_top, card_w, themes_card_h, s, sw, sh,
             );
-        }
-        Panel::Colors => {
+            cy_top += themes_card_h + CARD_GAP * s;
+
+            // Two-column body.
+            let col_gap = CARD_GAP * s;
+            let col_w = ((card_w - col_gap) / 2.0).floor();
+            let left_x = card_x;
+            let right_x = card_x + col_w + col_gap;
+
+            // Left column: Background Color → Borders → Window Sizes
+            let mut ly = cy_top;
             draw_background_color_card(
                 config, painter, text, ix, fox,
-                card_x, cy_top, card_w, bg_card_h, s, sw, sh,
+                left_x, ly, col_w, bg_card_h, s, sw, sh,
             );
-            cy_top += bg_card_h + CARD_GAP * s;
-            draw_window_gradient_card(
+            ly += bg_card_h + col_gap;
+            crate::appearance_layout::draw_borders_card(
                 config, painter, text, ix, fox,
-                card_x, cy_top, card_w, gradient_card_h, s, sw, sh,
-            );
-        }
-        Panel::Windows => {
-            crate::appearance_layout::draw_layout_card(
-                config, painter, text, ix, fox,
-                card_x, cy_top, card_w, layout_card_h, s, sw, sh,
+                left_x, ly, col_w, borders_card_h, s, sw, sh,
                 &ZONE_IDS_LAYOUT,
             );
-            cy_top += layout_card_h + CARD_GAP * s;
+            ly += borders_card_h + col_gap;
             crate::appearance_window_sizes::draw_window_sizes_card(
                 config, panel_state, painter, text, ix, fox,
-                card_x, cy_top, card_w, wsize_card_h, s, sw, sh,
+                left_x, ly, col_w, wsize_card_h, s, sw, sh,
                 &WSIZE_ZONES,
+            );
+
+            // Right column: Blur & Effects → Window Gradient → Focus Glow
+            let mut ry = cy_top;
+            crate::appearance_layout::draw_effects_card(
+                config, painter, text, ix, fox,
+                right_x, ry, col_w, effects_card_h, s, sw, sh,
+                &ZONE_IDS_LAYOUT,
+            );
+            ry += effects_card_h + col_gap;
+            draw_window_gradient_card(
+                config, painter, text, ix, fox,
+                right_x, ry, col_w, gradient_card_h, s, sw, sh,
+            );
+            ry += gradient_card_h + col_gap;
+            crate::appearance_focus::draw_focus_card(
+                config, painter, text, ix, fox,
+                right_x, ry, col_w, focus_card_h, s, sw, sh,
+                &ZONE_IDS_FOCUS,
             );
         }
         Panel::Animations => {
@@ -220,13 +244,6 @@ pub fn draw_appearance_panel(
                 config, panel_state, painter, text, ix, fox,
                 card_x, cy_top, card_w, anim_card_h, s, sw, sh,
                 &ZONE_IDS_ANIM,
-            );
-        }
-        Panel::Focus => {
-            crate::appearance_focus::draw_focus_card(
-                config, painter, text, ix, fox,
-                card_x, cy_top, card_w, focus_card_h, s, sw, sh,
-                &ZONE_IDS_FOCUS,
             );
         }
         _ => {}
@@ -719,9 +736,7 @@ pub fn handle_appearance_click(
     cursor_y: f32,
 ) {
     match zone_id {
-        // Focus & glow toggles
-        ZONE_FOCUS => config.window_manager.focus_follows_mouse =
-            !config.window_manager.focus_follows_mouse,
+        // Focus glow toggle (Focus Follows Mouse moved to the Input/Mouse page).
         ZONE_GLOW => config.window_manager.focus_glow = !config.window_manager.focus_glow,
         // Animations master + per-event toggles
         ZONE_ANIM_ENABLE => config.animations.enabled = !config.animations.enabled,

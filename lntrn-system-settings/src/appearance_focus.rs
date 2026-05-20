@@ -1,7 +1,8 @@
-//! Focus & Glow card for the Appearance panel.
+//! Focus Glow card for the Appearance / Windows subpanel.
 //!
-//! Focus-follows-mouse toggle, focus-glow toggle, and the glow color + intensity
-//! controls revealed when glow is enabled.
+//! Focus-glow master toggle plus glow color + intensity controls revealed when
+//! glow is enabled. (Focus-follows-mouse lives on the Input / Mouse subpanel
+//! since it's a pointer behavior, not a visual effect.)
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{FoxPalette, InteractionContext, Slider, Toggle};
@@ -40,20 +41,11 @@ pub(crate) fn draw_focus_card(
     let value_x = ctrl_x + ctrl_w + 8.0 * s;
 
     let mut cy = draw_section_card(
-        painter, text, fox, "Focus & Glow",
+        painter, text, fox, "Focus Glow",
         card_x, card_y, card_w, card_h, s, sw, sh,
     );
-
-    // Focus follows mouse
-    {
-        let rect = Rect::new(card_inner_x, cy, card_inner_w, TOGGLE_H * s);
-        let toggle = Toggle::new(rect, config.window_manager.focus_follows_mouse)
-            .label("Focus Follows Mouse").scale(s);
-        let track = toggle.track_rect();
-        let zone = ix.add_zone(z.focus, track);
-        toggle.hovered(zone.is_hovered()).draw(painter, text, fox, sw, sh);
-        cy += row;
-    }
+    // `z.focus` no longer rendered here — see input_panel Pointer card.
+    let _ = z.focus;
 
     // Glow master toggle
     {

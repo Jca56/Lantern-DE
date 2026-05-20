@@ -138,7 +138,7 @@ fn route_panel_click(
 ) {
     match active_panel {
         Panel::Home => {}
-        Panel::Themes | Panel::Colors | Panel::Windows | Panel::Animations | Panel::Focus => {
+        Panel::Themes | Panel::Animations => {
             crate::appearance_panel::handle_appearance_click(
                 config, panel_state, zone_id, cx, cy,
             );
@@ -151,7 +151,7 @@ fn route_panel_click(
                 config, display_state, zone_id, cx, cy, &state.output_mgr,
             );
         }
-        Panel::Mouse | Panel::Scrolling | Panel::Clicking | Panel::Cursor => {
+        Panel::Mouse => {
             input_panel::handle_input_click(config, input_state, zone_id);
         }
         Panel::NotifBehavior | Panel::NotifSound | Panel::NotifTesting => {

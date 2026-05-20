@@ -46,11 +46,11 @@ pub(crate) const ZONE_SIDEBAR_BASE: u32 = 200;
 pub(crate) enum Panel {
     Home,
     // Appearance
-    Themes, Colors, Windows, Animations, Focus,
+    Themes, Animations,
     // Display
     Monitors, Wallpaper,
     // Input
-    Mouse, Scrolling, Clicking, Cursor,
+    Mouse,
     // Notifications
     NotifBehavior, NotifSound, NotifTesting,
     // Power
@@ -64,20 +64,14 @@ fn parse_panel_arg() -> Option<Panel> {
     let idx = args.iter().position(|a| a == "--panel")?;
     match args.get(idx + 1)?.as_str() {
         "home"          => Some(Panel::Home),
-        // Appearance subpanels (legacy "appearance" maps to Themes)
-        "appearance" | "themes" => Some(Panel::Themes),
-        "colors"        => Some(Panel::Colors),
-        "windows"       => Some(Panel::Windows),
+        // Appearance subpanels (legacy "colors"/"windows"/"focus" all fold into Themes)
+        "appearance" | "themes" | "colors" | "windows" | "focus" => Some(Panel::Themes),
         "animations"    => Some(Panel::Animations),
-        "focus"         => Some(Panel::Focus),
         // Display
         "display" | "monitors" => Some(Panel::Monitors),
         "wallpaper"     => Some(Panel::Wallpaper),
-        // Input (legacy "input"/"mouse" both map to Mouse subpanel)
-        "input" | "mouse" => Some(Panel::Mouse),
-        "scrolling"     => Some(Panel::Scrolling),
-        "clicking"      => Some(Panel::Clicking),
-        "cursor"        => Some(Panel::Cursor),
+        // Input (legacy "scrolling"/"clicking"/"cursor" all roll into Mouse)
+        "input" | "mouse" | "scrolling" | "clicking" | "cursor" => Some(Panel::Mouse),
         // Notifications
         "notifications" | "notif-behavior" => Some(Panel::NotifBehavior),
         "notif-sound"   => Some(Panel::NotifSound),
@@ -536,7 +530,7 @@ pub fn run() -> Result<()> {
                     content_x, panel_y, content_w, panel_h, s, sw, sh,
                 );
             }
-            Panel::Themes | Panel::Colors | Panel::Windows | Panel::Animations | Panel::Focus => {
+            Panel::Themes | Panel::Animations => {
                 crate::appearance_panel::draw_appearance_panel(
                     active_panel,
                     &mut config, &mut panel_state, &mut themes_state,
@@ -544,16 +538,19 @@ pub fn run() -> Result<()> {
                     &mut tex_draws,
                     content_x, panel_y, content_w, panel_h, s, sw, sh, frame_scroll,
                 );
-                // Themes modal + thumbnails (only relevant on the Themes
-                // subpanel but harmless to feed through otherwise).
-                if themes_state.modal_open() {
-                    crate::appearance_themes::draw_themes_modal(
-                        &mut themes_state, &mut painter, &mut text, &mut ix, &fox,
-                        wf, hf, s, sw, sh,
-                    );
-                }
-                for td in crate::appearance_themes::collect_theme_thumbs(&themes_state) {
-                    tex_draws.push(td);
+                // Themes modal + thumbnails — only on the Themes subpanel.
+                // Otherwise stale tile_layouts from the last visit would keep
+                // pushing thumbnails over Windows / Animations.
+                if active_panel == Panel::Themes {
+                    if themes_state.modal_open() {
+                        crate::appearance_themes::draw_themes_modal(
+                            &mut themes_state, &mut painter, &mut text, &mut ix, &fox,
+                            wf, hf, s, sw, sh,
+                        );
+                    }
+                    for td in crate::appearance_themes::collect_theme_thumbs(&themes_state) {
+                        tex_draws.push(td);
+                    }
                 }
             }
             Panel::Monitors | Panel::Wallpaper => {
@@ -567,7 +564,7 @@ pub fn run() -> Result<()> {
                 let thumb_draws = display_panel::collect_thumb_draws(&display_state, s);
                 for td in thumb_draws { tex_draws.push(td); }
             }
-            Panel::Mouse | Panel::Scrolling | Panel::Clicking | Panel::Cursor => {
+            Panel::Mouse => {
                 input_panel::draw_input_panel(
                     active_panel,
                     &mut config, &mut input_state,

@@ -413,11 +413,13 @@ pub fn draw_input_panel<'a>(
     scroll_delta: f32,
     tex_draws: &mut Vec<TextureDraw<'a>>,
 ) {
-    use crate::wayland::Panel;
-    let show_pointer   = matches!(subpanel, Panel::Mouse);
-    let show_scrolling = matches!(subpanel, Panel::Scrolling);
-    let show_clicking  = matches!(subpanel, Panel::Clicking);
-    let show_cursor    = matches!(subpanel, Panel::Cursor);
+    // Mouse panel now shows every card stacked — Scrolling / Clicking / Cursor
+    // are no longer separate sidebar entries.
+    let _ = subpanel;
+    let show_pointer   = true;
+    let show_scrolling = true;
+    let show_clicking  = true;
+    let show_cursor    = true;
     state.scan();
     state.load_textures(tex_pass, gpu, s);
     let palette = CursorPalette {
@@ -458,8 +460,8 @@ pub fn draw_input_panel<'a>(
     // ── Card sizing ─────────────────────────────────────────────────
     let card_chrome_h = CARD_HEADER_H * s + CARD_INNER_PAD_V * 2.0 * s;
 
-    // Pointer card: Speed slider + Pointer Acceleration toggle.
-    let pointer_card_h = card_chrome_h + 2.0 * row;
+    // Pointer card: Speed slider + Pointer Acceleration toggle + Focus Follows Mouse toggle.
+    let pointer_card_h = card_chrome_h + 3.0 * row;
 
     // Scrolling card: just Scroll Speed for now.
     let scrolling_card_h = card_chrome_h + 1.0 * row;
@@ -556,6 +558,18 @@ pub fn draw_input_panel<'a>(
                 .label("Pointer Acceleration").scale(s);
             let track = toggle.track_rect();
             let zone = ix.add_zone(ZONE_POINTER_ACCEL, track);
+            toggle.hovered(zone.is_hovered()).draw(painter, text, fox, sw, sh);
+            cy += row;
+        }
+
+        // Focus Follows Mouse toggle (uses the legacy ZONE_FOCUS id so existing
+        // routing works — the click router routes it via handle_input_click).
+        {
+            let rect = Rect::new(card_inner_x, cy, card_inner_w, TOGGLE_H * s);
+            let toggle = Toggle::new(rect, config.window_manager.focus_follows_mouse)
+                .label("Focus Follows Mouse").scale(s);
+            let track = toggle.track_rect();
+            let zone = ix.add_zone(crate::appearance_panel::ZONE_FOCUS, track);
             toggle.hovered(zone.is_hovered()).draw(painter, text, fox, sw, sh);
         }
         cy_top += pointer_card_h + CARD_GAP * s;
@@ -969,6 +983,11 @@ pub fn handle_input_click(config: &mut LanternConfig, state: &InputPanelState, z
     match zone_id {
         ZONE_POINTER_ACCEL => {
             config.input.pointer_acceleration = !config.input.pointer_acceleration;
+        }
+        // Focus Follows Mouse moved here from the Appearance/Focus card.
+        id if id == crate::appearance_panel::ZONE_FOCUS => {
+            config.window_manager.focus_follows_mouse =
+                !config.window_manager.focus_follows_mouse;
         }
         ZONE_DOUBLE_CLICK => {
             config.input.double_click_to_open = !config.input.double_click_to_open;

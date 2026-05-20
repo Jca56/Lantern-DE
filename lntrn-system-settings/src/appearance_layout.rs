@@ -1,7 +1,7 @@
-//! Layout & Visual Effects card for the Appearance panel.
+//! Borders + Blur Effects cards for the Appearance / Windows subpanel.
 //!
-//! Houses window-frame controls (border, titlebar, gap, corner radius, border
-//! color) and blur effects (intensity, tint, tint color, darken, bg opacity).
+//! Split into two cards so the Windows page can render them in a two-column
+//! layout: Borders on the left, Blur Effects on the right.
 
 use lntrn_render::{Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{FoxPalette, InteractionContext, Slider};
@@ -14,8 +14,13 @@ use crate::panels::{
     VALUE_SIZE, VALUE_W,
 };
 
+/// Number of rows in the Borders card (Border Width, Corner Radius, Border Color).
+pub const BORDER_ROWS: f32 = 3.0;
+/// Number of rows in the Effects card (Blur Intensity, Tint, Tint Color, Darken, BG Opacity).
+pub const EFFECT_ROWS: f32 = 5.0;
+
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn draw_layout_card(
+pub(crate) fn draw_borders_card(
     config: &mut LanternConfig,
     painter: &mut Painter,
     text: &mut TextRenderer,
@@ -25,26 +30,14 @@ pub(crate) fn draw_layout_card(
     s: f32, sw: u32, sh: u32,
     z: &LayoutZones,
 ) {
-    let row = ROW_H * s;
-    let lsz = LABEL_SIZE * s;
-    let vsz = VALUE_SIZE * s;
-    let slider_h = SLIDER_H * s;
-    let card_inner_x = card_x + CARD_INNER_PAD_H * s;
-    let card_inner_w = card_w - CARD_INNER_PAD_H * 2.0 * s;
-    let label_w = LABEL_W * s;
-    let value_w = VALUE_W * s;
-    let label_x = card_inner_x;
-    let ctrl_x = card_inner_x + label_w;
-    let avail = (card_inner_w - label_w - value_w - 12.0 * s).max(80.0 * s);
-    let ctrl_w = (SLIDER_W * s).min(avail);
-    let value_x = ctrl_x + ctrl_w + 8.0 * s;
+    let (label_x, ctrl_x, ctrl_w, value_x, row, lsz, _vsz, slider_h) =
+        card_geom(card_x, card_w, s);
 
     let mut cy = draw_section_card(
-        painter, text, fox, "Layout & Visual Effects",
+        painter, text, fox, "Borders",
         card_x, card_y, card_w, card_h, s, sw, sh,
     );
 
-    // ── Window frame sliders ───────────────────────────────────────
     {
         let mut slider_row = |label: &str, frac: f32, zone_id: u32, cy: &mut f32,
                               min: f32, max: f32, suffix: &str, config_val: &mut u32| {
@@ -58,7 +51,7 @@ pub(crate) fn draw_layout_card(
             Slider::new(rect).value(frac).hovered(zone.is_hovered()).active(zone.is_active())
                 .draw(painter, fox);
             let val = format!("{}{}", *config_val, suffix);
-            text.queue(&val, vsz, value_x, label_y, fox.text_secondary, VALUE_W * s, sw, sh);
+            text.queue(&val, VALUE_SIZE * s, value_x, label_y, fox.text_secondary, VALUE_W * s, sw, sh);
             *cy += row;
         };
 
@@ -79,8 +72,27 @@ pub(crate) fn draw_layout_card(
         &config.window_manager.border_color,
         label_x, ctrl_x, &mut cy, row, lsz, s, sw, sh,
     );
+}
 
-    // ── Visual effects sliders ─────────────────────────────────────
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draw_effects_card(
+    config: &mut LanternConfig,
+    painter: &mut Painter,
+    text: &mut TextRenderer,
+    ix: &mut InteractionContext,
+    fox: &FoxPalette,
+    card_x: f32, card_y: f32, card_w: f32, card_h: f32,
+    s: f32, sw: u32, sh: u32,
+    z: &LayoutZones,
+) {
+    let (label_x, ctrl_x, ctrl_w, value_x, row, lsz, vsz, slider_h) =
+        card_geom(card_x, card_w, s);
+
+    let mut cy = draw_section_card(
+        painter, text, fox, "Blur & Effects",
+        card_x, card_y, card_w, card_h, s, sw, sh,
+    );
+
     pct_slider(painter, text, ix, fox, "Blur Intensity",
         &mut config.windows.blur_intensity, z.blur,
         label_x, ctrl_x, ctrl_w, value_x, slider_h, row, lsz, vsz, &mut cy, s, sw, sh);
@@ -101,6 +113,24 @@ pub(crate) fn draw_layout_card(
     pct_slider(painter, text, ix, fox, "Background Opacity",
         &mut config.windows.background_opacity, z.bg_opacity,
         label_x, ctrl_x, ctrl_w, value_x, slider_h, row, lsz, vsz, &mut cy, s, sw, sh);
+}
+
+/// (label_x, ctrl_x, ctrl_w, value_x, row, lsz, vsz, slider_h)
+fn card_geom(card_x: f32, card_w: f32, s: f32) -> (f32, f32, f32, f32, f32, f32, f32, f32) {
+    let row = ROW_H * s;
+    let lsz = LABEL_SIZE * s;
+    let vsz = VALUE_SIZE * s;
+    let slider_h = SLIDER_H * s;
+    let card_inner_x = card_x + CARD_INNER_PAD_H * s;
+    let card_inner_w = card_w - CARD_INNER_PAD_H * 2.0 * s;
+    let label_w = LABEL_W * s;
+    let value_w = VALUE_W * s;
+    let label_x = card_inner_x;
+    let ctrl_x = card_inner_x + label_w;
+    let avail = (card_inner_w - label_w - value_w - 12.0 * s).max(80.0 * s);
+    let ctrl_w = (SLIDER_W * s).min(avail);
+    let value_x = ctrl_x + ctrl_w + 8.0 * s;
+    (label_x, ctrl_x, ctrl_w, value_x, row, lsz, vsz, slider_h)
 }
 
 #[allow(clippy::too_many_arguments)]
