@@ -98,6 +98,7 @@ fn grid_cols(grid_w: f32, thumb_w: f32, gap: f32) -> usize {
 // ── Draw ────────────────────────────────────────────────────────────────────
 
 pub fn draw_display_panel(
+    subpanel: crate::wayland::Panel,
     config: &mut LanternConfig,
     dps: &mut DisplayPanelState,
     painter: &mut Painter,
@@ -117,6 +118,9 @@ pub fn draw_display_panel(
     outputs: &[(u32, OutputInfo)],
     output_mgr: &OutputManagerClient,
 ) {
+    use crate::wayland::Panel;
+    let show_display   = matches!(subpanel, Panel::Monitors);
+    let show_wallpaper = matches!(subpanel, Panel::Wallpaper);
     let lsz = LABEL_SIZE * s;
 
     // Reset per-monitor settings if selection changed
@@ -172,9 +176,10 @@ pub fn draw_display_panel(
     };
     let display_card_h = card_chrome_h + arrange_h_est + settings_h_est;
 
-    let content_height = CARD_OUTER_PAD_V * s
-        + display_card_h + CARD_GAP * s
-        + wallpaper_card_h + CARD_OUTER_PAD_V * 2.0 * s;
+    let mut content_height = CARD_OUTER_PAD_V * 2.0 * s;
+    if show_display   { content_height += display_card_h; }
+    if show_wallpaper { content_height += wallpaper_card_h; }
+    if show_display && show_wallpaper { content_height += CARD_GAP * s; }
 
     // ── Single ScrollArea wrapping the whole panel ─────────────────
     if scroll_delta != 0.0 {
@@ -187,48 +192,50 @@ pub fn draw_display_panel(
 
     let mut cy_top = scroll_area.content_y() + CARD_OUTER_PAD_V * s;
 
-    // ─────────────────────────────────────────────────────────────────
-    // Card 1: Display Settings (arrangement canvas + per-monitor settings)
-    // ─────────────────────────────────────────────────────────────────
-    let inner_y = draw_section_card(
-        painter, text, fox, "Display Settings",
-        card_x, cy_top, card_w, display_card_h, s, sw, sh,
-    );
-    // monitor_arrange uses x + PAD as its content origin; PAD == 24 ==
-    // CARD_INNER_PAD_H, so passing card_x lines content up with the card.
-    let arrange_h = monitor_arrange::draw_monitor_arrange(
-        &mut dps.monitor_arrange, outputs, &config.monitors, output_mgr,
-        painter, text, ix, fox,
-        card_x, inner_y, card_w, s, sw, sh,
-        false, // header is provided by the card
-    );
-    dps.last_arrange_h = arrange_h;
-
-    // Per-monitor settings drawn directly under the canvas, only when one
-    // is selected.
-    let mut settings_h = 0.0;
-    if let Some(hi) = selected_head_idx {
-        let cfg_entry = selected_name.as_ref()
-            .and_then(|name| config.monitors.iter().find(|m| &m.name == name));
-        settings_h = monitor_settings::draw_monitor_settings(
-            output_mgr, &mut dps.monitor_settings, hi, cfg_entry,
-            painter, text, ix, fox,
-            card_x, inner_y + arrange_h + 12.0 * s, card_w, s, sw, sh,
-            true, // show "Settings: <name>" inline header to identify which display
+    if show_display {
+        // ── Card: Display Settings (arrangement canvas + per-monitor settings) ──
+        let inner_y = draw_section_card(
+            painter, text, fox, "Display Settings",
+            card_x, cy_top, card_w, display_card_h, s, sw, sh,
         );
-    }
-    dps.last_settings_h = settings_h;
-    cy_top += display_card_h + CARD_GAP * s;
+        let arrange_h = monitor_arrange::draw_monitor_arrange(
+            &mut dps.monitor_arrange, outputs, &config.monitors, output_mgr,
+            painter, text, ix, fox,
+            card_x, inner_y, card_w, s, sw, sh,
+            false,
+        );
+        dps.last_arrange_h = arrange_h;
 
-    // ─────────────────────────────────────────────────────────────────
-    // Card 3: Wallpaper
-    // ─────────────────────────────────────────────────────────────────
-    let wp_inner_y = draw_section_card(
-        painter, text, fox, "Wallpaper",
-        card_x, cy_top, card_w, wallpaper_card_h, s, sw, sh,
-    );
+        let mut settings_h = 0.0;
+        if let Some(hi) = selected_head_idx {
+            let cfg_entry = selected_name.as_ref()
+                .and_then(|name| config.monitors.iter().find(|m| &m.name == name));
+            settings_h = monitor_settings::draw_monitor_settings(
+                output_mgr, &mut dps.monitor_settings, hi, cfg_entry,
+                painter, text, ix, fox,
+                card_x, inner_y + arrange_h + 12.0 * s, card_w, s, sw, sh,
+                true,
+            );
+        }
+        dps.last_settings_h = settings_h;
+        cy_top += display_card_h + CARD_GAP * s;
+    }
+
+    // Wallpaper card — only on the Wallpaper subpanel.
+    let wp_inner_y = if show_wallpaper {
+        let inner = draw_section_card(
+            painter, text, fox, "Wallpaper",
+            card_x, cy_top, card_w, wallpaper_card_h, s, sw, sh,
+        );
+        inner
+    } else {
+        // Inert placeholder so the rest of the function compiles unchanged;
+        // when `show_wallpaper` is false we skip every wallpaper-card draw.
+        cy_top
+    };
     let mut cy = wp_inner_y;
 
+    if show_wallpaper {
     // Row 1: Current wallpaper label (bigger text)
     {
         let label_sz = CURRENT_LABEL_SIZE * s;
@@ -317,20 +324,22 @@ pub fn draw_display_panel(
             }
         }
     }
+    } // end `if show_wallpaper`
 
     scroll_area.end(painter, text);
 
     // ── Stash layout for collect_thumb_draws ───────────────────────
-    // collect_thumb_draws uses these to position textures in the
-    // separate texture pass. The grid origin is wp_inner_y + 2 rows.
     dps.viewport_x = x;
     dps.viewport_y = y;
     dps.viewport_w = w;
     dps.viewport_h = h;
     dps.grid_x = card_inner_x;
     dps.grid_w = card_inner_w;
+    let preceding_offset = if show_display {
+        display_card_h + CARD_GAP * s
+    } else { 0.0 };
     dps.grid_content_y_offset = CARD_OUTER_PAD_V * s
-        + display_card_h + CARD_GAP * s
+        + preceding_offset
         + (CARD_HEADER_H * s + CARD_INNER_PAD_V * s)
         + header_row_h + input_row_h;
     dps.content_height = content_height;

@@ -1,16 +1,8 @@
 //! Routes a single `zone_id` from the interaction layer to the right action.
 //!
-//! This is the dispatch table that used to live inline in `wayland.rs::run()`:
-//!   * Sidebar zones → switch active panel.
-//!   * `ZONE_SAVE`   → flush dirty monitor settings, save config, apply WiFi.
-//!   * `ZONE_CANCEL` → revert to last saved snapshot.
-//!   * Anything else → forward to the active panel's `handle_*_click`.
-//!
-//! Adding a panel? Wire its click handler into [`route_panel_click`] alongside
-//! its `ZONE_*` ids. Sidebar/save/cancel routing here is panel-agnostic.
-//!
-//! The dropdown menu's own clicks short-circuit *before* this router is called
-//! (see `wayland.rs`), so we don't need to think about menu hit-tests here.
+//! Per frame the sidebar appends a `SidebarAction` per visible row; sidebar
+//! clicks resolve through that map so we get one consistent contiguous zone
+//! range regardless of which categories are expanded.
 
 use wayland_client::QueueHandle;
 
@@ -24,14 +16,14 @@ use crate::notifications_panel;
 use crate::output_manager::{apply_config, HeadChange};
 use crate::panels::{self, PanelState};
 use crate::power_panel;
-use crate::wayland::{Panel, State, PANELS, ZONE_SIDEBAR_BASE};
+use crate::sidebar::{self, SidebarAction, SidebarState};
+use crate::wayland::{Panel, State, ZONE_SIDEBAR_BASE};
 
-/// Handle one left-click on `zone_id`. Returns nothing — every effect happens
-/// through the mutable references.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn route_zone_click(
     zone_id: u32,
     active_panel: &mut Panel,
+    sidebar_state: &mut SidebarState,
     config: &mut LanternConfig,
     saved_config: &mut LanternConfig,
     panel_state: &mut PanelState,
@@ -44,9 +36,9 @@ pub(crate) fn route_zone_click(
     cx: f32,
     cy: f32,
 ) {
-    // ── Themes UI (always tested first when the Appearance panel is
-    // active — the modal needs to eat clicks even over sidebar zones).
-    if *active_panel == Panel::Appearance
+    // ── Themes UI (always tested first when the Themes subpanel is active —
+    // the modal needs to eat clicks even over sidebar zones). ─────────────
+    if *active_panel == Panel::Themes
         && crate::appearance_themes::handle_themes_click(
             themes_state, config, panel_state, zone_id, cx, cy,
         )
@@ -54,14 +46,24 @@ pub(crate) fn route_zone_click(
         return;
     }
 
-    // ── Sidebar (panel switch) ──────────────────────────────────────
-    if zone_id >= ZONE_SIDEBAR_BASE && zone_id < ZONE_SIDEBAR_BASE + PANELS.len() as u32 {
-        *active_panel = PANELS[(zone_id - ZONE_SIDEBAR_BASE) as usize].0;
-        panel_state.close_dropdown();
+    // ── Sidebar (panel switch or category toggle) ──────────────────────
+    if zone_id >= ZONE_SIDEBAR_BASE
+        && (zone_id - ZONE_SIDEBAR_BASE) < sidebar_state.row_actions.len() as u32
+    {
+        let row = (zone_id - ZONE_SIDEBAR_BASE) as usize;
+        match sidebar_state.action_for_row(row) {
+            Some(SidebarAction::ToggleCategory(idx)) => sidebar_state.toggle(idx),
+            Some(SidebarAction::SelectPanel(p)) => {
+                *active_panel = p;
+                sidebar_state.ensure_expanded(sidebar::category_of(p));
+                panel_state.close_dropdown();
+            }
+            None => {}
+        }
         return;
     }
 
-    // ── Save / Cancel ───────────────────────────────────────────────
+    // ── Save / Cancel ───────────────────────────────────────────────────
     match zone_id {
         panels::ZONE_SAVE => {
             apply_save(config, saved_config, display_state, state, qh);
@@ -74,15 +76,13 @@ pub(crate) fn route_zone_click(
         _ => {}
     }
 
-    // ── Per-panel click handlers ────────────────────────────────────
+    // ── Per-subpanel click handlers ─────────────────────────────────────
     route_panel_click(
         *active_panel, zone_id, config, panel_state,
         display_state, icon_panel_state, input_state, state, cx, cy,
     );
 }
 
-/// Apply pending monitor changes (output-manager + config.monitors),
-/// persist the config, and kick off WiFi modprobe if those values changed.
 fn apply_save(
     config: &mut LanternConfig,
     saved_config: &mut LanternConfig,
@@ -137,23 +137,24 @@ fn route_panel_click(
     cy: f32,
 ) {
     match active_panel {
-        Panel::Appearance => {
+        Panel::Home => {}
+        Panel::Themes | Panel::Colors | Panel::Windows | Panel::Animations | Panel::Focus => {
             crate::appearance_panel::handle_appearance_click(
                 config, panel_state, zone_id, cx, cy,
             );
         }
-        Panel::Power => {
+        Panel::LidIdle | Panel::Battery | Panel::WifiPower => {
             power_panel::handle_power_click(config, panel_state, zone_id, cx, cy);
         }
-        Panel::Display => {
+        Panel::Monitors | Panel::Wallpaper => {
             display_panel::handle_display_click(
                 config, display_state, zone_id, cx, cy, &state.output_mgr,
             );
         }
-        Panel::Input => {
+        Panel::Mouse | Panel::Scrolling | Panel::Clicking | Panel::Cursor => {
             input_panel::handle_input_click(config, input_state, zone_id);
         }
-        Panel::Notifications => {
+        Panel::NotifBehavior | Panel::NotifSound | Panel::NotifTesting => {
             notifications_panel::handle_notifications_click(config, zone_id);
         }
         Panel::AppIcons => {

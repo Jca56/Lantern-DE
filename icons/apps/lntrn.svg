@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 130" width="256" height="333">
+  <defs>
+    <radialGradient id="lntrnFlame" cx="50%" cy="58%" r="58%">
+      <stop offset="0%"  stop-color="#FFF1B0"/>
+      <stop offset="22%" stop-color="#FFD24A"/>
+      <stop offset="55%" stop-color="#E68A14"/>
+      <stop offset="85%" stop-color="#8A3A06"/>
+      <stop offset="100%" stop-color="#3A1A05"/>
+    </radialGradient>
+    <radialGradient id="lntrnHotspot" cx="50%" cy="62%" r="22%">
+      <stop offset="0%"   stop-color="#FFFFFF" stop-opacity="0.75"/>
+      <stop offset="60%"  stop-color="#FFE07A" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#FFE07A" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <g fill="none" stroke="#6C6C6C" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round">
+    <!-- Handle loop on top -->
+    <path d="M 38 14 Q 38 6 46 6 L 54 6 Q 62 6 62 14 L 62 22"/>
+    <path d="M 38 22 L 38 14"/>
+
+    <!-- Top cap (wider rounded shelf) -->
+    <rect x="22" y="22" width="56" height="14" rx="6"/>
+
+    <!-- Body cage (tall rounded rectangle holding the egg) -->
+    <rect x="26" y="36" width="48" height="68" rx="4"/>
+
+    <!-- Outer side rails extending past the cap/base -->
+    <path d="M 22 36 L 22 104"/>
+    <path d="M 78 36 L 78 104"/>
+
+    <!-- Middle horizontal band across the egg -->
+    <line x1="22" y1="68" x2="78" y2="68"/>
+
+    <!-- Bottom cap (mirror of top) -->
+    <rect x="22" y="104" width="56" height="14" rx="6"/>
+
+    <!-- Tiny foot rail under the bottom -->
+    <path d="M 30 118 L 30 124 Q 30 126 32 126 L 68 126 Q 70 126 70 124 L 70 118"/>
+  </g>
+
+  <!-- Glowing egg -->
+  <ellipse cx="50" cy="70" rx="20" ry="28" fill="url(#lntrnFlame)"/>
+  <ellipse cx="50" cy="73" rx="14" ry="20" fill="url(#lntrnHotspot)"/>
+
+  <!-- Wick / flame ticks crossing the middle band -->
+  <g stroke="#E08A1A" stroke-width="2.2" stroke-linecap="round" fill="none" opacity="0.9">
+    <line x1="42" y1="66" x2="38" y2="58"/>
+    <line x1="58" y1="66" x2="62" y2="58"/>
+    <line x1="50" y1="66" x2="50" y2="56"/>
+  </g>
+
+  <!-- Re-draw middle band on top so it crosses the flame like the reference -->
+  <line x1="22" y1="68" x2="78" y2="68" stroke="#6C6C6C" stroke-width="2.6" stroke-linecap="round"/>
+</svg>

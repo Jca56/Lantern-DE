@@ -114,6 +114,7 @@ const WSIZE_ZONES: crate::appearance_window_sizes::WindowSizeZones =
 
 #[allow(clippy::too_many_arguments)]
 pub fn draw_appearance_panel(
+    subpanel: crate::wayland::Panel,
     config: &mut LanternConfig,
     panel_state: &mut PanelState,
     themes_state: &mut ThemesPanelState,
@@ -133,23 +134,21 @@ pub fn draw_appearance_panel(
     sh: u32,
     scroll_delta: f32,
 ) {
+    use crate::wayland::Panel;
+
     let row = ROW_H * s;
     let card_chrome_h = CARD_HEADER_H * s + CARD_INNER_PAD_V * 2.0 * s;
     let card_x = x + CARD_OUTER_PAD_H * s;
     let card_w = w - CARD_OUTER_PAD_H * 2.0 * s;
-
-    // ── Card sizing ──────────────────────────────────────────────────
     let themes_card_inner_w = card_w - CARD_INNER_PAD_H * 2.0 * s;
+
+    // Per-card heights, computed once so the scroll math sees the same numbers
+    // as the draw calls.
     let themes_card_h = crate::appearance_themes::themes_card_height(
         themes_state, themes_card_inner_w, s,
     );
-    let theme_card_h = card_chrome_h + 1.6 * row + row; // theme cards + accent row
-    // Window Gradient: 1 chip row + 1 color swatch row + Intensity slider
-    // + Radius slider + Disable-All button row = 5 rows.
+    let bg_card_h = card_chrome_h + 1.6 * row + row;
     let gradient_card_h = card_chrome_h + 5.0 * row;
-    // Layout & Visual Effects: 2 sliders (Border Width, Corner Radius) +
-    // Border Color swatch + 2 sliders (Blur Intensity, Blur Tint) + Tint
-    // Color swatch + 2 sliders (Blur Darken, Background Opacity) = 7 rows.
     let layout_card_h = card_chrome_h + 7.0 * row;
     let anim_card_h = card_chrome_h + 4.0 * row + 3.0 * (ROW_H * 0.75) * s;
     let focus_base_rows = 2.0;
@@ -157,14 +156,20 @@ pub fn draw_appearance_panel(
     let focus_card_h = card_chrome_h + (focus_base_rows + glow_extra_rows) * row;
     let wsize_card_h = card_chrome_h + crate::appearance_window_sizes::ROWS * row;
 
-    let content_height = CARD_OUTER_PAD_V * s
-        + themes_card_h + CARD_GAP * s
-        + theme_card_h + CARD_GAP * s
-        + gradient_card_h + CARD_GAP * s
-        + layout_card_h + CARD_GAP * s
-        + anim_card_h + CARD_GAP * s
-        + focus_card_h + CARD_GAP * s
-        + wsize_card_h + CARD_OUTER_PAD_V * 2.0 * s;
+    // Which cards belong to which subpanel.
+    let card_heights: Vec<f32> = match subpanel {
+        Panel::Themes     => vec![themes_card_h],
+        Panel::Colors     => vec![bg_card_h, gradient_card_h],
+        Panel::Windows    => vec![layout_card_h, wsize_card_h],
+        Panel::Animations => vec![anim_card_h],
+        Panel::Focus      => vec![focus_card_h],
+        _ => vec![],
+    };
+
+    let n = card_heights.len();
+    let content_height = CARD_OUTER_PAD_V * 2.0 * s
+        + card_heights.iter().sum::<f32>()
+        + CARD_GAP * s * n.saturating_sub(1) as f32;
 
     if scroll_delta != 0.0 {
         ScrollArea::apply_scroll(
@@ -179,57 +184,55 @@ pub fn draw_appearance_panel(
 
     let mut cy_top = scroll_area.content_y() + CARD_OUTER_PAD_V * s;
 
-    // ── Card 0: Themes ─────────────────────────────────────────────
-    crate::appearance_themes::draw_themes_card(
-        themes_state, config, painter, text, ix, tex_pass, gpu, fox, tex_draws,
-        card_x, cy_top, card_w, themes_card_h, s, sw, sh,
-    );
-    cy_top += themes_card_h + CARD_GAP * s;
+    match subpanel {
+        Panel::Themes => {
+            crate::appearance_themes::draw_themes_card(
+                themes_state, config, painter, text, ix, tex_pass, gpu, fox, tex_draws,
+                card_x, cy_top, card_w, themes_card_h, s, sw, sh,
+            );
+        }
+        Panel::Colors => {
+            draw_background_color_card(
+                config, painter, text, ix, fox,
+                card_x, cy_top, card_w, bg_card_h, s, sw, sh,
+            );
+            cy_top += bg_card_h + CARD_GAP * s;
+            draw_window_gradient_card(
+                config, painter, text, ix, fox,
+                card_x, cy_top, card_w, gradient_card_h, s, sw, sh,
+            );
+        }
+        Panel::Windows => {
+            crate::appearance_layout::draw_layout_card(
+                config, painter, text, ix, fox,
+                card_x, cy_top, card_w, layout_card_h, s, sw, sh,
+                &ZONE_IDS_LAYOUT,
+            );
+            cy_top += layout_card_h + CARD_GAP * s;
+            crate::appearance_window_sizes::draw_window_sizes_card(
+                config, panel_state, painter, text, ix, fox,
+                card_x, cy_top, card_w, wsize_card_h, s, sw, sh,
+                &WSIZE_ZONES,
+            );
+        }
+        Panel::Animations => {
+            crate::appearance_animations::draw_animations_card(
+                config, panel_state, painter, text, ix, fox,
+                card_x, cy_top, card_w, anim_card_h, s, sw, sh,
+                &ZONE_IDS_ANIM,
+            );
+        }
+        Panel::Focus => {
+            crate::appearance_focus::draw_focus_card(
+                config, painter, text, ix, fox,
+                card_x, cy_top, card_w, focus_card_h, s, sw, sh,
+                &ZONE_IDS_FOCUS,
+            );
+        }
+        _ => {}
+    }
 
-    // ── Card 1: Background Color ──────────────────────────────────
-    draw_background_color_card(
-        config, painter, text, ix, fox,
-        card_x, cy_top, card_w, theme_card_h, s, sw, sh,
-    );
-    cy_top += theme_card_h + CARD_GAP * s;
-
-    // ── Card 1.5: Window Gradient ──────────────────────────────────
-    draw_window_gradient_card(
-        config, painter, text, ix, fox,
-        card_x, cy_top, card_w, gradient_card_h, s, sw, sh,
-    );
-    cy_top += gradient_card_h + CARD_GAP * s;
-
-    // ── Card 2: Layout & Visual Effects ────────────────────────────
-    crate::appearance_layout::draw_layout_card(
-        config, painter, text, ix, fox,
-        card_x, cy_top, card_w, layout_card_h, s, sw, sh,
-        &ZONE_IDS_LAYOUT,
-    );
-    cy_top += layout_card_h + CARD_GAP * s;
-
-    // ── Card 3: Animations ─────────────────────────────────────────
-    crate::appearance_animations::draw_animations_card(
-        config, panel_state, painter, text, ix, fox,
-        card_x, cy_top, card_w, anim_card_h, s, sw, sh,
-        &ZONE_IDS_ANIM,
-    );
-    cy_top += anim_card_h + CARD_GAP * s;
-
-    // ── Card 4: Focus & Glow ───────────────────────────────────────
-    crate::appearance_focus::draw_focus_card(
-        config, painter, text, ix, fox,
-        card_x, cy_top, card_w, focus_card_h, s, sw, sh,
-        &ZONE_IDS_FOCUS,
-    );
-    cy_top += focus_card_h + CARD_GAP * s;
-
-    // ── Card 5: Window Sizes ───────────────────────────────────────
-    crate::appearance_window_sizes::draw_window_sizes_card(
-        config, panel_state, painter, text, ix, fox,
-        card_x, cy_top, card_w, wsize_card_h, s, sw, sh,
-        &WSIZE_ZONES,
-    );
+    let _ = cy_top; // silence "unused-after-last-card" lint in arms with one card
 
     scroll_area.end(painter, text);
 

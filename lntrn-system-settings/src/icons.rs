@@ -182,6 +182,22 @@ fn intersect_scanline(x0: f32, y0: f32, x1: f32, y1: f32, y: f32) -> Option<f32>
 // ── Icon path data ──────────────────────────────────────────────────────────
 // All icons defined in a 24x24 viewbox (standard icon grid).
 
+/// Home — house silhouette with a pitched roof.
+pub fn icon_home() -> Vec<PathCmd> {
+    use PathCmd::*;
+    vec![
+        // Roof + walls outline, single closed polygon
+        Move(12.0, 3.0),       // roof peak
+        Line(22.0, 12.5),      // down-right along roof
+        Line(19.5, 12.5),      // small step left (eave)
+        Line(19.5, 21.0),      // right wall down
+        Line(4.5, 21.0),       // floor
+        Line(4.5, 12.5),       // left wall up
+        Line(2.0, 12.5),       // eave step left
+        Close,                 // back to peak
+    ]
+}
+
 /// Appearance — paintbrush icon
 pub fn icon_appearance() -> Vec<PathCmd> {
     use PathCmd::*;

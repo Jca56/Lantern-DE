@@ -878,7 +878,12 @@ pub fn render_surface(
         }
     }
 
-    // Render zombie closing windows (client-initiated closes) using captured snapshots
+    // Render zombie closing windows (client-initiated closes) using captured snapshots.
+    // Kept OUT of window_elements (the blur pipeline indexes into that and would mis-sample
+    // the snapshot). Inserted into the final `elements` list right before window_elements
+    // is extended, which places zombies one z-step above the topmost live window — matching
+    // the Super+Q live close visual (closing window stays on top while it shrinks).
+    let mut zombie_elements: Vec<CustomRenderElements> = Vec::new();
     {
         let ctx_id = renderer.context_id();
         for cw in &state.closing_windows {
@@ -950,7 +955,7 @@ pub fn render_surface(
                 None,
                 Kind::Unspecified,
             );
-            window_elements.push(CustomRenderElements::Backdrop(tex_elem));
+            zombie_elements.push(CustomRenderElements::Backdrop(tex_elem));
 
             // Shadow behind the zombie
             if let Some(ref shader) = shadow_shader {
@@ -977,7 +982,7 @@ pub fn render_surface(
                     ],
                     Kind::Unspecified,
                 );
-                window_elements.push(CustomRenderElements::Shader(shadow_elem));
+                zombie_elements.push(CustomRenderElements::Shader(shadow_elem));
             }
         }
     }
@@ -1646,6 +1651,10 @@ pub fn render_surface(
         }
     }
 
+    // Zombies first → they end up one z-step ABOVE the topmost live window
+    // (earlier in `elements` = higher z), matching where the closing window
+    // actually was when the user clicked X.
+    elements.extend(zombie_elements);
     elements.extend(window_elements);
     elements.extend(bottom_layer_elements);
 

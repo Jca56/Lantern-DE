@@ -404,6 +404,7 @@ fn load_cursor_texture(
 // ── Input panel ─────────────────────────────────────────────────────────────
 
 pub fn draw_input_panel<'a>(
+    subpanel: crate::wayland::Panel,
     config: &mut LanternConfig,
     state: &'a mut InputPanelState,
     painter: &mut Painter, text: &mut TextRenderer, ix: &mut InteractionContext,
@@ -412,6 +413,11 @@ pub fn draw_input_panel<'a>(
     scroll_delta: f32,
     tex_draws: &mut Vec<TextureDraw<'a>>,
 ) {
+    use crate::wayland::Panel;
+    let show_pointer   = matches!(subpanel, Panel::Mouse);
+    let show_scrolling = matches!(subpanel, Panel::Scrolling);
+    let show_clicking  = matches!(subpanel, Panel::Clicking);
+    let show_cursor    = matches!(subpanel, Panel::Cursor);
     state.scan();
     state.load_textures(tex_pass, gpu, s);
     let palette = CursorPalette {
@@ -483,11 +489,15 @@ pub fn draw_input_panel<'a>(
     let cursor_card_h = card_chrome_h + row * 8.0 + 8.0 * s
         + cursor_grid_h.max(cursor_card_size);
 
-    let content_height = CARD_OUTER_PAD_V * s
-        + pointer_card_h + CARD_GAP * s
-        + scrolling_card_h + CARD_GAP * s
-        + clicking_card_h + CARD_GAP * s
-        + cursor_card_h + CARD_OUTER_PAD_V * 2.0 * s;
+    let visible_heights: Vec<f32> = [
+        (show_pointer,   pointer_card_h),
+        (show_scrolling, scrolling_card_h),
+        (show_clicking,  clicking_card_h),
+        (show_cursor,    cursor_card_h),
+    ].iter().filter_map(|(b, h)| if *b { Some(*h) } else { None }).collect();
+    let content_height = CARD_OUTER_PAD_V * 2.0 * s
+        + visible_heights.iter().sum::<f32>()
+        + CARD_GAP * s * visible_heights.len().saturating_sub(1) as f32;
 
     if scroll_delta != 0.0 {
         ScrollArea::apply_scroll(
@@ -505,7 +515,7 @@ pub fn draw_input_panel<'a>(
     // ─────────────────────────────────────────────────────────────────
     // Card 1: Pointer
     // ─────────────────────────────────────────────────────────────────
-    {
+    if show_pointer {
         let mut cy = draw_section_card(
             painter, text, fox, "Pointer",
             card_x, cy_top, card_w, pointer_card_h, s, sw, sh,
@@ -548,14 +558,13 @@ pub fn draw_input_panel<'a>(
             let zone = ix.add_zone(ZONE_POINTER_ACCEL, track);
             toggle.hovered(zone.is_hovered()).draw(painter, text, fox, sw, sh);
         }
+        cy_top += pointer_card_h + CARD_GAP * s;
     }
-
-    cy_top += pointer_card_h + CARD_GAP * s;
 
     // ─────────────────────────────────────────────────────────────────
     // Card 2: Scrolling
     // ─────────────────────────────────────────────────────────────────
-    {
+    if show_scrolling {
         let cy = draw_section_card(
             painter, text, fox, "Scrolling",
             card_x, cy_top, card_w, scrolling_card_h, s, sw, sh,
@@ -578,14 +587,13 @@ pub fn draw_input_panel<'a>(
             .draw(painter, fox);
         let val = format!("{:.2}x", config.input.scroll_speed);
         text.queue(&val, vsz, value_x, label_y, fox.text_secondary, value_w, sw, sh);
+        cy_top += scrolling_card_h + CARD_GAP * s;
     }
-
-    cy_top += scrolling_card_h + CARD_GAP * s;
 
     // ─────────────────────────────────────────────────────────────────
     // Card 3: Clicking
     // ─────────────────────────────────────────────────────────────────
-    {
+    if show_clicking {
         let mut cy = draw_section_card(
             painter, text, fox, "Clicking",
             card_x, cy_top, card_w, clicking_card_h, s, sw, sh,
@@ -700,14 +708,13 @@ pub fn draw_input_panel<'a>(
             }
         }
         let _ = cy;
+        cy_top += clicking_card_h + CARD_GAP * s;
     }
-
-    cy_top += clicking_card_h + CARD_GAP * s;
 
     // ─────────────────────────────────────────────────────────────────
     // Card 4: Cursor Theme (with size slider above the grid)
     // ─────────────────────────────────────────────────────────────────
-    {
+    if show_cursor {
         let mut cy = draw_section_card(
             painter, text, fox, "Cursor Theme",
             card_x, cy_top, card_w, cursor_card_h, s, sw, sh,

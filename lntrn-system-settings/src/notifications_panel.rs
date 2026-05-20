@@ -38,6 +38,7 @@ impl NotifPanelState {
 
 #[allow(clippy::too_many_arguments)]
 pub fn draw_notifications_panel(
+    subpanel: crate::wayland::Panel,
     config: &mut LanternConfig,
     state: &mut NotifPanelState,
     painter: &mut Painter,
@@ -53,6 +54,11 @@ pub fn draw_notifications_panel(
     sh: u32,
     scroll_delta: f32,
 ) {
+    use crate::wayland::Panel;
+    // Behavior subpanel groups DnD + display (where toasts appear, how long).
+    let show_behavior = matches!(subpanel, Panel::NotifBehavior);
+    let show_sound    = matches!(subpanel, Panel::NotifSound);
+    let show_testing  = matches!(subpanel, Panel::NotifTesting);
     let row = ROW_H * s;
     let lsz = LABEL_SIZE * s;
     let vsz = VALUE_SIZE * s;
@@ -83,12 +89,15 @@ pub fn draw_notifications_panel(
     // Card 4: Testing — fire a test notification
     let testing_card_h = card_chrome_h + row * 1.5;
 
-    let content_height = CARD_OUTER_PAD_V * s
-        + dnd_card_h + CARD_GAP * s
-        + display_card_h + CARD_GAP * s
-        + sound_card_h + CARD_GAP * s
-        + testing_card_h
-        + CARD_OUTER_PAD_V * 2.0 * s;
+    let visible_heights: Vec<f32> = [
+        (show_behavior, dnd_card_h),
+        (show_behavior, display_card_h),
+        (show_sound,    sound_card_h),
+        (show_testing,  testing_card_h),
+    ].iter().filter_map(|(b, h)| if *b { Some(*h) } else { None }).collect();
+    let content_height = CARD_OUTER_PAD_V * 2.0 * s
+        + visible_heights.iter().sum::<f32>()
+        + CARD_GAP * s * visible_heights.len().saturating_sub(1) as f32;
 
     if scroll_delta != 0.0 {
         ScrollArea::apply_scroll(&mut state.scroll, scroll_delta * 40.0, content_height, panel_h);
@@ -101,7 +110,7 @@ pub fn draw_notifications_panel(
     let mut cy_top = scroll_area.content_y() + CARD_OUTER_PAD_V * s;
 
     // ── Do Not Disturb ──────────────────────────────────────────────
-    {
+    if show_behavior {
         let mut cy = draw_section_card(
             painter, text, fox, "Do Not Disturb",
             card_x, cy_top, card_w, dnd_card_h, s, sw, sh,
@@ -115,12 +124,11 @@ pub fn draw_notifications_panel(
         toggle.hovered(zone.is_hovered()).draw(painter, text, fox, sw, sh);
         cy += row;
         let _ = cy;
+        cy_top += dnd_card_h + CARD_GAP * s;
     }
 
-    cy_top += dnd_card_h + CARD_GAP * s;
-
     // ── Display ─────────────────────────────────────────────────────
-    {
+    if show_behavior {
         let mut cy = draw_section_card(
             painter, text, fox, "Display",
             card_x, cy_top, card_w, display_card_h, s, sw, sh,
@@ -196,48 +204,48 @@ pub fn draw_notifications_panel(
                     .draw(painter, text, fox, sw, sh);
             }
         }
+        cy_top += display_card_h + CARD_GAP * s;
     }
-
-    cy_top += display_card_h + CARD_GAP * s;
 
     // ── Sound ───────────────────────────────────────────────────────
-    let mut cy = draw_section_card(
-        painter, text, fox, "Sound",
-        card_x, cy_top, card_w, sound_card_h, s, sw, sh,
-    );
-    {
-        let rect = Rect::new(card_inner_x, cy, card_inner_w, TOGGLE_H * s);
-        let toggle = Toggle::new(rect, config.notifications.play_sound)
-            .label("Play Sound")
-            .scale(s);
-        let track = toggle.track_rect();
-        let zone = ix.add_zone(ZONE_NOTIF_SOUND, track);
-        toggle.hovered(zone.is_hovered()).draw(painter, text, fox, sw, sh);
-        cy += row;
-    }
-
-    if config.notifications.play_sound {
-        let label_y = cy + (row - lsz) / 2.0;
-        text.queue("Volume", lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
-        let frac = config.notifications.volume.clamp(0.0, 1.0);
-        let rect = Rect::new(ctrl_x, cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
-        let zone = ix.add_zone(ZONE_NOTIF_VOLUME, rect);
-        if let Some(f) = slider_value_from_cursor(ix, ZONE_NOTIF_VOLUME, &rect) {
-            config.notifications.volume = (f * 100.0).round() / 100.0;
+    if show_sound {
+        let mut cy = draw_section_card(
+            painter, text, fox, "Sound",
+            card_x, cy_top, card_w, sound_card_h, s, sw, sh,
+        );
+        {
+            let rect = Rect::new(card_inner_x, cy, card_inner_w, TOGGLE_H * s);
+            let toggle = Toggle::new(rect, config.notifications.play_sound)
+                .label("Play Sound")
+                .scale(s);
+            let track = toggle.track_rect();
+            let zone = ix.add_zone(ZONE_NOTIF_SOUND, track);
+            toggle.hovered(zone.is_hovered()).draw(painter, text, fox, sw, sh);
+            cy += row;
         }
-        Slider::new(rect)
-            .value(frac)
-            .hovered(zone.is_hovered())
-            .active(zone.is_active())
-            .draw(painter, fox);
-        let val = format!("{:.0}%", config.notifications.volume * 100.0);
-        text.queue(&val, vsz, value_x, label_y, fox.text_secondary, VALUE_W * s, sw, sh);
-    }
 
-    cy_top += sound_card_h + CARD_GAP * s;
+        if config.notifications.play_sound {
+            let label_y = cy + (row - lsz) / 2.0;
+            text.queue("Volume", lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
+            let frac = config.notifications.volume.clamp(0.0, 1.0);
+            let rect = Rect::new(ctrl_x, cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
+            let zone = ix.add_zone(ZONE_NOTIF_VOLUME, rect);
+            if let Some(f) = slider_value_from_cursor(ix, ZONE_NOTIF_VOLUME, &rect) {
+                config.notifications.volume = (f * 100.0).round() / 100.0;
+            }
+            Slider::new(rect)
+                .value(frac)
+                .hovered(zone.is_hovered())
+                .active(zone.is_active())
+                .draw(painter, fox);
+            let val = format!("{:.0}%", config.notifications.volume * 100.0);
+            text.queue(&val, vsz, value_x, label_y, fox.text_secondary, VALUE_W * s, sw, sh);
+        }
+        cy_top += sound_card_h + CARD_GAP * s;
+    }
 
     // ── Testing ─────────────────────────────────────────────────────
-    {
+    if show_testing {
         let cy = draw_section_card(
             painter, text, fox, "Testing",
             card_x, cy_top, card_w, testing_card_h, s, sw, sh,

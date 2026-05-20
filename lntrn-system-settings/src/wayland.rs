@@ -4,11 +4,11 @@ use std::ptr::NonNull;
 use anyhow::{anyhow, Result};
 use lntrn_render::{Color, GpuContext, GpuTexture, Painter, Rect, TextureDraw, TexturePass, TextRenderer};
 use lntrn_ui::gpu::{
-    FoxPalette, InteractionContext, MenuBar, MenuEvent, MenuItem, PopupSurface,
-    WaylandPopupBackend,
+    FoxPalette, InteractionContext, PopupSurface, WaylandPopupBackend,
 };
 
-use crate::config::{LanternConfig, WindowMode};
+use crate::config::LanternConfig;
+use crate::home_panel;
 use crate::display_panel::{self, DisplayPanelState};
 use crate::icon_panel;
 use crate::icons;
@@ -29,52 +29,65 @@ use wayland_protocols::xdg::shell::client::xdg_toplevel;
 const KEY_ESC: u32 = 1;
 use crate::chrome::{self, TITLE_BAR_H, CORNER_RADIUS};
 
-use crate::sidebar::{draw_sidebar, SIDEBAR_W};
+use crate::sidebar::{draw_sidebar, SidebarState, SIDEBAR_W};
 
 const ICON_SIZE: u32 = 72; // rasterized icon size in pixels
 
+/// Sidebar zone ids are allocated dynamically per-row by `draw_sidebar`. The
+/// click router maps `zone_id - ZONE_SIDEBAR_BASE` back through
+/// `SidebarState::row_actions`. Reserve a wide block to fit every possible
+/// (parent + child) row across all categories.
 pub(crate) const ZONE_SIDEBAR_BASE: u32 = 200;
 
-// View menu actions
-const MENU_MODE_FOX: u32 = 600;
-const MENU_MODE_LANTERN: u32 = 601;
-const MENU_MODE_GROUP: u32 = 1;
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Panel { Appearance, Input, Display, Power, Notifications, AppIcons }
-
-pub(crate) const PANELS: &[(Panel, &str)] = &[
-    (Panel::Appearance, "Appearance"),
-    (Panel::Input, "Mouse"),
-    (Panel::Display, "Display"),
-    (Panel::Power, "Power"),
-    (Panel::Notifications, "Notifications"),
-    (Panel::AppIcons, "App Icons"),
-];
-
-/// Build the menu bar menus for the given window mode. Currently just "View"
-/// with a radio group for Fox / Night Sky.
-fn build_view_menus(mode: WindowMode) -> Vec<(&'static str, Vec<MenuItem>)> {
-    let is_fox = mode == WindowMode::Fox;
-    vec![
-        ("View", vec![
-            MenuItem::header("Theme"),
-            MenuItem::radio(MENU_MODE_FOX, MENU_MODE_GROUP, "Fox Dark", is_fox),
-            MenuItem::radio(MENU_MODE_LANTERN, MENU_MODE_GROUP, "Lantern", !is_fox),
-        ]),
-    ]
+/// Every selectable destination in the sidebar tree. Categories themselves
+/// (Appearance, Display, etc.) are toggles only — see `Category` in
+/// `sidebar.rs` for the parent grouping.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub(crate) enum Panel {
+    Home,
+    // Appearance
+    Themes, Colors, Windows, Animations, Focus,
+    // Display
+    Monitors, Wallpaper,
+    // Input
+    Mouse, Scrolling, Clicking, Cursor,
+    // Notifications
+    NotifBehavior, NotifSound, NotifTesting,
+    // Power
+    LidIdle, Battery, WifiPower,
+    // Apps
+    AppIcons,
 }
 
 fn parse_panel_arg() -> Option<Panel> {
     let args: Vec<String> = std::env::args().collect();
     let idx = args.iter().position(|a| a == "--panel")?;
     match args.get(idx + 1)?.as_str() {
-        "appearance" => Some(Panel::Appearance),
-        "input" => Some(Panel::Input),
-        "display" => Some(Panel::Display),
-        "power" => Some(Panel::Power),
-        "notifications" => Some(Panel::Notifications),
-        "app-icons" => Some(Panel::AppIcons),
+        "home"          => Some(Panel::Home),
+        // Appearance subpanels (legacy "appearance" maps to Themes)
+        "appearance" | "themes" => Some(Panel::Themes),
+        "colors"        => Some(Panel::Colors),
+        "windows"       => Some(Panel::Windows),
+        "animations"    => Some(Panel::Animations),
+        "focus"         => Some(Panel::Focus),
+        // Display
+        "display" | "monitors" => Some(Panel::Monitors),
+        "wallpaper"     => Some(Panel::Wallpaper),
+        // Input (legacy "input"/"mouse" both map to Mouse subpanel)
+        "input" | "mouse" => Some(Panel::Mouse),
+        "scrolling"     => Some(Panel::Scrolling),
+        "clicking"      => Some(Panel::Clicking),
+        "cursor"        => Some(Panel::Cursor),
+        // Notifications
+        "notifications" | "notif-behavior" => Some(Panel::NotifBehavior),
+        "notif-sound"   => Some(Panel::NotifSound),
+        "notif-testing" => Some(Panel::NotifTesting),
+        // Power
+        "power" | "lid-idle" => Some(Panel::LidIdle),
+        "battery"       => Some(Panel::Battery),
+        "wifi-power"    => Some(Panel::WifiPower),
+        // Apps
+        "app-icons" | "apps" => Some(Panel::AppIcons),
         _ => None,
     }
 }
@@ -178,8 +191,6 @@ pub fn run() -> Result<()> {
     let mut ix = InteractionContext::new();
     // Palette will be rebuilt each frame from the current window mode.
     let mut fox = FoxPalette::dark();
-    // Menu bar in the title bar (View menu with theme switcher).
-    let mut menu_bar = MenuBar::new(&fox);
 
     // Initialize popup backend
     {
@@ -191,15 +202,16 @@ pub fn run() -> Result<()> {
         ));
     }
 
-    // Rasterize sidebar icons into GPU textures
+    // Rasterize sidebar icons into GPU textures. Indices line up with
+    // `sidebar::CategoryDef::icon_idx`.
     let tex_pass = TexturePass::new(&gpu);
     let icon_defs: [(Vec<icons::PathCmd>, Color); 7] = [
+        (icons::icon_home(),           Color::from_rgb8(255, 200, 60)),  // gold lantern
         (icons::icon_appearance(),     Color::from_rgb8(255, 180, 120)), // warm peach
-        (icons::icon_window_manager(), Color::from_rgb8(130, 170, 255)), // soft blue
-        (icons::icon_input(),          Color::from_rgb8(180, 140, 220)), // lavender
         (icons::icon_display(),        Color::from_rgb8(100, 200, 180)), // teal
-        (icons::icon_power(),          Color::from_rgb8(120, 210, 120)), // green
+        (icons::icon_input(),          Color::from_rgb8(180, 140, 220)), // lavender
         (icons::icon_notifications(),  Color::from_rgb8(255, 200, 100)), // amber
+        (icons::icon_power(),          Color::from_rgb8(120, 210, 120)), // green
         (icons::icon_app_icons(),      Color::from_rgb8(230, 130, 180)), // pink
     ];
     let icon_textures: Vec<GpuTexture> = icon_defs.iter().map(|(cmds, color)| {
@@ -207,7 +219,9 @@ pub fn run() -> Result<()> {
         tex_pass.upload(&gpu, &rgba, ICON_SIZE, ICON_SIZE)
     }).collect();
 
-    let mut active_panel = parse_panel_arg().unwrap_or(Panel::Appearance);
+    let mut active_panel = parse_panel_arg().unwrap_or(Panel::Home);
+    let mut sidebar_state = SidebarState::new(active_panel);
+    let mut home_state = home_panel::HomeState::new();
     let mut config = LanternConfig::load();
     let mut saved_config = config.clone();
     // Seed the palette from the persisted window style.
@@ -312,27 +326,12 @@ pub fn run() -> Result<()> {
         // Left press
         if state.left_pressed {
             state.left_pressed = false;
-            // Has the menu bar's label or open dropdown consumed this click?
-            let menu_consumed_click = if state.pointer_in_surface && pointer_on_popup.is_none() {
-                let on_dropdown = menu_bar.is_open()
-                    && menu_bar.context_menu.contains(cx, cy);
-                if on_dropdown {
-                    true
-                } else {
-                    let menus = build_view_menus(config.appearance.window_mode());
-                    menu_bar.on_click(&mut ix, &menus, s)
-                }
-            } else {
-                false
-            };
             if let Some(pid) = pointer_on_popup {
                 if let Some(backend) = &mut state.popup_backend {
                     if let Some(ctx) = backend.popup_render(pid) {
                         ctx.interaction.on_left_pressed();
                     }
                 }
-            } else if menu_consumed_click {
-                // Menu bar (label or dropdown) consumed the click — nothing else to do.
             } else {
                 let border = 10.0 * s;
                 let controls_x = wf - 110.0 * s;
@@ -372,6 +371,7 @@ pub fn run() -> Result<()> {
                         crate::click_router::route_zone_click(
                             zone_id,
                             &mut active_panel,
+                            &mut sidebar_state,
                             &mut config,
                             &mut saved_config,
                             &mut panel_state,
@@ -498,28 +498,22 @@ pub fn run() -> Result<()> {
         fox = chrome::content_palette(mode);
         let chrome_pal = chrome::ChromePalette::for_mode(mode);
 
-        // Window chrome: background, title, controls, border
+        // Window chrome: background + controls + border. No title text and
+        // no View menu — categories live in the sidebar now.
         chrome::draw_background(&mut painter, mode, wf, hf, r);
-        chrome::draw_title(&mut text, "System Settings", s, wf, title_h, &chrome_pal, sw, sh);
         chrome::draw_controls(&mut painter, cx, cy, s, wf, title_h, &chrome_pal);
-
-        // ── Menu bar (View menu with theme switcher) ───────────────────
-        let menu_area = Rect::new(10.0 * s, 0.0, 200.0 * s, title_h);
-        let view_menus = build_view_menus(mode);
-        menu_bar.update(&mut ix, &view_menus, menu_area, s);
-        let labels: Vec<&str> = view_menus.iter().map(|(l, _)| *l).collect();
-        menu_bar.draw_with_labels(&mut painter, &mut text, &fox, &labels, sw, sh, s);
 
         // ── Sidebar ────────────────────────────────────────────────────
         let mut tex_draws: Vec<TextureDraw> = Vec::new();
         draw_sidebar(
+            &mut sidebar_state,
             &mut painter, &mut text, &mut ix, &fox,
             &icon_textures, &mut tex_draws,
             active_panel, sidebar_w, body_y, hf, s, sw, sh,
         );
 
         // ── Content area header ────────────────────────────────────────
-        let header_label = PANELS.iter().find(|(p, _)| *p == active_panel).map(|(_, l)| *l).unwrap_or("");
+        let header_label = crate::sidebar::panel_label(active_panel);
         let header_size = 26.0 * s;
         let header_y = body_y + 16.0 * s;
         text.queue(header_label, header_size, content_x + 24.0 * s, header_y, fox.text, content_w, sw, sh);
@@ -533,19 +527,25 @@ pub fn run() -> Result<()> {
         );
 
         // ── Panel content ───────────────────────────────────────────────
+        let panel_h = hf - panel_y;
         match active_panel {
-            Panel::Appearance => {
-                let panel_h = hf - panel_y;
+            Panel::Home => {
+                home_panel::draw_home_panel(
+                    &mut home_state, &mut painter, &mut text, &tex_pass, &gpu, &fox,
+                    &mut tex_draws,
+                    content_x, panel_y, content_w, panel_h, s, sw, sh,
+                );
+            }
+            Panel::Themes | Panel::Colors | Panel::Windows | Panel::Animations | Panel::Focus => {
                 crate::appearance_panel::draw_appearance_panel(
+                    active_panel,
                     &mut config, &mut panel_state, &mut themes_state,
                     &mut painter, &mut text, &mut ix, &tex_pass, &gpu, &fox,
                     &mut tex_draws,
                     content_x, panel_y, content_w, panel_h, s, sw, sh, frame_scroll,
                 );
-                // Modal first while we still have &mut themes_state available;
-                // collect_theme_thumbs below takes an immutable borrow that the
-                // tex_draws Vec holds until the render pass at the bottom of
-                // the loop.
+                // Themes modal + thumbnails (only relevant on the Themes
+                // subpanel but harmless to feed through otherwise).
                 if themes_state.modal_open() {
                     crate::appearance_themes::draw_themes_modal(
                         &mut themes_state, &mut painter, &mut text, &mut ix, &fox,
@@ -556,29 +556,20 @@ pub fn run() -> Result<()> {
                     tex_draws.push(td);
                 }
             }
-            Panel::Power => {
-                let panel_h = hf - panel_y;
-                crate::power_panel::draw_power_panel(
-                    &mut config, &mut panel_state, &mut painter, &mut text, &mut ix, &fox,
-                    content_x, panel_y, content_w, panel_h, s, sw, sh, frame_scroll,
-                );
-            }
-            Panel::Display => {
-                let panel_h = hf - panel_y;
+            Panel::Monitors | Panel::Wallpaper => {
                 display_panel::draw_display_panel(
+                    active_panel,
                     &mut config, &mut display_state,
                     &mut painter, &mut text, &mut ix, &tex_pass, &fox, &gpu,
                     content_x, panel_y, content_w, panel_h, s, sw, sh,
                     frame_scroll, &state.outputs, &state.output_mgr,
                 );
                 let thumb_draws = display_panel::collect_thumb_draws(&display_state, s);
-                for td in thumb_draws {
-                    tex_draws.push(td);
-                }
+                for td in thumb_draws { tex_draws.push(td); }
             }
-            Panel::Input => {
-                let panel_h = hf - panel_y;
+            Panel::Mouse | Panel::Scrolling | Panel::Clicking | Panel::Cursor => {
                 input_panel::draw_input_panel(
+                    active_panel,
                     &mut config, &mut input_state,
                     &mut painter, &mut text, &mut ix,
                     &tex_pass, &fox, &gpu,
@@ -586,16 +577,22 @@ pub fn run() -> Result<()> {
                     frame_scroll, &mut tex_draws,
                 );
             }
-            Panel::Notifications => {
-                let panel_h = hf - panel_y;
+            Panel::NotifBehavior | Panel::NotifSound | Panel::NotifTesting => {
                 notifications_panel::draw_notifications_panel(
+                    active_panel,
                     &mut config, &mut notif_state,
                     &mut painter, &mut text, &mut ix, &fox,
                     content_x, panel_y, content_w, panel_h, s, sw, sh, frame_scroll,
                 );
             }
+            Panel::LidIdle | Panel::Battery | Panel::WifiPower => {
+                crate::power_panel::draw_power_panel(
+                    active_panel,
+                    &mut config, &mut panel_state, &mut painter, &mut text, &mut ix, &fox,
+                    content_x, panel_y, content_w, panel_h, s, sw, sh, frame_scroll,
+                );
+            }
             Panel::AppIcons => {
-                let panel_h = hf - panel_y;
                 icon_panel::draw_icon_panel(
                     &mut icon_panel_state,
                     &mut painter, &mut text, &mut ix, &tex_pass, &fox, &gpu,
@@ -617,28 +614,6 @@ pub fn run() -> Result<()> {
         // Window border (skip when maximized)
         if !state.maximized {
             chrome::draw_border(&mut painter, wf, hf, r, &chrome_pal);
-        }
-
-        // ── Menu bar dropdown overlay (drawn last so it's on top) ──────
-        menu_bar.context_menu.set_scale(s);
-        menu_bar.context_menu.update(0.016);
-        if let Some(evt) = menu_bar.context_menu.draw(&mut painter, &mut text, &mut ix, sw, sh) {
-            if let MenuEvent::RadioSelected { id, group: _ } = evt {
-                let new_theme = match id {
-                    MENU_MODE_FOX => Some("fox-dark"),
-                    MENU_MODE_LANTERN => Some("lantern"),
-                    _ => None,
-                };
-                if let Some(theme) = new_theme {
-                    if config.appearance.theme != theme {
-                        config.appearance.theme = theme.into();
-                        // Persist immediately — theme changes shouldn't need the Save button.
-                        saved_config.appearance.theme = theme.into();
-                        config.save();
-                    }
-                    menu_bar.close();
-                }
-            }
         }
 
         // ── Render pass ─────────────────────────────────────────────────

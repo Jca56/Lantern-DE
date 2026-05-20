@@ -210,18 +210,16 @@ impl Lantern {
                     }
                 }
 
-                // Super+Arrow — proportional resize. Aspect ratio locked to
-                // the focused window's output (detected from work area, so
-                // each monitor produces its native ratio).
-                //   Up / Right — grow to next size stage
-                //   Down / Left — shrink to prev size stage
+                // Super+Up/Down — resize. Middle column does aspect-locked
+                // resize. Edge columns (left/right) do vertical-only resize.
+                // Super+Left/Right intentionally do nothing.
                 if event.state() == KeyState::Pressed
                     && _modifiers.logo && !_modifiers.shift && !_modifiers.ctrl && !_modifiers.alt
                 {
                     let raw = keysym.modified_sym().raw();
                     let action = match raw {
-                        xkb::KEY_Up    | xkb::KEY_Right => Some(ResizeAction::Grow),
-                        xkb::KEY_Down  | xkb::KEY_Left  => Some(ResizeAction::Shrink),
+                        xkb::KEY_Up   => Some(ResizeAction::Grow),
+                        xkb::KEY_Down => Some(ResizeAction::Shrink),
                         _ => None,
                     };
                     if let Some(action) = action {

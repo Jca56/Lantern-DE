@@ -41,6 +41,7 @@ mod chrome;
 mod click_router;
 mod config;
 mod display_panel;
+mod home_panel;
 mod monitor_settings;
 mod output_manager;
 mod icon_panel;

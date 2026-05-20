@@ -154,6 +154,23 @@ impl Lantern {
             .min_by_key(|&i| (cur_loc.y - anchors_y[i as usize]).abs())
             .unwrap_or(1);
 
+        // Cross-monitor: at the leftmost cell pressing Left jumps to the
+        // adjacent left monitor's rightmost cell (and same row). Same for
+        // right. If no adjacent output exists, clamp at the current edge.
+        let cross = match arrow {
+            ArrowDir::Left  if cur_col == 0 => self.cross_to_adjacent_output(&window, &output, output_geo, ArrowDir::Left,  cur_row, w, h),
+            ArrowDir::Right if cur_col == 2 => self.cross_to_adjacent_output(&window, &output, output_geo, ArrowDir::Right, cur_row, w, h),
+            _ => None,
+        };
+        if let Some(target) = cross {
+            self.posed_windows.remove(&surface);
+            let cur_loc_now = self.workspaces.element_location(&window).unwrap_or(target.loc);
+            let current_rect = Rectangle::new(cur_loc_now, window.geometry().size);
+            let anim_start = self.window_state_anim.current_rect(&surface).unwrap_or(current_rect);
+            self.animate_resize(&surface, &window, anim_start, target);
+            return true;
+        }
+
         let (new_col, new_row) = match arrow {
             ArrowDir::Left  => ((cur_col - 1).max(0), cur_row),
             ArrowDir::Right => ((cur_col + 1).min(2), cur_row),
@@ -164,6 +181,72 @@ impl Lantern {
             return false;
         }
         self.move_focused_to_zone(zone_from_grid(new_col, new_row))
+    }
+
+    /// Find the output directly adjacent in `arrow` direction (left or right)
+    /// and return the target rect placing `(w, h)` in column 2 (left jump)
+    /// or column 0 (right jump) of that output's work area, at `dst_row`.
+    /// Returns None if no adjacent output exists on that side.
+    fn cross_to_adjacent_output(
+        &mut self,
+        window: &smithay::desktop::Window,
+        current_output: &smithay::output::Output,
+        current_geo: Rectangle<i32, smithay::utils::Logical>,
+        arrow: ArrowDir,
+        dst_row: i32,
+        w: i32, h: i32,
+    ) -> Option<Rectangle<i32, smithay::utils::Logical>> {
+        let cur_left = current_geo.loc.x;
+        let cur_right = current_geo.loc.x + current_geo.size.w;
+
+        let mut best: Option<(i32, smithay::output::Output)> = None;
+        for o in self.workspaces.outputs_iter() {
+            if o == current_output { continue; }
+            let Some(g) = self.workspaces.output_geometry(o) else { continue };
+            let o_left = g.loc.x;
+            let o_right = g.loc.x + g.size.w;
+            let dist = match arrow {
+                ArrowDir::Left  => cur_left - o_right,
+                ArrowDir::Right => o_left - cur_right,
+                _ => continue,
+            };
+            if dist < 0 { continue; }
+            if best.as_ref().map_or(true, |(d, _)| dist < *d) {
+                best = Some((dist, o.clone()));
+            }
+        }
+        let (_, target_output) = best?;
+        let target_geo = self.workspaces.output_geometry(&target_output)?;
+
+        let (top, bot, left, right) = self.exclusive_zone_offsets_for_output(&target_output);
+        let gap = crate::default_gap();
+        let tw_x = target_geo.loc.x + left + gap;
+        let tw_y = target_geo.loc.y + top + gap;
+        let tw_w = (target_geo.size.w - left - right - 2 * gap).max(1);
+        let tw_h = (target_geo.size.h - top - bot - 2 * gap).max(1);
+
+        let w = w.clamp(1, tw_w);
+        let h = h.clamp(1, tw_h);
+        let new_x = match arrow {
+            ArrowDir::Left  => tw_x + tw_w - w,
+            ArrowDir::Right => tw_x,
+            _ => tw_x,
+        };
+        let new_y = match dst_row {
+            0 => tw_y,
+            1 => tw_y + (tw_h - h) / 2,
+            _ => tw_y + tw_h - h,
+        };
+
+        // Hand window ownership over to the destination output's active
+        // workspace; remap_tracked_window uses the new location's monitor
+        // to pick the new owner. Without this, future per-output queries
+        // would still resolve to the source monitor and the window would
+        // visually stop updating after crossing the seam.
+        let new_loc = Point::from((new_x, new_y));
+        self.remap_tracked_window(window.clone(), new_loc, true);
+
+        Some(Rectangle::new(new_loc, Size::from((w, h))))
     }
 }
 

@@ -59,12 +59,17 @@ const VALUE_W: f32 = 60.0;
 // ── Draw ────────────────────────────────────────────────────────────────────
 
 pub fn draw_power_panel(
+    subpanel: crate::wayland::Panel,
     config: &mut LanternConfig,
     panel_state: &mut PanelState,
     painter: &mut Painter, text: &mut TextRenderer, ix: &mut InteractionContext,
     fox: &FoxPalette, x: f32, y: f32, w: f32, panel_h: f32,
     s: f32, sw: u32, sh: u32, scroll_delta: f32,
 ) {
+    use crate::wayland::Panel;
+    let show_lid     = matches!(subpanel, Panel::LidIdle);
+    let show_battery = matches!(subpanel, Panel::Battery);
+    let show_wifi    = matches!(subpanel, Panel::WifiPower);
     let row = ROW_H * s;
     let lsz = LABEL_SIZE * s;
     let vsz = VALUE_SIZE * s;
@@ -100,10 +105,14 @@ pub fn draw_power_panel(
     let battery_card_h = card_chrome_h + battery_rows * row;
     let wifi_card_h = card_chrome_h + wifi_rows * row;
 
-    let content_height = CARD_OUTER_PAD_V * s
-        + lid_idle_card_h + CARD_GAP * s
-        + battery_card_h + CARD_GAP * s
-        + wifi_card_h + CARD_OUTER_PAD_V * 2.0 * s;
+    let visible_heights: Vec<f32> = [
+        (show_lid,     lid_idle_card_h),
+        (show_battery, battery_card_h),
+        (show_wifi,    wifi_card_h),
+    ].iter().filter_map(|(b, h)| if *b { Some(*h) } else { None }).collect();
+    let content_height = CARD_OUTER_PAD_V * 2.0 * s
+        + visible_heights.iter().sum::<f32>()
+        + CARD_GAP * s * visible_heights.len().saturating_sub(1) as f32;
 
     if scroll_delta != 0.0 {
         ScrollArea::apply_scroll(
@@ -131,7 +140,7 @@ pub fn draw_power_panel(
     // ─────────────────────────────────────────────────────────────────
     // Card 1: Lid & Idle
     // ─────────────────────────────────────────────────────────────────
-    {
+    if show_lid {
         let mut cy = draw_section_card(
             painter, text, fox, "Lid & Idle",
             card_x, cy_top, card_w, lid_idle_card_h, s, sw, sh,
@@ -205,14 +214,13 @@ pub fn draw_power_panel(
             ZONE_PWR_IDLE_ACT_BTN, active == Some(ZONE_PWR_IDLE_ACT_BTN),
             painter, text, ix, fox,
             label_x, label_w, btn_x, btn_w, btn_h, row, lsz, s, sw, sh, &mut cy, menu);
+        cy_top += lid_idle_card_h + CARD_GAP * s;
     }
-
-    cy_top += lid_idle_card_h + CARD_GAP * s;
 
     // ─────────────────────────────────────────────────────────────────
     // Card 2: Battery
     // ─────────────────────────────────────────────────────────────────
-    {
+    if show_battery {
         let mut cy = draw_section_card(
             painter, text, fox, "Battery",
             card_x, cy_top, card_w, battery_card_h, s, sw, sh,
@@ -263,14 +271,13 @@ pub fn draw_power_panel(
             ZONE_PWR_CRIT_BTN, active == Some(ZONE_PWR_CRIT_BTN),
             painter, text, ix, fox,
             label_x, label_w, btn_x, btn_w, btn_h, row, lsz, s, sw, sh, &mut cy, menu);
+        cy_top += battery_card_h + CARD_GAP * s;
     }
-
-    cy_top += battery_card_h + CARD_GAP * s;
 
     // ─────────────────────────────────────────────────────────────────
     // Card 3: WiFi Power
     // ─────────────────────────────────────────────────────────────────
-    {
+    if show_wifi {
         let mut cy = draw_section_card(
             painter, text, fox, "WiFi Power",
             card_x, cy_top, card_w, wifi_card_h, s, sw, sh,

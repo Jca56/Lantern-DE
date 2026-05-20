@@ -53,50 +53,75 @@ impl Lantern {
         ];
 
         let pending = self.window_state_anim.target_rect(&surface);
+        let cur_loc = pending.map(|r| r.loc)
+            .or_else(|| self.workspaces.element_location(&window))
+            .unwrap_or_else(|| Point::from((work_x, work_y)));
         let cur_size = pending.map(|r| r.size)
             .or_else(|| captured_restore.map(|r| r.size))
             .unwrap_or_else(|| window.geometry().size);
         let cur_w = cur_size.w.max(1);
         let cur_h = cur_size.h.max(1);
 
-        // The "current stage" is whichever bucket the LARGER axis fits
-        // into relative to work area. Used as the index to step from.
-        let cur_pct = (cur_w as f32 / work_w as f32).max(cur_h as f32 / work_h as f32);
-        let cur_idx = nearest_stage_idx(cur_pct, &stages);
+        // Detect which column of the 9-zone grid the window sits in,
+        // using the same anchor-distance method as zone_move. Edge
+        // columns (0, 2) flip resize to vertical-only — same stage
+        // cycle, but only height changes; width and x stay put.
+        let anchors_x = [
+            work_x,
+            work_x + (work_w - cur_w) / 2,
+            work_x + work_w - cur_w,
+        ];
+        let cur_col = (0..3i32)
+            .min_by_key(|&i| (cur_loc.x - anchors_x[i as usize]).abs())
+            .unwrap_or(1);
+        let at_edge = cur_col == 0 || cur_col == 2;
 
-        // Aspect ratio is ALWAYS the output's — no per-window override,
-        // no square/wide toggle. Detect from the work area so laptops
-        // (16:9) and external monitors (e.g. 16:9 / 21:9 / 16:10) each
-        // produce their native ratio without hardcoded values.
-        let aspect = (work_w as f32) / (work_h as f32);
-        let target_idx = match action {
-            ResizeAction::Grow   => (cur_idx + 1).min(2),
-            ResizeAction::Shrink => cur_idx.saturating_sub(1),
-        };
-
-        // Cycle no-op: already at the requested stage with this aspect.
-        let aspect_now = cur_w as f32 / cur_h as f32;
-        let aspect_unchanged = (aspect - aspect_now).abs() < 0.01;
-        let stage_unchanged = target_idx == cur_idx;
-        if stage_unchanged && aspect_unchanged {
-            return false;
-        }
-
-        let stage_pct = stages[target_idx];
-        // Fit a box of (aspect) into stage_pct * work_w by stage_pct * work_h.
-        let max_w = (work_w as f32) * stage_pct;
-        let max_h = (work_h as f32) * stage_pct;
-        let (new_w_f, new_h_f) = if max_w / aspect <= max_h {
-            (max_w, max_w / aspect)
+        let (new_w, new_h, new_x, new_y) = if at_edge {
+            // Vertical-only: keep width, cycle height through stages,
+            // keep x at the edge anchor, re-center vertically.
+            let cur_h_idx = nearest_stage_idx(cur_h as f32 / work_h as f32, &stages);
+            let target_idx = match action {
+                ResizeAction::Grow   => (cur_h_idx + 1).min(2),
+                ResizeAction::Shrink => cur_h_idx.saturating_sub(1),
+            };
+            if target_idx == cur_h_idx {
+                return false;
+            }
+            let new_h = ((work_h as f32) * stages[target_idx]).round() as i32;
+            let new_h = new_h.clamp(1, work_h);
+            let new_w = cur_w.clamp(1, work_w);
+            let new_x = if cur_col == 0 { work_x } else { work_x + work_w - new_w };
+            let new_y = work_y + (work_h - new_h) / 2;
+            (new_w, new_h, new_x, new_y)
         } else {
-            (max_h * aspect, max_h)
+            // Aspect-locked resize centered in the work area.
+            let cur_pct = (cur_w as f32 / work_w as f32).max(cur_h as f32 / work_h as f32);
+            let cur_idx = nearest_stage_idx(cur_pct, &stages);
+            let aspect = (work_w as f32) / (work_h as f32);
+            let target_idx = match action {
+                ResizeAction::Grow   => (cur_idx + 1).min(2),
+                ResizeAction::Shrink => cur_idx.saturating_sub(1),
+            };
+            let aspect_now = cur_w as f32 / cur_h as f32;
+            let aspect_unchanged = (aspect - aspect_now).abs() < 0.01;
+            if target_idx == cur_idx && aspect_unchanged {
+                return false;
+            }
+            let stage_pct = stages[target_idx];
+            let max_w = (work_w as f32) * stage_pct;
+            let max_h = (work_h as f32) * stage_pct;
+            let (new_w_f, new_h_f) = if max_w / aspect <= max_h {
+                (max_w, max_w / aspect)
+            } else {
+                (max_h * aspect, max_h)
+            };
+            let new_w = (new_w_f.round() as i32).clamp(1, work_w);
+            let new_h = (new_h_f.round() as i32).clamp(1, work_h);
+            let new_x = work_x + (work_w - new_w) / 2;
+            let new_y = work_y + (work_h - new_h) / 2;
+            (new_w, new_h, new_x, new_y)
         };
-        let new_w = (new_w_f.round() as i32).clamp(1, work_w);
-        let new_h = (new_h_f.round() as i32).clamp(1, work_h);
 
-        // Re-center in work area.
-        let new_x = work_x + (work_w - new_w) / 2;
-        let new_y = work_y + (work_h - new_h) / 2;
         let target = Rectangle::new(Point::from((new_x, new_y)), Size::from((new_w, new_h)));
 
         self.posed_windows.remove(&surface);
