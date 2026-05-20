@@ -24,6 +24,8 @@ const SHAPE_TAPERED_PILL_SHADOW: f32 = 15.0;
 const SHAPE_TAPERED_PILL_INNER_SHADOW: f32 = 16.0;
 const SHAPE_ROUNDED_RING: f32 = 17.0;
 const SHAPE_GRADIENT_MULTI: f32 = 18.0;
+const SHAPE_TWIN_RADIAL_GLOW: f32 = 22.0;
+const SHAPE_RADIAL_GLOW: f32 = 23.0;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -517,6 +519,60 @@ impl Painter {
             color_b: [c1.r, c1.g, c1.b, c1.a],
             color_c: [c2.r, c2.g, c2.b, c2.a],
             color_d: [c3.r, c3.g, c3.b, c3.a],
+        });
+    }
+
+    /// Single radial glow anchored at a normalized position within the rect.
+    /// Color is at full alpha at the anchor and fades to zero at
+    /// `glow_radius_px` away. Multiple calls stack — the window-background
+    /// overlay uses one of these per active glow position (up to 4 corners
+    /// + a center).
+    pub fn rect_radial_glow(
+        &mut self,
+        rect: Rect,
+        corner_radius: f32,
+        anchor: (f32, f32),
+        glow_radius_px: f32,
+        color: Color,
+    ) {
+        self.instances.push(Instance {
+            bounds: [rect.x, rect.y, rect.w, rect.h],
+            color: [color.r, color.g, color.b, color.a],
+            params: [corner_radius, glow_radius_px, 0.0, SHAPE_RADIAL_GLOW],
+            color_b: [anchor.0, anchor.1, 0.0, 0.0],
+            color_c: [0.0, 0.0, 0.0, 0.0],
+            color_d: [0.0, 0.0, 0.0, 0.0],
+        });
+    }
+
+    /// Twin radial glow — two independent radial fades, each anchored at a
+    /// normalized position within the rect, fading to zero before they meet
+    /// so the rect's interior between them keeps whatever color was drawn
+    /// underneath. Used by the window-gradient overlay so the center of a
+    /// window stays its base color even at 100% intensity.
+    ///
+    /// `anchor_a` / `anchor_b` are normalized (0..1) within the rect.
+    /// `glow_radius_norm` is the falloff radius as a fraction of the
+    /// distance between the two anchors — 0.5 means each glow fades to zero
+    /// exactly at the midpoint between the anchors (no overlap, clean
+    /// preservation of the center).
+    pub fn rect_twin_radial_glow(
+        &mut self,
+        rect: Rect,
+        corner_radius: f32,
+        anchor_a: (f32, f32),
+        anchor_b: (f32, f32),
+        glow_radius_norm: f32,
+        color_a: Color,
+        color_b: Color,
+    ) {
+        self.instances.push(Instance {
+            bounds: [rect.x, rect.y, rect.w, rect.h],
+            color: [color_a.r, color_a.g, color_a.b, color_a.a],
+            params: [corner_radius, glow_radius_norm, 0.0, SHAPE_TWIN_RADIAL_GLOW],
+            color_b: [color_b.r, color_b.g, color_b.b, color_b.a],
+            color_c: [anchor_a.0, anchor_a.1, anchor_b.0, anchor_b.1],
+            color_d: [0.0, 0.0, 0.0, 0.0],
         });
     }
 

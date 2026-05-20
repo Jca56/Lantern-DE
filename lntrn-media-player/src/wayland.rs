@@ -24,9 +24,8 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 use crate::app::App;
 use crate::mpris_server::{self, PlayerState, MprisCmd};
 use crate::{
-    Gpu, ZONE_CANVAS, ZONE_CLOSE, ZONE_CONTROLS_BAR, ZONE_LOOP, ZONE_MAXIMIZE, ZONE_MINIMIZE,
-    ZONE_NEXT, ZONE_PLAY_PAUSE, ZONE_PREV, ZONE_SEEK_BAR, ZONE_TITLE_BAR, ZONE_VOLUME,
-    ZONE_VOL_SLIDER,
+    Gpu, ZONE_CANVAS, ZONE_CLOSE, ZONE_MAXIMIZE, ZONE_MINIMIZE,
+    ZONE_NEXT, ZONE_PLAY_PAUSE, ZONE_PREV, ZONE_SEEK_BAR, ZONE_TITLE_BAR,
 };
 
 // ── WaylandHandle for wgpu ──────────────────────────────────────────────────
@@ -51,6 +50,13 @@ impl HasWindowHandle for WaylandHandle {
 // ── Wayland state ───────────────────────────────────────────────────────────
 
 const BTN_LEFT: u32 = 0x110;
+
+/// Logical-pixel height of the hover-reveal controls strip below the window.
+/// The wl_surface extends past xdg_surface.set_window_geometry by this much so
+/// the strip floats *below* the visible window (transparent until hovered).
+/// Disabled (0) when fullscreen / maximized — controls overlay over the bars
+/// from within the window in that case.
+pub const STRIP_H_LOGICAL: u32 = 130;
 
 struct State {
     running: bool,
@@ -115,6 +121,16 @@ impl State {
 
     fn phys_width(&self) -> u32 { (self.width as f64 * self.fractional_scale()).round() as u32 }
     fn phys_height(&self) -> u32 { (self.height as f64 * self.fractional_scale()).round() as u32 }
+
+    /// Strip height in logical pixels (0 when the window is fullscreen / maximized
+    /// because there's no off-window space to fade controls into).
+    fn strip_h_logical(&self) -> u32 {
+        if self.fullscreen || self.maximized { 0 } else { STRIP_H_LOGICAL }
+    }
+    fn surface_h_logical(&self) -> u32 { self.height + self.strip_h_logical() }
+    fn phys_surface_h(&self) -> u32 {
+        (self.surface_h_logical() as f64 * self.fractional_scale()).round() as u32
+    }
 }
 
 // ── Dispatch impls ──────────────────────────────────────────────────────────
@@ -350,9 +366,16 @@ pub fn run(
     surface.set_buffer_scale(1);
     let viewport = state.viewporter.as_ref().map(|vp| {
         let vp = vp.get_viewport(&surface, &qh, ());
-        vp.set_destination(state.width as i32, state.height as i32);
+        vp.set_destination(state.width as i32, state.surface_h_logical() as i32);
         vp
     });
+
+    // The wl_surface buffer extends below the visible window; set_window_geometry
+    // tells the compositor where the actual window content ends so it draws
+    // borders / shadows around just the bars area.
+    if let Some(xs) = &state.xdg_surface {
+        xs.set_window_geometry(0, 0, state.width as i32, state.height as i32);
+    }
 
     // wgpu setup
     let display_ptr = conn.backend().display_ptr() as *mut c_void;
@@ -363,7 +386,7 @@ pub fn run(
     };
 
     let phys_w = state.phys_width().max(1);
-    let phys_h = state.phys_height().max(1);
+    let phys_h = state.phys_surface_h().max(1);
     let gpu_ctx = GpuContext::from_window(&wl_handle, phys_w, phys_h)
         .map_err(|e| anyhow!("GPU init failed: {e}"))?;
     let mut gpu = Gpu {
@@ -373,7 +396,6 @@ pub fn run(
         ctx: gpu_ctx,
     };
 
-    let palette = FoxPalette::dark();
     let mut app = App::new();
     let mut input = InteractionContext::new();
 
@@ -386,9 +408,6 @@ pub fn run(
     // Control rect caches (set each frame in render, read in input handling)
     let mut rects = crate::render::ControlRects {
         seek: Rect::new(0.0, 0.0, 0.0, 0.0),
-        vol_slider: Rect::new(0.0, 0.0, 0.0, 0.0),
-        seek_horizontal: false,
-        controls_bar: Rect::new(0.0, 0.0, 0.0, 0.0),
     };
 
     while state.running {
@@ -406,9 +425,11 @@ pub fn run(
             app.tick(&gpu.ctx, &gpu.tex_pass);
             if app.check_eos() { update_title(&toplevel, &app); }
 
-            // Wait for compositor frame callback — sleep to cap at ~60fps
+            // Wait for compositor frame callback. Audio-only playback caps at
+            // ~30fps (visualizer doesn't need more); video uses ~60fps.
             if !state.frame_done {
-                std::thread::sleep(std::time::Duration::from_millis(16));
+                let sleep_ms = if app.audio_only { 33 } else { 16 };
+                std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
                 continue;
             }
         } else {
@@ -427,15 +448,19 @@ pub fn run(
         // Handle resize
         if state.configured {
             state.configured = false;
-            gpu.ctx.resize(state.phys_width().max(1), state.phys_height().max(1));
+            gpu.ctx.resize(state.phys_width().max(1), state.phys_surface_h().max(1));
             surface.set_buffer_scale(1);
             if let Some(vp) = &viewport {
-                vp.set_destination(state.width as i32, state.height as i32);
+                vp.set_destination(state.width as i32, state.surface_h_logical() as i32);
+            }
+            if let Some(xs) = &state.xdg_surface {
+                xs.set_window_geometry(0, 0, state.width as i32, state.height as i32);
             }
         }
 
         let wf = gpu.ctx.width() as f32;
-        let hf = gpu.ctx.height() as f32;
+        let win_hf = state.phys_height() as f32;
+        let strip_hf = (state.phys_surface_h() as f32 - win_hf).max(0.0);
         let s = scale_f;
 
         // ── Cursor ──────────────────────────────────────────────────────
@@ -451,7 +476,7 @@ pub fn run(
         if state.pointer_in_surface {
             let desired = if !state.maximized && !state.fullscreen {
                 let border = 10.0 * s;
-                match edge_resize(cx, cy, wf, hf, border) {
+                match edge_resize(cx, cy, wf, win_hf, border) {
                     Some(edge) => resize_edge_to_cursor_shape(edge),
                     None => wp_cursor_shape_device_v1::Shape::Default,
                 }
@@ -466,29 +491,17 @@ pub fn run(
             }
         }
 
-        // ── Mouse movement → show controls ────────────────────────────
+        // ── Hover-reveal controls ────────────────────────────────────
+        app.pointer_in_window = state.pointer_in_surface;
         if state.pointer_in_surface {
-            app.reset_controls_timer();
-            // Keep controls visible while hovering over the bar
-            if rects.controls_bar.h > 0.0 && cy >= rects.controls_bar.y {
-                app.controls_last_move = std::time::Instant::now();
-            }
+            app.note_pointer_activity();
         }
-        app.update_controls_visibility();
+        app.update_controls_alpha();
 
         // ── Seek bar drag (motion) ─────────────────────────────────────
         if app.seeking && state.pointer_in_surface && rects.seek.w > 0.0 {
             let frac = ((cx - rects.seek.x) / rects.seek.w).clamp(0.0, 1.0);
             app.seek_value = frac;
-        }
-
-        // ── Volume slider drag (motion) ─────────────────────────────────
-        if app.vol_dragging && state.pointer_in_surface && rects.vol_slider.h > 0.0 {
-            let frac = 1.0 - ((cy - rects.vol_slider.y) / rects.vol_slider.h).clamp(0.0, 1.0);
-            app.volume = frac as f64;
-            if let Some(pipe) = &app.pipeline {
-                pipe.set_volume(app.volume);
-            }
         }
 
         // ── Keyboard ────────────────────────────────────────────────────
@@ -507,7 +520,7 @@ pub fn run(
         if state.left_pressed {
             state.left_pressed = false;
             let border = 10.0 * s;
-            if let Some(edge) = edge_resize(cx, cy, wf, hf, border) {
+            if let Some(edge) = edge_resize(cx, cy, wf, win_hf, border) {
                 if let Some(seat) = &state.seat {
                     toplevel.resize(seat, state.pointer_serial, edge);
                 }
@@ -522,29 +535,12 @@ pub fn run(
                         app.next_track();
                         update_title(&toplevel, &app);
                     }
-                    ZONE_LOOP => { app.cycle_loop_mode(); }
                     ZONE_SEEK_BAR => {
                         if rects.seek.w > 0.0 {
                             let frac = ((cx - rects.seek.x) / rects.seek.w).clamp(0.0, 1.0);
                             app.seeking = true;
                             app.seek_value = frac;
                         }
-                    }
-                    ZONE_VOLUME => {
-                        app.vol_showing = !app.vol_showing;
-                    }
-                    ZONE_VOL_SLIDER => {
-                        if rects.vol_slider.h > 0.0 {
-                            let frac = 1.0 - ((cy - rects.vol_slider.y) / rects.vol_slider.h).clamp(0.0, 1.0);
-                            app.volume = frac as f64;
-                            if let Some(pipe) = &app.pipeline {
-                                pipe.set_volume(app.volume);
-                            }
-                            app.vol_dragging = true;
-                        }
-                    }
-                    ZONE_CONTROLS_BAR => {
-                        // Clicks on bar background — don't drag window
                     }
                     ZONE_TITLE_BAR => {
                         if let Some(seat) = &state.seat {
@@ -565,7 +561,6 @@ pub fn run(
                         toplevel.set_minimized();
                     }
                     ZONE_CANVAS => {
-                        app.vol_showing = false;
                         if let Some(seat) = &state.seat {
                             toplevel._move(seat, state.pointer_serial);
                         }
@@ -581,7 +576,6 @@ pub fn run(
             if app.seeking {
                 app.seek_to_fraction(app.seek_value);
             }
-            app.vol_dragging = false;
             input.on_left_released();
         }
 
@@ -617,7 +611,12 @@ pub fn run(
 
         // ── Render ──────────────────────────────────────────────────────
         let is_maximized = state.maximized || state.fullscreen;
-        rects = crate::render::render_frame(&mut gpu, &app, &mut input, &palette, s, is_maximized);
+        let palette = FoxPalette::current();
+        let opacity = lntrn_theme::background_opacity();
+        rects = crate::render::render_frame(
+            &mut gpu, &app, &mut input, &palette, opacity, s,
+            win_hf, strip_hf, is_maximized,
+        );
 
         surface.frame(&qh, ());
         surface.commit();
@@ -653,20 +652,20 @@ fn resize_edge_to_cursor_shape(
     }
 }
 
+/// Bottom-edge resize is disabled so the hover-reveal controls strip (which
+/// sits just below the window) stays clickable. Resize is only available on
+/// the left, right, and top edges + the top corners.
 fn edge_resize(cx: f32, cy: f32, w: f32, h: f32, border: f32) -> Option<xdg_toplevel::ResizeEdge> {
+    if cy >= h { return None; }
     let left = cx < border;
     let right = cx > w - border;
     let top = cy < border;
-    let bottom = cy > h - border;
-    match (left, right, top, bottom) {
-        (true, _, true, _) => Some(xdg_toplevel::ResizeEdge::TopLeft),
-        (_, true, true, _) => Some(xdg_toplevel::ResizeEdge::TopRight),
-        (true, _, _, true) => Some(xdg_toplevel::ResizeEdge::BottomLeft),
-        (_, true, _, true) => Some(xdg_toplevel::ResizeEdge::BottomRight),
-        (true, _, _, _) => Some(xdg_toplevel::ResizeEdge::Left),
-        (_, true, _, _) => Some(xdg_toplevel::ResizeEdge::Right),
-        (_, _, true, _) => Some(xdg_toplevel::ResizeEdge::Top),
-        (_, _, _, true) => Some(xdg_toplevel::ResizeEdge::Bottom),
+    match (left, right, top) {
+        (true, _, true) => Some(xdg_toplevel::ResizeEdge::TopLeft),
+        (_, true, true) => Some(xdg_toplevel::ResizeEdge::TopRight),
+        (true, _, _) => Some(xdg_toplevel::ResizeEdge::Left),
+        (_, true, _) => Some(xdg_toplevel::ResizeEdge::Right),
+        (_, _, true) => Some(xdg_toplevel::ResizeEdge::Top),
         _ => None,
     }
 }
@@ -679,7 +678,6 @@ const KEY_L: u32 = 38;
 const KEY_A: u32 = 30;
 const KEY_D: u32 = 32;
 const KEY_F: u32 = 33;
-const KEY_V: u32 = 47;
 const KEY_SPACE: u32 = 57;
 const KEY_ESC: u32 = 1;
 const KEY_UP: u32 = 103;
@@ -696,7 +694,6 @@ fn handle_key(app: &mut App, toplevel: &xdg_toplevel::XdgToplevel, state: &mut S
         KEY_RIGHT | KEY_D => { app.seek_relative(FIVE_SEC_NS); }
         KEY_UP => { app.adjust_volume(0.05); }
         KEY_DOWN => { app.adjust_volume(-0.05); }
-        KEY_V => { app.cycle_vis_mode(); }
         KEY_N => { app.next_track(); }
         KEY_P => { app.prev_track(); }
         KEY_L => { app.cycle_loop_mode(); }

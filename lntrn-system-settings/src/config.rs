@@ -105,14 +105,19 @@ pub struct AppearanceConfig {
     /// `lntrn_theme::active_window_gradient_alphas()`.
     #[serde(default)]
     pub window_gradient_stop_alphas: Vec<f32>,
-    /// Window gradient direction preset. One of: "diagonal" (TL→BR, default),
-    /// "diagonal-reverse" (TR→BL), "vertical" (T→B), "horizontal" (L→R).
-    /// Read by `lntrn_theme::active_window_gradient_angle()`.
+    /// Legacy direction preset (now unused — superseded by per-position
+    /// glow toggles). Kept so existing configs deserialize without errors.
     #[serde(default = "default_gradient_direction")]
     pub window_gradient_direction: String,
+    /// Glow radius for the per-position window gradient, as a 0..1
+    /// fraction of the focused window's half-diagonal. Default 0.5.
+    /// Read by `lntrn_theme::active_window_gradient_radius()`.
+    #[serde(default = "default_gradient_radius")]
+    pub window_gradient_radius: f32,
 }
 
 fn default_gradient_direction() -> String { "diagonal".into() }
+fn default_gradient_radius() -> f32 { 0.5 }
 
 impl Default for AppearanceConfig {
     fn default() -> Self {
@@ -127,6 +132,7 @@ impl Default for AppearanceConfig {
             window_gradient_stops: Vec::new(),
             window_gradient_stop_alphas: Vec::new(),
             window_gradient_direction: default_gradient_direction(),
+            window_gradient_radius: default_gradient_radius(),
         }
     }
 }

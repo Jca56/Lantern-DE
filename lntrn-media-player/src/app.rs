@@ -13,21 +13,6 @@ const MEDIA_EXTENSIONS: &[&str] = &[
 ];
 
 #[derive(Clone, Copy, PartialEq)]
-pub enum VisMode {
-    ConcentricRings,
-    ClassicBars,
-}
-
-impl VisMode {
-    pub fn next(self) -> Self {
-        match self {
-            VisMode::ConcentricRings => VisMode::ClassicBars,
-            VisMode::ClassicBars => VisMode::ConcentricRings,
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq)]
 pub enum LoopMode {
     Off,
     LoopOne,
@@ -43,13 +28,6 @@ impl LoopMode {
         }
     }
 
-    pub fn label(self) -> &'static str {
-        match self {
-            LoopMode::Off => "\u{27F3}",
-            LoopMode::LoopOne => "\u{27F3}1",
-            LoopMode::LoopAll => "\u{27F3}A",
-        }
-    }
 }
 
 pub struct App {
@@ -66,17 +44,16 @@ pub struct App {
     pub seek_value: f32,
     pub status_text: String,
     pub audio_only: bool,
-    pub vis_mode: VisMode,
     pub vis_bars: Vec<f32>,
-    pub vol_showing: bool,
-    pub vol_dragging: bool,
     // Playlist
     pub loop_mode: LoopMode,
     pub playlist: Vec<PathBuf>,
     pub playlist_index: usize,
-    // Auto-hide controls
-    pub controls_visible: bool,
+    // Hover-reveal controls (0.0 = hidden, 1.0 = fully shown)
+    pub controls_alpha: f32,
     pub controls_last_move: Instant,
+    pub pointer_in_window: bool,
+    pub last_tick: Instant,
 }
 
 impl App {
@@ -95,15 +72,14 @@ impl App {
             seek_value: 0.0,
             status_text: "No media loaded".into(),
             audio_only: false,
-            vis_mode: VisMode::ConcentricRings,
             vis_bars: vec![0.0; VIS_BARS],
-            vol_showing: false,
-            vol_dragging: false,
             loop_mode: LoopMode::Off,
             playlist: Vec::new(),
             playlist_index: 0,
-            controls_visible: true,
+            controls_alpha: 0.0,
             controls_last_move: Instant::now(),
+            pointer_in_window: false,
+            last_tick: Instant::now(),
         }
     }
 
@@ -283,17 +259,35 @@ impl App {
         self.loop_mode = self.loop_mode.next();
     }
 
-    pub fn reset_controls_timer(&mut self) {
-        self.controls_visible = true;
-        self.controls_last_move = Instant::now();
+    /// Drive the hover-reveal fade. Controls ramp toward 1.0 while the pointer
+    /// is in the window, and toward 0.0 after a brief grace period once it leaves.
+    pub fn update_controls_alpha(&mut self) {
+        let now = Instant::now();
+        let dt = (now - self.last_tick).as_secs_f32().min(0.1);
+        self.last_tick = now;
+
+        let target = if self.pointer_in_window {
+            1.0
+        } else if self.controls_last_move.elapsed().as_secs_f32() < 1.5 {
+            1.0
+        } else {
+            0.0
+        };
+
+        // Fade rate: ~180ms in, ~250ms out
+        let rate = if target > self.controls_alpha { 1.0 / 0.18 } else { 1.0 / 0.25 };
+        let step = rate * dt;
+        if (target - self.controls_alpha).abs() <= step {
+            self.controls_alpha = target;
+        } else if target > self.controls_alpha {
+            self.controls_alpha += step;
+        } else {
+            self.controls_alpha -= step;
+        }
     }
 
-    pub fn update_controls_visibility(&mut self) {
-        if self.controls_visible && self.controls_last_move.elapsed().as_secs_f32() > 2.0 {
-            if self.is_playing() && !self.audio_only {
-                self.controls_visible = false;
-            }
-        }
+    pub fn note_pointer_activity(&mut self) {
+        self.controls_last_move = Instant::now();
     }
 
     pub fn is_playing(&self) -> bool {
@@ -337,10 +331,6 @@ impl App {
     pub fn progress_fraction(&self) -> f32 {
         if self.duration_ns == 0 { 0.0 }
         else { (self.position_ns as f64 / self.duration_ns as f64) as f32 }
-    }
-
-    pub fn cycle_vis_mode(&mut self) {
-        self.vis_mode = self.vis_mode.next();
     }
 
     pub fn format_time(ns: u64) -> String {

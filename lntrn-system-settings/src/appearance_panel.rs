@@ -64,26 +64,25 @@ const ZONE_BG_COLOR_BASE:    u32 = 380; // +0..9 swatches (BG_COLORS, 10 entries
 // direction-picker row (4 presets) and a "Clear / Disable" button.
 // BG_COLORS now has 11 entries; stop block reserves 60 IDs (4 stops × 15)
 // to leave headroom for future swatch additions.
-const ZONE_GRADIENT_STOP_BASE: u32 = 410; // +0..(4*BG_COLORS.len()-1)
-const ZONE_GRADIENT_CLEAR:     u32 = 470;
-const ZONE_GRADIENT_DIR_BASE:  u32 = 480; // +0..3 (4 direction presets)
-const ZONE_GRADIENT_ALPHA_BASE: u32 = 490; // +0..(GRADIENT_STOP_COUNT-1) per-stop alpha sliders
+const ZONE_GRADIENT_STOP_BASE: u32 = 410; // +0..(BG_COLORS.len()-1) — shared color swatch row
+const ZONE_GRADIENT_CLEAR:     u32 = 470; // "Disable All" button
+const ZONE_GRADIENT_CHIP_BASE: u32 = 480; // +0..4 — per-position toggle chips
+const ZONE_GRADIENT_ALPHA_BASE: u32 = 490; // Intensity slider
+const ZONE_GRADIENT_RADIUS:    u32 = 491; // Radius slider
 
-const GRADIENT_STOP_COUNT: usize = 4;
-const GRADIENT_DEFAULT_STOPS: [&str; GRADIENT_STOP_COUNT] = [
-    "#0E0E0E", // Black
-    "#2C0F5C", // Purple
-    "#0F1F5C", // Blue
-    "#5C1230", // Pink
-];
+// 5 independent glow positions stored in `window_gradient_stops`. Indices
+// in the storage array follow `GradientCorner::ALL` (TL, TR, BL, BR, Center).
+// Empty string at an index = position disabled.
+const GRADIENT_STOP_COUNT: usize = 5;
 
-/// (config-key, label) for each direction preset. Label uses arrows so the
-/// visual meaning is obvious at a glance.
-const GRADIENT_DIRECTIONS: &[(&str, &str)] = &[
-    ("diagonal",         "↘"),
-    ("diagonal-reverse", "↙"),
-    ("vertical",         "↓"),
-    ("horizontal",       "→"),
+/// (storage_index, chip_glyph) for the toggle-chip row. Visual order
+/// matches the user's layout: TL → BL → Center → TR → BR.
+const GRADIENT_CHIPS: [(usize, &str); 5] = [
+    (0, "↘"),  // Top-Left,    arrow points inward toward center
+    (2, "↗"),  // Bottom-Left, arrow points inward
+    (4, "●"),  // Center
+    (1, "↙"),  // Top-Right,   arrow points inward
+    (3, "↖"),  // Bottom-Right, arrow points inward
 ];
 
 // Dropdown menu action IDs (preset selection)
@@ -145,10 +144,9 @@ pub fn draw_appearance_panel(
         themes_state, themes_card_inner_w, s,
     );
     let theme_card_h = card_chrome_h + 1.6 * row + row; // theme cards + accent row
-    // Window Gradient: 1 direction row + 4 × (swatch row + alpha-slider row)
-    // + 1 disable-button row.
-    let gradient_card_h =
-        card_chrome_h + (GRADIENT_STOP_COUNT as f32 * 2.0 + 2.0) * row;
+    // Window Gradient: 1 chip row + 1 color swatch row + Intensity slider
+    // + Radius slider + Disable-All button row = 5 rows.
+    let gradient_card_h = card_chrome_h + 5.0 * row;
     // Layout & Visual Effects: 2 sliders (Border Width, Corner Radius) +
     // Border Color swatch + 2 sliders (Blur Intensity, Blur Tint) + Tint
     // Color swatch + 2 sliders (Blur Darken, Background Opacity) = 7 rows.
@@ -433,19 +431,6 @@ fn draw_window_gradient_card(
         card_x, card_y, card_w, card_h, s, sw, sh,
     );
 
-    // Direction picker row — 4 chip buttons (↘ ↙ ↓ →). The selected one is
-    // outlined; click swaps the saved preset.
-    draw_direction_row(
-        painter, text, ix, fox,
-        &config.appearance.window_gradient_direction,
-        label_x, ctrl_x, &mut cy, row, lsz, s, sw, sh,
-    );
-
-    // Render one swatch row + one alpha slider row per stop. Each swatch
-    // writes index `i` of window_gradient_stops; clicking a swatch fills
-    // earlier missing slots with the default for that index. The alpha
-    // slider (0..1, default 1.0) dials that stop's transparency — 0 lets
-    // the wallpaper show through at that band of the gradient.
     let card_inner_w = card_w - CARD_INNER_PAD_H * 2.0 * s;
     let value_w = VALUE_W * s;
     let avail = (card_inner_w - (ctrl_x - card_inner_x) - value_w - 12.0 * s).max(80.0 * s);
@@ -454,32 +439,36 @@ fn draw_window_gradient_card(
     let alpha_slider_h = SLIDER_H * s;
     let alpha_vsz = VALUE_SIZE * s;
 
-    for i in 0..GRADIENT_STOP_COUNT {
-        let stop_hex = config
-            .appearance
-            .window_gradient_stops
-            .get(i)
-            .cloned()
-            .unwrap_or_default();
-        let label = match i {
-            0 => "Stop 1",
-            1 => "Stop 2",
-            2 => "Stop 3",
-            _ => "Stop 4",
-        };
-        draw_bg_swatch_row(
-            painter, text, ix, fox,
-            label, ZONE_GRADIENT_STOP_BASE + (i as u32) * BG_COLORS.len() as u32, BG_COLORS,
-            &stop_hex,
-            label_x, ctrl_x, &mut cy, row, lsz, s, sw, sh,
-        );
+    // Toggle-chip row: 5 chips for the 5 glow positions. Each chip is a
+    // selected/deselected pill — clicking it toggles that position on/off.
+    // The chips share the row with the implicit "Position" label so the
+    // ctrl column starts at `ctrl_x`.
+    draw_gradient_chip_row(
+        painter, text, ix, fox,
+        &config.appearance.window_gradient_stops,
+        label_x, ctrl_x, &mut cy, row, lsz, s, sw, sh,
+    );
 
-        // Alpha slider row, indented under the swatch row.
-        let zone_id = ZONE_GRADIENT_ALPHA_BASE + i as u32;
+    // Shared color swatch row — picking a swatch repaints every currently
+    // enabled position. Falls back to the first non-empty stored hex so
+    // the row reflects the live look.
+    let shared_hex = current_shared_gradient_color(&config.appearance.window_gradient_stops);
+    draw_bg_swatch_row(
+        painter, text, ix, fox,
+        "Color", ZONE_GRADIENT_STOP_BASE, BG_COLORS,
+        &shared_hex,
+        label_x, ctrl_x, &mut cy, row, lsz, s, sw, sh,
+    );
+
+    // Intensity slider — global, applies to all enabled glows. The
+    // slider value is cubed downstream in `palette.rs` so the lower
+    // half of the slider produces the "subtle tint" range.
+    {
+        let zone_id = ZONE_GRADIENT_ALPHA_BASE;
         let label_y = cy + (row - lsz) / 2.0;
         text.queue(
-            "Alpha", lsz,
-            label_x + 16.0 * s, label_y,
+            "Intensity", lsz,
+            label_x, label_y,
             fox.text_secondary, ctrl_x - label_x, sw, sh,
         );
         let rect = Rect::new(
@@ -489,22 +478,17 @@ fn draw_window_gradient_card(
         );
         let zone = ix.add_zone(zone_id, rect);
 
-        // Current value (default 1.0 if slot missing).
         let mut alpha = config
             .appearance
             .window_gradient_stop_alphas
-            .get(i)
+            .first()
             .copied()
             .unwrap_or(1.0);
 
         if let Some(f) = slider_value_from_cursor(ix, zone_id, &rect) {
             alpha = (f * 100.0).round() / 100.0;
-            // Grow with 1.0s so earlier stops aren't silently zeroed when
-            // the user first drags slider 3 from an empty alpha list.
-            while config.appearance.window_gradient_stop_alphas.len() <= i {
-                config.appearance.window_gradient_stop_alphas.push(1.0);
-            }
-            config.appearance.window_gradient_stop_alphas[i] = alpha;
+            config.appearance.window_gradient_stop_alphas =
+                vec![alpha; GRADIENT_STOP_COUNT];
         }
 
         Slider::new(rect)
@@ -513,6 +497,44 @@ fn draw_window_gradient_card(
             .active(zone.is_active())
             .draw(painter, fox);
         let val = format!("{:.0}%", alpha * 100.0);
+        text.queue(
+            &val, alpha_vsz,
+            alpha_value_x, label_y,
+            fox.text_secondary, value_w, sw, sh,
+        );
+        cy += row;
+    }
+
+    // Radius slider — global, applies to every glow. Stored as a 0..1
+    // fraction of each window's half-diagonal so big windows get big
+    // glows automatically.
+    {
+        let zone_id = ZONE_GRADIENT_RADIUS;
+        let label_y = cy + (row - lsz) / 2.0;
+        text.queue(
+            "Radius", lsz,
+            label_x, label_y,
+            fox.text_secondary, ctrl_x - label_x, sw, sh,
+        );
+        let rect = Rect::new(
+            ctrl_x,
+            cy + (row - alpha_slider_h) / 2.0,
+            alpha_ctrl_w, alpha_slider_h,
+        );
+        let zone = ix.add_zone(zone_id, rect);
+
+        let mut radius = config.appearance.window_gradient_radius;
+        if let Some(f) = slider_value_from_cursor(ix, zone_id, &rect) {
+            radius = (f * 100.0).round() / 100.0;
+            config.appearance.window_gradient_radius = radius;
+        }
+
+        Slider::new(rect)
+            .value(radius)
+            .hovered(zone.is_hovered())
+            .active(zone.is_active())
+            .draw(painter, fox);
+        let val = format!("{:.0}%", radius * 100.0);
         text.queue(
             &val, alpha_vsz,
             alpha_value_x, label_y,
@@ -530,7 +552,7 @@ fn draw_window_gradient_card(
         btn_w, btn_h,
     );
     let btn_zone = ix.add_zone(ZONE_GRADIENT_CLEAR, btn_rect);
-    let enabled = !config.appearance.window_gradient_stops.is_empty();
+    let enabled = config.appearance.window_gradient_stops.iter().any(|s| !s.is_empty());
     let bg = if btn_zone.is_hovered() {
         fox.surface_2
     } else {
@@ -550,13 +572,18 @@ fn draw_window_gradient_card(
     );
 }
 
+/// Toggle-chip row for the 5 glow positions. Each chip is a pill button
+/// styled like the old direction picker — accent-highlighted when its
+/// position is enabled, muted otherwise. Click handler in
+/// `handle_appearance_click` flips that position between empty and
+/// "current shared color".
 #[allow(clippy::too_many_arguments)]
-fn draw_direction_row(
+fn draw_gradient_chip_row(
     painter: &mut Painter,
     text: &mut TextRenderer,
     ix: &mut InteractionContext,
     fox: &FoxPalette,
-    current_dir: &str,
+    stops: &[String],
     label_x: f32,
     ctrl_x: f32,
     cy: &mut f32,
@@ -567,20 +594,24 @@ fn draw_direction_row(
     sh: u32,
 ) {
     let label_y = *cy + (row - lsz) / 2.0;
-    text.queue("Direction", lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
+    text.queue("Position", lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
 
     let chip_w = 44.0 * s;
     let chip_h = 32.0 * s;
     let chip_gap = 8.0 * s;
-    let arrow_sz = 22.0 * s;
+    let glyph_sz = 22.0 * s;
     let mut sx = ctrl_x;
-    for (i, (key, label)) in GRADIENT_DIRECTIONS.iter().enumerate() {
-        let zone_id = ZONE_GRADIENT_DIR_BASE + i as u32;
+    for (chip_i, (storage_idx, glyph)) in GRADIENT_CHIPS.iter().enumerate() {
+        let zone_id = ZONE_GRADIENT_CHIP_BASE + chip_i as u32;
         let chip_rect = Rect::new(sx, *cy + (row - chip_h) / 2.0, chip_w, chip_h);
         let zone = ix.add_zone(zone_id, chip_rect);
 
-        let is_selected = current_dir.eq_ignore_ascii_case(key);
-        let bg = if is_selected {
+        let enabled = stops
+            .get(*storage_idx)
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
+
+        let bg = if enabled {
             fox.accent.with_alpha(0.18)
         } else if zone.is_hovered() {
             fox.surface_2
@@ -588,21 +619,33 @@ fn draw_direction_row(
             fox.surface
         };
         painter.rect_filled(chip_rect, 8.0 * s, bg);
-        let stroke_color = if is_selected { fox.accent } else { fox.muted.with_alpha(0.4) };
+        let stroke_color = if enabled { fox.accent } else { fox.muted.with_alpha(0.4) };
         painter.rect_stroke_sdf(chip_rect, 8.0 * s, 1.0 * s, stroke_color);
 
-        let lw = arrow_sz * 0.55;
+        let gw = glyph_sz * 0.55;
         text.queue(
-            label, arrow_sz,
-            chip_rect.x + (chip_rect.w - lw) / 2.0,
-            chip_rect.y + (chip_rect.h - arrow_sz) / 2.0,
-            if is_selected { fox.accent } else { fox.text },
+            glyph, glyph_sz,
+            chip_rect.x + (chip_rect.w - gw) / 2.0,
+            chip_rect.y + (chip_rect.h - glyph_sz) / 2.0,
+            if enabled { fox.accent } else { fox.text },
             chip_rect.w, sw, sh,
         );
 
         sx += chip_w + chip_gap;
     }
     *cy += row;
+}
+
+/// Pick the "shared" color for the gradient — first non-empty stored
+/// stop, or empty string if every position is disabled. Used both for
+/// the swatch row's selection-highlight and as the seed color when
+/// enabling a previously-disabled chip.
+fn current_shared_gradient_color(stops: &[String]) -> String {
+    stops
+        .iter()
+        .find(|s| !s.is_empty())
+        .cloned()
+        .unwrap_or_default()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -650,6 +693,16 @@ fn draw_bg_swatch_row(
         sx += swatch_size + swatch_gap;
     }
     *cy += row;
+}
+
+/// Ensure `window_gradient_stops` has exactly `GRADIENT_STOP_COUNT` entries
+/// before indexing into it. Newly-added slots are empty strings (= position
+/// disabled).
+fn grow_gradient_stops(config: &mut LanternConfig) {
+    let v = &mut config.appearance.window_gradient_stops;
+    while v.len() < GRADIENT_STOP_COUNT {
+        v.push(String::new());
+    }
 }
 
 // ── Click handling ─────────────────────────────────────────────────────────
@@ -719,36 +772,47 @@ pub fn handle_appearance_click(
             let idx = (id - ZONE_BG_COLOR_BASE) as usize;
             config.appearance.background_color = crate::panels::BG_COLORS[idx].0.into();
         }
-        // Window gradient: 4 stop rows × BG_COLORS swatches
+        // Window gradient: "Disable All" — clear every per-position color.
         ZONE_GRADIENT_CLEAR => {
-            config.appearance.window_gradient_stops.clear();
+            config.appearance.window_gradient_stops =
+                vec![String::new(); GRADIENT_STOP_COUNT];
         }
-        // Direction picker chips (↘ ↙ ↓ →)
-        id if id >= ZONE_GRADIENT_DIR_BASE
-            && id < ZONE_GRADIENT_DIR_BASE + GRADIENT_DIRECTIONS.len() as u32 =>
+        // Position toggle chip — flip that storage slot between empty
+        // and the currently-shared color. First-time enable seeds from
+        // the first BG_COLORS entry so the user gets *something* visible.
+        id if id >= ZONE_GRADIENT_CHIP_BASE
+            && id < ZONE_GRADIENT_CHIP_BASE + GRADIENT_CHIPS.len() as u32 =>
         {
-            let idx = (id - ZONE_GRADIENT_DIR_BASE) as usize;
-            config.appearance.window_gradient_direction =
-                GRADIENT_DIRECTIONS[idx].0.into();
-        }
-        id if id >= ZONE_GRADIENT_STOP_BASE
-            && id < ZONE_GRADIENT_STOP_BASE
-                + (GRADIENT_STOP_COUNT * crate::panels::BG_COLORS.len()) as u32 =>
-        {
-            let rel = (id - ZONE_GRADIENT_STOP_BASE) as usize;
-            let stop_idx = rel / crate::panels::BG_COLORS.len();
-            let color_idx = rel % crate::panels::BG_COLORS.len();
-            let new_hex = crate::panels::BG_COLORS[color_idx].0.to_string();
-            // Grow with defaults so earlier stops aren't blank when the user
-            // first interacts with stop 2/3/4 from a disabled state.
-            while config.appearance.window_gradient_stops.len() <= stop_idx {
-                let i = config.appearance.window_gradient_stops.len();
-                config
-                    .appearance
-                    .window_gradient_stops
-                    .push(GRADIENT_DEFAULT_STOPS[i].to_string());
+            let chip_i = (id - ZONE_GRADIENT_CHIP_BASE) as usize;
+            let storage_idx = GRADIENT_CHIPS[chip_i].0;
+            grow_gradient_stops(config);
+            let was_enabled = !config.appearance.window_gradient_stops[storage_idx].is_empty();
+            if was_enabled {
+                config.appearance.window_gradient_stops[storage_idx] = String::new();
+            } else {
+                let mut seed = current_shared_gradient_color(
+                    &config.appearance.window_gradient_stops,
+                );
+                if seed.is_empty() {
+                    seed = crate::panels::BG_COLORS[0].0.into();
+                }
+                config.appearance.window_gradient_stops[storage_idx] = seed;
             }
-            config.appearance.window_gradient_stops[stop_idx] = new_hex;
+        }
+        // Shared color swatch — repaints every currently enabled
+        // position to the picked hex. If nothing is enabled yet, the
+        // click is a no-op (the user toggles a chip on first).
+        id if id >= ZONE_GRADIENT_STOP_BASE
+            && id < ZONE_GRADIENT_STOP_BASE + crate::panels::BG_COLORS.len() as u32 =>
+        {
+            let color_idx = (id - ZONE_GRADIENT_STOP_BASE) as usize;
+            let new_hex = crate::panels::BG_COLORS[color_idx].0.to_string();
+            grow_gradient_stops(config);
+            for slot in config.appearance.window_gradient_stops.iter_mut() {
+                if !slot.is_empty() {
+                    *slot = new_hex.clone();
+                }
+            }
         }
         // Border color swatches
         id if id >= ZONE_BORDER_COLOR_BASE

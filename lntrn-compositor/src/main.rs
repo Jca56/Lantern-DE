@@ -29,8 +29,6 @@ mod snap;
 pub mod ssd;
 mod state;
 mod switcher;
-mod tiling;
-mod tiling_anim;
 mod workspace_anim;
 mod workspace_ipc;
 mod workspaces;
@@ -213,6 +211,26 @@ pub(crate) fn default_size_pct() -> f32 { window_size_pct("default_size_pct", 60
 pub(crate) fn size_small_pct()    -> f32 { window_size_pct("size_small_pct",   30) }
 pub(crate) fn size_medium_pct()   -> f32 { window_size_pct("size_medium_pct",  60) }
 pub(crate) fn size_large_pct()    -> f32 { window_size_pct("size_large_pct",   95) }
+
+/// Inner gap (formerly the tiling gap) — read from `[window_manager].gap`,
+/// default 8, clamped to 0..=32. Still used by snap zones, zone-move, and
+/// axis-resize to give windows breathing room from screen edges.
+pub(crate) fn default_gap() -> i32 {
+    read_config("window_manager", "gap", "8")
+        .parse::<i32>()
+        .unwrap_or(8)
+        .clamp(0, 32)
+}
+
+/// Outer gap (between a window and the screen edge). Matches the inner gap
+/// so users see one consistent value.
+pub(crate) fn default_outer_gap() -> i32 {
+    default_gap()
+}
+
+/// Larger outer gap used when a single window is "solo-tiled" (puffed up to
+/// fill the work area), so it doesn't sit flush against the screen edges.
+pub(crate) const SINGLE_WINDOW_OUTER_GAP: i32 = 40;
 
 /// Read all `[[window_rules]]` entries from lantern.toml.
 pub(crate) fn read_window_rules() -> Vec<WindowRule> {

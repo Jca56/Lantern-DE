@@ -5,65 +5,17 @@
 use std::time::Instant;
 
 use crate::app::{
-    ease_out_cubic, lerp_steps, AppState, PanelMode, PanelView,
-    GROW_ANIM_DURATION, GROW_H_STEPS, GROW_MAX_STEP, GROW_W_STEPS, PANEL_H_LOGICAL_PHASE1,
+    ease_out_cubic, AppState, PanelMode, PanelView, GROW_H_MAX, PANEL_H_LOGICAL_PHASE1,
     PANEL_W_LOGICAL,
 };
 
 impl AppState {
-    pub fn toggle_grow(&mut self) {
-        let now = std::time::Instant::now();
-        if self.collapsed {
-            let current = self.bar_grow_progress();
-            self.bar_size_idx = (self.bar_size_idx + 1) % (GROW_MAX_STEP + 1);
-            self.bar_grow_anim_origin = current;
-            self.bar_grow_anim_target = self.bar_size_idx as f32;
-            self.bar_grow_anim_start = Some(now);
-            tracing::info!(bar_size = self.bar_size_idx, current, "bar grow cycled");
-        } else {
-            let current = self.grow_progress();
-            self.panel_size_idx = (self.panel_size_idx + 1) % (GROW_MAX_STEP + 1);
-            self.grow_anim_origin = current;
-            self.grow_anim_target = self.panel_size_idx as f32;
-            self.grow_anim_start = Some(now);
-            tracing::info!(panel_size = self.panel_size_idx, current, "panel grow cycled");
-            self.save_persisted_state();
-        }
-    }
-
-    /// Eased window-grow progress as a float in `0.0..=2.0` — 0 = small,
-    /// 1 = medium, 2 = large. Handles mid-flight reversal so re-clicking
-    /// during an animation continues smoothly from the current visual.
-    pub fn grow_progress(&self) -> f32 {
-        if let Some(start) = self.grow_anim_start {
-            let t = (start.elapsed().as_secs_f32() / GROW_ANIM_DURATION).clamp(0.0, 1.0);
-            let eased = ease_out_cubic(t);
-            self.grow_anim_origin + (self.grow_anim_target - self.grow_anim_origin) * eased
-        } else {
-            self.panel_size_idx as f32
-        }
-    }
-
-    /// Eased bar-grow progress. Same shape as [`grow_progress`] but for
-    /// the collapsed-bar's independent size step.
-    pub fn bar_grow_progress(&self) -> f32 {
-        if let Some(start) = self.bar_grow_anim_start {
-            let t = (start.elapsed().as_secs_f32() / GROW_ANIM_DURATION).clamp(0.0, 1.0);
-            let eased = ease_out_cubic(t);
-            self.bar_grow_anim_origin
-                + (self.bar_grow_anim_target - self.bar_grow_anim_origin) * eased
-        } else {
-            self.bar_size_idx as f32
-        }
-    }
-
-    /// Width (logical px) at each collapse endpoint, using the current
-    /// (possibly animating) grow progresses. The collapsed bar's width
-    /// is driven by `bar_grow_progress`; the expanded window's width
-    /// uses `grow_progress`.
+    /// Width (logical px) at each collapse endpoint. Both come straight
+    /// from settings now: `bar_grow_w` for the collapsed bar,
+    /// `panel_grow_w` for the expanded window.
     fn endpoint_widths_logical(&self) -> (f32, f32) {
-        let bar_w = PANEL_W_LOGICAL + lerp_steps(self.bar_grow_progress(), GROW_W_STEPS);
-        let win_w = PANEL_W_LOGICAL + lerp_steps(self.grow_progress(), GROW_W_STEPS);
+        let bar_w = PANEL_W_LOGICAL + self.config.bar_grow_w;
+        let win_w = PANEL_W_LOGICAL + self.config.panel_grow_w;
         (bar_w, win_w)
     }
 
@@ -154,6 +106,9 @@ impl AppState {
         if view == self.panel_view {
             return;
         }
+        // View slides reveal the body underneath — an open overlay
+        // would just keep drawing on top, hiding the destination.
+        self.close_overlays();
         tracing::info!(from = ?self.panel_view, to = ?view, dir, "panel view → transition");
         self.view_anim_from = Some(self.panel_view);
         self.view_anim_start = Some(std::time::Instant::now());
@@ -185,65 +140,49 @@ impl AppState {
         self.toggle_collapsed();
     }
 
-    /// Grow the *expanded* panel by one step (clamped at GROW_MAX_STEP).
-    /// No-op when already at max. Animates from the current visual size.
+    /// Logical-px step used by the keyboard-shortcut size bumps so a
+    /// few presses span the whole 0..MAX slider range.
+    const SIZE_BUMP: f32 = crate::settings::GROW_W_MAX / 5.0;
+
+    /// Widen the *expanded* panel by one keyboard step. Mirrors the
+    /// "Expanded width" slider; clamped to the same 0..MAX range.
     pub fn inc_panel_size(&mut self) {
-        if self.panel_size_idx >= GROW_MAX_STEP {
+        let next = (self.config.panel_grow_w + Self::SIZE_BUMP).min(crate::settings::GROW_W_MAX);
+        if (next - self.config.panel_grow_w).abs() < 0.01 {
             return;
         }
-        let now = Instant::now();
-        let current = self.grow_progress();
-        self.panel_size_idx += 1;
-        self.grow_anim_origin = current;
-        self.grow_anim_target = self.panel_size_idx as f32;
-        self.grow_anim_start = Some(now);
-        tracing::info!(panel_size = self.panel_size_idx, current, "panel grow +1");
-        self.save_persisted_state();
+        self.config.panel_grow_w = next;
+        self.config.save();
     }
 
-    /// Shrink the *expanded* panel by one step (clamped at 0).
+    /// Shrink the *expanded* panel by one keyboard step.
     pub fn dec_panel_size(&mut self) {
-        if self.panel_size_idx == 0 {
+        let next = (self.config.panel_grow_w - Self::SIZE_BUMP).max(0.0);
+        if (next - self.config.panel_grow_w).abs() < 0.01 {
             return;
         }
-        let now = Instant::now();
-        let current = self.grow_progress();
-        self.panel_size_idx -= 1;
-        self.grow_anim_origin = current;
-        self.grow_anim_target = self.panel_size_idx as f32;
-        self.grow_anim_start = Some(now);
-        tracing::info!(panel_size = self.panel_size_idx, current, "panel grow -1");
-        self.save_persisted_state();
+        self.config.panel_grow_w = next;
+        self.config.save();
     }
 
-    /// Widen the *collapsed bar* by one step (clamped at GROW_MAX_STEP).
+    /// Widen the *collapsed bar* by one keyboard step.
     pub fn inc_bar_size(&mut self) {
-        if self.bar_size_idx >= GROW_MAX_STEP {
+        let next = (self.config.bar_grow_w + Self::SIZE_BUMP).min(crate::settings::GROW_W_MAX);
+        if (next - self.config.bar_grow_w).abs() < 0.01 {
             return;
         }
-        let now = Instant::now();
-        let current = self.bar_grow_progress();
-        self.bar_size_idx += 1;
-        self.bar_grow_anim_origin = current;
-        self.bar_grow_anim_target = self.bar_size_idx as f32;
-        self.bar_grow_anim_start = Some(now);
-        tracing::info!(bar_size = self.bar_size_idx, current, "bar grow +1");
-        self.save_persisted_state();
+        self.config.bar_grow_w = next;
+        self.config.save();
     }
 
-    /// Shorten the *collapsed bar* by one step (clamped at 0).
+    /// Shorten the *collapsed bar* by one keyboard step.
     pub fn dec_bar_size(&mut self) {
-        if self.bar_size_idx == 0 {
+        let next = (self.config.bar_grow_w - Self::SIZE_BUMP).max(0.0);
+        if (next - self.config.bar_grow_w).abs() < 0.01 {
             return;
         }
-        let now = Instant::now();
-        let current = self.bar_grow_progress();
-        self.bar_size_idx -= 1;
-        self.bar_grow_anim_origin = current;
-        self.bar_grow_anim_target = self.bar_size_idx as f32;
-        self.bar_grow_anim_start = Some(now);
-        tracing::info!(bar_size = self.bar_size_idx, current, "bar grow -1");
-        self.save_persisted_state();
+        self.config.bar_grow_w = next;
+        self.config.save();
     }
 
     /// Eased height-progress for the collapse transition. Returns 0.0
@@ -318,7 +257,10 @@ impl AppState {
     /// content. Used both for the static expanded case and as the
     /// "from" value when animating into/out of collapsed.
     fn expanded_panel_h_logical(&self) -> f32 {
-        let bonus = lerp_steps(self.grow_progress(), GROW_H_STEPS);
+        // Scale the height bonus linearly with the expanded-width
+        // slider so the panel grows proportionally on both axes.
+        let frac = (self.config.panel_grow_w / crate::settings::GROW_W_MAX).clamp(0.0, 1.0);
+        let bonus = frac * GROW_H_MAX;
         if matches!(self.mode, PanelMode::Control(crate::controls::TileId::SysMon)) {
             return 880.0 + bonus;
         }

@@ -175,7 +175,7 @@ impl Lantern {
 
         let (top_excl, bottom_excl, left_excl, right_excl) = self.exclusive_zone_offsets_for_output(output);
         let outer = self.workspaces.outer_gap;
-        let inner = crate::tiling::default_gap();
+        let inner = crate::default_gap();
         let half_inner = inner / 2;
 
         let x = geo.loc.x + left_excl + outer;
@@ -422,12 +422,6 @@ impl Lantern {
         let output_name = output.name();
         let Some(target) = self.snap_zone_geometry_on_output(&output, zone) else { return false };
 
-        // Pop from BSP if tiled — we're moving to a manual snap zone.
-        if self.workspaces.contains(surface) {
-            self.workspaces.remove(surface);
-            self.tiling_anim.remove(surface);
-        }
-
         self.apply_snap(surface, zone, target);
 
         let overlapping: Vec<(WlSurface, Rectangle<i32, Logical>)> = self.space.elements()
@@ -458,11 +452,6 @@ impl Lantern {
             let Some(other_output) = other_output else { continue };
             let Some(other_target) = self.snap_zone_geometry_on_output(&other_output, free) else { continue };
 
-            // Pop evictee from BSP tree too — they're becoming a snap.
-            if self.workspaces.contains(&other_surface) {
-                self.workspaces.remove(&other_surface);
-                self.tiling_anim.remove(&other_surface);
-            }
             let _ = self.snapped_windows.iter().position(|e| e.surface == other_surface)
                 .map(|i| self.snapped_windows.remove(i));
             let _ = self.maximized_windows.iter().position(|e| e.surface == other_surface)
@@ -479,9 +468,6 @@ impl Lantern {
             taken.push(free);
         }
 
-        if self.workspaces.tiling_active {
-            self.apply_tiling_layout();
-        }
         self.schedule_client_render();
         tracing::info!(?zone, "Snapped via drag with eviction");
         true

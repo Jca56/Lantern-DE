@@ -125,7 +125,6 @@ pub(super) fn handle_clicks(
         };
         let arrow_hit = crate::view_arrows::hit_test(panel_rect, scale_f, phys_cx, phys_cy);
         let home_hit = crate::view_indicator::hit_home(panel_rect, scale_f, phys_cx, phys_cy);
-        let grow_hit = crate::view_indicator::hit_grow(panel_rect, scale_f, phys_cx, phys_cy);
         let gear_hit = crate::view_indicator::hit_gear(panel_rect, scale_f, phys_cx, phys_cy);
         let restart_hit = crate::view_indicator::hit_restart(panel_rect, scale_f, phys_cx, phys_cy);
         let emoji_btn_hit = crate::view_indicator::hit_emoji(panel_rect, scale_f, phys_cx, phys_cy);
@@ -216,12 +215,18 @@ pub(super) fn handle_clicks(
                         }
                     }
                     crate::settings::SettingHit::SliderSeek(key, value) => {
-                        crate::settings::apply_value(
-                            &mut app.config,
-                            key,
-                            crate::settings::SettingValue::F(value),
-                        );
-                        app.config.save();
+                        if key.defers_during_drag() {
+                            // Stash for release-time commit so the panel
+                            // doesn't resize out from under the cursor.
+                            app.settings_drag_pending = Some(value);
+                        } else {
+                            crate::settings::apply_value(
+                                &mut app.config,
+                                key,
+                                crate::settings::SettingValue::F(value),
+                            );
+                            app.config.save();
+                        }
                         app.settings_drag = Some(key);
                     }
                 }
@@ -452,8 +457,6 @@ pub(super) fn handle_clicks(
             // Already handled by emojis overlay.
         } else if home_hit {
             app.set_view(crate::app::PanelView::Default);
-        } else if grow_hit {
-            app.toggle_grow();
         } else if let Some(dot_idx) = dot_hit {
             if let Some(v) = crate::app::PanelView::ALL.get(dot_idx) {
                 app.set_view(*v);
@@ -577,6 +580,37 @@ pub(super) fn handle_clicks(
                 }
                 crate::controls::TileId::TerminalClear => {
                     app.terminal.clear();
+                }
+                crate::controls::TileId::Audio => {
+                    // Audio tile is interactive in-place: speaker icon
+                    // toggles mute, the bar sets volume + starts a
+                    // drag. No navigation to the expanded view.
+                    use crate::controls::audio::InlineHit;
+                    if let Some(layout) = app.controls.tile_layout(
+                        crate::controls::TileId::Audio,
+                        panel_rect,
+                        scale_f,
+                        app.panel_view,
+                    ) {
+                        match crate::controls::audio::hit_test_inline(
+                            &layout, scale_f, phys_cx, phys_cy,
+                        ) {
+                            Some(InlineHit::SpeakerIcon) => {
+                                app.controls.audio.toggle_mute();
+                            }
+                            Some(InlineHit::VolumeBar) => {
+                                let bar = crate::controls::audio::inline_bar_rect(
+                                    &layout, scale_f,
+                                );
+                                let frac =
+                                    ((phys_cx - bar.x) / bar.w).clamp(0.0, 1.0);
+                                app.controls.audio.set_volume(frac);
+                                app.dragging =
+                                    Some(crate::app::DragTarget::AudioInlineSlider);
+                            }
+                            None => {}
+                        }
+                    }
                 }
                 _ => {
                     tracing::debug!(?tile_id, "left-click on controls tile → switch view");

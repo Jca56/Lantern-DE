@@ -92,8 +92,8 @@ fn right_slot_at(panel: Rect, scale: f32, right_logical_pad: f32, size: f32) -> 
 }
 
 /// Per-slot logical sizes for the LEFT strip in render order.
-/// 0 = Restart, 1 = Gear (Settings), 2 = Home, 3 = Grow (Size), 4 = Desktop.
-const LEFT_SLOT_SIZES: [f32; 5] = [RESTART_SIZE, GEAR_SIZE, BTN_SIZE, BTN_SIZE, BTN_SIZE];
+/// 0 = Restart, 1 = Gear (Settings), 2 = Home, 3 = Desktop.
+const LEFT_SLOT_SIZES: [f32; 4] = [RESTART_SIZE, GEAR_SIZE, BTN_SIZE, BTN_SIZE];
 
 /// X offset (logical, from panel left edge) of slot `idx`'s left edge.
 /// Walks the slot list cumulatively so a smaller gear at the front
@@ -121,11 +121,8 @@ pub fn gear_rect(panel: Rect, scale: f32) -> Rect {
 pub fn home_rect(panel: Rect, scale: f32) -> Rect {
     left_slot_at(panel, scale, left_slot_x_logical(2), BTN_SIZE)
 }
-pub fn grow_rect(panel: Rect, scale: f32) -> Rect {
-    left_slot_at(panel, scale, left_slot_x_logical(3), BTN_SIZE)
-}
 pub fn desktop_button_rect(panel: Rect, scale: f32) -> Rect {
-    left_slot_at(panel, scale, left_slot_x_logical(4), BTN_SIZE)
+    left_slot_at(panel, scale, left_slot_x_logical(3), BTN_SIZE)
 }
 
 pub fn notes_rect(panel: Rect, scale: f32) -> Rect {
@@ -147,9 +144,6 @@ fn point_in(r: Rect, px: f32, py: f32) -> bool {
 
 pub fn hit_home(panel: Rect, scale: f32, px: f32, py: f32) -> bool {
     point_in(home_rect(panel, scale), px, py)
-}
-pub fn hit_grow(panel: Rect, scale: f32, px: f32, py: f32) -> bool {
-    point_in(grow_rect(panel, scale), px, py)
 }
 pub fn hit_restart(panel: Rect, scale: f32, px: f32, py: f32) -> bool {
     point_in(restart_rect(panel, scale), px, py)
@@ -259,39 +253,6 @@ pub fn draw_dots(painter: &mut Painter, panel: Rect, scale: f32, alpha: f32, cur
                     .with_alpha(INACTIVE_ALPHA * alpha),
             );
         }
-    }
-}
-
-pub fn draw_grow(
-    painter: &mut Painter,
-    panel: Rect,
-    scale: f32,
-    alpha: f32,
-    grown: bool,
-    hovered: bool,
-) {
-    let r = grow_rect(panel, scale);
-    let stroke = 2.0 * scale;
-    let color = glyph_color(hovered, grown, alpha);
-
-    let cx = r.x + r.w / 2.0;
-    let cy = r.y + r.h / 2.0;
-    let arm = r.w * 0.32;
-    let head = arm * 0.45;
-    if grown {
-        painter.line_round(cx - arm, cy - arm, cx - arm * 0.4, cy - arm * 0.4, stroke, color);
-        painter.line_round(cx - arm * 0.4, cy - arm * 0.4, cx - arm * 0.4 + head, cy - arm * 0.4, stroke, color);
-        painter.line_round(cx - arm * 0.4, cy - arm * 0.4, cx - arm * 0.4, cy - arm * 0.4 + head, stroke, color);
-        painter.line_round(cx + arm, cy + arm, cx + arm * 0.4, cy + arm * 0.4, stroke, color);
-        painter.line_round(cx + arm * 0.4, cy + arm * 0.4, cx + arm * 0.4 - head, cy + arm * 0.4, stroke, color);
-        painter.line_round(cx + arm * 0.4, cy + arm * 0.4, cx + arm * 0.4, cy + arm * 0.4 - head, stroke, color);
-    } else {
-        painter.line_round(cx - arm * 0.4, cy - arm * 0.4, cx - arm, cy - arm, stroke, color);
-        painter.line_round(cx - arm, cy - arm, cx - arm + head, cy - arm, stroke, color);
-        painter.line_round(cx - arm, cy - arm, cx - arm, cy - arm + head, stroke, color);
-        painter.line_round(cx + arm * 0.4, cy + arm * 0.4, cx + arm, cy + arm, stroke, color);
-        painter.line_round(cx + arm, cy + arm, cx + arm - head, cy + arm, stroke, color);
-        painter.line_round(cx + arm, cy + arm, cx + arm, cy + arm - head, stroke, color);
     }
 }
 

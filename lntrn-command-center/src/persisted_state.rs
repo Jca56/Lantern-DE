@@ -1,9 +1,9 @@
 //! Per-session UI state that survives daemon restarts.
 //!
-//! Kept deliberately tiny: which tab the user was on, whether the panel
-//! was collapsed to its bar, and which grow step the panel was at. Lives
-//! at `~/.lantern/config/command-center/state.json` and is rewritten on
-//! every relevant transition.
+//! Kept deliberately tiny: which tab the user was on and whether the
+//! panel was collapsed to its bar. Lives at
+//! `~/.lantern/config/command-center/state.json` and is rewritten on
+//! every relevant transition. Panel size lives in `settings.toml` now.
 
 use std::fs;
 use std::path::PathBuf;
@@ -47,10 +47,6 @@ pub struct PersistedState {
     pub panel_view: PanelViewKind,
     #[serde(default)]
     pub collapsed: bool,
-    #[serde(default)]
-    pub panel_size_idx: u8,
-    #[serde(default)]
-    pub bar_size_idx: u8,
 }
 
 impl Default for PanelViewKind {
@@ -62,8 +58,6 @@ impl Default for PersistedState {
         Self {
             panel_view: PanelViewKind::Default,
             collapsed: false,
-            panel_size_idx: 0,
-            bar_size_idx: 0,
         }
     }
 }

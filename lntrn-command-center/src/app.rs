@@ -33,32 +33,12 @@ pub const PANEL_H_LOGICAL_PHASE1: f32 = 740.0;
 pub const PANEL_CORNER_RADIUS: f32 = 24.0;
 /// Animation duration (open and close), seconds.
 pub const ANIM_DURATION_SECS: f32 = 0.60;
-/// Duration of the collapse/expand height animation.
-/// Duration of the grow / shrink animation (panel width + height).
-pub const GROW_ANIM_DURATION: f32 = 1.00;
-/// Bonus height (logical px) added at each grow step. Index 0 = small
-/// (no bonus), index 1 = medium, index 2 = large. Large keeps medium's
-/// height — only the width keeps growing — so the panel doesn't run
-/// past the screen edge at the largest step.
-pub const GROW_H_STEPS: [f32; 3] = [0.0, 360.0, 360.0];
-/// Bonus width (logical px) added at each grow step. Pairs with
-/// [`GROW_H_STEPS`] so the grown panel scales nicely on both axes.
-pub const GROW_W_STEPS: [f32; 3] = [0.0, 240.0, 400.0];
-/// Maximum grow step index (so the cycle wraps small → medium → large
-/// → small).
-pub const GROW_MAX_STEP: u8 = 2;
-
-/// Linearly interpolate between consecutive `steps` entries using
-/// `progress` (0.0..=2.0). Used to map an animating grow progress into
-/// a concrete bonus dimension.
-pub fn lerp_steps(progress: f32, steps: [f32; 3]) -> f32 {
-    let p = progress.clamp(0.0, GROW_MAX_STEP as f32);
-    let i = p.floor() as usize;
-    let f = p - i as f32;
-    let i = i.min(2);
-    let next = (i + 1).min(2);
-    steps[i] + (steps[next] - steps[i]) * f
-}
+/// Bonus height (logical px) added to the expanded panel when the user
+/// has dialed up `panel_grow_w`. We scale the height linearly with the
+/// width slider so the panel grows proportionally on both axes — at
+/// `panel_grow_w == crate::settings::GROW_W_MAX` the bonus equals
+/// [`GROW_H_MAX`], at 0 there's no bonus.
+pub const GROW_H_MAX: f32 = 360.0;
 /// Scale at the start of the open animation (and end of the close animation).
 pub const ANIM_SCALE_START: f32 = 0.95;
 
@@ -97,6 +77,9 @@ pub enum DragTarget {
     AudioOutputSlider,
     /// Audio input (mic) slider.
     AudioInputSlider,
+    /// Audio output slider rendered inside the controls-row tile,
+    /// dragged without opening the expanded audio view.
+    AudioInlineSlider,
     /// Backlight brightness slider.
     BrightnessSlider,
 }
@@ -188,8 +171,6 @@ pub struct AppState {
     pub desktop_settings_hover: Option<crate::desktop_settings::HoverRow>,
     /// True when the cursor is hovering the Home button above the panel.
     pub home_hover: bool,
-    /// True when the cursor is hovering the grow / shrink button.
-    pub grow_hover: bool,
     /// True when the cursor is hovering the gear (settings) button.
     pub gear_hover: bool,
     /// True when the cursor is hovering the dev restart X button.
@@ -212,26 +193,12 @@ pub struct AppState {
     /// While the user is mid-drag on a settings slider, this points to
     /// which one so motion events route correctly.
     pub settings_drag: Option<crate::settings::SettingKey>,
-    /// Window-state grow step (0 = small, 1 = medium, 2 = large) used
-    /// when the panel is *expanded*. Independent of [`bar_size_idx`] so
-    /// the user can have e.g. a long bar + small window.
-    pub panel_size_idx: u8,
-    /// Animation state for the window's grow toggle.
-    /// `grow_anim_origin` is the progress at the moment the user
-    /// clicked; `target` is where the animation is heading (one of
-    /// 0.0/1.0/2.0). The lerp gives a smooth ease.
-    pub grow_anim_start: Option<std::time::Instant>,
-    pub grow_anim_origin: f32,
-    pub grow_anim_target: f32,
-    /// Collapsed-bar grow step (0/1/2) — controls the bar's width when
-    /// fully collapsed. Independent of [`panel_size_idx`]; cycled by the
-    /// grow button while collapsed.
-    pub bar_size_idx: u8,
-    /// Animation state for the bar's grow toggle. Same shape as the
-    /// window grow anim fields but tracks the bar's width.
-    pub bar_grow_anim_start: Option<std::time::Instant>,
-    pub bar_grow_anim_origin: f32,
-    pub bar_grow_anim_target: f32,
+    /// Tentative value for a settings slider whose effect must be
+    /// deferred until release (currently just `PanelGrowW` — applying
+    /// it live would move the slider track out from under the cursor).
+    /// The knob renders from this while it's set; on release the value
+    /// is committed to `config` and the field cleared.
+    pub settings_drag_pending: Option<f32>,
     /// Active view-switch animation: the view we're transitioning
     /// *from*, plus the wall-clock start. `panel_view` is already set
     /// to the destination; the body crossfades from `from` to `panel_view`
@@ -310,8 +277,6 @@ impl AppState {
         let persisted = crate::persisted_state::load();
         let saved_view: PanelView = persisted.panel_view.clone().into();
         let saved_collapsed = persisted.collapsed;
-        let saved_panel_size = persisted.panel_size_idx.min(GROW_MAX_STEP);
-        let saved_bar_size = persisted.bar_size_idx.min(GROW_MAX_STEP);
         Self {
             visibility: Visibility::Hidden,
             anim_start: Instant::now(),
@@ -341,7 +306,6 @@ impl AppState {
             desktop_settings_open: false,
             desktop_settings_hover: None,
             home_hover: false,
-            grow_hover: false,
             gear_hover: false,
             restart_hover: false,
             bar_sliders: crate::bar_sliders::BarSliderState::default(),
@@ -352,14 +316,7 @@ impl AppState {
             settings_open: false,
             config: crate::settings::Config::load(),
             settings_drag: None,
-            panel_size_idx: saved_panel_size,
-            grow_anim_start: None,
-            grow_anim_origin: saved_panel_size as f32,
-            grow_anim_target: saved_panel_size as f32,
-            bar_size_idx: saved_bar_size,
-            bar_grow_anim_start: None,
-            bar_grow_anim_origin: saved_bar_size as f32,
-            bar_grow_anim_target: saved_bar_size as f32,
+            settings_drag_pending: None,
             cursor_phys: (0.0, 0.0),
             view_anim_from: None,
             view_anim_start: None,
@@ -411,13 +368,12 @@ impl AppState {
     }
 
     /// Snapshot the durable bits of UI state to `state.json` so a fresh
-    /// daemon comes back on the same tab + collapse + grow as it left.
+    /// daemon comes back on the same tab + collapse as it left. Panel
+    /// size lives in settings.toml now (driven by the Size sliders).
     pub fn save_persisted_state(&self) {
         let snap = crate::persisted_state::PersistedState {
             panel_view: self.panel_view.into(),
             collapsed: self.collapsed,
-            panel_size_idx: self.panel_size_idx,
-            bar_size_idx: self.bar_size_idx,
         };
         crate::persisted_state::save(&snap);
     }

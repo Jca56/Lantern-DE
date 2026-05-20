@@ -66,7 +66,6 @@ const BASE_CLOSE: Duration = Duration::from_millis(1000);
 const BASE_STATE: Duration = Duration::from_millis(1000);
 const BASE_MINIMIZE: Duration = Duration::from_millis(1000);
 const BASE_UNMINIMIZE: Duration = Duration::from_millis(1000);
-const BASE_TILING: Duration = Duration::from_millis(1000);
 const BASE_WORKSPACE_SLIDE: Duration = Duration::from_millis(1000);
 
 pub fn open_duration() -> Duration { scaled_cat(BASE_OPEN, "open_close") }
@@ -74,7 +73,6 @@ pub fn close_duration() -> Duration { scaled_cat(BASE_CLOSE, "open_close") }
 pub fn state_duration() -> Duration { scaled_cat(BASE_STATE, "state") }
 pub fn minimize_duration() -> Duration { scaled_cat(BASE_MINIMIZE, "minimize") }
 pub fn unminimize_duration() -> Duration { scaled_cat(BASE_UNMINIMIZE, "minimize") }
-pub fn tiling_duration() -> Duration { scaled_cat(BASE_TILING, "tiling") }
 pub fn workspace_slide_duration() -> Duration { scaled_cat(BASE_WORKSPACE_SLIDE, "workspace") }
 
 // ── Preset → curve lookup ─────────────────────────────────────────────────
@@ -83,10 +81,6 @@ pub fn workspace_slide_duration() -> Duration { scaled_cat(BASE_WORKSPACE_SLIDE,
 // and unminimize. EaseOutBack uses the full duration so the bounce reads at
 // the same pace as the other animations.
 const SPRINGY_BOUNCE: Curve = Curve::EaseOutBack { overshoot: 1.70158 };
-// Cinematic tiling spring: damping 0.82 / freq 4.0 — tuned so the longer
-// cinematic duration doesn't wobble. Springy preset trades that for bounce.
-const SPRING_TILING_CIN: Curve = Curve::Spring { damping: 0.82, frequency: 4.0 };
-const SPRING_TILING_SPRINGY: Curve = Curve::Spring { damping: 0.5, frequency: 6.0 };
 
 pub fn open_curve() -> Curve {
     match preset().as_str() {
@@ -134,15 +128,6 @@ pub fn unminimize_curve() -> Curve {
         "springy" => SPRINGY_BOUNCE,
         "linear" => Curve::Linear,
         _ => Curve::EaseInOutQuint,
-    }
-}
-
-pub fn tiling_curve() -> Curve {
-    match preset().as_str() {
-        "snappy" => Curve::EaseOutCubic,
-        "springy" => SPRING_TILING_SPRINGY,
-        "linear" => Curve::Linear,
-        _ => SPRING_TILING_CIN,
     }
 }
 

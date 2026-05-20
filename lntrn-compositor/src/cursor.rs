@@ -101,7 +101,12 @@ impl CursorState {
             state.set_custom_theme(initial_theme);
         }
         if !state.custom_loaded {
-            state.load_xcursor(CursorIcon::Default);
+            // Run the full fallback chain (Lantern SVG → custom theme → embedded
+            // → xcursor) instead of going straight to xcursor. The bare
+            // load_xcursor path produced the Wayland blue/white triangle on
+            // first frame until something forced a re-render via set_status.
+            let status = state.status.clone();
+            state.set_status(status);
         }
         state
     }
@@ -228,10 +233,15 @@ impl CursorState {
         self.custom_theme = theme.to_string();
 
         if theme == "default" {
-            // Revert to xcursor
+            // Revert to the Lantern default arrow (lntrn-cursor.svg) by
+            // re-running the fallback chain with the current status,
+            // instead of immediately calling load_xcursor which would
+            // briefly paint the Wayland blue/white triangle until the
+            // next pointer-shape change forced a re-rasterize.
             self.custom_loaded = false;
-            self.loaded_icon_key = None; // Force reload
-            self.load_xcursor(CursorIcon::Default);
+            self.loaded_icon_key = None;
+            let status = self.status.clone();
+            self.set_status(status);
             return;
         }
 

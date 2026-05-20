@@ -46,6 +46,8 @@ const SHAPE_TAPERED_PILL_SHADOW: f32 = 15.0;
 const SHAPE_TAPERED_PILL_INNER_SHADOW: f32 = 16.0;
 const SHAPE_ROUNDED_RING: f32 = 17.0;
 const SHAPE_GRADIENT_MULTI: f32 = 18.0;
+const SHAPE_TWIN_RADIAL_GLOW: f32 = 22.0;
+const SHAPE_RADIAL_GLOW: f32 = 23.0;
 
 @vertex
 fn vs_main(@builtin(vertex_index) vi: u32, instance: InstanceInput) -> VertexOutput {
@@ -190,6 +192,19 @@ fn shadow_mask(dist: f32, sigma: f32) -> f32 {
     return exp(-0.5 * t * t);
 }
 
+// Pseudo-random screen-space dither for gradients. Adds ±0.5/255 of noise
+// per pixel so the quantization to 8-bit RGB happens to slightly different
+// values for neighbouring pixels — visible banding on subtle gradients
+// dissolves into film-grain. Per-channel noise (vs scalar) means the
+// dithering carries chroma too instead of looking like monochrome static.
+// Free in practice: ~5 ALU ops, no texture lookup.
+fn dither_rgb(px: vec2<f32>) -> vec3<f32> {
+    let n_r = fract(sin(dot(px, vec2<f32>(12.9898, 78.233))) * 43758.5453);
+    let n_g = fract(sin(dot(px, vec2<f32>(63.7264, 10.873))) * 24634.6345);
+    let n_b = fract(sin(dot(px, vec2<f32>(36.5829, 91.187))) * 51317.7345);
+    return (vec3<f32>(n_r, n_g, n_b) - 0.5) * (1.0 / 255.0);
+}
+
 // ── Fragment shader ─────────────────────────────────────────────────────────
 
 @fragment
@@ -233,8 +248,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let angle = in.params.y;
         let dir = vec2<f32>(cos(angle), sin(angle));
         let rel = (in.local_px - in.bounds.xy) / in.bounds.zw - 0.5;
-        let t = clamp(dot(rel, dir) + 0.5, 0.0, 1.0);
+        // Project onto the gradient axis with full corner-to-corner coverage.
+        // Without dividing by the corner-projection span the diagonal angles
+        // (multiples of π/4) clip the gradient early — the same fix the
+        // multi-stop path uses. Keeping the two paths aligned means switching
+        // between 2- and 3-stop gradients doesn't visibly shift the band.
+        let span = max(abs(dir.x) + abs(dir.y), 0.0001);
+        let t = clamp((dot(rel, dir) / span) + 0.5, 0.0, 1.0);
         color = mix(in.color, in.color_b, vec4<f32>(t));
+        color = vec4<f32>(color.rgb + dither_rgb(in.local_px), color.a);
 
     } else if in.params.w == SHAPE_GRADIENT_MULTI {
         // True multi-stop linear gradient (3 or 4 colors, evenly spaced).
@@ -275,6 +297,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 color = mix(in.color_b, in.color_c, vec4<f32>((t - 0.5) * 2.0));
             }
         }
+        color = vec4<f32>(color.rgb + dither_rgb(in.local_px), color.a);
 
     } else if in.params.w == SHAPE_GRADIENT_RADIAL {
         let radius = in.params.x;
@@ -293,6 +316,67 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let d = length(in.local_px - center) / max_dist;
         let t = clamp(d, 0.0, 1.0);
         color = mix(in.color, in.color_b, vec4<f32>(t));
+        color = vec4<f32>(color.rgb + dither_rgb(in.local_px), color.a);
+
+    } else if in.params.w == SHAPE_TWIN_RADIAL_GLOW {
+        // Two independent radial glows, each anchored at a normalized
+        // position within the rect (color_c.xy and color_c.zw) and fading
+        // smoothly to zero by `glow_radius_norm` * the inter-anchor
+        // distance. With the default radius of 0.5 the two glows meet at
+        // exactly the midpoint between them, both at zero alpha — so the
+        // window's center stays its original bg color even with both
+        // colors cranked to 100%. Anything between the anchors is a
+        // weighted blend of the two colors.
+        // params: [corner_radius, glow_radius_norm, _, shape_id]
+        // color = color_a, color_b = color_b
+        // color_c = [a_x, a_y, b_x, b_y] normalized 0-1 within rect
+        let radius = in.params.x;
+        let glow_r_norm = in.params.y;
+        let center = in.bounds.xy + in.bounds.zw * 0.5;
+        let half_size = in.bounds.zw * 0.5;
+        let dist = sdf_rounded_rect(in.local_px, center, half_size, radius);
+        mask = 1.0 - smoothstep(-1.0, 1.0, dist);
+
+        let anchor_a = in.bounds.xy + in.color_c.xy * in.bounds.zw;
+        let anchor_b = in.bounds.xy + in.color_c.zw * in.bounds.zw;
+        let anchor_dist = max(length(anchor_b - anchor_a), 0.001);
+        let glow_r = glow_r_norm * anchor_dist;
+
+        let d_a = length(in.local_px - anchor_a);
+        let d_b = length(in.local_px - anchor_b);
+        let f_a = 1.0 - smoothstep(0.0, glow_r, d_a);
+        let f_b = 1.0 - smoothstep(0.0, glow_r, d_b);
+
+        let a_a = in.color.a * f_a;
+        let a_b = in.color_b.a * f_b;
+        let total_a = a_a + a_b;
+        if total_a < 0.001 {
+            color = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+        } else {
+            let mixed_rgb = (in.color.rgb * a_a + in.color_b.rgb * a_b) / total_a;
+            color = vec4<f32>(mixed_rgb, min(total_a, 1.0));
+        }
+        color = vec4<f32>(color.rgb + dither_rgb(in.local_px), color.a);
+
+    } else if in.params.w == SHAPE_RADIAL_GLOW {
+        // Single radial glow anchored at a normalized point within the
+        // rect (color_b.xy), fading from `color`'s alpha at the anchor to
+        // zero at `glow_radius_px` away. Stack several of these to build
+        // the multi-corner window-background overlay.
+        // params: [corner_radius, glow_radius_px, _, shape_id]
+        // color_b.xy = anchor (normalized 0..1 within rect)
+        let radius = in.params.x;
+        let glow_r = max(in.params.y, 0.0001);
+        let center = in.bounds.xy + in.bounds.zw * 0.5;
+        let half_size = in.bounds.zw * 0.5;
+        let dist = sdf_rounded_rect(in.local_px, center, half_size, radius);
+        mask = 1.0 - smoothstep(-1.0, 1.0, dist);
+
+        let anchor = in.bounds.xy + in.color_b.xy * in.bounds.zw;
+        let d = length(in.local_px - anchor);
+        let falloff = 1.0 - smoothstep(0.0, glow_r, d);
+        color = vec4<f32>(in.color.rgb, in.color.a * falloff);
+        color = vec4<f32>(color.rgb + dither_rgb(in.local_px), color.a);
 
     } else if in.params.w == SHAPE_RECT_STROKE {
         // Proper rounded rect outline via SDF

@@ -22,8 +22,6 @@ pub struct MoveSurfaceGrab {
     pub was_maximized: bool,
     /// Whether we already restored the window during this drag
     pub restored_this_drag: bool,
-    /// If the window was tiled when the drag started
-    pub was_tiled: bool,
     /// Whether any actual motion happened (for click-without-drag detection)
     pub has_moved: bool,
 }
@@ -38,26 +36,6 @@ impl PointerGrab<Lantern> for MoveSurfaceGrab {
     ) {
         handle.motion(data, None, event);
         self.has_moved = true;
-
-        // If tiled, pop out of the tree on first motion
-        if self.was_tiled && !self.restored_this_drag {
-            self.restored_this_drag = true;
-            let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(&self.window) else { return };
-            data.workspaces.remove(&surface);
-            data.tiling_anim.remove(&surface);
-            if data.workspaces.tiling_active {
-                data.apply_tiling_layout();
-            }
-            // Re-center under cursor like snap/maximize restore
-            let geo = self.window.geometry();
-            let new_x = event.location.x - geo.size.w as f64 / 2.0;
-            let new_y = event.location.y + crate::ssd::SsdManager::bar_height() as f64 / 2.0;
-            let new_loc = Point::from((new_x as i32, new_y as i32));
-            data.remap_tracked_window(self.window.clone(), new_loc, false);
-            self.initial_window_location = new_loc;
-            self.start_data.location = event.location;
-            return;
-        }
 
         // If this window was snapped or maximized, restore it on first drag motion
         // and re-center the window under the cursor.
@@ -91,24 +69,6 @@ impl PointerGrab<Lantern> for MoveSurfaceGrab {
             false,
         );
 
-        // Drag-snap preview: if the pointer is near a snap zone or the
-        // top edge, compute the would-be target rect and stash it on
-        // state so the renderer can draw a translucent overlay. Cleared
-        // (set to None) when the pointer leaves the snap region.
-        let pointer_pos = event.location;
-        let preview_rect = if let Some(zone) = data.detect_snap_zone_drag(pointer_pos) {
-            data.snap_zone_geometry(zone)
-        } else if data.detect_top_edge(pointer_pos).is_some() {
-            // Top edge maps to "maximize"; preview the full output rect.
-            data.output_at_point(pointer_pos)
-                .and_then(|o| data.workspaces.output_geometry(&o))
-        } else {
-            None
-        };
-        if preview_rect != data.drag_snap_preview {
-            data.drag_snap_preview = preview_rect;
-            data.schedule_render();
-        }
     }
 
     fn relative_motion(
@@ -130,14 +90,6 @@ impl PointerGrab<Lantern> for MoveSurfaceGrab {
         handle.button(data, event);
         const BTN_LEFT: u32 = 0x110;
         if !handle.current_pressed().contains(&BTN_LEFT) {
-            // Always clear the preview overlay on release — whether or
-            // not we actually snap, the user shouldn't see a residual
-            // ghost rect after their drag finishes.
-            if data.drag_snap_preview.is_some() {
-                data.drag_snap_preview = None;
-                data.schedule_render();
-            }
-
             let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(&self.window) else { return };
 
             {
@@ -152,14 +104,6 @@ impl PointerGrab<Lantern> for MoveSurfaceGrab {
                     if !data.is_maximized(&surface) {
                         data.maximize_request_surface(&surface);
                     }
-                } else if self.was_tiled && self.has_moved && data.workspaces.tiling_active {
-                    // Re-insert into tiling tree on the output where it was dropped
-                    let output_name = data.output_at_point(pointer_pos)
-                        .or_else(|| data.workspaces.outputs_iter().next().cloned())
-                        .map(|o| o.name())
-                        .unwrap_or_default();
-                    data.workspaces.insert(&output_name, surface.clone(), None);
-                    data.apply_tiling_layout();
                 }
             }
 
@@ -256,12 +200,5 @@ impl PointerGrab<Lantern> for MoveSurfaceGrab {
         &self.start_data
     }
 
-    fn unset(&mut self, data: &mut Lantern) {
-        // Belt-and-suspenders cleanup of the snap-preview overlay in
-        // case `button` didn't run (e.g. another grab took over).
-        if data.drag_snap_preview.is_some() {
-            data.drag_snap_preview = None;
-            data.schedule_render();
-        }
-    }
+    fn unset(&mut self, _data: &mut Lantern) {}
 }

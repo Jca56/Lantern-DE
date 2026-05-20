@@ -41,13 +41,6 @@ pub fn render_surface(
 ) {
     let render_start = Instant::now();
 
-    // Drain deferred relayout flag set by config-poll (e.g. WM gap change).
-    // Must run before any state borrows.
-    if state.pending_layout {
-        state.pending_layout = false;
-        state.apply_tiling_layout();
-    }
-
     // Pick up live cursor-color changes from the settings panel without
     // requiring a session restart. Cheap — `read_input_setting` is
     // mtime-cached, and the rebuild only fires when fill/outline actually
@@ -114,7 +107,6 @@ pub fn render_surface(
             state.finish_close_animation(surface);
         }
     }
-    state.tiling_anim.tick();
     state.workspace_anim.tick();
     state.window_state_anim.tick();
     // Smooth-resize: stream a configure to every trusted in-progress
@@ -408,7 +400,7 @@ pub fn render_surface(
         }
 
         // ── Active-animation rect resolution ─────────────────────────────
-        // Priority: minimize > window_state anim > tiling anim > state target > live.
+        // Priority: minimize > window_state anim > state target > live.
         // window.geometry() is the surface's live geometry — but it can lag
         // when the client is slow to ack a maximize/fullscreen/snap configure.
         // After the state animation finishes, we fall back to the *target* rect
@@ -416,7 +408,6 @@ pub fn render_surface(
         // the window doesn't briefly snap to its stale pre-configure size.
         let win_geo = window.geometry();
         let win_size = win_geo.size;
-        let tiling_anim_rect = state.tiling_anim.current_rect(&surface);
         let state_anim_rect = state.window_state_anim.current_rect(&surface);
         // Smooth-resize held target: bridges the 1-2 frame gap between
         // "rect anim ended" and "client committed at the new size".
@@ -460,9 +451,6 @@ pub fn render_surface(
                 // new size pending. Pin the rect at target so the next
                 // frame's render is already in the final spot — the
                 // client commit will then collapse combined_scale to 1.0.
-                (rect.loc.x as f64, rect.loc.y as f64,
-                 rect.size.w as f64, rect.size.h as f64, 1.0)
-            } else if let Some(ref rect) = tiling_anim_rect {
                 (rect.loc.x as f64, rect.loc.y as f64,
                  rect.size.w as f64, rect.size.h as f64, 1.0)
             } else if let Some(rect) = state_target_rect {
@@ -1063,60 +1051,6 @@ pub fn render_surface(
         elements.extend(spinner_elements.into_iter().map(CustomRenderElements::Memory));
     }
 
-    // Drag-snap preview overlay: a translucent accent-colored rect
-    // showing where the dragged window would land if released right
-    // now. Stored on `state.drag_snap_preview` in global Logical coords;
-    // we convert to output-local Physical here and only emit when the
-    // rect actually intersects this output (multi-monitor correctness).
-    if let Some(preview) = state.drag_snap_preview {
-        use smithay::backend::renderer::element::{solid::SolidColorRenderElement, Id};
-        use smithay::backend::renderer::utils::CommitCounter;
-        if preview.overlaps(output_pos) {
-            let left   = preview.loc.x.max(output_pos.loc.x);
-            let top    = preview.loc.y.max(output_pos.loc.y);
-            let right  = (preview.loc.x + preview.size.w).min(output_pos.loc.x + output_pos.size.w);
-            let bottom = (preview.loc.y + preview.size.h).min(output_pos.loc.y + output_pos.size.h);
-            let loc_phys: Point<i32, Physical> = (
-                ((left - output_pos.loc.x) as f64 * scale).round() as i32,
-                ((top  - output_pos.loc.y) as f64 * scale).round() as i32,
-            ).into();
-            let size_phys: smithay::utils::Size<i32, Physical> = (
-                ((right - left) as f64 * scale).round() as i32,
-                ((bottom - top) as f64 * scale).round() as i32,
-            ).into();
-            // Soft amber accent at low alpha — same family as the
-            // hot-corner glow so the visual language stays consistent.
-            let fill_color = [1.0, 0.78, 0.18, 0.18];
-            let border_color = [1.0, 0.78, 0.18, 0.65];
-            elements.push(CustomRenderElements::Overlay(SolidColorRenderElement::new(
-                Id::new(),
-                Rectangle::<i32, Physical>::new(loc_phys, size_phys),
-                CommitCounter::default(),
-                fill_color,
-                Kind::Unspecified,
-            )));
-            // 2px logical border drawn as 4 thin strips. Stays crisp on
-            // HiDPI because we multiply by the same output `scale`.
-            let border_thickness = (2.0 * scale).round().max(1.0) as i32;
-            let border_strips: [(i32, i32, i32, i32); 4] = [
-                (loc_phys.x, loc_phys.y, size_phys.w, border_thickness),
-                (loc_phys.x, loc_phys.y + size_phys.h - border_thickness, size_phys.w, border_thickness),
-                (loc_phys.x, loc_phys.y, border_thickness, size_phys.h),
-                (loc_phys.x + size_phys.w - border_thickness, loc_phys.y, border_thickness, size_phys.h),
-            ];
-            for (x, y, w, h) in border_strips {
-                if w <= 0 || h <= 0 { continue; }
-                elements.push(CustomRenderElements::Overlay(SolidColorRenderElement::new(
-                    Id::new(),
-                    Rectangle::<i32, Physical>::new((x, y).into(), (w, h).into()),
-                    CommitCounter::default(),
-                    border_color,
-                    Kind::Unspecified,
-                )));
-            }
-        }
-    }
-
     // Hot corner glow feedback (above windows, below cursor)
     if let (Some(corner), Some(ref glow_shader)) = (hot_corner, &hot_corner_glow_shader) {
         use crate::hot_corners::ScreenCorner;
@@ -1521,11 +1455,9 @@ pub fn render_surface(
         }
         state.power.reload_from_config();
         state.power.tick();
-        // Gap sync runs here, but the actual relayout has to happen outside
-        // the udev borrow — set a flag the next render() pass picks up.
-        if state.workspaces.sync_gaps_from_config() {
-            state.pending_layout = true;
-        }
+        // Pick up gap changes from settings; values are read on demand by
+        // snap/zone-move/axis-resize so no relayout pass is needed.
+        let _ = state.workspaces.sync_gaps_from_config();
         state.system_bg_opacity = crate::read_config_f32("background_opacity", 1.0);
         state.blur_exclude = crate::read_config_list("windows", "blur_exclude");
         state.focus_glow = crate::read_config("window_manager", "focus_glow", "true") == "true";
@@ -1849,7 +1781,6 @@ pub fn render_surface(
     // Also keep rendering while switcher is silently waiting for hold threshold
     let switcher_pending = state.alt_tab_switcher.is_active() && !state.alt_tab_switcher.is_visible();
     let needs_anim_redraw = state.animations.has_active()
-        || state.tiling_anim.has_active()
         || state.workspace_anim.is_active()
         || state.window_state_anim.has_active()
         || state.window_state_anim.has_smooth_holds()

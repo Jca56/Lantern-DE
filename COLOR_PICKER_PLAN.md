@@ -1,278 +1,231 @@
-# Full Color Picker — Implementation Plan
+# Color Picker Modal + Drag-and-Drop Plan
 
-## Goal
+Supersedes the old "Full Color Picker" doc — that aimed at replacing the
+swatch row outright. The new design *adds* a picker that drops into the
+existing swatch system via drag-and-drop, instead of replacing it.
 
-Replace (or augment) every swatch-row color picker in System Settings with
-a full HSV picker so the user can dial in **any** color, not just the 8
-presets in `GLOW_COLORS`. Live preview, hex input, plus quick-presets
-stay available for one-click theming.
+## Decisions (locked)
 
-## Scope — all color settings in `lantern.toml`
+- **Picker style**: HSV square + vertical hue strip (Photoshop/Figma feel)
+- **Palette overrides**: per-card (each card maintains its own override list,
+  so editing the Background card's swatches doesn't affect the Gradient card)
+- **Drag visual**: filled color circle follows cursor + drop targets ring
+- **Picker button location**: top-right of each card header (one per card)
+- **Hex field**: read-only display for v1 (editable text input later)
+- **Modal lifecycle**: stays open after a drop so user can batch-edit
+- **Initial picker color**: seeded from the card's current selection
 
-| Field | Section | Currently |
-|---|---|---|
-| `appearance.accent` | Appearance | Theme preset |
-| `appearance.background_color` | Appearance | Background palette swatches |
-| `window_manager.border_color` | WM | GLOW swatch row |
-| `window_manager.focus_glow_color` | WM | GLOW swatch row |
-| `windows.blur_tint_color` | Windows | GLOW swatch row |
-| `input.cursor_body_light` | Mouse | GLOW swatch row |
-| `input.cursor_body_dark` | Mouse | GLOW swatch row |
-| `input.cursor_accent_light` | Mouse | GLOW swatch row |
-| `input.cursor_accent_dark` | Mouse | GLOW swatch row |
-| `input.cursor_outline_color` | Mouse | GLOW swatch row |
-| `input.click_anim_color` | Mouse | GLOW swatch row |
+## Phases
 
-11 fields total. All store hex strings (`"#RRGGBB"`). No schema change
-needed — the picker just outputs hex.
+### 1. HSV ↔ RGB math
+`lntrn-render/draw/src/color.rs`:
+- `Color::to_hsv() -> (f32, f32, f32)` (hue 0-360, sat 0-1, val 0-1)
+- `Color::from_hsv(h, s, v) -> Color`
 
-## UI design
-
-```
-Row layout (replacing or augmenting current swatch rows):
-
-  Label          [●]  ●●●●●●●●  [more]
-                 ^    ^^^^^^^^   ^
-                 |    GLOW       click to expand the picker
-                 |    presets    (or hold Shift+click on preset row)
-                 current color tile
-                 (click → open picker)
-
-Expanded picker (slides in below the row):
-
-  ┌─────────────────────────────────────────────┐
-  │ ┌────────────────┐  H │░░░░░░░│   #FFC800   │
-  │ │                │    │░██░░░░│   ┌───────┐ │
-  │ │   SV plane     │    │░░░░░░░│   │ Hex   │ │
-  │ │  (sat × value, │    │░░██░░░│   │ input │ │
-  │ │   hue tinted)  │    │░░░░░░│    └───────┘ │
-  │ │                │    │░░░░██│              │
-  │ │            [●] │    │░░░░░░│   [R G B HSV]│
-  │ └────────────────┘    └──────┘              │
-  │                                              │
-  │  S: 0.95   V: 0.78    H: 47°                │
-  │                                              │
-  │  ●●●●●●●● ← still-visible GLOW palette       │
-  │                                              │
-  │                       [Close]               │
-  └─────────────────────────────────────────────┘
-```
-
-- **SV plane**: 2D area, X = saturation, Y = value (inverted). Background
-  is the current hue at full S+V. Two gradient overlays:
-  1. White → transparent left-to-right (S axis)
-  2. Transparent → black top-to-bottom (V axis)
-  Draggable indicator dot snaps to cursor pos.
-- **Hue slider**: vertical (or horizontal) full-rainbow bar, draggable.
-  Use `rect_gradient_multi_direct` with 7 stops (red→yellow→green→cyan→blue→magenta→red).
-- **Hex input**: text field showing current color in `#RRGGBB` format.
-  Typing a valid hex updates the SV+hue indicators.
-- **R G B / H S V readouts**: small text labels with current values.
-  Optional toggle to display either.
-- **Preset row**: the existing `GLOW_COLORS` palette stays at the
-  bottom for quick selection. Picking a preset just sets the color +
-  closes (or keeps open — decide later).
-- **Close**: button (or click outside the expanded area).
-
-## Architecture
-
-### New module: `lntrn-ui/src/gpu/color_picker.rs`
-
+### 2. Picker + drag state on `PanelState`
 ```rust
-pub struct ColorPicker {
-    pub rect: Rect,           // outer bounds where the picker draws
-    pub current: Color,        // current hex value as parsed Color
-}
-
 pub struct ColorPickerState {
-    pub open_id: Option<u32>,        // which zone is currently expanded
-    pub hex_input_buf: String,       // text field buffer
-    pub dragging: Option<DragKind>,
+    pub open: bool,
+    pub origin_card: Option<CardId>,
+    pub h: f32, pub s: f32, pub v: f32,
 }
-
-enum DragKind { SvPlane, HueBar, AlphaBar }
-
-impl ColorPicker {
-    pub fn draw(
-        &self,
-        painter: &mut Painter,
-        text: &mut TextRenderer,
-        ix: &mut InteractionContext,
-        state: &mut ColorPickerState,
-        fox: &FoxPalette,
-        scale: f32, sw: u32, sh: u32,
-    ) -> Option<Color> {
-        // Returns Some(new_color) if the user changed it this frame.
-        // Layout: SV plane left, hue slider middle, hex+readouts right,
-        //         preset palette bottom, close button bottom-right.
-        // Handles drag in SV plane: cursor.x → saturation, cursor.y → value.
-        // Handles drag in hue bar: cursor position → hue.
-        // Handles hex field: validate as #RRGGBB, parse, update state.
-    }
+pub struct DragState {
+    pub color: Color,
+    pub start_zone: u32,
 }
 ```
 
-### Hosting in System Settings panels
+### 3. Per-card "+" button in section headers
+Extend `draw_section_card` with an optional picker button param.
+Each card has its own `ZONE_PICKER_BUTTON_*` constant.
 
-Each color row needs a tiny wrapper:
+### 4. HSV modal UI (`color_picker_modal.rs` new file)
+- HSV square: 2 stacked shader rects (white→hue, then 0→black overlay)
+- Hue strip: stack of 6 linear-gradient quads OR new shader path
+- Picker indicators (ring outlines)
+- Preview circle (drag handle)
+- Read-only hex display
+- X close button
+- Modal backdrop (translucent black) closes on outside click
 
+### 5. Drag-and-drop framework
+- Detect drag start: preview-circle zone enters `Dragging` state
+- While dragging: draw ghost circle at `ix.cursor()`
+- On left-release in `wayland.rs`: if drag is some, find hovered drop-target zone, fire drop handler
+- Drop-target zones registered in a small registry for hover-hit-testing
+
+### 6. Per-card palette override config
 ```rust
-struct ColorSlot {
-    label: &'static str,
-    zone_id: u32,           // the click-to-open zone
-    current_hex: String,    // mutable through &mut
-}
-
-fn draw_color_slot(...) -> Option<String> { ... }
-```
-
-When the user clicks a slot's tile, `state.color_picker.open_id` becomes
-that zone's ID. The panel reserves extra vertical space (~220px scaled)
-for the expanded picker below the row. Other rows shift down.
-
-### State management
-
-Picker state lives on `PanelState` (the top-level state struct), not per
-panel — only one picker can be open at a time across the entire app.
-
-```rust
-struct PanelState {
-    // ... existing fields ...
-    color_picker: ColorPickerState,
+#[derive(Default, Serialize, Deserialize)]
+pub struct PaletteOverrides {
+    pub background: Vec<String>,
+    pub gradient: Vec<String>,
+    pub border: Vec<String>,
+    pub tint: Vec<String>,
+    pub glow: Vec<String>,
 }
 ```
+Index-parallel to the default palette; empty string at index i = "use default[i]".
+Helper `effective_palette(defaults, overrides) -> Vec<(String, String)>`.
 
-When `color_picker.open_id` is set, the host panel calls
-`color_picker.draw(...)` after rendering the row that owns that zone.
+### 7. Drop handlers
+- Drop on swatch in card X, index i → `overrides.<card>[i] = drag.color`
+- Drop on gradient chip P → `window_gradient_stops[P] = drag.color`
+- `config.save()` after mutation
 
-### Hex round-tripping
+### 8. Drop-target highlight
+Each swatch / chip, when drag is active AND cursor over it,
+draws an outer pulse ring via `sin(time * 4)` alpha mod.
 
-- All config values stay `String` with `"#RRGGBB"` format.
-- On open: parse current hex → HSV.
-- On drag: update HSV → re-encode hex → update config.
-- On hex input: parse → update HSV → don't loop (skip if hex unchanged
-  since last drag).
+### 9. (Future) Mouse panel integration
+Same picker + drag system, register mouse-panel swatches as drop targets.
 
-## New / extracted primitives
+## Card IDs (for override storage)
+- `background` — Appearance > Background Color
+- `gradient` — Appearance > Window Gradient (shared color row)
+- `border` — Appearance > Window > Border Color
+- `tint` — Appearance > Window > Blur Tint Color
+- `glow` — Appearance > Window > Focus Glow Color
 
-- **`hsv_to_color(h: f32, s: f32, v: f32, a: f32) -> Color`** — extract
-  from `lntrn-media-player/src/render.rs` (`hue_color`) and
-  `lntrn-desktop/src/rainbow.rs` (`hsl_to_color`) into shared
-  `lntrn_render::color`.
-- **`color_to_hsv(c: Color) -> (h, s, v)`** — new helper.
-- **`Color::to_hex(&self) -> String`** — already exists? Check
-  `lntrn-render/draw/src/color.rs`. If not, add it.
-- **`rect_gradient_2d`** (optional, nice-to-have) — bilinear 4-corner
-  gradient. Without it, we layer rect_gradient_linear twice for the SV
-  plane.
-- **Text input widget** — the existing codebase has TextInput in
-  `lntrn-ui`. Use it for the hex field.
+## Estimate
+~4-5 hours, 2-3 deploy cycles.
 
-## Implementation phases
+---
 
-### Phase 1 — Foundations (no UI changes yet)
-- [ ] Extract `hsv_to_color` / `color_to_hsv` into `lntrn-render::color`.
-- [ ] Add `Color::to_hex` if missing.
-- [ ] Write unit tests for HSV ↔ hex round-trip.
+# Resumption Notes (read these FIRST on next session)
 
-### Phase 2 — Picker widget
-- [ ] Create `lntrn-ui/src/gpu/color_picker.rs`.
-- [ ] Draw SV plane (3 layers: hue base + S overlay + V overlay).
-- [ ] Draw hue bar (rainbow gradient).
-- [ ] Draw SV indicator dot + hue indicator triangle.
-- [ ] Wire drag handlers (mouse + position → HSV update).
-- [ ] Draw hex field + RGB/HSV readouts.
-- [ ] Draw embedded preset row (re-use existing `draw_color_swatch_row`).
-- [ ] Draw close button.
-- [ ] Animation: expand/collapse height interpolation (200ms).
+You're a fresh Claude with no context. Read this whole section, then read
+`/home/alva/Projects/Lantern-DE/CLAUDE.md` for the project conventions
+(file size limits, theme/UI conventions, multi-machine notes).
 
-### Phase 3 — Integration into panels
-- [ ] Add `color_picker: ColorPickerState` to top-level `PanelState`.
-- [ ] Refactor `draw_color_swatch_row` to add a "current color" tile +
-      click zone that toggles `open_id`.
-- [ ] Card height calc: when a slot in this card has the picker open, add
-      ~220 * s extra height + push subsequent rows down.
-- [ ] Live preview: every drag updates the config field immediately so
-      the affected widget (cursor, window border, etc.) updates in real
-      time (just like the slider live-update we already have).
+## State of the codebase as of this plan
 
-### Phase 4 — Per-panel wiring
-For each of the 11 color fields, replace the swatch-row call with a
-combined row that uses the new color slot. Order:
-- [ ] Mouse panel (5 cursor color slots + click_anim_color)
-- [ ] Appearance panel (accent + background)
-- [ ] Window manager panel (border + focus glow)
-- [ ] Windows panel (blur tint)
+The gradient overhaul shipped — Window Gradient now uses **5 independent
+radial glows** (TL, TR, BL, BR, Center), driven by chip toggles + shared
+color row + Intensity + Radius sliders. Nothing in that system needs to
+change for the picker — you're adding ON TOP of it.
 
-### Phase 5 — Polish
-- [ ] Keyboard accessibility: hex field gets focus on picker open.
-- [ ] Animated SV plane indicator dot.
-- [ ] Optional alpha slider (lower priority — only blur_tint_color and
-      focus_glow_color reasonably benefit from alpha; skip for v1).
-- [ ] Theme preset import: when a theme is loaded, the picker UI
-      reflects the new color without reopening.
+Other recent work that shipped:
+- Window controls: Super+Arrow = resize (aspect-locked), Super+Shift+Arrow = move,
+  Super+Alt+Arrow = max/min/workspace. Plus 9-zone cell-by-cell move logic.
+- Tiling subsystem deleted entirely. Don't look for it.
+- Drag-snap preview overlay removed (was causing PC freezes).
+- Gradient shader has dithering applied to all gradient paths.
+- Default cursor bug fixed (was loading xcursor blue triangle on session start).
 
-## Open questions to decide before starting
+## Key files (open these on resumption)
 
-1. **Alpha support?** Only `focus_glow_color` and `blur_tint_color` have
-   intensity/opacity sliders alongside them. Should those merge into a
-   single picker with alpha, or stay separate? *Suggestion: keep them
-   separate — alpha sliders are already exposed as `*_intensity` /
-   `blur_tint` floats.*
-2. **Where does the picker open — above or below the row?** Below is
-   conventional; above might be needed if the row is near the bottom of
-   the panel. *Suggestion: always below, scroll-into-view on open.*
-3. **One picker open at a time, or can multiple be open?** *Single is
-   simpler and reads cleaner.*
-4. **Click outside to close?** Yes (and Escape key).
-5. **Should clicking a GLOW preset inside the picker also close it?**
-   *Probably yes — the preset row IS a quick-pick.*
-6. **Show current hex as the slot's static label, or hide?** *Show it
-   in small text under the tile — confirms what's selected at a glance.*
+| Purpose | Path | Lines of interest |
+|---|---|---|
+| Color struct + hex parsing | `lntrn-render/draw/src/color.rs` | `from_hex` line 46; add `to_hsv`/`from_hsv` here |
+| Modal widget (already exists!) | `lntrn-ui/src/gpu/modal.rs` | struct at line 52; `.backdrop_rect`, `.panel_rect`, `.button_rect` |
+| InteractionContext + drag state machine | `lntrn-ui/src/gpu/input.rs` | struct line 35; `InteractionState` enum line 5 (has `Pressed`/`Dragging`); `on_left_pressed` line 111; `on_left_released` line 121 |
+| Wayland input loop (where mouse events route) | `lntrn-system-settings/src/wayland.rs` | cursor move line 265; click routing line 366-372 |
+| Appearance panel main render | `lntrn-system-settings/src/appearance_panel.rs` | `draw_appearance_panel` is the entry; gradient card around line 415; `handle_appearance_click` around line 700 |
+| PanelState (add picker + drag state here) | `lntrn-system-settings/src/panels.rs` | `PanelState` struct ~line 79; `BG_COLORS` at line 50; `GLOW_COLORS` at line 33 |
+| Config schema + persistence | `lntrn-system-settings/src/config.rs` | `AppearanceConfig` line 76; `LanternConfig::save()` line 474; `::load()` line 461 |
+| Section card chrome (where to add + button) | `lntrn-system-settings/src/panels.rs` | `draw_section_card` line 246; `CARD_HEADER_H` line 70; `CARD_INNER_PAD_H` line 68 |
+| Existing slider drag pattern (mirror this) | `lntrn-system-settings/src/panels.rs` | `slider_value_from_cursor` line 102 — uses `is_active()` + `ix.cursor()` |
+| Existing dropdown menu (similar lifecycle) | `lntrn-ui/src/gpu/context_menu.rs` | `ContextMenu` struct line 151; `open`/`close`/`contains`/`draw` |
+| Click router (outside-click logic example) | `lntrn-system-settings/src/wayland.rs` | line 369 — short-circuit before panel handler |
 
-## Visual mockup (terminal preview)
+## Patterns to mirror
 
-```
-Mouse → Cursor Theme card after picker opens for "Body Dark":
+- **Frame-based render** — every frame redraws everything from config state.
+  No "diff" logic. If you change `panel_state.color_picker.open = true`,
+  the next frame renders the modal. Read state, render, repeat.
+- **Zones registered each frame** — call `ix.add_zone(zone_id, rect)` in
+  every render of an interactive region, every frame. Returns the current
+  state (Idle / Hovered / Pressed / Dragging).
+- **Click handling separate from render** — render registers zones; click
+  events arrive separately via `on_left_pressed() -> Option<u32>` (the
+  topmost hit zone id) and are routed to `handle_appearance_click` etc.
+- **Config save pattern** — mutate `config.appearance.*`, then `config.save()`.
+  Atomic write of the whole TOML to `~/.lantern/config/lantern.toml`.
 
-  Size           [●━━━━━━━━●] 64px
-  Outline        [●━━━━━━━━●] 1.00x
-  Roundness      [●━━━━━━━━●] 0%
-  Body Light     [●]  ● ● ● ● ● ● ● ●        #FFFFFF
-  Body Dark      [●]  ● ● ● ● ● ● ● ●        #0A0A0A   ← clicked
-   ┌──────────────────────────────────────────────────┐
-   │  ┌─────────────┐  ┌─┐    Hex: [#0A0A0A]          │
-   │  │             │  │░│                              │
-   │  │   SV plane  │  │░│    R: 10  G: 10  B: 10      │
-   │  │             │  │█│    H: 0°  S: 0%   V: 4%     │
-   │  │         [●] │  │░│                              │
-   │  └─────────────┘  └─┘    ●●●●●●●●  [Close]       │
-   └──────────────────────────────────────────────────┘
-  Accent Light   [●]  ● ● ● ● ● ● ● ●        #FFC800
-  Accent Dark    [●]  ● ● ● ● ● ● ● ●        #0A0A0A
-  Outline        [●]  ● ● ● ● ● ● ● ●        #0A0A0A
+## Build + deploy
+
+```bash
+cd /home/alva/Projects/Lantern-DE
+cargo build --release -p lntrn-system-settings
+cp target/release/lntrn-system-settings /tmp/lntrn-system-settings-new && \
+  mv -f /tmp/lntrn-system-settings-new ~/.lantern/bin/lntrn-system-settings
 ```
 
-## Effort estimate
+If `lntrn-render` (where Color lives) changed too, just `cargo build` from
+the root — it's a workspace, all consumers pick it up. Then deploy any
+running app that uses the picker (initially just system-settings).
 
-| Phase | Estimated effort |
-|---|---|
-| Phase 1 — foundations | ~1-2 hours |
-| Phase 2 — picker widget | ~3-4 hours (the bulk of the work) |
-| Phase 3 — integration | ~2 hours |
-| Phase 4 — per-panel wiring | ~1-2 hours (mostly mechanical) |
-| Phase 5 — polish | ~1-2 hours |
-| **Total** | **~8-12 hours** |
+The `/tmp` move-trick is needed because Rust can't overwrite a running
+binary directly (`Text file busy` error).
 
-Most of the complexity lives in Phase 2 (the picker widget). The rest
-is mechanical replacement once the widget is solid.
+## Where to start (Cycle 1)
 
-## Out of scope (for now)
+1. **Phase 1** — add `to_hsv()`/`from_hsv()` to `Color` in
+   `lntrn-render/draw/src/color.rs`. Standard HSV math. Probably 30 lines.
+2. **Phase 2** — add `ColorPickerState` + `DragState` to `PanelState` in
+   `lntrn-system-settings/src/panels.rs`. Initialize defaults.
+3. **Phase 3** — modify `draw_section_card` (or wrap it) so cards can opt
+   in to a top-right "+" picker button. Each card that wants one passes
+   its `CardId`. Click handler in `handle_appearance_click` opens the
+   modal with that card as origin.
+4. **Phase 4** — new file `lntrn-system-settings/src/color_picker_modal.rs`.
+   Render an HSV square + hue strip in a centered panel. The HSV square
+   can be built from 2 stacked gradient quads:
+   - White → hue color (horizontal linear gradient at sat axis)
+   - Transparent black → opaque black (vertical) on top
+   The hue strip is a stack of 6 linear gradient quads or a new shader
+   path `SHAPE_HUE_STRIP` that maps Y to hue then converts HSV→RGB
+   inline (probably faster than 6 quads).
 
-- Eye-dropper / "pick from screen" mode.
-- Color palette save/load to disk as named themes.
-- Per-monitor color profiles.
-- HSL vs HSV picker mode switch.
-- Color blindness simulation overlay.
+Cycle 1 deploy goal: button visible, modal opens, HSV picker works
+visually (no drag yet). Verify before plumbing drag in Cycle 2.
 
-These are all good "v2" features once the v1 picker is stable.
+## Gotchas
+
+- **File size limit is 600 lines, flagged at 500.** `appearance_panel.rs`
+  is already long — when adding picker logic, factor into helpers, or
+  consider splitting into `appearance_panel.rs` + `color_picker_modal.rs`
+  (planned).
+- **`InteractionContext` has no native mouse-release event for "drop"** —
+  use the `on_left_released` call in `wayland.rs` as a hook: when release
+  fires AND `panel_state.drag.is_some()`, scan all registered zones,
+  find the topmost containing the cursor, fire `handle_drop(zone_id, color)`.
+- **Modal rendering is on top of everything** — render it AFTER all the
+  panel cards but BEFORE any debug overlays. The `Modal` widget in
+  `lntrn-ui` already handles the backdrop dim layer.
+- **Per-card overrides are index-parallel to defaults** — `overrides.background[3]`
+  overrides `BG_COLORS[3]`. Empty string = use default. Don't reshape
+  the arrays.
+- **The hue strip is the trickiest visual** — if a 6-stop linear gradient
+  feels too segmented, a custom shader path `SHAPE_HUE_STRIP` that does
+  `t -> hsv(t * 360, 1, 1) -> rgb` per pixel gives a perfectly smooth
+  rainbow. Look at the existing dither helper in `lntrn-render/draw/src/shader.rs`
+  for shader pattern reference. New shape IDs go in both `painter.rs`
+  AND `shader.rs` at the top.
+
+## Things I considered and rejected
+
+- **Editable hex text input** — punted to v2 because no text input widget
+  exists yet and building one is a 2-hour rabbit hole. Read-only display
+  is fine for v1.
+- **Eyedropper tool** — would require a Wayland screenshot capability
+  on the picker side. Not in scope.
+- **System-wide palette** — user explicitly chose per-card so we don't
+  build the global one.
+- **Color wheel UI** — user picked HSV square + hue strip. Don't redesign.
+
+## Quick smoke test on resumption
+
+Before writing any code, verify the codebase is in the expected state:
+```bash
+grep -n "fn to_hsv\|fn from_hsv" /home/alva/Projects/Lantern-DE/lntrn-render/draw/src/color.rs
+# Should return nothing — confirms Phase 1 not done yet
+grep -n "pub struct ColorPickerState\|pub struct DragState" /home/alva/Projects/Lantern-DE/lntrn-system-settings/src/panels.rs
+# Should return nothing — confirms Phase 2 not done yet
+ls /home/alva/Projects/Lantern-DE/lntrn-system-settings/src/color_picker_modal.rs
+# Should error — confirms Phase 4 not done yet
+```
+
+If any of those return something, someone (you, in a previous session)
+started the work — read the existing code before continuing.

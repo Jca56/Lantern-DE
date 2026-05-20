@@ -288,15 +288,10 @@ pub fn draw_row(
         // We compute it here and pass it into each tile so the icon
         // itself recolors, matching the waffle-button pattern.
         let is_hovered = hovered_tile == Some(*id);
-        let is_active = match id {
-            TileId::Audio => matches!(selected_tile, Some(TileId::Audio)),
-            TileId::Brightness => matches!(selected_tile, Some(TileId::Brightness)),
-            TileId::Wifi => matches!(selected_tile, Some(TileId::Wifi)),
-            TileId::Bluetooth => matches!(selected_tile, Some(TileId::Bluetooth)),
-            TileId::Battery => matches!(selected_tile, Some(TileId::Battery)),
-            TileId::Clock => matches!(selected_tile, Some(TileId::Clock)),
-            _ => false,
-        };
+        // Every navigable tile lights up when its expanded view is open.
+        // Collapse / TerminalClear never become the selected mode, so a
+        // simple equality check covers them by default.
+        let is_active = selected_tile == Some(*id);
         let lit = is_hovered || is_active;
 
         match id {

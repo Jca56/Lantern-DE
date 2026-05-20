@@ -2,8 +2,7 @@
 //!
 //! Each output has its own sparse BTreeMap<id, Workspace>. WS id 1 always
 //! exists; other IDs are auto-created on first use and auto-destroyed when
-//! empty. Each workspace owns its own tiling BSP tree, so switching
-//! workspaces swaps layouts instantly.
+//! empty.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -14,11 +13,8 @@ use smithay::{
     utils::{Logical, Point, Rectangle},
 };
 
-use crate::tiling::{AdjacentDir, TilingState};
-
 pub struct Workspace {
     pub id: u32,
-    pub tiling: TilingState,
     /// All window surfaces on this workspace, in spawn order.
     pub windows: Vec<WlSurface>,
     /// Most-recently-focused first.
@@ -40,7 +36,6 @@ impl Workspace {
     pub fn new(id: u32) -> Self {
         Self {
             id,
-            tiling: TilingState::new(),
             windows: Vec::new(),
             mru: Vec::new(),
             wallpaper_path: None,
@@ -126,31 +121,20 @@ pub struct PerOutputWorkspaces {
     /// existing workspaces (immediately) and any new workspace created
     /// later (at construction time).
     known_outputs: HashMap<String, (Output, Point<i32, Logical>)>,
-    pub tiling_active: bool,
+    /// Outer gap (between a window and the screen edge). Used by snap zones,
+    /// zone-move, and axis-resize. Synced from `[window_manager].gap` on
+    /// config reload.
     pub outer_gap: i32,
 }
 
 impl PerOutputWorkspaces {
-    /// Reload gap values from [window_manager].gap. Returns true if anything
-    /// changed (caller should trigger a relayout).
+    /// Reload gap values from [window_manager].gap. Returns true if the
+    /// outer gap changed (callers that cache it should refresh).
     pub fn sync_gaps_from_config(&mut self) -> bool {
-        let new_outer = crate::tiling::default_outer_gap();
-        let new_inner = crate::tiling::default_gap();
-        let mut changed = self.outer_gap != new_outer;
+        let new_outer = crate::default_outer_gap();
+        let changed = self.outer_gap != new_outer;
         if changed {
             self.outer_gap = new_outer;
-        }
-        for ow in self.per_output.values_mut() {
-            for ws in ow.workspaces.values_mut() {
-                if ws.tiling.gap != new_inner {
-                    ws.tiling.gap = new_inner;
-                    changed = true;
-                }
-                if ws.tiling.outer_gap != new_outer {
-                    ws.tiling.outer_gap = new_outer;
-                    changed = true;
-                }
-            }
         }
         changed
     }
@@ -159,8 +143,7 @@ impl PerOutputWorkspaces {
         Self {
             per_output: HashMap::new(),
             known_outputs: HashMap::new(),
-            tiling_active: false,
-            outer_gap: crate::tiling::default_outer_gap(),
+            outer_gap: crate::default_outer_gap(),
         }
     }
 
@@ -305,13 +288,12 @@ impl PerOutputWorkspaces {
         self.per_output.iter_mut()
     }
 
-    /// True if the surface is in ANY workspace's tiling tree (on any output).
-    /// Preserves the pre-workspaces `PerOutputTiling::contains` semantic —
-    /// callers use this to decide "was this window tiled?".
-    pub fn contains(&self, surface: &WlSurface) -> bool {
-        self.per_output.values().any(|ow| {
-            ow.workspaces.values().any(|ws| ws.tiling.contains(surface))
-        })
+    /// Stub kept for source compatibility — automatic tiling is gone, so
+    /// no window is ever in a tiling tree. Callers using this as a
+    /// "was this window tiled?" gate will see all `false`s and take the
+    /// floating-window path.
+    pub fn contains(&self, _surface: &WlSurface) -> bool {
+        false
     }
 
     /// True if the surface is tracked in any workspace's window list
@@ -338,19 +320,20 @@ impl PerOutputWorkspaces {
     }
 
     /// Insert a surface into the ACTIVE workspace of the given output.
-    /// Also inserts into that workspace's tiling tree (caller should gate on tiling_active).
-    pub fn insert(&mut self, output_name: &str, surface: WlSurface, near: Option<&WlSurface>) {
+    ///
+    /// The optional `_near` argument is a leftover from the BSP tiling
+    /// system and is ignored; kept on the signature so existing call sites
+    /// compile unchanged.
+    pub fn insert(&mut self, output_name: &str, surface: WlSurface, _near: Option<&WlSurface>) {
         self.ensure_output(output_name);
         let ow = self.per_output.get_mut(output_name).unwrap();
         let ws = ow.active_workspace_mut();
         if !ws.windows.contains(&surface) {
-            ws.windows.push(surface.clone());
+            ws.windows.push(surface);
         }
-        ws.tiling.insert(surface, near);
     }
 
-    /// Track a window on the active workspace WITHOUT touching tiling tree.
-    /// Use when tiling is inactive.
+    /// Track a window on the active workspace.
     pub fn track_window(&mut self, output_name: &str, surface: WlSurface) {
         self.ensure_output(output_name);
         let ow = self.per_output.get_mut(output_name).unwrap();
@@ -360,17 +343,13 @@ impl PerOutputWorkspaces {
         }
     }
 
-    /// Remove surface from all workspaces + tiling trees. Destroys empty non-primary WS.
+    /// Remove surface from all workspaces. Destroys empty non-primary WS.
     pub fn remove(&mut self, surface: &WlSurface) {
         let mut empties: Vec<(String, u32)> = Vec::new();
         for (output_name, ow) in self.per_output.iter_mut() {
             for (id, ws) in ow.workspaces.iter_mut() {
-                let was = ws.windows.len();
                 ws.windows.retain(|s| s != surface);
                 ws.mru.retain(|s| s != surface);
-                if was != ws.windows.len() {
-                    ws.tiling.remove(surface);
-                }
                 if ws.is_empty() && *id != 1 && *id != ow.active {
                     empties.push((output_name.clone(), *id));
                 }
@@ -391,99 +370,6 @@ impl PerOutputWorkspaces {
                 ws.mru.retain(|s| s != surface);
                 ws.mru.insert(0, surface.clone());
             }
-        }
-    }
-
-    // ── Tiling tree operations delegated to the surface's workspace ──────
-
-    pub fn swap(&mut self, a: &WlSurface, b: &WlSurface) {
-        for ow in self.per_output.values_mut() {
-            for ws in ow.workspaces.values_mut() {
-                if ws.tiling.contains(a) && ws.tiling.contains(b) {
-                    ws.tiling.swap(a, b);
-                    return;
-                }
-            }
-        }
-    }
-
-    pub fn resize_split(&mut self, surface: &WlSurface, delta: f32) {
-        for ow in self.per_output.values_mut() {
-            for ws in ow.workspaces.values_mut() {
-                if ws.tiling.contains(surface) {
-                    ws.tiling.resize_split(surface, delta);
-                    return;
-                }
-            }
-        }
-    }
-
-    pub fn find_adjacent(
-        &self,
-        surface: &WlSurface,
-        area: Rectangle<i32, Logical>,
-        dir: AdjacentDir,
-    ) -> Option<WlSurface> {
-        for ow in self.per_output.values() {
-            for ws in ow.workspaces.values() {
-                if ws.tiling.contains(surface) {
-                    return ws.tiling.find_adjacent(surface, area, dir);
-                }
-            }
-        }
-        None
-    }
-
-    /// Toggle global tiling on/off. Returns new active state.
-    pub fn toggle(&mut self) -> bool {
-        self.tiling_active = !self.tiling_active;
-        if !self.tiling_active {
-            for ow in self.per_output.values_mut() {
-                for ws in ow.workspaces.values_mut() {
-                    ws.tiling.clear();
-                }
-            }
-        }
-        self.tiling_active
-    }
-
-    /// Active workspace's tiling tree for an output (read-only).
-    pub fn active_tiling_tree(&self, output_name: &str) -> Option<&TilingState> {
-        let ow = self.per_output.get(output_name)?;
-        ow.workspaces.get(&ow.active).map(|ws| &ws.tiling)
-    }
-
-    /// Active workspace's tiling tree for an output (mutable).
-    pub fn active_tiling_tree_mut(&mut self, output_name: &str) -> Option<&mut TilingState> {
-        let ow = self.per_output.get_mut(output_name)?;
-        let active = ow.active;
-        ow.workspaces.get_mut(&active).map(|ws| &mut ws.tiling)
-    }
-
-    /// Find which output's active workspace tree contains this surface.
-    pub fn output_for_tiled_surface(&self, surface: &WlSurface) -> Option<String> {
-        for (name, ow) in &self.per_output {
-            if let Some(ws) = ow.workspaces.get(&ow.active) {
-                if ws.tiling.contains(surface) {
-                    return Some(name.clone());
-                }
-            }
-        }
-        None
-    }
-
-    /// Set a split's ratio in the tree containing `surface`.
-    pub fn set_split_ratio(&mut self, surface: &WlSurface, idx: usize, new_ratio: f32) {
-        let Some(name) = self.output_for_tiled_surface(surface) else { return };
-        if let Some(tree) = self.active_tiling_tree_mut(&name) {
-            tree.set_split_ratio(idx, new_ratio);
-        }
-    }
-
-    /// Set a split's ratio by output name + split index (no surface lookup).
-    pub fn set_split_ratio_on_output(&mut self, output_name: &str, idx: usize, new_ratio: f32) {
-        if let Some(tree) = self.active_tiling_tree_mut(output_name) {
-            tree.set_split_ratio(idx, new_ratio);
         }
     }
 
@@ -522,29 +408,22 @@ impl PerOutputWorkspaces {
         let Some((src_output, src_id)) = self.window_workspace(surface) else { return false };
         if src_output == target_output && src_id == target_id { return false; }
 
-        let had_tiling = {
+        {
             let ow = self.per_output.get_mut(&src_output).unwrap();
             let ws = ow.workspaces.get_mut(&src_id).unwrap();
-            let had = ws.tiling.contains(surface);
-            ws.tiling.remove(surface);
             ws.windows.retain(|s| s != surface);
             ws.mru.retain(|s| s != surface);
             let should_drop = ws.is_empty() && src_id != 1 && src_id != ow.active;
             if should_drop {
                 ow.workspaces.remove(&src_id);
             }
-            had
-        };
+        }
 
         self.ensure_output(target_output);
-        let tiling_active = self.tiling_active;
         let known = &self.known_outputs;
         let ow = self.per_output.get_mut(target_output).unwrap();
         let ws = ow.ensure_with_outputs(target_id, known);
         ws.windows.push(surface.clone());
-        if had_tiling && tiling_active {
-            ws.tiling.insert(surface.clone(), None);
-        }
         true
     }
 
@@ -672,9 +551,6 @@ impl Lantern {
             }
         } else {
             self.clear_focus(serial);
-        }
-        if self.workspaces.tiling_active {
-            self.apply_tiling_layout();
         }
         self.broadcast_workspace_state();
         self.schedule_render();
@@ -805,9 +681,6 @@ impl Lantern {
             self.window_state_anim.remove(&m.surface);
         }
 
-        if self.workspaces.tiling_active {
-            self.apply_tiling_layout();
-        }
         self.broadcast_workspace_state();
         self.schedule_render();
     }
@@ -896,9 +769,6 @@ impl Lantern {
                             if let Some(target_space) = self.workspace_space_mut(&output, target) {
                                 target_space.map_element(window, pre_loc, true);
                             }
-                        }
-                        if self.workspaces.tiling_active {
-                            self.apply_tiling_layout();
                         }
                         self.broadcast_workspace_state();
                         self.schedule_render();
@@ -1159,7 +1029,6 @@ impl Lantern {
                             w.windows.retain(|x| x != s);
                             w.mru.retain(|x| x != s);
                             w.positions.remove(s);
-                            w.tiling.remove(s);
                         }
                     }
 

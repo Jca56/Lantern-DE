@@ -250,6 +250,107 @@ pub fn window_gradient_angle_from_str(s: &str) -> f32 {
     }
 }
 
+/// Map the same direction preset to a pair of normalized anchor points
+/// (0..1 within the window rect) for the twin-radial gradient overlay.
+/// Stop 0 lands at the first anchor, stop 1 at the second.
+pub fn window_gradient_anchors_from_str(s: &str) -> ((f32, f32), (f32, f32)) {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "horizontal"       => ((0.0, 0.5), (1.0, 0.5)),  // left  ↔ right
+        "vertical"         => ((0.5, 0.0), (0.5, 1.0)),  // top   ↔ bottom
+        "diagonal-reverse" => ((1.0, 0.0), (0.0, 1.0)),  // TR    ↔ BL
+        _                  => ((0.0, 0.0), (1.0, 1.0)),  // TL    ↔ BR (default)
+    }
+}
+
+/// Convenience for callers that just want the active anchors.
+pub fn active_window_gradient_anchors() -> ((f32, f32), (f32, f32)) {
+    let raw = read_config_string("appearance", "window_gradient_direction", "diagonal");
+    window_gradient_anchors_from_str(&raw)
+}
+
+/// Position index for the per-corner / center gradient overlay.
+/// Order matches the `window_gradient_stops` array.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GradientCorner { TopLeft, TopRight, BottomLeft, BottomRight, Center }
+
+impl GradientCorner {
+    pub const ALL: [GradientCorner; 5] = [
+        GradientCorner::TopLeft,
+        GradientCorner::TopRight,
+        GradientCorner::BottomLeft,
+        GradientCorner::BottomRight,
+        GradientCorner::Center,
+    ];
+
+    /// Normalized anchor (0..1 within the window rect).
+    pub fn anchor(self) -> (f32, f32) {
+        match self {
+            GradientCorner::TopLeft     => (0.0, 0.0),
+            GradientCorner::TopRight    => (1.0, 0.0),
+            GradientCorner::BottomLeft  => (0.0, 1.0),
+            GradientCorner::BottomRight => (1.0, 1.0),
+            GradientCorner::Center      => (0.5, 0.5),
+        }
+    }
+}
+
+/// Read the per-corner gradient colours. Returns up to 5 entries (one per
+/// `GradientCorner` position) where `None` means that position is disabled.
+/// Pulled from the same `[appearance].window_gradient_stops` array; index
+/// 0 → TopLeft, 1 → TopRight, 2 → BottomLeft, 3 → BottomRight, 4 → Center.
+/// Empty strings or "off" mark the slot disabled.
+pub fn active_window_gradient_corners() -> [Option<crate::Rgba>; 5] {
+    let mut out = [None; 5];
+    let Some(path) = lantern_config_path() else { return out; };
+    let Ok(contents) = std::fs::read_to_string(&path) else { return out; };
+    let mut in_appearance = false;
+    let mut lines = contents.lines().peekable();
+    while let Some(line) = lines.next() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') && !trimmed.contains('=') {
+            in_appearance = trimmed == "[appearance]";
+            continue;
+        }
+        if !in_appearance { continue; }
+        let Some((k, v)) = trimmed.split_once('=') else { continue; };
+        if k.trim() != "window_gradient_stops" { continue; }
+        let mut buf = v.trim().to_string();
+        while !buf.contains(']') {
+            let Some(next) = lines.next() else { break; };
+            buf.push(' ');
+            buf.push_str(next.trim());
+        }
+        let Some(rest) = buf.trim().strip_prefix('[') else { break; };
+        let Some(inner) = rest.rsplit_once(']').map(|(a, _)| a) else { break; };
+        for (i, raw) in inner.split(',').take(5).enumerate() {
+            let s = raw.trim().trim_matches('"').trim_matches('\'');
+            if s.is_empty() || s.eq_ignore_ascii_case("off") { continue; }
+            if let Some(rgba) = parse_hex_rgb(s) {
+                out[i] = Some(rgba);
+            }
+        }
+        break;
+    }
+    out
+}
+
+/// Read the global gradient-glow radius (fraction of the window's
+/// half-diagonal length). Clamped to 0..1. Default 0.5.
+pub fn active_window_gradient_radius() -> f32 {
+    read_config_f32("appearance", "window_gradient_radius", 0.5).clamp(0.0, 1.0)
+}
+
+/// Read the global gradient intensity (cube-curved at render time).
+/// Default 1.0 — combined with the per-stop alpha. We continue to pull
+/// from `window_gradient_stop_alphas[0]` so the existing slider in
+/// settings keeps working while the per-stop alphas concept goes away.
+pub fn active_window_gradient_intensity() -> f32 {
+    active_window_gradient_alphas()
+        .and_then(|v| v.first().copied())
+        .unwrap_or(1.0)
+        .clamp(0.0, 1.0)
+}
+
 /// Read the user-configured multi-stop window gradient from
 /// `[appearance].window_gradient_stops`. Returns the parsed list of colors
 /// when present (typically 3 or 4 hex strings); `None` when missing, empty,
@@ -286,13 +387,23 @@ pub fn active_window_gradient() -> Option<Vec<crate::Rgba>> {
         }
         let inner = buf.trim().strip_prefix('[')?;
         let inner = inner.rsplit_once(']')?.0;
-        let stops: Vec<crate::Rgba> = inner
+        let mut stops: Vec<crate::Rgba> = inner
             .split(',')
             .map(|s| s.trim().trim_matches('"').trim_matches('\''))
             .filter(|s| !s.is_empty())
             .filter_map(parse_hex_rgb)
             .collect();
         if stops.len() < 2 { return None; }
+        // Lantern caps window gradients at 2 stops — the shader's 2-stop
+        // path is a clean single `mix`, which avoids the visible kinks
+        // at intermediate stops in 3- and 4-stop gradients. Legacy
+        // configs with more stops collapse to first+last so the user's
+        // overall color intent is preserved.
+        if stops.len() > 2 {
+            let last = *stops.last().unwrap();
+            stops.truncate(1);
+            stops.push(last);
+        }
         return Some(stops);
     }
     None
@@ -330,7 +441,7 @@ pub fn active_window_gradient_alphas() -> Option<Vec<f32>> {
         }
         let inner = buf.trim().strip_prefix('[')?;
         let inner = inner.rsplit_once(']')?.0;
-        let alphas: Vec<f32> = inner
+        let mut alphas: Vec<f32> = inner
             .split(',')
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
@@ -338,6 +449,13 @@ pub fn active_window_gradient_alphas() -> Option<Vec<f32>> {
             .map(|a| a.clamp(0.0, 1.0))
             .collect();
         if alphas.is_empty() { return None; }
+        // Match the 2-stop cap in `active_window_gradient`: collapse a
+        // legacy 4-entry alpha list to first+last so it stays paired.
+        if alphas.len() > 2 {
+            let last = *alphas.last().unwrap();
+            alphas.truncate(1);
+            alphas.push(last);
+        }
         return Some(alphas);
     }
     None

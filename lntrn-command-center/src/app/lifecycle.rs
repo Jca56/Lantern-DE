@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use crate::app::{
     ease_out_cubic, spawn_detached, AppState, PanelMode, PanelView, Selection, Visibility,
-    ANIM_DURATION_SECS, GROW_ANIM_DURATION,
+    ANIM_DURATION_SECS,
 };
 use crate::controls::TileId;
 use crate::search::apps::DesktopEntry;
@@ -48,9 +48,29 @@ impl AppState {
         }
     }
 
+    /// Dismiss every full-page overlay (settings, notes, clipboard,
+    /// emojis, usage, desktop widgets) in one shot. Navigation actions
+    /// (Home, Grow, view dots, view arrows, tile clicks) call this so
+    /// they actually override an open overlay instead of mutating the
+    /// panel underneath while the overlay keeps drawing on top.
+    pub fn close_overlays(&mut self) {
+        if self.notes.open {
+            self.notes.flush_edits_to_selected();
+        }
+        self.settings_open = false;
+        self.desktop_settings_open = false;
+        self.emojis.open = false;
+        self.clipboard.open = false;
+        self.notes.open = false;
+        self.usage.open = false;
+    }
+
     /// Switch the panel into a control's full-content view. If we're
     /// already showing that control, return to `Launcher` (toggle).
     pub fn show_control(&mut self, id: TileId) {
+        // A control view is body content — any full-page overlay must
+        // get out of the way first so the view is actually visible.
+        self.close_overlays();
         if self.mode == PanelMode::Control(id) {
             // Toggling the active tile back off. If this view was opened
             // from a collapsed panel, fold the panel back down too —
@@ -412,9 +432,7 @@ impl AppState {
         };
 
         let view = self.config.view_anim_duration.max(0.05);
-        in_flight(self.grow_anim_start, GROW_ANIM_DURATION)
-            || in_flight(self.bar_grow_anim_start, GROW_ANIM_DURATION)
-            || in_flight(self.view_anim_start, view)
+        in_flight(self.view_anim_start, view)
             || in_flight(self.collapse_anim_start, view)
     }
 

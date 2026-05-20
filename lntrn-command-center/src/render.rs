@@ -438,24 +438,6 @@ pub fn draw_content(
         panel.alpha,
         state.home_hover,
     );
-    // Grow button reflects the state it would toggle: collapsed → bar's
-    // size step, expanded → window's size step. Show "shrink" arrows
-    // (inward) only when the next click wraps back to small — i.e. when
-    // already at the largest step.
-    let size_idx = if state.collapsed {
-        state.bar_size_idx
-    } else {
-        state.panel_size_idx
-    };
-    let grown_visual = size_idx >= crate::app::GROW_MAX_STEP;
-    crate::view_indicator::draw_grow(
-        painter,
-        panel.rect,
-        panel.scale_factor,
-        panel.alpha,
-        grown_visual,
-        state.grow_hover,
-    );
     crate::view_indicator::draw_restart(
         painter,
         panel.rect,
@@ -632,10 +614,15 @@ pub fn draw_content(
     // dedicated page that doesn't participate in the view slide.
     if state.settings_open {
         let top_y = crate::controls::content_top_y(panel.rect, panel.scale_factor);
+        let pending = state
+            .settings_drag
+            .zip(state.settings_drag_pending)
+            .map(|(k, v)| (k, v));
         crate::settings::draw(
             painter,
             text,
             &state.config,
+            pending,
             panel.rect,
             top_y,
             panel.scale_factor,

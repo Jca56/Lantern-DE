@@ -406,7 +406,7 @@ impl Lantern {
         }
         let geo = self.workspaces.output_geometry(output)?;
         let (top, bot, left_off, right_off) = self.exclusive_zone_offsets_for_output(output);
-        let outer = crate::tiling::SINGLE_WINDOW_OUTER_GAP;
+        let outer = crate::SINGLE_WINDOW_OUTER_GAP;
 
         let work_x = geo.loc.x + left_off + outer;
         let work_y = geo.loc.y + top + outer;

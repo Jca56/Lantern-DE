@@ -210,54 +210,6 @@ pub fn init_winit(
                             );
                         }
 
-                        // Drag-snap preview overlay — translucent amber rect
-                        // at the would-be snap target. Single-output in winit
-                        // mode, so no per-output intersect needed.
-                        if let Some(preview) = state.drag_snap_preview {
-                            use smithay::backend::renderer::element::{
-                                solid::SolidColorRenderElement, Id,
-                            };
-                            use smithay::backend::renderer::utils::CommitCounter;
-                            let loc_phys: smithay::utils::Point<i32, Physical> = (
-                                (preview.loc.x as f64 * scale).round() as i32,
-                                (preview.loc.y as f64 * scale).round() as i32,
-                            ).into();
-                            let size_phys: smithay::utils::Size<i32, Physical> = (
-                                (preview.size.w as f64 * scale).round() as i32,
-                                (preview.size.h as f64 * scale).round() as i32,
-                            ).into();
-                            let fill_color = [1.0, 0.78, 0.18, 0.18];
-                            let border_color = [1.0, 0.78, 0.18, 0.65];
-                            elements.push(WinitRenderElements::Overlay(
-                                SolidColorRenderElement::new(
-                                    Id::new(),
-                                    Rectangle::<i32, Physical>::new(loc_phys, size_phys),
-                                    CommitCounter::default(),
-                                    fill_color,
-                                    Kind::Unspecified,
-                                ),
-                            ));
-                            let bt = (2.0 * scale).round().max(1.0) as i32;
-                            let strips: [(i32, i32, i32, i32); 4] = [
-                                (loc_phys.x, loc_phys.y, size_phys.w, bt),
-                                (loc_phys.x, loc_phys.y + size_phys.h - bt, size_phys.w, bt),
-                                (loc_phys.x, loc_phys.y, bt, size_phys.h),
-                                (loc_phys.x + size_phys.w - bt, loc_phys.y, bt, size_phys.h),
-                            ];
-                            for (x, y, w, h) in strips {
-                                if w <= 0 || h <= 0 { continue; }
-                                elements.push(WinitRenderElements::Overlay(
-                                    SolidColorRenderElement::new(
-                                        Id::new(),
-                                        Rectangle::<i32, Physical>::new((x, y).into(), (w, h).into()),
-                                        CommitCounter::default(),
-                                        border_color,
-                                        Kind::Unspecified,
-                                    ),
-                                ));
-                            }
-                        }
-
                         let switcher_visible = state.alt_tab_switcher.is_visible();
 
                         // Alt+Tab overlay chrome + thumbnails

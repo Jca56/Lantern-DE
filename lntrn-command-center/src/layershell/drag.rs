@@ -25,6 +25,16 @@ pub(super) fn handle_drag(
 ) {
     // End slider drags once the button is released.
     if !wl.left_held {
+        // Settings sliders whose effect is deferred (currently just
+        // `PanelGrowW`) commit their tentative value here.
+        if let (Some(key), Some(value)) = (app.settings_drag, app.settings_drag_pending.take()) {
+            crate::settings::apply_value(
+                &mut app.config,
+                key,
+                crate::settings::SettingValue::F(value),
+            );
+            app.config.save();
+        }
         app.dragging = None;
         app.settings_drag = None;
         app.bar_sliders.dragging = None;
@@ -60,12 +70,18 @@ pub(super) fn handle_drag(
         let rows = crate::settings::layout(panel_rect, top_y, scale_f);
         let phys_cx = wl.cursor_x as f32 * scale_f;
         if let Some(value) = crate::settings::hit_slider_only(&rows, key, phys_cx) {
-            crate::settings::apply_value(
-                &mut app.config,
-                key,
-                crate::settings::SettingValue::F(value),
-            );
-            app.config.save();
+            if key.defers_during_drag() {
+                // Knob follows the cursor via the pending value, but the
+                // panel itself doesn't resize until the user lets go.
+                app.settings_drag_pending = Some(value);
+            } else {
+                crate::settings::apply_value(
+                    &mut app.config,
+                    key,
+                    crate::settings::SettingValue::F(value),
+                );
+                app.config.save();
+            }
         }
     }
 
@@ -87,20 +103,41 @@ pub(super) fn handle_drag(
             DragTarget::AudioInputSlider => crate::controls::audio::slider_rect_for(
                 panel_rect, view_top_y, Direction::Input, scale_f,
             ),
+            DragTarget::AudioInlineSlider => {
+                // The inline tile only exists while the controls row is
+                // showing — if the user navigated away mid-drag, bail.
+                match app.controls.tile_layout(
+                    crate::controls::TileId::Audio,
+                    panel_rect,
+                    scale_f,
+                    app.panel_view,
+                ) {
+                    Some(layout) => {
+                        crate::controls::audio::inline_bar_rect(&layout, scale_f)
+                    }
+                    None => {
+                        app.dragging = None;
+                        return;
+                    }
+                }
+            }
             DragTarget::BrightnessSlider => crate::controls::brightness::slider_rect(
                 panel_rect, view_top_y, scale_f,
             ),
         };
-        // Audio sliders span 0..1.2 across the track (120 % boost);
-        // brightness stays at 0..1.
+        // Expanded audio sliders span 0..1.2 across the track (120 %
+        // boost); the inline tile slider stays at 0..1 since boost is a
+        // power-user move that lives in the full audio view. Brightness
+        // is always 0..1.
         let track_max = match target {
             DragTarget::AudioOutputSlider | DragTarget::AudioInputSlider => 1.2,
-            DragTarget::BrightnessSlider => 1.0,
+            DragTarget::AudioInlineSlider | DragTarget::BrightnessSlider => 1.0,
         };
         let frac = ((phys_cx - track.x) / track.w).clamp(0.0, 1.0) * track_max;
         match target {
             DragTarget::AudioOutputSlider => app.controls.audio.set_volume(frac),
             DragTarget::AudioInputSlider => app.controls.audio.set_input_volume(frac),
+            DragTarget::AudioInlineSlider => app.controls.audio.set_volume(frac),
             DragTarget::BrightnessSlider => app.controls.brightness.set_fraction(frac),
         }
     }

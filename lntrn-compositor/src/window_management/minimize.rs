@@ -132,12 +132,7 @@ impl Lantern {
         window.send_pending_configure();
         self.unmap_window_everywhere(&window);
 
-        let was_tiled = self.workspaces.contains(surface);
         self.workspaces.remove(surface);
-        self.tiling_anim.remove(surface);
-        if was_tiled && self.workspaces.tiling_active {
-            self.apply_tiling_layout();
-        }
 
         self.update_foreign_toplevel_states(surface);
         self.schedule_client_render();
@@ -186,11 +181,7 @@ impl Lantern {
         // is the critical part: if we don't re-track here, the restored
         // window becomes a ghost — it lives in the global Space but no
         // workspace claims it, so workspace switches never hide it.
-        if self.workspaces.tiling_active {
-            if !self.workspaces.contains(&entry.surface) {
-                self.workspaces.insert(&output_name, entry.surface.clone(), None);
-            }
-        } else if self.workspaces.window_workspace(&entry.surface).is_none() {
+        if self.workspaces.window_workspace(&entry.surface).is_none() {
             self.workspaces
                 .track_window(&output_name, entry.surface.clone());
         }
@@ -210,10 +201,6 @@ impl Lantern {
         self.minimize_anim
             .start_unminimize(&entry.surface, source_rect, target_rect);
         self.schedule_render();
-
-        if self.workspaces.tiling_active {
-            self.apply_tiling_layout();
-        }
 
         self.update_foreign_toplevel_states(&entry.surface);
         Some(entry.window)

@@ -13,8 +13,19 @@ use smithay::{
 use std::time::Instant;
 
 use crate::state::Lantern;
+use crate::window_management::{ArrowDir, ResizeAction};
 
 use super::spawn::{fire_audio_osd, fire_brightness_osd, spawn_detached, spawn_detached_args, spawn_detached_args_logged, AudioRepeat};
+
+fn arrow_dir_from_keysym(raw: u32) -> Option<ArrowDir> {
+    match raw {
+        xkb::KEY_Left => Some(ArrowDir::Left),
+        xkb::KEY_Right => Some(ArrowDir::Right),
+        xkb::KEY_Up => Some(ArrowDir::Up),
+        xkb::KEY_Down => Some(ArrowDir::Down),
+        _ => None,
+    }
+}
 
 impl Lantern {
     pub(super) fn handle_keyboard_event<I: InputBackend>(&mut self, event: I::KeyboardKeyEvent) {
@@ -164,202 +175,74 @@ impl Lantern {
                     }
                 }
 
-                // Super+Alt+Left/Right: prev/next workspace (sparse, wraps)
+                // Super+Alt+Arrow — system chord. Two-button reach for the
+                // common window-state and workspace moves.
+                //   Up   : toggle maximize on focused window
+                //   Down : toggle minimize on focused window
+                //   Left : previous workspace (no wrap)
+                //   Right: next workspace (creates one if at right edge, cap 9)
                 if event.state() == KeyState::Pressed
-                    && _modifiers.logo && _modifiers.alt && !_modifiers.shift
-                {
-                    let dir = match keysym.modified_sym().raw() {
-                        xkb::KEY_Left => Some(-1i32),
-                        xkb::KEY_Right => Some(1i32),
-                        _ => None,
-                    };
-                    if let Some(d) = dir {
-                        data.switch_workspace_neighbor(d);
-                        return FilterResult::Intercept(());
-                    }
-                }
-
-                // Super+Left/Right: previous / next workspace.
-                // Super+Right creates a new workspace at the right edge
-                // (capped at 9). Super+Left no-ops at WS 1. Gated to
-                // non-tiling mode — tiling-focus navigation owns Super+Arrow
-                // when tiling is on. Plain Super (no other mods).
-                if event.state() == KeyState::Pressed
-                    && _modifiers.logo
-                    && !_modifiers.shift && !_modifiers.alt && !_modifiers.ctrl
-                    && !data.workspaces.tiling_active
+                    && _modifiers.logo && _modifiers.alt && !_modifiers.shift && !_modifiers.ctrl
                 {
                     let raw = keysym.modified_sym().raw();
-                    if raw == xkb::KEY_Left {
-                        data.switch_workspace_neighbor_no_wrap(-1);
-                        return FilterResult::Intercept(());
-                    }
-                    if raw == xkb::KEY_Right {
-                        data.switch_workspace_right_or_create();
-                        return FilterResult::Intercept(());
-                    }
-                }
-
-                // Super+Arrow: move focus between tiled windows
-                if event.state() == KeyState::Pressed
-                    && _modifiers.logo && !_modifiers.shift && !_modifiers.ctrl
-                    && data.workspaces.tiling_active
-                {
-                    let dir = match keysym.modified_sym().raw() {
-                        xkb::KEY_Left => Some(crate::tiling::AdjacentDir::Left),
-                        xkb::KEY_Right => Some(crate::tiling::AdjacentDir::Right),
-                        xkb::KEY_Up => Some(crate::tiling::AdjacentDir::Up),
-                        xkb::KEY_Down => Some(crate::tiling::AdjacentDir::Down),
-                        _ => None,
-                    };
-                    if let Some(dir) = dir {
-                        if let Some(focused) = data.focused_surface.clone() {
-                            if let Some(area) = data.tiling_area_for_surface(&focused) {
-                                if let Some(target) = data.workspaces.find_adjacent(&focused, area, dir) {
-                                    if let Some(window) = data.find_mapped_window(&target) {
-                                        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-                                        data.focus_window(&window, serial);
-                                    }
-                                }
-                            }
+                    match raw {
+                        xkb::KEY_Up => {
+                            let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+                            data.toggle_maximize_focused(serial);
+                            data.schedule_render();
+                            return FilterResult::Intercept(());
                         }
-                        return FilterResult::Intercept(());
+                        xkb::KEY_Down => {
+                            let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+                            data.minimize_focused(serial);
+                            data.schedule_render();
+                            return FilterResult::Intercept(());
+                        }
+                        xkb::KEY_Left => {
+                            data.switch_workspace_neighbor_no_wrap(-1);
+                            return FilterResult::Intercept(());
+                        }
+                        xkb::KEY_Right => {
+                            data.switch_workspace_right_or_create();
+                            return FilterResult::Intercept(());
+                        }
+                        _ => {}
                     }
                 }
 
-                // Super+Up / Super+Down (floating mode only): toggle
-                // maximize / minimize on the focused window. Restoring a
-                // minimized window is intentionally NOT bound here — it
-                // happens via the tray icon or Alt-Tab, never via blind
-                // keypress (the previous Super+Shift+Up "restore last
-                // minimized" was footgun-prone).
+                // Super+Arrow — proportional resize. Aspect ratio locked to
+                // the focused window's output (detected from work area, so
+                // each monitor produces its native ratio).
+                //   Up / Right — grow to next size stage
+                //   Down / Left — shrink to prev size stage
                 if event.state() == KeyState::Pressed
                     && _modifiers.logo && !_modifiers.shift && !_modifiers.ctrl && !_modifiers.alt
-                    && !data.workspaces.tiling_active
                 {
                     let raw = keysym.modified_sym().raw();
-                    if raw == xkb::KEY_Up {
-                        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-                        data.toggle_maximize_focused(serial);
-                        data.schedule_render();
-                        return FilterResult::Intercept(());
-                    }
-                    if raw == xkb::KEY_Down {
-                        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-                        data.minimize_focused(serial);
-                        data.schedule_render();
-                        return FilterResult::Intercept(());
-                    }
-                }
-
-                // Ctrl+Super+Left/Right (no Shift): half-swap (Posed L↔R) or
-                // corner horizontal move. Same behavior as Ctrl+Shift+Super
-                // L/R but two-finger reach instead of three. Up/Down are
-                // intentionally left unbound here — corner vertical move
-                // stays exclusive to Ctrl+Shift+Super+Up/Down.
-                if event.state() == KeyState::Pressed
-                    && _modifiers.logo && _modifiers.ctrl && !_modifiers.shift && !_modifiers.alt
-                    && !data.workspaces.tiling_active
-                {
-                    let dir = match keysym.modified_sym().raw() {
-                        xkb::KEY_Left  => Some(crate::window_management::CornerDir::Left),
-                        xkb::KEY_Right => Some(crate::window_management::CornerDir::Right),
+                    let action = match raw {
+                        xkb::KEY_Up    | xkb::KEY_Right => Some(ResizeAction::Grow),
+                        xkb::KEY_Down  | xkb::KEY_Left  => Some(ResizeAction::Shrink),
                         _ => None,
                     };
-                    if let Some(dir) = dir {
-                        let handled = data.try_swap_half_side(dir)
-                            || data.move_corner_focused(dir);
-                        if handled {
-                            data.schedule_render();
-                        }
-                        return FilterResult::Intercept(());
-                    }
-                }
-
-                // Ctrl+Shift+Super+Arrow: positional move for posed windows.
-                //   - Half-posed (Left/Right): L↔R swap, or cross-monitor hop
-                //     when already at the matching edge.
-                //   - Tiny variants: walk the 5 Tiny positions (center + 4
-                //     edge midpoints), with same-direction-at-edge hopping
-                //     to the next monitor.
-                //   - Corner-posed: move between the four corners.
-                // Must come BEFORE the Shift+Super block since that one
-                // requires `!ctrl`.
-                if event.state() == KeyState::Pressed
-                    && _modifiers.logo && _modifiers.shift && _modifiers.ctrl && !_modifiers.alt
-                    && !data.workspaces.tiling_active
-                {
-                    let dir = match keysym.modified_sym().raw() {
-                        xkb::KEY_Left  => Some(crate::window_management::CornerDir::Left),
-                        xkb::KEY_Right => Some(crate::window_management::CornerDir::Right),
-                        xkb::KEY_Up    => Some(crate::window_management::CornerDir::Up),
-                        xkb::KEY_Down  => Some(crate::window_management::CornerDir::Down),
-                        _ => None,
-                    };
-                    if let Some(dir) = dir {
-                        let handled = data.try_swap_half_side(dir)
-                            || data.try_move_tiny_focused(dir)
-                            || data.move_corner_focused(dir);
-                        if handled {
-                            data.schedule_render();
-                        }
-                        return FilterResult::Intercept(());
-                    }
-                }
-
-                // Shift+Super+Arrow: window control.
-                //   Left/Right: pose to Left half ↔ Middle (1500×1000) ↔ Right half.
-                //   Up:         restore most-recently-minimized; corner → half;
-                //               Tiny → Middle; half-posed → top corner;
-                //               otherwise ladder up (Normal → SoloTile → Maximized).
-                //   Down:       Max → SoloTile → Normal → Tiny → Minimize, with
-                //               half-posed taking a side-trip into the bottom
-                //               corner of that side first.
-                if event.state() == KeyState::Pressed
-                    && _modifiers.logo && _modifiers.shift && !_modifiers.alt && !_modifiers.ctrl
-                    && !data.workspaces.tiling_active
-                {
-                    let raw = keysym.modified_sym().raw();
-                    if raw == xkb::KEY_Left {
-                        data.pose_half_left();
-                        data.schedule_render();
-                        return FilterResult::Intercept(());
-                    }
-                    if raw == xkb::KEY_Right {
-                        data.pose_half_right();
-                        data.schedule_render();
-                        return FilterResult::Intercept(());
-                    }
-                    if raw == xkb::KEY_Up {
-                        data.ladder_size_up();
-                        data.schedule_render();
-                        return FilterResult::Intercept(());
-                    }
-                    if raw == xkb::KEY_Down {
-                        data.ladder_size_down();
+                    if let Some(action) = action {
+                        data.resize_focused(action);
                         data.schedule_render();
                         return FilterResult::Intercept(());
                     }
                 }
 
-                // Super+Shift+Return: swap focused with next in tree
+                // Super+Shift+Arrow — move one cell on the 3×3 work-area
+                // grid. Clamps at the edge. Two quick presses naturally
+                // stack into a two-cell jump because the in-flight
+                // animation redirects.
                 if event.state() == KeyState::Pressed
-                    && _modifiers.logo && _modifiers.shift
-                    && keysym.modified_sym().raw() == xkb::KEY_Return
-                    && data.workspaces.tiling_active
+                    && _modifiers.logo && _modifiers.shift && !_modifiers.ctrl && !_modifiers.alt
                 {
-                    if let Some(focused) = data.focused_surface.clone() {
-                        if let Some(area) = data.tiling_area_for_surface(&focused) {
-                            // Swap with the next window to the right, or below
-                            let target = data.workspaces.find_adjacent(&focused, area, crate::tiling::AdjacentDir::Right)
-                                .or_else(|| data.workspaces.find_adjacent(&focused, area, crate::tiling::AdjacentDir::Down));
-                            if let Some(target) = target {
-                                data.workspaces.swap(&focused, &target);
-                                data.apply_tiling_layout();
-                            }
-                        }
+                    if let Some(arrow) = arrow_dir_from_keysym(keysym.modified_sym().raw()) {
+                        data.move_focused_one_cell(arrow);
+                        data.schedule_render();
+                        return FilterResult::Intercept(());
                     }
-                    return FilterResult::Intercept(());
                 }
 
                 // F11 or Super+F: toggle fullscreen.

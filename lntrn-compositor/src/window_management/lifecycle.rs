@@ -136,7 +136,6 @@ impl Lantern {
         use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 
         if self.scratchpad_surface.as_ref() == Some(surface) { return; }
-        if self.workspaces.tiling_active { return; }
 
         let Some(window) = self.space.elements()
             .find(|w| w.get_wl_surface().as_ref() == Some(surface))
@@ -229,11 +228,7 @@ impl Lantern {
         // global (no workspace assignment), so the helper picks no workspace
         // and only the global mirror gets the map_element.
         if !is_scratchpad {
-            if self.workspaces.tiling_active {
-                self.workspaces.insert(&output_name, surface.clone(), None);
-            } else {
-                self.workspaces.track_window(&output_name, surface.clone());
-            }
+            self.workspaces.track_window(&output_name, surface.clone());
         }
 
         let active_ws_id = self.workspaces.active_id(&output_name);
@@ -258,14 +253,9 @@ impl Lantern {
             }
         }
 
-        // Mark for centering after first real commit (skip scratchpad & tiling)
-        if !is_scratchpad && !self.workspaces.tiling_active {
+        // Mark for centering after first real commit (skip scratchpad).
+        if !is_scratchpad {
             self.pending_center.insert(surface.clone());
-        }
-
-        // Tiling relayout only needed AFTER the window's in the workspace.
-        if !is_scratchpad && self.workspaces.tiling_active {
-            self.apply_tiling_layout();
         }
 
         // Start open animation (preset-aware: Springy grows from center).
@@ -293,14 +283,9 @@ impl Lantern {
         self.pending_center.remove(surface);
         self.window_snapshots.remove(surface);
         self.animations.remove(surface);
-        self.tiling_anim.remove(surface);
         self.window_state_anim.remove(surface);
         self.minimize_anim.remove(surface);
-        let was_tiled = self.workspaces.contains(surface);
         self.workspaces.remove(surface);
-        if was_tiled && self.workspaces.tiling_active {
-            self.apply_tiling_layout();
-        }
         self.ssd.remove(surface);
         self.foreign_toplevel_state.toplevel_closed(surface);
 

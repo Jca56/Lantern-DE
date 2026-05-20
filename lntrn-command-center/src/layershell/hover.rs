@@ -72,7 +72,6 @@ pub(super) fn track_hovers(wl: &mut super::WlState, app: &mut crate::app::AppSta
             None
         };
         app.home_hover = crate::view_indicator::hit_home(panel_rect, scale_f, phys_cx, phys_cy);
-        app.grow_hover = crate::view_indicator::hit_grow(panel_rect, scale_f, phys_cx, phys_cy);
         app.gear_hover = crate::view_indicator::hit_gear(panel_rect, scale_f, phys_cx, phys_cy);
         app.restart_hover = crate::view_indicator::hit_restart(panel_rect, scale_f, phys_cx, phys_cy);
         app.emoji_hover = crate::view_indicator::hit_emoji(panel_rect, scale_f, phys_cx, phys_cy);

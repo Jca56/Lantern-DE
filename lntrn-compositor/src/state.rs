@@ -63,7 +63,6 @@ use crate::workspace_anim::WorkspaceAnimState;
 use crate::workspace_ipc::WorkspaceIpc;
 use crate::workspaces::PerOutputWorkspaces;
 use crate::minimize_anim::MinimizeAnimState;
-use crate::tiling_anim::TilingAnimationState;
 use crate::udev::UdevData;
 use crate::wallpaper::WallpaperState;
 use crate::window_state_anim::WindowStateAnimState;
@@ -357,7 +356,6 @@ pub struct Lantern {
     /// Per-window snapshot textures captured each render frame for close animations.
     pub window_snapshots: HashMap<WlSurface, (GlesTexture, Size<i32, Physical>)>,
     pub workspaces: PerOutputWorkspaces,
-    pub tiling_anim: TilingAnimationState,
     pub window_state_anim: WindowStateAnimState,
     pub minimize_anim: MinimizeAnimState,
     pub workspace_anim: WorkspaceAnimState,
@@ -371,12 +369,6 @@ pub struct Lantern {
     // Hot corners
     pub hot_corner: HotCornerState,
     pub show_desktop_active: bool,
-
-    // Drag-snap preview: when a window is being dragged with a move grab
-    // and the pointer hovers near a snap edge/corner, this holds the
-    // would-be target rect so the renderer can draw a translucent
-    // overlay showing where the window will land on release.
-    pub drag_snap_preview: Option<Rectangle<i32, Logical>>,
 
     // xdg-foreign: cross-client parent-child window relationships
     pub xdg_foreign_state: XdgForeignState,
@@ -401,11 +393,6 @@ pub struct Lantern {
 
     /// Idle/battery/power-action manager (reads [power] settings).
     pub power: crate::power::PowerState,
-
-    /// Set when a config change makes the tiling layout stale (e.g. gap
-    /// changed). Consumed at the top of the next `render_surface` call,
-    /// outside the udev borrow.
-    pub pending_layout: bool,
 
     /// WM border width in logical pixels (0 = no border).
     pub border_width: u32,
@@ -561,7 +548,6 @@ impl Lantern {
             closing_windows: Vec::new(),
             window_snapshots: HashMap::new(),
             workspaces: PerOutputWorkspaces::new(),
-            tiling_anim: TilingAnimationState::new(),
             window_state_anim: WindowStateAnimState::new(),
             minimize_anim: MinimizeAnimState::new(),
             workspace_anim: WorkspaceAnimState::new(),
@@ -571,7 +557,6 @@ impl Lantern {
             scratchpad_pending: false,
             hot_corner: HotCornerState::new(),
             show_desktop_active: false,
-            drag_snap_preview: None,
             xdg_foreign_state,
             audio_repeat: None,
             last_exclusive_offsets: (0, 0, 0, 0),
@@ -583,7 +568,6 @@ impl Lantern {
             input_config_counter: 0,
             libinput_devices: Vec::new(),
             power: crate::power::PowerState::new(),
-            pending_layout: false,
             border_width: crate::read_config("window_manager", "border_width", "0")
                 .parse::<u32>().unwrap_or(0).clamp(0, 10),
             hover_preview: crate::hover_preview::HoverPreview::new(),
@@ -866,18 +850,19 @@ impl Lantern {
                 }
             }
         }
-        // Fallback: closest output center
+        // Fallback: closest output center. Skip outputs that workspaces
+        // doesn't know about (mid-removal, etc.) instead of panicking.
         self.space
             .outputs()
-            .min_by_key(|o| {
-                let geo = self.workspaces.output_geometry(o).unwrap();
+            .filter_map(|o| self.workspaces.output_geometry(o).map(|g| (o, g)))
+            .min_by_key(|(_, geo)| {
                 let cx = geo.loc.x + geo.size.w / 2;
                 let cy = geo.loc.y + geo.size.h / 2;
                 let dx = point.x - cx as f64;
                 let dy = point.y - cy as f64;
                 (dx * dx + dy * dy) as i64
             })
-            .cloned()
+            .map(|(o, _)| o.clone())
     }
 
     /// Find the output a window lives on by checking which output contains its center.

@@ -62,7 +62,18 @@ pub struct Config {
     /// Vertical gap (logical px) between the bar and the body window
     /// when split mode is active.
     pub panel_split_gap: f32,
+    /// Extra width (logical px) added to the expanded panel. 0 → base
+    /// width. User-drivable via the "Expanded width" slider in Settings.
+    pub panel_grow_w: f32,
+    /// Extra width (logical px) added to the collapsed bar. Same idea,
+    /// independent slider so collapsed + expanded can size separately.
+    pub bar_grow_w: f32,
 }
+
+/// Max bonus width (logical px) the resize sliders allow. Matches the
+/// upper end of the old 3-step grow cycle so existing comfortable
+/// sizes are still reachable.
+pub const GROW_W_MAX: f32 = 400.0;
 
 impl Default for Config {
     fn default() -> Self {
@@ -74,6 +85,8 @@ impl Default for Config {
             view_anim_duration: 1.20,
             panel_split: false,
             panel_split_gap: 50.0,
+            panel_grow_w: 0.0,
+            bar_grow_w: 0.0,
         }
     }
 }
@@ -157,6 +170,16 @@ fn parse(text: &str) -> Config {
                     cfg.panel_split_gap = v.clamp(0.0, 120.0);
                 }
             }
+            "panel_grow_w" => {
+                if let Ok(v) = value.parse::<f32>() {
+                    cfg.panel_grow_w = v.clamp(0.0, GROW_W_MAX);
+                }
+            }
+            "bar_grow_w" => {
+                if let Ok(v) = value.parse::<f32>() {
+                    cfg.bar_grow_w = v.clamp(0.0, GROW_W_MAX);
+                }
+            }
             _ => {}
         }
     }
@@ -165,7 +188,16 @@ fn parse(text: &str) -> Config {
 
 fn render_text(c: &Config) -> String {
     format!(
-        "# lntrn-command-center settings\npanel_opacity = {:.3}\nopen_collapsed = {}\nshow_dock_collapsed = {}\ntext_size = {:.1}\nview_anim_duration = {:.2}\npanel_split = {}\npanel_split_gap = {:.1}\n",
+        "# lntrn-command-center settings\n\
+         panel_opacity = {:.3}\n\
+         open_collapsed = {}\n\
+         show_dock_collapsed = {}\n\
+         text_size = {:.1}\n\
+         view_anim_duration = {:.2}\n\
+         panel_split = {}\n\
+         panel_split_gap = {:.1}\n\
+         panel_grow_w = {:.1}\n\
+         bar_grow_w = {:.1}\n",
         c.panel_opacity,
         c.open_collapsed,
         c.show_dock_collapsed,
@@ -173,6 +205,8 @@ fn render_text(c: &Config) -> String {
         c.view_anim_duration,
         c.panel_split,
         c.panel_split_gap,
+        c.panel_grow_w,
+        c.bar_grow_w,
     )
 }
 
@@ -189,6 +223,20 @@ pub enum SettingKey {
     PanelSplitGap,
     TextSize,
     ViewAnimDuration,
+    /// Extra width added to the expanded panel.
+    PanelGrowW,
+    /// Extra width added to the collapsed bar.
+    BarGrowW,
+}
+
+impl SettingKey {
+    /// True for sliders that change the visible panel's geometry while
+    /// the user is dragging. Those need deferred commit (apply on
+    /// release, not every frame) to avoid the slider track sliding out
+    /// from under the cursor as the panel resizes.
+    pub fn defers_during_drag(self) -> bool {
+        matches!(self, SettingKey::PanelGrowW)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -252,6 +300,21 @@ const SECTIONS: &[SectionDef] = &[
                 key: SettingKey::PanelSplitGap,
                 label: "Split gap",
                 kind: RowKind::Slider(0.0, 120.0, "px"),
+            },
+        ],
+    },
+    SectionDef {
+        title: "Size",
+        rows: &[
+            RowDef {
+                key: SettingKey::PanelGrowW,
+                label: "Expanded width",
+                kind: RowKind::Slider(0.0, GROW_W_MAX, "px"),
+            },
+            RowDef {
+                key: SettingKey::BarGrowW,
+                label: "Collapsed width",
+                kind: RowKind::Slider(0.0, GROW_W_MAX, "px"),
             },
         ],
     },
@@ -371,6 +434,8 @@ pub fn current_value(cfg: &Config, key: SettingKey) -> SettingValue {
         SettingKey::PanelSplitGap => SettingValue::F(cfg.panel_split_gap),
         SettingKey::TextSize => SettingValue::F(cfg.text_size),
         SettingKey::ViewAnimDuration => SettingValue::F(cfg.view_anim_duration),
+        SettingKey::PanelGrowW => SettingValue::F(cfg.panel_grow_w),
+        SettingKey::BarGrowW => SettingValue::F(cfg.bar_grow_w),
     }
 }
 
@@ -383,6 +448,8 @@ pub fn apply_value(cfg: &mut Config, key: SettingKey, value: SettingValue) {
         (SettingKey::PanelSplitGap, SettingValue::F(v)) => cfg.panel_split_gap = v.clamp(0.0, 120.0),
         (SettingKey::TextSize, SettingValue::F(v)) => cfg.text_size = v.clamp(12.0, 32.0),
         (SettingKey::ViewAnimDuration, SettingValue::F(v)) => cfg.view_anim_duration = v.clamp(0.10, 3.0),
+        (SettingKey::PanelGrowW, SettingValue::F(v)) => cfg.panel_grow_w = v.clamp(0.0, GROW_W_MAX),
+        (SettingKey::BarGrowW, SettingValue::F(v)) => cfg.bar_grow_w = v.clamp(0.0, GROW_W_MAX),
         _ => {}
     }
 }
@@ -400,6 +467,7 @@ pub fn draw(
     painter: &mut Painter,
     text: &mut TextRenderer,
     cfg: &Config,
+    pending: Option<(SettingKey, f32)>,
     panel: Rect,
     top_y: f32,
     scale: f32,
@@ -448,7 +516,7 @@ pub fn draw(
 
         for (i, row_def) in section.rows.iter().enumerate() {
             let Some(layout) = row_iter.next() else { break };
-            draw_row(painter, text, layout, row_def, cfg, scale, alpha, surface_w, surface_h);
+            draw_row(painter, text, layout, row_def, cfg, pending, scale, alpha, surface_w, surface_h);
             section_y = layout.rect.y + layout.rect.h;
             if i + 1 < section.rows.len() {
                 section_y += ROW_GAP * scale;
@@ -465,6 +533,7 @@ fn draw_row(
     layout: &RowLayout,
     row_def: &RowDef,
     cfg: &Config,
+    pending: Option<(SettingKey, f32)>,
     scale: f32,
     alpha: f32,
     surface_w: u32,
@@ -504,10 +573,19 @@ fn draw_row(
             draw_toggle(painter, r, scale, alpha, on);
         }
         ControlLayout::Slider(r, min, max) => {
-            let value = match current_value(cfg, layout.key) {
-                SettingValue::F(v) => v,
-                _ => 0.0,
-            };
+            // Tentative drag value (e.g. for the Expanded width slider)
+            // takes precedence over the committed config value so the
+            // knob tracks the cursor live even when the panel itself
+            // hasn't resized yet.
+            let pending_value = pending
+                .filter(|(k, _)| *k == layout.key)
+                .map(|(_, v)| v);
+            let value = pending_value.unwrap_or_else(|| {
+                match current_value(cfg, layout.key) {
+                    SettingValue::F(v) => v,
+                    _ => 0.0,
+                }
+            });
             let unit = match row_def.kind {
                 RowKind::Slider(_, _, u) => u,
                 _ => "",

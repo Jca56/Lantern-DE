@@ -1,7 +1,7 @@
 use lntrn_render::{Color, Painter, Rect};
 use lntrn_theme::{self, Rgba, palette::Palette};
 
-use crate::gpu::fill::{draw_fill, Fill};
+use crate::gpu::fill::Fill;
 
 /// Fox palette expressed as linear-space `Color` values for GPU rendering.
 #[derive(Clone, Copy)]
@@ -38,22 +38,26 @@ fn to_color(c: Rgba) -> Color {
 pub fn draw_window_gradient_overlay(
     p: &mut Painter, rect: Rect, corner_r: f32, opacity: f32,
 ) {
-    let Some(stops) = lntrn_theme::active_window_gradient() else { return };
-    if stops.len() < 2 { return; }
-    let alphas = lntrn_theme::active_window_gradient_alphas();
-    let colors: Vec<Color> = stops
-        .iter()
-        .enumerate()
-        .map(|(i, c)| {
-            let a_mul = alphas
-                .as_ref()
-                .and_then(|v| v.get(i).copied())
-                .unwrap_or(1.0);
-            to_color(*c).with_alpha(opacity * a_mul)
-        })
-        .collect();
-    let fill = Fill::linear_multi(lntrn_theme::active_window_gradient_angle(), colors);
-    draw_fill(p, rect, corner_r, &fill);
+    let corners = lntrn_theme::active_window_gradient_corners();
+    if corners.iter().all(|c| c.is_none()) { return; }
+
+    // Cube-curve the intensity so the bottom half of the slider lives in
+    // the "barely visible" range — linear was unusable.
+    let intensity = lntrn_theme::active_window_gradient_intensity().powi(3);
+    if intensity <= 0.0 { return; }
+
+    // Radius is stored normalized (0..1) as a fraction of the window's
+    // half-diagonal so every window gets a proportionally sized glow.
+    let radius_norm = lntrn_theme::active_window_gradient_radius();
+    let half_diag = (rect.w * rect.w + rect.h * rect.h).sqrt() * 0.5;
+    let glow_radius_px = (radius_norm * half_diag).max(1.0);
+
+    for (i, slot) in corners.iter().enumerate() {
+        let Some(rgba) = *slot else { continue; };
+        let corner = lntrn_theme::GradientCorner::ALL[i];
+        let color = to_color(rgba).with_alpha(opacity * intensity);
+        p.rect_radial_glow(rect, corner_r, corner.anchor(), glow_radius_px, color);
+    }
 }
 
 /// Convenience: paint the full window background — solid `palette.bg` at

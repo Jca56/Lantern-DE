@@ -2545,6 +2545,7 @@ dependencies = [
  "libc",
  "lntrn-dbus",
  "lntrn-render",
+ "lntrn-theme",
  "lntrn-ui",
  "raw-window-handle",
  "serde",

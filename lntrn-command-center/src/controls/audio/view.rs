@@ -80,6 +80,57 @@ pub fn draw_inline(
                 .with_alpha(alpha),
         );
     }
+
+    // Drag knob at the fill end — sits on top of the bar so the inline
+    // slider reads as something you can grab.
+    let knob_r = bar_h * 1.2;
+    let knob_cx = bar_x + bar_w * v;
+    let knob_cy = bar_y + bar_h / 2.0;
+    let knob_color = if audio.is_muted() {
+        Color::from_rgb8(BAR_TRACK_RGB.0, BAR_TRACK_RGB.1, BAR_TRACK_RGB.2).with_alpha(alpha)
+    } else {
+        Color::from_rgb8(BAR_FILL_RGB.0, BAR_FILL_RGB.1, BAR_FILL_RGB.2).with_alpha(alpha)
+    };
+    painter.circle_filled(knob_cx, knob_cy, knob_r, knob_color);
+}
+
+// ── Inline hit-testing ──────────────────────────────────────────────────────
+
+/// Distinct hit zones inside the inline audio tile.
+#[derive(Debug, Clone, Copy)]
+pub enum InlineHit {
+    SpeakerIcon,
+    VolumeBar,
+}
+
+/// Physical-pixel rect of the volume bar inside the inline audio tile.
+pub fn inline_bar_rect(layout: &TileLayout, scale: f32) -> Rect {
+    let icon_size = ICON_SIZE * scale;
+    let icon_bar_gap = ICON_BAR_GAP * scale;
+    let bar_w = BAR_WIDTH * scale;
+    let bar_h = BAR_HEIGHT * scale;
+    let bar_x = layout.x + icon_size + icon_bar_gap;
+    let bar_y = layout.y + (layout.h - bar_h) / 2.0;
+    Rect::new(bar_x, bar_y, bar_w, bar_h)
+}
+
+/// Hit-test a click against the inline audio tile. The icon and the
+/// bar each get a generous tile-height hit zone so the targets are
+/// easy to land on — the icon owns the left half-tile up to the
+/// midpoint of the gap, the bar owns everything to the right of it.
+pub fn hit_test_inline(layout: &TileLayout, scale: f32, x: f32, y: f32) -> Option<InlineHit> {
+    if y < layout.y || y > layout.y + layout.h {
+        return None;
+    }
+    if x < layout.x || x > layout.x + layout.w {
+        return None;
+    }
+    let split = layout.x + (ICON_SIZE + ICON_BAR_GAP / 2.0) * scale;
+    if x < split {
+        Some(InlineHit::SpeakerIcon)
+    } else {
+        Some(InlineHit::VolumeBar)
+    }
 }
 
 // ── Click-expand panel constants ────────────────────────────────────────────
