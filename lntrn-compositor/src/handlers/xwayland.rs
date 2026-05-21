@@ -107,6 +107,37 @@ impl XwmHandler for Lantern {
         // OR windows position themselves — map at their requested location
         self.space.map_element(win.clone(), geo.loc, false);
         self.override_redirect_windows.push(win);
+
+        // When an X11 client pops up a menu/tooltip directly under the
+        // cursor (Steam menus, dropdowns, etc.) we need to RE-EVALUATE
+        // pointer focus — otherwise wl_pointer.enter never fires on the
+        // new surface and the client (Steam) thinks no pointer is over its
+        // menu and dismisses it within milliseconds. Synthesize a motion
+        // event at the current cursor position to force the focus update.
+        if let Some(pointer) = self.seat.get_pointer() {
+            let pos = pointer.current_location();
+            let cursor_rect = smithay::utils::Rectangle::new(
+                smithay::utils::Point::<i32, smithay::utils::Logical>::from(
+                    (pos.x as i32, pos.y as i32),
+                ),
+                smithay::utils::Size::from((1i32, 1i32)),
+            );
+            let or_rect = smithay::utils::Rectangle::new(geo.loc, geo.size);
+            if or_rect.overlaps(cursor_rect) {
+                let focus = self.surface_under(pos).map(|(s, p)| (s, p.to_i32_round()));
+                pointer.motion(
+                    self,
+                    focus,
+                    &smithay::input::pointer::MotionEvent {
+                        location: pos,
+                        serial: smithay::utils::SERIAL_COUNTER.next_serial(),
+                        time: 0,
+                    },
+                );
+                pointer.frame(self);
+            }
+        }
+
         self.schedule_render();
     }
 

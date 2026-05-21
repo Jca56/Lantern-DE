@@ -323,6 +323,15 @@ pub fn render_surface(
                 }
             }
         }
+        // X11 override-redirect windows (menus, tooltips, dropdowns) are
+        // not workspace-owned — they're transient popups. Include them in
+        // the render list so they show up on top of whatever workspace is
+        // active. Without this Steam menus open but are invisible.
+        for or_win in &state.override_redirect_windows {
+            if !windows.iter().any(|w| w == or_win) {
+                windows.push(or_win.clone());
+            }
+        }
     }
 
     let udev = match state.udev.as_mut() {
