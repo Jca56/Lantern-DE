@@ -16,6 +16,7 @@ mod handlers;
 mod hot_corners;
 pub mod hover_preview;
 mod input;
+mod keyboard_focus;
 mod layer_position;
 mod minimize_anim;
 mod rect_anim;

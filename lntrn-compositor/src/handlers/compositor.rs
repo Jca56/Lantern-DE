@@ -177,14 +177,24 @@ impl CompositorHandler for Lantern {
             if kb_interactivity == KeyboardInteractivity::Exclusive {
                 let serial = smithay::utils::SERIAL_COUNTER.next_serial();
                 let keyboard = self.seat.get_keyboard().unwrap();
-                keyboard.set_focus(self, Some(wl_surface), serial);
+                keyboard.set_focus(
+                    self,
+                    Some(crate::keyboard_focus::KeyboardFocusTarget::Wayland(wl_surface)),
+                    serial,
+                );
             } else if kb_interactivity == KeyboardInteractivity::None {
                 let keyboard = self.seat.get_keyboard().unwrap();
-                let has_focus = keyboard.current_focus()
-                    .map_or(false, |f| f == wl_surface);
+                let has_focus = keyboard.current_focus().map_or(false, |f| {
+                    use smithay::wayland::seat::WaylandFocus;
+                    f.wl_surface().map(|c| c.into_owned()).as_ref() == Some(&wl_surface)
+                });
                 if has_focus {
                     let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-                    keyboard.set_focus(self, Option::<smithay::reexports::wayland_server::protocol::wl_surface::WlSurface>::None, serial);
+                    keyboard.set_focus(
+                        self,
+                        Option::<crate::keyboard_focus::KeyboardFocusTarget>::None,
+                        serial,
+                    );
                 }
             }
         }

@@ -381,8 +381,19 @@ pub fn render_surface(
         // Used by the blur-source builder below to skip this window's own
         // surface so it never blurs into its own backdrop.
         let win_start_idx = window_elements.len();
+        // OR windows (X11 popups: menus, tooltips, dropdowns) live in
+        // `state.space` (the global mirror) but not in any per-workspace
+        // Space. Fall back to the global space when the per-workspace
+        // lookup returns None.
+        let lookup_loc = |w: &Window| -> smithay::utils::Point<i32, smithay::utils::Logical> {
+            state
+                .workspaces
+                .element_location(w)
+                .or_else(|| state.space.element_location(w))
+                .unwrap_or_default()
+        };
         let win_bbox = {
-            let loc = state.workspaces.element_location(window).unwrap_or_default();
+            let loc = lookup_loc(window);
             let mut bbox = window.bbox();
             bbox.loc += loc - window.geometry().loc;
             bbox
@@ -391,7 +402,7 @@ pub fn render_surface(
             continue;
         }
 
-        let location = state.workspaces.element_location(window).unwrap_or_default();
+        let location = lookup_loc(window);
         let _ = location;
         let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(window) else { continue };
 
@@ -466,7 +477,11 @@ pub fn render_surface(
                 (rect.loc.x as f64, rect.loc.y as f64,
                  rect.size.w as f64, rect.size.h as f64, 1.0)
             } else {
-                let loc = state.workspaces.element_location(window).unwrap_or_default();
+                let loc = state
+                    .workspaces
+                    .element_location(window)
+                    .or_else(|| state.space.element_location(window))
+                    .unwrap_or_default();
                 (loc.x as f64, loc.y as f64,
                  win_size.w as f64, win_size.h as f64, 1.0)
             };

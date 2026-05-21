@@ -80,8 +80,24 @@ impl Lantern {
             }
         }
 
+        // Build the keyboard focus target. For X11 surfaces we use the
+        // X11 variant so Smithay's KeyboardTarget impl also invokes the
+        // X11 server's SetInputFocus — native X11 games (SDL2 / XInput2 /
+        // XKBlib) won't receive key events without it.
+        let focus_target = surface.as_ref().map(|wls| {
+            let x11 = self
+                .space
+                .elements()
+                .find(|w| w.get_wl_surface().as_ref() == Some(wls))
+                .and_then(|w| w.x11_surface().cloned());
+            match x11 {
+                Some(x11s) => crate::keyboard_focus::KeyboardFocusTarget::X11(x11s),
+                None => crate::keyboard_focus::KeyboardFocusTarget::Wayland(wls.clone()),
+            }
+        });
+
         let keyboard = self.seat.get_keyboard().unwrap();
-        keyboard.set_focus(self, surface.clone(), serial);
+        keyboard.set_focus(self, focus_target, serial);
 
         if let Some(surface) = surface {
             self.remember_window_surface(&surface);

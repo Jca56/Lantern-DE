@@ -52,7 +52,7 @@ use smithay::{
 fn lantern_output_scale() -> f64 { crate::output_scale() }
 
 impl SeatHandler for Lantern {
-    type KeyboardFocus = WlSurface;
+    type KeyboardFocus = crate::keyboard_focus::KeyboardFocusTarget;
     type PointerFocus = WlSurface;
     type TouchFocus = WlSurface;
 
@@ -65,9 +65,17 @@ impl SeatHandler for Lantern {
         self.schedule_render();
     }
 
-    fn focus_changed(&mut self, seat: &Seat<Self>, focused: Option<&WlSurface>) {
+    fn focus_changed(
+        &mut self,
+        seat: &Seat<Self>,
+        focused: Option<&crate::keyboard_focus::KeyboardFocusTarget>,
+    ) {
+        use smithay::wayland::seat::WaylandFocus;
         let dh = &self.display_handle;
-        let client = focused.and_then(|s| dh.get_client(s.id()).ok());
+        let wl_surface = focused.and_then(|f| f.wl_surface().map(|c| c.into_owned()));
+        let client = wl_surface
+            .as_ref()
+            .and_then(|s| dh.get_client(s.id()).ok());
         set_data_device_focus(dh, seat, client);
         // Setting focus runs smithay's internal liveness purge; if the
         // selection just got cleared because its source died, take over.

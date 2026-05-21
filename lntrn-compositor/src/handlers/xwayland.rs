@@ -159,11 +159,22 @@ impl XwmHandler for Lantern {
             return;
         }
 
-        // Regular managed window
+        // Regular managed window. Also match by x11_surface in case the
+        // wl_surface association was already dropped (see destroyed_window
+        // for the same robustness fix).
+        let mapped_win = window
+            .wl_surface()
+            .and_then(|s| self.find_mapped_window(&s))
+            .or_else(|| {
+                self.space
+                    .elements()
+                    .find(|w| w.x11_surface().map(|x| x == &window).unwrap_or(false))
+                    .cloned()
+            });
+        if let Some(win) = mapped_win {
+            self.unmap_window_everywhere(&win);
+        }
         if let Some(wl_surface) = window.wl_surface() {
-            if let Some(win) = self.find_mapped_window(&wl_surface) {
-                self.unmap_window_everywhere(&win);
-            }
             self.forget_window(&wl_surface);
         }
 
@@ -186,11 +197,25 @@ impl XwmHandler for Lantern {
             self.space.unmap_elem(&win);
         }
 
-        // Clean up managed windows
+        // Clean up managed windows. By the time destroyed_window fires the
+        // X11 surface has often already dropped its wl_surface association,
+        // so finding the Window via wl_surface() returns None and leaves the
+        // dead Window stranded in `self.space` — the renderer keeps drawing
+        // its last (often black) buffer forever. Fall back to matching by
+        // x11_surface() so dead windows always get unmapped.
+        let mapped_win = window
+            .wl_surface()
+            .and_then(|s| self.find_mapped_window(&s))
+            .or_else(|| {
+                self.space
+                    .elements()
+                    .find(|w| w.x11_surface().map(|x| x == &window).unwrap_or(false))
+                    .cloned()
+            });
+        if let Some(win) = mapped_win {
+            self.unmap_window_everywhere(&win);
+        }
         if let Some(wl_surface) = window.wl_surface() {
-            if let Some(win) = self.find_mapped_window(&wl_surface) {
-                self.unmap_window_everywhere(&win);
-            }
             self.forget_window(&wl_surface);
         }
 

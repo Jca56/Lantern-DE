@@ -431,7 +431,11 @@ impl Lantern {
                 // Clicked on a layer surface (e.g. Bottom layer desktop widget)
                 // Give it keyboard focus so OnDemand interactivity works
                 let keyboard = self.seat.get_keyboard().unwrap();
-                keyboard.set_focus(self, Some(surface), serial.into());
+                keyboard.set_focus(
+                    self,
+                    Some(crate::keyboard_focus::KeyboardFocusTarget::Wayland(surface)),
+                    serial.into(),
+                );
             } else {
                 self.clear_focus(serial);
             }
