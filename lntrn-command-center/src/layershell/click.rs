@@ -582,9 +582,9 @@ pub(super) fn handle_clicks(
                     app.terminal.clear();
                 }
                 crate::controls::TileId::Audio => {
-                    // Audio tile is interactive in-place: speaker icon
-                    // toggles mute, the bar sets volume + starts a
-                    // drag. No navigation to the expanded view.
+                    // Audio tile is split: speaker icon opens the
+                    // expanded audio page (for output device picker
+                    // etc.); the bar sets volume + starts a drag.
                     use crate::controls::audio::InlineHit;
                     if let Some(layout) = app.controls.tile_layout(
                         crate::controls::TileId::Audio,
@@ -596,7 +596,7 @@ pub(super) fn handle_clicks(
                             &layout, scale_f, phys_cx, phys_cy,
                         ) {
                             Some(InlineHit::SpeakerIcon) => {
-                                app.controls.audio.toggle_mute();
+                                app.show_control(crate::controls::TileId::Audio);
                             }
                             Some(InlineHit::VolumeBar) => {
                                 let bar = crate::controls::audio::inline_bar_rect(

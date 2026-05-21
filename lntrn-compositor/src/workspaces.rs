@@ -13,6 +13,61 @@ use smithay::{
     utils::{Logical, Point, Rectangle},
 };
 
+use crate::window_ext::WindowExt;
+
+/// Tell an X11 window where it actually lives on screen. Wayland clients
+/// don't need this (the compositor positions surfaces itself), but X11
+/// clients translate pointer events to/from X root coordinates using the
+/// window's last-configured X11 position — if we don't sync this after
+/// `Space::map_element`, the client (e.g. Steam) thinks the window is at
+/// its originally-requested location and clicks land far from the cursor.
+/// Translate compositor logical coords to X11 root coords by adding the
+/// origin offset that makes the leftmost / topmost output start at (0, 0).
+/// XWayland's X server uses an X-root that always starts at (0, 0); if our
+/// monitor layout puts an output at negative compositor coords, X11 clients
+/// (especially CEF/Chromium-based like Steam) will misinterpret pointer
+/// positions and clicks land in the wrong place.
+fn x11_root_offset(workspaces: &Lantern) -> Point<i32, Logical> {
+    let mut min_x = 0;
+    let mut min_y = 0;
+    for (_, loc) in workspaces.workspaces.known_outputs() {
+        if loc.x < min_x {
+            min_x = loc.x;
+        }
+        if loc.y < min_y {
+            min_y = loc.y;
+        }
+    }
+    Point::from((-min_x, -min_y))
+}
+
+fn sync_x11_position(
+    workspaces: &Lantern,
+    window: &Window,
+    location: Point<i32, Logical>,
+) {
+    if let Some(x11) = window.x11_surface() {
+        if x11.is_override_redirect() {
+            // OR windows position themselves; configure() would error.
+            return;
+        }
+        let size = window.geometry().size;
+        let offset = x11_root_offset(workspaces);
+        let x11_loc = Point::<i32, Logical>::from((location.x + offset.x, location.y + offset.y));
+        let new_rect = Rectangle::new(x11_loc, size);
+        tracing::info!(
+            class = x11.class(),
+            title = x11.title(),
+            compositor_loc = format!("({}, {})", location.x, location.y),
+            x11_root_loc = format!("({}, {})", x11_loc.x, x11_loc.y),
+            offset = format!("({}, {})", offset.x, offset.y),
+            size = format!("{}x{}", size.w, size.h),
+            "sync_x11_position"
+        );
+        window.configure_rect(new_rect);
+    }
+}
+
 pub struct Workspace {
     pub id: u32,
     /// All window surfaces on this workspace, in spawn order.
@@ -474,7 +529,6 @@ impl PerOutputWorkspaces {
 
 use smithay::utils::SERIAL_COUNTER;
 use crate::state::Lantern;
-use crate::window_ext::WindowExt;
 
 impl Lantern {
     /// Find the topmost window under a point on the active workspace of
@@ -984,7 +1038,8 @@ impl Lantern {
         if let Some(space) = self.workspace_space_mut(output_name, ws_id) {
             space.map_element(window.clone(), location, activate);
         }
-        self.space.map_element(window, location, activate);
+        self.space.map_element(window.clone(), location, activate);
+        sync_x11_position(self, &window, location);
     }
 
     /// Re-map a window that already has a workspace assignment. Finds its
@@ -1061,7 +1116,8 @@ impl Lantern {
                 space.map_element(window.clone(), location, activate);
             }
         }
-        self.space.map_element(window, location, activate);
+        self.space.map_element(window.clone(), location, activate);
+        sync_x11_position(self, &window, location);
     }
 
     /// Unmap a window from its owning workspace's Space AND the global Space.

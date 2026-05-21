@@ -68,13 +68,21 @@ impl XdgShellHandler for Lantern {
         if let Some(start_data) = check_grab(&seat, wl_surface, serial) {
             let pointer = seat.get_pointer().unwrap();
 
-            let window = self
-                .space
-                .elements()
-                .find(|w| w.toplevel().unwrap().wl_surface() == wl_surface)
-                .unwrap()
-                .clone();
-            let initial_window_location = self.workspaces.element_location(&window).unwrap();
+            // Filter on toplevel() instead of unwrapping — `self.space` also
+            // contains X11 windows (e.g. Steam), and `toplevel()` returns
+            // None for those. Calling .unwrap() would panic the compositor.
+            let window = match self.space.elements().find(|w| {
+                w.toplevel()
+                    .map(|t| t.wl_surface() == wl_surface)
+                    .unwrap_or(false)
+            }) {
+                Some(w) => w.clone(),
+                None => return,
+            };
+            let initial_window_location = self
+                .workspaces
+                .element_location(&window)
+                .unwrap_or_default();
 
             let was_snapped = self.is_snapped(wl_surface);
             let was_maximized = self.is_maximized(wl_surface);
@@ -107,13 +115,19 @@ impl XdgShellHandler for Lantern {
             tracing::info!("Resize grab started successfully");
             let pointer = seat.get_pointer().unwrap();
 
-            let window = self
-                .space
-                .elements()
-                .find(|w| w.toplevel().unwrap().wl_surface() == wl_surface)
-                .unwrap()
-                .clone();
-            let initial_window_location = self.workspaces.element_location(&window).unwrap();
+            // Same X11-safe lookup as move_request — see comment there.
+            let window = match self.space.elements().find(|w| {
+                w.toplevel()
+                    .map(|t| t.wl_surface() == wl_surface)
+                    .unwrap_or(false)
+            }) {
+                Some(w) => w.clone(),
+                None => return,
+            };
+            let initial_window_location = self
+                .workspaces
+                .element_location(&window)
+                .unwrap_or_default();
             let initial_window_size = window.geometry().size;
 
             surface.with_pending_state(|state| {

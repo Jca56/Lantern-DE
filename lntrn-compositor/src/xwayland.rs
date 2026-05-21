@@ -45,14 +45,19 @@ pub fn start_xwayland(state: &mut Lantern) {
             )
         })
         .unwrap_or_else(|| "24".to_string());
-    // Mirror into the compositor's env so any dbus-update-activation-environment
-    // push (which reads from std::env) includes them too.
+    // libxcursor's compiled-in search path on Gentoo (and most non-XDG-aware
+    // builds) is `~/.icons:/usr/share/icons:/usr/share/pixmaps` — it does NOT
+    // include `$XDG_DATA_HOME/icons`, which is exactly where we wrote the
+    // Lantern theme. Build an explicit XCURSOR_PATH so XWayland can find it.
+    let xcursor_path = build_xcursor_path();
     std::env::set_var("XCURSOR_THEME", &xcursor_theme);
     std::env::set_var("XCURSOR_SIZE", &xcursor_size);
+    std::env::set_var("XCURSOR_PATH", &xcursor_path);
 
     let xwayland_env = vec![
         ("XCURSOR_THEME".to_string(), xcursor_theme),
         ("XCURSOR_SIZE".to_string(), xcursor_size),
+        ("XCURSOR_PATH".to_string(), xcursor_path),
     ];
 
     let (xwayland, client) = match XWayland::spawn(
@@ -146,6 +151,7 @@ fn push_activation_environment() {
         "XDG_SESSION_TYPE",
         "XCURSOR_THEME",
         "XCURSOR_SIZE",
+        "XCURSOR_PATH",
     ];
     let mut cmd = std::process::Command::new("dbus-update-activation-environment");
     cmd.arg("--systemd").args(vars);
@@ -160,6 +166,47 @@ fn push_activation_environment() {
             tracing::warn!("dbus-update-activation-environment not available: {err}");
         }
     }
+}
+
+/// Build a colon-separated XCURSOR_PATH that starts with our generated
+/// Lantern theme directory and includes the conventional system fallbacks.
+/// Respects $XDG_DATA_HOME and $XDG_DATA_DIRS for systems where they differ.
+fn build_xcursor_path() -> String {
+    let mut entries: Vec<String> = Vec::new();
+    let mut push = |p: String| {
+        if !p.is_empty() && !entries.contains(&p) {
+            entries.push(p);
+        }
+    };
+
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = std::path::PathBuf::from(home);
+        push(home.join(".icons").display().to_string());
+    }
+
+    let xdg_data_home = std::env::var_os("XDG_DATA_HOME")
+        .map(std::path::PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(|h| std::path::PathBuf::from(h).join(".local").join("share"))
+        });
+    if let Some(p) = xdg_data_home {
+        push(p.join("icons").display().to_string());
+    }
+
+    let xdg_data_dirs = std::env::var("XDG_DATA_DIRS")
+        .unwrap_or_else(|_| "/usr/local/share:/usr/share".to_string());
+    for dir in xdg_data_dirs.split(':') {
+        if dir.is_empty() {
+            continue;
+        }
+        push(format!("{dir}/icons"));
+    }
+
+    push("/usr/share/pixmaps".to_string());
+
+    entries.join(":")
 }
 
 fn spawn_client() {
