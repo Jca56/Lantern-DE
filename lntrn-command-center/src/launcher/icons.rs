@@ -132,6 +132,19 @@ fn icon_dirs() -> Vec<String> {
     dirs.push(format!("{home}/.local/share/icons/hicolor/scalable/apps"));
     dirs.push(format!("{home}/.icons"));
 
+    // Flatpak icon exports — system-wide and per-user. Flatpak apps
+    // (Steam, Discord, etc.) ship icons here, not in /usr/share/icons.
+    // Without these dirs, the Icon= name from a Flatpak .desktop file
+    // (e.g. `com.valvesoftware.Steam`) resolves to nothing.
+    for base in [
+        "/var/lib/flatpak/exports/share/icons".to_string(),
+        format!("{home}/.local/share/flatpak/exports/share/icons"),
+    ] {
+        for size in ["scalable", "512x512", "256x256", "128x128", "64x64", "48x48"] {
+            dirs.push(format!("{base}/hicolor/{size}/apps"));
+        }
+    }
+
     // System Tela (preferred theme).
     dirs.push("/usr/share/icons/Tela/scalable/apps".into());
     dirs.push("/usr/share/icons/Tela/256/apps".into());
