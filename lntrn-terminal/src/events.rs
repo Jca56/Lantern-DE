@@ -881,7 +881,7 @@ impl App {
 
         let tab = &self.tabs[self.active_tab];
         let terminal = &tab.panes[tab.active_pane].terminal;
-        let max_px = terminal.scrollback.len() as f32 * cell_h;
+        let max_px = terminal.active_scrollback().len() as f32 * cell_h;
 
         self.scroll_target_px = (self.scroll_target_px + delta_px).clamp(0.0, max_px);
         self.scroll_animating = true;
@@ -916,7 +916,7 @@ impl App {
         let (gx, gy, gw, gh) =
             Self::pane_grid_bounds(pane, rects[tab.active_pane], self.effective_font_size());
         let viewport = lntrn_render::Rect::new(gx, gy, gw, gh);
-        let total_lines = pane.terminal.scrollback.len() + pane.terminal.rows;
+        let total_lines = pane.terminal.active_scrollback().len() + pane.terminal.rows;
         let content_height = total_lines as f32 * cell_h;
         let max_scroll = (content_height - gh).max(0.0);
         let inverted_offset = max_scroll - self.scroll_current_px.min(max_scroll);

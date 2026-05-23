@@ -440,7 +440,7 @@ impl App {
         let cell_h = render::measure_cell(self.effective_font_size()).1;
         let tab = &mut self.tabs[self.active_tab];
         let terminal = &mut tab.panes[tab.active_pane].terminal;
-        let max_px = terminal.scrollback.len() as f32 * cell_h;
+        let max_px = terminal.active_scrollback().len() as f32 * cell_h;
 
         self.scroll_current_px = self.scroll_current_px.clamp(0.0, max_px);
         self.scroll_target_px = self.scroll_target_px.clamp(0.0, max_px);
@@ -455,7 +455,7 @@ impl App {
         // frame on slow displays.
         let sub_pixel = if raw_sub.abs() < 0.5 { 0.0 } else { raw_sub };
 
-        terminal.scroll_offset = line_offset.min(terminal.scrollback.len());
+        terminal.scroll_offset = line_offset.min(terminal.active_scrollback().len());
         sub_pixel
     }
 

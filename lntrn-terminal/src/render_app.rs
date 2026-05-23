@@ -152,7 +152,7 @@ impl App {
 
             // Draw scrollbar for active pane when scrolled
             if is_active_pane {
-                let total_lines = pane.terminal.scrollback.len() + pane.terminal.rows;
+                let total_lines = pane.terminal.active_scrollback().len() + pane.terminal.rows;
                 let content_height = total_lines as f32 * cell_h;
                 let viewport = lntrn_render::Rect::new(gx, gy, gw, gh);
                 let max_scroll = (content_height - gh).max(0.0);

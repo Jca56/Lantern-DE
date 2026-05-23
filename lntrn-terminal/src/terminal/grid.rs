@@ -188,6 +188,12 @@ pub struct TerminalState {
     pub alt_cursor: Option<(usize, usize)>,
     pub alt_saved_state: Option<AltSavedState>,
 
+    // Scrollback captured while on the alt screen. Lines pushed here when the
+    // alt-screen TUI scrolls; cleared on enter/leave so it never leaks into
+    // the main shell's history. Apps like Claude Code need this to be
+    // scrollable; classic TUIs (vim/less) just redraw and never trigger it.
+    pub alt_scrollback: Vec<Vec<Cell>>,
+
     // Responses to write back to the PTY (DA, DSR, etc.)
     pub pending_responses: Vec<Vec<u8>>,
 
@@ -258,6 +264,7 @@ impl TerminalState {
             cursor_row: 0,
             cursor_col: 0,
             scrollback: Vec::new(),
+            alt_scrollback: Vec::new(),
             max_scrollback: 5000,
             scroll_offset: 0,
             default_fg: Cell::default().fg,
@@ -480,11 +487,18 @@ impl TerminalState {
     pub fn scroll_up(&mut self) {
         if self.scroll_top < self.scroll_bottom && self.scroll_bottom < self.rows {
             let removed = self.grid.remove(self.scroll_top);
-            // Don't leak alt-screen content into the main scrollback buffer
-            if self.scroll_top == 0 && self.alt_grid.is_none() {
-                self.scrollback.push(removed);
-                if self.scrollback.len() > self.max_scrollback {
-                    self.scrollback.remove(0);
+            if self.scroll_top == 0 {
+                // Push to alt_scrollback when on the alt screen so the
+                // history stays isolated from the main shell's scrollback.
+                let max = self.max_scrollback;
+                let buf = if self.alt_grid.is_some() {
+                    &mut self.alt_scrollback
+                } else {
+                    &mut self.scrollback
+                };
+                buf.push(removed);
+                if buf.len() > max {
+                    buf.remove(0);
                 }
             }
             let def = self.default_cell();
@@ -531,6 +545,8 @@ impl TerminalState {
         self.grid = vec![vec![def; self.cols]; self.rows];
         self.cursor_row = 0;
         self.cursor_col = 0;
+        self.alt_scrollback.clear();
+        self.scroll_offset = 0;
         self.scroll_top = 0;
         self.scroll_bottom = self.rows.saturating_sub(1);
         self.wrap_next = false;
@@ -552,6 +568,10 @@ impl TerminalState {
             return;
         };
         self.grid = grid;
+        // Drop the alt-screen history and snap back to the live main grid so
+        // the user doesn't see stale TUI lines after the app exits.
+        self.alt_scrollback.clear();
+        self.scroll_offset = 0;
         if let Some((r, c)) = self.alt_cursor.take() {
             self.cursor_row = r.min(self.rows.saturating_sub(1));
             self.cursor_col = c.min(self.cols.saturating_sub(1));
@@ -602,6 +622,18 @@ impl TerminalState {
     }
 
     /// Get a display line accounting for scroll offset.
+    /// Returns whichever scrollback buffer is currently in use — the alt
+    /// buffer while on the alt screen, otherwise the main one. Callers
+    /// outside this module should use this rather than reading `.scrollback`
+    /// directly so they see the right history while a TUI is running.
+    pub fn active_scrollback(&self) -> &Vec<Vec<Cell>> {
+        if self.alt_grid.is_some() {
+            &self.alt_scrollback
+        } else {
+            &self.scrollback
+        }
+    }
+
     pub fn display_line(&self, row: usize) -> &[Cell] {
         if self.scroll_offset == 0 {
             if row < self.grid.len() {
@@ -610,12 +642,13 @@ impl TerminalState {
             return &[];
         }
 
-        let scrollback_len = self.scrollback.len();
+        let sb = self.active_scrollback();
+        let scrollback_len = sb.len();
         let scrollback_start = scrollback_len.saturating_sub(self.scroll_offset);
         let line_idx = scrollback_start + row;
 
         if line_idx < scrollback_len {
-            &self.scrollback[line_idx]
+            &sb[line_idx]
         } else {
             let grid_row = line_idx - scrollback_len;
             if grid_row < self.grid.len() {
@@ -630,7 +663,7 @@ impl TerminalState {
     /// is stable across scrolling. Absolute 0 is the oldest line in scrollback;
     /// the current live grid starts at `scrollback.len()`.
     pub fn visible_to_absolute(&self, vrow: usize) -> usize {
-        let scrollback_len = self.scrollback.len();
+        let scrollback_len = self.active_scrollback().len();
         let start = if self.scroll_offset == 0 {
             scrollback_len
         } else {
@@ -642,9 +675,10 @@ impl TerminalState {
     /// Get a line by absolute row index. Returns an empty slice if the index
     /// is out of range (e.g. the line was evicted from scrollback).
     pub fn absolute_line(&self, abs_row: usize) -> &[Cell] {
-        let scrollback_len = self.scrollback.len();
+        let sb = self.active_scrollback();
+        let scrollback_len = sb.len();
         if abs_row < scrollback_len {
-            &self.scrollback[abs_row]
+            &sb[abs_row]
         } else {
             let grid_row = abs_row - scrollback_len;
             if grid_row < self.grid.len() {

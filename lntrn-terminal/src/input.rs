@@ -67,7 +67,7 @@ pub fn handle_key(
         match key {
             Key::Named(NamedKey::PageUp) => {
                 let page = terminal.rows.max(1);
-                let max_offset = terminal.scrollback.len();
+                let max_offset = terminal.active_scrollback().len();
                 terminal.scroll_offset = (terminal.scroll_offset + page).min(max_offset);
                 return true;
             }

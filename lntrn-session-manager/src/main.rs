@@ -240,6 +240,25 @@ fn main() {
     std::env::set_var("DESKTOP_SESSION", "lantern");
     std::env::set_var("XDG_SESSION_TYPE", "wayland");
 
+    // NVIDIA hardware video decode for browsers (Firefox, Chromium).
+    // Routes VA-API calls → NVDEC via nvidia-vaapi-driver. Autodetected via
+    // /proc/driver/nvidia so this stays a no-op on the Intel/AMD laptop.
+    // Requires `nvidia-vaapi-driver` package; harmless if not yet installed
+    // (Firefox just falls back to software decode like it does today).
+    if std::path::Path::new("/proc/driver/nvidia").exists() {
+        if std::env::var_os("LIBVA_DRIVER_NAME").is_none() {
+            std::env::set_var("LIBVA_DRIVER_NAME", "nvidia");
+        }
+        if std::env::var_os("NVD_BACKEND").is_none() {
+            std::env::set_var("NVD_BACKEND", "direct");
+        }
+        // RDD sandbox blocks the NVIDIA driver from opening /dev/nvidia* —
+        // disabling it lets the video-decode process talk to the GPU.
+        if std::env::var_os("MOZ_DISABLE_RDD_SANDBOX").is_none() {
+            std::env::set_var("MOZ_DISABLE_RDD_SANDBOX", "1");
+        }
+    }
+
 
     // Ensure ~/.lantern/bin is in PATH
     if let Ok(path) = std::env::var("PATH") {
