@@ -7,8 +7,12 @@
 //! (newline-delimited UTF-8 over `/run/user/{uid}/lntrn-cc-thumbs.sock`):
 //!
 //!   begin                                      — start a new slot batch
-//!   thumb:{app_id}\t{title}\t{x}\t{y}\t{w}\t{h}  — slot, logical px
+//!   thumb:{app_id}\t{title}\t{instance}\t{x}\t{y}\t{w}\t{h}  — slot, logical px
 //!   commit                                     — apply staged batch
+//!
+//! `instance` is the occurrence index of the window among others sharing
+//! its `app_id` (creation order). It disambiguates multiple windows of
+//! the same app, which (app_id, title) alone cannot.
 //!   clear                                      — drop all slots immediately
 //!
 //! `begin` / `commit` make slot updates atomic across the multiple lines
@@ -51,6 +55,8 @@ fn socket_path() -> PathBuf {
 pub struct ThumbSlot {
     pub app_id: String,
     pub title: String,
+    /// Occurrence index among windows sharing `app_id` (creation order).
+    pub instance: u32,
     pub rect: Rectangle<i32, Logical>,
     /// Optional close-button overlay drawn by the compositor on top of
     /// the thumbnail. CC can't render over the compositor's overlay
@@ -249,6 +255,7 @@ fn parse_thumb(rest: &str) -> Option<ThumbSlot> {
     let mut parts = rest.split('\t');
     let app_id = parts.next()?.to_string();
     let title = parts.next()?.to_string();
+    let instance: u32 = parts.next()?.parse().ok()?;
     let x: i32 = parts.next()?.parse().ok()?;
     let y: i32 = parts.next()?.parse().ok()?;
     let w: i32 = parts.next()?.parse().ok()?;
@@ -275,6 +282,7 @@ fn parse_thumb(rest: &str) -> Option<ThumbSlot> {
     Some(ThumbSlot {
         app_id,
         title,
+        instance,
         rect: Rectangle::new((x, y).into(), (w, h).into()),
         close,
     })

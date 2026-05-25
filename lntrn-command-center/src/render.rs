@@ -320,7 +320,6 @@ pub fn draw_content(
                     &layout,
                     &state.toplevels,
                     panel.alpha * dock_alpha_mult,
-                    state.mini_dock_hover,
                 );
 
                 // Decorative lantern mascot — pinned to the left side of

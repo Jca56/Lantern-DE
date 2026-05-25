@@ -245,11 +245,20 @@ pub fn render_surface(
             slots
                 .iter()
                 .filter_map(|slot| {
-                    // Prefer (app_id, title) match; fall back to app_id-only if
-                    // title doesn't match (e.g. title raced an update).
+                    // Pick the n-th window sharing this app_id (creation
+                    // order), so multiple windows of the same app — even
+                    // with identical titles — each resolve to a distinct
+                    // window. Fall back to (app_id, title) then app_id-only
+                    // if the index is out of range (e.g. raced an update).
                     let surf = toplevels
                         .iter()
-                        .find(|(_, a, t)| a == &slot.app_id && t == &slot.title)
+                        .filter(|(_, a, _)| a == &slot.app_id)
+                        .nth(slot.instance as usize)
+                        .or_else(|| {
+                            toplevels
+                                .iter()
+                                .find(|(_, a, t)| a == &slot.app_id && t == &slot.title)
+                        })
                         .or_else(|| toplevels.iter().find(|(_, a, _)| a == &slot.app_id))
                         .map(|(s, _, _)| s.clone())?;
                     let win = state

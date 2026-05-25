@@ -1,7 +1,7 @@
 [package]
 name = "lntrn-bar"
 version = "0.4.0"
-description = "Desktop bar for Lantern DE"
+description = "[DEPRECATED] Desktop bar for Lantern DE — replaced by lntrn-command-center"
 authors = ["Jca56"]
 edition = "2021"
 

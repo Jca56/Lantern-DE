@@ -22,6 +22,10 @@ fn socket_path() -> PathBuf {
 pub struct ThumbSlot {
     pub app_id: String,
     pub title: String,
+    /// Occurrence index among windows sharing `app_id` (creation order).
+    /// Lets the compositor pick the right window when several share an
+    /// app_id (and often an identical title).
+    pub instance: u32,
     pub x: i32,
     pub y: i32,
     pub w: i32,
@@ -75,13 +79,13 @@ impl CcThumbsClient {
             let title = sanitize(&s.title);
             match &s.close {
                 Some(c) => buf.push_str(&format!(
-                    "thumb:{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
-                    app_id, title, s.x, s.y, s.w, s.h,
+                    "thumb:{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+                    app_id, title, s.instance, s.x, s.y, s.w, s.h,
                     c.x, c.y, c.w, c.h, if c.hovered { 1 } else { 0 }
                 )),
                 None => buf.push_str(&format!(
-                    "thumb:{}\t{}\t{}\t{}\t{}\t{}\n",
-                    app_id, title, s.x, s.y, s.w, s.h
+                    "thumb:{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+                    app_id, title, s.instance, s.x, s.y, s.w, s.h
                 )),
             }
         }

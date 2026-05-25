@@ -18,6 +18,10 @@ fn config_path() -> PathBuf {
 const DRAG_THRESHOLD: f32 = 6.0;
 /// Animation duration for icons sliding into position.
 const SLIDE_DURATION: f32 = 0.15;
+/// How much a tray icon grows when hovered (1.0 = no growth).
+const HOVER_SCALE: f32 = 1.2;
+/// Animation duration for the hover-grow effect.
+const HOVER_GROW_DURATION: f32 = 0.1;
 
 /// A single slot in the app tray (pinned, running, or both).
 #[derive(Debug, Clone)]
@@ -63,6 +67,10 @@ pub struct AppTray {
     drag: Option<DragState>,
     /// Animated x-offsets per app_id (pixels, converging to 0).
     anim_offsets: HashMap<String, f32>,
+    /// Currently hovered app_id (set during draw, eased in update_anim).
+    hovered_app: Option<String>,
+    /// Animated hover-grow scale per app_id (1.0 = base size).
+    hover_scales: HashMap<String, f32>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,6 +89,8 @@ impl AppTray {
             running_order: Vec::new(),
             drag: None,
             anim_offsets: HashMap::new(),
+            hovered_app: None,
+            hover_scales: HashMap::new(),
         };
         tray.load_config();
         tray
@@ -294,27 +304,55 @@ impl AppTray {
         self.drag.as_ref().is_some_and(|d| d.active)
     }
 
-    /// Advance slide animations. Returns true if still animating.
+    /// Advance slide + hover-grow animations. Returns true if still animating.
     pub fn update_anim(&mut self, dt: f32) -> bool {
-        if self.anim_offsets.is_empty() {
-            return false;
-        }
-        let speed = 1.0 / SLIDE_DURATION;
         let mut any = false;
-        self.anim_offsets.retain(|_, offset| {
-            let step = offset.abs() * speed * dt + 0.5; // proportional + minimum
-            if *offset > step {
-                *offset -= step;
-                any = true;
-                true
-            } else if *offset < -step {
-                *offset += step;
-                any = true;
-                true
-            } else {
-                false // animation done, remove
-            }
-        });
+
+        // Slide offsets converge to 0.
+        if !self.anim_offsets.is_empty() {
+            let speed = 1.0 / SLIDE_DURATION;
+            self.anim_offsets.retain(|_, offset| {
+                let step = offset.abs() * speed * dt + 0.5; // proportional + minimum
+                if *offset > step {
+                    *offset -= step;
+                    any = true;
+                    true
+                } else if *offset < -step {
+                    *offset += step;
+                    any = true;
+                    true
+                } else {
+                    false // animation done, remove
+                }
+            });
+        }
+
+        // Hover-grow eases toward HOVER_SCALE for the hovered icon, 1.0 for the
+        // rest. Make sure the hovered icon has an entry to ease up from.
+        if let Some(app) = &self.hovered_app {
+            self.hover_scales.entry(app.clone()).or_insert(1.0);
+        }
+        if !self.hover_scales.is_empty() {
+            let hovered = self.hovered_app.clone();
+            let t = (dt / HOVER_GROW_DURATION).min(1.0);
+            self.hover_scales.retain(|app_id, scale| {
+                let target = if hovered.as_deref() == Some(app_id.as_str()) {
+                    HOVER_SCALE
+                } else {
+                    1.0
+                };
+                *scale += (target - *scale) * t;
+                if (target - *scale).abs() < 0.001 {
+                    *scale = target;
+                    // Settled back at base size — drop it from the map.
+                    target != 1.0
+                } else {
+                    any = true;
+                    true
+                }
+            });
+        }
+
         any
     }
 
@@ -471,7 +509,7 @@ impl AppTray {
     /// When `left_x` is Some, left-aligns at that x position; otherwise centers.
     /// Returns (total_width, Vec<TextureDraw>).
     pub fn draw<'a>(
-        &self,
+        &mut self,
         painter: &mut Painter,
         _text: &mut TextRenderer,
         ix: &mut InteractionContext,
@@ -505,6 +543,7 @@ impl AppTray {
 
         let mut tex_draws = Vec::new();
         let indicator_h = 3.0 * scale;
+        let mut new_hovered: Option<String> = None;
 
         let dragging = &self.drag;
 
@@ -539,37 +578,43 @@ impl AppTray {
                     ix.add_zone(zone_id, rect);
                 }
                 let hovered = !is_dragged && ix.is_hovered(&rect);
-
-                // Hover highlight (not while dragging another icon)
                 if hovered && !self.is_dragging() {
-                    let pad = 4.0 * scale;
-                    let hover_rect = Rect::new(
-                        x - pad, bar_y + 2.0 * scale,
-                        icon_size + pad * 2.0, bar_h - 4.0 * scale,
-                    );
-                    painter.rect_filled(hover_rect, 4.0 * scale, palette.muted.with_alpha(0.35));
+                    new_hovered = Some(slot.app_id.clone());
                 }
+
+                // Hover-grow: instead of a highlight box, the icon swells a
+                // little. The scale is eased per-frame in update_anim.
+                let icon_scale = self.hover_scales.get(&slot.app_id).copied().unwrap_or(1.0);
+                let grown = icon_size * icon_scale;
+                let off = (grown - icon_size) / 2.0;
+                let draw_x = x - off;
+                let draw_y = center_y - off;
 
                 // Draw icon or fallback
                 let key = format!("app-{}", slot.app_id);
                 if let Some(tex) = icons.get(&key) {
-                    let mut draw = TextureDraw::new(tex, x, center_y, icon_size, icon_size);
+                    let mut draw = TextureDraw::new(tex, draw_x, draw_y, grown, grown);
                     if is_dragged { draw.opacity = 0.8; }
                     tex_draws.push(draw);
                 } else {
-                    painter.rect_filled(rect, icon_size * 0.2, palette.accent);
+                    painter.rect_filled(
+                        Rect::new(draw_x, draw_y, grown, grown),
+                        grown * 0.2, palette.accent,
+                    );
                 }
 
-                // Active indicator line across top of icon
+                // Active indicator line across top of icon (tracks the grown size)
                 if slot.running {
                     let line_color = if slot.activated { palette.accent } else { palette.muted };
                     painter.rect_filled(
-                        Rect::new(x, center_y - indicator_h - 2.0 * scale, icon_size, indicator_h),
+                        Rect::new(draw_x, draw_y - indicator_h - 2.0 * scale, grown, indicator_h),
                         indicator_h / 2.0, line_color,
                     );
                 }
             }
         }
+
+        self.hovered_app = new_hovered;
 
         (total_w, tex_draws)
     }

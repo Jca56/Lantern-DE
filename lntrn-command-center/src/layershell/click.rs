@@ -492,6 +492,7 @@ pub(super) fn handle_clicks(
                             app.window_actions.push(crate::app::WindowAction {
                                 app_id: target.app_id.clone(),
                                 title: target.title.clone(),
+                                instance: Some(window_idx),
                                 kind: crate::app::WindowActionKind::Activate,
                             });
                             app.close();
@@ -504,6 +505,7 @@ pub(super) fn handle_clicks(
                             app.window_actions.push(crate::app::WindowAction {
                                 app_id: target.app_id.clone(),
                                 title: target.title.clone(),
+                                instance: Some(window_idx),
                                 kind: crate::app::WindowActionKind::Close,
                             });
                         }
@@ -529,21 +531,24 @@ pub(super) fn handle_clicks(
                     tracing::debug!(pin = dock_idx, "mini-dock click → launch (no windows)");
                     app.activate_at(crate::app::HitTarget::Pin(dock_idx));
                 } else if !windows.is_empty() {
-                    let target = if let Some(cur) =
+                    let next_idx = if let Some(cur) =
                         windows.iter().position(|w| w.activated)
                     {
-                        windows[(cur + 1) % windows.len()]
+                        (cur + 1) % windows.len()
                     } else {
-                        windows[0]
+                        0
                     };
+                    let target = windows[next_idx];
                     tracing::debug!(
                         app_id = %entry.app_id,
                         total = windows.len(),
+                        next_idx,
                         "mini-dock click → cycle to next window",
                     );
                     app.window_actions.push(crate::app::WindowAction {
                         app_id: target.app_id.clone(),
                         title: target.title.clone(),
+                        instance: Some(next_idx),
                         kind: crate::app::WindowActionKind::Activate,
                     });
                     app.close();

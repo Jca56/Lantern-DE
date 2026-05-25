@@ -263,6 +263,10 @@ pub struct AppState {
 pub struct WindowAction {
     pub app_id: String,
     pub title: String,
+    /// Occurrence index among windows sharing `app_id` (creation order).
+    /// Disambiguates multiple windows of the same app — title alone can
+    /// collide (e.g. two terminals). `None` falls back to title matching.
+    pub instance: Option<usize>,
     pub kind: WindowActionKind,
 }
 

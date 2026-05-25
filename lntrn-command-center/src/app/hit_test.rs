@@ -296,6 +296,7 @@ impl AppState {
                 self.window_actions.push(WindowAction {
                     app_id: menu.app_id.clone(),
                     title: menu.window_title.clone(),
+                    instance: None,
                     kind: WindowActionKind::Close,
                 });
             }

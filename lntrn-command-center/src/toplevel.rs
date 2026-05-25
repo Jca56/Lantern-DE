@@ -64,10 +64,18 @@ impl ToplevelTracker {
             .collect()
     }
 
-    /// Activate the entry whose (app_id, title) match. Returns true on
-    /// success.
-    pub fn activate(&self, app_id: &str, title: &str, seat: &wl_seat::WlSeat) -> bool {
-        if let Some(e) = self.find(app_id, title) {
+    /// Activate the targeted window. When `instance` is Some, the n-th
+    /// window with the matching app_id (creation order) is chosen so
+    /// same-app windows are addressed unambiguously; otherwise we fall
+    /// back to (app_id, title) matching. Returns true on success.
+    pub fn activate(
+        &self,
+        app_id: &str,
+        title: &str,
+        instance: Option<usize>,
+        seat: &wl_seat::WlSeat,
+    ) -> bool {
+        if let Some(e) = self.resolve(app_id, title, instance) {
             e.handle.activate(seat);
             true
         } else {
@@ -75,12 +83,26 @@ impl ToplevelTracker {
         }
     }
 
-    pub fn close(&self, app_id: &str, title: &str) -> bool {
-        if let Some(e) = self.find(app_id, title) {
+    pub fn close(&self, app_id: &str, title: &str, instance: Option<usize>) -> bool {
+        if let Some(e) = self.resolve(app_id, title, instance) {
             e.handle.close();
             true
         } else {
             false
+        }
+    }
+
+    /// Resolve a window: prefer the occurrence index among same-app
+    /// windows; fall back to title matching when no index is given.
+    fn resolve(&self, app_id: &str, title: &str, instance: Option<usize>) -> Option<&Entry> {
+        match instance {
+            Some(n) => self
+                .entries
+                .iter()
+                .filter(|e| e.app_id == app_id)
+                .nth(n)
+                .or_else(|| self.find(app_id, title)),
+            None => self.find(app_id, title),
         }
     }
 

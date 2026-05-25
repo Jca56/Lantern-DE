@@ -132,7 +132,7 @@ pub(super) fn render_frame(
                     let inv = 1.0 / scale_f;
                     let phys_cx = wl.cursor_x as f32 * scale_f;
                     let phys_cy = wl.cursor_y as f32 * scale_f;
-                    for (tile, window) in tiles.iter().zip(windows.iter()) {
+                    for (wi, (tile, window)) in tiles.iter().zip(windows.iter()).enumerate() {
                         let close = crate::mini_dock::preview_close_button_rect(*tile, scale_f);
                         let close_hovered = phys_cx >= close.x
                             && phys_cx <= close.x + close.w
@@ -141,6 +141,7 @@ pub(super) fn render_frame(
                         slots.push(crate::thumbs::ThumbSlot {
                             app_id: window.app_id.clone(),
                             title: window.title.clone(),
+                            instance: wi as u32,
                             x: (tile.x * inv).round() as i32,
                             y: (tile.y * inv).round() as i32,
                             w: (tile.w * inv).round() as i32,

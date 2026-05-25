@@ -30,7 +30,7 @@ pub const PLATE_RADIUS: f32 = 18.0;
 pub const PLATE_PAD: f32 = 10.0;
 /// Magnification scale for the icon directly under the cursor. Neighbor
 /// icons fall off smoothly toward 1.0 with distance.
-pub const MAG_PEAK: f32 = 1.4;
+pub const MAG_PEAK: f32 = 1.6;
 /// How fast magnification falls off (in slot-pitch units). Larger →
 /// more icons magnify; smaller → tighter wave.
 const MAG_SIGMA: f32 = 1.5;
@@ -256,7 +256,6 @@ pub fn draw(
     layout: &DockLayout,
     toplevels: &[ToplevelInfo],
     alpha: f32,
-    hovered_idx: Option<usize>,
 ) {
     let scale = layout.scale;
     let plate = layout.plate;
@@ -303,21 +302,8 @@ pub fn draw(
     for (i, entry) in layout.entries.iter().enumerate() {
         let r = layout.icons[i];
 
-        // Hover ring around the icon (accent gold). Tracks the
-        // magnified rect so it looks right on the big hovered icon.
-        if hovered_idx == Some(i) {
-            painter.rect_stroke_sdf(
-                Rect::new(
-                    r.x - 4.0 * scale,
-                    r.y - 4.0 * scale,
-                    r.w + 8.0 * scale,
-                    r.h + 8.0 * scale,
-                ),
-                (r.w * 0.4) + 4.0 * scale,
-                2.0 * scale,
-                Color::from_rgb8(ACCENT_RGB.0, ACCENT_RGB.1, ACCENT_RGB.2).with_alpha(0.65 * alpha),
-            );
-        }
+        // No hover highlight here — the magnification grow *is* the hover
+        // affordance (see MAG_PEAK).
 
         icons.push(IconRequest {
             app_id: entry.app_id.clone(),

@@ -473,11 +473,11 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                 match act.kind {
                     WindowActionKind::Activate => {
                         if let Some(seat) = wl.seat.as_ref() {
-                            wl.toplevels.activate(&act.app_id, &act.title, seat);
+                            wl.toplevels.activate(&act.app_id, &act.title, act.instance, seat);
                         }
                     }
                     WindowActionKind::Close => {
-                        wl.toplevels.close(&act.app_id, &act.title);
+                        wl.toplevels.close(&act.app_id, &act.title, act.instance);
                     }
                 }
             }
