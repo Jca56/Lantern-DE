@@ -203,12 +203,16 @@ pub struct WindowsConfig {
     /// SoloTile rung — Super+Shift+Up step from Normal.
     #[serde(default = "default_pct_large")]
     pub size_large_pct: u32,
+    /// Top rung of the resize ladder — near-fullscreen.
+    #[serde(default = "default_pct_xlarge")]
+    pub size_xlarge_pct: u32,
 }
 
 fn default_pct_default() -> u32 { 60 }
 fn default_pct_small() -> u32 { 30 }
 fn default_pct_medium() -> u32 { 60 }
-fn default_pct_large() -> u32 { 95 }
+fn default_pct_large() -> u32 { 85 }
+fn default_pct_xlarge() -> u32 { 100 }
 
 impl Default for WindowsConfig {
     fn default() -> Self {
@@ -223,6 +227,7 @@ impl Default for WindowsConfig {
             size_small_pct: default_pct_small(),
             size_medium_pct: default_pct_medium(),
             size_large_pct: default_pct_large(),
+            size_xlarge_pct: default_pct_xlarge(),
         }
     }
 }

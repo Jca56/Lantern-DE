@@ -111,8 +111,29 @@ pub(crate) fn slider_value_from_cursor(
     None
 }
 
+/// Compute a swatch diameter + gap so `n` circular swatches fit in the span
+/// from `ctrl_x` to `end_x`. Shrinks the diameter first (down to a floor),
+/// then tightens the gap if it still overflows. Keeps the 28px look at full
+/// width and only scales down in narrow (two-column) cards.
+pub(crate) fn fit_swatches(n: usize, ctrl_x: f32, end_x: f32, s: f32) -> (f32, f32) {
+    let n = n.max(1) as f32;
+    let max_d = 28.0 * s;
+    let mut gap = 8.0 * s;
+    let avail = (end_x - ctrl_x).max(1.0);
+    let mut d = max_d;
+    if n * d + (n - 1.0) * gap > avail {
+        d = ((avail - (n - 1.0) * gap) / n).max(10.0 * s);
+        if n > 1.0 && n * d + (n - 1.0) * gap > avail {
+            gap = ((avail - n * d) / (n - 1.0)).max(2.0 * s);
+        }
+    }
+    (d, gap)
+}
+
 /// Render a labeled row of color-swatch picker buttons using the shared
 /// `GLOW_COLORS` palette. Zone IDs run `zone_base + 0..GLOW_COLORS.len()`.
+/// Swatches shrink to fit the span from `ctrl_x` to `end_x` (the card's
+/// inner-right edge) so they never overflow narrow two-column cards.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_color_swatch_row(
     painter: &mut Painter,
@@ -124,6 +145,7 @@ pub(crate) fn draw_color_swatch_row(
     selected_hex: &str,
     label_x: f32,
     ctrl_x: f32,
+    end_x: f32,
     cy: &mut f32,
     row: f32,
     lsz: f32,
@@ -134,8 +156,7 @@ pub(crate) fn draw_color_swatch_row(
     let label_y = *cy + (row - lsz) / 2.0;
     text.queue(label, lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
 
-    let swatch_size = 28.0 * s;
-    let swatch_gap = 8.0 * s;
+    let (swatch_size, swatch_gap) = fit_swatches(GLOW_COLORS.len(), ctrl_x, end_x, s);
     let mut sx = ctrl_x;
     for (i, (hex, _name)) in GLOW_COLORS.iter().enumerate() {
         let color = Color::from_hex(hex).unwrap();

@@ -799,31 +799,31 @@ pub fn draw_input_panel<'a>(
             painter, text, ix, fox,
             "Body Light", ZONE_CURSOR_BODY_LIGHT_BASE,
             &config.input.cursor_body_light,
-            label_x, ctrl_x, &mut cy, row, lsz, s, sw, sh,
+            label_x, ctrl_x, card_inner_x + card_inner_w, &mut cy, row, lsz, s, sw, sh,
         );
         draw_color_swatch_row(
             painter, text, ix, fox,
             "Body Dark", ZONE_CURSOR_BODY_DARK_BASE,
             &config.input.cursor_body_dark,
-            label_x, ctrl_x, &mut cy, row, lsz, s, sw, sh,
+            label_x, ctrl_x, card_inner_x + card_inner_w, &mut cy, row, lsz, s, sw, sh,
         );
         draw_color_swatch_row(
             painter, text, ix, fox,
             "Accent Light", ZONE_CURSOR_ACCENT_LIGHT_BASE,
             &config.input.cursor_accent_light,
-            label_x, ctrl_x, &mut cy, row, lsz, s, sw, sh,
+            label_x, ctrl_x, card_inner_x + card_inner_w, &mut cy, row, lsz, s, sw, sh,
         );
         draw_color_swatch_row(
             painter, text, ix, fox,
             "Accent Dark", ZONE_CURSOR_ACCENT_DARK_BASE,
             &config.input.cursor_accent_dark,
-            label_x, ctrl_x, &mut cy, row, lsz, s, sw, sh,
+            label_x, ctrl_x, card_inner_x + card_inner_w, &mut cy, row, lsz, s, sw, sh,
         );
         draw_color_swatch_row(
             painter, text, ix, fox,
             "Outline", ZONE_CURSOR_OUTLINE_BASE,
             &config.input.cursor_outline_color,
-            label_x, ctrl_x, &mut cy, row, lsz, s, sw, sh,
+            label_x, ctrl_x, card_inner_x + card_inner_w, &mut cy, row, lsz, s, sw, sh,
         );
 
         // Live preview tile of the bundled default cursor with all current

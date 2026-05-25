@@ -1,15 +1,15 @@
 //! Proportional resize locked to the output's aspect ratio.
 //!
 //! Drives the Super+Arrow scheme. Stages come from
-//! `[windows].size_{small,medium,large}_pct` and apply to the work
-//! area of the output the focused window lives on. The window is
+//! `[windows].size_{small,medium,large,xlarge}_pct` and apply to the
+//! work area of the output the focused window lives on. The window is
 //! always sized to the output's aspect ratio — different monitors
 //! produce different ratios, no hardcoded values.
 //!
 //!   - Super+Up / Super+Right — grow to the next size stage
 //!   - Super+Down / Super+Left — shrink to the prev size stage
 //!
-//! Clamps at small/large (no wrap). Auto-unmaximizes first if the
+//! Clamps at small/xlarge (no wrap). Auto-unmaximizes first if the
 //! window was maximized. Always re-centers in the work area.
 
 use smithay::utils::{Point, Rectangle, Size};
@@ -50,6 +50,7 @@ impl Lantern {
             crate::size_small_pct(),
             crate::size_medium_pct(),
             crate::size_large_pct(),
+            crate::size_xlarge_pct(),
         ];
 
         let pending = self.window_state_anim.target_rect(&surface);
@@ -81,7 +82,7 @@ impl Lantern {
             // keep x at the edge anchor, re-center vertically.
             let cur_h_idx = nearest_stage_idx(cur_h as f32 / work_h as f32, &stages);
             let target_idx = match action {
-                ResizeAction::Grow   => (cur_h_idx + 1).min(2),
+                ResizeAction::Grow   => (cur_h_idx + 1).min(stages.len() - 1),
                 ResizeAction::Shrink => cur_h_idx.saturating_sub(1),
             };
             if target_idx == cur_h_idx {
@@ -99,7 +100,7 @@ impl Lantern {
             let cur_idx = nearest_stage_idx(cur_pct, &stages);
             let aspect = (work_w as f32) / (work_h as f32);
             let target_idx = match action {
-                ResizeAction::Grow   => (cur_idx + 1).min(2),
+                ResizeAction::Grow   => (cur_idx + 1).min(stages.len() - 1),
                 ResizeAction::Shrink => cur_idx.saturating_sub(1),
             };
             let aspect_now = cur_w as f32 / cur_h as f32;
@@ -134,7 +135,7 @@ impl Lantern {
     }
 }
 
-fn nearest_stage_idx(pct: f32, stages: &[f32; 3]) -> usize {
+fn nearest_stage_idx(pct: f32, stages: &[f32]) -> usize {
     let mut best = 0usize;
     let mut best_d = f32::INFINITY;
     for (i, &s) in stages.iter().enumerate() {

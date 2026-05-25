@@ -66,11 +66,15 @@ pub(crate) fn draw_borders_card(
         config.window_manager.corner_radius = cr;
     }
 
+    // Swatch rows use a tighter label column than the sliders so all 10
+    // chips have room in a narrow two-column card.
+    let sw_ctrl_x = label_x + 130.0 * s;
+    let end_x = card_x + card_w - CARD_INNER_PAD_H * s;
     draw_color_swatch_row(
         painter, text, ix, fox,
         "Border Color", z.border_color_base,
         &config.window_manager.border_color,
-        label_x, ctrl_x, &mut cy, row, lsz, s, sw, sh,
+        label_x, sw_ctrl_x, end_x, &mut cy, row, lsz, s, sw, sh,
     );
 }
 
@@ -100,11 +104,13 @@ pub(crate) fn draw_effects_card(
         &mut config.windows.blur_tint, z.tint,
         label_x, ctrl_x, ctrl_w, value_x, slider_h, row, lsz, vsz, &mut cy, s, sw, sh);
 
+    let sw_ctrl_x = label_x + 130.0 * s;
+    let end_x = card_x + card_w - CARD_INNER_PAD_H * s;
     draw_color_swatch_row(
         painter, text, ix, fox,
         "Tint Color", z.tint_color_base,
         &config.windows.blur_tint_color,
-        label_x, ctrl_x, &mut cy, row, lsz, s, sw, sh,
+        label_x, sw_ctrl_x, end_x, &mut cy, row, lsz, s, sw, sh,
     );
 
     pct_slider(painter, text, ix, fox, "Blur Darken",

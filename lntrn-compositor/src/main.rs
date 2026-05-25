@@ -211,7 +211,8 @@ fn window_size_pct(key: &str, default: u32) -> f32 {
 pub(crate) fn default_size_pct() -> f32 { window_size_pct("default_size_pct", 60) }
 pub(crate) fn size_small_pct()    -> f32 { window_size_pct("size_small_pct",   30) }
 pub(crate) fn size_medium_pct()   -> f32 { window_size_pct("size_medium_pct",  60) }
-pub(crate) fn size_large_pct()    -> f32 { window_size_pct("size_large_pct",   95) }
+pub(crate) fn size_large_pct()    -> f32 { window_size_pct("size_large_pct",   85) }
+pub(crate) fn size_xlarge_pct()   -> f32 { window_size_pct("size_xlarge_pct", 100) }
 
 /// Inner gap (formerly the tiling gap) — read from `[window_manager].gap`,
 /// default 8, clamped to 0..=32. Still used by snap zones, zone-move, and

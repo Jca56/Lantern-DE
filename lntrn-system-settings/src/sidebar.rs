@@ -36,9 +36,10 @@ pub(crate) struct CategoryDef {
 pub(crate) const CATEGORIES: &[CategoryDef] = &[
     CategoryDef { cat: Category::Home,          label: "Home",          icon_idx: 0, children: &[], leaf_panel: Some(Panel::Home) },
     CategoryDef { cat: Category::Appearance,    label: "Appearance",    icon_idx: 1, leaf_panel: None, children: &[
-        (Panel::Themes,     "Themes"),
-        (Panel::Wallpaper,  "Wallpaper"),
-        (Panel::Animations, "Animations"),
+        (Panel::Themes,      "Themes"),
+        (Panel::WindowSizes, "Window Sizes"),
+        (Panel::Wallpaper,   "Wallpaper"),
+        (Panel::Animations,  "Animations"),
     ]},
     CategoryDef { cat: Category::Display,       label: "Display",       icon_idx: 2, children: &[], leaf_panel: Some(Panel::Monitors) },
     CategoryDef { cat: Category::Input,         label: "Input",         icon_idx: 3, leaf_panel: None, children: &[

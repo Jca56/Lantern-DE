@@ -44,12 +44,25 @@ impl Lantern {
     /// Returns a temporary position at the output center.
     /// The window will be repositioned to true center (accounting for its size)
     /// after its first commit, via `center_pending_window`.
-    pub fn place_new_window(&mut self, _window: &Window) -> Point<i32, Logical> {
-        let pointer_pos = self.seat.get_pointer()
-            .map(|p| p.current_location())
-            .unwrap_or_default();
-        let output = self.output_at_point(pointer_pos)
-            .or_else(|| self.workspaces.outputs_iter().next().cloned());
+    pub fn place_new_window(&mut self, window: &Window) -> Point<i32, Logical> {
+        // X11 windows (Wine/Proton games, Steam launchers) ignore the
+        // pointer's current output and always start on the primary monitor.
+        // Why: the cursor often lives on whatever monitor Steam/Wine is on,
+        // but games carry a saved fullscreen-resolution preference from a
+        // previous launch on the primary. Spawning them on a smaller
+        // secondary output triggers a configure/fullscreen oscillation as
+        // the game keeps re-requesting its preferred size. Wayland-native
+        // apps don't have this saved-resolution problem, so they keep the
+        // friendlier "spawn under the cursor" behavior.
+        let output = if window.x11_surface().is_some() {
+            self.workspaces.outputs_iter().next().cloned()
+        } else {
+            let pointer_pos = self.seat.get_pointer()
+                .map(|p| p.current_location())
+                .unwrap_or_default();
+            self.output_at_point(pointer_pos)
+                .or_else(|| self.workspaces.outputs_iter().next().cloned())
+        };
         let Some(output_geo) = output
             .and_then(|o| self.workspaces.output_geometry(&o))
         else {
@@ -101,7 +114,21 @@ impl Lantern {
 
         self.pending_center.remove(surface);
 
-        let output = self.output_for_window(&window)
+        // Pick the output by the window's TOP-LEFT corner, not its center.
+        // place_new_window puts the top-left at the placement-output's center
+        // — but if the window's real geometry is huge (e.g. a Proton game
+        // restoring 2560x1440 from a previous run), the window's logical
+        // center lands on a different monitor than the one we placed it on.
+        // Using the top-left keeps us anchored to the intended output, and
+        // the centering math below + clamp will pull the window onto that
+        // output's usable area.
+        let placed_loc = self.workspaces.element_location(&window).unwrap_or_default();
+        let output = self
+            .output_at_point(Point::<f64, smithay::utils::Logical>::from((
+                placed_loc.x as f64,
+                placed_loc.y as f64,
+            )))
+            .or_else(|| self.output_for_window(&window))
             .or_else(|| self.workspaces.outputs_iter().next().cloned());
         let Some(ref out) = output else { return };
         let Some(output_geo) = self.workspaces.output_geometry(out) else { return };

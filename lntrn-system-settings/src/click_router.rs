@@ -143,6 +143,8 @@ fn route_panel_click(
                 config, panel_state, zone_id, cx, cy,
             );
         }
+        // Window Sizes sliders are dragged live during draw — nothing to route.
+        Panel::WindowSizes => {}
         Panel::LidIdle | Panel::Battery | Panel::WifiPower => {
             power_panel::handle_power_click(config, panel_state, zone_id, cx, cy);
         }

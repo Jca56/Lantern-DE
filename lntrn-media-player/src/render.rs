@@ -338,23 +338,29 @@ fn draw_title_bar(
 
 // ── Visualizer: Classic Bars (flush to bottom of canvas) ─────────────────
 
-const PASTEL_COLORS: [(u8, u8, u8); 3] = [
-    (170, 110, 250),
-    (120, 220, 190),
-    (255, 140, 200),
+// Sunset gradient across the frequency range: gold bass (most prominent) climbing
+// through warm accents into a violet sky at the highs — echoes the Lantern palette.
+const SUNSET_COLORS: [(u8, u8, u8); 5] = [
+    (250, 180, 0),   // Lantern Gold     — bass
+    (255, 130, 30),  // warm orange      — low-mid
+    (255, 90, 140),  // coral / pink     — mid
+    (200, 100, 230), // magenta / purple — high-mid
+    (130, 120, 250), // violet           — highs
 ];
 
-fn pastel_color(t: f32, boost: f32) -> Color {
-    let t = t.clamp(0.0, 1.0) * (PASTEL_COLORS.len() - 1) as f32;
-    let idx = (t as usize).min(PASTEL_COLORS.len() - 2);
+/// Color a bar by its frequency position (`t`: 0.0 = bass .. 1.0 = highs),
+/// brightening slightly with loudness so peaks pop.
+fn sunset_color(t: f32, magnitude: f32) -> Color {
+    let t = t.clamp(0.0, 1.0) * (SUNSET_COLORS.len() - 1) as f32;
+    let idx = (t as usize).min(SUNSET_COLORS.len() - 2);
     let next = idx + 1;
     let frac = t - t.floor();
-    let (r0, g0, b0) = PASTEL_COLORS[idx];
-    let (r1, g1, b1) = PASTEL_COLORS[next];
+    let (r0, g0, b0) = SUNSET_COLORS[idx];
+    let (r1, g1, b1) = SUNSET_COLORS[next];
     let r = r0 as f32 + (r1 as f32 - r0 as f32) * frac;
     let g = g0 as f32 + (g1 as f32 - g0 as f32) * frac;
     let b = b0 as f32 + (b1 as f32 - b0 as f32) * frac;
-    let bright = 1.0 + boost * 0.3;
+    let bright = 1.0 + magnitude.clamp(0.0, 1.0) * 0.25;
     Color::from_rgba8(
         (r * bright).min(255.0) as u8,
         (g * bright).min(255.0) as u8,
@@ -381,15 +387,14 @@ fn draw_classic_bars(
     let border = 3.0 * s;
 
     for i in 0..num_bars {
-        let raw = bars[i];
-        let t = i as f32 / num_bars as f32;
-        let magnitude = raw;
+        let magnitude = bars[i];
+        let t = i as f32 / (num_bars.saturating_sub(1).max(1)) as f32;
 
         let bar_h = (magnitude * max_h).max(3.0 * s);
         let x = canvas.x + side_margin + i as f32 * (bar_w + gap);
         let y = base_y - bar_h;
 
-        let color = pastel_color(t, magnitude);
+        let color = sunset_color(t, magnitude);
 
         painter.rect_filled(
             Rect::new(x - border, y - border, bar_w + border * 2.0, bar_h + border * 2.0),

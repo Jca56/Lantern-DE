@@ -46,7 +46,7 @@ pub(crate) const ZONE_SIDEBAR_BASE: u32 = 200;
 pub(crate) enum Panel {
     Home,
     // Appearance
-    Themes, Animations,
+    Themes, WindowSizes, Animations,
     // Display
     Monitors, Wallpaper,
     // Input
@@ -66,6 +66,7 @@ fn parse_panel_arg() -> Option<Panel> {
         "home"          => Some(Panel::Home),
         // Appearance subpanels (legacy "colors"/"windows"/"focus" all fold into Themes)
         "appearance" | "themes" | "colors" | "windows" | "focus" => Some(Panel::Themes),
+        "window-sizes" | "sizes" => Some(Panel::WindowSizes),
         "animations"    => Some(Panel::Animations),
         // Display
         "display" | "monitors" => Some(Panel::Monitors),
@@ -552,6 +553,13 @@ pub fn run() -> Result<()> {
                         tex_draws.push(td);
                     }
                 }
+            }
+            Panel::WindowSizes => {
+                crate::appearance_window_sizes::draw_window_sizes_page(
+                    &mut config, &mut panel_state,
+                    &mut painter, &mut text, &mut ix, &fox,
+                    content_x, panel_y, content_w, panel_h, s, sw, sh, frame_scroll,
+                );
             }
             Panel::Monitors | Panel::Wallpaper => {
                 display_panel::draw_display_panel(

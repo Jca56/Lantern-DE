@@ -176,6 +176,13 @@ pub struct PerOutputWorkspaces {
     /// existing workspaces (immediately) and any new workspace created
     /// later (at construction time).
     known_outputs: HashMap<String, (Output, Point<i32, Logical>)>,
+    /// Names of known outputs, ordered to make `outputs_iter()` deterministic.
+    /// Sorted by position in `[[monitors]]` config (config-known outputs first,
+    /// in config order; unknown outputs after, in insertion order). Callers
+    /// that pick "the primary output" via `outputs_iter().next()` get the
+    /// first monitor listed in the user's config — important for fullscreen
+    /// X11/Wine games that snap to whatever the first output reports.
+    output_order: Vec<String>,
     /// Outer gap (between a window and the screen edge). Used by snap zones,
     /// zone-move, and axis-resize. Synced from `[window_manager].gap` on
     /// config reload.
@@ -198,8 +205,26 @@ impl PerOutputWorkspaces {
         Self {
             per_output: HashMap::new(),
             known_outputs: HashMap::new(),
+            output_order: Vec::new(),
             outer_gap: crate::default_outer_gap(),
         }
+    }
+
+    /// Rebuild `output_order` so config-listed outputs come first (in config
+    /// order), with anything else trailing in current insertion order. Cheap
+    /// — called on register/unregister, not in hot paths.
+    fn resort_outputs(&mut self) {
+        let config_order: Vec<String> = crate::read_monitor_configs()
+            .into_iter()
+            .map(|m| m.name)
+            .collect();
+        let position = |name: &String| -> usize {
+            config_order
+                .iter()
+                .position(|c| c == name)
+                .unwrap_or(usize::MAX)
+        };
+        self.output_order.sort_by_key(|n| position(n));
     }
 
     pub fn ensure_output(&mut self, output_name: &str) {
@@ -216,7 +241,12 @@ impl PerOutputWorkspaces {
     /// even before any windows are mapped.
     pub fn register_output(&mut self, output: Output, loc: Point<i32, Logical>) {
         let name = output.name();
+        let is_new = !self.known_outputs.contains_key(&name);
         self.known_outputs.insert(name.clone(), (output.clone(), loc));
+        if is_new {
+            self.output_order.push(name.clone());
+            self.resort_outputs();
+        }
         // Make sure this output has a Workspace 1 right away so
         // per-workspace Space queries work before any windows exist.
         self.ensure_output(&name);
@@ -233,6 +263,7 @@ impl PerOutputWorkspaces {
     pub fn unregister_output(&mut self, output: &Output) {
         let name = output.name();
         if self.known_outputs.remove(&name).is_some() {
+            self.output_order.retain(|n| n != &name);
             for ow in self.per_output.values_mut() {
                 for ws in ow.workspaces.values_mut() {
                     ws.space.unmap_output(output);
@@ -241,14 +272,23 @@ impl PerOutputWorkspaces {
         }
     }
 
-    /// Iterate every (Output, global location) currently known.
+    /// Iterate every (Output, global location) currently known, in stable
+    /// config order (see `output_order`).
     pub fn known_outputs(&self) -> impl Iterator<Item = (&Output, Point<i32, Logical>)> {
-        self.known_outputs.values().map(|(o, l)| (o, *l))
+        self.output_order
+            .iter()
+            .filter_map(|name| self.known_outputs.get(name))
+            .map(|(o, l)| (o, *l))
     }
 
-    /// Iterate every Output currently known. Replaces `space.outputs()`.
+    /// Iterate every Output currently known, in stable config order.
+    /// Replaces `space.outputs()`. The first item is the user's "primary"
+    /// monitor (first `[[monitors]]` entry in lantern.toml).
     pub fn outputs_iter(&self) -> impl Iterator<Item = &Output> {
-        self.known_outputs.values().map(|(o, _)| o)
+        self.output_order
+            .iter()
+            .filter_map(|name| self.known_outputs.get(name))
+            .map(|(o, _)| o)
     }
 
     /// Geometry (location + size) of an output in global logical coords.
