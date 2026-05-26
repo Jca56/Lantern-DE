@@ -171,8 +171,11 @@ impl CompositorHandler for Lantern {
             }
         }
 
-        // Apply keyboard focus for layer surfaces (after borrow of layer_surfaces ends)
-        if let Some((wl_surface, kb_interactivity)) = layer_kb_action {
+        // Apply keyboard focus for layer surfaces (after borrow of layer_surfaces ends).
+        // Skip entirely while locked — the lock surface must keep keyboard focus,
+        // or a layer surface (e.g. Command Center) re-grabs it and the password
+        // field never receives keystrokes.
+        if let Some((wl_surface, kb_interactivity)) = layer_kb_action.filter(|_| !self.is_locked()) {
             use smithay::wayland::shell::wlr_layer::KeyboardInteractivity;
             if kb_interactivity == KeyboardInteractivity::Exclusive {
                 let serial = smithay::utils::SERIAL_COUNTER.next_serial();

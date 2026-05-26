@@ -383,8 +383,7 @@ impl AppState {
     pub fn tick(&mut self) -> bool {
         let now = Instant::now();
         let p = self.progress(now);
-        let chat_dirty = self.chat.poll_stream();
-        let lifecycle_dirty = match self.visibility {
+        match self.visibility {
             Visibility::Opening if p >= 1.0 => {
                 self.visibility = Visibility::Visible;
                 true
@@ -394,8 +393,7 @@ impl AppState {
                 true
             }
             _ => false,
-        };
-        chat_dirty || lifecycle_dirty
+        }
     }
 
     /// True when the panel is fully hidden — caller may stop rendering.
@@ -411,8 +409,8 @@ impl AppState {
     }
 
     /// True when something visual is still in motion: Opening / Closing
-    /// visibility, any grow / view-slide / collapse animation within
-    /// its duration, or a chat stream pumping tokens. The render loop
+    /// visibility, or any grow / view-slide / collapse animation within
+    /// its duration. The render loop
     /// uses this to pick its dispatch strategy — block on frame
     /// callbacks when animating, poll wayland + ipc with a short
     /// timeout when steady so a static panel doesn't burn CPU
@@ -421,9 +419,6 @@ impl AppState {
         use std::time::Duration;
 
         if matches!(self.visibility, Visibility::Opening | Visibility::Closing) {
-            return true;
-        }
-        if self.chat.streaming {
             return true;
         }
 

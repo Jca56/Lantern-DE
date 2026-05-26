@@ -321,6 +321,19 @@ pub fn run_power_action(action: &str) {
     if action == "nothing" || action.is_empty() {
         return;
     }
+    // "lock" launches our own lock screen directly. The binary holds a single
+    // -instance flock, so repeated triggers (idle then lid, etc.) are no-ops.
+    if action == "lock" {
+        let bin = match std::env::var_os("HOME") {
+            Some(home) => std::path::PathBuf::from(home).join(".lantern/bin/lntrn-lockscreen"),
+            None => std::path::PathBuf::from("lntrn-lockscreen"),
+        };
+        match std::process::Command::new(&bin).spawn() {
+            Ok(_) => tracing::info!("Lock screen launched"),
+            Err(e) => tracing::warn!("Failed to launch lock screen ({}): {}", bin.display(), e),
+        }
+        return;
+    }
     let Some((bin, verb)) = power_bin(action) else {
         tracing::warn!("Unknown power action '{}'", action);
         return;

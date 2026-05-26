@@ -1684,15 +1684,56 @@ pub fn render_surface(
         }
     }
 
-    // Zombies first → they end up one z-step ABOVE the topmost live window
-    // (earlier in `elements` = higher z), matching where the closing window
-    // actually was when the user clicked X.
-    elements.extend(zombie_elements);
-    elements.extend(window_elements);
-    elements.extend(bottom_layer_elements);
+    if state.session_lock.is_some() {
+        // Locked: drop ALL normal content (windows, layers, cursor, wallpaper)
+        // and show only this output's lock surface. Outputs without a lock
+        // surface yet fall through to the BG_COLOR clear — that black frame is
+        // the "cleared frame" the protocol requires before confirming the lock.
+        elements.clear();
+        let out_name = output.name();
+        if let Some(data) = state.session_lock.as_ref() {
+            if let Some(ls) = data.surfaces.get(&out_name) {
+                if ls.alive() {
+                    let lock_elems: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
+                        render_elements_from_surface_tree(
+                            renderer,
+                            ls.wl_surface(),
+                            Point::<i32, Physical>::from((0, 0)),
+                            scale,
+                            1.0,
+                            Kind::Unspecified,
+                        );
+                    elements.extend(lock_elems.into_iter().map(CustomRenderElements::Surface));
+                }
+            }
+        }
 
-    if let Some(wallpaper_elem) = state.wallpaper.render_element_for_output(renderer, &output.name(), output_pos.size, scale) {
-        elements.push(CustomRenderElements::Memory(wallpaper_elem));
+        // Confirm the lock once every output has presented a locked frame.
+        // Disjoint field borrows only (state.udev stays mutably borrowed via
+        // `renderer`), so this can't be a &mut self method.
+        let output_names: Vec<String> =
+            state.workspaces.outputs_iter().map(|o| o.name()).collect();
+        if let Some(data) = state.session_lock.as_mut() {
+            if data.pending_locker.is_some() {
+                data.presented.insert(out_name);
+                if output_names.iter().all(|n| data.presented.contains(n)) {
+                    if let Some(locker) = data.pending_locker.take() {
+                        locker.lock();
+                    }
+                }
+            }
+        }
+    } else {
+        // Zombies first → they end up one z-step ABOVE the topmost live window
+        // (earlier in `elements` = higher z), matching where the closing window
+        // actually was when the user clicked X.
+        elements.extend(zombie_elements);
+        elements.extend(window_elements);
+        elements.extend(bottom_layer_elements);
+
+        if let Some(wallpaper_elem) = state.wallpaper.render_element_for_output(renderer, &output.name(), output_pos.size, scale) {
+            elements.push(CustomRenderElements::Memory(wallpaper_elem));
+        }
     }
 
     let backend = match udev.backends.get_mut(&node) {
@@ -1774,6 +1815,22 @@ pub fn render_surface(
                 Some(frame_callback_interval(&output)),
                 |_, _| Some(output.clone()),
             );
+        }
+        // Lock surfaces need vsync pacing too, or the lock client never
+        // repaints (clock stops, password dots lag).
+        if let Some(data) = state.session_lock.as_ref() {
+            for ls in data.surfaces.values() {
+                if !ls.alive() {
+                    continue;
+                }
+                smithay::desktop::utils::send_frames_surface_tree(
+                    ls.wl_surface(),
+                    &output,
+                    state.start_time.elapsed(),
+                    Some(frame_callback_interval(&output)),
+                    |_, _| Some(output.clone()),
+                );
+            }
         }
         state.pending_client_frame_callbacks = false;
     }

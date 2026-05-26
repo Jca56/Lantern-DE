@@ -44,6 +44,21 @@ impl Lantern {
             self.power.note_input();
         }
 
+        // While locked, only keyboard (for the password), lid switch (power),
+        // and device add/remove flow through. Pointer/gesture/button/axis are
+        // dropped so nothing leaks to background clients.
+        if self.is_locked()
+            && !matches!(
+                event,
+                InputEvent::Keyboard { .. }
+                    | InputEvent::SwitchToggle { .. }
+                    | InputEvent::DeviceAdded { .. }
+                    | InputEvent::DeviceRemoved { .. }
+            )
+        {
+            return;
+        }
+
         match event {
             InputEvent::Keyboard { event, .. } => self.handle_keyboard_event::<I>(event),
             InputEvent::PointerMotion { event, .. } => self.handle_pointer_motion::<I>(event),

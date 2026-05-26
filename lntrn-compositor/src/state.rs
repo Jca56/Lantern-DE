@@ -31,6 +31,7 @@ use smithay::{
         pointer_gestures::PointerGesturesState,
         presentation::PresentationState,
         relative_pointer::RelativePointerManagerState,
+        session_lock::SessionLockManagerState,
         selection::data_device::DataDeviceState,
         selection::ext_data_control::DataControlState as ExtDataControlState,
         selection::wlr_data_control::DataControlState as WlrDataControlState,
@@ -287,6 +288,10 @@ pub struct Lantern {
     pub relative_pointer_state: RelativePointerManagerState,
     pub text_input_manager_state: TextInputManagerState,
     pub presentation_state: PresentationState,
+    pub session_lock_state: SessionLockManagerState,
+    /// Present while the session is locked (ext-session-lock-v1). `None` =
+    /// unlocked. Holds the per-output lock surfaces + the pending confirmation.
+    pub session_lock: Option<crate::handlers::session_lock::SessionLockData>,
     pub popups: PopupManager,
 
     pub seat: Seat<Self>,
@@ -459,6 +464,12 @@ impl Lantern {
         let text_input_manager_state = TextInputManagerState::new::<Self>(&dh);
         // clk_id 1 = CLOCK_MONOTONIC (libc::CLOCK_MONOTONIC)
         let presentation_state = PresentationState::new::<Self>(&dh, libc::CLOCK_MONOTONIC as u32);
+        // Only the trusted lockscreen binary (~/.lantern/bin/lntrn-lockscreen)
+        // may bind the session-lock manager — same allowlist as layer-shell.
+        let session_lock_state = SessionLockManagerState::new::<Self, _>(
+            &dh,
+            |client| crate::security::is_trusted_client(client),
+        );
         let xwayland_shell_state = smithay::wayland::xwayland_shell::XWaylandShellState::new::<Self>(&dh);
 
         let mut seat_state = SeatState::new();
@@ -506,6 +517,8 @@ impl Lantern {
             relative_pointer_state,
             text_input_manager_state,
             presentation_state,
+            session_lock_state,
+            session_lock: None,
             popups,
             seat,
             cursor: CursorState::new(&crate::input::read_input_setting("cursor_theme", "default")),
@@ -770,6 +783,12 @@ impl Lantern {
 
     pub fn take_winit_redraw_request(&self) -> bool {
         self.winit_redraw_requested.swap(false, Ordering::AcqRel)
+    }
+
+    /// Whether the session is currently locked (ext-session-lock-v1 active).
+    /// True from the moment a lock is requested until `unlock_and_destroy`.
+    pub fn is_locked(&self) -> bool {
+        self.session_lock.is_some()
     }
 
     pub fn schedule_render(&mut self) {

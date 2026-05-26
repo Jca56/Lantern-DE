@@ -81,19 +81,6 @@ pub(super) fn handle_scroll(wl: &mut WlState, app: &mut AppState) {
             &app.files, panel_rect, top_y, scale_f, app.config.text_size,
         );
         app.files.scroll = (app.files.scroll + dy * scale_f).clamp(0.0, max);
-    } else if app.panel_view == crate::app::PanelView::Chat {
-        let top_y = crate::controls::content_top_y(panel_rect, scale_f);
-        let font = app.config.text_size * scale_f;
-        let l = crate::chat::render::layout(
-            panel_rect, top_y, scale_f, app.chat.input_lines, font,
-        );
-        let phys_cx = wl.cursor_x as f32 * scale_f;
-        let phys_cy = wl.cursor_y as f32 * scale_f;
-        if l.sidebar.contains(phys_cx, phys_cy) {
-            app.chat.scroll_sidebar(dy * scale_f);
-        } else {
-            app.chat.scroll_messages(dy * scale_f);
-        }
     } else if matches!(app.mode, crate::app::PanelMode::Launcher)
         && (!app.search.input.is_empty() || app.search.all_apps_mode)
         && !app.search.results().is_empty()
@@ -424,11 +411,6 @@ pub(super) fn handle_keypress(wl: &mut WlState, app: &mut AppState) {
                 }
             }
         }
-    } else if app.panel_view == crate::app::PanelView::Chat {
-        crate::chat::input::handle_key(
-            &mut app.chat, key, wl.shift_held, wl.ctrl_held, wl.caps_lock,
-            app.clipboard_handle.as_ref(),
-        );
     } else if app.panel_view == crate::app::PanelView::Files {
         // Files view: route to the filter input when active, else
         // typing auto-activates filter mode. Ctrl+H toggles hidden

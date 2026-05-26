@@ -54,7 +54,9 @@ impl PowerAction {
 
     /// Binary + subcommand for this action.
     ///
-    /// `Lock` always uses `loginctl lock-session` (both logind impls).
+    /// `Lock` launches the Lantern lock screen directly (resolved via PATH,
+    /// since `~/.lantern/bin` is on it). `loginctl lock-session` only emits a
+    /// logind signal nothing listens for yet.
     /// The other actions split at runtime: systemd-logind ships them
     /// on `systemctl` only, elogind ships them on `loginctl` only.
     /// Detection: presence of `/run/systemd/system` (canonical
@@ -62,7 +64,7 @@ impl PowerAction {
     pub fn command(self) -> (&'static str, &'static [&'static str]) {
         let systemd = std::path::Path::new("/run/systemd/system").is_dir();
         match self {
-            PowerAction::Lock => ("loginctl", &["lock-session"]),
+            PowerAction::Lock => ("lntrn-lockscreen", &[]),
             PowerAction::Sleep => {
                 if systemd { ("systemctl", &["suspend"]) }
                 else { ("loginctl", &["suspend"]) }

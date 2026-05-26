@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
+use std::time::Duration;
 
 // ── D-Bus message types ─────────────────────────────────────────────────────
 
@@ -254,17 +255,33 @@ impl Connection {
     }
 
     /// Blocking read until a reply with the given serial arrives.
+    ///
+    /// Bounded by a read timeout so an unresponsive peer (e.g. a service
+    /// that's slow or not yet up at cold boot) can never wedge the
+    /// caller's thread forever — on timeout we surface an `Err` and the
+    /// caller is expected to drop this connection.
     pub fn read_reply(&mut self, serial: u32) -> io::Result<Message> {
         self.stream.set_nonblocking(false)?;
-        loop {
-            let msg = read_message(&mut self.stream)?;
-            if msg.reply_serial == serial
-                && (msg.msg_type == MSG_METHOD_RETURN || msg.msg_type == MSG_ERROR)
-            {
-                self.stream.set_nonblocking(true).ok();
-                return Ok(msg);
+        // SO_RCVTIMEO only applies to blocking sockets; set it after
+        // clearing non-blocking above.
+        self.stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+        let result = loop {
+            match read_message(&mut self.stream) {
+                Ok(msg)
+                    if msg.reply_serial == serial
+                        && (msg.msg_type == MSG_METHOD_RETURN
+                            || msg.msg_type == MSG_ERROR) =>
+                {
+                    break Ok(msg);
+                }
+                Ok(_) => {} // unrelated message — keep waiting
+                Err(e) => break Err(e),
             }
-        }
+        };
+        // Restore the default state regardless of outcome.
+        self.stream.set_read_timeout(None).ok();
+        self.stream.set_nonblocking(true).ok();
+        result
     }
 }
 

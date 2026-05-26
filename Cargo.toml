@@ -38,6 +38,7 @@ members = [
     "lntrn-keys",
     "lntrn-clock",
     "lntrn-rice",
+    "lntrn-lockscreen",
 ]
 
 [profile.release]

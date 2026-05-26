@@ -222,8 +222,6 @@ pub struct AppState {
     pub terminal: crate::terminal::TerminalState,
     /// Files-tab state (cwd, entries, scroll, hover).
     pub files: crate::files::FilesState,
-    /// Chat-tab state (threads, draft input, streaming flag, API key).
-    pub chat: crate::chat::ChatState,
     /// Emojis overlay state (filter, category, scroll, hover).
     pub emojis: crate::emojis::EmojisState,
     /// Long-lived Wayland clipboard handle. We share one across the
@@ -329,7 +327,6 @@ impl AppState {
             waffle_hover: false,
             terminal: crate::terminal::TerminalState::new(),
             files: crate::files::FilesState::new(),
-            chat: crate::chat::ChatState::new(),
             emojis: crate::emojis::EmojisState::default(),
             clipboard_handle: lntrn_terminal::clipboard::WaylandClipboard::new(),
             clipboard: crate::clipboard::ClipboardState::default(),
@@ -523,15 +520,13 @@ pub enum PanelView {
     Default,
     Terminal,
     Files,
-    Chat,
 }
 
 impl PanelView {
-    pub const ALL: [PanelView; 4] = [
+    pub const ALL: [PanelView; 3] = [
         PanelView::Default,
         PanelView::Terminal,
         PanelView::Files,
-        PanelView::Chat,
     ];
     pub fn next(self) -> Self {
         let idx = Self::ALL.iter().position(|v| *v == self).unwrap_or(0);
@@ -547,7 +542,6 @@ impl PanelView {
             PanelView::Default => "Command Center",
             PanelView::Terminal => "Terminal",
             PanelView::Files => "Files",
-            PanelView::Chat => "Chat",
         }
     }
 }

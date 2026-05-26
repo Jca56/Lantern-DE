@@ -206,35 +206,6 @@ pub fn draw_content(
     if sliding {
         push_panel_clip(painter, text, mono_text);
     }
-    let chat_title_owned: Option<String> = {
-        let base = state.chat.active_thread()
-            .map(|th| th.title.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "Lantern Chat".to_string());
-        let usage = state.chat.active_thread().map(|th| th.usage.clone());
-        let usage_tag = match usage {
-            Some(u) if u.total_tokens() > 0 => {
-                let tok = u.total_tokens();
-                let tok_s = if tok >= 1_000_000 {
-                    format!("{:.1}M tok", tok as f64 / 1_000_000.0)
-                } else if tok >= 1000 {
-                    format!("{:.1}K tok", tok as f64 / 1000.0)
-                } else {
-                    format!("{tok} tok")
-                };
-                let cost = u.cost_usd();
-                Some(format!("· {tok_s} · ${cost:.4}"))
-            }
-            _ => None,
-        };
-        let mut t = base;
-        if state.chat.streaming { t.push_str("  ● streaming…"); }
-        if let Some(tag) = usage_tag {
-            t.push_str("   ");
-            t.push_str(&tag);
-        }
-        Some(t)
-    };
     for (view, off_frac) in &view_pairs {
         crate::controls::draw_row(
             painter,
@@ -249,7 +220,6 @@ pub fn draw_content(
             surface_h,
             &mut icons,
             *view,
-            chat_title_owned.as_deref(),
         );
     }
     if sliding {
@@ -846,25 +816,9 @@ pub fn draw_content(
                 surface_w,
                 surface_h,
             );
-        } else if *view == crate::app::PanelView::Chat {
-            let top_y = crate::controls::content_top_y(r, panel.scale_factor);
-            crate::chat::draw(
-                painter,
-                text,
-                mono_text,
-                &mut state.chat,
-                r,
-                top_y,
-                panel.scale_factor,
-                state.config.text_size,
-                alpha,
-                surface_w,
-                surface_h,
-            );
         }
-        // Default + Terminal each have their own body renderers above.
-        // No catch-all branch remains now that Assistant + MusicPlayer
-        // are gone.
+        // Default + Terminal + Files each have their own body renderers
+        // above. No catch-all branch remains.
     }
 
     if sliding {

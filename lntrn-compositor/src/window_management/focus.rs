@@ -50,6 +50,11 @@ impl Lantern {
     }
 
     pub(crate) fn set_focus_surface(&mut self, surface: Option<WlSurface>, serial: Serial) {
+        // While the session is locked, the lock surface owns keyboard focus.
+        // Refuse every other focus change so typed passwords reach the locker.
+        if self.is_locked() {
+            return;
+        }
         tracing::info!(
             focused = surface.is_some(),
             mapped_windows = self.space.elements().count(),

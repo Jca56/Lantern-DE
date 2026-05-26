@@ -1,0 +1,5 @@
+# PAM configuration for the Lantern lock screen.
+# Authenticates the current user against the system stack. `system-auth` is
+# provided by both Arch (pambase) and Gentoo, so this works on both targets.
+auth     include  system-auth
+account  include  system-auth

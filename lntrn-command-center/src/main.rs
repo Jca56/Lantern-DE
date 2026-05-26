@@ -6,7 +6,6 @@
 
 mod app;
 mod bar_sliders;
-mod chat;
 mod clipboard;
 mod desktop_settings;
 mod controls;

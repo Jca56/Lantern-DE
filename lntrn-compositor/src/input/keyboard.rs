@@ -39,16 +39,28 @@ impl Lantern {
             serial,
             time,
             |data, _modifiers, keysym| {
+                // While locked: forward every key to the focused lock surface
+                // and run NO compositor keybinds (no CC, Alt-Tab, launchers).
+                // Exception: VT switching stays live as a TTY escape hatch.
+                if data.is_locked() {
+                    let raw = keysym.modified_sym().raw();
+                    let is_vt =
+                        (xkb::KEY_XF86Switch_VT_1..=xkb::KEY_XF86Switch_VT_12).contains(&raw);
+                    if !is_vt {
+                        return FilterResult::Forward;
+                    }
+                }
                 let was_super = data.super_pressed;
                 data.super_pressed = _modifiers.logo;
+                let sym = keysym.modified_sym().raw();
+                let is_super_key = sym == xkb::KEY_Super_L || sym == xkb::KEY_Super_R;
                 // Super just pressed — start tracking clean tap
                 if _modifiers.logo && !was_super {
                     data.super_clean_tap = true;
                 }
                 // Any key pressed while Super held → not a clean tap
                 if _modifiers.logo && event.state() == KeyState::Pressed {
-                    let sym = keysym.modified_sym().raw();
-                    if sym != xkb::KEY_Super_L && sym != xkb::KEY_Super_R {
+                    if !is_super_key {
                         data.super_clean_tap = false;
                     }
                 }

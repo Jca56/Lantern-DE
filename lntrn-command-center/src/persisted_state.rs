@@ -16,7 +16,6 @@ pub enum PanelViewKind {
     Default,
     Terminal,
     Files,
-    Chat,
 }
 
 impl From<crate::app::PanelView> for PanelViewKind {
@@ -25,7 +24,6 @@ impl From<crate::app::PanelView> for PanelViewKind {
             crate::app::PanelView::Default => Self::Default,
             crate::app::PanelView::Terminal => Self::Terminal,
             crate::app::PanelView::Files => Self::Files,
-            crate::app::PanelView::Chat => Self::Chat,
         }
     }
 }
@@ -36,7 +34,6 @@ impl From<PanelViewKind> for crate::app::PanelView {
             PanelViewKind::Default => Self::Default,
             PanelViewKind::Terminal => Self::Terminal,
             PanelViewKind::Files => Self::Files,
-            PanelViewKind::Chat => Self::Chat,
         }
     }
 }

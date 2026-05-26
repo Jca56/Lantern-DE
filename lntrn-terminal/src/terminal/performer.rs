@@ -642,9 +642,11 @@ fn do_print(s: &mut TerminalState, c: char) {
         // Reverse video with "default" attrs must not yield a transparent
         // fg/bg, or the glyph (and its highlight) becomes invisible —
         // exactly what happens when fish/zsh paint paste indicators or
-        // syntax highlights with `\x1b[7m` over an explicit fg but no bg.
-        let fg_was_default = s.attr_fg.a == 0;
-        let bg_was_default = s.attr_bg.a == 0;
+        // syntax highlights with `\x1b[7m` over an explicit fg but no bg,
+        // or when nano paints its bottom-bar shortcut keys with `\x1b[7m`
+        // over the still-default fg/bg pair.
+        let fg_was_default = s.attr_fg == s.default_fg;
+        let bg_was_default = s.attr_bg == s.default_bg;
         let (fg, bg) = if s.attr_reverse {
             (s.attr_bg, s.attr_fg)
         } else {
