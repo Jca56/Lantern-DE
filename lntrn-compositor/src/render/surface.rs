@@ -1529,45 +1529,18 @@ pub fn render_surface(
                 else { 5 };
 
             let blur_key = UdevOutputId { device_id: node, crtc };
-            if crate::blur::ensure_textures(renderer, output_phys, passes, &mut udev.blur_states, blur_key) {
-                // Blur source: wallpaper + bottom layers + every window
-                // element EXCEPT the surface contents of transparent windows.
-                // Slicing out only the topmost transparent window (the old
-                // approach) meant any other transparent window stack-up
-                // re-included it in the blur — so the moment focus moved to
-                // a frontmost transparent peer, the previously-frontmost
-                // window started seeing its own bg blurred into its
-                // backdrop, compositing darker on every paint.
-                let mut excluded_ranges: Vec<(usize, usize)> = blur_backdrops
-                    .iter()
-                    .map(|(start, end, _, _, _)| (*start, *end))
-                    .collect();
-                excluded_ranges.sort_by_key(|(s, _)| *s);
-
-                let mut included_slices: Vec<&[CustomRenderElements]> = Vec::new();
-                let mut cursor = 0usize;
-                for (start, end) in &excluded_ranges {
-                    if *start > cursor {
-                        included_slices.push(&window_elements[cursor..*start]);
-                    }
-                    cursor = (*end).max(cursor);
-                }
-                if cursor < window_elements.len() {
-                    included_slices.push(&window_elements[cursor..]);
-                }
-
+            if crate::blur::ensure_textures(renderer, output_phys, passes, blur_backdrops.len(), &mut udev.blur_states, blur_key) {
+                // Per-window blur: each transparent window blurs everything
+                // STRICTLY BEHIND it — wallpaper + bottom layers + the tail of
+                // window_elements past its own range (higher index = further
+                // back). Windows in front, and the window itself, are excluded
+                // so it never blurs its own background (or a peer above it)
+                // into its backdrop. This is why each window needs its own
+                // result texture: their blur sources differ.
                 let mut wp_elements: Vec<CustomRenderElements> = Vec::new();
                 if let Some(wp_elem) = state.wallpaper.render_element_for_output(renderer, &output.name(), output_pos.size, scale) {
                     wp_elements.push(CustomRenderElements::Memory(wp_elem));
                 }
-
-                // Back-to-front render order: wallpaper → bottom layers → windows.
-                // `included_slices` is appended in window_elements traversal
-                // order (front-to-back as the loop above builds it).
-                let mut element_groups: Vec<&[CustomRenderElements]> = Vec::with_capacity(2 + included_slices.len());
-                element_groups.push(&wp_elements);
-                element_groups.push(&bottom_layer_elements);
-                element_groups.extend(included_slices);
 
                 // Premultiplied tint for the shader. Color comes from the
                 // configured `blur_tint_color` (same palette the focus glow
@@ -1600,7 +1573,9 @@ pub fn render_surface(
                     use smithay::backend::renderer::element::Element;
                     let mut h = std::collections::hash_map::DefaultHasher::new();
                     let scale_pt: smithay::utils::Scale<f64> = (output_scale, output_scale).into();
-                    for group in &element_groups {
+                    let fp_groups: [&[CustomRenderElements]; 3] =
+                        [&wp_elements, &bottom_layer_elements, &window_elements];
+                    for group in &fp_groups {
                         for elem in group.iter() {
                             elem.id().hash(&mut h);
                             // CommitCounter doesn't impl Hash; extract usize via distance.
@@ -1624,60 +1599,71 @@ pub fn render_surface(
                 });
                 let needs_reblur = fingerprint_changed && throttle_ok;
 
-                let blur_result = if needs_reblur {
-                    let r = crate::blur::render_and_blur(
-                        renderer, blur_state, &element_groups, BG_COLOR.into(),
-                        output_phys, output_scale, down_shader, up_shader,
-                        tint_rgba, blur_darken,
-                    );
-                    if r.is_ok() {
+                let mut blur_ok = true;
+                if needs_reblur {
+                    // One blur chain per transparent window. Each samples the
+                    // tail of window_elements past its own range (= everything
+                    // behind it) plus wallpaper + bottom layers, and writes its
+                    // own result texture (index i). `scene`/`textures` scratch
+                    // is fully overwritten each call, so it's safely reused.
+                    for (i, (_start, end, _rect, _alpha, _r)) in blur_backdrops.iter().enumerate() {
+                        let behind = &window_elements[(*end).min(window_elements.len())..];
+                        let groups: [&[CustomRenderElements]; 3] =
+                            [&wp_elements, &bottom_layer_elements, behind];
+                        let r = crate::blur::render_and_blur(
+                            renderer, blur_state, &groups, BG_COLOR.into(),
+                            output_phys, output_scale, down_shader, up_shader,
+                            tint_rgba, blur_darken, i,
+                        );
+                        if let Err(e) = r {
+                            tracing::warn!("blur: render_and_blur failed: {:?}", e);
+                            blur_ok = false;
+                            break;
+                        }
+                    }
+                    if blur_ok {
                         blur_state.last_blur = Some(std::time::Instant::now());
                         blur_state.last_blur_fingerprint = Some(fingerprint);
                     }
-                    r
-                } else {
-                    Ok(())
-                };
+                }
 
-                match blur_result {
-                    Ok(()) => {
-                        let ctx_id = {
-                            use smithay::backend::renderer::Renderer as _;
-                            renderer.context_id()
-                        };
-                        let output_logical = Size::<i32, Logical>::from((
-                            output_geo.size.w, output_geo.size.h,
-                        ));
-                        let blur_tex_w = (output_phys.w / 2).max(1) as f32;
-                        let blur_tex_h = (output_phys.h / 2).max(1) as f32;
+                if blur_ok {
+                    let ctx_id = {
+                        use smithay::backend::renderer::Renderer as _;
+                        renderer.context_id()
+                    };
+                    let output_logical = Size::<i32, Logical>::from((
+                        output_geo.size.w, output_geo.size.h,
+                    ));
+                    let blur_tex_w = (output_phys.w / 2).max(1) as f32;
+                    let blur_tex_h = (output_phys.h / 2).max(1) as f32;
 
-                        for (_start, idx, log_rect, alpha, radius_logical) in blur_backdrops.iter().rev() {
-                            let corner_r = radius_logical * output_scale as f32;
-                            let backdrop = crate::blur::create_backdrop(
-                                blur_state, ctx_id.clone(), *log_rect,
-                                output_logical, output_scale, *alpha,
+                    // Insert backdrops back-to-front (rev) so each insert at
+                    // `idx` doesn't shift the lower indices still to be used.
+                    // Result index `i` matches the per-window blur above.
+                    for (i, (_start, idx, log_rect, alpha, radius_logical)) in blur_backdrops.iter().enumerate().rev() {
+                        let corner_r = radius_logical * output_scale as f32;
+                        let backdrop = crate::blur::create_backdrop(
+                            blur_state, ctx_id.clone(), *log_rect,
+                            output_logical, output_scale, *alpha, i,
+                        );
+                        // Wrap in rounded backdrop with SDF corner masking
+                        if let Some(ref shader) = udev.backdrop_shader {
+                            let phys_w = (log_rect.size.w as f64 * output_scale).round() as f32;
+                            let phys_h = (log_rect.size.h as f64 * output_scale).round() as f32;
+                            let rounded = crate::rounded_element::RoundedBackdropElement::new(
+                                backdrop, shader.clone(),
+                                [phys_w, phys_h], corner_r,
+                                [blur_tex_w, blur_tex_h],
                             );
-                            // Wrap in rounded backdrop with SDF corner masking
-                            if let Some(ref shader) = udev.backdrop_shader {
-                                let phys_w = (log_rect.size.w as f64 * output_scale).round() as f32;
-                                let phys_h = (log_rect.size.h as f64 * output_scale).round() as f32;
-                                let rounded = crate::rounded_element::RoundedBackdropElement::new(
-                                    backdrop, shader.clone(),
-                                    [phys_w, phys_h], corner_r,
-                                    [blur_tex_w, blur_tex_h],
-                                );
-                                window_elements.insert(
-                                    *idx, CustomRenderElements::RoundedBackdrop(rounded),
-                                );
-                            } else {
-                                window_elements.insert(
-                                    *idx, CustomRenderElements::Backdrop(backdrop),
-                                );
-                            }
+                            window_elements.insert(
+                                *idx, CustomRenderElements::RoundedBackdrop(rounded),
+                            );
+                        } else {
+                            window_elements.insert(
+                                *idx, CustomRenderElements::Backdrop(backdrop),
+                            );
                         }
-                    }
-                    Err(e) => {
-                        tracing::warn!("blur: render_and_blur failed: {:?}", e);
                     }
                 }
             }

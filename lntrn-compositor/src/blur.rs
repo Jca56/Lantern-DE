@@ -23,12 +23,18 @@ use crate::render::CustomRenderElements;
 
 pub struct BlurState {
     /// Full-res scene capture texture (rendered before transparent windows).
+    /// Scratch — fully overwritten on every `render_and_blur` call, so it is
+    /// safely reused across the per-window blur passes within a single frame.
     pub scene: GlesTexture,
     /// Chain of textures at decreasing resolutions for downsample.
-    /// textures[0] = half-res, textures[1] = quarter-res, etc.
+    /// textures[0] = half-res, textures[1] = quarter-res, etc. Also scratch.
     pub textures: Vec<GlesTexture>,
-    /// An extra texture at half-res for the final upsample result.
-    pub result: GlesTexture,
+    /// One half-res upsample result PER transparent window backdrop. Each
+    /// transparent window blurs a different source (everything strictly
+    /// behind it), so each needs its own preserved result texture — a single
+    /// shared result would alias to the last window's blur. Grown on demand
+    /// by `ensure_textures`; reused frame-to-frame when the blur is throttled.
+    pub results: Vec<GlesTexture>,
     pub full_size: Size<i32, Physical>,
     pub passes: usize,
     /// Time of last full blur. Used to throttle blur to ~10Hz when nothing
@@ -50,11 +56,31 @@ pub fn ensure_textures<K: std::hash::Hash + Eq + Copy>(
     renderer: &mut GlesRenderer,
     phys_size: Size<i32, Physical>,
     passes: usize,
+    result_count: usize,
     states: &mut std::collections::HashMap<K, BlurState>,
     key: K,
 ) -> bool {
-    if let Some(state) = states.get(&key) {
+    let result_w = (phys_size.w / 2).max(1);
+    let result_h = (phys_size.h / 2).max(1);
+    let alloc_result = |renderer: &mut GlesRenderer| {
+        Offscreen::<GlesTexture>::create_buffer(
+            renderer, Fourcc::Abgr8888, Size::from((result_w, result_h)),
+        )
+    };
+
+    if let Some(state) = states.get_mut(&key) {
         if state.full_size == phys_size && state.passes == passes {
+            // Same output geometry — just grow the result pool to cover the
+            // current number of stacked transparent windows.
+            while state.results.len() < result_count {
+                match alloc_result(renderer) {
+                    Ok(t) => state.results.push(t),
+                    Err(e) => {
+                        tracing::warn!("blur: result texture failed: {:?}", e);
+                        return false;
+                    }
+                }
+            }
             return true;
         }
     }
@@ -90,21 +116,21 @@ pub fn ensure_textures<K: std::hash::Hash + Eq + Copy>(
         }
     };
 
-    // Result texture at half-res (same size as textures[0])
-    let result_w = (phys_size.w / 2).max(1);
-    let result_h = (phys_size.h / 2).max(1);
-    let result = match Offscreen::<GlesTexture>::create_buffer(
-        renderer, Fourcc::Abgr8888, Size::from((result_w, result_h)),
-    ) {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::warn!("blur: result texture failed: {:?}", e);
-            return false;
+    // One half-res result texture per stacked transparent window (same size
+    // as textures[0]). Always allocate at least one.
+    let mut results = Vec::with_capacity(result_count.max(1));
+    for _ in 0..result_count.max(1) {
+        match alloc_result(renderer) {
+            Ok(t) => results.push(t),
+            Err(e) => {
+                tracing::warn!("blur: result texture failed: {:?}", e);
+                return false;
+            }
         }
-    };
+    }
 
     states.insert(key, BlurState {
-        scene, textures, result, full_size: phys_size, passes,
+        scene, textures, results, full_size: phys_size, passes,
         last_blur: None,
         last_blur_fingerprint: None,
     });
@@ -128,8 +154,9 @@ pub fn render_and_blur(
     up_shader: &GlesTexProgram,
     tint_color: [f32; 4],
     darken: f32,
+    result_idx: usize,
 ) -> Result<(), GlesError> {
-    if state.textures.is_empty() { return Ok(()); }
+    if state.textures.is_empty() || result_idx >= state.results.len() { return Ok(()); }
 
     let half_w = (output_phys.w / 2).max(1);
     let half_h = (output_phys.h / 2).max(1);
@@ -214,7 +241,7 @@ pub fn render_and_blur(
         let src_tex = if i == state.passes - 1 {
             state.textures[state.passes].clone()
         } else {
-            if i + 1 == 0 { state.result.clone() } else { state.textures[i + 1].clone() }
+            state.textures[i + 1].clone()
         };
         let src_size = tex_size(&src_tex);
 
@@ -232,7 +259,7 @@ pub fn render_and_blur(
         let pass_tint = if is_final { tint_color } else { no_tint };
         let pass_darken = if is_final { darken } else { 0.0 };
 
-        let target_tex = if is_final { &mut state.result } else { &mut state.textures[i] };
+        let target_tex = if is_final { &mut state.results[result_idx] } else { &mut state.textures[i] };
         let mut target = renderer.bind(target_tex)?;
         let mut frame = renderer.render(&mut target, dst_size, Transform::Normal)?;
         frame.clear(Color32F::from([0.0, 0.0, 0.0, 0.0]), &[dst_rect])?;
@@ -269,6 +296,7 @@ pub fn create_backdrop(
     output_logical: Size<i32, smithay::utils::Logical>,
     output_scale: f64,
     alpha: f32,
+    result_idx: usize,
 ) -> TextureRenderElement<GlesTexture> {
     let half_w = (state.full_size.w / 2).max(1) as f64;
     let half_h = (state.full_size.h / 2).max(1) as f64;
@@ -290,7 +318,7 @@ pub fn create_backdrop(
         Id::new(),
         ctx_id,
         loc,
-        state.result.clone(),
+        state.results[result_idx.min(state.results.len().saturating_sub(1))].clone(),
         1,
         Transform::Normal,
         Some(alpha.clamp(0.0, 1.0)),
