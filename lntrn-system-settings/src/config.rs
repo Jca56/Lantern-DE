@@ -29,7 +29,57 @@ pub struct LanternConfig {
     pub notifications: NotificationsConfig,
     pub animations: AnimationsConfig,
     #[serde(default)]
+    pub lockscreen: LockScreenConfig,
+    #[serde(default)]
     pub monitors: Vec<MonitorEntry>,
+}
+
+// ── Lock screen ──────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LockScreenConfig {
+    /// Absolute path to the lock screen background image. Empty = no override
+    /// (the lock screen binary falls back to its built-in default).
+    pub background: String,
+    /// Password field border color (hex). Empty = use the theme accent.
+    #[serde(default)]
+    pub border_color: String,
+    /// Password field border thickness in pixels.
+    #[serde(default = "default_lock_border_thickness")]
+    pub border_thickness: f32,
+    /// Password field fill color (hex).
+    #[serde(default = "default_lock_field_color")]
+    pub field_color: String,
+    /// Password field fill opacity (0.0–1.0).
+    #[serde(default = "default_lock_field_opacity")]
+    pub field_opacity: f32,
+    /// Password dot color (hex).
+    #[serde(default = "default_lock_dot_color")]
+    pub dot_color: String,
+    /// Scrim opacity darkening the wallpaper behind the lock UI (0.0–1.0).
+    #[serde(default = "default_lock_scrim_opacity")]
+    pub scrim_opacity: f32,
+}
+
+fn default_lock_border_thickness() -> f32 { 2.0 }
+fn default_lock_field_color() -> String { "#000000".into() }
+fn default_lock_field_opacity() -> f32 { 0.55 }
+fn default_lock_dot_color() -> String { "#F5F5F5".into() }
+fn default_lock_scrim_opacity() -> f32 { 0.38 }
+
+impl Default for LockScreenConfig {
+    fn default() -> Self {
+        Self {
+            background: String::new(),
+            border_color: String::new(),
+            border_thickness: default_lock_border_thickness(),
+            field_color: default_lock_field_color(),
+            field_opacity: default_lock_field_opacity(),
+            dot_color: default_lock_dot_color(),
+            scrim_opacity: default_lock_scrim_opacity(),
+        }
+    }
 }
 
 // ── Animations ───────────────────────────────────────────────────────────────
@@ -448,6 +498,7 @@ impl Default for LanternConfig {
             power: PowerConfig::default(),
             notifications: NotificationsConfig::default(),
             animations: AnimationsConfig::default(),
+            lockscreen: LockScreenConfig::default(),
             monitors: Vec::new(),
         }
     }

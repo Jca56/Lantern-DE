@@ -47,6 +47,8 @@ mod output_manager;
 mod icon_panel;
 mod icons;
 mod input_panel;
+mod lock_style_panel;
+mod lock_wallpaper_panel;
 mod monitor_arrange;
 mod notifications_panel;
 mod panels;

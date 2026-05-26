@@ -11,6 +11,7 @@ use crate::config::LanternConfig;
 use crate::display_panel::{self, DisplayPanelState};
 use crate::icon_panel;
 use crate::input_panel;
+use crate::lock_wallpaper_panel::{self, LockWallpaperState};
 use crate::monitor_settings::persist_monitor_settings;
 use crate::notifications_panel;
 use crate::output_manager::{apply_config, HeadChange};
@@ -29,6 +30,7 @@ pub(crate) fn route_zone_click(
     panel_state: &mut PanelState,
     themes_state: &mut ThemesPanelState,
     display_state: &mut DisplayPanelState,
+    lock_wp_state: &mut LockWallpaperState,
     icon_panel_state: &mut icon_panel::IconPanelState,
     input_state: &input_panel::InputPanelState,
     state: &State,
@@ -79,7 +81,7 @@ pub(crate) fn route_zone_click(
     // ── Per-subpanel click handlers ─────────────────────────────────────
     route_panel_click(
         *active_panel, zone_id, config, panel_state,
-        display_state, icon_panel_state, input_state, state, cx, cy,
+        display_state, lock_wp_state, icon_panel_state, input_state, state, cx, cy,
     );
 }
 
@@ -130,6 +132,7 @@ fn route_panel_click(
     config: &mut LanternConfig,
     panel_state: &mut PanelState,
     display_state: &mut DisplayPanelState,
+    lock_wp_state: &mut LockWallpaperState,
     icon_panel_state: &mut icon_panel::IconPanelState,
     input_state: &input_panel::InputPanelState,
     state: &State,
@@ -161,6 +164,12 @@ fn route_panel_click(
         }
         Panel::AppIcons => {
             icon_panel_state.on_click(zone_id);
+        }
+        Panel::LockWallpaper => {
+            lock_wallpaper_panel::handle_lock_wallpaper_click(config, lock_wp_state, zone_id);
+        }
+        Panel::LockStyle => {
+            crate::lock_style_panel::handle_lock_style_click(config, zone_id);
         }
     }
 }

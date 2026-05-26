@@ -405,6 +405,35 @@ pub fn icon_notifications() -> Vec<PathCmd> {
     ]
 }
 
+/// Lock Screen — padlock icon
+pub fn icon_lock() -> Vec<PathCmd> {
+    use PathCmd::*;
+    vec![
+        // Shackle (arc rising from the body)
+        Move(7.5, 11.0),
+        Line(7.5, 8.0),
+        Cubic(7.5, 5.5, 9.5, 3.5, 12.0, 3.5),
+        Cubic(14.5, 3.5, 16.5, 5.5, 16.5, 8.0),
+        Line(16.5, 11.0),
+        Line(14.5, 11.0),
+        Line(14.5, 8.0),
+        Cubic(14.5, 6.6, 13.4, 5.5, 12.0, 5.5),
+        Cubic(10.6, 5.5, 9.5, 6.6, 9.5, 8.0),
+        Line(9.5, 11.0),
+        Close,
+        // Body (rounded rectangle)
+        Move(6.0, 11.0),
+        Cubic(5.2, 11.0, 4.5, 11.7, 4.5, 12.5),
+        Line(4.5, 19.0),
+        Cubic(4.5, 19.8, 5.2, 20.5, 6.0, 20.5),
+        Line(18.0, 20.5),
+        Cubic(18.8, 20.5, 19.5, 19.8, 19.5, 19.0),
+        Line(19.5, 12.5),
+        Cubic(19.5, 11.7, 18.8, 11.0, 18.0, 11.0),
+        Close,
+    ]
+}
+
 /// App Icons panel icon — a grid of squares representing app icons.
 pub fn icon_app_icons() -> Vec<PathCmd> {
     use PathCmd::*;

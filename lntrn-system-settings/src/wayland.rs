@@ -57,6 +57,8 @@ pub(crate) enum Panel {
     LidIdle, Battery, WifiPower,
     // Apps
     AppIcons,
+    // Lock Screen
+    LockWallpaper, LockStyle,
 }
 
 fn parse_panel_arg() -> Option<Panel> {
@@ -83,6 +85,9 @@ fn parse_panel_arg() -> Option<Panel> {
         "wifi-power"    => Some(Panel::WifiPower),
         // Apps
         "app-icons" | "apps" => Some(Panel::AppIcons),
+        // Lock Screen
+        "lock-screen" | "lockscreen" => Some(Panel::LockWallpaper),
+        "lock-style"    => Some(Panel::LockStyle),
         _ => None,
     }
 }
@@ -200,7 +205,7 @@ pub fn run() -> Result<()> {
     // Rasterize sidebar icons into GPU textures. Indices line up with
     // `sidebar::CategoryDef::icon_idx`.
     let tex_pass = TexturePass::new(&gpu);
-    let icon_defs: [(Vec<icons::PathCmd>, Color); 7] = [
+    let icon_defs: [(Vec<icons::PathCmd>, Color); 8] = [
         (icons::icon_home(),           Color::from_rgb8(255, 200, 60)),  // gold lantern
         (icons::icon_appearance(),     Color::from_rgb8(255, 180, 120)), // warm peach
         (icons::icon_display(),        Color::from_rgb8(100, 200, 180)), // teal
@@ -208,6 +213,7 @@ pub fn run() -> Result<()> {
         (icons::icon_notifications(),  Color::from_rgb8(255, 200, 100)), // amber
         (icons::icon_power(),          Color::from_rgb8(120, 210, 120)), // green
         (icons::icon_app_icons(),      Color::from_rgb8(230, 130, 180)), // pink
+        (icons::icon_lock(),           Color::from_rgb8(150, 180, 255)), // periwinkle
     ];
     let icon_textures: Vec<GpuTexture> = icon_defs.iter().map(|(cmds, color)| {
         let rgba = icons::rasterize_path(cmds, 24.0, 24.0, ICON_SIZE, ICON_SIZE, *color);
@@ -223,6 +229,8 @@ pub fn run() -> Result<()> {
     fox = chrome::content_palette(config.appearance.window_mode());
     let mut panel_state = PanelState::new(&fox);
     let mut display_state = DisplayPanelState::new(&config);
+    let mut lock_wp_state = crate::lock_wallpaper_panel::LockWallpaperState::new();
+    let mut lock_style_state = crate::lock_style_panel::LockStyleState::new();
     let mut icon_panel_state = icon_panel::IconPanelState::new();
     let mut input_state = input_panel::InputPanelState::new();
     let mut notif_state = NotifPanelState::new();
@@ -372,6 +380,7 @@ pub fn run() -> Result<()> {
                             &mut panel_state,
                             &mut themes_state,
                             &mut display_state,
+                            &mut lock_wp_state,
                             &mut icon_panel_state,
                             &input_state,
                             &state,
@@ -603,6 +612,22 @@ pub fn run() -> Result<()> {
                     &mut painter, &mut text, &mut ix, &tex_pass, &fox, &gpu,
                     content_x, panel_y, content_w, panel_h, s, sw, sh,
                     frame_scroll, &mut tex_draws,
+                );
+            }
+            Panel::LockWallpaper => {
+                crate::lock_wallpaper_panel::draw_lock_wallpaper_panel(
+                    &mut config, &mut lock_wp_state,
+                    &mut painter, &mut text, &mut ix, &tex_pass, &fox, &gpu,
+                    content_x, panel_y, content_w, panel_h, s, sw, sh, frame_scroll,
+                );
+                let thumb_draws = crate::lock_wallpaper_panel::collect_thumb_draws(&lock_wp_state, s);
+                for td in thumb_draws { tex_draws.push(td); }
+            }
+            Panel::LockStyle => {
+                crate::lock_style_panel::draw_lock_style_panel(
+                    &mut config, &mut lock_style_state,
+                    &mut painter, &mut text, &mut ix, &fox,
+                    content_x, panel_y, content_w, panel_h, s, sw, sh, frame_scroll,
                 );
             }
         }

@@ -20,7 +20,7 @@ pub(crate) const SIDEBAR_ICON_DRAW: f32 = 32.0;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Category {
-    Home, Appearance, Display, Input, Notifications, Power, Apps,
+    Home, Appearance, Display, Input, Notifications, Power, Apps, LockScreen,
 }
 
 pub(crate) struct CategoryDef {
@@ -57,6 +57,10 @@ pub(crate) const CATEGORIES: &[CategoryDef] = &[
     ]},
     CategoryDef { cat: Category::Apps,          label: "Apps",          icon_idx: 6, leaf_panel: None, children: &[
         (Panel::AppIcons,   "Icons"),
+    ]},
+    CategoryDef { cat: Category::LockScreen,    label: "Lock Screen",   icon_idx: 7, leaf_panel: None, children: &[
+        (Panel::LockWallpaper, "Wallpaper"),
+        (Panel::LockStyle,     "Style"),
     ]},
 ];
 
