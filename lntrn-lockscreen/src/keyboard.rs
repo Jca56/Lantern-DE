@@ -15,20 +15,40 @@ impl KeyboardState {
         Self { context, keymap: None, state: None }
     }
 
-    /// Called when wl_keyboard sends a keymap event (format XkbV1).
-    pub fn update_keymap(&mut self, fd: std::os::fd::RawFd, size: u32) {
-        use std::io::Read;
-        use std::os::fd::FromRawFd;
+    /// Called when wl_keyboard sends a keymap event (format XkbV1). Takes
+    /// ownership of the fd (closed on return). Returns true if a usable keymap
+    /// was compiled.
+    ///
+    /// The fd MUST be mmap'd at offset 0, not `read()`: Wayland dup's the
+    /// keymap fd to the client, and dup'd fds share a file offset. If the
+    /// compositor left that offset at EOF after writing the keymap, a `read()`
+    /// returns zero bytes and the keymap fails to compile.
+    pub fn update_keymap(&mut self, fd: std::os::fd::OwnedFd, size: u32) -> bool {
+        use std::os::fd::AsRawFd;
+        let len = size as usize;
+        if len == 0 {
+            return false;
+        }
         let map_str = unsafe {
-            let file = std::fs::File::from_raw_fd(fd);
-            let mut buf = Vec::with_capacity(size as usize);
-            let mut reader = std::io::BufReader::new(&file);
-            let _ = reader.read_to_end(&mut buf);
-            while buf.last() == Some(&0) {
-                buf.pop();
+            let ptr = libc::mmap(
+                std::ptr::null_mut(),
+                len,
+                libc::PROT_READ,
+                libc::MAP_PRIVATE,
+                fd.as_raw_fd(),
+                0,
+            );
+            if ptr == libc::MAP_FAILED {
+                return false;
             }
-            String::from_utf8_lossy(&buf).into_owned()
+            let bytes = std::slice::from_raw_parts(ptr as *const u8, len);
+            // Keymap is NUL-terminated; cut at the first NUL.
+            let end = bytes.iter().position(|&b| b == 0).unwrap_or(len);
+            let s = String::from_utf8_lossy(&bytes[..end]).into_owned();
+            libc::munmap(ptr, len);
+            s
         };
+        // fd dropped here → closed.
 
         if let Some(keymap) = xkb::Keymap::new_from_string(
             &self.context,
@@ -39,6 +59,9 @@ impl KeyboardState {
             let state = xkb::State::new(&keymap);
             self.keymap = Some(keymap);
             self.state = Some(state);
+            true
+        } else {
+            false
         }
     }
 

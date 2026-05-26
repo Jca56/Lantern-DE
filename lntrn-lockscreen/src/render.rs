@@ -1,5 +1,6 @@
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
-use lntrn_theme::Rgba;
+
+use crate::config::Style;
 
 /// Transient UI state shared across all output surfaces.
 pub struct Ui {
@@ -17,10 +18,6 @@ impl Ui {
     pub fn new() -> Self {
         Self { pw_len: 0, error: None, checking: false, caps_lock: false }
     }
-}
-
-fn col(c: Rgba) -> Color {
-    Color::from_rgba8(c.r, c.g, c.b, c.a)
 }
 
 /// Current local time as a libc `tm` struct.
@@ -56,14 +53,14 @@ pub fn draw(
     painter: &mut Painter,
     text: &mut TextRenderer,
     ui: &Ui,
-    accent: Rgba,
+    style: &Style,
     w: f32,
     h: f32,
     sw: u32,
     sh: u32,
 ) {
     // Darkening scrim so the clock/field stay legible over any wallpaper.
-    painter.rect_filled(Rect::new(0.0, 0.0, w, h), 0.0, Color::rgba(0.0, 0.0, 0.0, 0.38));
+    painter.rect_filled(Rect::new(0.0, 0.0, w, h), 0.0, Color::rgba(0.0, 0.0, 0.0, style.scrim_opacity));
 
     let white = Color::from_rgb8(245, 245, 245);
     let dim = Color::from_rgba8(230, 230, 230, 180);
@@ -93,14 +90,19 @@ pub fn draw(
     painter.rect_filled(
         Rect::new(field_x, field_y, field_w, field_h),
         radius,
-        Color::rgba(0.0, 0.0, 0.0, 0.35),
+        style.field_color,
     );
-    painter.rect_stroke(
-        Rect::new(field_x, field_y, field_w, field_h),
-        radius,
-        2.0,
-        col(accent),
-    );
+    // CSS-style border: outer edge aligns exactly with the fill's edge and
+    // grows INWARD, so it sits flush on the pill with no gap. (rect_stroke_sdf
+    // centers the stroke on the edge and extends outward, leaving a sliver.)
+    if style.border_thickness > 0.0 {
+        painter.rect_border(
+            Rect::new(field_x, field_y, field_w, field_h),
+            radius,
+            style.border_thickness,
+            style.border_color,
+        );
+    }
 
     let cy = field_y + field_h / 2.0;
     if ui.checking {
@@ -120,7 +122,7 @@ pub fn draw(
         let total = (count as f32 - 1.0).max(0.0) * gap;
         let mut dx = center_x - total / 2.0;
         for _ in 0..count {
-            painter.circle_filled(dx, cy, dot_r, white);
+            painter.circle_filled(dx, cy, dot_r, style.dot_color);
             dx += gap;
         }
     }

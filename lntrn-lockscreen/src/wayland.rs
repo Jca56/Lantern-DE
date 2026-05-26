@@ -4,7 +4,7 @@ use std::ptr::NonNull;
 use std::sync::mpsc::{Receiver, Sender};
 
 use anyhow::{anyhow, Result};
-use lntrn_render::{Color, GpuContext, GpuTexture, Painter, TextRenderer, TexturePass, TextureDraw};
+use lntrn_render::{GpuContext, GpuTexture, Painter, TextRenderer, TexturePass, TextureDraw};
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
     RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle, WindowHandle,
@@ -133,7 +133,7 @@ impl App {
 
 // ── Entry point ──────────────────────────────────────────────────────────────
 
-pub fn run(bg: BgImage, accent: lntrn_theme::Rgba) -> Result<()> {
+pub fn run(bg: BgImage, style: crate::config::Style) -> Result<()> {
     let conn = Connection::connect_to_env()?;
     let display = conn.display();
     let mut event_queue: EventQueue<App> = conn.new_event_queue();
@@ -229,7 +229,7 @@ pub fn run(bg: BgImage, accent: lntrn_theme::Rgba) -> Result<()> {
         }
 
         // (Re)create GPU contexts and render dirty outputs.
-        render_outputs(&mut app, &qh, display_ptr, &bg, accent, &mut gpus);
+        render_outputs(&mut app, &qh, display_ptr, &bg, &style, &mut gpus);
     }
 
     Ok(())
@@ -242,7 +242,7 @@ fn render_outputs(
     qh: &QueueHandle<App>,
     display_ptr: *mut c_void,
     bg: &BgImage,
-    accent: lntrn_theme::Rgba,
+    style: &crate::config::Style,
     gpus: &mut HashMap<ObjectId, OutputGpu>,
 ) {
     for out in app.outputs.iter_mut() {
@@ -319,13 +319,15 @@ fn render_outputs(
         og.text.clear();
 
         app.ui.caps_lock = app.caps_lock;
-        render::draw(&mut og.painter, &mut og.text, &app.ui, accent, w, h, og.buf_w, og.buf_h);
+        render::draw(&mut og.painter, &mut og.text, &app.ui, style, w, h, og.buf_w, og.buf_h);
 
         // Background image is drawn first (cover-fit), then the painter/text on top.
         let cover = cover_rect(bg.w as f32, bg.h as f32, w, h);
         if let Ok(mut frame) = og.gpu.begin_frame("lockscreen") {
             let view = frame.view().clone();
-            // Clear to black, then paint the wallpaper, then the UI scrim + text.
+            // Wallpaper first (cover-fit fills every pixel), then the UI scrim +
+            // field as an OVERLAY (LoadOp::Load) so it composites on top instead
+            // of clearing the wallpaper away, then text on top of that.
             og.tex_pass.render_pass(
                 &og.gpu,
                 frame.encoder_mut(),
@@ -333,7 +335,7 @@ fn render_outputs(
                 &[TextureDraw::new(&og.bg, cover.0, cover.1, cover.2, cover.3)],
                 None,
             );
-            og.painter.render_pass(&og.gpu, frame.encoder_mut(), &view, Color::TRANSPARENT);
+            og.painter.render_pass_overlay(&og.gpu, frame.encoder_mut(), &view);
             og.text.render_queued(&og.gpu, frame.encoder_mut(), &view);
             frame.submit(&og.gpu.queue);
         }

@@ -121,8 +121,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
         match event {
             wl_keyboard::Event::Keymap { format, fd, size } => {
                 if format == WEnum::Value(wl_keyboard::KeymapFormat::XkbV1) {
-                    use std::os::fd::AsRawFd;
-                    app.keyboard.update_keymap(fd.as_raw_fd(), size);
+                    app.keyboard.update_keymap(fd, size);
                 }
             }
             wl_keyboard::Event::Key { key, state, .. } => {

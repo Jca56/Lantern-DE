@@ -20,10 +20,10 @@ fn main() {
         }
     };
 
-    let accent = config::accent();
+    let style = config::style();
     let bg = load_background();
 
-    if let Err(err) = wayland::run(bg, accent) {
+    if let Err(err) = wayland::run(bg, style) {
         eprintln!("[lntrn-lockscreen] {err}");
         std::process::exit(1);
     }
