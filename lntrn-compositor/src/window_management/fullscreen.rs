@@ -68,6 +68,7 @@ impl Lantern {
         } else {
             self.schedule_client_render();
         }
+        self.refresh_vrr();
         tracing::info!("Window entered fullscreen");
         true
     }
@@ -94,6 +95,7 @@ impl Lantern {
         } else {
             self.schedule_client_render();
         }
+        self.refresh_vrr();
         tracing::info!("Window left fullscreen");
         true
     }

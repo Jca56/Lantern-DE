@@ -214,17 +214,20 @@ impl PerOutputWorkspaces {
     /// order), with anything else trailing in current insertion order. Cheap
     /// — called on register/unregister, not in hot paths.
     fn resort_outputs(&mut self) {
-        let config_order: Vec<String> = crate::read_monitor_configs()
-            .into_iter()
-            .map(|m| m.name)
-            .collect();
-        let position = |name: &String| -> usize {
-            config_order
-                .iter()
-                .position(|c| c == name)
-                .unwrap_or(usize::MAX)
+        let configs = crate::read_monitor_configs();
+        // An explicit `primary = true` always wins over array order, so the
+        // "primary output" callers see (window placement, fallbacks) matches
+        // the user's choice no matter how the Display panel reorders the
+        // `[[monitors]]` array on save. Falls back to config order when no
+        // monitor is flagged (e.g. single-display laptop).
+        let primary = configs.iter().find(|m| m.primary).map(|m| m.name.clone());
+        let config_order: Vec<String> = configs.into_iter().map(|m| m.name).collect();
+        let sort_key = |name: &String| -> (u8, usize) {
+            let primary_rank = if primary.as_deref() == Some(name.as_str()) { 0 } else { 1 };
+            let config_pos = config_order.iter().position(|c| c == name).unwrap_or(usize::MAX);
+            (primary_rank, config_pos)
         };
-        self.output_order.sort_by_key(|n| position(n));
+        self.output_order.sort_by_key(|n| sort_key(n));
     }
 
     pub fn ensure_output(&mut self, output_name: &str) {

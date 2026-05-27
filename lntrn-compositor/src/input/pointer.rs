@@ -9,6 +9,7 @@ use smithay::{
     },
     input::pointer::{AxisFrame, ButtonEvent, MotionEvent, RelativeMotionEvent},
     utils::SERIAL_COUNTER,
+    wayland::pointer_constraints::{with_pointer_constraint, PointerConstraint},
 };
 
 use crate::state::Lantern;
@@ -18,7 +19,8 @@ impl Lantern {
     pub(super) fn handle_pointer_motion<I: InputBackend>(&mut self, event: I::PointerMotionEvent) {
         let serial = SERIAL_COUNTER.next_serial();
         let pointer = self.seat.get_pointer().unwrap();
-        let mut pos = pointer.current_location();
+        let prev_loc = pointer.current_location();
+        let mut pos = prev_loc;
 
         // Apply mouse sensitivity: map -1..1 to 0.25x..4x (exponential)
         let sensitivity = (2.0_f64).powf(self.mouse_speed * 2.0);
@@ -31,6 +33,70 @@ impl Lantern {
         if bounds.size.w > 0 {
             pos.x = pos.x.clamp(bounds.loc.x as f64, (bounds.loc.x + bounds.size.w) as f64 - 1.0);
             pos.y = pos.y.clamp(bounds.loc.y as f64, (bounds.loc.y + bounds.size.h) as f64 - 1.0);
+        }
+
+        // Pointer constraints (FPS/TPS mouse-look). A game that grabs the
+        // pointer via pointer-constraints-v1 expects the cursor to STAY put
+        // (locked) or stay within a region (confined) while it consumes raw
+        // relative deltas. Without enforcing this the cursor wanders off the
+        // window — and on a multi-monitor desktop it crosses onto the next
+        // output, the game loses pointer focus, and mouse-look breaks. The
+        // constraint lives on the surface the pointer currently sits on.
+        let mut pointer_locked = false;
+        let mut pointer_confined = false;
+        let mut confine_region = None;
+        let under_now = self.surface_under(prev_loc);
+        if let Some((ref surface, surface_loc)) = under_now {
+            with_pointer_constraint(surface, &pointer, |constraint| {
+                if let Some(constraint) = constraint {
+                    if !constraint.is_active() {
+                        return;
+                    }
+                    // Region is surface-local; only honor the constraint while
+                    // the pointer is actually inside it.
+                    let point = (prev_loc - surface_loc).to_i32_round();
+                    if !constraint.region().map_or(true, |r| r.contains(point)) {
+                        return;
+                    }
+                    match &*constraint {
+                        PointerConstraint::Locked(_) => pointer_locked = true,
+                        PointerConstraint::Confined(c) => {
+                            pointer_confined = true;
+                            confine_region = c.region().cloned();
+                        }
+                    }
+                }
+            });
+        }
+
+        // Locked: never move the pointer — only forward raw relative motion.
+        if pointer_locked {
+            pointer.relative_motion(
+                self,
+                under_now,
+                &RelativeMotionEvent {
+                    delta: event.delta(),
+                    delta_unaccel: event.delta_unaccel(),
+                    utime: event.time(),
+                },
+            );
+            pointer.frame(self);
+            return;
+        }
+
+        // Confined: reject any move that would leave the confine region (or,
+        // if the client gave no region, the constrained surface itself).
+        if pointer_confined {
+            if let Some((_, surface_loc)) = under_now {
+                let point = (pos - surface_loc).to_i32_round();
+                let inside = match confine_region.as_ref() {
+                    Some(r) => r.contains(point),
+                    None => self.surface_under(pos).is_some(),
+                };
+                if !inside {
+                    pos = prev_loc;
+                }
+            }
         }
 
         // When switcher overlay is visible, hover to highlight thumbnails

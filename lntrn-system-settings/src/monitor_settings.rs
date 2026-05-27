@@ -422,6 +422,8 @@ pub fn persist_monitor_settings(
                 refresh_rate: String::new(),
                 scale: 1.0,
                 wallpaper: String::new(),
+                primary: false,
+                vrr: false,
             });
             config.monitors.last_mut().unwrap()
         }

@@ -171,6 +171,8 @@ impl MonitorArrangeState {
                     refresh_rate: prev.refresh_rate.clone(),
                     scale: prev.scale,
                     wallpaper: prev.wallpaper.clone(),
+                    primary: prev.primary,
+                    vrr: prev.vrr,
                 }
             } else {
                 MonitorEntry {
@@ -181,6 +183,8 @@ impl MonitorArrangeState {
                     refresh_rate: String::new(),
                     scale: 1.0,
                     wallpaper: String::new(),
+                    primary: false,
+                    vrr: false,
                 }
             }
         }).collect()

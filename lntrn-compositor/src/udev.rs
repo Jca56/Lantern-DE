@@ -83,6 +83,9 @@ pub(crate) struct OutputSurface {
     /// not held during early startup) and force a recovery render.
     pub frame_pending_since: Option<Instant>,
     pub pending_render: bool,
+    /// Whether direct scanout was allowed on the previous frame. Used purely to
+    /// log engage/disengage transitions (not every frame).
+    pub scanout_active: bool,
 }
 
 /// Floor for the vblank watchdog timeout. The watchdog scales with the

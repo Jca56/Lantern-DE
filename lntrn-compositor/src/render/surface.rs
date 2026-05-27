@@ -96,6 +96,41 @@ pub fn render_surface(
         None => return,
     };
 
+    // Direct scanout gate (computed before any udev borrow; it's a Copy bool
+    // used much later at the render_frame call). Only bypass compositing when a
+    // fullscreen app owns this output AND the cursor is hidden — i.e. a
+    // pointer-locked FPS. In that case there's a single opaque fullscreen
+    // element with nothing to draw on top, so flipping the game's buffer
+    // straight to the primary plane is safe and skips a whole composite pass
+    // (lower latency, less jitter). Every other case — visible cursor, SSD,
+    // overlays, or ordinary CSD windows like Firefox — keeps full compositing
+    // so the software cursor and chrome never get dropped.
+    // A fullscreen window covering this output occludes everything behind it,
+    // so any blur backdrops (panels, other windows) are invisible — computing
+    // them is pure wasted GPU/CPU. During gameplay that ~2-4ms dual-kawase
+    // pass was overrunning the 144Hz vblank deadline and causing periodic
+    // frame drops. Used below to skip blur, and as the basis for scanout.
+    let fullscreen_here = state.output_has_fullscreen(&output);
+    let allow_scanout = fullscreen_here
+        && matches!(
+            state.cursor.status,
+            smithay::input::pointer::CursorImageStatus::Hidden
+        );
+
+    // Per-output frame-callback pacing (computed before the udev borrow). A
+    // window should be paced by the vblank of the monitor it actually lives
+    // on — NOT every monitor that happens to render this pass. Driving a
+    // fullscreen game on DP-1 from a second monitor's refresh too gives it two
+    // conflicting "draw now" heartbeats at different rates → stutter. We only
+    // scope toplevel windows here; layer surfaces keep their send-from-all
+    // behavior (panels/animations rely on it).
+    let surfaces_on_output: std::collections::HashSet<WlSurface> = state
+        .space
+        .elements()
+        .filter(|w| state.output_for_window(w).as_ref() == Some(&output))
+        .filter_map(crate::window_ext::WindowExt::get_wl_surface)
+        .collect();
+
     // Tick animations and handle finished close animations (before borrowing udev)
     let finished_closes = state.animations.tick();
     for surface in &finished_closes {
@@ -1517,7 +1552,10 @@ pub fn render_surface(
     ));
     let blur_intensity = crate::read_config_f32("blur_intensity", 0.8);
     let blur_enabled = blur_intensity >= 0.05;
-    if !blur_backdrops.is_empty() && blur_enabled {
+    // Skip the (expensive) blur pass when a fullscreen window covers this
+    // output — its backdrops are fully occluded, and the pass was overrunning
+    // the vblank deadline and dropping frames during fullscreen gameplay.
+    if !blur_backdrops.is_empty() && blur_enabled && !fullscreen_here {
         if let (Some(ref down_shader), Some(ref up_shader)) =
             (&udev.blur_down_shader, &udev.blur_up_shader)
         {
@@ -1732,11 +1770,26 @@ pub fn render_surface(
         None => return,
     };
 
-    // Always composite — never allow DRM primary plane scanout.
-    // Scanout bypasses our compositor, which means software-rendered cursor
-    // and overlays (SSD, hotcorner glow, etc.) won't be drawn.
-    // CSD-only windows like Firefox would get scanned out and freeze the cursor.
-    let frame_flags = FrameFlags::empty();
+    // Allow primary-plane scanout ONLY for a pointer-locked fullscreen game
+    // (see `allow_scanout` above). Scanout bypasses compositing, so the
+    // software cursor and overlays (SSD, hotcorner glow, etc.) wouldn't be
+    // drawn — which is exactly why it's gated on a hidden cursor + fullscreen
+    // surface, where there's nothing to draw on top. All other frames
+    // composite normally so nothing is dropped (the old Firefox cursor-freeze).
+    let frame_flags = if allow_scanout {
+        FrameFlags::ALLOW_PRIMARY_PLANE_SCANOUT
+    } else {
+        FrameFlags::empty()
+    };
+    if surface.scanout_active != allow_scanout {
+        surface.scanout_active = allow_scanout;
+        tracing::info!(
+            output = %output.name(),
+            scanout = allow_scanout,
+            "direct scanout {}",
+            if allow_scanout { "engaged" } else { "disengaged" }
+        );
+    }
 
     let t_render = Instant::now();
     let result = surface.drm_output.render_frame(
@@ -1776,8 +1829,15 @@ pub fn render_surface(
     // know when to submit new content).
     let mut frame_callback_count = 0;
     if state.pending_client_frame_callbacks {
-        frame_callback_count = state.space.elements().count();
         state.space.elements().for_each(|window| {
+            // Pace only windows that live on THIS output, so a window is driven
+            // by a single monitor's vblank instead of every monitor's.
+            let on_this_output = crate::window_ext::WindowExt::get_wl_surface(window)
+                .map_or(false, |s| surfaces_on_output.contains(&s));
+            if !on_this_output {
+                return;
+            }
+            frame_callback_count += 1;
             window.send_frame(
                 &output,
                 state.start_time.elapsed(),

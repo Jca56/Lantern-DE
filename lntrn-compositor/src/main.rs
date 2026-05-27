@@ -33,6 +33,7 @@ mod switcher;
 mod workspace_anim;
 mod workspace_ipc;
 mod workspaces;
+mod vrr;
 pub mod udev;
 mod udev_device;
 mod power;
@@ -179,6 +180,9 @@ pub(crate) struct MonitorConfig {
     /// User-designated "main" monitor — UI surfaces that should always
     /// land on one specific output (e.g. command-center) anchor here.
     pub primary: bool,
+    /// Allow Variable Refresh Rate (adaptive sync) on this output. Honored
+    /// on demand — only while a fullscreen app owns the output. See `vrr.rs`.
+    pub vrr: bool,
 }
 
 /// A per-app window sizing rule from `[[window_rules]]` in lantern.toml.
@@ -307,11 +311,12 @@ pub(crate) fn read_monitor_configs() -> Vec<MonitorConfig> {
     let mut scale: Option<f64> = None;
     let mut wallpaper: Option<String> = None;
     let mut primary = false;
+    let mut vrr = false;
 
     let mut flush = |name: &mut String, x: &mut Option<i32>, y: &mut Option<i32>,
                      resolution: &mut Option<String>, refresh_rate: &mut Option<u32>,
                      scale: &mut Option<f64>, wallpaper: &mut Option<String>,
-                     primary: &mut bool,
+                     primary: &mut bool, vrr: &mut bool,
                      monitors: &mut Vec<MonitorConfig>| {
         if !name.is_empty() {
             monitors.push(MonitorConfig {
@@ -323,6 +328,7 @@ pub(crate) fn read_monitor_configs() -> Vec<MonitorConfig> {
                 scale: scale.take(),
                 wallpaper: wallpaper.take(),
                 primary: std::mem::take(primary),
+                vrr: std::mem::take(vrr),
             });
         }
     };
@@ -330,13 +336,13 @@ pub(crate) fn read_monitor_configs() -> Vec<MonitorConfig> {
     for line in contents.lines() {
         let trimmed = line.trim();
         if trimmed == "[[monitors]]" {
-            flush(&mut name, &mut x, &mut y, &mut resolution, &mut refresh_rate, &mut scale, &mut wallpaper, &mut primary, &mut monitors);
+            flush(&mut name, &mut x, &mut y, &mut resolution, &mut refresh_rate, &mut scale, &mut wallpaper, &mut primary, &mut vrr, &mut monitors);
             in_monitors = true;
             continue;
         }
         if trimmed.starts_with('[') {
             if in_monitors {
-                flush(&mut name, &mut x, &mut y, &mut resolution, &mut refresh_rate, &mut scale, &mut wallpaper, &mut primary, &mut monitors);
+                flush(&mut name, &mut x, &mut y, &mut resolution, &mut refresh_rate, &mut scale, &mut wallpaper, &mut primary, &mut vrr, &mut monitors);
             }
             in_monitors = false;
             continue;
@@ -354,6 +360,7 @@ pub(crate) fn read_monitor_configs() -> Vec<MonitorConfig> {
                     "scale" => scale = v.parse().ok(),
                     "wallpaper" => wallpaper = Some(v.to_string()),
                     "primary" => primary = v == "true",
+                    "vrr" => vrr = v == "true",
                     _ => {}
                 }
             }
@@ -361,7 +368,7 @@ pub(crate) fn read_monitor_configs() -> Vec<MonitorConfig> {
     }
     // Flush last entry
     if in_monitors {
-        flush(&mut name, &mut x, &mut y, &mut resolution, &mut refresh_rate, &mut scale, &mut wallpaper, &mut primary, &mut monitors);
+        flush(&mut name, &mut x, &mut y, &mut resolution, &mut refresh_rate, &mut scale, &mut wallpaper, &mut primary, &mut vrr, &mut monitors);
     }
 
     monitors
@@ -375,6 +382,16 @@ pub(crate) fn primary_output_name() -> Option<String> {
         .into_iter()
         .find(|m| m.primary)
         .map(|m| m.name)
+}
+
+/// Whether the named output is allowed to use Variable Refresh Rate
+/// (`vrr = true` in its `[[monitors]]` block). Default false.
+pub(crate) fn output_vrr_enabled(name: &str) -> bool {
+    read_monitor_configs()
+        .iter()
+        .find(|m| m.name == name)
+        .map(|m| m.vrr)
+        .unwrap_or(false)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

@@ -132,11 +132,13 @@ fn handle_xwayland_ready(
     std::env::set_var("DISPLAY", &display_str);
     tracing::info!("XWayland ready on {}", display_str);
 
-    // (Previously set XRandR primary here; reverted — Steam's webhelper
-    // (CEF) hits a NOTREACHED assertion shortly after XWayland reports a
-    // primary output, and the Steam UI never appears. Until we figure out
-    // why, leave the primary unset and rely on the monitor order in
-    // lantern.toml so the top-left monitor is naturally chosen.)
+    // (Do NOT set XRandR primary here — Steam's webhelper (CEF) hits a
+    // NOTREACHED assertion shortly after XWayland reports a primary output
+    // and the Steam UI never appears. `set_randr_primary` is kept for
+    // reference but stays unused. Instead, primary-output placement is
+    // handled compositor-side: `resort_outputs` orders the flagged
+    // `primary = true` monitor first, so X11 games spawn on it via
+    // `place_new_window` without XWayland ever announcing a RANDR primary.)
 
     // Push DISPLAY (and friends) into the dbus + systemd --user activation
     // environment so Flatpak / dbus-activated apps see it. Without this,

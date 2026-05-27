@@ -412,6 +412,15 @@ pub struct MonitorEntry {
     pub scale: f32,
     #[serde(default)]
     pub wallpaper: String,
+    /// When true, this is the "primary" output: new windows (and X11/Wine
+    /// games in particular) spawn here regardless of `[[monitors]]` order.
+    /// Preserved across saves; the compositor reads it to order outputs.
+    #[serde(default)]
+    pub primary: bool,
+    /// Allow Variable Refresh Rate (adaptive sync) on this output. The
+    /// compositor enables it on demand while a fullscreen app owns the output.
+    #[serde(default)]
+    pub vrr: bool,
 }
 
 fn default_monitor_scale() -> f32 { 1.0 }

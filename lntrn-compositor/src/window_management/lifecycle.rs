@@ -303,7 +303,12 @@ impl Lantern {
         self.minimized_windows.retain(|entry| entry.surface != *surface);
         self.solo_tiled_windows.retain(|entry| entry.surface != *surface);
         self.maximized_windows.retain(|entry| entry.surface != *surface);
+        let was_fullscreen = self.fullscreen_windows.iter().any(|e| e.surface == *surface);
         self.fullscreen_windows.retain(|entry| entry.surface != *surface);
+        if was_fullscreen {
+            // A fullscreen game closing should drop VRR back off this output.
+            self.refresh_vrr();
+        }
         self.snapped_windows.retain(|entry| entry.surface != *surface);
         self.posed_windows.remove(surface);
         self.pending_workspace_moves.retain(|m| m.surface != *surface);
