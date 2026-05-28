@@ -884,15 +884,15 @@ impl Lantern {
             .map(|(o, _)| o.clone())
     }
 
-    /// Find the output a window lives on by checking which output contains its center.
+    /// Find the output a window lives on by checking which output contains its
+    /// top-left. Center-based detection misclassifies oversized windows whose
+    /// centers land on the wrong monitor — when this misclassifies, render-path
+    /// consumers like per-output frame-callback pacing drop the window from the
+    /// rendering output's surface set and the client stops getting frame
+    /// callbacks (stutter).
     pub fn output_for_window(&self, window: &Window) -> Option<Output> {
         let loc = self.workspaces.element_location(window)?;
-        let size = window.geometry().size;
-        let center = Point::from((
-            loc.x as f64 + size.w as f64 / 2.0,
-            loc.y as f64 + size.h as f64 / 2.0,
-        ));
-        self.output_at_point(center)
+        self.output_at_point(Point::from((loc.x as f64, loc.y as f64)))
     }
 
     /// Combined bounding box of all outputs.

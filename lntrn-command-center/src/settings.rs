@@ -70,10 +70,15 @@ pub struct Config {
     pub bar_grow_w: f32,
 }
 
-/// Max bonus width (logical px) the resize sliders allow. Matches the
-/// upper end of the old 3-step grow cycle so existing comfortable
-/// sizes are still reachable.
+/// Max bonus width (logical px) the expanded-panel resize slider allows.
+/// Matches the upper end of the old 3-step grow cycle so existing
+/// comfortable sizes are still reachable.
 pub const GROW_W_MAX: f32 = 400.0;
+
+/// Max bonus width (logical px) the collapsed-bar slider allows.
+/// Larger than the panel cap so the bar can stretch nearly edge-to-edge
+/// on wide monitors (1000 base + 1400 = 2400 logical px).
+pub const BAR_GROW_W_MAX: f32 = 1400.0;
 
 impl Default for Config {
     fn default() -> Self {
@@ -177,7 +182,7 @@ fn parse(text: &str) -> Config {
             }
             "bar_grow_w" => {
                 if let Ok(v) = value.parse::<f32>() {
-                    cfg.bar_grow_w = v.clamp(0.0, GROW_W_MAX);
+                    cfg.bar_grow_w = v.clamp(0.0, BAR_GROW_W_MAX);
                 }
             }
             _ => {}
@@ -314,7 +319,7 @@ const SECTIONS: &[SectionDef] = &[
             RowDef {
                 key: SettingKey::BarGrowW,
                 label: "Collapsed width",
-                kind: RowKind::Slider(0.0, GROW_W_MAX, "px"),
+                kind: RowKind::Slider(0.0, BAR_GROW_W_MAX, "px"),
             },
         ],
     },
@@ -449,7 +454,7 @@ pub fn apply_value(cfg: &mut Config, key: SettingKey, value: SettingValue) {
         (SettingKey::TextSize, SettingValue::F(v)) => cfg.text_size = v.clamp(12.0, 32.0),
         (SettingKey::ViewAnimDuration, SettingValue::F(v)) => cfg.view_anim_duration = v.clamp(0.10, 3.0),
         (SettingKey::PanelGrowW, SettingValue::F(v)) => cfg.panel_grow_w = v.clamp(0.0, GROW_W_MAX),
-        (SettingKey::BarGrowW, SettingValue::F(v)) => cfg.bar_grow_w = v.clamp(0.0, GROW_W_MAX),
+        (SettingKey::BarGrowW, SettingValue::F(v)) => cfg.bar_grow_w = v.clamp(0.0, BAR_GROW_W_MAX),
         _ => {}
     }
 }

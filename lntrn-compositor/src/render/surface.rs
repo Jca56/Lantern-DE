@@ -117,20 +117,6 @@ pub fn render_surface(
             smithay::input::pointer::CursorImageStatus::Hidden
         );
 
-    // Per-output frame-callback pacing (computed before the udev borrow). A
-    // window should be paced by the vblank of the monitor it actually lives
-    // on — NOT every monitor that happens to render this pass. Driving a
-    // fullscreen game on DP-1 from a second monitor's refresh too gives it two
-    // conflicting "draw now" heartbeats at different rates → stutter. We only
-    // scope toplevel windows here; layer surfaces keep their send-from-all
-    // behavior (panels/animations rely on it).
-    let surfaces_on_output: std::collections::HashSet<WlSurface> = state
-        .space
-        .elements()
-        .filter(|w| state.output_for_window(w).as_ref() == Some(&output))
-        .filter_map(crate::window_ext::WindowExt::get_wl_surface)
-        .collect();
-
     // Tick animations and handle finished close animations (before borrowing udev)
     let finished_closes = state.animations.tick();
     for surface in &finished_closes {
@@ -1829,15 +1815,8 @@ pub fn render_surface(
     // know when to submit new content).
     let mut frame_callback_count = 0;
     if state.pending_client_frame_callbacks {
+        frame_callback_count = state.space.elements().count();
         state.space.elements().for_each(|window| {
-            // Pace only windows that live on THIS output, so a window is driven
-            // by a single monitor's vblank instead of every monitor's.
-            let on_this_output = crate::window_ext::WindowExt::get_wl_surface(window)
-                .map_or(false, |s| surfaces_on_output.contains(&s));
-            if !on_this_output {
-                return;
-            }
-            frame_callback_count += 1;
             window.send_frame(
                 &output,
                 state.start_time.elapsed(),

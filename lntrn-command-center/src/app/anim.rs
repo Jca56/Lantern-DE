@@ -167,7 +167,7 @@ impl AppState {
 
     /// Widen the *collapsed bar* by one keyboard step.
     pub fn inc_bar_size(&mut self) {
-        let next = (self.config.bar_grow_w + Self::SIZE_BUMP).min(crate::settings::GROW_W_MAX);
+        let next = (self.config.bar_grow_w + Self::SIZE_BUMP).min(crate::settings::BAR_GROW_W_MAX);
         if (next - self.config.bar_grow_w).abs() < 0.01 {
             return;
         }
