@@ -284,21 +284,46 @@ impl Lantern {
                     }
                 }
 
-                // Audio media keys (laptop Fn+F1/F2/F3).
-                // `cmd` is an opaque action tag — fire_audio_osd builds the
-                // actual shell script so up/down can snap to 5% boundaries.
+                // Volume key-repeat is tracked by key_code and ticked
+                // independently of held modifiers, so clear it the moment
+                // the tracked key is released — no matter what. Otherwise
+                // releasing Super before `=`/`-` would strand the repeat
+                // and ramp the volume forever. Runs before the match below
+                // so it also covers the Super-released-first ordering; it
+                // doesn't intercept, so ordinary key releases pass through.
+                if event.state() == KeyState::Released
+                    && data
+                        .audio_repeat
+                        .as_ref()
+                        .map_or(false, |r| r.key_code == event.key_code())
+                {
+                    data.audio_repeat = None;
+                }
+
+                // Audio media keys (laptop Fn+F1/F2/F3) plus Super+= and
+                // Super+- as a desktop-keyboard equivalent for boards with
+                // no dedicated media keys. `cmd` is an opaque action tag —
+                // fire_audio_osd builds the actual shell script so up/down
+                // snap to 5% boundaries.
                 {
                     let audio_cmd = match keysym.modified_sym().raw() {
                         xkb::KEY_XF86AudioRaiseVolume => Some("VOL_UP"),
                         xkb::KEY_XF86AudioLowerVolume => Some("VOL_DOWN"),
                         xkb::KEY_XF86AudioMute => Some("MUTE"),
+                        // Gate `=`/`-` on Super so they still type normally.
+                        // Include the shifted syms (`+`/`_`) so the same
+                        // physical keys work whether or not Shift is held.
+                        xkb::KEY_equal | xkb::KEY_plus if _modifiers.logo => Some("VOL_UP"),
+                        xkb::KEY_minus | xkb::KEY_underscore if _modifiers.logo => Some("VOL_DOWN"),
+                        // Super+0: mute toggle (no repeat — handled below).
+                        xkb::KEY_0 if _modifiers.logo => Some("MUTE"),
                         _ => None,
                     };
                     if let Some(cmd) = audio_cmd {
                         if event.state() == KeyState::Pressed {
                             fire_audio_osd(cmd, &data.socket_name);
                             // Start repeat tracking (not for mute toggle)
-                            if keysym.modified_sym().raw() != xkb::KEY_XF86AudioMute {
+                            if cmd != "MUTE" {
                                 data.audio_repeat = Some(AudioRepeat {
                                     cmd,
                                     key_code: event.key_code(),
