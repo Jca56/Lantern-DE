@@ -798,6 +798,38 @@ impl Lantern {
         self.switch_to_workspace(target);
     }
 
+    /// Move the focused window to the previous/next existing workspace
+    /// (no wrap, no create). No-op at the edges. Mirrors
+    /// [`switch_workspace_neighbor_no_wrap`] but moves the window instead
+    /// of just following the view. Driven by the mouse wheel-tilt binds
+    /// (Lantern Hub, Phase 1).
+    pub fn move_focused_to_workspace_neighbor(&mut self, direction: i32) {
+        let Some(output_name) = self.focused_output_name() else { return };
+        let Some(target) = self.workspaces.neighbor_id_no_wrap(&output_name, direction)
+            else { return };
+        self.move_focused_to_workspace(target);
+    }
+
+    /// Move the focused window to the next workspace, creating a fresh one
+    /// at the right edge (cap 9) if there isn't one — the move-the-window
+    /// counterpart to [`switch_workspace_right_or_create`]. Lets the
+    /// wheel-tilt-right bind fling a window into brand-new space instead of
+    /// no-op'ing at the edge (Lantern Hub, Phase 1).
+    pub fn move_focused_to_workspace_right_or_create(&mut self) {
+        let Some(output_name) = self.focused_output_name() else { return };
+        if let Some(target) = self.workspaces.neighbor_id_no_wrap(&output_name, 1) {
+            self.move_focused_to_workspace(target);
+            return;
+        }
+        let max_id = self
+            .workspaces
+            .output_workspaces(&output_name)
+            .map(|ow| ow.populated_ids().into_iter().max().unwrap_or(1))
+            .unwrap_or(1);
+        if max_id >= 9 { return; }
+        self.move_focused_to_workspace(max_id + 1);
+    }
+
     /// Super+Right: go to the next existing workspace, or create a new one
     /// at `max_existing_id + 1` if we're already at the rightmost edge.
     /// Capped at 9 so it stays consistent with the Super+1..9 number binds.
