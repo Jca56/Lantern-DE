@@ -11,7 +11,7 @@ use crate::app::{
 };
 use crate::launcher::context_menu::{ContextMenu, MenuItem};
 
-use super::{reap, spawn_detached};
+use super::{open_path_detached, reap, spawn_detached};
 
 impl AppState {
     pub fn hit_test_launcher(
@@ -233,34 +233,48 @@ impl AppState {
     /// for the entry at `target`. No-op if the target doesn't resolve
     /// to an app_id.
     pub fn open_context_menu_at(&mut self, target: HitTarget, phys_x: f32, phys_y: f32) {
-        let (app_id, is_path) = match target {
-            HitTarget::Pin(i) => {
-                match self.launcher.pinned_items(&self.apps).into_iter().nth(i) {
-                    Some(crate::launcher::PinnedItem::App(e)) => (Some(e.app_id.clone()), false),
-                    Some(crate::launcher::PinnedItem::Path { path, .. }) => {
-                        (Some(path.to_string_lossy().into_owned()), true)
-                    }
-                    None => (None, false),
+        // Resolve the target into a stored id (app_id or path string) and
+        // a menu flavor, dropping any borrow on `self` before we build the
+        // item list (some flavors call `self.menu_items_for`).
+        enum Flavor {
+            App,
+            /// A path pinned to the main page — offers "Unpin".
+            PinnedPath,
+            /// A path surfaced by file search — offers "Pin".
+            ResultFile,
+        }
+        let resolved: Option<(String, Flavor)> = match target {
+            HitTarget::Pin(i) => match self.launcher.pinned_items(&self.apps).into_iter().nth(i) {
+                Some(crate::launcher::PinnedItem::App(e)) => Some((e.app_id.clone(), Flavor::App)),
+                Some(crate::launcher::PinnedItem::Path { path, .. }) => {
+                    Some((path.to_string_lossy().into_owned(), Flavor::PinnedPath))
                 }
-            }
-            HitTarget::Result(i) => (
-                self.search
-                    .results()
-                    .get(i)
-                    .and_then(|r| self.apps.get(r.entry_idx))
-                    .map(|e| e.app_id.clone()),
-                false,
-            ),
+                None => None,
+            },
+            HitTarget::Result(i) => match self.search.results().get(i).map(|r| r.kind.clone()) {
+                Some(crate::search::ResultKind::App(idx)) => {
+                    self.apps.get(idx).map(|e| (e.app_id.clone(), Flavor::App))
+                }
+                Some(crate::search::ResultKind::File { path, .. }) => {
+                    Some((path.to_string_lossy().into_owned(), Flavor::ResultFile))
+                }
+                None => None,
+            },
         };
-        let Some(app_id) = app_id else { return };
-        let items = if is_path {
-            vec![
+        let Some((app_id, flavor)) = resolved else { return };
+        let items = match flavor {
+            Flavor::App => self.menu_items_for(&app_id),
+            Flavor::PinnedPath => vec![
                 MenuItem { label: "Open".into(), action: MenuAction::FilesOpen },
                 MenuItem { label: "Unpin from main page".into(), action: MenuAction::FilesTogglePin },
                 MenuItem { label: "Copy path".into(), action: MenuAction::FilesCopyPath },
-            ]
-        } else {
-            self.menu_items_for(&app_id)
+            ],
+            Flavor::ResultFile => vec![
+                MenuItem { label: "Open".into(), action: MenuAction::FilesOpen },
+                MenuItem { label: "Reveal in Files".into(), action: MenuAction::FilesRevealInFM },
+                MenuItem { label: "Pin to main page".into(), action: MenuAction::FilesTogglePin },
+                MenuItem { label: "Copy path".into(), action: MenuAction::FilesCopyPath },
+            ],
         };
         self.context_menu = Some(ContextMenu {
             app_id,
@@ -401,7 +415,8 @@ impl AppState {
                 .search
                 .results()
                 .get(i)
-                .and_then(|r| self.apps.get(r.entry_idx))
+                .and_then(|r| r.app_idx())
+                .and_then(|idx| self.apps.get(idx))
                 .map(|e| e.app_id.clone()),
         };
         if let Some(id) = app_id {
@@ -427,17 +442,7 @@ impl AppState {
                     }
                 };
                 if let Some((p, is_dir)) = pin_path {
-                    let escaped = p.replace('\'', "'\\''");
-                    // Folders go straight to lntrn-file-manager — xdg-open
-                    // for `inode/directory` is unreliable (often grabs
-                    // Firefox or another generic handler). Files defer to
-                    // the user's xdg-mime mapping as usual.
-                    let cmd = if is_dir {
-                        format!("lntrn-file-manager '{}'", escaped)
-                    } else {
-                        format!("xdg-open '{}'", escaped)
-                    };
-                    spawn_detached(&cmd);
+                    open_path_detached(std::path::Path::new(&p), is_dir);
                     self.close();
                     true
                 } else {

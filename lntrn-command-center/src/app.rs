@@ -616,6 +616,21 @@ pub(super) fn reap(mut child: std::process::Child) {
     std::thread::spawn(move || { let _ = child.wait(); });
 }
 
+/// Open a filesystem path detached from the panel. Directories go to
+/// `lntrn-file-manager` directly (xdg-open for `inode/directory` is
+/// unreliable — it often grabs a browser); files defer to the user's
+/// `xdg-mime` handler via `xdg-open`. Single-quotes in the path are
+/// shell-escaped.
+pub(crate) fn open_path_detached(path: &std::path::Path, is_dir: bool) {
+    let escaped = path.to_string_lossy().replace('\'', "'\\''");
+    let cmd = if is_dir {
+        format!("lntrn-file-manager '{}'", escaped)
+    } else {
+        format!("xdg-open '{}'", escaped)
+    };
+    spawn_detached(&cmd);
+}
+
 /// Standard ease-out cubic: 1 - (1 - t)^3.
 pub(super) fn ease_out_cubic(t: f32) -> f32 {
     let inv = 1.0 - t;

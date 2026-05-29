@@ -290,17 +290,31 @@ impl AppState {
                 .search
                 .results()
                 .get(i)
-                .and_then(|r| self.apps.get(r.entry_idx)),
+                .and_then(|r| r.app_idx())
+                .and_then(|idx| self.apps.get(idx)),
         }
     }
 
-    /// Launch the currently selected app. Spawns the exec line with
-    /// `setsid` + `setpgid` so the child detaches cleanly from us, then
-    /// triggers the close animation.
+    /// Launch the current selection. App results (and pinned apps) spawn
+    /// their `.desktop` exec line; file results open via `xdg-open` (or
+    /// the file manager for directories). Both detach cleanly and then
+    /// trigger the close animation.
     ///
     /// Returns true if a launch was attempted; false if there was
     /// nothing to launch (empty results / no pins).
     pub fn launch_selected(&mut self) -> bool {
+        // File results take a different launch path than apps.
+        if let Selection::Result(i) = self.selection {
+            if let Some(crate::search::ResultKind::File { path, is_dir }) =
+                self.search.results().get(i).map(|r| r.kind.clone())
+            {
+                crate::app::open_path_detached(&path, is_dir);
+                tracing::info!(path = %path.display(), is_dir, "opened file from search");
+                self.close();
+                return true;
+            }
+        }
+
         let Some(entry) = self.selected_entry() else {
             return false;
         };

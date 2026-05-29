@@ -5,19 +5,64 @@
 //! add file/web/math/command/clipboard providers via `dispatch`.
 
 pub mod apps;
+pub mod files;
 pub mod fuzzy;
 pub mod input;
+
+use std::path::PathBuf;
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
 use crate::render::IconRequest;
-use self::apps::{AppsProvider, RankedEntry};
+use self::apps::AppsProvider;
+use self::files::FileIndex;
 use self::input::Input;
 
 /// Hard cap on ranked results. Set well above what fits in the visible
 /// viewport — anything past the bottom of the panel is reachable via
 /// scroll. 50 is plenty for fuzzy matches against typical app sets.
 pub const MAX_RESULTS: usize = 50;
+
+/// Cap on file hits merged in before the apps+files list is re-sorted
+/// and truncated to `MAX_RESULTS`. Generous so a good file match isn't
+/// dropped before it gets to compete with apps.
+const MAX_FILE_RESULTS: usize = 60;
+
+/// File search only kicks in once the query is at least this many chars.
+/// Single-character queries match almost every file and just bury the
+/// app matches the user is far more likely to want.
+const FILE_QUERY_MIN_CHARS: usize = 2;
+
+/// File scores are dampened by this factor before merging with apps, so
+/// an equally-good app match takes the top slot — from the launcher you
+/// usually want to *launch* something, and only sometimes open a file.
+const FILE_SCORE_WEIGHT: f32 = 0.9;
+
+/// What a single result row points at: an installed app (index into the
+/// `AppsProvider`) or a filesystem path from the live file index.
+#[derive(Clone)]
+pub enum ResultKind {
+    App(usize),
+    File { path: PathBuf, is_dir: bool },
+}
+
+/// A ranked search result — an app or a file, plus its merged score.
+#[derive(Clone)]
+pub struct RankedResult {
+    pub kind: ResultKind,
+    pub score: f32,
+}
+
+impl RankedResult {
+    /// The app index, if this result is an app. `None` for files. Lets
+    /// app-only call sites (context menu, pin toggle) ignore file rows.
+    pub fn app_idx(&self) -> Option<usize> {
+        match self.kind {
+            ResultKind::App(i) => Some(i),
+            ResultKind::File { .. } => None,
+        }
+    }
+}
 
 /// Top-level search state for the panel.
 ///
@@ -26,7 +71,7 @@ pub const MAX_RESULTS: usize = 50;
 /// (pinned favorites) can also reach it without going through search.
 pub struct Search {
     pub input: Input,
-    results: Vec<RankedEntry>,
+    results: Vec<RankedResult>,
     /// Vertical scroll offset (physical px) into the result list.
     /// Clamped each render to `[0, max_scroll]` based on the current
     /// viewport height. Reset to 0 whenever the query changes.
@@ -35,6 +80,9 @@ pub struct Search {
     /// on the search bar. Shows every non-NoDisplay app alphabetically.
     /// Cleared the moment the user types into the input.
     pub all_apps_mode: bool,
+    /// Live-indexed filesystem search. Built on a background thread at
+    /// construction; merged into `results` for 2+ char queries.
+    file_index: FileIndex,
 }
 
 impl Search {
@@ -44,11 +92,13 @@ impl Search {
             results: Vec::new(),
             scroll_offset: 0.0,
             all_apps_mode: false,
+            file_index: FileIndex::spawn(),
         }
     }
 
-    /// Re-rank results against the current input, using the provided
-    /// apps cache. Called when the input buffer changes.
+    /// Re-rank results against the current input. Merges installed-app
+    /// matches with live filesystem matches into one score-sorted list.
+    /// Called when the input buffer changes.
     pub fn refresh_results(&mut self, apps: &AppsProvider, hidden: &crate::launcher::hidden::Hidden) {
         // Any keystroke exits all-apps browse mode — typing implies the
         // user wants to filter, not browse the full list.
@@ -59,7 +109,37 @@ impl Search {
             self.scroll_offset = 0.0;
             return;
         }
-        self.results = apps.rank(q, MAX_RESULTS, hidden);
+
+        // Apps first — keep their full score so an exact app match wins.
+        let mut merged: Vec<RankedResult> = apps
+            .rank(q, MAX_RESULTS, hidden)
+            .into_iter()
+            .map(|r| RankedResult {
+                kind: ResultKind::App(r.entry_idx),
+                score: r.score,
+            })
+            .collect();
+
+        // Files join in for 2+ char queries, slightly dampened.
+        if q.chars().count() >= FILE_QUERY_MIN_CHARS {
+            for h in self.file_index.rank(q, MAX_FILE_RESULTS) {
+                merged.push(RankedResult {
+                    kind: ResultKind::File {
+                        path: h.path,
+                        is_dir: h.is_dir,
+                    },
+                    score: h.score * FILE_SCORE_WEIGHT,
+                });
+            }
+        }
+
+        merged.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        merged.truncate(MAX_RESULTS);
+        self.results = merged;
         // Reset scroll on every query change so the user sees the
         // top-ranked match without having to scroll back up.
         self.scroll_offset = 0.0;
@@ -69,19 +149,21 @@ impl Search {
     /// sorted alphabetically. Triggered by the waffle icon on the
     /// search bar. `hidden` filters out user-hidden app_ids.
     pub fn show_all_apps(&mut self, apps: &AppsProvider, hidden: &crate::launcher::hidden::Hidden) {
-        let mut all: Vec<RankedEntry> = (0..apps.count())
+        let mut all: Vec<RankedResult> = (0..apps.count())
             .filter(|i| {
                 let Some(e) = apps.get(*i) else { return false };
                 !e.no_display && !hidden.is_hidden(&e.app_id)
             })
-            .map(|i| RankedEntry {
-                entry_idx: i,
+            .map(|i| RankedResult {
+                kind: ResultKind::App(i),
                 score: 0.0,
             })
             .collect();
         all.sort_by(|a, b| {
-            let na = apps.get(a.entry_idx).map(|e| e.name.as_str()).unwrap_or("");
-            let nb = apps.get(b.entry_idx).map(|e| e.name.as_str()).unwrap_or("");
+            let idx_a = a.app_idx().unwrap_or(0);
+            let idx_b = b.app_idx().unwrap_or(0);
+            let na = apps.get(idx_a).map(|e| e.name.as_str()).unwrap_or("");
+            let nb = apps.get(idx_b).map(|e| e.name.as_str()).unwrap_or("");
             na.to_lowercase().cmp(&nb.to_lowercase())
         });
         self.results = all;
@@ -99,7 +181,7 @@ impl Search {
     }
 
     /// Borrow the result list for rendering / navigation.
-    pub fn results(&self) -> &[RankedEntry] {
+    pub fn results(&self) -> &[RankedResult] {
         &self.results
     }
 }
@@ -242,7 +324,32 @@ pub fn draw_results(
     let scroll = search.scroll_offset;
 
     for (i, r) in results.iter().enumerate() {
-        let Some(entry) = apps.get(r.entry_idx) else { continue };
+        // Resolve the row to (icon cache key, icon name, primary line,
+        // secondary line). Apps key by app_id; files key by a shared
+        // generic-mime icon (folder / image / video / document).
+        let (icon_key, icon_name, primary_text, secondary_text) = match &r.kind {
+            ResultKind::App(idx) => {
+                let Some(entry) = apps.get(*idx) else { continue };
+                (
+                    entry.app_id.clone(),
+                    entry.icon_name.clone(),
+                    entry.name.clone(),
+                    entry.app_id.clone(),
+                )
+            }
+            ResultKind::File { path, is_dir } => {
+                let (key, icon) = crate::launcher::path_icon(path, *is_dir);
+                let name = path
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.to_string_lossy().into_owned());
+                let parent = path
+                    .parent()
+                    .map(files::display_path)
+                    .unwrap_or_default();
+                (key, Some(icon), name, parent)
+            }
+        };
         let row_y = list_y_start + (i as f32) * (row_h + gap) - scroll;
         // Skip rows entirely outside the viewport — saves draw calls
         // when the user scrolls a long list, and avoids wasted text
@@ -268,8 +375,8 @@ pub fn draw_results(
         // Icon on the left, vertically centered.
         let icon_y = row_y + (row_h - icon_size) / 2.0;
         icons.push(IconRequest {
-            app_id: entry.app_id.clone(),
-            icon_name: entry.icon_name.clone(),
+            app_id: icon_key,
+            icon_name,
             x: list_x + icon_pad_left,
             y: icon_y,
             size: icon_size,
@@ -281,10 +388,10 @@ pub fn draw_results(
         let primary = text_color(alpha);
         let secondary = text_color(SECONDARY_ALPHA * alpha);
 
-        // Primary: app name (shifted right past the icon).
-        // Secondary: app_id in the right gutter.
+        // Primary: name (shifted right past the icon).
+        // Secondary: app_id / containing folder in the right gutter.
         text.queue(
-            &entry.name,
+            &primary_text,
             font,
             list_x + text_x_offset,
             text_y,
@@ -294,7 +401,7 @@ pub fn draw_results(
             surface_h,
         );
         text.queue(
-            &entry.app_id,
+            &secondary_text,
             font * 0.85,
             list_x + list_w * 0.6,
             text_y + 2.0 * scale,
@@ -396,7 +503,10 @@ fn draw_results_grid(
     let scroll = search.scroll_offset;
 
     for (i, r) in results.iter().enumerate() {
-        let Some(entry) = apps.get(r.entry_idx) else { continue };
+        // The grid is only ever populated from apps (waffle browse), so
+        // skip any non-app row defensively rather than rendering it.
+        let Some(idx) = r.app_idx() else { continue };
+        let Some(entry) = apps.get(idx) else { continue };
         let col = i % GRID_COLS;
         let row = i / GRID_COLS;
         let cell_x = grid_x0 + col as f32 * (tile + tile_gap);
