@@ -1,0 +1,15 @@
+[package]
+name = "lntrn-gear"
+version = "0.1.0"
+edition = "2021"
+description = "Lantern DE - peripheral control (RGB, DPI, profiles) over device protocols like HID++ — our G HUB replacement"
+
+[lib]
+name = "lntrn_gear"
+path = "src/lib.rs"
+
+[[bin]]
+name = "lntrn-gear"
+path = "src/bin/lntrn-gear.rs"
+
+[dependencies]
