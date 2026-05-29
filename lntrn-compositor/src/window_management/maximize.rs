@@ -5,7 +5,8 @@ use smithay::{
     utils::{Logical, Point, Rectangle, Serial, Size},
 };
 
-use crate::state::{Lantern, MaximizedWindow};
+use crate::state::Lantern;
+use crate::window_state::MaximizedWindow;
 use crate::window_ext::WindowExt;
 
 /// Minimum width/height (logical px) below which a captured restore

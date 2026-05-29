@@ -40,6 +40,7 @@ mod power;
 mod wallpaper;
 mod window_ext;
 mod window_management;
+mod window_state;
 mod winit;
 mod xcursor_export;
 mod xwayland;

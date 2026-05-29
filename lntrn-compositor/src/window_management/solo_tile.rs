@@ -8,7 +8,8 @@ use smithay::{
     utils::{Logical, Point, Rectangle, Size, Serial},
 };
 
-use crate::state::{Lantern, SoloTiledWindow};
+use crate::state::Lantern;
+use crate::window_state::SoloTiledWindow;
 use crate::window_ext::WindowExt;
 use crate::window_management::PoseSlot;
 

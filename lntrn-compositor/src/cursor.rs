@@ -49,6 +49,8 @@ pub struct CursorState {
 }
 
 impl CursorState {
+    // ── Construction & status ──────────────────────────────────────────
+
     pub fn new(initial_theme: &str) -> Self {
         // XCURSOR_SIZE env var takes precedence (legacy override); otherwise read
         // from [input].cursor_size in lantern.toml, default 24.
@@ -153,6 +155,8 @@ impl CursorState {
             self.load_xcursor(icon);
         }
     }
+
+    // ── Theme selection & SVG loading ──────────────────────────────────
 
     /// Rasterize the user's currently-active custom cursor theme SVG
     /// (from `~/.lantern/config/cursors/{custom_theme}.svg`) and tag it
@@ -267,6 +271,8 @@ impl CursorState {
         }
     }
 
+    // ── Size & color ───────────────────────────────────────────────────
+
     pub fn cursor_size(&self) -> u32 {
         self.cursor_size
     }
@@ -326,6 +332,8 @@ impl CursorState {
             self.load_xcursor(CursorIcon::Default);
         }
     }
+
+    // ── Rasterization & xcursor fallback ───────────────────────────────
 
     /// Rasterize an SVG into RGBA pixels and load into the cursor buffer.
     /// Returns Some(()) on success. The caller is responsible for any

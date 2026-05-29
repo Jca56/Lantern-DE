@@ -7,7 +7,8 @@ use smithay::{
 };
 
 use crate::minimize_anim::MinimizeKind;
-use crate::state::{Lantern, MinimizedWindow};
+use crate::state::Lantern;
+use crate::window_state::MinimizedWindow;
 use crate::window_ext::WindowExt;
 
 impl Lantern {

@@ -3,7 +3,7 @@
 //! `udev_device` modules import [`CustomRenderElements`].
 //!
 //! [`surface::render_surface`] is intentionally a single long function
-//! (~1400 lines): it's the per-frame DRM-output pipeline, builds three
+//! (~1900 lines): it's the per-frame DRM-output pipeline, builds three
 //! parallel Vec<Element> collections (windows / bottom-layers /
 //! blur backdrops), and mutates `state` + `udev` + `renderer` in
 //! lock-step. Each phase depends on what the previous one queued, so

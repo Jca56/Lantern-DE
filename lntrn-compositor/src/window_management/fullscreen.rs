@@ -5,7 +5,8 @@ use smithay::{
     utils::{Point, Rectangle, Serial},
 };
 
-use crate::state::{FullscreenWindow, Lantern};
+use crate::state::Lantern;
+use crate::window_state::FullscreenWindow;
 use crate::window_ext::WindowExt;
 
 impl Lantern {

@@ -1,3 +1,17 @@
+//! Central compositor state.
+//!
+//! [`Lantern`] is the god-struct every handler and the event loop mutate:
+//! it owns the Smithay protocol states, the `Space`, per-output
+//! workspaces, input/cursor/animation state, and the live lists of
+//! windows in each non-normal layout state. It's intentionally large — a
+//! Smithay compositor's central state always is — so the `impl Lantern`
+//! block below is grouped into `// ──`-marked sections to stay navigable.
+//!
+//! Support types live nearby: the per-layout-state records
+//! ([`MinimizedWindow`](crate::window_state::MinimizedWindow) et al.) in
+//! [`crate::window_state`]; [`PendingWorkspaceMove`] and [`DebugCounters`]
+//! here since they're only touched from this module's machinery.
+
 use std::{
     collections::{HashMap, HashSet},
     ffi::OsString,
@@ -66,49 +80,13 @@ use crate::workspaces::PerOutputWorkspaces;
 use crate::minimize_anim::MinimizeAnimState;
 use crate::udev::UdevData;
 use crate::wallpaper::WallpaperState;
+use crate::window_state::{FullscreenWindow, MaximizedWindow, MinimizedWindow, SoloTiledWindow};
 use crate::window_state_anim::WindowStateAnimState;
 
 const COUNTER_REPORT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 
-#[derive(Clone)]
-pub struct MinimizedWindow {
-    pub surface: WlSurface,
-    pub window: Window,
-    pub location: Point<i32, Logical>,
-}
-
-#[derive(Clone)]
-pub struct FullscreenWindow {
-    pub surface: WlSurface,
-    pub restore: Rectangle<i32, Logical>,
-    /// Output geometry at the time of fullscreen — used as the render fallback
-    /// after the state animation finishes but before the client has acked the
-    /// new size. Without it, the render would briefly fall back to the
-    /// stale `window.geometry().size` and the window would visually snap.
-    pub target: Rectangle<i32, Logical>,
-}
-
-#[derive(Clone)]
-pub struct MaximizedWindow {
-    pub surface: WlSurface,
-    pub restore: Rectangle<i32, Logical>,
-    /// Output geometry at the time of maximize — see [`FullscreenWindow::target`].
-    pub target: Rectangle<i32, Logical>,
-}
-
-/// A window currently puffed up to the "solo tile" rect (output minus
-/// exclusive zones, inset by `SINGLE_WINDOW_OUTER_GAP`). The Super+Up /
-/// Super+Down ladder drives this state. The entry persists across a
-/// subsequent maximize so unmaximize returns the window to its
-/// solo-tile rect (one rung down the ladder).
-#[derive(Clone)]
-pub struct SoloTiledWindow {
-    pub surface: WlSurface,
-    pub window: Window,
-    /// Rect to restore to when un-solo'd (the "Normal" geometry).
-    pub restore: Rectangle<i32, Logical>,
-    pub target: Rectangle<i32, Logical>,
-}
+// Window-state records (MinimizedWindow / FullscreenWindow /
+// MaximizedWindow / SoloTiledWindow) live in `crate::window_state`.
 
 /// A window-to-workspace move that's mid slide-off animation. While
 /// `complete_at` hasn't elapsed the window remains in the source
@@ -421,6 +399,8 @@ pub struct Lantern {
 }
 
 impl Lantern {
+    // ── Construction & Wayland socket ───────────────────────────────────
+
     pub fn new(event_loop: &mut EventLoop<'static, Self>, display: Display<Self>) -> Self {
         let start_time = std::time::Instant::now();
         let dh = display.handle();
@@ -670,6 +650,8 @@ impl Lantern {
         socket_name
     }
 
+    // ── Surface hit-testing ─────────────────────────────────────────────
+
     pub fn surface_under(
         &self,
         pos: Point<f64, Logical>,
@@ -776,6 +758,8 @@ impl Lantern {
         None
     }
 
+    // ── Render scheduling & frame bookkeeping ───────────────────────────
+
     pub fn request_winit_redraw(&self) {
         self.winit_redraw_requested.store(true, Ordering::Release);
         self.loop_signal.wakeup();
@@ -857,6 +841,8 @@ impl Lantern {
         self.last_pointer_render_location = Some(rounded);
         true
     }
+
+    // ── Output & exclusive-zone geometry ────────────────────────────────
 
     /// Find the output whose geometry contains `point`.
     /// Falls back to the closest output if the point is between monitors.
