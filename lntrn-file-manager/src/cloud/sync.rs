@@ -65,7 +65,7 @@ fn run_loop(
 ) {
     // Ensure ~/Cloud exists.
     if let Err(e) = std::fs::create_dir_all(cloud_root()) {
-        eprintln!("[fox-cloud] cannot create cloud root: {e}");
+        super::log_line(&format!("cannot create cloud root: {e}"));
         *status.lock().unwrap() = SyncStatus::Error;
         return;
     }
@@ -80,14 +80,14 @@ fn run_loop(
     }) {
         Ok(w) => w,
         Err(e) => {
-            eprintln!("[fox-cloud] watcher init failed: {e}");
+            super::log_line(&format!("watcher init failed: {e}"));
             *status.lock().unwrap() = SyncStatus::Error;
             return;
         }
     };
     use notify::Watcher;
     if let Err(e) = watcher.watch(&cloud_root(), notify::RecursiveMode::Recursive) {
-        eprintln!("[fox-cloud] watch ~/Cloud failed: {e}");
+        super::log_line(&format!("watch ~/Cloud failed: {e}"));
     }
 
     // Run an immediate pull-then-reconcile so a freshly-signed-in machine
@@ -132,7 +132,7 @@ fn do_reconcile(authed: &Authed, status: &Arc<Mutex<SyncStatus>>) {
     match super::reconcile::reconcile_all(authed) {
         Ok(()) => *status.lock().unwrap() = SyncStatus::Idle,
         Err(e) => {
-            eprintln!("[fox-cloud] reconcile failed: {e}");
+            super::log_line(&format!("reconcile failed: {e}"));
             *status.lock().unwrap() = SyncStatus::Error;
         }
     }

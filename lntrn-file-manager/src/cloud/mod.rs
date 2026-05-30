@@ -58,6 +58,28 @@ pub fn device_name() -> String {
         .unwrap_or_else(|| "device".to_string())
 }
 
+/// Append a line to ~/.lantern/log/fox-cloud.log and echo to stderr. Best-effort:
+/// never panics, swallows its own I/O errors. This is the audit trail for sync —
+/// per-file uploads/downloads and any failures land here so problems are visible.
+pub fn log_line(msg: &str) {
+    use std::io::Write;
+    eprintln!("[fox-cloud] {msg}");
+    let path = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join(".lantern/log/fox-cloud.log");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let _ = writeln!(f, "[{ts}] {msg}");
+    }
+}
+
 /// Top-level state owned by App. None = not signed in. Some = sync thread running.
 pub struct CloudState {
     pub config: Arc<CloudConfig>,

@@ -3,7 +3,7 @@
 // Paste into: Firebase Console -> Storage -> Rules -> Publish.
 //
 // Rule: an authenticated user can only read/write blobs under their own
-// /users/{uid}/** prefix. Optional size cap of 256 MiB per object — bump if you
+// /users/{uid}/** prefix. Optional size cap of 1 GiB per object — bump if you
 // want to back up larger files.
 
 rules_version = '2';
@@ -16,7 +16,7 @@ service firebase.storage {
                    && request.auth.uid == uid;
       allow write: if request.auth != null
                     && request.auth.uid == uid
-                    && request.resource.size < 256 * 1024 * 1024;
+                    && request.resource.size < 1024 * 1024 * 1024;
     }
 
     // Everything else denied by default.

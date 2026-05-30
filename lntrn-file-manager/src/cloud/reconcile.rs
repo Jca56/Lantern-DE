@@ -73,7 +73,7 @@ fn walk(root: &Path, dir: &Path, out: &mut HashMap<String, LocalFile>) {
         let sha = match sha256_file(&abs) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("[fox-cloud] hash {} failed: {e}", abs.display());
+                super::log_line(&format!("hash {} failed: {e}", abs.display()));
                 continue;
             }
         };
@@ -165,7 +165,7 @@ fn upload_local(
     };
     firestore::put(authed, &doc)?;
     manifest.set(local.rel.clone(), local.sha.clone());
-    eprintln!("[fox-cloud] ↑ {}", local.rel);
+    super::log_line(&format!("↑ {}", local.rel));
     Ok(())
 }
 
@@ -186,7 +186,7 @@ fn download_remote(
     std::fs::write(&tmp, &bytes)?;
     std::fs::rename(&tmp, &abs)?;
     manifest.set(doc.path.clone(), doc.sha256.clone());
-    eprintln!("[fox-cloud] ↓ {}", doc.path);
+    super::log_line(&format!("↓ {}", doc.path));
     Ok(())
 }
 
@@ -196,7 +196,7 @@ fn delete_local(rel: &str, manifest: &mut Manifest) -> anyhow::Result<()> {
         std::fs::remove_file(&abs)?;
     }
     manifest.remove(rel);
-    eprintln!("[fox-cloud] × local {}", rel);
+    super::log_line(&format!("× local {}", rel));
     Ok(())
 }
 
@@ -217,7 +217,7 @@ fn tombstone_remote(
     };
     firestore::put(authed, &doc)?;
     manifest.remove(rel);
-    eprintln!("[fox-cloud] × remote {}", rel);
+    super::log_line(&format!("× remote {}", rel));
     Ok(())
 }
 
@@ -235,7 +235,7 @@ fn resolve_conflict(
         std::fs::create_dir_all(parent)?;
     }
     std::fs::rename(&local.abs, &conflict_abs)?;
-    eprintln!("[fox-cloud] ⚠ conflict on {} → {}", local.rel, conflict_rel);
+    super::log_line(&format!("⚠ conflict on {} → {}", local.rel, conflict_rel));
 
     // 2. Upload the renamed local file under its new path. Hash is unchanged.
     let renamed = LocalFile {
@@ -272,6 +272,7 @@ pub fn reconcile_all(authed: &Authed) -> anyhow::Result<()> {
     all_paths.extend(remotes.keys().cloned());
     all_paths.extend(manifest.entries.keys().cloned());
 
+    let mut failures: Vec<String> = Vec::new();
     for path in &all_paths {
         let local = locals.get(path);
         let remote = remotes.get(path);
@@ -377,10 +378,24 @@ pub fn reconcile_all(authed: &Authed) -> anyhow::Result<()> {
         };
 
         if let Err(e) = result {
-            eprintln!("[fox-cloud] reconcile {} failed: {e}", path);
+            super::log_line(&format!("reconcile {path} failed: {e}"));
+            failures.push(format!("{path}: {e}"));
         }
     }
 
+    // Persist whatever progress we made before reporting any failures — successful
+    // files must still be recorded so the next pass doesn't redo them.
     manifest.save()?;
-    Ok(())
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        // Surface to the caller so sync status flips to Error instead of failing
+        // silently. The full list is already in the log; summarize here.
+        Err(anyhow::anyhow!(
+            "{} file(s) failed to sync (see ~/.lantern/log/fox-cloud.log): {}",
+            failures.len(),
+            failures.join("; ")
+        ))
+    }
 }
