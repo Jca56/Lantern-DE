@@ -284,6 +284,25 @@ pub fn reconcile_all(authed: &Authed) -> anyhow::Result<()> {
             // 2. brand new remote file
             (None, Some(r), None) if !r.deleted => download_remote(authed, &mut manifest, r),
 
+            // 2b. local + remote both exist but no manifest pivot. Happens when a path
+            //     carries a stale tombstone (deleted earlier, manifest entry purged) and
+            //     a file is re-created at that name, or after a manifest wipe. Without an
+            //     arm here these fell through to the no-op catch-all and stuck forever.
+            (Some(l), Some(r), None) if r.deleted => {
+                // Remote says deleted, but we have a live local file with no record of
+                // having agreed to that deletion → the user wants this file. Push it.
+                upload_local(authed, &mut manifest, l, &device)
+            }
+            (Some(l), Some(r), None) if l.sha == r.sha256 => {
+                // Identical content on both sides — just adopt the manifest pivot.
+                manifest.set(path.clone(), r.sha256.clone());
+                Ok(())
+            }
+            (Some(l), Some(r), None) => {
+                // Different content, no common base to merge from → keep both.
+                resolve_conflict(authed, &mut manifest, l, r, &device)
+            }
+
             // 3a. in sync
             (Some(l), Some(r), Some(m_sha))
                 if !r.deleted && l.sha == m_sha && r.sha256 == m_sha =>
