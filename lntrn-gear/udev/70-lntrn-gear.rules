@@ -1,0 +1,13 @@
+# Lantern Hub (lntrn-gear): let the logged-in local user control Logitech
+# HID++ peripherals (mice, keyboards, headsets) over hidraw, so the GUI and
+# daemon don't need root.
+#
+# Install:
+#   sudo cp 70-lntrn-gear.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+# Then replug the device (or just reboot) so the new permissions apply.
+#
+# Belt and suspenders: TAG+="uaccess" grants the active session user via
+# (e)logind ACLs; GROUP="plugdev" MODE="0660" is a fallback for users in
+# that group / for non-session daemons. Matches all Logitech (046d) HID.
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", MODE="0660", GROUP="plugdev", TAG+="uaccess"

@@ -8,6 +8,9 @@ pub struct DesktopItem {
     pub name: String,
     pub is_dir: bool,
     pub kind: IconKind,
+    /// Last-modified time, captured at scan. Used to invalidate cached
+    /// thumbnails when a file is overwritten in place.
+    pub mtime: SystemTime,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -59,6 +62,7 @@ impl DesktopItem {
             return None;
         }
         let is_dir = meta.is_dir();
+        let mtime = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
         let kind = if is_dir {
             IconKind::Folder
         } else {
@@ -68,7 +72,7 @@ impl DesktopItem {
                 .unwrap_or("");
             IconKind::File(FileKind::from_extension(ext))
         };
-        Some(Self { path, name, is_dir, kind })
+        Some(Self { path, name, is_dir, kind, mtime })
     }
 }
 

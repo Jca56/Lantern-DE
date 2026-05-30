@@ -23,6 +23,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 
 use crate::assets::IconCache;
 use crate::fs_watch::DesktopWatcher;
+use crate::icons::{FileKind, IconKind};
 use crate::input::{self, KeyAction};
 use crate::keyboard::{self, KeyboardState};
 use crate::layout::{grid_dims, ICON_PX};
@@ -191,6 +192,8 @@ pub fn run() -> Result<()> {
     let scale = state.fractional_scale() as f32;
     let icon_px = (ICON_PX * scale) as u32;
     let mut icons = IconCache::new(icon_px);
+    // Per-file thumbnails for image files, decoded on a background thread.
+    let mut thumbs = crate::thumbs::ThumbCache::new(icon_px);
 
     // App state — scan desktop, assign cells, then prime only the icons we need.
     let desktop_dir = crate::icons::ensure_desktop_dir();
@@ -295,6 +298,23 @@ pub fn run() -> Result<()> {
             }
         }
 
+        // Thumbnails: upload any finished decodes, queue any image files not
+        // yet handled, and keep the frame pump alive while decodes are out so
+        // the results actually get painted on an otherwise idle desktop.
+        if thumbs.drain(&gpu, &tex_pass) {
+            state.frame_done = true;
+        }
+        for item in &app.items {
+            if matches!(item.kind, IconKind::File(FileKind::Image)) {
+                thumbs.request(&item.path, item.mtime);
+            }
+        }
+        if thumbs.has_pending() && !state.frame_done {
+            surface.frame(&qh, ());
+            surface.commit();
+            continue;
+        }
+
         // Persist widget position after a drag finishes.
         if app.widgets_dirty {
             app.widgets.save();
@@ -320,6 +340,7 @@ pub fn run() -> Result<()> {
             let new_icon_px = (ICON_PX * state.fractional_scale() as f32) as u32;
             if new_icon_px != icon_px {
                 icons.clear(new_icon_px);
+                thumbs.clear(new_icon_px);
             }
             let dims = grid_dims(state.width as f32, state.height as f32);
             app.rescan(dims);
@@ -464,6 +485,7 @@ pub fn run() -> Result<()> {
             &mut painter,
             &mut text,
             &mut icons,
+            &thumbs,
             &gpu,
             &tex_pass,
             &app,

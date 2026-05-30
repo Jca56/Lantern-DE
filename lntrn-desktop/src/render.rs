@@ -3,6 +3,7 @@ use lntrn_render::{Color, GpuContext, Painter, Rect, TextRenderer, TextureDraw, 
 use crate::assets::IconCache;
 use crate::layout::{cell_origin, CELL_W, ICON_PX, LABEL_PX};
 use crate::state::{ContextMenuState, DesktopState, RenameState};
+use crate::thumbs::ThumbCache;
 
 const SELECTION_BG: Color = Color {
     r: 0.30,
@@ -62,6 +63,7 @@ pub fn draw_desktop<'a>(
     painter: &mut Painter,
     text: &mut TextRenderer,
     icons: &'a mut IconCache,
+    thumbs: &'a ThumbCache,
     gpu: &GpuContext,
     tex_pass: &TexturePass,
     state: &DesktopState,
@@ -123,7 +125,12 @@ pub fn draw_desktop<'a>(
             painter.rect_stroke(sel_rect, 12.0 * scale, 1.5 * scale, SELECTION_BORDER);
         }
 
-        if let Some(tex) = icons.get_cached_for(&item.name, item.kind) {
+        // Prefer a decoded thumbnail for image files; fall back to the
+        // generic glyph while it's still decoding (or if it can't decode).
+        let tex = thumbs
+            .get(&item.path)
+            .or_else(|| icons.get_cached_for(&item.name, item.kind));
+        if let Some(tex) = tex {
             tex_draws.push(TextureDraw::new(
                 tex,
                 icon_x * scale,

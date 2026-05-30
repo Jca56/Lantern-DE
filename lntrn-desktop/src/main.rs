@@ -12,6 +12,7 @@ mod layout;
 mod rainbow;
 mod render;
 mod state;
+mod thumbs;
 mod wayland;
 mod widgets_config;
 

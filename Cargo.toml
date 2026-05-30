@@ -35,6 +35,7 @@ members = [
     "lntrn-lava-lamp",
     "lntrn-command-center",
     "lntrn-gear",
+    "lntrn-gear-ui",
     "lntrn-keychain",
     "lntrn-keys",
     "lntrn-clock",
