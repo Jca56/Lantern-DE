@@ -228,25 +228,6 @@ impl Lantern {
         let button = event.button_code();
         let button_state = event.state();
 
-        // ── Mouse shortcut buttons (Lantern Hub, Phase 1) ───────────────
-        // The G502's two thumb buttons drive workspace switching globally.
-        // Handled here and NOT forwarded to clients, so the mouse-only
-        // workflow works over any focused app. (The sniper / DPI / profile
-        // buttons are firmware-silent until the HID++ Hub remaps them.)
-        const BTN_SIDE: u32 = 0x113; // thumb back  → previous workspace
-        const BTN_EXTRA: u32 = 0x114; // thumb fwd  → next workspace
-        if button == BTN_SIDE || button == BTN_EXTRA {
-            if button_state == ButtonState::Pressed {
-                if button == BTN_SIDE {
-                    self.switch_workspace_neighbor_no_wrap(-1);
-                } else {
-                    self.switch_workspace_right_or_create();
-                }
-            }
-            // Swallow both press and release — clients never see them.
-            return;
-        }
-
         // Spawn the click ripple on left-button press, regardless of which
         // downstream branch handles the click. Position is the pointer's
         // current logical location; the renderer scales per-output.
@@ -541,28 +522,6 @@ impl Lantern {
 
     pub(super) fn handle_pointer_axis<I: InputBackend>(&mut self, event: I::PointerAxisEvent) {
         let source = event.source();
-
-        // ── Wheel tilt → move window to neighbor workspace (Lantern Hub,
-        // Phase 1). Only a discrete mouse-WHEEL horizontal click counts —
-        // a touchpad's continuous horizontal scroll (Finger source) is
-        // left alone so the laptop keeps two-finger sideways scrolling.
-        if source == AxisSource::Wheel {
-            if let Some(h) = event.amount_v120(Axis::Horizontal) {
-                if h != 0.0 {
-                    // tilt right (+) → next workspace, creating one at the
-                    // edge (mirrors the thumb-fwd button); tilt left (−) →
-                    // previous workspace, no wrap (there's nothing below 1).
-                    if h > 0.0 {
-                        self.move_focused_to_workspace_right_or_create();
-                    } else {
-                        self.move_focused_to_workspace_neighbor(-1);
-                    }
-                    self.schedule_render();
-                    return; // swallow the tilt; don't forward as scroll
-                }
-            }
-        }
-
         let scroll_mult = self.scroll_speed;
         let horizontal_amount = event
             .amount(Axis::Horizontal)

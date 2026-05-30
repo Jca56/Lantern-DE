@@ -29,7 +29,8 @@ BINARIES := \
 	lntrn-sysmon \
 	lntrn-snapshot \
 	lntrn-snapshot-gui \
-	lntrn-screencopy
+	lntrn-screencopy \
+	lntrn-lockscreen
 
 # Extra binaries from multi-binary crates
 EXTRA_BINARIES := notify-send
@@ -42,8 +43,22 @@ all: build install
 	@echo ""
 	@echo "🏮 Lantern DE built and installed to $(LANTERN_HOME)"
 
+# Crates that run bindgen (pipewire/libspa-sys in lntrn-desktop, pam-sys in
+# lntrn-lockscreen) need libclang. On Gentoo libclang lives in a versioned dir
+# (/usr/lib/llvm/N/lib64) that clang-sys doesn't probe; on Arch it's in
+# /usr/lib. Derive the path from llvm-config so it works on both without
+# hardcoding.
+LIBCLANG_PATH ?= $(shell command -v llvm-config >/dev/null 2>&1 && llvm-config --libdir)
+export LIBCLANG_PATH
+
+# lntrn-desktop (pipewire → bindgen 0.72) and lntrn-lockscreen (pam-sys →
+# bindgen 0.69) both pull the same clang-sys. In one build graph Cargo unifies
+# features, forcing clang-sys's `runtime` (dlopen-libclang) mode on for
+# everyone — which pam-sys's older bindgen can't satisfy. Build lockscreen in
+# its own invocation so its clang-sys stays in link mode.
 build:
-	cargo build --release
+	cargo build --release --workspace --exclude lntrn-lockscreen
+	cargo build --release -p lntrn-lockscreen
 
 dirs:
 	@mkdir -p $(BIN_DIR) $(CONFIG_DIR) $(ICON_DIR) $(LOG_DIR) $(WALL_DIR) $(APP_DIR)
