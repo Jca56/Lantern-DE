@@ -194,7 +194,7 @@ fn build_file_svg(slot: IconSlot) -> String {
         .replace("__ACCENT__", accent)
 }
 
-fn rasterize_svg(data: &[u8], size: u32) -> Option<Vec<u8>> {
+pub(crate) fn rasterize_svg(data: &[u8], size: u32) -> Option<Vec<u8>> {
     // No fontdb load: none of our SVGs use `<text>`, so we skip the system
     // font scan entirely.
     let opt = usvg::Options::default();

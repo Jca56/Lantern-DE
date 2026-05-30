@@ -1,3 +1,4 @@
+mod actions;
 mod assets;
 mod audio;
 mod clock;
@@ -9,6 +10,7 @@ mod icons;
 mod input;
 mod keyboard;
 mod layout;
+mod radial_menu;
 mod rainbow;
 mod render;
 mod state;

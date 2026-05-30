@@ -1,6 +1,7 @@
 use std::time::{Duration, Instant};
 
 use crate::layout::{cell_origin, pixel_to_cell, rect_hits, CELL_W, ICON_PX, CELL_H};
+use crate::radial_menu::{self, RadialAction, RadialMenuState};
 use crate::render;
 use crate::state::{DesktopState, DragState, MenuAction, PendingAction, RubberBand, WidgetDrag};
 
@@ -25,6 +26,21 @@ pub fn on_left_press(
     surface_w: f32,
     surface_h: f32,
 ) {
+    // A latched radial menu intercepts the click: fire the hovered button, or
+    // dismiss on a miss. (Open-but-not-latched means a hold is in progress —
+    // swallow the click so it doesn't start a drag/selection underneath.)
+    if let Some(r) = &state.radial {
+        let latched = r.latched;
+        let hovered = radial_menu::hit(r, cx, cy);
+        if latched {
+            state.radial = None;
+            if let Some(i) = hovered {
+                dispatch_radial_action(state, radial_menu::ITEMS[i].action);
+            }
+        }
+        return;
+    }
+
     // If a context menu is open, decide whether the click hit it.
     if let Some(menu) = &state.menu {
         if let Some(hit) = render::menu_hit(menu, cx, cy) {
@@ -165,6 +181,12 @@ pub fn on_cursor_move(
         menu.hover = render::menu_hit(menu, cx, cy);
     }
 
+    // Update radial-menu hover.
+    if let Some(r) = &mut state.radial {
+        let h = radial_menu::hit(r, cx, cy);
+        r.hover = h;
+    }
+
     if let Some(drag) = &mut state.drag {
         drag.cursor_x = cx;
         drag.cursor_y = cy;
@@ -257,39 +279,89 @@ pub fn on_left_release(state: &mut DesktopState, _cx: f32, _cy: f32, _dims: (i32
     state.rubber_band = None;
 }
 
-/// Right-mouse press — open a context menu.
+/// Right-mouse press — open a context menu (on an item) or the radial menu
+/// (on empty desktop). The radial menu's gesture completes on release.
 pub fn on_right_press(state: &mut DesktopState, cx: f32, cy: f32, surface_w: f32, surface_h: f32) {
-    // Close any existing menu.
+    // Close any existing menus / interactions.
     state.menu = None;
+    state.radial = None;
     state.drag = None;
     state.rubber_band = None;
     if state.renaming.is_some() {
         state.pending_action = Some(PendingAction::SubmitRename);
         return;
     }
-    let hit = crate::layout::hit_test(cx, cy, &state.cells);
-    let menu = match hit {
+    match crate::layout::hit_test(cx, cy, &state.cells) {
         Some(idx) => {
-            // Make sure the right-clicked item is selected.
+            // Right-click on a file/folder → classic list context menu.
             if !state.selection.contains(&idx) {
                 state.selection.clear();
                 state.selection.insert(idx);
             }
-            crate::context_menu::item_menu(idx, cx, cy)
+            let mut menu = crate::context_menu::item_menu(idx, cx, cy);
+            let mw = render::menu_width();
+            let mh = render::menu_height(&menu);
+            if menu.anchor_x + mw > surface_w {
+                menu.anchor_x = (surface_w - mw - 4.0).max(0.0);
+            }
+            if menu.anchor_y + mh > surface_h {
+                menu.anchor_y = (surface_h - mh - 4.0).max(0.0);
+            }
+            state.menu = Some(menu);
         }
-        None => crate::context_menu::empty_menu(cx, cy),
+        None => {
+            // Empty desktop → radial menu. Open at the real cursor (so the
+            // tap-vs-drag test measures against the true press point), then
+            // clamp only the center so the whole ring stays on-screen.
+            let mut r = RadialMenuState::open(cx, cy);
+            r.clamp_to_surface(surface_w, surface_h);
+            state.radial = Some(r);
+        }
+    }
+}
+
+/// Right-mouse release — completes the radial-menu gesture.
+///
+/// - Released over a button → fire it.
+/// - Quick tap on the empty center → latch the ring open for point-and-click.
+/// - Held + released on a miss → dismiss.
+pub fn on_right_release(state: &mut DesktopState, cx: f32, cy: f32) {
+    let Some(r) = &state.radial else {
+        return;
     };
-    // Clamp anchor so menu fits on-screen.
-    let mw = render::menu_width();
-    let mh = render::menu_height(&menu);
-    let mut menu = menu;
-    if menu.anchor_x + mw > surface_w {
-        menu.anchor_x = (surface_w - mw - 4.0).max(0.0);
+    let hovered = radial_menu::hit(r, cx, cy);
+    let elapsed_ms = r.opened_at.elapsed().as_millis();
+    let moved =
+        ((cx - r.press_x).powi(2) + (cy - r.press_y).powi(2)).sqrt() > radial_menu::TAP_MOVE_THRESHOLD;
+    let already_latched = r.latched;
+
+    match hovered {
+        Some(i) => {
+            state.radial = None;
+            dispatch_radial_action(state, radial_menu::ITEMS[i].action);
+        }
+        None => {
+            if !already_latched && !moved && elapsed_ms < radial_menu::TAP_LATCH_MS {
+                if let Some(r) = &mut state.radial {
+                    r.latched = true;
+                }
+            } else {
+                state.radial = None;
+            }
+        }
     }
-    if menu.anchor_y + mh > surface_h {
-        menu.anchor_y = (surface_h - mh - 4.0).max(0.0);
-    }
-    state.menu = Some(menu);
+}
+
+/// Map a radial-menu choice to a pending action consumed by the main loop.
+fn dispatch_radial_action(state: &mut DesktopState, action: RadialAction) {
+    state.pending_action = Some(match action {
+        RadialAction::Terminal => PendingAction::OpenTerminal,
+        RadialAction::FileManager => PendingAction::Launch("lntrn-file-manager"),
+        RadialAction::Settings => PendingAction::Launch("lntrn-system-settings"),
+        RadialAction::Screenshot => PendingAction::Launch("lntrn-screenshot"),
+        RadialAction::NewFolder => PendingAction::NewFolder,
+        RadialAction::Refresh => PendingAction::Refresh,
+    });
 }
 
 pub fn dispatch_menu_action(

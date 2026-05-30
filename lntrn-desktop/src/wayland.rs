@@ -28,7 +28,7 @@ use crate::input::{self, KeyAction};
 use crate::keyboard::{self, KeyboardState};
 use crate::layout::{grid_dims, ICON_PX};
 use crate::render;
-use crate::state::{DesktopState, PendingAction, RenameState};
+use crate::state::{DesktopState, PendingAction};
 
 pub const BTN_LEFT: u32 = 0x110;
 pub const BTN_RIGHT: u32 = 0x111;
@@ -72,6 +72,7 @@ pub struct State {
     pub left_pressed: bool,
     pub left_released: bool,
     pub right_pressed: bool,
+    pub right_released: bool,
     pub key_pressed: Option<u32>,
     pub keymap_pending: Option<(RawFd, u32)>,
     pub modifiers_pending: Option<(u32, u32, u32, u32)>,
@@ -103,6 +104,7 @@ impl State {
             left_pressed: false,
             left_released: false,
             right_pressed: false,
+            right_released: false,
             key_pressed: None,
             keymap_pending: None,
             modifiers_pending: None,
@@ -194,6 +196,9 @@ pub fn run() -> Result<()> {
     let mut icons = IconCache::new(icon_px);
     // Per-file thumbnails for image files, decoded on a background thread.
     let mut thumbs = crate::thumbs::ThumbCache::new(icon_px);
+    // Glyph icons for the radial right-click menu (rasterized on first open).
+    let radial_icon_px = |s: f32| (72.0 * s) as u32;
+    let mut radial_icons = crate::radial_menu::RadialIconCache::new(radial_icon_px(scale));
 
     // App state — scan desktop, assign cells, then prime only the icons we need.
     let desktop_dir = crate::icons::ensure_desktop_dir();
@@ -231,6 +236,10 @@ pub fn run() -> Result<()> {
     let rainbow_start = Instant::now();
     let mut last_rainbow_tick = Instant::now();
     const RAINBOW_TICK_MS: u128 = 33;
+
+    // Radial menu bloom — snappy ~60 Hz repaint while the ring animates open.
+    let mut last_radial_tick = Instant::now();
+    const RADIAL_TICK_MS: u128 = 16;
 
     surface.frame(&qh, ());
     surface.commit();
@@ -315,6 +324,19 @@ pub fn run() -> Result<()> {
             continue;
         }
 
+        // Radial menu bloom drives continuous repaint until it settles; once
+        // open and idle it costs nothing (repaints come from pointer motion).
+        if app.radial.as_ref().map_or(false, |r| r.needs_anim()) {
+            if last_radial_tick.elapsed().as_millis() >= RADIAL_TICK_MS {
+                last_radial_tick = Instant::now();
+                state.frame_done = true;
+            } else if !state.frame_done {
+                surface.frame(&qh, ());
+                surface.commit();
+                continue;
+            }
+        }
+
         // Persist widget position after a drag finishes.
         if app.widgets_dirty {
             app.widgets.save();
@@ -341,10 +363,15 @@ pub fn run() -> Result<()> {
             if new_icon_px != icon_px {
                 icons.clear(new_icon_px);
                 thumbs.clear(new_icon_px);
+                radial_icons.clear(radial_icon_px(state.fractional_scale() as f32));
             }
             let dims = grid_dims(state.width as f32, state.height as f32);
             app.rescan(dims);
             icons.prime_for_items(&gpu, &tex_pass, &app.items);
+            // Keep an open radial ring on-screen if the surface shrank.
+            if let Some(r) = &mut app.radial {
+                r.clamp_to_surface(state.width as f32, state.height as f32);
+            }
         }
 
         let s = state.fractional_scale() as f32;
@@ -385,6 +412,10 @@ pub fn run() -> Result<()> {
                 state.width as f32,
                 state.height as f32,
             );
+        }
+        if state.right_released {
+            state.right_released = false;
+            input::on_right_release(&mut app, cx, cy);
         }
 
         // Keyboard events.
@@ -437,6 +468,7 @@ pub fn run() -> Result<()> {
                     keyboard::KEY_ESCAPE => {
                         app.selection.clear();
                         app.menu = None;
+                        app.radial = None;
                     }
                     _ => {}
                 }
@@ -446,7 +478,7 @@ pub fn run() -> Result<()> {
         // Apply any pending action.
         let mut needs_rescan = false;
         if let Some(action) = app.pending_action.take() {
-            apply_action(&mut app, action, &mut needs_rescan);
+            crate::actions::apply_action(&mut app, action, &mut needs_rescan);
         }
         if needs_rescan {
             app.rescan(dims);
@@ -455,7 +487,8 @@ pub fn run() -> Result<()> {
 
         // Cursor shape — pointer where there's an icon → pointer; otherwise default.
         if state.pointer_in_surface {
-            let desired = if app.hover.is_some() || app.drag.is_some() {
+            let radial_hover = app.radial.as_ref().map_or(false, |r| r.hover.is_some());
+            let desired = if app.hover.is_some() || app.drag.is_some() || radial_hover {
                 wp_cursor_shape_device_v1::Shape::Pointer
             } else {
                 wp_cursor_shape_device_v1::Shape::Default
@@ -507,6 +540,27 @@ pub fn run() -> Result<()> {
             painter.render_pass(&gpu, frame.encoder_mut(), &view, Color::TRANSPARENT);
             tex_pass.render_pass(&gpu, frame.encoder_mut(), &view, &tex_draws, None);
             text.render_queued(&gpu, frame.encoder_mut(), &view);
+
+            // Radial menu overlays everything: its shapes, icons, and labels
+            // composite on top of the desktop icons in their own passes.
+            if let Some(radial) = &app.radial {
+                painter.clear();
+                let radial_draws = crate::radial_menu::draw_radial_menu(
+                    &mut painter,
+                    &mut text,
+                    &mut radial_icons,
+                    &gpu,
+                    &tex_pass,
+                    radial,
+                    s,
+                    state.width,
+                    state.height,
+                );
+                painter.render_pass_overlay(&gpu, frame.encoder_mut(), &view);
+                tex_pass.render_pass(&gpu, frame.encoder_mut(), &view, &radial_draws, None);
+                text.render_queued(&gpu, frame.encoder_mut(), &view);
+            }
+
             frame.submit(&gpu.queue);
         }
 
@@ -516,112 +570,4 @@ pub fn run() -> Result<()> {
 
     app.save_positions_if_dirty();
     Ok(())
-}
-
-fn apply_action(app: &mut DesktopState, action: PendingAction, needs_rescan: &mut bool) {
-    match action {
-        PendingAction::Open(idx) => {
-            if let Some(item) = app.items.get(idx) {
-                crate::icons::open_with_default(&item.path);
-            }
-        }
-        PendingAction::Trash(idxs) => {
-            let mut paths: Vec<std::path::PathBuf> = idxs
-                .iter()
-                .filter_map(|&i| app.items.get(i).map(|it| it.path.clone()))
-                .collect();
-            paths.sort();
-            paths.dedup();
-            for p in &paths {
-                crate::icons::move_to_trash(p);
-            }
-            app.selection.clear();
-            *needs_rescan = true;
-        }
-        PendingAction::StartRename(idx) => {
-            if let Some(item) = app.items.get(idx) {
-                app.renaming = Some(RenameState {
-                    idx,
-                    buffer: item.name.clone(),
-                    cursor: item.name.chars().count(),
-                });
-                app.selection.clear();
-                app.selection.insert(idx);
-            }
-        }
-        PendingAction::SubmitRename => {
-            let Some(rn) = app.renaming.take() else {
-                return;
-            };
-            let old = match app.items.get(rn.idx) {
-                Some(it) => it.path.clone(),
-                None => return,
-            };
-            let trimmed = rn.buffer.trim();
-            if !trimmed.is_empty() && trimmed != old.file_name().unwrap_or_default().to_string_lossy()
-            {
-                if crate::icons::rename(&old, trimmed) {
-                    // Carry over the position to the new name.
-                    if let Some(cell) = app.positions.get(&app.items[rn.idx].name) {
-                        app.positions.remove(&app.items[rn.idx].name);
-                        app.positions.set(trimmed, cell);
-                        app.dirty_positions = true;
-                    }
-                    *needs_rescan = true;
-                }
-            }
-        }
-        PendingAction::CancelRename => {
-            app.renaming = None;
-        }
-        PendingAction::NewFolder => {
-            if let Some(new_path) = crate::icons::new_folder(&app.desktop_dir) {
-                // Place the new folder where the menu was opened (anchor) — if known.
-                let anchor_cell = app
-                    .menu
-                    .as_ref()
-                    .map(|m| crate::layout::pixel_to_cell(m.anchor_x, m.anchor_y));
-                if let (Some(cell), Some(name)) = (anchor_cell, new_path.file_name()) {
-                    app.positions
-                        .set(&name.to_string_lossy(), cell);
-                    app.dirty_positions = true;
-                }
-                *needs_rescan = true;
-            }
-        }
-        PendingAction::Refresh => {
-            *needs_rescan = true;
-        }
-        PendingAction::SelectAll => {
-            app.selection = (0..app.items.len()).collect();
-        }
-        PendingAction::OpenTerminal => {
-            let dir = app.desktop_dir.clone();
-            std::thread::spawn(move || {
-                let _ = std::process::Command::new("lntrn-terminal")
-                    .current_dir(&dir)
-                    .spawn();
-            });
-        }
-        PendingAction::CopyName(idx) => {
-            if let Some(item) = app.items.get(idx) {
-                let s = item.name.clone();
-                std::thread::spawn(move || {
-                    let _ = std::process::Command::new("wl-copy")
-                        .arg(&s)
-                        .spawn();
-                });
-            }
-        }
-        PendingAction::CopyPath(idx) => {
-            if let Some(item) = app.items.get(idx) {
-                let s = item.path.display().to_string();
-                std::thread::spawn(move || {
-                    let _ = std::process::Command::new("wl-copy")
-                        .arg(&s)
-                        .spawn();
-                });
-            }
-        }
-    }
 }

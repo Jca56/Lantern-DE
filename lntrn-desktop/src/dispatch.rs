@@ -255,6 +255,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 if button == BTN_RIGHT && pressed {
                     state.right_pressed = true;
                 }
+                if button == BTN_RIGHT && released {
+                    state.right_released = true;
+                }
                 state.frame_done = true;
             }
             _ => {}

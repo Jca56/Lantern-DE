@@ -38,6 +38,10 @@ pub fn item_menu(target_idx: usize, anchor_x: f32, anchor_y: f32) -> ContextMenu
 }
 
 /// Menu when right-clicking on an empty area of the desktop.
+///
+/// Superseded by the radial menu (see `radial_menu`), kept as a list-style
+/// fallback for empty-space right-clicks.
+#[allow(dead_code)]
 pub fn empty_menu(anchor_x: f32, anchor_y: f32) -> ContextMenuState {
     ContextMenuState {
         anchor_x,

@@ -34,6 +34,9 @@ pub struct DesktopState {
     /// Pending context-menu state (anchor + items).
     pub menu: Option<ContextMenuState>,
 
+    /// Radial right-click menu (ring of circular buttons), open on empty space.
+    pub radial: Option<crate::radial_menu::RadialMenuState>,
+
     /// Pending action set by input/menu handlers, consumed by main loop.
     pub pending_action: Option<PendingAction>,
 
@@ -135,6 +138,8 @@ pub enum PendingAction {
     CopyPath(usize),
     SubmitRename,
     CancelRename,
+    /// Spawn a Lantern app binary by name (detached), cwd = desktop dir.
+    Launch(&'static str),
 }
 
 impl DesktopState {
@@ -154,6 +159,7 @@ impl DesktopState {
             last_click_idx: None,
             renaming: None,
             menu: None,
+            radial: None,
             pending_action: None,
             ctrl_held: false,
             shift_held: false,

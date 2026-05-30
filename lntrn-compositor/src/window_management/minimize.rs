@@ -195,6 +195,20 @@ impl Lantern {
             true,
         );
 
+        // For X11 (XWayland) windows, set WM_STATE back to Normal and ensure
+        // the WM frame is mapped. Wine/Proton games park their swapchain when
+        // minimized and watch the X11 map/WM_STATE to know when to resume —
+        // re-mapping only in the compositor Space leaves the X11 client unaware
+        // it's visible again (permanent black). This maps just the WM *frame*,
+        // which fires smithay's `map_window_notify` (a no-op for us), NOT
+        // `map_window_request`, so it cannot spawn a duplicate Window.
+        if let Some(x11) = entry.window.x11_surface() {
+            match x11.set_mapped(true) {
+                Ok(()) => tracing::info!(class = x11.class(), "restore: X11 set_mapped(true)"),
+                Err(e) => tracing::warn!(class = x11.class(), "restore: X11 set_mapped(true) failed: {e}"),
+            }
+        }
+
         // Start the unminimize animation: emerge from the tray icon rect and
         // grow into the restored position.
         let source_rect = Rectangle::new(location, entry.window.geometry().size);
