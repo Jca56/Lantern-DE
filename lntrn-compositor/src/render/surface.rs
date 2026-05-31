@@ -222,6 +222,51 @@ pub fn render_surface(
         })
         .collect();
 
+    // Pre-resolve switcher app-icon badges and the per-card chrome layout
+    // BEFORE the long-lived udev/renderer borrow. The icon cache and the
+    // switcher both live on `state`, which is mutably borrowed via `udev`
+    // below — so we snapshot what the render block needs here. `CardLayout`
+    // is Copy and `MemoryRenderBuffer` is cheap-Clone (refcounted), so this
+    // is just a few clones, gated on the switcher being visible.
+    let switcher_backdrop = if switcher_visible {
+        state.alt_tab_switcher.backdrop_element(output_pos.size, scale)
+    } else {
+        None
+    };
+    let switcher_dims = if switcher_visible {
+        state.alt_tab_switcher.dim_elements(output_pos.size, scale)
+    } else {
+        Vec::new()
+    };
+    let switcher_close = if switcher_visible {
+        state.alt_tab_switcher.close_button_element(output_pos.size, scale)
+    } else {
+        None
+    };
+    let switcher_fade = state.alt_tab_switcher.current_fade_alpha();
+    let (switcher_cards, switcher_icon_bufs) = if switcher_visible {
+        // Icons rasterized at ~1.4× the logical badge size in phys px so
+        // they stay crisp on the selected (full-scale) card.
+        let icon_phys = ((crate::switcher::layout::ICON_SIZE as f64) * scale * 1.4)
+            .round()
+            .clamp(32.0, 256.0) as u32;
+        state.switcher_icons.resize(icon_phys);
+        let cards = state.alt_tab_switcher.card_layouts(output_pos.size);
+        let mut bufs: Vec<(usize, smithay::backend::renderer::element::memory::MemoryRenderBuffer)> =
+            Vec::with_capacity(cards.len());
+        for c in &cards {
+            if let Some(app_id) = state.alt_tab_switcher.app_id_at(c.entry_index) {
+                let app_id = app_id.to_string();
+                if let Some(buf) = state.switcher_icons.get_or_load(&app_id) {
+                    bufs.push((c.entry_index, buf.clone()));
+                }
+            }
+        }
+        (cards, bufs)
+    } else {
+        (Vec::new(), Vec::new())
+    };
+
     // ── Hover preview pre-computation ────────────────────────────────
     state.hover_preview.poll();
     let pointer_pos = state.seat.get_pointer()
@@ -1193,25 +1238,128 @@ pub fn render_surface(
         }
     }
 
-    // Alt+Tab switcher: elements are ordered front-to-back (first = highest Z).
-    // Layer order: close btn / minimized dim → thumbnails → cards / highlights → panel → dim.
+    // Alt+Tab switcher "spotlight" view. Elements are pushed front-to-back
+    // (first = highest Z). Per card, the z-order top→bottom is:
+    //   close button → icon badge → gold glow ring (selected) → dim overlay
+    //   → rounded live preview → soft card shadow.
+    // Then a single full-screen backdrop dim sits behind everything.
     if switcher_visible {
-        // Chrome elements from render_overlay. The returned order is:
-        //   [dim, panel, (highlight?, card, min_dim?, close_btn?) × N]
-        // We split into base chrome (behind thumbnails) and top chrome (above thumbnails).
-        let (base_chrome, top_chrome) = state
-            .alt_tab_switcher
-            .render_overlay_split(output_pos.size, scale);
+        use crate::switcher::{layout, BRAND_GOLD};
+        let kind = Kind::Unspecified;
 
-        // 1) Top overlays (close button, minimized dim) — highest Z, above thumbnails
-        let mut top: Vec<_> = top_chrome
-            .into_iter()
-            .map(CustomRenderElements::Overlay)
-            .collect();
-        top.reverse();
-        elements.extend(top);
+        // ── 1) Close button: bg quad + white X glyph (selected card only) ──
+        if let Some(close_bg) = switcher_close {
+            // X glyph on top of the bg.
+            if let Some(card) = switcher_cards.iter().find(|c| c.selected) {
+                let (loc, sz) = card.close_rect();
+                let inset = (sz as f32 * 0.28).round() as i32;
+                let glyph_pos: Point<f64, Physical> = (
+                    (loc.x + inset) as f64 * output_scale,
+                    (loc.y + inset) as f64 * output_scale,
+                ).into();
+                let glyph_dst = Size::<i32, Logical>::from((sz - 2 * inset, sz - 2 * inset));
+                if let Ok(x_elem) =
+                    smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement::from_buffer(
+                        renderer,
+                        glyph_pos,
+                        &state.cc_thumbs.x_glyph,
+                        Some(switcher_fade),
+                        None,
+                        Some(glyph_dst),
+                        kind,
+                    )
+                {
+                    elements.push(CustomRenderElements::Memory(x_elem));
+                }
+            }
+            elements.push(CustomRenderElements::Overlay(close_bg));
+        }
 
-        // 2) Thumbnail surfaces
+        // ── 2) App-icon badges (above preview, bottom-left of each card) ──
+        for (entry_index, buf) in &switcher_icon_bufs {
+            let Some(card) = switcher_cards.iter().find(|c| c.entry_index == *entry_index) else {
+                continue;
+            };
+            let (loc, sz) = card.icon_rect();
+            let pos: Point<f64, Physical> = (
+                loc.x as f64 * output_scale,
+                loc.y as f64 * output_scale,
+            ).into();
+            if let Ok(icon) =
+                smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement::from_buffer(
+                    renderer,
+                    pos,
+                    buf,
+                    Some(switcher_fade),
+                    None,
+                    Some(Size::<i32, Logical>::from((sz, sz))),
+                    kind,
+                )
+            {
+                elements.push(CustomRenderElements::Memory(icon));
+            }
+        }
+
+        // ── 3) Gold glow ring on the selected card (border + soft halo) ──
+        if let Some(card) = switcher_cards.iter().find(|c| c.selected) {
+            let cw = card.size.w;
+            let ch = card.size.h;
+            let corner_r = layout::CORNER_RADIUS * card.scale;
+            // Crisp accent ring just outside the preview edge.
+            if let Some(ref shader) = border_shader {
+                let bw = 4i32;
+                let pad = bw + 1;
+                let area = Rectangle::<i32, Logical>::new(
+                    (card.position.x - pad, card.position.y - pad).into(),
+                    (cw + pad * 2, ch + pad * 2).into(),
+                );
+                let mut bc = BRAND_GOLD;
+                bc[3] = 1.0;
+                elements.push(CustomRenderElements::Shader(PixelShaderElement::new(
+                    shader.clone(),
+                    area,
+                    None,
+                    switcher_fade,
+                    vec![
+                        Uniform::new("window_size", [cw as f32, ch as f32]),
+                        Uniform::new("corner_radius", corner_r),
+                        Uniform::new("border_width", bw as f32),
+                        Uniform::new("border_color", bc),
+                    ],
+                    kind,
+                )));
+            }
+            // Soft wider gold halo, same trick as window focus_glow.
+            if let Some(ref shader) = shadow_shader {
+                let expand = 40i32;
+                let area = Rectangle::<i32, Logical>::new(
+                    (card.position.x - expand, card.position.y - expand).into(),
+                    (cw + expand * 2, ch + expand * 2).into(),
+                );
+                let mut glow = BRAND_GOLD;
+                glow[3] = 0.55;
+                elements.push(CustomRenderElements::Shader(PixelShaderElement::new(
+                    shader.clone(),
+                    area,
+                    None,
+                    switcher_fade,
+                    vec![
+                        Uniform::new("window_size", [cw as f32, ch as f32]),
+                        Uniform::new("sigma", 16.0f32),
+                        Uniform::new("corner_radius", corner_r),
+                        Uniform::new("shadow_color", glow),
+                    ],
+                    kind,
+                )));
+            }
+        }
+
+        // ── 4) Per-card dim overlays (non-selected + minimized) ──
+        for dim in switcher_dims {
+            elements.push(CustomRenderElements::Overlay(dim));
+        }
+
+        // ── 5) Rounded live previews ──
         for &(slot_idx, ref window) in &thumb_windows {
             let slot = &thumbnail_slots[slot_idx];
             let win_geo = window.geometry();
@@ -1247,23 +1395,65 @@ pub fn render_surface(
                     1.0,
                 );
 
+            // Rounded corners on the preview if the shader is available;
+            // fall back to a plain rescale otherwise. corner_radius is in
+            // physical px (post-scale), matching the rendered preview size.
+            let rounded_shader = udev.rounded_tex_shader.as_ref();
+            let corner_phys = slot.corner_radius * output_scale as f32;
+            let preview_phys_w = rendered_w as f32 * output_scale as f32;
+            let preview_phys_h = rendered_h as f32 * output_scale as f32;
             for elem in full_elements {
                 let rescaled = RescaleRenderElement::from_element(
                     elem,
                     content_phys,
                     smithay::utils::Scale::from(thumb_scale),
                 );
-                elements.push(CustomRenderElements::Rescaled(rescaled));
+                if let Some(shader) = rounded_shader {
+                    elements.push(CustomRenderElements::RoundedSurface(
+                        crate::rounded_element::RoundedSurfaceElement::new(
+                            rescaled,
+                            shader.clone(),
+                            [preview_phys_w, preview_phys_h],
+                            corner_phys,
+                        ),
+                    ));
+                } else {
+                    elements.push(CustomRenderElements::Rescaled(rescaled));
+                }
             }
         }
 
-        // 3) Base chrome (cards, highlights, panel, dim) — behind thumbnails
-        let mut base: Vec<_> = base_chrome
-            .into_iter()
-            .map(CustomRenderElements::Overlay)
-            .collect();
-        base.reverse();
-        elements.extend(base);
+        // ── 6) Card drop shadows (behind previews) ──
+        if let Some(ref shader) = shadow_shader {
+            for card in &switcher_cards {
+                let cw = card.size.w;
+                let ch = card.size.h;
+                let corner_r = layout::CORNER_RADIUS * card.scale;
+                let expand = 36i32;
+                let area = Rectangle::<i32, Logical>::new(
+                    (card.position.x - expand, card.position.y - expand).into(),
+                    (cw + expand * 2, ch + expand * 2).into(),
+                );
+                elements.push(CustomRenderElements::Shader(PixelShaderElement::new(
+                    shader.clone(),
+                    area,
+                    None,
+                    switcher_fade,
+                    vec![
+                        Uniform::new("window_size", [cw as f32, ch as f32]),
+                        Uniform::new("sigma", 13.0f32),
+                        Uniform::new("corner_radius", corner_r),
+                        Uniform::new("shadow_color", [0.0f32, 0.0, 0.0, 0.45]),
+                    ],
+                    kind,
+                )));
+            }
+        }
+
+        // ── 7) Full-screen backdrop dim (behind everything) ──
+        if let Some(backdrop) = switcher_backdrop {
+            elements.push(CustomRenderElements::Overlay(backdrop));
+        }
     }
 
     // ── Hover preview (above bar, below alt-tab) ──────────────────

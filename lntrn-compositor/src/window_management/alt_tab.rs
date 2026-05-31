@@ -61,8 +61,23 @@ impl Lantern {
             .map(|m| m.surface.clone())
             .collect();
 
-        self.alt_tab_switcher.start_visible(all_surfaces, original, minimized);
+        let app_ids = self.switcher_app_ids(&all_surfaces);
+        self.alt_tab_switcher.start_visible(all_surfaces, app_ids, original, minimized);
         self.schedule_render();
+    }
+
+    /// Resolve the app_id for each entry surface (parallel to `surfaces`),
+    /// for the switcher's icon badges. Falls back to an empty string when
+    /// the window can't be found (icon resolution then yields no badge).
+    fn switcher_app_ids(&self, surfaces: &[WlSurface]) -> Vec<String> {
+        surfaces
+            .iter()
+            .map(|s| {
+                self.find_any_window(s)
+                    .map(|w| w.get_app_id())
+                    .unwrap_or_default()
+            })
+            .collect()
     }
 
     /// Switcher entry list: windows on the focused output's active workspace,
@@ -98,7 +113,8 @@ impl Lantern {
                 .iter()
                 .map(|m| m.surface.clone())
                 .collect();
-            self.alt_tab_switcher.start_silent(all_surfaces, original, minimized)
+            let app_ids = self.switcher_app_ids(&all_surfaces);
+            self.alt_tab_switcher.start_silent(all_surfaces, app_ids, original, minimized)
         };
 
         let Some(surface) = pending_surface else {

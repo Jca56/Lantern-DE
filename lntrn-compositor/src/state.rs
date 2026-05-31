@@ -305,6 +305,8 @@ pub struct Lantern {
     pub pending_workspace_moves: Vec<PendingWorkspaceMove>,
     pub fullscreen_windows: Vec<FullscreenWindow>,
     pub alt_tab_switcher: AltTabSwitcher,
+    /// App-icon cache for the Alt+Tab switcher's corner badges.
+    pub switcher_icons: crate::switcher::icons::SwitcherIconCache,
     pub wallpaper: WallpaperState,
     pub wallpaper_frame_counter: u32,
     pub layer_surfaces: Vec<LayerSurface>,
@@ -526,6 +528,7 @@ impl Lantern {
             pending_workspace_moves: Vec::new(),
             fullscreen_windows: Vec::new(),
             alt_tab_switcher: AltTabSwitcher::new(),
+            switcher_icons: crate::switcher::icons::SwitcherIconCache::new(96),
             wallpaper: WallpaperState::load_from_config(),
             wallpaper_frame_counter: 0,
             layer_surfaces: Vec::new(),

@@ -212,17 +212,34 @@ pub fn init_winit(
 
                         let switcher_visible = state.alt_tab_switcher.is_visible();
 
-                        // Alt+Tab overlay chrome + thumbnails
+                        // Alt+Tab spotlight overlay. The winit/nested backend
+                        // has no access to the udev shadow/glow/rounded
+                        // shaders, so it draws a simplified version: backdrop
+                        // dim → per-card dim overlays → close button → flat
+                        // previews. The real udev path (render/surface.rs)
+                        // gets the full chrome.
                         if switcher_visible {
                             state.alt_tab_switcher.update_sizes(output_geo.size);
                             let slots = state.alt_tab_switcher.thumbnail_slots(output_geo.size);
 
-                            let (base, top) = state
+                            // Top layer (drawn first = highest Z): close + dims.
+                            if let Some(close) =
+                                state.alt_tab_switcher.close_button_element(output_geo.size, scale)
+                            {
+                                elements.push(WinitRenderElements::Overlay(close));
+                            }
+                            for dim in
+                                state.alt_tab_switcher.dim_elements(output_geo.size, scale)
+                            {
+                                elements.push(WinitRenderElements::Overlay(dim));
+                            }
+                            // Backdrop dim added after previews below.
+                            let backdrop: Vec<_> = state
                                 .alt_tab_switcher
-                                .render_overlay_split(output_geo.size, scale);
-                            elements.extend(top.into_iter().map(WinitRenderElements::Overlay));
-                            // base chrome added after thumbnails below
-                            let base_chrome: Vec<_> = base.into_iter().map(WinitRenderElements::Overlay).collect();
+                                .backdrop_element(output_geo.size, scale)
+                                .into_iter()
+                                .map(WinitRenderElements::Overlay)
+                                .collect();
 
                             for slot in &slots {
                                 if let Some(window) = state.find_mapped_window(&slot.surface) {
@@ -251,7 +268,7 @@ pub fn init_winit(
                                     );
                                 }
                             }
-                            elements.extend(base_chrome);
+                            elements.extend(backdrop);
                         }
 
                         // Render windows manually with per-window alpha
