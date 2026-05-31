@@ -5,6 +5,7 @@ mod find_bar;
 mod format;
 mod keys;
 mod mouse;
+mod page;
 mod render;
 mod scrollbar;
 mod status_bar;
@@ -13,6 +14,7 @@ mod tabs;
 mod theme;
 mod title_bar;
 mod toolbar;
+mod wrap;
 
 use std::time::{Duration, Instant};
 
@@ -39,6 +41,8 @@ pub(crate) const ZONE_CLOSE: u32 = 1;
 pub(crate) const ZONE_MAXIMIZE: u32 = 2;
 pub(crate) const ZONE_MINIMIZE: u32 = 3;
 pub(crate) const ZONE_EDITOR: u32 = 10;
+pub(crate) const ZONE_PAGE_HANDLE_L: u32 = 11;
+pub(crate) const ZONE_PAGE_HANDLE_R: u32 = 12;
 pub(crate) const ZONE_EDITOR_SCROLL_THUMB: u32 = 4000;
 pub(crate) const ZONE_EDITOR_SCROLL_TRACK: u32 = 4001;
 
@@ -93,6 +97,11 @@ pub(crate) struct TextHandler {
     pub(crate) cursor_visible: bool,
     pub(crate) cursor_blink_deadline: Instant,
     pub(crate) dragging: bool,
+    /// Writable-area width as a fraction of the available editor width.
+    /// Controlled by dragging the page margins; persisted to disk.
+    pub(crate) page_width_frac: f32,
+    /// True while a page-margin handle is being dragged.
+    pub(crate) page_drag: bool,
     /// Wall-clock of the last animation tick — used for dt-based easing.
     pub(crate) last_anim_tick: Instant,
 }
@@ -116,7 +125,8 @@ impl TextHandler {
             next_id += 1;
             tabs.push(e);
         }
-        let theme = theme::load_active();
+        let cfg = theme::load();
+        let theme = cfg.theme;
         let palette = theme.palette();
         Self {
             window: None,
@@ -137,8 +147,18 @@ impl TextHandler {
             cursor_visible: true,
             cursor_blink_deadline: Instant::now() + BLINK_INTERVAL,
             dragging: false,
+            page_width_frac: cfg.page_width,
+            page_drag: false,
             last_anim_tick: Instant::now(),
         }
+    }
+
+    /// Persist current view settings (theme + page width) to disk.
+    pub(crate) fn save_config(&self) {
+        theme::save(&theme::NotepadConfig {
+            theme: self.theme,
+            page_width: self.page_width_frac,
+        });
     }
 
     /// Borrow the active editor.
@@ -221,9 +241,7 @@ impl TextHandler {
 
         if let Some(gpu) = &mut self.gpu {
             // Compute content_x matching render.rs page layout
-            let max_page_w = 800.0 * s;
-            let page_w = er.w.min(max_page_w);
-            let page_x = er.x + (er.w - page_w) * 0.5;
+            let (page_x, page_w) = page::geometry(er, self.page_width_frac, s);
             let content_x = page_x + pad;
             let content_max_w = (page_w - pad * 2.0).max(10.0);
 
@@ -312,11 +330,25 @@ impl ApplicationHandler for TextHandler {
                 let (cx, cy) = (position.x as f32, position.y as f32);
                 self.input.on_cursor_moved(cx, cy);
 
+                let on_handle = matches!(
+                    self.input.zone_at(cx, cy),
+                    Some(ZONE_PAGE_HANDLE_L | ZONE_PAGE_HANDLE_R)
+                );
+
                 if mouse::update_scrollbar_drag(self, cx, cy) {
                     // scrollbar drag consumes the move
+                } else if self.page_drag {
+                    mouse::set_page_width_from_cursor(self, cx);
+                    if let Some(w) = &self.window {
+                        w.set_cursor(CursorIcon::EwResize);
+                    }
                 } else if self.dragging {
                     self.click_to_cursor(cx, cy);
                     self.reset_blink();
+                } else if on_handle {
+                    if let Some(w) = &self.window {
+                        w.set_cursor(CursorIcon::EwResize);
+                    }
                 } else if let Some(dir) = self.edge_resize_direction() {
                     if let Some(w) = &self.window {
                         w.set_cursor(CursorIcon::from(dir));
@@ -388,6 +420,7 @@ impl ApplicationHandler for TextHandler {
                 let scale = self.scale;
                 let palette = self.palette;
                 let theme = self.theme;
+                let page_width_frac = self.page_width_frac;
                 // Split borrow: gpu, the active editor (via tabs), find_bar,
                 // and menu/toolbar state are all separate fields.
                 let active = self.active_tab;
@@ -406,6 +439,7 @@ impl ApplicationHandler for TextHandler {
                         &palette,
                         theme,
                         scale,
+                        page_width_frac,
                         cursor_vis,
                     )
                 } else {

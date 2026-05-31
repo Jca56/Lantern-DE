@@ -5,7 +5,7 @@
 
 use crate::editor::Editor;
 use crate::tab_strip::TabLabel;
-use crate::theme::{self, Theme};
+use crate::theme::Theme;
 use crate::TextHandler;
 use lntrn_ui::gpu::MenuBar;
 
@@ -71,7 +71,7 @@ impl TextHandler {
         self.theme = new_theme;
         self.palette = new_theme.palette();
         self.menu_bar = MenuBar::new(&self.palette);
-        theme::save_active(new_theme);
+        self.save_config();
         self.needs_redraw = true;
     }
 

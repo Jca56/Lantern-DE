@@ -120,17 +120,40 @@ pub fn dark_palette() -> FoxPalette {
 
 // ── Persistence ─────────────────────────────────────────────────────────────
 
+/// Default writable-area width as a fraction of the available editor width
+/// (0.0 = minimum column, 1.0 = full width with comfy margins). Wide and
+/// roomy out of the box; the user drags the page margins to taste.
+pub const DEFAULT_PAGE_WIDTH: f32 = 0.82;
+
+/// All persisted notepad settings. Lives in `~/.lantern/config/notepad.toml`.
+#[derive(Clone, Copy, Debug)]
+pub struct NotepadConfig {
+    pub theme: Theme,
+    /// Writable-area width fraction (see `DEFAULT_PAGE_WIDTH`).
+    pub page_width: f32,
+}
+
+impl Default for NotepadConfig {
+    fn default() -> Self {
+        Self {
+            theme: Theme::default(),
+            page_width: DEFAULT_PAGE_WIDTH,
+        }
+    }
+}
+
 fn config_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     PathBuf::from(home).join(".lantern/config/notepad.toml")
 }
 
-/// Load the active theme from disk. Returns `Theme::Paper` if no config exists
-/// or the file is malformed.
-pub fn load_active() -> Theme {
+/// Load the persisted config from disk. Returns defaults if no config exists
+/// or any field is missing / malformed.
+pub fn load() -> NotepadConfig {
+    let mut cfg = NotepadConfig::default();
     let path = config_path();
     let Ok(content) = std::fs::read_to_string(&path) else {
-        return Theme::default();
+        return cfg;
     };
     for line in content.lines() {
         let line = line.trim();
@@ -138,20 +161,29 @@ pub fn load_active() -> Theme {
             let rest = rest.trim_start_matches(|c: char| c == '=' || c.is_whitespace());
             let value = rest.trim_matches('"').trim();
             if let Some(theme) = Theme::from_str(value) {
-                return theme;
+                cfg.theme = theme;
+            }
+        } else if let Some(rest) = line.strip_prefix("page_width") {
+            let rest = rest.trim_start_matches(|c: char| c == '=' || c.is_whitespace());
+            if let Ok(v) = rest.trim().parse::<f32>() {
+                cfg.page_width = v.clamp(0.0, 1.0);
             }
         }
     }
-    Theme::default()
+    cfg
 }
 
-/// Persist the chosen theme to disk. Errors are silently ignored — theme
-/// choice is non-critical state.
-pub fn save_active(theme: Theme) {
+/// Persist the config to disk. Errors are silently ignored — this is
+/// non-critical view state.
+pub fn save(cfg: &NotepadConfig) {
     let path = config_path();
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let body = format!("theme = \"{}\"\n", theme.as_str());
+    let body = format!(
+        "theme = \"{}\"\npage_width = {:.3}\n",
+        cfg.theme.as_str(),
+        cfg.page_width,
+    );
     let _ = std::fs::write(&path, body);
 }

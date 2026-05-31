@@ -18,7 +18,7 @@ use crate::toolbar::{
 };
 use crate::{
     TextHandler, ZONE_CLOSE, ZONE_EDITOR, ZONE_EDITOR_SCROLL_THUMB, ZONE_EDITOR_SCROLL_TRACK,
-    ZONE_MAXIMIZE, ZONE_MINIMIZE,
+    ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_PAGE_HANDLE_L, ZONE_PAGE_HANDLE_R,
 };
 
 /// Result of a mouse event — same shape as `KeyAction` so callers can decide
@@ -129,6 +129,11 @@ fn handle_left_press(handler: &mut TextHandler, event_loop: &ActiveEventLoop) ->
             z if z >= ZONE_TAB_CLOSE_BASE && z < ZONE_TAB_CLOSE_BASE + 1000 => {
                 handler.close_tab((z - ZONE_TAB_CLOSE_BASE) as usize);
             }
+            ZONE_PAGE_HANDLE_L | ZONE_PAGE_HANDLE_R => {
+                handler.fmt_toolbar.size_dropdown_open = false;
+                handler.fmt_toolbar.spacing_dropdown_open = false;
+                handler.page_drag = true;
+            }
             ZONE_EDITOR_SCROLL_THUMB => begin_editor_scroll_drag(handler, false),
             ZONE_EDITOR_SCROLL_TRACK => begin_editor_scroll_drag(handler, true),
             _ => {
@@ -153,8 +158,32 @@ fn handle_left_release(handler: &mut TextHandler) -> MouseAction {
             handler.editor_mut().clear_selection();
         }
     }
+    if handler.page_drag {
+        handler.page_drag = false;
+        // Persist the new width once the drag settles.
+        handler.save_config();
+    }
     handler.editor_mut().scrollbar.dragging = false;
     MouseAction::Consumed
+}
+
+/// Set the page-width fraction from a cursor x during a margin drag. The page
+/// is centered, so the dragged edge sits at `center ± page_w/2`; we mirror the
+/// math in `render::page_geometry` so the edge tracks the cursor exactly.
+pub(crate) fn set_page_width_from_cursor(handler: &mut TextHandler, cx: f32) {
+    let s = handler.scale;
+    let er = editor_body_rect(handler);
+    let center_x = er.x + er.w * 0.5;
+    let desired_w = 2.0 * (cx - center_x).abs();
+
+    let max_w = (er.w - 2.0 * crate::page::COMFY_MARGIN * s).max(10.0);
+    let min_w = (crate::page::MIN_PAGE_W * s).min(max_w);
+    handler.page_width_frac = if max_w > min_w {
+        ((desired_w - min_w) / (max_w - min_w)).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    handler.needs_redraw = true;
 }
 
 // ── Scrollbar drag helpers ──────────────────────────────────────────────────

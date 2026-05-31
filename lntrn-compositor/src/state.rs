@@ -454,7 +454,15 @@ impl Lantern {
 
         let mut seat_state = SeatState::new();
         let mut seat: Seat<Self> = seat_state.new_wl_seat(&dh, "lantern");
-        seat.add_keyboard(Default::default(), 200, 25).unwrap();
+        let keyboard = seat.add_keyboard(Default::default(), 200, 25).unwrap();
+        // Default NumLock ON at session start. The Razer Naga side grid (and any
+        // real numpad) emit keypad keysyms; with NumLock off those decode to
+        // navigation keys (KP1=End, KP5=Begin/dead), so games see VK_END instead
+        // of VK_NUMPAD1. Locking NumLock on makes them produce digits. The user
+        // can still toggle it off with the physical key.
+        let mut mods = keyboard.modifier_state();
+        mods.num_lock = true;
+        keyboard.set_modifier_state(mods);
         seat.add_pointer();
 
         let space = Space::default();

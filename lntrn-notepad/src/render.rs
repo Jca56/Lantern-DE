@@ -79,7 +79,7 @@ pub fn measure_to_offset(
 }
 
 /// Convert a FormatSpan's attrs into (font_size, FontWeight, FontStyle).
-fn span_rendering(span: &FormatSpan, default_font_size: f32) -> (f32, FontWeight, FontStyle) {
+pub(crate) fn span_rendering(span: &FormatSpan, default_font_size: f32) -> (f32, FontWeight, FontStyle) {
     let fs = span.attrs.font_size.unwrap_or(default_font_size);
     let weight = if span.attrs.bold { FontWeight::Bold } else { FontWeight::Normal };
     let style = if span.attrs.italic { FontStyle::Italic } else { FontStyle::Normal };
@@ -111,86 +111,6 @@ pub fn measure_range(
         - measure_to_offset(text, editor, line, from, default_font_size)
 }
 
-/// Compute word-wrap break points for a single document line.
-/// Returns byte offsets where each visual row starts (first is always 0).
-/// `first_indent_px` reduces the first row's available width.
-fn compute_line_wraps(
-    text: &mut TextRenderer,
-    editor: &Editor,
-    line_idx: usize,
-    max_width: f32,
-    first_indent_px: f32,
-    default_font_size: f32,
-) -> Vec<usize> {
-    let line_str = &editor.lines[line_idx];
-    if line_str.is_empty() || max_width <= 0.0 {
-        return vec![0];
-    }
-
-    let spans = editor.formats.get(line_idx).iter_spans(line_str.len());
-    let mut row_starts: Vec<usize> = vec![0];
-    let mut row_x: f32 = 0.0;
-    // First row has reduced width for first-line indent
-    let mut effective_w = (max_width - first_indent_px).max(10.0);
-    let mut last_break: Option<(usize, f32)> = None; // (byte_after_break, row_x_at_that_point)
-
-    for span in &spans {
-        let (fs, weight, style) = span_rendering(span, default_font_size);
-        for (rel_i, ch) in line_str[span.start..span.end].char_indices() {
-            let byte_pos = span.start + rel_i;
-            let ch_w = text.measure_width_styled(
-                &line_str[byte_pos..byte_pos + ch.len_utf8()],
-                fs,
-                weight,
-                style,
-            );
-
-            if row_x + ch_w > effective_w && byte_pos > *row_starts.last().unwrap() {
-                if let Some((br_byte, br_x)) = last_break {
-                    if br_byte > *row_starts.last().unwrap() {
-                        row_starts.push(br_byte);
-                        row_x -= br_x;
-                    } else {
-                        row_starts.push(byte_pos);
-                        row_x = 0.0;
-                    }
-                } else {
-                    row_starts.push(byte_pos);
-                    row_x = 0.0;
-                }
-                last_break = None;
-                // Subsequent rows get full width (no indent)
-                effective_w = max_width;
-            }
-
-            row_x += ch_w;
-
-            // Track word-boundary break points: spaces and hyphens
-            if ch == ' ' || ch == '-' {
-                last_break = Some((byte_pos + ch.len_utf8(), row_x));
-            }
-        }
-    }
-
-    row_starts
-}
-
-/// Recompute all word-wrap info and store on the editor.
-fn compute_wraps(
-    text: &mut TextRenderer,
-    editor: &mut Editor,
-    max_width: f32,
-    scale: f32,
-    default_font_size: f32,
-) {
-    let mut wraps = Vec::with_capacity(editor.lines.len());
-    for i in 0..editor.lines.len() {
-        let indent_px = editor.formats.get(i).para.first_indent * scale;
-        wraps.push(compute_line_wraps(text, editor, i, max_width, indent_px, default_font_size));
-    }
-    editor.wrap_rows = wraps;
-}
-
 pub fn render_frame(
     gpu: &mut Gpu,
     editor: &mut Editor,
@@ -203,6 +123,7 @@ pub fn render_frame(
     palette: &FoxPalette,
     theme: Theme,
     scale: f32,
+    page_width_frac: f32,
     cursor_visible: bool,
 ) -> Option<MenuEvent> {
     let Gpu { ctx, painter, text } = gpu;
@@ -272,12 +193,10 @@ pub fn render_frame(
     let font_size = editor::FONT_SIZE * s;
     let pad = editor::PAD * s;
 
-    // Document mode: render the editor body as a centered "page" with
-    // generous side margins so prose has a fixed comfortable measure
-    // instead of stretching to the window edge.
-    let max_page_w = 800.0 * s;
-    let page_w = er.w.min(max_page_w);
-    let page_x = er.x + (er.w - page_w) * 0.5;
+    // Document mode: render the editor body as a centered "page". Its width
+    // is user-controlled via the draggable margins (`page_width_frac`), so
+    // prose can be a comfortable column or fill the screen — their call.
+    let (page_x, page_w) = crate::page::geometry(er, page_width_frac, s);
     let content_x = page_x + pad;
     let content_max_w = (page_w - pad * 2.0).max(10.0);
     let text_y_start = er.y + pad * 1.5 - editor.scroll_offset;
@@ -285,8 +204,12 @@ pub fn render_frame(
     // White page rect over the gutter so the typeable area stands out.
     painter.rect_filled(Rect::new(page_x, er.y, page_w, er.h), 0.0, pal.bg);
 
+    // Draggable margin handles, registered after ZONE_EDITOR so they win the
+    // hit-test where they overlap the editor body.
+    crate::page::draw_handles(input, painter, pal, er, page_x, page_w, s);
+
     // ── Compute word wraps ────────────────────────────────────────────
-    compute_wraps(text, editor, content_max_w, s, font_size);
+    crate::wrap::compute(text, editor, content_max_w, s, font_size);
 
     // Build per-line y-start positions (variable height per paragraph).
     let mut line_y_starts: Vec<f32> = Vec::with_capacity(editor.lines.len());
