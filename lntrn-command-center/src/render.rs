@@ -598,6 +598,7 @@ pub fn draw_content(
             body_alpha_base,
             surface_w,
             surface_h,
+            state.settings_scroll,
         );
         return icons;
     }

@@ -199,6 +199,9 @@ pub struct AppState {
     /// The knob renders from this while it's set; on release the value
     /// is committed to `config` and the field cleared.
     pub settings_drag_pending: Option<f32>,
+    /// Vertical scroll offset (physical px) for the settings page so it
+    /// stays usable when the panel is too short to show every row.
+    pub settings_scroll: f32,
     /// Active view-switch animation: the view we're transitioning
     /// *from*, plus the wall-clock start. `panel_view` is already set
     /// to the destination; the body crossfades from `from` to `panel_view`
@@ -319,6 +322,7 @@ impl AppState {
             config: crate::settings::Config::load(),
             settings_drag: None,
             settings_drag_pending: None,
+            settings_scroll: 0.0,
             cursor_phys: (0.0, 0.0),
             view_anim_from: None,
             view_anim_start: None,
@@ -384,6 +388,7 @@ impl AppState {
         self.settings_open = !self.settings_open;
         // Settings is mutually exclusive with other overlays.
         if self.settings_open {
+            self.settings_scroll = 0.0;
             self.emojis.open = false;
             self.clipboard.open = false;
             self.notes.flush_edits_to_selected();

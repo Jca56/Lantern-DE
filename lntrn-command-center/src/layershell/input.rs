@@ -25,7 +25,11 @@ pub(super) fn handle_scroll(wl: &mut WlState, app: &mut AppState) {
     );
     let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
 
-    if app.emojis.open {
+    if app.settings_open {
+        let top_y = crate::controls::content_top_y(panel_rect, scale_f);
+        let max = crate::settings::max_scroll(panel_rect, top_y, scale_f, app.config.text_size);
+        app.settings_scroll = (app.settings_scroll + dy * scale_f).clamp(0.0, max);
+    } else if app.emojis.open {
         let top_y = crate::controls::content_top_y(panel_rect, scale_f);
         let panel_bottom = panel_rect.y + panel_rect.h;
         let grid = crate::emojis::grid_rect(panel_rect, top_y, scale_f, panel_bottom);

@@ -66,8 +66,8 @@ pub(super) fn handle_drag(
             phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical(),
         );
         let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
-        let top_y = crate::controls::content_top_y(panel_rect, scale_f);
-        let rows = crate::settings::layout(panel_rect, top_y, scale_f);
+        let top_y = crate::controls::content_top_y(panel_rect, scale_f) - app.settings_scroll;
+        let rows = crate::settings::layout(panel_rect, top_y, scale_f, app.config.text_size);
         let phys_cx = wl.cursor_x as f32 * scale_f;
         if let Some(value) = crate::settings::hit_slider_only(&rows, key, phys_cx) {
             if key.defers_during_drag() {

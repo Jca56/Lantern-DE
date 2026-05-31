@@ -13,7 +13,7 @@ use smithay::{
 use std::time::Instant;
 
 use crate::state::Lantern;
-use crate::window_management::{ArrowDir, ResizeAction};
+use crate::window_management::ArrowDir;
 
 use super::spawn::{fire_audio_osd, fire_brightness_osd, spawn_detached, spawn_detached_args, spawn_detached_args_logged, AudioRepeat};
 
@@ -222,34 +222,62 @@ impl Lantern {
                     }
                 }
 
-                // Super+Up/Down — resize. Middle column does aspect-locked
-                // resize. Edge columns (left/right) do vertical-only resize.
-                // Super+Left/Right intentionally do nothing.
+                // Super+Up / Super+Down — grow / shrink through size stages.
+                // Free windows resize aspect-locked AND re-centre (the classic
+                // centre resize — also how you pull a window back to the
+                // middle); edge-snapped windows pin their snapped edge.
+                // Super+Left/Right are left for clients.
                 if event.state() == KeyState::Pressed
                     && _modifiers.logo && !_modifiers.shift && !_modifiers.ctrl && !_modifiers.alt
                 {
-                    let raw = keysym.modified_sym().raw();
-                    let action = match raw {
-                        xkb::KEY_Up   => Some(ResizeAction::Grow),
-                        xkb::KEY_Down => Some(ResizeAction::Shrink),
+                    let grow = match keysym.modified_sym().raw() {
+                        xkb::KEY_Up => Some(true),
+                        xkb::KEY_Down => Some(false),
                         _ => None,
                     };
-                    if let Some(action) = action {
-                        data.resize_focused(action);
+                    if let Some(grow) = grow {
+                        data.resize_focused(grow);
                         data.schedule_render();
                         return FilterResult::Intercept(());
                     }
                 }
 
-                // Super+Shift+Arrow — move one cell on the 3×3 work-area
-                // grid. Clamps at the edge. Two quick presses naturally
-                // stack into a two-cell jump because the in-flight
-                // animation redirects.
+                // Super+Shift+Arrow — smart snap. Throw the focused window
+                // to that edge, filling the region with gaps. Repeating the
+                // same arrow cycles ½ → ⅓ → ⅔; a perpendicular arrow while
+                // edge-snapped makes a corner. Neighbours never move.
                 if event.state() == KeyState::Pressed
                     && _modifiers.logo && _modifiers.shift && !_modifiers.ctrl && !_modifiers.alt
                 {
                     if let Some(arrow) = arrow_dir_from_keysym(keysym.modified_sym().raw()) {
-                        data.move_focused_one_cell(arrow);
+                        data.snap_focused_dir(arrow);
+                        data.schedule_render();
+                        return FilterResult::Intercept(());
+                    }
+                }
+
+                // Super+Ctrl+Arrow — swap the focused window with the
+                // nearest neighbour in that direction (reorder). Both trade
+                // position and size.
+                if event.state() == KeyState::Pressed
+                    && _modifiers.logo && _modifiers.ctrl && !_modifiers.shift && !_modifiers.alt
+                {
+                    if let Some(arrow) = arrow_dir_from_keysym(keysym.modified_sym().raw()) {
+                        data.swap_focused(arrow);
+                        data.schedule_render();
+                        return FilterResult::Intercept(());
+                    }
+                }
+
+                // Super+Shift+Ctrl+Arrow — move the focused window to the
+                // adjacent monitor in that direction. Snapped windows
+                // re-snap on the new monitor; free windows keep size +
+                // relative position. No-op on a single display.
+                if event.state() == KeyState::Pressed
+                    && _modifiers.logo && _modifiers.shift && _modifiers.ctrl && !_modifiers.alt
+                {
+                    if let Some(arrow) = arrow_dir_from_keysym(keysym.modified_sym().raw()) {
+                        data.move_focused_to_output(arrow);
                         data.schedule_render();
                         return FilterResult::Intercept(());
                     }

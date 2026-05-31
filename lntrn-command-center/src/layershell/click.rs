@@ -198,9 +198,11 @@ pub(super) fn handle_clicks(
             // Already handled.
         } else if app.settings_open && {
             // While the settings page is open all clicks inside the
-            // panel route to the settings hit-test first.
-            let top_y = crate::controls::content_top_y(panel_rect, scale_f);
-            let rows = crate::settings::layout(panel_rect, top_y, scale_f);
+            // panel route to the settings hit-test first. Offset by the
+            // scroll so clicks line up with the on-screen rows.
+            let top_y =
+                crate::controls::content_top_y(panel_rect, scale_f) - app.settings_scroll;
+            let rows = crate::settings::layout(panel_rect, top_y, scale_f, app.config.text_size);
             if let Some(hit) = crate::settings::hit_test(&rows, phys_cx, phys_cy) {
                 match hit {
                     crate::settings::SettingHit::Toggle(key) => {

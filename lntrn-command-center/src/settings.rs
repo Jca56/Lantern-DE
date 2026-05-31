@@ -12,11 +12,25 @@ use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
 // ── Visual constants ───────────────────────────────────────────────────────
 
-const TITLE_FONT: f32 = 30.0;
-const SECTION_FONT: f32 = 16.0;
-const ROW_FONT: f32 = 18.0;
-const VALUE_FONT: f32 = 16.0;
-const ROW_H: f32 = 64.0;
+// Fonts + row height scale off the user's unified `text_size` so the
+// Settings page previews changes live as the slider is dragged. Anchored
+// so the default text size (22) reproduces the old fixed values.
+fn title_font(text_size: f32) -> f32 {
+    text_size * 1.4
+}
+fn section_font(text_size: f32) -> f32 {
+    (text_size * 0.78).max(13.0)
+}
+fn row_font(text_size: f32) -> f32 {
+    text_size
+}
+fn value_font(text_size: f32) -> f32 {
+    (text_size * 0.78).max(13.0)
+}
+fn row_height(text_size: f32) -> f32 {
+    text_size * 2.9
+}
+
 const ROW_GAP: f32 = 8.0;
 const SECTION_GAP: f32 = 18.0;
 const PAD: f32 = 32.0;
@@ -345,17 +359,17 @@ pub enum ControlLayout {
 
 /// Build the per-row layouts for the current panel rect. Caller uses
 /// this for both drawing and click/drag hit-testing.
-pub fn layout(panel: Rect, top_y: f32, scale: f32) -> Vec<RowLayout> {
+pub fn layout(panel: Rect, top_y: f32, scale: f32, text_size: f32) -> Vec<RowLayout> {
     let mut out = Vec::new();
     let pad = PAD * scale;
     let body_x = panel.x + pad;
     let body_w = panel.w - pad * 2.0;
-    let mut y = top_y + pad + TITLE_FONT * scale + 18.0 * scale;
-    let row_h = ROW_H * scale;
+    let mut y = top_y + pad + title_font(text_size) * scale + 18.0 * scale;
+    let row_h = row_height(text_size) * scale;
     let row_pad_x = ROW_PAD_X * scale;
 
     for section in SECTIONS {
-        y += SECTION_FONT * scale + 10.0 * scale;
+        y += section_font(text_size) * scale + 10.0 * scale;
         for (i, row) in section.rows.iter().enumerate() {
             let rect = Rect::new(body_x, y, body_w, row_h);
             let control = match row.kind {
@@ -383,6 +397,36 @@ pub fn layout(panel: Rect, top_y: f32, scale: f32) -> Vec<RowLayout> {
         y += SECTION_GAP * scale;
     }
     out
+}
+
+/// Total height (physical px) of the whole settings page below the
+/// content top — title, every section header, and every row. Used to
+/// size the scrollbar and clamp the scroll offset.
+pub fn content_height(scale: f32, text_size: f32) -> f32 {
+    let pad = PAD * scale;
+    let mut h = pad + title_font(text_size) * scale + 18.0 * scale;
+    let row_h = row_height(text_size) * scale;
+    for section in SECTIONS {
+        h += section_font(text_size) * scale + 10.0 * scale;
+        for (i, _row) in section.rows.iter().enumerate() {
+            h += row_h;
+            if i + 1 < section.rows.len() {
+                h += ROW_GAP * scale;
+            }
+        }
+        h += SECTION_GAP * scale;
+    }
+    // Breathing room so the last row isn't flush against the bottom edge
+    // when fully scrolled.
+    h + pad
+}
+
+/// Max scroll offset (physical px) for the current panel. Zero when all
+/// content fits inside the visible body.
+pub fn max_scroll(panel: Rect, top_y: f32, scale: f32, text_size: f32) -> f32 {
+    let content_bottom = top_y + content_height(scale, text_size);
+    let viewport_bottom = panel.y + panel.h;
+    (content_bottom - viewport_bottom).max(0.0)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -479,34 +523,44 @@ pub fn draw(
     alpha: f32,
     surface_w: u32,
     surface_h: u32,
+    scroll: f32,
 ) {
     let pad = PAD * scale;
     let body_x = panel.x + pad;
     let body_w = panel.w - pad * 2.0;
 
+    // Clip the whole page to the body area below the controls bar so
+    // scrolled-off content disappears cleanly instead of overflowing the
+    // panel.
+    let clip = Rect::new(panel.x, top_y, panel.w, (panel.y + panel.h - top_y).max(0.0));
+    painter.push_clip(clip);
+    text.push_clip([clip.x, clip.y, clip.w, clip.h]);
+
+    // Everything scrolls together (title included) — shift the content
+    // top up by the scroll offset.
+    let draw_top = top_y - scroll;
+    let text_size = cfg.text_size;
+
     // Title.
-    let title_font = TITLE_FONT * scale;
+    let title_px = title_font(text_size) * scale;
     text.queue(
         "Settings",
-        title_font,
+        title_px,
         body_x,
-        top_y + pad,
+        draw_top + pad,
         Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(alpha),
         body_w,
         surface_w,
         surface_h,
     );
 
-    let rows = layout(panel, top_y, scale);
+    let rows = layout(panel, draw_top, scale, text_size);
     let mut row_iter = rows.iter().peekable();
 
-    let mut section_y = top_y + pad + title_font + 18.0 * scale;
+    let mut section_y = draw_top + pad + title_px + 18.0 * scale;
     for section in SECTIONS {
-        if section_y >= panel.y + panel.h {
-            break;
-        }
         // Section header.
-        let sf = SECTION_FONT * scale;
+        let sf = section_font(text_size) * scale;
         text.queue(
             section.title,
             sf,
@@ -528,6 +582,31 @@ pub fn draw(
             }
         }
         section_y += SECTION_GAP * scale;
+    }
+
+    painter.pop_clip();
+    text.pop_clip();
+
+    // Subtle scrollbar on the right edge when content overflows. Drawn
+    // outside the content clip so it always reads as full-height.
+    let max = max_scroll(panel, top_y, scale, text_size);
+    if max > 0.0 {
+        let track_w = 4.0 * scale;
+        let track_x = panel.x + panel.w - track_w - 4.0 * scale;
+        let track_y = clip.y;
+        let track_h = clip.h;
+        painter.rect_filled(
+            Rect::new(track_x, track_y, track_w, track_h),
+            track_w / 2.0,
+            Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(0.06 * alpha),
+        );
+        let thumb_h = (track_h * track_h / (track_h + max)).max(20.0 * scale);
+        let thumb_y = track_y + (track_h - thumb_h) * (scroll / max).clamp(0.0, 1.0);
+        painter.rect_filled(
+            Rect::new(track_x, thumb_y, track_w, thumb_h),
+            track_w / 2.0,
+            Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(0.30 * alpha),
+        );
     }
 }
 
@@ -558,12 +637,12 @@ fn draw_row(
         Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(ROW_BORDER_ALPHA * alpha),
     );
 
-    let row_font = ROW_FONT * scale;
+    let row_px = row_font(cfg.text_size) * scale;
     let label_x = layout.rect.x + ROW_PAD_X * scale;
-    let label_y = layout.rect.y + (layout.rect.h - row_font) / 2.0;
+    let label_y = layout.rect.y + (layout.rect.h - row_px) / 2.0;
     text.queue(
         row_def.label,
-        row_font,
+        row_px,
         label_x,
         label_y,
         Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(0.95 * alpha),
@@ -595,7 +674,10 @@ fn draw_row(
                 RowKind::Slider(_, _, u) => u,
                 _ => "",
             };
-            draw_slider(painter, text, r, scale, alpha, value, min, max, unit, surface_w, surface_h);
+            draw_slider(
+                painter, text, r, scale, alpha, value, min, max, unit, cfg.text_size, surface_w,
+                surface_h,
+            );
         }
     }
 }
@@ -633,6 +715,7 @@ fn draw_slider(
     min: f32,
     max: f32,
     unit: &str,
+    text_size: f32,
     surface_w: u32,
     surface_h: u32,
 ) {
@@ -662,7 +745,7 @@ fn draw_slider(
 
     // Value label to the right of the slider (small).
     let value_str = format_value(value, unit);
-    let vf = VALUE_FONT * scale;
+    let vf = value_font(text_size) * scale;
     let vw = text.measure_width(&value_str, vf);
     text.queue(
         &value_str,
