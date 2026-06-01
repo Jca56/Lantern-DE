@@ -46,14 +46,14 @@ pub fn draw_background(p: &mut Painter, w: f32, h: f32, maximized: bool) {
 
 // ── Window controls ─────────────────────────────────────────────────────────
 
-const BTN_RADIUS: f32 = 14.0;
+const BTN_RADIUS: f32 = 10.0;
 const BTN_THICK: f32 = 1.5;
-const ICON_SIZE: f32 = 5.0;
+const ICON_SIZE: f32 = 4.0;
 
 fn btn_positions(w: f32) -> (f32, f32, f32, f32) {
     let y = crate::ui_chrome::TITLE_BAR_HEIGHT * 0.5;
-    // Right margin slightly enlarged to pull the controls in from the edge.
-    (w - 40.0, w - 78.0, w - 116.0, y)
+    // Compact controls pulled in from the right edge, ~30px apart.
+    (w - 30.0, w - 60.0, w - 90.0, y)
 }
 
 fn dist(cx: f32, cy: f32, bx: f32, by: f32) -> f32 {

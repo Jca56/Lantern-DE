@@ -21,6 +21,9 @@ pub struct MenuBar {
     open_index: Option<usize>,
     /// Cached rects for each label, set during draw.
     label_rects: Vec<Rect>,
+    /// Label font size (before scale). Defaults to the theme body font; can be
+    /// overridden (e.g. for a compact title bar) via `with_font_size`.
+    font_size: f32,
 }
 
 /// Base zone ID for menu bar labels. Each label uses ZONE_BASE + index.
@@ -36,8 +39,18 @@ impl MenuBar {
             context_menu: ContextMenu::new(style),
             open_index: None,
             label_rects: Vec::new(),
+            font_size: FONT_BODY,
         }
     }
+
+    /// Override the label font size (before scale). Use for a compact menu bar.
+    pub fn with_font_size(mut self, font_size: f32) -> Self {
+        self.font_size = font_size;
+        self
+    }
+
+    /// Current label font size (before scale).
+    pub fn font_size(&self) -> f32 { self.font_size }
 
     pub fn is_open(&self) -> bool { self.open_index.is_some() }
 
@@ -54,7 +67,7 @@ impl MenuBar {
     ) {
         // Compute label rects
         self.label_rects.clear();
-        let font = FONT_BODY * scale;
+        let font = self.font_size * scale;
         let pad_h = LABEL_PAD_H * scale;
         let pad_v = LABEL_PAD_V * scale;
         let mut x = rect.x + pad_h * 0.5;
@@ -140,7 +153,7 @@ impl MenuBar {
         sh: u32,
         scale: f32,
     ) {
-        let font = FONT_BODY * scale;
+        let font = self.font_size * scale;
         let pad_h = LABEL_PAD_H * scale;
         let r = 6.0 * scale;
 
@@ -175,7 +188,7 @@ impl MenuBar {
         sh: u32,
         scale: f32,
     ) {
-        let font = FONT_BODY * scale;
+        let font = self.font_size * scale;
         let pad_h = LABEL_PAD_H * scale;
         let r = 6.0 * scale;
 

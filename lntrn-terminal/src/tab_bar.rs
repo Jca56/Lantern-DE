@@ -7,15 +7,18 @@ use crate::config::WindowMode;
 // ── Constants ───────────────────────────────────────────────────────────────
 
 const TAB_MAX_WIDTH: f32 = 500.0;
-const TAB_MIN_WIDTH: f32 = 90.0;
+const TAB_MIN_WIDTH: f32 = 80.0;
 const TAB_GAP: f32 = 6.0;
-const TAB_PAD_H: f32 = 14.0;
-const NEW_TAB_WIDTH: f32 = 48.0;
-const TAB_CLOSE_SIZE: f32 = 24.0;
-const TAB_FONT_SIZE: f32 = 22.0;
-const PIN_WIDTH: f32 = 22.0;
+const TAB_PAD_H: f32 = 12.0;
+const NEW_TAB_WIDTH: f32 = 30.0;
+const TAB_CLOSE_SIZE: f32 = 22.0;
+const TAB_FONT_SIZE: f32 = 18.0;
+const PIN_WIDTH: f32 = 20.0;
 const DOUBLE_CLICK_MS: u128 = 400;
-const TAB_PAD_V: f32 = 8.0;
+const TAB_PAD_V: f32 = 3.0;
+/// Corner radius for tab pills — small for a pointier, near-square look
+/// (90% straight edges) rather than a full pill.
+const TAB_CORNER_R: f32 = 4.0;
 /// Internal left inset inside the tabs region so the first tab's rounded left
 /// edge isn't clipped by `push_clip(bounds)`.
 const TABS_INNER_LEFT: f32 = 6.0;
@@ -191,7 +194,7 @@ pub enum TabBarAction {
 
 /// Per-char width used for tab title measurement. Uses the ceiling of
 /// `font * 0.6` to match the monospace grid cell width (see `render.rs`).
-const CHAR_W: f32 = 14.0; // ceil(22 * 0.6)
+const CHAR_W: f32 = 11.0; // ceil(18 * 0.6)
 
 /// Compute widths for each tab based on title length, fitting within available space.
 fn calc_tab_widths(titles: &[&str], available: f32) -> Vec<f32> {
@@ -310,8 +313,8 @@ pub fn draw_tab_bar(
         let is_hovered = hit(rect, cursor_pos);
         let is_renaming = state.renaming == Some(i);
 
-        // Tab background (pill shape)
-        let pill_r = rect.h / 2.0;
+        // Tab background — pointier, near-square corners (not a full pill)
+        let pill_r = TAB_CORNER_R;
         if is_renaming {
             painter.rect_filled(rect, pill_r, pal.tab_rename);
             // Gold border for rename mode
@@ -384,7 +387,7 @@ pub fn draw_tab_bar(
 
     // "+" new tab button (pill) — positioned after last dynamic tab
     let nb = new_tab_rect(&widths, bounds);
-    let nb_r = nb.h / 2.0;
+    let nb_r = TAB_CORNER_R;
     let plus_hovered = hit(nb, cursor_pos);
     if plus_hovered {
         painter.rect_filled(nb, nb_r, pal.plus_bg_hover);
@@ -395,7 +398,7 @@ pub fn draw_tab_bar(
     let plus_color = if plus_hovered { pal.plus_icon_hover } else { pal.plus_icon };
     let cx = nb.x + nb.w / 2.0;
     let cy = nb.y + nb.h / 2.0;
-    let arm = 8.0;
+    let arm = 6.0;
     painter.line(cx - arm, cy, cx + arm, cy, 2.0, plus_color);
     painter.line(cx, cy - arm, cx, cy + arm, 2.0, plus_color);
 

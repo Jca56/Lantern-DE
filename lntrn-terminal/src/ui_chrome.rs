@@ -10,12 +10,12 @@ use crate::night_sky;
 // ── Constants ───────────────────────────────────────────────────────────────
 
 /// Unified title bar height — accommodates inline tabs, menus, and window controls.
-pub const TITLE_BAR_HEIGHT: f32 = 50.0;
+pub const TITLE_BAR_HEIGHT: f32 = 30.0;
 
 /// Width reserved on the right for window controls (same in both modes — they
-/// share the circular control style). Buttons sit at w-40 / w-78 / w-116 with
-/// 14px radius, so the leftmost edge is at w-130 — reserve a bit beyond that.
-const CONTROLS_W: f32 = 140.0;
+/// share the circular control style). Buttons sit at w-30 / w-60 / w-90 with
+/// 10px radius, so the leftmost edge is at w-100 — reserve a bit beyond that.
+const CONTROLS_W: f32 = 108.0;
 
 /// Left margin for the menu bar.
 const MENU_LEFT: f32 = 8.0;
@@ -28,7 +28,11 @@ const TABS_LEFT_INSET: f32 = 12.0;
 const DIVIDER_W: f32 = 2.5;
 
 // Replicated from lntrn_ui::gpu::menu_bar (private constants there).
-const MENU_FONT_BODY: f32 = 28.0;
+// Compact menu font for the title bar. The MenuBar is constructed with this
+// same value (see ChromeState::new) so our layout width calc lines up exactly
+// with where the menu labels actually render. Smaller than the theme body font
+// so the title bar can be slim.
+const MENU_FONT_BODY: f32 = 20.0;
 const MENU_LABEL_PAD_H: f32 = 8.0;
 const MENU_LABEL_GAP: f32 = 12.0;
 
@@ -70,7 +74,7 @@ impl ChromeState {
     pub fn new() -> Self {
         let palette = FoxPalette::dark();
         Self {
-            menu_bar: MenuBar::new(&palette),
+            menu_bar: MenuBar::new(&palette).with_font_size(MENU_FONT_BODY),
             context_menu: ContextMenu::new(ContextMenuStyle::from_palette(&palette)),
             palette,
         }
