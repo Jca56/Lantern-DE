@@ -49,7 +49,17 @@ pub struct LanternConfig {
     pub font: FontConfig,
     pub general: GeneralConfig,
     #[serde(default)]
+    pub sidebar: SidebarConfig,
+    #[serde(default)]
     pub pinned_tabs: Vec<PinnedTab>,
+}
+
+/// Sidebar preferences.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SidebarConfig {
+    /// User-chosen width from dragging the resize handle. `None` = auto-fit.
+    pub width: Option<f32>,
 }
 
 /// Terminal font settings.
@@ -98,6 +108,7 @@ impl Default for LanternConfig {
         Self {
             font: FontConfig::default(),
             general: GeneralConfig::default(),
+            sidebar: SidebarConfig::default(),
             pinned_tabs: Vec::new(),
         }
     }

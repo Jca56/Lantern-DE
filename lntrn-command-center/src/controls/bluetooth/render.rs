@@ -1,84 +1,16 @@
-//! Bluetooth view rendering — inline tile in the controls row + the
-//! full-content view (header, toggles row, paired/available device
-//! sections) when the user opens the BT tile.
+//! Bluetooth click-expand view — the full-content view (header, toggles
+//! row, paired/available device sections) shown when the user opens the
+//! BT tile, plus its hit-testing.
 //!
-//! Modal dialogs (pair prompt, incoming-file request) live in
-//! `super::modals` since they have their own layout and click flow.
+//! The inline controls-row glyph lives in `super::glyph`; the expanded
+//! device-detail block in `super::detail`; inline request strips (pair /
+//! file Accept-Reject) in `super::prompt`.
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
-use crate::controls::tile::TileLayout;
+use super::detail;
+use super::prompt::{self, prompt_button_rects, prompt_extra_height, row_prompt, RowPrompt};
 use super::{Bluetooth, Device, SendStatus};
-
-// ── Inline tile ─────────────────────────────────────────────────────────────
-
-const ICON_SIZE: f32 = 28.0;
-const ICON_LEFT_PAD: f32 = 16.0;
-
-pub const TILE_WIDTH: f32 = ICON_LEFT_PAD + ICON_SIZE;
-
-#[allow(clippy::too_many_arguments)]
-pub fn draw_inline(
-    painter: &mut Painter,
-    _text: &mut TextRenderer,
-    bt: &Bluetooth,
-    layout: &TileLayout,
-    scale: f32,
-    alpha: f32,
-    _surface_w: u32,
-    _surface_h: u32,
-    lit: bool,
-) {
-    if !bt.is_present() {
-        return;
-    }
-    let icon_size = ICON_SIZE * scale;
-    let icon_x = layout.x + ICON_LEFT_PAD * scale;
-    let icon_y = layout.y + (layout.h - icon_size) / 2.0;
-    let icon_alpha = if bt.is_powered() { alpha } else { 0.30 * alpha };
-    let color = if lit {
-        Color::from_rgb8(0xc8, 0x86, 0x0a).with_alpha(icon_alpha)
-    } else {
-        Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(icon_alpha)
-    };
-    draw_bt_glyph_colored(painter, icon_x, icon_y, icon_size, icon_size, color);
-}
-
-#[allow(dead_code)]
-fn draw_bt_glyph(painter: &mut Painter, x: f32, y: f32, w: f32, h: f32, alpha: f32) {
-    let color = Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(alpha);
-    draw_bt_glyph_colored(painter, x, y, w, h, color);
-}
-
-fn draw_bt_glyph_colored(painter: &mut Painter, x: f32, y: f32, w: f32, h: f32, color: Color) {
-    let pt = |fx: f32, fy: f32| (x + fx * w, y + fy * h);
-    // We render the bluetooth rune as a stroked path: top-bottom spine
-    // line + four diagonal lines forming the two bowed-out shapes.
-    // Stroked shapes look better than triangle-fanning a non-convex
-    // polygon (lesson from the lightning bolt).
-    let stroke = w * 0.12;
-    let top = pt(0.50, 0.05);
-    let bot = pt(0.50, 0.95);
-    let mid_left = pt(0.20, 0.30);
-    let mid_left_b = pt(0.20, 0.70);
-    let upper_right = pt(0.80, 0.30);
-    let lower_right = pt(0.80, 0.70);
-    let center = pt(0.50, 0.50);
-
-    // Spine (vertical line top → bottom).
-    painter.line_round(top.0, top.1, bot.0, bot.1, stroke, color);
-    // Top diamond: top → upper-right → center.
-    painter.line_round(top.0, top.1, upper_right.0, upper_right.1, stroke, color);
-    painter.line_round(upper_right.0, upper_right.1, center.0, center.1, stroke, color);
-    // Bottom diamond: center → lower-right → bottom.
-    painter.line_round(center.0, center.1, lower_right.0, lower_right.1, stroke, color);
-    painter.line_round(lower_right.0, lower_right.1, bot.0, bot.1, stroke, color);
-    // The two left-side cross strokes that complete the bowtie.
-    painter.line_round(top.0, top.1, mid_left.0, mid_left.1, stroke, color);
-    painter.line_round(mid_left.0, mid_left.1, center.0, center.1, stroke, color);
-    painter.line_round(center.0, center.1, mid_left_b.0, mid_left_b.1, stroke, color);
-    painter.line_round(mid_left_b.0, mid_left_b.1, bot.0, bot.1, stroke, color);
-}
 
 // ── Click-expand view ───────────────────────────────────────────────────────
 
@@ -99,10 +31,12 @@ const SECTION_HEADER_BOTTOM_GAP: f32 = 6.0;
 const SECTION_GAP: f32 = 12.0;
 
 const ROW_HEIGHT: f32 = 56.0;
-const ROW_INNER_PAD: f32 = 16.0;
-const ROW_RIGHT_GAP: f32 = 12.0;
+pub(super) const ROW_INNER_PAD: f32 = 16.0;
+pub(super) const ROW_RIGHT_GAP: f32 = 12.0;
 const MAX_PAIRED_ROWS: usize = 4;
-const MAX_UNPAIRED_ROWS: usize = 4;
+// Show more of the (now junk-filtered, RSSI-ranked) available list so a
+// real device like earbuds isn't pushed off by a few named smart-locks.
+const MAX_UNPAIRED_ROWS: usize = 6;
 
 fn header_row_y(panel_top_y: f32, scale: f32) -> f32 {
     panel_top_y + VIEW_TOP_PAD * scale
@@ -185,91 +119,28 @@ pub enum BtClick {
     /// Click on the Send-file button inside the expanded panel. Only
     /// fires when the device exposes an OBEX push profile.
     SendButton(String),
+    /// Accept button on an inline request strip (incoming file, incoming
+    /// pair, or outgoing pair-confirm) attached to this device's row.
+    PromptAccept(String),
+    /// Reject button on an inline request strip.
+    PromptReject(String),
 }
 
-// ── Expanded-row constants ─────────────────────────────────────────────
-/// Padding inside the expanded panel.
-const EXPAND_PAD_TOP: f32 = 10.0;
-const EXPAND_PAD_BOTTOM: f32 = 14.0;
-const EXPAND_LINE_GAP: f32 = 6.0;
-const EXPAND_LABEL_W_FRAC: f32 = 0.30;
-const EXPAND_BUTTON_TOP_GAP: f32 = 14.0;
-const EXPAND_BUTTON_H: f32 = 44.0;
-const EXPAND_BUTTON_W: f32 = 180.0;
-const EXPAND_BUTTON_GAP: f32 = 12.0;
-
-/// Body font for the expanded view, scaled off the user's Text Size
-/// setting. We use the setting directly so the device-detail rows
-/// honour what the user picked in Settings.
-fn body_font(text_size: f32, scale: f32) -> f32 {
+/// Body font for the expanded view + inline strips, scaled off the
+/// user's Text Size setting so device rows honour what they picked.
+pub(super) fn body_font(text_size: f32, scale: f32) -> f32 {
     (text_size.max(12.0)) * scale
 }
 
-fn label_font(text_size: f32, scale: f32) -> f32 {
-    (text_size.max(12.0)) * 0.82 * scale
-}
-
-/// Visible detail lines for `dev` in the order they're rendered.
-/// Returns `(label, value)` pairs; only lines with a value are included.
-fn detail_lines(dev: &Device) -> Vec<(&'static str, String)> {
-    let mut out: Vec<(&'static str, String)> = Vec::new();
-    out.push(("Address", dev.mac.clone()));
-    if !dev.alias.is_empty() && dev.alias != dev.name {
-        out.push(("Alias", dev.alias.clone()));
+/// Total extra height a device row contributes below its header: the
+/// inline prompt strip (if any) plus the expanded-detail block (if
+/// expanded). A row with a live request always shows its strip, even
+/// when not toggled open.
+fn row_extra_height(bt: &Bluetooth, dev: &Device, text_size: f32, scale: f32) -> f32 {
+    let mut h = prompt_extra_height(bt, dev, text_size, scale);
+    if bt.expanded_mac.as_deref() == Some(dev.mac.as_str()) {
+        h += detail::expanded_extra_height(dev, text_size, scale);
     }
-    if !dev.address_type.is_empty() {
-        out.push(("Type", dev.address_type.clone()));
-    }
-    if !dev.icon.is_empty() {
-        out.push(("Kind", dev.icon.clone()));
-    }
-    if !dev.class.is_empty() {
-        out.push(("Class", dev.class.clone()));
-    }
-    if let Some(pct) = dev.battery_percent {
-        out.push(("Battery", format!("{}%", pct)));
-    }
-    if let Some(r) = dev.rssi {
-        out.push(("Signal", format!("{} dBm", r)));
-    }
-    out.push((
-        "Status",
-        format!(
-            "{}{}{}{}",
-            if dev.paired { "paired" } else { "unpaired" },
-            if dev.connected { " · connected" } else { "" },
-            if dev.trusted { " · trusted" } else { "" },
-            if dev.blocked { " · blocked" } else { "" },
-        ),
-    ));
-    if !dev.uuids.is_empty() {
-        // Cap the profile list so a chatty device doesn't blow the
-        // panel up — the user can still get the gist.
-        let preview: Vec<&String> = dev.uuids.iter().take(8).collect();
-        let mut joined = preview
-            .iter()
-            .map(|s| s.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        if dev.uuids.len() > 8 {
-            joined.push_str(&format!(" + {} more", dev.uuids.len() - 8));
-        }
-        out.push(("Profiles", joined));
-    }
-    out
-}
-
-/// Height (in physical px) of the expanded detail block for a single
-/// device. Shared by the renderer and the hit-tester so geometry stays
-/// in sync.
-fn expanded_extra_height(dev: &Device, text_size: f32, scale: f32) -> f32 {
-    let lines = detail_lines(dev);
-    let body = body_font(text_size, scale);
-    let gap = EXPAND_LINE_GAP * scale;
-    let detail_h = lines.len() as f32 * (body + gap) - gap.max(0.0);
-    let mut h = EXPAND_PAD_TOP * scale + detail_h.max(0.0);
-    h += EXPAND_BUTTON_TOP_GAP * scale + EXPAND_BUTTON_H * scale;
-    h += EXPAND_PAD_BOTTOM * scale;
     h
 }
 
@@ -277,52 +148,26 @@ fn header_row_rect(inner_x: f32, inner_w: f32, row_y: f32, scale: f32) -> Rect {
     Rect::new(inner_x, row_y, inner_w, ROW_HEIGHT * scale)
 }
 
-/// Compute the Connect button rect inside `dev`'s expanded panel.
-fn connect_button_rect(
-    inner_x: f32,
-    _inner_w: f32,
+/// Per-row layout passed to `walk_devices` visitors. `strip_top` is the
+/// y where the inline request strip starts (= just below the header);
+/// `expanded_top` is where the expanded-detail block starts (below the
+/// strip when one is present).
+struct RowGeom {
+    header: Rect,
+    strip_top: f32,
     expanded_top: f32,
-    dev: &Device,
-    text_size: f32,
-    scale: f32,
-) -> Rect {
-    let extra = expanded_extra_height(dev, text_size, scale);
-    let btn_h = EXPAND_BUTTON_H * scale;
-    let btn_w = EXPAND_BUTTON_W * scale;
-    let btn_y = expanded_top + extra - EXPAND_PAD_BOTTOM * scale - btn_h;
-    Rect::new(inner_x, btn_y, btn_w, btn_h)
-}
-
-/// Compute the Send button rect inside `dev`'s expanded panel. `None`
-/// when the device doesn't expose an OBEX push profile.
-fn send_button_rect_expanded(
-    inner_x: f32,
-    inner_w: f32,
-    expanded_top: f32,
-    dev: &Device,
-    text_size: f32,
-    scale: f32,
-) -> Option<Rect> {
-    if !dev.supports_file_transfer() {
-        return None;
-    }
-    let connect = connect_button_rect(inner_x, inner_w, expanded_top, dev, text_size, scale);
-    let btn_w = EXPAND_BUTTON_W * scale;
-    let gap = EXPAND_BUTTON_GAP * scale;
-    Some(Rect::new(connect.x + connect.w + gap, connect.y, btn_w, connect.h))
 }
 
 /// Walk the device list top-to-bottom, mirroring the renderer's layout,
-/// and invoke `visit` for each device with its header rect, expanded-top
-/// y, and a reference to the device. `visit` returns `true` to stop
-/// iteration early (used by hit-testing).
+/// and invoke `visit` for each device with its row geometry. `visit`
+/// returns `true` to stop iteration early (used by hit-testing).
 fn walk_devices(
     bt: &Bluetooth,
     panel: Rect,
     panel_top_y: f32,
     text_size: f32,
     scale: f32,
-    mut visit: impl FnMut(&Device, Rect, f32) -> bool,
+    mut visit: impl FnMut(&Device, RowGeom) -> bool,
 ) {
     let pad = crate::controls::ROW_HORIZONTAL_PAD * scale;
     let inner_x = panel.x + pad;
@@ -333,35 +178,33 @@ fn walk_devices(
 
     let mut cy = list_top_y(panel_top_y, scale);
 
+    let walk_section = |cy: &mut f32, devs: &[&Device], max: usize, visit: &mut dyn FnMut(&Device, RowGeom) -> bool| -> bool {
+        for dev in devs.iter().take(max) {
+            let header = header_row_rect(inner_x, inner_w, *cy, scale);
+            let strip_top = *cy + row_h;
+            let prompt_h = prompt_extra_height(bt, dev, text_size, scale);
+            let expanded_top = strip_top + prompt_h;
+            if visit(dev, RowGeom { header, strip_top, expanded_top }) {
+                return true;
+            }
+            *cy += row_h + row_extra_height(bt, dev, text_size, scale);
+        }
+        false
+    };
+
     let paired = bt.paired_devices();
     if !paired.is_empty() {
         cy += section_header_h;
-        for dev in paired.iter().take(MAX_PAIRED_ROWS) {
-            let header = header_row_rect(inner_x, inner_w, cy, scale);
-            let expanded_top = cy + row_h;
-            if visit(dev, header, expanded_top) {
-                return;
-            }
-            cy += row_h;
-            if bt.expanded_mac.as_deref() == Some(dev.mac.as_str()) {
-                cy += expanded_extra_height(dev, text_size, scale);
-            }
+        if walk_section(&mut cy, &paired, MAX_PAIRED_ROWS, &mut visit) {
+            return;
         }
         cy += section_gap;
     }
     let unpaired = bt.unpaired_devices();
     if !unpaired.is_empty() {
         cy += section_header_h;
-        for dev in unpaired.iter().take(MAX_UNPAIRED_ROWS) {
-            let header = header_row_rect(inner_x, inner_w, cy, scale);
-            let expanded_top = cy + row_h;
-            if visit(dev, header, expanded_top) {
-                return;
-            }
-            cy += row_h;
-            if bt.expanded_mac.as_deref() == Some(dev.mac.as_str()) {
-                cy += expanded_extra_height(dev, text_size, scale);
-            }
+        if walk_section(&mut cy, &unpaired, MAX_UNPAIRED_ROWS, &mut visit) {
+            return;
         }
     }
 }
@@ -402,18 +245,32 @@ pub fn hit_test(
     }
 
     let mut hit: Option<BtClick> = None;
-    walk_devices(bt, panel, panel_top_y, text_size, scale, |dev, header, expanded_top| {
-        if inside(header) {
+    walk_devices(bt, panel, panel_top_y, text_size, scale, |dev, geom| {
+        // Inline request strip buttons take priority over the header
+        // toggle so a click on Accept/Reject doesn't also collapse/expand.
+        if row_prompt(bt, dev).is_some() {
+            let (accept, reject, _field) =
+                prompt_button_rects(bt, dev, inner_x, inner_w, geom.strip_top, text_size, scale);
+            if inside(accept) {
+                hit = Some(BtClick::PromptAccept(dev.mac.clone()));
+                return true;
+            }
+            if inside(reject) {
+                hit = Some(BtClick::PromptReject(dev.mac.clone()));
+                return true;
+            }
+        }
+        if inside(geom.header) {
             hit = Some(BtClick::DeviceRow(dev.mac.clone()));
             return true;
         }
         if bt.expanded_mac.as_deref() == Some(dev.mac.as_str()) {
-            let connect = connect_button_rect(inner_x, inner_w, expanded_top, dev, text_size, scale);
+            let connect = detail::connect_button_rect(inner_x, inner_w, geom.expanded_top, dev, text_size, scale);
             if inside(connect) {
                 hit = Some(BtClick::ConnectButton(dev.mac.clone()));
                 return true;
             }
-            if let Some(send) = send_button_rect_expanded(inner_x, inner_w, expanded_top, dev, text_size, scale) {
+            if let Some(send) = detail::send_button_rect_expanded(inner_x, inner_w, geom.expanded_top, dev, text_size, scale) {
                 if inside(send) {
                     hit = Some(BtClick::SendButton(dev.mac.clone()));
                     return true;
@@ -462,7 +319,7 @@ pub fn draw_view(
         surface_h,
     );
     let t_rect = toggle_rect(panel, panel_top_y, scale);
-    super::modals::draw_toggle(painter, t_rect, bt.is_powered(), alpha, scale);
+    super::toggle::draw_toggle(painter, t_rect, bt.is_powered(), alpha, scale);
 
     // Power off → bail with a simple message.
     if !bt.is_powered() {
@@ -502,6 +359,23 @@ pub fn draw_view(
             painter, text, bt, header, &unpaired, MAX_UNPAIRED_ROWS,
             inner_x, inner_w, cy, scale, alpha, text_size, surface_w, surface_h,
         );
+        // Note how many discovered-but-unnamed devices we hid, so a device
+        // whose name BlueZ hasn't resolved yet isn't a silent mystery.
+        let hidden = bt.hidden_unpaired_count();
+        if hidden > 0 {
+            let msg = format!("+{hidden} unnamed device{} hidden", if hidden == 1 { "" } else { "s" });
+            text.queue(
+                &msg,
+                row_font * 0.8,
+                inner_x,
+                cy + row_font * 0.4,
+                muted,
+                inner_w,
+                surface_w,
+                surface_h,
+            );
+            cy += row_font;
+        }
     } else if paired.is_empty() && bt.is_scanning() {
         text.queue(
             "Scanning for devices…",
@@ -559,27 +433,9 @@ pub fn draw_view(
         cy += row_font;
     }
 
-    // Modals float on layer 1 so their backdrop + box correctly cover
-    // any text we already queued underneath. The layered render pass in
-    // layershell.rs is what makes this actually work — see the
-    // TEXT_OCCLUSION_FIX doc in lntrn-render/.
-    if bt.pair_prompt.is_some() || bt.incoming_request.is_some() {
-        painter.set_layer(1);
-        text.set_layer(1);
-
-        if let Some(prompt) = &bt.pair_prompt {
-            super::modals::draw_pair_modal(
-                painter, text, prompt, panel, panel_top_y, scale, alpha, surface_w, surface_h,
-            );
-        }
-        // Incoming-file modal also floats. We draw last so it sits on
-        // top of the pair modal (rare to coincide, but well-defined).
-        if let Some(req) = &bt.incoming_request {
-            super::modals::draw_incoming_modal(
-                painter, text, req, panel, panel_top_y, scale, alpha, surface_w, surface_h,
-            );
-        }
-    }
+    // Pair prompts, incoming-file requests, and incoming-pair requests
+    // are now drawn inline on the relevant device row (see
+    // `draw_prompt_strip`), so there's no floating modal to compose here.
 
     cy
 }
@@ -610,7 +466,7 @@ fn draw_toggles_row(
         surface_w,
         surface_h,
     );
-    super::modals::draw_toggle(painter, layout.discoverable_toggle, bt.is_discoverable(), alpha, scale);
+    super::toggle::draw_toggle(painter, layout.discoverable_toggle, bt.is_discoverable(), alpha, scale);
 
     text.queue(
         "Scan",
@@ -622,7 +478,64 @@ fn draw_toggles_row(
         surface_w,
         surface_h,
     );
-    super::modals::draw_toggle(painter, layout.scan_toggle, bt.is_scanning(), alpha, scale);
+    super::toggle::draw_toggle(painter, layout.scan_toggle, bt.is_scanning(), alpha, scale);
+}
+
+/// The right-aligned status badge text + colour for a device row. A live
+/// request (pair / file) overrides the steady-state status; otherwise the
+/// badge reflects send progress, an in-flight connect/pair, or the plain
+/// connected/paired/available state.
+fn row_badge(bt: &Bluetooth, dev: &Device, alpha: f32) -> (String, Color) {
+    let white = Color::from_rgb8(0xff, 0xff, 0xff);
+    let gold = Color::from_rgb8(0xc8, 0x86, 0x0a);
+    let red = Color::from_rgb8(0xe0, 0x40, 0x40);
+
+    if let Some(p) = row_prompt(bt, dev) {
+        let text = match p {
+            RowPrompt::IncomingFile { .. } => "Incoming file",
+            _ => "Pair request",
+        };
+        return (text.into(), gold.with_alpha(alpha));
+    }
+
+    if let Some(s) = bt.send_state.get(&dev.mac) {
+        return match &s.status {
+            SendStatus::Starting => ("Picking…".into(), white.with_alpha(alpha)),
+            SendStatus::InProgress => {
+                let pct = if s.bytes_total > 0 {
+                    ((s.bytes_done as f32 / s.bytes_total as f32) * 100.0).round() as i32
+                } else {
+                    0
+                };
+                let name = if s.filename.is_empty() { "file".to_string() }
+                    else { truncate_name(&s.filename, 20) };
+                (format!("Sending {} · {}%", name, pct), white.with_alpha(alpha))
+            }
+            SendStatus::Done => ("Sent ✓".into(), gold.with_alpha(alpha)),
+            SendStatus::Failed(msg) => {
+                (format!("Send failed: {}", truncate_name(msg, 30)), red.with_alpha(alpha))
+            }
+        };
+    }
+
+    if Some(dev.mac.as_str()) == bt.pending() {
+        let text = if !dev.paired {
+            "Pairing…"
+        } else if dev.connected {
+            "Disconnecting…"
+        } else {
+            "Connecting…"
+        };
+        return (text.into(), white.with_alpha(alpha));
+    }
+
+    if dev.connected {
+        ("Connected".into(), gold.with_alpha(alpha))
+    } else if dev.paired {
+        ("Paired".into(), white.with_alpha(0.65 * alpha))
+    } else {
+        ("Available".into(), gold.with_alpha(alpha))
+    }
 }
 
 /// Draw one device-list section ("Paired" or "Available"). Returns the
@@ -653,7 +566,6 @@ fn draw_section(
 
     let white = Color::from_rgb8(0xff, 0xff, 0xff);
     let muted = white.with_alpha(0.55 * alpha);
-    let gold = Color::from_rgb8(0xc8, 0x86, 0x0a);
 
     // Section header (small, muted).
     text.queue(
@@ -672,21 +584,27 @@ fn draw_section(
     for (i, dev) in devices.iter().take(max_rows).enumerate() {
         let is_expanded = bt.expanded_mac.as_deref() == Some(dev.mac.as_str());
         let is_hovered = bt.hovered_mac.as_deref() == Some(dev.mac.as_str());
+        let has_prompt = row_prompt(bt, dev).is_some();
+        let extra = row_extra_height(bt, dev, text_size, scale);
         let row_rect = Rect::new(inner_x, cy, inner_w, row_h);
 
-        if is_expanded {
-            // Container plate behind the header + expanded body —
-            // darker grey to match the Wi-Fi pattern.
-            let total_h = row_h + expanded_extra_height(dev, text_size, scale);
+        if is_expanded || has_prompt {
+            // Container plate behind the header + strip + expanded body.
+            // A live request gets a gold-tinted plate so it stands out.
+            let plate = if has_prompt {
+                Color::rgba(0.78, 0.52, 0.04, 0.16 * alpha)
+            } else {
+                Color::rgba(0.0, 0.0, 0.0, 0.35 * alpha)
+            };
             painter.rect_filled(
-                Rect::new(inner_x, cy, inner_w, total_h),
+                Rect::new(inner_x, cy, inner_w, row_h + extra),
                 10.0 * scale,
-                Color::rgba(0.0, 0.0, 0.0, 0.35 * alpha),
+                plate,
             );
         } else if i % 2 == 0 {
             painter.rect_filled(row_rect, 8.0 * scale, white.with_alpha(0.04 * alpha));
         }
-        if is_hovered && !is_expanded {
+        if is_hovered && !is_expanded && !has_prompt {
             painter.rect_filled(row_rect, 8.0 * scale, white.with_alpha(0.10 * alpha));
         }
 
@@ -705,57 +623,11 @@ fn draw_section(
             surface_h,
         );
 
-        let send_state = bt.send_state.get(&dev.mac);
-        let in_flight = Some(dev.mac.as_str()) == bt.pending();
-        let badge_text: String = if let Some(s) = send_state {
-            match &s.status {
-                SendStatus::Starting => "Picking…".to_string(),
-                SendStatus::InProgress => {
-                    let pct = if s.bytes_total > 0 {
-                        ((s.bytes_done as f32 / s.bytes_total as f32) * 100.0).round() as i32
-                    } else {
-                        0
-                    };
-                    let name = if s.filename.is_empty() { "file".to_string() }
-                        else { truncate_name(&s.filename, 20) };
-                    format!("Sending {} · {}%", name, pct)
-                }
-                SendStatus::Done => "Sent ✓".to_string(),
-                SendStatus::Failed(msg) => format!("Send failed: {}", truncate_name(msg, 30)),
-            }
-        } else if in_flight {
-            if !dev.paired {
-                "Pairing…".into()
-            } else if dev.connected {
-                "Disconnecting…".into()
-            } else {
-                "Connecting…".into()
-            }
-        } else if dev.connected {
-            "Connected".into()
-        } else if dev.paired {
-            "Paired".into()
-        } else {
-            "Available".into()
-        };
+        let (badge_text, badge_color) = row_badge(bt, dev, alpha);
         let badge_font = row_font * 0.85;
         let badge_w = text.measure_width(&badge_text, badge_font);
         let badge_x = inner_x + inner_w - badge_w - right_gap;
         let badge_y = cy + (row_h - badge_font) / 2.0;
-        let badge_color = match send_state.map(|s| &s.status) {
-            Some(SendStatus::Done) => gold.with_alpha(alpha),
-            Some(SendStatus::Failed(_)) => Color::from_rgb8(0xe0, 0x40, 0x40).with_alpha(alpha),
-            Some(_) => white.with_alpha(alpha),
-            None => {
-                if dev.connected {
-                    gold.with_alpha(alpha)
-                } else if dev.paired {
-                    white.with_alpha(0.65 * alpha)
-                } else {
-                    gold.with_alpha(alpha)
-                }
-            }
-        };
         text.queue(
             &badge_text,
             badge_font,
@@ -769,8 +641,15 @@ fn draw_section(
 
         cy += row_h;
 
+        if has_prompt {
+            cy += prompt::draw_prompt_strip(
+                painter, text, dev, bt, inner_x, inner_w, cy, scale, alpha,
+                text_size, surface_w, surface_h,
+            );
+        }
+
         if is_expanded {
-            cy += draw_expanded(
+            cy += detail::draw_expanded(
                 painter, text, dev, bt, inner_x, inner_w, cy, scale, alpha,
                 text_size, surface_w, surface_h,
             );
@@ -781,71 +660,7 @@ fn draw_section(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_expanded(
-    painter: &mut Painter,
-    text: &mut TextRenderer,
-    dev: &Device,
-    bt: &Bluetooth,
-    inner_x: f32,
-    inner_w: f32,
-    top_y: f32,
-    scale: f32,
-    alpha: f32,
-    text_size: f32,
-    surface_w: u32,
-    surface_h: u32,
-) -> f32 {
-    let white = Color::from_rgb8(0xff, 0xff, 0xff);
-    let muted = white.with_alpha(0.55 * alpha);
-    let gold = Color::from_rgb8(0xc8, 0x86, 0x0a);
-    let body = body_font(text_size, scale);
-    let lbl_font = label_font(text_size, scale);
-    let pad_l = ROW_INNER_PAD * scale;
-    let pad_t = EXPAND_PAD_TOP * scale;
-    let gap = EXPAND_LINE_GAP * scale;
-    let label_w = inner_w * EXPAND_LABEL_W_FRAC;
-
-    let mut cy = top_y + pad_t;
-    for (label, value) in detail_lines(dev) {
-        text.queue(
-            label, lbl_font, inner_x + pad_l, cy + (body - lbl_font) / 2.0,
-            muted, label_w - pad_l, surface_w, surface_h,
-        );
-        let value_x = inner_x + pad_l + label_w;
-        text.queue(
-            &value, body, value_x, cy, white.with_alpha(0.92 * alpha),
-            inner_w - (label_w + pad_l + ROW_RIGHT_GAP * scale),
-            surface_w, surface_h,
-        );
-        cy += body + gap;
-    }
-
-    // ── Action buttons ──
-    let expanded_top = top_y;
-    let connect = connect_button_rect(inner_x, inner_w, expanded_top, dev, text_size, scale);
-    let connect_label = if !dev.paired {
-        "Pair"
-    } else if dev.connected {
-        "Disconnect"
-    } else {
-        "Connect"
-    };
-    draw_pill_button(painter, text, connect, connect_label, body, gold, alpha, scale, surface_w, surface_h);
-
-    if let Some(send) = send_button_rect_expanded(inner_x, inner_w, expanded_top, dev, text_size, scale) {
-        let label = if bt.send_state.contains_key(&dev.mac) {
-            "Sending…"
-        } else {
-            "Send file"
-        };
-        draw_pill_button(painter, text, send, label, body, gold, alpha, scale, surface_w, surface_h);
-    }
-
-    expanded_extra_height(dev, text_size, scale)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn draw_pill_button(
+pub(super) fn draw_pill_button(
     painter: &mut Painter,
     text: &mut TextRenderer,
     rect: Rect,
@@ -871,7 +686,7 @@ fn draw_pill_button(
 }
 
 /// Truncate a filename or error message to fit visual width.
-fn truncate_name(s: &str, max_chars: usize) -> String {
+pub(super) fn truncate_name(s: &str, max_chars: usize) -> String {
     if s.chars().count() <= max_chars {
         return s.to_string();
     }

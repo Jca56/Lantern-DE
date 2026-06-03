@@ -768,6 +768,69 @@ pub fn render_frame(
         }
     };
 
+    // ── Play-button overlays for video thumbnails ─────────────────────
+    // Recompute the drawn icon rect for any video entry that has a real
+    // thumbnail, so we can stamp a play glyph on top after the textures
+    // render. Mirrors the geometry of the tex_draws collection above.
+    let mut video_overlays: Vec<(f32, f32, f32, f32)> = match view_mode {
+        ViewMode::Grid => (0..entries.len())
+            .filter(|&i| has_icon[i] && icons::is_video_file(&entries[i].name))
+            .filter_map(|i| {
+                let ir = file_item_rect(i, cols, content.x, base_y, s, zoom);
+                let icon_x = ir.x + (ir.w - icsz) * 0.5;
+                let label_font = 16.0 * s;
+                let content_h = icsz + 2.0 * s + label_font;
+                let top_pad = (ir.h - content_h) * 0.5;
+                let icon_y = ir.y + top_pad;
+                let tex = icon_cache.get(&entries[i])?;
+                Some(icons::fit_in_box(tex, icon_x, icon_y, icsz, icsz))
+            })
+            .collect(),
+        ViewMode::List => {
+            let m = list_zoom_multiplier(zoom);
+            let row_h = if is_searching { search_list_row_h(s, zoom) } else { list_row_h(s, zoom) };
+            let hdr_h = 32.0 * m * s;
+            let list_icon_sz = 28.0 * m * s;
+            (0..entries.len())
+                .filter(|&i| has_icon[i] && icons::is_video_file(&entries[i].name))
+                .filter_map(|i| {
+                    let y = base_y + hdr_h + i as f32 * row_h;
+                    let icon_x = content.x + 8.0 * m * s;
+                    let icon_y = y + (row_h - list_icon_sz) * 0.5;
+                    let tex = icon_cache.get(&entries[i])?;
+                    Some(icons::fit_in_box(tex, icon_x, icon_y, list_icon_sz, list_icon_sz))
+                })
+                .collect()
+        }
+        ViewMode::Tree => {
+            let m = list_zoom_multiplier(zoom);
+            let row_h = tree_row_h(s, zoom);
+            let tree_indent = 28.0 * m * s;
+            let tree_icon_sz = 24.0 * m * s;
+            let tree_entries = &app.tree_entries;
+            (0..tree_entries.len())
+                .filter(|&i| has_icon[i] && icons::is_video_file(&tree_entries[i].entry.name))
+                .filter_map(|i| {
+                    let te = &tree_entries[i];
+                    let y = base_y + i as f32 * row_h;
+                    let x_offset = te.depth as f32 * tree_indent;
+                    let icon_x = content.x + 8.0 * m * s + x_offset + 16.0 * m * s;
+                    let icon_y = y + (row_h - tree_icon_sz) * 0.5;
+                    let tex = icon_cache.get(&te.entry)?;
+                    Some(icons::fit_in_box(tex, icon_x, icon_y, tree_icon_sz, tree_icon_sz))
+                })
+                .collect()
+        }
+    };
+    // Preview pane: a play badge on the large video thumbnail too.
+    if let (Some(thumb), Some(entry)) = (preview_thumb_rect, preview_thumb_entry.as_ref()) {
+        if icons::is_video_file(&entry.name) {
+            if let Some(tex) = icon_cache.get(entry) {
+                video_overlays.push(icons::fit_in_box(tex, thumb.x, thumb.y, thumb.w, thumb.h));
+            }
+        }
+    }
+
     // Drag ghost texture — just the icon, centered on cursor
     if let (Some(drag_idx), Some((dx, dy))) = (app.drag_item, app.drag_pos) {
         if drag_idx < entries.len() {
@@ -792,6 +855,27 @@ pub fn render_frame(
     // ── Modal overlays (layer 1) ─────────────────────────────────────
     painter.set_layer(1);
     text.set_layer(1);
+
+    // Play-button overlays sit on layer 1 so they paint over the video
+    // thumbnail textures (which render after layer-0 painter shapes).
+    for (dx, dy, dw, dh) in &video_overlays {
+        let cx = dx + dw * 0.5;
+        let cy = dy + dh * 0.5;
+        // Circle scales with the thumbnail, clamped so tiny list icons
+        // still get a legible badge.
+        let r = (dw.min(*dh) * 0.28).clamp(7.0 * s, 26.0 * s);
+        painter.circle_filled(cx, cy, r, Color::rgba(0.0, 0.0, 0.0, 0.55));
+        // White right-pointing triangle, inset within the circle.
+        let t = r * 0.5;
+        let off = r * 0.12; // nudge right so it looks optically centered
+        painter.triangle(
+            cx - t * 0.7 + off, cy - t,
+            cx - t * 0.7 + off, cy + t,
+            cx + t + off,       cy,
+            Color::rgba(1.0, 1.0, 1.0, 0.95),
+        );
+    }
+
     let mut props_tex_draws = Vec::new();
     // Collect props action outside the &mut borrow so we can mutate
     // app.properties / icon_cache after the dialog draws.

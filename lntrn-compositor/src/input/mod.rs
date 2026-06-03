@@ -1,5 +1,6 @@
 mod dispatch;
 mod keyboard;
+pub(crate) mod layer;
 mod pointer;
 mod spawn;
 

@@ -129,9 +129,11 @@ impl App {
     /// Called when the sidebar mode switches to Git.
     pub(crate) fn on_sidebar_git_mode(&mut self) {
         self.open_git_repo();
-        // Also update sidebar width for git content
-        if self.sidebar.width < 280.0 {
-            self.sidebar.width = 280.0;
+        // Git content wants a bit more room — widen if the user hasn't set a
+        // manual width and we're currently narrower than the git comfort floor.
+        const GIT_MIN_WIDTH: f32 = 340.0;
+        if self.sidebar.manual_width.is_none() && self.sidebar.width < GIT_MIN_WIDTH {
+            self.sidebar.width = GIT_MIN_WIDTH;
         }
     }
 

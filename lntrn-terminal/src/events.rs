@@ -26,6 +26,16 @@ impl App {
         self.cursor_pos = Some((x, y));
         self.input.on_cursor_moved(x, y);
 
+        // Sidebar resize drag — owns the pointer while active.
+        if self.sidebar.resizing {
+            self.sidebar.resize_to(x);
+            self.update_grid_size();
+            if let Some(ref window) = self.window {
+                window.set_cursor(CursorIcon::ColResize);
+            }
+            self.request_redraw();
+            return EventResult::Handled;
+        }
 
         // Tab drag reorder
         if self.tab_bar.dragging.is_some() {
@@ -106,9 +116,16 @@ impl App {
             false
         };
 
+        let chrome_h = self.chrome_height();
+        let on_resize_handle =
+            !self.chrome_hidden && self.sidebar.resize_handle_hit(self.cursor_pos, chrome_h);
         if self.selecting {
             if let Some(ref window) = self.window {
                 window.set_cursor(CursorIcon::Text);
+            }
+        } else if on_resize_handle {
+            if let Some(ref window) = self.window {
+                window.set_cursor(CursorIcon::ColResize);
             }
         } else if hovering_link {
             if let Some(ref window) = self.window {
@@ -386,6 +403,25 @@ impl App {
         // to the terminal grid.
         let allow_sidebar_hits = !self.chrome_hidden;
 
+        // Resize handle on the sidebar's right edge takes priority over content
+        // hits so a drag starting at the edge never lands on a list row. A
+        // double-click on the handle resets to auto-fit width.
+        if allow_sidebar_hits && self.sidebar.resize_handle_hit(self.cursor_pos, chrome_h) {
+            let now = Instant::now();
+            let double = now.duration_since(self.last_resize_handle_click).as_millis() < 400;
+            self.last_resize_handle_click = now;
+            if double {
+                self.sidebar.reset_width();
+                self.config.sidebar.width = None;
+                self.config.save();
+                self.update_grid_size();
+            } else {
+                self.sidebar.begin_resize();
+            }
+            self.request_redraw();
+            return EventResult::Handled;
+        }
+
         // Check sidebar mode toggle first
         if allow_sidebar_hits {
             if let Some(new_mode) = sidebar::handle_mode_click(&mut self.sidebar, self.cursor_pos, chrome_h) {
@@ -482,6 +518,11 @@ impl App {
     pub(crate) fn handle_left_release(&mut self) {
         self.left_pressed = false;
         self.scrollbar_dragging = false;
+        if self.sidebar.end_resize() {
+            // Persist the dragged width so it survives restarts.
+            self.config.sidebar.width = self.sidebar.manual_width;
+            self.config.save();
+        }
         self.input.on_left_released();
         tab_bar::handle_drag_end(&mut self.tab_bar);
         if self.selecting && !self.tabs.is_empty() {

@@ -43,12 +43,14 @@ pub fn draw_sidebar(
     // Background
     painter.rect_filled(sidebar_rect, 0.0, c(SURFACE));
 
-    // Right edge divider
-    painter.rect_filled(
-        Rect::new(sw - 1.0, chrome_h, 1.0, h),
-        0.0,
-        c(DIVIDER),
-    );
+    // Right edge divider — brightens into an accent grip while hovered or
+    // actively dragging the resize handle, so the edge is discoverable.
+    let handle_hot = state.resizing || state.resize_handle_hit(cursor_pos, chrome_h);
+    if handle_hot {
+        painter.rect_filled(Rect::new(sw - 2.0, chrome_h, 2.0, h), 0.0, c(ACCENT));
+    } else {
+        painter.rect_filled(Rect::new(sw - 1.0, chrome_h, 1.0, h), 0.0, c(DIVIDER));
+    }
 
     // Mode toggle buttons [Files] [Git]
     draw_mode_toggle(painter, text, state, chrome_h, sw, screen_w, screen_h, cursor_pos);

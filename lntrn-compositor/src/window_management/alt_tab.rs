@@ -101,12 +101,30 @@ impl Lantern {
     }
 
     pub fn focus_next_window(&mut self, serial: Serial) -> bool {
+        self.step_switcher(serial, false)
+    }
+
+    /// Backward sibling of [`focus_next_window`] — Shift+Tab / Left arrow.
+    /// On a fresh start (first chord press is backward) it lands on the
+    /// window *before* the focused one instead of after it.
+    pub fn focus_prev_window(&mut self, serial: Serial) -> bool {
+        self.step_switcher(serial, true)
+    }
+
+    /// Shared advance/retreat path for the Alt-Tab switcher. Starts the
+    /// switcher in silent mode if it isn't active yet, otherwise steps the
+    /// existing selection in `backward`'s direction.
+    fn step_switcher(&mut self, serial: Serial, backward: bool) -> bool {
         self.compact_window_mru();
 
         let all_surfaces = self.switcher_entries();
 
         let pending_surface = if self.alt_tab_switcher.is_active() {
-            self.alt_tab_switcher.advance()
+            if backward {
+                self.alt_tab_switcher.retreat()
+            } else {
+                self.alt_tab_switcher.advance()
+            }
         } else {
             let original = self.focused_surface.clone();
             let minimized: std::collections::HashSet<_> = self.minimized_windows
@@ -114,7 +132,16 @@ impl Lantern {
                 .map(|m| m.surface.clone())
                 .collect();
             let app_ids = self.switcher_app_ids(&all_surfaces);
-            self.alt_tab_switcher.start_silent(all_surfaces, app_ids, original, minimized)
+            let started =
+                self.alt_tab_switcher.start_silent(all_surfaces, app_ids, original, minimized);
+            // A fresh start lands on focused+1. For a backward first press we
+            // want focused-1, so step back twice from there.
+            if backward && started.is_some() {
+                self.alt_tab_switcher.retreat();
+                self.alt_tab_switcher.retreat()
+            } else {
+                started
+            }
         };
 
         let Some(surface) = pending_surface else {

@@ -361,6 +361,25 @@ pub struct Lantern {
     // Audio key repeat
     pub audio_repeat: Option<AudioRepeat>,
 
+    // Lantern layer (hold-to-activate WASD→arrows etc. for 60% keyboards).
+    // `layer` is reloaded from config on mtime change; `layer_held` tracks the
+    // momentary held state of the trigger key. See `input::layer`.
+    pub layer: crate::input::layer::LanternLayer,
+    pub layer_held: bool,
+    /// Injections to forward to the focused client *after* the filter returns
+    /// (we can't re-enter the keyboard handle from inside the filter). Each is
+    /// (target_keycode, key_state). Usually one entry, but releasing the
+    /// trigger while source keys are still held emits several releases at once.
+    pub layer_inject: Vec<(smithay::input::keyboard::Keycode, smithay::backend::input::KeyState)>,
+    /// Source-keycode → injected target-keycode for keys currently held down
+    /// under the layer. Lets us emit the matching *release* even if the trigger
+    /// was let go first — otherwise the client never sees key-up and autorepeats
+    /// forever. Keyed by the physical keycode so it's stable across layer drops.
+    pub layer_active_keys: std::collections::HashMap<u32, smithay::input::keyboard::Keycode>,
+    /// mtime of lantern.toml at last layer reload, so we hot-reload the layer
+    /// map when the user edits keybinds in System Settings.
+    pub layer_config_mtime: Option<std::time::SystemTime>,
+
     // Cached exclusive zone offsets — reconfigure maximized windows when these change
     pub last_exclusive_offsets: (i32, i32, i32, i32),
 
@@ -563,6 +582,11 @@ impl Lantern {
             show_desktop_active: false,
             xdg_foreign_state,
             audio_repeat: None,
+            layer: crate::input::layer::LanternLayer::load(),
+            layer_held: false,
+            layer_inject: Vec::new(),
+            layer_active_keys: std::collections::HashMap::new(),
+            layer_config_mtime: None,
             last_exclusive_offsets: (0, 0, 0, 0),
             ssd: SsdManager::new(),
             mouse_speed: crate::input::read_input_setting_f64("mouse_speed", 0.0),

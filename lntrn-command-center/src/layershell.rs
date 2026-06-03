@@ -516,8 +516,10 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
             // into the BT view. Other controls don't need the wake-up
             // path so we keep this cheap and BT-specific.
             app.controls.bluetooth.tick();
-            if app.controls.bluetooth.incoming_request.is_some() {
-                tracing::info!("incoming BT file → auto-opening panel to BT view");
+            if app.controls.bluetooth.incoming_request.is_some()
+                || app.controls.bluetooth.pair_request.is_some()
+            {
+                tracing::info!("incoming BT file/pair → auto-opening panel to BT view");
                 app.mode = crate::app::PanelMode::Control(
                     crate::controls::TileId::Bluetooth,
                 );
@@ -580,7 +582,8 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
             input_active = false;
             continue;
         }
-        let bt_incoming_before = app.controls.bluetooth.incoming_request.is_some();
+        let bt_incoming_before = app.controls.bluetooth.incoming_request.is_some()
+            || app.controls.bluetooth.pair_request.is_some();
         // Mirror the cursor position into AppState (in physical px) so
         // the renderer can drive cursor-aware effects (dock magnification
         // wave) without reaching into wayland state.
@@ -640,11 +643,12 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         // …) in one pass.
         track_hovers(&mut wl, &mut app);
 
-        let bt_incoming_after = app.controls.bluetooth.incoming_request.is_some();
-        // Fresh incoming-file request → jump straight to the BT view so
-        // the modal isn't hidden behind whatever the user was looking at.
+        let bt_incoming_after = app.controls.bluetooth.incoming_request.is_some()
+            || app.controls.bluetooth.pair_request.is_some();
+        // Fresh incoming file/pair request → jump straight to the BT view
+        // so the inline Accept/Reject isn't hidden behind another view.
         if bt_incoming_after && !bt_incoming_before {
-            tracing::info!("incoming BT file while panel visible → switching to BT view");
+            tracing::info!("incoming BT file/pair while panel visible → switching to BT view");
             app.mode =
                 crate::app::PanelMode::Control(crate::controls::TileId::Bluetooth);
         }

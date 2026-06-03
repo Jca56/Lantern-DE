@@ -174,6 +174,8 @@ impl AppState {
             self.controls.wifi.close_prompt();
         } else if self.controls.bluetooth.incoming_request.is_some() {
             self.controls.bluetooth.incoming_reject();
+        } else if self.controls.bluetooth.pair_request.is_some() {
+            self.controls.bluetooth.pair_request_reject();
         } else if self.controls.bluetooth.pair_prompt.is_some() {
             self.controls.bluetooth.pair_cancel();
         } else if self.settings_open {

@@ -209,6 +209,24 @@ impl AltTabSwitcher {
         self.selected_surface().cloned()
     }
 
+    /// Move selection to the previous entry (wraps) — Shift+Tab / Left.
+    pub fn retreat(&mut self) -> Option<WlSurface> {
+        if !self.active || self.entries.is_empty() {
+            return None;
+        }
+        self.prev_selected_index = self.selected_index;
+        self.selected_index = if self.selected_index == 0 {
+            self.entries.len() - 1
+        } else {
+            self.selected_index - 1
+        };
+        if self.visible {
+            self.slide_start = Some(Instant::now());
+        }
+        self.update_scroll();
+        self.selected_surface().cloned()
+    }
+
     pub fn should_promote(&self) -> bool {
         self.active
             && !self.visible

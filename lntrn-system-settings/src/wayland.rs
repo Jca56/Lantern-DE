@@ -13,6 +13,7 @@ use crate::display_panel::{self, DisplayPanelState};
 use crate::icon_panel;
 use crate::icons;
 use crate::input_panel;
+use crate::keybinds_panel::{self, KeybindsPanelState};
 use crate::monitor_arrange;
 use crate::monitor_settings::persist_monitor_settings;
 use crate::notifications_panel::{self, NotifPanelState};
@@ -50,7 +51,7 @@ pub(crate) enum Panel {
     // Display
     Monitors, Wallpaper,
     // Input
-    Mouse,
+    Mouse, Keybindings,
     // Notifications
     NotifBehavior, NotifSound, NotifTesting,
     // Power
@@ -75,6 +76,7 @@ fn parse_panel_arg() -> Option<Panel> {
         "wallpaper"     => Some(Panel::Wallpaper),
         // Input (legacy "scrolling"/"clicking"/"cursor" all roll into Mouse)
         "input" | "mouse" | "scrolling" | "clicking" | "cursor" => Some(Panel::Mouse),
+        "keybindings" | "keybinds" | "shortcuts" | "keyboard" => Some(Panel::Keybindings),
         // Notifications
         "notifications" | "notif-behavior" => Some(Panel::NotifBehavior),
         "notif-sound"   => Some(Panel::NotifSound),
@@ -234,6 +236,7 @@ pub fn run() -> Result<()> {
     let mut icon_panel_state = icon_panel::IconPanelState::new();
     let mut input_state = input_panel::InputPanelState::new();
     let mut notif_state = NotifPanelState::new();
+    let mut keybinds_state = KeybindsPanelState::new();
     let mut themes_state = crate::appearance_themes::ThemesPanelState::new();
     let mut kbd = KeyboardState::new();
 
@@ -383,6 +386,7 @@ pub fn run() -> Result<()> {
                             &mut lock_wp_state,
                             &mut icon_panel_state,
                             &input_state,
+                            &mut keybinds_state,
                             &state,
                             &qh,
                             cx,
@@ -589,6 +593,13 @@ pub fn run() -> Result<()> {
                     &tex_pass, &fox, &gpu,
                     content_x, panel_y, content_w, panel_h, s, sw, sh,
                     frame_scroll, &mut tex_draws,
+                );
+            }
+            Panel::Keybindings => {
+                keybinds_panel::draw_keybinds_panel(
+                    &mut config, &mut keybinds_state,
+                    &mut painter, &mut text, &mut ix, &fox,
+                    content_x, panel_y, content_w, panel_h, s, sw, sh, frame_scroll,
                 );
             }
             Panel::NotifBehavior | Panel::NotifSound | Panel::NotifTesting => {

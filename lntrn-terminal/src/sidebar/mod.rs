@@ -22,7 +22,11 @@ pub const TOGGLE_H: f32 = 36.0;
 // ── Layout constants ─────────────────────────────────────────────────────────
 
 pub(super) const MIN_WIDTH: f32 = 200.0;
-pub(super) const MAX_WIDTH: f32 = 500.0;
+pub(super) const MAX_WIDTH: f32 = 900.0;
+/// Wider comfortable default when the sidebar first opens.
+pub(super) const DEFAULT_WIDTH: f32 = 340.0;
+/// Width of the invisible drag zone on the sidebar's right edge.
+pub const RESIZE_HANDLE_W: f32 = 8.0;
 pub(super) const PADDING: f32 = 28.0;
 pub(super) const ITEM_HEIGHT: f32 = 44.0;
 pub(super) const INDENT_PX: f32 = 20.0;
@@ -85,6 +89,11 @@ pub struct SidebarState {
     pub entries: Vec<DirEntry>,
     pub scroll_offset: f32,
     pub width: f32,
+    /// When the user has manually dragged the right edge, this holds their
+    /// chosen width and auto-fit (`recompute_width`) stops overriding it.
+    pub manual_width: Option<f32>,
+    /// True while the user is actively dragging the right-edge resize handle.
+    pub resizing: bool,
     /// Right-click context menu: (entry_index, x, y). ROOT_CTX = empty space.
     pub context_menu: Option<(usize, f32, f32)>,
     /// Inline text editing (new file, new folder, rename)
@@ -101,15 +110,21 @@ impl SidebarState {
             root: PathBuf::new(),
             entries: Vec::new(),
             scroll_offset: 0.0,
-            width: MIN_WIDTH,
+            width: DEFAULT_WIDTH,
+            manual_width: None,
+            resizing: false,
             context_menu: None,
             edit: None,
             git_marks: Vec::new(),
         }
     }
 
-    /// Recalculate width to fit the widest visible entry.
+    /// Recalculate width to fit the widest visible entry. No-op once the user
+    /// has manually set a width by dragging the resize handle.
     fn recompute_width(&mut self) {
+        if self.manual_width.is_some() {
+            return;
+        }
         let header_name = self
             .root
             .file_name()
@@ -142,6 +157,53 @@ impl SidebarState {
     /// Toggle visibility.
     pub fn toggle(&mut self) {
         self.visible = !self.visible;
+    }
+
+    /// Is the cursor over the right-edge resize handle?
+    pub fn resize_handle_hit(&self, pos: Option<(f32, f32)>, chrome_h: f32) -> bool {
+        if !self.visible {
+            return false;
+        }
+        match pos {
+            Some((x, y)) => {
+                y >= chrome_h
+                    && (x - self.width).abs() <= RESIZE_HANDLE_W
+            }
+            None => false,
+        }
+    }
+
+    /// Begin a resize drag.
+    pub fn begin_resize(&mut self) {
+        self.resizing = true;
+    }
+
+    /// Apply a resize to the given cursor x (the new right edge), clamped.
+    pub fn resize_to(&mut self, x: f32) {
+        let w = x.clamp(MIN_WIDTH, MAX_WIDTH);
+        self.width = w;
+        self.manual_width = Some(w);
+    }
+
+    /// End a resize drag. Returns true if a resize was actually in progress
+    /// (so the caller can persist the new width).
+    pub fn end_resize(&mut self) -> bool {
+        let was = self.resizing;
+        self.resizing = false;
+        was
+    }
+
+    /// Reset to auto-fit width (e.g. on double-click of the handle).
+    pub fn reset_width(&mut self) {
+        self.manual_width = None;
+        self.recompute_width();
+    }
+
+    /// Apply a width restored from config as a manual override (clamped).
+    pub fn apply_saved_width(&mut self, w: f32) {
+        let w = w.clamp(MIN_WIDTH, MAX_WIDTH);
+        self.width = w;
+        self.manual_width = Some(w);
     }
 
     /// Rebuild the flat list from the tree state.

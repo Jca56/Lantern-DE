@@ -254,13 +254,12 @@ pub(crate) fn handle_click(
                         // Mixed/Directory pick types.
                         let path = te.entry.path.clone();
                         app.toggle_tree_expand(path.clone());
-                        // In pick mode, also point current_dir at this folder so
-                        // the path bar follows the click and Save targets it.
-                        // `tree_root` keeps the tree anchored at the initial pick
-                        // dir, so changing current_dir doesn't re-root the tree.
+                        // In pick mode, also navigate current_dir into this folder
+                        // so the path bar follows the click, the listing refreshes,
+                        // and Save targets it. `tree_root` keeps the tree anchored
+                        // at the initial pick dir, so navigating doesn't re-root it.
                         if app.pick.is_some() {
-                            app.tabs[app.current_tab].path = path.clone();
-                            app.current_dir = path;
+                            app.navigate_to(path);
                         }
                     } else {
                         let path = te.entry.path.clone();

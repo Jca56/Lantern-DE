@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 // ── Window chrome mode ───────────────────────────────────────────────────────
@@ -32,6 +33,8 @@ pub struct LanternConfig {
     pub lockscreen: LockScreenConfig,
     #[serde(default)]
     pub monitors: Vec<MonitorEntry>,
+    #[serde(default)]
+    pub keybinds: KeybindsConfig,
 }
 
 // ── Lock screen ──────────────────────────────────────────────────────────────
@@ -494,6 +497,73 @@ impl Default for NotificationsConfig {
     }
 }
 
+// ── Keybinds ────────────────────────────────────────────────────────────────
+
+/// The "Lantern layer" + keybind configuration. Serializes to `[keybinds]`
+/// with optional per-machine overrides under `[keybinds.machine.<hostname>]`,
+/// letting the desktop enable the WASD-arrow layer without touching the
+/// laptop. The compositor reads the same keys (see `input::layer`).
+///
+/// `layer_maps` is stored as `"from=To"` strings (e.g. `"w=Up"`) so it's
+/// trivially parseable by the compositor's line-scanning config reader.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct KeybindsConfig {
+    /// Master switch for the hold-to-activate navigation layer.
+    pub layer_enabled: bool,
+    /// Trigger key name held to activate the layer. Default "Menu" (the key
+    /// right of `fn` on 60% boards — `fn` itself is firmware-locked and never
+    /// reaches the OS). Other accepted names: Super, Caps, RAlt.
+    pub layer_key: String,
+    /// Source→target map as `"from=To"` pairs. `from` is one character; `To`
+    /// is a nav target (Up/Down/Left/Right/Home/End/PageUp/PageDown/Delete/
+    /// Backspace).
+    pub layer_maps: Vec<String>,
+    /// Per-machine overrides keyed by hostname. Any field set here wins over
+    /// the shared values above on that machine.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub machine: HashMap<String, KeybindsMachine>,
+}
+
+/// Per-machine override block. All fields optional so a machine can override
+/// just the enabled flag (the common case: laptop off, desktop on) without
+/// repeating the whole map.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct KeybindsMachine {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layer_enabled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layer_key: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub layer_maps: Vec<String>,
+}
+
+/// The bundled-default layer map shown in the UI and written on first save:
+/// WASD→arrows, Q/E→Home/End, R/F→PageUp/PageDown, X→Delete, Z→Backspace.
+pub fn default_layer_maps() -> Vec<String> {
+    [
+        "w=Up", "a=Left", "s=Down", "d=Right",
+        "q=Home", "e=End",
+        "r=PageUp", "f=PageDown",
+        "x=Delete", "z=Backspace",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+}
+
+impl Default for KeybindsConfig {
+    fn default() -> Self {
+        Self {
+            layer_enabled: false,
+            layer_key: "Menu".into(),
+            layer_maps: default_layer_maps(),
+            machine: HashMap::new(),
+        }
+    }
+}
+
 // ── Top-level default ────────────────────────────────────────────────────────
 
 impl Default for LanternConfig {
@@ -509,6 +579,7 @@ impl Default for LanternConfig {
             animations: AnimationsConfig::default(),
             lockscreen: LockScreenConfig::default(),
             monitors: Vec::new(),
+            keybinds: KeybindsConfig::default(),
         }
     }
 }
@@ -590,5 +661,92 @@ impl LanternConfig {
         {
             self.notifications.position = "top-right".into();
         }
+        if self.keybinds.layer_key.trim().is_empty() {
+            self.keybinds.layer_key = "Menu".into();
+        }
+    }
+}
+
+/// This machine's hostname (matches the compositor's `machine_hostname`).
+/// Used to scope keybinds to a single machine. Reads `/etc/hostname`, falling
+/// back to `$HOSTNAME`, then "unknown".
+pub fn machine_hostname() -> String {
+    // The kernel hostname is always present on Linux; `/etc/hostname` is absent
+    // on some setups (Gentoo uses `/etc/conf.d/hostname`). Must match the
+    // compositor's `read_hostname` so per-machine scoping agrees.
+    let try_file = |p: &str| {
+        std::fs::read_to_string(p)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+    try_file("/proc/sys/kernel/hostname")
+        .or_else(|| try_file("/etc/hostname"))
+        .or_else(|| std::env::var("HOSTNAME").ok().filter(|s| !s.is_empty()))
+        .unwrap_or_else(|| "unknown".into())
+}
+
+impl KeybindsConfig {
+    /// Effective `layer_enabled` for this machine: a per-machine override
+    /// wins over the shared value.
+    pub fn effective_enabled(&self, host: &str) -> bool {
+        self.machine
+            .get(host)
+            .and_then(|m| m.layer_enabled)
+            .unwrap_or(self.layer_enabled)
+    }
+
+    /// Set `layer_enabled` either globally or for one machine (per-machine
+    /// scope), creating the override block as needed.
+    pub fn set_enabled(&mut self, enabled: bool, scope_machine: Option<&str>) {
+        match scope_machine {
+            Some(host) => {
+                self.machine.entry(host.to_string()).or_default().layer_enabled = Some(enabled);
+            }
+            None => {
+                self.layer_enabled = enabled;
+                // Clear any per-machine override so the global value applies.
+                for m in self.machine.values_mut() {
+                    m.layer_enabled = None;
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `[keybinds]` is a table emitted after the `[[monitors]]` array-of-tables.
+    /// TOML is order-sensitive, so guard that a config with both round-trips
+    /// (serialize → parse) without losing the keybinds section.
+    #[test]
+    fn keybinds_roundtrips_after_monitors() {
+        let mut cfg = LanternConfig::default();
+        cfg.monitors.push(MonitorEntry {
+            name: "DP-1".into(), x: 0, y: 0,
+            resolution: "2560x1440".into(), refresh_rate: "144000".into(),
+            scale: 1.0, wallpaper: String::new(), primary: true, vrr: false,
+        });
+        cfg.keybinds.set_enabled(true, Some("gentoo-pc"));
+        let s = toml::to_string_pretty(&cfg).expect("serialize");
+        assert!(s.contains("[keybinds]"), "missing [keybinds]:\n{s}");
+        assert!(s.contains("[keybinds.machine.gentoo-pc]"), "missing per-machine:\n{s}");
+        let back: LanternConfig = toml::from_str(&s).expect("parse");
+        assert!(back.keybinds.effective_enabled("gentoo-pc"));
+        assert!(!back.keybinds.effective_enabled("laptop"));
+        assert_eq!(back.keybinds.layer_maps, default_layer_maps());
+    }
+
+    #[test]
+    fn scope_toggle_does_not_lose_enabled_state() {
+        let mut kb = KeybindsConfig::default();
+        // Enable per-machine, then switch to global scope keeping the value.
+        kb.set_enabled(true, Some("host"));
+        assert!(kb.effective_enabled("host"));
+        kb.set_enabled(true, None);
+        assert!(kb.effective_enabled("host"));
+        assert!(kb.effective_enabled("other")); // global now applies everywhere
     }
 }

@@ -32,6 +32,14 @@ impl Lantern {
         let serial = SERIAL_COUNTER.next_serial();
         let time = Event::time_msec(&event);
 
+        // Hot-reload the Lantern layer if the config changed on disk (the
+        // System Settings keybinds page rewrites lantern.toml). Cheap: just an
+        // mtime stat against the cached value.
+        self.reload_layer_if_changed();
+
+        // Clear any stale pending injections before this event's filter runs.
+        self.layer_inject.clear();
+
         self.seat.get_keyboard().unwrap().input::<(), _>(
             self,
             event.key_code(),
@@ -50,6 +58,67 @@ impl Lantern {
                         return FilterResult::Forward;
                     }
                 }
+                // --- Lantern layer (60% keyboard nav layer) ---
+                // The trigger key (Menu by default) is a momentary modifier:
+                // while held, mapped keys (WASD→arrows etc.) inject navigation
+                // keycodes instead of typing. Runs before everything else so
+                // the layer owns its keys; the trigger itself never types.
+                //
+                // Releases are tracked by *physical keycode* (not layer state)
+                // so a key pressed under the layer always gets its matching
+                // key-up — even if the trigger was released first. Without this
+                // the client never sees key-up and autorepeats forever.
+                if data.layer.enabled {
+                    let raw = keysym.modified_sym().raw();
+                    let phys = event.key_code().raw();
+
+                    // Trigger key: toggle the held state. On release, force-emit
+                    // releases for any source keys still held under the layer so
+                    // nothing gets stranded "down".
+                    if raw == data.layer.trigger_sym {
+                        let pressed = event.state() == KeyState::Pressed;
+                        data.layer_held = pressed;
+                        if !pressed {
+                            for (_src, target) in data.layer_active_keys.drain() {
+                                data.layer_inject.push((target, KeyState::Released));
+                            }
+                        }
+                        return FilterResult::Intercept(());
+                    }
+
+                    // Release of a key we previously injected: always translate
+                    // it to the target's release, regardless of current layer
+                    // state. Keyed by physical keycode (stable across drops).
+                    if event.state() == KeyState::Released {
+                        if let Some(target) = data.layer_active_keys.remove(&phys) {
+                            data.layer_inject.push((target, KeyState::Released));
+                            return FilterResult::Intercept(());
+                        }
+                    }
+
+                    // Press of a mapped key while the layer is held: inject the
+                    // target press and remember the physical→target mapping so
+                    // we can release it later.
+                    if data.layer_held && event.state() == KeyState::Pressed {
+                        // Match the unshifted keysym so the map fires whether
+                        // or not Shift is held with the layer.
+                        let base = keysym
+                            .raw_syms()
+                            .first()
+                            .map(|s| s.raw())
+                            .unwrap_or(raw);
+                        let held = crate::input::layer::held_mods(_modifiers);
+                        if let Some(target) = data.layer.lookup(base, held)
+                            .or_else(|| data.layer.lookup(raw, held))
+                        {
+                            let kc = smithay::input::keyboard::Keycode::new(target);
+                            data.layer_active_keys.insert(phys, kc);
+                            data.layer_inject.push((kc, KeyState::Pressed));
+                            return FilterResult::Intercept(());
+                        }
+                    }
+                }
+
                 let was_super = data.super_pressed;
                 data.super_pressed = _modifiers.logo;
                 let sym = keysym.modified_sym().raw();
@@ -114,13 +183,40 @@ impl Lantern {
                     }
                 }
 
-                // Alt+Tab: show visual switcher overlay with thumbnails
+                // Alt+Tab: show visual switcher overlay with thumbnails.
+                // Shift+Tab steps backward. With Shift held the keysym
+                // becomes KEY_ISO_Left_Tab on most layouts, so match either.
                 if event.state() == KeyState::Pressed
                     && _modifiers.alt
-                    && keysym.raw_syms().contains(&Keysym::from(xkb::KEY_Tab))
+                    && (keysym.raw_syms().contains(&Keysym::from(xkb::KEY_Tab))
+                        || keysym.raw_syms().contains(&Keysym::from(xkb::KEY_ISO_Left_Tab)))
                 {
-                    data.focus_next_window(serial);
+                    if _modifiers.shift {
+                        data.focus_prev_window(serial);
+                    } else {
+                        data.focus_next_window(serial);
+                    }
                     return FilterResult::Intercept(());
+                }
+
+                // While the switcher is active, Left/Right arrows move the
+                // selection (GNOME spotlight feel). Intercepted only when
+                // the switcher owns the keyboard, so arrows pass through
+                // normally otherwise.
+                if event.state() == KeyState::Pressed
+                    && data.alt_tab_switcher.is_active()
+                {
+                    match keysym.modified_sym().raw() {
+                        xkb::KEY_Right | xkb::KEY_Down => {
+                            data.focus_next_window(serial);
+                            return FilterResult::Intercept(());
+                        }
+                        xkb::KEY_Left | xkb::KEY_Up => {
+                            data.focus_prev_window(serial);
+                            return FilterResult::Intercept(());
+                        }
+                        _ => {}
+                    }
                 }
 
                 // Alt released while switcher is active: commit selection
@@ -505,5 +601,30 @@ impl Lantern {
                 FilterResult::Forward
             },
         );
+
+        // The filter intercepted layer-mapped key(s) and recorded target
+        // keycodes to inject. Forward them to the focused client now, outside
+        // the filter closure (the keyboard handle's internal state was locked
+        // during `input`). We skip the filter on injected keys — they're
+        // navigation keys we don't bind — by using `input_forward` directly.
+        if !self.layer_inject.is_empty() {
+            let injects = std::mem::take(&mut self.layer_inject);
+            let keyboard = self.seat.get_keyboard().unwrap();
+            for (keycode, state) in injects {
+                let serial = SERIAL_COUNTER.next_serial();
+                keyboard.input_forward(self, keycode, state, serial, time, false);
+            }
+        }
+    }
+
+    /// Reload the Lantern layer config when `lantern.toml` changes on disk so
+    /// edits from System Settings take effect without a compositor restart.
+    fn reload_layer_if_changed(&mut self) {
+        let path = crate::lantern_config_path();
+        let mtime = std::fs::metadata(&path).ok().and_then(|m| m.modified().ok());
+        if self.layer_config_mtime != mtime {
+            self.layer_config_mtime = mtime;
+            self.layer = crate::input::layer::LanternLayer::load();
+        }
     }
 }

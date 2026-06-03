@@ -456,7 +456,7 @@ fn is_image_file(name: &str) -> bool {
     )
 }
 
-fn is_video_file(name: &str) -> bool {
+pub fn is_video_file(name: &str) -> bool {
     let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
     matches!(
         ext.as_str(),

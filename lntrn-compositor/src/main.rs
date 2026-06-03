@@ -109,6 +109,47 @@ pub(crate) fn read_config(section: &str, key: &str, default: &str) -> String {
     default.to_string()
 }
 
+/// This machine's hostname, cached for the process lifetime. Read from
+/// `/etc/hostname` (trimmed), falling back to `$HOSTNAME`, then "unknown".
+/// Used to scope keybinds per-machine so the Gentoo PC and Arch laptop can
+/// diverge — see `read_keybind`.
+pub(crate) fn machine_hostname() -> &'static str {
+    use std::sync::OnceLock;
+    static HOST: OnceLock<String> = OnceLock::new();
+    HOST.get_or_init(read_hostname)
+}
+
+/// Resolve this machine's hostname robustly. The kernel hostname
+/// (`/proc/sys/kernel/hostname`) is the source of truth and is always present
+/// on Linux — `/etc/hostname` is absent on some setups (e.g. Gentoo stores it
+/// in `/etc/conf.d/hostname`). Falls back through `/etc/hostname`, `$HOSTNAME`,
+/// then "unknown".
+fn read_hostname() -> String {
+    let try_file = |p: &str| {
+        std::fs::read_to_string(p)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+    try_file("/proc/sys/kernel/hostname")
+        .or_else(|| try_file("/etc/hostname"))
+        .or_else(|| std::env::var("HOSTNAME").ok().filter(|s| !s.is_empty()))
+        .unwrap_or_else(|| "unknown".into())
+}
+
+/// Read a keybind setting with per-machine override. Looks first in the
+/// machine-scoped section `[keybinds.machine.<hostname>]`, then falls back to
+/// the shared `[keybinds]` section, then `default`. This is how a setting can
+/// apply to only the desktop without touching the laptop.
+pub(crate) fn read_keybind(key: &str, default: &str) -> String {
+    let scoped = format!("keybinds.machine.{}", machine_hostname());
+    let v = read_config(&scoped, key, "");
+    if !v.is_empty() {
+        return v;
+    }
+    read_config("keybinds", key, default)
+}
+
 /// Read a float setting from a given [section] in lantern.toml.
 pub(crate) fn read_config_f32(key: &str, default: f32) -> f32 {
     let s = read_config("windows", key, "");

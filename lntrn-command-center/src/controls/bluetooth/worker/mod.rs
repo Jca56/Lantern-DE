@@ -22,10 +22,12 @@ use super::{BtCmd, BtEvent};
 mod devices;
 mod legacy_obex;
 mod pair;
+mod pair_agent;
 mod scan;
 
 use devices::{forward_bt_result, read_devices, read_discoverable, read_powered};
 use pair::interactive_pair;
+use pair_agent::PairAgent;
 use scan::ScanSession;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
@@ -42,6 +44,11 @@ pub(super) fn worker(tx: mpsc::Sender<BtEvent>, cmd_rx: mpsc::Receiver<BtCmd>) {
     // (`obex_incoming_agent`, `obex_send`) are kept in the file per the
     // never-delete rule but are no longer wired up.
     let obex_tx = obex::spawn(tx.clone());
+
+    // System-bus BlueZ agent so *incoming* pair requests (another device
+    // pairing with us) surface inline for Accept/Reject. `None` when the
+    // system bus is unreachable — outgoing pairing still works.
+    let mut pair_agent = PairAgent::register();
 
     // Live D-Bus discovery session — `org.bluez.Adapter1.StartDiscovery`
     // is per-client, so bluez keeps scanning as long as we hold this
@@ -121,6 +128,11 @@ pub(super) fn worker(tx: mpsc::Sender<BtEvent>, cmd_rx: mpsc::Receiver<BtCmd>) {
                     // commands which we forward via the helper's stdin
                     // channel.
                     interactive_pair(&tx, &cmd_rx, &mac);
+                    // The child session's `default-agent` call stole the
+                    // default from our incoming-pair agent — take it back.
+                    if let Some(agent) = pair_agent.as_mut() {
+                        agent.reassert_default();
+                    }
                     let _ = tx.send(BtEvent::Devices(read_devices()));
                     last_poll = Instant::now();
                 }
@@ -182,7 +194,26 @@ pub(super) fn worker(tx: mpsc::Sender<BtEvent>, cmd_rx: mpsc::Receiver<BtCmd>) {
                     };
                     let _ = obex_tx.send(cmd);
                 }
+                BtCmd::IncomingPairReply { accept } => {
+                    let accepted_mac =
+                        pair_agent.as_mut().and_then(|a| a.reply(accept));
+                    if let Some(mac) = accepted_mac {
+                        // BlueZ proceeds with bonding once we ack; trust
+                        // so the device auto-reconnects later, then
+                        // refresh the list so the new device appears.
+                        let _ = Command::new("bluetoothctl")
+                            .args(["trust", &mac])
+                            .output();
+                        let _ = tx.send(BtEvent::Devices(read_devices()));
+                        last_poll = Instant::now();
+                    }
+                }
             }
+        }
+
+        // Poll the system-bus agent for incoming pair prompts.
+        if let Some(agent) = pair_agent.as_mut() {
+            agent.poll(&tx);
         }
 
         // Faster device polling while scanning so newly discovered

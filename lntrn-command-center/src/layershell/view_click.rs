@@ -174,57 +174,7 @@ pub(super) fn handle_control_view_click(
             false
         }
         crate::controls::TileId::Bluetooth => {
-            use crate::controls::bluetooth::{
-                BtClick, IncomingModalHit, PairModalHit, PairPromptKind,
-            };
-
-            // Incoming-file modal sits highest in priority.
-            if app.controls.bluetooth.incoming_request.is_some() {
-                let hit = crate::controls::bluetooth::hit_test_incoming_modal(
-                    panel, view_top_y, scale, phys_x, phys_y,
-                );
-                match hit {
-                    IncomingModalHit::Accept => app.controls.bluetooth.incoming_accept(),
-                    IncomingModalHit::Reject | IncomingModalHit::Backdrop => {
-                        app.controls.bluetooth.incoming_reject();
-                    }
-                    IncomingModalHit::Box => {}
-                }
-                return true;
-            }
-
-            // If the pair-prompt modal is up, every click in the BT
-            // view goes to the modal first.
-            if let Some(prompt) = app.controls.bluetooth.pair_prompt.as_ref() {
-                let kind = prompt.kind.clone();
-                let hit = crate::controls::bluetooth::hit_test_pair_modal(
-                    prompt, panel, view_top_y, scale, phys_x, phys_y,
-                );
-                match hit {
-                    PairModalHit::Primary => match kind {
-                        PairPromptKind::Confirm(_) | PairPromptKind::Authorize(_) => {
-                            app.controls.bluetooth.pair_confirm_yes();
-                        }
-                        PairPromptKind::Enter => {
-                            app.controls.bluetooth.pair_submit_passkey();
-                        }
-                    },
-                    PairModalHit::Secondary | PairModalHit::Backdrop => {
-                        match kind {
-                            PairPromptKind::Confirm(_) | PairPromptKind::Authorize(_) => {
-                                app.controls.bluetooth.pair_confirm_no();
-                            }
-                            PairPromptKind::Enter => {
-                                app.controls.bluetooth.pair_cancel();
-                            }
-                        }
-                    }
-                    PairModalHit::Field | PairModalHit::Box => {
-                        // Inside the modal but not on a button — no-op.
-                    }
-                }
-                return true;
-            }
+            use crate::controls::bluetooth::BtClick;
 
             if let Some(hit) = crate::controls::bluetooth::hit_test(
                 &app.controls.bluetooth,
@@ -235,31 +185,28 @@ pub(super) fn handle_control_view_click(
                 phys_x,
                 phys_y,
             ) {
+                let bt = &mut app.controls.bluetooth;
                 match hit {
-                    BtClick::PowerToggle => app.controls.bluetooth.toggle_power(),
-                    BtClick::DiscoverableToggle => {
-                        app.controls.bluetooth.toggle_discoverable();
-                    }
-                    BtClick::ScanToggle => app.controls.bluetooth.toggle_scan(),
-                    BtClick::DeviceRow(mac) => {
-                        app.controls.bluetooth.toggle_expanded(&mac);
-                    }
+                    BtClick::PowerToggle => bt.toggle_power(),
+                    BtClick::DiscoverableToggle => bt.toggle_discoverable(),
+                    BtClick::ScanToggle => bt.toggle_scan(),
+                    BtClick::DeviceRow(mac) => bt.toggle_expanded(&mac),
                     BtClick::ConnectButton(mac) => {
-                        let is_paired = app
-                            .controls
-                            .bluetooth
-                            .devices()
-                            .iter()
-                            .any(|d| d.mac == mac && d.paired);
+                        let is_paired =
+                            bt.devices().iter().any(|d| d.mac == mac && d.paired);
                         if is_paired {
-                            app.controls.bluetooth.toggle_connection(&mac);
+                            bt.toggle_connection(&mac);
                         } else {
-                            app.controls.bluetooth.pair(&mac);
+                            bt.pair(&mac);
                         }
                     }
-                    BtClick::SendButton(mac) => {
-                        app.controls.bluetooth.send_file(&mac);
-                    }
+                    BtClick::SendButton(mac) => bt.send_file(&mac),
+                    // Inline request-strip buttons. Which reply fires
+                    // depends on which request is live for this MAC: an
+                    // outgoing pair prompt we own, an incoming pair, or
+                    // an incoming file.
+                    BtClick::PromptAccept(mac) => dispatch_prompt(bt, &mac, true),
+                    BtClick::PromptReject(mac) => dispatch_prompt(bt, &mac, false),
                 }
                 return true;
             }
@@ -389,5 +336,44 @@ pub(super) fn handle_control_view_click(
         // No expanded view — click handling is shortcut in the press
         // path, so we never reach here for these.
         crate::controls::TileId::Collapse | crate::controls::TileId::TerminalClear => false,
+    }
+}
+
+/// Route an inline request-strip Accept/Reject for `mac` to the matching
+/// backend reply. Priority mirrors `bluetooth::prompt::row_prompt`:
+/// outgoing pair we own → incoming pair → incoming file.
+fn dispatch_prompt(
+    bt: &mut crate::controls::bluetooth::Bluetooth,
+    mac: &str,
+    accept: bool,
+) {
+    use crate::controls::bluetooth::PairPromptKind;
+
+    // Outgoing pair flow we initiated (Confirm passkey / authorize / PIN).
+    if let Some(kind) = bt.pair_prompt.as_ref().filter(|p| p.mac == mac).map(|p| p.kind.clone()) {
+        match (accept, kind) {
+            (true, PairPromptKind::Enter) => bt.pair_submit_passkey(),
+            (true, _) => bt.pair_confirm_yes(),
+            (false, PairPromptKind::Enter) => bt.pair_cancel(),
+            (false, _) => bt.pair_confirm_no(),
+        }
+        return;
+    }
+
+    // Incoming pair (another device pairing with us).
+    if bt.pair_request.as_ref().is_some_and(|p| p.mac == mac) {
+        if accept {
+            bt.pair_request_accept();
+        } else {
+            bt.pair_request_reject();
+        }
+        return;
+    }
+
+    // Otherwise it's an incoming-file request on this row.
+    if accept {
+        bt.incoming_accept();
+    } else {
+        bt.incoming_reject();
     }
 }

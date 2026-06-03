@@ -17,20 +17,18 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-mod modals;
+mod detail;
+mod glyph;
 mod obex;
+mod prompt;
 mod render;
+mod toggle;
 mod worker;
 
 // Re-export public items so callers can keep saying
 // `crate::controls::bluetooth::draw_view` etc. as before.
-pub use modals::{
-    hit_test_incoming_modal, hit_test_pair_modal, IncomingModalHit, PairModalHit,
-};
-pub use render::{
-    draw_inline, draw_view, hit_test,
-    BtClick, TILE_WIDTH,
-};
+pub use glyph::{draw_inline, TILE_WIDTH};
+pub use render::{draw_view, hit_test, BtClick};
 
 #[derive(Debug, Clone, Default)]
 pub struct Device {
@@ -64,6 +62,48 @@ pub struct Device {
 }
 
 impl Device {
+    /// True when the device has a real, human-friendly name rather than a
+    /// MAC-style fallback. BlueZ uses the address as the name when a device
+    /// advertises no friendly name — those come through as either the raw
+    /// MAC (`F0:05:...`), a dash-joined MAC (`47-11-F8-CC-E3-57`), or a bare
+    /// hex/ID blob (`47074567.00007702`). Real devices like
+    /// "Bose QuietComfort Earbuds" have letters and spaces.
+    pub fn has_real_name(&self) -> bool {
+        let n = self.name.trim();
+        if n.is_empty() || n == self.mac {
+            return false;
+        }
+        // Dash-joined MAC, e.g. "47-11-F8-CC-E3-57".
+        let dash_mac = n.len() == 17
+            && n.matches('-').count() == 5
+            && n.chars().all(|c| c.is_ascii_hexdigit() || c == '-');
+        if dash_mac {
+            return false;
+        }
+        // No-space all-hex/punctuation blob with no real letters mixed in,
+        // e.g. "47074567.00007702" or "F8F00549870A". A genuine name has at
+        // least one space or a stretch that isn't pure hex.
+        let has_space = n.contains(' ');
+        let only_hexish = n
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() || c == '.' || c == ':' || c == '-');
+        if !has_space && only_hexish {
+            return false;
+        }
+        true
+    }
+
+    /// Ranking key for the unpaired "Available" list — lower sorts first.
+    /// Named devices beat unnamed; within each, stronger RSSI wins so the
+    /// thing in your hand floats to the top. `None` RSSI sorts last.
+    fn discovery_rank(&self) -> (u8, i32) {
+        let name_tier = if self.has_real_name() { 0 } else { 1 };
+        // RSSI is negative dBm (closer to 0 = stronger). Negate so stronger
+        // signal yields a smaller key.
+        let signal = -self.rssi.unwrap_or(-127);
+        (name_tier, signal)
+    }
+
     /// True when the device exposes the OBEX Object Push profile and is
     /// therefore capable of *receiving* a file from us. Headphones, mice,
     /// keyboards etc. return false even though they're paired.
@@ -106,6 +146,9 @@ enum BtCmd {
     },
     /// Reply Yes/No to an incoming-file authorization prompt.
     IncomingReply { accept: bool },
+    /// Reply Yes/No to an *incoming* pairing request (another device is
+    /// pairing with us, via our registered BlueZ agent).
+    IncomingPairReply { accept: bool },
 }
 
 enum BtEvent {
@@ -137,10 +180,18 @@ enum BtEvent {
     /// Clear any inline send state on this device's row (e.g. when the
     /// user cancels the file picker — no error, just nothing to show).
     SendCleared { mac: String },
-    /// Incoming push request. Modal asks Accept/Reject.
+    /// Incoming push request. The device's row shows Accept/Reject inline.
     IncomingRequest { from_name: String, filename: String, size: u64 },
     /// Incoming file fully received.
     IncomingDone { filename: String, path: String },
+    /// Another device wants to pair *with us* (our agent got a
+    /// RequestConfirmation / RequestAuthorization). The requesting
+    /// device's row shows Accept/Reject inline. `passkey == None` means
+    /// a simple yes/no authorization with no number to confirm.
+    IncomingPairRequest { mac: String, name: String, passkey: Option<u32> },
+    /// The incoming pairing request was cancelled by the remote (or
+    /// BlueZ released our agent). Clears the inline prompt.
+    IncomingPairCancelled,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -173,6 +224,9 @@ pub struct Bluetooth {
     pub send_state: std::collections::HashMap<String, SendState>,
     /// Pending incoming-file request awaiting Accept/Reject.
     pub incoming_request: Option<IncomingRequest>,
+    /// Pending incoming-pair request awaiting Accept/Reject (another
+    /// device is pairing with us).
+    pub pair_request: Option<IncomingPairRequest>,
     /// Last successfully received file (cleared when a new request arrives).
     pub last_received: Option<IncomingReceived>,
     /// MAC of the device whose detail row is currently expanded. `None`
@@ -221,20 +275,30 @@ pub struct IncomingReceived {
     pub path: String,
 }
 
+/// An incoming pairing request from another device, awaiting the user's
+/// Accept/Reject on the device's row.
+#[derive(Debug, Clone)]
+pub struct IncomingPairRequest {
+    pub mac: String,
+    pub name: String,
+    /// `Some(passkey)` → "Confirm 482913 matches the device", a
+    /// just-confirm yes/no. `None` → bare authorization, no number.
+    pub passkey: Option<u32>,
+}
+
 pub struct PairPrompt {
     pub mac: String,
-    pub device_name: String,
     pub kind: PairPromptKind,
     pub passkey_input: crate::search::input::Input,
-    /// Latest error from a failed reply (e.g. user typed wrong PIN).
+    /// Latest error from a failed reply (e.g. user typed wrong PIN),
+    /// shown inline on the device's strip.
     pub error: Option<String>,
 }
 
 impl PairPrompt {
-    fn new(mac: String, device_name: String, kind: PairPromptKind) -> Self {
+    fn new(mac: String, kind: PairPromptKind) -> Self {
         Self {
             mac,
-            device_name,
             kind,
             passkey_input: crate::search::input::Input::new(),
             error: None,
@@ -271,6 +335,7 @@ impl Bluetooth {
             pair_prompt: None,
             send_state: std::collections::HashMap::new(),
             incoming_request: None,
+            pair_request: None,
             last_received: None,
             expanded_mac: None,
             hovered_mac: None,
@@ -309,12 +374,62 @@ impl Bluetooth {
     }
 
     /// Devices split into paired and unpaired-but-discovered groups.
-    /// The view renders these as two separate sections.
+    /// The view renders these as two separate sections. A device with a
+    /// live request (incoming pair / file) floats to the front of its
+    /// section so the row cap can never hide its Accept/Reject strip.
     pub fn paired_devices(&self) -> Vec<&Device> {
-        self.devices.iter().filter(|d| d.paired).collect()
+        let mut v: Vec<&Device> = self.devices.iter().filter(|d| d.paired).collect();
+        v.sort_by_key(|d| !self.has_request(&d.mac));
+        v
     }
     pub fn unpaired_devices(&self) -> Vec<&Device> {
-        self.devices.iter().filter(|d| !d.paired).collect()
+        // Hide MAC-only / hex-blob junk (smart locks, unresolved devices)
+        // so real named devices aren't buried — but always keep anything
+        // with a live pair request so an incoming pair can never be filtered
+        // out from under the Accept/Reject strip.
+        let mut v: Vec<&Device> = self
+            .devices
+            .iter()
+            .filter(|d| !d.paired)
+            .filter(|d| d.has_real_name() || self.has_request(&d.mac))
+            .collect();
+        // Live requests first; then named-with-strong-signal ranking; then
+        // name as a stable tiebreaker.
+        v.sort_by(|a, b| {
+            (!self.has_request(&a.mac))
+                .cmp(&!self.has_request(&b.mac))
+                .then_with(|| a.discovery_rank().cmp(&b.discovery_rank()))
+                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        });
+        v
+    }
+
+    /// How many discovered-but-unnamed devices were filtered out of the
+    /// "Available" list — surfaced in the view so a hidden device that
+    /// hasn't resolved a name yet isn't a total mystery.
+    pub fn hidden_unpaired_count(&self) -> usize {
+        self.devices
+            .iter()
+            .filter(|d| !d.paired)
+            .filter(|d| !d.has_real_name() && !self.has_request(&d.mac))
+            .count()
+    }
+
+    /// Whether the device with this MAC has a pending request (pair or
+    /// file) awaiting Accept/Reject — used to float its row to the top of
+    /// its section so the row cap can't hide the strip. Incoming files are
+    /// keyed by name, which for a synthetic placeholder equals its MAC.
+    fn has_request(&self, mac: &str) -> bool {
+        if self.pair_request.as_ref().is_some_and(|p| p.mac == mac) {
+            return true;
+        }
+        if let (Some(req), Some(dev)) =
+            (&self.incoming_request, self.devices.iter().find(|d| d.mac == mac))
+        {
+            let n = if dev.name.is_empty() { dev.mac.as_str() } else { dev.name.as_str() };
+            return req.from_name == n || req.from_name == dev.alias;
+        }
+        false
     }
 
     pub fn last_error(&self) -> Option<&str> {
@@ -352,19 +467,19 @@ impl Bluetooth {
                 BtEvent::Devices(d) => {
                     self.pending = None;
                     self.devices = d;
+                    // A fresh snapshot can drop the synthetic row we
+                    // injected for an in-flight incoming pair — re-add it.
+                    self.ensure_pending_pair_device();
                 }
                 BtEvent::Error(msg) => {
                     self.last_error = Some(msg);
                     self.pending = None;
                 }
                 BtEvent::PairPrompt { mac, kind } => {
-                    let device_name = self
-                        .devices
-                        .iter()
-                        .find(|d| d.mac == mac)
-                        .map(|d| d.name.clone())
-                        .unwrap_or_else(|| mac.clone());
-                    self.pair_prompt = Some(PairPrompt::new(mac, device_name, kind));
+                    // The prompt renders inline on the device's own row,
+                    // so the name comes from the row itself — no need to
+                    // resolve it here.
+                    self.pair_prompt = Some(PairPrompt::new(mac, kind));
                 }
                 BtEvent::PairDone { mac: _ } => {
                     self.pair_prompt = None;
@@ -431,10 +546,41 @@ impl Bluetooth {
                         size,
                     });
                     self.last_received = None;
+                    // Guarantee a row to render the inline Accept/Reject
+                    // on, even if the sender isn't in the snapshot or its
+                    // name doesn't match a known device.
+                    self.ensure_incoming_file_device();
                 }
                 BtEvent::IncomingDone { filename, path } => {
                     self.last_received = Some(IncomingReceived { filename, path });
                     self.incoming_request = None;
+                }
+                BtEvent::IncomingPairRequest { mac, name, passkey } => {
+                    // Prefer the friendly name we already know for this
+                    // MAC if the agent gave us a bare path/alias.
+                    let display = self
+                        .devices
+                        .iter()
+                        .find(|d| d.mac == mac)
+                        .map(|d| {
+                            if !d.name.is_empty() && d.name != d.mac {
+                                d.name.clone()
+                            } else {
+                                name.clone()
+                            }
+                        })
+                        .unwrap_or_else(|| name.clone());
+                    self.pair_request = Some(IncomingPairRequest {
+                        mac,
+                        name: display,
+                        passkey,
+                    });
+                    // Surface the requesting device's row even if it's
+                    // not in the snapshot yet (brand-new device).
+                    self.ensure_pending_pair_device();
+                }
+                BtEvent::IncomingPairCancelled => {
+                    self.pair_request = None;
                 }
             }
         }
@@ -551,6 +697,53 @@ impl Bluetooth {
     pub fn incoming_reject(&mut self) {
         let _ = self.cmd_tx.send(BtCmd::IncomingReply { accept: false });
         self.incoming_request = None;
+    }
+
+    /// Accept an incoming pairing request (another device pairing with us).
+    pub fn pair_request_accept(&mut self) {
+        let _ = self.cmd_tx.send(BtCmd::IncomingPairReply { accept: true });
+        self.pair_request = None;
+    }
+
+    /// Reject an incoming pairing request.
+    pub fn pair_request_reject(&mut self) {
+        let _ = self.cmd_tx.send(BtCmd::IncomingPairReply { accept: false });
+        self.pair_request = None;
+    }
+
+    /// Ensure the device behind an active incoming-pair request has a row
+    /// to render on, even if `bluetoothctl devices` hasn't surfaced it
+    /// yet. Inserts a minimal unpaired placeholder keyed by MAC.
+    fn ensure_pending_pair_device(&mut self) {
+        let Some(req) = &self.pair_request else { return };
+        if self.devices.iter().any(|d| d.mac == req.mac) {
+            return;
+        }
+        self.devices.push(Device {
+            mac: req.mac.clone(),
+            name: req.name.clone(),
+            ..Device::default()
+        });
+    }
+
+    /// Ensure a row exists for an incoming-file request. The OBEX agent
+    /// only gives us the sender's friendly name, so we match rows by name
+    /// (see `prompt::row_prompt`); if none matches, inject a placeholder
+    /// keyed by name so the Accept/Reject strip still has somewhere to go.
+    fn ensure_incoming_file_device(&mut self) {
+        let Some(req) = &self.incoming_request else { return };
+        let matched = self.devices.iter().any(|d| {
+            let n = if d.name.is_empty() { d.mac.as_str() } else { d.name.as_str() };
+            req.from_name == n || req.from_name == d.alias
+        });
+        if matched {
+            return;
+        }
+        self.devices.push(Device {
+            mac: req.from_name.clone(),
+            name: req.from_name.clone(),
+            ..Device::default()
+        });
     }
 }
 

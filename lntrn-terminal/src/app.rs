@@ -112,6 +112,8 @@ pub struct App {
 
     // Sidebar file browser
     pub sidebar: sidebar::SidebarState,
+    /// Time of the last resize-handle press, for double-click-to-reset.
+    pub(crate) last_resize_handle_click: Instant,
 
     // Git sidebar
     pub git_sidebar: git_sidebar::GitSidebarState,
@@ -123,6 +125,12 @@ impl App {
     pub fn new(proxy: EventLoopProxy<UserEvent>) -> Self {
         let config = LanternConfig::load();
         let theme = Theme::from_config(&config);
+
+        // Restore a previously dragged sidebar width, if any.
+        let mut sidebar = sidebar::SidebarState::new();
+        if let Some(w) = config.sidebar.width {
+            sidebar.apply_saved_width(w);
+        }
 
         // Spawn git worker thread
         let git_proxy = proxy.clone();
@@ -161,7 +169,8 @@ impl App {
             selecting: false,
             scrollbar_dragging: false,
             pending_menu_event: None,
-            sidebar: sidebar::SidebarState::new(),
+            sidebar,
+            last_resize_handle_click: Instant::now() - std::time::Duration::from_secs(10),
             git_sidebar: git_sidebar::GitSidebarState::new(),
             git_cmd_tx: Some(git_cmd_tx),
             git_event_rx: Some(git_event_rx),

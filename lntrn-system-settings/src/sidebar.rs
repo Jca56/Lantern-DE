@@ -43,7 +43,8 @@ pub(crate) const CATEGORIES: &[CategoryDef] = &[
     ]},
     CategoryDef { cat: Category::Display,       label: "Display",       icon_idx: 2, children: &[], leaf_panel: Some(Panel::Monitors) },
     CategoryDef { cat: Category::Input,         label: "Input",         icon_idx: 3, leaf_panel: None, children: &[
-        (Panel::Mouse,      "Mouse"),
+        (Panel::Mouse,       "Mouse"),
+        (Panel::Keybindings, "Keybindings"),
     ]},
     CategoryDef { cat: Category::Notifications, label: "Notifications", icon_idx: 4, leaf_panel: None, children: &[
         (Panel::NotifBehavior, "Behavior"),

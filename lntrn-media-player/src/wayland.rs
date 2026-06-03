@@ -24,7 +24,7 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 use crate::app::App;
 use crate::mpris_server::{self, PlayerState, MprisCmd};
 use crate::{
-    Gpu, ZONE_CANVAS, ZONE_CLOSE, ZONE_MAXIMIZE, ZONE_MINIMIZE,
+    Gpu, ZONE_CANVAS, ZONE_CLOSE, ZONE_FULLSCREEN, ZONE_LOOP, ZONE_MAXIMIZE, ZONE_MINIMIZE,
     ZONE_NEXT, ZONE_PLAY_PAUSE, ZONE_PREV, ZONE_SEEK_BAR, ZONE_TITLE_BAR,
 };
 
@@ -50,13 +50,6 @@ impl HasWindowHandle for WaylandHandle {
 // ── Wayland state ───────────────────────────────────────────────────────────
 
 const BTN_LEFT: u32 = 0x110;
-
-/// Logical-pixel height of the hover-reveal controls strip below the window.
-/// The wl_surface extends past xdg_surface.set_window_geometry by this much so
-/// the strip floats *below* the visible window (transparent until hovered).
-/// Disabled (0) when fullscreen / maximized — controls overlay over the bars
-/// from within the window in that case.
-pub const STRIP_H_LOGICAL: u32 = 130;
 
 struct State {
     running: bool,
@@ -121,16 +114,6 @@ impl State {
 
     fn phys_width(&self) -> u32 { (self.width as f64 * self.fractional_scale()).round() as u32 }
     fn phys_height(&self) -> u32 { (self.height as f64 * self.fractional_scale()).round() as u32 }
-
-    /// Strip height in logical pixels (0 when the window is fullscreen / maximized
-    /// because there's no off-window space to fade controls into).
-    fn strip_h_logical(&self) -> u32 {
-        if self.fullscreen || self.maximized { 0 } else { STRIP_H_LOGICAL }
-    }
-    fn surface_h_logical(&self) -> u32 { self.height + self.strip_h_logical() }
-    fn phys_surface_h(&self) -> u32 {
-        (self.surface_h_logical() as f64 * self.fractional_scale()).round() as u32
-    }
 }
 
 // ── Dispatch impls ──────────────────────────────────────────────────────────
@@ -366,13 +349,10 @@ pub fn run(
     surface.set_buffer_scale(1);
     let viewport = state.viewporter.as_ref().map(|vp| {
         let vp = vp.get_viewport(&surface, &qh, ());
-        vp.set_destination(state.width as i32, state.surface_h_logical() as i32);
+        vp.set_destination(state.width as i32, state.height as i32);
         vp
     });
 
-    // The wl_surface buffer extends below the visible window; set_window_geometry
-    // tells the compositor where the actual window content ends so it draws
-    // borders / shadows around just the bars area.
     if let Some(xs) = &state.xdg_surface {
         xs.set_window_geometry(0, 0, state.width as i32, state.height as i32);
     }
@@ -386,7 +366,7 @@ pub fn run(
     };
 
     let phys_w = state.phys_width().max(1);
-    let phys_h = state.phys_surface_h().max(1);
+    let phys_h = state.phys_height().max(1);
     let gpu_ctx = GpuContext::from_window(&wl_handle, phys_w, phys_h)
         .map_err(|e| anyhow!("GPU init failed: {e}"))?;
     let mut gpu = Gpu {
@@ -448,10 +428,10 @@ pub fn run(
         // Handle resize
         if state.configured {
             state.configured = false;
-            gpu.ctx.resize(state.phys_width().max(1), state.phys_surface_h().max(1));
+            gpu.ctx.resize(state.phys_width().max(1), state.phys_height().max(1));
             surface.set_buffer_scale(1);
             if let Some(vp) = &viewport {
-                vp.set_destination(state.width as i32, state.surface_h_logical() as i32);
+                vp.set_destination(state.width as i32, state.height as i32);
             }
             if let Some(xs) = &state.xdg_surface {
                 xs.set_window_geometry(0, 0, state.width as i32, state.height as i32);
@@ -460,7 +440,6 @@ pub fn run(
 
         let wf = gpu.ctx.width() as f32;
         let win_hf = state.phys_height() as f32;
-        let strip_hf = (state.phys_surface_h() as f32 - win_hf).max(0.0);
         let s = scale_f;
 
         // ── Cursor ──────────────────────────────────────────────────────
@@ -472,11 +451,16 @@ pub fn run(
             input.on_cursor_left();
         }
 
+        // Controls own the bottom edge while visible; the title bar (video
+        // mode, not fullscreen) owns the top edge.
+        let controls_visible = app.controls_alpha > 0.05;
+        let title_visible = !app.audio_only && app.pipeline.is_some() && !state.fullscreen;
+
         // ── Cursor shape (resize edges) ────────────────────────────────
         if state.pointer_in_surface {
             let desired = if !state.maximized && !state.fullscreen {
                 let border = 10.0 * s;
-                match edge_resize(cx, cy, wf, win_hf, border) {
+                match edge_resize(cx, cy, wf, win_hf, border, controls_visible, title_visible) {
                     Some(edge) => resize_edge_to_cursor_shape(edge),
                     None => wp_cursor_shape_device_v1::Shape::Default,
                 }
@@ -520,7 +504,12 @@ pub fn run(
         if state.left_pressed {
             state.left_pressed = false;
             let border = 10.0 * s;
-            if let Some(edge) = edge_resize(cx, cy, wf, win_hf, border) {
+            let resize_edge = if !state.maximized && !state.fullscreen {
+                edge_resize(cx, cy, wf, win_hf, border, controls_visible, title_visible)
+            } else {
+                None
+            };
+            if let Some(edge) = resize_edge {
                 if let Some(seat) = &state.seat {
                     toplevel.resize(seat, state.pointer_serial, edge);
                 }
@@ -560,10 +549,18 @@ pub fn run(
                     ZONE_MINIMIZE => {
                         toplevel.set_minimized();
                     }
-                    ZONE_CANVAS => {
-                        if let Some(seat) = &state.seat {
-                            toplevel._move(seat, state.pointer_serial);
+                    ZONE_FULLSCREEN => {
+                        if state.fullscreen {
+                            toplevel.unset_fullscreen();
+                        } else {
+                            toplevel.set_fullscreen(None);
                         }
+                    }
+                    ZONE_LOOP => { app.cycle_loop_mode(); }
+                    ZONE_CANVAS => {
+                        // Click the video/visualizer to toggle playback, the
+                        // standard media-player gesture.
+                        app.toggle_play_pause();
                     }
                     _ => {}
                 }
@@ -610,12 +607,11 @@ pub fn run(
         });
 
         // ── Render ──────────────────────────────────────────────────────
-        let is_maximized = state.maximized || state.fullscreen;
         let palette = FoxPalette::current();
         let opacity = lntrn_theme::background_opacity();
         rects = crate::render::render_frame(
             &mut gpu, &app, &mut input, &palette, opacity, s,
-            win_hf, strip_hf, is_maximized,
+            win_hf, state.fullscreen,
         );
 
         surface.frame(&qh, ());
@@ -652,20 +648,27 @@ fn resize_edge_to_cursor_shape(
     }
 }
 
-/// Bottom-edge resize is disabled so the hover-reveal controls strip (which
-/// sits just below the window) stays clickable. Resize is only available on
-/// the left, right, and top edges + the top corners.
-fn edge_resize(cx: f32, cy: f32, w: f32, h: f32, border: f32) -> Option<xdg_toplevel::ResizeEdge> {
-    if cy >= h { return None; }
+/// Resize on any edge / corner within `border` of the window bounds. The
+/// controls overlay auto-hides, so when `controls_visible` is true the bottom
+/// edge is suppressed to keep the seek bar and buttons clickable; the top edge
+/// is likewise suppressed when the title bar is showing (it owns those clicks).
+fn edge_resize(
+    cx: f32, cy: f32, w: f32, h: f32, border: f32,
+    controls_visible: bool, title_visible: bool,
+) -> Option<xdg_toplevel::ResizeEdge> {
     let left = cx < border;
     let right = cx > w - border;
-    let top = cy < border;
-    match (left, right, top) {
-        (true, _, true) => Some(xdg_toplevel::ResizeEdge::TopLeft),
-        (_, true, true) => Some(xdg_toplevel::ResizeEdge::TopRight),
-        (true, _, _) => Some(xdg_toplevel::ResizeEdge::Left),
-        (_, true, _) => Some(xdg_toplevel::ResizeEdge::Right),
-        (_, _, true) => Some(xdg_toplevel::ResizeEdge::Top),
+    let top = cy < border && !title_visible;
+    let bottom = cy > h - border && !controls_visible;
+    match (left, right, top, bottom) {
+        (true, _, true, _) => Some(xdg_toplevel::ResizeEdge::TopLeft),
+        (_, true, true, _) => Some(xdg_toplevel::ResizeEdge::TopRight),
+        (true, _, _, true) => Some(xdg_toplevel::ResizeEdge::BottomLeft),
+        (_, true, _, true) => Some(xdg_toplevel::ResizeEdge::BottomRight),
+        (true, _, _, _) => Some(xdg_toplevel::ResizeEdge::Left),
+        (_, true, _, _) => Some(xdg_toplevel::ResizeEdge::Right),
+        (_, _, true, _) => Some(xdg_toplevel::ResizeEdge::Top),
+        (_, _, _, true) => Some(xdg_toplevel::ResizeEdge::Bottom),
         _ => None,
     }
 }

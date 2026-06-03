@@ -33,6 +33,7 @@ pub(crate) fn route_zone_click(
     lock_wp_state: &mut LockWallpaperState,
     icon_panel_state: &mut icon_panel::IconPanelState,
     input_state: &input_panel::InputPanelState,
+    keybinds_state: &mut crate::keybinds_panel::KeybindsPanelState,
     state: &State,
     qh: &QueueHandle<State>,
     cx: f32,
@@ -81,7 +82,7 @@ pub(crate) fn route_zone_click(
     // ── Per-subpanel click handlers ─────────────────────────────────────
     route_panel_click(
         *active_panel, zone_id, config, panel_state,
-        display_state, lock_wp_state, icon_panel_state, input_state, state, cx, cy,
+        display_state, lock_wp_state, icon_panel_state, input_state, keybinds_state, state, cx, cy,
     );
 }
 
@@ -135,6 +136,7 @@ fn route_panel_click(
     lock_wp_state: &mut LockWallpaperState,
     icon_panel_state: &mut icon_panel::IconPanelState,
     input_state: &input_panel::InputPanelState,
+    keybinds_state: &mut crate::keybinds_panel::KeybindsPanelState,
     state: &State,
     cx: f32,
     cy: f32,
@@ -158,6 +160,9 @@ fn route_panel_click(
         }
         Panel::Mouse => {
             input_panel::handle_input_click(config, input_state, zone_id);
+        }
+        Panel::Keybindings => {
+            crate::keybinds_panel::handle_keybinds_click(config, keybinds_state, zone_id);
         }
         Panel::NotifBehavior | Panel::NotifSound | Panel::NotifTesting => {
             notifications_panel::handle_notifications_click(config, zone_id);

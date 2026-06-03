@@ -12,22 +12,26 @@ const MEDIA_EXTENSIONS: &[&str] = &[
     "mp3", "flac", "wav", "ogg", "m4a", "aac", "opus", "wma",
 ];
 
+/// What happens when the current track reaches the end.
 #[derive(Clone, Copy, PartialEq)]
 pub enum LoopMode {
-    Off,
-    LoopOne,
-    LoopAll,
+    /// Stop after the current track finishes ("play once").
+    Once,
+    /// Repeat the current track forever ("loop").
+    RepeatOne,
+    /// Advance to the next file in the folder ("continue").
+    Continue,
 }
 
 impl LoopMode {
+    /// Cycle order: Continue → RepeatOne → Once → Continue.
     pub fn next(self) -> Self {
         match self {
-            LoopMode::Off => LoopMode::LoopOne,
-            LoopMode::LoopOne => LoopMode::LoopAll,
-            LoopMode::LoopAll => LoopMode::Off,
+            LoopMode::Continue => LoopMode::RepeatOne,
+            LoopMode::RepeatOne => LoopMode::Once,
+            LoopMode::Once => LoopMode::Continue,
         }
     }
-
 }
 
 pub struct App {
@@ -73,7 +77,7 @@ impl App {
             status_text: "No media loaded".into(),
             audio_only: false,
             vis_bars: vec![0.0; VIS_BARS],
-            loop_mode: LoopMode::Off,
+            loop_mode: LoopMode::Continue,
             playlist: Vec::new(),
             playlist_index: 0,
             controls_alpha: 0.0,
@@ -203,7 +207,7 @@ impl App {
 
     fn handle_eos(&mut self) -> bool {
         match self.loop_mode {
-            LoopMode::LoopOne => {
+            LoopMode::RepeatOne => {
                 if let Some(pipe) = &mut self.pipeline {
                     pipe.clear_eos();
                     pipe.seek(0);
@@ -211,7 +215,16 @@ impl App {
                 }
                 true
             }
-            LoopMode::Off | LoopMode::LoopAll => {
+            LoopMode::Once => {
+                // Stop at the end of the current track; leave it paused on the
+                // last frame so the user can replay or pick another file.
+                if let Some(pipe) = &mut self.pipeline {
+                    pipe.clear_eos();
+                    pipe.pause();
+                }
+                false
+            }
+            LoopMode::Continue => {
                 if let Some(pipe) = &mut self.pipeline {
                     pipe.clear_eos();
                 }
@@ -224,9 +237,8 @@ impl App {
         if self.playlist.len() <= 1 { return false; }
         if self.playlist_index + 1 < self.playlist.len() {
             self.playlist_index += 1;
-        } else if self.loop_mode == LoopMode::LoopAll {
-            self.playlist_index = 0;
         } else {
+            // Past the last file: wrap only when explicitly looping the folder.
             return false;
         }
         let path = self.playlist[self.playlist_index].clone();
@@ -245,8 +257,6 @@ impl App {
         }
         if self.playlist_index > 0 {
             self.playlist_index -= 1;
-        } else if self.loop_mode == LoopMode::LoopAll {
-            self.playlist_index = self.playlist.len() - 1;
         } else {
             return false;
         }
@@ -266,9 +276,13 @@ impl App {
         let dt = (now - self.last_tick).as_secs_f32().min(0.1);
         self.last_tick = now;
 
-        let target = if self.pointer_in_window {
-            1.0
-        } else if self.controls_last_move.elapsed().as_secs_f32() < 1.5 {
+        // Controls stay up while the pointer is in the window, briefly after it
+        // moves, and whenever playback is paused (so you can always see the seek
+        // bar and hit play again without fishing for the controls).
+        let target = if self.pointer_in_window
+            || !self.is_playing()
+            || self.controls_last_move.elapsed().as_secs_f32() < 1.5
+        {
             1.0
         } else {
             0.0
