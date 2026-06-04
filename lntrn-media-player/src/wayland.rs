@@ -25,7 +25,8 @@ use crate::app::App;
 use crate::mpris_server::{self, PlayerState, MprisCmd};
 use crate::{
     Gpu, ZONE_CANVAS, ZONE_CLOSE, ZONE_FULLSCREEN, ZONE_LOOP, ZONE_MAXIMIZE, ZONE_MINIMIZE,
-    ZONE_NEXT, ZONE_PLAY_PAUSE, ZONE_PREV, ZONE_SEEK_BAR, ZONE_TITLE_BAR,
+    ZONE_NEXT, ZONE_PLAY_PAUSE, ZONE_PREV, ZONE_SEEK_BAR, ZONE_TITLE_BAR, ZONE_VIEW_MENU,
+    ZONE_VIEW_SWATCH_BASE,
 };
 
 // ── WaylandHandle for wgpu ──────────────────────────────────────────────────
@@ -454,7 +455,11 @@ pub fn run(
         // Controls own the bottom edge while visible; the title bar (video
         // mode, not fullscreen) owns the top edge.
         let controls_visible = app.controls_alpha > 0.05;
-        let title_visible = !app.audio_only && app.pipeline.is_some() && !state.fullscreen;
+        // Title bar owns the top edge in video mode (always) and in audio mode
+        // whenever it's faded in on hover.
+        let video_mode = !app.audio_only && app.pipeline.is_some();
+        let title_visible = !state.fullscreen
+            && (video_mode || (app.audio_only && controls_visible));
 
         // ── Cursor shape (resize edges) ────────────────────────────────
         if state.pointer_in_surface {
@@ -514,8 +519,22 @@ pub fn run(
                     toplevel.resize(seat, state.pointer_serial, edge);
                 }
             } else if let Some(zone_id) = input.on_left_pressed() {
+                // Any click outside the View menu/button closes it.
+                let is_view = zone_id == ZONE_VIEW_MENU
+                    || (zone_id >= ZONE_VIEW_SWATCH_BASE
+                        && zone_id < ZONE_VIEW_SWATCH_BASE + crate::vis_theme::theme_count() as u32);
+                if app.view_menu_open && !is_view {
+                    app.view_menu_open = false;
+                }
                 match zone_id {
                     ZONE_PLAY_PAUSE => { app.toggle_play_pause(); }
+                    ZONE_VIEW_MENU => { app.view_menu_open = !app.view_menu_open; }
+                    z if z >= ZONE_VIEW_SWATCH_BASE
+                        && z < ZONE_VIEW_SWATCH_BASE + crate::vis_theme::theme_count() as u32 =>
+                    {
+                        app.set_vis_theme((z - ZONE_VIEW_SWATCH_BASE) as usize);
+                        app.view_menu_open = false;
+                    }
                     ZONE_PREV => {
                         app.prev_track();
                         update_title(&toplevel, &app);
@@ -558,9 +577,12 @@ pub fn run(
                     }
                     ZONE_LOOP => { app.cycle_loop_mode(); }
                     ZONE_CANVAS => {
-                        // Click the video/visualizer to toggle playback, the
-                        // standard media-player gesture.
-                        app.toggle_play_pause();
+                        // Click anywhere on the canvas to drag the window (the
+                        // whole surface is a move handle). Playback toggles via
+                        // the controls or spacebar instead.
+                        if let Some(seat) = &state.seat {
+                            toplevel._move(seat, state.pointer_serial);
+                        }
                     }
                     _ => {}
                 }

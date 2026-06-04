@@ -4,13 +4,15 @@ use lntrn_ui::gpu::{FoxPalette, InteractionContext, MenuBar, MenuEvent, MenuItem
 use crate::editor::{self, Editor};
 use crate::find_bar::{draw_find_bar, match_color, FindBar};
 use crate::format::{Alignment, FormatSpan};
+use crate::ribbon;
 use crate::scrollbar;
 use crate::tab_strip::{draw_tab_strip, TabLabel, TAB_STRIP_H};
 use crate::theme::Theme;
 use crate::title_bar::{draw_window_controls, title_content_rect, TITLE_BAR_H};
+use crate::tokens;
 use crate::toolbar::{self, FormatToolbar};
 use crate::{
-    Gpu, MENU_NEW, MENU_OPEN, MENU_SAVE, MENU_SAVE_DOCX, MENU_THEME_DARK, MENU_THEME_NIGHT,
+    Gpu, MENU_NEW, MENU_OPEN, MENU_SAVE, MENU_SAVE_DOCX, MENU_THEME_DARK,
     MENU_THEME_PAPER, ZONE_EDITOR, ZONE_EDITOR_SCROLL_THUMB,
 };
 
@@ -39,7 +41,6 @@ pub fn file_menu_items() -> Vec<(&'static str, Vec<MenuItem>)> {
             "View",
             vec![
                 MenuItem::action_with(MENU_THEME_PAPER, "Theme: Paper", ""),
-                MenuItem::action_with(MENU_THEME_NIGHT, "Theme: Night Sky", ""),
                 MenuItem::action_with(MENU_THEME_DARK, "Theme: Dark", ""),
             ],
         ),
@@ -69,7 +70,7 @@ pub fn measure_to_offset(
         let span_text = &line_str[span.start..end];
         if !span_text.is_empty() {
             let (fs, weight, style) = span_rendering(&span, default_font_size);
-            x += text.measure_width_styled(span_text, fs, weight, style);
+            x += text.measure_width_full(span_text, fs, weight, style, span_family(&span));
         }
         if span.end >= byte_offset {
             break;
@@ -84,6 +85,13 @@ pub(crate) fn span_rendering(span: &FormatSpan, default_font_size: f32) -> (f32,
     let weight = if span.attrs.bold { FontWeight::Bold } else { FontWeight::Normal };
     let style = if span.attrs.italic { FontStyle::Italic } else { FontStyle::Normal };
     (fs, weight, style)
+}
+
+/// The font family name a span should render with, or `None` for the default.
+pub(crate) fn span_family(span: &FormatSpan) -> Option<&'static str> {
+    span.attrs
+        .font
+        .and_then(|idx| crate::fonts::family_for_index_static(idx as usize))
 }
 
 /// Compute the x-offset for a given text alignment.
@@ -138,13 +146,17 @@ pub fn render_frame(
     painter.clear();
     input.begin_frame();
 
-    // ── Window background (one continuous paper sheet) ───────────────
-    painter.rect_filled(Rect::new(0.0, 0.0, wf, hf), 10.0 * s, pal.bg);
+    // ── Window background (the desk colour fills the whole window) ───
+    painter.rect_filled(Rect::new(0.0, 0.0, wf, hf), tokens::RADIUS_WINDOW * s, pal.bg);
+
+    // ── Ribbon panel (title + tabs + toolbar cohesion) ───────────────
+    // One top-lit gradient with a tight drop shadow + 1px sheen, painted
+    // before any chrome content so controls/labels sit on top of it.
+    ribbon::draw_ribbon_bg(painter, pal, wf, s);
 
     // ── Inline title bar ──────────────────────────────────────────────
-    // No background fill — it shares the paper bg from above. We just draw
-    // the window controls and let the menu bar render on top.
-    draw_window_controls(painter, input, pal, wf, s);
+    // Window controls + menu render directly on the ribbon panel.
+    draw_window_controls(painter, input, pal, theme, wf, s);
 
     // ── Menu bar (inside title bar content area) ─────────────────────
     let menus = file_menu_items();
@@ -155,7 +167,16 @@ pub fn render_frame(
 
     // ── Tab strip ────────────────────────────────────────────────────
     draw_tab_strip(
-        painter, text, input, tab_labels, active_tab, pal, wf, s, w, h,
+        painter, text, input, tab_labels, active_tab, pal, theme, wf, s, w, h,
+    );
+
+    // ── Ribbon↔desk seam hairline ────────────────────────────────────
+    // Drawn after the tabs so the active tab covered its own seam slice.
+    let ribbon_h = ribbon::ribbon_height(s);
+    painter.rect_filled(
+        Rect::new(0.0, ribbon_h - 1.0 * s, wf, 1.0 * s),
+        0.0,
+        theme.hairline(),
     );
 
     // ── Formatting toolbar ────────────────────────────────────────────
@@ -173,6 +194,7 @@ pub fn render_frame(
             text,
             input,
             pal,
+            theme,
             find_bar_top,
             0.0,
             wf,
@@ -186,51 +208,85 @@ pub fn render_frame(
     let er = editor_rect(wf, hf, s, find_bar_h);
     input.add_zone(ZONE_EDITOR, er);
 
-    // Fill the editor area with the gutter color, then draw the page
-    // on top so the non-typeable margins are visually distinct.
-    painter.rect_filled(er, 0.0, pal.surface_2);
-
     let font_size = editor::FONT_SIZE * s;
     let pad = editor::PAD * s;
 
     // Document mode: render the editor body as a centered "page". Its width
     // is user-controlled via the draggable margins (`page_width_frac`), so
     // prose can be a comfortable column or fill the screen — their call.
+    // Geometry is computed first so the drop shadow can sit under the sheet.
     let (page_x, page_w) = crate::page::geometry(er, page_width_frac, s);
     let content_x = page_x + pad;
     let content_max_w = (page_w - pad * 2.0).max(10.0);
     let text_y_start = er.y + pad * 1.5 - editor.scroll_offset;
+    let page_rect = Rect::new(page_x, er.y, page_w, er.h);
+    let r = tokens::RADIUS_PAGE * s;
 
-    // White page rect over the gutter so the typeable area stands out.
-    painter.rect_filled(Rect::new(page_x, er.y, page_w, er.h), 0.0, pal.bg);
+    // ── Floating page on a warm desk (the signature Word look) ───────
+    // Z-order is load-bearing: desk → shadow → sheet → edge → sheen.
+
+    // Desk: a subtle vertical gradient so the gutter has depth, not flatness.
+    let (desk_top, desk_bot) = tokens::desk_gradient(pal.surface_2);
+    painter.rect_gradient_linear(er, 0.0, tokens::GRAD_ANGLE, desk_top, desk_bot);
+
+    // Soft drop shadow under the sheet (before the sheet paints over it).
+    let (sh_sigma, sh_color, sh_dx, sh_dy) = tokens::page_shadow(theme);
+    painter.shadow(page_rect, r, sh_sigma * s, sh_color, sh_dx * s, sh_dy * s);
+
+    // The page sheet — top corners rounded, bottom square (continuous column).
+    painter.rect_4corner(page_rect, [r, r, 0.0, 0.0], pal.bg);
+
+    // Crisp hairline around the sheet, then a faint inner top sheen for paper feel.
+    painter.rect_border(page_rect, r, 1.0 * s, tokens::page_edge(theme));
+    painter.inner_shadow(page_rect, r, 6.0 * s, tokens::page_sheen(theme), 0.0, -3.0 * s);
 
     // Draggable margin handles, registered after ZONE_EDITOR so they win the
     // hit-test where they overlap the editor body.
     crate::page::draw_handles(input, painter, pal, er, page_x, page_w, s);
 
+    // Toolbar dropdown option zones MUST be registered AFTER ZONE_EDITOR (and
+    // the page handles) — hit-testing is last-registered-wins, and the open
+    // dropdown panels float over the editor body. Registering them here makes
+    // clicks on font/size options win over the editor underneath.
+    toolbar::register_font_option_zones(fmt_toolbar, input, s);
+    toolbar::register_size_option_zones(fmt_toolbar, &fmt_state, input, s);
+
     // ── Compute word wraps ────────────────────────────────────────────
     crate::wrap::compute(text, editor, content_max_w, s, font_size);
 
-    // Build per-line y-start positions (variable height per paragraph).
+    // Build per-line and per-row y-start positions. Each wrap row's height is
+    // driven by the largest font size on that row, so big text gets a taller
+    // row (no overlap) — this is what makes font-size changes actually work.
     let mut line_y_starts: Vec<f32> = Vec::with_capacity(editor.lines.len());
+    let mut row_y_starts: Vec<Vec<f32>> = Vec::with_capacity(editor.lines.len());
     let mut y_accum = text_y_start;
     for (i, wraps) in editor.wrap_rows.iter().enumerate() {
         let para = editor.formats.get(i).para;
+        let line_len = editor.lines[i].len();
         y_accum += para.space_before * s;
         line_y_starts.push(y_accum);
-        let row_h = editor::FONT_SIZE * para.line_spacing * s;
-        y_accum += wraps.len() as f32 * row_h;
+        let mut rows: Vec<f32> = Vec::with_capacity(wraps.len());
+        for (row_idx, &row_start) in wraps.iter().enumerate() {
+            let row_end = wraps.get(row_idx + 1).copied().unwrap_or(line_len);
+            rows.push(y_accum);
+            y_accum += editor.row_height(i, row_start, row_end, s);
+        }
+        row_y_starts.push(rows);
         y_accum += para.space_after * s;
     }
 
-    // Determine visible doc lines via y-coordinate comparison.
+    // Determine visible doc lines via y-coordinate comparison. A line's bottom
+    // edge is the last wrap row's y plus that row's (font-size-driven) height.
     let first_doc = line_y_starts
         .iter()
         .enumerate()
-        .position(|(i, &y)| {
-            let para = editor.formats.get(i).para;
-            let row_h = editor::FONT_SIZE * para.line_spacing * s;
-            y + editor.wrap_rows[i].len() as f32 * row_h >= er.y
+        .position(|(i, _)| {
+            let rows = &row_y_starts[i];
+            let last_idx = rows.len().saturating_sub(1);
+            let last_start = *editor.wrap_rows[i].last().unwrap_or(&0);
+            let line_len = editor.lines[i].len();
+            let last_h = editor.row_height(i, last_start, line_len, s);
+            rows.get(last_idx).map_or(false, |&ly| ly + last_h >= er.y)
         })
         .unwrap_or(0);
     let last_doc = line_y_starts
@@ -239,7 +295,8 @@ pub fn render_frame(
         .unwrap_or(editor.lines.len())
         .min(editor.lines.len());
 
-    /// Per-row x-offset for alignment + first-line indent.
+    /// Per-row x-offset for alignment + first-line indent + bullet hanging
+    /// indent (which applies to every row of a bullet paragraph).
     #[inline]
     fn row_x_offset(
         text: &mut TextRenderer,
@@ -253,10 +310,12 @@ pub fn render_frame(
         s: f32,
     ) -> f32 {
         let para = editor.formats.get(line).para;
+        let bullet = if para.bullet { editor::BULLET_INDENT * s } else { 0.0 };
+        let avail = (content_max_w - bullet).max(10.0);
         let row_w = measure_range(text, editor, line, row_start, row_end, font_size);
-        let align = alignment_offset(para.alignment, content_max_w, row_w);
+        let align = alignment_offset(para.alignment, avail, row_w);
         let indent = if row_idx == 0 { para.first_indent * s } else { 0.0 };
-        align + indent
+        bullet + align + indent
     }
 
     // ── Selection highlight ───────────────────────────────────────────
@@ -276,12 +335,11 @@ pub fn render_frame(
                 (0, line_len)
             };
 
-            let para = editor.formats.get(i).para;
-            let row_h = editor::FONT_SIZE * para.line_spacing * s;
             let wraps = &editor.wrap_rows[i];
             for (row_idx, &row_start) in wraps.iter().enumerate() {
                 let row_end = wraps.get(row_idx + 1).copied().unwrap_or(line_len);
-                let y = line_y_starts[i] + row_idx as f32 * row_h;
+                let y = row_y_starts[i][row_idx];
+                let row_h = editor.row_height(i, row_start, row_end, s);
                 if y + row_h < er.y || y > er.y + er.h {
                     continue;
                 }
@@ -332,8 +390,6 @@ pub fn render_frame(
             if m.line < first_doc || m.line >= last_doc {
                 continue;
             }
-            let para = editor.formats.get(m.line).para;
-            let row_h = editor::FONT_SIZE * para.line_spacing * s;
             let wraps = &editor.wrap_rows[m.line];
             for (row_idx, &row_start) in wraps.iter().enumerate() {
                 let row_end = wraps
@@ -343,7 +399,8 @@ pub fn render_frame(
                 if m.end <= row_start || m.start >= row_end {
                     continue;
                 }
-                let y = line_y_starts[m.line] + row_idx as f32 * row_h;
+                let y = row_y_starts[m.line][row_idx];
+                let row_h = editor.row_height(m.line, row_start, row_end, s);
                 if y + row_h < er.y || y > er.y + er.h {
                     continue;
                 }
@@ -361,7 +418,7 @@ pub fn render_frame(
                     painter.rect_filled(
                         Rect::new(x1, y, x2 - x1, row_h),
                         2.0 * s,
-                        match_color(m_idx == find_bar.current),
+                        match_color(m_idx == find_bar.current, theme),
                     );
                 }
             }
@@ -377,15 +434,28 @@ pub fn render_frame(
     for i in first_doc..last_doc {
         let line_str = &editor.lines[i];
         let wraps = &editor.wrap_rows[i];
-        let para = editor.formats.get(i).para;
-        let row_h = editor::FONT_SIZE * para.line_spacing * s;
 
+        let para = editor.formats.get(i).para;
         for (row_idx, &row_start) in wraps.iter().enumerate() {
             let row_end = wraps.get(row_idx + 1).copied().unwrap_or(line_str.len());
-            let y = line_y_starts[i] + row_idx as f32 * row_h;
+            let y = row_y_starts[i][row_idx];
+            let row_h = editor.row_height(i, row_start, row_end, s);
             if y + row_h < er.y || y > er.y + er.h {
                 continue;
             }
+
+            // Bullet glyph on the first row of a bullet paragraph (even when the
+            // line has no text yet). The dot is centered on the text's visual
+            // midline (~0.58 of the font size below the row top, where glyph ink
+            // actually sits given the 1.2 line-height), not the row-box middle.
+            if para.bullet && row_idx == 0 {
+                let row_fs = editor.row_font_size(i, row_start, row_end) * s;
+                let dot_r = (row_fs * 0.16).max(4.0 * s);
+                let dot_x = content_x + editor::BULLET_INDENT * 0.5 * s;
+                let dot_y = y + row_fs * 0.58;
+                painter.circle_filled(dot_x, dot_y, dot_r, pal.text);
+            }
+
             if row_start >= row_end {
                 continue;
             }
@@ -410,6 +480,7 @@ pub fn render_frame(
                 }
 
                 let (fs, weight, style) = span_rendering(&span, font_size);
+                let family = span_family(&span);
                 let span_color = match span.attrs.color {
                     Some(rgb) => Color::from_rgb8(
                         ((rgb >> 16) & 0xFF) as u8,
@@ -419,10 +490,10 @@ pub fn render_frame(
                     None => pal.text,
                 };
 
-                text.queue_styled(
-                    span_text, fs, x, y, span_color, content_max_w, weight, style, w, h,
+                text.queue_full(
+                    span_text, fs, x, y, span_color, content_max_w, weight, style, family, w, h,
                 );
-                let span_w = text.measure_width_styled(span_text, fs, weight, style);
+                let span_w = text.measure_width_full(span_text, fs, weight, style, family);
 
                 if span.attrs.underline {
                     let ul_y = y + fs + 2.0;
@@ -446,7 +517,7 @@ pub fn render_frame(
     scrollbar::draw_editor_scrollbar(editor, painter, input, er, s, ZONE_EDITOR_SCROLL_THUMB);
 
     // ── Status bar ────────────────────────────────────────────────────
-    crate::status_bar::draw_status_bar(editor, painter, text, pal, wf, hf, s, w, h);
+    crate::status_bar::draw_status_bar(editor, painter, text, pal, theme, wf, hf, s, w, h);
 
     // ── Overlay layer — menus and toolbar dropdowns above editor text ──
     painter.set_layer(1);
@@ -487,9 +558,10 @@ pub fn render_frame(
                     .saturating_sub(1);
                 let c_row_start = c_wraps[c_row_idx];
                 let c_row_end = c_wraps.get(c_row_idx + 1).copied().unwrap_or(editor.lines[c_line].len());
-                let c_para = editor.formats.get(c_line).para;
-                let c_row_h = editor::FONT_SIZE * c_para.line_spacing * s;
-                let cursor_y = line_y_starts[c_line] + c_row_idx as f32 * c_row_h;
+                let c_row_h = editor.row_height(c_line, c_row_start, c_row_end, s);
+                let cursor_y = row_y_starts[c_line][c_row_idx];
+                // Caret height tracks the row's font size so it's tall on big text.
+                let caret_fs = editor.row_font_size(c_line, c_row_start, c_row_end) * s;
                 let c_x_off = row_x_offset(
                     text, editor, c_line, c_row_idx, c_row_start, c_row_end,
                     content_max_w, font_size, s,
@@ -507,7 +579,7 @@ pub fn render_frame(
                 if cursor_y + c_row_h > er.y && cursor_y < er.y + er.h {
                     painter.clear();
                     painter.rect_filled(
-                        Rect::new(cursor_x, cursor_y, 2.5 * s, font_size + 2.0),
+                        Rect::new(cursor_x, cursor_y, 2.5 * s, caret_fs + 2.0),
                         0.0,
                         pal.accent,
                     );

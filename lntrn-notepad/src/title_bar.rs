@@ -4,6 +4,8 @@
 use lntrn_render::{Color, Painter, Rect};
 use lntrn_ui::gpu::{FoxPalette, InteractionContext};
 
+use crate::theme::Theme;
+use crate::tokens;
 use crate::{ZONE_CLOSE, ZONE_MAXIMIZE, ZONE_MINIMIZE};
 
 /// Title bar height in logical pixels (multiplied by `scale` at draw time).
@@ -34,6 +36,7 @@ pub fn draw_window_controls(
     painter: &mut Painter,
     input: &mut InteractionContext,
     pal: &FoxPalette,
+    theme: Theme,
     wf: f32,
     s: f32,
 ) {
@@ -47,42 +50,53 @@ pub fn draw_window_controls(
     let max_state = input.add_zone(ZONE_MAXIMIZE, max_rect);
     let min_state = input.add_zone(ZONE_MINIMIZE, min_rect);
 
-    // Subtle warm hover tint that blends with paper.
-    let hover_bg = Color::from_rgba8(60, 50, 35, 28);
+    // Warm neutral hover tint that reads on the ribbon gradient. Idle icons sit
+    // muted; the hovered control's icon darkens to full text colour.
+    let hover_bg = if theme.is_paper() {
+        Color::from_rgba8(60, 50, 35, 40)
+    } else {
+        Color::from_rgba8(232, 220, 200, 30)
+    };
     let icon_color = pal.text_secondary;
     let icon_sz = 12.0 * s;
     let stroke = 1.5 * s;
 
     // ── Minimize ────────────────────────────────────────────────
-    if min_state.is_hovered() {
+    let min_icon = if min_state.is_hovered() {
         painter.rect_filled(min_rect, 0.0, hover_bg);
-    }
+        pal.text
+    } else {
+        icon_color
+    };
     let mcx = min_rect.center_x();
     let mcy = min_rect.center_y();
     painter.rect_filled(
         Rect::new(mcx - icon_sz * 0.5, mcy - stroke * 0.5, icon_sz, stroke),
         0.0,
-        icon_color,
+        min_icon,
     );
 
     // ── Maximize ────────────────────────────────────────────────
-    if max_state.is_hovered() {
+    let max_icon = if max_state.is_hovered() {
         painter.rect_filled(max_rect, 0.0, hover_bg);
-    }
+        pal.text
+    } else {
+        icon_color
+    };
     let xcx = max_rect.center_x();
     let xcy = max_rect.center_y();
     painter.rect_stroke(
         Rect::new(xcx - icon_sz * 0.5, xcy - icon_sz * 0.5, icon_sz, icon_sz),
         1.0 * s,
         stroke,
-        icon_color,
+        max_icon,
     );
 
     // ── Close (warm red bg on hover, rounds top-right window corner) ─
     let close_hovered = close_state.is_hovered();
     if close_hovered {
         let close_bg = Color::from_rgb8(204, 78, 60);
-        let r = 10.0 * s;
+        let r = tokens::RADIUS_WINDOW * s;
         painter.rect_filled(close_rect, r, close_bg);
         // Square off the bottom-left, top-left, and bottom-right so only the
         // top-right corner stays rounded (matches the window corner radius).

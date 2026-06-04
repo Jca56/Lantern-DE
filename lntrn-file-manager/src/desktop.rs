@@ -70,14 +70,49 @@ fn parse_desktop_unfiltered(path: &Path, content: &str) -> Option<DesktopApp> {
     })
 }
 
+/// Extra apps to always offer for a dual-natured extension, by desktop id.
+/// SVG is both an image and editable XML, so we add lntrn-code explicitly
+/// rather than querying `text/xml` (which would pull in every XML app).
+fn extra_apps_for_extension(ext: &str) -> &'static [&'static str] {
+    if ext.eq_ignore_ascii_case("svg") {
+        &["lntrn-code"]
+    } else {
+        &[]
+    }
+}
+
+/// Load a specific app by its desktop id (no MIME filtering), if installed.
+fn app_by_desktop_id(id: &str) -> Option<DesktopApp> {
+    let file = format!("{id}.desktop");
+    for dir in desktop_dirs() {
+        let path = dir.join(&file);
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Some(app) = parse_desktop_unfiltered(&path, &content) {
+                return Some(app);
+            }
+        }
+    }
+    None
+}
+
 /// Find apps that can open the given file extension.
 /// Returns a deduplicated, alphabetically sorted list.
 pub fn apps_for_extension(ext: &str) -> Vec<DesktopApp> {
+    let mut seen: HashMap<String, DesktopApp> = HashMap::new();
     let mime = mime_from_extension(ext);
-    if mime.is_empty() {
-        return Vec::new();
+    if !mime.is_empty() {
+        for app in apps_for_mime(&mime) {
+            seen.entry(app.desktop_id.clone()).or_insert(app);
+        }
     }
-    apps_for_mime(&mime)
+    for id in extra_apps_for_extension(ext) {
+        if let Some(app) = app_by_desktop_id(id) {
+            seen.entry(app.desktop_id.clone()).or_insert(app);
+        }
+    }
+    let mut apps: Vec<DesktopApp> = seen.into_values().collect();
+    apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    apps
 }
 
 /// Find apps that support a given MIME type by scanning .desktop files.
@@ -249,7 +284,10 @@ fn mime_from_extension(ext: &str) -> String {
         "html" | "htm" => "text/html",
         "css" => "text/css",
         "csv" => "text/csv",
-        "xml" | "svg" => "text/xml",
+        "xml" => "text/xml",
+        // SVG is primarily an image (opens in the image viewer by default);
+        // `mimes_for_extension` also exposes text/xml so editors stay in "Open With".
+        "svg" => "image/svg+xml",
         "json" => "application/json",
         "yaml" | "yml" => "application/x-yaml",
         "toml" => "application/toml",

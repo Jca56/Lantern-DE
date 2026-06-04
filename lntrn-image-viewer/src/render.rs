@@ -1,4 +1,4 @@
-use lntrn_render::{Color, Painter, Rect, TextPass, TextureDraw};
+use lntrn_render::{Color, Painter, Rect, TextPass, TextRenderer, TextureDraw};
 use lntrn_ui::gpu::{FontSize, FoxPalette, InteractionContext, TextLabel, TitleBar};
 
 use crate::app::App;
@@ -22,8 +22,8 @@ pub fn render_frame(
     painter.clear();
     input.begin_frame();
 
-    let title_h = 36.0 * s;
-    let status_h = 28.0 * s;
+    let title_h = crate::TITLE_H * s;
+    let status_h = crate::STATUS_H * s;
 
     // ── Background ──────────────────────────────────────────────────
     painter.rect_filled(Rect::new(0.0, 0.0, wf, hf), 10.0 * s, palette.bg);
@@ -120,24 +120,50 @@ pub fn render_frame(
     }
 
     // ── Status bar ──────────────────────────────────────────────────
+    // Font px scales with `s` so the text grows with the rest of the chrome
+    // (title_h/status_h are *s too) instead of staying tiny on scaled outputs.
+    let status_font = FontSize::Custom(FontSize::Body.px() * s);
+    let fpx = status_font.px();
     let status_rect = Rect::new(0.0, hf - status_h, wf, status_h);
     painter.rect_filled(status_rect, 0.0, palette.surface);
 
-    let status_y = status_rect.y + 4.0 * s;
-    TextLabel::new(&app.status_text, 8.0 * s, status_y)
-        .size(FontSize::Small)
-        .color(palette.text)
-        .draw(text, ctx.width(), ctx.height());
+    let pad = 12.0 * s;
+    // Vertically centre the text within the bar.
+    let status_y = status_rect.y + (status_h - fpx) * 0.5;
+    let gap = 16.0 * s; // min gap between path (left) and info (right)
 
-    if let Some(img) = &app.image {
+    // Right side: dimensions + zoom %. Drawn first so we know how much width
+    // it claims, then the path gets whatever's left.
+    let info = app.image.as_ref().map(|img| {
         let fit_zoom = (canvas.w / img.width as f32).min(canvas.h / img.height as f32);
         let pct = (fit_zoom * app.zoom * 100.0).round() as u32;
-        let info = format!("{} — {}%", app.dimensions_text, pct);
-        let info_w = text.measure_width(&info, FontSize::Small.px());
-        TextLabel::new(&info, wf - info_w - 8.0 * s, status_y)
-            .size(FontSize::Small)
+        let s = format!("{} — {}%", app.dimensions_text, pct);
+        let w = text.measure_width(&s, fpx);
+        (s, w)
+    });
+    let info_w = info.as_ref().map(|(_, w)| *w).unwrap_or(0.0);
+
+    // Available width for the path = bar minus padding, info, and a gap.
+    let avail = wf - pad * 2.0 - info_w - if info_w > 0.0 { gap } else { 0.0 };
+
+    // Draw the (middle-ellipsized) path on the left if there's room for it.
+    if avail > fpx {
+        let path = middle_ellipsize(text, &app.status_text, fpx, avail);
+        TextLabel::new(&path, pad, status_y)
+            .size(status_font)
             .color(palette.text)
             .draw(text, ctx.width(), ctx.height());
+    }
+
+    // Draw the info on the right (always — it's small and the more useful bit
+    // when space is tight), unless the bar is too narrow for even that.
+    if let Some((info, info_w)) = info {
+        if info_w <= wf - pad * 2.0 {
+            TextLabel::new(&info, wf - info_w - pad, status_y)
+                .size(status_font)
+                .color(palette.text)
+                .draw(text, ctx.width(), ctx.height());
+        }
     }
 
     // ── Multi-pass render ───────────────────────────────────────────
@@ -154,6 +180,48 @@ pub fn render_frame(
         }
         Err(e) => eprintln!("[image-viewer] render error: {e}"),
     }
+}
+
+// ── Text helpers ──────────────────────────────────────────────────────────
+
+/// Shrink `s` to fit within `max_w` pixels by dropping characters from the
+/// middle and inserting an ellipsis — keeps both the leading dirs and the
+/// filename visible (e.g. `/home/a…/candle.svg`). Returns `s` unchanged if it
+/// already fits, or just "…" if even that won't fit.
+fn middle_ellipsize(text: &mut TextRenderer, s: &str, fpx: f32, max_w: f32) -> String {
+    if text.measure_width(s, fpx) <= max_w {
+        return s.to_string();
+    }
+    let ell = "…";
+    if text.measure_width(ell, fpx) > max_w {
+        return String::new();
+    }
+    // Work on chars so we never split a UTF-8 codepoint.
+    let chars: Vec<char> = s.chars().collect();
+    let n = chars.len();
+    let build = |keep: usize| -> String {
+        let head = keep.div_ceil(2);
+        let tail = keep - head;
+        let mut out: String = chars[..head].iter().collect();
+        out.push_str(ell);
+        out.extend(chars[n - tail..].iter());
+        out
+    };
+    // Binary search the largest `keep` (total visible chars, head+tail) that fits.
+    let (mut lo, mut hi) = (0usize, n);
+    let mut best = String::from(ell);
+    while lo <= hi {
+        let keep = (lo + hi) / 2;
+        let candidate = build(keep);
+        if text.measure_width(&candidate, fpx) <= max_w {
+            best = candidate;
+            lo = keep + 1;
+        } else {
+            if keep == 0 { break; }
+            hi = keep - 1;
+        }
+    }
+    best
 }
 
 // ── Shuffle icon ────────────────────────────────────────────────────────────

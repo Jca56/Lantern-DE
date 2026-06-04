@@ -6,7 +6,7 @@
 use lntrn_render::TextRenderer;
 
 use crate::editor::Editor;
-use crate::render::span_rendering;
+use crate::render::{span_family, span_rendering};
 
 /// Recompute all word-wrap info and store it on the editor.
 pub fn compute(
@@ -18,8 +18,15 @@ pub fn compute(
 ) {
     let mut wraps = Vec::with_capacity(editor.lines.len());
     for i in 0..editor.lines.len() {
-        let indent_px = editor.formats.get(i).para.first_indent * scale;
-        wraps.push(line_wraps(text, editor, i, max_width, indent_px, default_font_size));
+        let para = editor.formats.get(i).para;
+        let indent_px = para.first_indent * scale;
+        // Bullet paragraphs lose width to the hanging indent on every row.
+        let line_w = if para.bullet {
+            (max_width - crate::editor::BULLET_INDENT * scale).max(10.0)
+        } else {
+            max_width
+        };
+        wraps.push(line_wraps(text, editor, i, line_w, indent_px, default_font_size));
     }
     editor.wrap_rows = wraps;
 }
@@ -49,13 +56,15 @@ fn line_wraps(
 
     for span in &spans {
         let (fs, weight, style) = span_rendering(span, default_font_size);
+        let family = span_family(span);
         for (rel_i, ch) in line_str[span.start..span.end].char_indices() {
             let byte_pos = span.start + rel_i;
-            let ch_w = text.measure_width_styled(
+            let ch_w = text.measure_width_full(
                 &line_str[byte_pos..byte_pos + ch.len_utf8()],
                 fs,
                 weight,
                 style,
+                family,
             );
 
             if row_x + ch_w > effective_w && byte_pos > *row_starts.last().unwrap() {

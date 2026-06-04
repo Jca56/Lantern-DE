@@ -9,6 +9,8 @@ use lntrn_ui::gpu::{FoxPalette, InteractionContext};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 
 use crate::editor::Editor;
+use crate::theme::Theme;
+use crate::tokens;
 
 pub const FIND_ROW_H: f32 = 38.0;
 
@@ -387,6 +389,7 @@ pub fn draw_find_bar(
     text: &mut TextRenderer,
     _input: &mut InteractionContext,
     palette: &FoxPalette,
+    theme: Theme,
     editor_top: f32,
     editor_left: f32,
     editor_width: f32,
@@ -400,16 +403,15 @@ pub fn draw_find_bar(
     let h = bar.height(s);
     let bar_rect = Rect::new(editor_left, editor_top, editor_width, h);
 
-    // Background — slightly inset paper plate.
-    painter.rect_filled(bar_rect, 0.0, palette.surface_2);
+    // Floating panel dropping from the top: a soft drop shadow under the bar,
+    // then the plate tone (matches the footer plate, not the desk).
+    painter.shadow(bar_rect, 0.0, 4.0 * s, Color::from_rgba8(0, 0, 0, 50), 0.0, 2.0 * s);
+    painter.rect_filled(bar_rect, 0.0, palette.sidebar);
     // Bottom hairline separator.
-    painter.line(
-        editor_left,
-        editor_top + h,
-        editor_left + editor_width,
-        editor_top + h,
-        1.0 * s,
-        Color::from_rgba8(60, 50, 35, 60),
+    painter.rect_filled(
+        Rect::new(editor_left, editor_top + h, editor_width, 1.0 * s),
+        0.0,
+        theme.hairline(),
     );
 
     let row_h = FIND_ROW_H * s;
@@ -422,6 +424,7 @@ pub fn draw_find_bar(
         painter,
         text,
         palette,
+        theme,
         Rect::new(editor_left, editor_top, editor_width, row_h),
         "Find",
         &bar.query,
@@ -467,6 +470,7 @@ pub fn draw_find_bar(
             painter,
             text,
             palette,
+            theme,
             Rect::new(editor_left, editor_top + row_h, editor_width, row_h),
             "Replace",
             &bar.replace,
@@ -486,6 +490,7 @@ fn draw_field_row(
     painter: &mut Painter,
     text: &mut TextRenderer,
     palette: &FoxPalette,
+    theme: Theme,
     row: Rect,
     label: &str,
     value: &str,
@@ -520,15 +525,32 @@ fn draw_field_row(
     let input_y = row.y + (row.h - input_h) * 0.5;
     let input_rect = Rect::new(input_x, input_y, input_w, input_h);
 
-    // Input background
-    let input_bg = palette.bg;
-    painter.rect_filled(input_rect, 4.0 * s, input_bg);
-    let border_color = if focused {
-        palette.accent
+    // Input field — sunken depth via an inner shadow, with a gold focus ring
+    // (and a soft outer glow) when the field is focused.
+    let input_r = tokens::RADIUS_INPUT * s;
+    if focused {
+        // Outer gold halo, drawn first so the fill + stroke sit crisp on top.
+        let halo = Rect::new(
+            input_rect.x - 4.0 * s,
+            input_rect.y - 4.0 * s,
+            input_rect.w + 8.0 * s,
+            input_rect.h + 8.0 * s,
+        );
+        painter.rect_radial_glow(
+            halo,
+            input_r,
+            (0.5, 0.5),
+            input_rect.h * 0.9,
+            palette.accent.with_alpha(tokens::FOCUS_GLOW_ALPHA),
+        );
+    }
+    painter.rect_filled(input_rect, input_r, palette.bg);
+    painter.inner_shadow(input_rect, input_r, 3.0 * s, Color::from_rgba8(0, 0, 0, 36), 0.0, 2.0 * s);
+    if focused {
+        painter.rect_stroke_sdf(input_rect, input_r, tokens::FOCUS_STROKE_W * s, palette.accent);
     } else {
-        Color::from_rgba8(60, 50, 35, 60)
-    };
-    painter.rect_stroke(input_rect, 4.0 * s, 1.5 * s, border_color);
+        painter.rect_stroke_sdf(input_rect, input_r, 1.5 * s, theme.hairline());
+    }
 
     // Value text
     let text_x = input_rect.x + 8.0 * s;
@@ -558,12 +580,13 @@ fn draw_field_row(
     }
 }
 
-/// Paint match highlights inside the editor body. Caller passes the offsets
-/// computed by render.rs (since wrap-aware measurement lives there).
-pub fn match_color(current: bool) -> Color {
-    if current {
-        Color::from_rgba8(255, 100, 0, 180)
-    } else {
-        Color::from_rgba8(255, 140, 40, 90)
+/// Gold-harmonized highlight color for a find match. `current` is the actively
+/// focused match; the rest are dimmer. Theme-aware so each theme keeps contrast.
+pub fn match_color(current: bool, theme: Theme) -> Color {
+    match (theme.is_paper(), current) {
+        (true, true) => Color::from_rgba8(250, 188, 0, 200),
+        (true, false) => Color::from_rgba8(250, 205, 60, 96),
+        (false, true) => Color::from_rgba8(250, 196, 20, 190),
+        (false, false) => Color::from_rgba8(250, 205, 70, 84),
     }
 }

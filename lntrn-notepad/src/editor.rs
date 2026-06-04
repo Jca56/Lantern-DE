@@ -3,12 +3,16 @@ use std::path::PathBuf;
 use crate::format::{Alignment, DocFormats, ParagraphAttrs, TextAttrs};
 use crate::scrollbar::ScrollbarState;
 
-/// Font size for editor text (physical pixels, scaled at draw time).
+/// Default font size for editor text (logical pixels, scaled at draw time).
+/// Spans may override this per-run via `TextAttrs::font_size`.
 pub const FONT_SIZE: f32 = 24.0;
-/// Line height multiplier.
-pub const LINE_HEIGHT: f32 = 1.5;
+/// Line height multiplier. 1.0 = tight single spacing (the only spacing now).
+pub const LINE_HEIGHT: f32 = 1.0;
 /// Padding inside the editor area.
 pub const PAD: f32 = 14.0;
+/// Hanging indent (logical px) for bullet-list paragraphs: the text is pushed
+/// right by this much and the • glyph sits in the gap.
+pub const BULLET_INDENT: f32 = 28.0;
 
 /// A (line, byte_col) position in the document.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -479,6 +483,12 @@ impl Editor {
         self.toggle_format(|a| a.font_size = Some(size));
     }
 
+    /// Set the font family (a `fonts::FONTS` index, or `None` for default) on
+    /// the selection. If no selection, applies to pending_attrs.
+    pub fn set_font_family(&mut self, font: Option<u8>) {
+        self.toggle_format(|a| a.font = font);
+    }
+
     /// Query the uniform format state across the current selection.
     /// Returns default if no selection.
     pub fn selection_format_state(&self) -> TextAttrs {
@@ -514,8 +524,39 @@ impl Editor {
         self.set_paragraph_attr(|p| p.alignment = align);
     }
 
-    pub fn set_line_spacing(&mut self, spacing: f32) {
-        self.set_paragraph_attr(|p| p.line_spacing = spacing);
+    /// Toggle bullet-list state on the current paragraph(s). If any touched
+    /// line is not yet a bullet, turn all on; otherwise turn all off.
+    pub fn toggle_bullet(&mut self) {
+        let (lo, hi) = if let Some((start, end)) = self.selection_range() {
+            (start.line, end.line)
+        } else {
+            (self.cursor_line, self.cursor_line)
+        };
+        let all_bullet = (lo..=hi).all(|i| self.formats.get(i).para.bullet);
+        let target = !all_bullet;
+        self.push_undo();
+        for i in lo..=hi {
+            self.formats.get_mut(i).para.bullet = target;
+        }
+        self.modified = true;
+    }
+
+    /// True if the cursor line is an empty (text-less) bullet item.
+    pub fn cursor_on_empty_bullet(&self) -> bool {
+        let lf = self.formats.get(self.cursor_line);
+        lf.para.bullet && self.lines[self.cursor_line].is_empty()
+    }
+
+    /// True if the cursor is at the very start of a bullet line.
+    pub fn cursor_at_bullet_start(&self) -> bool {
+        self.cursor_col == 0 && self.formats.get(self.cursor_line).para.bullet
+    }
+
+    /// Clear bullet state on the cursor's line (used to "exit" the list).
+    pub fn clear_bullet_here(&mut self) {
+        self.push_undo();
+        self.formats.get_mut(self.cursor_line).para.bullet = false;
+        self.modified = true;
     }
 
     pub fn set_first_indent(&mut self, indent: f32) {
@@ -527,15 +568,46 @@ impl Editor {
         self.formats.get(self.cursor_line).para
     }
 
-    /// Total content height in physical pixels (accounts for word-wrap rows
-    /// and per-paragraph line spacing / spacing before+after).
+    /// The largest font size (logical px, unscaled) used by any span within the
+    /// byte range `[start, end)` of `line`. Falls back to the default size when
+    /// the range is empty or has no size overrides. This is what drives a wrap
+    /// row's height so larger text gets a taller row (no overlap).
+    pub fn row_font_size(&self, line: usize, start: usize, end: usize) -> f32 {
+        let line_len = self.lines[line].len();
+        let mut max_fs = FONT_SIZE;
+        // An empty row (blank line) still uses any pending/size at col 0.
+        for span in self.formats.get(line).iter_spans(line_len) {
+            if span.end <= start || span.start >= end {
+                continue;
+            }
+            if let Some(fs) = span.attrs.font_size {
+                if fs > max_fs {
+                    max_fs = fs;
+                }
+            }
+        }
+        max_fs
+    }
+
+    /// Physical height of a single wrap row: its max span font size ×
+    /// line spacing × scale.
+    pub fn row_height(&self, line: usize, start: usize, end: usize, scale: f32) -> f32 {
+        let para = self.formats.get(line).para;
+        self.row_font_size(line, start, end) * para.line_spacing * scale
+    }
+
+    /// Total content height in physical pixels (accounts for word-wrap rows,
+    /// per-row font size, and spacing before+after each paragraph).
     pub fn content_height(&self, scale: f32) -> f32 {
         let mut h = PAD * scale * 2.0;
         if self.wrap_rows.len() == self.lines.len() {
             for (i, wraps) in self.wrap_rows.iter().enumerate() {
                 let para = self.formats.get(i).para;
-                let row_h = FONT_SIZE * para.line_spacing * scale;
-                h += wraps.len() as f32 * row_h;
+                let line_len = self.lines[i].len();
+                for (row_idx, &row_start) in wraps.iter().enumerate() {
+                    let row_end = wraps.get(row_idx + 1).copied().unwrap_or(line_len);
+                    h += self.row_height(i, row_start, row_end, scale);
+                }
                 h += (para.space_before + para.space_after) * scale;
             }
         } else {
@@ -558,11 +630,12 @@ impl Editor {
 
         for (i, wraps) in self.wrap_rows.iter().enumerate() {
             let para = self.formats.get(i).para;
-            let row_h = FONT_SIZE * para.line_spacing * scale;
+            let line_len = self.lines[i].len();
             y += para.space_before * scale;
             for (row_idx, &row_start) in wraps.iter().enumerate() {
+                let row_end = wraps.get(row_idx + 1).copied().unwrap_or(line_len);
+                let row_h = self.row_height(i, row_start, row_end, scale);
                 if cy < y + row_h {
-                    let row_end = wraps.get(row_idx + 1).copied().unwrap_or(self.lines[i].len());
                     return (i, row_start, row_end);
                 }
                 y += row_h;

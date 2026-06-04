@@ -103,6 +103,15 @@ impl TextRenderer {
         Self::with_options(gpu, true)
     }
 
+    /// Load a font from raw `.ttf`/`.otf` bytes into the renderer's font
+    /// database. After loading, the font's internal family name resolves via
+    /// `Family::Name` in `queue_family`/`measure_width_family`. Used to bundle
+    /// app-specific fonts (e.g. the notepad's Google Fonts) without relying on
+    /// them being installed system-wide.
+    pub fn load_font_data(&mut self, data: Vec<u8>) {
+        self.font_system.db_mut().load_font_data(data);
+    }
+
     fn with_options(gpu: &GpuContext, monospace: bool) -> Self {
         let font_system = FontSystem::new();
         let swash_cache = SwashCache::new();
@@ -310,6 +319,104 @@ impl TextRenderer {
             (0, 0, screen_w as i32, (y + font_size * 1.2).ceil() as i32)
         };
 
+        self.queued.push(QueuedText {
+            key,
+            x,
+            y,
+            line_height: font_size * 1.2,
+            bounds_left: bl,
+            bounds_top: bt,
+            bounds_right: br,
+            bounds_bottom: bb,
+            default_color: GlyphonColor::rgb(255, 255, 255),
+        });
+    }
+
+    /// Measure a styled string with an optional font family. Composes weight,
+    /// style, AND family (unlike `measure_width_family`, which forces
+    /// normal weight/style). `None` family = the renderer default.
+    pub fn measure_width_full(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        weight: FontWeight,
+        style: FontStyle,
+        family: Option<&str>,
+    ) -> f32 {
+        let font_size = quantize_px(font_size);
+        let color = GlyphonColor::rgba(0, 0, 0, 0);
+        let key = TextLayoutKey {
+            text: text.to_string(),
+            font_size_bits: font_size.to_bits(),
+            max_width_bits: 10000.0_f32.to_bits(),
+            color: [0, 0, 0, 0],
+            weight: weight as u8,
+            style: style as u8,
+            family: family.unwrap_or("").to_string(),
+        };
+        self.use_tick = self.use_tick.wrapping_add(1).max(1);
+        if let Some(layout) = self.layouts.get_mut(&key) {
+            layout.last_used = self.use_tick;
+            return layout_width(&layout.buffer);
+        }
+        self.evict_one_if_needed();
+        let buffer = create_styled_layout(
+            &mut self.font_system, text, font_size, 10000.0, color,
+            self.monospace, weight, style, family.filter(|f| !f.is_empty()),
+        );
+        let w = layout_width(&buffer);
+        self.layouts.insert(key, CachedLayout { buffer, last_used: self.use_tick });
+        w
+    }
+
+    /// Queue styled text with an optional font family. Composes weight, style,
+    /// AND family. `None` family = the renderer default.
+    #[allow(clippy::too_many_arguments)]
+    pub fn queue_full(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        x: f32,
+        y: f32,
+        color: Color,
+        max_width: f32,
+        weight: FontWeight,
+        style: FontStyle,
+        family: Option<&str>,
+        screen_w: u32,
+        _screen_h: u32,
+    ) {
+        let font_size = quantize_px(font_size);
+        let max_width = quantize_px(max_width.max(1.0));
+        let srgb = color.to_srgb8();
+        let glyph_color = GlyphonColor::rgba(srgb[0], srgb[1], srgb[2], srgb[3]);
+        let key = TextLayoutKey {
+            text: text.to_string(),
+            font_size_bits: font_size.to_bits(),
+            max_width_bits: max_width.to_bits(),
+            color: [glyph_color.r(), glyph_color.g(), glyph_color.b(), glyph_color.a()],
+            weight: weight as u8,
+            style: style as u8,
+            family: family.unwrap_or("").to_string(),
+        };
+        self.use_tick = self.use_tick.wrapping_add(1).max(1);
+        if let Some(layout) = self.layouts.get_mut(&key) {
+            layout.last_used = self.use_tick;
+            self.cache_hits = self.cache_hits.saturating_add(1);
+        } else {
+            self.cache_misses = self.cache_misses.saturating_add(1);
+            self.evict_one_if_needed();
+            let buffer = create_styled_layout(
+                &mut self.font_system, text, font_size, max_width, glyph_color,
+                self.monospace, weight, style, family.filter(|f| !f.is_empty()),
+            );
+            self.layouts.insert(key.clone(), CachedLayout { buffer, last_used: self.use_tick });
+        }
+        let (bl, bt, br, bb) = if let Some(clip) = self.clip_stack.last() {
+            (clip[0] as i32, clip[1] as i32, (clip[0] + clip[2]) as i32, (clip[1] + clip[3]) as i32)
+        } else {
+            (0, 0, screen_w as i32, (y + font_size * 1.2).ceil() as i32)
+        };
         self.queued.push(QueuedText {
             key,
             x,

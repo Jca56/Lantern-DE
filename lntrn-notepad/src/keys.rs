@@ -21,7 +21,19 @@ pub fn handle_key(
     key: &Key,
     mods: ModifiersState,
 ) -> KeyAction {
+    // ── Editable font-size box owns input while focused ───────────────
+    if handler.fmt_toolbar.size_editing {
+        if let Some(action) = handle_size_edit_key(handler, key) {
+            return action;
+        }
+    }
+
     if matches!(key, Key::Named(NamedKey::Escape)) {
+        if handler.fmt_toolbar.size_editing {
+            handler.fmt_toolbar.size_editing = false;
+            handler.fmt_toolbar.size_buffer.clear();
+            return KeyAction::Consumed;
+        }
         if handler.menu_bar.is_open() {
             handler.menu_bar.close();
             return KeyAction::Consumed;
@@ -172,11 +184,23 @@ pub fn handle_key(
             _ => KeyAction::Ignored,
         },
         Key::Named(NamedKey::Enter) => {
-            handler.editor_mut().insert_char('\n');
+            // Enter on an empty bullet exits the list instead of making a new
+            // empty bullet; otherwise the new line inherits the bullet.
+            if handler.editor().cursor_on_empty_bullet() {
+                handler.editor_mut().clear_bullet_here();
+            } else {
+                handler.editor_mut().insert_char('\n');
+            }
             KeyAction::Consumed
         }
         Key::Named(NamedKey::Backspace) => {
-            handler.editor_mut().backspace();
+            // Backspace at the start of a bullet line un-bullets it rather than
+            // merging into the previous line.
+            if handler.editor().cursor_at_bullet_start() {
+                handler.editor_mut().clear_bullet_here();
+            } else {
+                handler.editor_mut().backspace();
+            }
             KeyAction::Consumed
         }
         Key::Named(NamedKey::Delete) => {
@@ -223,5 +247,31 @@ pub fn handle_key(
             KeyAction::Consumed
         }
         _ => KeyAction::Ignored,
+    }
+}
+
+/// Handle a key while the editable size box is focused. Returns `Some(action)`
+/// when the key was consumed by the box, `None` to fall through (e.g. Escape,
+/// which the main handler treats specially).
+fn handle_size_edit_key(handler: &mut TextHandler, key: &Key) -> Option<KeyAction> {
+    match key {
+        Key::Named(NamedKey::Enter) => {
+            crate::mouse::commit_size_edit(handler);
+            Some(KeyAction::Consumed)
+        }
+        Key::Named(NamedKey::Backspace) => {
+            handler.fmt_toolbar.size_buffer.pop();
+            Some(KeyAction::Consumed)
+        }
+        Key::Named(NamedKey::Escape) => None, // let the main handler cancel it
+        Key::Character(s) => {
+            for ch in s.chars() {
+                if ch.is_ascii_digit() && handler.fmt_toolbar.size_buffer.len() < 3 {
+                    handler.fmt_toolbar.size_buffer.push(ch);
+                }
+            }
+            Some(KeyAction::Consumed)
+        }
+        _ => Some(KeyAction::Consumed), // swallow arrows etc. while editing
     }
 }

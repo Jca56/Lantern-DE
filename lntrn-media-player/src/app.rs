@@ -58,6 +58,9 @@ pub struct App {
     pub controls_last_move: Instant,
     pub pointer_in_window: bool,
     pub last_tick: Instant,
+    // Visualizer theme (index into vis_theme::VIS_THEMES) + View dropdown state.
+    pub vis_theme_index: usize,
+    pub view_menu_open: bool,
 }
 
 impl App {
@@ -84,7 +87,15 @@ impl App {
             controls_last_move: Instant::now(),
             pointer_in_window: false,
             last_tick: Instant::now(),
+            vis_theme_index: crate::vis_theme::load_theme_index(),
+            view_menu_open: false,
         }
+    }
+
+    /// Pick a visualizer color theme and persist it.
+    pub fn set_vis_theme(&mut self, index: usize) {
+        self.vis_theme_index = index.min(crate::vis_theme::theme_count() - 1);
+        crate::vis_theme::save_theme_index(self.vis_theme_index);
     }
 
     pub fn open_file(&mut self, path: &str) {
@@ -281,6 +292,7 @@ impl App {
         // bar and hit play again without fishing for the controls).
         let target = if self.pointer_in_window
             || !self.is_playing()
+            || self.view_menu_open
             || self.controls_last_move.elapsed().as_secs_f32() < 1.5
         {
             1.0
@@ -366,13 +378,18 @@ fn log_group_spectrum(raw: &[f32], num_bars: usize) -> Vec<f32> {
     if n == 0 {
         return vec![0.0; num_bars];
     }
+    // The top ~12% of bands sit above ~16kHz — effectively silent for music, so
+    // the last bar never moved. Map the bars only across the usable/musical span
+    // so every bar (including the far right) gets real energy.
+    let usable = ((n as f32) * 0.86).round().max(1.0) as usize;
+    let usable = usable.min(n);
 
     let mut bars = Vec::with_capacity(num_bars);
     for i in 0..num_bars {
-        let lo = ((i as f64 / num_bars as f64).powf(2.0) * n as f64) as usize;
-        let hi = (((i + 1) as f64 / num_bars as f64).powf(2.0) * n as f64) as usize;
-        let lo = lo.min(n);
-        let hi = hi.max(lo + 1).min(n);
+        let lo = ((i as f64 / num_bars as f64).powf(2.0) * usable as f64) as usize;
+        let hi = (((i + 1) as f64 / num_bars as f64).powf(2.0) * usable as f64) as usize;
+        let lo = lo.min(usable.saturating_sub(1));
+        let hi = hi.max(lo + 1).min(usable);
 
         let sum: f32 = raw[lo..hi].iter().sum();
         let avg = sum / (hi - lo) as f32;

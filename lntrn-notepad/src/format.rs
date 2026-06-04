@@ -17,8 +17,8 @@ impl Default for Alignment {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ParagraphAttrs {
     pub alignment: Alignment,
-    /// Line spacing multiplier (1.0, 1.15, 1.5, 2.0). Default 1.5 matches
-    /// the editor's original LINE_HEIGHT constant.
+    /// Line spacing multiplier. Fixed at 1.0 (single spacing) — the spacing
+    /// control was removed; the field stays so row-height math is uniform.
     pub line_spacing: f32,
     /// Extra space before this paragraph in logical pixels.
     pub space_before: f32,
@@ -26,16 +26,20 @@ pub struct ParagraphAttrs {
     pub space_after: f32,
     /// First-line indent in logical pixels.
     pub first_indent: f32,
+    /// True when this paragraph is a bullet-list item (renders a • + hanging
+    /// indent; Enter continues the list).
+    pub bullet: bool,
 }
 
 impl Default for ParagraphAttrs {
     fn default() -> Self {
         Self {
             alignment: Alignment::Left,
-            line_spacing: 1.5,
+            line_spacing: 1.0,
             space_before: 0.0,
             space_after: 0.0,
             first_indent: 0.0,
+            bullet: false,
         }
     }
 }
@@ -49,6 +53,10 @@ pub struct TextAttrs {
     pub strikethrough: bool,
     /// Override font size in logical pixels. `None` = use editor default.
     pub font_size: Option<f32>,
+    /// Override font family as an index into `fonts::FONTS`. `None` (or index
+    /// 0 = "Sans (Default)") = the renderer's default sans. Stored as an index
+    /// to keep `TextAttrs` `Copy`.
+    pub font: Option<u8>,
     /// Override text color packed as 0xRRGGBB. `None` = use the theme's
     /// default text color. Used by the markdown preview to color inline /
     /// fenced code without going through the syntax highlighter.
@@ -66,6 +74,7 @@ impl Default for TextAttrs {
             underline: false,
             strikethrough: false,
             font_size: None,
+            font: None,
             color: None,
             bg_color: None,
         }
@@ -233,9 +242,12 @@ impl LineFormats {
             result.italic = result.italic && attrs.italic;
             result.underline = result.underline && attrs.underline;
             result.strikethrough = result.strikethrough && attrs.strikethrough;
-            // Font size: uniform only if all segments agree
+            // Font size / family: uniform only if all segments agree
             if result.font_size != attrs.font_size {
                 result.font_size = None;
+            }
+            if result.font != attrs.font {
+                result.font = None;
             }
         }
         result
@@ -481,6 +493,9 @@ impl DocFormats {
             if result.font_size != a.font_size {
                 result.font_size = None;
             }
+            if result.font != a.font {
+                result.font = None;
+            }
         }
         let a = self.lines[end_line].query_uniform(0, end_col);
         result.bold = result.bold && a.bold;
@@ -490,6 +505,48 @@ impl DocFormats {
         if result.font_size != a.font_size {
             result.font_size = None;
         }
+        if result.font != a.font {
+            result.font = None;
+        }
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Applying a font family to a plain range must leave a span carrying that
+    /// font index — the core of the font-picker feature.
+    #[test]
+    fn font_applies_to_range() {
+        let mut lf = LineFormats::new();
+        // "hello world", apply font index 3 to "world" (cols 6..11).
+        lf.apply_format(6, 11, |a| a.font = Some(3));
+        assert_eq!(lf.attrs_at(0).font, None, "plain text keeps default font");
+        assert_eq!(lf.attrs_at(7).font, Some(3), "selected range carries the font");
+        // Query uniform over the range should report the font.
+        assert_eq!(lf.query_uniform(6, 11).font, Some(3));
+    }
+
+    /// Font + bold can coexist on the same span.
+    #[test]
+    fn font_and_bold_coexist() {
+        let mut lf = LineFormats::new();
+        lf.apply_format(0, 5, |a| a.font = Some(2));
+        lf.apply_format(0, 5, |a| a.bold = true);
+        let at = lf.attrs_at(2);
+        assert_eq!(at.font, Some(2));
+        assert!(at.bold);
+    }
+
+    /// Bullet toggling lives on the paragraph, independent of spans.
+    #[test]
+    fn bullet_is_paragraph_level() {
+        let mut lf = LineFormats::new();
+        assert!(!lf.para.bullet);
+        lf.para.bullet = true;
+        assert!(lf.para.bullet);
+        assert_eq!(lf.para.line_spacing, 1.0, "default spacing is single");
     }
 }

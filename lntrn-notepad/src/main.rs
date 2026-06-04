@@ -2,17 +2,20 @@ mod actions;
 mod clipboard;
 mod editor;
 mod find_bar;
+mod fonts;
 mod format;
 mod keys;
 mod mouse;
 mod page;
 mod render;
+mod ribbon;
 mod scrollbar;
 mod status_bar;
 mod tab_strip;
 mod tabs;
 mod theme;
 mod title_bar;
+mod tokens;
 mod toolbar;
 mod wrap;
 
@@ -53,7 +56,6 @@ pub(crate) const MENU_OPEN: u32 = 101;
 pub(crate) const MENU_SAVE: u32 = 102;
 pub(crate) const MENU_SAVE_DOCX: u32 = 103;
 pub(crate) const MENU_THEME_PAPER: u32 = 200;
-pub(crate) const MENU_THEME_NIGHT: u32 = 201;
 pub(crate) const MENU_THEME_DARK: u32 = 202;
 
 // ── Main ────────────────────────────────────────────────────────────────────
@@ -245,16 +247,19 @@ impl TextHandler {
             let content_x = page_x + pad;
             let content_max_w = (page_w - pad * 2.0).max(10.0);
 
-            // Alignment + indent offset for this row
+            // Alignment + indent + bullet offset for this row. Must match
+            // render::row_x_offset so clicks land on the right glyph.
             let para = editor.formats.get(doc_line).para;
             let wraps = &editor.wrap_rows[doc_line];
-            let row_idx = wraps.iter().position(|&s| s == row_start).unwrap_or(0);
+            let row_idx = wraps.iter().position(|&st| st == row_start).unwrap_or(0);
+            let bullet_off = if para.bullet { editor::BULLET_INDENT * s } else { 0.0 };
+            let avail = (content_max_w - bullet_off).max(10.0);
             let row_w = render::measure_range(
                 &mut gpu.text, editor, doc_line, row_start, row_end, font_size,
             );
-            let align_off = render::alignment_offset(para.alignment, content_max_w, row_w);
+            let align_off = render::alignment_offset(para.alignment, avail, row_w);
             let indent_off = if row_idx == 0 { para.first_indent * s } else { 0.0 };
-            let effective_x = content_x + align_off + indent_off;
+            let effective_x = content_x + bullet_off + align_off + indent_off;
 
             let base = render::measure_to_offset(
                 &mut gpu.text, editor, doc_line, row_start, font_size,
@@ -297,9 +302,12 @@ impl ApplicationHandler for TextHandler {
         let gpu_ctx = GpuContext::from_window(&window, size.width, size.height)
             .expect("Failed to create GPU context");
 
+        let mut text = TextRenderer::new(&gpu_ctx);
+        // Load the bundled Google Fonts so families resolve by name.
+        fonts::load_bundled(&mut text);
         self.gpu = Some(Gpu {
             painter: Painter::new(&gpu_ctx),
-            text: TextRenderer::new(&gpu_ctx),
+            text,
             ctx: gpu_ctx,
         });
         self.window = Some(window);
@@ -466,10 +474,6 @@ impl ApplicationHandler for TextHandler {
                         MenuEvent::Action(MENU_THEME_PAPER) => {
                             self.menu_bar.close();
                             self.set_theme(Theme::Paper);
-                        }
-                        MenuEvent::Action(MENU_THEME_NIGHT) => {
-                            self.menu_bar.close();
-                            self.set_theme(Theme::NightSky);
                         }
                         MenuEvent::Action(MENU_THEME_DARK) => {
                             self.menu_bar.close();

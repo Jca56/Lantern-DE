@@ -16,6 +16,9 @@ use wayland_client::{
     },
     Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum,
 };
+use wayland_protocols::wp::cursor_shape::v1::client::{
+    wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1,
+};
 use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
@@ -67,6 +70,9 @@ struct State {
     xdg_surface: Option<xdg_surface::XdgSurface>,
     toplevel: Option<xdg_toplevel::XdgToplevel>,
     seat: Option<wl_seat::WlSeat>,
+    cursor_shape_mgr: Option<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1>,
+    cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
+    current_cursor_shape: Option<wp_cursor_shape_device_v1::Shape>,
     // Input
     cursor_x: f64,
     cursor_y: f64,
@@ -77,6 +83,7 @@ struct State {
     middle_released: bool,
     scroll_delta: f32,
     pointer_serial: u32,
+    enter_serial: u32,
     // Keyboard
     ctrl: bool,
     key_pressed: Option<u32>,
@@ -90,10 +97,11 @@ impl State {
             output_phys_width: 0, output_phys_height: 0, maximized: false,
             compositor: None, wm_base: None, viewporter: None,
             surface: None, xdg_surface: None, toplevel: None, seat: None,
+            cursor_shape_mgr: None, cursor_shape_device: None, current_cursor_shape: None,
             cursor_x: 0.0, cursor_y: 0.0, pointer_in_surface: false,
             left_pressed: false, left_released: false,
             middle_pressed: false, middle_released: false,
-            scroll_delta: 0.0, pointer_serial: 0,
+            scroll_delta: 0.0, pointer_serial: 0, enter_serial: 0,
             ctrl: false, key_pressed: None,
         }
     }
@@ -124,6 +132,9 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 "wp_viewporter" => { state.viewporter = Some(registry.bind(name, version.min(1), qh, ())); }
                 "wl_output" => { let _: wl_output::WlOutput = registry.bind(name, version.min(4), qh, ()); }
                 "wl_seat" => { state.seat = Some(registry.bind(name, version.min(9), qh, ())); }
+                "wp_cursor_shape_manager_v1" => {
+                    state.cursor_shape_mgr = Some(registry.bind(name, version.min(1), qh, ()));
+                }
                 _ => {}
             }
         }
@@ -141,6 +152,12 @@ impl Dispatch<wp_viewporter::WpViewporter, ()> for State {
 }
 impl Dispatch<wp_viewport::WpViewport, ()> for State {
     fn event(_: &mut Self, _: &wp_viewport::WpViewport, _: wp_viewport::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
+impl Dispatch<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1, ()> for State {
+    fn event(_: &mut Self, _: &wp_cursor_shape_manager_v1::WpCursorShapeManagerV1, _: wp_cursor_shape_manager_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
+impl Dispatch<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1, ()> for State {
+    fn event(_: &mut Self, _: &wp_cursor_shape_device_v1::WpCursorShapeDeviceV1, _: wp_cursor_shape_device_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
 }
 
 impl Dispatch<xdg_wm_base::XdgWmBase, ()> for State {
@@ -209,11 +226,18 @@ impl Dispatch<wl_callback::WlCallback, ()> for State {
 
 impl Dispatch<wl_seat::WlSeat, ()> for State {
     fn event(
-        _: &mut Self, seat: &wl_seat::WlSeat,
+        state: &mut Self, seat: &wl_seat::WlSeat,
         event: wl_seat::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>,
     ) {
         if let wl_seat::Event::Capabilities { capabilities: WEnum::Value(cap) } = event {
-            if cap.contains(wl_seat::Capability::Pointer) { seat.get_pointer(qh, ()); }
+            if cap.contains(wl_seat::Capability::Pointer) {
+                let ptr = seat.get_pointer(qh, ());
+                // Pair the pointer with a cursor-shape device so we can set
+                // named resize cursors on hover (no XCursor theme loading).
+                if let Some(mgr) = &state.cursor_shape_mgr {
+                    state.cursor_shape_device = Some(mgr.get_pointer(&ptr, qh, ()));
+                }
+            }
             if cap.contains(wl_seat::Capability::Keyboard) { seat.get_keyboard(qh, ()); }
         }
     }
@@ -225,10 +249,13 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
         event: wl_pointer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
     ) {
         match event {
-            wl_pointer::Event::Enter { surface_x, surface_y, .. } => {
+            wl_pointer::Event::Enter { serial, surface_x, surface_y, .. } => {
                 state.pointer_in_surface = true;
                 state.cursor_x = surface_x;
                 state.cursor_y = surface_y;
+                // set_shape must reference the enter serial; force a re-apply.
+                state.enter_serial = serial;
+                state.current_cursor_shape = None;
                 state.frame_done = true;
             }
             wl_pointer::Event::Leave { .. } => {
@@ -441,8 +468,8 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
 
         // ── Scroll → zoom ──────────────────────────────────────────────
         if state.scroll_delta.abs() > 0.01 {
-            let title_h = 36.0 * s;
-            let status_h = 28.0 * s;
+            let title_h = crate::TITLE_H * s;
+            let status_h = crate::STATUS_H * s;
             let canvas = Rect::new(0.0, title_h, wf, hf - title_h - status_h);
             if canvas.contains(cx, cy) {
                 let factor = if state.scroll_delta < 0.0 { 1.03 } else { 1.0 / 1.03 };
@@ -460,7 +487,7 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
         if state.left_pressed {
             state.left_pressed = false;
             // Edge resize
-            let border = 10.0 * s;
+            let border = crate::RESIZE_BORDER * s;
             if let Some(edge) = edge_resize(cx, cy, wf, hf, border) {
                 if let Some(seat) = &state.seat {
                     toplevel.resize(seat, state.pointer_serial, edge);
@@ -486,7 +513,7 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
                 }
             } else {
                 // Title bar drag
-                let title_h = 36.0 * s;
+                let title_h = crate::TITLE_H * s;
                 if cy < title_h {
                     if let Some(seat) = &state.seat {
                         toplevel._move(seat, state.pointer_serial);
@@ -522,6 +549,36 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
         if state.middle_released {
             state.middle_released = false;
             app.is_panning = false;
+        }
+
+        // ── Keep SVGs crisp ──────────────────────────────────────────────
+        // Re-rasterize the vector image to the size it's about to be drawn at,
+        // mirroring the fit+zoom math in render_frame so it never looks blurry.
+        if let Some(img) = &app.image {
+            let canvas_w = wf;
+            let canvas_h = hf - (crate::TITLE_H + crate::STATUS_H) * s;
+            let fit_zoom = (canvas_w / img.width as f32).min(canvas_h / img.height as f32);
+            let display_zoom = fit_zoom * app.zoom;
+            let disp_w = img.width as f32 * display_zoom;
+            let disp_h = img.height as f32 * display_zoom;
+            app.maybe_rerender_svg(&gpu.ctx, &gpu.tex_pass, disp_w, disp_h);
+        }
+
+        // ── Resize cursor on hover ───────────────────────────────────────
+        // Show a directional resize cursor whenever the pointer is over an
+        // edge band — not just while an interactive resize is in progress.
+        if state.pointer_in_surface {
+            let border = crate::RESIZE_BORDER * s;
+            let desired = match edge_resize(cx, cy, wf, hf, border) {
+                Some(edge) => resize_edge_to_cursor_shape(edge),
+                None => wp_cursor_shape_device_v1::Shape::Default,
+            };
+            if state.current_cursor_shape != Some(desired) {
+                if let Some(dev) = &state.cursor_shape_device {
+                    dev.set_shape(state.enter_serial, desired);
+                }
+                state.current_cursor_shape = Some(desired);
+            }
         }
 
         // ── Render ──────────────────────────────────────────────────────
@@ -567,6 +624,22 @@ fn edge_resize(cx: f32, cy: f32, w: f32, h: f32, border: f32) -> Option<xdg_topl
         (_, _, true, _) => Some(xdg_toplevel::ResizeEdge::Top),
         (_, _, _, true) => Some(xdg_toplevel::ResizeEdge::Bottom),
         _ => None,
+    }
+}
+
+/// Map a resize edge to the matching directional cursor shape.
+fn resize_edge_to_cursor_shape(edge: xdg_toplevel::ResizeEdge) -> wp_cursor_shape_device_v1::Shape {
+    use wp_cursor_shape_device_v1::Shape;
+    match edge {
+        xdg_toplevel::ResizeEdge::Top => Shape::NResize,
+        xdg_toplevel::ResizeEdge::Bottom => Shape::SResize,
+        xdg_toplevel::ResizeEdge::Left => Shape::WResize,
+        xdg_toplevel::ResizeEdge::Right => Shape::EResize,
+        xdg_toplevel::ResizeEdge::TopLeft => Shape::NwResize,
+        xdg_toplevel::ResizeEdge::TopRight => Shape::NeResize,
+        xdg_toplevel::ResizeEdge::BottomLeft => Shape::SwResize,
+        xdg_toplevel::ResizeEdge::BottomRight => Shape::SeResize,
+        _ => Shape::Default,
     }
 }
 

@@ -6,7 +6,9 @@ use lntrn_render::{Color, FontStyle, FontWeight, Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{FoxPalette, InteractionContext};
 
 use crate::render::TOOLBAR_H;
+use crate::theme::Theme;
 use crate::title_bar::TITLE_BAR_H;
+use crate::tokens;
 
 /// Lightweight per-tab info passed to the strip renderer. Cloned each frame
 /// so the strip code doesn't have to borrow the editor list.
@@ -17,7 +19,7 @@ pub struct TabLabel {
 }
 
 /// Height of the tab strip in logical pixels.
-pub const TAB_STRIP_H: f32 = 32.0;
+pub const TAB_STRIP_H: f32 = 34.0;
 
 /// Tab sizing.
 const TAB_MIN_W: f32 = 110.0;
@@ -25,7 +27,7 @@ const TAB_MAX_W: f32 = 220.0;
 const TAB_PAD_X: f32 = 12.0;
 const CLOSE_BTN_W: f32 = 20.0;
 const NEW_TAB_BTN_W: f32 = 32.0;
-const FONT: f32 = 16.0;
+const FONT: f32 = 17.0;
 
 /// Hit-zone IDs. Tab clicks use `ZONE_TAB_BASE + index`, close buttons use
 /// `ZONE_TAB_CLOSE_BASE + index`. The new-tab button has its own ID.
@@ -60,81 +62,84 @@ pub fn draw_tab_strip(
     tabs: &[TabLabel],
     active: usize,
     palette: &FoxPalette,
+    theme: Theme,
     wf: f32,
     s: f32,
     sw: u32,
     sh: u32,
 ) {
+    let _ = wf; // strip bg is now the shared ribbon gradient; width unused.
     let y = tab_strip_y(s);
     let h = TAB_STRIP_H * s;
 
-    // ── Strip background ──────────────────────────────────────────────
-    // Slightly inset from the paper bg so inactive tabs sit on a darker plate.
-    let strip_bg = palette.surface_2;
-    painter.rect_filled(Rect::new(0.0, y, wf, h), 0.0, strip_bg);
-
-    // Hairline below the strip (separates from toolbar).
-    painter.line(
-        0.0,
-        y + h,
-        wf,
-        y + h,
-        1.0 * s,
-        Color::from_rgba8(60, 50, 35, 38),
-    );
+    // No strip background or below-strip hairline here — the unified ribbon
+    // gradient (drawn earlier) and the ribbon↔desk seam (drawn after) handle
+    // those. Tabs paint only their own fills/glows on top of the gradient.
 
     let pad = TAB_PAD_X * s;
     let close_w = CLOSE_BTN_W * s;
     let font_px = FONT * s;
+    let gold = palette.accent;
+    let tab_top_r = tokens::RADIUS_TAB * s;
 
     let mut x = 0.0;
     for (i, tab) in tabs.iter().enumerate() {
+        let is_active = i == active;
+        let weight = if is_active { FontWeight::Bold } else { FontWeight::Normal };
+
         let label = display_label(tab);
-        let label_w = text.measure_width(&label, font_px);
+        let label_w = text.measure_width_styled(&label, font_px, weight, FontStyle::Normal);
         let tab_w = (label_w + pad * 2.0 + close_w)
             .clamp(TAB_MIN_W * s, TAB_MAX_W * s);
         let tab_r = Rect::new(x, y, tab_w, h);
 
         let zone = input.add_zone(ZONE_TAB_BASE + i as u32, tab_r);
         let hovered = zone.is_hovered();
-        let is_active = i == active;
 
-        // ── Background fill ──────────────────────────────────────
-        let bg = if is_active {
-            palette.bg
-        } else if hovered {
-            Color::from_rgba8(255, 255, 255, 50)
-        } else {
-            Color::TRANSPARENT
-        };
-        painter.rect_filled(tab_r, 0.0, bg);
-
-        // Active tab: accent stripe at top, cover bottom hairline so the
-        // active tab visually flows into the toolbar below.
         if is_active {
-            painter.rect_filled(
-                Rect::new(tab_r.x, tab_r.y, tab_r.w, 2.0 * s),
+            // Gold radial glow pooling at the page seam, then the tab fuses
+            // into the page tone with a gold top stripe.
+            let glow_r =
+                Rect::new(tab_r.x - 10.0 * s, tab_r.y, tab_r.w + 20.0 * s, tab_r.h + 6.0 * s);
+            painter.rect_radial_glow(
+                glow_r,
                 0.0,
-                palette.accent,
+                (0.5, 0.92),
+                (tab_r.w * 0.62).max(70.0 * s),
+                gold.with_alpha(tokens::TAB_GLOW_ALPHA),
             );
+            painter.rect_4corner(tab_r, [tab_top_r, tab_top_r, 0.0, 0.0], palette.bg);
+            painter.rect_4corner(
+                Rect::new(tab_r.x, tab_r.y, tab_r.w, tokens::TAB_STRIPE_H * s),
+                [tab_top_r, tab_top_r, 0.0, 0.0],
+                gold,
+            );
+            // Cover the seam slice so the active tab flows into the document.
             painter.rect_filled(
                 Rect::new(tab_r.x, tab_r.y + tab_r.h - 1.0 * s, tab_r.w, 1.0 * s),
                 0.0,
                 palette.bg,
             );
+        } else if hovered {
+            // Warm gold hover wash with rounded top corners.
+            painter.rect_4corner(
+                tab_r,
+                [tab_top_r, tab_top_r, 0.0, 0.0],
+                gold.with_alpha(tokens::GOLD_HOVER_ALPHA),
+            );
         }
 
-        // Right-edge separator between inactive tabs.
-        if !is_active && i + 1 < tabs.len() {
+        // Faint divider between adjacent inactive, non-hovered tabs.
+        if !is_active && i + 1 < tabs.len() && i + 1 != active && !hovered {
             painter.rect_filled(
                 Rect::new(
                     tab_r.x + tab_r.w - 1.0 * s,
-                    tab_r.y + 6.0 * s,
+                    tab_r.y + 8.0 * s,
                     1.0 * s,
-                    h - 12.0 * s,
+                    h - 16.0 * s,
                 ),
                 0.0,
-                Color::from_rgba8(60, 50, 35, 30),
+                theme.hairline_faint(),
             );
         }
 
@@ -148,7 +153,7 @@ pub fn draw_tab_strip(
         let label_y = tab_r.y + (h - font_px) * 0.5;
         text.queue_styled(
             &label, font_px, label_x, label_y, label_color,
-            tab_r.w - pad * 2.0 - close_w, FontWeight::Normal, FontStyle::Normal, sw, sh,
+            tab_r.w - pad * 2.0 - close_w, weight, FontStyle::Normal, sw, sh,
         );
 
         // ── Close button (visible on hover or active) ───────────
@@ -164,7 +169,7 @@ pub fn draw_tab_strip(
             if close_hovered {
                 painter.rect_filled(
                     close_r,
-                    4.0 * s,
+                    tokens::RADIUS_CHIP * s,
                     Color::from_rgba8(204, 78, 60, 230),
                 );
             }
@@ -191,10 +196,19 @@ pub fn draw_tab_strip(
     let new_w = NEW_TAB_BTN_W * s;
     let new_r = Rect::new(x, y, new_w, h);
     let new_zone = input.add_zone(ZONE_NEW_TAB, new_r);
-    if new_zone.is_hovered() {
-        painter.rect_filled(new_r, 0.0, Color::from_rgba8(255, 255, 255, 50));
+    let new_hovered = new_zone.is_hovered();
+    if new_hovered {
+        painter.rect_4corner(
+            new_r,
+            [tab_top_r, tab_top_r, 0.0, 0.0],
+            gold.with_alpha(tokens::GOLD_HOVER_ALPHA),
+        );
     }
-    let plus_color = palette.text_secondary;
+    let plus_color = if new_hovered {
+        tokens::gold_press(gold)
+    } else {
+        palette.text_secondary
+    };
     let plus_cx = new_r.center_x();
     let plus_cy = new_r.center_y();
     let plus_half = 6.0 * s;

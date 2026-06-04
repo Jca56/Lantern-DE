@@ -14,6 +14,13 @@ pub const ZONE_NAV_PREV: u32 = 11;
 pub const ZONE_NAV_NEXT: u32 = 12;
 pub const ZONE_SHUFFLE: u32 = 13;
 
+// ── Layout (logical px, multiply by scale `s`) ───────────────────────────────
+// Shared so render + hit-testing + SVG re-render agree on the canvas bounds.
+pub const TITLE_H: f32 = 36.0;
+pub const STATUS_H: f32 = 40.0;
+/// Width of the window edge band that triggers a resize.
+pub const RESIZE_BORDER: f32 = 10.0;
+
 // ── Shared types ────────────────────────────────────────────────────────────
 
 pub struct Gpu {

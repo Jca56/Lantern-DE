@@ -9,11 +9,13 @@ use lntrn_render::Rect;
 use crate::render;
 use crate::scrollbar;
 use crate::tab_strip::{self, ZONE_NEW_TAB, ZONE_TAB_BASE, ZONE_TAB_CLOSE_BASE};
+use crate::fonts;
 use crate::format::Alignment;
 use crate::toolbar::{
-    FONT_SIZES, LINE_SPACINGS, ZONE_FMT_ALIGN_CENTER, ZONE_FMT_ALIGN_LEFT,
-    ZONE_FMT_ALIGN_RIGHT, ZONE_FMT_BOLD, ZONE_FMT_ITALIC, ZONE_FMT_SIZE_BTN,
-    ZONE_FMT_SIZE_OPT_BASE, ZONE_FMT_SPACING_BTN, ZONE_FMT_SPACING_OPT_BASE,
+    FONT_SIZES, SIZE_MAX, SIZE_MIN, ZONE_FMT_ALIGN_CENTER, ZONE_FMT_ALIGN_LEFT,
+    ZONE_FMT_ALIGN_RIGHT, ZONE_FMT_BOLD, ZONE_FMT_BULLET, ZONE_FMT_FONT_BTN,
+    ZONE_FMT_FONT_OPT_BASE, ZONE_FMT_ITALIC, ZONE_FMT_SIZE_BOX, ZONE_FMT_SIZE_CARET,
+    ZONE_FMT_SIZE_MINUS, ZONE_FMT_SIZE_OPT_BASE, ZONE_FMT_SIZE_PLUS,
     ZONE_FMT_STRIKE, ZONE_FMT_UNDERLINE,
 };
 use crate::{
@@ -84,8 +86,43 @@ fn handle_left_press(handler: &mut TextHandler, event_loop: &ActiveEventLoop) ->
             ZONE_FMT_STRIKE => handler
                 .editor_mut()
                 .toggle_format(|a| a.strikethrough = !a.strikethrough),
-            ZONE_FMT_SIZE_BTN => {
-                handler.fmt_toolbar.size_dropdown_open = !handler.fmt_toolbar.size_dropdown_open;
+            ZONE_FMT_BULLET => {
+                handler.fmt_toolbar.close_all();
+                handler.editor_mut().toggle_bullet();
+            }
+            // Font-family picker
+            ZONE_FMT_FONT_BTN => {
+                let open = !handler.fmt_toolbar.font_dropdown_open;
+                handler.fmt_toolbar.close_all();
+                handler.fmt_toolbar.font_dropdown_open = open;
+            }
+            z if z >= ZONE_FMT_FONT_OPT_BASE
+                && z < ZONE_FMT_FONT_OPT_BASE + fonts::FONTS.len() as u32 =>
+            {
+                let idx = (z - ZONE_FMT_FONT_OPT_BASE) as usize;
+                let font = if idx == 0 { None } else { Some(idx as u8) };
+                handler.editor_mut().set_font_family(font);
+                handler.fmt_toolbar.font_dropdown_open = false;
+            }
+            // Editable size box + steppers + preset caret
+            ZONE_FMT_SIZE_BOX => {
+                let cur = handler.editor().selection_format_state().font_size
+                    .unwrap_or(crate::editor::FONT_SIZE);
+                handler.fmt_toolbar.size_dropdown_open = false;
+                handler.fmt_toolbar.font_dropdown_open = false;
+                handler.fmt_toolbar.size_editing = true;
+                handler.fmt_toolbar.size_buffer = format!("{}", cur as i32);
+            }
+            ZONE_FMT_SIZE_MINUS => {
+                step_size(handler, -1.0);
+            }
+            ZONE_FMT_SIZE_PLUS => {
+                step_size(handler, 1.0);
+            }
+            ZONE_FMT_SIZE_CARET => {
+                let open = !handler.fmt_toolbar.size_dropdown_open;
+                handler.fmt_toolbar.close_all();
+                handler.fmt_toolbar.size_dropdown_open = open;
             }
             z if z >= ZONE_FMT_SIZE_OPT_BASE
                 && z < ZONE_FMT_SIZE_OPT_BASE + FONT_SIZES.len() as u32 =>
@@ -98,21 +135,9 @@ fn handle_left_press(handler: &mut TextHandler, event_loop: &ActiveEventLoop) ->
             ZONE_FMT_ALIGN_LEFT => handler.editor_mut().set_alignment(Alignment::Left),
             ZONE_FMT_ALIGN_CENTER => handler.editor_mut().set_alignment(Alignment::Center),
             ZONE_FMT_ALIGN_RIGHT => handler.editor_mut().set_alignment(Alignment::Right),
-            // Line spacing dropdown
-            ZONE_FMT_SPACING_BTN => {
-                handler.fmt_toolbar.spacing_dropdown_open =
-                    !handler.fmt_toolbar.spacing_dropdown_open;
-            }
-            z if z >= ZONE_FMT_SPACING_OPT_BASE
-                && z < ZONE_FMT_SPACING_OPT_BASE + LINE_SPACINGS.len() as u32 =>
-            {
-                let idx = (z - ZONE_FMT_SPACING_OPT_BASE) as usize;
-                handler.editor_mut().set_line_spacing(LINE_SPACINGS[idx]);
-                handler.fmt_toolbar.spacing_dropdown_open = false;
-            }
             ZONE_EDITOR => {
-                handler.fmt_toolbar.size_dropdown_open = false;
-                handler.fmt_toolbar.spacing_dropdown_open = false;
+                commit_size_edit(handler);
+                handler.fmt_toolbar.close_all();
                 handler.editor_mut().clear_selection();
                 if let Some((cx, cy)) = handler.input.cursor() {
                     handler.click_to_cursor(cx, cy);
@@ -130,15 +155,15 @@ fn handle_left_press(handler: &mut TextHandler, event_loop: &ActiveEventLoop) ->
                 handler.close_tab((z - ZONE_TAB_CLOSE_BASE) as usize);
             }
             ZONE_PAGE_HANDLE_L | ZONE_PAGE_HANDLE_R => {
-                handler.fmt_toolbar.size_dropdown_open = false;
-                handler.fmt_toolbar.spacing_dropdown_open = false;
+                commit_size_edit(handler);
+                handler.fmt_toolbar.close_all();
                 handler.page_drag = true;
             }
             ZONE_EDITOR_SCROLL_THUMB => begin_editor_scroll_drag(handler, false),
             ZONE_EDITOR_SCROLL_TRACK => begin_editor_scroll_drag(handler, true),
             _ => {
-                handler.fmt_toolbar.size_dropdown_open = false;
-                handler.fmt_toolbar.spacing_dropdown_open = false;
+                commit_size_edit(handler);
+                handler.fmt_toolbar.close_all();
             }
         }
     } else if handler.is_on_title_bar() {
@@ -148,6 +173,34 @@ fn handle_left_press(handler: &mut TextHandler, event_loop: &ActiveEventLoop) ->
         return MouseAction::Consumed;
     }
     MouseAction::Consumed
+}
+
+/// Nudge the current font size up/down by one logical px and apply it.
+fn step_size(handler: &mut TextHandler, delta: f32) {
+    let cur = handler
+        .editor()
+        .selection_format_state()
+        .font_size
+        .unwrap_or(crate::editor::FONT_SIZE);
+    let next = (cur + delta).clamp(SIZE_MIN, SIZE_MAX);
+    handler.editor_mut().set_font_size(next);
+}
+
+/// Commit the editable size box (if focused) — parse the buffer and apply.
+/// Clears the editing state either way.
+pub fn commit_size_edit(handler: &mut TextHandler) {
+    if !handler.fmt_toolbar.size_editing {
+        return;
+    }
+    handler.fmt_toolbar.size_editing = false;
+    let buf = handler.fmt_toolbar.size_buffer.trim().to_string();
+    if let Ok(v) = buf.parse::<f32>() {
+        if v > 0.0 {
+            let v = v.clamp(SIZE_MIN, SIZE_MAX);
+            handler.editor_mut().set_font_size(v);
+        }
+    }
+    handler.fmt_toolbar.size_buffer.clear();
 }
 
 fn handle_left_release(handler: &mut TextHandler) -> MouseAction {

@@ -24,7 +24,7 @@ impl Rgba {
 
 // ── Brand colors ─────────────────────────────────────────────────────────────
 
-pub const BRAND_GOLD: Rgba = Rgba::rgb(200, 134, 10);
+pub const BRAND_GOLD: Rgba = Rgba::rgb(250, 200, 0);
 pub const DANGER_RED: Rgba = Rgba::rgb(200, 45, 45);
 pub const SUCCESS_GREEN: Rgba = Rgba::rgb(22, 160, 72);
 pub const WARNING_YELLOW: Rgba = Rgba::rgb(250, 204, 21);

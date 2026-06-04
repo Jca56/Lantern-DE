@@ -60,7 +60,20 @@ pub struct LoadedImage {
     pub texture: GpuTexture,
     pub width: u32,
     pub height: u32,
-    pub path: PathBuf,
+    /// For vector images: the parsed SVG and its native aspect, so we can
+    /// re-rasterize crisply at whatever pixel size it's displayed at.
+    pub svg: Option<SvgImage>,
+}
+
+/// A loaded SVG kept around for on-demand re-rasterization at the display size.
+pub struct SvgImage {
+    pub source: String,
+    /// Native (intrinsic) dimensions in SVG user units.
+    pub native_w: f32,
+    pub native_h: f32,
+    /// Pixel size the current `texture` was rasterized at.
+    pub rendered_w: u32,
+    pub rendered_h: u32,
 }
 
 // ── GIF animation ───────────────────────────────────────────────────────────
@@ -217,33 +230,37 @@ impl App {
                     let f = &anim.frames[0];
                     let tex = tex_pass.upload(gpu, &f.rgba, f.width, f.height);
                     let (w, h) = (f.width, f.height);
-                    self.set_loaded(abs.clone(), tex, w, h);
+                    self.set_loaded(abs.clone(), tex, w, h, None);
                     self.gif = Some(anim);
                     return;
                 }
             }
         }
 
-        let result = if is_svg(&abs) {
-            load_svg_texture(gpu, tex_pass, &abs)
+        if is_svg(&abs) {
+            match load_svg_texture(gpu, tex_pass, &abs) {
+                Some((tex, w, h, svg)) => self.set_loaded(abs, tex, w, h, Some(svg)),
+                None => self.status_text = format!("Cannot load: {}", abs.display()),
+            }
         } else {
-            load_raster_texture(gpu, tex_pass, &abs)
-        };
-
-        match result {
-            Some((tex, w, h)) => self.set_loaded(abs, tex, w, h),
-            None => {
-                self.status_text = format!("Cannot load: {}", abs.display());
+            match load_raster_texture(gpu, tex_pass, &abs) {
+                Some((tex, w, h)) => self.set_loaded(abs, tex, w, h, None),
+                None => self.status_text = format!("Cannot load: {}", abs.display()),
             }
         }
     }
 
-    fn set_loaded(&mut self, abs: PathBuf, tex: GpuTexture, w: u32, h: u32) {
+    fn set_loaded(&mut self, abs: PathBuf, tex: GpuTexture, w: u32, h: u32, svg: Option<SvgImage>) {
         self.file_name = abs.file_name()
             .map(|n| n.to_string_lossy().into())
             .unwrap_or_default();
         self.status_text = abs.to_string_lossy().into();
-        self.dimensions_text = format!("{w} × {h}");
+        // For SVG, report native (intrinsic) size rather than the rasterized size.
+        match &svg {
+            Some(s) => self.dimensions_text =
+                format!("{} × {}", s.native_w.ceil() as u32, s.native_h.ceil() as u32),
+            None => self.dimensions_text = format!("{w} × {h}"),
+        }
         self.zoom = 1.0;
         self.pan_x = 0.0;
         self.pan_y = 0.0;
@@ -251,8 +268,52 @@ impl App {
             texture: tex,
             width: w,
             height: h,
-            path: abs,
+            svg,
         });
+    }
+
+    /// Re-rasterize the loaded SVG to match the on-screen pixel size, so it
+    /// stays sharp when the window/zoom grows. `disp_w`/`disp_h` are the pixel
+    /// dimensions the image is currently drawn at. No-op for raster images, and
+    /// only re-renders when the target meaningfully exceeds the current texture
+    /// (hysteresis avoids churning a texture every frame during a drag-resize).
+    pub fn maybe_rerender_svg(
+        &mut self,
+        gpu: &GpuContext,
+        tex_pass: &TexturePass,
+        disp_w: f32,
+        disp_h: f32,
+    ) {
+        let Some(img) = &self.image else { return };
+        let Some(svg) = &img.svg else { return };
+
+        // Target raster size: cover the displayed size, capped, never below native.
+        let want_w = (disp_w.ceil() as u32).clamp(svg.native_w.ceil() as u32, 8192).max(1);
+        let want_h = (disp_h.ceil() as u32).clamp(svg.native_h.ceil() as u32, 8192).max(1);
+
+        // Re-render only on a ≥25% jump in either axis (up or down) to avoid
+        // per-frame churn while still tracking large zoom changes.
+        let grew = want_w as f32 > svg.rendered_w as f32 * 1.25
+            || want_h as f32 > svg.rendered_h as f32 * 1.25;
+        let shrank = (want_w as f32) < svg.rendered_w as f32 * 0.75
+            && (want_h as f32) < svg.rendered_h as f32 * 0.75;
+        if !grew && !shrank {
+            return;
+        }
+
+        if let Some((tex, rw, rh)) =
+            rasterize_svg(gpu, tex_pass, &svg.source, svg.native_w, svg.native_h, want_w, want_h)
+        {
+            if let Some(img) = &mut self.image {
+                img.texture = tex;
+                img.width = rw;
+                img.height = rh;
+                if let Some(svg) = &mut img.svg {
+                    svg.rendered_w = rw;
+                    svg.rendered_h = rh;
+                }
+            }
+        }
     }
 
     fn scan_directory(&mut self, dir: &Path) {
@@ -416,27 +477,59 @@ fn svg_font_database() -> Arc<resvg::usvg::fontdb::Database> {
     .clone()
 }
 
+/// Initial SVG load: rasterize at native size and keep the source around so it
+/// can be re-rasterized larger on demand (see `App::maybe_rerender_svg`).
 fn load_svg_texture(
     gpu: &GpuContext,
     tex_pass: &TexturePass,
     path: &Path,
-) -> Option<(GpuTexture, u32, u32)> {
+) -> Option<(GpuTexture, u32, u32, SvgImage)> {
     let svg_data = std::fs::read_to_string(path).ok()?;
     let mut opt = resvg::usvg::Options::default();
     opt.fontdb = svg_font_database();
     let tree = resvg::usvg::Tree::from_str(&svg_data, &opt).ok()?;
-
     let size = tree.size();
-    let svg_w = size.width();
-    let svg_h = size.height();
-    // Render at native size, capped at 8192
-    let render_w = (svg_w.ceil() as u32).min(8192).max(1);
-    let render_h = (svg_h.ceil() as u32).min(8192).max(1);
+    let native_w = size.width();
+    let native_h = size.height();
 
+    // Start at native size; window/zoom growth triggers a sharper re-render.
+    let want_w = (native_w.ceil() as u32).min(8192).max(1);
+    let want_h = (native_h.ceil() as u32).min(8192).max(1);
+    let (tex, rw, rh) =
+        rasterize_svg(gpu, tex_pass, &svg_data, native_w, native_h, want_w, want_h)?;
+
+    let svg = SvgImage {
+        source: svg_data,
+        native_w,
+        native_h,
+        rendered_w: rw,
+        rendered_h: rh,
+    };
+    Some((tex, rw, rh, svg))
+}
+
+/// Rasterize an SVG source string to a GPU texture at `target_w × target_h`
+/// pixels, preserving the native aspect ratio. Returns the texture and the
+/// actual pixel size used.
+fn rasterize_svg(
+    gpu: &GpuContext,
+    tex_pass: &TexturePass,
+    source: &str,
+    native_w: f32,
+    native_h: f32,
+    target_w: u32,
+    target_h: u32,
+) -> Option<(GpuTexture, u32, u32)> {
+    let mut opt = resvg::usvg::Options::default();
+    opt.fontdb = svg_font_database();
+    let tree = resvg::usvg::Tree::from_str(source, &opt).ok()?;
+
+    let render_w = target_w.clamp(1, 8192);
+    let render_h = target_h.clamp(1, 8192);
     let mut pixmap = resvg::tiny_skia::Pixmap::new(render_w, render_h)?;
     let transform = resvg::tiny_skia::Transform::from_scale(
-        render_w as f32 / svg_w,
-        render_h as f32 / svg_h,
+        render_w as f32 / native_w,
+        render_h as f32 / native_h,
     );
     resvg::render(&tree, transform, &mut pixmap.as_mut());
 

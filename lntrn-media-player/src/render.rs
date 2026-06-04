@@ -4,7 +4,7 @@ use lntrn_ui::gpu::{draw_window_bg, FontSize, FoxPalette, InteractionContext, Te
 use crate::app::{App, LoopMode, VIS_BARS};
 use crate::{
     Gpu, ZONE_CANVAS, ZONE_CLOSE, ZONE_FULLSCREEN, ZONE_LOOP, ZONE_MAXIMIZE, ZONE_MINIMIZE,
-    ZONE_NEXT, ZONE_PLAY_PAUSE, ZONE_PREV, ZONE_SEEK_BAR, ZONE_TITLE_BAR,
+    ZONE_NEXT, ZONE_PLAY_PAUSE, ZONE_PREV, ZONE_SEEK_BAR, ZONE_TITLE_BAR, ZONE_VIEW_MENU,
 };
 
 pub struct ControlRects {
@@ -36,8 +36,20 @@ pub fn render_frame(
     input.begin_frame();
 
     let video_mode = !app.audio_only && app.pipeline.is_some();
-    let show_title = video_mode && !fullscreen;
-    let title_h = if show_title { 52.0 * s } else { 0.0 };
+    let bar_h = 52.0 * s;
+    // Title bar visibility:
+    //   • video mode      → solid bar that reserves canvas space (as before)
+    //   • audio mode      → overlays the bars and fades in with hover (no reserve)
+    //   • fullscreen      → hidden
+    let title_fade = if fullscreen {
+        0.0
+    } else if video_mode {
+        1.0
+    } else {
+        app.controls_alpha.clamp(0.0, 1.0)
+    };
+    let reserve_title = video_mode && !fullscreen;
+    let title_h = if reserve_title { bar_h } else { 0.0 };
 
     // ── Window background (palette + opacity from lantern.toml) ───────
     // Fullscreen video paints opaque black so letterbox bars aren't see-through.
@@ -54,7 +66,8 @@ pub fn render_frame(
 
     let mut tex_draws: Vec<TextureDraw> = Vec::new();
     if !video_mode {
-        draw_classic_bars(painter, &app.vis_bars, canvas, s);
+        let theme = crate::vis_theme::theme(app.vis_theme_index);
+        draw_classic_bars(painter, &app.vis_bars, canvas, s, &theme.stops);
     } else if let Some(tex) = &app.video_texture {
         if app.video_width > 0 && app.video_height > 0 {
             let fit = aspect_fit(app.video_width, app.video_height, canvas);
@@ -64,9 +77,19 @@ pub fn render_frame(
         }
     }
 
-    // ── Title bar (video, non-fullscreen) ─────────────────────────────
-    if show_title {
-        draw_title_bar(painter, text, ctx, input, palette, app, wf, title_h, s);
+    // ── Title bar (video: solid; audio: hover-reveal overlay) ─────────
+    // Drawn on painter layer 1 in audio mode so it composites above the bars;
+    // in video mode it's part of the window frame (layer 0).
+    if title_fade > 0.005 {
+        if !reserve_title {
+            painter.set_layer(1);
+        }
+        draw_title_bar(
+            painter, text, ctx, input, palette, app, wf, bar_h, s, title_fade, reserve_title,
+        );
+        if !reserve_title {
+            painter.set_layer(0);
+        }
     }
 
     // ── Controls: always overlay the bottom of the canvas ────────────
@@ -377,8 +400,12 @@ fn draw_seek_bar(
     }
 }
 
-// ── Title bar (video mode) ───────────────────────────────────────────────
+// ── Title bar (video: solid; audio: hover-reveal overlay) ────────────────
 
+/// Draw the title bar: window title, a "View" menu button, and Terminal-style
+/// circular window controls (minimize / maximize / close). `fade` dims the whole
+/// bar for the audio hover-reveal; `reserve` is true when the bar reserves canvas
+/// space (video mode) vs. overlaying the bars (audio mode).
 fn draw_title_bar(
     painter: &mut lntrn_render::Painter,
     text: &mut lntrn_render::TextRenderer,
@@ -387,49 +414,84 @@ fn draw_title_bar(
     palette: &FoxPalette,
     app: &App,
     wf: f32, title_h: f32, s: f32,
+    fade: f32, reserve: bool,
 ) {
-    // Button glyph font (small) and a much larger font for the video title.
-    let font = FontSize::Body;
     let title_font = FontSize::Custom((26.0 * s).clamp(20.0, 34.0));
-    // No background fill: the bar blends into the window background drawn just
-    // beneath it (draw_window_bg already painted this region with the palette
-    // bg + window opacity), so the title row reads as part of the frame.
 
-    let btn_w = title_h;
-    let close_rect = Rect::new(wf - btn_w, 0.0, btn_w, title_h);
-    let max_rect = Rect::new(wf - btn_w * 2.0, 0.0, btn_w, title_h);
-    let min_rect = Rect::new(wf - btn_w * 3.0, 0.0, btn_w, title_h);
-
-    let close_state = input.add_zone(ZONE_CLOSE, close_rect);
-    let max_state = input.add_zone(ZONE_MAXIMIZE, max_rect);
-    let min_state = input.add_zone(ZONE_MINIMIZE, min_rect);
-
-    let title_drag_rect = Rect::new(0.0, 0.0, wf - btn_w * 3.0, title_h);
-    input.add_zone(ZONE_TITLE_BAR, title_drag_rect);
-
-    if min_state.is_hovered() {
-        painter.rect_filled(min_rect, 0.0, palette.surface_2.with_alpha(0.4));
-    }
-    if max_state.is_hovered() {
-        painter.rect_filled(max_rect, 0.0, palette.surface_2.with_alpha(0.4));
-    }
-    if close_state.is_hovered() {
-        painter.rect_filled(close_rect, 0.0, Color::rgba(0.85, 0.2, 0.2, 0.9));
+    // In audio (overlay) mode, lay a subtle scrim behind the bar so controls and
+    // title stay legible over the dancing bars.
+    if !reserve {
+        painter.rect_filled(
+            Rect::new(0.0, 0.0, wf, title_h),
+            0.0,
+            Color::rgba(0.0, 0.0, 0.0, 0.32 * fade),
+        );
     }
 
-    let icon_min = "\u{2013}";
-    let icon_max = "\u{25A1}";
-    let icon_close = "\u{2715}";
-    let cy = (title_h - font.px()) * 0.5;
-    let imw = text.measure_width(icon_min, font.px());
-    TextLabel::new(icon_min, min_rect.x + (btn_w - imw) * 0.5, cy)
-        .size(font).color(palette.text).draw(text, ctx.width(), ctx.height());
-    let imxw = text.measure_width(icon_max, font.px());
-    TextLabel::new(icon_max, max_rect.x + (btn_w - imxw) * 0.5, cy)
-        .size(font).color(palette.text).draw(text, ctx.width(), ctx.height());
-    let icw = text.measure_width(icon_close, font.px());
-    TextLabel::new(icon_close, close_rect.x + (btn_w - icw) * 0.5, cy)
-        .size(font).color(palette.text).draw(text, ctx.width(), ctx.height());
+    let cursor = input.cursor();
+    let by = title_h * 0.5;
+    let btn_r = 11.0 * s;
+    let icon = 4.5 * s;
+    let thick = 1.8 * s;
+    let gap = 34.0 * s;
+    let right_pad = 24.0 * s;
+
+    // Circular control buttons pulled in from the right edge (Terminal layout).
+    let close_x = wf - right_pad - btn_r;
+    let max_x = close_x - gap;
+    let min_x = max_x - gap;
+
+    // Generous square hit-zones centered on each circle so clicks land easily.
+    let hz = |cx: f32| Rect::new(cx - btn_r * 1.4, by - btn_r * 1.4, btn_r * 2.8, btn_r * 2.8);
+    let close_state = input.add_zone(ZONE_CLOSE, hz(close_x));
+    let max_state = input.add_zone(ZONE_MAXIMIZE, hz(max_x));
+    let min_state = input.add_zone(ZONE_MINIMIZE, hz(min_x));
+
+    let idle = Color::from_rgba8(140, 120, 90, 255).with_alpha(fade);
+    let icon_hover = Color::from_rgba8(250, 200, 0, 255).with_alpha(fade);
+    let hover_bg = Color::from_rgba8(250, 200, 0, 60).with_alpha(fade);
+    let close_bg = Color::rgba(0.85, 0.2, 0.2, 0.45 * fade);
+    let close_icon = Color::rgba(1.0, 0.85, 0.85, fade);
+
+    let _ = cursor;
+    // Minimize — line
+    if min_state.is_hovered() { painter.circle_filled(min_x, by, btn_r, hover_bg); }
+    let ic = if min_state.is_hovered() { icon_hover } else { idle };
+    painter.line(min_x - icon, by, min_x + icon, by, thick, ic);
+
+    // Maximize — square outline
+    if max_state.is_hovered() { painter.circle_filled(max_x, by, btn_r, hover_bg); }
+    let ic = if max_state.is_hovered() { icon_hover } else { idle };
+    painter.rect_stroke_sdf(
+        Rect::new(max_x - icon, by - icon, icon * 2.0, icon * 2.0), 1.5 * s, thick, ic,
+    );
+
+    // Close — X (red on hover)
+    let chov = close_state.is_hovered();
+    if chov { painter.circle_filled(close_x, by, btn_r, close_bg); }
+    let ic = if chov { close_icon } else { idle };
+    painter.line(close_x - icon, by - icon, close_x + icon, by + icon, thick, ic);
+    painter.line(close_x - icon, by + icon, close_x + icon, by - icon, thick, ic);
+
+    // ── "View" menu button (left of the window controls) ──────────────
+    let menu_font = FontSize::Custom((22.0 * s).clamp(16.0, 28.0));
+    let view_label = "View";
+    let vw = text.measure_width(view_label, menu_font.px());
+    let view_pad = 14.0 * s;
+    let view_w = vw + view_pad * 2.0;
+    let view_x = min_x - btn_r * 1.4 - 12.0 * s - view_w;
+    let view_rect = Rect::new(view_x, 0.0, view_w, title_h);
+    let view_state = input.add_zone(ZONE_VIEW_MENU, view_rect);
+    if view_state.is_hovered() || app.view_menu_open {
+        painter.rect_filled(view_rect, 6.0 * s, hover_bg);
+    }
+    let view_color = if app.view_menu_open || view_state.is_hovered() { icon_hover } else { palette.text.with_alpha(fade) };
+    TextLabel::new(view_label, view_x + view_pad, (title_h - menu_font.px()) * 0.5)
+        .size(menu_font).color(view_color).draw(text, ctx.width(), ctx.height());
+
+    // ── Drag region + title text (everything left of the View button) ──
+    let drag_rect = Rect::new(0.0, 0.0, view_x.max(0.0), title_h);
+    input.add_zone(ZONE_TITLE_BAR, drag_rect);
 
     let title_text = if app.file_name.is_empty() {
         "Lantern Media Player".to_string()
@@ -437,7 +499,7 @@ fn draw_title_bar(
         app.file_name.clone()
     };
     let title_px = title_font.px();
-    let max_title_w = (title_drag_rect.w - 28.0 * s).max(0.0);
+    let max_title_w = (drag_rect.w - 28.0 * s).max(0.0);
     let mut shown = title_text.clone();
     while text.measure_width(&shown, title_px) > max_title_w && shown.len() > 1 {
         shown.pop();
@@ -446,32 +508,78 @@ fn draw_title_bar(
         shown.pop();
         shown.push('\u{2026}');
     }
-    let title_cy = (title_h - title_px) * 0.5;
-    TextLabel::new(&shown, 16.0 * s, title_cy)
-        .size(title_font).color(palette.text).draw(text, ctx.width(), ctx.height());
+    TextLabel::new(&shown, 16.0 * s, (title_h - title_px) * 0.5)
+        .size(title_font).color(palette.text.with_alpha(fade)).draw(text, ctx.width(), ctx.height());
+
+    // ── View dropdown (color swatches) ────────────────────────────────
+    if app.view_menu_open {
+        draw_view_menu(painter, text, ctx, input, app, view_x, title_h, view_w, s);
+    }
+}
+
+/// Dropdown listing the visualizer color themes as labeled swatch rows.
+fn draw_view_menu(
+    painter: &mut lntrn_render::Painter,
+    text: &mut lntrn_render::TextRenderer,
+    ctx: &lntrn_render::GpuContext,
+    input: &mut InteractionContext,
+    app: &App,
+    anchor_x: f32, title_h: f32, anchor_w: f32, s: f32,
+) {
+    let font = FontSize::Custom((20.0 * s).clamp(15.0, 26.0));
+    let row_h = 40.0 * s;
+    let count = crate::vis_theme::theme_count();
+    let menu_w = (anchor_w.max(220.0 * s)).max(220.0 * s);
+    let pad = 8.0 * s;
+    let menu_h = row_h * count as f32 + pad * 2.0;
+    let menu_x = anchor_x;
+    let menu_y = title_h + 4.0 * s;
+
+    // Panel background + border.
+    painter.rect_filled(Rect::new(menu_x, menu_y, menu_w, menu_h), 10.0 * s, Color::from_rgba8(24, 22, 28, 250));
+    painter.rect_stroke(Rect::new(menu_x, menu_y, menu_w, menu_h), 10.0 * s, 1.5 * s, Color::from_rgba8(250, 200, 0, 90));
+
+    let sw_size = 22.0 * s;
+    for i in 0..count {
+        let theme = crate::vis_theme::theme(i);
+        let row_y = menu_y + pad + i as f32 * row_h;
+        let row = Rect::new(menu_x + pad, row_y, menu_w - pad * 2.0, row_h);
+        let st = input.add_zone(crate::ZONE_VIEW_SWATCH_BASE + i as u32, row);
+        let selected = i == app.vis_theme_index;
+        if st.is_hovered() || selected {
+            painter.rect_filled(row, 6.0 * s, Color::from_rgba8(250, 200, 0, if selected { 55 } else { 30 }));
+        }
+        // Swatch: a row of the 5 gradient stops.
+        let sw_x = row.x + 8.0 * s;
+        let sw_y = row_y + (row_h - sw_size) * 0.5;
+        let stub = sw_size / 5.0;
+        for (k, &(r, g, b)) in theme.stops.iter().enumerate() {
+            painter.rect_filled(
+                Rect::new(sw_x + k as f32 * stub, sw_y, stub + 0.5, sw_size),
+                0.0, Color::from_rgb8(r, g, b),
+            );
+        }
+        painter.rect_stroke(Rect::new(sw_x, sw_y, sw_size, sw_size), 3.0 * s, 1.0 * s, Color::rgba(1.0, 1.0, 1.0, 0.25));
+        // Label.
+        let label_x = sw_x + sw_size + 12.0 * s;
+        let label_color = if selected { Color::from_rgb8(250, 200, 0) } else { Color::from_rgb8(232, 220, 200) };
+        TextLabel::new(theme.name, label_x, row_y + (row_h - font.px()) * 0.5)
+            .size(font).color(label_color).draw(text, ctx.width(), ctx.height());
+    }
 }
 
 // ── Visualizer: Classic Bars (flush to bottom of canvas) ─────────────────
 
-// Sunset gradient across the frequency range: gold bass (most prominent) climbing
-// through warm accents into a violet sky at the highs — echoes the Lantern palette.
-const SUNSET_COLORS: [(u8, u8, u8); 5] = [
-    (250, 180, 0),   // Lantern Gold     — bass
-    (255, 130, 30),  // warm orange      — low-mid
-    (255, 90, 140),  // coral / pink     — mid
-    (200, 100, 230), // magenta / purple — high-mid
-    (130, 120, 250), // violet           — highs
-];
-
-/// Color a bar by its frequency position (`t`: 0.0 = bass .. 1.0 = highs),
-/// brightening slightly with loudness so peaks pop.
-fn sunset_color(t: f32, magnitude: f32) -> Color {
-    let t = t.clamp(0.0, 1.0) * (SUNSET_COLORS.len() - 1) as f32;
-    let idx = (t as usize).min(SUNSET_COLORS.len() - 2);
+/// Color a bar by its frequency position (`t`: 0.0 = bass .. 1.0 = highs) using
+/// the active theme's 5-stop gradient, brightening slightly with loudness so
+/// peaks pop.
+fn bar_color(stops: &[(u8, u8, u8); 5], t: f32, magnitude: f32) -> Color {
+    let t = t.clamp(0.0, 1.0) * (stops.len() - 1) as f32;
+    let idx = (t as usize).min(stops.len() - 2);
     let next = idx + 1;
     let frac = t - t.floor();
-    let (r0, g0, b0) = SUNSET_COLORS[idx];
-    let (r1, g1, b1) = SUNSET_COLORS[next];
+    let (r0, g0, b0) = stops[idx];
+    let (r1, g1, b1) = stops[next];
     let r = r0 as f32 + (r1 as f32 - r0 as f32) * frac;
     let g = g0 as f32 + (g1 as f32 - g0 as f32) * frac;
     let b = b0 as f32 + (b1 as f32 - b0 as f32) * frac;
@@ -489,6 +597,7 @@ fn draw_classic_bars(
     bars: &[f32],
     canvas: Rect,
     s: f32,
+    stops: &[(u8, u8, u8); 5],
 ) {
     let num_bars = bars.len();
     let gap = 3.0 * s;
@@ -509,7 +618,7 @@ fn draw_classic_bars(
         let x = canvas.x + side_margin + i as f32 * (bar_w + gap);
         let y = base_y - bar_h;
 
-        let color = sunset_color(t, magnitude);
+        let color = bar_color(stops, t, magnitude);
 
         painter.rect_filled(
             Rect::new(x - border, y - border, bar_w + border * 2.0, bar_h + border * 2.0),

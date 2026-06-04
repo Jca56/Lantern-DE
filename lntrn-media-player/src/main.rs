@@ -4,6 +4,7 @@ mod mpris_server;
 mod pipeline;
 mod position_store;
 mod render;
+mod vis_theme;
 mod wayland;
 
 use lntrn_render::{GpuContext, Painter, TextRenderer, TexturePass};
@@ -24,6 +25,9 @@ pub const ZONE_LOOP: u32 = 26;
 pub const ZONE_CONTROLS_BAR: u32 = 27;
 pub const ZONE_TITLE_BAR: u32 = 28;
 pub const ZONE_FULLSCREEN: u32 = 29;
+pub const ZONE_VIEW_MENU: u32 = 30;
+// View-menu swatch entries: ZONE_VIEW_SWATCH_BASE + theme_index.
+pub const ZONE_VIEW_SWATCH_BASE: u32 = 300;
 
 // ── Shared types ────────────────────────────────────────────────────────────
 
