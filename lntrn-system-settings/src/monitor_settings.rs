@@ -424,6 +424,8 @@ pub fn persist_monitor_settings(
                 wallpaper: String::new(),
                 primary: false,
                 vrr: false,
+                hdr: false,
+                sdr_brightness: 203,
             });
             config.monitors.last_mut().unwrap()
         }

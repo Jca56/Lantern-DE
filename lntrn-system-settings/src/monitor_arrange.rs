@@ -173,6 +173,8 @@ impl MonitorArrangeState {
                     wallpaper: prev.wallpaper.clone(),
                     primary: prev.primary,
                     vrr: prev.vrr,
+                    hdr: prev.hdr,
+                    sdr_brightness: prev.sdr_brightness,
                 }
             } else {
                 MonitorEntry {
@@ -185,6 +187,8 @@ impl MonitorArrangeState {
                     wallpaper: String::new(),
                     primary: false,
                     vrr: false,
+                    hdr: false,
+                    sdr_brightness: 203,
                 }
             }
         }).collect()

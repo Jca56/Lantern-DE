@@ -424,9 +424,18 @@ pub struct MonitorEntry {
     /// compositor enables it on demand while a fullscreen app owns the output.
     #[serde(default)]
     pub vrr: bool,
+    /// Enable HDR output on this monitor. Only meaningful when the display
+    /// reports HDR support via EDID (the toggle is hidden otherwise).
+    #[serde(default)]
+    pub hdr: bool,
+    /// Luminance (nits) SDR white maps to inside the HDR signal. BT.2408
+    /// reference is 203.
+    #[serde(default = "default_sdr_brightness")]
+    pub sdr_brightness: u32,
 }
 
 fn default_monitor_scale() -> f32 { 1.0 }
+fn default_sdr_brightness() -> u32 { 203 }
 
 
 // ── Power ───────────────────────────────────────────────────────────────────
@@ -728,6 +737,7 @@ mod tests {
             name: "DP-1".into(), x: 0, y: 0,
             resolution: "2560x1440".into(), refresh_rate: "144000".into(),
             scale: 1.0, wallpaper: String::new(), primary: true, vrr: false,
+            hdr: false, sdr_brightness: 203,
         });
         cfg.keybinds.set_enabled(true, Some("gentoo-pc"));
         let s = toml::to_string_pretty(&cfg).expect("serialize");

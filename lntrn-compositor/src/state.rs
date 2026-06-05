@@ -345,6 +345,7 @@ pub struct Lantern {
     pub minimize_anim: MinimizeAnimState,
     pub workspace_anim: WorkspaceAnimState,
     pub workspace_ipc: WorkspaceIpc,
+    pub hdr_ipc: crate::hdr_ipc::HdrIpc,
     pub gesture: GestureState,
 
     // Scratchpad (dropdown terminal)
@@ -575,6 +576,7 @@ impl Lantern {
             minimize_anim: MinimizeAnimState::new(),
             workspace_anim: WorkspaceAnimState::new(),
             workspace_ipc: WorkspaceIpc::new(),
+            hdr_ipc: crate::hdr_ipc::HdrIpc::new(),
             gesture: GestureState::new(),
             scratchpad_surface: None,
             scratchpad_pending: false,

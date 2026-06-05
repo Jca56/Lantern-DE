@@ -148,6 +148,7 @@ pub fn render_surface(
         state.finish_minimize_animation(surface);
     }
     state.poll_workspace_ipc();
+    state.poll_hdr_ipc();
     crate::clipboard_ipc::poll(state);
 
     // Get cursor position relative to this output (logical -> physical)

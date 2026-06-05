@@ -451,6 +451,24 @@ fn connector_connected(
             connector_handle: connector.handle(),
         });
 
+    // Detect HDR capability from the display's EDID. Stored on the output so
+    // the settings app (via lntrn_hdr_manager) and the DRM-prop path can read
+    // it. None → pure-SDR panel, the HDR toggle never appears for this output.
+    let hdr_caps = smithay_drm_extras::display_info::for_connector(
+        backend.drm_output_manager.device(),
+        connector.handle(),
+    )
+    .and_then(|info| crate::hdr::edid_caps::detect(&info));
+    if let Some(caps) = &hdr_caps {
+        info!(
+            "Output {} HDR-capable: pq={} hlg={} max_lum={:.0}nits min_lum={:.4}nits",
+            output_name, caps.pq_supported, caps.hlg_supported, caps.max_luminance, caps.min_luminance
+        );
+        output.user_data().insert_if_missing(|| caps.clone());
+    } else {
+        info!("Output {} reports no HDR support (SDR-only)", output_name);
+    }
+
     let drm_output = match backend
         .drm_output_manager
         .initialize_output::<_, CustomRenderElements>(
@@ -493,6 +511,9 @@ fn connector_connected(
     );
     state.output_management_state.broadcast_done();
 
+    // Publish HDR capability to the settings app (no-op caps line if SDR-only).
+    state.announce_hdr_caps(&output);
+
     render_device(state, node, Some(crtc));
 }
 
@@ -526,6 +547,7 @@ pub fn connector_disconnected(state: &mut Lantern, node: DrmNode, crtc: crtc::Ha
     if let Some(output) = output {
         state.output_management_state.remove_head(&output.name());
         state.output_management_state.broadcast_done();
+        state.hdr_ipc.remove_output(&output.name());
         state.space.unmap_output(&output);
         state.workspaces.unregister_output(&output);
     }

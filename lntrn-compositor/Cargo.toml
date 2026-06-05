@@ -23,7 +23,15 @@ smithay = { version = "0.7", default-features = false, features = [
     "desktop",
     "xwayland",
 ] }
-smithay-drm-extras = { version = "0.1", default-features = false }
+smithay-drm-extras = { version = "0.1", default-features = false, features = [
+    "display-info",
+] }
+# Direct dep with the v0_2 feature so we get the HDR static-metadata /
+# colorimetry accessors (`hdr_static_metadata`, `default_color_primaries`,
+# `supported_signal_colorimetry`) — those are gated behind `v0_2`, which
+# smithay-drm-extras does NOT enable on its own. Cargo unifies the feature
+# across both. Links the system `libdisplay-info` C library.
+libdisplay-info = { version = "0.2.1", features = ["v0_2"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 bitflags = "2"
