@@ -12,6 +12,7 @@ use lntrn_ui::gpu::{FoxPalette, InteractionContext};
 // Zone IDs — continue the monitor_settings range (res/refresh/scale use 1100-2).
 pub const ZONE_HDR_TOGGLE: u32 = 1103;
 pub const ZONE_SDR_SLIDER: u32 = 1104;
+pub const ZONE_HDR_KEEP: u32 = 1105;
 
 const PAD: f32 = 24.0;
 const ROW_H: f32 = 48.0;
@@ -41,6 +42,7 @@ pub fn draw_hdr_row(
     hdr_on: bool,
     sdr_nits: u32,
     max_nits: u32,
+    pending_secs_left: Option<u32>,
     x: f32,
     y: f32,
     s: f32,
@@ -139,6 +141,52 @@ pub fn draw_hdr_row(
         painter.circle_stroke(knob_x, slider_y, knob_r2, 1.5 * s, fox.text);
 
         cy += row_h;
+    }
+
+    // ── "Keep HDR?" confirmation banner (auto-revert countdown) ────
+    if let Some(secs) = pending_secs_left {
+        let banner_h = row_h * 1.1;
+        let banner = Rect::new(label_x, cy, 480.0 * s, banner_h);
+        painter.rect_filled(banner, 8.0 * s, fox.surface_2);
+        painter.rect_stroke_sdf(banner, 8.0 * s, 1.5 * s, fox.warning);
+
+        let msg = format!("Keep HDR? Reverting in {secs}s if your screen looks wrong…");
+        text.queue(
+            &msg,
+            lsz * 0.9,
+            banner.x + 14.0 * s,
+            banner.y + (banner_h - lsz * 0.9) / 2.0,
+            fox.text,
+            340.0 * s,
+            sw,
+            sh,
+        );
+
+        // "Keep" button on the right of the banner.
+        let btn_w = 96.0 * s;
+        let btn_h = 34.0 * s;
+        let btn = Rect::new(
+            banner.x + banner.w - btn_w - 10.0 * s,
+            banner.y + (banner_h - btn_h) / 2.0,
+            btn_w,
+            btn_h,
+        );
+        let keep_zone = ix.add_zone(ZONE_HDR_KEEP, btn);
+        let btn_bg = if keep_zone.is_hovered() { fox.success } else { fox.accent };
+        painter.rect_filled(btn, 6.0 * s, btn_bg);
+        let klsz = lsz * 0.95;
+        text.queue(
+            "Keep",
+            klsz,
+            btn.x + (btn_w - klsz * 2.2) / 2.0,
+            btn.y + (btn_h - klsz) / 2.0,
+            fox.text,
+            btn_w,
+            sw,
+            sh,
+        );
+
+        cy += banner_h + 8.0 * s;
     }
 
     HdrRowResult {

@@ -13,6 +13,12 @@
 //!
 //!   # Settings → Compositor:
 //!   `set:<output>:<enable>:<sdr_nits>`   # enable = 0|1
+//!   `confirm:<output>`                   # keep HDR (cancel auto-revert)
+//!
+//!   # Compositor → Settings (HDR confirmation lifecycle):
+//!   `pending:<output>:<seconds>`   # HDR engaged, awaiting "Keep" within N s
+//!   `confirmed:<output>`           # kept
+//!   `reverted:<output>`            # auto-reverted (timed out / failed)
 //!
 //! The compositor still reads `hdr`/`sdr_brightness` from lantern.toml at
 //! startup; this socket only carries *live* changes + capability discovery.
@@ -47,11 +53,13 @@ pub fn socket_path() -> PathBuf {
     PathBuf::from(format!("/run/user/{}/lntrn-hdr.sock", uid))
 }
 
-/// A live HDR enable/disable request from the settings app.
+/// A live HDR request from the settings app: either set enable/sdr, or a bare
+/// "keep it" confirmation (`confirm = true`, other fields ignored).
 pub struct HdrSetCommand {
     pub output: String,
     pub enable: bool,
     pub sdr_nits: u32,
+    pub confirm: bool,
 }
 
 /// Capability snapshot for one output, cached so newly-connecting clients get
@@ -194,6 +202,22 @@ impl HdrIpc {
         commands
     }
 
+    /// Tell the settings app HDR just engaged on `output` and a confirmation is
+    /// expected within `secs` seconds (else it auto-reverts).
+    pub fn notify_pending(&mut self, output: &str, secs: u32) {
+        self.broadcast(&format!("pending:{output}:{secs}"));
+    }
+
+    /// Tell the settings app HDR was confirmed kept.
+    pub fn notify_confirmed(&mut self, output: &str) {
+        self.broadcast(&format!("confirmed:{output}"));
+    }
+
+    /// Tell the settings app HDR was auto-reverted.
+    pub fn notify_reverted(&mut self, output: &str) {
+        self.broadcast(&format!("reverted:{output}"));
+    }
+
     fn broadcast(&mut self, line: &str) {
         let payload = if line.ends_with('\n') { line.to_string() } else { format!("{}\n", line) };
         let mut drop_indexes = Vec::new();
@@ -224,6 +248,19 @@ fn format_caps_line(caps: &OutputCaps) -> String {
 }
 
 fn parse_set_command(msg: &str) -> Option<HdrSetCommand> {
+    // confirm:<output>
+    if let Some(output) = msg.strip_prefix("confirm:") {
+        if output.is_empty() {
+            return None;
+        }
+        return Some(HdrSetCommand {
+            output: output.to_string(),
+            enable: false,
+            sdr_nits: 0,
+            confirm: true,
+        });
+    }
+    // set:<output>:<enable>:<sdr_nits>
     let parts: Vec<&str> = msg.splitn(4, ':').collect();
     if parts.len() != 4 || parts[0] != "set" {
         return None;
@@ -232,5 +269,6 @@ fn parse_set_command(msg: &str) -> Option<HdrSetCommand> {
         output: parts[1].to_string(),
         enable: parts[2] == "1",
         sdr_nits: parts[3].parse().ok()?,
+        confirm: false,
     })
 }

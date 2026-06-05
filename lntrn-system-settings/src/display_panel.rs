@@ -213,10 +213,13 @@ pub fn draw_display_panel(
                 .and_then(|name| config.monitors.iter().find(|m| &m.name == name));
             let hdr_caps = selected_name.as_ref()
                 .and_then(|name| hdr_client.caps_for(name));
+            let hdr_pending_secs = selected_name.as_ref()
+                .and_then(|name| hdr_client.pending_for(name))
+                .map(|p| p.secs_left());
             settings_h = monitor_settings::draw_monitor_settings(
                 output_mgr, &mut dps.monitor_settings, hi, cfg_entry,
                 painter, text, ix, fox,
-                hdr_caps,
+                hdr_caps, hdr_pending_secs,
                 card_x, inner_y + arrange_h + 12.0 * s, card_w, s, sw, sh,
                 true,
             );

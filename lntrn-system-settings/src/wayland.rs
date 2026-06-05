@@ -372,6 +372,13 @@ pub fn run() -> Result<()> {
                         }
                     }
                 } else if let Some(zone_id) = ix.on_left_pressed() {
+                    // "Keep HDR" confirmation button — handled here where
+                    // hdr_client is mutable, before the (immutable-state) router.
+                    if zone_id == crate::hdr_panel::ZONE_HDR_KEEP {
+                        if let Some(name) = display_state.monitor_arrange.selected_output_name() {
+                            state.hdr_client.confirm_hdr(&name);
+                        }
+                    }
                     // If a context menu is open, let it handle its own clicks
                     // first; otherwise route to sidebar / save-cancel / panel.
                     let menu_consumed = panel_state.dropdown_menu.is_open()

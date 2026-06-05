@@ -152,6 +152,7 @@ pub fn draw_monitor_settings(
     ix: &mut InteractionContext,
     fox: &FoxPalette,
     hdr_caps: Option<crate::hdr_client::HdrCaps>,
+    hdr_pending_secs: Option<u32>,
     x: f32,
     y: f32,
     w: f32,
@@ -300,7 +301,7 @@ pub fn draw_monitor_settings(
         let sdr_nits = mss.selected_sdr_brightness.unwrap_or(203);
         let max_nits = hdr_caps.map(|c| c.max_nits).unwrap_or(0);
         let res = crate::hdr_panel::draw_hdr_row(
-            painter, text, ix, fox, hdr_on, sdr_nits, max_nits,
+            painter, text, ix, fox, hdr_on, sdr_nits, max_nits, hdr_pending_secs,
             x, cy, s, sw, sh,
         );
         if let Some(nits) = res.dragged_sdr_nits {

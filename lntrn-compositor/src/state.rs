@@ -348,6 +348,8 @@ pub struct Lantern {
     pub hdr_ipc: crate::hdr_ipc::HdrIpc,
     /// Output names with HDR currently engaged (connector props committed).
     pub hdr_active_outputs: std::collections::HashSet<String>,
+    /// Outputs awaiting "keep HDR" confirmation → their auto-revert deadline.
+    pub hdr_pending_confirm: std::collections::HashMap<String, std::time::Instant>,
     pub gesture: GestureState,
 
     // Scratchpad (dropdown terminal)
@@ -580,6 +582,7 @@ impl Lantern {
             workspace_ipc: WorkspaceIpc::new(),
             hdr_ipc: crate::hdr_ipc::HdrIpc::new(),
             hdr_active_outputs: std::collections::HashSet::new(),
+            hdr_pending_confirm: std::collections::HashMap::new(),
             gesture: GestureState::new(),
             scratchpad_surface: None,
             scratchpad_pending: false,

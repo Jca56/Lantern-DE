@@ -479,6 +479,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_logging(log_file);
     setup_panic_hook();
 
+    // If a previous run left an unconfirmed HDR marker, the last HDR attempt
+    // likely crashed the compositor — force those outputs back to SDR before we
+    // bring up any displays, so the user isn't locked out again.
+    crate::hdr::safety::recover_from_crash();
+
     let backend = parse_backend();
     tracing::info!("Starting Lantern compositor with {:?} backend", backend);
 
