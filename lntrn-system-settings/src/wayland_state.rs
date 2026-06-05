@@ -109,6 +109,8 @@ pub(crate) struct State {
     pub pointer_surface: Option<wl_surface::WlSurface>,
     // Output management
     pub output_mgr: crate::output_manager::OutputManagerClient,
+    // HDR capability + control (compositor IPC socket)
+    pub hdr_client: crate::hdr_client::HdrClient,
 }
 
 impl State {
@@ -133,6 +135,7 @@ impl State {
             popup_closed: false,
             pointer_surface: None,
             output_mgr: crate::output_manager::OutputManagerClient::new(),
+            hdr_client: crate::hdr_client::HdrClient::new(),
         }
     }
 

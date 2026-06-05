@@ -46,6 +46,10 @@ pub struct MonitorSettingsState {
     pub selected_mode_idx: Option<usize>,
     /// Selected scale value.
     pub selected_scale: Option<f64>,
+    /// Selected HDR on/off (only meaningful on HDR-capable outputs).
+    pub selected_hdr: Option<bool>,
+    /// Selected SDR-white brightness in nits.
+    pub selected_sdr_brightness: Option<u32>,
     /// True when user has made changes that need applying.
     pub dirty: bool,
 }
@@ -57,6 +61,8 @@ impl MonitorSettingsState {
             selected_resolution: None,
             selected_mode_idx: None,
             selected_scale: None,
+            selected_hdr: None,
+            selected_sdr_brightness: None,
             dirty: false,
         }
     }
@@ -110,6 +116,14 @@ impl MonitorSettingsState {
                 .map(|c| c.scale as f64)
                 .or(Some(head.scale));
         }
+
+        if self.selected_hdr.is_none() {
+            self.selected_hdr = Some(config_entry.map(|c| c.hdr).unwrap_or(false));
+        }
+        if self.selected_sdr_brightness.is_none() {
+            self.selected_sdr_brightness =
+                Some(config_entry.map(|c| c.sdr_brightness).unwrap_or(203));
+        }
     }
 
     /// Reset when selected monitor changes.
@@ -117,6 +131,8 @@ impl MonitorSettingsState {
         self.selected_resolution = None;
         self.selected_mode_idx = None;
         self.selected_scale = None;
+        self.selected_hdr = None;
+        self.selected_sdr_brightness = None;
         self.open_dropdown = OpenDropdown::None;
         self.dirty = false;
     }
@@ -135,6 +151,7 @@ pub fn draw_monitor_settings(
     text: &mut TextRenderer,
     ix: &mut InteractionContext,
     fox: &FoxPalette,
+    hdr_caps: Option<crate::hdr_client::HdrCaps>,
     x: f32,
     y: f32,
     w: f32,
@@ -277,6 +294,24 @@ pub fn draw_monitor_settings(
         cy += 4.0 * s;
     }
 
+    // ── HDR row (only on HDR-capable outputs) ──────────────────────
+    if hdr_caps.map(|c| c.hdr_capable).unwrap_or(false) {
+        let hdr_on = mss.selected_hdr.unwrap_or(false);
+        let sdr_nits = mss.selected_sdr_brightness.unwrap_or(203);
+        let max_nits = hdr_caps.map(|c| c.max_nits).unwrap_or(0);
+        let res = crate::hdr_panel::draw_hdr_row(
+            painter, text, ix, fox, hdr_on, sdr_nits, max_nits,
+            x, cy, s, sw, sh,
+        );
+        if let Some(nits) = res.dragged_sdr_nits {
+            if mss.selected_sdr_brightness != Some(nits) {
+                mss.selected_sdr_brightness = Some(nits);
+                mss.dirty = true;
+            }
+        }
+        cy += res.consumed_h;
+    }
+
     cy - y
 }
 
@@ -356,6 +391,15 @@ pub fn handle_monitor_settings_click(
         return true;
     }
 
+    // HDR toggle
+    if zone_id == crate::hdr_panel::ZONE_HDR_TOGGLE {
+        let now = !mss.selected_hdr.unwrap_or(false);
+        mss.selected_hdr = Some(now);
+        mss.dirty = true;
+        mss.open_dropdown = OpenDropdown::None;
+        return true;
+    }
+
     false
 }
 
@@ -400,6 +444,7 @@ fn draw_dropdown_button(
 /// `config.monitors`, creating the entry if missing. Ensures that the next
 /// `config.save()` persists display settings to lantern.toml, and the
 /// compositor picks them up on next start.
+#[allow(clippy::too_many_arguments)]
 pub fn persist_monitor_settings(
     config: &mut LanternConfig,
     output_mgr: &OutputManagerClient,
@@ -407,6 +452,8 @@ pub fn persist_monitor_settings(
     head_name: &str,
     selected_scale: Option<f64>,
     selected_mode_idx: Option<usize>,
+    selected_hdr: Option<bool>,
+    selected_sdr_brightness: Option<u32>,
 ) {
     let entry = match config.monitors.iter_mut().find(|m| m.name == head_name) {
         Some(e) => e,
@@ -441,6 +488,12 @@ pub fn persist_monitor_settings(
                 entry.refresh_rate = mode.refresh.to_string();
             }
         }
+    }
+    if let Some(hdr) = selected_hdr {
+        entry.hdr = hdr;
+    }
+    if let Some(nits) = selected_sdr_brightness {
+        entry.sdr_brightness = nits;
     }
 }
 

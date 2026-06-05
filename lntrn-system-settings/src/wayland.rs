@@ -248,6 +248,9 @@ pub fn run() -> Result<()> {
         if !state.frame_done { continue; }
         state.frame_done = false;
 
+        // Pull any HDR capability updates from the compositor.
+        state.hdr_client.poll();
+
         let s = state.fractional_scale() as f32;
 
         // Handle resize
@@ -449,7 +452,14 @@ pub fn run() -> Result<()> {
                         &selected_name,
                         display_state.monitor_settings.selected_scale,
                         display_state.monitor_settings.selected_mode_idx,
+                        display_state.monitor_settings.selected_hdr,
+                        display_state.monitor_settings.selected_sdr_brightness,
                     );
+                    // Live HDR apply over the compositor IPC socket.
+                    if let Some(hdr_on) = display_state.monitor_settings.selected_hdr {
+                        let nits = display_state.monitor_settings.selected_sdr_brightness.unwrap_or(203);
+                        state.hdr_client.set_hdr(&selected_name, hdr_on, nits);
+                    }
                     config.save();
                     saved_config = config.clone();
                     display_state.monitor_settings.dirty = false;
@@ -580,7 +590,7 @@ pub fn run() -> Result<()> {
                     &mut config, &mut display_state,
                     &mut painter, &mut text, &mut ix, &tex_pass, &fox, &gpu,
                     content_x, panel_y, content_w, panel_h, s, sw, sh,
-                    frame_scroll, &state.outputs, &state.output_mgr,
+                    frame_scroll, &state.outputs, &state.output_mgr, &state.hdr_client,
                 );
                 let thumb_draws = display_panel::collect_thumb_draws(&display_state, s);
                 for td in thumb_draws { tex_draws.push(td); }

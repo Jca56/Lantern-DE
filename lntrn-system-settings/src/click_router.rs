@@ -113,6 +113,8 @@ fn apply_save(
                     &selected_name,
                     display_state.monitor_settings.selected_scale,
                     display_state.monitor_settings.selected_mode_idx,
+                    display_state.monitor_settings.selected_hdr,
+                    display_state.monitor_settings.selected_sdr_brightness,
                 );
                 display_state.monitor_settings.dirty = false;
             }

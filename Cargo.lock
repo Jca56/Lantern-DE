@@ -2835,6 +2835,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "image",
+ "libc",
  "lntrn-icons",
  "lntrn-render",
  "lntrn-theme",

@@ -117,6 +117,7 @@ pub fn draw_display_panel(
     scroll_delta: f32,
     outputs: &[(u32, OutputInfo)],
     output_mgr: &OutputManagerClient,
+    hdr_client: &crate::hdr_client::HdrClient,
 ) {
     use crate::wayland::Panel;
     let show_display   = matches!(subpanel, Panel::Monitors);
@@ -210,9 +211,12 @@ pub fn draw_display_panel(
         if let Some(hi) = selected_head_idx {
             let cfg_entry = selected_name.as_ref()
                 .and_then(|name| config.monitors.iter().find(|m| &m.name == name));
+            let hdr_caps = selected_name.as_ref()
+                .and_then(|name| hdr_client.caps_for(name));
             settings_h = monitor_settings::draw_monitor_settings(
                 output_mgr, &mut dps.monitor_settings, hi, cfg_entry,
                 painter, text, ix, fox,
+                hdr_caps,
                 card_x, inner_y + arrange_h + 12.0 * s, card_w, s, sw, sh,
                 true,
             );
