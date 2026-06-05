@@ -6,6 +6,7 @@
 //! gracefully: an SDR-only display, or a GPU/driver that doesn't expose the
 //! HDR connector properties, simply renders as it always has.
 
+pub mod drm_props;
 pub mod edid_caps;
 
 pub use edid_caps::HdrCaps;
@@ -15,6 +16,7 @@ use tracing::info;
 
 use crate::hdr_ipc::OutputCaps;
 use crate::state::Lantern;
+use crate::udev::{UdevOutputId, UdevOutputModes};
 
 impl Lantern {
     /// Publish an output's HDR capability to the settings app over the HDR IPC
@@ -59,10 +61,61 @@ impl Lantern {
         }
     }
 
-    /// Toggle HDR on a single output. Phase 2 fills this in with the real DRM
-    /// connector-property commit; for Phase 0 it's a logging stub so the IPC
-    /// path is testable on its own.
+    /// Toggle HDR on a single output by committing the DRM connector properties.
+    /// Mirrors `vrr::set_output_vrr`: reach the surface via `with_compositor`,
+    /// then schedule a render so the change flushes on the next page-flip.
+    /// No-ops gracefully when the output has no HDR caps or the driver doesn't
+    /// expose the properties.
     pub fn set_output_hdr(&mut self, output: &Output, enable: bool, sdr_nits: u32) {
-        let _ = (output, enable, sdr_nits);
+        let _ = sdr_nits; // used by the render pipeline (Phase 4), not the props
+
+        // Only meaningful on HDR-capable displays.
+        let Some(caps) = output.user_data().get::<HdrCaps>().cloned() else {
+            if enable {
+                info!(output = %output.name(), "HDR requested but display is SDR-only");
+            }
+            return;
+        };
+        let Some(oid) = output.user_data().get::<UdevOutputId>().copied() else { return };
+        let Some(conn) = output
+            .user_data()
+            .get::<UdevOutputModes>()
+            .map(|m| m.connector_handle)
+        else {
+            return;
+        };
+
+        let name = output.name();
+        let mut applied = false;
+        {
+            let Some(udev) = self.udev.as_mut() else { return };
+            let Some(backend) = udev.backends.get_mut(&oid.device_id) else { return };
+            let Some(surface) = backend.surfaces.get_mut(&oid.crtc) else { return };
+            surface.drm_output.with_compositor(|comp| {
+                let drm_surface = comp.surface();
+                let handles = drm_props::resolve_props(drm_surface, conn);
+                if !handles.any() {
+                    if enable {
+                        info!(
+                            output = %name,
+                            "HDR requested but driver exposes no HDR connector properties"
+                        );
+                    }
+                    return;
+                }
+                drm_props::set_hdr_metadata(drm_surface, conn, &handles, &caps, enable);
+                applied = true;
+            });
+        }
+
+        if applied {
+            if enable {
+                self.hdr_active_outputs.insert(name.clone());
+            } else {
+                self.hdr_active_outputs.remove(&name);
+            }
+            info!(output = %name, enable, "HDR connector props committed");
+            self.schedule_render();
+        }
     }
 }

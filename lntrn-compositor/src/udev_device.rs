@@ -514,6 +514,13 @@ fn connector_connected(
     // Publish HDR capability to the settings app (no-op caps line if SDR-only).
     state.announce_hdr_caps(&output);
 
+    // Engage HDR at startup if the user enabled it for this output and the
+    // display actually supports it.
+    if crate::output_hdr_enabled(&output_name) && hdr_caps.is_some() {
+        let nits = crate::output_sdr_brightness(&output_name);
+        state.set_output_hdr(&output, true, nits);
+    }
+
     render_device(state, node, Some(crtc));
 }
 

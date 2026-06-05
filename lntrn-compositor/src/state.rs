@@ -346,6 +346,8 @@ pub struct Lantern {
     pub workspace_anim: WorkspaceAnimState,
     pub workspace_ipc: WorkspaceIpc,
     pub hdr_ipc: crate::hdr_ipc::HdrIpc,
+    /// Output names with HDR currently engaged (connector props committed).
+    pub hdr_active_outputs: std::collections::HashSet<String>,
     pub gesture: GestureState,
 
     // Scratchpad (dropdown terminal)
@@ -577,6 +579,7 @@ impl Lantern {
             workspace_anim: WorkspaceAnimState::new(),
             workspace_ipc: WorkspaceIpc::new(),
             hdr_ipc: crate::hdr_ipc::HdrIpc::new(),
+            hdr_active_outputs: std::collections::HashSet::new(),
             gesture: GestureState::new(),
             scratchpad_surface: None,
             scratchpad_pending: false,
