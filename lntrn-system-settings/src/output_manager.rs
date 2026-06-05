@@ -152,8 +152,15 @@ impl Dispatch<ZwlrOutputManagerV1, ()> for State {
             }
             zwlr_output_manager_v1::Event::Done { serial } => {
                 state.output_mgr.serial = serial;
-                // Swap building_heads into heads
-                state.output_mgr.heads = std::mem::take(&mut state.output_mgr.building_heads);
+                // Swap building_heads into heads — but ONLY when this Done
+                // actually re-advertised heads. The compositor emits a bare
+                // Done (serial bump, no head re-advertisement) on routine
+                // output changes; taking an empty building_heads there would
+                // wipe `heads`, which makes a selected monitor stop matching
+                // and the per-monitor settings panel flash then vanish.
+                if !state.output_mgr.building_heads.is_empty() {
+                    state.output_mgr.heads = std::mem::take(&mut state.output_mgr.building_heads);
+                }
             }
             zwlr_output_manager_v1::Event::Finished => {
                 state.output_mgr.manager = None;
