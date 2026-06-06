@@ -49,6 +49,30 @@ impl Lantern {
         self.set_focus_surface(None, serial);
     }
 
+    /// Re-evaluate pointer focus at the cursor's CURRENT location and deliver a
+    /// synthetic `wl_pointer.motion`. Setting keyboard focus alone is not enough
+    /// for click-to-interact: `wl_pointer.enter` only fires on real motion, so a
+    /// window that maps/fullscreens UNDER a stationary cursor never gets pointer
+    /// focus and silently drops clicks. Proton games (Helldivers, Cyberpunk) hit
+    /// this: they fullscreen their real window while the cursor sits still over
+    /// it, so without this nudge they stay unclickable until you wiggle the mouse
+    /// or alt-tab. Mirrors the OR-window motion synthesis in handlers/xwayland.rs.
+    pub fn refocus_pointer_at_cursor(&mut self) {
+        let Some(pointer) = self.seat.get_pointer() else { return };
+        let pos = pointer.current_location();
+        let under = self.surface_under(pos);
+        pointer.motion(
+            self,
+            under,
+            &smithay::input::pointer::MotionEvent {
+                location: pos,
+                serial: smithay::utils::SERIAL_COUNTER.next_serial(),
+                time: 0,
+            },
+        );
+        pointer.frame(self);
+    }
+
     pub(crate) fn set_focus_surface(&mut self, surface: Option<WlSurface>, serial: Serial) {
         // While the session is locked, the lock surface owns keyboard focus.
         // Refuse every other focus change so typed passwords reach the locker.

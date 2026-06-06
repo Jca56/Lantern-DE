@@ -731,6 +731,11 @@ pub fn apply_output_config(
         }
     }
 
+    // The primary output's scale may have changed — re-apply the XWayland
+    // scale override so newly-spawned X11 games still see native physical
+    // resolution under the new UI scale.
+    crate::xwayland::refresh_xwayland_scale(state);
+
     // Invalidate wallpaper cache
     state.wallpaper.clear_cache();
 

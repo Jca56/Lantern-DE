@@ -1,3 +1,9 @@
+// Dead-code allowed: this module is intentionally NOT called — real HDR
+// engagement is hard-disabled (see `hdr::set_output_hdr`) because the legacy
+// connector-prop approach bricks NVIDIA. Kept compiled as the reference for the
+// eventual correct (atomic-commit + DRM_MODE_ATOMIC_TEST_ONLY) reimplementation.
+#![allow(dead_code)]
+
 //! DRM connector-property signalling for HDR.
 //!
 //! To put a display into HDR mode we set three connector properties:

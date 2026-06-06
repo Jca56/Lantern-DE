@@ -66,6 +66,9 @@ impl Lantern {
         self.update_foreign_toplevel_states(surface);
         if serial != Serial::from(0) {
             self.focus_window(&window, serial);
+            // Establish POINTER focus too — keyboard focus alone leaves Proton
+            // games unclickable when they fullscreen under a stationary cursor.
+            self.refocus_pointer_at_cursor();
         } else {
             self.schedule_client_render();
         }
@@ -114,7 +117,14 @@ impl Lantern {
     }
 
     pub fn fullscreen_request_surface(&mut self, surface: &WlSurface) -> bool {
-        self.fullscreen_surface(surface, Serial::from(0))
+        // A client-requested fullscreen is an unambiguous "this is the window
+        // the user is looking at" signal. Games under Proton/Wine often map a
+        // throwaway helper window that steals focus, then fullscreen their real
+        // window — so we MUST move keyboard + X11 input focus to the window
+        // being fullscreened, otherwise the game receives no input on launch
+        // (Cyberpunk 2077, Helldivers 2) until the user alt-tabs into it.
+        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+        self.fullscreen_surface(surface, serial)
     }
 
     pub fn unfullscreen_request_surface(&mut self, surface: &WlSurface) -> bool {
@@ -124,8 +134,12 @@ impl Lantern {
     /// Wine fullscreen: Wine draws its own titlebar inside the window surface,
     /// so we configure the window taller and shift it up to hide the titlebar.
     pub fn wine_fullscreen(&mut self, surface: &WlSurface, _x11: &smithay::xwayland::X11Surface) {
-        // First do normal fullscreen
-        if !self.fullscreen_surface(surface, Serial::from(0)) {
+        // First do normal fullscreen. Use a fresh serial so the window being
+        // fullscreened also grabs keyboard + X11 input focus — see the note in
+        // fullscreen_request_surface. Wine games map a focus-stealing helper
+        // window before fullscreening their real one.
+        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+        if !self.fullscreen_surface(surface, serial) {
             return;
         }
 

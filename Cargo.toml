@@ -47,3 +47,10 @@ members = [
 opt-level = 2
 strip = true
 incremental = false
+
+# Vendored Smithay 0.7 with a one-line guard against a divide-by-zero panic in
+# the integer coordinate math (utils/geometry.rs). Triggered by Steam's
+# degenerate X11/CEF surfaces once the XWayland client_scale drops below 1.0
+# (our native-resolution-for-games fix). See vendor/smithay for the patch.
+[patch.crates-io]
+smithay = { path = "vendor/smithay" }

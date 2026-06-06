@@ -10,6 +10,7 @@ mod cursor;
 mod cursor_click;
 mod cursor_loading;
 mod easing;
+mod gaming_mode;
 mod gestures;
 mod grabs;
 mod handlers;
@@ -628,7 +629,8 @@ pub fn reap_zombies() {
 fn setup_panic_hook() {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        tracing::error!("PANIC: {}", info);
+        let bt = std::backtrace::Backtrace::force_capture();
+        tracing::error!("PANIC: {}\nbacktrace:\n{}", info, bt);
         default_hook(info);
     }));
 }

@@ -406,6 +406,16 @@ impl Lantern {
                         }
                         return FilterResult::Intercept(());
                     }
+
+                    // Super+G: toggle Gaming Mode — drops the primary output to
+                    // native scale 1.0 so fullscreen X11 games render at true
+                    // native resolution (e.g. 3840x2160@240) with 1:1 input,
+                    // and restores the configured desktop scale when off. Toggle
+                    // it ON before launching a game, OFF after.
+                    if _modifiers.logo && keysym.modified_sym().raw() == xkb::KEY_g {
+                        data.toggle_gaming_mode();
+                        return FilterResult::Intercept(());
+                    }
                 }
 
                 // Volume key-repeat is tracked by key_code and ticked

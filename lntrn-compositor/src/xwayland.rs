@@ -1,7 +1,7 @@
 /// On-demand XWayland spawning and lifecycle management.
 
 use smithay::reexports::wayland_server::Client;
-use smithay::xwayland::{X11Wm, XWayland, XWaylandEvent};
+use smithay::xwayland::{X11Wm, XWayland, XWaylandClientData, XWaylandEvent};
 
 use crate::Lantern;
 
@@ -11,6 +11,9 @@ pub struct XWaylandState {
     pub wm: Option<X11Wm>,
     /// The display number (e.g. 0 for `:0`).
     pub display_number: Option<u32>,
+    /// The XWayland Wayland client, kept so we can re-apply its scale override
+    /// when the primary output's scale changes mid-session.
+    pub client: Option<Client>,
 }
 
 impl XWaylandState {
@@ -18,6 +21,7 @@ impl XWaylandState {
         Self {
             wm: None,
             display_number: None,
+            client: None,
         }
     }
 }
@@ -76,6 +80,17 @@ pub fn start_xwayland(state: &mut Lantern) {
         }
     };
 
+    // Set the XWayland client's scale NOW, before XWayland connects and binds
+    // the wl_output globals. XWayland binds outputs during its Wayland-side
+    // connect — which happens BEFORE the Ready event — so applying the scale in
+    // handle_xwayland_ready is too late: the outputs already bound at the
+    // default client_scale 1.0 and games see physical/fractional (e.g. 2954
+    // instead of 3840). Doing it here, synchronously before the event loop
+    // dispatches the bind, makes XWayland bind at native scale with NO global
+    // re-advertise (a global Output::change_current_state re-advertises to every
+    // client and wedged the command-center layer surface on game launch).
+    set_xwayland_native_scale(state, &client);
+
     // We need to move the Client into the Ready callback.
     // Use an Option so we can take() it on first Ready event.
     let client = std::cell::RefCell::new(Some(client));
@@ -116,6 +131,20 @@ fn handle_xwayland_ready(
     display_number: u32,
     client: Client,
 ) {
+    // Make XWayland advertise the outputs' FULL PHYSICAL resolution to X11
+    // clients, regardless of the fractional UI scale. Smithay reports the
+    // xdg_output logical size to clients as (verified in vendor/smithay
+    // wayland/output/xdg.rs):
+    //     physical / fractional_scale * client_scale
+    // With the default client_scale of 1.0 a 3840x2160 panel at scale 1.3
+    // only ever offers 2954x1662 to X11 — so games can't pick native res and
+    // fall back to 1080. Setting client_scale = scale cancels the fractional
+    // divide, so XWayland's logical space == physical pixels and games get the
+    // real 3840x2160 mode. Non-game X11 apps render at native px and are sized
+    // up via GDK_DPI_SCALE / QT_SCALE_FACTOR env vars instead (see CLAUDE.md).
+    set_xwayland_native_scale(state, &client);
+    state.xwayland_state.client = Some(client.clone());
+
     let wm = match X11Wm::start_wm(state.loop_handle.clone(), x11_socket, client) {
         Ok(wm) => wm,
         Err(err) => {
@@ -147,6 +176,60 @@ fn handle_xwayland_ready(
 
     // Spawn any -c/--command client now that DISPLAY is set.
     spawn_client();
+}
+
+/// Override the XWayland client's scale so it reports native physical
+/// resolution to X11 apps. See the call site for the full rationale.
+///
+/// We key off the PRIMARY output's scale — that's where X11 games spawn
+/// (`place_new_window` forces them onto the primary). There's a single
+/// XWayland client, so this is one global value; if the primary's scale
+/// changes mid-session, `refresh_xwayland_scale` re-applies it.
+fn set_xwayland_native_scale(state: &Lantern, client: &Client) {
+    let Some(data) = client.get_data::<XWaylandClientData>() else {
+        tracing::warn!("XWayland client missing XWaylandClientData; cannot set native scale");
+        return;
+    };
+
+    let _ = state;
+    // Run XWayland HONEST: client_scale = 1.0. We deliberately do NOT inflate it
+    // to the output's fractional scale anymore. That single GLOBAL value cannot
+    // be correct on a mixed-scale multi-monitor setup (4K@1.3 + 1080p@1.0) — it
+    // produced black-quadrant rendering (game buffer bigger than its logical
+    // window), cursor desync, and games latching onto the secondary monitor's
+    // inflated mode (2496x1404@100 instead of 3840x2160@240).
+    //
+    // True native-resolution gaming is handled instead by GAMING MODE
+    // (gaming_mode.rs / Super+G): it drops the PRIMARY output itself to scale
+    // 1.0, so logical == physical and a fullscreen game renders 1:1 at the
+    // panel's real mode with pixel-aligned input. Non-game X11 apps render at
+    // native px and are sized up via GDK_DPI_SCALE / QT_SCALE_FACTOR env vars
+    // (see CLAUDE.md).
+    data.compositor_state.set_client_scale(1.0);
+    tracing::info!("XWayland client_scale = 1.0 (honest scaling; native gaming via Gaming Mode)");
+}
+
+/// Re-apply the XWayland native-resolution scale after the primary output's
+/// scale changed (e.g. the user moved the System Settings scale slider). No-op
+/// if XWayland hasn't connected yet. Newly-spawned games then see the updated
+/// physical mode list; already-running games keep their current mode until they
+/// re-query (typically on the next fullscreen toggle).
+pub fn refresh_xwayland_scale(state: &mut Lantern) {
+    let Some(client) = state.xwayland_state.client.clone() else { return };
+    set_xwayland_native_scale(state, &client);
+}
+
+/// Scale of the primary output (closest to origin), falling back to any
+/// output, then 1.0. Kept for reference — no longer used now that XWayland runs
+/// at a fixed honest client_scale of 1.0 (native gaming is via Gaming Mode).
+#[allow(dead_code)]
+fn primary_output_scale(state: &Lantern) -> f64 {
+    state
+        .workspaces
+        .known_outputs()
+        .min_by_key(|(_, loc)| loc.x.abs() + loc.y.abs())
+        .map(|(o, _)| o.current_scale().fractional_scale())
+        .unwrap_or(1.0)
 }
 
 fn set_randr_primary(state: &mut Lantern) {

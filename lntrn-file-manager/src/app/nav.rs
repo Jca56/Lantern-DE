@@ -98,6 +98,24 @@ impl App {
         self.reload();
     }
 
+    /// Pick-mode tree navigation: point `current_dir` at `path` and refresh
+    /// the listing so the path bar / Save target / preview follow the click —
+    /// but WITHOUT `navigate_to`'s disruptive side-effects. `navigate_to`
+    /// resets `scroll_offset` to 0, pushes history, and clears
+    /// `pick_tree_selection`; in tree view that yanks the tree back to the top
+    /// on every folder click (so a folder below the fold expands off-screen and
+    /// looks like nothing happened) and drops any in-progress multi-pick.
+    /// Here the tree stays anchored at `tree_root` and the scroll position is
+    /// kept, so drilling into folders actually works.
+    pub fn pick_tree_navigate(&mut self, path: std::path::PathBuf) {
+        if path == self.current_dir {
+            return;
+        }
+        self.current_dir = path.clone();
+        self.tabs[self.current_tab].path = path;
+        self.reload();
+    }
+
     pub fn reload(&mut self) {
         // Preserve an active rename across reload — the auto-refresh poll
         // would otherwise drop the user mid-type ~3 seconds after creating

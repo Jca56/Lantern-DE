@@ -331,6 +331,11 @@ pub struct Lantern {
     /// by the [windows].blur_tint strength at draw time).
     pub blur_tint_color: [f32; 4],
     pub focus_follows_mouse: bool,
+    /// Gaming Mode: when true, the primary output is dropped to scale 1.0 so
+    /// fullscreen X11 games render at true native resolution (1:1, no fractional
+    /// downscale) with perfectly-aligned input. Toggled with Super+G; restores
+    /// the configured desktop scale when turned off. See `gaming_mode.rs`.
+    pub gaming_mode: bool,
     pub super_pressed: bool,
     /// True if Super was pressed and no Super+combo was used (for tap detection)
     pub super_clean_tap: bool,
@@ -569,6 +574,7 @@ impl Lantern {
             focus_glow_intensity: crate::read_config("window_manager", "focus_glow_intensity", "0.2")
                 .parse::<f32>().unwrap_or(0.2).clamp(0.0, 0.6),
             focus_follows_mouse: crate::read_config("window_manager", "focus_follows_mouse", "false") == "true",
+            gaming_mode: false,
             super_pressed: false,
             super_clean_tap: false,
             snapped_windows: Vec::new(),
@@ -752,6 +758,13 @@ impl Lantern {
         }
 
         // Space only contains windows on active workspaces (unmapped elsewhere).
+        // For XWayland fullscreen games at sub-native resolution, XWayland
+        // attaches a wp_viewport (src = game's small buffer, dst = full output)
+        // that scales BOTH the rendered image AND the pointer coordinates it
+        // forwards to the X11 client. Smithay's surface_under already maps
+        // through the viewport dst, so we pass the raw logical position and do
+        // NO manual stretch — an extra inverse-transform here would double-scale
+        // and desync the game's cursor.
         let window_hit = self.space
             .element_under(pos)
             .and_then(|(window, location)| {
