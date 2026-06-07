@@ -814,6 +814,66 @@ impl Lantern {
         None
     }
 
+    /// True if a Top/Overlay layer surface (command center, screenshot UI,
+    /// …) currently accepts pointer input at `pos`. Window-level pointer
+    /// grabs — the outer resize zone, SSD decoration clicks, Super+drag —
+    /// must defer to it; otherwise a click meant for the overlay falls
+    /// through to the window (or its 8px resize border) beneath it.
+    ///
+    /// Respects the surface's input region (via `under_from_surface_tree`),
+    /// so a fullscreen overlay that's currently click-through — empty input
+    /// region, e.g. the CC while hidden — correctly reports `false`.
+    pub fn pointer_over_top_layer(&self, pos: Point<f64, Logical>) -> bool {
+        use smithay::wayland::compositor::with_states;
+        use smithay::wayland::shell::wlr_layer::Layer;
+
+        let Some(output) = self.output_at_point(pos) else { return false; };
+        // A fullscreen window suppresses layer input on its output (mirrors
+        // surface_under), so don't block window grabs behind it.
+        let output_has_fullscreen = self.fullscreen_windows.iter().any(|fw| {
+            self.find_mapped_window(&fw.surface)
+                .and_then(|w| self.output_for_window(&w))
+                .map_or(false, |o| o == output)
+        });
+        if output_has_fullscreen {
+            return false;
+        }
+        let output_geo = self.workspaces.output_geometry(&output).unwrap_or_default();
+        for ls in self.layer_surfaces.iter().rev() {
+            if !ls.alive() {
+                continue;
+            }
+            if !self.layer_surface_on_output(ls, &output) {
+                continue;
+            }
+            let cached = with_states(ls.wl_surface(), |states| {
+                *states.cached_state.get::<LayerSurfaceCachedState>().current()
+            });
+            if cached.layer != Layer::Top && cached.layer != Layer::Overlay {
+                continue;
+            }
+            let ls_loc = crate::render::layer_surface_position_logical(&cached, output_geo);
+            let size = crate::layer_position::layer_surface_effective_size(&cached, output_geo);
+            let rect = Rectangle::new(ls_loc, size);
+            let pos_i = Point::from((pos.x as i32, pos.y as i32));
+            if !rect.contains(pos_i) {
+                continue;
+            }
+            let relative = pos - ls_loc.to_f64();
+            if smithay::desktop::utils::under_from_surface_tree(
+                ls.wl_surface(),
+                relative,
+                (0, 0),
+                WindowSurfaceType::ALL,
+            )
+            .is_some()
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     // ── Render scheduling & frame bookkeeping ───────────────────────────
 
     pub fn request_winit_redraw(&self) {

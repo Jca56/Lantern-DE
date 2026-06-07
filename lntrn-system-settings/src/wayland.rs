@@ -8,7 +8,6 @@ use lntrn_ui::gpu::{
 };
 
 use crate::config::LanternConfig;
-use crate::home_panel;
 use crate::display_panel::{self, DisplayPanelState};
 use crate::icon_panel;
 use crate::icons;
@@ -45,11 +44,10 @@ pub(crate) const ZONE_SIDEBAR_BASE: u32 = 200;
 /// `sidebar.rs` for the parent grouping.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub(crate) enum Panel {
-    Home,
     // Appearance
     Themes, WindowSizes, Animations,
-    // Display
-    Monitors, Wallpaper,
+    // Display (also hosts the wallpaper picker)
+    Monitors,
     // Input
     Mouse, Keybindings,
     // Notifications
@@ -66,14 +64,12 @@ fn parse_panel_arg() -> Option<Panel> {
     let args: Vec<String> = std::env::args().collect();
     let idx = args.iter().position(|a| a == "--panel")?;
     match args.get(idx + 1)?.as_str() {
-        "home"          => Some(Panel::Home),
         // Appearance subpanels (legacy "colors"/"windows"/"focus" all fold into Themes)
         "appearance" | "themes" | "colors" | "windows" | "focus" => Some(Panel::Themes),
         "window-sizes" | "sizes" => Some(Panel::WindowSizes),
         "animations"    => Some(Panel::Animations),
-        // Display
-        "display" | "monitors" => Some(Panel::Monitors),
-        "wallpaper"     => Some(Panel::Wallpaper),
+        // Display (wallpaper now lives here too)
+        "home" | "display" | "monitors" | "wallpaper" => Some(Panel::Monitors),
         // Input (legacy "scrolling"/"clicking"/"cursor" all roll into Mouse)
         "input" | "mouse" | "scrolling" | "clicking" | "cursor" => Some(Panel::Mouse),
         "keybindings" | "keybinds" | "shortcuts" | "keyboard" => Some(Panel::Keybindings),
@@ -207,8 +203,7 @@ pub fn run() -> Result<()> {
     // Rasterize sidebar icons into GPU textures. Indices line up with
     // `sidebar::CategoryDef::icon_idx`.
     let tex_pass = TexturePass::new(&gpu);
-    let icon_defs: [(Vec<icons::PathCmd>, Color); 8] = [
-        (icons::icon_home(),           Color::from_rgb8(255, 200, 60)),  // gold lantern
+    let icon_defs: [(Vec<icons::PathCmd>, Color); 7] = [
         (icons::icon_appearance(),     Color::from_rgb8(255, 180, 120)), // warm peach
         (icons::icon_display(),        Color::from_rgb8(100, 200, 180)), // teal
         (icons::icon_input(),          Color::from_rgb8(180, 140, 220)), // lavender
@@ -222,9 +217,8 @@ pub fn run() -> Result<()> {
         tex_pass.upload(&gpu, &rgba, ICON_SIZE, ICON_SIZE)
     }).collect();
 
-    let mut active_panel = parse_panel_arg().unwrap_or(Panel::Home);
+    let mut active_panel = parse_panel_arg().unwrap_or(Panel::Monitors);
     let mut sidebar_state = SidebarState::new(active_panel);
-    let mut home_state = home_panel::HomeState::new();
     let mut config = LanternConfig::load();
     let mut saved_config = config.clone();
     // Seed the palette from the persisted window style.
@@ -554,13 +548,6 @@ pub fn run() -> Result<()> {
         // ── Panel content ───────────────────────────────────────────────
         let panel_h = hf - panel_y;
         match active_panel {
-            Panel::Home => {
-                home_panel::draw_home_panel(
-                    &mut home_state, &mut painter, &mut text, &tex_pass, &gpu, &fox,
-                    &mut tex_draws,
-                    content_x, panel_y, content_w, panel_h, s, sw, sh,
-                );
-            }
             Panel::Themes | Panel::Animations => {
                 crate::appearance_panel::draw_appearance_panel(
                     active_panel,
@@ -591,7 +578,7 @@ pub fn run() -> Result<()> {
                     content_x, panel_y, content_w, panel_h, s, sw, sh, frame_scroll,
                 );
             }
-            Panel::Monitors | Panel::Wallpaper => {
+            Panel::Monitors => {
                 display_panel::draw_display_panel(
                     active_panel,
                     &mut config, &mut display_state,

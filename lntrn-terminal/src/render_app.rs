@@ -102,7 +102,7 @@ impl App {
                     text,
                     &self.git_sidebar,
                     self.sidebar.width,
-                    chrome_h + sidebar::TOGGLE_H,
+                    chrome_h + sidebar::TOGGLE_H * self.sidebar.scale,
                     screen_w,
                     screen_h,
                     self.cursor_pos,
@@ -214,7 +214,7 @@ impl App {
                 self.sidebar.visible,
                 self.config.general.cursor_style,
                 maximized,
-                1.0,
+                self.scale,
                 &mode,
                 cursor_pos,
             );

@@ -59,7 +59,7 @@ impl App {
             let bounds = ui_chrome::tabs_bounds(
                 &menus,
                 screen_w as f32,
-                1.0,
+                self.scale,
                 &crate::config::WindowMode::current(),
             );
             if let Some(action) =
@@ -193,7 +193,7 @@ impl App {
             let tabs_rect = ui_chrome::tabs_bounds(
                 &menus,
                 screen_w as f32,
-                1.0,
+                self.scale,
                 &crate::config::WindowMode::current(),
             );
             let tab_action = tab_bar::handle_click(
@@ -215,7 +215,7 @@ impl App {
         // opening a dropdown that captures all input.
         if let Some((x, y)) = self.cursor_pos {
             if y <= self.chrome_height() {
-                if ui_chrome::is_files_label_hit(x, &crate::config::WindowMode::current()) {
+                if ui_chrome::is_files_label_hit(x, &crate::config::WindowMode::current(), self.scale) {
                     self.chrome.close_all_menus();
                     match self.dispatch_chrome_action(
                         ui_chrome::ClickAction::ToggleSidebar,
@@ -243,7 +243,7 @@ impl App {
             &mut self.chrome,
             &mut self.input,
             &menus,
-            1.0,
+            self.scale,
             &crate::config::WindowMode::current(),
             screen_w,
         );
@@ -433,8 +433,8 @@ impl App {
 
         // Git sidebar click handling
         if allow_sidebar_hits && self.sidebar.visible && self.sidebar.mode == sidebar::SidebarMode::Git {
-            let git_top = chrome_h + sidebar::TOGGLE_H;
-            if git_sidebar::contains(self.cursor_pos, self.sidebar.width, git_top) {
+            let git_top = chrome_h + sidebar::TOGGLE_H * self.sidebar.scale;
+            if git_sidebar::contains(self.cursor_pos, self.sidebar.width, git_top, self.git_sidebar.scale) {
                 let action = git_sidebar::handle_click(
                     &mut self.git_sidebar,
                     self.cursor_pos,
@@ -571,7 +571,7 @@ impl App {
         let tabs_rect = ui_chrome::tabs_bounds(
             &menus,
             screen_w as f32,
-            1.0,
+            self.scale,
             &crate::config::WindowMode::current(),
         );
         if tab_bar::handle_right_click(
@@ -598,6 +598,7 @@ impl App {
                 false
             };
             let items = ui_chrome::build_context_menu(has_selection);
+            self.chrome.context_menu.set_scale(self.scale);
             self.chrome.context_menu.open(x, y, items);
             self.chrome.context_menu.clamp_to_screen(screen_w as f32, screen_h as f32);
             self.request_redraw();
@@ -887,8 +888,8 @@ impl App {
 
         // Git sidebar scroll
         if self.sidebar.visible && self.sidebar.mode == sidebar::SidebarMode::Git {
-            let git_top = chrome_h + sidebar::TOGGLE_H;
-            if git_sidebar::contains(self.cursor_pos, self.sidebar.width, git_top) {
+            let git_top = chrome_h + sidebar::TOGGLE_H * self.sidebar.scale;
+            if git_sidebar::contains(self.cursor_pos, self.sidebar.width, git_top, self.git_sidebar.scale) {
                 let dy = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 20.0,

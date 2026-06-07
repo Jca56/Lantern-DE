@@ -19,19 +19,20 @@ pub fn handle_mode_click(
         return None;
     }
 
-    let y = chrome_h + 4.0;
-    let btn_w = (state.width - 16.0) / 2.0;
-    let btn_h = TOGGLE_H - 8.0;
+    let scale = state.scale;
+    let y = chrome_h + 4.0 * scale;
+    let btn_w = (state.width - 16.0 * scale) / 2.0;
+    let btn_h = TOGGLE_H * scale - 8.0 * scale;
 
     if cy < y || cy > y + btn_h {
         return None;
     }
 
-    if cx >= 6.0 && cx <= 6.0 + btn_w && state.mode != SidebarMode::Files {
+    if cx >= 6.0 * scale && cx <= 6.0 * scale + btn_w && state.mode != SidebarMode::Files {
         state.mode = SidebarMode::Files;
         return Some(SidebarMode::Files);
     }
-    let gx = 6.0 + btn_w + 4.0;
+    let gx = 6.0 * scale + btn_w + 4.0 * scale;
     if cx >= gx && cx <= gx + btn_w && state.mode != SidebarMode::Git {
         state.mode = SidebarMode::Git;
         return Some(SidebarMode::Git);
@@ -74,16 +75,18 @@ pub fn handle_click(
         return ClickResult::None;
     }
 
-    let header_h = 42.0;
-    let list_y = chrome_h + TOGGLE_H + header_h;
-    let list_h = screen_h as f32 - chrome_h - TOGGLE_H - header_h;
+    let scale = state.scale;
+    let header_h = 42.0 * scale;
+    let toggle_h = TOGGLE_H * scale;
+    let list_y = chrome_h + toggle_h + header_h;
+    let list_h = screen_h as f32 - chrome_h - toggle_h - header_h;
 
     if cy < list_y || cy > list_y + list_h {
         return ClickResult::None;
     }
 
     let relative_y = cy - list_y + state.scroll_offset;
-    let idx = (relative_y / ITEM_HEIGHT) as usize;
+    let idx = (relative_y / (ITEM_HEIGHT * scale)) as usize;
 
     if idx < state.entries.len() {
         if state.entries[idx].is_dir {
@@ -118,15 +121,16 @@ pub fn handle_right_click(
         return false;
     }
 
-    let header_h = 42.0;
-    let list_y = chrome_h + TOGGLE_H + header_h;
+    let scale = state.scale;
+    let header_h = 42.0 * scale;
+    let list_y = chrome_h + TOGGLE_H * scale + header_h;
 
     if cy < list_y {
         return false;
     }
 
     let relative_y = cy - list_y + state.scroll_offset;
-    let idx = (relative_y / ITEM_HEIGHT) as usize;
+    let idx = (relative_y / (ITEM_HEIGHT * scale)) as usize;
 
     if idx < state.entries.len() {
         state.context_menu = Some((idx, cx, cy));
@@ -150,18 +154,21 @@ fn handle_context_menu_click(
         return false;
     }
 
+    let scale = state.scale;
+    let ctx_item_height = CTX_ITEM_HEIGHT * scale;
+    let ctx_menu_width = CTX_MENU_WIDTH * scale;
     let is_root = idx == ROOT_CTX;
     let is_dir = is_root || (idx < state.entries.len() && state.entries[idx].is_dir);
     let item_count = if is_root { 2 } else if is_dir { 4 } else { 3 };
-    let menu_h = 10.0 + item_count as f32 * CTX_ITEM_HEIGHT + 10.0;
-    let x = mx.min(screen_h as f32 - CTX_MENU_WIDTH - 4.0).max(0.0);
+    let menu_h = 10.0 * scale + item_count as f32 * ctx_item_height + 10.0 * scale;
+    let x = mx.min(screen_h as f32 - ctx_menu_width - 4.0 * scale).max(0.0);
     let y = if my + menu_h > screen_h as f32 { my - menu_h } else { my }.max(0.0);
-    let menu = Rect::new(x, y, CTX_MENU_WIDTH, menu_h);
+    let menu = Rect::new(x, y, ctx_menu_width, menu_h);
 
     let Some((_, cy)) = cursor_pos.filter(|_| hit(menu, cursor_pos)) else {
         return false;
     };
-    let item_idx = ((cy - menu.y - 6.0) / CTX_ITEM_HEIGHT) as usize;
+    let item_idx = ((cy - menu.y - 6.0 * scale) / ctx_item_height) as usize;
 
     if is_root {
         // Root context: New File / New Folder in root directory

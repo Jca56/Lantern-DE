@@ -66,6 +66,12 @@ pub struct App {
     pub(crate) texture_pass: Option<TexturePass>,
     pub(crate) image_textures: Vec<(u32, u64, GpuTexture)>, // (image_id, version, gpu_texture)
 
+    /// Current output/display scale factor (from winit's fractional scale).
+    /// 1.0 = native; 1.4 = "everything 40% bigger". All UI geometry is laid
+    /// out in physical pixels = logical-design-px × scale. Updated on
+    /// `ScaleFactorChanged` and propagated into the stateful sub-components.
+    pub(crate) scale: f32,
+
     // Tabs
     pub tabs: Vec<Tab>,
     pub active_tab: usize,
@@ -143,6 +149,7 @@ impl App {
             proxy,
             window: None,
             gpu: None,
+            scale: 1.0,
             painter: None,
             overlay_painter: None,
             text: None,
@@ -210,24 +217,47 @@ impl App {
         if self.chrome_hidden {
             return 0.0;
         }
-        ui_chrome::title_bar_height(&crate::config::WindowMode::current())
+        ui_chrome::title_bar_height(&crate::config::WindowMode::current()) * self.scale
     }
 
-    /// Font size scaled to current window width.
-    /// At the reference width (or larger), returns the full config font size.
-    /// As the window shrinks, the font scales down proportionally (min 10px).
+    /// Effective font size in PHYSICAL pixels for rendering.
+    ///
+    /// Two factors combine: (1) a width-responsive shrink based on the
+    /// *logical* window width relative to a reference, so narrow windows get
+    /// smaller text the same way at every scale; (2) the display scale factor,
+    /// so a 1.4× output scale yields 1.4× bigger glyphs on screen. The grid is
+    /// drawn into a physical-pixel buffer, so callers want physical px.
     pub(crate) fn effective_font_size(&self) -> f32 {
-        const FONT_SCALE_REF_WIDTH: f32 = 1060.0;
-        let base = self.config.font.size;
-        let cur_w = self
+        const FONT_SCALE_REF_WIDTH: f32 = 1060.0; // logical px
+        let base = self.config.font.size; // logical px
+        let scale = self.scale;
+        let logical_w = self
             .gpu
             .as_ref()
-            .map_or(FONT_SCALE_REF_WIDTH, |g| g.width() as f32);
-        if cur_w >= FONT_SCALE_REF_WIDTH {
-            return base;
+            .map_or(FONT_SCALE_REF_WIDTH, |g| g.width() as f32 / scale);
+        let logical_font = if logical_w >= FONT_SCALE_REF_WIDTH {
+            base
+        } else {
+            (base * logical_w / FONT_SCALE_REF_WIDTH).clamp(10.0, base)
+        };
+        logical_font * scale
+    }
+
+    /// Update the active display scale and fan it out to the stateful
+    /// sub-components (which lay out their own geometry). Recomputes the grid
+    /// so the cell count tracks the new cell size. Cheap; safe to call on
+    /// every `ScaleFactorChanged`.
+    pub(crate) fn apply_scale(&mut self, scale: f32) {
+        let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+        if (scale - self.scale).abs() < f32::EPSILON {
+            return;
         }
-        let scaled = base * cur_w / FONT_SCALE_REF_WIDTH;
-        scaled.clamp(10.0, base)
+        self.scale = scale;
+        self.tab_bar.scale = scale;
+        self.sidebar.set_scale(scale);
+        self.git_sidebar.set_scale(scale);
+        self.update_grid_size();
+        self.request_redraw();
     }
 
     pub(crate) fn sidebar_offset(&self) -> f32 {
@@ -518,7 +548,18 @@ impl ApplicationHandler<UserEvent> for App {
             }
         }
 
+        // Seed the scale from the compositor's preferred fractional scale
+        // before any layout happens so the first frame is already correct.
+        let initial_scale = window.scale_factor() as f32;
         self.window = Some(window);
+        self.scale = if initial_scale.is_finite() && initial_scale > 0.0 {
+            initial_scale
+        } else {
+            1.0
+        };
+        self.tab_bar.scale = self.scale;
+        self.sidebar.set_scale(self.scale);
+        self.git_sidebar.set_scale(self.scale);
 
         self.init_gpu();
         self.restore_pinned_tabs();
@@ -550,6 +591,14 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 self.update_grid_size();
                 self.request_redraw();
+            }
+
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                // The compositor changed the output scale (e.g. 1.0 → 1.4).
+                // winit keeps the logical window size constant and hands us a
+                // larger physical buffer via the following Resized event; here
+                // we just adopt the new factor so fonts/chrome grow with it.
+                self.apply_scale(scale_factor as f32);
             }
 
             WindowEvent::RedrawRequested => {

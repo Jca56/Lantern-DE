@@ -58,6 +58,9 @@ pub enum GitAction {
 // ── State ───────────────────────────────────────────────────────────────────
 
 pub struct GitSidebarState {
+    /// UI scale factor. Logical layout constants are multiplied by this at
+    /// point of use so the git panel scales in physical pixels.
+    pub scale: f32,
     pub repo_path: Option<PathBuf>,
     pub status: Option<RepoStatus>,
     pub branches: Vec<BranchInfo>,
@@ -74,6 +77,7 @@ pub struct GitSidebarState {
 impl GitSidebarState {
     pub fn new() -> Self {
         Self {
+            scale: 1.0,
             repo_path: None,
             status: None,
             branches: Vec::new(),
@@ -88,12 +92,16 @@ impl GitSidebarState {
         }
     }
 
+    pub fn set_scale(&mut self, scale: f32) {
+        self.scale = scale;
+    }
+
     pub fn is_capturing_input(&self) -> bool {
         self.commit_focused
     }
 
     pub fn scroll(&mut self, delta: f32) {
-        self.scroll_offset = (self.scroll_offset - delta * SCROLL_SPEED).max(0.0);
+        self.scroll_offset = (self.scroll_offset - delta * SCROLL_SPEED * self.scale).max(0.0);
     }
 
     pub fn set_message(&mut self, msg: String, is_error: bool) {

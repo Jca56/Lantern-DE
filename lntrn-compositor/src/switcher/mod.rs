@@ -29,6 +29,12 @@ pub use layout::{CardLayout, CORNER_RADIUS};
 /// How long Alt must be held before the overlay appears.
 const HOLD_THRESHOLD_MS: u128 = 220;
 
+/// Minimum pointer travel (logical px) since the last hover-driven pick
+/// before hovering may center a different card. This is what breaks the
+/// "centering shifts a new card under the stationary cursor → runaway"
+/// feedback loop: the strip only steps once per deliberate mouse move.
+const HOVER_STEP_DISTANCE: f64 = 140.0;
+
 /// Fade-in duration on promote-to-visible (seconds).
 const DURATION_FADE: f32 = 0.22;
 /// Spring settle window for the selection slide (seconds). The spring
@@ -39,7 +45,7 @@ const SLIDE_DAMPING: f64 = 0.62;
 const SLIDE_FREQUENCY: f64 = 5.5;
 
 /// Backdrop dim (Fox-tinted near-black, a touch warmer than pure black).
-const OVERLAY_COLOR: [f32; 4] = [0.02, 0.015, 0.03, 0.38];
+const OVERLAY_COLOR: [f32; 4] = [0.02, 0.015, 0.03, 0.28];
 /// BRAND_GOLD accent: rgb(200, 134, 10) — matches lntrn_theme::BRAND_GOLD.
 pub const BRAND_GOLD: [f32; 4] = [200.0 / 255.0, 134.0 / 255.0, 10.0 / 255.0, 1.0];
 /// Dim overlay drawn over non-selected / minimized cards.
@@ -77,6 +83,10 @@ pub struct AltTabSwitcher {
     slide_start: Option<Instant>,
     prev_selected_index: usize,
     minimized_surfaces: HashSet<WlSurface>,
+    /// Pointer position at the last hover-driven selection change. Used to
+    /// require deliberate movement before the carousel re-centers on a new
+    /// card (see [`hover_select`]).
+    last_hover_pos: Option<Point<f64, Logical>>,
     /// When true, opened via hot corner — Alt-release won't dismiss.
     hot_corner_mode: bool,
     // Full-screen backdrop dim (single size, reused).
@@ -103,6 +113,7 @@ impl AltTabSwitcher {
             slide_start: None,
             prev_selected_index: 0,
             minimized_surfaces: HashSet::new(),
+            last_hover_pos: None,
             hot_corner_mode: false,
             overlay_buf: SolidColorBuffer::new((1, 1), OVERLAY_COLOR),
             dim_id: Id::new(),
@@ -155,13 +166,17 @@ impl AltTabSwitcher {
         self.alt_held_since = Some(Instant::now());
         self.fade_start = None;
         self.slide_start = None;
+        self.last_hover_pos = None;
 
+        // A quick tap cycles live windows only — skip minimized entries.
+        // (They still appear once the overlay is held open; see `advance`.)
         let focused_idx = original_focus
             .as_ref()
             .and_then(|f| self.entries.iter().position(|s| s == f));
         self.selected_index = match focused_idx {
-            Some(idx) => (idx + 1) % self.entries.len(),
-            None => 0,
+            Some(idx) => self.step_index(idx, false, true),
+            None if !self.minimized_surfaces.contains(&self.entries[0]) => 0,
+            None => self.step_index(0, false, true),
         };
         self.prev_selected_index = self.selected_index;
         self.update_scroll();
@@ -190,18 +205,22 @@ impl AltTabSwitcher {
         self.alt_held_since = None;
         self.fade_start = Some(Instant::now());
         self.slide_start = None;
+        self.last_hover_pos = None;
         self.selected_index = 0;
         self.prev_selected_index = 0;
         self.update_scroll();
     }
 
-    /// Move selection to the next entry (wraps).
+    /// Move selection to the next entry (wraps). While the overlay is still
+    /// silent (a quick tap) minimized windows are skipped; once it's held
+    /// open they're cyclable so you can pick one to restore.
     pub fn advance(&mut self) -> Option<WlSurface> {
         if !self.active || self.entries.is_empty() {
             return None;
         }
+        self.last_hover_pos = None;
         self.prev_selected_index = self.selected_index;
-        self.selected_index = (self.selected_index + 1) % self.entries.len();
+        self.selected_index = self.step_index(self.selected_index, false, !self.visible);
         if self.visible {
             self.slide_start = Some(Instant::now());
         }
@@ -210,21 +229,42 @@ impl AltTabSwitcher {
     }
 
     /// Move selection to the previous entry (wraps) — Shift+Tab / Left.
+    /// Mirrors [`advance`]'s skip-minimized-while-silent behaviour.
     pub fn retreat(&mut self) -> Option<WlSurface> {
         if !self.active || self.entries.is_empty() {
             return None;
         }
+        self.last_hover_pos = None;
         self.prev_selected_index = self.selected_index;
-        self.selected_index = if self.selected_index == 0 {
-            self.entries.len() - 1
-        } else {
-            self.selected_index - 1
-        };
+        self.selected_index = self.step_index(self.selected_index, true, !self.visible);
         if self.visible {
             self.slide_start = Some(Instant::now());
         }
         self.update_scroll();
         self.selected_surface().cloned()
+    }
+
+    /// Step one entry from `start` in `backward`'s direction. When
+    /// `skip_minimized` is set, keep stepping over minimized entries so a
+    /// quick Alt+Tab tap only visits live windows. Falls back to `start`
+    /// when every other entry is minimized.
+    fn step_index(&self, start: usize, backward: bool, skip_minimized: bool) -> usize {
+        let n = self.entries.len();
+        if n == 0 {
+            return 0;
+        }
+        let mut idx = start;
+        for _ in 0..n {
+            idx = if backward {
+                if idx == 0 { n - 1 } else { idx - 1 }
+            } else {
+                (idx + 1) % n
+            };
+            if !skip_minimized || !self.minimized_surfaces.contains(&self.entries[idx]) {
+                return idx;
+            }
+        }
+        start
     }
 
     pub fn should_promote(&self) -> bool {
@@ -242,6 +282,7 @@ impl AltTabSwitcher {
         self.visible = true;
         self.fade_start = Some(Instant::now());
         self.slide_start = None;
+        self.last_hover_pos = None;
         self.prev_selected_index = self.selected_index;
     }
 
@@ -257,6 +298,7 @@ impl AltTabSwitcher {
         self.alt_held_since = None;
         self.fade_start = None;
         self.slide_start = None;
+        self.last_hover_pos = None;
         self.minimized_surfaces.clear();
         self.hot_corner_mode = false;
     }
@@ -406,6 +448,66 @@ impl AltTabSwitcher {
         }
         let cards = self.card_layouts(output_size);
         layout::hit_test(&cards, point.x as i32, point.y as i32)
+    }
+
+    /// Pointer-hover selection: center the window under the cursor, then
+    /// hold steady. Returns true if the selection changed (caller re-renders).
+    ///
+    /// Two things make this stop instead of running the carousel to the end:
+    /// 1. We hit-test the *settled* layout (cards at their resting spots for
+    ///    the current selection) rather than the mid-slide layout, so an
+    ///    in-flight animation never drags a different card under the cursor.
+    /// 2. We only step selection once the pointer has travelled
+    ///    [`HOVER_STEP_DISTANCE`] since the last hover pick. Centering a card
+    ///    shifts the strip so a *new* card lands under the (now stationary)
+    ///    cursor — without this gate that alone would trigger another pick,
+    ///    and another, cascading to the edge. Requiring fresh travel means
+    ///    the strip moves one window per deliberate mouse move.
+    pub fn hover_select(
+        &mut self,
+        point: Point<f64, Logical>,
+        output_size: Size<i32, Logical>,
+    ) -> bool {
+        if !self.is_visible() {
+            return false;
+        }
+        // Settled layout for the current selection (prev == selected makes
+        // the slide a no-op, pinning cards at their resting positions).
+        let cards = layout::compute(
+            output_size,
+            self.entries.len(),
+            self.selected_index,
+            self.selected_index,
+            self.scroll_offset,
+            1.0,
+        );
+        let hit = layout::hit_test(&cards, point.x as i32, point.y as i32);
+
+        let changed = match hit {
+            Some(idx) if idx != self.selected_index => {
+                // Distance accumulates from the last *committed* pick, so a
+                // slow drag eventually crosses the threshold and steps once.
+                let moved_enough = self.last_hover_pos.map_or(false, |last| {
+                    let dx = point.x - last.x;
+                    let dy = point.y - last.y;
+                    dx * dx + dy * dy >= HOVER_STEP_DISTANCE * HOVER_STEP_DISTANCE
+                });
+                if moved_enough {
+                    self.select(idx);
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        };
+
+        if changed || self.last_hover_pos.is_none() {
+            // Re-anchor on a real pick, or seed the baseline on first hover
+            // (so the overlay appearing under the cursor can't insta-jump).
+            self.last_hover_pos = Some(point);
+        }
+        changed
     }
 
     /// Hit-test the close button on the selected card.

@@ -85,6 +85,10 @@ pub(super) const ROOT_CTX: usize = usize::MAX;
 pub struct SidebarState {
     pub visible: bool,
     pub mode: SidebarMode,
+    /// UI scale factor. All logical layout constants are multiplied by this at
+    /// point of use so the whole sidebar (fonts, rows, padding, icons, resize
+    /// handle, context menu) scales in physical pixels.
+    pub scale: f32,
     pub root: PathBuf,
     pub entries: Vec<DirEntry>,
     pub scroll_offset: f32,
@@ -107,6 +111,7 @@ impl SidebarState {
         Self {
             visible: false,
             mode: SidebarMode::Files,
+            scale: 1.0,
             root: PathBuf::new(),
             entries: Vec::new(),
             scroll_offset: 0.0,
@@ -119,29 +124,37 @@ impl SidebarState {
         }
     }
 
+    /// Set the UI scale factor and re-fit the auto-width to match.
+    pub fn set_scale(&mut self, scale: f32) {
+        self.scale = scale;
+        self.recompute_width();
+    }
+
     /// Recalculate width to fit the widest visible entry. No-op once the user
-    /// has manually set a width by dragging the resize handle.
+    /// has manually set a width by dragging the resize handle. Produces a scaled
+    /// physical width.
     fn recompute_width(&mut self) {
         if self.manual_width.is_some() {
             return;
         }
+        let scale = self.scale;
         let header_name = self
             .root
             .file_name()
             .map(|n| n.to_string_lossy().len())
             .unwrap_or(1);
-        let mut max_w = header_name as f32 * CHAR_WIDTH + PADDING;
+        let mut max_w = header_name as f32 * CHAR_WIDTH * scale + PADDING * scale;
 
         for entry in &self.entries {
-            let indent = entry.depth as f32 * INDENT_PX + 10.0 + 16.0;
-            let name_w = entry.name.len() as f32 * CHAR_WIDTH;
-            let total = indent + name_w + PADDING;
+            let indent = entry.depth as f32 * INDENT_PX * scale + (10.0 + 16.0) * scale;
+            let name_w = entry.name.len() as f32 * CHAR_WIDTH * scale;
+            let total = indent + name_w + PADDING * scale;
             if total > max_w {
                 max_w = total;
             }
         }
 
-        self.width = max_w.clamp(MIN_WIDTH, MAX_WIDTH);
+        self.width = max_w.clamp(MIN_WIDTH * scale, MAX_WIDTH * scale);
     }
 
     /// Set the root directory and refresh entries.
@@ -167,7 +180,7 @@ impl SidebarState {
         match pos {
             Some((x, y)) => {
                 y >= chrome_h
-                    && (x - self.width).abs() <= RESIZE_HANDLE_W
+                    && (x - self.width).abs() <= RESIZE_HANDLE_W * self.scale
             }
             None => false,
         }
@@ -180,7 +193,7 @@ impl SidebarState {
 
     /// Apply a resize to the given cursor x (the new right edge), clamped.
     pub fn resize_to(&mut self, x: f32) {
-        let w = x.clamp(MIN_WIDTH, MAX_WIDTH);
+        let w = x.clamp(MIN_WIDTH * self.scale, MAX_WIDTH * self.scale);
         self.width = w;
         self.manual_width = Some(w);
     }
@@ -201,7 +214,7 @@ impl SidebarState {
 
     /// Apply a width restored from config as a manual override (clamped).
     pub fn apply_saved_width(&mut self, w: f32) {
-        let w = w.clamp(MIN_WIDTH, MAX_WIDTH);
+        let w = w.clamp(MIN_WIDTH * self.scale, MAX_WIDTH * self.scale);
         self.width = w;
         self.manual_width = Some(w);
     }
@@ -311,8 +324,8 @@ impl SidebarState {
     }
 
     pub fn scroll(&mut self, delta: f32) {
-        self.scroll_offset = (self.scroll_offset - delta * SCROLL_SPEED).max(0.0);
-        let max = (self.entries.len() as f32 * ITEM_HEIGHT).max(0.0);
+        self.scroll_offset = (self.scroll_offset - delta * SCROLL_SPEED * self.scale).max(0.0);
+        let max = (self.entries.len() as f32 * ITEM_HEIGHT * self.scale).max(0.0);
         self.scroll_offset = self.scroll_offset.min(max);
     }
 

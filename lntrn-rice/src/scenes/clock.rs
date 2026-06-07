@@ -16,19 +16,34 @@ impl Scene for Clock {
         let (h, m, _) = local_hms();
         let s = format!("{:02}:{:02}", h, m);
 
-        // Fill the window — measure once with the actual font, then scale so the
-        // text width hits ~92% of the window width (or 80% of height, whichever
-        // is tighter). Digital-7 has wide glyphs, so its width factor differs
-        // from a generic sans — measuring with the right family keeps it tight.
+        // Fill the window. Measure at a probe size, then scale. Width uses the
+        // laid-out advance; HEIGHT uses the actual ink bounds (the lit digits),
+        // not the padded line box — "Square Sans Serif 7" has lots of
+        // ascent/descent air, so fitting to the line box leaves the digits short
+        // and floating in a short/wide window.
         let probe = 100.0_f32;
         let probe_w = text.measure_width_family(&s, probe, FONT).max(1.0);
-        let by_width = (ctx.wf * 0.92) / probe_w * probe;
-        let by_height = ctx.hf * 0.80 / 1.2;
-        let font_size = by_width.min(by_height).max(48.0 * ctx.scale);
+        let (ink_h, ink_top) = text.measure_ink_height_family(&s, probe, FONT);
 
+        let by_width = (ctx.wf * 0.95) / probe_w * probe;
+        let have_ink = ink_h >= 1.0;
+        let font_size = if have_ink {
+            // Scale so the visible ink fills ~92% of the window height.
+            by_width.min((ctx.hf * 0.92) / ink_h * probe)
+        } else {
+            by_width.min(ctx.hf * 0.90 / 1.2) // fallback if ink couldn't be measured
+        }
+        .max(48.0 * ctx.scale);
+
+        let scale_f = font_size / probe;
         let w = text.measure_width_family(&s, font_size, FONT);
         let x = (ctx.wf - w) * 0.5;
-        let y = (ctx.hf - font_size * 1.2) * 0.5;
+        // Center the visible ink vertically (not the padded line box).
+        let y = if have_ink {
+            (ctx.hf - ink_h * scale_f) * 0.5 - ink_top * scale_f
+        } else {
+            (ctx.hf - font_size * 1.2) * 0.5
+        };
 
         let screen_w = ctx.wf.round().max(1.0) as u32;
         let screen_h = ctx.hf.round().max(1.0) as u32;

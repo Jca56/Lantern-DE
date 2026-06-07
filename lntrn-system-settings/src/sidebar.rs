@@ -1,7 +1,7 @@
 //! Expandable category tree on the left edge.
 //!
 //! Each entry in [`CATEGORIES`] is a category — either a leaf (no children) that
-//! selects a `Panel` directly (Home), or a parent that holds a list of child
+//! selects a `Panel` directly (Display), or a parent that holds a list of child
 //! panels. Parents are click-to-toggle; children select content.
 //!
 //! Zones are allocated dynamically per-frame: each rendered row (parent or
@@ -20,7 +20,7 @@ pub(crate) const SIDEBAR_ICON_DRAW: f32 = 32.0;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Category {
-    Home, Appearance, Display, Input, Notifications, Power, Apps, LockScreen,
+    Appearance, Display, Input, Notifications, Power, Apps, LockScreen,
 }
 
 pub(crate) struct CategoryDef {
@@ -34,32 +34,30 @@ pub(crate) struct CategoryDef {
 }
 
 pub(crate) const CATEGORIES: &[CategoryDef] = &[
-    CategoryDef { cat: Category::Home,          label: "Home",          icon_idx: 0, children: &[], leaf_panel: Some(Panel::Home) },
-    CategoryDef { cat: Category::Appearance,    label: "Appearance",    icon_idx: 1, leaf_panel: None, children: &[
+    CategoryDef { cat: Category::Appearance,    label: "Appearance",    icon_idx: 0, leaf_panel: None, children: &[
         (Panel::Themes,      "Themes"),
         (Panel::WindowSizes, "Window Sizes"),
-        (Panel::Wallpaper,   "Wallpaper"),
         (Panel::Animations,  "Animations"),
     ]},
-    CategoryDef { cat: Category::Display,       label: "Display",       icon_idx: 2, children: &[], leaf_panel: Some(Panel::Monitors) },
-    CategoryDef { cat: Category::Input,         label: "Input",         icon_idx: 3, leaf_panel: None, children: &[
+    CategoryDef { cat: Category::Display,       label: "Display",       icon_idx: 1, children: &[], leaf_panel: Some(Panel::Monitors) },
+    CategoryDef { cat: Category::Input,         label: "Input",         icon_idx: 2, leaf_panel: None, children: &[
         (Panel::Mouse,       "Mouse"),
         (Panel::Keybindings, "Keybindings"),
     ]},
-    CategoryDef { cat: Category::Notifications, label: "Notifications", icon_idx: 4, leaf_panel: None, children: &[
+    CategoryDef { cat: Category::Notifications, label: "Notifications", icon_idx: 3, leaf_panel: None, children: &[
         (Panel::NotifBehavior, "Behavior"),
         (Panel::NotifSound,    "Sound"),
         (Panel::NotifTesting,  "Testing"),
     ]},
-    CategoryDef { cat: Category::Power,         label: "Power",         icon_idx: 5, leaf_panel: None, children: &[
+    CategoryDef { cat: Category::Power,         label: "Power",         icon_idx: 4, leaf_panel: None, children: &[
         (Panel::LidIdle,    "Lid & Idle"),
         (Panel::Battery,    "Battery"),
         (Panel::WifiPower,  "WiFi Power"),
     ]},
-    CategoryDef { cat: Category::Apps,          label: "Apps",          icon_idx: 6, leaf_panel: None, children: &[
+    CategoryDef { cat: Category::Apps,          label: "Apps",          icon_idx: 5, leaf_panel: None, children: &[
         (Panel::AppIcons,   "Icons"),
     ]},
-    CategoryDef { cat: Category::LockScreen,    label: "Lock Screen",   icon_idx: 7, leaf_panel: None, children: &[
+    CategoryDef { cat: Category::LockScreen,    label: "Lock Screen",   icon_idx: 6, leaf_panel: None, children: &[
         (Panel::LockWallpaper, "Wallpaper"),
         (Panel::LockStyle,     "Style"),
     ]},
@@ -67,7 +65,6 @@ pub(crate) const CATEGORIES: &[CategoryDef] = &[
 
 /// Find the category that owns `panel` (so we can auto-expand it).
 pub(crate) fn category_of(panel: Panel) -> Category {
-    if panel == Panel::Home { return Category::Home; }
     for cat in CATEGORIES {
         if cat.children.iter().any(|(p, _)| *p == panel) {
             return cat.cat;
@@ -76,12 +73,11 @@ pub(crate) fn category_of(panel: Panel) -> Category {
             return cat.cat;
         }
     }
-    Category::Home
+    Category::Display
 }
 
 /// Human-readable label for `panel` — used for the content header.
 pub(crate) fn panel_label(panel: Panel) -> &'static str {
-    if panel == Panel::Home { return "Home"; }
     for cat in CATEGORIES {
         for (p, label) in cat.children {
             if *p == panel { return label; }
@@ -171,6 +167,18 @@ pub(crate) fn draw_sidebar<'a>(
     let mut y = body_y + 8.0 * s;
 
     for (cat_i, cat) in CATEGORIES.iter().enumerate() {
+        // Thin divider between top-level tabs (skip above the first row).
+        if cat_i > 0 {
+            y += 5.0 * s;
+            let div_inset = 20.0 * s;
+            painter.rect_filled(
+                Rect::new(div_inset, y, sidebar_w - div_inset * 2.0, 1.0 * s),
+                0.0,
+                fox.muted.with_alpha(0.22),
+            );
+            y += 6.0 * s;
+        }
+
         let row_idx = state.row_actions.len();
         let zone_id = ZONE_SIDEBAR_BASE + row_idx as u32;
         let row_rect = Rect::new(0.0, y, sidebar_w, parent_h);
@@ -212,7 +220,7 @@ pub(crate) fn draw_sidebar<'a>(
 
         // Record the click action for this row.
         if is_leaf {
-            state.row_actions.push(SidebarAction::SelectPanel(cat.leaf_panel.unwrap_or(Panel::Home)));
+            state.row_actions.push(SidebarAction::SelectPanel(cat.leaf_panel.unwrap_or(Panel::Monitors)));
         } else {
             state.row_actions.push(SidebarAction::ToggleCategory(cat_i));
         }

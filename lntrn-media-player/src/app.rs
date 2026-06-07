@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use lntrn_render::{GpuContext, GpuTexture, TexturePass};
 
@@ -58,6 +58,9 @@ pub struct App {
     pub controls_last_move: Instant,
     pub pointer_in_window: bool,
     pub last_tick: Instant,
+    // Throttle for pipeline position/duration queries (each can briefly grab the
+    // GStreamer stream lock, so we don't want to ask every frame).
+    pub last_query: Instant,
     // Visualizer theme (index into vis_theme::VIS_THEMES) + View dropdown state.
     pub vis_theme_index: usize,
     pub view_menu_open: bool,
@@ -87,6 +90,7 @@ impl App {
             controls_last_move: Instant::now(),
             pointer_in_window: false,
             last_tick: Instant::now(),
+            last_query: Instant::now(),
             vis_theme_index: crate::vis_theme::load_theme_index(),
             view_menu_open: false,
         }
@@ -170,12 +174,20 @@ impl App {
             None => return false,
         };
 
-        // Update position/duration
-        if let Some(pos) = pipe.position() {
-            self.position_ns = pos;
-        }
-        if let Some(dur) = pipe.duration() {
-            self.duration_ns = dur;
+        // Position drives the seek bar + timestamps; ~10 Hz is plenty for the UI
+        // and avoids hammering the pipeline every frame. Duration is fixed for a
+        // file (reset to 0 on each new track), so query it only until it's known
+        // — query_duration is the expensive one and never changes mid-file.
+        if self.last_query.elapsed() >= Duration::from_millis(100) {
+            self.last_query = Instant::now();
+            if let Some(pos) = pipe.position() {
+                self.position_ns = pos;
+            }
+            if self.duration_ns == 0 {
+                if let Some(dur) = pipe.duration() {
+                    self.duration_ns = dur;
+                }
+            }
         }
 
         // Detect audio-only — only trust n-video after duration is known
@@ -197,12 +209,14 @@ impl App {
             }
         }
 
-        // Grab latest video frame
+        // Grab latest video frame. Reuse the existing GPU texture when the
+        // resolution is unchanged (the common case) so playback doesn't churn
+        // ~8 MB of VRAM per frame — that allocation thrash was the random stutter.
         if let Some(frame) = pipe.take_frame() {
             self.audio_only = false;
             self.video_width = frame.width;
             self.video_height = frame.height;
-            self.video_texture = Some(tex_pass.upload(gpu, &frame.rgba, frame.width, frame.height));
+            tex_pass.upload_reuse(gpu, &mut self.video_texture, &frame.rgba, frame.width, frame.height);
             return true;
         }
 

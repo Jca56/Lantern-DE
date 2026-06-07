@@ -59,27 +59,38 @@ pub(super) fn render_frame(
         Vec::new()
     };
 
-    // Big white workspace number in the top-left corner — only while
-    // the panel is on screen. Sits outside the CC card so the number is
-    // always readable on whatever the desktop is showing underneath.
-    if !app.is_hidden() {
+    // Workspace number — a bold white digit tucked just to the left of
+    // the panel's left view-arrow and vertically centered on it (it
+    // overhangs the arrow top/bottom a touch since the digit is taller
+    // than the arrow). Anchored to the panel so it tracks the panel's
+    // position AND scales with the UI, instead of floating at a fixed
+    // size in the screen corner.
+    if let Some(p) = &panel_draw {
         if let Some(ws) = app.workspace_ipc.active_id() {
-            let alpha = app.anim_factor().clamp(0.0, 1.0);
+            let alpha = p.alpha.clamp(0.0, 1.0);
             if alpha > 0.01 {
-                let font_size = 180.0 * scale_f;
-                let pad_x = 32.0 * scale_f;
-                // Optical baseline tweak — cosmic-text anchors near the
-                // top of the line box, so a small inset keeps the digit
-                // visually flush with the corner rather than floating.
-                let pad_y = 8.0 * scale_f;
+                let arrow = crate::view_arrows::button_rect(
+                    p.rect, scale_f, crate::view_arrows::Side::Left,
+                );
+                let font_size = 90.0 * scale_f;
                 let text_str = ws.to_string();
-                text.queue(
+                let num_w = text.measure_width(&text_str, font_size);
+                let gap = 12.0 * scale_f;
+                // Right-align against the arrow's left edge; clamp so a
+                // two-digit workspace never slides off the screen edge.
+                let x = (arrow.x - gap - num_w).max(4.0 * scale_f);
+                // Center the line box on the arrow so the taller digit
+                // overhangs symmetrically rather than sitting low.
+                let y = arrow.y + (arrow.h - font_size) * 0.5;
+                text.queue_styled(
                     &text_str,
                     font_size,
-                    pad_x,
-                    pad_y,
+                    x,
+                    y,
                     Color::rgba(1.0, 1.0, 1.0, alpha),
-                    phys_w as f32 - pad_x,
+                    phys_w as f32,
+                    lntrn_render::FontWeight::Bold,
+                    lntrn_render::FontStyle::Normal,
                     phys_w,
                     phys_h,
                 );

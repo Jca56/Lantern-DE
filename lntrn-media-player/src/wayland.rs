@@ -22,7 +22,7 @@ use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
 use crate::app::App;
-use crate::mpris_server::{self, PlayerState, MprisCmd};
+use crate::mpris_server::{PlayerState, MprisCmd};
 use crate::{
     Gpu, ZONE_CANVAS, ZONE_CLOSE, ZONE_FULLSCREEN, ZONE_LOOP, ZONE_MAXIMIZE, ZONE_MINIMIZE,
     ZONE_NEXT, ZONE_PLAY_PAUSE, ZONE_PREV, ZONE_SEEK_BAR, ZONE_TITLE_BAR, ZONE_VIEW_MENU,
@@ -391,6 +391,14 @@ pub fn run(
         seek: Rect::new(0.0, 0.0, 0.0, 0.0),
     };
 
+    // MPRIS push throttle: don't clone+send a PlayerState every frame (that was
+    // 60 String allocations/sec into the channel). Push at 4 Hz to keep position
+    // fresh for clients, and flush immediately on play/title/volume changes.
+    let mut last_mpris_send = std::time::Instant::now();
+    let mut mpris_prev_playing = false;
+    let mut mpris_prev_title = String::new();
+    let mut mpris_prev_volume = app.volume;
+
     while state.running {
         // Non-blocking when playing, blocking when paused
         if app.is_playing() {
@@ -616,17 +624,27 @@ pub fn run(
                 }
             }
         }
-        // Send state to MPRIS server
-        let _ = mpris_tx.send(PlayerState {
-            title: app.file_name.clone(),
-            file_path: app.file_path.as_ref()
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-            playing: app.is_playing(),
-            position_ns: app.position_ns,
-            duration_ns: app.duration_ns,
-            volume: app.volume,
-        });
+        // Send state to MPRIS server (throttled — see notes above the loop).
+        let playing = app.is_playing();
+        let mpris_dirty = playing != mpris_prev_playing
+            || app.file_name != mpris_prev_title
+            || (app.volume - mpris_prev_volume).abs() > 0.001;
+        if mpris_dirty || last_mpris_send.elapsed() >= std::time::Duration::from_millis(250) {
+            last_mpris_send = std::time::Instant::now();
+            mpris_prev_playing = playing;
+            mpris_prev_title = app.file_name.clone();
+            mpris_prev_volume = app.volume;
+            let _ = mpris_tx.send(PlayerState {
+                title: app.file_name.clone(),
+                file_path: app.file_path.as_ref()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                playing,
+                position_ns: app.position_ns,
+                duration_ns: app.duration_ns,
+                volume: app.volume,
+            });
+        }
 
         // ── Render ──────────────────────────────────────────────────────
         let palette = FoxPalette::current();

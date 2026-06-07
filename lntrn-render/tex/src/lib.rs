@@ -73,6 +73,9 @@ const MAX_TEX_INSTANCES: usize = 256;
 /// Opaque handle to a GPU-resident texture.
 pub struct GpuTexture {
     bind_group: wgpu::BindGroup,
+    /// Kept so the pixels can be rewritten in place (see `upload_reuse`) instead
+    /// of reallocating a fresh texture every frame.
+    texture: wgpu::Texture,
     pub width: u32,
     pub height: u32,
 }
@@ -348,9 +351,51 @@ impl TexturePass {
 
         GpuTexture {
             bind_group,
+            texture,
             width,
             height,
         }
+    }
+
+    /// Reuse the texture already in `slot` when its dimensions match, writing the
+    /// new pixels straight into existing GPU memory; otherwise allocate a fresh
+    /// one. Prefer this over `upload` for anything that updates every frame (e.g.
+    /// video playback): calling `upload` per frame reallocates a texture + view +
+    /// bind group each time, and the resulting VRAM churn shows up as random
+    /// allocator/GC hitches.
+    pub fn upload_reuse(
+        &self,
+        gpu: &GpuContext,
+        slot: &mut Option<GpuTexture>,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) {
+        if let Some(existing) = slot.as_ref() {
+            if existing.width == width && existing.height == height {
+                gpu.queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &existing.texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    rgba,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(4 * width),
+                        rows_per_image: Some(height),
+                    },
+                    wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                return;
+            }
+        }
+        *slot = Some(self.upload(gpu, rgba, width, height));
     }
 
     /// Render textured quads in a single render pass.

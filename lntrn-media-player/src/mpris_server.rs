@@ -100,8 +100,6 @@ fn server_thread_with_conn(
     cmd_tx: mpsc::Sender<MprisCmd>,
 ) {
     log("MPRIS server thread running");
-    let mut heartbeat_count = 0u32;
-    let mut first_loop = true;
 
     let mut state = PlayerState {
         title: String::new(),
@@ -111,54 +109,17 @@ fn server_thread_with_conn(
         duration_ns: 0,
         volume: 1.0,
     };
-    let mut prev_playing = false;
-    let mut prev_title = String::new();
-
     loop {
-        // Drain state updates (take latest)
-        let mut changed = false;
+        // Drain state updates (keep only the latest). Clients query Position /
+        // PlaybackStatus on demand, so we just need the freshest snapshot.
         while let Ok(new_state) = state_rx.try_recv() {
-            if new_state.playing != state.playing || new_state.title != state.title
-                || (new_state.volume - state.volume).abs() > 0.01
-            {
-                changed = true;
-            }
             state = new_state;
-        }
-
-        // PropertiesChanged disabled for debugging
-        if changed {
-            prev_playing = state.playing;
-            prev_title = state.title.clone();
         }
 
         // Handle incoming D-Bus method calls
         while let Some(msg) = conn.try_read() {
             if msg.is_method_call() {
                 handle_method(&mut conn, &msg, &state, &cmd_tx);
-            }
-        }
-
-        // Heartbeat: actually call GetNameOwner to verify we own the name
-        heartbeat_count += 1;
-        if heartbeat_count >= 40 {
-            heartbeat_count = 0;
-            let mut body = Vec::new();
-            lntrn_dbus::encode_string(&mut body, BUS_NAME);
-            let serial = conn.method_call(
-                "org.freedesktop.DBus", "/org/freedesktop/DBus",
-                "org.freedesktop.DBus", "GetNameOwner", "s", &body,
-            );
-            // Try to read the reply (blocking briefly)
-            match conn.read_reply(serial) {
-                Ok(reply) => {
-                    let mut r = BodyReader::new(&reply.body, &reply.signature);
-                    let owner = r.read_string();
-                    log(&format!("heartbeat: owner of {BUS_NAME} = '{owner}' (err={})", reply.is_error()));
-                }
-                Err(e) => {
-                    log(&format!("heartbeat: GetNameOwner FAILED: {e}"));
-                }
             }
         }
 

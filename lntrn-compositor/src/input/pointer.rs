@@ -106,9 +106,7 @@ impl Lantern {
                 .map(|g| g.size)
                 .unwrap_or_default();
             let logical_point = smithay::utils::Point::from((pos.x, pos.y));
-            if let Some(idx) = self.alt_tab_switcher.hit_test(logical_point, output_size) {
-                self.alt_tab_switcher.select(idx);
-            }
+            self.alt_tab_switcher.hover_select(logical_point, output_size);
             // Still update pointer position (for cursor rendering) but
             // don't send motion to clients — intercept the event.
             pointer.motion(
@@ -181,9 +179,7 @@ impl Lantern {
         // Switcher hover (absolute motion variant)
         if self.alt_tab_switcher.is_visible() {
             let logical_point = smithay::utils::Point::from((pos.x, pos.y));
-            if let Some(idx) = self.alt_tab_switcher.hit_test(logical_point, output_geo.size) {
-                self.alt_tab_switcher.select(idx);
-            }
+            self.alt_tab_switcher.hover_select(logical_point, output_geo.size);
             pointer.motion(
                 self,
                 None,
@@ -285,11 +281,21 @@ impl Lantern {
             }
         }
 
+        // A Top/Overlay layer surface with pointer input (command center,
+        // screenshot UI, …) owns clicks over its region. The window-grab
+        // branches below (Super+drag, SSD clicks, outer resize zone) defer
+        // to it so a click meant for the overlay isn't stolen — e.g.
+        // clicking a CC button that happens to sit over a window's 8px
+        // resize border underneath.
+        let over_top_layer = ButtonState::Pressed == button_state
+            && self.pointer_over_top_layer(pointer.current_location());
+
         // Super+left-click: compositor-level move
         // Super+right-click: compositor-level resize
         if ButtonState::Pressed == button_state
             && self.super_pressed
             && !pointer.is_grabbed()
+            && !over_top_layer
             && (button == BTN_LEFT || button == BTN_RIGHT)
         {
             let pos = pointer.current_location();
@@ -352,6 +358,7 @@ impl Lantern {
         if ButtonState::Pressed == button_state
             && button == BTN_LEFT
             && !pointer.is_grabbed()
+            && !over_top_layer
         {
             let pos = pointer.current_location();
 
@@ -409,6 +416,7 @@ impl Lantern {
         if ButtonState::Pressed == button_state
             && button == BTN_LEFT
             && !pointer.is_grabbed()
+            && !over_top_layer
         {
             let pos = pointer.current_location();
             // Only trigger if we're NOT directly on a window surface
@@ -523,16 +531,30 @@ impl Lantern {
     pub(super) fn handle_pointer_axis<I: InputBackend>(&mut self, event: I::PointerAxisEvent) {
         let source = event.source();
         let scroll_mult = self.scroll_speed;
+        // High-res mouse wheels report their motion only through v120; libinput
+        // still returns `Some(0.0)` (not `None`) for the legacy continuous
+        // `amount()`, so a plain `unwrap_or_else` never falls back. Treat a zero
+        // continuous value as "absent" and derive it from v120 (15° per 120
+        // units). Without a non-zero `wl_pointer.axis` event, clients whose
+        // toolkit ignores `axis_value120` (e.g. winit on sctk 0.19) receive an
+        // empty axis frame and never scroll — the trackpad works because Finger
+        // events carry a real continuous value and no v120.
         let horizontal_amount = event
             .amount(Axis::Horizontal)
-            .unwrap_or_else(|| {
-                event.amount_v120(Axis::Horizontal).unwrap_or(0.0) * 15.0 / 120.
-            }) * scroll_mult;
+            .filter(|v| *v != 0.0)
+            .or_else(|| {
+                event.amount_v120(Axis::Horizontal).map(|v| v * 15.0 / 120.)
+            })
+            .unwrap_or(0.0)
+            * scroll_mult;
         let vertical_amount = event
             .amount(Axis::Vertical)
-            .unwrap_or_else(|| {
-                event.amount_v120(Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.
-            }) * scroll_mult;
+            .filter(|v| *v != 0.0)
+            .or_else(|| {
+                event.amount_v120(Axis::Vertical).map(|v| v * 15.0 / 120.)
+            })
+            .unwrap_or(0.0)
+            * scroll_mult;
         let horizontal_amount_discrete = event
             .amount_v120(Axis::Horizontal)
             .map(|v| v * scroll_mult);

@@ -15,5 +15,9 @@ package() {
     install -Dm755 lntrn              "$pkgdir/usr/bin/lntrn"
     install -Dm755 lntrn-sysmon-view  "$pkgdir/usr/share/lntrn/lntrn-sysmon-view"
     install -Dm755 lntrn-files-view   "$pkgdir/usr/share/lntrn/lntrn-files-view"
+    install -Dm755 lntrn-art-gen      "$pkgdir/usr/share/lntrn/lntrn-art-gen"
     install -Dm644 assets/lntrn.png   "$pkgdir/usr/share/lntrn/lntrn.png"
+    for f in art/*.ans; do
+        install -Dm644 "$f" "$pkgdir/usr/share/lntrn/$f"
+    done
 }

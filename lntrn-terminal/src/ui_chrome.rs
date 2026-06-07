@@ -10,7 +10,7 @@ use crate::night_sky;
 // ── Constants ───────────────────────────────────────────────────────────────
 
 /// Unified title bar height — accommodates inline tabs, menus, and window controls.
-pub const TITLE_BAR_HEIGHT: f32 = 30.0;
+pub const TITLE_BAR_HEIGHT: f32 = 40.0;
 
 /// Width reserved on the right for window controls (same in both modes — they
 /// share the circular control style). Buttons sit at w-30 / w-60 / w-90 with
@@ -32,11 +32,11 @@ const DIVIDER_W: f32 = 2.5;
 // same value (see ChromeState::new) so our layout width calc lines up exactly
 // with where the menu labels actually render. Smaller than the theme body font
 // so the title bar can be slim.
-const MENU_FONT_BODY: f32 = 20.0;
+const MENU_FONT_BODY: f32 = 22.0;
 const MENU_LABEL_PAD_H: f32 = 8.0;
 const MENU_LABEL_GAP: f32 = 12.0;
 
-/// Title bar height for the given window mode (both modes are unified at 50px).
+/// Title bar height for the given window mode (both modes share TITLE_BAR_HEIGHT).
 pub fn title_bar_height(_mode: &WindowMode) -> f32 {
     TITLE_BAR_HEIGHT
 }
@@ -269,7 +269,7 @@ pub fn draw_chrome(
         WindowMode::Lantern => night_sky::ControlPalette::lantern(),
         _ => night_sky::ControlPalette::default_palette(),
     };
-    night_sky::draw_controls(painter, cursor_pos, wf, &ctrl_pal);
+    night_sky::draw_controls(painter, cursor_pos, wf, &ctrl_pal, s);
 
     // ── Menu bar in the menu region ─────────────────────────────────────
     let menu_area = Rect::new(layout.menu_left, 0.0, layout.menu_right - layout.menu_left, layout.bar_h);
@@ -381,7 +381,7 @@ pub fn handle_click(
     }
 
     // Window control buttons (shared circular controls for both modes)
-    if let Some(zone) = night_sky::hit_test_controls((x, y), screen_w) {
+    if let Some(zone) = night_sky::hit_test_controls((x, y), screen_w, scale) {
         return match zone {
             10 => ClickAction::Close,
             11 => ClickAction::Maximize,
@@ -427,8 +427,7 @@ pub fn menu_event_to_action(event: &MenuEvent) -> ClickAction {
 
 /// Quick hit-test: is (x) on the "Files" menu label? Used by events.rs to
 /// intercept the click before InteractionContext sees it.
-pub fn is_files_label_hit(x: f32, _mode: &WindowMode) -> bool {
-    let scale = 1.0_f32;
+pub fn is_files_label_hit(x: f32, _mode: &WindowMode, scale: f32) -> bool {
     let font = MENU_FONT_BODY * scale;
     let pad_h = MENU_LABEL_PAD_H * scale;
     let ml = MENU_LEFT * scale + pad_h * 0.5;

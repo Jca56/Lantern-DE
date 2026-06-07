@@ -1,3 +1,7 @@
+//! PARKED this round: unbound from Super+Ctrl+Arrow. Kept to be re-bound as a
+//! "condition" in a later round; allow dead code until then.
+#![allow(dead_code)]
+//!
 //! Swap the focused window's slot with a neighbour — the "reorder" verb
 //! of the Super+Arrow scheme (Super+Ctrl+Arrow).
 //!

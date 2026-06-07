@@ -120,8 +120,11 @@ pub fn draw_display_panel(
     hdr_client: &crate::hdr_client::HdrClient,
 ) {
     use crate::wayland::Panel;
+    // The Display panel now hosts both the monitor arrangement and the
+    // wallpaper picker: pick a display in the canvas, then set its wallpaper
+    // in the card below.
     let show_display   = matches!(subpanel, Panel::Monitors);
-    let show_wallpaper = matches!(subpanel, Panel::Wallpaper);
+    let show_wallpaper = show_display;
     let lsz = LABEL_SIZE * s;
 
     // Reset per-monitor settings if selection changed
@@ -228,10 +231,15 @@ pub fn draw_display_panel(
         cy_top += display_card_h + CARD_GAP * s;
     }
 
-    // Wallpaper card — only on the Wallpaper subpanel.
+    // Wallpaper card — sits below the display settings. Name the selected
+    // display in the header so it's clear which monitor we're changing.
+    let wp_label = match &selected_name {
+        Some(name) => format!("Wallpaper — {}", name),
+        None => "Wallpaper".to_string(),
+    };
     let wp_inner_y = if show_wallpaper {
         let inner = draw_section_card(
-            painter, text, fox, "Wallpaper",
+            painter, text, fox, &wp_label,
             card_x, cy_top, card_w, wallpaper_card_h, s, sw, sh,
         );
         inner

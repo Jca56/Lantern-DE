@@ -12,7 +12,7 @@ const TAB_GAP: f32 = 6.0;
 const TAB_PAD_H: f32 = 12.0;
 const NEW_TAB_WIDTH: f32 = 30.0;
 const TAB_CLOSE_SIZE: f32 = 22.0;
-const TAB_FONT_SIZE: f32 = 18.0;
+const TAB_FONT_SIZE: f32 = 20.0;
 const PIN_WIDTH: f32 = 20.0;
 const DOUBLE_CLICK_MS: u128 = 400;
 const TAB_PAD_V: f32 = 3.0;
@@ -144,6 +144,10 @@ pub struct TabBarState {
 
     // Tab right-click context menu
     pub context_menu: Option<(usize, f32, f32)>,
+
+    /// UI scale factor. All logical design constants are multiplied by this at
+    /// point of use so drawing/hit-testing in physical pixels grow uniformly.
+    pub scale: f32,
 }
 
 impl TabBarState {
@@ -159,6 +163,7 @@ impl TabBarState {
             last_click_time: Instant::now(),
             last_click_tab: None,
             context_menu: None,
+            scale: 1.0,
         }
     }
 
@@ -197,21 +202,22 @@ pub enum TabBarAction {
 const CHAR_W: f32 = 11.0; // ceil(18 * 0.6)
 
 /// Compute widths for each tab based on title length, fitting within available space.
-fn calc_tab_widths(titles: &[&str], available: f32) -> Vec<f32> {
+fn calc_tab_widths(titles: &[&str], available: f32, scale: f32) -> Vec<f32> {
     let n = titles.len().max(1);
     let space = available
-        - TABS_INNER_LEFT
-        - TABS_INNER_LEFT // symmetric right-side breathing room
-        - NEW_TAB_WIDTH
-        - 4.0
-        - (n.saturating_sub(1) as f32 * TAB_GAP);
+        - TABS_INNER_LEFT * scale
+        - TABS_INNER_LEFT * scale // symmetric right-side breathing room
+        - NEW_TAB_WIDTH * scale
+        - 4.0 * scale
+        - (n.saturating_sub(1) as f32 * TAB_GAP * scale);
 
     // Ideal width per tab: pad + text + close + pad
     let ideal: Vec<f32> = titles
         .iter()
         .map(|t| {
-            let text_w = t.chars().count() as f32 * CHAR_W;
-            (TAB_PAD_H * 2.0 + text_w + TAB_CLOSE_SIZE).clamp(TAB_MIN_WIDTH, TAB_MAX_WIDTH)
+            let text_w = t.chars().count() as f32 * CHAR_W * scale;
+            (TAB_PAD_H * scale * 2.0 + text_w + TAB_CLOSE_SIZE * scale)
+                .clamp(TAB_MIN_WIDTH * scale, TAB_MAX_WIDTH * scale)
         })
         .collect();
 
@@ -222,43 +228,49 @@ fn calc_tab_widths(titles: &[&str], available: f32) -> Vec<f32> {
     }
 
     // Scale down proportionally, respecting min
-    let scale = space / total_ideal;
+    let shrink = space / total_ideal;
     ideal
         .iter()
-        .map(|&w| (w * scale).clamp(TAB_MIN_WIDTH, TAB_MAX_WIDTH))
+        .map(|&w| (w * shrink).clamp(TAB_MIN_WIDTH * scale, TAB_MAX_WIDTH * scale))
         .collect()
 }
 
 /// Compute tab rect using pre-calculated dynamic widths inside the given bounds.
-fn tab_rect_dynamic(idx: usize, widths: &[f32], bounds: Rect) -> Rect {
-    let mut x = bounds.x + TABS_INNER_LEFT;
+fn tab_rect_dynamic(idx: usize, widths: &[f32], bounds: Rect, scale: f32) -> Rect {
+    let mut x = bounds.x + TABS_INNER_LEFT * scale;
     for i in 0..idx {
-        x += widths[i] + TAB_GAP;
+        x += widths[i] + TAB_GAP * scale;
     }
-    let w = widths.get(idx).copied().unwrap_or(TAB_MIN_WIDTH);
-    Rect::new(x, bounds.y + TAB_PAD_V, w, bounds.h - TAB_PAD_V * 2.0)
-}
-
-/// Compute the new-tab "+" button rect placed after the last tab, inside bounds.
-fn new_tab_rect(widths: &[f32], bounds: Rect) -> Rect {
-    let last_end = if widths.is_empty() {
-        bounds.x + TABS_INNER_LEFT
-    } else {
-        let last = tab_rect_dynamic(widths.len() - 1, widths, bounds);
-        last.x + last.w + TAB_GAP
-    };
+    let w = widths.get(idx).copied().unwrap_or(TAB_MIN_WIDTH * scale);
     Rect::new(
-        last_end + 4.0,
-        bounds.y + TAB_PAD_V,
-        NEW_TAB_WIDTH,
-        bounds.h - TAB_PAD_V * 2.0,
+        x,
+        bounds.y + TAB_PAD_V * scale,
+        w,
+        bounds.h - TAB_PAD_V * scale * 2.0,
     )
 }
 
-fn tab_close_rect(tab: Rect) -> Rect {
-    let x = tab.x + tab.w - TAB_PAD_H - TAB_CLOSE_SIZE + 4.0;
-    let y = tab.y + (tab.h - TAB_CLOSE_SIZE) / 2.0;
-    Rect::new(x, y, TAB_CLOSE_SIZE, TAB_CLOSE_SIZE)
+/// Compute the new-tab "+" button rect placed after the last tab, inside bounds.
+fn new_tab_rect(widths: &[f32], bounds: Rect, scale: f32) -> Rect {
+    let last_end = if widths.is_empty() {
+        bounds.x + TABS_INNER_LEFT * scale
+    } else {
+        let last = tab_rect_dynamic(widths.len() - 1, widths, bounds, scale);
+        last.x + last.w + TAB_GAP * scale
+    };
+    Rect::new(
+        last_end + 4.0 * scale,
+        bounds.y + TAB_PAD_V * scale,
+        NEW_TAB_WIDTH * scale,
+        bounds.h - TAB_PAD_V * scale * 2.0,
+    )
+}
+
+fn tab_close_rect(tab: Rect, scale: f32) -> Rect {
+    let close_size = TAB_CLOSE_SIZE * scale;
+    let x = tab.x + tab.w - TAB_PAD_H * scale - close_size + 4.0 * scale;
+    let y = tab.y + (tab.h - close_size) / 2.0;
+    Rect::new(x, y, close_size, close_size)
 }
 
 fn hit(rect: Rect, pos: Option<(f32, f32)>) -> bool {
@@ -289,20 +301,23 @@ pub fn draw_tab_bar(
     if bounds.w <= 0.0 {
         return;
     }
+    let scale = state.scale;
+    let font_size = TAB_FONT_SIZE * scale;
+    let pin_width = PIN_WIDTH * scale;
     let tab_count = tabs.len();
     let pal = palette(mode);
     let _ = pal.surface; // bg now drawn by ui_chrome
 
     // Compute dynamic tab widths based on title lengths
     let titles: Vec<&str> = tabs.iter().map(|t| t.title).collect();
-    let widths = calc_tab_widths(&titles, bounds.w);
+    let widths = calc_tab_widths(&titles, bounds.w, scale);
 
     // Clip everything inside the tabs region so dragged or oversized tabs
     // don't bleed onto menus or window controls.
     painter.push_clip(bounds);
 
     for (i, tab) in tabs.iter().enumerate() {
-        let mut rect = tab_rect_dynamic(i, &widths, bounds);
+        let mut rect = tab_rect_dynamic(i, &widths, bounds, scale);
 
         // If dragging this tab, offset it
         if state.dragging == Some(i) && state.drag_committed {
@@ -314,7 +329,7 @@ pub fn draw_tab_bar(
         let is_renaming = state.renaming == Some(i);
 
         // Tab background — pointier, near-square corners (not a full pill)
-        let pill_r = TAB_CORNER_R;
+        let pill_r = TAB_CORNER_R * scale;
         if is_renaming {
             painter.rect_filled(rect, pill_r, pal.tab_rename);
             // Gold border for rename mode
@@ -331,45 +346,45 @@ pub fn draw_tab_bar(
 
         // Pin indicator
         let text_x = if tab.pinned {
-            let pin_x = rect.x + 8.0;
-            let pin_y = rect.y + (rect.h - TAB_FONT_SIZE) / 2.0;
+            let pin_x = rect.x + 8.0 * scale;
+            let pin_y = rect.y + (rect.h - font_size) / 2.0;
             text.queue(
                 "\u{1F4CC}",
-                TAB_FONT_SIZE - 4.0,
+                font_size - 4.0 * scale,
                 pin_x,
                 pin_y,
                 pal.accent,
-                PIN_WIDTH,
+                pin_width,
                 screen_w,
                 screen_h,
             );
-            rect.x + 8.0 + PIN_WIDTH
+            rect.x + 8.0 * scale + pin_width
         } else {
-            rect.x + TAB_PAD_H
+            rect.x + TAB_PAD_H * scale
         };
 
         // Close button (only if not pinned and multiple tabs)
         let has_close = !tab.pinned && tab_count > 1;
         let max_text_w = if has_close {
-            rect.x + rect.w - TAB_PAD_H - TAB_CLOSE_SIZE - text_x
+            rect.x + rect.w - TAB_PAD_H * scale - TAB_CLOSE_SIZE * scale - text_x
         } else {
-            rect.x + rect.w - TAB_PAD_H - text_x
+            rect.x + rect.w - TAB_PAD_H * scale - text_x
         };
 
         // Tab title (or rename buffer)
-        let text_y = rect.y + (rect.h - TAB_FONT_SIZE) / 2.0;
+        let text_y = rect.y + (rect.h - font_size) / 2.0;
 
         if is_renaming {
             draw_rename_field(
                 painter, text, state, rect, text_x, text_y, max_text_w, screen_w, screen_h,
-                &pal,
+                &pal, scale,
             );
         } else {
             let text_color = if is_active { pal.text } else { pal.muted };
-            let display = truncate_title(tab.title, max_text_w);
+            let display = truncate_title(tab.title, max_text_w, scale);
             text.queue(
                 &display,
-                TAB_FONT_SIZE,
+                font_size,
                 text_x,
                 text_y,
                 text_color,
@@ -381,26 +396,26 @@ pub fn draw_tab_bar(
 
         // Close X button
         if has_close && !is_renaming {
-            draw_close_x(painter, tab_close_rect(rect), cursor_pos, is_active, &pal);
+            draw_close_x(painter, tab_close_rect(rect, scale), cursor_pos, is_active, &pal, scale);
         }
     }
 
     // "+" new tab button (pill) — positioned after last dynamic tab
-    let nb = new_tab_rect(&widths, bounds);
-    let nb_r = TAB_CORNER_R;
+    let nb = new_tab_rect(&widths, bounds, scale);
+    let nb_r = TAB_CORNER_R * scale;
     let plus_hovered = hit(nb, cursor_pos);
     if plus_hovered {
         painter.rect_filled(nb, nb_r, pal.plus_bg_hover);
     } else {
         painter.rect_filled(nb, nb_r, pal.plus_bg);
-        painter.rect_stroke_sdf(nb, nb_r, 1.5, pal.plus_border);
+        painter.rect_stroke_sdf(nb, nb_r, 1.5 * scale, pal.plus_border);
     }
     let plus_color = if plus_hovered { pal.plus_icon_hover } else { pal.plus_icon };
     let cx = nb.x + nb.w / 2.0;
     let cy = nb.y + nb.h / 2.0;
-    let arm = 6.0;
-    painter.line(cx - arm, cy, cx + arm, cy, 2.0, plus_color);
-    painter.line(cx, cy - arm, cx, cy + arm, 2.0, plus_color);
+    let arm = 6.0 * scale;
+    painter.line(cx - arm, cy, cx + arm, cy, 2.0 * scale, plus_color);
+    painter.line(cx, cy - arm, cx, cy + arm, 2.0 * scale, plus_color);
 
     painter.pop_clip();
 }
@@ -416,7 +431,9 @@ fn draw_rename_field(
     screen_w: u32,
     screen_h: u32,
     pal: &TabPalette,
+    scale: f32,
 ) {
+    let font_size = TAB_FONT_SIZE * scale;
     // Measure the actual rendered width of the text up to the cursor — using
     // `font * 0.6` constants would drift from Glyphon's real advance metrics.
     // We need a string slice up to `rename_cursor` chars, so handle multibyte
@@ -429,11 +446,11 @@ fn draw_rename_field(
     let cursor_px = if prefix.is_empty() {
         0.0
     } else {
-        text.measure_width(&prefix, TAB_FONT_SIZE)
+        text.measure_width(&prefix, font_size)
     };
     // Per-char width estimate used for scroll bookkeeping (an exact value isn't
     // required here — just enough to keep the caret on screen).
-    let char_w = (TAB_FONT_SIZE * 0.6).ceil();
+    let char_w = (font_size * 0.6).ceil();
 
     // Scroll offset so cursor stays visible within max_w
     let scroll = if cursor_px > max_w - char_w {
@@ -447,7 +464,7 @@ fn draw_rename_field(
 
     text.queue(
         &state.rename_buf,
-        TAB_FONT_SIZE,
+        font_size,
         text_x - scroll,
         text_y,
         pal.text,
@@ -459,7 +476,7 @@ fn draw_rename_field(
     // Draw cursor
     let cursor_x = text_x + cursor_px - scroll;
     painter.rect_filled(
-        Rect::new(cursor_x, text_y, 2.0, TAB_FONT_SIZE + 2.0),
+        Rect::new(cursor_x, text_y, 2.0 * scale, font_size + 2.0 * scale),
         0.0,
         pal.text,
     );
@@ -473,10 +490,11 @@ fn draw_close_x(
     cursor_pos: Option<(f32, f32)>,
     is_active: bool,
     pal: &TabPalette,
+    scale: f32,
 ) {
     let close_hovered = hit(cr, cursor_pos);
     if close_hovered {
-        painter.rect_filled(cr, 3.0, pal.close_hover_bg);
+        painter.rect_filled(cr, 3.0 * scale, pal.close_hover_bg);
     }
     let xc = if close_hovered {
         pal.close_hover_fg
@@ -485,22 +503,22 @@ fn draw_close_x(
     } else {
         pal.close_inactive_fg
     };
-    let inset = 6.0;
+    let inset = 6.0 * scale;
     let x1 = cr.x + inset;
     let y1 = cr.y + inset;
     let x2 = cr.x + cr.w - inset;
     let y2 = cr.y + cr.h - inset;
-    painter.line(x1, y1, x2, y2, 1.5, xc);
-    painter.line(x2, y1, x1, y2, 1.5, xc);
+    painter.line(x1, y1, x2, y2, 1.5 * scale, xc);
+    painter.line(x2, y1, x1, y2, 1.5 * scale, xc);
 }
 
 /// Truncate the title to fit within `max_w` pixels, appending an ellipsis
 /// if any characters were dropped. Uses the same per-char width assumption
 /// as the layout / cursor code so the visual fit matches what we measured.
-fn truncate_title(title: &str, max_w: f32) -> String {
+fn truncate_title(title: &str, max_w: f32, scale: f32) -> String {
     let chars: Vec<char> = title.chars().collect();
     // How many full characters fit, leaving space for the ellipsis if needed.
-    let max_chars = (max_w / CHAR_W).floor() as usize;
+    let max_chars = (max_w / (CHAR_W * scale)).floor() as usize;
     if chars.len() <= max_chars {
         return title.to_string();
     }
@@ -534,6 +552,9 @@ pub fn draw_tab_context_menu(
         return;
     }
 
+    let scale = state.scale;
+    let menu_width = CTX_MENU_WIDTH * scale;
+    let item_height = CTX_ITEM_HEIGHT * scale;
     let pal = palette(mode);
 
     let is_pinned = tabs[tab_idx].pinned;
@@ -543,9 +564,9 @@ pub fn draw_tab_context_menu(
         &["Rename", "Pin tab", "Close tab"]
     };
     let item_count = items.len();
-    let h = 12.0 + item_count as f32 * CTX_ITEM_HEIGHT + 12.0;
-    let x = if mx + CTX_MENU_WIDTH > screen_w as f32 {
-        mx - CTX_MENU_WIDTH
+    let h = 12.0 * scale + item_count as f32 * item_height + 12.0 * scale;
+    let x = if mx + menu_width > screen_w as f32 {
+        mx - menu_width
     } else {
         mx
     }
@@ -556,41 +577,41 @@ pub fn draw_tab_context_menu(
         my
     }
     .max(0.0);
-    let menu = Rect::new(x, y, CTX_MENU_WIDTH, h);
+    let menu = Rect::new(x, y, menu_width, h);
 
     // Shadow + bg
     painter.rect_filled(
-        Rect::new(menu.x + 2.0, menu.y + 2.0, menu.w, menu.h),
-        6.0,
+        Rect::new(menu.x + 2.0 * scale, menu.y + 2.0 * scale, menu.w, menu.h),
+        6.0 * scale,
         pal.ctx_shadow,
     );
-    painter.rect_filled(menu, 6.0, pal.ctx_bg);
+    painter.rect_filled(menu, 6.0 * scale, pal.ctx_bg);
     painter.rect_filled(
-        Rect::new(menu.x + 3.0, menu.y, menu.w - 6.0, 1.0),
+        Rect::new(menu.x + 3.0 * scale, menu.y, menu.w - 6.0 * scale, 1.0 * scale),
         0.0,
         pal.ctx_top_line,
     );
 
-    let mut iy = menu.y + 8.0;
-    let font = 18.0;
+    let mut iy = menu.y + 8.0 * scale;
+    let font = 18.0 * scale;
     for label in items {
-        let item_rect = Rect::new(menu.x + 4.0, iy, menu.w - 8.0, CTX_ITEM_HEIGHT);
+        let item_rect = Rect::new(menu.x + 4.0 * scale, iy, menu.w - 8.0 * scale, item_height);
         let hovered = hit(item_rect, cursor_pos);
         if hovered {
-            painter.rect_filled(item_rect, 4.0, pal.ctx_highlight);
+            painter.rect_filled(item_rect, 4.0 * scale, pal.ctx_highlight);
         }
         let lc = if hovered { pal.text } else { pal.muted };
         text.queue(
             label,
             font,
-            menu.x + 16.0,
-            iy + (CTX_ITEM_HEIGHT - font) / 2.0,
+            menu.x + 16.0 * scale,
+            iy + (item_height - font) / 2.0,
             lc,
-            CTX_MENU_WIDTH - 32.0,
+            menu_width - 32.0 * scale,
             screen_w,
             screen_h,
         );
-        iy += CTX_ITEM_HEIGHT;
+        iy += item_height;
     }
 }
 
@@ -609,6 +630,9 @@ pub fn handle_click(
     bounds: Rect,
     screen_w: u32,
 ) -> TabBarAction {
+    let scale = state.scale;
+    let menu_width = CTX_MENU_WIDTH * scale;
+    let item_height = CTX_ITEM_HEIGHT * scale;
     let (px, _py) = match cursor_pos {
         Some(p) => p,
         None => return TabBarAction::None,
@@ -622,16 +646,16 @@ pub fn handle_click(
         } else {
             &["Rename", "Pin tab", "Close tab"]
         };
-        let h = 12.0 + items.len() as f32 * CTX_ITEM_HEIGHT + 12.0;
+        let h = 12.0 * scale + items.len() as f32 * item_height + 12.0 * scale;
         let sw = screen_w as f32;
-        let x = if mx + CTX_MENU_WIDTH > sw { mx - CTX_MENU_WIDTH } else { mx }.max(0.0);
+        let x = if mx + menu_width > sw { mx - menu_width } else { mx }.max(0.0);
         let y = if my + h > sw { my - h } else { my }.max(0.0);
-        let menu = Rect::new(x, y, CTX_MENU_WIDTH, h);
+        let menu = Rect::new(x, y, menu_width, h);
 
         if hit(menu, cursor_pos) {
-            let mut iy = menu.y + 8.0;
+            let mut iy = menu.y + 8.0 * scale;
             for (i, _label) in items.iter().enumerate() {
-                let item_rect = Rect::new(menu.x + 4.0, iy, menu.w - 8.0, CTX_ITEM_HEIGHT);
+                let item_rect = Rect::new(menu.x + 4.0 * scale, iy, menu.w - 8.0 * scale, item_height);
                 if hit(item_rect, cursor_pos) {
                     state.context_menu = None;
                     return match (is_pinned, i) {
@@ -646,7 +670,7 @@ pub fn handle_click(
                         _ => TabBarAction::None,
                     };
                 }
-                iy += CTX_ITEM_HEIGHT;
+                iy += item_height;
             }
         }
         state.context_menu = None;
@@ -659,11 +683,11 @@ pub fn handle_click(
     }
 
     let titles: Vec<&str> = tabs.iter().map(|t| t.title).collect();
-    let widths = calc_tab_widths(&titles, bounds.w);
+    let widths = calc_tab_widths(&titles, bounds.w, scale);
 
     // If renaming, click-away confirms
     if let Some(idx) = state.renaming {
-        let rect = tab_rect_dynamic(idx, &widths, bounds);
+        let rect = tab_rect_dynamic(idx, &widths, bounds, scale);
         if !hit(rect, cursor_pos) {
             let name = state.rename_buf.clone();
             state.cancel_rename();
@@ -673,19 +697,19 @@ pub fn handle_click(
     }
 
     // New tab button
-    let nb = new_tab_rect(&widths, bounds);
+    let nb = new_tab_rect(&widths, bounds, scale);
     if hit(nb, cursor_pos) {
         return TabBarAction::NewTab;
     }
 
     // Tab clicks
     for i in 0..tab_count {
-        let rect = tab_rect_dynamic(i, &widths, bounds);
+        let rect = tab_rect_dynamic(i, &widths, bounds, scale);
         if hit(rect, cursor_pos) {
             // Close button
             let is_pinned = tabs.get(i).map_or(false, |t| t.pinned);
             if !is_pinned && tab_count > 1 {
-                if hit(tab_close_rect(rect), cursor_pos) {
+                if hit(tab_close_rect(rect, scale), cursor_pos) {
                     return TabBarAction::CloseTab(i);
                 }
             }
@@ -721,6 +745,7 @@ pub fn handle_right_click(
     tabs: &[TabDisplay],
     bounds: Rect,
 ) -> bool {
+    let scale = state.scale;
     let (px, py) = match cursor_pos {
         Some(p) => p,
         None => return false,
@@ -731,9 +756,9 @@ pub fn handle_right_click(
     }
 
     let titles: Vec<&str> = tabs.iter().map(|t| t.title).collect();
-    let widths = calc_tab_widths(&titles, bounds.w);
+    let widths = calc_tab_widths(&titles, bounds.w, scale);
     for i in 0..tabs.len() {
-        let rect = tab_rect_dynamic(i, &widths, bounds);
+        let rect = tab_rect_dynamic(i, &widths, bounds, scale);
         if hit(rect, cursor_pos) {
             state.context_menu = Some((i, px, py));
             return true;
@@ -749,18 +774,19 @@ pub fn handle_drag_move(
     tabs: &[TabDisplay],
     bounds: Rect,
 ) -> Option<TabBarAction> {
+    let scale = state.scale;
     let dragging_idx = state.dragging?;
     let delta = cursor_x - state.drag_start_x;
 
-    if !state.drag_committed && delta.abs() < 8.0 {
+    if !state.drag_committed && delta.abs() < 8.0 * scale {
         return None;
     }
     state.drag_committed = true;
     state.drag_offset_x = delta;
 
     let titles: Vec<&str> = tabs.iter().map(|t| t.title).collect();
-    let widths = calc_tab_widths(&titles, bounds.w);
-    let rect = tab_rect_dynamic(dragging_idx, &widths, bounds);
+    let widths = calc_tab_widths(&titles, bounds.w, scale);
+    let rect = tab_rect_dynamic(dragging_idx, &widths, bounds, scale);
     let dragged_center = rect.x + delta + rect.w / 2.0;
 
     // Check if we crossed into an adjacent tab
@@ -768,7 +794,7 @@ pub fn handle_drag_move(
         if i == dragging_idx {
             continue;
         }
-        let other = tab_rect_dynamic(i, &widths, bounds);
+        let other = tab_rect_dynamic(i, &widths, bounds, scale);
         let other_center = other.x + other.w / 2.0;
         if (i < dragging_idx && dragged_center < other_center)
             || (i > dragging_idx && dragged_center > other_center)

@@ -53,6 +53,60 @@ if [[ "${1:-}" == "--files" ]]; then
     exec python3 "$FILES_VIEW" "$@"
 fi
 
+# ── ASCII art gallery ─────────────────────────────────────────────────────────
+if [[ "${1:-}" == "--art" ]]; then
+    # Pre-baked colored ASCII art (installed or dev-tree). Pure cat — no deps.
+    if [[ -d /usr/share/lntrn/art ]]; then
+        ART_DIR="/usr/share/lntrn/art"
+    else
+        SCRIPT_PATH="$(readlink -f "$0")"
+        SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+        ART_DIR="$SCRIPT_DIR/art"
+    fi
+    shift
+    # A name plus an optional --clean/-c flag, in any order.
+    NAME=""
+    CLEAN=0
+    for a in "$@"; do
+        case "$a" in
+            --clean|-c) CLEAN=1 ;;
+            -*)         echo "Error: unknown art option '$a'" >&2; exit 1 ;;
+            *)          [[ -z "$NAME" ]] && NAME="$a" ;;
+        esac
+    done
+    if [[ -z "$NAME" ]]; then
+        echo "Available art:"
+        shopt -s nullglob
+        found=0
+        for f in "$ART_DIR"/*.ans; do
+            echo "  $(basename "$f" .ans)"
+            found=1
+        done
+        shopt -u nullglob
+        [[ "$found" == 0 ]] && echo "  (none yet — generate with lntrn-art-gen)"
+        echo
+        echo "Usage: lntrn --art <name> [--clean]"
+        echo "  --clean   fullscreen, no prompt — press any key to exit (for screenshots)"
+        exit 0
+    fi
+    ART_FILE="$ART_DIR/$NAME.ans"
+    if [[ ! -f "$ART_FILE" ]]; then
+        echo "Error: no art named '$NAME' (try: lntrn --art)" >&2
+        exit 1
+    fi
+    if [[ "$CLEAN" == 1 ]]; then
+        # Alternate screen + hidden cursor → just the art, no prompt. Restored
+        # on any exit (keypress, Ctrl+C). Perfect for ricing screenshots.
+        trap 'printf "\033[?25h\033[?1049l"' EXIT
+        printf '\033[?1049h\033[H\033[2J\033[?25l'
+        cat "$ART_FILE"
+        read -rsn1 </dev/tty || true
+    else
+        cat "$ART_FILE"
+    fi
+    exit 0
+fi
+
 # ── Resolve icon path ─────────────────────────────────────────────────────────
 # Check installed location first, then dev tree
 if [[ -f /usr/share/lntrn/lntrn.png ]]; then

@@ -18,9 +18,10 @@
 
 use smithay::utils::{Logical, Point, Size};
 
-/// Full (selected) card footprint, logical px.
-pub const CARD_W: i32 = 600;
-pub const CARD_H: i32 = 390;
+/// Full (selected) card footprint, logical px. (+25% over the original
+/// 600x390 — bigger, easier-to-read previews.)
+pub const CARD_W: i32 = 750;
+pub const CARD_H: i32 = 488;
 /// Scale applied to non-selected cards.
 pub const SIDE_SCALE: f32 = 0.72;
 /// Gap between adjacent card footprints, logical px.

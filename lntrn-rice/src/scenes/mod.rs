@@ -4,16 +4,25 @@ use crate::app::FrameCtx;
 
 mod clock;
 mod empty;
+mod matrix;
+mod pipes;
 
 pub use clock::Clock;
 pub use empty::Empty;
+pub use matrix::Matrix;
+pub use pipes::Pipes;
 
 pub trait Scene {
     fn draw(&mut self, painter: &mut Painter, text: &mut TextRenderer, ctx: &FrameCtx);
 }
 
 pub fn all() -> Vec<Box<dyn Scene>> {
-    vec![Box::new(Empty), Box::new(Clock)]
+    vec![
+        Box::new(Empty),
+        Box::new(Clock),
+        Box::new(Pipes::new()),
+        Box::new(Matrix::new()),
+    ]
 }
 
 pub fn draw_theme_background(painter: &mut Painter, ctx: &FrameCtx) {

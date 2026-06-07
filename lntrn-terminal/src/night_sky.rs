@@ -50,10 +50,10 @@ const BTN_RADIUS: f32 = 10.0;
 const BTN_THICK: f32 = 1.5;
 const ICON_SIZE: f32 = 4.0;
 
-fn btn_positions(w: f32) -> (f32, f32, f32, f32) {
-    let y = crate::ui_chrome::TITLE_BAR_HEIGHT * 0.5;
-    // Compact controls pulled in from the right edge, ~30px apart.
-    (w - 30.0, w - 60.0, w - 90.0, y)
+fn btn_positions(w: f32, scale: f32) -> (f32, f32, f32, f32) {
+    let y = crate::ui_chrome::TITLE_BAR_HEIGHT * 0.5 * scale;
+    // Compact controls pulled in from the right edge, ~30px apart (logical).
+    (w - 30.0 * scale, w - 60.0 * scale, w - 90.0 * scale, y)
 }
 
 fn dist(cx: f32, cy: f32, bx: f32, by: f32) -> f32 {
@@ -92,48 +92,52 @@ impl ControlPalette {
 }
 
 /// Draw window control buttons (close, maximize, minimize).
-pub fn draw_controls(p: &mut Painter, cursor: Option<(f32, f32)>, w: f32, pal: &ControlPalette) {
-    let (close_x, max_x, min_x, btn_y) = btn_positions(w);
+pub fn draw_controls(p: &mut Painter, cursor: Option<(f32, f32)>, w: f32, pal: &ControlPalette, scale: f32) {
+    let (close_x, max_x, min_x, btn_y) = btn_positions(w, scale);
     let (cx, cy) = cursor.unwrap_or((-1.0, -1.0));
+    let radius = BTN_RADIUS * scale;
+    let icon = ICON_SIZE * scale;
+    let thick = BTN_THICK * scale;
 
     // Close — X
-    let hov = dist(cx, cy, close_x, btn_y) < BTN_RADIUS;
+    let hov = dist(cx, cy, close_x, btn_y) < radius;
     if hov {
-        p.circle_filled(close_x, btn_y, BTN_RADIUS, pal.close_bg);
+        p.circle_filled(close_x, btn_y, radius, pal.close_bg);
     }
     let ic = if hov { pal.close_icon } else { pal.icon };
-    p.line(close_x - ICON_SIZE, btn_y - ICON_SIZE, close_x + ICON_SIZE, btn_y + ICON_SIZE, BTN_THICK, ic);
-    p.line(close_x - ICON_SIZE, btn_y + ICON_SIZE, close_x + ICON_SIZE, btn_y - ICON_SIZE, BTN_THICK, ic);
+    p.line(close_x - icon, btn_y - icon, close_x + icon, btn_y + icon, thick, ic);
+    p.line(close_x - icon, btn_y + icon, close_x + icon, btn_y - icon, thick, ic);
 
     // Maximize — square
-    let hov = dist(cx, cy, max_x, btn_y) < BTN_RADIUS;
+    let hov = dist(cx, cy, max_x, btn_y) < radius;
     if hov {
-        p.circle_filled(max_x, btn_y, BTN_RADIUS, pal.hover_bg);
+        p.circle_filled(max_x, btn_y, radius, pal.hover_bg);
     }
     let ic = if hov { pal.icon_hover } else { pal.icon };
     p.rect_stroke_sdf(
-        Rect::new(max_x - ICON_SIZE, btn_y - ICON_SIZE, ICON_SIZE * 2.0, ICON_SIZE * 2.0),
-        1.5, BTN_THICK, ic,
+        Rect::new(max_x - icon, btn_y - icon, icon * 2.0, icon * 2.0),
+        1.5 * scale, thick, ic,
     );
 
     // Minimize — line
-    let hov = dist(cx, cy, min_x, btn_y) < BTN_RADIUS;
+    let hov = dist(cx, cy, min_x, btn_y) < radius;
     if hov {
-        p.circle_filled(min_x, btn_y, BTN_RADIUS, pal.hover_bg);
+        p.circle_filled(min_x, btn_y, radius, pal.hover_bg);
     }
     let ic = if hov { pal.icon_hover } else { pal.icon };
-    p.line(min_x - ICON_SIZE, btn_y, min_x + ICON_SIZE, btn_y, BTN_THICK, ic);
+    p.line(min_x - icon, btn_y, min_x + icon, btn_y, thick, ic);
 }
 
 /// Hit-test window controls. Returns Some(zone_id) matching ui_chrome zone constants.
-pub fn hit_test_controls(cursor: (f32, f32), w: f32) -> Option<u32> {
-    let (close_x, max_x, min_x, btn_y) = btn_positions(w);
+pub fn hit_test_controls(cursor: (f32, f32), w: f32, scale: f32) -> Option<u32> {
+    let (close_x, max_x, min_x, btn_y) = btn_positions(w, scale);
     let (cx, cy) = cursor;
-    if dist(cx, cy, close_x, btn_y) < BTN_RADIUS {
+    let radius = BTN_RADIUS * scale;
+    if dist(cx, cy, close_x, btn_y) < radius {
         Some(10) // ZONE_CLOSE
-    } else if dist(cx, cy, max_x, btn_y) < BTN_RADIUS {
+    } else if dist(cx, cy, max_x, btn_y) < radius {
         Some(11) // ZONE_MAXIMIZE
-    } else if dist(cx, cy, min_x, btn_y) < BTN_RADIUS {
+    } else if dist(cx, cy, min_x, btn_y) < radius {
         Some(12) // ZONE_MINIMIZE
     } else {
         None

@@ -144,7 +144,6 @@ fn route_panel_click(
     cy: f32,
 ) {
     match active_panel {
-        Panel::Home => {}
         Panel::Themes | Panel::Animations => {
             crate::appearance_panel::handle_appearance_click(
                 config, panel_state, zone_id, cx, cy,
@@ -155,7 +154,7 @@ fn route_panel_click(
         Panel::LidIdle | Panel::Battery | Panel::WifiPower => {
             power_panel::handle_power_click(config, panel_state, zone_id, cx, cy);
         }
-        Panel::Monitors | Panel::Wallpaper => {
+        Panel::Monitors => {
             display_panel::handle_display_click(
                 config, display_state, zone_id, cx, cy, &state.output_mgr,
             );

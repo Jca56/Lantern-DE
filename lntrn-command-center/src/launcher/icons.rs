@@ -129,7 +129,18 @@ fn icon_dirs() -> Vec<String> {
 
     // User-local freedesktop themes.
     dirs.push(format!("{home}/.local/share/icons/Tela/scalable/apps"));
-    dirs.push(format!("{home}/.local/share/icons/hicolor/scalable/apps"));
+    // User-local hicolor — scan every sized subdir, not just scalable.
+    // Steam writes game icons here as PNGs (`steam_icon_<appid>.png`) at
+    // sizes like 256/48/32/16 and NEVER in scalable, so without the sized
+    // dirs every Steam game resolves to a blank icon. Largest-first so we
+    // pick up the sharpest available size (coverage varies per game — some
+    // only ship a 32x32, so we have to go all the way down to 16x16).
+    for size in [
+        "scalable", "512x512", "256x256", "128x128", "96x96", "64x64",
+        "48x48", "32x32", "24x24", "16x16",
+    ] {
+        dirs.push(format!("{home}/.local/share/icons/hicolor/{size}/apps"));
+    }
     dirs.push(format!("{home}/.icons"));
 
     // Flatpak icon exports — system-wide and per-user. Flatpak apps
@@ -381,19 +392,13 @@ fn rasterize_png(data: &[u8], w: u32, h: u32) -> Option<Vec<u8>> {
     if src_w == w && src_h == h {
         return Some(rgba);
     }
-    let mut out = vec![0u8; (w * h * 4) as usize];
-    for y in 0..h {
-        for x in 0..w {
-            let sx = (x as f32 * src_w as f32 / w as f32) as u32;
-            let sy = (y as f32 * src_h as f32 / h as f32) as u32;
-            let si = ((sy * src_w + sx) * 4) as usize;
-            let di = ((y * w + x) * 4) as usize;
-            if si + 3 < rgba.len() {
-                out[di..di + 4].copy_from_slice(&rgba[si..si + 4]);
-            }
-        }
-    }
-    Some(out)
+    // Bilinear (Triangle) resize instead of nearest-neighbor so the small
+    // PNGs many Steam games ship (often only a 32x32) don't come out blocky
+    // when scaled up to the panel's icon size. Icons and our target are both
+    // square, so a straight stretch preserves the aspect ratio.
+    let src = image::RgbaImage::from_raw(src_w, src_h, rgba)?;
+    let resized = image::imageops::resize(&src, w, h, image::imageops::FilterType::Triangle);
+    Some(resized.into_raw())
 }
 
 /// Convert in-place from premultiplied RGBA to straight alpha.

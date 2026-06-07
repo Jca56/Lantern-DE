@@ -29,12 +29,17 @@ struct TextLayoutKey {
     text: String,
     font_size_bits: u32,
     max_width_bits: u32,
-    color: [u8; 4],
     weight: u8,
     style: u8,
     /// Empty string => use the renderer's default (Monospace or SansSerif).
     family: String,
 }
+// NOTE: color is deliberately NOT part of this key. Shaping/layout is
+// color-independent, so cached buffers are colorless and the real color is
+// applied at render time via `TextArea.default_color`. Keying on color would
+// multiply the cache by every distinct RGBA — e.g. a per-pixel-colored ASCII
+// image floods past MAX_CACHED_LAYOUTS, evicting glyphs still queued for the
+// current frame, which then get silently dropped at render. Don't add it back.
 
 /// Snap a float to a 1/4-pixel grid before it lands in a cache key.
 /// Callers like the command-center animate font sizes / widths by
@@ -216,12 +221,10 @@ impl TextRenderer {
         style: FontStyle,
     ) -> f32 {
         let font_size = quantize_px(font_size);
-        let color = GlyphonColor::rgba(0, 0, 0, 0);
         let key = TextLayoutKey {
             text: text.to_string(),
             font_size_bits: font_size.to_bits(),
             max_width_bits: 10000.0_f32.to_bits(),
-            color: [0, 0, 0, 0],
             weight: weight as u8,
             style: style as u8,
             family: String::new(),
@@ -236,7 +239,7 @@ impl TextRenderer {
 
         self.evict_one_if_needed();
         let buffer = create_styled_layout(
-            &mut self.font_system, text, font_size, 10000.0, color,
+            &mut self.font_system, text, font_size, 10000.0,
             self.monospace, weight, style, None,
         );
         let w = layout_width(&buffer);
@@ -284,7 +287,6 @@ impl TextRenderer {
             text: text.to_string(),
             font_size_bits: font_size.to_bits(),
             max_width_bits: max_width.to_bits(),
-            color: [glyph_color.r(), glyph_color.g(), glyph_color.b(), glyph_color.a()],
             weight: weight as u8,
             style: style as u8,
             family: String::new(),
@@ -301,7 +303,7 @@ impl TextRenderer {
 
             let buffer = create_styled_layout(
                 &mut self.font_system,
-                text, font_size, max_width, glyph_color,
+                text, font_size, max_width,
                 self.monospace, weight, style, None,
             );
             self.layouts.insert(
@@ -328,7 +330,7 @@ impl TextRenderer {
             bounds_top: bt,
             bounds_right: br,
             bounds_bottom: bb,
-            default_color: GlyphonColor::rgb(255, 255, 255),
+            default_color: glyph_color,
         });
     }
 
@@ -344,12 +346,10 @@ impl TextRenderer {
         family: Option<&str>,
     ) -> f32 {
         let font_size = quantize_px(font_size);
-        let color = GlyphonColor::rgba(0, 0, 0, 0);
         let key = TextLayoutKey {
             text: text.to_string(),
             font_size_bits: font_size.to_bits(),
             max_width_bits: 10000.0_f32.to_bits(),
-            color: [0, 0, 0, 0],
             weight: weight as u8,
             style: style as u8,
             family: family.unwrap_or("").to_string(),
@@ -361,7 +361,7 @@ impl TextRenderer {
         }
         self.evict_one_if_needed();
         let buffer = create_styled_layout(
-            &mut self.font_system, text, font_size, 10000.0, color,
+            &mut self.font_system, text, font_size, 10000.0,
             self.monospace, weight, style, family.filter(|f| !f.is_empty()),
         );
         let w = layout_width(&buffer);
@@ -394,7 +394,6 @@ impl TextRenderer {
             text: text.to_string(),
             font_size_bits: font_size.to_bits(),
             max_width_bits: max_width.to_bits(),
-            color: [glyph_color.r(), glyph_color.g(), glyph_color.b(), glyph_color.a()],
             weight: weight as u8,
             style: style as u8,
             family: family.unwrap_or("").to_string(),
@@ -407,7 +406,7 @@ impl TextRenderer {
             self.cache_misses = self.cache_misses.saturating_add(1);
             self.evict_one_if_needed();
             let buffer = create_styled_layout(
-                &mut self.font_system, text, font_size, max_width, glyph_color,
+                &mut self.font_system, text, font_size, max_width,
                 self.monospace, weight, style, family.filter(|f| !f.is_empty()),
             );
             self.layouts.insert(key.clone(), CachedLayout { buffer, last_used: self.use_tick });
@@ -426,7 +425,7 @@ impl TextRenderer {
             bounds_top: bt,
             bounds_right: br,
             bounds_bottom: bb,
-            default_color: GlyphonColor::rgb(255, 255, 255),
+            default_color: glyph_color,
         });
     }
 
@@ -434,12 +433,10 @@ impl TextRenderer {
     /// Falls back to the renderer default if the family isn't installed.
     pub fn measure_width_family(&mut self, text: &str, font_size: f32, family: &str) -> f32 {
         let font_size = quantize_px(font_size);
-        let color = GlyphonColor::rgba(0, 0, 0, 0);
         let key = TextLayoutKey {
             text: text.to_string(),
             font_size_bits: font_size.to_bits(),
             max_width_bits: 10000.0_f32.to_bits(),
-            color: [0, 0, 0, 0],
             weight: FontWeight::Normal as u8,
             style: FontStyle::Normal as u8,
             family: family.to_string(),
@@ -451,12 +448,69 @@ impl TextRenderer {
         }
         self.evict_one_if_needed();
         let buffer = create_styled_layout(
-            &mut self.font_system, text, font_size, 10000.0, color,
+            &mut self.font_system, text, font_size, 10000.0,
             self.monospace, FontWeight::Normal, FontStyle::Normal, Some(family),
         );
         let w = layout_width(&buffer);
         self.layouts.insert(key, CachedLayout { buffer, last_used: self.use_tick });
         w
+    }
+
+    /// Measure the actual rendered *ink* bounds of `text` at `font_size` with
+    /// `family` — the visible pixel extent, not the padded line box. Returns
+    /// `(ink_height, ink_top)` in pixels, where `ink_top` is the offset from the
+    /// layout origin (the `y` passed to `queue_family`) down to the first visible
+    /// pixel. Lets callers fit text by its visible size and center it precisely
+    /// (e.g. display/7-segment fonts that have lots of ascent/descent air).
+    /// Returns `(0.0, 0.0)` when nothing rasterizes (e.g. whitespace only).
+    pub fn measure_ink_height_family(&mut self, text: &str, font_size: f32, family: &str) -> (f32, f32) {
+        let font_size = quantize_px(font_size);
+        let key = TextLayoutKey {
+            text: text.to_string(),
+            font_size_bits: font_size.to_bits(),
+            max_width_bits: 10000.0_f32.to_bits(),
+            weight: FontWeight::Normal as u8,
+            style: FontStyle::Normal as u8,
+            family: family.to_string(),
+        };
+        self.use_tick = self.use_tick.wrapping_add(1).max(1);
+        if let Some(layout) = self.layouts.get_mut(&key) {
+            layout.last_used = self.use_tick;
+        } else {
+            self.evict_one_if_needed();
+            let buffer = create_styled_layout(
+                &mut self.font_system, text, font_size, 10000.0,
+                self.monospace, FontWeight::Normal, FontStyle::Normal, Some(family),
+            );
+            self.layouts.insert(key.clone(), CachedLayout { buffer, last_used: self.use_tick });
+        }
+
+        // Split-borrow so we can read the cached buffer while rasterizing glyphs
+        // through the swash cache (disjoint fields).
+        let Self { layouts, swash_cache, font_system, .. } = self;
+        let buffer = match layouts.get(&key) {
+            Some(l) => &l.buffer,
+            None => return (0.0, 0.0),
+        };
+        let (mut min_top, mut max_bottom) = (f32::MAX, f32::MIN);
+        for run in buffer.layout_runs() {
+            for g in run.glyphs {
+                let pg = g.physical((0.0, 0.0), 1.0);
+                if let Some(img) = swash_cache.get_image(font_system, pg.cache_key) {
+                    if img.placement.height == 0 {
+                        continue;
+                    }
+                    let top = run.line_y - img.placement.top as f32;
+                    min_top = min_top.min(top);
+                    max_bottom = max_bottom.max(top + img.placement.height as f32);
+                }
+            }
+        }
+        if max_bottom <= min_top {
+            (0.0, 0.0)
+        } else {
+            (max_bottom - min_top, min_top)
+        }
     }
 
     /// Queue text using a specific font family (e.g. `"Digital-7"`).
@@ -481,7 +535,6 @@ impl TextRenderer {
             text: text.to_string(),
             font_size_bits: font_size.to_bits(),
             max_width_bits: max_width.to_bits(),
-            color: [glyph_color.r(), glyph_color.g(), glyph_color.b(), glyph_color.a()],
             weight: FontWeight::Normal as u8,
             style: FontStyle::Normal as u8,
             family: family.to_string(),
@@ -494,7 +547,7 @@ impl TextRenderer {
             self.cache_misses = self.cache_misses.saturating_add(1);
             self.evict_one_if_needed();
             let buffer = create_styled_layout(
-                &mut self.font_system, text, font_size, max_width, glyph_color,
+                &mut self.font_system, text, font_size, max_width,
                 self.monospace, FontWeight::Normal, FontStyle::Normal, Some(family),
             );
             self.layouts.insert(key.clone(), CachedLayout { buffer, last_used: self.use_tick });
@@ -509,7 +562,7 @@ impl TextRenderer {
             x, y,
             line_height: font_size * 1.2,
             bounds_left: bl, bounds_top: bt, bounds_right: br, bounds_bottom: bb,
-            default_color: GlyphonColor::rgb(255, 255, 255),
+            default_color: glyph_color,
         });
     }
 
@@ -533,7 +586,6 @@ impl TextRenderer {
             text: text.to_string(),
             font_size_bits: font_size.to_bits(),
             max_width_bits: max_width.to_bits(),
-            color: [glyph_color.r(), glyph_color.g(), glyph_color.b(), glyph_color.a()],
             weight: 0,
             style: 0,
             family: String::new(),
@@ -553,7 +605,6 @@ impl TextRenderer {
                 text,
                 font_size,
                 max_width,
-                glyph_color,
                 self.monospace,
             );
             self.layouts.insert(
@@ -574,7 +625,7 @@ impl TextRenderer {
             bounds_top: clip[1] as i32,
             bounds_right: (clip[0] + clip[2]) as i32,
             bounds_bottom: (clip[1] + clip[3]) as i32,
-            default_color: GlyphonColor::rgb(255, 255, 255),
+            default_color: glyph_color,
         });
     }
 
@@ -763,21 +814,22 @@ fn create_layout_buffer(
     text: &str,
     font_size: f32,
     max_width: f32,
-    color: GlyphonColor,
     monospace: bool,
 ) -> Buffer {
     create_styled_layout(
-        font_system, text, font_size, max_width, color,
+        font_system, text, font_size, max_width,
         monospace, FontWeight::Normal, FontStyle::Normal, None,
     )
 }
 
+// Color is intentionally not baked into the shaped buffer — it's applied at
+// render time via `TextArea.default_color` so one colorless layout serves every
+// color. See the note on `TextLayoutKey`.
 fn create_styled_layout(
     font_system: &mut FontSystem,
     text: &str,
     font_size: f32,
     max_width: f32,
-    color: GlyphonColor,
     monospace: bool,
     weight: FontWeight,
     style: FontStyle,
@@ -801,7 +853,7 @@ fn create_styled_layout(
     buffer.set_text(
         font_system,
         text,
-        &Attrs::new().family(family).color(color).weight(w).style(s),
+        &Attrs::new().family(family).weight(w).style(s),
         Shaping::Advanced,
         None,
     );

@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+# ── lntrn-art-gen ─────────────────────────────────────────────────────────────
+# Convert an image into colored ASCII art for the terminal.
+#
+# Maps pixel luminance to an ASCII brightness ramp and tints each glyph with the
+# pixel's real 24-bit color, baking ANSI escapes straight into a .ans file so
+# `lntrn --art <name>` can `cat` it instantly with zero runtime dependencies.
+#
+# Transparent / near-empty pixels become spaces, so a cut-out subject floats on
+# the terminal background — perfect for ricing splashes.
+#
+# Dependencies: python3, python-pillow  (only needed to GENERATE, not to display)
+#
+# Usage:
+#   lntrn-art-gen INPUT.png OUTPUT.ans [options]
+#
+# Options:
+#   --width N        target column count               (default 72)
+#   --height N       clamp to at most N rows            (default: auto)
+#   --ramp STR       sparse→dense glyphs               (default " .:-=+*#%@")
+#   --cell-aspect F  terminal cell height/width ratio   (default 2.0)
+#   --gamma F        contrast curve on luminance        (default 0.85)
+#   --saturate F     color saturation multiplier        (default 1.32)
+#   --brighten F     color brightness multiplier        (default 1.22)
+#   --floor N        lift opaque blacks to >= this value (default 64)
+#   --min-ink N      lowest ramp index for opaque pixels (default 4)
+#   --alpha N        alpha below this is transparent     (default 96)
+#   --card           fill each cell's background with a darkened version of its
+#                    color (glyph on top). Renders solid like the lantern art —
+#                    needed for terminals that drop foreground-only glyphs.
+#   --card-dark F    background darkness factor for --card  (default 0.30)
+#   --keep-bg        render the background instead of cutting it out
+#   --no-crop        skip auto-crop to the subject's bounding box
+# ──────────────────────────────────────────────────────────────────────────────
+
+import sys
+
+try:
+    from PIL import Image
+except ImportError:
+    sys.stderr.write("lntrn-art-gen: needs python-pillow (pip install pillow)\n")
+    sys.exit(1)
+
+
+DEFAULTS = {
+    "width": 72,
+    "height": None,
+    "ramp": " .:-=+*#%@",
+    "cell_aspect": 2.0,
+    "gamma": 0.85,
+    "saturate": 1.32,
+    "brighten": 1.22,
+    "floor": 64,
+    "min_ink": 4,
+    "alpha": 96,
+    "card": False,
+    "card_dark": 0.30,
+    "keep_bg": False,
+    "no_crop": False,
+}
+
+
+def parse_args(argv):
+    if len(argv) < 2:
+        sys.stderr.write(__doc__ or "usage: lntrn-art-gen INPUT OUTPUT [options]\n")
+        sys.stderr.write("usage: lntrn-art-gen INPUT.png OUTPUT.ans [options]\n")
+        sys.exit(2)
+    inp, out = argv[0], argv[1]
+    opts = dict(DEFAULTS)
+    i = 2
+    flags = {"--keep-bg": "keep_bg", "--no-crop": "no_crop", "--card": "card"}
+    vals = {
+        "--width": ("width", int), "--height": ("height", int),
+        "--ramp": ("ramp", str), "--cell-aspect": ("cell_aspect", float),
+        "--gamma": ("gamma", float), "--saturate": ("saturate", float),
+        "--brighten": ("brighten", float), "--floor": ("floor", int),
+        "--min-ink": ("min_ink", int), "--alpha": ("alpha", int),
+        "--card-dark": ("card_dark", float),
+    }
+    while i < len(argv):
+        a = argv[i]
+        if a in flags:
+            opts[flags[a]] = True
+            i += 1
+        elif a in vals:
+            key, cast = vals[a]
+            opts[key] = cast(argv[i + 1])
+            i += 2
+        else:
+            sys.stderr.write(f"lntrn-art-gen: unknown option '{a}'\n")
+            sys.exit(2)
+    return inp, out, opts
+
+
+def autocrop(img, alpha_thresh):
+    """Crop to the bounding box of pixels that are visibly opaque."""
+    a = img.split()[3]
+    mask = a.point(lambda v: 255 if v >= alpha_thresh else 0)
+    bbox = mask.getbbox()
+    return img.crop(bbox) if bbox else img
+
+
+def adjust(r, g, b, saturate, brighten, floor):
+    """Saturate + brighten a color, then lift it off pure black so dark
+    opaque pixels (line art) stay visible on a dark terminal."""
+    if saturate != 1.0:
+        gray = 0.2126 * r + 0.7152 * g + 0.0722 * b
+        r = gray + (r - gray) * saturate
+        g = gray + (g - gray) * saturate
+        b = gray + (b - gray) * saturate
+    r, g, b = r * brighten, g * brighten, b * brighten
+    out = []
+    for c in (r, g, b):
+        c = floor + c * (255 - floor) / 255  # compress range up off black
+        out.append(max(0, min(255, int(c + 0.5))))
+    return out[0], out[1], out[2]
+
+
+def main():
+    inp, out, o = parse_args(sys.argv[1:])
+
+    try:
+        img = Image.open(inp).convert("RGBA")
+    except Exception as e:  # noqa: BLE001
+        sys.stderr.write(f"lntrn-art-gen: cannot open {inp}: {e}\n")
+        sys.exit(1)
+
+    if not o["no_crop"]:
+        img = autocrop(img, o["alpha"])
+
+    cols = max(1, o["width"])
+    rows = max(1, round(cols * img.height / img.width / o["cell_aspect"]))
+    if o["height"]:
+        rows = min(rows, o["height"])
+        # re-derive cols if height is the binding constraint, preserving aspect
+        fit_cols = round(rows * o["cell_aspect"] * img.width / img.height)
+        cols = min(cols, max(1, fit_cols))
+
+    img = img.resize((cols, rows), Image.LANCZOS)
+    px = img.load()
+
+    ramp = o["ramp"]
+    last = len(ramp) - 1
+    inv_gamma = 1.0 / o["gamma"] if o["gamma"] else 1.0
+    # Opaque pixels never fall below this ramp index, so the subject renders as a
+    # solid figure instead of fragmenting into faint dots on a dark terminal.
+    min_ink = max(0, min(last, o["min_ink"]))
+    span = last - min_ink
+    card = o["card"]
+    cd = o["card_dark"]
+
+    lines = []
+    for y in range(rows):
+        parts = []
+        cur_fg = None  # last emitted fg (r,g,b) for run-length escape suppression
+        cur_bg = None  # last emitted bg (r,g,b)
+        trailing = 0  # pending spaces, only flushed if real content follows
+        for x in range(cols):
+            r, g, b, a = px[x, y]
+            lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0
+            if not o["keep_bg"] and a < o["alpha"]:
+                trailing += 1
+                continue
+            idx = min_ink + int((lum ** inv_gamma) * span + 0.5)
+            glyph = ramp[max(0, min(last, idx))]
+            if glyph == " ":
+                trailing += 1
+                continue
+            if trailing:
+                # reset before the gap so a card background never bleeds across it
+                parts.append("\033[0m" + " " * trailing)
+                trailing = 0
+                cur_fg = cur_bg = None
+            cr, cg, cb = adjust(r, g, b, o["saturate"], o["brighten"], o["floor"])
+            if card:
+                bg = (max(10, int(r * cd)), max(8, int(g * cd)), max(8, int(b * cd)))
+                if bg != cur_bg:
+                    parts.append(f"\033[48;2;{bg[0]};{bg[1]};{bg[2]}m")
+                    cur_bg = bg
+            if (cr, cg, cb) != cur_fg:
+                parts.append(f"\033[38;2;{cr};{cg};{cb}m")
+                cur_fg = (cr, cg, cb)
+            parts.append(glyph)
+        parts.append("\033[0m")
+        lines.append("".join(parts))
+
+    art = "\n".join(lines) + "\n"
+    try:
+        with open(out, "w", encoding="utf-8") as f:
+            f.write(art)
+    except OSError as e:
+        sys.stderr.write(f"lntrn-art-gen: cannot write {out}: {e}\n")
+        sys.exit(1)
+
+    sys.stderr.write(f"lntrn-art-gen: wrote {out}  ({cols}x{rows} cells)\n")
+
+
+if __name__ == "__main__":
+    main()

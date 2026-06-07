@@ -43,7 +43,6 @@ mod config;
 mod display_panel;
 mod hdr_client;
 mod hdr_panel;
-mod home_panel;
 mod monitor_settings;
 mod output_manager;
 mod icon_panel;

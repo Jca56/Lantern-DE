@@ -318,30 +318,47 @@ impl Lantern {
                     }
                 }
 
-                // Super+Up / Super+Down — grow / shrink through size stages.
-                // Free windows resize aspect-locked AND re-centre (the classic
-                // centre resize — also how you pull a window back to the
-                // middle); edge-snapped windows pin their snapped edge.
-                // Super+Left/Right are left for clients.
+                // Super+Arrow — the window-shape basics (focused window only,
+                // always re-centred):
+                //   Up   : grow one size stage    Down : shrink one size stage
+                //   Left : taller aspect (→4:3)   Right: wider aspect (→16:9)
+                // Up/Down scale aspect-locked through the `[windows] size_*_pct`
+                // stages; Left/Right cycle 4:3 ↔ 3:2 ↔ 16:9 keeping the height.
                 if event.state() == KeyState::Pressed
                     && _modifiers.logo && !_modifiers.shift && !_modifiers.ctrl && !_modifiers.alt
                 {
-                    let grow = match keysym.modified_sym().raw() {
-                        xkb::KEY_Up => Some(true),
-                        xkb::KEY_Down => Some(false),
-                        _ => None,
+                    let is_shape_key = match keysym.modified_sym().raw() {
+                        xkb::KEY_Up => {
+                            data.resize_focused(true);
+                            true
+                        }
+                        xkb::KEY_Down => {
+                            data.resize_focused(false);
+                            true
+                        }
+                        xkb::KEY_Left => {
+                            data.cycle_aspect_focused(false);
+                            true
+                        }
+                        xkb::KEY_Right => {
+                            data.cycle_aspect_focused(true);
+                            true
+                        }
+                        // Non-arrow Super keys (launchers, Super+F, …) fall
+                        // through to the handlers below.
+                        _ => false,
                     };
-                    if let Some(grow) = grow {
-                        data.resize_focused(grow);
+                    if is_shape_key {
                         data.schedule_render();
                         return FilterResult::Intercept(());
                     }
                 }
 
-                // Super+Shift+Arrow — smart snap. Throw the focused window
-                // to that edge, filling the region with gaps. Repeating the
-                // same arrow cycles ½ → ⅓ → ⅔; a perpendicular arrow while
-                // edge-snapped makes a corner. Neighbours never move.
+                // Super+Shift+Arrow — MOVE the focused window one stop toward
+                // that edge (left/top ↔ centre ↔ right/bottom), keeping its
+                // exact size. Corners come from two presses. Pure placement —
+                // it NEVER resizes (size = Super+Up/Down, aspect =
+                // Super+Left/Right).
                 if event.state() == KeyState::Pressed
                     && _modifiers.logo && _modifiers.shift && !_modifiers.ctrl && !_modifiers.alt
                 {
@@ -352,32 +369,10 @@ impl Lantern {
                     }
                 }
 
-                // Super+Ctrl+Arrow — swap the focused window with the
-                // nearest neighbour in that direction (reorder). Both trade
-                // position and size.
-                if event.state() == KeyState::Pressed
-                    && _modifiers.logo && _modifiers.ctrl && !_modifiers.shift && !_modifiers.alt
-                {
-                    if let Some(arrow) = arrow_dir_from_keysym(keysym.modified_sym().raw()) {
-                        data.swap_focused(arrow);
-                        data.schedule_render();
-                        return FilterResult::Intercept(());
-                    }
-                }
-
-                // Super+Shift+Ctrl+Arrow — move the focused window to the
-                // adjacent monitor in that direction. Snapped windows
-                // re-snap on the new monitor; free windows keep size +
-                // relative position. No-op on a single display.
-                if event.state() == KeyState::Pressed
-                    && _modifiers.logo && _modifiers.shift && _modifiers.ctrl && !_modifiers.alt
-                {
-                    if let Some(arrow) = arrow_dir_from_keysym(keysym.modified_sym().raw()) {
-                        data.move_focused_to_output(arrow);
-                        data.schedule_render();
-                        return FilterResult::Intercept(());
-                    }
-                }
+                // PARKED this round: Super+Ctrl+Arrow (swap) and
+                // Super+Shift+Ctrl+Arrow (move-to-monitor). Their methods still
+                // live in window_management (smart_snap::parked, window_swap) —
+                // re-bind them here as "conditions" in a later round.
 
                 // F11 or Super+F: toggle fullscreen.
                 // - F11 alone fullscreens (let X11 Wine windows handle it themselves).
