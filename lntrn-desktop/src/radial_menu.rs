@@ -15,8 +15,9 @@ use lntrn_render::{Color, GpuContext, GpuTexture, Painter, Rect, TextRenderer, T
 
 // ── Geometry (logical px) ─────────────────────────────────────────────────────
 
-/// Orbit radius of the button centers around the cursor.
-const RING_RADIUS: f32 = 134.0;
+/// Orbit radius of the button centers around the cursor. Bigger = buttons sit
+/// farther from the hub and spread out more (button size is fixed by BUTTON_R).
+const RING_RADIUS: f32 = 184.0;
 /// Radius of each circular button.
 const BUTTON_R: f32 = 46.0;
 /// Radius of the little center hub dot.
@@ -37,32 +38,27 @@ pub const TAP_MOVE_THRESHOLD: f32 = 12.0;
 
 // ── Items ─────────────────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+/// What a ring button does when fired. Loaded from config (see `radial_config`),
+/// so the set of actions stays small and data-driven — `Launch` covers every
+/// app/command, while the two desktop-native actions are built in.
+#[derive(Clone, PartialEq, Eq)]
 pub enum RadialAction {
-    Terminal,
-    FileManager,
-    Settings,
-    Screenshot,
+    /// Run a command (program + optional whitespace-separated args), cwd = desktop.
+    Launch(String),
+    /// Create a new folder at the ring's anchor point.
     NewFolder,
+    /// Re-scan the desktop directory.
     Refresh,
 }
 
+/// One button in the ring. Owned strings so the contents can come from a config
+/// file the user edits, not just a compiled-in table.
+#[derive(Clone)]
 pub struct RadialItem {
     pub action: RadialAction,
-    pub label: &'static str,
-    pub icon: &'static str,
+    pub label: String,
+    pub icon: String,
 }
-
-/// The ring's contents, in clockwise order starting from the top.
-/// Apps cluster on the right, desktop actions on the left.
-pub const ITEMS: &[RadialItem] = &[
-    RadialItem { action: RadialAction::Terminal,    label: "Terminal",   icon: "lntrn-terminal.svg" },
-    RadialItem { action: RadialAction::FileManager, label: "Files",      icon: "lntrn-file-manager.svg" },
-    RadialItem { action: RadialAction::Settings,    label: "Settings",   icon: "lntrn-system-settings.svg" },
-    RadialItem { action: RadialAction::Screenshot,  label: "Screenshot", icon: "lntrn-screenshot.svg" },
-    RadialItem { action: RadialAction::NewFolder,   label: "New Folder", icon: "folders/Standard/lntrn-folder-desktop.svg" },
-    RadialItem { action: RadialAction::Refresh,     label: "Refresh",    icon: "spark-menu-restart.svg" },
-];
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -135,8 +131,11 @@ fn button_center(cx: f32, cy: f32, i: usize, n: usize, radius: f32) -> (f32, f32
 
 /// Hit-test the cursor (logical px) against the settled button positions.
 /// Returns the hovered button index, or None for the dead zone / outside.
-pub fn hit(st: &RadialMenuState, mx: f32, my: f32) -> Option<usize> {
-    let n = ITEMS.len();
+pub fn hit(st: &RadialMenuState, items: &[RadialItem], mx: f32, my: f32) -> Option<usize> {
+    let n = items.len();
+    if n == 0 {
+        return None;
+    }
     let r2 = (BUTTON_R + HIT_SLOP).powi(2);
     for i in 0..n {
         let (bx, by) = button_center(st.cx, st.cy, i, n, RING_RADIUS);
@@ -177,7 +176,7 @@ impl RadialColors {
 /// Rasterizes the ring's embedded SVG icons (via `lntrn_icons`) into GPU
 /// textures, reusing the desktop's existing resvg pipeline.
 pub struct RadialIconCache {
-    textures: HashMap<&'static str, GpuTexture>,
+    textures: HashMap<String, GpuTexture>,
     size_px: u32,
 }
 
@@ -192,7 +191,7 @@ impl RadialIconCache {
         self.size_px = size_px.max(24);
     }
 
-    fn ensure(&mut self, gpu: &GpuContext, tex_pass: &TexturePass, name: &'static str) {
+    fn ensure(&mut self, gpu: &GpuContext, tex_pass: &TexturePass, name: &str) {
         if self.textures.contains_key(name) {
             return;
         }
@@ -201,7 +200,7 @@ impl RadialIconCache {
         };
         if let Some(rgba) = crate::assets::rasterize_svg(bytes, self.size_px) {
             let tex = tex_pass.upload(gpu, &rgba, self.size_px, self.size_px);
-            self.textures.insert(name, tex);
+            self.textures.insert(name.to_string(), tex);
         }
     }
 
@@ -249,12 +248,16 @@ pub fn draw_radial_menu<'a>(
     gpu: &GpuContext,
     tex_pass: &TexturePass,
     st: &RadialMenuState,
+    items: &[RadialItem],
     scale: f32,
     surface_w: u32,
     surface_h: u32,
 ) -> Vec<TextureDraw<'a>> {
     let cols = RadialColors::current();
-    let n = ITEMS.len();
+    let n = items.len();
+    if n == 0 {
+        return Vec::new();
+    }
 
     let elapsed = st.opened_at.elapsed().as_secs_f32();
     let t = progress(elapsed, BLOOM_SECS);
@@ -280,14 +283,14 @@ pub fn draw_radial_menu<'a>(
     painter.circle_stroke(cx, cy, hub, 2.0 * scale, cols.accent.with_alpha(0.85 * fade));
 
     // Pass 1: make sure every icon texture is rasterized (mutable borrow).
-    for it in ITEMS {
-        icons.ensure(gpu, tex_pass, it.icon);
+    for it in items {
+        icons.ensure(gpu, tex_pass, &it.icon);
     }
 
     // Pass 2: queue shapes + labels, collect icon draws (immutable borrow).
     let mut draws: Vec<TextureDraw<'a>> = Vec::with_capacity(n);
     let shadow = Color::from_rgba8(0, 0, 0, 255);
-    for (i, it) in ITEMS.iter().enumerate() {
+    for (i, it) in items.iter().enumerate() {
         let (bx, by) = button_center(cx, cy, i, n, rr);
         let hovered = st.hover == Some(i);
         let r = if hovered { br * 1.16 } else { br };
@@ -307,7 +310,7 @@ pub fn draw_radial_menu<'a>(
         painter.circle_stroke(bx, by, r, 2.0 * scale, cols.accent.with_alpha(rim_a * fade));
 
         // Icon centered in the button.
-        if let Some(tex) = icons.get(it.icon) {
+        if let Some(tex) = icons.get(&it.icon) {
             let isz = r * 1.16;
             draws.push(
                 TextureDraw::new(tex, bx - isz * 0.5, by - isz * 0.5, isz, isz).opacity(fade),
@@ -316,7 +319,7 @@ pub fn draw_radial_menu<'a>(
 
         // Label pill below the button.
         let fsz = LABEL_SIZE * scale;
-        let tw = text.measure_width(it.label, fsz);
+        let tw = text.measure_width(&it.label, fsz);
         let pill_h = fsz + 10.0 * scale;
         let pill_w = tw + 18.0 * scale;
         let ly = by + r + 10.0 * scale;
@@ -328,7 +331,7 @@ pub fn draw_radial_menu<'a>(
         };
         painter.rect_filled(Rect::new(pill_x, ly, pill_w, pill_h), pill_h * 0.5, pill_col);
         text.queue(
-            it.label,
+            &it.label,
             fsz,
             bx - tw * 0.5,
             ly + 5.0 * scale,

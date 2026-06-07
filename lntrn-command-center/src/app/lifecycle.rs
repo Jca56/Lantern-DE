@@ -67,6 +67,32 @@ impl AppState {
 
     /// Switch the panel into a control's full-content view. If we're
     /// already showing that control, return to `Launcher` (toggle).
+    /// Toggle toolbar customize / edit mode. Entering forces the compact
+    /// collapsed bar (the edit canvas); leaving restores the prior
+    /// collapse state and persists the layout.
+    pub fn toggle_toolbar_edit(&mut self) {
+        if self.toolbar_edit {
+            self.exit_toolbar_edit();
+        } else {
+            self.toolbar_edit = true;
+            self.toolbar_edit_prev_collapsed = self.collapsed;
+            self.widget_drag = None;
+            self.set_collapsed(true);
+        }
+    }
+
+    pub fn exit_toolbar_edit(&mut self) {
+        if !self.toolbar_edit {
+            return;
+        }
+        self.toolbar_edit = false;
+        self.widget_drag = None;
+        self.widget_settings_open = None;
+        self.widget_slider_drag = None;
+        self.controls.toolbar.save();
+        self.set_collapsed(self.toolbar_edit_prev_collapsed);
+    }
+
     pub fn show_control(&mut self, id: TileId) {
         // A control view is body content — any full-page overlay must
         // get out of the way first so the view is actually visible.
@@ -103,6 +129,11 @@ impl AppState {
     /// 2. Else if we're in a control view → back to launcher.
     /// 3. Else → close the whole panel.
     pub fn handle_esc(&mut self) {
+        // Esc leaves toolbar customize mode first.
+        if self.toolbar_edit {
+            self.exit_toolbar_edit();
+            return;
+        }
         // In the Terminal view, Esc is a normal byte the shell/child
         // wants to receive (vim mode switch, readline cancel, etc.).
         // Forward it instead of dismissing the panel.
@@ -187,8 +218,7 @@ impl AppState {
             self.desktop_settings_open = false;
         } else if matches!(
             self.mode,
-            PanelMode::Control(crate::controls::TileId::SysMon)
-                | PanelMode::Control(crate::controls::TileId::Temp)
+            PanelMode::Control(id) if id.opens_sysmon_view()
         ) && !self.controls.sysmon.filter.is_empty()
         {
             // Esc clears the process filter before falling back to

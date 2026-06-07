@@ -43,6 +43,11 @@ members = [
     "lntrn-lockscreen",
 ]
 
+# Custom text engine in development — built standalone so it stays off the live
+# DE build until it's finished (see lntrn-type/PLAN.md). Renamed to lntrn-text
+# and added to `members` at the end of the project.
+exclude = ["lntrn-type"]
+
 [profile.release]
 opt-level = 2
 strip = true

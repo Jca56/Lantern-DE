@@ -10,6 +10,7 @@ mod icons;
 mod input;
 mod keyboard;
 mod layout;
+mod radial_config;
 mod radial_menu;
 mod rainbow;
 mod render;

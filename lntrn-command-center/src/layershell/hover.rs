@@ -84,6 +84,13 @@ pub(super) fn track_hovers(wl: &mut super::WlState, app: &mut crate::app::AppSta
         } else {
             None
         };
+        // Floating media transport buttons — same collapsed-only gating.
+        let media_hover = if app.collapse_progress() > 0.5 && crate::media::render::is_active(&app.media) {
+            crate::media::render::floating_button_hit(panel_rect, scale_f, phys_cx, phys_cy)
+        } else {
+            None
+        };
+        app.media.hover = media_hover;
         // Emoji overlay hover routing.
         if app.emojis.open {
             let top_y = crate::controls::content_top_y(panel_rect, scale_f);

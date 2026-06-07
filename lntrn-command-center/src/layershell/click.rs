@@ -31,6 +31,69 @@ pub(super) fn handle_clicks(
         let phys_cy = wl.cursor_y as f32 * scale_f;
         let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
 
+        // Toolbar edit mode owns every press: Done button, ✕ remove
+        // badges, tray chips (begin enable-drag), and widgets (begin
+        // move-drag). All other click handling is suspended while editing.
+        if app.toolbar_edit {
+            use crate::controls::toolbar_edit as te;
+            use crate::controls::widget_settings as ws;
+
+            // An open settings popover gets first crack at the click.
+            if let Some(id) = app.widget_settings_open {
+                if let Some(h) = ws::hit(id, &app.controls, panel_rect, scale_f, phys_cx, phys_cy) {
+                    match h {
+                        ws::Hit::Slider(slider) => {
+                            let v = ws::slider_value_at(id, slider, &app.controls, panel_rect, scale_f, phys_cx);
+                            let o = app.controls.toolbar.opts_mut(id);
+                            match slider {
+                                ws::WidgetSlider::Size => o.size = v,
+                                ws::WidgetSlider::Space => o.space = v,
+                            }
+                            app.widget_slider_drag = Some((id, slider));
+                        }
+                        ws::Hit::ToggleDate => app.controls.toolbar.opts_mut(id).clock.show_date ^= true,
+                        ws::Hit::SetDatePos(p) => app.controls.toolbar.opts_mut(id).clock.date_pos = p,
+                        ws::Hit::Toggle24h => app.controls.toolbar.opts_mut(id).clock.hour24 ^= true,
+                        ws::Hit::ToggleSeconds => app.controls.toolbar.opts_mut(id).clock.seconds ^= true,
+                    }
+                    app.controls.toolbar.save();
+                    return;
+                }
+                // Clicking another widget's ⚙ switches the popover; Done
+                // still works; anything else just closes the popover.
+                if let Some(gid) = te::hit_gear_badge(&app.controls, panel_rect, scale_f, phys_cx, phys_cy) {
+                    app.widget_settings_open = if gid == id { None } else { Some(gid) };
+                } else if te::hit_done(panel_rect, scale_f, phys_cx, phys_cy) {
+                    app.exit_toolbar_edit();
+                } else {
+                    app.widget_settings_open = None;
+                }
+                return;
+            }
+
+            if te::hit_done(panel_rect, scale_f, phys_cx, phys_cy) {
+                app.exit_toolbar_edit();
+            } else if let Some(id) =
+                te::hit_gear_badge(&app.controls, panel_rect, scale_f, phys_cx, phys_cy)
+            {
+                app.widget_settings_open = Some(id);
+            } else if let Some(id) =
+                te::hit_close_badge(&app.controls, panel_rect, scale_f, phys_cx, phys_cy)
+            {
+                app.controls.toolbar.disable(id);
+                app.controls.toolbar.save();
+            } else if let Some(id) =
+                te::hit_tray_chip(&app.controls, panel_rect, scale_f, phys_cx, phys_cy)
+            {
+                app.widget_drag = Some(te::WidgetDrag { id, from_tray: true, cursor: (phys_cx, phys_cy) });
+            } else if let Some(id) =
+                te::hit_widget(&app.controls, panel_rect, scale_f, phys_cx, phys_cy)
+            {
+                app.widget_drag = Some(te::WidgetDrag { id, from_tray: false, cursor: (phys_cx, phys_cy) });
+            }
+            return;
+        }
+
         // Bar-mode sliders: grab one if the press lands on its track,
         // seek the value to the cursor, and stash the dragging slider
         // so subsequent motion events keep updating it. Bar sliders are
@@ -42,6 +105,17 @@ pub(super) fn handle_clicks(
                 let v = crate::bar_sliders::value_at_cursor(panel_rect, scale_f, slider, phys_cx);
                 crate::bar_sliders::set_value(slider, v);
                 app.bar_sliders.dragging = Some(slider);
+                return;
+            }
+        }
+
+        // Floating now-playing card: transport buttons sit just below the
+        // bar while collapsed, same as the sliders.
+        if app.collapse_progress() > 0.5 && crate::media::render::is_active(&app.media) {
+            if let Some(btn) = crate::media::render::floating_button_hit(
+                panel_rect, scale_f, phys_cx, phys_cy,
+            ) {
+                app.media.command(btn);
                 return;
             }
         }
@@ -587,6 +661,9 @@ pub(super) fn handle_clicks(
                 }
                 crate::controls::TileId::TerminalClear => {
                     app.terminal.clear();
+                }
+                crate::controls::TileId::Workspace => {
+                    // Workspace number is a passive indicator — no view.
                 }
                 crate::controls::TileId::Audio => {
                     // Audio tile is split: speaker icon opens the

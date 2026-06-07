@@ -52,6 +52,26 @@ pub(super) fn handle_right_click(
         }
     }
 
+    // Right-click toggles toolbar customize / edit mode. While editing,
+    // any right-click leaves it; otherwise a right-click on the controls
+    // row (Default view) enters it.
+    if app.toolbar_edit {
+        app.toggle_toolbar_edit();
+        return;
+    }
+    if app.panel_view == crate::app::PanelView::Default {
+        let row_top = panel.y + crate::controls::ROW_TOP_MARGIN * scale_f;
+        let row_bot = row_top + crate::controls::ROW_HEIGHT * scale_f;
+        if phys_cy >= row_top
+            && phys_cy <= row_bot
+            && phys_cx >= panel.x
+            && phys_cx <= panel.x + panel.w
+        {
+            app.toggle_toolbar_edit();
+            return;
+        }
+    }
+
     match app.mode {
         crate::app::PanelMode::Launcher
         if app.panel_view == crate::app::PanelView::Default =>

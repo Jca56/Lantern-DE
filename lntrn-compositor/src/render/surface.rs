@@ -503,19 +503,31 @@ pub fn render_surface(
         // stored on the MaximizedWindow/FullscreenWindow/SnappedWindow entry so
         // the window doesn't briefly snap to its stale pre-configure size.
         let win_geo = window.geometry();
-        // Prefer the surface's ACTUAL rendered logical size over the window
-        // geometry. They differ for XWayland fullscreen games at sub-native
-        // resolution: the client commits a small buffer but XWayland attaches a
-        // wp_viewport whose dst == the full output, so the surface already
-        // renders at full size. Using surface_size() (= viewport dst) keeps
-        // combined_scale ≈ 1.0 so we DON'T stretch on top of the viewport (that
-        // double-scale is what desynced the in-game cursor). Falls back to the
-        // window geometry for normal windows / before the first commit.
-        let surface_render_size = crate::window_ext::WindowExt::get_wl_surface(window)
-            .and_then(|s| smithay::backend::renderer::utils::with_renderer_surface_state(
-                &s, |rss| rss.surface_size(),
-            ).flatten())
-            .filter(|sz| sz.w > 0 && sz.h > 0);
+        // For X11/XWayland windows ONLY: prefer the surface's ACTUAL rendered
+        // logical size over the window geometry. They differ for XWayland
+        // fullscreen games at sub-native resolution: the client commits a small
+        // buffer but XWayland attaches a wp_viewport whose dst == the full
+        // output, so the surface already renders at full size. Using
+        // surface_size() (= viewport dst) keeps combined_scale ≈ 1.0 so we
+        // DON'T stretch on top of the viewport (that double-scale is what
+        // desynced the in-game cursor).
+        //
+        // xdg toplevels are EXCLUDED: their surface buffer is LARGER than the
+        // window geometry when the client draws CSD shadow margins OUTSIDE its
+        // geometry (Firefox/GTK do this). The raw buffer would size the border
+        // + drop shadow to include that invisible shadow, drawing the window's
+        // decorations bigger than its content (gap on the bottom/right, plus a
+        // little post-resize "grow" as the border snaps from the animated rect
+        // out to the buffer size). window.geometry() is the honest content rect.
+        let surface_render_size = if window.x11_surface().is_some() {
+            crate::window_ext::WindowExt::get_wl_surface(window)
+                .and_then(|s| smithay::backend::renderer::utils::with_renderer_surface_state(
+                    &s, |rss| rss.surface_size(),
+                ).flatten())
+                .filter(|sz| sz.w > 0 && sz.h > 0)
+        } else {
+            None
+        };
         let win_size = surface_render_size.unwrap_or(win_geo.size);
         let state_anim_rect = state.window_state_anim.current_rect(&surface);
         // Smooth-resize held target: bridges the 1-2 frame gap between

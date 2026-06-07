@@ -40,6 +40,60 @@ pub(super) fn handle_drag(
         app.bar_sliders.dragging = None;
     }
 
+    // Toolbar edit-mode widget drag: follow the cursor while held; on
+    // release, drop into the resolved zone (or the disabled tray) and
+    // persist the new layout.
+    if app.widget_drag.is_some() {
+        let scale_f = wl.fractional_scale() as f32;
+        let phys_w = wl.phys_width().max(1);
+        let panel = PanelRect::compute_with_dims(
+            phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical(),
+        );
+        let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+        let phys_cx = wl.cursor_x as f32 * scale_f;
+        let phys_cy = wl.cursor_y as f32 * scale_f;
+        if wl.left_held {
+            if let Some(d) = app.widget_drag.as_mut() {
+                d.cursor = (phys_cx, phys_cy);
+            }
+        } else {
+            use crate::controls::toolbar_edit as te;
+            let drag = app.widget_drag.take().expect("widget_drag present");
+            if let Some(kind) =
+                te::resolve_drop(&app.controls, panel_rect, scale_f, &drag, (phys_cx, phys_cy))
+            {
+                match kind {
+                    te::DropKind::Zone(zone, idx) => app.controls.toolbar.move_to(drag.id, zone, idx),
+                    te::DropKind::Disable => app.controls.toolbar.disable(drag.id),
+                }
+                app.controls.toolbar.save();
+            }
+        }
+    }
+
+    // Per-widget size/space slider drag (in the settings popover).
+    if let Some((id, slider)) = app.widget_slider_drag {
+        use crate::controls::widget_settings::{self as ws, WidgetSlider};
+        let scale_f = wl.fractional_scale() as f32;
+        let phys_w = wl.phys_width().max(1);
+        let panel = PanelRect::compute_with_dims(
+            phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical(),
+        );
+        let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+        let phys_cx = wl.cursor_x as f32 * scale_f;
+        if wl.left_held {
+            let v = ws::slider_value_at(id, slider, &app.controls, panel_rect, scale_f, phys_cx);
+            let o = app.controls.toolbar.opts_mut(id);
+            match slider {
+                WidgetSlider::Size => o.size = v,
+                WidgetSlider::Space => o.space = v,
+            }
+        } else {
+            app.controls.toolbar.save();
+            app.widget_slider_drag = None;
+        }
+    }
+
     // Bar-mode slider drag: while a transparency / blur knob is held,
     // map cursor x onto its track and persist the new value to
     // lantern.toml. The compositor mtime-caches that file, so changes

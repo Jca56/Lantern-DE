@@ -11,6 +11,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use super::gpu::{self, GpuStats};
 use super::proc::{
     list_processes, read_cpu_temp_c, read_cpu_totals, read_meminfo, read_net_total, CpuTotals,
     MemInfo, NetCounters, ProcRaw,
@@ -43,10 +44,17 @@ pub(super) enum SysMonEvent {
         /// could be read (e.g. unsupported hardware).
         temp_c: Option<f32>,
     },
+    /// A GPU sample (or `None` if the read failed this tick). Polled on a
+    /// slower cadence than CPU/mem since `nvidia-smi` spawns a process.
+    Gpu(Option<GpuStats>),
     /// A refreshed process list, sorted by CPU desc and truncated to
     /// [`PROCESS_LIST_LEN`].
     Processes(Vec<ProcessRow>),
 }
+
+/// GPU poll cadence. Slower than the 2 Hz CPU/mem sample because the
+/// NVIDIA path shells out to `nvidia-smi`.
+const GPU_PERIOD: Duration = Duration::from_millis(1500);
 
 /// Worker entry point. Loops forever, sleeping between checks.
 pub(super) fn run(tx: mpsc::Sender<SysMonEvent>, cmd_rx: mpsc::Receiver<SysMonCmd>) {
@@ -56,9 +64,13 @@ pub(super) fn run(tx: mpsc::Sender<SysMonEvent>, cmd_rx: mpsc::Receiver<SysMonCm
     let mut prev_proc: HashMap<i32, u64> = HashMap::new();
     let mut last_sample_at: Option<Instant> = None;
     let mut last_proc_refresh_at: Option<Instant> = None;
+    let mut last_gpu_at: Option<Instant> = None;
     let mut sort = ProcSort::CpuDesc;
     // sysconf is stable for the life of the process — cache it once.
     let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) as f32 };
+    // Probe for a readable GPU once so we don't spawn nvidia-smi on
+    // machines that have no GPU we can query.
+    let gpu_present = gpu::gpu_available();
 
     loop {
         // Drain commands first so visibility flips take effect before
@@ -75,6 +87,7 @@ pub(super) fn run(tx: mpsc::Sender<SysMonEvent>, cmd_rx: mpsc::Receiver<SysMonCm
                     prev_proc.clear();
                     last_sample_at = None;
                     last_proc_refresh_at = None;
+                    last_gpu_at = None;
                 }
                 SysMonCmd::SetSort(s) => {
                     sort = s;
@@ -102,6 +115,16 @@ pub(super) fn run(tx: mpsc::Sender<SysMonEvent>, cmd_rx: mpsc::Receiver<SysMonCm
                     temp_c,
                 });
                 last_sample_at = Some(now);
+            }
+
+            if gpu_present {
+                let gpu_due = last_gpu_at
+                    .map(|p| now.duration_since(p) >= GPU_PERIOD)
+                    .unwrap_or(true);
+                if gpu_due {
+                    let _ = tx.send(SysMonEvent::Gpu(gpu::read_gpu()));
+                    last_gpu_at = Some(now);
+                }
             }
 
             let proc_due = last_proc_refresh_at

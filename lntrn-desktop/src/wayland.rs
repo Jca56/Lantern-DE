@@ -190,6 +190,16 @@ pub fn run() -> Result<()> {
     let mut painter = Painter::new(&gpu);
     let mut text = TextRenderer::new(&gpu);
     let tex_pass = TexturePass::new(&gpu);
+    // The radial menu overlays the desktop, so it needs its *own* texture pass
+    // AND its *own* text renderer. Both `TexturePass` (instance buffer) and
+    // glyphon's text renderer (vertex buffer) reuse one GPU buffer and rewrite
+    // it at offset 0 on every render call; since all `queue.write_buffer`s in a
+    // frame apply before any pass executes, two passes sharing one renderer both
+    // end up drawing the last-written (radial) data — so the desktop icons, then
+    // their labels, vanished when the ring opened. Dedicated renderers keep the
+    // two buffers independent.
+    let radial_tex_pass = TexturePass::new(&gpu);
+    let mut radial_text = TextRenderer::new(&gpu);
 
     let scale = state.fractional_scale() as f32;
     let icon_px = (ICON_PX * scale) as u32;
@@ -547,18 +557,19 @@ pub fn run() -> Result<()> {
                 painter.clear();
                 let radial_draws = crate::radial_menu::draw_radial_menu(
                     &mut painter,
-                    &mut text,
+                    &mut radial_text,
                     &mut radial_icons,
                     &gpu,
-                    &tex_pass,
+                    &radial_tex_pass,
                     radial,
+                    &app.radial_items,
                     s,
                     state.width,
                     state.height,
                 );
                 painter.render_pass_overlay(&gpu, frame.encoder_mut(), &view);
-                tex_pass.render_pass(&gpu, frame.encoder_mut(), &view, &radial_draws, None);
-                text.render_queued(&gpu, frame.encoder_mut(), &view);
+                radial_tex_pass.render_pass(&gpu, frame.encoder_mut(), &view, &radial_draws, None);
+                radial_text.render_queued(&gpu, frame.encoder_mut(), &view);
             }
 
             frame.submit(&gpu.queue);

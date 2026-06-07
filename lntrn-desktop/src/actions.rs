@@ -90,11 +90,20 @@ pub fn apply_action(app: &mut DesktopState, action: PendingAction, needs_rescan:
                     .spawn();
             });
         }
-        PendingAction::Launch(bin) => {
-            // Spawn a Lantern app binary by name (detached), cwd = desktop dir.
+        PendingAction::Launch(cmd) => {
+            // Spawn a command (program + whitespace-separated args) detached,
+            // cwd = desktop dir. Args let ring entries do e.g.
+            // "lntrn-system-settings --panel wallpaper".
             let dir = app.desktop_dir.clone();
             std::thread::spawn(move || {
-                let _ = std::process::Command::new(bin).current_dir(&dir).spawn();
+                let mut parts = cmd.split_whitespace();
+                if let Some(prog) = parts.next() {
+                    let args: Vec<&str> = parts.collect();
+                    let _ = std::process::Command::new(prog)
+                        .args(&args)
+                        .current_dir(&dir)
+                        .spawn();
+                }
             });
         }
         PendingAction::CopyName(idx) => {

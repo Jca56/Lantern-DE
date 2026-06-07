@@ -295,9 +295,13 @@ pub(super) fn handle_control_view_click(
             }
             false
         }
-        // Temp shares its expanded view (and click behavior) with
-        // SysMon since they read from the same backend.
-        crate::controls::TileId::SysMon | crate::controls::TileId::Temp => {
+        // Temp / Network / GPU / Disk share their expanded view (and
+        // click behavior) with SysMon since they all funnel into it.
+        crate::controls::TileId::SysMon
+        | crate::controls::TileId::Temp
+        | crate::controls::TileId::Network
+        | crate::controls::TileId::Gpu
+        | crate::controls::TileId::Disk => {
             if let Some(hit) = crate::controls::sysmon::view::hit_test_view(
                 &app.controls.sysmon,
                 panel,
@@ -335,7 +339,9 @@ pub(super) fn handle_control_view_click(
         }
         // No expanded view — click handling is shortcut in the press
         // path, so we never reach here for these.
-        crate::controls::TileId::Collapse | crate::controls::TileId::TerminalClear => false,
+        crate::controls::TileId::Workspace
+        | crate::controls::TileId::Collapse
+        | crate::controls::TileId::TerminalClear => false,
     }
 }
 

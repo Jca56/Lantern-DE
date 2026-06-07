@@ -31,11 +31,12 @@ pub fn on_left_press(
     // swallow the click so it doesn't start a drag/selection underneath.)
     if let Some(r) = &state.radial {
         let latched = r.latched;
-        let hovered = radial_menu::hit(r, cx, cy);
+        let hovered = radial_menu::hit(r, &state.radial_items, cx, cy);
         if latched {
+            let action = hovered.map(|i| state.radial_items[i].action.clone());
             state.radial = None;
-            if let Some(i) = hovered {
-                dispatch_radial_action(state, radial_menu::ITEMS[i].action);
+            if let Some(action) = action {
+                dispatch_radial_action(state, action);
             }
         }
         return;
@@ -182,9 +183,9 @@ pub fn on_cursor_move(
     }
 
     // Update radial-menu hover.
-    if let Some(r) = &mut state.radial {
-        let h = radial_menu::hit(r, cx, cy);
-        r.hover = h;
+    if state.radial.is_some() {
+        let h = radial_menu::hit(state.radial.as_ref().unwrap(), &state.radial_items, cx, cy);
+        state.radial.as_mut().unwrap().hover = h;
     }
 
     if let Some(drag) = &mut state.drag {
@@ -329,7 +330,7 @@ pub fn on_right_release(state: &mut DesktopState, cx: f32, cy: f32) {
     let Some(r) = &state.radial else {
         return;
     };
-    let hovered = radial_menu::hit(r, cx, cy);
+    let hovered = radial_menu::hit(r, &state.radial_items, cx, cy);
     let elapsed_ms = r.opened_at.elapsed().as_millis();
     let moved =
         ((cx - r.press_x).powi(2) + (cy - r.press_y).powi(2)).sqrt() > radial_menu::TAP_MOVE_THRESHOLD;
@@ -337,8 +338,9 @@ pub fn on_right_release(state: &mut DesktopState, cx: f32, cy: f32) {
 
     match hovered {
         Some(i) => {
+            let action = state.radial_items[i].action.clone();
             state.radial = None;
-            dispatch_radial_action(state, radial_menu::ITEMS[i].action);
+            dispatch_radial_action(state, action);
         }
         None => {
             if !already_latched && !moved && elapsed_ms < radial_menu::TAP_LATCH_MS {
@@ -355,10 +357,7 @@ pub fn on_right_release(state: &mut DesktopState, cx: f32, cy: f32) {
 /// Map a radial-menu choice to a pending action consumed by the main loop.
 fn dispatch_radial_action(state: &mut DesktopState, action: RadialAction) {
     state.pending_action = Some(match action {
-        RadialAction::Terminal => PendingAction::OpenTerminal,
-        RadialAction::FileManager => PendingAction::Launch("lntrn-file-manager"),
-        RadialAction::Settings => PendingAction::Launch("lntrn-system-settings"),
-        RadialAction::Screenshot => PendingAction::Launch("lntrn-screenshot"),
+        RadialAction::Launch(cmd) => PendingAction::Launch(cmd),
         RadialAction::NewFolder => PendingAction::NewFolder,
         RadialAction::Refresh => PendingAction::Refresh,
     });

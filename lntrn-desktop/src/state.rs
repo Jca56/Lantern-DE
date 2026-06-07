@@ -36,6 +36,8 @@ pub struct DesktopState {
 
     /// Radial right-click menu (ring of circular buttons), open on empty space.
     pub radial: Option<crate::radial_menu::RadialMenuState>,
+    /// The ring's buttons, loaded from `~/.lantern/config/desktop-radial.json`.
+    pub radial_items: Vec<crate::radial_menu::RadialItem>,
 
     /// Pending action set by input/menu handlers, consumed by main loop.
     pub pending_action: Option<PendingAction>,
@@ -138,8 +140,8 @@ pub enum PendingAction {
     CopyPath(usize),
     SubmitRename,
     CancelRename,
-    /// Spawn a Lantern app binary by name (detached), cwd = desktop dir.
-    Launch(&'static str),
+    /// Run a command (program + whitespace-separated args) detached, cwd = desktop dir.
+    Launch(String),
 }
 
 impl DesktopState {
@@ -160,6 +162,7 @@ impl DesktopState {
             renaming: None,
             menu: None,
             radial: None,
+            radial_items: crate::radial_config::load(),
             pending_action: None,
             ctrl_held: false,
             shift_held: false,

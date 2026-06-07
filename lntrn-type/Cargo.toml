@@ -1,0 +1,24 @@
+[package]
+name = "lntrn-type"
+version = "0.1.0"
+description = "Lantern DE custom text rendering engine (from-scratch replacement for glyphon/cosmic-text)"
+authors = ["Jca56"]
+edition = "2021"
+
+# NOTE: kept OUT of the root workspace `members` (it's in `exclude`) so it builds
+# standalone while glyphon stays the live text stack. At the end of the project
+# (PLAN.md Phase 12) this is renamed to `lntrn-text`, added to members, and
+# `lntrn-render` flips its dependency to it.
+
+[dependencies]
+bytemuck = { version = "1", features = ["derive"] }
+lntrn-draw = { path = "../lntrn-render/draw" }
+lntrn-gfx = { path = "../lntrn-render/gfx" }
+wgpu = "28"
+
+[dev-dependencies]
+pollster = "0.4"
+
+[[example]]
+name = "preview"
+path = "examples/preview.rs"

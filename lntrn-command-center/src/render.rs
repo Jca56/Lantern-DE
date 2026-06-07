@@ -206,6 +206,7 @@ pub fn draw_content(
     if sliding {
         push_panel_clip(painter, text, mono_text);
     }
+    let workspace_num = state.workspace_ipc.active_id();
     for (view, off_frac) in &view_pairs {
         crate::controls::draw_row(
             painter,
@@ -220,6 +221,7 @@ pub fn draw_content(
             surface_h,
             &mut icons,
             *view,
+            workspace_num,
         );
     }
     if sliding {
@@ -347,7 +349,7 @@ pub fn draw_content(
     // 1d2. Bar-mode sliders (Transparency + Blur) — show when CC is
     //      collapsed enough that the dock is visible. Fade with
     //      collapse_p so they appear/disappear in sync with the bar.
-    if collapse_p > 0.005 {
+    if collapse_p > 0.005 && !state.toolbar_edit {
         crate::bar_sliders::draw(
             painter,
             text,
@@ -355,6 +357,37 @@ pub fn draw_content(
             panel.scale_factor,
             panel.alpha * collapse_p.clamp(0.0, 1.0),
             state.bar_sliders,
+            surface_w,
+            surface_h,
+        );
+
+        // Now-playing controls — a floating card centered below the bar,
+        // shown only while something is playing. Fades with the collapse
+        // animation alongside the sliders.
+        crate::media::render::draw_floating(
+            painter,
+            text,
+            &state.media,
+            panel.rect,
+            panel.scale_factor,
+            panel.alpha * collapse_p.clamp(0.0, 1.0),
+            surface_w,
+            surface_h,
+        );
+    }
+
+    // Toolbar customize / edit-mode overlay (zone hints, ✕ badges,
+    // disabled tray, drag ghost). Replaces the sliders/media below the bar.
+    if state.toolbar_edit && state.panel_view == crate::app::PanelView::Default {
+        crate::controls::toolbar_edit::draw(
+            painter,
+            text,
+            &state.controls,
+            &state.widget_drag,
+            state.widget_settings_open,
+            panel.rect,
+            panel.scale_factor,
+            panel.alpha,
             surface_w,
             surface_h,
         );

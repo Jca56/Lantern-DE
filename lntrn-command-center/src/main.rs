@@ -16,6 +16,7 @@ mod lantern_toml;
 mod launcher;
 mod layershell;
 mod mascot;
+mod media;
 mod mini_dock;
 mod notes;
 mod persisted_state;

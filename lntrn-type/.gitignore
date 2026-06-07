@@ -1,0 +1,6 @@
+# Build artifacts + generated golden images only. Source, Cargo.toml, Cargo.lock,
+# and PLAN.md are all tracked so the project continues identically on both
+# machines. (Cargo.lock is committed for reproducible deps; it becomes moot once
+# this crate joins the workspace at Phase 12 and the root lock takes over.)
+/target
+phase*.png

@@ -93,6 +93,14 @@ impl App {
         tab.scroll_offset = 0.0;
         self.current_dir = path;
         self.scroll_offset = 0.0;
+        // In pick mode the tree is anchored at `tree_root`. Jumping to a new
+        // place (sidebar/breadcrumb/drive/favorite) must re-anchor it, otherwise
+        // `rebuild_tree` stays pinned to the start dir and the tree never
+        // reflects the new directory. Outside pick mode `tree_root` is None and
+        // `rebuild_tree` already falls back to `current_dir`.
+        if self.tree_root.is_some() {
+            self.tree_root = Some(self.current_dir.clone());
+        }
         self.pick_tree_selection.clear();
         self.last_click_path = None;
         self.reload();

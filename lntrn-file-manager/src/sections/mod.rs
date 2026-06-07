@@ -131,3 +131,38 @@ pub fn truncate_with_ellipsis(name: &str, max_w: f32, char_w: f32) -> String {
     let truncated: String = name.chars().take(max_chars).collect();
     format!("{truncated}\u{2026}")
 }
+
+/// Truncate `name` to fit `max_w` pixels using the renderer's *actual* glyph
+/// measurements (cached), with a trailing ellipsis. The char-width estimate in
+/// `truncate_with_ellipsis` underestimates wide glyphs (m, w, …), which lets the
+/// leftover wrap onto a second line; measuring is exact. Binary-searches the
+/// longest prefix that fits — ~log2(len) cached measurements per long name.
+pub fn truncate_to_width(
+    text: &mut lntrn_render::TextRenderer,
+    name: &str,
+    max_w: f32,
+    font_px: f32,
+) -> String {
+    if max_w <= 0.0 {
+        return String::new();
+    }
+    if text.measure_width(name, font_px) <= max_w {
+        return name.to_string();
+    }
+    let chars: Vec<char> = name.chars().collect();
+    let mut lo = 0usize;
+    let mut hi = chars.len();
+    while lo < hi {
+        let mid = (lo + hi + 1) / 2;
+        let mut candidate: String = chars[..mid].iter().collect();
+        candidate.push('\u{2026}');
+        if text.measure_width(&candidate, font_px) <= max_w {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    let mut out: String = chars[..lo].iter().collect();
+    out.push('\u{2026}');
+    out
+}

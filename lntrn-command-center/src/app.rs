@@ -177,6 +177,19 @@ pub struct AppState {
     pub restart_hover: bool,
     /// Hover + drag state for the two bar-mode sliders.
     pub bar_sliders: crate::bar_sliders::BarSliderState,
+    /// True while the toolbar is in "customize" / edit mode (drag widgets
+    /// between zones, toggle them on/off via the tray).
+    pub toolbar_edit: bool,
+    /// Collapse state to restore when leaving edit mode (edit mode forces
+    /// the compact collapsed bar as its canvas).
+    pub toolbar_edit_prev_collapsed: bool,
+    /// In-flight widget drag during edit mode, if any.
+    pub widget_drag: Option<crate::controls::toolbar_edit::WidgetDrag>,
+    /// Which widget's settings popover is open (edit mode), if any.
+    pub widget_settings_open: Option<crate::controls::TileId>,
+    /// Which widget + which slider (size/space) is being dragged in its
+    /// settings popover, if any.
+    pub widget_slider_drag: Option<(crate::controls::TileId, crate::controls::widget_settings::WidgetSlider)>,
     /// Hover state for the right-side strip icons.
     pub emoji_hover: bool,
     pub clipboard_hover: bool,
@@ -258,6 +271,9 @@ pub struct AppState {
     /// draw the current workspace number in the top-left corner while
     /// the panel is visible.
     pub workspace_ipc: crate::workspace_ipc::WorkspaceIpc,
+    /// Now-playing media (MPRIS). Drives the centerpiece widget in the
+    /// middle of the controls row.
+    pub media: crate::media::Media,
 }
 
 #[derive(Debug, Clone)]
@@ -314,6 +330,11 @@ impl AppState {
             gear_hover: false,
             restart_hover: false,
             bar_sliders: crate::bar_sliders::BarSliderState::default(),
+            toolbar_edit: false,
+            toolbar_edit_prev_collapsed: false,
+            widget_drag: None,
+            widget_settings_open: None,
+            widget_slider_drag: None,
             emoji_hover: false,
             clipboard_hover: false,
             notes_hover: false,
@@ -346,6 +367,7 @@ impl AppState {
             },
             pending_terminal_input: None,
             workspace_ipc: crate::workspace_ipc::WorkspaceIpc::new(),
+            media: crate::media::Media::new(),
         }
     }
 

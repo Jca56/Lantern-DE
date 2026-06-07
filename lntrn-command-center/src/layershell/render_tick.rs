@@ -59,44 +59,9 @@ pub(super) fn render_frame(
         Vec::new()
     };
 
-    // Workspace number — a bold white digit tucked just to the left of
-    // the panel's left view-arrow and vertically centered on it (it
-    // overhangs the arrow top/bottom a touch since the digit is taller
-    // than the arrow). Anchored to the panel so it tracks the panel's
-    // position AND scales with the UI, instead of floating at a fixed
-    // size in the screen corner.
-    if let Some(p) = &panel_draw {
-        if let Some(ws) = app.workspace_ipc.active_id() {
-            let alpha = p.alpha.clamp(0.0, 1.0);
-            if alpha > 0.01 {
-                let arrow = crate::view_arrows::button_rect(
-                    p.rect, scale_f, crate::view_arrows::Side::Left,
-                );
-                let font_size = 90.0 * scale_f;
-                let text_str = ws.to_string();
-                let num_w = text.measure_width(&text_str, font_size);
-                let gap = 12.0 * scale_f;
-                // Right-align against the arrow's left edge; clamp so a
-                // two-digit workspace never slides off the screen edge.
-                let x = (arrow.x - gap - num_w).max(4.0 * scale_f);
-                // Center the line box on the arrow so the taller digit
-                // overhangs symmetrically rather than sitting low.
-                let y = arrow.y + (arrow.h - font_size) * 0.5;
-                text.queue_styled(
-                    &text_str,
-                    font_size,
-                    x,
-                    y,
-                    Color::rgba(1.0, 1.0, 1.0, alpha),
-                    phys_w as f32,
-                    lntrn_render::FontWeight::Bold,
-                    lntrn_render::FontStyle::Normal,
-                    phys_w,
-                    phys_h,
-                );
-            }
-        }
-    }
+    // (The workspace number now lives inside the Command Center as a
+    // chip to the left of the clock — see `controls::clock::draw_inline`
+    // — instead of floating outside the panel.)
 
     // Stream thumbnail slots to the compositor for the mini-dock
     // hover preview only. (The legacy "Open" section on the main page

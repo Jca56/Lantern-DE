@@ -598,6 +598,7 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
             crate::app::set_split_gap_px(crate::app::effective_split_gap_px(&app, scale_f));
         }
         app.controls.tick();
+        app.media.tick();
         // PTY housekeeping for the Terminal view. We spawn lazily on
         // first activation and resize whenever the body geometry
         // changes so the child shell reflows correctly.

@@ -261,7 +261,7 @@ impl AppState {
         // slider so the panel grows proportionally on both axes.
         let frac = (self.config.panel_grow_w / crate::settings::GROW_W_MAX).clamp(0.0, 1.0);
         let bonus = frac * GROW_H_MAX;
-        if matches!(self.mode, PanelMode::Control(crate::controls::TileId::SysMon)) {
+        if matches!(self.mode, PanelMode::Control(id) if id.opens_sysmon_view()) {
             return 880.0 + bonus;
         }
         if !matches!(self.mode, PanelMode::Launcher) {

@@ -8,7 +8,7 @@ use crate::config::WindowMode;
 
 const TAB_MAX_WIDTH: f32 = 500.0;
 const TAB_MIN_WIDTH: f32 = 80.0;
-const TAB_GAP: f32 = 6.0;
+const TAB_GAP: f32 = 10.0;
 const TAB_PAD_H: f32 = 12.0;
 const NEW_TAB_WIDTH: f32 = 30.0;
 const TAB_CLOSE_SIZE: f32 = 22.0;
@@ -16,9 +16,9 @@ const TAB_FONT_SIZE: f32 = 20.0;
 const PIN_WIDTH: f32 = 20.0;
 const DOUBLE_CLICK_MS: u128 = 400;
 const TAB_PAD_V: f32 = 3.0;
-/// Corner radius for tab pills — small for a pointier, near-square look
-/// (90% straight edges) rather than a full pill.
-const TAB_CORNER_R: f32 = 4.0;
+/// Corner radius for tab pills — softly rounded so tabs read as friendly
+/// pills against the transparent window rather than hard squares.
+const TAB_CORNER_R: f32 = 12.0;
 /// Internal left inset inside the tabs region so the first tab's rounded left
 /// edge isn't clipped by `push_clip(bounds)`.
 const TABS_INNER_LEFT: f32 = 6.0;
@@ -66,10 +66,13 @@ fn palette(mode: &WindowMode) -> TabPalette {
     match mode {
         WindowMode::Fox => TabPalette {
             surface: Color::from_rgba8(30, 30, 30, 255),
-            tab_active: Color::from_rgba8(50, 50, 50, 255),
-            tab_hover: Color::from_rgba8(45, 45, 45, 255),
-            tab_inactive: Color::from_rgba8(35, 35, 35, 255),
-            tab_rename: Color::from_rgba8(50, 50, 50, 255),
+            // Translucent light tints so the window's transparency shows through
+            // instead of solid grey blocks. Active is brightest, inactive barely
+            // there.
+            tab_active: Color::from_rgba8(255, 255, 255, 45),
+            tab_hover: Color::from_rgba8(255, 255, 255, 28),
+            tab_inactive: Color::from_rgba8(255, 255, 255, 10),
+            tab_rename: Color::from_rgba8(255, 255, 255, 45),
             text: Color::from_rgba8(236, 236, 236, 255),
             muted: Color::from_rgba8(144, 144, 144, 255),
             accent,
@@ -89,10 +92,12 @@ fn palette(mode: &WindowMode) -> TabPalette {
         },
         WindowMode::Lantern => TabPalette {
             surface: Color::from_rgba8(25, 20, 16, 255),
-            tab_active: Color::from_rgba8(50, 38, 24, 255),
-            tab_hover: Color::from_rgba8(45, 35, 22, 255),
-            tab_inactive: Color::from_rgba8(35, 28, 18, 255),
-            tab_rename: Color::from_rgba8(50, 38, 24, 255),
+            // Warm cream tints, translucent so the transparent window glows
+            // through rather than sitting behind solid brown blocks.
+            tab_active: Color::from_rgba8(240, 230, 210, 48),
+            tab_hover: Color::from_rgba8(240, 230, 210, 30),
+            tab_inactive: Color::from_rgba8(240, 230, 210, 12),
+            tab_rename: Color::from_rgba8(240, 230, 210, 48),
             text: Color::from_rgba8(240, 230, 210, 255),
             muted: Color::from_rgba8(140, 120, 90, 255),
             accent,
@@ -197,9 +202,10 @@ pub enum TabBarAction {
 
 // ── Layout helpers ──────────────────────────────────────────────────────────
 
-/// Per-char width used for tab title measurement. Uses the ceiling of
-/// `font * 0.6` to match the monospace grid cell width (see `render.rs`).
-const CHAR_W: f32 = 11.0; // ceil(18 * 0.6)
+/// Per-char width used only for the initial tab-width *estimate*. The ceiling of
+/// `font * 0.6` matches the monospace grid cell (see `render.rs`); final title
+/// fitting is done with real glyph metrics in `truncate_title`.
+const CHAR_W: f32 = 12.0; // ceil(20 * 0.6)
 
 /// Compute widths for each tab based on title length, fitting within available space.
 fn calc_tab_widths(titles: &[&str], available: f32, scale: f32) -> Vec<f32> {
@@ -381,17 +387,21 @@ pub fn draw_tab_bar(
             );
         } else {
             let text_color = if is_active { pal.text } else { pal.muted };
-            let display = truncate_title(tab.title, max_text_w, scale);
+            let display = truncate_title(text, tab.title, max_text_w, font_size);
+            // Clip to the tab's text region as a hard guarantee: even a stray
+            // wide glyph can never bleed over the close button or the next tab.
+            text.push_clip([text_x, rect.y, max_text_w.max(1.0), rect.h]);
             text.queue(
                 &display,
                 font_size,
                 text_x,
                 text_y,
                 text_color,
-                max_text_w.max(10.0) + 1000.0, // give Glyphon room — we already truncated
+                max_text_w.max(10.0) + 1000.0, // already truncated to fit
                 screen_w,
                 screen_h,
             );
+            text.pop_clip();
         }
 
         // Close X button
@@ -512,23 +522,38 @@ fn draw_close_x(
     painter.line(x2, y1, x1, y2, 1.5 * scale, xc);
 }
 
-/// Truncate the title to fit within `max_w` pixels, appending an ellipsis
-/// if any characters were dropped. Uses the same per-char width assumption
-/// as the layout / cursor code so the visual fit matches what we measured.
-fn truncate_title(title: &str, max_w: f32, scale: f32) -> String {
-    let chars: Vec<char> = title.chars().collect();
-    // How many full characters fit, leaving space for the ellipsis if needed.
-    let max_chars = (max_w / (CHAR_W * scale)).floor() as usize;
-    if chars.len() <= max_chars {
+/// Truncate the title to fit within `max_w` pixels using *real* glyph metrics,
+/// appending an ellipsis if any characters were dropped. Measuring (rather than
+/// assuming a per-char width) is what keeps the text from ever spilling past the
+/// tab edge. A binary search keeps it to ~log2(n) measurements; the text
+/// renderer caches layouts so repeated frames are cheap.
+fn truncate_title(text: &mut TextRenderer, title: &str, max_w: f32, font_size: f32) -> String {
+    if max_w <= 0.0 {
+        return String::new();
+    }
+    if text.measure_width(title, font_size) <= max_w {
         return title.to_string();
     }
-    // Need at least 1 char + ellipsis to be meaningful.
-    if max_chars < 2 {
-        return "\u{2026}".to_string();
+    let chars: Vec<char> = title.chars().collect();
+    let ellipsis = "\u{2026}";
+    let ell_w = text.measure_width(ellipsis, font_size);
+
+    // Largest `keep` such that width(first `keep` chars) + ellipsis fits.
+    let (mut lo, mut hi) = (0usize, chars.len());
+    while lo < hi {
+        let mid = (lo + hi + 1) / 2;
+        let candidate: String = chars[..mid].iter().collect();
+        if text.measure_width(&candidate, font_size) + ell_w <= max_w {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
     }
-    let keep = max_chars.saturating_sub(1); // leave room for the ellipsis
-    let mut t: String = chars[..keep].iter().collect();
-    t.push('\u{2026}');
+    if lo == 0 {
+        return ellipsis.to_string();
+    }
+    let mut t: String = chars[..lo].iter().collect();
+    t.push_str(ellipsis);
     t
 }
 

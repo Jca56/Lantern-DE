@@ -12,6 +12,7 @@ use chrono::{Datelike, Local, NaiveDate, Timelike};
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
 use crate::controls::tile::TileLayout;
+use crate::controls::toolbar::{ClockOpts, DatePos};
 
 /// White text — user prefers white over the Studio tan everywhere.
 const TEXT_RGB: (u8, u8, u8) = (0xff, 0xff, 0xff);
@@ -118,11 +119,36 @@ const TIME_FONT: f32 = 38.0;
 const DATE_FONT: f32 = 16.0;
 const TIME_DATE_GAP: f32 = 1.0;
 
-/// Logical px the clock tile asks for in the row layout. Sized to the
-/// actual content width — "12:34" at 38pt is roughly 100pt wide, the
-/// date "Wed Apr 30" at 16pt is similar. Anything wider just leaves
-/// dead space between the clock and the next tile.
+/// Optical-centering rise as a fraction of font size. cosmic-text lays
+/// glyphs low within their 1.2× line box, so plain `(h - font)/2`
+/// centering renders text bottom-heavy; lifting by this fraction puts the
+/// ink on the row's true vertical center.
+const V_CENTER_RISE: f32 = 0.12;
+
+/// Default logical width (date below, no seconds). Used as the generic
+/// `TileId::logical_width` fallback; the live width comes from
+/// [`tile_width`] which accounts for the clock's options.
 pub const TILE_WIDTH: f32 = 110.0;
+
+/// Approximate logical widths used for slot sizing (we can't measure text
+/// without a `TextRenderer` here, so these are generous estimates).
+const TIME_W: f32 = 100.0;
+const TIME_SECONDS_W: f32 = 150.0;
+const DATE_W: f32 = 100.0;
+/// Gap between time and date when the date is beside the time.
+const DATE_SIDE_GAP: f32 = 8.0;
+
+/// Logical width the clock asks for given its options.
+pub fn tile_width(opts: &ClockOpts) -> f32 {
+    let time_w = if opts.seconds { TIME_SECONDS_W } else { TIME_W };
+    if !opts.show_date {
+        return time_w;
+    }
+    match opts.date_pos {
+        DatePos::Below => time_w.max(DATE_W),
+        DatePos::Left | DatePos::Right => time_w + DATE_SIDE_GAP + DATE_W,
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 pub fn draw_inline(
@@ -135,47 +161,66 @@ pub fn draw_inline(
     surface_w: u32,
     surface_h: u32,
     lit: bool,
+    opts: &ClockOpts,
 ) {
     let now = Local::now();
-    let time_str = format_time(now.hour(), now.minute());
-    let date_str = format_short_date(now.weekday(), now.month(), now.day());
+    let time_str = format_time(now.hour(), now.minute(), now.second(), opts.hour24, opts.seconds);
 
     let time_font = TIME_FONT * scale;
     let date_font = DATE_FONT * scale;
-    let gap = TIME_DATE_GAP * scale;
-    let stack_h = time_font + gap + date_font;
-    let cy = layout.y + (layout.h - stack_h) / 2.0;
-
-    let time_w = text.measure_width(&time_str, time_font);
-    let date_w = text.measure_width(&date_str, date_font);
-
     let primary = if lit { accent_color(alpha) } else { text_color(alpha) };
     let secondary = if lit {
         accent_color(SECONDARY_ALPHA * alpha)
     } else {
         text_color(SECONDARY_ALPHA * alpha)
     };
+    let time_w = text.measure_width(&time_str, time_font);
 
-    text.queue(
-        &time_str,
-        time_font,
-        layout.x,
-        cy,
-        primary,
-        layout.w,
-        surface_w,
-        surface_h,
-    );
-    text.queue(
-        &date_str,
-        date_font,
-        layout.x + (time_w - date_w) / 2.0,
-        cy + time_font + gap,
-        secondary,
-        layout.w,
-        surface_w,
-        surface_h,
-    );
+    // Date hidden → just center the time in the tile.
+    if !opts.show_date {
+        let tx = layout.x + (layout.w - time_w) / 2.0;
+        let ty = layout.y + (layout.h - time_font) / 2.0 - time_font * V_CENTER_RISE;
+        text.queue(&time_str, time_font, tx, ty, primary, layout.w, surface_w, surface_h);
+        return;
+    }
+
+    let date_str = format_short_date(now.weekday(), now.month(), now.day());
+    let date_w = text.measure_width(&date_str, date_font);
+
+    match opts.date_pos {
+        DatePos::Below => {
+            let gap = TIME_DATE_GAP * scale;
+            let stack_h = time_font + gap + date_font;
+            let cy = layout.y + (layout.h - stack_h) / 2.0 - time_font * V_CENTER_RISE;
+            let group_w = time_w.max(date_w);
+            let gx = layout.x + (layout.w - group_w) / 2.0;
+            text.queue(&time_str, time_font, gx + (group_w - time_w) / 2.0, cy, primary, layout.w, surface_w, surface_h);
+            text.queue(
+                &date_str,
+                date_font,
+                gx + (group_w - date_w) / 2.0,
+                cy + time_font + gap,
+                secondary,
+                layout.w,
+                surface_w,
+                surface_h,
+            );
+        }
+        DatePos::Left | DatePos::Right => {
+            let side_gap = DATE_SIDE_GAP * scale;
+            let total_w = time_w + side_gap + date_w;
+            let gx = layout.x + (layout.w - total_w) / 2.0;
+            let ty = layout.y + (layout.h - time_font) / 2.0 - time_font * V_CENTER_RISE;
+            let dy = layout.y + (layout.h - date_font) / 2.0 - date_font * V_CENTER_RISE;
+            let (time_x, date_x) = if opts.date_pos == DatePos::Left {
+                (gx + date_w + side_gap, gx)
+            } else {
+                (gx, gx + time_w + side_gap)
+            };
+            text.queue(&time_str, time_font, time_x, ty, primary, layout.w, surface_w, surface_h);
+            text.queue(&date_str, date_font, date_x, dy, secondary, layout.w, surface_w, surface_h);
+        }
+    }
 }
 
 // ── Click-expand calendar ───────────────────────────────────────────────────
@@ -935,18 +980,24 @@ fn truncate_to_width(text: &mut TextRenderer, s: &str, font: f32, max_w: f32) ->
 
 // ── Formatting helpers ──────────────────────────────────────────────────────
 
-fn format_time(hour: u32, minute: u32) -> String {
-    // 12-hour clock without AM/PM (user preference). 12am → "12:00",
-    // 1pm → "1:00", etc. Hour is *not* zero-padded so it reads as a
-    // natural human time.
-    let h12 = if hour == 0 {
-        12
-    } else if hour <= 12 {
-        hour
+fn format_time(hour: u32, minute: u32, second: u32, hour24: bool, seconds: bool) -> String {
+    if hour24 {
+        // 24-hour: zero-pad the hour ("09:05").
+        if seconds {
+            format!("{:02}:{:02}:{:02}", hour, minute, second)
+        } else {
+            format!("{:02}:{:02}", hour, minute)
+        }
     } else {
-        hour - 12
-    };
-    format!("{}:{:02}", h12, minute)
+        // 12-hour without AM/PM (user preference). Hour not zero-padded so
+        // it reads as a natural human time.
+        let h12 = if hour % 12 == 0 { 12 } else { hour % 12 };
+        if seconds {
+            format!("{}:{:02}:{:02}", h12, minute, second)
+        } else {
+            format!("{}:{:02}", h12, minute)
+        }
+    }
 }
 
 fn format_short_date(weekday: chrono::Weekday, month: u32, day: u32) -> String {

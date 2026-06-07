@@ -383,8 +383,7 @@ pub(super) fn handle_keypress(wl: &mut WlState, app: &mut AppState) {
         }
     } else if matches!(
         app.mode,
-        crate::app::PanelMode::Control(crate::controls::TileId::SysMon)
-            | crate::app::PanelMode::Control(crate::controls::TileId::Temp)
+        crate::app::PanelMode::Control(id) if id.opens_sysmon_view()
     ) {
         // Sysmon process filter: typed chars edit the buffer. Esc
         // (handled above via esc_pressed) clears it; Enter and arrows

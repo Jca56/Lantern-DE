@@ -6,7 +6,7 @@ use std::path::Path;
 
 use crate::app::TreeEntry;
 use crate::fs::FileEntry;
-use crate::sections::{selection_tint, truncate_with_ellipsis};
+use crate::sections::{selection_tint, truncate_to_width, truncate_with_ellipsis};
 
 // ── List view ───────────────────────────────────────────────────────────────
 
@@ -270,8 +270,13 @@ pub fn draw_content_tree(
         let name_x = icon_x + icon_sz + 8.0 * m * s;
         let text_y = y + (row_h - 24.0 * m * s) * 0.5;
         let max_w = content_rect.x + content_rect.w - name_x - 12.0 * m * s;
-        let name_color = if te.entry.is_dir { palette.text } else { palette.text };
-        TextLabel::new(&te.entry.name, name_x, text_y)
+        let name_color = palette.text;
+        // Truncate to a single line with an ellipsis using real glyph widths.
+        // Passing the raw name with only max_width lets cosmic-text WRAP onto a
+        // second line, which then overlaps the row below; the char-width
+        // *estimate* undertrims wide glyphs and still wraps, so measure exactly.
+        let display = truncate_to_width(text, &te.entry.name, max_w, 24.0 * m * s);
+        TextLabel::new(&display, name_x, text_y)
             .size(font).color(name_color).max_width(max_w)
             .draw(text, screen.0, screen.1);
     }

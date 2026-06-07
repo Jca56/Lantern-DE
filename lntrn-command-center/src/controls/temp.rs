@@ -13,8 +13,9 @@ use crate::controls::sysmon::SysMon;
 use crate::controls::tile::TileLayout;
 use crate::render::IconRequest;
 
-/// Logical width of the tile. Bulb + stem + gap + 2–3 digit number.
-pub const TILE_WIDTH: f32 = 80.0;
+/// Logical width of the tile, sized tight to its content: left pad +
+/// thermometer + gap + up to a 3-digit number.
+pub const TILE_WIDTH: f32 = 64.0;
 
 /// Thermometer geometry (all logical px).
 const STEM_W: f32 = 6.0;
@@ -26,11 +27,17 @@ const STEM_BULB_OVERLAP: f32 = 3.0;
 /// Logical px from tile left edge to the thermometer's left edge.
 const ICON_LEFT_PAD: f32 = 10.0;
 
-/// Font for the temperature number.
-const NUMBER_FONT: f32 = 22.0;
+/// Font for the temperature number. Matches the GPU tile's temp text
+/// (gpu.rs `TOP_FONT`) so the two thermals read at the same size.
+const NUMBER_FONT: f32 = 18.0;
 
-/// Logical px gap between the bulb's right edge and the digits.
-const ICON_NUMBER_GAP: f32 = 10.0;
+/// Logical px gap between the bulb's right edge and the digits. Tight so
+/// the number tucks in close to the thermometer.
+const ICON_NUMBER_GAP: f32 = 4.0;
+
+/// Logical px the number is nudged upward from vertical center so its top
+/// lines up with the top of the thermometer icon.
+const NUMBER_RISE: f32 = 12.0;
 
 /// Temperature thresholds (°C). Below COOL → blue; between → orange;
 /// ≥ HOT → red.
@@ -92,7 +99,7 @@ pub fn draw_inline(
     let number = format!("{}", temp_c.round() as i32);
     let number_w = text.measure_width(&number, number_font);
     let number_x = icon_left + icon_w + gap;
-    let number_y = layout.y + (layout.h - number_font) / 2.0;
+    let number_y = layout.y + (layout.h - number_font) / 2.0 - NUMBER_RISE * scale;
     let white = Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(alpha * 0.92);
     text.queue(
         &number,

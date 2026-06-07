@@ -5,6 +5,7 @@
 //! drops all polling work when `visible == false` and clears history so
 //! a fresh open starts with an empty graph instead of stale data.
 
+pub mod gpu;
 pub mod proc;
 pub mod process_list;
 pub mod tile;
@@ -19,6 +20,8 @@ use crate::search::input::Input;
 
 use self::proc::MemInfo;
 use self::worker::{SysMonCmd, SysMonEvent};
+
+pub use self::gpu::GpuStats;
 
 /// How the process list should be ordered. The render side surfaces
 /// these via clickable column headers — clicking the active column
@@ -155,6 +158,14 @@ pub struct SysMon {
     /// thermal zone is readable (worker hasn't sampled yet, or the
     /// hardware doesn't expose one).
     pub last_temp_c: Option<f32>,
+    /// Most recent GPU sample, or `None` until the first poll arrives
+    /// (or always, on hardware with no readable GPU).
+    pub last_gpu: Option<GpuStats>,
+    pub gpu_history: History,
+    /// One-time probe result: is there a GPU we can read? Drives the
+    /// GPU tile's slot reservation so the layout doesn't shift when the
+    /// first sample lands.
+    gpu_present: bool,
     pub processes: Vec<ProcessRow>,
     /// Currently highlighted process row, set by clicking it. Used as
     /// a soft-confirm: the kill button on the **selected** row sends
@@ -190,6 +201,9 @@ impl SysMon {
             last_net_rx_bps: 0.0,
             last_net_tx_bps: 0.0,
             last_temp_c: None,
+            last_gpu: None,
+            gpu_history: History::new(HISTORY_LEN),
+            gpu_present: gpu::gpu_available(),
             processes: Vec::new(),
             selected_pid: None,
             sort: ProcSort::CpuDesc,
@@ -199,6 +213,12 @@ impl SysMon {
 
     pub const fn is_present(&self) -> bool {
         true
+    }
+
+    /// Whether a readable GPU was detected at startup. Gates the GPU
+    /// tile so it only appears on machines we can actually query.
+    pub const fn has_gpu(&self) -> bool {
+        self.gpu_present
     }
 
     /// Update the sort key and forward to the worker. The next process
@@ -225,6 +245,8 @@ impl SysMon {
         self.last_net_rx_bps = 0.0;
         self.last_net_tx_bps = 0.0;
         self.last_temp_c = None;
+        self.last_gpu = None;
+        self.gpu_history.clear();
         self.processes.clear();
         self.selected_pid = None;
         // Filter persists across opens — feels less surprising than
@@ -267,6 +289,12 @@ impl SysMon {
                     self.net_rx_history.push(net_rx_bps);
                     self.net_tx_history.push(net_tx_bps);
                     self.last_temp_c = temp_c;
+                }
+                SysMonEvent::Gpu(stats) => {
+                    self.last_gpu = stats;
+                    if let Some(g) = stats {
+                        self.gpu_history.push(g.util_pct);
+                    }
                 }
                 SysMonEvent::Processes(rows) => {
                     self.processes = rows;
