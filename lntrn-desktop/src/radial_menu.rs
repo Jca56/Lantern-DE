@@ -19,7 +19,7 @@ use lntrn_render::{Color, GpuContext, GpuTexture, Painter, Rect, TextRenderer, T
 /// farther from the hub and spread out more (button size is fixed by BUTTON_R).
 const RING_RADIUS: f32 = 184.0;
 /// Radius of each circular button.
-const BUTTON_R: f32 = 46.0;
+const BUTTON_R: f32 = 60.0;
 /// Radius of the little center hub dot.
 const HUB_R: f32 = 16.0;
 /// Label text size (logical). Big, per the user's eyesight preference.
@@ -177,28 +177,44 @@ impl RadialColors {
 /// textures, reusing the desktop's existing resvg pipeline.
 pub struct RadialIconCache {
     textures: HashMap<String, GpuTexture>,
+    /// Names we've already tried (resolved or not), so a missing icon doesn't
+    /// re-scan the disk every frame the ring is open.
+    attempted: std::collections::HashSet<String>,
     size_px: u32,
 }
 
 impl RadialIconCache {
     pub fn new(size_px: u32) -> Self {
-        Self { textures: HashMap::new(), size_px: size_px.max(24) }
+        Self {
+            textures: HashMap::new(),
+            attempted: std::collections::HashSet::new(),
+            size_px: size_px.max(24),
+        }
     }
 
     /// Drop all textures (e.g. on output-scale change) and re-target a new size.
     pub fn clear(&mut self, size_px: u32) {
         self.textures.clear();
+        self.attempted.clear();
         self.size_px = size_px.max(24);
     }
 
+    /// Rasterize an icon by name. Embedded Lantern icons (e.g. "lntrn-terminal.svg")
+    /// win; otherwise the name is treated as a freedesktop icon / app id and
+    /// resolved from the system icon theme (e.g. "firefox" → the real logo).
     fn ensure(&mut self, gpu: &GpuContext, tex_pass: &TexturePass, name: &str) {
-        if self.textures.contains_key(name) {
+        if self.attempted.contains(name) {
             return;
         }
-        let Some(bytes) = lntrn_icons::get(name) else {
-            return;
+        self.attempted.insert(name.to_string());
+
+        let rgba = if let Some(bytes) = lntrn_icons::get(name) {
+            crate::assets::rasterize_svg(bytes, self.size_px)
+        } else {
+            crate::system_icons::resolve(name)
+                .and_then(|path| crate::system_icons::rasterize(&path, self.size_px))
         };
-        if let Some(rgba) = crate::assets::rasterize_svg(bytes, self.size_px) {
+        if let Some(rgba) = rgba {
             let tex = tex_pass.upload(gpu, &rgba, self.size_px, self.size_px);
             self.textures.insert(name.to_string(), tex);
         }
@@ -271,10 +287,6 @@ pub fn draw_radial_menu<'a>(
     let br = BUTTON_R * scale * lerp(0.55, 1.0, pop);
     let hub = HUB_R * scale * fade;
 
-    // Soft focus disc behind the ring — dims the wallpaper/icons so the menu pops.
-    let disc_r = rr + br + 44.0 * scale;
-    painter.circle_filled(cx, cy, disc_r, cols.bg.with_alpha(0.18 * fade));
-
     // The ring track the buttons sit on.
     painter.circle_stroke(cx, cy, rr, 3.0 * scale, cols.accent.with_alpha(0.45 * fade));
 
@@ -311,7 +323,7 @@ pub fn draw_radial_menu<'a>(
 
         // Icon centered in the button.
         if let Some(tex) = icons.get(&it.icon) {
-            let isz = r * 1.16;
+            let isz = r * 1.3;
             draws.push(
                 TextureDraw::new(tex, bx - isz * 0.5, by - isz * 0.5, isz, isz).opacity(fade),
             );

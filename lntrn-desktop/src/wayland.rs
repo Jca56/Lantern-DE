@@ -207,7 +207,8 @@ pub fn run() -> Result<()> {
     // Per-file thumbnails for image files, decoded on a background thread.
     let mut thumbs = crate::thumbs::ThumbCache::new(icon_px);
     // Glyph icons for the radial right-click menu (rasterized on first open).
-    let radial_icon_px = |s: f32| (72.0 * s) as u32;
+    // Sized for the larger ring buttons so icons stay crisp incl. on hover-grow.
+    let radial_icon_px = |s: f32| (112.0 * s) as u32;
     let mut radial_icons = crate::radial_menu::RadialIconCache::new(radial_icon_px(scale));
 
     // App state — scan desktop, assign cells, then prime only the icons we need.

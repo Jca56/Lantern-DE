@@ -283,6 +283,12 @@ pub fn on_left_release(state: &mut DesktopState, _cx: f32, _cy: f32, _dims: (i32
 /// Right-mouse press — open a context menu (on an item) or the radial menu
 /// (on empty desktop). The radial menu's gesture completes on release.
 pub fn on_right_press(state: &mut DesktopState, cx: f32, cy: f32, surface_w: f32, surface_h: f32) {
+    // If the ring is already open, a right-click dismisses it (toggle) — the same
+    // way a left-click on empty space closes it. Without this, a second
+    // right-click would just re-bloom a fresh ring at the new cursor spot.
+    if state.radial.take().is_some() {
+        return;
+    }
     // Close any existing menus / interactions.
     state.menu = None;
     state.radial = None;

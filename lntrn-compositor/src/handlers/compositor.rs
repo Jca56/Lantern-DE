@@ -193,11 +193,19 @@ impl CompositorHandler for Lantern {
                 });
                 if has_focus {
                     let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-                    keyboard.set_focus(
-                        self,
-                        Option::<crate::keyboard_focus::KeyboardFocusTarget>::None,
-                        serial,
-                    );
+                    // A keyboard-grabbing layer surface (the Command Center) just
+                    // released its grab. Instead of leaving the keyboard focused
+                    // on nothing, hand focus back to the top-most window so the
+                    // user can keep typing/working immediately on close.
+                    if let Some(window) = self.focused_window() {
+                        self.focus_window(&window, serial);
+                    } else {
+                        keyboard.set_focus(
+                            self,
+                            Option::<crate::keyboard_focus::KeyboardFocusTarget>::None,
+                            serial,
+                        );
+                    }
                 }
             }
         }

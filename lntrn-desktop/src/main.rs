@@ -15,6 +15,7 @@ mod radial_menu;
 mod rainbow;
 mod render;
 mod state;
+mod system_icons;
 mod thumbs;
 mod wayland;
 mod widgets_config;

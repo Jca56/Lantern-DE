@@ -134,10 +134,9 @@ fn default_items() -> Vec<RadialItem> {
 /// (label, icon, action, command) — the seed ring, clockwise from the top.
 const DEFAULTS: &[(&str, &str, &str, &str)] = &[
     ("Terminal", "lntrn-terminal.svg", "launch", "lntrn-terminal"),
-    ("Files", "lntrn-file-manager.svg", "launch", "lntrn-file-manager"),
-    ("Settings", "lntrn-system-settings.svg", "launch", "lntrn-system-settings"),
-    ("Wallpaper", "spark-menu-graphics.svg", "launch", "lntrn-system-settings --panel wallpaper"),
+    ("File Manager", "lntrn-file-manager.svg", "launch", "lntrn-file-manager"),
+    ("Firefox", "firefox", "launch", "firefox"),
+    ("Notepad", "lntrn-notepad.svg", "launch", "lntrn-notepad"),
     ("Screenshot", "lntrn-screenshot.svg", "launch", "lntrn-screenshot"),
-    ("New Folder", "folders/Standard/lntrn-folder-desktop.svg", "new_folder", ""),
-    ("Refresh", "spark-menu-restart.svg", "refresh", ""),
+    ("Settings", "lntrn-system-settings.svg", "launch", "lntrn-system-settings"),
 ];
