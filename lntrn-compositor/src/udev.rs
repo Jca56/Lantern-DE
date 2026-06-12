@@ -381,6 +381,13 @@ pub fn init_udev(
                 Some(crate::animation::ClosingWindow { surface, location, size, had_ssd })
             })
             .collect();
+        if !dead_windows.is_empty() {
+            // Purge the dead elements from the spaces RIGHT NOW so the next
+            // dispatch round can't re-detect them — zombie close animations
+            // must start exactly once per window.
+            state.space.refresh();
+            state.refresh_all_spaces();
+        }
         for cw in dead_windows {
             if state.animations.take_close_done(&cw.surface) {
                 // Compositor-initiated close (Super+Q) already animated — just clean up
@@ -395,8 +402,12 @@ pub fn init_udev(
                 state.schedule_render();
             }
         }
-        state.space.refresh();
-        state.refresh_all_spaces();
+        // NOTE: the unconditional Space::refresh (global + per-workspace)
+        // moved into render_surface. This callback fires after EVERY
+        // dispatch round — at 1000Hz mouse polling that was ~7000 refresh
+        // sweeps/sec; the render path runs it at most once per output frame,
+        // and the dead-window purge above covers the one case that needed
+        // dispatch-time refresh semantics.
         state.popups.cleanup();
         state.layer_surfaces.retain(|ls| ls.alive());
         state.check_exclusive_zone_change();
@@ -459,6 +470,56 @@ pub(crate) fn frame_finish(state: &mut Lantern, node: DrmNode, crtc: crtc::Handl
 /// Trigger a re-render on all outputs (e.g. after cursor movement)
 pub fn schedule_render_all(state: &mut Lantern) {
     schedule_render(state, false);
+}
+
+/// Trigger a re-render on a single output. Events that only affect one
+/// monitor (pointer motion, a client commit) shouldn't force the other
+/// monitor(s) through a full element build + render pass — at 240Hz primary
+/// + secondary that over-render was pure waste. Falls back to all-outputs
+/// when the output has no udev identity (winit, mid-hotplug).
+pub fn schedule_render_output(state: &mut Lantern, output: &smithay::output::Output) {
+    let Some(id) = output.user_data().get::<UdevOutputId>().copied() else {
+        schedule_render(state, false);
+        return;
+    };
+    let interval = fastest_output_interval(state);
+    let udev = match state.udev.as_mut() {
+        Some(u) => u,
+        None => return,
+    };
+    let needs_timer = udev.render_timer.is_none();
+    if let Some(surface) = udev
+        .backends
+        .get_mut(&id.device_id)
+        .and_then(|b| b.surfaces.get_mut(&id.crtc))
+    {
+        surface.pending_render = true;
+    } else {
+        // Output not backed by a live surface right now — be conservative.
+        for (_, backend) in &mut udev.backends {
+            for (_, surface) in &mut backend.surfaces {
+                surface.pending_render = true;
+            }
+        }
+    }
+
+    if needs_timer {
+        let token = state.loop_handle.insert_source(
+            Timer::from_duration(interval),
+            |_, _, state| {
+                if let Some(udev) = state.udev.as_mut() {
+                    udev.render_timer = None;
+                }
+                flush_pending_renders(state, false);
+                TimeoutAction::Drop
+            },
+        );
+        if let Ok(token) = token {
+            if let Some(udev) = state.udev.as_mut() {
+                udev.render_timer = Some(token);
+            }
+        }
+    }
 }
 
 /// Arm a one-shot timer that will run shortly after VBLANK_TIMEOUT, so that

@@ -128,10 +128,7 @@ impl Lantern {
         window: &Window,
         surface: &WlSurface,
     ) -> Option<Rectangle<i32, Logical>> {
-        if self.take_maximized_restore(surface).is_some() {
-            window.set_maximized(false);
-            self.update_foreign_toplevel_states(surface);
-        }
+        self.clear_maximize_for_op(window, surface);
         let output = self
             .output_for_window(window)
             .or_else(|| self.workspaces.outputs_iter().next().cloned())?;

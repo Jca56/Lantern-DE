@@ -57,6 +57,10 @@ pub(crate) fn run_loop(
     let mut last_dir_check = Instant::now();
     let mut last_dir_mtime: Option<std::time::SystemTime> = None;
     let mut last_dir_path = app.current_dir.clone();
+    let mut dir_watcher = crate::dir_watch::DirWatcher::new();
+    let mut git = crate::git_status::GitStatus::new();
+    let mut git_dir = std::path::PathBuf::new();
+    let mut last_git_poll = Instant::now();
     let mut last_devices_check = Instant::now();
     let mut last_tab_click: Option<(usize, Instant)> = None;
     // Pinned tab drag reorder state
@@ -88,12 +92,23 @@ pub(crate) fn run_loop(
         }
         if let Some(guard) = event_queue.prepare_read() {
             let fd = guard.connection_fd().as_raw_fd();
-            let mut pfd = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
-            let ret = unsafe { libc::poll(&mut pfd, 1, timeout_ms) };
-            if ret > 0 {
+            // Poll the watcher's eventfd alongside the wayland fd so a file
+            // landing in the current directory wakes the loop immediately.
+            let mut pfds = [
+                libc::pollfd { fd, events: libc::POLLIN, revents: 0 },
+                libc::pollfd { fd: dir_watcher.fd(), events: libc::POLLIN, revents: 0 },
+            ];
+            let ret = unsafe { libc::poll(pfds.as_mut_ptr(), 2, timeout_ms) };
+            // Any revents (POLLIN, but also POLLHUP/POLLERR on compositor
+            // death) → read, so connection errors surface in dispatch and
+            // the loop exits instead of busy-spinning on a dead fd.
+            if ret > 0 && pfds[0].revents != 0 {
                 let _ = guard.read();
             } else {
                 drop(guard);
+            }
+            if ret > 0 && pfds[1].revents & libc::POLLIN != 0 {
+                dir_watcher.drain_fd();
             }
         }
         if let Err(e) = event_queue.dispatch_pending(state) {
@@ -892,7 +907,7 @@ pub(crate) fn run_loop(
         *palette = FoxPalette::current();
         let render_palette = palette.with_bg_opacity(opacity);
         let inline_evt = crate::render::render_frame(
-            gpu, app, input, icon_cache, file_info,
+            gpu, app, input, icon_cache, file_info, &git,
             &render_palette, s, state.maximized, view_menu, context_menu,
             tab_drag, fav_drag, opacity, state.desktop_mode,
         );
@@ -1053,7 +1068,32 @@ pub(crate) fn run_loop(
             }
         }
 
-        // ── Auto-refresh: check directory mtime every 3 seconds ─────
+        // ── Auto-refresh ─────────────────────────────────────────────
+        // Primary: inotify on the current dir → debounced instant reload.
+        dir_watcher.watch(&app.current_dir);
+        if dir_watcher.take_due_reload() {
+            app.reload();
+            // Keep the mtime tracker in sync so the fallback poll below
+            // doesn't schedule a redundant second reload.
+            last_dir_mtime = std::fs::metadata(&app.current_dir)
+                .and_then(|m| m.modified()).ok();
+            git.refresh(&app.current_dir);
+        }
+
+        // ── Git badges/branch ────────────────────────────────────────
+        git.poll();
+        if app.current_dir != git_dir {
+            git_dir = app.current_dir.clone();
+            last_git_poll = Instant::now();
+            git.refresh(&app.current_dir);
+        } else if git.in_repo() && last_git_poll.elapsed() >= Duration::from_secs(5) {
+            // Commits/stages from a terminal change git state without any
+            // fs event in the viewed dir — cheap periodic re-scan, repos only.
+            last_git_poll = Instant::now();
+            git.refresh(&app.current_dir);
+        }
+        // Fallback: dir-mtime poll every 3s, for filesystems without
+        // inotify delivery (sshfs and friends).
         if app.current_dir != last_dir_path {
             // Directory changed (navigation) — reset tracker, don't reload
             last_dir_path = app.current_dir.clone();
@@ -1089,7 +1129,10 @@ pub(crate) fn run_loop(
             || fav_drag.is_some()
             || app.preview_drag.is_some()
             || app.op_progress.is_some()
-            || state.dnd_active;
+            || state.dnd_active
+            || icon_cache.has_pending()
+            || dir_watcher.reload_pending()
+            || app.quick_look.as_ref().is_some_and(|ql| ql.loading());
     }
 
     Ok(())

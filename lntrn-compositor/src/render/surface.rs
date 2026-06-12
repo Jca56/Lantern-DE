@@ -34,6 +34,61 @@ use crate::Lantern;
 use super::helpers::{capture_window_snapshot, send_presentation_feedback};
 use super::CustomRenderElements;
 
+/// Inputs that parameterize a cached window-chrome shader element (shadow
+/// or border). Float params are compared by bit pattern. When the key is
+/// unchanged the cached element is reused as-is.
+#[derive(Clone, Copy, PartialEq)]
+pub struct ChromeKey {
+    area: Rectangle<i32, Logical>,
+    win: (i32, i32),
+    a: u32,
+    b: u32,
+    color: [u32; 4],
+    alpha: u32,
+}
+
+/// Per-window cached chrome shader elements. Rebuilding these every frame
+/// minted a fresh element Id each time, which reads as brand-new damage to
+/// the output damage tracker — every scheduled frame repainted every
+/// window's shadow + border region at 4K. Reuse keeps Id + commit counter
+/// stable so unchanged chrome is genuinely undamaged; on change the element
+/// is updated in place (same Id, bumped commit = correctly damaged).
+#[derive(Default)]
+pub struct ChromeCacheEntry {
+    shadow: Option<(ChromeKey, PixelShaderElement)>,
+    border: Option<(ChromeKey, PixelShaderElement)>,
+}
+
+fn cached_chrome_elem(
+    slot: &mut Option<(ChromeKey, PixelShaderElement)>,
+    shader: &smithay::backend::renderer::gles::GlesPixelProgram,
+    key: ChromeKey,
+    uniforms: impl Fn() -> Vec<Uniform<'static>>,
+) -> PixelShaderElement {
+    match slot {
+        Some((k, elem)) if *k == key => elem.clone(),
+        Some((k, elem)) => {
+            elem.resize(key.area, None);
+            elem.update_uniforms_static(uniforms());
+            elem.set_alpha(f32::from_bits(key.alpha));
+            *k = key;
+            elem.clone()
+        }
+        None => {
+            let elem = PixelShaderElement::new_static(
+                shader.clone(),
+                key.area,
+                None,
+                f32::from_bits(key.alpha),
+                uniforms(),
+                Kind::Unspecified,
+            );
+            *slot = Some((key, elem.clone()));
+            elem
+        }
+    }
+}
+
 pub fn render_surface(
     state: &mut Lantern,
     node: smithay::backend::drm::DrmNode,
@@ -85,6 +140,13 @@ pub fn render_surface(
         };
         surface.pending_render = false;
     }
+
+    // Space refresh (dead-element cleanup, output-presence updates) moved
+    // here from the calloop post-dispatch callback — there it ran after
+    // EVERY dispatch round (≈7000 sweeps/sec under 1000Hz mouse polling);
+    // here it runs at most once per output frame.
+    state.space.refresh();
+    state.refresh_all_spaces();
 
     let output = match state.workspaces.outputs_iter().find(|o| {
         o.user_data()
@@ -458,6 +520,12 @@ pub fn render_surface(
     let output_name_str = output.name();
     let ws_transition_now = std::time::Instant::now();
 
+    // Chrome cache is taken out of `state` for the duration of the window
+    // loop so its &mut doesn't conflict with the loop's other state borrows;
+    // restored immediately after the loop.
+    let mut chrome_cache_all = std::mem::take(&mut state.window_chrome_cache);
+    let chrome_cache = chrome_cache_all.entry(output_name_str.clone()).or_default();
+
     for window in windows.iter().rev() {
         // Index where this window's contributions to `window_elements` start.
         // Used by the blur-source builder below to skip this window's own
@@ -466,33 +534,30 @@ pub fn render_surface(
         // OR windows (X11 popups: menus, tooltips, dropdowns) live in
         // `state.space` (the global mirror) but not in any per-workspace
         // Space. Fall back to the global space when the per-workspace
-        // lookup returns None.
-        let lookup_loc = |w: &Window| -> smithay::utils::Point<i32, smithay::utils::Logical> {
-            state
-                .workspaces
-                .element_location(w)
-                .or_else(|| state.space.element_location(w))
-                .unwrap_or_default()
-        };
+        // lookup returns None. Looked up ONCE per window per frame — this
+        // was a closure invoked twice (with the second result discarded)
+        // plus a third equivalent lookup in the eff-rect fallback below.
+        let window_loc = state
+            .workspaces
+            .element_location(window)
+            .or_else(|| state.space.element_location(window))
+            .unwrap_or_default();
         let win_bbox = {
-            let loc = lookup_loc(window);
             let mut bbox = window.bbox();
-            bbox.loc += loc - window.geometry().loc;
+            bbox.loc += window_loc - window.geometry().loc;
             bbox
         };
         if !output_geo.overlaps(win_bbox) {
             continue;
         }
 
-        let location = lookup_loc(window);
-        let _ = location;
         let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(window) else { continue };
 
         // Space only contains active-workspace windows (unmap/remap on switch).
         // Apply slide offset if a transition is running on this output.
         let mut ws_slide_offset = 0.0f64;
-        if let Some((win_output, win_ws)) = state.workspaces.window_workspace(&surface) {
-            if win_output == output_name_str {
+        if let Some((win_output, win_ws)) = state.workspaces.window_workspace_ref(&surface) {
+            if win_output == output_name_str.as_str() {
                 if let Some(t) = state.workspace_anim.get(&output_name_str) {
                     if let Some(off) = t.offset_for(win_ws, output_geo.size.w as f64, ws_transition_now) {
                         ws_slide_offset = off;
@@ -584,12 +649,7 @@ pub fn render_surface(
                 (rect.loc.x as f64, rect.loc.y as f64,
                  rect.size.w as f64, rect.size.h as f64, 1.0)
             } else {
-                let loc = state
-                    .workspaces
-                    .element_location(window)
-                    .or_else(|| state.space.element_location(window))
-                    .unwrap_or_default();
-                (loc.x as f64, loc.y as f64,
+                (window_loc.x as f64, window_loc.y as f64,
                  win_size.w as f64, win_size.h as f64, 1.0)
             };
 
@@ -955,19 +1015,23 @@ pub fn render_surface(
                 } else {
                     (12.0f32, [0.0f32, 0.0, 0.0, 0.4])
                 };
-                let shadow_elem = PixelShaderElement::new(
-                    shader.clone(),
-                    shadow_area,
-                    None,
-                    alpha,
+                let key = ChromeKey {
+                    area: shadow_area,
+                    win: (win_w, win_h),
+                    a: sigma.to_bits(),
+                    b: corner_r.to_bits(),
+                    color: shadow_color.map(f32::to_bits),
+                    alpha: alpha.to_bits(),
+                };
+                let chrome = chrome_cache.entry(surface.clone()).or_default();
+                let shadow_elem = cached_chrome_elem(&mut chrome.shadow, shader, key, || {
                     vec![
                         Uniform::new("window_size", [win_w as f32, win_h as f32]),
                         Uniform::new("sigma", sigma),
                         Uniform::new("corner_radius", corner_r),
                         Uniform::new("shadow_color", shadow_color),
-                    ],
-                    Kind::Unspecified,
-                );
+                    ]
+                });
                 window_elements.push(CustomRenderElements::Shader(shadow_elem));
             }
 
@@ -990,24 +1054,31 @@ pub fn render_surface(
                     );
                     let mut bc = state.border_color;
                     bc[3] = 1.0;
-                    let border_elem = PixelShaderElement::new(
-                        shader.clone(),
-                        border_area,
-                        None,
-                        alpha,
+                    let key = ChromeKey {
+                        area: border_area,
+                        win: (win_w, win_h),
+                        a: corner_r.to_bits(),
+                        b: (border_width as f32).to_bits(),
+                        color: bc.map(f32::to_bits),
+                        alpha: alpha.to_bits(),
+                    };
+                    let chrome = chrome_cache.entry(surface.clone()).or_default();
+                    let border_elem = cached_chrome_elem(&mut chrome.border, shader, key, || {
                         vec![
                             Uniform::new("window_size", [win_w as f32, win_h as f32]),
                             Uniform::new("corner_radius", corner_r),
                             Uniform::new("border_width", border_width as f32),
                             Uniform::new("border_color", bc),
-                        ],
-                        Kind::Unspecified,
-                    );
+                        ]
+                    });
                     window_elements.push(CustomRenderElements::Shader(border_elem));
                 }
             }
         }
     }
+
+    // Hand the chrome cache back (taken before the window loop).
+    state.window_chrome_cache = chrome_cache_all;
 
     // Render zombie closing windows (client-initiated closes) using captured snapshots.
     // Kept OUT of window_elements (the blur pipeline indexes into that and would mis-sample
@@ -1754,6 +1825,9 @@ pub fn render_surface(
         let _ = state.workspaces.sync_gaps_from_config();
         state.system_bg_opacity = crate::read_config_f32("background_opacity", 1.0);
         state.blur_exclude = crate::read_config_list("windows", "blur_exclude");
+        state.blur_intensity = crate::read_config_f32("blur_intensity", 0.8);
+        state.blur_tint = crate::read_config_f32("blur_tint", 0.15);
+        state.blur_darken = crate::read_config_f32("blur_darken", 0.0);
         state.focus_glow = crate::read_config("window_manager", "focus_glow", "true") == "true";
         state.focus_glow_color = crate::parse_glow_color(&crate::read_config("window_manager", "focus_glow_color", "#4A9EFF"));
         state.border_color = crate::parse_glow_color(&crate::read_config("window_manager", "border_color", "#4A9EFF"));
@@ -1771,7 +1845,7 @@ pub fn render_surface(
         (output_geo.size.w as f64 * output_scale).round() as i32,
         (output_geo.size.h as f64 * output_scale).round() as i32,
     ));
-    let blur_intensity = crate::read_config_f32("blur_intensity", 0.8);
+    let blur_intensity = state.blur_intensity;
     let blur_enabled = blur_intensity >= 0.05;
     // Skip the (expensive) blur pass when a fullscreen window covers this
     // output — its backdrops are fully occluded, and the pass was overrunning
@@ -1780,8 +1854,8 @@ pub fn render_surface(
         if let (Some(ref down_shader), Some(ref up_shader)) =
             (&udev.blur_down_shader, &udev.blur_up_shader)
         {
-            let blur_tint = crate::read_config_f32("blur_tint", 0.15);
-            let blur_darken = crate::read_config_f32("blur_darken", 0.0);
+            let blur_tint = state.blur_tint;
+            let blur_darken = state.blur_darken;
             let passes = if blur_intensity < 0.3 { 2usize }
                 else if blur_intensity < 0.6 { 3 }
                 else if blur_intensity < 0.8 { 4 }
@@ -2031,41 +2105,57 @@ pub fn render_surface(
     };
 
 
-    // Fulfill any pending screencopy requests whose target output matches
-    // the one we just rendered. Other outputs' requests stay queued for
-    // their own render pass — without this filter, the first output to
-    // render would drain the entire queue and copy the wrong monitor's
-    // framebuffer (with mismatched dimensions) into every client buffer.
-    if rendered && !state.pending_screencopy.is_empty() {
+    // Deliver the PREVIOUS frame's async screencopy readback first — the
+    // GPU has had a full frame interval to finish it, so mapping the PBO
+    // no longer stalls the pipeline the way the old synchronous
+    // glReadPixels did (2-8ms at 4K on NVIDIA).
+    crate::screencopy_render::deliver_inflight(renderer, &output, &mut state.screencopy_pbos);
+
+    // Queue this frame's capture requests (for this output only — other
+    // outputs' requests stay queued for their own render pass) as a new
+    // async readback, delivered next frame. `with_damage` requests only
+    // complete on frames with actual damage; plain requests must complete
+    // even on idle frames — those route through the offscreen composite,
+    // which is always valid (the primary fb only has fresh content when
+    // `rendered`).
+    let mut screencopy_started = false;
+    if !state.pending_screencopy.is_empty() {
         let (matching, remaining): (Vec<_>, Vec<_>) = state
             .pending_screencopy
             .drain(..)
-            .partition(|p| p.output == output);
+            .partition(|p| p.output == output && (rendered || !p.with_damage));
         state.pending_screencopy = remaining;
         if !matching.is_empty() {
-            if nocapture_indices.is_empty() {
+            if nocapture_indices.is_empty() && rendered {
                 // Nothing to hide → cheap direct-framebuffer readback, and
                 // any leftover offscreen target from a finished recording
                 // can be freed.
                 state.screencopy_offscreen.remove(&output.name());
-                crate::screencopy_render::fulfill_screencopy(renderer, &output, matching);
+                crate::screencopy_render::start_screencopy_readback(
+                    renderer,
+                    &output,
+                    matching,
+                    &mut state.screencopy_pbos,
+                );
             } else {
-                // Recording badge on screen: serve the capture from a
-                // badge-free offscreen composite instead.
+                // Recording badge on screen (or a no-damage frame): serve
+                // the capture from a badge-free offscreen composite instead.
                 let filtered: Vec<&CustomRenderElements> = elements
                     .iter()
                     .enumerate()
                     .filter(|(i, _)| !nocapture_indices.contains(i))
                     .map(|(_, e)| e)
                     .collect();
-                crate::screencopy_render::fulfill_screencopy_filtered(
+                crate::screencopy_render::start_screencopy_filtered(
                     renderer,
                     &output,
                     matching,
                     &filtered,
                     &mut state.screencopy_offscreen,
+                    &mut state.screencopy_pbos,
                 );
             }
+            screencopy_started = true;
         }
     }
 
@@ -2182,6 +2272,11 @@ pub fn render_surface(
     }
     if needs_anim_redraw {
         state.schedule_render();
+    }
+    // A capture readback started this frame needs one follow-up frame on
+    // this output to map + deliver its pixels.
+    if screencopy_started {
+        crate::udev::schedule_render_output(state, &output);
     }
 
     let total_elapsed = render_start.elapsed();

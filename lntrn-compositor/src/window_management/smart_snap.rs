@@ -58,7 +58,14 @@ impl Lantern {
         }
         let Some(window) = self.focused_window() else { return false };
         let Some(surface) = window.get_wl_surface() else { return false };
-        let Some(wa) = self.unmaximize_for_op(&window, &surface) else { return false };
+        let was_maximized = self.is_maximized(&surface);
+        // Maximized is the top of the ladder — growing from it is a no-op.
+        // Bail BEFORE touching the maximize tracking; the old flow dropped
+        // the restore rect here, leaving an untracked full-size window.
+        if was_maximized && grow {
+            return false;
+        }
+        let Some(wa) = self.shape_op_work_area(&window) else { return false };
 
         let (_, size) = self.op_start_rect(&window, &surface, wa.loc);
         let stages = size_stages();
@@ -68,13 +75,16 @@ impl Lantern {
         } else {
             cur.saturating_sub(1)
         };
-        if next == cur {
+        // A maximized window always shrinks out of maximize, even when its
+        // height already classifies as the smallest stage.
+        if next == cur && !was_maximized {
             return false;
         }
         let aspect = ASPECTS[current_aspect_idx(size.w, size.h)];
         let height = (wa.size.h as f32 * stages[next]).round() as i32;
         let target = shaped_rect(height, aspect, wa);
 
+        self.clear_maximize_for_op(&window, &surface);
         self.posed_windows.remove(&surface);
         self.animate_focused_to(&surface, &window, target);
         true
@@ -92,7 +102,7 @@ impl Lantern {
         }
         let Some(window) = self.focused_window() else { return false };
         let Some(surface) = window.get_wl_surface() else { return false };
-        let Some(wa) = self.unmaximize_for_op(&window, &surface) else { return false };
+        let Some(wa) = self.shape_op_work_area(&window) else { return false };
 
         let (_, size) = self.op_start_rect(&window, &surface, wa.loc);
         let cur = current_aspect_idx(size.w, size.h);
@@ -102,12 +112,15 @@ impl Lantern {
             cur.saturating_sub(1)
         };
         if next == cur {
+            // No-op press: leave any maximize tracking intact instead of
+            // silently dropping the restore rect like the old flow did.
             return false;
         }
         // Keep the current height; only the width changes to hit the new ratio.
         let height = size.h.clamp(1, wa.size.h);
         let target = shaped_rect(height, ASPECTS[next], wa);
 
+        self.clear_maximize_for_op(&window, &surface);
         self.posed_windows.remove(&surface);
         self.animate_focused_to(&surface, &window, target);
         true
@@ -124,11 +137,6 @@ impl Lantern {
         let Some(window) = self.focused_window() else { return false };
         let Some(surface) = window.get_wl_surface() else { return false };
 
-        // Drop any maximize first so we reposition a normal rect.
-        if self.take_maximized_restore(&surface).is_some() {
-            window.set_maximized(false);
-            self.update_foreign_toplevel_states(&surface);
-        }
         let output = self
             .output_for_window(&window)
             .or_else(|| self.workspaces.outputs_iter().next().cloned());
@@ -157,6 +165,8 @@ impl Lantern {
         };
         let target = Rectangle::new(Point::from((nx, ny)), size);
 
+        // Drop any maximize now that we're committed to repositioning.
+        self.clear_maximize_for_op(&window, &surface);
         self.posed_windows.remove(&surface);
         self.animate_focused_to(&surface, &window, target);
         true
@@ -176,17 +186,10 @@ impl Lantern {
         Some(Rectangle::new(Point::from((x, y)), Size::from((w, h))))
     }
 
-    /// Drop any maximize state before a shape op so it starts from a normal
-    /// rect, and return the focused window's work area.
-    fn unmaximize_for_op(
-        &mut self,
-        window: &Window,
-        surface: &WlSurface,
-    ) -> Option<Rectangle<i32, Logical>> {
-        if self.take_maximized_restore(surface).is_some() {
-            window.set_maximized(false);
-            self.update_foreign_toplevel_states(surface);
-        }
+    /// Work area of the focused window's output — the measuring frame for the
+    /// centred shape ops. Does NOT touch maximize state; ops drop that via
+    /// `clear_maximize_for_op` only once they've committed to a new rect.
+    fn shape_op_work_area(&self, window: &Window) -> Option<Rectangle<i32, Logical>> {
         let output = self
             .output_for_window(window)
             .or_else(|| self.workspaces.outputs_iter().next().cloned())?;
@@ -352,10 +355,7 @@ mod parked {
             let Some(src_wa) = self.work_area(&src_out) else { return false };
             let Some(dst_wa) = self.work_area(&dst_out) else { return false };
 
-            if self.take_maximized_restore(&surface).is_some() {
-                window.set_maximized(false);
-                self.update_foreign_toplevel_states(&surface);
-            }
+            self.clear_maximize_for_op(&window, &surface);
 
             let (loc, size) = self.op_start_rect(&window, &surface, src_wa.loc);
             let gap = crate::default_gap();

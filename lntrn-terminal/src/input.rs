@@ -3,7 +3,7 @@ use winit::keyboard::{Key, ModifiersState, NamedKey};
 
 use crate::clipboard::WaylandClipboard;
 use crate::pty::Pty;
-use crate::terminal::TerminalState;
+use crate::terminal::{TerminalState, Wide};
 
 /// Process a winit keyboard event and write appropriate bytes to PTY.
 /// Returns true if the event was handled.
@@ -31,7 +31,7 @@ pub fn handle_key(
                     return true;
                 }
                 "V" | "v" => {
-                    do_paste(clipboard, pty);
+                    do_paste(clipboard, terminal, pty);
                     terminal.scroll_offset = 0;
                     return true;
                 }
@@ -248,11 +248,21 @@ pub fn do_copy(terminal: &TerminalState, clipboard: &Option<WaylandClipboard>) {
         let mut t = String::new();
         for row in 0..terminal.rows {
             let line = &terminal.grid[row];
-            let row_text: String = line.iter().map(|c| c.c).collect();
-            let trimmed = row_text.trim_end();
-            t.push_str(trimmed);
-            if row < terminal.rows - 1 {
-                t.push('\n');
+            // Skip wide-char tail cells — the head already has the character
+            let row_text: String = line
+                .iter()
+                .filter(|c| c.wide != Wide::Tail)
+                .map(|c| c.c)
+                .collect();
+            // Soft-wrapped rows flow into the next row: one logical line,
+            // no newline, and their trailing cells are real content.
+            if line.last().map_or(false, |cell| cell.wrapped) {
+                t.push_str(&row_text);
+            } else {
+                t.push_str(row_text.trim_end());
+                if row < terminal.rows - 1 {
+                    t.push('\n');
+                }
             }
         }
         t.trim_end_matches('\n').to_string()
@@ -262,7 +272,7 @@ pub fn do_copy(terminal: &TerminalState, clipboard: &Option<WaylandClipboard>) {
     }
 }
 
-pub fn do_paste(clipboard: &Option<WaylandClipboard>, pty: &Pty) {
+pub fn do_paste(clipboard: &Option<WaylandClipboard>, terminal: &TerminalState, pty: &Pty) {
     let text = if let Some(cb) = clipboard {
         cb.get_text()
     } else {
@@ -271,10 +281,25 @@ pub fn do_paste(clipboard: &Option<WaylandClipboard>, pty: &Pty) {
 
     if let Some(text) = text {
         if !text.is_empty() {
-            pty.write(b"\x1b[200~");
-            pty.write(text.as_bytes());
-            pty.write(b"\x1b[201~");
+            write_paste(&text, terminal, pty);
         }
+    }
+}
+
+/// Send pasted text to the PTY, honoring bracketed paste mode (DECSET 2004).
+/// Apps that opted in get the text wrapped in ESC[200~/201~ (with any
+/// embedded end-marker stripped so clipboard content can't break out of the
+/// paste); everyone else gets plain text with newlines converted to CR, the
+/// byte the Enter key produces.
+pub fn write_paste(text: &str, terminal: &TerminalState, pty: &Pty) {
+    if terminal.bracketed_paste {
+        let sanitized = text.replace("\x1b[201~", "");
+        pty.write(b"\x1b[200~");
+        pty.write(sanitized.as_bytes());
+        pty.write(b"\x1b[201~");
+    } else {
+        let normalized = text.replace("\r\n", "\r").replace('\n', "\r");
+        pty.write(normalized.as_bytes());
     }
 }
 

@@ -46,6 +46,46 @@ impl PixelShaderElement {
         }
     }
 
+    /// Like [`PixelShaderElement::new`], but takes uniforms that are already
+    /// `'static` and stores them as-is. With `&'static str` uniform names
+    /// (`Cow::Borrowed`) this performs no per-name heap copy, unlike `new`,
+    /// whose `into_owned` always materialises an owned `String`. Useful for
+    /// elements (re)built on a per-frame hot path.
+    pub fn new_static(
+        shader: GlesPixelProgram,
+        area: Rectangle<i32, Logical>,
+        opaque_regions: Option<Vec<Rectangle<i32, Logical>>>,
+        alpha: f32,
+        additional_uniforms: Vec<Uniform<'static>>,
+        kind: Kind,
+    ) -> Self {
+        PixelShaderElement {
+            shader,
+            id: Id::new(),
+            commit_counter: CommitCounter::default(),
+            area,
+            opaque_regions: opaque_regions.unwrap_or_default(),
+            alpha,
+            additional_uniforms,
+            kind,
+        }
+    }
+
+    /// Like [`PixelShaderElement::update_uniforms`], but stores already-
+    /// `'static` uniforms without copying borrowed names to the heap.
+    pub fn update_uniforms_static(&mut self, additional_uniforms: Vec<Uniform<'static>>) {
+        self.additional_uniforms = additional_uniforms;
+        self.commit_counter.increment();
+    }
+
+    /// Update the element alpha, bumping the commit counter only on change.
+    pub fn set_alpha(&mut self, alpha: f32) {
+        if self.alpha != alpha {
+            self.alpha = alpha;
+            self.commit_counter.increment();
+        }
+    }
+
     /// Resize the canvas area
     pub fn resize(
         &mut self,

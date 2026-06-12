@@ -31,6 +31,9 @@ pub struct MinimizeAnim {
     pub target_rect: Rectangle<i32, Logical>,
     pub start_time: Instant,
     pub duration: Duration,
+    /// Easing curve resolved at construction — render_params runs every
+    /// frame, so it must not go back to config for the preset.
+    pub curve: crate::rect_anim::Curve,
 }
 
 /// Render parameters produced by ticking a minimize animation.
@@ -56,10 +59,7 @@ impl MinimizeAnim {
 
     pub fn render_params(&self) -> MinimizeParams {
         let raw = self.raw_progress();
-        let p = match self.kind {
-            MinimizeKind::Minimize => crate::animations::minimize_curve_eval(raw),
-            MinimizeKind::Unminimize => crate::animations::unminimize_curve_eval(raw),
-        };
+        let p = self.curve.eval(raw);
         // Alpha is clamped because the spring curve used by Unminimize on the
         // Springy preset overshoots 1.0 mid-flight; we don't want >1.0 alpha.
         let pf = (p as f32).clamp(0.0, 1.0);
@@ -132,6 +132,7 @@ impl MinimizeAnimState {
                 target_rect,
                 start_time: Instant::now(),
                 duration: min_duration(),
+                curve: crate::animations::minimize_curve(),
             },
         );
     }
@@ -150,6 +151,7 @@ impl MinimizeAnimState {
                 target_rect,
                 start_time: Instant::now(),
                 duration: unmin_duration(),
+                curve: crate::animations::unminimize_curve(),
             },
         );
     }

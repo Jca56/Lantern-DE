@@ -394,6 +394,11 @@ impl vte::Perform for Performer<'_> {
                                     s.leave_alt_screen();
                                 }
                             }
+                            2004 => {
+                                // Bracketed paste — only apps that opt in
+                                // get ESC[200~/201~ wrappers around pastes.
+                                s.bracketed_paste = set;
+                            }
                             2026 => {
                                 // Synchronized output — suppress rendering
                                 // during batch updates. Set a fallback
@@ -634,6 +639,12 @@ fn do_print(s: &mut TerminalState, c: char) {
     // region and overwriting widget content.
     if s.wrap_next {
         s.wrap_next = false;
+        // Text is flowing past the last column — mark the row as
+        // soft-wrapped so copy rejoins it with the next row instead of
+        // inserting a newline mid-command.
+        if let Some(last) = s.grid[s.cursor_row].last_mut() {
+            last.wrapped = true;
+        }
         s.cursor_col = 0;
         if s.cursor_row == s.scroll_bottom {
             s.scroll_up();
@@ -648,7 +659,12 @@ fn do_print(s: &mut TerminalState, c: char) {
             return;
         }
         if s.cursor_col < s.cols {
-            s.grid[s.cursor_row][s.cursor_col] = s.default_cell();
+            // Filler for the unusable last column. Wide::Tail keeps the
+            // blank out of copied text; wrapped joins the rows on copy.
+            let mut filler = s.default_cell();
+            filler.wide = Wide::Tail;
+            filler.wrapped = true;
+            s.grid[s.cursor_row][s.cursor_col] = filler;
         }
         s.cursor_col = 0;
         if s.cursor_row == s.scroll_bottom {
@@ -703,6 +719,7 @@ fn do_print(s: &mut TerminalState, c: char) {
             underline: s.attr_underline,
             wide: wide_flag,
             hyperlink: s.active_hyperlink,
+            wrapped: false,
         };
         s.cursor_col += 1;
 
@@ -716,6 +733,7 @@ fn do_print(s: &mut TerminalState, c: char) {
                 underline: false,
                 wide: Wide::Tail,
                 hyperlink: s.active_hyperlink,
+                wrapped: false,
             };
             s.cursor_col += 1;
         }

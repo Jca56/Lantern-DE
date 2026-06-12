@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 mod draw;
 mod input;
 
-pub use draw::{draw_sidebar, draw_sidebar_context_menu};
+pub use draw::draw_sidebar;
 pub use input::{
     contains, handle_click, handle_edit_char, handle_edit_key, handle_mode_click,
-    handle_right_click,
+    handle_right_click, RightClickTarget,
 };
 
 // ── Sidebar mode ────────────────────────────────────────────────────────────
@@ -35,11 +35,6 @@ pub(super) const ICON_FONT: f32 = 22.0;
 pub(super) const SCROLL_SPEED: f32 = 40.0;
 /// Must match render::measure_cell logic: (font_size * 0.6).ceil()
 pub(super) const CHAR_WIDTH: f32 = 14.0; // (FONT_SIZE * 0.6).ceil() — can't call ceil() in const
-
-// Context menu
-pub(super) const CTX_MENU_WIDTH: f32 = 200.0;
-pub(super) const CTX_ITEM_HEIGHT: f32 = 40.0;
-pub(super) const CTX_FONT: f32 = 20.0;
 
 // ── Entry model ──────────────────────────────────────────────────────────────
 
@@ -98,8 +93,10 @@ pub struct SidebarState {
     pub manual_width: Option<f32>,
     /// True while the user is actively dragging the right-edge resize handle.
     pub resizing: bool,
-    /// Right-click context menu: (entry_index, x, y). ROOT_CTX = empty space.
-    pub context_menu: Option<(usize, f32, f32)>,
+    /// Entry the open right-click context menu targets. ROOT_CTX = empty
+    /// space (root directory). The menu itself is the shared chrome
+    /// ContextMenu — this just remembers which entry the actions apply to.
+    pub menu_target: Option<usize>,
     /// Inline text editing (new file, new folder, rename)
     pub(super) edit: Option<InlineEdit>,
     /// Git status marks: (absolute_path, status_char)
@@ -118,7 +115,7 @@ impl SidebarState {
             width: DEFAULT_WIDTH,
             manual_width: None,
             resizing: false,
-            context_menu: None,
+            menu_target: None,
             edit: None,
             git_marks: Vec::new(),
         }
@@ -329,16 +326,75 @@ impl SidebarState {
         self.scroll_offset = self.scroll_offset.min(max);
     }
 
-    pub fn has_overlay(&self) -> bool {
-        self.context_menu.is_some()
-    }
-
     pub fn is_editing(&self) -> bool {
         self.edit.is_some()
     }
 
-    pub(super) fn close_menu(&mut self) {
-        self.context_menu = None;
+    pub fn close_menu(&mut self) {
+        self.menu_target = None;
+    }
+
+    // ── Context menu actions ────────────────────────────────────────
+    // Fired from the shared chrome ContextMenu; each consumes the
+    // remembered target entry.
+
+    pub fn menu_new_file(&mut self) {
+        self.menu_begin_create(EditMode::NewFile);
+    }
+
+    pub fn menu_new_folder(&mut self) {
+        self.menu_begin_create(EditMode::NewFolder);
+    }
+
+    fn menu_begin_create(&mut self, mode: EditMode) {
+        let Some(idx) = self.menu_target.take() else { return };
+        // ROOT_CTX anchors the inline edit after the last visible entry.
+        let entry_idx = if idx == ROOT_CTX {
+            if self.entries.is_empty() { 0 } else { self.entries.len() - 1 }
+        } else {
+            idx
+        };
+        self.edit = Some(InlineEdit {
+            mode,
+            entry_idx,
+            buf: String::new(),
+            cursor: 0,
+        });
+    }
+
+    pub fn menu_rename(&mut self) {
+        let Some(idx) = self.menu_target.take() else { return };
+        if idx >= self.entries.len() {
+            return;
+        }
+        let name = self.entries[idx].name.clone();
+        let len = name.len();
+        self.edit = Some(InlineEdit {
+            mode: EditMode::Rename,
+            entry_idx: idx,
+            buf: name,
+            cursor: len,
+        });
+    }
+
+    pub fn menu_delete(&mut self) {
+        let Some(idx) = self.menu_target.take() else { return };
+        self.do_delete(idx);
+    }
+
+    pub fn menu_open_code(&mut self) {
+        let Some(idx) = self.menu_target.take() else { return };
+        if idx >= self.entries.len() {
+            return;
+        }
+        let path = self.entries[idx].path.clone();
+        std::thread::spawn(move || {
+            let _ = std::process::Command::new("lntrn-code")
+                .arg(&path)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+        });
     }
 
     /// Get the parent directory for a given entry index.

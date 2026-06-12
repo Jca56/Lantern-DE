@@ -80,6 +80,11 @@ pub struct Cell {
     pub wide: Wide,
     /// Index into TerminalState::hyperlinks, or 0 for no link.
     pub hyperlink: u16,
+    /// Set on the LAST cell of a row when text flowed past the row's end
+    /// onto the next row (soft wrap). Copy joins such rows into one logical
+    /// line instead of inserting a newline. A hard newline (CR/LF) never
+    /// sets this, so real line breaks still copy as newlines.
+    pub wrapped: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -100,6 +105,7 @@ impl Default for Cell {
             underline: false,
             wide: Wide::No,
             hyperlink: 0,
+            wrapped: false,
         }
     }
 }
@@ -166,6 +172,7 @@ pub struct TerminalState {
     // DEC private modes
     pub cursor_hidden: bool,      // mode 25
     pub application_cursor: bool, // mode 1
+    pub bracketed_paste: bool,    // mode 2004 — wrap pastes in ESC[200~/201~
 
     // Mouse reporting (DECSET 1000/1002/1003) + SGR encoding (1006).
     // See terminal/mouse.rs for forwarding details.
@@ -287,6 +294,7 @@ impl TerminalState {
             saved_cursor: None,
             cursor_hidden: false,
             application_cursor: false,
+            bracketed_paste: false,
             mouse_mode: MouseMode::Off,
             mouse_sgr: false,
             cursor_shape: 0,
@@ -472,6 +480,7 @@ impl TerminalState {
             underline: false,
             wide: Wide::No,
             hyperlink: 0,
+            wrapped: false,
         }
     }
 
@@ -781,6 +790,7 @@ impl TerminalState {
             } else {
                 line.len().saturating_sub(1)
             };
+            let row_start = text.len();
             for col in col_start..=col_end.min(line.len().saturating_sub(1)) {
                 // Skip wide-char tail cells — the head already has the character
                 if line[col].wide == Wide::Tail {
@@ -788,9 +798,18 @@ impl TerminalState {
                 }
                 text.push(line[col].c);
             }
-            // Trim trailing spaces on each line
+            // A row that soft-wraps continues on the next row: it's one
+            // logical line, so no newline — and no trimming, because every
+            // cell up to the wrap is real printed content (a command's
+            // spaces may land exactly at the row edge).
+            let soft_wrapped = line.last().map_or(false, |cell| cell.wrapped);
+            if soft_wrapped {
+                continue;
+            }
+            // Trim trailing blank padding cells — but only what THIS row
+            // contributed, never content from a previous wrapped row.
             let trimmed = text.trim_end_matches(' ');
-            text.truncate(trimmed.len());
+            text.truncate(trimmed.len().max(row_start));
             if abs_row < er {
                 text.push('\n');
             }

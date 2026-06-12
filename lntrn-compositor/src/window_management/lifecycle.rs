@@ -157,17 +157,16 @@ impl Lantern {
     /// override the global `[windows] default_width/default_height` default.
     /// Skips: scratchpad, surfaces with maximized/fullscreen pending, surfaces
     /// whose initial configure has already been sent, and tiling-mode windows.
-    pub fn apply_initial_window_size(&mut self, surface: &WlSurface) {
+    /// `window` is the already-resolved mapped window for `surface` — the
+    /// commit handler does that lookup once and shares it with every
+    /// per-commit helper instead of each one re-scanning the space.
+    pub fn apply_initial_window_size(&mut self, window: &Window, surface: &WlSurface) {
         use smithay::wayland::compositor::with_states;
         use smithay::wayland::shell::xdg::{SurfaceCachedState, XdgToplevelSurfaceData};
         use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 
         if self.scratchpad_surface.as_ref() == Some(surface) { return; }
 
-        let Some(window) = self.space.elements()
-            .find(|w| w.get_wl_surface().as_ref() == Some(surface))
-            .cloned()
-        else { return };
         let Some(toplevel) = window.toplevel().cloned() else { return };
 
         let (already_sent, app_id, client_min) = with_states(surface, |states| {
@@ -298,6 +297,9 @@ impl Lantern {
     }
 
     pub fn forget_window(&mut self, surface: &WlSurface) {
+        for cache in self.window_chrome_cache.values_mut() {
+            cache.remove(surface);
+        }
         self.window_spawn_order.retain(|entry| entry != surface);
         self.window_mru.retain(|entry| entry != surface);
         self.minimized_windows.retain(|entry| entry.surface != *surface);

@@ -1,6 +1,7 @@
 //! Maximize / unmaximize state and animations.
 
 use smithay::{
+    desktop::Window,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Point, Rectangle, Serial, Size},
 };
@@ -38,6 +39,20 @@ impl Lantern {
     }
 
     pub(crate) fn maximize_surface(&mut self, surface: &WlSurface, serial: Serial) -> bool {
+        self.maximize_surface_with_restore(surface, serial, None)
+    }
+
+    /// `restore_override`: explicit pre-maximize rect to return to on
+    /// unmaximize. Drag-to-top maximize passes the rect the drag STARTED
+    /// from — at release the mapped location is the mid-drag spot under
+    /// the cursor (title bar often off-screen), and capturing that meant
+    /// the next restore "returned" the window to a random spot.
+    pub(crate) fn maximize_surface_with_restore(
+        &mut self,
+        surface: &WlSurface,
+        serial: Serial,
+        restore_override: Option<Rectangle<i32, Logical>>,
+    ) -> bool {
         let Some(window) = self.find_mapped_window(surface) else {
             tracing::warn!("maximize_surface: window not found in space");
             return false;
@@ -67,7 +82,9 @@ impl Lantern {
         // If the window is currently in a pose slot (Left/Middle/Right
         // half), the Normal rung of the ladder is the Middle 1500×1000
         // rect, not the tall half rect — see `half_pose.rs`.
-        let raw_restore = if self.posed_windows.contains_key(surface) {
+        let raw_restore = if let Some(rect) = restore_override {
+            rect
+        } else if self.posed_windows.contains_key(surface) {
             let output = self.output_for_window(&window)
                 .or_else(|| self.workspaces.outputs_iter().next().cloned());
             output.as_ref().and_then(|o| self.middle_pose_rect(o))
@@ -124,12 +141,27 @@ impl Lantern {
     }
 
     pub(crate) fn unmaximize_surface(&mut self, surface: &WlSurface, serial: Serial) -> bool {
+        self.unmaximize_surface_to(surface, serial, None)
+    }
+
+    /// `loc_override`: land the restored rect here instead of at its saved
+    /// location. Drag-unmaximize uses this to put the window under the
+    /// cursor while keeping the saved SIZE.
+    pub(crate) fn unmaximize_surface_to(
+        &mut self,
+        surface: &WlSurface,
+        serial: Serial,
+        loc_override: Option<Point<i32, Logical>>,
+    ) -> bool {
         let Some(window) = self.find_mapped_window(surface) else {
             return false;
         };
-        let Some(restore) = self.take_maximized_restore(surface) else {
+        let Some(mut restore) = self.take_maximized_restore(surface) else {
             return false;
         };
+        if let Some(loc) = loc_override {
+            restore.loc = loc;
+        }
 
         // Animation start = current visible rect (handles redirect mid-maximize).
         let current_loc = self.workspaces.element_location(&window).unwrap_or(restore.loc);
@@ -159,7 +191,6 @@ impl Lantern {
             .any(|entry| entry.surface == *surface)
     }
 
-    #[allow(dead_code)]
     pub(crate) fn maximized_restore(&self, surface: &WlSurface) -> Option<Rectangle<i32, Logical>> {
         self.maximized_windows
             .iter()
@@ -173,6 +204,18 @@ impl Lantern {
             .iter()
             .position(|entry| entry.surface == *surface)?;
         Some(self.maximized_windows.remove(index).restore)
+    }
+
+    /// Drop maximize tracking before a shape op (keyboard resize / aspect /
+    /// snap move) takes over the geometry. The restore rect is intentionally
+    /// discarded — these ops compute their own centred target. Call this only
+    /// once the op is committed to changing the rect; calling it on a path
+    /// that then bails leaves an untracked full-size window behind.
+    pub(crate) fn clear_maximize_for_op(&mut self, window: &Window, surface: &WlSurface) {
+        if self.take_maximized_restore(surface).is_some() {
+            window.set_maximized(false);
+            self.update_foreign_toplevel_states(surface);
+        }
     }
 }
 

@@ -282,6 +282,13 @@ pub struct Lantern {
     pub winit_redraw_requested: Arc<AtomicBool>,
     pub pending_client_frame_callbacks: bool,
     pub last_pointer_render_location: Option<(i32, i32)>,
+    /// The (surface, surface_loc) the pointer was over after the last motion
+    /// event — i.e. surface_under(prev_loc) for the NEXT event. Caching this
+    /// halves the full surface-tree walks done per motion event (the
+    /// pointer-constraint check needed its own walk at up to 1000Hz).
+    /// Invalidated (None) whenever a motion event ends without computing a
+    /// fresh hit (e.g. the Alt-Tab overlay intercepting motion).
+    pub last_pointer_under: Option<(WlSurface, Point<f64, Logical>)>,
     /// Last time we sent frame callbacks. Used to keep the vblank stream
     /// running at 60Hz while clients are actively rendering, so wgpu FIFO
     /// presentation doesn't get throttled by sparse vblank events.
@@ -318,6 +325,10 @@ pub struct Lantern {
     /// populated while a no-capture overlay — the recording indicator —
     /// is on screen; dropped again on the next plain capture).
     pub screencopy_offscreen: HashMap<String, crate::screencopy_render::OffscreenCapture>,
+    /// Per-output PBO slot for asynchronous screencopy readback. The
+    /// glReadPixels lands in the PBO without stalling the GPU; the pixels
+    /// are mapped and delivered on the output's NEXT frame.
+    pub screencopy_pbos: HashMap<String, crate::screencopy_render::ScreencopyPbo>,
     /// System-wide background opacity from `[windows].background_opacity`.
     /// When < 1.0, the compositor pushes a blur backdrop behind every
     /// non-fullscreen, non-excluded window so the apps' translucent
@@ -325,6 +336,20 @@ pub struct Lantern {
     pub system_bg_opacity: f32,
     /// App IDs that skip the blur backdrop.
     pub blur_exclude: Vec<String>,
+    /// Blur strength/tint/darken from `[windows]`, cached on the same
+    /// 30-frame poll cycle as `system_bg_opacity` — these were read from
+    /// config (mutex + string alloc + line walk) every frame at 240Hz.
+    pub blur_intensity: f32,
+    pub blur_tint: f32,
+    pub blur_darken: f32,
+    /// Per-output cache of window chrome shader elements (drop shadow,
+    /// border ring), keyed by output name → window surface. Rebuilding
+    /// these every frame minted a fresh element Id each time, which defeats
+    /// damage tracking (a new Id reads as a brand-new damaged element), and
+    /// re-allocated the uniform vectors. Entries are pruned in
+    /// `forget_window`.
+    pub window_chrome_cache:
+        HashMap<String, HashMap<WlSurface, crate::render::surface::ChromeCacheEntry>>,
     /// Global default initial window size (logical px). None = let client choose.
     pub default_window_size: Option<(i32, i32)>,
     /// Per-app initial window size overrides from `[[window_rules]]`.
@@ -554,6 +579,7 @@ impl Lantern {
             winit_redraw_requested: Arc::new(AtomicBool::new(false)),
             pending_client_frame_callbacks: false,
             last_pointer_render_location: None,
+            last_pointer_under: None,
             last_callback_render: std::time::Instant::now() - std::time::Duration::from_secs(60),
             debug_counters: DebugCounters::from_env(),
             focused_surface: None,
@@ -573,8 +599,13 @@ impl Lantern {
             layer_surface_outputs: HashMap::new(),
             layer_surface_namespaces: HashMap::new(),
             screencopy_offscreen: HashMap::new(),
+            screencopy_pbos: HashMap::new(),
             system_bg_opacity: crate::read_config_f32("background_opacity", 1.0),
             blur_exclude: crate::read_config_list("windows", "blur_exclude"),
+            blur_intensity: crate::read_config_f32("blur_intensity", 0.8),
+            blur_tint: crate::read_config_f32("blur_tint", 0.15),
+            blur_darken: crate::read_config_f32("blur_darken", 0.0),
+            window_chrome_cache: HashMap::new(),
             default_window_size: crate::default_window_size(),
             window_rules: crate::read_window_rules(),
             window_zoom: HashMap::new(),
@@ -722,9 +753,9 @@ impl Lantern {
     /// Space but must NOT be hit (they're not on screen).
     pub fn window_is_visible(&self, window: &Window) -> bool {
         match crate::window_ext::WindowExt::get_wl_surface(window)
-            .and_then(|s| self.workspaces.window_workspace(&s))
+            .and_then(|s| self.workspaces.window_workspace_ref(&s).map(|(o, w)| (o, w)))
         {
-            Some((out, ws)) => ws == self.workspaces.active_id(&out),
+            Some((out, ws)) => ws == self.workspaces.active_id(out),
             None => true,
         }
     }
@@ -952,6 +983,57 @@ impl Lantern {
     pub fn schedule_client_render(&mut self) {
         self.pending_client_frame_callbacks = true;
         self.schedule_render();
+    }
+
+    /// Commit-path render scheduling: only repaint the output that owns the
+    /// committed surface. A 240fps game on the primary shouldn't drag the
+    /// secondary monitor through a render pass per commit. Surfaces with no
+    /// workspace assignment (OR popups, scratchpad, layer surfaces) fall
+    /// back to all outputs.
+    pub fn schedule_client_render_for_surface(&mut self, surface: &WlSurface) {
+        self.pending_client_frame_callbacks = true;
+        if self.udev.is_none() {
+            self.request_winit_redraw();
+            return;
+        }
+        let output = self
+            .workspaces
+            .window_workspace_ref(surface)
+            .and_then(|(name, _)| self.workspaces.output_by_name(name))
+            .cloned();
+        match output {
+            Some(o) => crate::udev::schedule_render_output(self, &o),
+            None => crate::udev::schedule_render_all(self),
+        }
+    }
+
+    /// Pointer-path render scheduling: repaint the output under the cursor,
+    /// plus the previous output when the cursor just crossed a monitor seam
+    /// (it must repaint once to erase the cursor it's still showing).
+    pub fn schedule_render_pointer(
+        &mut self,
+        prev_loc: Point<f64, Logical>,
+        pos: Point<f64, Logical>,
+    ) {
+        if self.udev.is_none() {
+            self.request_winit_redraw();
+            return;
+        }
+        let cur = self.output_at_point(pos);
+        match &cur {
+            Some(o) => {
+                let o = o.clone();
+                crate::udev::schedule_render_output(self, &o);
+            }
+            None => crate::udev::schedule_render_all(self),
+        }
+        if let Some(prev) = self.output_at_point(prev_loc) {
+            // Output PartialEq is Arc identity; both handles come from the
+            // same workspaces registry, so this is a reliable comparison.
+            if cur.as_ref() != Some(&prev) {
+                crate::udev::schedule_render_output(self, &prev);
+            }
+        }
     }
 
     pub fn schedule_render_forced(&mut self) {

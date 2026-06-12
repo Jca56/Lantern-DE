@@ -139,12 +139,6 @@ pub fn workspace_curve() -> Curve {
     }
 }
 
-pub fn open_curve_eval(t: f64) -> f64 { open_curve().eval(t) }
-pub fn close_curve_eval(t: f64) -> f64 { close_curve().eval(t) }
-pub fn minimize_curve_eval(t: f64) -> f64 { minimize_curve().eval(t) }
-pub fn unminimize_curve_eval(t: f64) -> f64 { unminimize_curve().eval(t) }
-pub fn workspace_curve_eval(t: f64) -> f64 { workspace_curve().eval(t) }
-
 /// True when the active preset opens windows with a grow-from-center slide
 /// instead of pure alpha fade. Today: springy only.
 pub fn open_uses_grow() -> bool {

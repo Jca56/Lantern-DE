@@ -22,6 +22,7 @@ const KEY_HOME: u32 = 102;
 const KEY_END: u32 = 107;
 const KEY_LEFT: u32 = 105;
 const KEY_RIGHT: u32 = 106;
+const KEY_SPACE: u32 = 57;
 
 /// Map an evdev keycode to a character for filename entry.
 fn keycode_to_char(key: u32, shift: bool) -> Option<char> {
@@ -474,6 +475,45 @@ pub(crate) fn handle_key(
                     app.save_name_selection = None;
                 }
             }
+        }
+        return;
+    }
+
+    // Quick Look overlay — Space/Esc close, ←/→ step through files,
+    // everything else is swallowed while it's open.
+    if app.quick_look.is_some() {
+        match key {
+            KEY_ESC | KEY_SPACE => app.quick_look = None,
+            KEY_LEFT | KEY_RIGHT => {
+                let step: isize = if key == KEY_LEFT { -1 } else { 1 };
+                let cur = app.quick_look.as_ref().and_then(|ql| {
+                    app.entries.iter().position(|e| e.path == ql.path)
+                });
+                if let Some(cur) = cur {
+                    let mut i = cur as isize + step;
+                    while i >= 0 && (i as usize) < app.entries.len() {
+                        if !app.entries[i as usize].is_dir {
+                            for e in app.entries.iter_mut() { e.selected = false; }
+                            app.entries[i as usize].selected = true;
+                            app.quick_look = Some(crate::quick_look::QuickLook::open(
+                                &app.entries[i as usize].path,
+                            ));
+                            break;
+                        }
+                        i += step;
+                    }
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    // Space opens Quick Look on the selected file (browse mode only —
+    // every text-entry mode already returned above).
+    if key == KEY_SPACE && !ctrl {
+        if let Some(entry) = app.entries.iter().find(|e| e.selected && !e.is_dir) {
+            app.quick_look = Some(crate::quick_look::QuickLook::open(&entry.path));
         }
         return;
     }

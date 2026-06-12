@@ -7,7 +7,8 @@ use lntrn_ui::gpu::{FoxPalette, GradientStrip, InteractionContext};
 
 const ZONE_PROPS_CLOSE: u32 = 800;
 const ZONE_PROPS_BACKDROP: u32 = 801;
-const ZONE_SECTION_BASE: u32 = 810; // 810..815 for 6 sections
+const ZONE_PROPS_CHECKSUM_ROW: u32 = 805;
+const ZONE_SECTION_BASE: u32 = 810; // 810..816 for 7 sections
 
 const DIALOG_W: f32 = 520.0;
 const PADDING: f32 = 24.0;
@@ -29,6 +30,7 @@ const SEC_DISK: usize = 2;
 const SEC_SYSTEM: usize = 3;
 const SEC_PERMS: usize = 4;
 const SEC_SYMLINK: usize = 5;
+const SEC_CHECKSUM: usize = 6;
 
 /// Gathered file properties for display.
 #[allow(dead_code)]
@@ -64,8 +66,10 @@ pub struct FileProperties {
     pub image_dimensions: Option<(u32, u32)>,
     pub media_duration: Option<String>,
     // UI state
-    pub section_open: [bool; 6],
+    pub section_open: [bool; 7],
     pub scroll_offset: f32,
+    /// Lazy SHA-256 — spawned the first time the Checksum section opens.
+    pub checksum_job: Option<crate::checksums::ChecksumJob>,
     /// Set by draw_properties_dialog for render.rs to place the icon texture.
     pub icon_rect: Option<(f32, f32, f32, f32)>,
     /// When true, the Properties body is replaced with the icon picker.
@@ -195,7 +199,11 @@ impl FileProperties {
             blocks: meta.blocks(),
             disk_total, disk_free, disk_used_fraction,
             image_dimensions: None, media_duration: None,
-            section_open: [true; 6], scroll_offset: 0.0, icon_rect: None,
+            // Checksum starts closed — hashing only begins when the user
+            // opens the section (could be a 50GB ISO).
+            section_open: { let mut so = [true; 7]; so[SEC_CHECKSUM] = false; so },
+            scroll_offset: 0.0, icon_rect: None,
+            checksum_job: None,
             picker_open: false,
             picker_tab: IconPickerTab::Standard,
             icon_was_active: false,
@@ -411,6 +419,12 @@ pub fn draw_properties_dialog(
         if props.section_open[SEC_SYMLINK] { content_h += row_h; }
     }
 
+    // Checksum section (files only)
+    if !props.is_dir {
+        content_h += section_h;
+        if props.section_open[SEC_CHECKSUM] { content_h += row_h; }
+    }
+
     content_h += pad; // bottom padding
 
     let dialog_h = content_h.min(screen_h - 40.0 * s);
@@ -623,14 +637,52 @@ pub fn draw_properties_dialog(
             inner_x, cy, inner_w, section_h, s, sw, sh,
         );
         if props.section_open[SEC_SYMLINK] {
-            let target = props.symlink_target.clone().unwrap_or_else(|| "Unknown".into());
-            let _ = draw_row(painter, text, fox, "Target", &target, inner_x, cy, inner_w, label_w, label_font, row_h, sw, sh);
+            cy = {
+                let target = props.symlink_target.clone().unwrap_or_else(|| "Unknown".into());
+                draw_row(painter, text, fox, "Target", &target, inner_x, cy, inner_w, label_w, label_font, row_h, sw, sh)
+            };
+        }
+    }
+
+    // ── Checksum section (files only) ───────────────────────────────────
+    let mut checksum_copy: Option<String> = None;
+    if !props.is_dir {
+        cy = draw_section_header(
+            "Checksum", SEC_CHECKSUM, props, painter, text, ix, fox,
+            inner_x, cy, inner_w, section_h, s, sw, sh,
+        );
+        if props.section_open[SEC_CHECKSUM] {
+            if props.checksum_job.is_none() {
+                props.checksum_job = Some(crate::checksums::ChecksumJob::spawn(props.path.clone()));
+            }
+            match props.checksum_job.as_ref().and_then(|j| j.get()) {
+                Some(hash) => {
+                    let row_rect = Rect::new(inner_x, cy, inner_w, row_h);
+                    let zone = ix.add_zone(ZONE_PROPS_CHECKSUM_ROW, row_rect);
+                    if zone.is_hovered() {
+                        painter.rect_filled(row_rect, 4.0 * s, fox.accent.with_alpha(0.08));
+                    }
+                    // 64 hex chars overflow the value column — show a prefix,
+                    // copy the full hash on click.
+                    let display = format!("{}…  (click to copy)", &hash[..20.min(hash.len())]);
+                    let _ = draw_row(painter, text, fox, "SHA-256", &display, inner_x, cy, inner_w, label_w, label_font, row_h, sw, sh);
+                    if zone.is_active() {
+                        checksum_copy = Some(hash);
+                    }
+                }
+                None => {
+                    let _ = draw_row(painter, text, fox, "SHA-256", "Computing…", inner_x, cy, inner_w, label_w, label_font, row_h, sw, sh);
+                }
+            }
         }
     }
 
     // Handle events
     if close_zone.is_active() {
         return Some(PropertiesEvent::Close);
+    }
+    if let Some(hash) = checksum_copy {
+        return Some(PropertiesEvent::CopyText(hash));
     }
     None
 }
@@ -763,6 +815,8 @@ pub enum PropertiesEvent {
     IconChosen(PathBuf),
     /// "Reset" — clear the folder icon xattr.
     IconReset,
+    /// Put this text on the clipboard (checksum click-to-copy).
+    CopyText(String),
 }
 
 // ── Icon picker body ──────────────────────────────────────────────────────

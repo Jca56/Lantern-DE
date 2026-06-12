@@ -41,15 +41,18 @@ impl Lantern {
         if trusted {
             // Smooth path: scale the existing buffer throughout the
             // animation; defer the configure until anim end. Remap to the
-            // new location so positioning is current.
-            self.remap_tracked_window(window.clone(), dst.loc, true);
+            // new location so positioning is current. The remap's output
+            // handoff measures against the DESTINATION size — the live
+            // geometry is still the old (e.g. maximized) size until the
+            // client acks, and its center can land on the wrong monitor.
+            self.remap_tracked_window_sized(window.clone(), dst.loc, dst.size, true);
             self.window_state_anim.animate_smooth(surface, src, dst);
         } else {
             // Crossfade path: configure the client to the new size
             // immediately and let the existing snapshot crossfade hide the
             // content reflow.
             window.configure_rect(dst);
-            self.remap_tracked_window(window.clone(), dst.loc, true);
+            self.remap_tracked_window_sized(window.clone(), dst.loc, dst.size, true);
             self.window_state_anim.animate_default(surface, src, dst);
         }
     }

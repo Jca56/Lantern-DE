@@ -78,6 +78,13 @@ pub const CTX_LNTRN: u32 = 409;
 pub const CTX_PREV_TAB: u32 = 410;
 pub const CTX_NEXT_TAB: u32 = 411;
 pub const CTX_OPEN_SIDEBAR: u32 = 412;
+// Sidebar (file tree) context menu — same ContextMenu widget as the
+// terminal menu, different item set. Must stay below CTX_TAB_DOT_BASE.
+pub const CTX_SB_NEW_FILE: u32 = 420;
+pub const CTX_SB_NEW_FOLDER: u32 = 421;
+pub const CTX_SB_RENAME: u32 = 422;
+pub const CTX_SB_DELETE: u32 = 423;
+pub const CTX_SB_OPEN_CODE: u32 = 424;
 /// Base id for the tab-indicator dots floating above the context menu.
 /// Dot for tab `i` fires `CTX_TAB_DOT_BASE + i` — this range is open-ended
 /// (one id per tab), so keep it the HIGHEST id block in the menu.
@@ -163,6 +170,13 @@ pub enum ClickAction {
     NextTab,
     /// Type `lntrn` + Enter into the active pane (context-menu brand label).
     RunLntrn,
+    // Sidebar file-tree context menu actions — operate on the entry
+    // remembered in `SidebarState::menu_target`.
+    SidebarNewFile,
+    SidebarNewFolder,
+    SidebarRename,
+    SidebarDelete,
+    SidebarOpenCode,
 }
 
 // ── Menu definitions ────────────────────────────────────────────────────────
@@ -244,6 +258,25 @@ pub fn build_context_menu(
         MenuItem::separator(),
         MenuItem::action(CTX_CLEAR_SCROLLBACK, "Clear Scrollback"),
     ]
+}
+
+/// Context menu for a file-tree sidebar entry. Same widget + style as the
+/// terminal menu; the header names the target so it's obvious what the
+/// actions apply to. `is_root` = right-click on empty space (root dir).
+pub fn build_sidebar_context_menu(name: &str, is_root: bool, is_dir: bool) -> Vec<MenuItem> {
+    let mut items = vec![MenuItem::header(name), MenuItem::separator()];
+    if is_root || is_dir {
+        items.push(MenuItem::action(CTX_SB_NEW_FILE, "New File"));
+        items.push(MenuItem::action(CTX_SB_NEW_FOLDER, "New Folder"));
+    } else {
+        items.push(MenuItem::action(CTX_SB_OPEN_CODE, "Open with Lantern Code"));
+    }
+    if !is_root {
+        items.push(MenuItem::separator());
+        items.push(MenuItem::action(CTX_SB_RENAME, "Rename"));
+        items.push(MenuItem::action_danger(CTX_SB_DELETE, "Delete"));
+    }
+    items
 }
 
 // ── Layout ──────────────────────────────────────────────────────────────────
@@ -510,6 +543,11 @@ pub fn menu_event_to_action(event: &MenuEvent) -> ClickAction {
             CTX_PREV_TAB => ClickAction::PrevTab,
             CTX_NEXT_TAB => ClickAction::NextTab,
             CTX_OPEN_SIDEBAR => ClickAction::ToggleSidebar,
+            CTX_SB_NEW_FILE => ClickAction::SidebarNewFile,
+            CTX_SB_NEW_FOLDER => ClickAction::SidebarNewFolder,
+            CTX_SB_RENAME => ClickAction::SidebarRename,
+            CTX_SB_DELETE => ClickAction::SidebarDelete,
+            CTX_SB_OPEN_CODE => ClickAction::SidebarOpenCode,
             id if id >= CTX_TAB_DOT_BASE => {
                 ClickAction::SelectTab((id - CTX_TAB_DOT_BASE) as usize)
             }

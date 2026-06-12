@@ -1,0 +1,16 @@
+[package]
+name = "lntrn-spotify-theme"
+version = "0.1.0"
+description = "Rices Spotify to match the Lantern DE theme — transparency, blur, and FoxPalette colors"
+authors = ["Jca56"]
+edition = "2021"
+
+[[bin]]
+name = "lntrn-spotify-theme"
+path = "src/main.rs"
+
+[dependencies]
+lntrn-theme = { path = "../lntrn-theme" }
+# Already in the workspace tree (lntrn-bar). Used ONLY for the raw DEFLATE
+# primitive + CRC32 — the ZIP container itself is hand-rolled in zip.rs.
+flate2 = "1"

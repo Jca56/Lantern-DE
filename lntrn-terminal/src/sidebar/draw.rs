@@ -3,8 +3,8 @@ use lntrn_render::{Color, Painter, Rect, TextRenderer};
 use crate::terminal::Color8;
 
 use super::{
-    hit, DirEntry, EditMode, SidebarMode, SidebarState, CHAR_WIDTH, CTX_FONT, CTX_ITEM_HEIGHT,
-    CTX_MENU_WIDTH, FONT_SIZE, ICON_FONT, INDENT_PX, ITEM_HEIGHT, ROOT_CTX, TOGGLE_H,
+    hit, DirEntry, EditMode, SidebarMode, SidebarState, CHAR_WIDTH, FONT_SIZE, ICON_FONT,
+    INDENT_PX, ITEM_HEIGHT, TOGGLE_H,
 };
 
 // ── Colors ───────────────────────────────────────────────────────────────────
@@ -15,7 +15,6 @@ const TEXT_DIM: Color8 = Color8::from_rgb(120, 120, 120);
 const ACCENT: Color8 = Color8::from_rgb(255, 200, 0);
 const DANGER: Color8 = Color8::from_rgb(220, 60, 60);
 const DIVIDER: Color8 = Color8::from_rgba(255, 255, 255, 12);
-const MENU_BG: Color8 = Color8::from_rgb(42, 42, 42);
 
 fn c(color: Color8) -> Color {
     Color::from_rgba8(color.r, color.g, color.b, color.a)
@@ -287,84 +286,6 @@ pub fn draw_sidebar(
     painter.pop_clip();
 
     sw
-}
-
-/// Draw the sidebar context menu overlay (call in overlay pass).
-pub fn draw_sidebar_context_menu(
-    painter: &mut Painter,
-    text: &mut TextRenderer,
-    state: &SidebarState,
-    screen_w: u32,
-    screen_h: u32,
-    cursor_pos: Option<(f32, f32)>,
-) {
-    let (idx, mx, my) = match state.context_menu {
-        Some(v) => v,
-        None => return,
-    };
-    if idx != ROOT_CTX && idx >= state.entries.len() {
-        return;
-    }
-
-    let scale = state.scale;
-    let ctx_menu_width = CTX_MENU_WIDTH * scale;
-    let ctx_item_height = CTX_ITEM_HEIGHT * scale;
-    let ctx_font = CTX_FONT * scale;
-
-    let items: &[(&str, Color8)] = if idx == ROOT_CTX {
-        &[
-            ("New File", TEXT),
-            ("New Folder", TEXT),
-        ]
-    } else if state.entries[idx].is_dir {
-        &[
-            ("New File", TEXT),
-            ("New Folder", TEXT),
-            ("Rename", TEXT),
-            ("Delete", DANGER),
-        ]
-    } else {
-        &[
-            ("Open with Lantern Code", TEXT),
-            ("Rename", TEXT),
-            ("Delete", DANGER),
-        ]
-    };
-
-    let item_count = items.len();
-    let menu_h = 10.0 * scale + item_count as f32 * ctx_item_height + 10.0 * scale;
-    let x = mx.min(screen_w as f32 - ctx_menu_width - 4.0 * scale).max(0.0);
-    let y = if my + menu_h > screen_h as f32 { my - menu_h } else { my }.max(0.0);
-    let menu = Rect::new(x, y, ctx_menu_width, menu_h);
-
-    // Shadow + bg
-    painter.rect_filled(
-        Rect::new(menu.x + 2.0 * scale, menu.y + 2.0 * scale, menu.w, menu.h),
-        8.0 * scale,
-        c(Color8::from_rgba(0, 0, 0, 60)),
-    );
-    painter.rect_filled(menu, 8.0 * scale, c(MENU_BG));
-
-    let mut iy = menu.y + 6.0 * scale;
-    for (label, color) in items {
-        let item_rect = Rect::new(menu.x + 4.0 * scale, iy, menu.w - 8.0 * scale, ctx_item_height);
-        let hovered = hit(item_rect, cursor_pos);
-        if hovered {
-            painter.rect_filled(item_rect, 4.0 * scale, c(SURFACE_HOVER));
-        }
-        let lc = if hovered { c(ACCENT) } else { c(*color) };
-        text.queue(
-            label,
-            ctx_font,
-            menu.x + 16.0 * scale,
-            iy + (ctx_item_height - ctx_font) / 2.0,
-            lc,
-            ctx_menu_width - 32.0 * scale,
-            screen_w,
-            screen_h,
-        );
-        iy += ctx_item_height;
-    }
 }
 
 fn entry_y_position(

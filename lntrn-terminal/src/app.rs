@@ -102,6 +102,10 @@ pub struct App {
     pub(crate) scroll_target_px: f32,
     pub(crate) scroll_current_px: f32,
     pub(crate) scroll_animating: bool,
+    /// Wheel scroll speed multiplier — `[terminal] scroll_speed` in
+    /// lantern.toml. Per-machine so wheel (PC) and trackpad (laptop) can
+    /// be tuned independently. Refreshed by the 500ms config poll.
+    pub(crate) scroll_speed: f32,
     /// Fractional wheel detents carried over between events while forwarding
     /// scroll to a mouse-mode TUI (see `forward_wheel_to_tui`).
     pub(crate) wheel_tick_accum: f32,
@@ -174,6 +178,7 @@ impl App {
             cursor_blink_deadline: Instant::now() + CURSOR_BLINK_INTERVAL,
             clipboard: clipboard::WaylandClipboard::new(),
             scroll_target_px: 0.0,
+            scroll_speed: lntrn_theme::read_config_f32("terminal", "scroll_speed", 8.0),
             scroll_current_px: 0.0,
             wheel_tick_accum: 0.0,
             scroll_animating: false,
@@ -742,18 +747,16 @@ impl ApplicationHandler<UserEvent> for App {
                     return;
                 }
                 let tab = &self.tabs[self.active_tab];
-                let pty = &tab.panes[tab.active_pane].pty;
-                // Bracketed paste so the shell (or Claude Code) treats
-                // the multi-path string as a single literal insertion
-                // instead of running it.
+                let pane = &tab.panes[tab.active_pane];
+                // Paste the multi-path string so the shell (or Claude Code)
+                // treats it as a single literal insertion instead of
+                // running it.
                 let joined = paths
                     .iter()
                     .map(|p| crate::dnd::shell_quote(p))
                     .collect::<Vec<_>>()
                     .join(" ");
-                pty.write(b"\x1b[200~");
-                pty.write(joined.as_bytes());
-                pty.write(b"\x1b[201~");
+                crate::input::write_paste(&joined, &pane.terminal, &pane.pty);
                 self.request_redraw();
             }
             UserEvent::GitUpdate => {
@@ -812,6 +815,8 @@ impl ApplicationHandler<UserEvent> for App {
         // animation-frame rate.
         if now.duration_since(self.last_theme_poll).as_millis() >= 500 {
             self.last_theme_poll = now;
+            self.scroll_speed =
+                lntrn_theme::read_config_f32("terminal", "scroll_speed", 8.0);
             let new_theme = crate::theme::Theme::current();
             if new_theme.bg != self.theme.bg
                 || new_theme.terminal_fg != self.theme.terminal_fg
@@ -863,13 +868,15 @@ impl ApplicationHandler<UserEvent> for App {
             self.request_redraw();
         }
 
-        // Animate smooth scrolling
+        // Animate smooth scrolling. Exponential ease-out: ~12/s reaches
+        // 95% of the target in ~250ms — a visible glide. Higher values
+        // finish within a few frames and read as rigid per-detent hops.
         if self.scroll_animating {
             let dt = now
                 .duration_since(self.last_frame_time)
                 .as_secs_f32()
                 .min(0.05);
-            let speed = 30.0_f32;
+            let speed = 12.0_f32;
             let t = 1.0 - (-speed * dt).exp();
             let diff = self.scroll_target_px - self.scroll_current_px;
             self.scroll_current_px += diff * t;

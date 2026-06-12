@@ -268,6 +268,9 @@ pub struct App {
     // Properties dialog
     pub properties: Option<crate::properties::FileProperties>,
 
+    // Quick Look overlay (Space on a selected file)
+    pub quick_look: Option<crate::quick_look::QuickLook>,
+
     // Drop confirmation modal
     pub pending_drop: Option<PendingDrop>,
 
@@ -396,6 +399,7 @@ impl App {
             save_name_editing: false,
             save_name_selection: None,
             properties: None,
+            quick_look: None,
             pending_drop: None,
             sudo_prompt: None,
             conflict_dialog: None,

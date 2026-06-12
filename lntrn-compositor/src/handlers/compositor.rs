@@ -41,22 +41,33 @@ impl CompositorHandler for Lantern {
             Some(std::time::Instant::now())
         } else { None };
         on_commit_buffer_handler::<Self>(surface);
+        // One mapped-window lookup for the whole handler. This used to be
+        // five separate linear space scans per commit — a 240fps client
+        // commits 240 times a second, so every scan here is hot.
+        let mut root = surface.clone();
+        while let Some(parent) = get_parent(&root) {
+            root = parent;
+        }
+        let surface_is_root = root == *surface;
+        let mut mapped_window: Option<smithay::desktop::Window> = None;
         if !is_sync_subsurface(surface) {
-            let mut root = surface.clone();
-            while let Some(parent) = get_parent(&root) {
-                root = parent;
-            }
-            if let Some(window) = self
+            let root_window = self
                 .space
                 .elements()
                 .find(|w| w.get_wl_surface().as_ref() == Some(&root))
-            {
+                .cloned();
+            if let Some(window) = &root_window {
                 window.on_commit();
+            }
+            if surface_is_root {
+                mapped_window = root_window;
             }
         };
 
-        self.apply_initial_window_size(surface);
-        xdg_shell::handle_commit(&mut self.popups, &self.space, surface);
+        if let Some(window) = mapped_window.clone() {
+            self.apply_initial_window_size(&window, surface);
+        }
+        xdg_shell::handle_commit(&mut self.popups, mapped_window.as_ref(), surface);
         resize_grab::handle_commit(self, surface);
 
         // Smooth-resize handoff: if a held visual is still in effect and
@@ -64,7 +75,7 @@ impl CompositorHandler for Lantern {
         // renderer stops stretching the buffer. Looking up the window's
         // geometry here is post-commit, so `geometry().size` already
         // reflects whatever the client just acked.
-        if let Some(window) = self.find_mapped_window(surface) {
+        if let Some(window) = &mapped_window {
             let committed_size = window.geometry().size;
             self.window_state_anim
                 .clear_held_scale_if_matched(surface, committed_size);
@@ -74,7 +85,7 @@ impl CompositorHandler for Lantern {
         self.center_pending_window(surface);
 
         // Propagate title/app_id changes to foreign-toplevel clients
-        if self.space.elements().any(|w| w.get_wl_surface().as_ref() == Some(surface)) {
+        if mapped_window.is_some() {
             with_states(surface, |states| {
                 if let Some(data) = states.data_map.get::<XdgToplevelSurfaceData>() {
                     let attrs = data.lock().unwrap();
@@ -210,7 +221,7 @@ impl CompositorHandler for Lantern {
             }
         }
 
-        self.schedule_client_render();
+        self.schedule_client_render_for_surface(&root);
         if let Some(t) = commit_start {
             self.debug_counters.commit_micros += t.elapsed().as_micros() as u64;
         }

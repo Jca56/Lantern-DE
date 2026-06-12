@@ -104,11 +104,14 @@ impl SsdState {
 /// Manages SSD for all windows.
 pub struct SsdManager {
     pub windows: HashMap<WlSurface, SsdState>,
+    /// Reused scratch buffer for `ssd_update_hover` so the per-motion-event
+    /// key snapshot doesn't allocate a fresh Vec at 1000Hz.
+    pub hover_scratch: Vec<WlSurface>,
 }
 
 impl SsdManager {
     pub fn new() -> Self {
-        Self { windows: HashMap::new() }
+        Self { windows: HashMap::new(), hover_scratch: Vec::new() }
     }
 
     pub fn add(&mut self, surface: WlSurface) {

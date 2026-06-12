@@ -1,24 +1,21 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
 
 use lntrn_render::{GpuContext, GpuTexture, TexturePass};
 
 use crate::fs::FileEntry;
+use crate::thumbs::ThumbPool;
 
 const ICON_RENDER_SIZE: u32 = 192;
+
+/// Max image/video thumbnails kept on the GPU at once (~147KB each at
+/// 192px RGBA → ~75MB cap). Past this, navigation purges them; the disk
+/// cache makes regeneration cheap.
+const THUMB_RAM_CAP: usize = 512;
 
 fn icon_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     PathBuf::from(home).join(".lantern/icons/folders")
-}
-
-/// RGBA image data produced by a background ffmpeg thread.
-struct VideoThumbResult {
-    key: String,
-    rgba: Vec<u8>,
-    width: u32,
-    height: u32,
 }
 
 // ── Icon cache ───────────────────────────────────────────────────────────────
@@ -26,45 +23,64 @@ struct VideoThumbResult {
 pub struct IconCache {
     cache: HashMap<String, GpuTexture>,
     cached_dir: PathBuf,
-    /// Keys currently being generated in background threads.
-    pending_videos: HashSet<String>,
-    /// Receiver for completed video thumbnails.
-    video_rx: mpsc::Receiver<VideoThumbResult>,
-    /// Sender cloned into each background thread.
-    video_tx: mpsc::Sender<VideoThumbResult>,
+    /// Background workers generating image/video thumbnails.
+    pool: ThumbPool,
+    /// Keys queued or in flight on the pool.
+    pending: HashSet<String>,
+    /// Keys whose generation failed — never retried this visit, so a corrupt
+    /// or oversized file costs one attempt instead of one per frame.
+    failed: HashSet<String>,
 }
 
 impl IconCache {
     pub fn new() -> Self {
-        let (tx, rx) = mpsc::channel();
         Self {
             cache: HashMap::new(),
             cached_dir: PathBuf::new(),
-            pending_videos: HashSet::new(),
-            video_rx: rx,
-            video_tx: tx,
+            pool: ThumbPool::new(),
+            pending: HashSet::new(),
+            failed: HashSet::new(),
         }
     }
 
-    /// Clear thumbnail cache when navigating to a new directory.
-    /// Keeps folder/type icons since they're reusable.
+    /// Called on navigation. Thumbnails stay cached across directory changes
+    /// (instant back-nav) until the RAM cap is hit; queued-but-unstarted jobs
+    /// for the old directory are dropped so the new one renders first.
     pub fn ensure_dir(&mut self, dir: &Path) {
         if self.cached_dir != dir {
-            // Only clear thumbnails (path-specific), keep type/folder icons
-            self.cache.retain(|k, _| !k.starts_with("thumb:"));
-            self.pending_videos.clear();
+            let thumb_count = self.cache.keys().filter(|k| k.starts_with("thumb:")).count();
+            if thumb_count > THUMB_RAM_CAP {
+                self.cache.retain(|k, _| !k.starts_with("thumb:"));
+            }
+            for key in self.pool.clear_queue() {
+                self.pending.remove(&key);
+            }
+            self.failed.clear();
             self.cached_dir = dir.to_path_buf();
         }
     }
 
-    /// Drain completed video thumbnails from background threads and upload to GPU.
+    /// Drain completed thumbnails from the worker pool and upload to GPU.
     /// Call once per frame before rendering.
-    pub fn poll_video_thumbs(&mut self, gpu: &GpuContext, tex: &TexturePass) {
-        while let Ok(result) = self.video_rx.try_recv() {
-            self.pending_videos.remove(&result.key);
-            let texture = tex.upload(gpu, &result.rgba, result.width, result.height);
-            self.cache.insert(result.key, texture);
+    pub fn poll_thumbs(&mut self, gpu: &GpuContext, tex: &TexturePass) {
+        while let Some(result) = self.pool.try_recv() {
+            self.pending.remove(&result.key);
+            match result.rgba {
+                Some((rgba, w, h)) => {
+                    let texture = tex.upload(gpu, &rgba, w, h);
+                    self.cache.insert(result.key, texture);
+                }
+                None => {
+                    self.failed.insert(result.key);
+                }
+            }
         }
+    }
+
+    /// True while thumbnail jobs are queued or in flight — the event loop
+    /// polls faster so finished thumbs appear promptly.
+    pub fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
     }
 
     /// Check if an icon texture is already cached for this entry.
@@ -78,6 +94,7 @@ impl IconCache {
     pub fn invalidate(&mut self, path: &Path) {
         let needle = path.to_string_lossy().to_string();
         self.cache.retain(|k, _| !k.contains(&needle));
+        self.failed.retain(|k| !k.contains(&needle));
     }
 
     /// Read-only access to a cached icon texture.
@@ -85,7 +102,9 @@ impl IconCache {
         self.cache.get(&cache_key(entry))
     }
 
-    /// Get cached icon or load it. Returns None if loading fails or is still pending.
+    /// Get cached icon or start loading it. Folder icons (small embedded
+    /// SVGs) load synchronously; image and video thumbnails are queued on
+    /// the worker pool and return None until ready.
     pub fn get_or_load(
         &mut self,
         entry: &FileEntry,
@@ -93,21 +112,25 @@ impl IconCache {
         tex: &TexturePass,
     ) -> Option<&GpuTexture> {
         let key = cache_key(entry);
-        if !self.cache.contains_key(&key) && !self.pending_videos.contains(&key) {
-            if is_video_file(&entry.name) {
-                // Spawn background thread for video thumbnails
-                self.pending_videos.insert(key.clone());
-                let path = entry.path.clone();
-                let tx = self.video_tx.clone();
-                let k = key.clone();
-                std::thread::spawn(move || {
-                    if let Some((rgba, w, h)) = extract_video_frame(&path) {
-                        let _ = tx.send(VideoThumbResult { key: k, rgba, width: w, height: h });
+        if !self.cache.contains_key(&key)
+            && !self.pending.contains(&key)
+            && !self.failed.contains(&key)
+        {
+            if entry.is_dir {
+                match load_folder_icon(entry, gpu, tex) {
+                    Some(texture) => {
+                        self.cache.insert(key.clone(), texture);
                     }
-                });
-            } else if let Some(texture) = load_icon(entry, gpu, tex) {
-                self.cache.insert(key.clone(), texture);
+                    None => {
+                        self.failed.insert(key.clone());
+                    }
+                }
+            } else if is_image_file(&entry.name) || is_video_file(&entry.name) {
+                self.pending.insert(key.clone());
+                self.pool
+                    .submit(key.clone(), entry.path.clone(), is_video_file(&entry.name));
             }
+            // Other file types: procedural fallback icon, no texture.
         }
         self.cache.get(&key)
     }
@@ -179,12 +202,16 @@ fn cache_key(entry: &FileEntry) -> String {
         let icon = get_folder_icon(&entry.path).unwrap_or_default();
         let color = get_folder_color(&entry.path).unwrap_or_default();
         format!("dir:{}:{}:{}", entry.name.to_lowercase(), icon, color)
-    } else if is_image_file(&entry.name) {
-        // Each image gets its own thumbnail
-        format!("thumb:{}", entry.path.display())
-    } else if is_video_file(&entry.name) {
-        // Each video gets its own thumbnail
-        format!("thumb:{}", entry.path.display())
+    } else if is_image_file(&entry.name) || is_video_file(&entry.name) {
+        // Per-file thumbnail, keyed on size + mtime (already stat'd by the
+        // listing — no syscall here) so a file that changed on disk gets a
+        // fresh texture and a mid-download decode failure retries once the
+        // file finishes instead of sticking in the failed set.
+        let stamp = entry.modified
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        format!("thumb:{}:{}:{}", entry.path.display(), entry.size, stamp)
     } else {
         // File type icons are shared by extension
         let ext = entry
@@ -224,27 +251,20 @@ fn folder_icon_embedded(entry: &FileEntry) -> Option<&'static [u8]> {
     lntrn_icons::get(icon_name)
 }
 
-fn load_icon(entry: &FileEntry, gpu: &GpuContext, tex: &TexturePass) -> Option<GpuTexture> {
-    if entry.is_dir {
-        // Try embedded first
-        if let Some(data) = folder_icon_embedded(entry) {
-            return rasterize_svg_bytes(data, gpu, tex);
-        }
-        // Fall back to disk (xattr custom icons)
-        let icon_path = folder_icon_path(entry);
-        if is_svg_file(&icon_path) {
-            rasterize_svg(&icon_path, gpu, tex)
-        } else {
-            load_image_thumbnail(&icon_path, gpu, tex)
-        }
-    } else if is_image_file(&entry.name) {
-        if is_svg_file(&entry.path) {
-            rasterize_svg(&entry.path, gpu, tex)
-        } else {
-            load_image_thumbnail(&entry.path, gpu, tex)
-        }
+fn load_folder_icon(entry: &FileEntry, gpu: &GpuContext, tex: &TexturePass) -> Option<GpuTexture> {
+    // Try embedded first
+    if let Some(data) = folder_icon_embedded(entry) {
+        return rasterize_svg_bytes(data, gpu, tex);
+    }
+    // Fall back to disk (xattr custom icons)
+    let icon_path = folder_icon_path(entry);
+    if is_svg_file(&icon_path) {
+        rasterize_svg(&icon_path, gpu, tex)
     } else {
-        None // No file type icons yet — procedural fallback
+        // Custom image icon — one-off, goes through the shared thumbnail
+        // generator (disk cache + decode limits) synchronously.
+        let (rgba, w, h) = crate::thumbs::generate(&icon_path, false)?;
+        Some(tex.upload(gpu, &rgba, w, h))
     }
 }
 
@@ -375,77 +395,6 @@ fn rasterize_svg(path: &Path, gpu: &GpuContext, tex: &TexturePass) -> Option<Gpu
     rasterize_svg_bytes(&data, gpu, tex)
 }
 
-// ── Image thumbnails ─────────────────────────────────────────────────────────
-
-fn load_image_thumbnail(path: &Path, gpu: &GpuContext, tex: &TexturePass) -> Option<GpuTexture> {
-    let img = image::open(path).ok()?;
-    let thumb = img.thumbnail(ICON_RENDER_SIZE, ICON_RENDER_SIZE);
-    let rgba = thumb.to_rgba8();
-    let (w, h) = (rgba.width(), rgba.height());
-    Some(tex.upload(gpu, &rgba, w, h))
-}
-
-// ── Video thumbnails ─────────────────────────────────────────────────────────
-
-fn video_thumb_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-    PathBuf::from(home).join(".cache/lntrn-file-manager/video-thumbs")
-}
-
-/// Simple hash of a path string for use as a cache filename.
-fn path_hash(path: &Path) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    path.hash(&mut hasher);
-    hasher.finish()
-}
-
-/// Extract a video frame via ffmpeg, with disk caching.
-/// Runs on background thread — no GPU access.
-fn extract_video_frame(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
-    use std::process::Command;
-
-    let cache_dir = video_thumb_dir();
-    let _ = std::fs::create_dir_all(&cache_dir);
-    let cached = cache_dir.join(format!("{:016x}.png", path_hash(path)));
-
-    // Check disk cache first
-    if cached.exists() {
-        if let Ok(img) = image::open(&cached) {
-            let rgba = img.to_rgba8();
-            let (w, h) = (rgba.width(), rgba.height());
-            return Some((rgba.into_raw(), w, h));
-        }
-    }
-
-    // Extract frame with ffmpeg
-    let output = Command::new("ffmpeg")
-        .args(["-ss", "1", "-i"])
-        .arg(path)
-        .args([
-            "-frames:v", "1",
-            "-vf", &format!("scale={s}:{s}:force_original_aspect_ratio=decrease", s = ICON_RENDER_SIZE),
-            "-f", "image2pipe",
-            "-vcodec", "png",
-            "-loglevel", "error",
-            "pipe:1",
-        ])
-        .output()
-        .ok()?;
-
-    if !output.status.success() || output.stdout.is_empty() {
-        return None;
-    }
-
-    // Save to disk cache
-    let _ = std::fs::write(&cached, &output.stdout);
-
-    let img = image::load_from_memory(&output.stdout).ok()?;
-    let rgba = img.to_rgba8();
-    let (w, h) = (rgba.width(), rgba.height());
-    Some((rgba.into_raw(), w, h))
-}
-
 // ── File type detection ──────────────────────────────────────────────────────
 
 fn is_image_file(name: &str) -> bool {
@@ -453,6 +402,17 @@ fn is_image_file(name: &str) -> bool {
     matches!(
         ext.as_str(),
         "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "svg" | "ico" | "tiff" | "tif"
+    )
+}
+
+/// Raster formats the compositor's wallpaper loader can decode — gates the
+/// "Set as Wallpaper" context-menu item (no SVG: the compositor decodes
+/// wallpapers with the `image` crate).
+pub fn is_raster_image_file(name: &str) -> bool {
+    let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
+    matches!(
+        ext.as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "tiff" | "tif"
     )
 }
 

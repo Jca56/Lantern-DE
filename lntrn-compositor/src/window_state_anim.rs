@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use smithay::{
     reexports::wayland_server::protocol::wl_surface::WlSurface,
-    utils::{Logical, Rectangle},
+    utils::{Logical, Point, Rectangle},
 };
 
 use crate::rect_anim::{Curve, RectAnim};
@@ -95,6 +95,20 @@ impl WindowStateAnimState {
 
     pub fn current_rect(&self, surface: &WlSurface) -> Option<Rectangle<i32, Logical>> {
         self.animations.get(surface).map(|a| a.current())
+    }
+
+    /// Shift the destination LOCATION of an in-flight anim (and its
+    /// smooth-hold) without touching timing, size, or curve. Drag-unmaximize
+    /// calls this on every motion event so the shrink lands wherever the
+    /// drag currently is — by anim end the target loc and the mapped drag
+    /// location are the same point, so there's nothing to snap to.
+    pub fn retarget_loc(&mut self, surface: &WlSurface, loc: Point<i32, Logical>) {
+        if let Some(anim) = self.animations.get_mut(surface) {
+            anim.set_target_loc(loc);
+        }
+        if let Some(hold) = self.smooth_holds.get_mut(surface) {
+            hold.target.loc = loc;
+        }
     }
 
     pub fn target_rect(&self, surface: &WlSurface) -> Option<Rectangle<i32, Logical>> {

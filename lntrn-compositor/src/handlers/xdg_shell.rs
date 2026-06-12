@@ -1,6 +1,6 @@
 use smithay::{
     delegate_xdg_shell,
-    desktop::{find_popup_root_surface, get_popup_toplevel_coords, PopupKind, PopupManager, Space, Window},
+    desktop::{find_popup_root_surface, get_popup_toplevel_coords, PopupKind, PopupManager, Window},
     input::{
         pointer::{Focus, GrabStartData as PointerGrabStartData},
         Seat,
@@ -210,12 +210,11 @@ fn check_grab(
     Some(start_data)
 }
 
-pub fn handle_commit(popups: &mut PopupManager, space: &Space<Window>, surface: &WlSurface) {
-    if let Some(window) = space
-        .elements()
-        .find(|w| w.get_wl_surface().as_ref() == Some(surface))
-        .cloned()
-    {
+/// `window` is the commit handler's already-resolved mapped window for
+/// `surface` (None for popups/subsurfaces) — avoids re-scanning the space
+/// on every commit.
+pub fn handle_commit(popups: &mut PopupManager, window: Option<&Window>, surface: &WlSurface) {
+    if let Some(window) = window {
         // Only send initial configure for Wayland (XDG) windows
         if let Some(toplevel) = window.toplevel() {
             let initial_configure_sent = with_states(surface, |states| {

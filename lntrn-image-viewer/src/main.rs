@@ -1,8 +1,25 @@
 mod app;
+mod canvas;
+mod dnd;
 mod render;
+mod render_canvas;
+mod render_launcher;
 mod wayland;
+mod wayland_dispatch;
 
 use lntrn_render::{GpuContext, Painter, TextRenderer, TexturePass};
+
+// ── App modes ───────────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum AppMode {
+    /// Classic single-image viewer (launched with an image path).
+    Viewer,
+    /// No-argument launch screen: new canvas + saved canvases list.
+    Launcher,
+    /// Collage canvas editor.
+    Canvas,
+}
 
 // ── Hit zone IDs ────────────────────────────────────────────────────────────
 
@@ -13,6 +30,22 @@ pub const ZONE_CANVAS: u32 = 10;
 pub const ZONE_NAV_PREV: u32 = 11;
 pub const ZONE_NAV_NEXT: u32 = 12;
 pub const ZONE_SHUFFLE: u32 = 13;
+// Launcher
+pub const ZONE_LAUNCHER_NEW: u32 = 20;
+// Canvas mode
+pub const ZONE_SIDEBAR_TOGGLE: u32 = 30;
+pub const ZONE_CANVAS_AREA: u32 = 32;
+pub const ZONE_CANVAS_SAVE: u32 = 33;
+pub const ZONE_SEL_DELETE: u32 = 34;
+pub const ZONE_SIDEBAR_SCROLLBAR: u32 = 36;
+// Dialog buttons (order matches each dialog's button list)
+pub const ZONE_DIALOG_BTN0: u32 = 40;
+pub const ZONE_DIALOG_BTN1: u32 = 41;
+pub const ZONE_DIALOG_BTN2: u32 = 42;
+pub const ZONE_DIALOG_BACKDROP: u32 = 46;
+// Ranges
+pub const ZONE_LAUNCHER_ITEM_BASE: u32 = 50;
+pub const ZONE_SIDEBAR_ITEM_BASE: u32 = 1000;
 
 // ── Layout (logical px, multiply by scale `s`) ───────────────────────────────
 // Shared so render + hit-testing + SVG re-render agree on the canvas bounds.
@@ -20,6 +53,8 @@ pub const TITLE_H: f32 = 36.0;
 pub const STATUS_H: f32 = 40.0;
 /// Width of the window edge band that triggers a resize.
 pub const RESIZE_BORDER: f32 = 10.0;
+/// Canvas-mode sidebar width (expanded).
+pub const SIDEBAR_W: f32 = 240.0;
 
 // ── Shared types ────────────────────────────────────────────────────────────
 
@@ -47,7 +82,7 @@ fn main() {
     }
 }
 
-fn percent_decode(input: &str) -> String {
+pub(crate) fn percent_decode(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;

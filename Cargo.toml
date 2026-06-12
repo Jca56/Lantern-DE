@@ -41,6 +41,7 @@ members = [
     "lntrn-clock",
     "lntrn-rice",
     "lntrn-lockscreen",
+    "lntrn-spotify-theme",
 ]
 
 # Custom text engine in development — built standalone so it stays off the live

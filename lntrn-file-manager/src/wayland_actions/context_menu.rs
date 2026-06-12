@@ -31,6 +31,7 @@ use super::{apply_sort_selection, sort_menu_items};
 fn build_item_menu(
     is_dir: bool,
     is_archive: bool,
+    is_image: bool,
     allow_rename: bool,
     in_trash: bool,
     has_clipboard: bool,
@@ -60,6 +61,9 @@ fn build_item_menu(
         v.push(MenuItem::action(CTX_EXTRACT, "Extract Here"));
     }
     v.push(MenuItem::action(CTX_COMPRESS, "Compress"));
+    if is_image {
+        v.push(MenuItem::action(crate::CTX_SET_WALLPAPER, "Set as Wallpaper"));
+    }
     v.push(MenuItem::separator());
     if allow_rename {
         v.push(MenuItem::action(CTX_RENAME, "Rename"));
@@ -305,7 +309,8 @@ pub(crate) fn handle_right_click(
                     FavoriteState::NotFavorite
                 }
             } else { FavoriteState::NotApplicable };
-            build_item_menu(is_dir, is_archive, true, app.in_trash(), has_clipboard, open_with_apps, fav_state)
+            let is_image = !is_dir && crate::icons::is_raster_image_file(&app.entries[idx].name);
+            build_item_menu(is_dir, is_archive, is_image, true, app.in_trash(), has_clipboard, open_with_apps, fav_state)
         }
         ClickedRow::NestedPath(path, is_dir) => {
             // Nested tree row — clear any entries-based selection so the
@@ -332,7 +337,10 @@ pub(crate) fn handle_right_click(
             } else { FavoriteState::NotApplicable };
             // `allow_rename = false` — rename UI keys off an entries index and
             // doesn't have a path-based variant yet, so we hide it for nested rows.
-            build_item_menu(is_dir, is_archive, false, app.in_trash(), has_clipboard, open_with_apps, fav_state)
+            let is_image = !is_dir && path.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(crate::icons::is_raster_image_file);
+            build_item_menu(is_dir, is_archive, is_image, false, app.in_trash(), has_clipboard, open_with_apps, fav_state)
         }
         ClickedRow::None => {
             app.clear_selection();
@@ -507,6 +515,19 @@ pub(crate) fn handle_ctx_event(
                         if let Some(clip) = &app.wayland_clipboard {
                             clip.set_text(&text);
                         }
+                    }
+                }
+                crate::CTX_SET_WALLPAPER => {
+                    let path = match &app.context_target {
+                        Some(ContextTarget::Item(idx)) =>
+                            app.entries.get(*idx).map(|e| e.path.clone()),
+                        Some(ContextTarget::SearchItem(idx)) =>
+                            app.search_results.get(*idx).map(|e| e.path.clone()),
+                        Some(ContextTarget::Path(path)) => Some(path.clone()),
+                        _ => None,
+                    };
+                    if let Some(path) = path {
+                        crate::lantern_config::set_wallpaper(&path);
                     }
                 }
                 CTX_DUPLICATE => app.duplicate_selected(),

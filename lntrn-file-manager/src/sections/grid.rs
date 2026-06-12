@@ -20,6 +20,7 @@ pub fn draw_content_grid(
     has_icon: &[bool],
     drag_item: Option<usize>,
     renaming: Option<usize>,
+    git: &crate::git_status::GitStatus,
     screen: (u32, u32),
     s: f32,
     zoom: f32,
@@ -92,6 +93,21 @@ pub fn draw_content_grid(
                 painter.line(lx, icon_y + 26.0*s, lx + lw*0.8, icon_y + 26.0*s, 1.5*s, Color::from_rgb8(224, 90, 138).with_alpha(0.6 * alpha));
                 painter.line(lx, icon_y + 32.0*s, lx + lw*0.6, icon_y + 32.0*s, 1.5*s, Color::from_rgb8(155, 93, 229).with_alpha(0.6 * alpha));
             }
+        }
+
+        // Git badge — dot at the icon's bottom-right corner.
+        if let Some(mark) = git.mark(&entry.path) {
+            let color = match mark {
+                crate::git_status::GitMark::Modified => palette.warning,
+                crate::git_status::GitMark::Untracked => palette.success,
+            };
+            let icon_x = x + (isz - icsz) * 0.5;
+            let icon_y = y + top_pad;
+            let r = 6.0 * s;
+            let cx = icon_x + icsz - r * 0.6;
+            let cy = icon_y + icsz - r * 0.6;
+            painter.rect_filled(Rect::new(cx - r - 1.5 * s, cy - r - 1.5 * s, (r + 1.5 * s) * 2.0, (r + 1.5 * s) * 2.0), r + 1.5 * s, palette.surface.with_alpha(alpha));
+            painter.rect_filled(Rect::new(cx - r, cy - r, r * 2.0, r * 2.0), r, color.with_alpha(alpha));
         }
 
         let label_y = y + top_pad + icsz + 2.0 * s;

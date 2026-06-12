@@ -2574,6 +2574,8 @@ dependencies = [
  "lntrn-ui",
  "raw-window-handle",
  "resvg 0.47.0",
+ "serde",
+ "serde_json",
  "wayland-backend",
  "wayland-client",
  "wayland-protocols",
@@ -2812,6 +2814,14 @@ dependencies = [
  "lntrn-theme",
  "lntrn-ui",
  "winit",
+]
+
+[[package]]
+name = "lntrn-spotify-theme"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "lntrn-theme",
 ]
 
 [[package]]

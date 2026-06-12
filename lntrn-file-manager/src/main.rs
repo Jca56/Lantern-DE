@@ -1,9 +1,13 @@
 mod app;
+mod checksums;
 mod clipboard;
 mod cloud;
 mod conflict;
 mod desktop;
 mod dialogs;
+mod dir_watch;
+mod git_status;
+mod lantern_config;
 pub mod undo;
 mod file_info;
 mod file_ops;
@@ -15,10 +19,12 @@ mod pick_bar;
 mod popup_backend;
 mod preview;
 mod properties;
+mod quick_look;
 mod render;
 mod sections;
 mod settings;
 mod sudo;
+mod thumbs;
 mod views;
 mod wayland;
 mod wayland_actions;
@@ -112,6 +118,7 @@ pub const CTX_RESTORE: u32 = 92;
 pub const CTX_ADD_FAVORITE: u32 = 93;
 pub const CTX_REMOVE_FAVORITE: u32 = 94;
 pub const CTX_EMPTY_TRASH: u32 = 95;
+pub const CTX_SET_WALLPAPER: u32 = 96;
 pub const ZONE_BREADCRUMB_BASE: u32 = 300;
 pub const CTX_SHOW_HIDDEN: u32 = 90;
 // Pick mode action bar
@@ -178,6 +185,9 @@ pub const ZONE_PROPS_PICKER_TAB_BASE: u32 = 78;  // 78..82
 pub const ZONE_PROPS_PICKER_RESET: u32 = 83;
 pub const ZONE_PROPS_PICKER_BACK: u32 = 84;
 pub const ZONE_PROPS_ICON_BASE: u32 = 2000;  // 2000+, one per shown icon
+
+// Quick Look overlay — full-screen backdrop, click closes.
+pub const ZONE_QUICK_LOOK: u32 = 905;
 
 // ── Shared types ────────────────────────────────────────────────────────────
 

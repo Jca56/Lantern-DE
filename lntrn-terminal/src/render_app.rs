@@ -248,7 +248,6 @@ impl App {
         // mode (which only hides the title/tab bar); the menu-bar/tab-bar
         // overlays belong to chrome that isn't drawn there.
         let has_overlay = self.chrome.context_menu.is_open()
-            || self.sidebar.has_overlay()
             || (!self.chrome_hidden
                 && (self.chrome.has_overlay() || self.tab_bar.has_overlay()));
 
@@ -349,16 +348,6 @@ impl App {
                 screen_h,
                 self.cursor_pos,
                 &mode,
-            );
-
-            // Sidebar context menu overlay
-            sidebar::draw_sidebar_context_menu(
-                overlay_painter,
-                overlay_text,
-                &self.sidebar,
-                screen_w,
-                screen_h,
-                self.cursor_pos,
             );
 
             let result: Result<(), lntrn_render::SurfaceError> = (|| {

@@ -104,10 +104,19 @@ impl Lantern {
     /// Update SSD hover state based on logical pointer position.
     /// Returns true if any hover state changed (needs re-render).
     pub fn ssd_update_hover(&mut self, pointer_pos: smithay::utils::Point<f64, smithay::utils::Logical>) -> bool {
+        // This runs per motion event (up to 1000Hz) — bail before any
+        // allocation when no window has server-side decorations (the common
+        // case: CSD apps and fullscreen games).
+        if self.ssd.windows.is_empty() {
+            return false;
+        }
         let mut changed = false;
 
-        // Collect SSD surfaces first to avoid borrow conflict
-        let ssd_surfaces: Vec<WlSurface> = self.ssd.windows.keys().cloned().collect();
+        // Collect SSD surfaces first to avoid borrow conflict, reusing a
+        // scratch buffer so the per-event allocation happens only once.
+        let mut ssd_surfaces = std::mem::take(&mut self.ssd.hover_scratch);
+        ssd_surfaces.clear();
+        ssd_surfaces.extend(self.ssd.windows.keys().cloned());
 
         for surface in &ssd_surfaces {
             let window = match self.find_mapped_window(surface) {
@@ -134,6 +143,7 @@ impl Lantern {
             }
         }
 
+        self.ssd.hover_scratch = ssd_surfaces;
         changed
     }
 

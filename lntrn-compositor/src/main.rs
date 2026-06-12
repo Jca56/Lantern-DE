@@ -71,23 +71,42 @@ pub(crate) fn lantern_config_path() -> std::path::PathBuf {
 /// Cached lantern.toml contents, invalidated by mtime. Avoids re-reading the
 /// file on every read_config call — periodic reloads in the render path were
 /// causing 33ms stalls every 300 frames (visible as cursor/animation lag).
+///
+/// The mtime stat() itself is throttled to once per 200ms: config readers in
+/// the frame loop were issuing thousands of stat syscalls per second at
+/// 240Hz, and config edits are human-speed — a ≤200ms-stale view is invisible.
 pub(crate) fn cached_lantern_toml() -> std::sync::Arc<String> {
     use std::sync::{Arc, Mutex, OnceLock};
-    use std::time::SystemTime;
-    static CACHE: OnceLock<Mutex<(Option<SystemTime>, Arc<String>)>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new((None, Arc::new(String::new()))));
+    use std::time::{Duration, Instant, SystemTime};
+    struct TomlCache {
+        last_check: Option<Instant>,
+        mtime: Option<SystemTime>,
+        contents: Arc<String>,
+    }
+    static CACHE: OnceLock<Mutex<TomlCache>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| {
+        Mutex::new(TomlCache { last_check: None, mtime: None, contents: Arc::new(String::new()) })
+    });
+
+    let mut guard = cache.lock().unwrap();
+    let now = Instant::now();
+    if guard
+        .last_check
+        .is_some_and(|t| now.duration_since(t) < Duration::from_millis(200))
+    {
+        return Arc::clone(&guard.contents);
+    }
+    guard.last_check = Some(now);
 
     let path = lantern_config_path();
     let mtime = std::fs::metadata(&path).ok().and_then(|m| m.modified().ok());
-
-    let mut guard = cache.lock().unwrap();
-    if guard.0 != mtime {
+    if guard.mtime != mtime {
         match std::fs::read_to_string(&path) {
-            Ok(c) => { guard.0 = mtime; guard.1 = Arc::new(c); }
+            Ok(c) => { guard.mtime = mtime; guard.contents = Arc::new(c); }
             Err(_) => { /* keep previous cache on read error */ }
         }
     }
-    Arc::clone(&guard.1)
+    Arc::clone(&guard.contents)
 }
 
 /// Read a string setting from a given [section] in lantern.toml.
@@ -347,11 +366,10 @@ pub(crate) fn read_window_rules() -> Vec<WindowRule> {
 
 /// Read all `[[monitors]]` entries from lantern.toml.
 pub(crate) fn read_monitor_configs() -> Vec<MonitorConfig> {
-    let path = lantern_config_path();
-    let contents = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(_) => return Vec::new(),
-    };
+    let contents = cached_lantern_toml();
+    if contents.is_empty() {
+        return Vec::new();
+    }
 
     let mut monitors = Vec::new();
     let mut in_monitors = false;

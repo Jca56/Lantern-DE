@@ -19,6 +19,8 @@ pub struct WorkspaceTransition {
     pub direction: i32,
     pub start: Instant,
     pub duration: Duration,
+    /// Easing curve resolved at start — `eased` runs every frame.
+    pub curve: crate::rect_anim::Curve,
 }
 
 impl WorkspaceTransition {
@@ -28,7 +30,7 @@ impl WorkspaceTransition {
     }
 
     pub fn eased(&self, now: Instant) -> f64 {
-        crate::animations::workspace_curve_eval(self.progress(now))
+        self.curve.eval(self.progress(now))
     }
 
     pub fn is_done(&self, now: Instant) -> bool {
@@ -77,6 +79,7 @@ impl WorkspaceAnimState {
                 direction,
                 start: Instant::now(),
                 duration: slide_duration(),
+                curve: crate::animations::workspace_curve(),
             },
         );
     }

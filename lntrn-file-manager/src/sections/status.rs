@@ -17,6 +17,7 @@ pub fn draw_status_bar(
     file_info: &mut crate::file_info::FileInfoCache,
     cloud_status: Option<crate::cloud::sync::SyncStatus>,
     op_progress: Option<&OpHandle>,
+    git_branch: Option<&str>,
     input: &mut InteractionContext,
     screen: (u32, u32),
     s: f32,
@@ -78,6 +79,21 @@ pub fn draw_status_bar(
         .color(palette.text_secondary)
         .draw(text, screen.0, screen.1);
     x += counts.len() as f32 * cw;
+
+    // Git branch chip — only when the current dir is inside a repo.
+    if let Some(branch) = git_branch {
+        TextLabel::new(dot_sep, x, y)
+            .size(font)
+            .color(palette.muted.with_alpha(0.5))
+            .draw(text, screen.0, screen.1);
+        x += 24.0 * s;
+        let chip = format!("git: {branch}");
+        TextLabel::new(&chip, x, y)
+            .size(font)
+            .color(palette.accent)
+            .draw(text, screen.0, screen.1);
+        x += chip.len() as f32 * cw;
+    }
 
     if sel_count > 0 {
         // Dot separator

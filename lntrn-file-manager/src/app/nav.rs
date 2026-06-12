@@ -132,8 +132,20 @@ impl App {
         let renaming_path = self.renaming
             .and_then(|idx| self.entries.get(idx))
             .map(|e| e.path.clone());
+        // Same for selection — fs-event reloads fire whenever anything
+        // lands in the dir, and losing your selection to a background
+        // download finishing would be infuriating.
+        let selected_paths: Vec<std::path::PathBuf> = self.entries.iter()
+            .filter(|e| e.selected)
+            .map(|e| e.path.clone())
+            .collect();
 
         self.entries = fs::list_directory(&self.current_dir, self.show_hidden, self.sort_by, self.sort_dir);
+        if !selected_paths.is_empty() {
+            for e in &mut self.entries {
+                e.selected = selected_paths.contains(&e.path);
+            }
+        }
         // Apply pick filter (dirs always shown, files filtered)
         if let Some(ref pick) = self.pick {
             if !pick.filters.is_empty() {

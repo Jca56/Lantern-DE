@@ -169,6 +169,7 @@ impl App {
                 if let Some((x, y)) = self.cursor_pos {
                     if !self.chrome.context_menu.contains(x, y) {
                         self.chrome.context_menu.close();
+                        self.sidebar.close_menu();
                     }
                 }
                 self.request_redraw();
@@ -176,6 +177,23 @@ impl App {
             }
             self.request_redraw();
             return self.handle_click_passthrough(screen_h);
+        }
+
+        // Open right-click context menu takes priority over everything else
+        // (same rule as rice mode above): clicks inside land via its
+        // interaction zones during the overlay draw; clicks outside dismiss
+        // it without activating whatever sits underneath (sidebar rows,
+        // tabs, terminal selection).
+        if self.chrome.context_menu.is_open() {
+            self.input.on_left_pressed();
+            if let Some((x, y)) = self.cursor_pos {
+                if !self.chrome.context_menu.contains(x, y) {
+                    self.chrome.context_menu.close();
+                    self.sidebar.close_menu();
+                }
+            }
+            self.request_redraw();
+            return EventResult::Handled;
         }
 
         // When a menu overlay is open, check chrome first so
@@ -389,7 +407,7 @@ impl App {
                 if !self.tabs.is_empty() {
                     let tab = &self.tabs[self.active_tab];
                     let pane = &tab.panes[tab.active_pane];
-                    input::do_paste(&self.clipboard, &pane.pty);
+                    input::do_paste(&self.clipboard, &pane.terminal, &pane.pty);
                 }
             }
             ui_chrome::ClickAction::SelectAll => {
@@ -448,6 +466,21 @@ impl App {
                     let tab = &mut self.tabs[self.active_tab];
                     tab.panes[tab.active_pane].terminal.clear_scrollback();
                 }
+            }
+            ui_chrome::ClickAction::SidebarNewFile => {
+                self.sidebar.menu_new_file();
+            }
+            ui_chrome::ClickAction::SidebarNewFolder => {
+                self.sidebar.menu_new_folder();
+            }
+            ui_chrome::ClickAction::SidebarRename => {
+                self.sidebar.menu_rename();
+            }
+            ui_chrome::ClickAction::SidebarDelete => {
+                self.sidebar.menu_delete();
+            }
+            ui_chrome::ClickAction::SidebarOpenCode => {
+                self.sidebar.menu_open_code();
             }
             ui_chrome::ClickAction::None => {
                 return self.handle_click_passthrough(screen_h);
@@ -596,14 +629,12 @@ impl App {
         let chrome_h = self.chrome_height();
         // Sidebar right-click — stays routable in rice mode (the handler
         // no-ops when the sidebar is closed).
-        if sidebar::handle_right_click(
+        if let Some(target) = sidebar::handle_right_click(
             &mut self.sidebar,
             self.cursor_pos,
             chrome_h,
         ) {
-            self.chrome.close_all_menus();
-            self.tab_bar.context_menu = None;
-            self.request_redraw();
+            self.open_sidebar_context_menu(&target, screen_w, screen_h);
             return;
         }
 
@@ -644,11 +675,32 @@ impl App {
             tabs_rect,
         ) {
             self.chrome.close_all_menus();
-            self.sidebar.context_menu = None;
+            self.sidebar.close_menu();
             self.request_redraw();
         } else {
             self.open_terminal_context_menu(screen_w, screen_h);
         }
+    }
+
+    /// Open the sidebar's context menu — the same chrome ContextMenu the
+    /// terminal uses, with file-tree items for the right-clicked entry.
+    fn open_sidebar_context_menu(
+        &mut self,
+        target: &sidebar::RightClickTarget,
+        screen_w: u32,
+        screen_h: u32,
+    ) {
+        let Some((x, y)) = self.cursor_pos else { return };
+        self.tab_bar.context_menu = None;
+        self.chrome.menu_bar.close();
+
+        let items =
+            ui_chrome::build_sidebar_context_menu(&target.name, target.is_root, target.is_dir);
+        self.chrome.refresh_theme();
+        self.chrome.context_menu.set_scale(self.scale);
+        self.chrome.context_menu.open(x, y, items);
+        self.chrome.context_menu.clamp_to_screen(screen_w as f32, screen_h as f32);
+        self.request_redraw();
     }
 
     /// Open the terminal's right-click context menu at the cursor. Shared by
@@ -656,6 +708,7 @@ impl App {
     fn open_terminal_context_menu(&mut self, screen_w: u32, screen_h: u32) {
         let Some((x, y)) = self.cursor_pos else { return };
         self.tab_bar.context_menu = None;
+        self.sidebar.close_menu();
         self.chrome.menu_bar.close();
 
         let items = self.context_menu_items();
@@ -1013,9 +1066,13 @@ impl App {
         }
 
         let cell_h = render::measure_cell(self.effective_font_size()).1;
+        // PixelDelta: one wheel detent arrives as 15 logical px × scale
+        // (compositor-synthesized), so ×8 ≈ 6 lines per detent; trackpads
+        // scroll at 8× finger speed. LineDelta (non-Lantern fallback):
+        // detents arrive pre-quantized, so scale by cell height directly.
         let delta_px = match delta {
-            MouseScrollDelta::LineDelta(_, y) => y * cell_h * 10.0,
-            MouseScrollDelta::PixelDelta(pos) => pos.y as f32 * 4.0,
+            MouseScrollDelta::LineDelta(_, y) => y * cell_h * self.scroll_speed,
+            MouseScrollDelta::PixelDelta(pos) => pos.y as f32 * self.scroll_speed,
         };
 
         let tab = &self.tabs[self.active_tab];

@@ -1,6 +1,8 @@
 use std::ffi::c_void;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
+use std::sync::mpsc;
+use std::time::Instant;
 
 use anyhow::{anyhow, Result};
 use lntrn_render::{GpuContext, Painter, Rect, TextRenderer, TexturePass};
@@ -10,22 +12,25 @@ use raw_window_handle::{
     RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle, WindowHandle,
 };
 use wayland_client::{
-    protocol::{
-        wl_callback, wl_compositor, wl_keyboard, wl_output, wl_pointer, wl_registry, wl_seat,
-        wl_surface,
-    },
-    Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum,
+    protocol::{wl_compositor, wl_data_device_manager, wl_data_offer, wl_seat, wl_surface},
+    Connection, EventQueue, Proxy,
 };
 use wayland_protocols::wp::cursor_shape::v1::client::{
     wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1,
 };
-use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
+use wayland_protocols::wp::viewporter::client::wp_viewporter;
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
 use crate::app::App;
+use crate::canvas::editor::{CanvasEditor, DialogKind, DragMode};
+use crate::canvas::input::{self as canvas_input, CanvasAction};
+use crate::canvas::persist;
+use crate::canvas::sidebar::SidebarState;
+use crate::canvas::tex_cache::CanvasTexCache;
+use crate::render_launcher::{self, LauncherState};
 use crate::{
-    Gpu, ZONE_CANVAS, ZONE_CLOSE, ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_NAV_PREV, ZONE_NAV_NEXT,
-    ZONE_SHUFFLE,
+    AppMode, Gpu, ZONE_CANVAS, ZONE_CLOSE, ZONE_LAUNCHER_ITEM_BASE, ZONE_LAUNCHER_NEW,
+    ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_NAV_PREV, ZONE_NAV_NEXT, ZONE_SHUFFLE,
 };
 
 // ── WaylandHandle for wgpu ──────────────────────────────────────────────────
@@ -48,51 +53,65 @@ impl HasWindowHandle for WaylandHandle {
 }
 
 // ── Wayland state ───────────────────────────────────────────────────────────
+// Fields are pub(crate): the Dispatch impls that fill them live in
+// wayland_dispatch.rs (protocol plumbing) and dnd.rs (drag-and-drop).
 
-const BTN_LEFT: u32 = 0x110;
-const BTN_MIDDLE: u32 = 0x112;
-
-struct State {
-    running: bool,
-    configured: bool,
-    frame_done: bool,
-    width: u32,
-    height: u32,
-    scale: i32,
-    output_phys_width: u32,
-    output_phys_height: u32,
-    maximized: bool,
+pub(crate) struct State {
+    pub(crate) running: bool,
+    /// Compositor asked us to close (xdg_toplevel.close) — the main loop turns
+    /// this into a confirm dialog when the canvas has unsaved changes.
+    pub(crate) close_requested: bool,
+    pub(crate) configured: bool,
+    pub(crate) frame_done: bool,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) scale: i32,
+    pub(crate) output_phys_width: u32,
+    pub(crate) output_phys_height: u32,
+    pub(crate) maximized: bool,
     // Wayland objects
-    compositor: Option<wl_compositor::WlCompositor>,
-    wm_base: Option<xdg_wm_base::XdgWmBase>,
-    viewporter: Option<wp_viewporter::WpViewporter>,
-    surface: Option<wl_surface::WlSurface>,
-    xdg_surface: Option<xdg_surface::XdgSurface>,
-    toplevel: Option<xdg_toplevel::XdgToplevel>,
-    seat: Option<wl_seat::WlSeat>,
-    cursor_shape_mgr: Option<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1>,
-    cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
-    current_cursor_shape: Option<wp_cursor_shape_device_v1::Shape>,
+    pub(crate) compositor: Option<wl_compositor::WlCompositor>,
+    pub(crate) wm_base: Option<xdg_wm_base::XdgWmBase>,
+    pub(crate) viewporter: Option<wp_viewporter::WpViewporter>,
+    pub(crate) surface: Option<wl_surface::WlSurface>,
+    pub(crate) xdg_surface: Option<xdg_surface::XdgSurface>,
+    pub(crate) toplevel: Option<xdg_toplevel::XdgToplevel>,
+    pub(crate) seat: Option<wl_seat::WlSeat>,
+    pub(crate) cursor_shape_mgr: Option<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1>,
+    pub(crate) cursor_shape_device: Option<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1>,
+    pub(crate) current_cursor_shape: Option<wp_cursor_shape_device_v1::Shape>,
     // Input
-    cursor_x: f64,
-    cursor_y: f64,
-    pointer_in_surface: bool,
-    left_pressed: bool,
-    left_released: bool,
-    middle_pressed: bool,
-    middle_released: bool,
-    scroll_delta: f32,
-    pointer_serial: u32,
-    enter_serial: u32,
+    pub(crate) cursor_x: f64,
+    pub(crate) cursor_y: f64,
+    pub(crate) pointer_in_surface: bool,
+    pub(crate) left_pressed: bool,
+    pub(crate) left_released: bool,
+    pub(crate) middle_pressed: bool,
+    pub(crate) middle_released: bool,
+    pub(crate) scroll_delta: f32,
+    pub(crate) pointer_serial: u32,
+    pub(crate) enter_serial: u32,
     // Keyboard
-    ctrl: bool,
-    key_pressed: Option<u32>,
+    pub(crate) ctrl: bool,
+    pub(crate) shift: bool,
+    pub(crate) key_pressed: Option<u32>,
+    // Drag-and-drop receive (Dispatch impls live in dnd.rs)
+    pub(crate) data_device_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
+    pub(crate) dnd_mimes: Vec<String>,
+    pub(crate) dnd_offer: Option<wl_data_offer::WlDataOffer>,
+    /// Drop cursor position in logical surface coords (× scale before use).
+    pub(crate) dnd_x: f64,
+    pub(crate) dnd_y: f64,
+    /// True while a drop's pipe is being read on a worker thread — keeps the
+    /// event loop polling so the result lands promptly.
+    pub(crate) dnd_reading: bool,
+    pub(crate) dnd_tx: mpsc::Sender<Vec<PathBuf>>,
 }
 
 impl State {
-    fn new() -> Self {
+    fn new(dnd_tx: mpsc::Sender<Vec<PathBuf>>) -> Self {
         Self {
-            running: true, configured: false, frame_done: true,
+            running: true, close_requested: false, configured: false, frame_done: true,
             width: 0, height: 0, scale: 1,
             output_phys_width: 0, output_phys_height: 0, maximized: false,
             compositor: None, wm_base: None, viewporter: None,
@@ -102,7 +121,10 @@ impl State {
             left_pressed: false, left_released: false,
             middle_pressed: false, middle_released: false,
             scroll_delta: 0.0, pointer_serial: 0, enter_serial: 0,
-            ctrl: false, key_pressed: None,
+            ctrl: false, shift: false, key_pressed: None,
+            data_device_manager: None,
+            dnd_mimes: Vec::new(), dnd_offer: None,
+            dnd_x: 0.0, dnd_y: 0.0, dnd_reading: false, dnd_tx,
         }
     }
 
@@ -118,196 +140,6 @@ impl State {
     fn phys_height(&self) -> u32 { (self.height as f64 * self.fractional_scale()).round() as u32 }
 }
 
-// ── Dispatch impls ──────────────────────────────────────────────────────────
-
-impl Dispatch<wl_registry::WlRegistry, ()> for State {
-    fn event(
-        state: &mut Self, registry: &wl_registry::WlRegistry,
-        event: wl_registry::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>,
-    ) {
-        if let wl_registry::Event::Global { name, interface, version } = event {
-            match interface.as_str() {
-                "wl_compositor" => { state.compositor = Some(registry.bind(name, version.min(6), qh, ())); }
-                "xdg_wm_base" => { state.wm_base = Some(registry.bind(name, version.min(5), qh, ())); }
-                "wp_viewporter" => { state.viewporter = Some(registry.bind(name, version.min(1), qh, ())); }
-                "wl_output" => { let _: wl_output::WlOutput = registry.bind(name, version.min(4), qh, ()); }
-                "wl_seat" => { state.seat = Some(registry.bind(name, version.min(9), qh, ())); }
-                "wp_cursor_shape_manager_v1" => {
-                    state.cursor_shape_mgr = Some(registry.bind(name, version.min(1), qh, ()));
-                }
-                _ => {}
-            }
-        }
-    }
-}
-
-impl Dispatch<wl_compositor::WlCompositor, ()> for State {
-    fn event(_: &mut Self, _: &wl_compositor::WlCompositor, _: wl_compositor::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
-}
-impl Dispatch<wl_surface::WlSurface, ()> for State {
-    fn event(_: &mut Self, _: &wl_surface::WlSurface, _: wl_surface::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
-}
-impl Dispatch<wp_viewporter::WpViewporter, ()> for State {
-    fn event(_: &mut Self, _: &wp_viewporter::WpViewporter, _: wp_viewporter::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
-}
-impl Dispatch<wp_viewport::WpViewport, ()> for State {
-    fn event(_: &mut Self, _: &wp_viewport::WpViewport, _: wp_viewport::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
-}
-impl Dispatch<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1, ()> for State {
-    fn event(_: &mut Self, _: &wp_cursor_shape_manager_v1::WpCursorShapeManagerV1, _: wp_cursor_shape_manager_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
-}
-impl Dispatch<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1, ()> for State {
-    fn event(_: &mut Self, _: &wp_cursor_shape_device_v1::WpCursorShapeDeviceV1, _: wp_cursor_shape_device_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
-}
-
-impl Dispatch<xdg_wm_base::XdgWmBase, ()> for State {
-    fn event(
-        _: &mut Self, wm_base: &xdg_wm_base::XdgWmBase,
-        event: xdg_wm_base::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
-    ) {
-        if let xdg_wm_base::Event::Ping { serial } = event { wm_base.pong(serial); }
-    }
-}
-
-impl Dispatch<xdg_surface::XdgSurface, ()> for State {
-    fn event(
-        state: &mut Self, xdg_surface: &xdg_surface::XdgSurface,
-        event: xdg_surface::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
-    ) {
-        if let xdg_surface::Event::Configure { serial } = event {
-            xdg_surface.ack_configure(serial);
-            state.configured = true;
-            state.frame_done = true;
-        }
-    }
-}
-
-impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
-    fn event(
-        state: &mut Self, _: &xdg_toplevel::XdgToplevel,
-        event: xdg_toplevel::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
-    ) {
-        match event {
-            xdg_toplevel::Event::Configure { width, height, states } => {
-                if width > 0 { state.width = width as u32; }
-                if height > 0 { state.height = height as u32; }
-                state.maximized = states.chunks_exact(4).any(|chunk| {
-                    let val = u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
-                    val == xdg_toplevel::State::Maximized as u32
-                });
-            }
-            xdg_toplevel::Event::Close => { state.running = false; }
-            _ => {}
-        }
-    }
-}
-
-impl Dispatch<wl_output::WlOutput, ()> for State {
-    fn event(
-        state: &mut Self, _: &wl_output::WlOutput,
-        event: wl_output::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
-    ) {
-        match event {
-            wl_output::Event::Scale { factor } => { state.scale = factor; }
-            wl_output::Event::Mode { width, height, .. } => {
-                state.output_phys_width = width as u32;
-                state.output_phys_height = height as u32;
-            }
-            _ => {}
-        }
-    }
-}
-
-impl Dispatch<wl_callback::WlCallback, ()> for State {
-    fn event(state: &mut Self, _: &wl_callback::WlCallback, _: wl_callback::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
-        state.frame_done = true;
-    }
-}
-
-impl Dispatch<wl_seat::WlSeat, ()> for State {
-    fn event(
-        state: &mut Self, seat: &wl_seat::WlSeat,
-        event: wl_seat::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>,
-    ) {
-        if let wl_seat::Event::Capabilities { capabilities: WEnum::Value(cap) } = event {
-            if cap.contains(wl_seat::Capability::Pointer) {
-                let ptr = seat.get_pointer(qh, ());
-                // Pair the pointer with a cursor-shape device so we can set
-                // named resize cursors on hover (no XCursor theme loading).
-                if let Some(mgr) = &state.cursor_shape_mgr {
-                    state.cursor_shape_device = Some(mgr.get_pointer(&ptr, qh, ()));
-                }
-            }
-            if cap.contains(wl_seat::Capability::Keyboard) { seat.get_keyboard(qh, ()); }
-        }
-    }
-}
-
-impl Dispatch<wl_pointer::WlPointer, ()> for State {
-    fn event(
-        state: &mut Self, _: &wl_pointer::WlPointer,
-        event: wl_pointer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
-    ) {
-        match event {
-            wl_pointer::Event::Enter { serial, surface_x, surface_y, .. } => {
-                state.pointer_in_surface = true;
-                state.cursor_x = surface_x;
-                state.cursor_y = surface_y;
-                // set_shape must reference the enter serial; force a re-apply.
-                state.enter_serial = serial;
-                state.current_cursor_shape = None;
-                state.frame_done = true;
-            }
-            wl_pointer::Event::Leave { .. } => {
-                state.pointer_in_surface = false;
-                state.frame_done = true;
-            }
-            wl_pointer::Event::Motion { surface_x, surface_y, .. } => {
-                state.cursor_x = surface_x;
-                state.cursor_y = surface_y;
-                state.frame_done = true;
-            }
-            wl_pointer::Event::Button { button, state: btn_state, serial, .. } => {
-                state.pointer_serial = serial;
-                let pressed = btn_state == WEnum::Value(wl_pointer::ButtonState::Pressed);
-                let released = btn_state == WEnum::Value(wl_pointer::ButtonState::Released);
-                if button == BTN_LEFT && pressed { state.left_pressed = true; }
-                if button == BTN_LEFT && released { state.left_released = true; }
-                if button == BTN_MIDDLE && pressed { state.middle_pressed = true; }
-                if button == BTN_MIDDLE && released { state.middle_released = true; }
-                state.frame_done = true;
-            }
-            wl_pointer::Event::Axis { axis, value, .. } => {
-                if axis == WEnum::Value(wl_pointer::Axis::VerticalScroll) {
-                    state.scroll_delta += value as f32;
-                }
-                state.frame_done = true;
-            }
-            _ => {}
-        }
-    }
-}
-
-impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
-    fn event(
-        state: &mut Self, _: &wl_keyboard::WlKeyboard,
-        event: wl_keyboard::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
-    ) {
-        match event {
-            wl_keyboard::Event::Key { key, state: key_state, .. } => {
-                if key_state == WEnum::Value(wl_keyboard::KeyState::Pressed) {
-                    state.key_pressed = Some(key);
-                }
-                state.frame_done = true;
-            }
-            wl_keyboard::Event::Modifiers { mods_depressed, .. } => {
-                state.ctrl = mods_depressed & 4 != 0;
-            }
-            _ => {}
-        }
-    }
-}
-
 // ── Entry point ─────────────────────────────────────────────────────────────
 
 pub fn run(initial_path: Option<String>) -> Result<()> {
@@ -315,7 +147,8 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
     let display = conn.display();
     let mut event_queue: EventQueue<State> = conn.new_event_queue();
     let qh = event_queue.handle();
-    let mut state = State::new();
+    let (dnd_tx, dnd_rx) = mpsc::channel::<Vec<PathBuf>>();
+    let mut state = State::new(dnd_tx);
 
     display.get_registry(&qh, ());
     event_queue.roundtrip(&mut state)?;
@@ -361,6 +194,12 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
     state.xdg_surface = Some(xdg_surface);
     state.toplevel = Some(toplevel.clone());
 
+    // DnD target: needs a data device on our seat (events handled in dnd.rs).
+    let _data_device = match (&state.data_device_manager, &state.seat) {
+        (Some(mgr), Some(seat)) => Some(mgr.get_data_device(seat, &qh, ())),
+        _ => None,
+    };
+
     // Wait for initial configure
     while !state.configured {
         event_queue.blocking_dispatch(&mut state)?;
@@ -395,18 +234,45 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
         ctx: gpu_ctx,
     };
 
-    let palette = FoxPalette::dark();
     let mut app = App::new();
     let mut input = InteractionContext::new();
 
-    // Load initial image if provided
-    if let Some(path) = initial_path {
-        app.open_image(&gpu.ctx, &gpu.tex_pass, &path);
-    }
+    // ── Mode selection ──────────────────────────────────────────────
+    let mut editor = CanvasEditor::new_empty();
+    let mut sidebar = SidebarState::new();
+    let mut tex_cache = CanvasTexCache::new();
+    let mut launcher = LauncherState::new();
+    let mut mode = match &initial_path {
+        Some(p) if p.to_ascii_lowercase().ends_with(".lcanvas") => {
+            match persist::load_canvas(Path::new(p)) {
+                Ok(doc) => {
+                    editor = CanvasEditor::from_doc(doc, Some(PathBuf::from(p)));
+                    AppMode::Canvas
+                }
+                Err(e) => {
+                    eprintln!("[image-viewer] cannot open canvas {p}: {e}");
+                    launcher.error = Some(format!("Couldn't open canvas: {e}"));
+                    AppMode::Launcher
+                }
+            }
+        }
+        Some(p) => {
+            app.open_image(&gpu.ctx, &gpu.tex_pass, p);
+            AppMode::Viewer
+        }
+        None => AppMode::Launcher,
+    };
+
+    let mut last_frame = Instant::now();
+    let mut last_title = String::new();
 
     while state.running {
-        // Use non-blocking dispatch when animating a GIF, blocking otherwise
-        if app.gif.is_some() {
+        // Non-blocking dispatch while anything animates or a DnD read is in
+        // flight (those complete off the wayland socket, so blocking_dispatch
+        // would never wake for them); blocking otherwise.
+        let canvas_busy = mode == AppMode::Canvas
+            && (sidebar.scroll.is_animating() || sidebar.has_pending());
+        if app.gif.is_some() || canvas_busy || state.dnd_reading {
             if let Some(guard) = event_queue.prepare_read() {
                 let _ = guard.read();
             }
@@ -421,16 +287,23 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
                 state.frame_done = true;
             }
             if !state.frame_done {
-                // Sleep until next frame is due (or a short poll interval)
-                let sleep = app.gif.as_ref()
-                    .map(|g| {
-                        let remaining = g.current_delay()
-                            .saturating_sub(g.last_swap.elapsed());
-                        remaining.min(std::time::Duration::from_millis(16))
-                    })
-                    .unwrap_or(std::time::Duration::from_millis(16));
-                std::thread::sleep(sleep);
-                continue;
+                if canvas_busy || state.dnd_reading {
+                    // Steady redraw cadence for scroll animation / thumbnail
+                    // arrival / drop-read completion.
+                    std::thread::sleep(std::time::Duration::from_millis(12));
+                    state.frame_done = true;
+                } else {
+                    // Sleep until next GIF frame is due (or a short poll interval)
+                    let sleep = app.gif.as_ref()
+                        .map(|g| {
+                            let remaining = g.current_delay()
+                                .saturating_sub(g.last_swap.elapsed());
+                            remaining.min(std::time::Duration::from_millis(16))
+                        })
+                        .unwrap_or(std::time::Duration::from_millis(16));
+                    std::thread::sleep(sleep);
+                    continue;
+                }
             }
         } else {
             if let Err(e) = event_queue.blocking_dispatch(&mut state) {
@@ -457,6 +330,16 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
         let hf = gpu.ctx.height() as f32;
         let s = scale_f;
 
+        // ── Compositor close request ────────────────────────────────────
+        if state.close_requested {
+            state.close_requested = false;
+            if mode == AppMode::Canvas && editor.dirty && editor.dialog.is_none() {
+                editor.dialog = Some(DialogKind::ConfirmQuit);
+            } else {
+                state.running = false;
+            }
+        }
+
         // ── Cursor ──────────────────────────────────────────────────────
         let cx = (state.cursor_x as f32) * s;
         let cy = (state.cursor_y as f32) * s;
@@ -466,21 +349,67 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
             input.on_cursor_left();
         }
 
-        // ── Scroll → zoom ──────────────────────────────────────────────
-        if state.scroll_delta.abs() > 0.01 {
-            let title_h = crate::TITLE_H * s;
-            let status_h = crate::STATUS_H * s;
-            let canvas = Rect::new(0.0, title_h, wf, hf - title_h - status_h);
-            if canvas.contains(cx, cy) {
-                let factor = if state.scroll_delta < 0.0 { 1.03 } else { 1.0 / 1.03 };
-                app.zoom_at(factor, cx, cy, canvas.x + canvas.w * 0.5, canvas.y + canvas.h * 0.5);
+        // ── DnD drops (read off-thread, results polled here) ────────────
+        while let Ok(paths) = dnd_rx.try_recv() {
+            state.dnd_reading = false;
+            if paths.is_empty() { continue; }
+            match mode {
+                AppMode::Canvas => {
+                    let dx = (state.dnd_x as f32) * s;
+                    let dy = (state.dnd_y as f32) * s;
+                    canvas_input::add_dropped(&mut editor, &sidebar, &paths, dx, dy, wf, hf, s);
+                }
+                AppMode::Viewer => {
+                    if let Some(p) = paths.iter().find(|p| crate::app::is_supported(p)) {
+                        app.open_image(&gpu.ctx, &gpu.tex_pass, &p.to_string_lossy());
+                    }
+                }
+                AppMode::Launcher => {}
             }
+        }
+
+        // ── Scroll ──────────────────────────────────────────────────────
+        if state.scroll_delta.abs() > 0.01 {
+            let delta = state.scroll_delta;
             state.scroll_delta = 0.0;
+            match mode {
+                AppMode::Viewer => {
+                    let title_h = crate::TITLE_H * s;
+                    let status_h = crate::STATUS_H * s;
+                    let canvas = Rect::new(0.0, title_h, wf, hf - title_h - status_h);
+                    if canvas.contains(cx, cy) {
+                        let factor = if delta < 0.0 { 1.03 } else { 1.0 / 1.03 };
+                        app.zoom_at(factor, cx, cy, canvas.x + canvas.w * 0.5, canvas.y + canvas.h * 0.5);
+                    }
+                }
+                AppMode::Canvas => {
+                    canvas_input::on_scroll(&mut editor, &mut sidebar, delta, cx, cy, wf, hf, s);
+                }
+                AppMode::Launcher => {
+                    render_launcher::apply_scroll(&mut launcher, delta * s * 4.0, wf, hf, s);
+                }
+            }
         }
 
         // ── Keyboard ────────────────────────────────────────────────────
         if let Some(key) = state.key_pressed.take() {
-            handle_key(&mut app, &mut gpu, key, state.ctrl);
+            match mode {
+                AppMode::Viewer => handle_key(&mut app, &mut gpu, key, state.ctrl),
+                AppMode::Canvas => {
+                    let action = canvas_input::on_key(
+                        &mut editor, &mut sidebar, key, state.ctrl, state.shift, wf, hf, s,
+                    );
+                    if matches!(action, CanvasAction::Quit) {
+                        state.running = false;
+                    }
+                }
+                AppMode::Launcher => {
+                    const KEY_Q: u32 = 16;
+                    if state.ctrl && key == KEY_Q {
+                        state.running = false;
+                    }
+                }
+            }
         }
 
         // ── Left press ──────────────────────────────────────────────────
@@ -494,22 +423,67 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
                 }
             } else if let Some(zone_id) = input.on_left_pressed() {
                 match zone_id {
-                    ZONE_CLOSE => { state.running = false; }
+                    ZONE_CLOSE => {
+                        if mode == AppMode::Canvas && editor.dirty {
+                            editor.dialog = Some(DialogKind::ConfirmQuit);
+                        } else {
+                            state.running = false;
+                        }
+                    }
                     ZONE_MINIMIZE => { toplevel.set_minimized(); }
                     ZONE_MAXIMIZE => {
                         if state.maximized { toplevel.unset_maximized(); }
                         else { toplevel.set_maximized(); }
                     }
-                    ZONE_CANVAS => {
-                        // Start panning
-                        app.is_panning = true;
-                        app.last_pan_x = cx;
-                        app.last_pan_y = cy;
-                    }
-                    ZONE_NAV_PREV => { app.prev_image(&gpu.ctx, &gpu.tex_pass); }
-                    ZONE_NAV_NEXT => { app.next_image(&gpu.ctx, &gpu.tex_pass); }
-                    ZONE_SHUFFLE => { app.toggle_shuffle(); }
-                    _ => {}
+                    _ => match mode {
+                        AppMode::Viewer => match zone_id {
+                            ZONE_CANVAS => {
+                                // Start panning
+                                app.is_panning = true;
+                                app.last_pan_x = cx;
+                                app.last_pan_y = cy;
+                            }
+                            ZONE_NAV_PREV => { app.prev_image(&gpu.ctx, &gpu.tex_pass); }
+                            ZONE_NAV_NEXT => { app.next_image(&gpu.ctx, &gpu.tex_pass); }
+                            ZONE_SHUFFLE => { app.toggle_shuffle(); }
+                            _ => {}
+                        },
+                        AppMode::Canvas => {
+                            let action = canvas_input::on_zone_pressed(
+                                &mut editor, &mut sidebar, zone_id, cx, cy, wf, hf, s,
+                            );
+                            if matches!(action, CanvasAction::Quit) {
+                                state.running = false;
+                            }
+                        }
+                        AppMode::Launcher => match zone_id {
+                            ZONE_LAUNCHER_NEW => {
+                                editor = CanvasEditor::new_empty();
+                                tex_cache.clear();
+                                mode = AppMode::Canvas;
+                            }
+                            z if z >= ZONE_LAUNCHER_ITEM_BASE => {
+                                let i = (z - ZONE_LAUNCHER_ITEM_BASE) as usize;
+                                if let Some(entry) = launcher.canvases.get(i) {
+                                    match persist::load_canvas(&entry.path) {
+                                        Ok(doc) => {
+                                            editor = CanvasEditor::from_doc(
+                                                doc, Some(entry.path.clone()),
+                                            );
+                                            tex_cache.clear();
+                                            mode = AppMode::Canvas;
+                                        }
+                                        Err(e) => {
+                                            launcher.error = Some(format!(
+                                                "Couldn't open {}: {e}", entry.name,
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        },
+                    },
                 }
             } else {
                 // Title bar drag
@@ -525,13 +499,23 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
         // ── Middle press → pan ──────────────────────────────────────────
         if state.middle_pressed {
             state.middle_pressed = false;
-            app.is_panning = true;
-            app.last_pan_x = cx;
-            app.last_pan_y = cy;
+            match mode {
+                AppMode::Viewer => {
+                    app.is_panning = true;
+                    app.last_pan_x = cx;
+                    app.last_pan_y = cy;
+                }
+                AppMode::Canvas => {
+                    if editor.dialog.is_none() {
+                        editor.drag = DragMode::PanningCanvas { last_x: cx, last_y: cy };
+                    }
+                }
+                AppMode::Launcher => {}
+            }
         }
 
-        // ── Panning with mouse movement ─────────────────────────────────
-        if app.is_panning && state.pointer_in_surface {
+        // ── Pointer-driven updates while moving ─────────────────────────
+        if mode == AppMode::Viewer && app.is_panning && state.pointer_in_surface {
             let dx = cx - app.last_pan_x;
             let dy = cy - app.last_pan_y;
             app.pan_x += dx;
@@ -539,16 +523,27 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
             app.last_pan_x = cx;
             app.last_pan_y = cy;
         }
+        if mode == AppMode::Canvas && state.pointer_in_surface {
+            canvas_input::on_motion(&mut editor, &mut sidebar, &input, cx, cy, wf, hf, s);
+        }
 
         // ── Left/middle release ─────────────────────────────────────────
         if state.left_released {
             state.left_released = false;
+            if mode == AppMode::Canvas {
+                canvas_input::on_release(&mut editor, &mut sidebar, cx, cy, wf, hf, s);
+            }
             app.is_panning = false;
             input.on_left_released();
         }
         if state.middle_released {
             state.middle_released = false;
             app.is_panning = false;
+            if mode == AppMode::Canvas
+                && matches!(editor.drag, DragMode::PanningCanvas { .. })
+            {
+                editor.drag = DragMode::Idle;
+            }
         }
 
         // ── Keep SVGs crisp ──────────────────────────────────────────────
@@ -581,8 +576,36 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
             }
         }
 
+        // ── Window title tracks the canvas name + dirty state ───────────
+        let desired_title = match mode {
+            AppMode::Canvas => editor.window_title(),
+            _ => "Lantern Image Viewer".to_string(),
+        };
+        if desired_title != last_title {
+            toplevel.set_title(desired_title.clone());
+            last_title = desired_title;
+        }
+
         // ── Render ──────────────────────────────────────────────────────
-        crate::render::render_frame(&mut gpu, &app, &mut input, &palette, s);
+        let now = Instant::now();
+        let dt = (now - last_frame).as_secs_f32().min(0.05);
+        last_frame = now;
+        // Re-read each frame so theme/accent changes apply on next draw.
+        let palette = FoxPalette::current();
+        match mode {
+            AppMode::Viewer => {
+                crate::render::render_frame(&mut gpu, &app, &mut input, &palette, s);
+            }
+            AppMode::Launcher => {
+                render_launcher::render_launcher_frame(&mut gpu, &mut launcher, &mut input, &palette, s);
+            }
+            AppMode::Canvas => {
+                crate::render_canvas::render_canvas_frame(
+                    &mut gpu, &mut editor, &mut sidebar, &mut tex_cache, &mut input,
+                    &palette, s, dt,
+                );
+            }
+        }
 
         surface.frame(&qh, ());
         surface.commit();

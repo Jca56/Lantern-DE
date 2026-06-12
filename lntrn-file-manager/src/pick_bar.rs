@@ -49,6 +49,7 @@ pub fn draw_pick_bar(
     Button::new(confirm_rect, confirm_label)
         .variant(ButtonVariant::Primary)
         .hovered(confirm_state.is_hovered())
+        .scale(s)
         .draw(painter, text, palette, screen.0, screen.1);
 
     // ── Cancel button ───────────────────────────────────────────────────
@@ -57,6 +58,7 @@ pub fn draw_pick_bar(
     let cancel_state = input.add_zone(ZONE_PICK_CANCEL, cancel_rect);
     Button::new(cancel_rect, "Cancel")
         .hovered(cancel_state.is_hovered())
+        .scale(s)
         .draw(painter, text, palette, screen.0, screen.1);
 
     let mut left_x = pad;
@@ -70,6 +72,7 @@ pub fn draw_pick_bar(
         let filter_state = input.add_zone(ZONE_PICK_FILTER, filter_rect);
         Button::new(filter_rect, &filter_label)
             .hovered(filter_state.is_hovered())
+            .scale(s)
             .draw(painter, text, palette, screen.0, screen.1);
         left_x += filter_w + gap;
     }

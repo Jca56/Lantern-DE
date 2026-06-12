@@ -37,6 +37,13 @@ pub(crate) fn handle_click(
 ) -> ClickAction {
     let _ = current_theme;
     if let Some(zone_id) = input.on_left_pressed() {
+        // ── Quick Look: clicking the backdrop closes; swallow the rest ──
+        if app.quick_look.is_some() {
+            if zone_id == crate::ZONE_QUICK_LOOK {
+                app.quick_look = None;
+            }
+            return ClickAction::None;
+        }
         // ── Conflict dialog: captures all clicks while open ─────────
         if app.conflict_dialog.is_some() {
             use crate::conflict::ConflictAction;

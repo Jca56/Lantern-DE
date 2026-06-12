@@ -110,6 +110,15 @@ impl RectAnim {
         )
     }
 
+    /// Move the destination LOCATION without touching timing, size, or curve.
+    /// The interpolated rect shifts by eased-progress·Δ, so an in-flight
+    /// shrink drifts toward the new spot instead of snapping — used by
+    /// drag-unmaximize, where the target is "under the cursor" and the
+    /// cursor keeps moving while the animation plays.
+    pub fn set_target_loc(&mut self, loc: Point<i32, Logical>) {
+        self.target.loc = loc;
+    }
+
     /// Redirect this animation to a new target, starting from the current
     /// interpolated rect. Use when the user retriggers a state change mid-flight
     /// (e.g. maximize → unmaximize before the first finishes).

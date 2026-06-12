@@ -13,7 +13,7 @@ const SUPPORTED_EXTS: &[&str] = &[
     "png", "jpg", "jpeg", "webp", "gif", "bmp", "ico", "tiff", "tif", "svg",
 ];
 
-fn is_supported(path: &Path) -> bool {
+pub(crate) fn is_supported(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .map(|ext| {
@@ -467,7 +467,7 @@ fn load_gif_frames(path: &Path) -> Option<GifAnimation> {
     })
 }
 
-fn svg_font_database() -> Arc<resvg::usvg::fontdb::Database> {
+pub(crate) fn svg_font_database() -> Arc<resvg::usvg::fontdb::Database> {
     static DB: OnceLock<Arc<resvg::usvg::fontdb::Database>> = OnceLock::new();
     DB.get_or_init(|| {
         let mut db = resvg::usvg::fontdb::Database::new();

@@ -40,6 +40,10 @@ pub struct WindowAnimation {
     pub kind: AnimationKind,
     start_time: Instant,
     duration: Duration,
+    /// Easing curve, resolved from the `[animations]` preset at construction
+    /// so render_params doesn't re-read config (and the preset can't change
+    /// mid-flight) — this runs every frame for every animated window.
+    curve: crate::rect_anim::Curve,
     /// Starting alpha for interruption (close mid-open).
     start_alpha: f32,
     /// Endpoints of the slide trajectory. When both are None, no slide is
@@ -57,6 +61,7 @@ impl WindowAnimation {
             kind: AnimationKind::Open,
             start_time: Instant::now(),
             duration: animations::open_duration(),
+            curve: animations::open_curve(),
             start_alpha: 0.0,
             source: None,
             target: None,
@@ -68,6 +73,7 @@ impl WindowAnimation {
             kind: AnimationKind::Open,
             start_time: Instant::now(),
             duration: animations::open_duration(),
+            curve: animations::open_curve(),
             start_alpha: 0.0,
             source: Some(SlideEnd::Fixed(source)),
             target: Some(SlideEnd::Live),
@@ -79,6 +85,7 @@ impl WindowAnimation {
             kind: AnimationKind::Close,
             start_time: Instant::now(),
             duration: animations::close_duration(),
+            curve: animations::close_curve(),
             start_alpha: 1.0,
             source: Some(SlideEnd::Live),
             target: Some(SlideEnd::Fixed(target)),
@@ -93,6 +100,7 @@ impl WindowAnimation {
             kind: AnimationKind::Close,
             start_time: Instant::now(),
             duration: animations::close_duration(),
+            curve: animations::close_curve(),
             start_alpha: 1.0,
             source: Some(SlideEnd::Fixed(source)),
             target: Some(SlideEnd::Fixed(target)),
@@ -108,6 +116,7 @@ impl WindowAnimation {
             kind: AnimationKind::Close,
             start_time: Instant::now(),
             duration: Duration::from_millis(duration_ms),
+            curve: animations::close_curve(),
             start_alpha: current_alpha,
             source: Some(SlideEnd::Live),
             target: Some(SlideEnd::Fixed(target)),
@@ -135,19 +144,11 @@ impl WindowAnimation {
         live_win_size: Size<i32, Logical>,
     ) -> AnimParams {
         let t = self.raw_progress();
-        let (alpha, p) = match self.kind {
-            AnimationKind::Open => {
-                let p = animations::open_curve_eval(t);
-                let pf = (p as f32).clamp(0.0, 1.0);
-                let alpha = self.start_alpha + (1.0 - self.start_alpha) * pf;
-                (alpha, p)
-            }
-            AnimationKind::Close => {
-                let p = animations::close_curve_eval(t);
-                let pf = (p as f32).clamp(0.0, 1.0);
-                let alpha = self.start_alpha * (1.0 - pf);
-                (alpha, p)
-            }
+        let p = self.curve.eval(t);
+        let pf = (p as f32).clamp(0.0, 1.0);
+        let alpha = match self.kind {
+            AnimationKind::Open => self.start_alpha + (1.0 - self.start_alpha) * pf,
+            AnimationKind::Close => self.start_alpha * (1.0 - pf),
         };
 
         let slide = match (self.source, self.target) {

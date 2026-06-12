@@ -29,6 +29,7 @@ pub fn render_frame(
     input: &mut InteractionContext,
     icon_cache: &mut IconCache,
     file_info: &mut crate::file_info::FileInfoCache,
+    git: &crate::git_status::GitStatus,
     palette: &FoxPalette,
     scale: f32,
     maximized: bool,
@@ -53,7 +54,12 @@ pub fn render_frame(
 
     // ── Compute content geometry per view mode ─────────────────────────
     icon_cache.ensure_dir(&app.current_dir);
-    icon_cache.poll_video_thumbs(ctx, tex_pass);
+    icon_cache.poll_thumbs(ctx, tex_pass);
+    // Quick Look texture upload happens here, before any texture borrows
+    // are taken for draw lists.
+    if let Some(ql) = &mut app.quick_look {
+        ql.poll_upload(ctx, tex_pass);
+    }
     let full_content = if app.pick.is_some() {
         let bottom = hf - crate::pick_bar::PICK_BAR_H * s;
         content_rect_with_bottom(wf, bottom, s)
@@ -486,7 +492,7 @@ pub fn render_frame(
             }
             draw_content_grid(
                 painter, text, pal, content, entries, cols,
-                &scroll_area, &item_hovered, &has_icon, app.drag_item, app.renaming, (w, h), s, zoom,
+                &scroll_area, &item_hovered, &has_icon, app.drag_item, app.renaming, git, (w, h), s, zoom,
             );
 
             // Inline rename input (grid mode)
@@ -546,7 +552,7 @@ pub fn render_frame(
             draw_content_list(
                 painter, text, pal, content, entries,
                 &scroll_area, &item_hovered, &has_icon, app.drag_item, app.renaming,
-                search_root, (w, h), s, zoom,
+                search_root, git, (w, h), s, zoom,
             );
 
             // Inline rename input (list mode)
@@ -685,7 +691,7 @@ pub fn render_frame(
         } else {
             None
         };
-        draw_status_bar(painter, text, pal, status, &app.entries, file_info, cloud_status, app.op_progress.as_ref(), input, (w, h), s);
+        draw_status_bar(painter, text, pal, status, &app.entries, file_info, cloud_status, app.op_progress.as_ref(), git.branch(), input, (w, h), s);
     }
 
     // ── Rubber band selection overlay ─────────────────────────────────
@@ -917,6 +923,7 @@ pub fn render_frame(
     let mut props_close = false;
     let mut props_icon_chosen: Option<(std::path::PathBuf, std::path::PathBuf)> = None;
     let mut props_icon_reset: Option<std::path::PathBuf> = None;
+    let mut props_copy_text: Option<String> = None;
     let mut props_icon_rect_data: Option<(crate::fs::FileEntry, (f32, f32, f32, f32))> = None;
     if let Some(ref mut props) = app.properties {
         let evt = crate::properties::draw_properties_dialog(
@@ -934,6 +941,9 @@ pub fn render_frame(
             Some(crate::properties::PropertiesEvent::IconReset) => {
                 props_icon_reset = Some(props.path.clone());
                 props.picker_open = false;
+            }
+            Some(crate::properties::PropertiesEvent::CopyText(t)) => {
+                props_copy_text = Some(t);
             }
             None => {}
         }
@@ -967,6 +977,11 @@ pub fn render_frame(
     if let Some(folder) = props_icon_reset {
         app.pending_icon_apply.push((folder, None));
     }
+    if let Some(text) = props_copy_text {
+        if let Some(clip) = &app.wayland_clipboard {
+            clip.set_text(&text);
+        }
+    }
     if let Some((entry, (ix, iy, iw, ih))) = props_icon_rect_data {
         if let Some(tex) = icon_cache.get(&entry) {
             let (bx, by, bw, bh) = icons::fit_in_box(tex, ix, iy, iw, ih);
@@ -987,6 +1002,15 @@ pub fn render_frame(
     }
     if let Some(ref dialog) = app.conflict_dialog {
         crate::dialogs::draw_conflict_dialog(dialog, painter, text, pal, input, (w, h), s);
+    }
+
+    // ── Quick Look overlay (topmost modal) ─────────────────────────
+    if let Some(ref ql) = app.quick_look {
+        if let Some(draw) = crate::quick_look::draw_quick_look(
+            ql, painter, text, pal, input, wf, hf, s, w, h,
+        ) {
+            props_tex_draws.push(draw);
+        }
     }
 
     // ── Inline context menu (desktop mode) ─────────────────────────
@@ -1104,6 +1128,7 @@ fn draw_drop_modal(
         .variant(ButtonVariant::Primary)
         .hovered(move_state.is_hovered())
         .pressed(move_state.is_active())
+        .scale(s)
         .draw(painter, text, pal, sw, sh);
 
     // Copy button
@@ -1112,6 +1137,7 @@ fn draw_drop_modal(
     Button::new(copy_rect, "Copy")
         .hovered(copy_state.is_hovered())
         .pressed(copy_state.is_active())
+        .scale(s)
         .draw(painter, text, pal, sw, sh);
 
     // Cancel button
@@ -1120,5 +1146,6 @@ fn draw_drop_modal(
     Button::new(cancel_rect, "Cancel")
         .hovered(cancel_state.is_hovered())
         .pressed(cancel_state.is_active())
+        .scale(s)
         .draw(painter, text, pal, sw, sh);
 }

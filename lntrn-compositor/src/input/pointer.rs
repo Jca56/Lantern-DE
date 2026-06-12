@@ -8,6 +8,7 @@ use smithay::{
         PointerAxisEvent, PointerButtonEvent, PointerMotionEvent,
     },
     input::pointer::{AxisFrame, ButtonEvent, MotionEvent, RelativeMotionEvent},
+    reexports::wayland_server::Resource,
     utils::SERIAL_COUNTER,
     wayland::pointer_constraints::{with_pointer_constraint, PointerConstraint},
 };
@@ -45,7 +46,17 @@ impl Lantern {
         let mut pointer_locked = false;
         let mut pointer_confined = false;
         let mut confine_region = None;
-        let under_now = self.surface_under(prev_loc);
+        // surface_under(prev_loc) is exactly what the previous motion event
+        // computed for its `pos` — reuse it instead of paying a second full
+        // surface-tree walk per event (this path runs at the mouse's polling
+        // rate, up to 1000Hz). Fall back to a fresh walk when there's no
+        // cached hit (first event, or an intercepted event invalidated it),
+        // and drop cached surfaces that died between events.
+        let under_now = self
+            .last_pointer_under
+            .take()
+            .filter(|(s, _)| s.is_alive())
+            .or_else(|| self.surface_under(prev_loc));
         if let Some((ref surface, surface_loc)) = under_now {
             with_pointer_constraint(surface, &pointer, |constraint| {
                 if let Some(constraint) = constraint {
@@ -73,7 +84,7 @@ impl Lantern {
         if pointer_locked {
             pointer.relative_motion(
                 self,
-                under_now,
+                under_now.clone(),
                 &RelativeMotionEvent {
                     delta: event.delta(),
                     delta_unaccel: event.delta_unaccel(),
@@ -81,6 +92,10 @@ impl Lantern {
                 },
             );
             pointer.frame(self);
+            // The pointer didn't move, so the cached hit stays valid — put
+            // it back. This is the mouse-look path: without this, every
+            // event of a locked FPS pointer would re-walk the surface tree.
+            self.last_pointer_under = under_now;
             return;
         }
 
@@ -107,6 +122,9 @@ impl Lantern {
                 .unwrap_or_default();
             let logical_point = smithay::utils::Point::from((pos.x, pos.y));
             self.alt_tab_switcher.hover_select(logical_point, output_size);
+            // The pointer moved but we computed no fresh hit — the cached
+            // hit no longer matches the pointer position.
+            self.last_pointer_under = None;
             // Still update pointer position (for cursor rendering) but
             // don't send motion to clients — intercept the event.
             pointer.motion(
@@ -127,6 +145,7 @@ impl Lantern {
         let ssd_changed = self.ssd_update_hover(pos);
 
         let under = self.surface_under(pos);
+        self.last_pointer_under = under.clone();
 
         // Focus follows mouse: focus the window under the pointer
         if self.focus_follows_mouse {
@@ -160,7 +179,7 @@ impl Lantern {
         pointer.frame(self);
         self.update_hot_corner(pos);
         if self.should_render_pointer_motion(pos) || ssd_changed {
-            self.schedule_render();
+            self.schedule_render_pointer(prev_loc, pos);
         }
     }
 
@@ -198,6 +217,7 @@ impl Lantern {
         let ssd_changed_abs = self.ssd_update_hover(pos);
 
         let under = self.surface_under(pos);
+        self.last_pointer_under = under.clone();
 
         pointer.motion(
             self,
@@ -211,7 +231,7 @@ impl Lantern {
         pointer.frame(self);
         self.update_hot_corner(pos);
         if self.should_render_pointer_motion(pos) || ssd_changed_abs {
-            self.schedule_render();
+            self.schedule_render_pointer(pos, pos);
         }
     }
 
