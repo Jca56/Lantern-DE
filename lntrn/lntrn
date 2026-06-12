@@ -18,6 +18,9 @@ done
 export LNTRN_LIVE="$LIVE_MODE"
 export LNTRN_NO_ANIM="$NO_ANIM"
 
+# Let global flags precede a mode flag: lntrn --live --sysmon, lntrn --no-anim --typing
+while [[ "${1:-}" == "--live" || "${1:-}" == "--no-anim" ]]; do shift; done
+
 # ── System monitor mode ──────────────────────────────────────────────────────
 if [[ "${1:-}" == "--sysmon" ]]; then
     # Handoff to the fancy Python TUI dashboard (installed or dev-tree)
@@ -51,6 +54,23 @@ if [[ "${1:-}" == "--files" ]]; then
     fi
     shift
     exec python3 "$FILES_VIEW" "$@"
+fi
+
+# ── Typing test mode ──────────────────────────────────────────────────────────
+if [[ "${1:-}" == "--typing" ]]; then
+    # Handoff to the Lantern Typing Test TUI (installed or dev-tree)
+    if [[ -f /usr/share/lntrn/lntrn-typing-view ]]; then
+        TYPING_VIEW="/usr/share/lntrn/lntrn-typing-view"
+    else
+        SCRIPT_PATH="$(readlink -f "$0")"
+        SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+        TYPING_VIEW="$SCRIPT_DIR/lntrn-typing-view"
+    fi
+    if [[ ! -f "$TYPING_VIEW" ]]; then
+        echo "Error: lntrn-typing-view not found (looked in /usr/share/lntrn and $SCRIPT_DIR)" >&2
+        exit 1
+    fi
+    exec python3 "$TYPING_VIEW"
 fi
 
 # ── ASCII art gallery ─────────────────────────────────────────────────────────

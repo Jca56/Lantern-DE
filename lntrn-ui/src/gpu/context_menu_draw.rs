@@ -6,7 +6,7 @@ use super::context_menu::{
     ContextMenuStyle, MenuEvent, MenuItem,
     ACCENT_BAR_WIDTH, COLOR_SWATCH_HEIGHT, CONTEXT_MENU_ZONE_BASE, HEADER_HEIGHT,
     PROGRESS_ITEM_HEIGHT, SEPARATOR_HEIGHT, SLIDER_ITEM_HEIGHT, SLIDER_TRACK_H,
-    items_height_slice,
+    TAB_DOTS_OVERHANG, WINDOW_CONTROLS_HEIGHT, items_height_slice,
 };
 use super::controls::{Button, ButtonVariant};
 use super::input::{InteractionContext, InteractionState};
@@ -58,9 +58,11 @@ pub(super) fn draw_panel(
         }
     }
 
-    // Background
+    // Background. The border strokes inward (rect_border) rather than
+    // centered on the edge — popup surfaces are sized exactly to the menu,
+    // so a centered stroke would have its outer half clipped away.
     painter.rect_filled(menu_rect, cr, style.bg);
-    painter.rect_stroke_sdf(menu_rect, cr, style.border_width * s, style.border);
+    painter.rect_border(menu_rect, cr, style.border_width * s, style.border);
 
     let mut event = None;
     let mut hovered_submenu: Option<u32> = None;
@@ -72,7 +74,7 @@ pub(super) fn draw_panel(
     let item_h = style.item_height * s;
     let font = style.font_size * s;
     let pad = style.padding * s;
-    let shortcut_font = FONT_LABEL * s;
+    let shortcut_font = FONT_LABEL * 0.85 * s;
     // Extra left inset so content clears the accent bar
     let accent_inset = (ACCENT_BAR_WIDTH + 6.0) * s;
     let content_x = inner_x + pad + accent_inset;
@@ -152,6 +154,7 @@ pub(super) fn draw_panel(
                 let cb_rect = Rect::new(content_x, cy, content_w - pad, item_h);
                 Checkbox::new(cb_rect, *checked)
                     .label(label)
+                    .font_size(style.font_size)
                     .scale(s)
                     .hovered(state.is_hovered())
                     .draw(painter, text, pal, screen_w, screen_h);
@@ -366,6 +369,173 @@ pub(super) fn draw_panel(
                         pressed_zones.push(zone_id);
                         event = Some(MenuEvent::Action(*sid));
                     }
+                }
+
+                cy += row_h;
+            }
+            MenuItem::WindowControls { minimize_id, maximize_id, close_id, title, nav, tabs } => {
+                let row_h = WINDOW_CONTROLS_HEIGHT * s;
+                let radius = 10.0 * s;
+                let icon = 4.0 * s;
+                let thick = 1.5 * s;
+                let mid_y = cy + row_h * 0.5;
+
+                // Tab-indicator dots in a capsule floating above the panel's
+                // top-left corner. Active tab = accent, others = muted;
+                // clicking a dot jumps to that tab.
+                if let Some((base_id, count, active)) = tabs {
+                    let dot_r = 4.0 * s;
+                    let gap = 16.0 * s;
+                    let cap_h = 20.0 * s;
+                    let cap_pad = 10.0 * s;
+                    let cap_w = (*count as f32 - 1.0) * gap + dot_r * 2.0 + cap_pad * 2.0;
+                    let cap_y = py - TAB_DOTS_OVERHANG * s;
+                    let cap = Rect::new(px, cap_y, cap_w, cap_h);
+                    painter.rect_filled(cap, cap_h * 0.5, style.bg);
+                    if style.border_width > 0.0 {
+                        painter.rect_stroke_sdf(cap, cap_h * 0.5, style.border_width, style.border);
+                    }
+                    let dot_cy = cap_y + cap_h * 0.5;
+                    for i in 0..*count {
+                        let dx = px + cap_pad + dot_r + i as f32 * gap;
+                        let zone_id = zone_base + *base_id + i as u32;
+                        let state = zone_state(
+                            interaction, zone_id,
+                            Rect::new(dx - gap * 0.5, cap_y, gap, cap_h),
+                        );
+                        let hov = state.is_hovered();
+                        if hov { non_submenu_hovered = true; }
+                        let is_active = i == *active;
+                        let color = if is_active {
+                            style.accent
+                        } else if hov {
+                            style.text
+                        } else {
+                            style.text_muted
+                        };
+                        let r = if is_active { dot_r } else { dot_r * 0.7 };
+                        painter.circle_filled(dx, dot_cy, r, color);
+                        if state == InteractionState::Pressed && !pressed_zones.contains(&zone_id) {
+                            pressed_zones.push(zone_id);
+                            event = Some(MenuEvent::Action(*base_id + i as u32));
+                        }
+                    }
+                }
+                // Right-aligned like a real title bar: close at the far
+                // right, then maximize, then minimize, 30px apart.
+                let right = inner_x + inner_w - pad * 2.0;
+                let close_x = right - radius;
+                let max_x = close_x - 30.0 * s;
+                let min_x = max_x - 30.0 * s;
+
+                // Clickable title label on the left (accent-colored brand mark)
+                if let Some((tid, label)) = title {
+                    let title_font = style.font_size * s;
+                    let label_w = label.len() as f32 * title_font * 0.55;
+                    let pill = Rect::new(
+                        content_x - 4.0 * s, mid_y - row_h * 0.5 + 2.0 * s,
+                        label_w + 8.0 * s, row_h - 4.0 * s,
+                    );
+                    let zone_id = zone_base + *tid;
+                    let state = zone_state(interaction, zone_id, pill);
+                    if state.is_hovered() {
+                        non_submenu_hovered = true;
+                        painter.rect_filled(pill, 6.0 * s, style.bg_hover);
+                    }
+                    text.queue(
+                        label, title_font, content_x, mid_y - title_font * 0.5,
+                        style.accent, label_w + 8.0 * s, screen_w, screen_h,
+                    );
+                    if state == InteractionState::Pressed && !pressed_zones.contains(&zone_id) {
+                        pressed_zones.push(zone_id);
+                        event = Some(MenuEvent::Action(*tid));
+                    }
+                }
+
+                // Prev / next nav chevrons just left of the buttons
+                if let Some((prev_id, next_id)) = nav {
+                    let next_x = min_x - 30.0 * s;
+                    let prev_x = next_x - 26.0 * s;
+                    let ch = 5.0 * s;
+                    for (bx, id, dir) in [(prev_x, *prev_id, -1.0f32), (next_x, *next_id, 1.0f32)] {
+                        let zone_id = zone_base + id;
+                        let state = zone_state(
+                            interaction, zone_id,
+                            Rect::new(bx - radius, mid_y - radius, radius * 2.0, radius * 2.0),
+                        );
+                        let hov = state.is_hovered();
+                        if hov {
+                            non_submenu_hovered = true;
+                            painter.circle_filled(bx, mid_y, radius, style.bg_hover);
+                        }
+                        let ic = if hov { style.text } else { style.text_muted };
+                        let tip_x = bx + ch * 0.5 * dir;
+                        let base_x = bx - ch * 0.5 * dir;
+                        painter.line(base_x, mid_y - ch, tip_x, mid_y, thick, ic);
+                        painter.line(tip_x, mid_y, base_x, mid_y + ch, thick, ic);
+                        if state == InteractionState::Pressed && !pressed_zones.contains(&zone_id) {
+                            pressed_zones.push(zone_id);
+                            event = Some(MenuEvent::Action(id));
+                        }
+                    }
+                }
+
+                // Close — X, danger-tinted on hover
+                let zone_id = zone_base + *close_id;
+                let state = zone_state(
+                    interaction, zone_id,
+                    Rect::new(close_x - radius, mid_y - radius, radius * 2.0, radius * 2.0),
+                );
+                let hov = state.is_hovered();
+                if hov {
+                    non_submenu_hovered = true;
+                    painter.circle_filled(close_x, mid_y, radius, pal.danger.with_alpha(0.30));
+                }
+                let ic = if hov { pal.danger } else { style.text_muted };
+                painter.line(close_x - icon, mid_y - icon, close_x + icon, mid_y + icon, thick, ic);
+                painter.line(close_x - icon, mid_y + icon, close_x + icon, mid_y - icon, thick, ic);
+                if state == InteractionState::Pressed && !pressed_zones.contains(&zone_id) {
+                    pressed_zones.push(zone_id);
+                    event = Some(MenuEvent::Action(*close_id));
+                }
+
+                // Maximize — square
+                let zone_id = zone_base + *maximize_id;
+                let state = zone_state(
+                    interaction, zone_id,
+                    Rect::new(max_x - radius, mid_y - radius, radius * 2.0, radius * 2.0),
+                );
+                let hov = state.is_hovered();
+                if hov {
+                    non_submenu_hovered = true;
+                    painter.circle_filled(max_x, mid_y, radius, style.bg_hover);
+                }
+                let ic = if hov { style.text } else { style.text_muted };
+                painter.rect_stroke_sdf(
+                    Rect::new(max_x - icon, mid_y - icon, icon * 2.0, icon * 2.0),
+                    1.5 * s, thick, ic,
+                );
+                if state == InteractionState::Pressed && !pressed_zones.contains(&zone_id) {
+                    pressed_zones.push(zone_id);
+                    event = Some(MenuEvent::Action(*maximize_id));
+                }
+
+                // Minimize — line
+                let zone_id = zone_base + *minimize_id;
+                let state = zone_state(
+                    interaction, zone_id,
+                    Rect::new(min_x - radius, mid_y - radius, radius * 2.0, radius * 2.0),
+                );
+                let hov = state.is_hovered();
+                if hov {
+                    non_submenu_hovered = true;
+                    painter.circle_filled(min_x, mid_y, radius, style.bg_hover);
+                }
+                let ic = if hov { style.text } else { style.text_muted };
+                painter.line(min_x - icon, mid_y, min_x + icon, mid_y, thick, ic);
+                if state == InteractionState::Pressed && !pressed_zones.contains(&zone_id) {
+                    pressed_zones.push(zone_id);
+                    event = Some(MenuEvent::Action(*minimize_id));
                 }
 
                 cy += row_h;

@@ -16,8 +16,6 @@ pub struct MoveSurfaceGrab {
     pub start_data: PointerGrabStartData<Lantern>,
     pub window: Window,
     pub initial_window_location: Point<i32, Logical>,
-    /// If the window was snapped when the drag started
-    pub was_snapped: bool,
     /// If the window was maximized when the drag started
     pub was_maximized: bool,
     /// Whether we already restored the window during this drag
@@ -37,16 +35,13 @@ impl PointerGrab<Lantern> for MoveSurfaceGrab {
         handle.motion(data, None, event);
         self.has_moved = true;
 
-        // If this window was snapped or maximized, restore it on first drag motion
-        // and re-center the window under the cursor.
-        if (self.was_snapped || self.was_maximized) && !self.restored_this_drag {
+        // If this window was maximized, restore it on first drag motion and
+        // re-center the window under the cursor. (Floating drag-snaps aren't
+        // tracked, so there's no snapped state to restore.)
+        if self.was_maximized && !self.restored_this_drag {
             self.restored_this_drag = true;
             let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(&self.window) else { return };
-            let restored = if self.was_maximized {
-                data.unmaximize_request_surface(&surface)
-            } else {
-                data.unsnap_window(&surface)
-            };
+            let restored = data.unmaximize_request_surface(&surface);
             if restored {
                 // After restoring, the window has its original size.
                 // Place it so the cursor is roughly centered on the title bar.
@@ -98,7 +93,7 @@ impl PointerGrab<Lantern> for MoveSurfaceGrab {
                 // occupied zone bumps its tenant to the largest free zone.
                 let pointer_pos = handle.current_location();
                 if let Some(zone) = data.detect_snap_zone_drag(pointer_pos) {
-                    data.apply_snap_with_eviction(&surface, zone);
+                    data.apply_floating_snap(&surface, zone);
                 } else if data.detect_top_edge(pointer_pos).is_some() {
                     // Top edge = maximize
                     if !data.is_maximized(&surface) {

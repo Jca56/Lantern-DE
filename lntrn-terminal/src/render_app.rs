@@ -85,8 +85,10 @@ impl App {
         );
         draw_window_gradient_overlay(painter, win_rect, win_r, opacity);
 
-        // Draw sidebar (file browser or git panel) — skipped in rice mode.
-        if !self.chrome_hidden {
+        // Draw sidebar (file browser or git panel). Works in rice mode too —
+        // rice only hides the title/tab bar; the sidebar follows its own
+        // visible flag (draw_sidebar no-ops when closed).
+        {
             sidebar::draw_sidebar(
                 painter,
                 text,
@@ -213,6 +215,7 @@ impl App {
                 font_size,
                 self.sidebar.visible,
                 self.config.general.cursor_style,
+                self.config.general.open_chrome_hidden,
                 maximized,
                 self.scale,
                 &mode,
@@ -241,10 +244,13 @@ impl App {
             );
         }
 
-        let has_overlay = !self.chrome_hidden
-            && (self.chrome.has_overlay()
-                || self.tab_bar.has_overlay()
-                || self.sidebar.has_overlay());
+        // The right-click context menu and the sidebar stay usable in rice
+        // mode (which only hides the title/tab bar); the menu-bar/tab-bar
+        // overlays belong to chrome that isn't drawn there.
+        let has_overlay = self.chrome.context_menu.is_open()
+            || self.sidebar.has_overlay()
+            || (!self.chrome_hidden
+                && (self.chrome.has_overlay() || self.tab_bar.has_overlay()));
 
         if has_overlay {
             // Two-pass rendering: menus must appear ABOVE terminal text.
@@ -284,9 +290,17 @@ impl App {
             if let Some(ref event) = menu_event {
                 self.pending_menu_event = Some(ui_chrome::menu_event_to_action(event));
                 // Plain actions (Copy, Paste, splits, ...) dismiss the menu
-                // immediately — sliders/toggles/radios stay open for
-                // live adjustment.
-                if matches!(event, MenuEvent::Action(_)) {
+                // immediately — sliders/toggles/radios stay open for live
+                // adjustment, and so do the tab-cycle chevrons so several
+                // tabs can be flipped through without reopening the menu.
+                let keeps_open = matches!(
+                    event,
+                    MenuEvent::Action(id)
+                        if *id == ui_chrome::CTX_PREV_TAB
+                            || *id == ui_chrome::CTX_NEXT_TAB
+                            || *id >= ui_chrome::CTX_TAB_DOT_BASE
+                );
+                if matches!(event, MenuEvent::Action(_)) && !keeps_open {
                     self.chrome.close_all_menus();
                 }
                 if let MenuEvent::SliderChanged { id, value } = event {
@@ -295,6 +309,12 @@ impl App {
                             self.config.font.size = ui_chrome::font_size_from_slider(*value);
                         }
                         _ => {}
+                    }
+                }
+                if let MenuEvent::Toggled { id, checked } = event {
+                    if *id == ui_chrome::MENU_OPEN_BAR_HIDDEN {
+                        self.config.general.open_chrome_hidden = *checked;
+                        self.config.save();
                     }
                 }
                 if let MenuEvent::RadioSelected { id, group } = event {
@@ -527,8 +547,17 @@ impl App {
     }
 }
 
+/// Live accent from `[appearance].accent` in lantern.toml, theme fallback.
+fn accent_color(alpha: u8) -> Color {
+    if let Some(c) = lntrn_theme::active_accent() {
+        return Color::from_rgba8(c.r, c.g, c.b, alpha);
+    }
+    let v = lntrn_theme::active_variant().accent();
+    Color::from_rgba8(v.r, v.g, v.b, alpha)
+}
+
 fn draw_pane_dividers(painter: &mut Painter, rects: &[(f32, f32, f32, f32)], tab: &Tab) {
-    let divider_color = Color::from_rgba8(80, 80, 80, 255);
+    let divider_color = accent_color(255);
     match tab.split {
         Some(SplitDir::Horizontal) => {
             for i in 1..rects.len() {
@@ -555,7 +584,7 @@ fn draw_pane_dividers(painter: &mut Painter, rects: &[(f32, f32, f32, f32)], tab
 
     // Highlight active pane border
     let (ax, ay, aw, ah) = rects[tab.active_pane];
-    let accent = Color::from_rgba8(200, 134, 10, 80);
+    let accent = accent_color(80);
     let b = 2.0;
     painter.rect_filled(lntrn_render::Rect::new(ax, ay, aw, b), 0.0, accent);
     painter.rect_filled(

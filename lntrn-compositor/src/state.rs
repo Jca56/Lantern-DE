@@ -346,6 +346,8 @@ pub struct Lantern {
     pub super_pressed: bool,
     /// True if Super was pressed and no Super+combo was used (for tap detection)
     pub super_clean_tap: bool,
+    /// When Super was last pressed — a long hold counts as a hold, not a tap.
+    pub super_press_time: Option<std::time::Instant>,
     pub snapped_windows: Vec<SnappedWindow>,
     pub animations: AnimationState,
     /// Windows that died (client-initiated close) but still have a close animation playing.
@@ -586,6 +588,7 @@ impl Lantern {
             gaming_mode: false,
             super_pressed: false,
             super_clean_tap: false,
+            super_press_time: None,
             snapped_windows: Vec::new(),
             animations: AnimationState::new(),
             closing_windows: Vec::new(),
@@ -803,7 +806,14 @@ impl Lantern {
             .rev()
             .filter(|w| self.window_is_visible(w))
             .find_map(|window| {
-                let location = self.space.element_location(window)?;
+                // Use the RENDER location (buffer top-left), not the mapped
+                // location: `surface_under` walks the surface tree from the
+                // buffer origin. For CSD windows with shadow margins (Firefox)
+                // `geometry().loc` is non-zero, so the two differ — using the
+                // raw mapped location shifts the reported pointer up-and-left
+                // by the shadow inset. `Space::element_under` subtracts the
+                // same offset internally; we replicate it here.
+                let location = self.space.element_location(window)? - window.geometry().loc;
                 window
                     .surface_under(pos - location.to_f64(), WindowSurfaceType::ALL)
                     .map(|(s, p)| (s, (p + location).to_f64()))

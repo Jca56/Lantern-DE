@@ -138,7 +138,10 @@ pub fn tray_rect(panel: Rect, scale: f32) -> Rect {
     let w = TRAY_W * scale;
     let h = TRAY_H * scale;
     let x = panel.x + (panel.w - w) / 2.0;
-    let y = panel.y + panel.h + TRAY_TOP_GAP * scale;
+    // Below the bottom outer-zone band so the tray doesn't cover the
+    // sliders/media drop targets while editing.
+    let band = crate::outer_zones::BOTTOM_BAND_GAP + crate::outer_zones::BOTTOM_BAND_H;
+    let y = panel.y + panel.h + (band + TRAY_TOP_GAP) * scale;
     Rect::new(x, y, w, h)
 }
 

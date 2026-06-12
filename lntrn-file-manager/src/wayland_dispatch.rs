@@ -234,6 +234,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
             wl_keyboard::Event::Modifiers { mods_depressed, .. } => {
                 state.ctrl = mods_depressed & 4 != 0;
                 state.shift = mods_depressed & 1 != 0;
+                state.logo = mods_depressed & 64 != 0; // Mod4 / Super
             }
             _ => {}
         }

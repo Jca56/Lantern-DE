@@ -1,9 +1,16 @@
-/// Snap zones: edge/corner window snapping with restore.
+/// Drag-to-edge snapping. Snapping here is PURE FLOATING: a drag-release near
+/// an edge/corner move+resizes the window onto the 40px grid (shared with the
+/// keyboard axis-resize) but leaves it an ordinary free-floating window — no
+/// lock, no `snapped_windows` tracking, no eviction, no restore-on-redrag.
+///
+/// `SnapZone` / `snap_zone_geometry*` / `SnappedWindow` remain only because the
+/// renderer, SSD and fullscreen paths still reference them; nothing populates
+/// `snapped_windows` anymore, so those readers operate on an empty list.
 
 use smithay::{
     output::Output,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
-    utils::{Logical, Point, Rectangle},
+    utils::{Logical, Point, Rectangle, Size},
 };
 
 use crate::state::Lantern;
@@ -16,57 +23,16 @@ pub enum SnapZone {
     BottomLeft, BottomHalf, BottomRight,
 }
 
-impl SnapZone {
-    /// The grid cells this zone covers (in the 3×3 grid). Used for overlap checks.
-    fn cells(self) -> &'static [(i32, i32)] {
-        match self {
-            Self::Full        => &[(0,0),(1,0),(2,0),(0,1),(1,1),(2,1),(0,2),(1,2),(2,2)],
-            Self::TopHalf     => &[(0,0),(1,0),(2,0)],
-            Self::BottomHalf  => &[(0,2),(1,2),(2,2)],
-            Self::Left        => &[(0,0),(0,1),(0,2)],
-            Self::Right       => &[(2,0),(2,1),(2,2)],
-            Self::TopLeft     => &[(0,0)],
-            Self::TopRight    => &[(2,0)],
-            Self::BottomLeft  => &[(0,2)],
-            Self::BottomRight => &[(2,2)],
-        }
-    }
-
-    /// True if two zones share any grid cell (overlap when both placed).
-    pub fn overlaps_zone(self, other: Self) -> bool {
-        let a = self.cells();
-        let b = other.cells();
-        a.iter().any(|c| b.contains(c))
-    }
-}
-
-/// Do two logical rectangles overlap (not merely touch)?
-fn rects_overlap(a: &Rectangle<i32, Logical>, b: &Rectangle<i32, Logical>) -> bool {
-    a.loc.x < b.loc.x + b.size.w
-        && b.loc.x < a.loc.x + a.size.w
-        && a.loc.y < b.loc.y + b.size.h
-        && b.loc.y < a.loc.y + a.size.h
-}
-
-/// Pick the largest free zone that doesn't overlap any already-taken zone.
-/// Halves come first so we fill space efficiently before falling back to quarters.
-fn find_free_zone(taken: &[SnapZone]) -> Option<SnapZone> {
-    use SnapZone::*;
-    let candidates = [Left, Right, TopHalf, BottomHalf, TopLeft, TopRight, BottomLeft, BottomRight];
-    candidates
-        .into_iter()
-        .find(|z| taken.iter().all(|t| !t.overlaps_zone(*z)))
-}
-
-/// Saved state for a snapped window so we can restore it.
+/// Saved state for a snapped window. Legacy: retained for the renderer/SSD
+/// fallback rect and corner-rounding lookups; no longer written to.
 #[derive(Clone)]
 pub struct SnappedWindow {
     pub surface: WlSurface,
     pub zone: SnapZone,
     pub restore: Rectangle<i32, Logical>,
-    /// Target rect (snap-zone geometry) — used as the render fallback after
-    /// the state animation finishes but before the client has acked the new
-    /// size, so the window doesn't briefly snap to its stale buffer size.
+    /// Target rect — render fallback after the state animation finishes but
+    /// before the client acks the new size, so the window doesn't briefly
+    /// snap to its stale buffer size.
     pub target: Rectangle<i32, Logical>,
 }
 
@@ -124,7 +90,7 @@ impl Lantern {
         self.snap_zone_geometry_on_output(&output, zone)
     }
 
-    /// Same as `snap_zone_geometry` but for a specific output (used by keyboard cycling).
+    /// Same as `snap_zone_geometry` but for a specific output.
     /// Applies tiling gaps: `outer_gap` from screen edges and `DEFAULT_GAP/2` between
     /// adjacent zones so snapped windows sit inside the tiled layout grid cleanly.
     pub fn snap_zone_geometry_on_output(
@@ -167,183 +133,71 @@ impl Lantern {
         Some(rect)
     }
 
-    /// Snap a window to a zone. Saves the pre-snap geometry for later restore.
-    pub fn snap_window_to_zone(&mut self, surface: &WlSurface, zone: SnapZone) -> bool {
-        let Some(window) = self.find_mapped_window(surface) else {
-            return false;
-        };
-
-        let Some(target) = self.snap_zone_geometry(zone) else {
-            return false;
-        };
-
-        // If already snapped, remove old snap state (we'll overwrite with new zone)
-        // But keep the *original* restore geometry if re-snapping from another zone.
-        let restore = if let Some(idx) = self.snapped_windows.iter().position(|e| e.surface == *surface) {
-            self.snapped_windows.remove(idx).restore
-        } else if let Some(idx) = self.maximized_windows.iter().position(|e| e.surface == *surface) {
-            // Unsnap from maximized state first
-            self.maximized_windows.remove(idx).restore
-        } else {
-            let location = self.workspaces.element_location(&window).unwrap_or_default();
-            Rectangle::new(location, window.geometry().size)
-        };
-
-        self.snapped_windows.push(SnappedWindow {
-            surface: surface.clone(),
-            zone,
-            restore,
-            target,
-        });
-
-        // Capture animation start before reconfiguring.
-        let current_loc = self.workspaces.element_location(&window).unwrap_or(target.loc);
-        let current_rect = Rectangle::new(current_loc, window.geometry().size);
-        let anim_start = self
-            .window_state_anim
-            .current_rect(surface)
-            .unwrap_or(current_rect);
-
-        crate::window_ext::WindowExt::configure_size(&window, target.size);
-
-        self.remap_tracked_window(window, target.loc, true);
-        self.window_state_anim.animate_default(surface, anim_start, target);
-        self.schedule_client_render();
-        tracing::info!(?zone, "Snapped window to zone");
-        true
-    }
-
-    /// Unsnap a window and restore its pre-snap geometry.
-    pub fn unsnap_window(&mut self, surface: &WlSurface) -> bool {
-        let Some(idx) = self.snapped_windows.iter().position(|e| e.surface == *surface) else {
-            return false;
-        };
-        let snap = self.snapped_windows.remove(idx);
-
-        let Some(window) = self.find_mapped_window(surface) else {
-            return false;
-        };
-
-        let current_loc = self.workspaces.element_location(&window).unwrap_or(snap.restore.loc);
-        let current_rect = Rectangle::new(current_loc, window.geometry().size);
-        let anim_start = self
-            .window_state_anim
-            .current_rect(surface)
-            .unwrap_or(current_rect);
-
-        crate::window_ext::WindowExt::configure_size(&window, snap.restore.size);
-
-        self.remap_tracked_window(window, snap.restore.loc, true);
-        self.window_state_anim.animate_default(surface, anim_start, snap.restore);
-        self.schedule_client_render();
-        true
-    }
-
-    /// Check if a window is currently snapped.
+    /// Check if a window is currently snapped. Always false now (nothing
+    /// populates `snapped_windows`); kept for the lifecycle centering guard.
     pub fn is_snapped(&self, surface: &WlSurface) -> bool {
         self.snapped_windows.iter().any(|e| e.surface == *surface)
     }
 
-    /// Snap the currently focused window to a zone.
-    pub fn snap_focused(&mut self, zone: SnapZone) -> bool {
-        let Some(window) = self.focused_window() else {
-            return false;
+    /// Target rect for a FLOATING drag-snap, on the 40px grid shared with the
+    /// keyboard axis-resize: `snap_region` inset by `SINGLE_WINDOW_OUTER_GAP`,
+    /// with halves/quarters separated by the SAME gap. So two opposite halves —
+    /// or four quarters — tile with a uniform 40px channel between and around
+    /// them, and the result lands a window edge-pinned (Super+arrow axis-resize
+    /// then works on it).
+    fn floating_snap_rect(&self, output: &Output, zone: SnapZone) -> Option<Rectangle<i32, Logical>> {
+        let region = self.snap_region(output)?;
+        let gap = crate::SINGLE_WINDOW_OUTER_GAP;
+        let full_w = (region.size.w - 2 * gap).max(1);
+        let full_h = (region.size.h - 2 * gap).max(1);
+        let half_w = ((full_w - gap) / 2).max(1);
+        let half_h = ((full_h - gap) / 2).max(1);
+        let left_x = region.loc.x + gap;
+        let right_x = region.loc.x + region.size.w - gap - half_w;
+        let top_y = region.loc.y + gap;
+        let bottom_y = region.loc.y + region.size.h - gap - half_h;
+        use SnapZone::*;
+        let (x, y, w, h) = match zone {
+            Left        => (left_x,  top_y,    half_w, full_h),
+            Right       => (right_x, top_y,    half_w, full_h),
+            TopLeft     => (left_x,  top_y,    half_w, half_h),
+            TopRight    => (right_x, top_y,    half_w, half_h),
+            BottomLeft  => (left_x,  bottom_y, half_w, half_h),
+            BottomRight => (right_x, bottom_y, half_w, half_h),
+            TopHalf     => (left_x,  top_y,    full_w, half_h),
+            BottomHalf  => (left_x,  bottom_y, full_w, half_h),
+            Full        => (left_x,  top_y,    full_w, full_h),
         };
-        let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(&window) else { return false };
-        self.snap_window_to_zone(&surface, zone)
+        Some(Rectangle::new(Point::from((x, y)), Size::from((w, h))))
     }
 
-    /// Snap `surface` to `zone`, evicting any window whose current rect
-    /// overlaps the target. Evicted windows go to the largest free snap
-    /// zone (same logic as keyboard cycle). Used by drag-and-drop release.
-    /// Surface is popped from the BSP tree first if present.
-    pub fn apply_snap_with_eviction(&mut self, surface: &WlSurface, zone: SnapZone) -> bool {
+    /// Move+resize the dragged window onto `zone` as a FLOATING window: it
+    /// lands on the 40px grid but is NOT tracked, NOT locked, and evicts
+    /// nothing — it stays an ordinary free-floating window. Replaces the legacy
+    /// locked `apply_snap_with_eviction` on drag-release.
+    pub fn apply_floating_snap(&mut self, surface: &WlSurface, zone: SnapZone) -> bool {
         let Some(window) = self.find_mapped_window(surface) else { return false };
         let output = self.output_for_window(&window)
             .or_else(|| self.workspaces.outputs_iter().next().cloned());
         let Some(output) = output else { return false };
-        let output_name = output.name();
-        let Some(target) = self.snap_zone_geometry_on_output(&output, zone) else { return false };
+        let Some(target) = self.floating_snap_rect(&output, zone) else { return false };
 
-        self.apply_snap(surface, zone, target);
-
-        let overlapping: Vec<(WlSurface, Rectangle<i32, Logical>)> = self.space.elements()
-            .filter_map(|w| {
-                let s = crate::window_ext::WindowExt::get_wl_surface(w)?;
-                if s == *surface { return None; }
-                let same_output = self.output_for_window(w)
-                    .map(|o| o.name() == output_name)
-                    .unwrap_or(false);
-                if !same_output { return None; }
-                let loc = self.workspaces.element_location(w).unwrap_or_default();
-                let rect = Rectangle::new(loc, w.geometry().size);
-                if rects_overlap(&rect, &target) { Some((s, rect)) } else { None }
-            })
-            .collect();
-
-        let mut taken: Vec<SnapZone> = vec![zone];
-        for existing in &self.snapped_windows {
-            if existing.surface != *surface && !taken.contains(&existing.zone) {
-                taken.push(existing.zone);
-            }
+        // Shed any leftover locked/posed/maximized state so this is clean float.
+        if self.is_maximized(surface) {
+            self.take_maximized_restore(surface);
+            crate::window_ext::WindowExt::set_maximized(&window, false);
+            self.update_foreign_toplevel_states(surface);
         }
-        for (other_surface, other_rect) in overlapping {
-            let Some(free) = find_free_zone(&taken) else { break };
-            let Some(other_window) = self.find_mapped_window(&other_surface) else { continue };
-            let other_output = self.output_for_window(&other_window)
-                .or_else(|| self.workspaces.outputs_iter().next().cloned());
-            let Some(other_output) = other_output else { continue };
-            let Some(other_target) = self.snap_zone_geometry_on_output(&other_output, free) else { continue };
+        self.snapped_windows.retain(|e| e.surface != *surface);
+        self.posed_windows.remove(surface);
 
-            let _ = self.snapped_windows.iter().position(|e| e.surface == other_surface)
-                .map(|i| self.snapped_windows.remove(i));
-            let _ = self.maximized_windows.iter().position(|e| e.surface == other_surface)
-                .map(|i| self.maximized_windows.remove(i));
-
-            self.snapped_windows.push(SnappedWindow {
-                surface: other_surface.clone(),
-                zone: free,
-                restore: Rectangle::new(other_rect.loc, other_rect.size),
-                target: other_target,
-            });
-            crate::window_ext::WindowExt::configure_size(&other_window, other_target.size);
-            self.remap_tracked_window(other_window, other_target.loc, true);
-            taken.push(free);
-        }
-
+        let live_loc = self.workspaces.element_location(&window).unwrap_or(target.loc);
+        let current_rect = Rectangle::new(live_loc, window.geometry().size);
+        let anim_start = self.window_state_anim.current_rect(surface).unwrap_or(current_rect);
+        self.animate_resize(surface, &window, anim_start, target);
         self.schedule_client_render();
-        tracing::info!(?zone, "Snapped via drag with eviction");
+        tracing::info!(?zone, "Drag-snapped (floating) to zone");
         true
-    }
-
-    /// Snap a window to a zone given a precomputed rect. Updates/creates the
-    /// snapped_windows entry and re-maps/resizes the window.
-    fn apply_snap(
-        &mut self,
-        surface: &WlSurface,
-        zone: SnapZone,
-        target: Rectangle<i32, Logical>,
-    ) {
-        let Some(window) = self.find_mapped_window(surface) else { return };
-
-        let restore = if let Some(idx) = self.snapped_windows.iter().position(|e| e.surface == *surface) {
-            self.snapped_windows.remove(idx).restore
-        } else if let Some(idx) = self.maximized_windows.iter().position(|e| e.surface == *surface) {
-            self.maximized_windows.remove(idx).restore
-        } else {
-            let location = self.workspaces.element_location(&window).unwrap_or_default();
-            Rectangle::new(location, window.geometry().size)
-        };
-
-        self.snapped_windows.push(SnappedWindow {
-            surface: surface.clone(),
-            zone,
-            restore,
-            target,
-        });
-
-        crate::window_ext::WindowExt::configure_size(&window, target.size);
-        self.remap_tracked_window(window, target.loc, true);
     }
 
     /// Check if pointer is at the top edge (for maximize-on-drag).

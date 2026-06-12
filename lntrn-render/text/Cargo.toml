@@ -7,6 +7,9 @@ edition = "2021"
 
 [dependencies]
 glyphon = "0.10"
+# Same version cosmic-text uses — needed only to name `Script` in the
+# `Fallback` trait signature for our custom font fallback ordering.
+unicode-script = "0.5"
 lntrn-draw = { path = "../draw" }
 lntrn-gfx = { path = "../gfx" }
 wgpu = "28"

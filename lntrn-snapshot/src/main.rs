@@ -1,4 +1,4 @@
-use lntrn_snapshot::config::Config;
+use lntrn_snapshot::config::{Config, SnapshotTarget};
 use lntrn_snapshot::manager::{SnapshotKind, SnapshotManager};
 use std::env;
 use std::process;
@@ -11,7 +11,7 @@ fn main() {
         process::exit(1);
     }
 
-    // Root check — rsync needs it to preserve ownership/permissions
+    // Root check — btrfs snapshot/destroy ioctls need CAP_SYS_ADMIN
     if !is_root() {
         eprintln!("error: lntrn-snapshot requires root privileges");
         eprintln!("  try: sudo lntrn-snapshot {}", args[1..].join(" "));
@@ -30,27 +30,27 @@ fn main() {
         "delete" | "rm" => {
             if args.len() < 3 {
                 eprintln!("error: delete requires a snapshot name");
-                eprintln!("  usage: lntrn-snapshot delete <name>");
+                eprintln!("  usage: lntrn-snapshot delete <name> [--target <source>]");
                 process::exit(1);
             }
-            cmd_delete(&config, &args[2]);
+            cmd_delete(&config, &args[2], parse_target_flag(&args));
         }
         "rename" | "mv" => {
             if args.len() < 4 {
                 eprintln!("error: rename requires old and new name");
-                eprintln!("  usage: lntrn-snapshot rename <old> <new>");
+                eprintln!("  usage: lntrn-snapshot rename <old> <new> [--target <source>]");
                 process::exit(1);
             }
-            cmd_rename(&config, &args[2], &args[3]);
+            cmd_rename(&config, &args[2], &args[3], parse_target_flag(&args));
         }
         "prune" => cmd_prune(&config),
         "rollback" => {
             if args.len() < 3 {
                 eprintln!("error: rollback requires a snapshot name");
-                eprintln!("  usage: lntrn-snapshot rollback <name>");
+                eprintln!("  usage: lntrn-snapshot rollback <name> [--target <source>]");
                 process::exit(1);
             }
-            cmd_rollback(&config, &args[2]);
+            cmd_rollback(&config, &args[2], parse_target_flag(&args));
         }
         "config" => cmd_config(),
         "help" | "--help" | "-h" => print_usage(),
@@ -65,17 +65,19 @@ fn main() {
 fn print_usage() {
     eprintln!(
         "\
-lntrn-snapshot — rsync snapshot manager
+lntrn-snapshot — btrfs snapshot manager
 
 usage:
   lntrn-snapshot init                    Set up snapshot directories + default config
-  lntrn-snapshot create [--kind <type>]  Create a snapshot (manual/boot/hourly/daily/weekly)
+  lntrn-snapshot create [--kind <type>]  Snapshot all targets (manual/boot/hourly/daily/weekly)
   lntrn-snapshot list                    List all snapshots
   lntrn-snapshot delete <name>           Delete a snapshot by name
   lntrn-snapshot rename <old> <new>      Rename a snapshot
   lntrn-snapshot prune                   Apply retention policy, remove old snapshots
-  lntrn-snapshot rollback <name>         Create writable snapshot for rollback
+  lntrn-snapshot rollback <name>         Restore a snapshot (subvolume swap + reboot)
   lntrn-snapshot config                  Show config file location and contents
+
+  --target <source>  Disambiguate when a name exists for multiple targets (e.g. / and /home)
 
 aliases: list=ls, delete=rm"
     );
@@ -106,18 +108,66 @@ fn parse_kind_flag(args: &[String]) -> SnapshotKind {
     SnapshotKind::Manual
 }
 
-fn make_manager(config: &Config, target: &lntrn_snapshot::config::SnapshotTarget) -> SnapshotManager {
+fn parse_target_flag(args: &[String]) -> Option<String> {
+    for i in 2..args.len() {
+        if args[i] == "--target" {
+            return args.get(i + 1).cloned();
+        }
+    }
+    None
+}
+
+fn make_manager(config: &Config, target: &SnapshotTarget) -> SnapshotManager {
     let mut mgr = SnapshotManager::new(
         target.source.clone(),
         target.snapshot_dir.clone(),
     );
-    mgr.excludes = config.excludes.clone();
-    // Always exclude the snapshot dir itself
-    let snap_dir_str = target.snapshot_dir.to_string_lossy().to_string();
-    if !mgr.excludes.contains(&snap_dir_str) {
-        mgr.excludes.push(snap_dir_str);
-    }
+    mgr.retention_mut(&config.retention);
     mgr
+}
+
+/// Targets that contain a snapshot with this name, honoring --target.
+fn matching_targets<'a>(
+    config: &'a Config,
+    name: &str,
+    target_filter: &Option<String>,
+) -> Vec<&'a SnapshotTarget> {
+    config
+        .targets
+        .iter()
+        .filter(|t| {
+            if let Some(f) = target_filter {
+                if t.source.to_string_lossy() != *f {
+                    return false;
+                }
+            }
+            t.snapshot_dir.join(name).exists()
+        })
+        .collect()
+}
+
+/// Resolve a snapshot name to exactly one target, or explain how to.
+fn resolve_target<'a>(
+    config: &'a Config,
+    name: &str,
+    target_filter: &Option<String>,
+) -> Option<&'a SnapshotTarget> {
+    let matches = matching_targets(config, name, target_filter);
+    match matches.len() {
+        0 => {
+            eprintln!("snapshot '{}' not found in any target", name);
+            None
+        }
+        1 => Some(matches[0]),
+        _ => {
+            eprintln!("snapshot '{}' exists for multiple targets:", name);
+            for t in &matches {
+                eprintln!("  --target {}", t.source.display());
+            }
+            eprintln!("rerun with --target to pick one");
+            None
+        }
+    }
 }
 
 // ── Commands ───────────────────────────────────────────────────────
@@ -208,51 +258,31 @@ fn cmd_list(config: &Config) {
     }
 }
 
-fn cmd_rename(config: &Config, old_name: &str, new_name: &str) {
-    for target in &config.targets {
-        let snap_path = target.snapshot_dir.join(old_name);
-        if !snap_path.exists() {
-            continue;
-        }
-
-        let mgr = make_manager(config, target);
-
-        match mgr.rename(old_name, new_name) {
-            Ok(()) => println!("renamed {} -> {}", old_name, new_name),
-            Err(e) => eprintln!("error renaming {}: {}", old_name, e),
-        }
+fn cmd_rename(config: &Config, old_name: &str, new_name: &str, target_filter: Option<String>) {
+    let Some(target) = resolve_target(config, old_name, &target_filter) else {
         return;
+    };
+    let mgr = make_manager(config, target);
+    match mgr.rename(old_name, new_name) {
+        Ok(()) => println!("renamed {} -> {}", old_name, new_name),
+        Err(e) => eprintln!("error renaming {}: {}", old_name, e),
     }
-
-    eprintln!("snapshot '{}' not found in any target", old_name);
 }
 
-fn cmd_delete(config: &Config, name: &str) {
-    for target in &config.targets {
-        let snap_path = target.snapshot_dir.join(name);
-        if !snap_path.exists() {
-            continue;
-        }
-
-        let mgr = make_manager(config, target);
-
-        match mgr.delete(name) {
-            Ok(()) => println!("deleted {}", name),
-            Err(e) => eprintln!("error deleting {}: {}", name, e),
-        }
+fn cmd_delete(config: &Config, name: &str, target_filter: Option<String>) {
+    let Some(target) = resolve_target(config, name, &target_filter) else {
         return;
+    };
+    let mgr = make_manager(config, target);
+    match mgr.delete(name) {
+        Ok(()) => println!("deleted {}", name),
+        Err(e) => eprintln!("error deleting {}: {}", name, e),
     }
-
-    eprintln!("snapshot '{}' not found in any target", name);
 }
 
 fn cmd_prune(config: &Config) {
     for target in &config.targets {
-        let mut mgr = SnapshotManager::new(
-            target.source.clone(),
-            target.snapshot_dir.clone(),
-        );
-        mgr.retention_mut(&config.retention);
+        let mgr = make_manager(config, target);
 
         match mgr.prune() {
             Ok(deleted) => {
@@ -266,39 +296,36 @@ fn cmd_prune(config: &Config) {
             }
             Err(e) => eprintln!("error pruning {}: {}", target.source.display(), e),
         }
+
+        // Reap stale subvolumes from completed rollbacks (post-reboot)
+        for name in mgr.cleanup_stale() {
+            println!("reaped stale subvolume {}", name);
+        }
     }
 }
 
 fn cmd_prune_quiet(config: &Config) {
     for target in &config.targets {
-        let mut mgr = make_manager(config, target);
-        mgr.retention_mut(&config.retention);
+        let mgr = make_manager(config, target);
         let _ = mgr.prune();
+        let _ = mgr.cleanup_stale();
     }
 }
 
-fn cmd_rollback(config: &Config, name: &str) {
-    for target in &config.targets {
-        let snap_path = target.snapshot_dir.join(name);
-        if !snap_path.exists() {
-            continue;
-        }
-
-        let mgr = make_manager(config, target);
-
-        match mgr.rollback(name) {
-            Ok(backup_path) => {
-                println!("rollback complete! restored from: {}", name);
-                println!("pre-rollback backup saved to: {}", backup_path.display());
-                println!();
-                println!("reboot recommended to pick up all changes.");
-            }
-            Err(e) => eprintln!("error rolling back: {}", e),
-        }
+fn cmd_rollback(config: &Config, name: &str, target_filter: Option<String>) {
+    let Some(target) = resolve_target(config, name, &target_filter) else {
         return;
+    };
+    let mgr = make_manager(config, target);
+    match mgr.rollback(name) {
+        Ok(backup_name) => {
+            println!("rollback staged: {} will be live after reboot", name);
+            println!("pre-rollback backup saved as: {}", backup_name);
+            println!();
+            println!("REBOOT NOW to complete the rollback.");
+        }
+        Err(e) => eprintln!("error rolling back: {}", e),
     }
-
-    eprintln!("snapshot '{}' not found in any target", name);
 }
 
 fn cmd_config() {

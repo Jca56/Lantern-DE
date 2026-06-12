@@ -449,11 +449,12 @@ pub fn draw_view(
     let bottom = list_bottom;
 
     // Draw the password prompt on top of the network list when active.
-    // Layer 1 so the modal's painter rects can occlude already-queued
-    // text from the network list — see lntrn-render/TEXT_OCCLUSION_FIX.
+    // Layer 2 (the modal tier) so the modal's painter rects can occlude
+    // already-queued text from the network list — see
+    // lntrn-render/TEXT_OCCLUSION_FIX.
     if let Some(prompt) = &wifi.prompt {
-        painter.set_layer(1);
-        text.set_layer(1);
+        painter.set_layer(2);
+        text.set_layer(2);
         draw_modal(
             painter,
             text,

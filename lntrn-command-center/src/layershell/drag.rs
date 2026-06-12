@@ -71,6 +71,71 @@ pub(super) fn handle_drag(
         }
     }
 
+    // Outer-chrome widget drag (edit mode): follow the cursor while
+    // held; on release, drop into the resolved zone (respecting each
+    // widget's allowed zones) and persist the layout.
+    if app.outer_drag.is_some() {
+        let scale_f = wl.fractional_scale() as f32;
+        let phys_w = wl.phys_width().max(1);
+        let panel = PanelRect::compute_with_dims(
+            phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical(),
+        );
+        let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+        let phys_cx = wl.cursor_x as f32 * scale_f;
+        let phys_cy = wl.cursor_y as f32 * scale_f;
+        if wl.left_held {
+            if let Some(d) = app.outer_drag.as_mut() {
+                d.cursor = (phys_cx, phys_cy);
+            }
+        } else {
+            let drag = app.outer_drag.take().expect("outer_drag present");
+            if let Some((zone, idx)) = crate::outer_zones::resolve_drop(
+                &app.outer, panel_rect, scale_f, drag.id, (phys_cx, phys_cy),
+            ) {
+                app.outer.move_to(drag.id, zone, idx);
+                app.outer.save();
+            }
+        }
+    }
+
+    // Sticky-note drag: the grabbed paper follows the cursor (move) or
+    // its bottom-right corner does (resize). Geometry is mutated in
+    // logical px in memory each frame and persisted once on release.
+    if let Some(d) = app.sticky_drag {
+        use crate::notes::sticky;
+        let scale_f = wl.fractional_scale() as f32;
+        let sw = wl.phys_width().max(1) as f32;
+        let sh = wl.phys_height().max(1) as f32;
+        match app.notes.notes.iter().position(|n| n.id == d.id) {
+            Some(idx) if wl.left_held => {
+                let phys_cx = wl.cursor_x as f32 * scale_f;
+                let phys_cy = wl.cursor_y as f32 * scale_f;
+                let r = sticky::rect(&app.notes.notes[idx], scale_f, sw, sh);
+                let n = &mut app.notes.notes[idx];
+                if d.resize {
+                    let w = (phys_cx + d.grab.0 - r.x)
+                        .clamp(sticky::MIN_W * scale_f, (sw - r.x).max(sticky::MIN_W * scale_f));
+                    let h = (phys_cy + d.grab.1 - r.y)
+                        .clamp(sticky::MIN_H * scale_f, (sh - r.y).max(sticky::MIN_H * scale_f));
+                    n.sticky_w = w / scale_f;
+                    n.sticky_h = h / scale_f;
+                } else {
+                    n.sticky_x = (phys_cx - d.grab.0).clamp(0.0, (sw - r.w).max(0.0)) / scale_f;
+                    n.sticky_y = (phys_cy - d.grab.1).clamp(0.0, (sh - r.h).max(0.0)) / scale_f;
+                }
+            }
+            Some(idx) => {
+                // Released — persist the final geometry.
+                let _ = crate::notes::store::save_one(&app.notes.notes[idx]);
+                app.sticky_drag = None;
+            }
+            None => {
+                // Note deleted mid-drag.
+                app.sticky_drag = None;
+            }
+        }
+    }
+
     // Per-widget size/space slider drag (in the settings popover).
     if let Some((id, slider)) = app.widget_slider_drag {
         use crate::controls::widget_settings::{self as ws, WidgetSlider};
@@ -106,8 +171,16 @@ pub(super) fn handle_drag(
         );
         let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
         let phys_cx = wl.cursor_x as f32 * scale_f;
-        let v = crate::bar_sliders::value_at_cursor(panel_rect, scale_f, slider, phys_cx);
-        crate::bar_sliders::set_value(slider, v);
+        let outer_pos = crate::outer_zones::positions(
+            &app.outer, panel_rect, scale_f,
+            crate::media::render::is_active(&app.media),
+        );
+        if let Some(slot) =
+            crate::outer_zones::rect_in(&outer_pos, crate::outer_zones::OuterId::Sliders)
+        {
+            let v = crate::bar_sliders::value_at_cursor(slot, scale_f, slider, phys_cx);
+            crate::bar_sliders::set_value(slider, v);
+        }
     }
 
     // Settings page slider drag: while the user has a settings slider

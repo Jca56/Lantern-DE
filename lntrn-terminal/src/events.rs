@@ -54,6 +54,7 @@ impl App {
                 self.effective_font_size(),
                 self.sidebar.visible,
                 self.config.general.cursor_style,
+                self.config.general.open_chrome_hidden,
                 &crate::config::WindowMode::current(),
             );
             let bounds = ui_chrome::tabs_bounds(
@@ -117,8 +118,7 @@ impl App {
         };
 
         let chrome_h = self.chrome_height();
-        let on_resize_handle =
-            !self.chrome_hidden && self.sidebar.resize_handle_hit(self.cursor_pos, chrome_h);
+        let on_resize_handle = self.sidebar.resize_handle_hit(self.cursor_pos, chrome_h);
         if self.selecting {
             if let Some(ref window) = self.window {
                 window.set_cursor(CursorIcon::Text);
@@ -159,9 +159,21 @@ impl App {
         }
 
         // Rice mode: skip all chrome/tab/menubar click routing — go straight
-        // to the terminal-selection passthrough.
+        // to the terminal-selection passthrough. Exception: the right-click
+        // context menu still works here. Clicks inside it land via its
+        // interaction zones during the overlay draw; clicks outside close it
+        // instead of starting a selection underneath.
         if self.chrome_hidden {
             self.input.on_left_pressed();
+            if self.chrome.context_menu.is_open() {
+                if let Some((x, y)) = self.cursor_pos {
+                    if !self.chrome.context_menu.contains(x, y) {
+                        self.chrome.context_menu.close();
+                    }
+                }
+                self.request_redraw();
+                return EventResult::Handled;
+            }
             self.request_redraw();
             return self.handle_click_passthrough(screen_h);
         }
@@ -188,6 +200,7 @@ impl App {
                 self.effective_font_size(),
                 self.sidebar.visible,
                 self.config.general.cursor_style,
+                self.config.general.open_chrome_hidden,
                 &crate::config::WindowMode::current(),
             );
             let tabs_rect = ui_chrome::tabs_bounds(
@@ -236,6 +249,7 @@ impl App {
             self.effective_font_size(),
             self.sidebar.visible,
             self.config.general.cursor_style,
+            self.config.general.open_chrome_hidden,
             &crate::config::WindowMode::current(),
         );
         let screen_w = self.gpu.as_ref().map_or(800, |g| g.width()) as f32;
@@ -397,6 +411,38 @@ impl App {
                     return EventResult::Exit;
                 }
             }
+            ui_chrome::ClickAction::PrevTab => {
+                if self.tabs.len() > 1 {
+                    self.active_tab = if self.active_tab == 0 {
+                        self.tabs.len() - 1
+                    } else {
+                        self.active_tab - 1
+                    };
+                    self.cursor_visible = true;
+                    self.cursor_blink_deadline = Instant::now() + CURSOR_BLINK_INTERVAL;
+                }
+            }
+            ui_chrome::ClickAction::NextTab => {
+                if self.tabs.len() > 1 {
+                    self.active_tab = (self.active_tab + 1) % self.tabs.len();
+                    self.cursor_visible = true;
+                    self.cursor_blink_deadline = Instant::now() + CURSOR_BLINK_INTERVAL;
+                }
+            }
+            ui_chrome::ClickAction::SelectTab(i) => {
+                if i < self.tabs.len() && i != self.active_tab {
+                    self.active_tab = i;
+                    self.cursor_visible = true;
+                    self.cursor_blink_deadline = Instant::now() + CURSOR_BLINK_INTERVAL;
+                }
+            }
+            ui_chrome::ClickAction::RunLntrn => {
+                if !self.tabs.is_empty() {
+                    let tab = &self.tabs[self.active_tab];
+                    // 0x0D = Enter, same byte the keyboard path sends.
+                    tab.panes[tab.active_pane].pty.write(b"lntrn\r");
+                }
+            }
             ui_chrome::ClickAction::ClearScrollback => {
                 if !self.tabs.is_empty() {
                     let tab = &mut self.tabs[self.active_tab];
@@ -413,15 +459,10 @@ impl App {
     fn handle_click_passthrough(&mut self, screen_h: u32) -> EventResult {
         let chrome_h = self.chrome_height();
 
-        // Sidebar / git-sidebar / sidebar-file hits — all skipped in rice
-        // mode since the sidebar isn't drawn and those coordinates belong
-        // to the terminal grid.
-        let allow_sidebar_hits = !self.chrome_hidden;
-
         // Resize handle on the sidebar's right edge takes priority over content
         // hits so a drag starting at the edge never lands on a list row. A
         // double-click on the handle resets to auto-fit width.
-        if allow_sidebar_hits && self.sidebar.resize_handle_hit(self.cursor_pos, chrome_h) {
+        if self.sidebar.resize_handle_hit(self.cursor_pos, chrome_h) {
             let now = Instant::now();
             let double = now.duration_since(self.last_resize_handle_click).as_millis() < 400;
             self.last_resize_handle_click = now;
@@ -438,16 +479,14 @@ impl App {
         }
 
         // Check sidebar mode toggle first
-        if allow_sidebar_hits {
-            if let Some(new_mode) = sidebar::handle_mode_click(&mut self.sidebar, self.cursor_pos, chrome_h) {
-                self.handle_sidebar_mode_change(new_mode);
-                self.request_redraw();
-                return EventResult::Handled;
-            }
+        if let Some(new_mode) = sidebar::handle_mode_click(&mut self.sidebar, self.cursor_pos, chrome_h) {
+            self.handle_sidebar_mode_change(new_mode);
+            self.request_redraw();
+            return EventResult::Handled;
         }
 
         // Git sidebar click handling
-        if allow_sidebar_hits && self.sidebar.visible && self.sidebar.mode == sidebar::SidebarMode::Git {
+        if self.sidebar.visible && self.sidebar.mode == sidebar::SidebarMode::Git {
             let git_top = chrome_h + sidebar::TOGGLE_H * self.sidebar.scale;
             if git_sidebar::contains(self.cursor_pos, self.sidebar.width, git_top, self.git_sidebar.scale) {
                 let action = git_sidebar::handle_click(
@@ -463,7 +502,7 @@ impl App {
         }
 
         // Check file sidebar click
-        if allow_sidebar_hits && sidebar::contains(&self.sidebar, self.cursor_pos, chrome_h) {
+        if sidebar::contains(&self.sidebar, self.cursor_pos, chrome_h) {
             let ctrl = self.modifiers.contains(ModifiersState::CONTROL);
             let result = sidebar::handle_click(
                 &mut self.sidebar,
@@ -555,7 +594,8 @@ impl App {
         let screen_w = self.gpu.as_ref().map_or(800, |g| g.width());
         let screen_h = self.gpu.as_ref().map_or(600, |g| g.height());
         let chrome_h = self.chrome_height();
-        // Sidebar right-click
+        // Sidebar right-click — stays routable in rice mode (the handler
+        // no-ops when the sidebar is closed).
         if sidebar::handle_right_click(
             &mut self.sidebar,
             self.cursor_pos,
@@ -564,6 +604,13 @@ impl App {
             self.chrome.close_all_menus();
             self.tab_bar.context_menu = None;
             self.request_redraw();
+            return;
+        }
+
+        // Rice mode: the tab bar isn't drawn, so its hit region belongs to
+        // the terminal grid — go straight to the terminal menu.
+        if self.chrome_hidden {
+            self.open_terminal_context_menu(screen_w, screen_h);
             return;
         }
 
@@ -581,6 +628,7 @@ impl App {
             self.effective_font_size(),
             self.sidebar.visible,
             self.config.general.cursor_style,
+            self.config.general.open_chrome_hidden,
             &crate::config::WindowMode::current(),
         );
         let tabs_rect = ui_chrome::tabs_bounds(
@@ -598,27 +646,56 @@ impl App {
             self.chrome.close_all_menus();
             self.sidebar.context_menu = None;
             self.request_redraw();
-        } else if let Some((x, y)) = self.cursor_pos {
-            self.tab_bar.context_menu = None;
-            self.chrome.menu_bar.close();
-
-            // Build context menu items
-            let has_selection = if !self.tabs.is_empty() {
-                let tab = &self.tabs[self.active_tab];
-                tab.panes[tab.active_pane]
-                    .terminal
-                    .selection_range()
-                    .is_some()
-            } else {
-                false
-            };
-            let items = ui_chrome::build_context_menu(has_selection);
-            self.chrome.refresh_theme();
-            self.chrome.context_menu.set_scale(self.scale);
-            self.chrome.context_menu.open(x, y, items);
-            self.chrome.context_menu.clamp_to_screen(screen_w as f32, screen_h as f32);
-            self.request_redraw();
+        } else {
+            self.open_terminal_context_menu(screen_w, screen_h);
         }
+    }
+
+    /// Open the terminal's right-click context menu at the cursor. Shared by
+    /// the normal path and rice mode (where it doubles as the title bar).
+    fn open_terminal_context_menu(&mut self, screen_w: u32, screen_h: u32) {
+        let Some((x, y)) = self.cursor_pos else { return };
+        self.tab_bar.context_menu = None;
+        self.chrome.menu_bar.close();
+
+        let items = self.context_menu_items();
+        self.chrome.refresh_theme();
+        self.chrome.context_menu.set_scale(self.scale);
+        self.chrome.context_menu.open(x, y, items);
+        self.chrome.context_menu.clamp_to_screen(screen_w as f32, screen_h as f32);
+        self.request_redraw();
+    }
+
+    /// Context-menu items for the current terminal state.
+    fn context_menu_items(&self) -> Vec<lntrn_ui::gpu::MenuItem> {
+        let has_selection = self
+            .tabs
+            .get(self.active_tab)
+            .map_or(false, |t| {
+                t.panes[t.active_pane].terminal.selection_range().is_some()
+            });
+        let pane_count = self
+            .tabs
+            .get(self.active_tab)
+            .map_or(0, |t| t.panes.len());
+        ui_chrome::build_context_menu(
+            has_selection,
+            self.tabs.len(),
+            self.active_tab,
+            pane_count,
+            self.sidebar.visible,
+        )
+    }
+
+    /// Rebuild the open context menu's items in place so live state (active
+    /// tab dot, chevrons, pane count) stays current after actions that keep
+    /// the menu open.
+    pub(crate) fn refresh_context_menu_items(&mut self) {
+        if !self.chrome.context_menu.is_open() {
+            return;
+        }
+        let items = self.context_menu_items();
+        self.chrome.context_menu.replace_items(items);
     }
 
     pub(crate) fn handle_keyboard(
@@ -742,10 +819,10 @@ impl App {
                 }
             }
 
-            // Super+F11: toggle "rice mode" — hides the entire chrome
-            // (titlebar, tabs, sidebar) for screenshots / fastfetch glamour.
-            // The compositor lets Super+F11 fall through; plain F11 still
-            // toggles compositor fullscreen.
+            // Super+F11: toggle "rice mode" — hides the title/tab bar for
+            // screenshots / fastfetch glamour. The sidebar keeps following
+            // its own visible flag. The compositor lets Super+F11 fall
+            // through; plain F11 still toggles compositor fullscreen.
             if self.modifiers.contains(ModifiersState::SUPER) {
                 if let winit::keyboard::Key::Named(winit::keyboard::NamedKey::F11) =
                     &event.logical_key
@@ -931,6 +1008,10 @@ impl App {
             return;
         }
 
+        if self.forward_wheel_to_tui(delta) {
+            return;
+        }
+
         let cell_h = render::measure_cell(self.effective_font_size()).1;
         let delta_px = match delta {
             MouseScrollDelta::LineDelta(_, y) => y * cell_h * 10.0,
@@ -944,6 +1025,84 @@ impl App {
         self.scroll_target_px = (self.scroll_target_px + delta_px).clamp(0.0, max_px);
         self.scroll_animating = true;
         self.request_redraw();
+    }
+
+    /// Wheel handling for TUIs that own their viewport. Apps that enabled
+    /// mouse reporting (Claude Code, htop, vim `mouse=a`) get each wheel
+    /// tick forwarded as a mouse-button report at the hovered cell;
+    /// alt-screen apps without mouse reporting (`less`, `man`) get arrow
+    /// keys instead (alternate scroll). Returns false for everything else
+    /// so the caller scrolls our scrollback — which is the only thing the
+    /// wheel could do before, and on the alt screen meant scrolling an
+    /// empty buffer, i.e. a dead wheel.
+    ///
+    /// One tick = one wheel detent: the compositor synthesizes 15 logical
+    /// px of continuous scroll per detent (see lntrn-compositor
+    /// `handle_pointer_axis`), which winit hands us ×scale as PixelDelta.
+    /// Trackpads integrate their finger deltas on the same scale.
+    fn forward_wheel_to_tui(&mut self, delta: MouseScrollDelta) -> bool {
+        let tab = &self.tabs[self.active_tab];
+        let pane = &tab.panes[tab.active_pane];
+        let terminal = &pane.terminal;
+        let mouse_on = terminal.mouse_mode != crate::terminal::MouseMode::Off;
+        if !mouse_on && !terminal.is_alt_screen() {
+            return false;
+        }
+
+        self.wheel_tick_accum += match delta {
+            MouseScrollDelta::LineDelta(_, y) => y,
+            MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / (15.0 * self.scale),
+        };
+        let ticks = self.wheel_tick_accum as i32;
+        self.wheel_tick_accum -= ticks as f32;
+        if ticks == 0 {
+            // Consumed: the sub-detent remainder stays accumulated.
+            return true;
+        }
+        let up = ticks > 0;
+
+        let bytes = if mouse_on {
+            let (col, row) = self.hovered_cell(tab, pane);
+            let report =
+                crate::terminal::mouse::wheel_report(terminal.mouse_sgr, up, col, row);
+            report.repeat(ticks.unsigned_abs() as usize)
+        } else {
+            crate::terminal::mouse::alternate_scroll(
+                up,
+                terminal.application_cursor,
+                ticks.unsigned_abs() as usize,
+            )
+        };
+        pane.pty.write(&bytes);
+        true
+    }
+
+    /// 1-based cell coordinates under the pointer, clamped into the active
+    /// pane's grid — mouse reports have no notion of "outside the grid".
+    fn hovered_cell(&self, tab: &crate::app::Tab, pane: &crate::app::Pane) -> (usize, usize) {
+        let font_size = self.effective_font_size();
+        let (cell_w, cell_h) = render::measure_cell(font_size);
+        let screen_w = self.gpu.as_ref().map_or(800, |g| g.width());
+        let screen_h = self.gpu.as_ref().map_or(600, |g| g.height());
+        let rects = Self::pane_rects_for_tab(
+            tab,
+            screen_w,
+            screen_h,
+            self.sidebar_offset(),
+            self.chrome_height(),
+        );
+        if tab.active_pane >= rects.len() {
+            return (1, 1);
+        }
+        let (gx, gy, _, _) =
+            Self::pane_grid_bounds(pane, rects[tab.active_pane], font_size);
+        let (cx, cy) = self.cursor_pos.unwrap_or((gx, gy));
+        let col = ((cx - gx) / cell_w).floor().max(0.0) as usize;
+        let row = ((cy - gy) / cell_h).floor().max(0.0) as usize;
+        (
+            col.min(pane.terminal.cols.saturating_sub(1)) + 1,
+            row.min(pane.terminal.rows.saturating_sub(1)) + 1,
+        )
     }
 
     pub(crate) fn handle_slider_drags(&mut self) {

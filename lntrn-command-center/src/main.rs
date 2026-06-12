@@ -19,6 +19,8 @@ mod mascot;
 mod media;
 mod mini_dock;
 mod notes;
+mod outer_edit;
+mod outer_zones;
 mod persisted_state;
 mod power;
 mod render;

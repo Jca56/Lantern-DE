@@ -17,6 +17,12 @@ use crate::window_management::ArrowDir;
 
 use super::spawn::{fire_audio_osd, fire_brightness_osd, spawn_detached, spawn_detached_args, spawn_detached_args_logged, AudioRepeat};
 
+/// Max time Super may be held and still count as a "tap" that opens the
+/// Command Center. Anything longer is a hold (e.g. holding Super to drag a
+/// window) and is ignored. Generous so genuine taps never get eaten — a
+/// drag/click is also cancelled directly via `super_clean_tap` in pointer.rs.
+const SUPER_TAP_MAX_MS: u128 = 350;
+
 fn arrow_dir_from_keysym(raw: u32) -> Option<ArrowDir> {
     match raw {
         xkb::KEY_Left => Some(ArrowDir::Left),
@@ -126,6 +132,7 @@ impl Lantern {
                 // Super just pressed — start tracking clean tap
                 if _modifiers.logo && !was_super {
                     data.super_clean_tap = true;
+                    data.super_press_time = Some(std::time::Instant::now());
                 }
                 // Any key pressed while Super held → not a clean tap
                 if _modifiers.logo && event.state() == KeyState::Pressed {
@@ -133,10 +140,17 @@ impl Lantern {
                         data.super_clean_tap = false;
                     }
                 }
-                // Super released — if no combo was used, toggle Command Center.
+                // Super released — toggle Command Center only on a clean TAP:
+                // no combo used (keyboard or mouse, see pointer.rs) AND held
+                // briefly. A long hold (e.g. holding Super to drag windows)
+                // counts as a hold, not a tap, so the CC stays put.
                 // (`cycle_desktop_panel` remains defined in state.rs but is no
                 // longer wired to Super-tap; nothing in this project is deleted.)
-                if !_modifiers.logo && was_super && data.super_clean_tap {
+                let held_briefly = data
+                    .super_press_time
+                    .map(|t| t.elapsed().as_millis() <= SUPER_TAP_MAX_MS)
+                    .unwrap_or(false);
+                if !_modifiers.logo && was_super && data.super_clean_tap && held_briefly {
                     data.super_clean_tap = false;
                     tracing::info!("Super tap → toggling lntrn-command-center");
                     spawn_detached_args_logged(

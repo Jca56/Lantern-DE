@@ -16,6 +16,9 @@ use crate::search::input::KeyEffect;
 impl AppState {
     pub fn open(&mut self) {
         let now = Instant::now();
+        // An explicit open always disarms a pending collapse-then-close
+        // so the panel doesn't vanish out from under the user.
+        self.close_after_collapse = false;
         match self.visibility {
             Visibility::Visible | Visibility::Opening => {}
             Visibility::Hidden => {
@@ -26,8 +29,9 @@ impl AppState {
                 self.files.reset_to_home();
                 self.visibility = Visibility::Opening;
                 self.anim_start = now;
-                // Honor the "open in collapsed mode" setting.
-                self.collapsed = self.config.open_collapsed;
+                // Collapsed is the default open state; the "open in
+                // expanded mode" setting opts out.
+                self.collapsed = !self.config.open_expanded;
                 self.collapse_anim_start = None;
                 self.collapse_anim_origin = if self.collapsed { 1.0 } else { 0.0 };
                 self.collapse_anim_target = self.collapse_anim_origin;
@@ -77,6 +81,7 @@ impl AppState {
             self.toolbar_edit = true;
             self.toolbar_edit_prev_collapsed = self.collapsed;
             self.widget_drag = None;
+            self.outer_drag = None;
             self.set_collapsed(true);
         }
     }
@@ -87,9 +92,11 @@ impl AppState {
         }
         self.toolbar_edit = false;
         self.widget_drag = None;
+        self.outer_drag = None;
         self.widget_settings_open = None;
         self.widget_slider_drag = None;
         self.controls.toolbar.save();
+        self.outer.save();
         self.set_collapsed(self.toolbar_edit_prev_collapsed);
     }
 
@@ -229,7 +236,9 @@ impl AppState {
         } else if self.search.all_apps_mode {
             self.search.reset();
         } else {
-            self.close();
+            // Top-level Esc is a dismiss gesture like click-outside —
+            // it gets the same collapse-first treatment.
+            self.dismiss();
         }
     }
 
@@ -363,8 +372,33 @@ impl AppState {
 
     /// Trigger a close animation. No-op if already closing or hidden.
     /// Same interruption math as `open` in reverse.
+    /// Close request from a "put it away" gesture — click outside,
+    /// Super toggle, top-level Esc. With the collapse-before-close
+    /// setting on (the default), an expanded panel folds down to the
+    /// bar first and `tick` fires the real close once the fold lands.
+    /// A second dismiss while the fold is in flight skips the nicety
+    /// and closes immediately, as does a collapsed/expanded-off panel.
+    pub fn dismiss(&mut self) {
+        if matches!(self.visibility, Visibility::Hidden | Visibility::Closing) {
+            return;
+        }
+        if self.config.collapse_before_close
+            && !self.collapsed
+            && !self.close_after_collapse
+            && !self.toolbar_edit
+        {
+            self.close_after_collapse = true;
+            self.set_collapsed(true);
+        } else {
+            self.close();
+        }
+    }
+
     pub fn close(&mut self) {
         let now = Instant::now();
+        // Direct closes (app launch, power action, …) override any
+        // pending deferred close.
+        self.close_after_collapse = false;
         self.context_menu = None;
         // Calendar always reopens on the current month — drop any
         // forward/back navigation the user did before closing.
@@ -419,7 +453,7 @@ impl AppState {
     pub fn toggle(&mut self) {
         match self.visibility {
             Visibility::Hidden | Visibility::Closing => self.open(),
-            Visibility::Visible | Visibility::Opening => self.close(),
+            Visibility::Visible | Visibility::Opening => self.dismiss(),
         }
     }
 
@@ -428,6 +462,18 @@ impl AppState {
     /// if anything changed (caller should redraw).
     pub fn tick(&mut self) -> bool {
         let now = Instant::now();
+        // Deferred dismiss: once the collapse-before-close fold has
+        // landed, fire the real close animation.
+        if self.close_after_collapse {
+            let dur = self.config.view_anim_duration.max(0.05);
+            let fold_done = self
+                .collapse_anim_start
+                .is_none_or(|s| s.elapsed().as_secs_f32() >= dur);
+            if fold_done {
+                self.close();
+                return true;
+            }
+        }
         let p = self.progress(now);
         match self.visibility {
             Visibility::Opening if p >= 1.0 => {

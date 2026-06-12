@@ -50,6 +50,12 @@ impl Lantern {
     /// The window keeps its current aspect ratio and stays centred, so it
     /// scales as a whole. Clamps at the smallest / largest stage.
     pub fn resize_focused(&mut self, grow: bool) -> bool {
+        // Edge-pinned windows resize one axis at a time instead of through the
+        // centred size ladder — Super+Up/Down cycles HEIGHT in thirds, staying
+        // pinned to the edge. See `axis_resize`.
+        if self.focused_edge_pin().is_some() {
+            return self.axis_resize_height(grow);
+        }
         let Some(window) = self.focused_window() else { return false };
         let Some(surface) = window.get_wl_surface() else { return false };
         let Some(wa) = self.unmaximize_for_op(&window, &surface) else { return false };
@@ -79,6 +85,11 @@ impl Lantern {
     /// 4:3. Keeps the current height — only the width moves — and re-centres.
     /// Clamps at the ends (no wrap).
     pub fn cycle_aspect_focused(&mut self, wider: bool) -> bool {
+        // Edge-pinned windows cycle WIDTH in thirds (Right = wider, Left =
+        // narrower) instead of aspect ratio, staying flush to the pinned edge.
+        if let Some(pin) = self.focused_edge_pin() {
+            return self.axis_resize_width(wider, pin);
+        }
         let Some(window) = self.focused_window() else { return false };
         let Some(surface) = window.get_wl_surface() else { return false };
         let Some(wa) = self.unmaximize_for_op(&window, &surface) else { return false };
@@ -155,7 +166,7 @@ impl Lantern {
     /// zones (bars / Command Center). Unlike `work_area` this keeps NO inner
     /// gap — `snap_focused_dir` insets the window from this region itself by
     /// `SINGLE_WINDOW_OUTER_GAP`, so the snapped gap is exactly that value.
-    fn snap_region(&self, output: &Output) -> Option<Rectangle<i32, Logical>> {
+    pub(crate) fn snap_region(&self, output: &Output) -> Option<Rectangle<i32, Logical>> {
         let geo = self.workspaces.output_geometry(output)?;
         let (top, bot, left, right) = self.exclusive_zone_offsets_for_output(output);
         let x = geo.loc.x + left;
@@ -184,7 +195,7 @@ impl Lantern {
 
     /// The rect a shape op should measure from: the in-flight animation target
     /// (so rapid presses chain) falling back to the live mapped rect.
-    fn op_start_rect(
+    pub(crate) fn op_start_rect(
         &self,
         window: &Window,
         surface: &WlSurface,
@@ -203,7 +214,7 @@ impl Lantern {
 
     /// Start (or redirect) the rect animation from the window's current
     /// on-screen rect to `target`.
-    fn animate_focused_to(
+    pub(crate) fn animate_focused_to(
         &mut self,
         surface: &WlSurface,
         window: &Window,

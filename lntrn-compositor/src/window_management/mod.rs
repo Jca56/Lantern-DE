@@ -6,6 +6,7 @@ use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::desktop::Window;
 
 mod alt_tab;
+mod axis_resize;
 mod focus;
 mod fullscreen;
 mod half_pose;

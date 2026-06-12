@@ -1,3 +1,7 @@
+mod fonts;
+
+pub use fonts::lantern_font_system;
+
 use std::collections::HashMap;
 
 use glyphon::{
@@ -118,7 +122,7 @@ impl TextRenderer {
     }
 
     fn with_options(gpu: &GpuContext, monospace: bool) -> Self {
-        let font_system = FontSystem::new();
+        let font_system = fonts::lantern_font_system();
         let swash_cache = SwashCache::new();
         let cache = Cache::new(&gpu.device);
         let viewport = Viewport::new(&gpu.device, &cache);

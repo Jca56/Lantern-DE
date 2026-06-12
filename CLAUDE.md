@@ -23,11 +23,11 @@ Lantern DE runs on two machines:
 - **Laptop** — Arch Linux, single built-in display
 - **Desktop (PC)** — Gentoo Linux, multiple external monitors
 
-Never hardcode pixel sizes, monitor counts, monitor names, resolutions, or DPI values that would break the other setup. Layout has to adapt to the active output(s) at runtime — query compositor/output state, use relative units, or pull from config. Don't hardcode distro-specific paths or package-manager assumptions either. (The DP-1 / HDMI-A-1 values in Preferences below are desktop reference info, not values to bake in.)
+Never hardcode pixel sizes, monitor counts, monitor names, resolutions, or DPI values that would break the other setup. Layout has to adapt to the active output(s) at runtime — query compositor/output state, use relative units, or pull from config. Don't hardcode distro-specific paths or package-manager assumptions either. The desktop's monitors and scales change over time (monitor upgrades, scale switching between ~1.0–1.4, secondary monitor may come and go) — don't assume any specific resolution or scale, even in conversation; check the live config/output state when it matters.
 
 ## Preferences
 - Always prefer building our own dependencies over using external crates. Minimal outside dependencies — we build all our own stuff! Only reach for an external crate when it would be incredibly difficult to implement ourselves.
-- Output scale: 1.0 native (desktop reference: DP-1: 2560x1440, HDMI-A-1: 1920x1080). Non-Lantern apps scaled via env vars (GDK_DPI_SCALE=1.25, QT_SCALE_FACTOR=1.25).
+- Output scale varies per session (1.0 / 1.3 / 1.4 on the 4K primary; secondary usually 1.0) — read it from lantern.toml / compositor state, never assume. Non-Lantern apps scaled via env vars (GDK_DPI_SCALE=1.25, QT_SCALE_FACTOR=1.25).
 - Large font sizes, minimum of 16 or 18. User has poor eyesight — always err on the side of BIGGER text and UI elements. When in doubt, make it larger.
 - When given tasks you will ask questions using the `AskUserQuestion` tool.
 - Files must be kept at less than 600 lines of code and flagged at 500 lines. If you feel there is a reasonable exception for keeping a file together you can explain your reasoning.

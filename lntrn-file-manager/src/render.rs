@@ -1,6 +1,6 @@
 use lntrn_render::{Color, Rect, TextureDraw};
 use lntrn_ui::gpu::{
-    draw_window_bg, ContextMenu, FontSize, FoxPalette, GradientStrip, InteractionContext,
+    draw_window_bg, ContextMenu, FontSize, FoxPalette, InteractionContext,
     MenuEvent, ScrollArea, Scrollbar, TabBar, TextInput, TextLabel, TitleBar,
 };
 
@@ -161,8 +161,8 @@ pub fn render_frame(
     let win_rect = Rect::new(0.0, 0.0, wf, hf);
     draw_window_bg(painter, win_rect, corner_r, pal, bg_opacity);
 
-    // ── Title bar (window mode only) ─────────────────────────────────
-    if !desktop_mode {
+    // ── Title bar (window mode only, hidden in rice mode) ────────────
+    if !desktop_mode && !crate::layout::chrome_hidden() {
         let tb_rect = title_bar_rect(wf, s);
         let close_rect = TitleBar::new(tb_rect).scale(s).close_button_rect();
         let max_rect = TitleBar::new(tb_rect).scale(s).maximize_button_rect();
@@ -206,13 +206,10 @@ pub fn render_frame(
 
     }
 
-    // ── Top gradient strip ───────────────────────────────────────────
-    {
+    // ── Top gradient strip (hidden in rice mode along with the bar) ──
+    if !crate::layout::chrome_hidden() {
         let tb_h = title_bar_rect(wf, s).h;
-        let mut grad = GradientStrip::new(0.0, tb_h, wf)
-            .colors(pal.file_manager_gradient_stops());
-        grad.height = 4.0 * s;
-        grad.draw(painter);
+        draw_gradient_h(painter, pal, 0.0, tb_h, wf, s);
     }
 
     // ── Nav bar ───────────────────────────────────────────────────────
@@ -407,7 +404,7 @@ pub fn render_frame(
     }
 
     // Drop-target highlight on tabs while dragging files
-    if app.drag_item.is_some() {
+    if app.drag_item.is_some() || app.drag_tree_item.is_some() {
         if let Some(ti) = hovered_tab {
             if ti < tab_rects.len() {
                 painter.rect_filled(tab_rects[ti], 4.0 * s, pal.accent.with_alpha(0.2));
@@ -455,7 +452,7 @@ pub fn render_frame(
         let zone_id = crate::ZONE_PHONE_ITEM_BASE + i as u32;
         phone_hovered.push(input.add_zone(zone_id, *item_rect).is_hovered());
     }
-    let dragging = app.drag_item.is_some();
+    let dragging = app.drag_item.is_some() || app.drag_tree_item.is_some();
     let hov = SidebarHovered {
         places: &sidebar_hovered,
         favorites: &favorite_hovered,
@@ -476,8 +473,11 @@ pub fn render_frame(
             let mut item_hovered = Vec::with_capacity(entries.len());
             for i in 0..entries.len() {
                 let item_rect = file_item_rect(i, cols, content.x, base_y, s, zoom);
+                // Tight hitbox around the icon+label — the cell padding stays
+                // click-through so right-clicks between items hit empty space.
+                let hit_rect = crate::layout::item_hit_rect(item_rect, s, zoom);
                 let zone_id = ZONE_FILE_ITEM_BASE + i as u32;
-                let hovered = if let Some(clipped) = item_rect.intersect(&content) {
+                let hovered = if let Some(clipped) = hit_rect.intersect(&content) {
                     input.add_zone(zone_id, clipped).is_hovered()
                 } else {
                     false
@@ -518,7 +518,22 @@ pub fn render_frame(
             let hdr_h = 32.0 * list_zoom_multiplier(zoom) * s;
             let mut item_hovered = Vec::with_capacity(entries.len());
             for i in 0..entries.len() {
-                let row_rect = Rect::new(content.x, base_y + hdr_h + i as f32 * row_h, content.w, row_h);
+                let y = base_y + hdr_h + i as f32 * row_h;
+                // Off-screen rows get no zone (and skip the text measuring
+                // the tight rect needs).
+                if y + row_h < content.y || y > content.y + content.h {
+                    item_hovered.push(false);
+                    continue;
+                }
+                // Tight zone: icon + name only — the size/date columns stay
+                // empty space (right-click → folder menu), matching grid
+                // view. Search rows keep the full row (no empty-area menu
+                // there, and the location line spans the row anyway).
+                let row_rect = if is_searching {
+                    Rect::new(content.x, y, content.w, row_h)
+                } else {
+                    crate::views::list_row_hit_rect(text, &entries[i], content, y, row_h, s, zoom)
+                };
                 let zone_id = ZONE_FILE_ITEM_BASE + i as u32;
                 let hovered = if let Some(clipped) = row_rect.intersect(&content) {
                     input.add_zone(zone_id, clipped).is_hovered()
@@ -560,7 +575,14 @@ pub fn render_frame(
             let tree_entries = &app.tree_entries;
             let mut item_hovered = Vec::with_capacity(tree_entries.len());
             for i in 0..tree_entries.len() {
-                let row_rect = Rect::new(content.x, base_y + i as f32 * row_h, content.w, row_h);
+                let y = base_y + i as f32 * row_h;
+                if y + row_h < content.y || y > content.y + content.h {
+                    item_hovered.push(false);
+                    continue;
+                }
+                // Tight zone: arrow + icon + name only, so the space right of
+                // a name is empty (right-click → folder menu), matching grid.
+                let row_rect = crate::views::tree_row_hit_rect(text, &tree_entries[i], content, y, row_h, s, zoom);
                 let zone_id = ZONE_TREE_ITEM_BASE + i as u32;
                 let hovered = if let Some(clipped) = row_rect.intersect(&content) {
                     input.add_zone(zone_id, clipped).is_hovered()
@@ -589,7 +611,7 @@ pub fn render_frame(
             draw_content_tree(
                 painter, text, pal, content, tree_entries,
                 &scroll_area, &item_hovered, &has_icon, &tree_selected,
-                renaming_path.as_deref(), (w, h), s, zoom,
+                app.drag_tree_item, renaming_path.as_deref(), (w, h), s, zoom,
             );
 
             // Inline rename input (tree mode)
@@ -618,10 +640,11 @@ pub fn render_frame(
         }
     }
 
-    // Scrollbar
+    // Scrollbar — the zone is the widened hover band over the whole track,
+    // not just the thumb, so it's grabbable and track-clicks page-jump.
     if scroll_area.is_scrollable() {
         let scrollbar = Scrollbar::new(&content, total_content_h, app.scroll_offset);
-        input.add_zone(ZONE_SCROLLBAR, scrollbar.thumb);
+        input.add_zone(ZONE_SCROLLBAR, scrollbar.hover_zone());
         let sb_state = input.zone_state(ZONE_SCROLLBAR);
         draw_scrollbar(painter, &scrollbar, sb_state, pal);
     }
@@ -674,31 +697,38 @@ pub fn render_frame(
     let drag_count = if app.drag_item.is_some() {
         let sel = entries.iter().filter(|e| e.selected).count();
         sel.max(1)
+    } else if let Some(ti) = app.drag_tree_item {
+        // Tree multi-drag only when the grabbed row is part of the
+        // selection (selection lives in `entries`, keyed by path).
+        match app.tree_entries.get(ti) {
+            Some(te) if app.entries.iter().any(|e| e.selected && e.path == te.entry.path) => {
+                app.entries.iter().filter(|e| e.selected).count().max(1)
+            }
+            Some(_) => 1,
+            None => 0,
+        }
     } else { 0 };
 
-    if let (Some(drag_idx), Some((dx, dy))) = (app.drag_item, app.drag_pos) {
-        if drag_idx < entries.len() {
+    // Count badge for multi-drag
+    if drag_count > 1 {
+        if let Some((dx, dy)) = app.drag_pos {
             let ghost_sz = 80.0 * s;
             let gx = dx - ghost_sz * 0.5;
             let gy = dy - ghost_sz * 0.5;
-
-            // Count badge for multi-drag
-            if drag_count > 1 {
-                let badge_font = 14.0 * s;
-                let badge_text = format!("{drag_count}");
-                let badge_w = (badge_text.len() as f32 * badge_font * 0.6 + 10.0 * s).max(24.0 * s);
-                let badge_h = 22.0 * s;
-                let badge_x = gx + ghost_sz - badge_w * 0.5;
-                let badge_y = gy - badge_h * 0.3;
-                let badge_rect = Rect::new(badge_x, badge_y, badge_w, badge_h);
-                painter.rect_filled(badge_rect, badge_h * 0.5, pal.accent);
-                let tx = badge_x + (badge_w - badge_text.len() as f32 * badge_font * 0.55) * 0.5;
-                let ty = badge_y + (badge_h - badge_font) * 0.5;
-                TextLabel::new(&badge_text, tx, ty)
-                    .size(FontSize::Custom(badge_font))
-                    .color(pal.bg)
-                    .draw(text, w, h);
-            }
+            let badge_font = 14.0 * s;
+            let badge_text = format!("{drag_count}");
+            let badge_w = (badge_text.len() as f32 * badge_font * 0.6 + 10.0 * s).max(24.0 * s);
+            let badge_h = 22.0 * s;
+            let badge_x = gx + ghost_sz - badge_w * 0.5;
+            let badge_y = gy - badge_h * 0.3;
+            let badge_rect = Rect::new(badge_x, badge_y, badge_w, badge_h);
+            painter.rect_filled(badge_rect, badge_h * 0.5, pal.accent);
+            let tx = badge_x + (badge_w - badge_text.len() as f32 * badge_font * 0.55) * 0.5;
+            let ty = badge_y + (badge_h - badge_font) * 0.5;
+            TextLabel::new(&badge_text, tx, ty)
+                .size(FontSize::Custom(badge_font))
+                .color(pal.bg)
+                .draw(text, w, h);
         }
     }
 
@@ -832,15 +862,20 @@ pub fn render_frame(
     }
 
     // Drag ghost texture — just the icon, centered on cursor
-    if let (Some(drag_idx), Some((dx, dy))) = (app.drag_item, app.drag_pos) {
-        if drag_idx < entries.len() {
-            let ghost_sz = 80.0 * s;
-            let gx = dx - ghost_sz * 0.5;
-            let gy = dy - ghost_sz * 0.5;
-            if let Some(tex) = icon_cache.get(&entries[drag_idx]) {
-                let (bx, by, bw, bh) = icons::fit_in_box(tex, gx, gy, ghost_sz, ghost_sz);
-                tex_draws.push(TextureDraw::new(tex, bx, by, bw, bh));
-            }
+    let ghost_entry = if let Some(drag_idx) = app.drag_item {
+        entries.get(drag_idx)
+    } else if let Some(ti) = app.drag_tree_item {
+        app.tree_entries.get(ti).map(|te| &te.entry)
+    } else {
+        None
+    };
+    if let (Some(entry), Some((dx, dy))) = (ghost_entry, app.drag_pos) {
+        let ghost_sz = 80.0 * s;
+        let gx = dx - ghost_sz * 0.5;
+        let gy = dy - ghost_sz * 0.5;
+        if let Some(tex) = icon_cache.get(entry) {
+            let (bx, by, bw, bh) = icons::fit_in_box(tex, gx, gy, ghost_sz, ghost_sz);
+            tex_draws.push(TextureDraw::new(tex, bx, by, bw, bh));
         }
     }
 

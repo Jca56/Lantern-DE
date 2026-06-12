@@ -72,6 +72,21 @@ pub enum MenuItem {
     Header { label: String },
     /// A row of color swatches. Each swatch has an id and a color.
     ColorSwatches { label: String, swatches: Vec<(u32, Color)> },
+    /// Mini title bar row: circular minimize / maximize / close window
+    /// controls, right-aligned like a real title bar. Optionally a clickable
+    /// title label on the left and prev/next nav chevrons just left of the
+    /// buttons. Every element emits `MenuEvent::Action` with its id.
+    /// `tabs` adds a row of clickable tab-indicator dots floating in a small
+    /// capsule above the panel's top-left corner: `(base_id, count, active)`.
+    /// Dot `i` emits `MenuEvent::Action(base_id + i)`.
+    WindowControls {
+        minimize_id: u32,
+        maximize_id: u32,
+        close_id: u32,
+        title: Option<(u32, String)>,
+        nav: Option<(u32, u32)>,
+        tabs: Option<(u32, usize, usize)>,
+    },
 }
 
 impl MenuItem {
@@ -86,6 +101,15 @@ impl MenuItem {
     }
     pub fn action_danger(id: u32, label: impl Into<String>) -> Self {
         Self::Action { id, label: label.into(), shortcut: None, enabled: true, danger: true }
+    }
+    /// Set enabled state on an `Action` or `Toggle` (no-op on other variants).
+    /// Lets shortcut-bearing items built via `action_with` be greyed out.
+    pub fn enabled(mut self, on: bool) -> Self {
+        match &mut self {
+            Self::Action { enabled, .. } | Self::Toggle { enabled, .. } => *enabled = on,
+            _ => {}
+        }
+        self
     }
     pub fn separator() -> Self { Self::Separator }
     pub fn colored_separator(color: Color) -> Self { Self::ColoredSeparator(color) }
@@ -121,6 +145,41 @@ impl MenuItem {
     }
     pub fn header(label: impl Into<String>) -> Self {
         Self::Header { label: label.into() }
+    }
+    pub fn window_controls(minimize_id: u32, maximize_id: u32, close_id: u32) -> Self {
+        Self::WindowControls { minimize_id, maximize_id, close_id, title: None, nav: None, tabs: None }
+    }
+    /// Add a clickable title label on the left of a `WindowControls` row.
+    /// No-op on other variants.
+    pub fn controls_title(mut self, id: u32, text: impl Into<String>) -> Self {
+        if let Self::WindowControls { title, .. } = &mut self {
+            *title = Some((id, text.into()));
+        }
+        self
+    }
+    /// Add prev/next nav chevrons left of the buttons on a `WindowControls`
+    /// row. No-op on other variants.
+    pub fn controls_nav(mut self, prev_id: u32, next_id: u32) -> Self {
+        if let Self::WindowControls { nav, .. } = &mut self {
+            *nav = Some((prev_id, next_id));
+        }
+        self
+    }
+    /// Add tab-indicator dots floating above the panel's top-left corner on
+    /// a `WindowControls` row. Dot `i` of `count` emits
+    /// `MenuEvent::Action(base_id + i)`; `active` is highlighted. No-op on
+    /// other variants.
+    pub fn controls_tabs(mut self, base_id: u32, count: usize, active: usize) -> Self {
+        if let Self::WindowControls { tabs, .. } = &mut self {
+            *tabs = Some((base_id, count, active));
+        }
+        self
+    }
+
+    /// Whether this item floats tab dots above the panel (needs the menu's
+    /// hit-test and clamping to reserve headroom).
+    pub(super) fn has_floating_tabs(&self) -> bool {
+        matches!(self, Self::WindowControls { tabs: Some(_), .. })
     }
 }
 
@@ -291,6 +350,14 @@ impl ContextMenu {
         self.needs_clamp = true;
     }
 
+    /// Swap the items of an open menu in place — e.g. to refresh state the
+    /// items display (active tab dot, enabled flags) after an action that
+    /// keeps the menu open. Position, scroll, and submenu state are kept.
+    pub fn replace_items(&mut self, items: Vec<MenuItem>) {
+        self.width = compute_width(&items, &self.style);
+        self.items = items;
+    }
+
     pub fn clamp_to_screen(&mut self, screen_w: f32, screen_h: f32) {
         let total_h = items_height(&self.items, &self.style);
         if self.x + self.width > screen_w {
@@ -322,6 +389,14 @@ impl ContextMenu {
                     self.y = (screen_h - total_h - margin).max(0.0);
                     self.max_height = 0.0;
                 }
+            }
+        }
+
+        // Reserve headroom so the floating tab-dot capsule stays on screen.
+        if self.items.iter().any(MenuItem::has_floating_tabs) {
+            let overhang = TAB_DOTS_OVERHANG * self.style.scale;
+            if self.y < overhang + margin {
+                self.y = overhang + margin;
             }
         }
     }
@@ -705,6 +780,18 @@ impl ContextMenu {
         let visible_h = if self.max_height > 0.0 { self.max_height.min(root_h) } else { root_h };
         if contains_rect(x, y, self.x, self.y, self.width, visible_h) { return true; }
 
+        // Tab dots float above the panel — clicks there belong to the menu,
+        // not the window behind it.
+        if self.items.iter().any(MenuItem::has_floating_tabs)
+            && contains_rect(
+                x, y,
+                self.x, self.y - TAB_DOTS_OVERHANG * sc,
+                self.width, TAB_DOTS_OVERHANG * sc,
+            )
+        {
+            return true;
+        }
+
         let mut current_items: &[MenuItem] = &self.items;
         let mut px = self.x;
         let mut py = self.y;
@@ -741,6 +828,7 @@ pub(super) fn item_height(item: &MenuItem, style: &ContextMenuStyle) -> f32 {
         MenuItem::Progress { .. } => PROGRESS_ITEM_HEIGHT * s,
         MenuItem::Header { .. } => HEADER_HEIGHT * s,
         MenuItem::ColorSwatches { .. } => COLOR_SWATCH_HEIGHT * s,
+        MenuItem::WindowControls { .. } => WINDOW_CONTROLS_HEIGHT * s,
     }
 }
 
@@ -777,6 +865,13 @@ fn compute_width(items: &[MenuItem], style: &ContextMenuStyle) -> f32 {
             let icon = 40.0 * s;
             let gap = 6.0 * s;
             Some(swatches.len() as f32 * icon + (swatches.len().saturating_sub(1)) as f32 * gap)
+        }
+        // Three buttons at 30px spacing plus breathing room, widened by the
+        // optional title label and nav chevrons.
+        MenuItem::WindowControls { title, nav, .. } => {
+            let title_w = title.as_ref().map_or(0.0, |(_, t)| t.len() as f32 * fw + 16.0 * s);
+            let nav_w = if nav.is_some() { 60.0 * s } else { 0.0 };
+            Some(120.0 * s + title_w + nav_w)
         }
         MenuItem::Separator | MenuItem::ColoredSeparator(_) => None,
     }).fold(0.0f32, f32::max);
@@ -830,3 +925,7 @@ pub(super) const PROGRESS_ITEM_HEIGHT: f32 = 50.0;
 pub(super) const CONTEXT_MENU_ZONE_BASE: u32 = 0xCE_0000;
 pub(super) const COLOR_SWATCH_HEIGHT: f32 = 86.0;
 pub(super) const ACCENT_BAR_WIDTH: f32 = 3.5;
+pub(super) const WINDOW_CONTROLS_HEIGHT: f32 = 34.0;
+/// Headroom (unscaled px) reserved above the panel for the floating tab-dot
+/// capsule on a `WindowControls` row: 20px capsule + 6px gap.
+pub(super) const TAB_DOTS_OVERHANG: f32 = 26.0;

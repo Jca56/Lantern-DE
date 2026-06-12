@@ -445,7 +445,8 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
 
     while wl.running {
         // Drain any queued IPC commands and apply them.
-        if let Some(cmd) = ipc::drain(&sock) {
+        let ipc_cmd = ipc::drain(&sock);
+        if let Some(cmd) = ipc_cmd {
             tracing::debug!(?cmd, "ipc command received");
             // Any externally-triggered visibility change resets the
             // keyboard-held state. This is a safety net for the stale
@@ -547,7 +548,17 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         // tick at ~20Hz even with zero user input. Without the IPC fd
         // in the poll set the daemon would sit on `blocking_dispatch`
         // and miss any `--toggle` sent during idle-visible.
-        let poll_timeout = if app.is_animating() {
+        let poll_timeout = if ipc_cmd.is_some() {
+            // An IPC command just mutated visibility/animation state.
+            // A steady panel hasn't committed a frame recently, so no
+            // frame callback is pending to wake the poll — blocking
+            // here would stall the first frame of whatever animation
+            // the command started (Super-toggle collapse-then-close sat
+            // frozen for the full ACTIVE_POLL_CAP). Fall straight
+            // through and render now; that commit restarts the
+            // frame-callback chain.
+            Some(Duration::ZERO)
+        } else if app.is_animating() {
             Some(ACTIVE_POLL_CAP)
         } else {
             Some(IDLE_TICK)
@@ -803,9 +814,16 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         // Render gate: render if a wayland event signalled fresh state
         // (frame_done), OR if FALLBACK_REDRAW_INTERVAL has elapsed
         // since the last render so timer-driven UI (clock, sysmon)
-        // doesn't go stale while the panel is idle-visible.
+        // doesn't go stale while the panel is idle-visible, OR if an
+        // animation is in flight. The last one matters when the
+        // animation was started by something other than a wayland
+        // event (IPC toggle, Esc with a stationary mouse): the screen
+        // is static so no frame callback is pending, and waiting for
+        // the fallback timer froze the first half-second of the
+        // collapse-then-close fold. Rendering commits damage, which
+        // restarts the frame-callback chain at refresh rate.
         let fallback_due = last_render.elapsed() >= FALLBACK_REDRAW_INTERVAL;
-        if !wl.frame_done && !fallback_due {
+        if !wl.frame_done && !fallback_due && !app.is_animating() {
             continue;
         }
         wl.frame_done = false;

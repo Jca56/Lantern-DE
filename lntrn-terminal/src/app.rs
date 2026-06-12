@@ -49,7 +49,7 @@ pub struct Tab {
     pub custom_name: Option<String>,
 }
 
-pub(crate) const SPLIT_DIVIDER: f32 = 2.0;
+pub(crate) const SPLIT_DIVIDER: f32 = 3.0;
 
 pub struct App {
     pub config: LanternConfig,
@@ -85,9 +85,10 @@ pub struct App {
     pub chrome: ui_chrome::ChromeState,
     pub tab_bar: tab_bar::TabBarState,
     pub input: InteractionContext,
-    /// "Rice mode" — toggled by Super+F11. When true, chrome (titlebar,
-    /// tabs, sidebar) is not drawn and click-handlers ignore those regions
-    /// so the terminal grid fills the entire window.
+    /// "Rice mode" — toggled by Super+F11. When true, the title/tab bar is
+    /// not drawn and click-handlers ignore that region so the terminal grid
+    /// fills from y=0. The sidebar and right-click context menu stay usable
+    /// (the sidebar follows its own `visible` flag).
     pub chrome_hidden: bool,
 
     // Cursor blink
@@ -101,6 +102,9 @@ pub struct App {
     pub(crate) scroll_target_px: f32,
     pub(crate) scroll_current_px: f32,
     pub(crate) scroll_animating: bool,
+    /// Fractional wheel detents carried over between events while forwarding
+    /// scroll to a mouse-mode TUI (see `forward_wheel_to_tui`).
+    pub(crate) wheel_tick_accum: f32,
     pub(crate) last_frame_time: Instant,
     /// Last time we polled `lantern.toml` for theme/accent changes. Cheap
     /// throttle — the read isn't cached so we only check a few times per
@@ -131,6 +135,7 @@ impl App {
     pub fn new(proxy: EventLoopProxy<UserEvent>) -> Self {
         let config = LanternConfig::load();
         let theme = Theme::from_config(&config);
+        let open_chrome_hidden = config.general.open_chrome_hidden;
 
         // Restore a previously dragged sidebar width, if any.
         let mut sidebar = sidebar::SidebarState::new();
@@ -164,12 +169,13 @@ impl App {
             chrome: ui_chrome::ChromeState::new(),
             tab_bar: tab_bar::TabBarState::new(),
             input: InteractionContext::new(),
-            chrome_hidden: false,
+            chrome_hidden: open_chrome_hidden,
             cursor_visible: true,
             cursor_blink_deadline: Instant::now() + CURSOR_BLINK_INTERVAL,
             clipboard: clipboard::WaylandClipboard::new(),
             scroll_target_px: 0.0,
             scroll_current_px: 0.0,
+            wheel_tick_accum: 0.0,
             scroll_animating: false,
             last_frame_time: Instant::now(),
             last_theme_poll: Instant::now(),
@@ -261,9 +267,6 @@ impl App {
     }
 
     pub(crate) fn sidebar_offset(&self) -> f32 {
-        if self.chrome_hidden {
-            return 0.0;
-        }
         if self.sidebar.visible {
             self.sidebar.width
         } else {
@@ -505,6 +508,34 @@ impl App {
     }
 }
 
+/// Initial window size: 16:9 at `[windows] default_size_pct` of the monitor
+/// width (the same knob the compositor uses for default window sizing, set
+/// in lntrn-system-settings). Falls back to 1500x1000 when winit hasn't
+/// learned about any outputs yet.
+fn initial_window_size(event_loop: &ActiveEventLoop) -> LogicalSize<f64> {
+    let pct = (lntrn_theme::read_config_f32("windows", "default_size_pct", 60.0)
+        / 100.0)
+        .clamp(0.2, 1.0) as f64;
+
+    let Some(monitor) = event_loop
+        .primary_monitor()
+        .or_else(|| event_loop.available_monitors().next())
+    else {
+        return LogicalSize::new(1500.0, 1000.0);
+    };
+
+    let logical = monitor.size().to_logical::<f64>(monitor.scale_factor());
+    let mut w = logical.width * pct;
+    let mut h = w * 9.0 / 16.0;
+    // Portrait/short monitors: keep 16:9 but fit within the same pct of height.
+    let max_h = logical.height * pct;
+    if h > max_h {
+        h = max_h;
+        w = h * 16.0 / 9.0;
+    }
+    LogicalSize::new(w.max(480.0), h.max(320.0))
+}
+
 impl ApplicationHandler<UserEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
@@ -514,7 +545,7 @@ impl ApplicationHandler<UserEvent> for App {
         let mut attrs = WindowAttributes::default()
             .with_name("lntrn-terminal", "lntrn-terminal")
             .with_title("Lantern Terminal")
-            .with_inner_size(LogicalSize::new(1500.0, 1000.0))
+            .with_inner_size(initial_window_size(event_loop))
             .with_min_inner_size(LogicalSize::new(480.0, 320.0))
             .with_decorations(false)
             .with_transparent(true);
@@ -617,12 +648,23 @@ impl ApplicationHandler<UserEvent> for App {
                 self.render_frame();
                 // Process any menu events that occurred during rendering
                 if let Some(action) = self.pending_menu_event.take() {
+                    // Tab-switching actions keep the menu open — its items
+                    // (active tab dot, chevrons) must be rebuilt afterwards.
+                    let tab_nav = matches!(
+                        &action,
+                        ui_chrome::ClickAction::PrevTab
+                            | ui_chrome::ClickAction::NextTab
+                            | ui_chrome::ClickAction::SelectTab(_)
+                    );
                     match self.dispatch_chrome_action(action, event_loop, self.gpu.as_ref().map_or(600, |g| g.height())) {
                         EventResult::Exit => {
                             event_loop.exit();
                             return;
                         }
                         _ => {}
+                    }
+                    if tab_nav {
+                        self.refresh_context_menu_items();
                     }
                     // The menu auto-closed mid-frame (its geometry was
                     // already queued) — paint once more so the close and

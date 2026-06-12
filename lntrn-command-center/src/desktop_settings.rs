@@ -15,29 +15,18 @@ const ACCENT_RGB: (u8, u8, u8) = (0xc8, 0x86, 0x0a);
 const INACTIVE_RGB: (u8, u8, u8) = (0xff, 0xff, 0xff);
 const INACTIVE_ALPHA: f32 = 0.35;
 
-// ── Button on the top strip ───────────────────────────────────────────────
+// ── Button in the outer strip ─────────────────────────────────────────────
 
-/// Hit-rect for the button — lives in the old "clock" slot of the
-/// top strip.
-pub fn button_rect(panel: Rect, scale: f32) -> Rect {
-    crate::view_indicator::desktop_button_rect(panel, scale)
-}
-
-pub fn hit_test_button(panel: Rect, scale: f32, px: f32, py: f32) -> bool {
-    let r = button_rect(panel, scale);
-    px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h
-}
-
-/// Draw a small monitor / display glyph in the strip button.
+/// Draw a small monitor / display glyph in the slot rect the outer-zone
+/// layout allocated.
 pub fn draw_button(
     painter: &mut Painter,
-    panel: Rect,
+    r: Rect,
     scale: f32,
     alpha: f32,
     hovered: bool,
     popover_open: bool,
 ) {
-    let r = button_rect(panel, scale);
     let color = if hovered || popover_open {
         Color::from_rgb8(ACCENT_RGB.0, ACCENT_RGB.1, ACCENT_RGB.2).with_alpha(alpha)
     } else {

@@ -52,7 +52,9 @@ pub fn draw_content_grid(
         let alpha = if is_dragging { 0.3 } else { 1.0 };
 
 
-        let item_rect = Rect::new(x, y, isz, isz);
+        // Highlight matches the tight hitbox, not the full cell, so the
+        // hover/selection pill hugs the icon like the clickable area does.
+        let item_rect = crate::layout::item_hit_rect(Rect::new(x, y, isz, isz), s, zoom);
         if entry.selected {
             let tint = selection_tint(palette);
             painter.rect_filled(item_rect, 6.0 * s, tint.with_alpha(0.25 * alpha));

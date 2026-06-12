@@ -1,6 +1,7 @@
 //! Shared keycode-to-character mapping for text input fields.
 
 pub const KEY_BACKSPACE: u32 = 14;
+pub const KEY_TAB: u32 = 15;
 pub const KEY_ENTER: u32 = 28;
 pub const KEY_ESC: u32 = 1;
 pub const KEY_LEFT: u32 = 105;

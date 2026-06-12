@@ -1,18 +1,17 @@
-//! Now-playing controls, rendered as a floating card centered just below
-//! the bar (the same below-bar band the transparency/blur sliders use).
-//! Only shown while the bar is collapsed AND something is playing.
+//! Now-playing controls, rendered as a floating card in the below-bar
+//! band. Only shown while the bar is collapsed AND something is playing.
+//! Position comes from the outer-zone layout ([`crate::outer_zones`]) —
+//! the card rect is handed in rather than computed from the panel.
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
 use super::{Media, MediaButton, PlaybackStatus};
 
-/// Card size (logical px).
-const CARD_W: f32 = 480.0;
-const CARD_H: f32 = 62.0;
+/// Card size (logical px) — the outer zone layout sizes this widget's
+/// slot from these.
+pub const CARD_W: f32 = 480.0;
+pub const CARD_H: f32 = 62.0;
 const CARD_PAD: f32 = 18.0;
-/// Gap below the bar — matches the bar sliders' `TOP_GAP` so the card
-/// lines up with them vertically.
-const TOP_GAP: f32 = 12.0;
 const RADIUS: f32 = 16.0;
 
 const BTN: f32 = 32.0;
@@ -26,15 +25,6 @@ const TEXT_PROGRESS_GAP: f32 = 6.0;
 
 const ACCENT_RGB: (u8, u8, u8) = (0xc8, 0x86, 0x0a);
 const CARD_RGB: (u8, u8, u8) = (24, 24, 24);
-
-/// The card's bounding rect, centered horizontally below the bar.
-pub fn floating_rect(panel: Rect, scale: f32) -> Rect {
-    let w = CARD_W * scale;
-    let h = CARD_H * scale;
-    let x = panel.x + (panel.w - w) / 2.0;
-    let y = panel.y + panel.h + TOP_GAP * scale;
-    Rect::new(x, y, w, h)
-}
 
 /// True when the floating card should be present: a track exists to show.
 pub fn is_active(media: &Media) -> bool {
@@ -89,7 +79,7 @@ pub fn draw_floating(
     painter: &mut Painter,
     text: &mut TextRenderer,
     media: &Media,
-    panel: Rect,
+    card: Rect,
     scale: f32,
     alpha: f32,
     surface_w: u32,
@@ -102,7 +92,6 @@ pub fn draw_floating(
         return;
     };
 
-    let card = floating_rect(panel, scale);
     // Floating plate so it reads as a control over the desktop.
     painter.shadow(card, RADIUS * scale, 18.0 * scale, Color::BLACK.with_alpha(0.35 * alpha), 0.0, 4.0 * scale);
     painter.rect_filled(card, RADIUS * scale, Color::from_rgb8(CARD_RGB.0, CARD_RGB.1, CARD_RGB.2).with_alpha(0.78 * alpha));
@@ -144,9 +133,9 @@ pub fn draw_floating(
     }
 }
 
-/// Which transport button (if any) is under the cursor, given the bar rect.
-pub fn floating_button_hit(panel: Rect, scale: f32, px: f32, py: f32) -> Option<MediaButton> {
-    let g = geom(floating_rect(panel, scale), scale);
+/// Which transport button (if any) is under the cursor, given the card rect.
+pub fn floating_button_hit(card: Rect, scale: f32, px: f32, py: f32) -> Option<MediaButton> {
+    let g = geom(card, scale);
     let hit = |r: &Rect| px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
     if hit(&g.prev) {
         Some(MediaButton::Previous)

@@ -10,12 +10,15 @@ use crate::layout::{build_sidebar_layout, content_rect};
 use crate::settings::Settings;
 use crate::wayland::State;
 use crate::{
-    CTX_ADD_FAVORITE, CTX_CHANGE_ICON, CTX_COMPRESS, CTX_COPY, CTX_COPY_NAME, CTX_COPY_PATH,
-    CTX_CUT, CTX_DRIVE_EJECT, CTX_DRIVE_FORMAT, CTX_DRIVE_PROPERTIES, CTX_DUPLICATE,
-    CTX_EMPTY_TRASH, CTX_EXTRACT, CTX_NEW_FILE, CTX_NEW_FOLDER, CTX_NEW_FOLDER_BLUE,
+    CTX_ADD_FAVORITE, CTX_CHANGE_ICON, CTX_CLOSE_WINDOW, CTX_COMPRESS, CTX_COPY, CTX_COPY_NAME,
+    CTX_COPY_PATH, CTX_CUT, CTX_DRIVE_EJECT, CTX_DRIVE_FORMAT, CTX_DRIVE_PROPERTIES,
+    CTX_DUPLICATE, CTX_EMPTY_TRASH, CTX_EXTRACT, CTX_LNTRN, CTX_MAXIMIZE, CTX_MINIMIZE,
+    CTX_NEW_FILE, CTX_NEW_FOLDER, CTX_NEW_FOLDER_BLUE,
     CTX_NEW_FOLDER_GREEN, CTX_NEW_FOLDER_ORANGE, CTX_NEW_FOLDER_PLAIN, CTX_NEW_FOLDER_PURPLE,
-    CTX_NEW_FOLDER_RED, CTX_NEW_FOLDER_YELLOW, CTX_OPEN, CTX_OPEN_AS_ROOT, CTX_OPEN_LOCATION,
-    CTX_OPEN_TERMINAL, CTX_OPEN_WITH, CTX_OPEN_WITH_BASE, CTX_PASTE, CTX_PROPERTIES,
+    CTX_NEW_FOLDER_RED, CTX_NEW_FOLDER_YELLOW, CTX_NEXT_TAB, CTX_OPEN, CTX_OPEN_AS_ROOT,
+    CTX_OPEN_LOCATION,
+    CTX_OPEN_TERMINAL, CTX_OPEN_WITH, CTX_OPEN_WITH_BASE, CTX_PASTE, CTX_PREV_TAB,
+    CTX_PROPERTIES,
     CTX_REMOVE_FAVORITE, CTX_RENAME, CTX_SELECT_ALL, CTX_SHOW_HIDDEN, CTX_SORT_BY, CTX_SORT_DATE,
     CTX_SORT_NAME, CTX_SORT_SIZE, CTX_SORT_TYPE, CTX_TRASH,
 };
@@ -79,6 +82,19 @@ fn build_item_menu(
     }
     v.push(MenuItem::action(CTX_PROPERTIES, "Properties"));
     v
+}
+
+/// Mini title bar at the top of the content-area context menu (terminal
+/// style): window controls, the "lntrn" brand label (navigates home), and
+/// tab-cycle chevrons when more than one tab is open. Handy in rice mode
+/// where the real title bar is hidden.
+fn controls_row(app: &App) -> MenuItem {
+    let mut controls = MenuItem::window_controls(CTX_MINIMIZE, CTX_MAXIMIZE, CTX_CLOSE_WINDOW)
+        .controls_title(CTX_LNTRN, "lntrn");
+    if app.tabs.len() > 1 {
+        controls = controls.controls_nav(CTX_PREV_TAB, CTX_NEXT_TAB);
+    }
+    controls
 }
 
 /// Whether a right-clicked target is currently pinned. Controls which of
@@ -222,6 +238,10 @@ pub(crate) fn handle_right_click(
             }
             context_menu.set_scale(s);
             if let Some(backend) = popup_backend {
+                // Mini title bar up top — window mode only; the desktop
+                // surface has no window to control.
+                items.insert(0, controls_row(app));
+                items.insert(1, MenuItem::separator());
                 let lx = (cx / s) as f32;
                 let ly = (cy / s) as f32;
                 context_menu.open_popup(lx, ly, items, backend);
@@ -268,7 +288,7 @@ pub(crate) fn handle_right_click(
     };
 
     let has_clipboard = app.clipboard.is_some();
-    let items = match clicked_row {
+    let mut items = match clicked_row {
         ClickedRow::Item(idx) => {
             app.select_item(idx);
             app.context_target = Some(ContextTarget::Item(idx));
@@ -318,6 +338,9 @@ pub(crate) fn handle_right_click(
             app.clear_selection();
             app.context_target = Some(ContextTarget::Empty);
             let mut v = Vec::new();
+            v.push(MenuItem::checkbox(CTX_SHOW_HIDDEN, "Show Hidden Files", app.show_hidden));
+            v.push(MenuItem::slider(crate::CTX_ICON_SIZE, "Icon Size", app.icon_zoom));
+            v.push(MenuItem::separator());
             if has_clipboard {
                 v.push(MenuItem::action_with(CTX_PASTE, "Paste", "Ctrl+V"));
                 v.push(MenuItem::separator());
@@ -337,15 +360,16 @@ pub(crate) fn handle_right_click(
             v.push(MenuItem::separator());
             v.push(MenuItem::action(CTX_SELECT_ALL, "Select All"));
             v.push(MenuItem::action(CTX_OPEN_TERMINAL, "Open Terminal Here"));
-            v.push(MenuItem::separator());
-            v.push(MenuItem::checkbox(CTX_SHOW_HIDDEN, "Show Hidden Files", app.show_hidden));
             v
         }
     };
 
     context_menu.set_scale(s);
     if let Some(backend) = popup_backend {
-        // Window mode: open as xdg_popup surface
+        // Window mode: open as xdg_popup surface, with the terminal-style
+        // mini title bar up top (desktop surface has no window to control).
+        items.insert(0, controls_row(app));
+        items.insert(1, MenuItem::separator());
         let lx = (cx / s) as f32;
         let ly = (cy / s) as f32;
         context_menu.open_popup(lx, ly, items, backend);
@@ -355,17 +379,45 @@ pub(crate) fn handle_right_click(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn handle_ctx_event(
     app: &mut App, settings: &mut Settings,
     context_menu: &mut ContextMenu,
     popup_backend: &mut Option<WaylandPopupBackend<State>>,
     open_with_apps: &[DesktopApp],
     file_info: &mut crate::file_info::FileInfoCache,
+    toplevel: &Option<wayland_protocols::xdg::shell::client::xdg_toplevel::XdgToplevel>,
+    maximized: bool,
+    running: &mut bool,
     event: MenuEvent,
 ) {
     match event {
         MenuEvent::Action(id) => {
             match id {
+                // Mini title bar (window controls row)
+                CTX_MINIMIZE => {
+                    if let Some(t) = toplevel { t.set_minimized(); }
+                }
+                CTX_MAXIMIZE => {
+                    if let Some(t) = toplevel {
+                        if maximized { t.unset_maximized(); } else { t.set_maximized(); }
+                    }
+                }
+                CTX_CLOSE_WINDOW => *running = false,
+                CTX_LNTRN => app.navigate_to_home(),
+                CTX_PREV_TAB => {
+                    let n = app.tabs.len();
+                    if n > 1 {
+                        let i = if app.current_tab == 0 { n - 1 } else { app.current_tab - 1 };
+                        app.switch_tab(i);
+                    }
+                }
+                CTX_NEXT_TAB => {
+                    let n = app.tabs.len();
+                    if n > 1 {
+                        app.switch_tab((app.current_tab + 1) % n);
+                    }
+                }
                 CTX_OPEN => {
                     if let Some(ContextTarget::Favorite(idx)) = app.context_target.clone() {
                         app.on_favorite_click(idx);
@@ -629,9 +681,8 @@ pub(crate) fn handle_ctx_event(
                 app.show_hidden = checked;
                 settings.show_hidden = checked;
                 app.reload();
-                if let Some(backend) = popup_backend {
-                    context_menu.close_popups(backend);
-                }
+                // Menu stays open — it now shares a row group with the icon
+                // size slider, so the user can adjust both in one visit.
             }
         }
         _ => {}

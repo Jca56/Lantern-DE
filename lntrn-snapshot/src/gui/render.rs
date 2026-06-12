@@ -1,7 +1,7 @@
 use lntrn_render::{Color, Rect};
 use lntrn_ui::gpu::{
-    Button, ButtonVariant, FontSize, FoxPalette, GradientStrip, InteractionContext,
-    ScrollArea, Scrollbar, TextLabel, TitleBar,
+    draw_window_bg, Button, ButtonVariant, FontSize, FoxPalette, GradientStrip,
+    InteractionContext, ScrollArea, Scrollbar, TextLabel, TitleBar,
 };
 
 use super::{
@@ -32,13 +32,12 @@ pub fn render_frame(
     gpu: &mut Gpu,
     input: &mut InteractionContext,
     palette: &FoxPalette,
+    bg_opacity: f32,
     scale: f32,
     snapshots: &[SnapshotEntry],
     selected: Option<usize>,
     scroll_offset: &mut f32,
     status_msg: &str,
-    progress_fraction: Option<f32>,
-    progress_label: &str,
 ) {
     let Gpu { ctx, painter, text } = gpu;
     let w = ctx.width();
@@ -52,7 +51,12 @@ pub fn render_frame(
     input.begin_frame();
 
     // ── Window background ─────────────────────────────────────────
-    painter.rect_filled(Rect::new(0.0, 0.0, wf, hf), 10.0 * s, pal.bg);
+    // Solid bg at the system-wide [windows].background_opacity, plus the
+    // configured window gradient overlay. The compositor blurs behind the
+    // translucent area, matching every other Lantern app.
+    let corner_r = 18.0 * s;
+    let win_rect = Rect::new(0.0, 0.0, wf, hf);
+    draw_window_bg(painter, win_rect, corner_r, pal, bg_opacity);
 
     // ── Title bar ─────────────────────────────────────────────────
     let title_rect = Rect::new(0.0, 0.0, wf, TITLE_BAR_H * s);
@@ -63,6 +67,7 @@ pub fn render_frame(
 
     TitleBar::new(title_rect)
         .scale(s)
+        .transparent_bg(true)
         .close_hovered(close_state.is_hovered())
         .maximize_hovered(max_state.is_hovered())
         .minimize_hovered(min_state.is_hovered())
@@ -175,12 +180,17 @@ pub fn render_frame(
     );
 
     let col_name_x = PAD * s;
-    let col_kind_x = wf * 0.50;
-    let col_date_x = wf * 0.68;
+    let col_target_x = wf * 0.42;
+    let col_kind_x = wf * 0.56;
+    let col_date_x = wf * 0.70;
     let header_text_y = header_y + (HEADER_H * s - 20.0 * s) * 0.5;
     let header_font = FontSize::Custom(18.0 * s);
 
     TextLabel::new("NAME", col_name_x, header_text_y)
+        .size(header_font)
+        .color(pal.text_secondary)
+        .draw(text, w, h);
+    TextLabel::new("TARGET", col_target_x, header_text_y)
         .size(header_font)
         .color(pal.text_secondary)
         .draw(text, w, h);
@@ -238,7 +248,14 @@ pub fn render_frame(
         TextLabel::new(&snap.name, col_name_x, text_y)
             .size(row_font)
             .color(name_color)
-            .max_width(col_kind_x - col_name_x - PAD * s)
+            .max_width(col_target_x - col_name_x - PAD * s)
+            .draw(text, w, h);
+
+        // Target column
+        TextLabel::new(&snap.target, col_target_x, text_y)
+            .size(row_font)
+            .color(pal.text_secondary)
+            .max_width(col_kind_x - col_target_x - PAD * s)
             .draw(text, w, h);
 
         // Kind column
@@ -271,46 +288,8 @@ pub fn render_frame(
         scrollbar.draw(painter, sb_state, pal);
     }
 
-    // ── Status / progress bar ────────────────────────────────────
-    if let Some(fraction) = progress_fraction {
-        let bar_h = 36.0 * s;
-        let bar_y = hf - bar_h;
-        let bar_pad = PAD * s;
-        let bar_inner_h = 8.0 * s;
-
-        // Background
-        painter.rect_filled(
-            Rect::new(0.0, bar_y, wf, bar_h),
-            0.0,
-            pal.surface_2,
-        );
-
-        // Progress label + percentage
-        let pct_text = format!("{}%  {}", (fraction * 100.0) as u32, progress_label);
-        TextLabel::new(&pct_text, bar_pad, bar_y + 2.0 * s)
-            .size(FontSize::Custom(16.0 * s))
-            .color(pal.text)
-            .draw(text, w, h);
-
-        // Track
-        let track_y = bar_y + bar_h - bar_inner_h - 4.0 * s;
-        let track_w = wf - bar_pad * 2.0;
-        painter.rect_filled(
-            Rect::new(bar_pad, track_y, track_w, bar_inner_h),
-            4.0 * s,
-            pal.muted.with_alpha(0.2),
-        );
-
-        // Fill
-        let fill_w = track_w * fraction.clamp(0.0, 1.0);
-        if fill_w > 0.5 {
-            painter.rect_filled(
-                Rect::new(bar_pad, track_y, fill_w, bar_inner_h),
-                4.0 * s,
-                pal.accent,
-            );
-        }
-    } else if !status_msg.is_empty() {
+    // ── Status bar ────────────────────────────────────────────────
+    if !status_msg.is_empty() {
         let status_h = 28.0 * s;
         let status_y = hf - status_h;
         painter.rect_filled(

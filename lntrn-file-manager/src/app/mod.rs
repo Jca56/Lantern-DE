@@ -211,6 +211,10 @@ pub struct App {
 
     // Click-to-open deferred to release (so drag works)
     pub pending_open: Option<usize>,
+    /// Tree-view counterpart of `pending_open` — an index into
+    /// `tree_entries` (nested rows have no `entries` index). The deferred
+    /// action is expand/collapse for folders, launch for files.
+    pub pending_tree_open: Option<usize>,
     pub press_pos: Option<(f32, f32)>,
     /// Modifiers held at the moment of press — used by the release/drag
     /// handlers to decide between range-select, rubber-band, and open.
@@ -232,6 +236,8 @@ pub struct App {
 
     // Drag
     pub drag_item: Option<usize>,
+    /// Tree-view drag — an index into `tree_entries` (see `pending_tree_open`).
+    pub drag_tree_item: Option<usize>,
     pub drag_pos: Option<(f32, f32)>,
 
     // Rename
@@ -358,6 +364,7 @@ impl App {
             clipboard: None,
             drive_dialog: None,
             pending_open: None,
+            pending_tree_open: None,
             press_pos: None,
             press_shift: false,
             press_ctrl: false,
@@ -366,6 +373,7 @@ impl App {
             double_click_to_open: read_double_click_to_open(),
             selection_anchor: None,
             drag_item: None,
+            drag_tree_item: None,
             drag_pos: None,
             renaming: None,
             rename_buf: String::new(),

@@ -1,10 +1,11 @@
 use std::ffi::c_void;
+use std::os::fd::AsRawFd;
 use std::ptr::NonNull;
 
 use anyhow::{anyhow, Result};
 use lntrn_render::{Color, GpuContext, Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{
-    FoxPalette, GradientStrip, InteractionContext, TitleBar, WaylandPopupBackend,
+    draw_window_bg, FoxPalette, InteractionContext, TitleBar, WaylandPopupBackend,
 };
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
@@ -420,7 +421,6 @@ pub fn run() -> Result<()> {
     let mut painter = Painter::new(&gpu);
     let mut text = TextRenderer::new(&gpu);
     let mut ix = InteractionContext::new();
-    let fox = FoxPalette::dark();
 
     // Popup backend
     {
@@ -434,22 +434,53 @@ pub fn run() -> Result<()> {
 
     let mut app = crate::app::App::new();
     let mut needs_anim = false;
+    let mut last_frame = std::time::Instant::now();
+    let mut last_theme_variant = lntrn_theme::active_variant();
+    let mut last_theme_poll = std::time::Instant::now();
 
     while state.running {
-        // Non-blocking dispatch so app.tick() can process background events
-        if needs_anim {
-            event_queue.flush()?;
-            if let Some(guard) = event_queue.prepare_read() {
-                let _ = guard.read();
-            }
-            event_queue.dispatch_pending(&mut state)?;
-            std::thread::sleep(std::time::Duration::from_millis(16));
-            state.frame_done = true;
-        } else {
-            event_queue.blocking_dispatch(&mut state)?;
+        // Event dispatch. Animating: 16ms poll for ~60Hz redraws. Idle: poll
+        // up to 500ms (50ms while a git op is in flight) so worker events and
+        // the theme live-reload still get serviced. poll() on the wayland fd
+        // instead of sleeping so input events wake the loop immediately.
+        let timeout_ms: i32 = if needs_anim { 16 } else if app.busy() { 50 } else { 500 };
+        event_queue.flush()?;
+        if let Some(guard) = event_queue.prepare_read() {
+            let fd = guard.connection_fd().as_raw_fd();
+            let mut pfd = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+            let ret = unsafe { libc::poll(&mut pfd, 1, timeout_ms) };
+            if ret > 0 { let _ = guard.read(); } else { drop(guard); }
         }
+        event_queue.dispatch_pending(&mut state)?;
+
+        // Drain background git events — a finished op needs a redraw.
+        if app.tick() { state.frame_done = true; }
+
+        // Animations (smooth scroll, text cursor) keep frames flowing.
+        if needs_anim { state.frame_done = true; }
+
+        // Theme live-reload: the palette is re-resolved every frame, but a
+        // variant flip in System Settings needs a redraw kick while idle.
+        if last_theme_poll.elapsed() >= std::time::Duration::from_millis(500) {
+            last_theme_poll = std::time::Instant::now();
+            let v = lntrn_theme::active_variant();
+            if v != last_theme_variant {
+                last_theme_variant = v;
+                state.frame_done = true;
+            }
+        }
+
         if !state.frame_done { continue; }
         state.frame_done = false;
+
+        // Cap rendering at ~60Hz so high-rate pointer motion coalesces.
+        let since_last = last_frame.elapsed();
+        let frame_budget = std::time::Duration::from_millis(16);
+        if since_last < frame_budget {
+            std::thread::sleep(frame_budget - since_last);
+        }
+        let dt = last_frame.elapsed().as_secs_f32().min(0.1);
+        last_frame = std::time::Instant::now();
 
         let s = state.fractional_scale() as f32;
 
@@ -484,9 +515,6 @@ pub fn run() -> Result<()> {
             let active = if state.pointer_in_surface { pointer_on_popup } else { None };
             backend.route_cursor(active, cx, cy);
         }
-
-        // Tick app (drain background git events)
-        app.tick();
 
         // Keyboard
         if let Some(key) = state.key_pressed.take() {
@@ -550,11 +578,14 @@ pub fn run() -> Result<()> {
             ix.on_left_released();
         }
 
-        // Scroll
+        // Scroll — wheel detents move a boosted distance and ease toward the
+        // target instead of the old rigid 1:1 jump per event.
+        const SCROLL_STEP_MULT: f32 = 4.0;
         if state.scroll_delta != 0.0 {
-            app.on_scroll(state.scroll_delta);
+            app.on_scroll(state.scroll_delta * s * SCROLL_STEP_MULT);
             state.scroll_delta = 0.0;
         }
+        let scroll_animating = app.tick_scroll(dt);
 
         // Handle popup_done
         if state.popup_closed {
@@ -577,16 +608,17 @@ pub fn run() -> Result<()> {
         }
 
         // ── Render ──────────────────────────────────────────────────────
+        // Re-resolve every frame so System Settings → Appearance changes
+        // (theme variant, accent, background, opacity) apply without a
+        // relaunch. Blur is compositor-side — translucency lets it show.
+        let fox = FoxPalette::current();
+        let bg_opacity = lntrn_theme::background_opacity();
+
         ix.begin_frame();
         painter.clear();
 
         let win_r = if state.maximized { 0.0 } else { 10.0 * s };
-        if win_r > 0.0 {
-            let r = win_r;
-            painter.rect_filled(Rect::new(r, 1.0, wf - r * 2.0, hf - 2.0), 0.0, fox.bg);
-            painter.rect_filled(Rect::new(1.0, r, wf - 2.0, hf - r * 2.0), 0.0, fox.bg);
-        }
-        painter.rect_filled(Rect::new(0.0, 0.0, wf, hf), win_r, fox.bg);
+        draw_window_bg(&mut painter, Rect::new(0.0, 0.0, wf, hf), win_r, &fox, bg_opacity);
 
         // Title bar
         let tb_rect = Rect::new(0.0, 0.0, wf, TITLE_BAR_H * s);
@@ -600,6 +632,7 @@ pub fn run() -> Result<()> {
         let tb = TitleBar::new(tb_rect).scale(s);
         let tb_content = tb.content_rect();
         tb.maximized(state.maximized)
+            .transparent_bg(true)
             .close_hovered(close_s.is_hovered())
             .maximize_hovered(max_s.is_hovered())
             .minimize_hovered(min_s.is_hovered())
@@ -608,14 +641,13 @@ pub fn run() -> Result<()> {
         // App title bar content (back button, repo name, branch)
         app.draw_title_bar(&mut text, &mut ix, &fox, tb_content, &mut painter, s, sw, sh);
 
-        // Gradient strip
+        // Accent line under the title bar
         let strip_y = TITLE_BAR_H * s;
-        let mut strip = GradientStrip::new(0.0, strip_y, wf);
-        strip.height = 4.0 * s;
-        strip.draw(&mut painter);
+        let strip_h = 4.0 * s;
+        painter.rect_filled(Rect::new(0.0, strip_y, wf, strip_h), 0.0, fox.accent);
 
         // App content
-        let content_y = strip_y + strip.height;
+        let content_y = strip_y + strip_h;
         let content_h = hf - content_y;
         app.draw(
             &mut painter, &mut text, &mut ix, &fox,
@@ -643,8 +675,8 @@ pub fn run() -> Result<()> {
             backend.render_all();
         }
 
-        // Keep animating if app has pending work
-        needs_anim = app.wants_keyboard();
+        // Keep animating while scrolls glide or a text cursor is live
+        needs_anim = app.wants_keyboard() || scroll_animating;
 
         ix.clear_scroll();
         surface.frame(&qh, ());

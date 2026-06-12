@@ -45,6 +45,14 @@ pub struct Settings {
     /// User-pinned folder paths, ordered as the user arranged them.
     #[serde(default)]
     pub favorites: Vec<String>,
+    /// Window title bar visibility. Rice mode (hidden) is the default;
+    /// toggled live via Super+F11 or the View menu, persisted here.
+    #[serde(default)]
+    pub show_titlebar: bool,
+    /// Divider style: false = rainbow gradient strips (default), true = solid
+    /// accent-colored lines. Toggled from the View menu.
+    #[serde(default)]
+    pub solid_dividers: bool,
 }
 
 fn default_preview_width() -> f32 { 360.0 }
@@ -79,6 +87,8 @@ impl Default for Settings {
             favorites_collapsed: false,
             devices_collapsed: false,
             favorites: Vec::new(),
+            show_titlebar: false,
+            solid_dividers: false,
         }
     }
 }

@@ -50,6 +50,9 @@ pub const MENU_CLOSE_PANE: u32 = 202;
 pub const MENU_PREV_PANE: u32 = 203;
 pub const MENU_NEXT_PANE: u32 = 204;
 pub const MENU_TOGGLE_SIDEBAR: u32 = 300;
+/// View menu toggle: open new windows with the title/tab bar hidden
+/// (same "rice mode" Super+F11 toggles live).
+pub const MENU_OPEN_BAR_HIDDEN: u32 = 301;
 
 // Cursor style radio group + items
 pub const CURSOR_STYLE_GROUP: u32 = 500;
@@ -64,6 +67,21 @@ pub const CTX_SELECT_ALL: u32 = 402;
 pub const CTX_CLEAR_SCROLLBACK: u32 = 403;
 pub const CTX_NEW_TAB: u32 = 404;
 pub const CTX_CLOSE_TAB: u32 = 405;
+// Mini title bar (window controls) at the top of the context menu
+pub const CTX_MINIMIZE: u32 = 406;
+pub const CTX_MAXIMIZE: u32 = 407;
+pub const CTX_CLOSE_WINDOW: u32 = 408;
+/// "lntrn" brand label in the mini title bar — types `lntrn` + Enter into
+/// the active pane.
+pub const CTX_LNTRN: u32 = 409;
+// Tab-cycle chevrons in the mini title bar (only shown with >1 tab)
+pub const CTX_PREV_TAB: u32 = 410;
+pub const CTX_NEXT_TAB: u32 = 411;
+pub const CTX_OPEN_SIDEBAR: u32 = 412;
+/// Base id for the tab-indicator dots floating above the context menu.
+/// Dot for tab `i` fires `CTX_TAB_DOT_BASE + i` — this range is open-ended
+/// (one id per tab), so keep it the HIGHEST id block in the menu.
+pub const CTX_TAB_DOT_BASE: u32 = 500;
 
 // ── State ───────────────────────────────────────────────────────────────────
 
@@ -101,12 +119,14 @@ impl ChromeState {
     }
 }
 
-/// Terminal context-menu style: a richer panel sunk toward the window bg
-/// (instead of the stock flat `surface_2` grey) with an accent-tinted
-/// border and hover so it follows the user's theme + accent override.
+/// Terminal context-menu style: a black panel (instead of the stock flat
+/// `surface_2` grey) with an accent-tinted border and hover so it follows
+/// the user's theme + accent override. The bg is Lantern's standard black
+/// (#0A0A0A) by explicit user preference — exempt from the no-hardcoded-
+/// colors rule.
 pub fn context_menu_style(palette: &FoxPalette) -> ContextMenuStyle {
     let mut style = ContextMenuStyle::from_palette(palette);
-    style.bg = palette.surface_2.lerp(palette.bg, 0.55);
+    style.bg = Color::from_rgba8(10, 10, 10, 255);
     style.bg_hover = palette.accent.with_alpha(0.16);
     style.border = palette.accent.with_alpha(0.35);
     style.border_width = 1.5;
@@ -128,6 +148,8 @@ pub enum ClickAction {
     SplitHorizontal,
     SplitVertical,
     ClosePane,
+    /// Jump directly to tab `i` (from the context-menu tab dots).
+    SelectTab(usize),
     FocusPrevPane,
     FocusNextPane,
     ToggleSidebar,
@@ -137,6 +159,10 @@ pub enum ClickAction {
     NewTab,
     CloseTab,
     ClearScrollback,
+    PrevTab,
+    NextTab,
+    /// Type `lntrn` + Enter into the active pane (context-menu brand label).
+    RunLntrn,
 }
 
 // ── Menu definitions ────────────────────────────────────────────────────────
@@ -145,6 +171,7 @@ pub fn build_menus(
     font_size: f32,
     _sidebar_visible: bool,
     cursor_style: CursorStylePref,
+    open_bar_hidden: bool,
     _mode: &WindowMode,
 ) -> Vec<(&'static str, Vec<MenuItem>)> {
     let block_sel = matches!(cursor_style, CursorStylePref::Block);
@@ -161,6 +188,8 @@ pub fn build_menus(
             MenuItem::radio(MENU_CURSOR_BLOCK, CURSOR_STYLE_GROUP, "Block", block_sel),
             MenuItem::radio(MENU_CURSOR_UNDERLINE, CURSOR_STYLE_GROUP, "Underline", underline_sel),
             MenuItem::radio(MENU_CURSOR_BEAM, CURSOR_STYLE_GROUP, "Beam", beam_sel),
+            MenuItem::separator(),
+            MenuItem::toggle(MENU_OPEN_BAR_HIDDEN, "Open with Bar Hidden", open_bar_hidden),
         ]),
         ("Split", vec![
             MenuItem::action_with(MENU_SPLIT_RIGHT, "Split Right", "Ctrl+Shift+D"),
@@ -174,19 +203,41 @@ pub fn build_menus(
     ]
 }
 
-pub fn build_context_menu(has_selection: bool) -> Vec<MenuItem> {
+pub fn build_context_menu(
+    has_selection: bool,
+    tab_count: usize,
+    active_tab: usize,
+    pane_count: usize,
+    sidebar_visible: bool,
+) -> Vec<MenuItem> {
     let copy = if has_selection {
         MenuItem::action_with(CTX_COPY, "Copy", "Ctrl+Shift+C")
     } else {
         MenuItem::action_disabled(CTX_COPY, "Copy")
     };
+    // Mini title bar: window controls up top, handy in rice mode where
+    // the real title bar is hidden. The "lntrn" brand label runs the
+    // `lntrn` command; tab-cycle chevrons appear with more than one tab.
+    let mut controls = MenuItem::window_controls(CTX_MINIMIZE, CTX_MAXIMIZE, CTX_CLOSE_WINDOW)
+        .controls_title(CTX_LNTRN, "lntrn");
+    if tab_count > 1 {
+        controls = controls
+            .controls_nav(CTX_PREV_TAB, CTX_NEXT_TAB)
+            .controls_tabs(CTX_TAB_DOT_BASE, tab_count, active_tab);
+    }
+    let sidebar_label = if sidebar_visible { "Close Sidebar" } else { "Open Sidebar" };
     vec![
+        controls,
+        MenuItem::separator(),
+        MenuItem::action(CTX_OPEN_SIDEBAR, sidebar_label),
+        MenuItem::separator(),
         copy,
         MenuItem::action_with(CTX_PASTE, "Paste", "Ctrl+Shift+V"),
         MenuItem::action(CTX_SELECT_ALL, "Select All"),
         MenuItem::separator(),
         MenuItem::action_with(MENU_SPLIT_RIGHT, "Split Right", "Ctrl+Shift+D"),
         MenuItem::action_with(MENU_SPLIT_DOWN, "Split Down", "Ctrl+Shift+E"),
+        MenuItem::action_with(MENU_CLOSE_PANE, "Close Pane", "Ctrl+Shift+W").enabled(pane_count > 1),
         MenuItem::separator(),
         MenuItem::action_with(CTX_NEW_TAB, "New Tab", "Ctrl+Shift+T"),
         MenuItem::action(CTX_CLOSE_TAB, "Close Tab"),
@@ -288,6 +339,7 @@ pub fn draw_chrome(
     font_size: f32,
     sidebar_visible: bool,
     cursor_style: CursorStylePref,
+    open_bar_hidden: bool,
     _maximized: bool,
     scale: f32,
     mode: &WindowMode,
@@ -297,7 +349,7 @@ pub fn draw_chrome(
     let pal = &state.palette;
     let wf = screen_w as f32;
 
-    let menus = build_menus(font_size, sidebar_visible, cursor_style, mode);
+    let menus = build_menus(font_size, sidebar_visible, cursor_style, open_bar_hidden, mode);
     let layout = compute_layout(&menus, wf, s, mode);
 
     // ── Window controls — same circular style, mode-specific palette ────
@@ -451,6 +503,16 @@ pub fn menu_event_to_action(event: &MenuEvent) -> ClickAction {
             CTX_NEW_TAB => ClickAction::NewTab,
             CTX_CLOSE_TAB => ClickAction::CloseTab,
             CTX_CLEAR_SCROLLBACK => ClickAction::ClearScrollback,
+            CTX_MINIMIZE => ClickAction::Minimize,
+            CTX_MAXIMIZE => ClickAction::Maximize,
+            CTX_CLOSE_WINDOW => ClickAction::Close,
+            CTX_LNTRN => ClickAction::RunLntrn,
+            CTX_PREV_TAB => ClickAction::PrevTab,
+            CTX_NEXT_TAB => ClickAction::NextTab,
+            CTX_OPEN_SIDEBAR => ClickAction::ToggleSidebar,
+            id if id >= CTX_TAB_DOT_BASE => {
+                ClickAction::SelectTab((id - CTX_TAB_DOT_BASE) as usize)
+            }
             _ => ClickAction::None,
         },
         MenuEvent::Toggled { id, .. } => match *id {

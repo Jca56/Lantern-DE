@@ -36,7 +36,7 @@ pub use palette::{draw_window_bg, draw_window_gradient_overlay, FoxPalette};
 pub use popup::{PopupRenderContext, PopupSurface, WaylandPopupBackend};
 pub use progress::ProgressBar;
 pub use radio::{RadioButton, RadioGroup};
-pub use scroll::{ScrollArea, Scrollbar};
+pub use scroll::{ScrollArea, Scrollbar, SmoothScroll};
 pub use tabs::TabBar;
 pub use text::{FontSize, TextLabel};
 pub use text_input::TextInput;

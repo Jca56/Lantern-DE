@@ -4,23 +4,26 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 
 use lntrn_render::{Painter, Rect, TextRenderer};
-use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea, Scrollbar};
+use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea, Scrollbar, SmoothScroll};
 
 use crate::clone::{CloneAction, CloneView};
 use crate::git;
 use crate::main_view::{MainView, MainViewAction};
+use crate::new_repo::{NewRepoAction, NewRepoView};
 use crate::worker::{GitCmd, GitEvent};
 
 // Zone IDs
 const ZONE_REPO_BASE: u32 = 200;
 const ZONE_SCROLLBAR: u32 = 199;
 const ZONE_CLONE_BTN: u32 = 198;
+const ZONE_NEW_REPO_BTN: u32 = 197;
 
 #[derive(PartialEq)]
 enum View {
     RepoPicker,
     Main,
     Clone,
+    NewRepo,
 }
 
 pub struct App {
@@ -33,8 +36,9 @@ pub struct App {
     // Sub-views
     clone_view: CloneView,
     main_view: MainView,
+    new_repo_view: NewRepoView,
     // Picker scroll
-    scroll_offset: f32,
+    scroll: SmoothScroll,
     picker_content_height: f32,
     picker_viewport_h: f32,
     // Channels
@@ -53,7 +57,8 @@ impl App {
             repo_stack: Vec::new(),
             clone_view: CloneView::new(),
             main_view: MainView::new(cmd_tx.clone()),
-            scroll_offset: 0.0,
+            new_repo_view: NewRepoView::new(),
+            scroll: SmoothScroll::new(),
             picker_content_height: 0.0,
             picker_viewport_h: 0.0,
             cmd_tx,
@@ -63,8 +68,11 @@ impl App {
         app
     }
 
-    pub fn tick(&mut self) {
+    /// Drain background git events. Returns true if any arrived (= redraw).
+    pub fn tick(&mut self) -> bool {
+        let mut processed = false;
         while let Ok(event) = self.event_rx.try_recv() {
+            processed = true;
             match event {
                 GitEvent::Repos(repos) => { self.repos = repos; }
                 GitEvent::RemoteRepos(result) => {
@@ -74,9 +82,39 @@ impl App {
                         Err(e) => { self.clone_view.error = Some(e); }
                     }
                 }
+                GitEvent::RepoCreated(result) => {
+                    self.new_repo_view.creating = false;
+                    match result {
+                        Ok(res) => {
+                            let github_error = res.github_error;
+                            self.open_repo(res.path);
+                            if let Some(e) = github_error {
+                                self.main_view.handle_event(GitEvent::Error(format!("GitHub: {e}")));
+                            }
+                            self.new_repo_view.reset();
+                            // Refresh the picker so the new repo shows up there too.
+                            let _ = self.cmd_tx.send(GitCmd::FindRepos);
+                        }
+                        Err(e) => { self.new_repo_view.error = Some(e); }
+                    }
+                }
                 other => { self.main_view.handle_event(other); }
             }
         }
+        processed
+    }
+
+    /// Advance scroll animations. Returns true while anything is gliding.
+    pub fn tick_scroll(&mut self, dt: f32) -> bool {
+        let mut animating = self.scroll.tick(dt);
+        animating |= self.clone_view.tick_scroll(dt);
+        animating |= self.main_view.tick_scroll(dt);
+        animating
+    }
+
+    /// Whether a background git operation is in flight (drives poll cadence).
+    pub fn busy(&self) -> bool {
+        self.main_view.busy || self.clone_view.loading || self.new_repo_view.creating
     }
 
     pub fn on_click(&mut self, ix: &InteractionContext, phys_cx: f32, phys_cy: f32) {
@@ -108,7 +146,7 @@ impl App {
             match self.clone_view.on_click(ix, phys_cx, phys_cy) {
                 CloneAction::GoBack => {
                     self.view = View::RepoPicker;
-                    self.scroll_offset = 0.0;
+                    self.scroll.set(0.0);
                 }
                 CloneAction::OpenRepo(path) => {
                     self.open_repo(path);
@@ -118,16 +156,34 @@ impl App {
             return;
         }
 
+        // New repo view
+        if self.view == View::NewRepo {
+            match self.new_repo_view.on_click(ix, phys_cx, phys_cy) {
+                NewRepoAction::GoBack => {
+                    self.view = View::RepoPicker;
+                    self.scroll.set(0.0);
+                }
+                NewRepoAction::Create { name, parent, github, private } => {
+                    let _ = self.cmd_tx.send(GitCmd::CreateRepo { name, parent, github, private });
+                }
+                NewRepoAction::None => {}
+            }
+            return;
+        }
+
         // Repo picker
         let Some(zone) = ix.zone_at(phys_cx, phys_cy) else { return };
 
         if zone == ZONE_CLONE_BTN {
             self.view = View::Clone;
-            self.scroll_offset = 0.0;
+            self.scroll.set(0.0);
             if self.clone_view.repos.is_empty() {
                 self.clone_view.loading = true;
                 let _ = self.cmd_tx.send(GitCmd::FetchGitHubRepos);
             }
+        } else if zone == ZONE_NEW_REPO_BTN {
+            self.view = View::NewRepo;
+            self.scroll.set(0.0);
         } else if zone >= ZONE_REPO_BASE && zone < ZONE_REPO_BASE + 256 {
             let idx = (zone - ZONE_REPO_BASE) as usize;
             if let Some(repo) = self.repos.get(idx).cloned() {
@@ -139,7 +195,7 @@ impl App {
     fn open_repo(&mut self, path: PathBuf) {
         self.repo_path = Some(path.clone());
         self.view = View::Main;
-        self.scroll_offset = 0.0;
+        self.scroll.set(0.0);
         self.main_view.reset();
         self.main_view.repo_path = Some(path.clone());
         self.main_view.busy = true;
@@ -150,6 +206,13 @@ impl App {
         match self.view {
             View::Main => self.main_view.on_key(key, shift),
             View::Clone => self.clone_view.on_key(key, shift),
+            View::NewRepo => {
+                if let NewRepoAction::Create { name, parent, github, private } =
+                    self.new_repo_view.on_key(key, shift)
+                {
+                    let _ = self.cmd_tx.send(GitCmd::CreateRepo { name, parent, github, private });
+                }
+            }
             View::RepoPicker => {}
         }
     }
@@ -158,9 +221,10 @@ impl App {
         match self.view {
             View::Main => self.main_view.on_scroll(delta),
             View::Clone => self.clone_view.on_scroll(delta),
+            View::NewRepo => {}
             View::RepoPicker => {
-                ScrollArea::apply_scroll(
-                    &mut self.scroll_offset, delta,
+                self.scroll.scroll_by(
+                    delta,
                     self.picker_content_height, self.picker_viewport_h,
                 );
             }
@@ -171,6 +235,7 @@ impl App {
         match self.view {
             View::Main => self.main_view.wants_keyboard(),
             View::Clone => self.clone_view.wants_keyboard(),
+            View::NewRepo => self.new_repo_view.wants_keyboard(),
             View::RepoPicker => false,
         }
     }
@@ -187,7 +252,7 @@ impl App {
         let ty = tb_content.y + (tb_content.h - font) / 2.0;
 
         match self.view {
-            View::RepoPicker | View::Clone => {
+            View::RepoPicker | View::Clone | View::NewRepo => {
                 text.queue(
                     "Lantern Git", font, tx, ty, palette.text,
                     tb_content.w, screen_w, screen_h,
@@ -232,6 +297,11 @@ impl App {
                 content_x, content_y, content_w, content_h,
                 scale, screen_w, screen_h,
             ),
+            View::NewRepo => self.new_repo_view.draw(
+                painter, text, ix, palette,
+                content_x, content_y, content_w, content_h,
+                scale, screen_w, screen_h,
+            ),
             View::Main => self.main_view.draw(
                 painter, text, ix, palette,
                 content_x, content_y, content_w, content_h,
@@ -261,25 +331,31 @@ impl App {
         let label_y = cy + (action_row_h - title_font) / 2.0;
         text.queue("Open Repository", title_font, cx + pad, label_y, palette.text, cw, sw, sh);
 
-        // "Clone from GitHub" button
-        let clone_label = "Clone from GitHub";
+        // "New Repository" + "Clone from GitHub" buttons (right-aligned)
         let btn_font = 20.0 * s;
+        let btn_h = 38.0 * s;
+        let btn_y = cy + (action_row_h - btn_h) / 2.0;
+        let btn_gap = 10.0 * s;
         let clone_w = 200.0 * s;
-        let clone_h = 38.0 * s;
-        let clone_rect = Rect::new(
-            cx + cw - pad - clone_w,
-            cy + (action_row_h - clone_h) / 2.0,
-            clone_w, clone_h,
-        );
-        let clone_state = ix.add_zone(ZONE_CLONE_BTN, clone_rect);
-        let clone_color = if clone_state.is_hovered() { palette.accent } else { palette.accent.with_alpha(0.7) };
-        painter.rect_filled(clone_rect, 8.0 * s, clone_color);
-        let ct_y = clone_rect.y + (clone_h - btn_font) / 2.0;
-        let tw = btn_font * 0.5 * clone_label.len() as f32;
-        text.queue(
-            clone_label, btn_font, clone_rect.x + (clone_w - tw) / 2.0, ct_y,
-            palette.text, clone_w, sw, sh,
-        );
+        let new_w = 180.0 * s;
+
+        let clone_rect = Rect::new(cx + cw - pad - clone_w, btn_y, clone_w, btn_h);
+        let new_rect = Rect::new(clone_rect.x - btn_gap - new_w, btn_y, new_w, btn_h);
+
+        for (zone_id, label, rect) in [
+            (ZONE_NEW_REPO_BTN, "New Repository", new_rect),
+            (ZONE_CLONE_BTN, "Clone from GitHub", clone_rect),
+        ] {
+            let state = ix.add_zone(zone_id, rect);
+            let color = if state.is_hovered() { palette.accent } else { palette.accent.with_alpha(0.7) };
+            painter.rect_filled(rect, 8.0 * s, color);
+            let ty = rect.y + (btn_h - btn_font) / 2.0;
+            let tw = btn_font * 0.5 * label.len() as f32;
+            text.queue(
+                label, btn_font, rect.x + (rect.w - tw) / 2.0, ty,
+                palette.text, rect.w, sw, sh,
+            );
+        }
 
         // Divider below action row
         let action_div_h = 3.0 * s;
@@ -301,9 +377,10 @@ impl App {
 
         self.picker_content_height = total_content_h;
         self.picker_viewport_h = viewport_h;
+        self.scroll.clamp_to(total_content_h, viewport_h);
 
         let viewport = Rect::new(cx, header_y, cw, viewport_h);
-        let scroll = ScrollArea::new(viewport, total_content_h, &mut self.scroll_offset);
+        let scroll = ScrollArea::new(viewport, total_content_h, &mut self.scroll.offset);
 
         scroll.begin(painter, text);
 
@@ -345,7 +422,7 @@ impl App {
 
         scroll.end(painter, text);
 
-        let scrollbar = Scrollbar::new(&viewport, total_content_h, self.scroll_offset);
+        let scrollbar = Scrollbar::new(&viewport, total_content_h, self.scroll.offset);
         let sb_state = ix.add_zone(ZONE_SCROLLBAR, scrollbar.thumb);
         scrollbar.draw(painter, sb_state, palette);
     }

@@ -1,6 +1,8 @@
 //! Render the Claude-usage overlay page.
 //!
 //! Layout (top → bottom):
+//!   0. Live limit bars: current 5-hour + weekly window utilization
+//!      (same data Claude Code's `/usage` shows), color-coded.
 //!   1. Three hero stat cards stacked side-by-side under the toolbar:
 //!      `$ saved`, `Total tokens`, `Total turns`.
 //!   2. Time-window rows: Today / This week / This month / All time.
@@ -15,6 +17,7 @@
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
+use super::limits::{RateLimits, RateWindow};
 use super::pricing::short_name;
 use super::stats::{DayBucket, UsageStats};
 
@@ -119,6 +122,7 @@ pub fn draw(
     painter: &mut Painter,
     text: &mut TextRenderer,
     stats: &UsageStats,
+    limits: &RateLimits,
     panel: Rect,
     top_y: f32,
     scale: f32,
@@ -143,6 +147,28 @@ pub fn draw(
     let hero_label = body * 0.95;
     // The big hero number is hand-scaled per card width so it can still
     // dominate the layout when the user picks a small text-size.
+
+    // 0. Live limit bars — current 5-hour + weekly window utilization.
+    //    Hidden until the limits poller delivers its first snapshot
+    //    (no token / offline → the page simply looks like it used to).
+    let windows: [(&str, Option<&RateWindow>); 2] = [
+        ("5-hour limit", limits.five_hour.as_ref()),
+        ("Weekly limit", limits.seven_day.as_ref()),
+    ];
+    if windows.iter().any(|(_, w)| w.is_some()) {
+        let row_h = body * 1.85;
+        let mut drawn = 0u32;
+        for (label, win) in windows.iter() {
+            let Some(win) = win else { continue };
+            let ry = y + drawn as f32 * row_h;
+            draw_limit_row(
+                painter, text, content_x, ry, content_w, row_h, scale,
+                body, stat, chip, alpha, label, win, surface_w, surface_h,
+            );
+            drawn += 1;
+        }
+        y += drawn as f32 * row_h + pad * 0.7;
+    }
 
     // 1. Hero strip — three big stat cards.
     let card_gap = 14.0 * scale;
@@ -496,6 +522,135 @@ fn draw_card(
         surface_w,
         surface_h,
     );
+}
+
+/// One live rate-limit window row:
+///   `label ── [████████░░░░░░░░░] resets in 2h 41m  41%`
+/// Bar + percent share a traffic-light color so a glance tells you how
+/// hot the window is. Both rows use fixed column anchors so the bars
+/// line up vertically.
+#[allow(clippy::too_many_arguments)]
+fn draw_limit_row(
+    painter: &mut Painter,
+    text: &mut TextRenderer,
+    x: f32,
+    y: f32,
+    w: f32,
+    row_h: f32,
+    scale: f32,
+    body: f32,
+    stat: f32,
+    chip: f32,
+    alpha: f32,
+    label: &str,
+    win: &RateWindow,
+    surface_w: u32,
+    surface_h: u32,
+) {
+    // Traffic-light thresholds matching the shell statusline: green
+    // under 60%, orange under 85%, red past that.
+    let col = if win.utilization >= 85.0 {
+        Color::from_rgb8(255, 90, 90)
+    } else if win.utilization >= 60.0 {
+        Color::from_rgb8(255, 180, 80)
+    } else {
+        Color::from_rgb8(120, 220, 120)
+    };
+
+    // Fixed right-edge anchors shared by both rows.
+    let pct_right = x + w;
+    let reset_right = pct_right - stat * 3.4;
+    let bar_right = reset_right - chip * 8.6 - 14.0 * scale;
+    let bar_left = x + w * 0.22;
+
+    // Label.
+    let l_top = y + (row_h - body) * 0.5 - body * 0.15;
+    text.queue(
+        label,
+        body,
+        x,
+        l_top,
+        white(0.92 * alpha),
+        bar_left - x - 10.0 * scale,
+        surface_w,
+        surface_h,
+    );
+
+    // Track + fill. Chunkier than the breakdown bars below — these are
+    // the live numbers you open the page for.
+    let bar_h = (body * 0.50).clamp(8.0 * scale, 15.0 * scale);
+    let bar_y = y + (row_h - bar_h) * 0.5;
+    let bar_w = (bar_right - bar_left).max(40.0 * scale);
+    painter.rect_filled(
+        Rect::new(bar_left, bar_y, bar_w, bar_h),
+        bar_h / 2.0,
+        white(0.08 * alpha),
+    );
+    let frac = (win.utilization / 100.0).clamp(0.0, 1.0);
+    if frac > 0.001 {
+        painter.rect_filled(
+            Rect::new(bar_left, bar_y, (bar_w * frac).max(bar_h), bar_h),
+            bar_h / 2.0,
+            col.with_alpha(alpha),
+        );
+    }
+
+    // Reset countdown, muted, right-aligned to its own anchor.
+    if let Some(reset) = win.resets_at {
+        let now = now_epoch();
+        if reset > now {
+            let t = format!("resets in {}", fmt_remaining(reset - now));
+            let tw = text.measure_width(&t, chip);
+            let t_top = y + (row_h - chip) * 0.5 - chip * 0.15;
+            text.queue(
+                &t,
+                chip,
+                reset_right - tw,
+                t_top,
+                muted(0.70 * alpha),
+                tw,
+                surface_w,
+                surface_h,
+            );
+        }
+    }
+
+    // Percent, in the window color, rightmost.
+    let pct_text = format!("{:.0}%", win.utilization);
+    let pw = text.measure_width(&pct_text, stat);
+    let p_top = y + (row_h - stat) * 0.5 - stat * 0.15;
+    text.queue(
+        &pct_text,
+        stat,
+        pct_right - pw,
+        p_top,
+        col.with_alpha(alpha),
+        pw,
+        surface_w,
+        surface_h,
+    );
+}
+
+fn now_epoch() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// `5d 21h` for multi-day windows, `2h 41m` under two days, `41m` in
+/// the home stretch.
+fn fmt_remaining(secs: u64) -> String {
+    let mins = secs / 60;
+    let hours = mins / 60;
+    if hours >= 48 {
+        format!("{}d {}h", hours / 24, hours % 24)
+    } else if hours >= 1 {
+        format!("{}h {}m", hours, mins % 60)
+    } else {
+        format!("{}m", mins.max(1))
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

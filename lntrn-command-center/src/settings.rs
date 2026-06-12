@@ -58,17 +58,24 @@ const ACCENT_RGB: (u8, u8, u8) = (0xc8, 0x86, 0x0a);
 pub struct Config {
     /// Panel surface alpha (0.10 → 1.00).
     pub panel_opacity: f32,
-    /// When true, every fresh open of the panel starts in collapsed
-    /// mode.
-    pub open_collapsed: bool,
-    /// When false, the mini-dock under the bar is hidden even in
-    /// collapsed mode (chevron + clock only).
-    pub show_dock_collapsed: bool,
+    /// When true, every fresh open of the panel starts in expanded
+    /// mode. Default is off — the panel opens collapsed.
+    pub open_expanded: bool,
+    /// When true (the default), dismissing an expanded panel (click
+    /// outside / Super toggle / Esc) folds it down to the collapsed
+    /// bar first and only then plays the close animation. Off →
+    /// expanded panels close immediately.
+    pub collapse_before_close: bool,
     /// Unified text size (logical px) used by every Command Center
-    /// view — terminal cells, Files rows, search input, etc.
+    /// view — terminal cells, Files rows, search input, etc. No UI
+    /// slider anymore; fixed at the 22pt default unless hand-edited.
     pub text_size: f32,
     /// View-switch slide duration in seconds.
     pub view_anim_duration: f32,
+    /// When true, the panel slides in/out from the top screen edge on
+    /// open/close (and the mini-dock slides from the bottom edge)
+    /// instead of the default fade + center-scale animation.
+    pub slide_anim: bool,
     /// When true, expanding the panel doesn't grow the bar — instead
     /// a separate body window appears below the bar with a small gap.
     /// The bar (controls row) stays put at the top.
@@ -94,14 +101,19 @@ pub const GROW_W_MAX: f32 = 400.0;
 /// on wide monitors (1000 base + 1400 = 2400 logical px).
 pub const BAR_GROW_W_MAX: f32 = 1400.0;
 
+/// Step (logical px) the width sliders snap to. Snapped at hit-test
+/// time so click, drag, and the live pending knob all agree.
+pub const GROW_W_STEP: f32 = 10.0;
+
 impl Default for Config {
     fn default() -> Self {
         Self {
             panel_opacity: 0.92,
-            open_collapsed: false,
-            show_dock_collapsed: true,
+            open_expanded: false,
+            collapse_before_close: true,
             text_size: 22.0,
             view_anim_duration: 1.20,
+            slide_anim: false,
             panel_split: false,
             panel_split_gap: 50.0,
             panel_grow_w: 0.0,
@@ -161,8 +173,8 @@ fn parse(text: &str) -> Config {
                     cfg.panel_opacity = v.clamp(0.10, 1.0);
                 }
             }
-            "open_collapsed" => cfg.open_collapsed = value == "true",
-            "show_dock_collapsed" => cfg.show_dock_collapsed = value == "true",
+            "open_expanded" => cfg.open_expanded = value == "true",
+            "collapse_before_close" => cfg.collapse_before_close = value == "true",
             "text_size" => {
                 if let Ok(v) = value.parse::<f32>() {
                     cfg.text_size = v.clamp(12.0, 32.0);
@@ -177,12 +189,16 @@ fn parse(text: &str) -> Config {
                 }
             }
             // Dropped settings — silently ignore the old keys.
-            "terminal_output_size" | "files_text_size" | "wifi_backend" => {}
+            // (`open_collapsed` is intentionally ignored rather than
+            // inverted: collapsed-open is the new baseline for everyone.)
+            "terminal_output_size" | "files_text_size" | "wifi_backend" | "open_collapsed"
+            | "show_dock_collapsed" => {}
             "view_anim_duration" => {
                 if let Ok(v) = value.parse::<f32>() {
                     cfg.view_anim_duration = v.clamp(0.10, 3.0);
                 }
             }
+            "slide_anim" => cfg.slide_anim = value == "true",
             "panel_split" => cfg.panel_split = value == "true",
             "panel_split_gap" => {
                 if let Ok(v) = value.parse::<f32>() {
@@ -209,19 +225,21 @@ fn render_text(c: &Config) -> String {
     format!(
         "# lntrn-command-center settings\n\
          panel_opacity = {:.3}\n\
-         open_collapsed = {}\n\
-         show_dock_collapsed = {}\n\
+         open_expanded = {}\n\
+         collapse_before_close = {}\n\
          text_size = {:.1}\n\
          view_anim_duration = {:.2}\n\
+         slide_anim = {}\n\
          panel_split = {}\n\
          panel_split_gap = {:.1}\n\
          panel_grow_w = {:.1}\n\
          bar_grow_w = {:.1}\n",
         c.panel_opacity,
-        c.open_collapsed,
-        c.show_dock_collapsed,
+        c.open_expanded,
+        c.collapse_before_close,
         c.text_size,
         c.view_anim_duration,
+        c.slide_anim,
         c.panel_split,
         c.panel_split_gap,
         c.panel_grow_w,
@@ -236,11 +254,11 @@ fn render_text(c: &Config) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingKey {
     PanelOpacity,
-    OpenCollapsed,
-    ShowDockCollapsed,
+    OpenExpanded,
+    CollapseBeforeClose,
+    SlideAnim,
     PanelSplit,
     PanelSplitGap,
-    TextSize,
     ViewAnimDuration,
     /// Extra width added to the expanded panel.
     PanelGrowW,
@@ -255,6 +273,18 @@ impl SettingKey {
     /// from under the cursor as the panel resizes.
     pub fn defers_during_drag(self) -> bool {
         matches!(self, SettingKey::PanelGrowW)
+    }
+
+    /// Snap a raw slider value to this setting's step, if it has one.
+    /// The width sliders move in 10 px increments; everything else is
+    /// continuous.
+    fn snap(self, value: f32) -> f32 {
+        match self {
+            SettingKey::PanelGrowW | SettingKey::BarGrowW => {
+                (value / GROW_W_STEP).round() * GROW_W_STEP
+            }
+            _ => value,
+        }
     }
 }
 
@@ -278,51 +308,6 @@ struct SectionDef {
 
 const SECTIONS: &[SectionDef] = &[
     SectionDef {
-        title: "Appearance",
-        rows: &[
-            RowDef {
-                key: SettingKey::PanelOpacity,
-                label: "Panel opacity",
-                kind: RowKind::Slider(0.10, 1.0, "%"),
-            },
-            RowDef {
-                key: SettingKey::TextSize,
-                label: "Text size",
-                kind: RowKind::Slider(12.0, 32.0, "pt"),
-            },
-            RowDef {
-                key: SettingKey::ViewAnimDuration,
-                label: "View slide duration",
-                kind: RowKind::Slider(0.20, 2.50, "s"),
-            },
-        ],
-    },
-    SectionDef {
-        title: "Behavior",
-        rows: &[
-            RowDef {
-                key: SettingKey::OpenCollapsed,
-                label: "Open in collapsed mode",
-                kind: RowKind::Toggle,
-            },
-            RowDef {
-                key: SettingKey::ShowDockCollapsed,
-                label: "Show pinned dock when collapsed",
-                kind: RowKind::Toggle,
-            },
-            RowDef {
-                key: SettingKey::PanelSplit,
-                label: "Split bar and panel into separate windows",
-                kind: RowKind::Toggle,
-            },
-            RowDef {
-                key: SettingKey::PanelSplitGap,
-                label: "Split gap",
-                kind: RowKind::Slider(0.0, 120.0, "px"),
-            },
-        ],
-    },
-    SectionDef {
         title: "Size",
         rows: &[
             RowDef {
@@ -334,6 +319,51 @@ const SECTIONS: &[SectionDef] = &[
                 key: SettingKey::BarGrowW,
                 label: "Collapsed width",
                 kind: RowKind::Slider(0.0, BAR_GROW_W_MAX, "px"),
+            },
+        ],
+    },
+    SectionDef {
+        title: "Appearance",
+        rows: &[
+            RowDef {
+                key: SettingKey::PanelOpacity,
+                label: "Panel opacity",
+                kind: RowKind::Slider(0.10, 1.0, "%"),
+            },
+            RowDef {
+                key: SettingKey::ViewAnimDuration,
+                label: "View slide duration",
+                kind: RowKind::Slider(0.20, 2.50, "s"),
+            },
+            RowDef {
+                key: SettingKey::SlideAnim,
+                label: "Slide in/out instead of fade",
+                kind: RowKind::Toggle,
+            },
+        ],
+    },
+    SectionDef {
+        title: "Behavior",
+        rows: &[
+            RowDef {
+                key: SettingKey::OpenExpanded,
+                label: "Open in expanded mode",
+                kind: RowKind::Toggle,
+            },
+            RowDef {
+                key: SettingKey::CollapseBeforeClose,
+                label: "Collapse before closing",
+                kind: RowKind::Toggle,
+            },
+            RowDef {
+                key: SettingKey::PanelSplit,
+                label: "Split bar and panel into separate windows",
+                kind: RowKind::Toggle,
+            },
+            RowDef {
+                key: SettingKey::PanelSplitGap,
+                label: "Split gap",
+                kind: RowKind::Slider(0.0, 120.0, "px"),
             },
         ],
     },
@@ -449,7 +479,7 @@ pub fn hit_test(rows: &[RowLayout], px: f32, py: f32) -> Option<SettingHit> {
                 let y_max = r.y + r.h + 16.0;
                 if px >= r.x && px <= r.x + r.w && py >= y_min && py <= y_max {
                     let t = ((px - r.x) / r.w).clamp(0.0, 1.0);
-                    let value = min + (max - min) * t;
+                    let value = row.key.snap(min + (max - min) * t);
                     return Some(SettingHit::SliderSeek(row.key, value));
                 }
             }
@@ -468,7 +498,7 @@ pub fn hit_slider_only(rows: &[RowLayout], key: SettingKey, px: f32) -> Option<f
         }
         if let ControlLayout::Slider(r, min, max) = row.control {
             let t = ((px - r.x) / r.w).clamp(0.0, 1.0);
-            return Some(min + (max - min) * t);
+            return Some(key.snap(min + (max - min) * t));
         }
     }
     None
@@ -477,11 +507,11 @@ pub fn hit_slider_only(rows: &[RowLayout], key: SettingKey, px: f32) -> Option<f
 pub fn current_value(cfg: &Config, key: SettingKey) -> SettingValue {
     match key {
         SettingKey::PanelOpacity => SettingValue::F(cfg.panel_opacity),
-        SettingKey::OpenCollapsed => SettingValue::B(cfg.open_collapsed),
-        SettingKey::ShowDockCollapsed => SettingValue::B(cfg.show_dock_collapsed),
+        SettingKey::OpenExpanded => SettingValue::B(cfg.open_expanded),
+        SettingKey::CollapseBeforeClose => SettingValue::B(cfg.collapse_before_close),
+        SettingKey::SlideAnim => SettingValue::B(cfg.slide_anim),
         SettingKey::PanelSplit => SettingValue::B(cfg.panel_split),
         SettingKey::PanelSplitGap => SettingValue::F(cfg.panel_split_gap),
-        SettingKey::TextSize => SettingValue::F(cfg.text_size),
         SettingKey::ViewAnimDuration => SettingValue::F(cfg.view_anim_duration),
         SettingKey::PanelGrowW => SettingValue::F(cfg.panel_grow_w),
         SettingKey::BarGrowW => SettingValue::F(cfg.bar_grow_w),
@@ -491,11 +521,11 @@ pub fn current_value(cfg: &Config, key: SettingKey) -> SettingValue {
 pub fn apply_value(cfg: &mut Config, key: SettingKey, value: SettingValue) {
     match (key, value) {
         (SettingKey::PanelOpacity, SettingValue::F(v)) => cfg.panel_opacity = v.clamp(0.10, 1.0),
-        (SettingKey::OpenCollapsed, SettingValue::B(v)) => cfg.open_collapsed = v,
-        (SettingKey::ShowDockCollapsed, SettingValue::B(v)) => cfg.show_dock_collapsed = v,
+        (SettingKey::OpenExpanded, SettingValue::B(v)) => cfg.open_expanded = v,
+        (SettingKey::CollapseBeforeClose, SettingValue::B(v)) => cfg.collapse_before_close = v,
+        (SettingKey::SlideAnim, SettingValue::B(v)) => cfg.slide_anim = v,
         (SettingKey::PanelSplit, SettingValue::B(v)) => cfg.panel_split = v,
         (SettingKey::PanelSplitGap, SettingValue::F(v)) => cfg.panel_split_gap = v.clamp(0.0, 120.0),
-        (SettingKey::TextSize, SettingValue::F(v)) => cfg.text_size = v.clamp(12.0, 32.0),
         (SettingKey::ViewAnimDuration, SettingValue::F(v)) => cfg.view_anim_duration = v.clamp(0.10, 3.0),
         (SettingKey::PanelGrowW, SettingValue::F(v)) => cfg.panel_grow_w = v.clamp(0.0, GROW_W_MAX),
         (SettingKey::BarGrowW, SettingValue::F(v)) => cfg.bar_grow_w = v.clamp(0.0, BAR_GROW_W_MAX),
@@ -762,7 +792,7 @@ fn draw_slider(
 fn format_value(value: f32, unit: &str) -> String {
     match unit {
         "%" => format!("{}%", (value * 100.0).round() as i32),
-        "pt" => format!("{} pt", value.round() as i32),
+        "px" => format!("{} px", value.round() as i32),
         "s" => format!("{:.2} s", value),
         _ => format!("{:.2}", value),
     }

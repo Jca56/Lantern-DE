@@ -2549,6 +2549,7 @@ name = "lntrn-git"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "libc",
  "lntrn-render",
  "lntrn-theme",
  "lntrn-ui",
@@ -2808,6 +2809,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "lntrn-render",
+ "lntrn-theme",
  "lntrn-ui",
  "winit",
 ]
@@ -2888,6 +2890,7 @@ dependencies = [
  "glyphon",
  "lntrn-draw",
  "lntrn-gfx",
+ "unicode-script",
  "wgpu",
 ]
 

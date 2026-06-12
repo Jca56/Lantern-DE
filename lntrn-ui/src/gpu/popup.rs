@@ -191,7 +191,6 @@ struct PopupEntry {
     wl_surface: wl_surface::WlSurface,
     xdg_surface: xdg_surface::XdgSurface,
     xdg_popup: xdg_popup::XdgPopup,
-    #[allow(dead_code)]
     viewport: Option<wp_viewport::WpViewport>,
     render: PopupRenderContext,
     configured: bool,
@@ -318,11 +317,32 @@ where
     }
 
     pub fn configure_size(&mut self, id: u32, width: u32, height: u32) {
+        self.apply_popup_size(id, width, height);
+    }
+
+    /// Keep in sync with the output's fractional scale (call whenever it may
+    /// have changed — a per-frame call is fine). Menus bake this scale into
+    /// the pixel sizes they draw at; if the backend lags behind, popup
+    /// buffers are allocated from the stale scale and come out smaller than
+    /// the drawn content — the menu renders clipped on the right/bottom.
+    pub fn set_scale(&mut self, scale: f32) {
+        self.scale = scale;
+    }
+
+    /// Resize a popup's GPU buffer to `width`×`height` logical px and keep
+    /// the viewport destination in step — otherwise the compositor squeezes
+    /// the new buffer into the old destination size.
+    fn apply_popup_size(&mut self, id: u32, width: u32, height: u32) {
+        if width == 0 || height == 0 { return; }
         if let Some(p) = self.popups.get_mut(&id) {
-            if width > 0 && height > 0 {
-                let phys_w = ((width as f32) * self.scale).ceil() as u32;
-                let phys_h = ((height as f32) * self.scale).ceil() as u32;
-                p.render.gpu.resize(phys_w.max(1), phys_h.max(1));
+            let phys_w = (((width as f32) * self.scale).ceil() as u32).max(1);
+            let phys_h = (((height as f32) * self.scale).ceil() as u32).max(1);
+            if p.render.gpu.width() == phys_w && p.render.gpu.height() == phys_h {
+                return; // called per-frame for submenus — don't spam the viewport
+            }
+            p.render.gpu.resize(phys_w, phys_h);
+            if let Some(vp) = &p.viewport {
+                vp.set_destination(width as i32, height as i32);
             }
         }
     }
@@ -418,11 +438,7 @@ where
     }
 
     fn resize_popup(&mut self, id: u32, width: u32, height: u32) {
-        if let Some(p) = self.popups.get_mut(&id) {
-            let phys_w = ((width as f32) * self.scale).ceil() as u32;
-            let phys_h = ((height as f32) * self.scale).ceil() as u32;
-            p.render.gpu.resize(phys_w.max(1), phys_h.max(1));
-        }
+        self.apply_popup_size(id, width, height);
     }
 
     fn destroy_popup(&mut self, id: u32) {

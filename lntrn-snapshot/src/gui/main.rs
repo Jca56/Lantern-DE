@@ -1,7 +1,5 @@
 mod render;
 
-use std::sync::mpsc;
-
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
@@ -9,8 +7,6 @@ use winit::platform::wayland::WindowAttributesExtWayland;
 use winit::window::{CursorIcon, ResizeDirection, Window, WindowAttributes, WindowId};
 
 use lntrn_render::{GpuContext, Painter, TextRenderer};
-use lntrn_snapshot::config::Config;
-use lntrn_snapshot::manager::{Progress, SnapshotKind, SnapshotManager};
 use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea};
 
 // ── Hit zone IDs ────────────────────────────────────────────────────
@@ -33,6 +29,8 @@ pub struct SnapshotEntry {
     pub name: String,
     pub kind: String,
     pub date: String,
+    /// Source mount this snapshot belongs to, e.g. "/" or "/home".
+    pub target: String,
 }
 
 // ── GPU ─────────────────────────────────────────────────────────────
@@ -53,6 +51,18 @@ fn main() {
         std::process::exit(1);
     }
 
+    // Under sudo, HOME points at /root — retarget it to the invoking user
+    // so lntrn-theme finds their ~/.lantern/config/lantern.toml and we find
+    // the CLI in their ~/.lantern/bin.
+    if let Ok(user) = std::env::var("SUDO_USER") {
+        if user != "root" {
+            let home = format!("/home/{user}");
+            if std::path::Path::new(&home).exists() {
+                std::env::set_var("HOME", &home);
+            }
+        }
+    }
+
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     let mut handler = SnapHandler::new();
     event_loop.run_app(&mut handler).expect("Event loop failed");
@@ -65,21 +75,13 @@ struct SnapHandler {
     gpu: Option<Gpu>,
     input: InteractionContext,
     palette: FoxPalette,
+    bg_opacity: f32,
     scale: f32,
     needs_redraw: bool,
     snapshots: Vec<SnapshotEntry>,
     selected: Option<usize>,
     scroll_offset: f32,
     status_msg: String,
-    /// Progress bar state — Some while an operation is running.
-    progress: Option<ProgressState>,
-}
-
-struct ProgressState {
-    rx: mpsc::Receiver<Progress>,
-    handle: Option<std::thread::JoinHandle<Result<lntrn_snapshot::manager::Snapshot, lntrn_snapshot::manager::SnapError>>>,
-    fraction: f32,
-    label: String,
 }
 
 impl SnapHandler {
@@ -88,14 +90,14 @@ impl SnapHandler {
             window: None,
             gpu: None,
             input: InteractionContext::new(),
-            palette: FoxPalette::dark(),
+            palette: FoxPalette::current(),
+            bg_opacity: lntrn_theme::background_opacity(),
             scale: 1.0,
             needs_redraw: true,
             snapshots: Vec::new(),
             selected: None,
             scroll_offset: 0.0,
             status_msg: String::new(),
-            progress: None,
         }
     }
 
@@ -115,126 +117,59 @@ impl SnapHandler {
     }
 
     fn action_create(&mut self) {
-        // Don't start another if one is already running
-        if self.progress.is_some() { return; }
-
-        let config = Config::load();
-        if let Some(target) = config.targets.first() {
-            let mut mgr = SnapshotManager::new(
-                target.source.clone(),
-                target.snapshot_dir.clone(),
-            );
-            mgr.excludes = config.excludes.clone();
-            let snap_dir_str = target.snapshot_dir.to_string_lossy().to_string();
-            if !mgr.excludes.contains(&snap_dir_str) {
-                mgr.excludes.push(snap_dir_str);
-            }
-
-            match mgr.create_with_progress(SnapshotKind::Manual) {
-                Ok((rx, handle)) => {
-                    self.progress = Some(ProgressState {
-                        rx,
-                        handle: Some(handle),
-                        fraction: 0.0,
-                        label: "Starting snapshot...".into(),
-                    });
-                    self.status_msg.clear();
-                }
-                Err(e) => {
-                    self.status_msg = format!("error: {e}");
-                }
-            }
-        }
-    }
-
-    /// Poll progress channel — called every frame while an operation is running.
-    fn poll_progress(&mut self) {
-        let finished = if let Some(prog) = &mut self.progress {
-            let mut done = false;
-            while let Ok(p) = prog.rx.try_recv() {
-                prog.fraction = p.fraction;
-                prog.label = p.label;
-                done = p.done;
-            }
-            self.needs_redraw = true;
-            done
-        } else {
-            return;
-        };
-
-        if finished {
-            if let Some(mut prog) = self.progress.take() {
-                if let Some(handle) = prog.handle.take() {
-                    match handle.join() {
-                        Ok(Ok(snap)) => {
-                            self.status_msg = format!("Created {}", snap.name);
-                        }
-                        Ok(Err(e)) => {
-                            self.status_msg = format!("error: {e}");
-                        }
-                        Err(_) => {
-                            self.status_msg = "error: snapshot thread panicked".into();
-                        }
-                    }
-                }
-            }
-            self.refresh_list();
-            self.needs_redraw = true;
-        }
-    }
-
-    fn action_prune(&mut self) {
-        let output = run_snapshot_cmd(&["prune"]);
-        self.status_msg = output;
+        // btrfs snapshots are instant — blocking the UI for a few ms is fine
+        self.status_msg = run_snapshot_cmd(&["create"]);
         self.refresh_list();
     }
 
+    fn action_prune(&mut self) {
+        self.status_msg = run_snapshot_cmd(&["prune"]);
+        self.refresh_list();
+    }
+
+    fn selected_entry(&self) -> Option<&SnapshotEntry> {
+        self.selected.and_then(|idx| self.snapshots.get(idx))
+    }
+
     fn action_delete(&mut self) {
-        if let Some(idx) = self.selected {
-            if let Some(snap) = self.snapshots.get(idx) {
-                let name = snap.name.clone();
-                let output = run_snapshot_cmd(&["delete", &name]);
-                self.status_msg = output;
-                self.refresh_list();
-            }
+        if let Some(snap) = self.selected_entry() {
+            let (name, target) = (snap.name.clone(), snap.target.clone());
+            self.status_msg = run_snapshot_cmd(&["delete", &name, "--target", &target]);
+            self.refresh_list();
         }
     }
 
     fn action_rollback(&mut self) {
-        if let Some(idx) = self.selected {
-            if let Some(snap) = self.snapshots.get(idx) {
-                let name = snap.name.clone();
-                let output = run_snapshot_cmd(&["rollback", &name]);
-                self.status_msg = output;
-                self.refresh_list();
-            }
+        if let Some(snap) = self.selected_entry() {
+            let (name, target) = (snap.name.clone(), snap.target.clone());
+            self.status_msg = run_snapshot_cmd(&["rollback", &name, "--target", &target]);
+            self.refresh_list();
         }
     }
 
     fn action_rename(&mut self) {
-        if let Some(idx) = self.selected {
-            if let Some(snap) = self.snapshots.get(idx) {
-                let old_name = snap.name.clone();
-                // Use zenity for input dialog
-                let result = std::process::Command::new("zenity")
-                    .args([
-                        "--entry",
-                        "--title=Rename Snapshot",
-                        "--text=New name:",
-                        &format!("--entry-text={}", old_name),
-                    ])
-                    .output();
-                if let Ok(out) = result {
-                    if out.status.success() {
-                        let new_name = String::from_utf8_lossy(&out.stdout)
-                            .trim()
-                            .to_string();
-                        if !new_name.is_empty() && new_name != old_name {
-                            let output =
-                                run_snapshot_cmd(&["rename", &old_name, &new_name]);
-                            self.status_msg = output;
-                            self.refresh_list();
-                        }
+        if let Some(snap) = self.selected_entry() {
+            let old_name = snap.name.clone();
+            let target = snap.target.clone();
+            // Use zenity for input dialog
+            let result = std::process::Command::new("zenity")
+                .args([
+                    "--entry",
+                    "--title=Rename Snapshot",
+                    "--text=New name:",
+                    &format!("--entry-text={}", old_name),
+                ])
+                .output();
+            if let Ok(out) = result {
+                if out.status.success() {
+                    let new_name = String::from_utf8_lossy(&out.stdout)
+                        .trim()
+                        .to_string();
+                    if !new_name.is_empty() && new_name != old_name {
+                        self.status_msg = run_snapshot_cmd(&[
+                            "rename", &old_name, &new_name, "--target", &target,
+                        ]);
+                        self.refresh_list();
                     }
                 }
             }
@@ -431,35 +366,25 @@ impl ApplicationHandler for SnapHandler {
             }
 
             WindowEvent::RedrawRequested => {
-                // Poll progress before rendering
-                self.poll_progress();
-
-                let (prog_fraction, prog_label) = self.progress.as_ref()
-                    .map(|p| (Some(p.fraction), p.label.as_str()))
-                    .unwrap_or((None, ""));
+                // Re-read the theme each frame so System Settings changes
+                // (theme/accent/background/opacity) apply on the next draw.
+                self.palette = FoxPalette::current();
+                self.bg_opacity = lntrn_theme::background_opacity();
 
                 if let Some(gpu) = &mut self.gpu {
                     render::render_frame(
                         gpu,
                         &mut self.input,
                         &self.palette,
+                        self.bg_opacity,
                         self.scale,
                         &self.snapshots,
                         self.selected,
                         &mut self.scroll_offset,
                         &self.status_msg,
-                        prog_fraction,
-                        prog_label,
                     );
                 }
                 self.needs_redraw = false;
-
-                // Keep redrawing while progress is active
-                if self.progress.is_some() {
-                    if let Some(w) = &self.window {
-                        w.request_redraw();
-                    }
-                }
             }
 
             _ => {}
@@ -504,11 +429,17 @@ fn run_snapshot_cmd(args: &[&str]) -> String {
         Ok(out) => {
             let stdout = String::from_utf8_lossy(&out.stdout);
             let stderr = String::from_utf8_lossy(&out.stderr);
-            if out.status.success() {
+            let msg = if out.status.success() {
                 stdout.trim().to_string()
             } else {
                 format!("error: {}", stderr.trim())
-            }
+            };
+            // Status bar is a single line — collapse multi-target output
+            msg.lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .collect::<Vec<_>>()
+                .join("  •  ")
         }
         Err(e) => format!("failed to run lntrn-snapshot: {}", e),
     }
@@ -522,15 +453,18 @@ fn list_snapshots_cli() -> Vec<SnapshotEntry> {
         Err(_) => return Vec::new(),
     };
 
-    // Parse the list output:
-    //   manual-2026-03-11_143022  Manual   2026-03-11 14:30:22
+    // Parse the list output, tracking which target's section we're in:
+    //   snapshots for /:
+    //     manual-2026-03-11_143022  Manual   2026-03-11 14:30:22
     let mut entries = Vec::new();
+    let mut target = String::from("/");
     for line in output.lines() {
         let line = line.trim();
-        if line.is_empty()
-            || line.starts_with("snapshots for")
-            || line.starts_with("(none)")
-        {
+        if line.is_empty() || line.starts_with("(none)") {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("snapshots for ") {
+            target = rest.trim_end_matches(':').to_string();
             continue;
         }
 
@@ -540,7 +474,12 @@ fn list_snapshots_cli() -> Vec<SnapshotEntry> {
             let kind = parts[1].to_string();
             // Remaining parts are the date
             let date = parts[2..].join(" ");
-            entries.push(SnapshotEntry { name, kind, date });
+            entries.push(SnapshotEntry {
+                name,
+                kind,
+                date,
+                target: target.clone(),
+            });
         }
     }
 

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 
 use crate::git;
+use crate::github;
 
 /// Events from the background git thread.
 pub enum GitEvent {
@@ -14,7 +15,16 @@ pub enum GitEvent {
     GraphData(Vec<git::GraphCommit>),
     Message(String),
     Error(String),
-    RemoteRepos(Result<Vec<git::RemoteRepo>, String>),
+    RemoteRepos(Result<Vec<github::RemoteRepo>, String>),
+    RepoCreated(Result<NewRepoResult, String>),
+}
+
+/// Outcome of creating a new repo — the local part can succeed even when
+/// the optional GitHub creation fails, so the error rides along.
+#[derive(Debug)]
+pub struct NewRepoResult {
+    pub path: PathBuf,
+    pub github_error: Option<String>,
 }
 
 /// Commands to the background git thread.
@@ -30,6 +40,7 @@ pub enum GitCmd {
     Push,
     Pull,
     FetchGitHubRepos,
+    CreateRepo { name: String, parent: PathBuf, github: bool, private: bool },
     ListBranches,
     ListBranchesDetailed,
     FetchGraph(usize),
@@ -137,8 +148,19 @@ fn run(tx: mpsc::Sender<GitEvent>, rx: mpsc::Receiver<GitCmd>) {
                 }
             }
             GitCmd::FetchGitHubRepos => {
-                let result = git::fetch_github_repos();
+                let result = github::fetch_github_repos();
                 let _ = tx.send(GitEvent::RemoteRepos(result));
+            }
+            GitCmd::CreateRepo { name, parent, github, private } => {
+                let result = git::init_repo(&parent, &name).map(|path| {
+                    let github_error = if github {
+                        github::create_github_repo(&path, &name, private).err()
+                    } else {
+                        None
+                    };
+                    NewRepoResult { path, github_error }
+                });
+                let _ = tx.send(GitEvent::RepoCreated(result));
             }
             GitCmd::ListBranches => {
                 if let Some(ref path) = repo_path {

@@ -1,7 +1,7 @@
 //! Clone view — browse GitHub repos and clone them.
 
 use lntrn_render::{Painter, Rect, TextRenderer};
-use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea, Scrollbar};
+use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea, Scrollbar, SmoothScroll};
 
 use crate::git;
 use crate::keys;
@@ -23,7 +23,7 @@ enum Phase {
 
 pub struct CloneView {
     phase: Phase,
-    pub repos: Vec<git::RemoteRepo>,
+    pub repos: Vec<crate::github::RemoteRepo>,
     pub loading: bool,
     pub error: Option<String>,
     pub message: Option<String>,
@@ -34,7 +34,7 @@ pub struct CloneView {
     pub path_focused: bool,
     pub cursor_pos: usize,
     // Scroll
-    scroll_offset: f32,
+    scroll: SmoothScroll,
     content_height: f32,
     viewport_h: f32,
 }
@@ -59,17 +59,18 @@ impl CloneView {
             clone_path: default_clone_path(),
             path_focused: false,
             cursor_pos: 0,
-            scroll_offset: 0.0,
+            scroll: SmoothScroll::new(),
             content_height: 0.0,
             viewport_h: 0.0,
         }
     }
 
     pub fn on_scroll(&mut self, delta: f32) {
-        ScrollArea::apply_scroll(
-            &mut self.scroll_offset, delta,
-            self.content_height, self.viewport_h,
-        );
+        self.scroll.scroll_by(delta, self.content_height, self.viewport_h);
+    }
+
+    pub fn tick_scroll(&mut self, dt: f32) -> bool {
+        self.scroll.tick(dt)
     }
 
     pub fn wants_keyboard(&self) -> bool {
@@ -250,9 +251,10 @@ impl CloneView {
         let total_h = self.repos.len() as f32 * row_h;
         self.content_height = total_h;
         self.viewport_h = available_h;
+        self.scroll.clamp_to(total_h, available_h);
 
         let viewport = Rect::new(cx, top_y, cw, available_h);
-        let scroll = ScrollArea::new(viewport, total_h, &mut self.scroll_offset);
+        let scroll = ScrollArea::new(viewport, total_h, &mut self.scroll.offset);
 
         scroll.begin(painter, text);
 
@@ -301,7 +303,7 @@ impl CloneView {
 
         scroll.end(painter, text);
 
-        let scrollbar = Scrollbar::new(&viewport, total_h, self.scroll_offset);
+        let scrollbar = Scrollbar::new(&viewport, total_h, self.scroll.offset);
         let sb_state = ix.add_zone(ZONE_SCROLLBAR, scrollbar.thumb);
         scrollbar.draw(painter, sb_state, palette);
     }

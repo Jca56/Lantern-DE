@@ -99,6 +99,9 @@ pub struct GeneralConfig {
     /// Default cursor shape. Used when the active program hasn't set its own
     /// shape via DECSCUSR.
     pub cursor_style: CursorStylePref,
+    /// Open new windows with the title/tab bar hidden ("rice mode", the
+    /// state Super+F11 toggles live). Toggled from View menu.
+    pub open_chrome_hidden: bool,
 }
 
 // ── Defaults ─────────────────────────────────────────────────────────────────
@@ -128,6 +131,7 @@ impl Default for GeneralConfig {
         Self {
             theme: "fox-dark".to_string(),
             cursor_style: CursorStylePref::default(),
+            open_chrome_hidden: false,
         }
     }
 }

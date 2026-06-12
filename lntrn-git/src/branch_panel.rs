@@ -1,7 +1,7 @@
 //! Branch panel — dashboard showing all branches with ahead/behind counts.
 
 use lntrn_render::{Painter, Rect, TextRenderer};
-use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea, Scrollbar};
+use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea, Scrollbar, SmoothScroll};
 
 use crate::git;
 
@@ -11,7 +11,7 @@ const ZONE_SCROLLBAR: u32 = 5499;
 
 pub struct BranchPanel {
     pub branches: Vec<git::BranchDetail>,
-    scroll_offset: f32,
+    scroll: SmoothScroll,
     content_height: f32,
     viewport_h: f32,
 }
@@ -20,17 +20,18 @@ impl BranchPanel {
     pub fn new() -> Self {
         Self {
             branches: Vec::new(),
-            scroll_offset: 0.0,
+            scroll: SmoothScroll::new(),
             content_height: 0.0,
             viewport_h: 0.0,
         }
     }
 
     pub fn on_scroll(&mut self, delta: f32) {
-        ScrollArea::apply_scroll(
-            &mut self.scroll_offset, delta,
-            self.content_height, self.viewport_h,
-        );
+        self.scroll.scroll_by(delta, self.content_height, self.viewport_h);
+    }
+
+    pub fn tick_scroll(&mut self, dt: f32) -> bool {
+        self.scroll.tick(dt)
     }
 
     pub fn draw(
@@ -70,9 +71,10 @@ impl BranchPanel {
 
         self.content_height = total_content_h;
         self.viewport_h = list_h;
+        self.scroll.clamp_to(total_content_h, list_h);
 
         let viewport = Rect::new(cx, list_top, cw, list_h);
-        let scroll = ScrollArea::new(viewport, total_content_h, &mut self.scroll_offset);
+        let scroll = ScrollArea::new(viewport, total_content_h, &mut self.scroll.offset);
         scroll.begin(painter, text);
 
         let base_y = scroll.content_y();
@@ -171,7 +173,7 @@ impl BranchPanel {
         scroll.end(painter, text);
 
         if total_content_h > list_h {
-            let scrollbar = Scrollbar::new(&viewport, total_content_h, self.scroll_offset);
+            let scrollbar = Scrollbar::new(&viewport, total_content_h, self.scroll.offset);
             let sb_state = ix.add_zone(ZONE_SCROLLBAR, scrollbar.thumb);
             scrollbar.draw(painter, sb_state, palette);
         }

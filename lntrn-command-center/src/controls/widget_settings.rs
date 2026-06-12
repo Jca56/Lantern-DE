@@ -72,7 +72,9 @@ fn layout(id: TileId, controls: &Controls, panel: Rect, scale: f32) -> PopLayout
     let min_x = panel.x + 8.0 * scale;
     let max_x = panel.x + panel.w - 8.0 * scale - pop_w;
     let x = (cx - pop_w / 2.0).clamp(min_x, max_x.max(min_x));
-    let y = panel.y + panel.h + TOP_GAP * scale;
+    // Clears the bottom outer-zone band, same as the disabled tray.
+    let band = crate::outer_zones::BOTTOM_BAND_GAP + crate::outer_zones::BOTTOM_BAND_H;
+    let y = panel.y + panel.h + (band + TOP_GAP) * scale;
     let rect = Rect::new(x, y, pop_w, pop_h);
 
     let inner_x = x + PAD * scale;

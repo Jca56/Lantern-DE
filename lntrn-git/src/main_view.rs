@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 
 use lntrn_render::{Painter, Rect, TextRenderer};
-use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea, Scrollbar, TabBar};
+use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea, Scrollbar, SmoothScroll, TabBar};
 
 use crate::branch_panel::BranchPanel;
 use crate::branch_view::{BranchAction, BranchDropdown};
@@ -62,7 +62,7 @@ pub struct MainView {
     branch_panel: BranchPanel,
     graph_view: GraphView,
     pub merge_modal: MergeModal,
-    scroll_offset: f32,
+    scroll: SmoothScroll,
     content_height: f32,
     viewport_h: f32,
     cmd_tx: mpsc::Sender<GitCmd>,
@@ -85,7 +85,7 @@ impl MainView {
             branch_panel: BranchPanel::new(),
             graph_view: GraphView::new(),
             merge_modal: MergeModal::new(),
-            scroll_offset: 0.0,
+            scroll: SmoothScroll::new(),
             content_height: 0.0,
             viewport_h: 0.0,
             cmd_tx,
@@ -100,7 +100,7 @@ impl MainView {
         self.commit_focused = false;
         self.message = None;
         self.error = None;
-        self.scroll_offset = 0.0;
+        self.scroll.set(0.0);
         self.branch_dropdown.close();
     }
 
@@ -157,7 +157,7 @@ impl MainView {
             };
             if new_tab != self.tab {
                 self.tab = new_tab;
-                self.scroll_offset = 0.0;
+                self.scroll.set(0.0);
                 match new_tab {
                     MainTab::Branches => { let _ = self.cmd_tx.send(GitCmd::ListBranchesDetailed); }
                     MainTab::Graph => { let _ = self.cmd_tx.send(GitCmd::FetchGraph(100)); }
@@ -263,11 +263,17 @@ impl MainView {
         match self.tab {
             MainTab::Branches => self.branch_panel.on_scroll(delta),
             MainTab::Graph => self.graph_view.on_scroll(delta),
-            _ => ScrollArea::apply_scroll(
-                &mut self.scroll_offset, delta,
-                self.content_height, self.viewport_h,
-            ),
+            _ => self.scroll.scroll_by(delta, self.content_height, self.viewport_h),
         }
+    }
+
+    /// Advance all scroll animations. Returns true while anything is gliding.
+    pub fn tick_scroll(&mut self, dt: f32) -> bool {
+        let mut animating = self.scroll.tick(dt);
+        animating |= self.branch_panel.tick_scroll(dt);
+        animating |= self.graph_view.tick_scroll(dt);
+        animating |= self.branch_dropdown.tick_scroll(dt);
+        animating
     }
 
     pub fn wants_keyboard(&self) -> bool {
@@ -455,9 +461,10 @@ impl MainView {
 
             self.content_height = total_content_h;
             self.viewport_h = list_h;
+            self.scroll.clamp_to(total_content_h, list_h);
 
             let viewport = Rect::new(cx, list_top, cw, list_h);
-            let scroll = ScrollArea::new(viewport, total_content_h, &mut self.scroll_offset);
+            let scroll = ScrollArea::new(viewport, total_content_h, &mut self.scroll.offset);
 
             if status.files.is_empty() {
                 text.queue(
@@ -532,7 +539,7 @@ impl MainView {
 
                 scroll.end(painter, text);
 
-                let scrollbar = Scrollbar::new(&viewport, total_content_h, self.scroll_offset);
+                let scrollbar = Scrollbar::new(&viewport, total_content_h, self.scroll.offset);
                 let sb_state = ix.add_zone(ZONE_SCROLLBAR, scrollbar.thumb);
                 scrollbar.draw(painter, sb_state, palette);
             }

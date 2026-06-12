@@ -155,16 +155,25 @@ fn draw_action_row(
     surface_w: u32,
     surface_h: u32,
 ) {
-    let (pin, export, delete) = action_buttons(panel, top_y, scale);
+    let (pin, stick, export, delete) = action_buttons(panel, top_y, scale);
     let has_selection = state.selected_id.is_some();
     let is_pinned = state
         .selected_index()
         .map(|i| state.notes[i].pinned)
         .unwrap_or(false);
+    let is_sticky = state
+        .selected_index()
+        .map(|i| state.notes[i].sticky)
+        .unwrap_or(false);
     draw_action_btn(
         painter, text, pin, scale, text_size, alpha,
         if is_pinned { "Unpin" } else { "Pin" },
         is_pinned, has_selection, surface_w, surface_h,
+    );
+    draw_action_btn(
+        painter, text, stick, scale, text_size, alpha,
+        if is_sticky { "Unstick" } else { "Stick" },
+        is_sticky, has_selection, surface_w, surface_h,
     );
     draw_action_btn(
         painter, text, export, scale, text_size, alpha,

@@ -18,7 +18,20 @@ pub fn selection_tint(_palette: &FoxPalette) -> Color {
 
 // ── Gradient separators ─────────────────────────────────────────────────────
 
+/// When true, the rainbow gradient dividers render as solid accent-colored
+/// lines instead. Persisted via `Settings::solid_dividers`, toggled live from
+/// the View menu (same static-atomic pattern as `layout::CHROME_HIDDEN`).
+pub static SOLID_DIVIDERS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn solid_dividers() -> bool {
+    SOLID_DIVIDERS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 pub fn draw_gradient_h(painter: &mut Painter, palette: &FoxPalette, x: f32, y: f32, width: f32, s: f32) {
+    if solid_dividers() {
+        painter.rect_filled(Rect::new(x, y, width, 4.0 * s), 0.0, palette.accent);
+        return;
+    }
     let mut bar = GradientStrip::new(x, y, width);
     bar.height = 4.0 * s;
     bar.colors = palette.file_manager_gradient_stops();
@@ -26,6 +39,10 @@ pub fn draw_gradient_h(painter: &mut Painter, palette: &FoxPalette, x: f32, y: f
 }
 
 pub fn draw_gradient_v(painter: &mut Painter, palette: &FoxPalette, x: f32, y: f32, height: f32, s: f32) {
+    if solid_dividers() {
+        painter.rect_filled(Rect::new(x, y, 4.0 * s, height), 0.0, palette.accent);
+        return;
+    }
     let colors = palette.file_manager_gradient_stops();
     let w = 4.0 * s;
     let segments = height.max(1.0).ceil() as usize;

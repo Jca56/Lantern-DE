@@ -149,6 +149,17 @@ pub(crate) fn handle_click(
                             vec![
                                 MenuItem::slider(VIEW_SLIDER_ID, "Scale", app.icon_zoom),
                                 MenuItem::checkbox(VIEW_SHOW_HIDDEN_ID, "Show Hidden Files", app.show_hidden),
+                                MenuItem::checkbox(
+                                    crate::VIEW_SHOW_TITLEBAR_ID,
+                                    "Show Title Bar",
+                                    !crate::layout::chrome_hidden(),
+                                ),
+                                MenuItem::checkbox(
+                                    crate::VIEW_SOLID_DIVIDERS_ID,
+                                    "Solid Accent Dividers",
+                                    crate::sections::SOLID_DIVIDERS
+                                        .load(std::sync::atomic::Ordering::Relaxed),
+                                ),
                             ],
                             backend,
                         );
@@ -248,21 +259,29 @@ pub(crate) fn handle_click(
                 let idx = (id - ZONE_TREE_ITEM_BASE) as usize;
                 if idx < app.tree_entries.len() {
                     let te = &app.tree_entries[idx];
-                    if te.entry.is_dir && !ctrl && !shift {
-                        // Plain click on a folder toggles expansion in all modes.
-                        // Ctrl/Shift treats folders like files (select) — useful in
-                        // Mixed/Directory pick types.
+                    if !ctrl && !shift && app.pick.is_none() {
+                        // Plain press: defer the action (expand/collapse for
+                        // folders, launch for files) to release so a >5px move
+                        // becomes a drag instead — same pending pattern as
+                        // grid/list. The release handler in wayland_loop runs
+                        // the deferred action when no drag started.
+                        app.pending_tree_open = Some(idx);
+                        if let Some((cx, cy)) = input.cursor() {
+                            app.press_pos = Some((cx, cy));
+                        }
+                        app.press_shift = false;
+                        app.press_ctrl = false;
+                    } else if te.entry.is_dir && !ctrl && !shift {
+                        // Pick-mode folder click: toggle expansion and point
+                        // current_dir at it so the path bar follows the click,
+                        // the listing refreshes, and Save targets it. Use the
+                        // lightweight tree navigate — NOT navigate_to, whose
+                        // scroll reset would jump the tree to the top on every
+                        // click and break drilling in. The tree stays anchored
+                        // at `tree_root`. (Pickers act at press — no drag.)
                         let path = te.entry.path.clone();
                         app.toggle_tree_expand(path.clone());
-                        // In pick mode, also point current_dir at this folder so
-                        // the path bar follows the click, the listing refreshes,
-                        // and Save targets it. Use the lightweight tree navigate —
-                        // NOT navigate_to, whose scroll reset would jump the tree
-                        // to the top on every click and break drilling in. The
-                        // tree stays anchored at `tree_root`.
-                        if app.pick.is_some() {
-                            app.pick_tree_navigate(path);
-                        }
+                        app.pick_tree_navigate(path);
                     } else {
                         let path = te.entry.path.clone();
                         let entry_idx = app.entries.iter().position(|e| e.path == path);
@@ -328,20 +347,9 @@ pub(crate) fn handle_click(
                             if is_double {
                                 app.confirm_pick();
                             }
-                        } else {
-                            // Non-pick plain click on a file: launch.
-                            let ext = path.extension()
-                                .and_then(|e| e.to_str())
-                                .map(|s| s.to_lowercase())
-                                .unwrap_or_default();
-                            if let Some(app) = desktop::default_app_for_extension(&ext) {
-                                desktop::launch_app(&app.exec, &path);
-                            } else {
-                                std::thread::spawn(move || {
-                                    let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
-                                });
-                            }
                         }
+                        // (Non-pick plain clicks never reach here — the
+                        // pending_tree_open arm above defers them to release.)
                     }
                 }
             }

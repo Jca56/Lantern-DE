@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use super::images::ImageManager;
+use super::mouse::MouseMode;
 use super::performer::Performer;
 
 /// Fallback timeout for synchronized output mode 2026 (DEC mode 2026,
@@ -166,6 +167,11 @@ pub struct TerminalState {
     pub cursor_hidden: bool,      // mode 25
     pub application_cursor: bool, // mode 1
 
+    // Mouse reporting (DECSET 1000/1002/1003) + SGR encoding (1006).
+    // See terminal/mouse.rs for forwarding details.
+    pub mouse_mode: MouseMode,
+    pub mouse_sgr: bool,
+
     // Cursor shape (DECSCUSR): 0/1=blinking block, 2=steady block,
     // 3=blinking underline, 4=steady underline, 5=blinking beam, 6=steady beam
     pub cursor_shape: u8,
@@ -281,6 +287,8 @@ impl TerminalState {
             saved_cursor: None,
             cursor_hidden: false,
             application_cursor: false,
+            mouse_mode: MouseMode::Off,
+            mouse_sgr: false,
             cursor_shape: 0,
             title: None,
             osc7_cwd: None,
@@ -632,6 +640,11 @@ impl TerminalState {
         } else {
             &self.scrollback
         }
+    }
+
+    /// True while the app is on the alternate screen (DECSET 1049/1047/47).
+    pub fn is_alt_screen(&self) -> bool {
+        self.alt_grid.is_some()
     }
 
     /// Wipe the active scrollback buffer (main or alt, whichever is live).

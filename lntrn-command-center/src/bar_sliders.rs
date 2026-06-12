@@ -2,6 +2,10 @@
 //! Transparency → `[windows] background_opacity`, Blur → `[windows] blur_intensity`,
 //! both in `~/.lantern/config/lantern.toml`. Compositor mtime-caches the
 //! file so writes here update window blur/opacity on the next frame.
+//!
+//! The block's position comes from the outer-zone layout
+//! ([`crate::outer_zones`]) — every function takes the slot rect the
+//! layout allocated rather than computing one from the panel.
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
@@ -10,10 +14,13 @@ const TRACK_H: f32 = 10.0;
 const KNOB_R: f32 = 11.0;
 const ROW_H: f32 = 32.0;
 const ROW_GAP: f32 = 8.0;
-const LEFT_PAD: f32 = 24.0;
-const TOP_GAP: f32 = 12.0;
 /// Snap step — slider locks to multiples of 5% (0.00, 0.05, …, 1.00).
 const SNAP_STEP: f32 = 0.05;
+
+/// Logical footprint of the whole two-slider block, used by the outer
+/// zone layout to size this widget's slot.
+pub const BLOCK_W: f32 = TRACK_W;
+pub const BLOCK_H: f32 = ROW_H * 2.0 + ROW_GAP;
 
 const TRACK_RGB: (u8, u8, u8) = (90, 90, 90);
 const FILL_RGB: (u8, u8, u8) = (0xc8, 0x86, 0x0a);
@@ -35,16 +42,13 @@ pub struct BarSliderState {
     pub dragging: Option<Slider>,
 }
 
-fn row_rect(panel: Rect, scale: f32, idx: usize) -> Rect {
-    let y = panel.y + panel.h + TOP_GAP * scale + idx as f32 * (ROW_H + ROW_GAP) * scale;
-    let x = panel.x + LEFT_PAD * scale;
-    let w = TRACK_W * scale;
-    let h = ROW_H * scale;
-    Rect::new(x, y, w, h)
+fn row_rect(slot: Rect, scale: f32, idx: usize) -> Rect {
+    let y = slot.y + idx as f32 * (ROW_H + ROW_GAP) * scale;
+    Rect::new(slot.x, y, TRACK_W * scale, ROW_H * scale)
 }
 
-fn track_rect(panel: Rect, scale: f32, idx: usize) -> Rect {
-    let row = row_rect(panel, scale, idx);
+fn track_rect(slot: Rect, scale: f32, idx: usize) -> Rect {
+    let row = row_rect(slot, scale, idx);
     let cy = row.y + row.h / 2.0;
     Rect::new(row.x, cy - TRACK_H * scale / 2.0, TRACK_W * scale, TRACK_H * scale)
 }
@@ -86,9 +90,9 @@ fn write_value(s: Slider, v: f32) {
 
 /// Hit-test both sliders. Returns the one under the cursor (track region
 /// only — labels aren't clickable).
-pub fn hit_test(panel: Rect, scale: f32, phys_x: f32, phys_y: f32) -> Option<Slider> {
+pub fn hit_test(slot: Rect, scale: f32, phys_x: f32, phys_y: f32) -> Option<Slider> {
     for (i, s) in [Slider::Transparency, Slider::Blur].iter().enumerate() {
-        let track = track_rect(panel, scale, i);
+        let track = track_rect(slot, scale, i);
         // Wide hit area: vertically expand by knob radius so users can
         // grab the knob even if it overshoots the track.
         let knob_pad = KNOB_R * scale;
@@ -108,8 +112,8 @@ pub fn hit_test(panel: Rect, scale: f32, phys_x: f32, phys_y: f32) -> Option<Sli
 }
 
 /// Map cursor x to a 0..1 value on the named slider's track.
-pub fn value_at_cursor(panel: Rect, scale: f32, slider: Slider, phys_x: f32) -> f32 {
-    let track = track_rect(panel, scale, slider_index(slider));
+pub fn value_at_cursor(slot: Rect, scale: f32, slider: Slider, phys_x: f32) -> f32 {
+    let track = track_rect(slot, scale, slider_index(slider));
     ((phys_x - track.x) / track.w).clamp(0.0, 1.0)
 }
 
@@ -122,7 +126,7 @@ pub fn set_value(slider: Slider, v: f32) { write_value(slider, v); }
 pub fn draw(
     painter: &mut Painter,
     _text: &mut TextRenderer,
-    panel: Rect,
+    slot: Rect,
     scale: f32,
     alpha: f32,
     state: BarSliderState,
@@ -132,7 +136,7 @@ pub fn draw(
     if alpha < 0.01 { return; }
 
     for (i, slider) in [Slider::Transparency, Slider::Blur].iter().enumerate() {
-        let track = track_rect(panel, scale, i);
+        let track = track_rect(slot, scale, i);
         let v = snap(read_value(*slider));
         let fill_w = track.w * v;
         let hovered_or_dragging = state.hover == Some(*slider) || state.dragging == Some(*slider);

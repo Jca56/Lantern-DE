@@ -1,7 +1,7 @@
 //! Branch dropdown — lists branches, create new, switch on click.
 
 use lntrn_render::{Painter, Rect, TextRenderer};
-use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea, Scrollbar, Toggle};
+use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea, Scrollbar, SmoothScroll, Toggle};
 
 use crate::git;
 use crate::keys;
@@ -31,7 +31,7 @@ pub struct BranchDropdown {
     pub cursor_pos: usize,
     pub push_to_remote: bool,
     // Scroll
-    scroll_offset: f32,
+    scroll: SmoothScroll,
     /// The panel rect from the last draw, used for text clipping.
     pub panel_rect: Option<Rect>,
 }
@@ -45,7 +45,7 @@ impl BranchDropdown {
             input_focused: false,
             cursor_pos: 0,
             push_to_remote: true,
-            scroll_offset: 0.0,
+            scroll: SmoothScroll::new(),
             panel_rect: None,
         }
     }
@@ -70,7 +70,11 @@ impl BranchDropdown {
         if !self.open { return; }
         let count = self.branches.len() as f32;
         let content_h = count * 40.0 + 60.0; // rough estimate
-        ScrollArea::apply_scroll(&mut self.scroll_offset, delta, content_h, 300.0);
+        self.scroll.scroll_by(delta, content_h, 300.0);
+    }
+
+    pub fn tick_scroll(&mut self, dt: f32) -> bool {
+        self.scroll.tick(dt)
     }
 
     pub fn on_key(&mut self, key: u32, shift: bool) -> BranchAction {
@@ -256,7 +260,7 @@ impl BranchDropdown {
         // ── Branch list ─────────────────────────────────────────────────────
         let list_top = dy + header_h;
         let viewport = Rect::new(dx, list_top, dropdown_w, list_h);
-        let scroll = ScrollArea::new(viewport, list_content_h, &mut self.scroll_offset);
+        let scroll = ScrollArea::new(viewport, list_content_h, &mut self.scroll.offset);
 
         scroll.begin(painter, text);
 
@@ -295,7 +299,7 @@ impl BranchDropdown {
 
         // Scrollbar if needed
         if list_content_h > list_h {
-            let scrollbar = Scrollbar::new(&viewport, list_content_h, self.scroll_offset);
+            let scrollbar = Scrollbar::new(&viewport, list_content_h, self.scroll.offset);
             let sb_state = ix.add_zone(ZONE_SCROLLBAR, scrollbar.thumb);
             scrollbar.draw(painter, sb_state, palette);
         }

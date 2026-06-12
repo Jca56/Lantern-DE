@@ -148,6 +148,11 @@ pub struct AppState {
     pub collapse_anim_origin: f32,
     /// Progress value (0..=1) the animation is interpolating *to*.
     pub collapse_anim_target: f32,
+    /// Armed by `dismiss()` when the collapse-before-close setting
+    /// folds an expanded panel down instead of closing outright.
+    /// `tick` watches for the fold to land and then fires the real
+    /// close. Cleared by any open/close/inside-click in between.
+    pub close_after_collapse: bool,
     /// Pinned-app index currently under the cursor in the mini-dock
     /// (the icon row that floats below the panel while collapsed).
     pub mini_dock_hover: Option<usize>,
@@ -183,6 +188,14 @@ pub struct AppState {
     pub toolbar_edit_prev_collapsed: bool,
     /// In-flight widget drag during edit mode, if any.
     pub widget_drag: Option<crate::controls::toolbar_edit::WidgetDrag>,
+    /// Persisted outer-chrome zone layout (strip buttons, dots, sliders,
+    /// media card) — which widget lives in which of the six zones
+    /// around the collapsed bar.
+    pub outer: crate::outer_zones::OuterLayout,
+    /// In-flight outer-widget drag during edit mode, if any.
+    pub outer_drag: Option<crate::outer_edit::OuterDrag>,
+    /// In-flight sticky-note move/resize drag, if any.
+    pub sticky_drag: Option<crate::notes::sticky::StickyDrag>,
     /// Which widget's settings popover is open (edit mode), if any.
     pub widget_settings_open: Option<crate::controls::TileId>,
     /// Which widget + which slider (size/space) is being dragged in its
@@ -316,6 +329,7 @@ impl AppState {
             collapse_anim_start: None,
             collapse_anim_origin: if saved_collapsed { 1.0 } else { 0.0 },
             collapse_anim_target: if saved_collapsed { 1.0 } else { 0.0 },
+            close_after_collapse: false,
             mini_dock_hover: None,
             opened_from_collapsed: false,
             panel_view: saved_view,
@@ -330,6 +344,9 @@ impl AppState {
             toolbar_edit: false,
             toolbar_edit_prev_collapsed: false,
             widget_drag: None,
+            outer: crate::outer_zones::OuterLayout::load(),
+            outer_drag: None,
+            sticky_drag: None,
             widget_settings_open: None,
             widget_slider_drag: None,
             emoji_hover: false,

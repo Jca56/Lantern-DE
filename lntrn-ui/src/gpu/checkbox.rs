@@ -29,6 +29,9 @@ pub struct Checkbox<'a> {
     hovered: bool,
     disabled: bool,
     scale: f32,
+    /// Label font size in logical px (pre-scale). Defaults to `FONT_BODY`;
+    /// menus pass their own item font so checkbox rows match action rows.
+    font_size: f32,
 }
 
 impl<'a> Checkbox<'a> {
@@ -41,11 +44,17 @@ impl<'a> Checkbox<'a> {
             hovered: false,
             disabled: false,
             scale: 1.0,
+            font_size: FONT_BODY,
         }
     }
 
     pub fn label(mut self, label: &'a str) -> Self {
         self.label = Some(label);
+        self
+    }
+
+    pub fn font_size(mut self, font_size: f32) -> Self {
+        self.font_size = font_size;
         self
     }
 
@@ -86,7 +95,7 @@ impl<'a> Checkbox<'a> {
         let bw = BORDER_WIDTH * s;
         let ct = CHECK_THICKNESS * s;
         let gap = LABEL_GAP * s;
-        let font = FONT_BODY * s;
+        let font = self.font_size * s;
         let opacity = if self.disabled { 0.4 } else { 1.0 };
         let box_rect = self.box_rect();
 

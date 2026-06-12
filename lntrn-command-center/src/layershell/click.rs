@@ -26,10 +26,18 @@ pub(super) fn handle_clicks(
         wl.left_clicked = false;
         let scale_f = wl.fractional_scale() as f32;
         let phys_w = wl.phys_width().max(1);
+        let phys_h = wl.phys_height().max(1);
         let panel = PanelRect::compute_with_dims(phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical());
         let phys_cx = wl.cursor_x as f32 * scale_f;
         let phys_cy = wl.cursor_y as f32 * scale_f;
         let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+
+        // A click back inside the panel while a collapse-then-close
+        // fold is pending means the user changed their mind — disarm
+        // the deferred close and let the click land normally.
+        if app.close_after_collapse && panel.contains(phys_cx, phys_cy) {
+            app.close_after_collapse = false;
+        }
 
         // Toolbar edit mode owns every press: Done button, ✕ remove
         // badges, tray chips (begin enable-drag), and widgets (begin
@@ -90,33 +98,67 @@ pub(super) fn handle_clicks(
                 te::hit_widget(&app.controls, panel_rect, scale_f, phys_cx, phys_cy)
             {
                 app.widget_drag = Some(te::WidgetDrag { id, from_tray: false, cursor: (phys_cx, phys_cy) });
+            } else {
+                // Outer-chrome widgets (strip buttons, dots, sliders,
+                // media) — edit mode includes the media slot even when
+                // nothing is playing so it stays grabbable.
+                let outer_pos = crate::outer_zones::positions(
+                    &app.outer, panel_rect, scale_f, true,
+                );
+                if let Some(id) =
+                    crate::outer_zones::hit_widget(&outer_pos, phys_cx, phys_cy)
+                {
+                    app.outer_drag = Some(crate::outer_edit::OuterDrag {
+                        id,
+                        cursor: (phys_cx, phys_cy),
+                    });
+                }
             }
             return;
         }
+
+        // Outer-chrome widget positions for this frame — every strip
+        // button, the dots, sliders, and media card hit-test against
+        // these so clicks land wherever the user dragged them.
+        let outer_pos = crate::outer_zones::positions(
+            &app.outer,
+            panel_rect,
+            scale_f,
+            crate::media::render::is_active(&app.media),
+        );
 
         // Bar-mode sliders: grab one if the press lands on its track,
         // seek the value to the cursor, and stash the dragging slider
         // so subsequent motion events keep updating it. Bar sliders are
         // only visible / hittable while CC is collapsed.
         if app.collapse_progress() > 0.5 {
-            if let Some(slider) = crate::bar_sliders::hit_test(
-                panel_rect, scale_f, phys_cx, phys_cy,
-            ) {
-                let v = crate::bar_sliders::value_at_cursor(panel_rect, scale_f, slider, phys_cx);
-                crate::bar_sliders::set_value(slider, v);
-                app.bar_sliders.dragging = Some(slider);
-                return;
+            if let Some(slot) =
+                crate::outer_zones::rect_in(&outer_pos, crate::outer_zones::OuterId::Sliders)
+            {
+                if let Some(slider) =
+                    crate::bar_sliders::hit_test(slot, scale_f, phys_cx, phys_cy)
+                {
+                    let v = crate::bar_sliders::value_at_cursor(slot, scale_f, slider, phys_cx);
+                    crate::bar_sliders::set_value(slider, v);
+                    app.bar_sliders.dragging = Some(slider);
+                    return;
+                }
             }
         }
 
-        // Floating now-playing card: transport buttons sit just below the
-        // bar while collapsed, same as the sliders.
-        if app.collapse_progress() > 0.5 && crate::media::render::is_active(&app.media) {
-            if let Some(btn) = crate::media::render::floating_button_hit(
-                panel_rect, scale_f, phys_cx, phys_cy,
-            ) {
-                app.media.command(btn);
-                return;
+        // Floating now-playing card: transport buttons live in the
+        // card's outer-zone slot while collapsed, same as the sliders.
+        // (The slot only exists while something is playing.)
+        if app.collapse_progress() > 0.5 {
+            if let Some(card) =
+                crate::outer_zones::rect_in(&outer_pos, crate::outer_zones::OuterId::Media)
+            {
+                if let Some(btn) =
+                    crate::media::render::floating_button_hit(card, scale_f, phys_cx, phys_cy)
+                {
+                    app.media.command(btn);
+                    return;
+                }
             }
         }
 
@@ -197,24 +239,24 @@ pub(super) fn handle_clicks(
         } else {
             crate::power::hit_test(panel_rect, scale_f, phys_cx, phys_cy)
         };
+        use crate::outer_zones::{hit_id, rect_in, OuterId};
         let arrow_hit = crate::view_arrows::hit_test(panel_rect, scale_f, phys_cx, phys_cy);
-        let gear_hit = crate::view_indicator::hit_gear(panel_rect, scale_f, phys_cx, phys_cy);
-        let restart_hit = crate::view_indicator::hit_restart(panel_rect, scale_f, phys_cx, phys_cy);
-        let emoji_btn_hit = crate::view_indicator::hit_emoji(panel_rect, scale_f, phys_cx, phys_cy);
-        let clipboard_btn_hit = crate::view_indicator::hit_clipboard(panel_rect, scale_f, phys_cx, phys_cy);
-        let notes_btn_hit = crate::view_indicator::hit_notes(panel_rect, scale_f, phys_cx, phys_cy);
-        let usage_btn_hit = crate::usage_button::hit_test(panel_rect, scale_f, phys_cx, phys_cy);
-        let dot_hit = crate::view_indicator::hit_test_dot(panel_rect, scale_f, phys_cx, phys_cy);
+        let gear_hit = hit_id(&outer_pos, OuterId::Settings, phys_cx, phys_cy);
+        let restart_hit = hit_id(&outer_pos, OuterId::Close, phys_cx, phys_cy);
+        let emoji_btn_hit = hit_id(&outer_pos, OuterId::Emojis, phys_cx, phys_cy);
+        let clipboard_btn_hit = hit_id(&outer_pos, OuterId::Clipboard, phys_cx, phys_cy);
+        let notes_btn_hit = hit_id(&outer_pos, OuterId::Notes, phys_cx, phys_cy);
+        let usage_btn_hit = hit_id(&outer_pos, OuterId::Usage, phys_cx, phys_cy);
+        let dot_hit = rect_in(&outer_pos, OuterId::Dots)
+            .and_then(|r| crate::view_indicator::dot_at(r, scale_f, phys_cx, phys_cy));
         // Mini-dock hit-tests — try preview-tile first (when hover
         // points to an app with open windows) then the icon body.
         // (dock_idx, window_idx_within_app, hit_kind)
         let mut dock_preview_hit: Option<(usize, usize, crate::mini_dock::PreviewHit)> = None;
         let mut dock_pin: Option<usize> = None;
         let mut dock_layout: Option<crate::mini_dock::DockLayout> = None;
-        // Dock is only visible (and clickable) in the Default view.
-        if app.collapse_progress() > 0.005
-            && app.panel_view == crate::app::PanelView::Default
-        {
+        // Dock is visible (and clickable) in every view while collapsed.
+        if app.collapse_progress() > 0.005 {
             let pinned = app.launcher.pinned_entries(&app.apps);
             let phys_h_f = wl.phys_height().max(1) as f32;
             if let Some(layout) = crate::mini_dock::compute_layout(
@@ -423,6 +465,15 @@ pub(super) fn handle_clicks(
                         app.notes.toggle_pin_selected();
                         true
                     }
+                    crate::notes::Hit::StickyAction => {
+                        app.notes.flush_edits_to_selected();
+                        let spawn = crate::notes::sticky::spawn_pos(
+                            &app.notes.notes, panel_rect, scale_f,
+                            phys_w as f32, phys_h as f32,
+                        );
+                        crate::notes::sticky::toggle_selected(&mut app.notes, spawn);
+                        true
+                    }
                     crate::notes::Hit::ExportAction => {
                         app.notes.flush_edits_to_selected();
                         app.notes.export_selected();
@@ -544,7 +595,7 @@ pub(super) fn handle_clicks(
                 crate::view_arrows::Side::Left => app.cycle_view_prev(),
                 crate::view_arrows::Side::Right => app.cycle_view_next(),
             }
-        } else if crate::desktop_settings::hit_test_button(panel_rect, scale_f, phys_cx, phys_cy) {
+        } else if hit_id(&outer_pos, OuterId::Desktop, phys_cx, phys_cy) {
             // Page is body-sized — uncollapse first when collapsed so
             // the user actually sees the page they just opened.
             if app.collapsed && !app.desktop_settings_open {
@@ -632,6 +683,40 @@ pub(super) fn handle_clicks(
                     app.close();
                 }
             }
+        } else if let Some((id, part)) = (!panel.contains(phys_cx, phys_cy))
+            .then(|| {
+                crate::notes::sticky::hit(
+                    &app.notes.notes, scale_f, phys_w as f32, phys_h as f32,
+                    phys_cx, phys_cy,
+                )
+            })
+            .flatten()
+        {
+            // Click landed on a floating sticky note (outside the
+            // panel — the panel always wins where they overlap).
+            use crate::notes::sticky::{StickyDrag, StickyPart};
+            match part {
+                StickyPart::Unstick => {
+                    if let Some(i) = app.notes.notes.iter().position(|n| n.id == id) {
+                        app.notes.notes[i].sticky = false;
+                        let _ = crate::notes::store::save_one(&app.notes.notes[i]);
+                    }
+                }
+                StickyPart::Body | StickyPart::Resize => {
+                    if let Some(n) = app.notes.notes.iter().find(|n| n.id == id) {
+                        let r = crate::notes::sticky::rect(
+                            n, scale_f, phys_w as f32, phys_h as f32,
+                        );
+                        let resize = part == StickyPart::Resize;
+                        let grab = if resize {
+                            (r.x + r.w - phys_cx, r.y + r.h - phys_cy)
+                        } else {
+                            (phys_cx - r.x, phys_cy - r.y)
+                        };
+                        app.sticky_drag = Some(StickyDrag { id, resize, grab });
+                    }
+                }
+            }
         } else if !panel.contains(phys_cx, phys_cy) {
             tracing::debug!(
                 cursor = ?(phys_cx, phys_cy),
@@ -646,7 +731,7 @@ pub(super) fn handle_clicks(
             let logical_x = wl.cursor_x.round() as i32;
             let logical_y = wl.cursor_y.round() as i32;
             thumbs.focus_at(logical_x, logical_y);
-            app.close();
+            app.dismiss();
         } else if consumed_by_view {
             // Already handled.
         } else if let Some(tile_id) = app.controls.hit_test(

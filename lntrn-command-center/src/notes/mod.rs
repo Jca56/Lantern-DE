@@ -8,12 +8,17 @@
 pub mod editor;
 pub mod export;
 pub mod render;
+pub mod sticky;
 pub mod store;
 
 use std::sync::{Arc, Mutex};
 
-use lntrn_render::{Rect, TextRenderer};
+use lntrn_render::Rect;
 use serde::{Deserialize, Serialize};
+
+// Mouse → byte-offset hit-testing lives next to the editor it serves;
+// re-exported so call sites keep their `crate::notes::` paths.
+pub use editor::{body_byte_at, input_byte_at};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Note {
@@ -24,6 +29,18 @@ pub struct Note {
     pub modified_ms: u128,
     #[serde(default)]
     pub pinned: bool,
+    /// Floating sticky-note state — geometry in logical px, kept when
+    /// unsticking so a re-stick lands where the paper used to be.
+    #[serde(default)]
+    pub sticky: bool,
+    #[serde(default)]
+    pub sticky_x: f32,
+    #[serde(default)]
+    pub sticky_y: f32,
+    #[serde(default)]
+    pub sticky_w: f32,
+    #[serde(default)]
+    pub sticky_h: f32,
 }
 
 impl Note {
@@ -36,6 +53,11 @@ impl Note {
             created_ms: now,
             modified_ms: now,
             pinned: false,
+            sticky: false,
+            sticky_x: 0.0,
+            sticky_y: 0.0,
+            sticky_w: 0.0,
+            sticky_h: 0.0,
         }
     }
 }
@@ -73,6 +95,7 @@ pub enum Hit {
     PinAction,
     DeleteAction,
     ExportAction,
+    StickyAction,
     TitleInput,
     BodyEditor,
 }
@@ -383,16 +406,14 @@ pub fn body_rect(editor: Rect, scale: f32) -> Rect {
     Rect::new(editor.x, y, editor.w, h)
 }
 
-/// Left-side action buttons (pin / export / delete), packed left to
-/// right inside the action row.
-pub fn action_buttons(panel: Rect, top_y: f32, scale: f32) -> (Rect, Rect, Rect) {
+/// Left-side action buttons (pin / stick / export / delete), packed
+/// left to right inside the action row.
+pub fn action_buttons(panel: Rect, top_y: f32, scale: f32) -> (Rect, Rect, Rect, Rect) {
     let row = action_row_rect(panel, top_y, scale);
-    let gap = 8.0 * scale;
-    let btn_w = ((row.w - gap * 2.0) / 3.0).max(60.0 * scale);
-    let pin = Rect::new(row.x, row.y, btn_w, row.h);
-    let export = Rect::new(row.x + btn_w + gap, row.y, btn_w, row.h);
-    let delete = Rect::new(row.x + (btn_w + gap) * 2.0, row.y, btn_w, row.h);
-    (pin, export, delete)
+    let gap = 6.0 * scale;
+    let btn_w = ((row.w - gap * 3.0) / 4.0).max(52.0 * scale);
+    let at = |i: f32| Rect::new(row.x + (btn_w + gap) * i, row.y, btn_w, row.h);
+    (at(0.0), at(1.0), at(2.0), at(3.0))
 }
 
 pub fn list_row_rect(list: Rect, scale: f32, visible_idx: usize) -> Rect {
@@ -472,9 +493,12 @@ pub fn hit_test(
         return Hit::NewBtn;
     }
     // Action row buttons (above the list).
-    let (pin, export, delete) = action_buttons(panel, top_y, scale);
+    let (pin, stick, export, delete) = action_buttons(panel, top_y, scale);
     if point_in(pin, px, py) {
         return Hit::PinAction;
+    }
+    if point_in(stick, px, py) {
+        return Hit::StickyAction;
     }
     if point_in(export, px, py) {
         return Hit::ExportAction;
@@ -517,69 +541,6 @@ pub fn filter_text_left_pad(bar: Rect, scale: f32) -> f32 {
     glyph_pad + glyph_r * 2.0 + 14.0 * scale
 }
 
-// ── Mouse → byte offset hit-testing ────────────────────────────────────────
-
-/// Layout-aware byte offset for a mouse position over the body editor.
-pub fn body_byte_at(
-    body_rect_inner: Rect,
-    buf: &str,
-    body_scroll: f32,
-    text_size: f32,
-    scale: f32,
-    px: f32,
-    py: f32,
-    text: &mut TextRenderer,
-) -> usize {
-    let font = (text_size * scale).max(15.0);
-    let line_h = body_line_height(text_size, scale);
-    let line_count = buf.split('\n').count().max(1);
-    let rel_y = py - body_rect_inner.y + body_scroll;
-    let line_idx = ((rel_y / line_h).floor() as i64)
-        .clamp(0, (line_count as i64) - 1) as usize;
-    // Compute byte offset of line start.
-    let mut line_start = 0usize;
-    for _ in 0..line_idx {
-        if let Some(off) = buf[line_start..].find('\n') {
-            line_start += off + 1;
-        } else {
-            line_start = buf.len();
-            break;
-        }
-    }
-    let line_end = buf[line_start..]
-        .find('\n')
-        .map(|i| line_start + i)
-        .unwrap_or(buf.len());
-    let line = &buf[line_start..line_end];
-    let target_x = (px - body_rect_inner.x).max(0.0);
-    line_start + byte_at_x_in_line(line, target_x, font, text)
-}
-
-/// Walk through chars in `line` measuring widths and return the byte
-/// offset whose visual gap is closest to `target_x`.
-pub fn byte_at_x_in_line(line: &str, target_x: f32, font: f32, text: &mut TextRenderer) -> usize {
-    let mut last_w = 0.0f32;
-    for (byte_idx, ch) in line.char_indices() {
-        let next_byte = byte_idx + ch.len_utf8();
-        let w = text.measure_width(&line[..next_byte], font);
-        let center = (last_w + w) * 0.5;
-        if target_x < center {
-            return byte_idx;
-        }
-        last_w = w;
-    }
-    line.len()
-}
-
-/// Single-line byte offset for inputs with a left padding and font.
-pub fn input_byte_at(
-    field_rect: Rect,
-    text_left_pad: f32,
-    buf: &str,
-    font: f32,
-    px: f32,
-    text: &mut TextRenderer,
-) -> usize {
-    let target_x = (px - field_rect.x - text_left_pad).max(0.0);
-    byte_at_x_in_line(buf, target_x, font, text)
-}
+// Mouse → byte-offset hit-testing (`body_byte_at`, `byte_at_x_in_line`,
+// `input_byte_at`) lives in `editor.rs`, re-exported at the top of this
+// module.

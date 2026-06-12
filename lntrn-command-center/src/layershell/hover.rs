@@ -63,33 +63,42 @@ pub(super) fn track_hovers(wl: &mut super::WlState, app: &mut crate::app::AppSta
         let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
         let phys_cx = wl.cursor_x as f32 * scale_f;
         let phys_cy = wl.cursor_y as f32 * scale_f;
+        use crate::outer_zones::{hit_id, rect_in, OuterId};
         app.view_arrow_hover = crate::view_arrows::hit_test(panel_rect, scale_f, phys_cx, phys_cy);
-        app.desktop_button_hover = crate::desktop_settings::hit_test_button(panel_rect, scale_f, phys_cx, phys_cy);
+        // Outer-chrome widgets hit-test against their zone-layout slots.
+        let outer_pos = crate::outer_zones::positions(
+            &app.outer, panel_rect, scale_f,
+            crate::media::render::is_active(&app.media),
+        );
+        app.desktop_button_hover = hit_id(&outer_pos, OuterId::Desktop, phys_cx, phys_cy);
         app.desktop_settings_hover = if app.desktop_settings_open {
             let top_y = crate::controls::content_top_y(panel_rect, scale_f);
             crate::desktop_settings::hovered_row(panel_rect, top_y, scale_f, phys_cx, phys_cy)
         } else {
             None
         };
-        app.gear_hover = crate::view_indicator::hit_gear(panel_rect, scale_f, phys_cx, phys_cy);
-        app.restart_hover = crate::view_indicator::hit_restart(panel_rect, scale_f, phys_cx, phys_cy);
-        app.emoji_hover = crate::view_indicator::hit_emoji(panel_rect, scale_f, phys_cx, phys_cy);
-        app.clipboard_hover = crate::view_indicator::hit_clipboard(panel_rect, scale_f, phys_cx, phys_cy);
-        app.notes_hover = crate::view_indicator::hit_notes(panel_rect, scale_f, phys_cx, phys_cy);
-        app.usage_hover = crate::usage_button::hit_test(panel_rect, scale_f, phys_cx, phys_cy);
+        app.gear_hover = hit_id(&outer_pos, OuterId::Settings, phys_cx, phys_cy);
+        app.restart_hover = hit_id(&outer_pos, OuterId::Close, phys_cx, phys_cy);
+        app.emoji_hover = hit_id(&outer_pos, OuterId::Emojis, phys_cx, phys_cy);
+        app.clipboard_hover = hit_id(&outer_pos, OuterId::Clipboard, phys_cx, phys_cy);
+        app.notes_hover = hit_id(&outer_pos, OuterId::Notes, phys_cx, phys_cy);
+        app.usage_hover = hit_id(&outer_pos, OuterId::Usage, phys_cx, phys_cy);
         // Bar-mode sliders only hover-react while CC is collapsed.
         app.bar_sliders.hover = if app.collapse_progress() > 0.5 {
-            crate::bar_sliders::hit_test(panel_rect, scale_f, phys_cx, phys_cy)
+            rect_in(&outer_pos, OuterId::Sliders)
+                .and_then(|r| crate::bar_sliders::hit_test(r, scale_f, phys_cx, phys_cy))
         } else {
             None
         };
-        // Floating media transport buttons — same collapsed-only gating.
-        let media_hover = if app.collapse_progress() > 0.5 && crate::media::render::is_active(&app.media) {
-            crate::media::render::floating_button_hit(panel_rect, scale_f, phys_cx, phys_cy)
+        // Floating media transport buttons — same collapsed-only gating
+        // (the card's slot only exists while something is playing).
+        app.media.hover = if app.collapse_progress() > 0.5 {
+            rect_in(&outer_pos, OuterId::Media).and_then(|r| {
+                crate::media::render::floating_button_hit(r, scale_f, phys_cx, phys_cy)
+            })
         } else {
             None
         };
-        app.media.hover = media_hover;
         // Emoji overlay hover routing.
         if app.emojis.open {
             let top_y = crate::controls::content_top_y(panel_rect, scale_f);
@@ -177,12 +186,11 @@ pub(super) fn track_hovers(wl: &mut super::WlState, app: &mut crate::app::AppSta
     }
 
     // Mini-dock hover tracking — only meaningful while the dock is
-    // actually rendered: Default view AND collapse-progress > 0.
-    // The hover index sticks while the cursor is over the preview
-    // tile so users can move down onto it without it disappearing.
-    if app.collapse_progress() <= 0.005
-        || app.panel_view != crate::app::PanelView::Default
-    {
+    // actually rendered (collapse-progress > 0; the dock shows in
+    // every view while collapsed). The hover index sticks while the
+    // cursor is over the preview tile so users can move down onto it
+    // without it disappearing.
+    if app.collapse_progress() <= 0.005 {
         app.mini_dock_hover = None;
     } else {
         let scale_f = wl.fractional_scale() as f32;

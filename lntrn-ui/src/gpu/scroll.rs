@@ -67,6 +67,67 @@ impl ScrollArea {
     }
 }
 
+/// Animated wheel scrolling — deltas move a target and the rendered offset
+/// eases toward it each frame, instead of the rigid 1:1 jump per event.
+///
+/// Matches the file-manager scroll feel: exponential ease with
+/// `k = 1 - exp(-dt * 12)`, snapping once within half a pixel. Callers keep
+/// scheduling ~16ms frames while [`SmoothScroll::tick`] returns true.
+#[derive(Default)]
+pub struct SmoothScroll {
+    /// The rendered offset — pass `&mut .offset` to [`ScrollArea::new`].
+    pub offset: f32,
+    target: Option<f32>,
+}
+
+impl SmoothScroll {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Queue a wheel delta (positive = down), clamped to the content bounds.
+    pub fn scroll_by(&mut self, delta: f32, content_height: f32, viewport_h: f32) {
+        let max = (content_height - viewport_h).max(0.0);
+        let base = self.target.unwrap_or(self.offset);
+        self.target = Some((base + delta).clamp(0.0, max));
+    }
+
+    /// Jump straight to `offset` and cancel any in-flight animation
+    /// (view resets, scrollbar drags).
+    pub fn set(&mut self, offset: f32) {
+        self.offset = offset;
+        self.target = None;
+    }
+
+    /// Clamp both the offset and any pending target to the content bounds.
+    /// Call from draw once real sizes are known, so a shrinking list can't
+    /// leave the animation chasing an out-of-range target forever.
+    pub fn clamp_to(&mut self, content_height: f32, viewport_h: f32) {
+        let max = (content_height - viewport_h).max(0.0);
+        self.offset = self.offset.clamp(0.0, max);
+        if let Some(t) = self.target {
+            self.target = Some(t.clamp(0.0, max));
+        }
+    }
+
+    /// Advance the ease toward the target. Returns true while still moving.
+    pub fn tick(&mut self, dt: f32) -> bool {
+        let Some(target) = self.target else { return false };
+        let k = 1.0 - (-dt * 12.0).exp();
+        self.offset += (target - self.offset) * k;
+        if (target - self.offset).abs() < 0.5 {
+            self.offset = target;
+            self.target = None;
+            return false;
+        }
+        true
+    }
+
+    pub fn is_animating(&self) -> bool {
+        self.target.is_some()
+    }
+}
+
 const MIN_THUMB_H: f32 = 30.0;
 const SCROLLBAR_W: f32 = 14.0;
 const SCROLLBAR_PAD: f32 = 4.0;

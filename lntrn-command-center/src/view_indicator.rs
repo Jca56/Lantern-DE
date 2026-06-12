@@ -1,15 +1,12 @@
-//! Top-strip icons above the panel.
+//! Glyphs for the outer-strip buttons and the view dots.
 //!
-//! Layout (from left to right, in the margin above the panel):
-//!   LEFT  : [Restart (X)] [Gear (Settings)] [Desktop]
-//!   CENTER: view dots
-//!   RIGHT : [Usage (Claude)] [Emoji] [Clipboard] [Notes]
+//! Positions are owned by [`crate::outer_zones`] — every draw function
+//! here receives the slot rect the zone layout allocated, so the same
+//! glyph renders correctly wherever the user drags the widget. Desktop
+//! and Usage glyphs live in `desktop_settings.rs` / `usage_button.rs`
+//! and follow the same rect-in convention.
 //!
-//! Desktop + Usage glyphs themselves are drawn by `desktop_settings.rs`
-//! and `usage_button.rs`; this module owns their rects so all top-strip
-//! buttons line up against the same horizontal baseline.
-//!
-//! The Restart X is a dev convenience — kills the daemon and re-launches
+//! The Close X is a dev convenience — kills the daemon and re-launches
 //! it so iteration on the binary doesn't need a separate seppuku step.
 
 use lntrn_render::{Color, Painter, Rect};
@@ -19,19 +16,19 @@ use crate::app::PanelView;
 /// Dot diameter and gap (logical px).
 pub const DOT_DIAMETER: f32 = 10.0;
 pub const DOT_GAP: f32 = 16.0;
-/// Vertical center of the dot row relative to the panel top edge — the
-/// dots sit *above* the panel inside the top margin.
+/// Vertical center of the top strip relative to the panel top edge —
+/// strip widgets sit *above* the panel inside the top margin.
 pub const STRIP_OFFSET: f32 = 22.0;
 
-/// Standard glyph size for the four big-button icons on the strip.
+/// Standard glyph size for the big strip buttons.
 pub const BTN_SIZE: f32 = 34.0;
 /// Gear is slightly smaller — gear teeth read OK at this size.
 pub const GEAR_SIZE: f32 = 27.0;
-/// Restart X (dev button) matches the gear so they sit on the same baseline.
+/// Close X (dev restart) matches the gear so they share a baseline.
 pub const RESTART_SIZE: f32 = 27.0;
-/// Gap between adjacent buttons on the same side.
+/// Gap between adjacent widgets in the same zone.
 pub const BTN_GAP: f32 = 14.0;
-/// Outer padding from the panel edge to the first button on each side.
+/// Outer padding from the panel edge to a side zone's first widget.
 pub const SIDE_PAD: f32 = 24.0;
 
 const ACTIVE_RGB: (u8, u8, u8) = (0xc8, 0x86, 0x0a);
@@ -39,120 +36,33 @@ const INACTIVE_RGB: (u8, u8, u8) = (0xff, 0xff, 0xff);
 const INACTIVE_ALPHA: f32 = 0.35;
 const ICON_IDLE_ALPHA: f32 = 0.70;
 
-/// Rect for the i-th view dot. Used for both rendering and clickable
-/// hit-zones (each dot is a tiny shortcut to that view).
-pub fn dot_rect(panel: Rect, scale: f32, idx: usize) -> Rect {
+/// Rect of the i-th view dot inside the dots widget's slot rect.
+fn dot_rect_in(slot: Rect, scale: f32, idx: usize) -> Rect {
     let d = DOT_DIAMETER * scale;
     let gap = DOT_GAP * scale;
     let n = PanelView::ALL.len() as f32;
     let total = n * d + (n - 1.0) * gap;
-    let start_x = panel.x + (panel.w - total) / 2.0;
-    let cy = panel.y - STRIP_OFFSET * scale;
+    let start_x = slot.x + (slot.w - total) / 2.0;
     let x = start_x + idx as f32 * (d + gap);
-    let y = cy - d / 2.0;
+    let y = slot.y + (slot.h - d) / 2.0;
     Rect::new(x, y, d, d)
 }
 
-/// Slightly enlarged hit-rect for the dots so they're easier to click
-/// than the tiny visible circle suggests.
-pub fn dot_hit_rect(panel: Rect, scale: f32, idx: usize) -> Rect {
-    let base = dot_rect(panel, scale, idx);
-    let pad = 6.0 * scale;
-    Rect::new(base.x - pad, base.y - pad, base.w + pad * 2.0, base.h + pad * 2.0)
-}
-
-pub fn hit_test_dot(panel: Rect, scale: f32, px: f32, py: f32) -> Option<usize> {
+/// Which dot (if any) is under the cursor. The slot already includes a
+/// hit pad, so each dot also gets a little slack.
+pub fn dot_at(slot: Rect, scale: f32, px: f32, py: f32) -> Option<usize> {
     for i in 0..PanelView::ALL.len() {
-        let r = dot_hit_rect(panel, scale, i);
-        if px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h {
+        let base = dot_rect_in(slot, scale, i);
+        let pad = 6.0 * scale;
+        if px >= base.x - pad
+            && px <= base.x + base.w + pad
+            && py >= base.y - pad
+            && py <= base.y + base.h + pad
+        {
             return Some(i);
         }
     }
     None
-}
-
-/// Compute a rect for the `idx`-th button on the LEFT side, sized to
-/// `size` logical px. Slots line up against a shared centerline.
-fn left_slot_at(panel: Rect, scale: f32, start_logical_x: f32, size: f32) -> Rect {
-    let s = size * scale;
-    let x = panel.x + start_logical_x * scale;
-    let cy = panel.y - STRIP_OFFSET * scale;
-    let y = cy - s / 2.0;
-    Rect::new(x, y, s, s)
-}
-
-/// Compute a rect for an icon on the RIGHT side whose right edge sits
-/// `right_logical_pad` from the panel right edge.
-fn right_slot_at(panel: Rect, scale: f32, right_logical_pad: f32, size: f32) -> Rect {
-    let s = size * scale;
-    let x = panel.x + panel.w - s - right_logical_pad * scale;
-    let cy = panel.y - STRIP_OFFSET * scale;
-    let y = cy - s / 2.0;
-    Rect::new(x, y, s, s)
-}
-
-/// Per-slot logical sizes for the LEFT strip in render order.
-/// 0 = Restart, 1 = Gear (Settings), 2 = Desktop.
-const LEFT_SLOT_SIZES: [f32; 3] = [RESTART_SIZE, GEAR_SIZE, BTN_SIZE];
-
-/// X offset (logical, from panel left edge) of slot `idx`'s left edge.
-/// Walks the slot list cumulatively so a smaller gear at the front
-/// doesn't push the later slots off-center.
-fn left_slot_x_logical(idx: usize) -> f32 {
-    let mut x = SIDE_PAD;
-    for i in 0..idx.min(LEFT_SLOT_SIZES.len()) {
-        x += LEFT_SLOT_SIZES[i] + BTN_GAP;
-    }
-    x
-}
-
-/// X offset (logical, from panel right edge) of each right-side slot.
-/// idx 0 = rightmost (Notes), then Clipboard, Emoji, Usage.
-fn right_slot_pad_logical(idx: usize) -> f32 {
-    SIDE_PAD + idx as f32 * (BTN_SIZE + BTN_GAP)
-}
-
-pub fn restart_rect(panel: Rect, scale: f32) -> Rect {
-    left_slot_at(panel, scale, left_slot_x_logical(0), RESTART_SIZE)
-}
-pub fn gear_rect(panel: Rect, scale: f32) -> Rect {
-    left_slot_at(panel, scale, left_slot_x_logical(1), GEAR_SIZE)
-}
-pub fn desktop_button_rect(panel: Rect, scale: f32) -> Rect {
-    left_slot_at(panel, scale, left_slot_x_logical(2), BTN_SIZE)
-}
-
-pub fn notes_rect(panel: Rect, scale: f32) -> Rect {
-    right_slot_at(panel, scale, right_slot_pad_logical(0), BTN_SIZE)
-}
-pub fn clipboard_rect(panel: Rect, scale: f32) -> Rect {
-    right_slot_at(panel, scale, right_slot_pad_logical(1), BTN_SIZE)
-}
-pub fn emoji_rect(panel: Rect, scale: f32) -> Rect {
-    right_slot_at(panel, scale, right_slot_pad_logical(2), BTN_SIZE)
-}
-pub fn usage_rect(panel: Rect, scale: f32) -> Rect {
-    right_slot_at(panel, scale, right_slot_pad_logical(3), BTN_SIZE)
-}
-
-fn point_in(r: Rect, px: f32, py: f32) -> bool {
-    px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h
-}
-
-pub fn hit_restart(panel: Rect, scale: f32, px: f32, py: f32) -> bool {
-    point_in(restart_rect(panel, scale), px, py)
-}
-pub fn hit_gear(panel: Rect, scale: f32, px: f32, py: f32) -> bool {
-    point_in(gear_rect(panel, scale), px, py)
-}
-pub fn hit_emoji(panel: Rect, scale: f32, px: f32, py: f32) -> bool {
-    point_in(emoji_rect(panel, scale), px, py)
-}
-pub fn hit_clipboard(panel: Rect, scale: f32, px: f32, py: f32) -> bool {
-    point_in(clipboard_rect(panel, scale), px, py)
-}
-pub fn hit_notes(panel: Rect, scale: f32, px: f32, py: f32) -> bool {
-    point_in(notes_rect(panel, scale), px, py)
 }
 
 fn glyph_color(hovered: bool, active: bool, alpha: f32) -> Color {
@@ -164,16 +74,34 @@ fn glyph_color(hovered: bool, active: bool, alpha: f32) -> Color {
     }
 }
 
+pub fn draw_dots(painter: &mut Painter, slot: Rect, scale: f32, alpha: f32, current: PanelView) {
+    for (i, view) in PanelView::ALL.iter().enumerate() {
+        let r = dot_rect_in(slot, scale, i);
+        let cx = r.x + r.w / 2.0;
+        let cy = r.y + r.h / 2.0;
+        let radius = r.w / 2.0;
+        if *view == current {
+            painter.circle_filled(
+                cx,
+                cy,
+                radius,
+                Color::from_rgb8(ACTIVE_RGB.0, ACTIVE_RGB.1, ACTIVE_RGB.2).with_alpha(alpha),
+            );
+        } else {
+            painter.circle_filled(
+                cx,
+                cy,
+                radius,
+                Color::from_rgb8(INACTIVE_RGB.0, INACTIVE_RGB.1, INACTIVE_RGB.2)
+                    .with_alpha(INACTIVE_ALPHA * alpha),
+            );
+        }
+    }
+}
+
 /// Bright red X — dev restart button, intentionally garish so it never
 /// gets clicked by mistake.
-pub fn draw_restart(
-    painter: &mut Painter,
-    panel: Rect,
-    scale: f32,
-    alpha: f32,
-    hovered: bool,
-) {
-    let r = restart_rect(panel, scale);
+pub fn draw_restart(painter: &mut Painter, r: Rect, scale: f32, alpha: f32, hovered: bool) {
     let cx = r.x + r.w / 2.0;
     let cy = r.y + r.h / 2.0;
     let arm = r.w * 0.34;
@@ -189,13 +117,12 @@ pub fn draw_restart(
 
 pub fn draw_gear(
     painter: &mut Painter,
-    panel: Rect,
+    r: Rect,
     scale: f32,
     alpha: f32,
     hovered: bool,
     active: bool,
 ) {
-    let r = gear_rect(panel, scale);
     let cx = r.x + r.w / 2.0;
     let cy = r.y + r.h / 2.0;
     let color = glyph_color(hovered, active, alpha);
@@ -225,41 +152,15 @@ pub fn draw_gear(
     painter.circle_filled(cx, cy, r.w * 0.10, color);
 }
 
-pub fn draw_dots(painter: &mut Painter, panel: Rect, scale: f32, alpha: f32, current: PanelView) {
-    for (i, view) in PanelView::ALL.iter().enumerate() {
-        let r = dot_rect(panel, scale, i);
-        let cx = r.x + r.w / 2.0;
-        let cy = r.y + r.h / 2.0;
-        let radius = r.w / 2.0;
-        if *view == current {
-            painter.circle_filled(
-                cx,
-                cy,
-                radius,
-                Color::from_rgb8(ACTIVE_RGB.0, ACTIVE_RGB.1, ACTIVE_RGB.2).with_alpha(alpha),
-            );
-        } else {
-            painter.circle_filled(
-                cx,
-                cy,
-                radius,
-                Color::from_rgb8(INACTIVE_RGB.0, INACTIVE_RGB.1, INACTIVE_RGB.2)
-                    .with_alpha(INACTIVE_ALPHA * alpha),
-            );
-        }
-    }
-}
-
 /// Smiley-face glyph for the Emojis page.
 pub fn draw_emoji(
     painter: &mut Painter,
-    panel: Rect,
+    r: Rect,
     scale: f32,
     alpha: f32,
     active: bool,
     hovered: bool,
 ) {
-    let r = emoji_rect(panel, scale);
     let stroke = 2.0 * scale;
     let color = glyph_color(hovered, active, alpha);
 
@@ -305,13 +206,12 @@ pub fn draw_emoji(
 /// Clipboard glyph for the Clipboard History page.
 pub fn draw_clipboard(
     painter: &mut Painter,
-    panel: Rect,
+    r: Rect,
     scale: f32,
     alpha: f32,
     active: bool,
     hovered: bool,
 ) {
-    let r = clipboard_rect(panel, scale);
     let stroke = 2.0 * scale;
     let color = glyph_color(hovered, active, alpha);
 
@@ -357,13 +257,12 @@ pub fn draw_clipboard(
 /// Notepad glyph for the Quick Notes page.
 pub fn draw_notes(
     painter: &mut Painter,
-    panel: Rect,
+    r: Rect,
     scale: f32,
     alpha: f32,
     active: bool,
     hovered: bool,
 ) {
-    let r = notes_rect(panel, scale);
     let stroke = 2.0 * scale;
     let color = glyph_color(hovered, active, alpha);
 

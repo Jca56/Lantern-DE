@@ -1,7 +1,7 @@
 //! Commit graph — custom DAG layout with circles and lines.
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
-use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea, Scrollbar};
+use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea, Scrollbar, SmoothScroll};
 
 use crate::git;
 
@@ -35,7 +35,7 @@ struct LayoutNode {
 pub struct GraphView {
     commits: Vec<git::GraphCommit>,
     layout: Vec<LayoutNode>,
-    scroll_offset: f32,
+    scroll: SmoothScroll,
     content_height: f32,
     viewport_h: f32,
 }
@@ -45,7 +45,7 @@ impl GraphView {
         Self {
             commits: Vec::new(),
             layout: Vec::new(),
-            scroll_offset: 0.0,
+            scroll: SmoothScroll::new(),
             content_height: 0.0,
             viewport_h: 0.0,
         }
@@ -54,14 +54,15 @@ impl GraphView {
     pub fn set_commits(&mut self, commits: Vec<git::GraphCommit>) {
         self.layout = Self::compute_layout(&commits);
         self.commits = commits;
-        self.scroll_offset = 0.0;
+        self.scroll.set(0.0);
     }
 
     pub fn on_scroll(&mut self, delta: f32) {
-        ScrollArea::apply_scroll(
-            &mut self.scroll_offset, delta,
-            self.content_height, self.viewport_h,
-        );
+        self.scroll.scroll_by(delta, self.content_height, self.viewport_h);
+    }
+
+    pub fn tick_scroll(&mut self, dt: f32) -> bool {
+        self.scroll.tick(dt)
     }
 
     /// Assign lanes to commits and compute edges.
@@ -153,9 +154,10 @@ impl GraphView {
         let total_h = self.commits.len() as f32 * row_h;
         self.content_height = total_h;
         self.viewport_h = ch;
+        self.scroll.clamp_to(total_h, ch);
 
         let viewport = Rect::new(cx, cy, cw, ch);
-        let scroll = ScrollArea::new(viewport, total_h, &mut self.scroll_offset);
+        let scroll = ScrollArea::new(viewport, total_h, &mut self.scroll.offset);
         scroll.begin(painter, text);
 
         let base_y = scroll.content_y();
@@ -228,7 +230,7 @@ impl GraphView {
         scroll.end(painter, text);
 
         if total_h > ch {
-            let scrollbar = Scrollbar::new(&viewport, total_h, self.scroll_offset);
+            let scrollbar = Scrollbar::new(&viewport, total_h, self.scroll.offset);
             let sb_state = ix.add_zone(ZONE_SCROLLBAR, scrollbar.thumb);
             scrollbar.draw(painter, sb_state, palette);
         }

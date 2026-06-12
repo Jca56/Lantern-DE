@@ -94,17 +94,52 @@ pub(crate) fn resize_edge_to_cursor_shape(
 
 pub(crate) fn update_rubber_band(app: &mut App, wf: f32, hf: f32, s: f32) {
     let (Some(start), Some(end)) = (app.rubber_band_start, app.rubber_band_end) else { return };
+    // Search results render as a list but have no selection model — leave the
+    // (hidden) directory entries alone.
+    if app.searching && !app.search_buf.is_empty() { return; }
     let cr = content_rect(wf, hf, s);
     let zoom = app.icon_zoom;
-    let cols = grid_columns(cr.w, s, zoom);
     let base_y = cr.y - app.scroll_offset;
     let band = Rect::new(
         start.0.min(end.0), start.1.min(end.1),
         (start.0 - end.0).abs(), (start.1 - end.1).abs(),
     );
-    for i in 0..app.entries.len() {
-        let ir = file_item_rect(i, cols, cr.x, base_y, s, zoom);
-        app.entries[i].selected = ir.intersect(&band).is_some();
+    match app.view_mode {
+        crate::app::ViewMode::Grid => {
+            let cols = grid_columns(cr.w, s, zoom);
+            for i in 0..app.entries.len() {
+                // Match the tight hitbox so rubber-band selection agrees with
+                // what the highlight pill shows.
+                let ir = crate::layout::item_hit_rect(file_item_rect(i, cols, cr.x, base_y, s, zoom), s, zoom);
+                app.entries[i].selected = ir.intersect(&band).is_some();
+            }
+        }
+        crate::app::ViewMode::List => {
+            // Full-row intersection: sweeping the band across any part of a
+            // row should catch it — the tight pill only gates clicks.
+            let hdr_h = 32.0 * crate::layout::list_zoom_multiplier(zoom) * s;
+            let row_h = crate::layout::list_row_h(s, zoom);
+            for i in 0..app.entries.len() {
+                let r = Rect::new(cr.x, base_y + hdr_h + i as f32 * row_h, cr.w, row_h);
+                app.entries[i].selected = r.intersect(&band).is_some();
+            }
+        }
+        crate::app::ViewMode::Tree => {
+            // Tree rows don't line up with `entries` indices (expand state),
+            // so collect the band-hit paths first. Nested rows only select in
+            // pick mode (pick_tree_selection), which the band doesn't touch.
+            let row_h = crate::layout::tree_row_h(s, zoom);
+            let hit: std::collections::HashSet<&std::path::Path> = app.tree_entries.iter().enumerate()
+                .filter(|(ti, _)| {
+                    let r = Rect::new(cr.x, base_y + *ti as f32 * row_h, cr.w, row_h);
+                    r.intersect(&band).is_some()
+                })
+                .map(|(_, te)| te.entry.path.as_path())
+                .collect();
+            for e in &mut app.entries {
+                e.selected = hit.contains(e.path.as_path());
+            }
+        }
     }
 }
 

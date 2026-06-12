@@ -9,7 +9,6 @@ use super::{
 
 // ── Colors ───────────────────────────────────────────────────────────────────
 
-const SURFACE: Color8 = Color8::from_rgb(30, 30, 30);
 const SURFACE_HOVER: Color8 = Color8::from_rgba(255, 255, 255, 15);
 const TEXT: Color8 = Color8::from_rgb(200, 200, 200);
 const TEXT_DIM: Color8 = Color8::from_rgb(120, 120, 120);
@@ -46,10 +45,11 @@ pub fn draw_sidebar(
 
     let h = screen_h as f32 - chrome_h;
     let sw = state.width;
-    let sidebar_rect = Rect::new(0.0, chrome_h, sw, h);
 
-    // Background
-    painter.rect_filled(sidebar_rect, 0.0, c(SURFACE));
+    // No background fill — the window background (theme bg at the
+    // [windows].background_opacity from lantern.toml, plus the optional
+    // gradient overlay) shows through so the sidebar matches the rest of
+    // the window.
 
     // Right edge divider — brightens into an accent grip while hovered or
     // actively dragging the resize handle, so the edge is discoverable.

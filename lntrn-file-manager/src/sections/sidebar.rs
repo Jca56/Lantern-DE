@@ -157,7 +157,9 @@ fn draw_section_header(
     s: f32,
 ) {
     let _ = painter;
-    let color = if hovered { palette.text } else { palette.text_secondary };
+    // Section headers follow the theme accent; hover brightens to full text
+    // so the collapse affordance still reads.
+    let color = if hovered { palette.text } else { palette.accent };
     // Chevron sits to the left of the label so the click target reads as a
     // disclosure toggle on the whole header row.
     let chev_x = 14.0 * s;

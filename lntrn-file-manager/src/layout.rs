@@ -4,8 +4,27 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// When true, layout omits the title bar (desktop widget mode).
 pub static DESKTOP_MODE: AtomicBool = AtomicBool::new(false);
 
+/// "Rice mode" — Super+F11 hides/shows the title bar at runtime (same toggle
+/// the terminal has). Everything below shifts up since all layout derives
+/// from `title_bar_h_base`.
+pub static CHROME_HIDDEN: AtomicBool = AtomicBool::new(false);
+
+pub fn chrome_hidden() -> bool {
+    CHROME_HIDDEN.load(Ordering::Relaxed)
+}
+
 fn title_bar_h_base() -> f32 {
-    if DESKTOP_MODE.load(Ordering::Relaxed) { 0.0 } else { 40.0 }
+    if DESKTOP_MODE.load(Ordering::Relaxed) || CHROME_HIDDEN.load(Ordering::Relaxed) {
+        0.0
+    } else {
+        40.0
+    }
+}
+
+/// The top gradient strip (between title bar and nav bar) goes away in rice
+/// mode along with the title bar. Desktop mode keeps it.
+fn top_gradient_h_base() -> f32 {
+    if CHROME_HIDDEN.load(Ordering::Relaxed) { 0.0 } else { GRADIENT_H }
 }
 const NAV_BAR_H: f32 = 48.0;
 const GRADIENT_H: f32 = 4.0;
@@ -49,7 +68,7 @@ pub fn title_bar_rect(width: f32, s: f32) -> Rect {
 }
 
 pub fn nav_bar_y(s: f32) -> f32 {
-    (title_bar_h_base() + GRADIENT_H) * s
+    (title_bar_h_base() + top_gradient_h_base()) * s
 }
 
 pub fn nav_bar_rect(width: f32, s: f32) -> Rect {
@@ -114,7 +133,7 @@ pub fn search_button_rect(width: f32, s: f32) -> Rect {
 }
 
 pub fn tab_bar_y(s: f32) -> f32 {
-    (title_bar_h_base() + GRADIENT_H + NAV_BAR_H + GRADIENT_H) * s
+    (title_bar_h_base() + top_gradient_h_base() + NAV_BAR_H + GRADIENT_H) * s
 }
 
 pub fn tab_bar_rect(width: f32, s: f32) -> Rect {
@@ -123,7 +142,7 @@ pub fn tab_bar_rect(width: f32, s: f32) -> Rect {
 }
 
 pub fn content_top(s: f32) -> f32 {
-    (title_bar_h_base() + GRADIENT_H + NAV_BAR_H + GRADIENT_H + TAB_BAR_H) * s
+    (title_bar_h_base() + top_gradient_h_base() + NAV_BAR_H + GRADIENT_H + TAB_BAR_H) * s
 }
 
 pub fn content_bottom(height: f32, s: f32) -> f32 {
@@ -342,4 +361,18 @@ pub fn file_item_rect(index: usize, cols: usize, content_x: f32, base_y: f32, s:
     let x = content_x + pad + col as f32 * (item + pad);
     let y = base_y + pad + row as f32 * (item + pad);
     Rect::new(x, y, item, item)
+}
+
+/// Tight hit/highlight rect inside a grid cell: hugs the icon + label block
+/// instead of the full cell, so the gaps between items stay right-clickable
+/// (empty-area menu) while the grid spacing itself is unchanged. Mirrors the
+/// icon/label geometry in `sections/grid.rs`.
+pub fn item_hit_rect(cell: Rect, s: f32, zoom: f32) -> Rect {
+    let icsz = icon_size(s, zoom);
+    let label_font = 16.0 * s;
+    let content_h = icsz + 2.0 * s + label_font; // icon + gap + filename line
+    let margin = 8.0 * s;
+    let w = (icsz + margin * 2.0).min(cell.w);
+    let h = (content_h + margin * 2.0).min(cell.h);
+    Rect::new(cell.x + (cell.w - w) * 0.5, cell.y + (cell.h - h) * 0.5, w, h)
 }

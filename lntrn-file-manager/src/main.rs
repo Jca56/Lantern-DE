@@ -47,6 +47,8 @@ pub const ZONE_NAV_PREVIEW_TOGGLE: u32 = 27;
 pub const ZONE_PREVIEW_RESIZE: u32 = 28;
 pub const VIEW_SLIDER_ID: u32 = 1;
 pub const VIEW_SHOW_HIDDEN_ID: u32 = 3;
+pub const VIEW_SHOW_TITLEBAR_ID: u32 = 4;
+pub const VIEW_SOLID_DIVIDERS_ID: u32 = 5;
 pub const ZONE_SIDEBAR_ITEM_BASE: u32 = 100;
 pub const ZONE_DRIVE_ITEM_BASE: u32 = 200;
 pub const ZONE_PHONE_ITEM_BASE: u32 = 400;
@@ -117,6 +119,16 @@ pub const ZONE_PICK_CONFIRM: u32 = 40;
 pub const ZONE_PICK_CANCEL: u32 = 41;
 pub const ZONE_PICK_FILENAME: u32 = 42;
 pub const ZONE_PICK_FILTER: u32 = 43;
+
+// Context menu — mini title bar (window controls row, terminal-style).
+// The "lntrn" brand label navigates home; chevrons cycle tabs.
+pub const CTX_MINIMIZE: u32 = 120;
+pub const CTX_MAXIMIZE: u32 = 121;
+pub const CTX_CLOSE_WINDOW: u32 = 122;
+pub const CTX_LNTRN: u32 = 123;
+pub const CTX_PREV_TAB: u32 = 124;
+pub const CTX_NEXT_TAB: u32 = 125;
+pub const CTX_ICON_SIZE: u32 = 126;
 
 // Drive context menu
 pub const CTX_DRIVE_EJECT: u32 = 110;

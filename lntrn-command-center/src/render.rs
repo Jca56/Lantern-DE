@@ -25,6 +25,9 @@ const SURFACE_BYTES: (u8, u8, u8) = (24, 24, 24);
 /// Fallback panel opacity when no config has loaded. The actual value
 /// per frame comes from [`crate::app::AppState::config::panel_opacity`].
 const SURFACE_ALPHA_DEFAULT: f32 = 0.92;
+/// Extra logical px past the panel bottom that must clear the screen's
+/// top edge in slide mode: bottom outer band (12 + 72) + shadow blur.
+const SLIDE_CLEARANCE_LOGICAL: f32 = 120.0;
 
 /// Result of `draw_panel` — the (animated) panel rect and alpha, so
 /// content layers can position themselves over the same region.
@@ -71,12 +74,16 @@ pub fn draw_panel(
         return None;
     }
 
-    let alpha = factor;
+    // Slide mode replaces the fade + center-scale entirely: content
+    // stays fully opaque at full size and the whole panel translates
+    // in from above the top screen edge instead.
+    let slide = state.config.slide_anim;
+    let alpha = if slide { 1.0 } else { factor };
     // Scale: ANIM_SCALE_START → 1.0 as factor goes 0 → 1.
     // Skipped in split mode — the bar is treated as a persistent
     // detached window so we don't want it to inflate/contract from
     // the panel's center every time CC opens or collapses.
-    let s = if state.config.panel_split {
+    let s = if state.config.panel_split || slide {
         1.0
     } else {
         ANIM_SCALE_START + (1.0 - ANIM_SCALE_START) * factor
@@ -94,12 +101,20 @@ pub fn draw_panel(
     let cy = base.y + base.h / 2.0;
     let scaled_w = base.w * s;
     let scaled_h = base.h * s;
-    let rect = Rect::new(
+    let mut rect = Rect::new(
         cx - scaled_w / 2.0,
         cy - scaled_h / 2.0,
         scaled_w,
         scaled_h,
     );
+    if slide && factor < 1.0 {
+        // Everything below positions off this rect, so shifting it is
+        // the whole slide. Clearance puts the panel's bottom outer band
+        // (gap 12 + block 72 logical) and shadow reach above the top
+        // edge at factor 0 so nothing peeks out before the slide starts.
+        let clearance = base.y + base.h + SLIDE_CLEARANCE_LOGICAL * scale;
+        rect.y -= clearance * (1.0 - factor);
+    }
 
     let radius = PANEL_CORNER_RADIUS * scale;
     let (sr, sg, sb) = SURFACE_BYTES;
@@ -256,12 +271,12 @@ pub fn draw_content(
         );
     }
 
-    // 1d. Mini-dock of pinned apps under the panel. Fades with collapse
-    //     progress AND with `default_visibility` so it cross-fades
-    //     during a view slide instead of popping. Skipped entirely
-    //     when the user has disabled the collapsed-dock in settings,
-    //     OR when any full-page overlay is open — those replace the
-    //     panel body and the hover-preview tile would float on top.
+    // 1d. Mini-dock of pinned apps under the panel. Hides with the
+    //     expand/collapse and open/close animations (fade or slide per
+    //     the user's setting) but stays put across view switches — the
+    //     collapsed bar keeps its dock in every view. Skipped when any
+    //     full-page overlay is open — those replace the panel body and
+    //     the hover-preview tile would float on top.
     {
         let any_overlay_open = state.settings_open
             || state.emojis.open
@@ -269,12 +284,28 @@ pub fn draw_content(
             || state.notes.open
             || state.usage.open
             || state.desktop_settings_open;
+        // Shown-ness of the dock comes from two animations: open/close
+        // (anim_factor) and expand/collapse (collapse_p). Fade mode
+        // expresses the collapse part through alpha; slide mode routes
+        // both through the bottom-edge offset below so expanding the
+        // panel sends the dock out the same way closing does. The view
+        // slide deliberately does NOT factor in — the collapsed bar
+        // keeps its dock in every view (Terminal, Files, …).
+        let slide = state.config.slide_anim;
+        let collapse_vis = collapse_p.clamp(0.0, 1.0);
         let dock_alpha_mult = if any_overlay_open {
             0.0
+        } else if slide {
+            1.0
         } else {
-            collapse_p.clamp(0.0, 1.0) * default_visibility
+            collapse_vis
         };
-        if dock_alpha_mult > 0.005 && state.config.show_dock_collapsed {
+        let slide_vis = if slide {
+            state.anim_factor() * collapse_vis
+        } else {
+            1.0
+        };
+        if dock_alpha_mult > 0.005 && slide_vis > 0.005 {
             let pinned = state.launcher.pinned_entries(&state.apps);
             let layout = crate::mini_dock::compute_layout(
                 panel.rect,
@@ -285,7 +316,21 @@ pub fn draw_content(
                 &state.apps,
                 Some(state.cursor_phys),
             );
-            if let Some(layout) = layout {
+            if let Some(mut layout) = layout {
+                // Slide mode: the dock mirrors the panel by sliding out
+                // through the *bottom* screen edge. Shift the whole
+                // computed layout — draw + mascot read these rects, so
+                // everything moves together. Margin covers magnified
+                // icons poking above the plate plus its shadow.
+                if slide && slide_vis < 1.0 {
+                    let off = (surface_h as f32 - layout.plate.y
+                        + 80.0 * panel.scale_factor)
+                        * (1.0 - slide_vis);
+                    layout.plate.y += off;
+                    for r in &mut layout.icons {
+                        r.y += off;
+                    }
+                }
                 crate::mini_dock::draw(
                     painter,
                     &mut icons,
@@ -304,14 +349,10 @@ pub fn draw_content(
                 );
 
                 // Hover preview tile above the icon when the hovered app
-                // has at least one open window. Suppressed in alternate
-                // top-level views (Music, Assistant) so the preview
-                // doesn't collide with their bodies.
-                let preview_hover = if state.panel_view == crate::app::PanelView::Default {
-                    state.mini_dock_hover
-                } else {
-                    None
-                };
+                // has at least one open window. Available in every view —
+                // the dock only shows while collapsed, so there's no
+                // body content down here to collide with.
+                let preview_hover = state.mini_dock_hover;
                 if let Some(hover_idx) = preview_hover {
                     if let Some(entry) = layout.entries.get(hover_idx) {
                         let windows = crate::mini_dock::windows_for_app(
@@ -346,34 +387,66 @@ pub fn draw_content(
         }
     }
 
-    // 1d2. Bar-mode sliders (Transparency + Blur) — show when CC is
-    //      collapsed enough that the dock is visible. Fade with
-    //      collapse_p so they appear/disappear in sync with the bar.
-    if collapse_p > 0.005 && !state.toolbar_edit {
-        crate::bar_sliders::draw(
-            painter,
-            text,
-            panel.rect,
-            panel.scale_factor,
-            panel.alpha * collapse_p.clamp(0.0, 1.0),
-            state.bar_sliders,
-            surface_w,
-            surface_h,
-        );
-
-        // Now-playing controls — a floating card centered below the bar,
-        // shown only while something is playing. Fades with the collapse
-        // animation alongside the sliders.
-        crate::media::render::draw_floating(
-            painter,
-            text,
-            &state.media,
-            panel.rect,
-            panel.scale_factor,
-            panel.alpha * collapse_p.clamp(0.0, 1.0),
-            surface_w,
-            surface_h,
-        );
+    // 1d2. Outer-chrome widgets — strip buttons, view dots, the
+    //      transparency/blur sliders, and the now-playing card. Each
+    //      draws into whatever slot the user's outer-zone layout gives
+    //      it. Buttons + dots are always-on chrome; sliders + media are
+    //      collapsed-bar furniture that fades with collapse_p (and hides
+    //      during edit mode, where labeled plates stand in for them).
+    let media_active = crate::media::render::is_active(&state.media);
+    let outer_pos = crate::outer_zones::positions(
+        &state.outer,
+        panel.rect,
+        panel.scale_factor,
+        media_active,
+    );
+    let bar_chrome_alpha = panel.alpha * collapse_p.clamp(0.0, 1.0);
+    for (id, r) in &outer_pos {
+        use crate::outer_zones::OuterId;
+        match id {
+            OuterId::Sliders => {
+                if collapse_p > 0.005 && !state.toolbar_edit {
+                    crate::bar_sliders::draw(
+                        painter, text, *r, panel.scale_factor, bar_chrome_alpha,
+                        state.bar_sliders, surface_w, surface_h,
+                    );
+                }
+            }
+            OuterId::Media => {
+                if collapse_p > 0.005 && !state.toolbar_edit {
+                    crate::media::render::draw_floating(
+                        painter, text, &state.media, *r, panel.scale_factor,
+                        bar_chrome_alpha, surface_w, surface_h,
+                    );
+                }
+            }
+            OuterId::Dots => crate::view_indicator::draw_dots(
+                painter, *r, panel.scale_factor, panel.alpha, state.panel_view,
+            ),
+            OuterId::Close => crate::view_indicator::draw_restart(
+                painter, *r, panel.scale_factor, panel.alpha, state.restart_hover,
+            ),
+            OuterId::Settings => crate::view_indicator::draw_gear(
+                painter, *r, panel.scale_factor, panel.alpha,
+                state.gear_hover, state.settings_open,
+            ),
+            OuterId::Desktop => crate::desktop_settings::draw_button(
+                painter, *r, panel.scale_factor, panel.alpha,
+                state.desktop_button_hover, state.desktop_settings_open,
+            ),
+            OuterId::Usage => crate::usage_button::draw(
+                *r, panel.alpha, state.usage_hover, state.usage.open, &mut icons,
+            ),
+            OuterId::Emojis => crate::view_indicator::draw_emoji(
+                painter, *r, panel.scale_factor, panel.alpha, false, state.emoji_hover,
+            ),
+            OuterId::Clipboard => crate::view_indicator::draw_clipboard(
+                painter, *r, panel.scale_factor, panel.alpha, false, state.clipboard_hover,
+            ),
+            OuterId::Notes => crate::view_indicator::draw_notes(
+                painter, *r, panel.scale_factor, panel.alpha, false, state.notes_hover,
+            ),
+        }
     }
 
     // Toolbar customize / edit-mode overlay (zone hints, ✕ badges,
@@ -385,6 +458,19 @@ pub fn draw_content(
             &state.controls,
             &state.widget_drag,
             state.widget_settings_open,
+            panel.rect,
+            panel.scale_factor,
+            panel.alpha,
+            surface_w,
+            surface_h,
+        );
+        // Outer-zone edit chrome — zone hint boxes around the bar,
+        // grab outlines on every outer widget, and the drag ghost.
+        crate::outer_edit::draw(
+            painter,
+            text,
+            &state.outer,
+            &state.outer_drag,
             panel.rect,
             panel.scale_factor,
             panel.alpha,
@@ -413,75 +499,6 @@ pub fn draw_content(
         panel.scale_factor,
         panel.alpha,
         state.view_arrow_hover,
-    );
-
-    // 1f. Desktop Settings button — floats under the left arrow, same column.
-    crate::desktop_settings::draw_button(
-        painter,
-        panel.rect,
-        panel.scale_factor,
-        panel.alpha,
-        state.desktop_button_hover,
-        state.desktop_settings_open,
-    );
-
-    // 1g. View dots in the strip above the panel.
-    crate::view_indicator::draw_dots(
-        painter,
-        panel.rect,
-        panel.scale_factor,
-        panel.alpha,
-        state.panel_view,
-    );
-    crate::view_indicator::draw_restart(
-        painter,
-        panel.rect,
-        panel.scale_factor,
-        panel.alpha,
-        state.restart_hover,
-    );
-    crate::view_indicator::draw_gear(
-        painter,
-        panel.rect,
-        panel.scale_factor,
-        panel.alpha,
-        state.gear_hover,
-        state.settings_open,
-    );
-    crate::view_indicator::draw_emoji(
-        painter,
-        panel.rect,
-        panel.scale_factor,
-        panel.alpha,
-        false,
-        state.emoji_hover,
-    );
-    crate::view_indicator::draw_clipboard(
-        painter,
-        panel.rect,
-        panel.scale_factor,
-        panel.alpha,
-        false,
-        state.clipboard_hover,
-    );
-    crate::view_indicator::draw_notes(
-        painter,
-        panel.rect,
-        panel.scale_factor,
-        panel.alpha,
-        false,
-        state.notes_hover,
-    );
-    // Claude-usage button — floats under the right arrow (mirrors
-    // desktop button under the left arrow).
-    crate::usage_button::draw(
-        painter,
-        panel.rect,
-        panel.scale_factor,
-        panel.alpha,
-        state.usage_hover,
-        state.usage.open,
-        &mut icons,
     );
 
     // 1f + 1c. Per-view chevron and (Terminal-only) cursor-row mirror.
@@ -576,12 +593,13 @@ pub fn draw_content(
 
     // Right-click context menu — drawn here (before the collapsed
     // early return below) so dock-right-click menus still render in
-    // the collapsed state where the body is fully faded out. Layer 1
+    // the collapsed state where the body is fully faded out. Layer 2
+    // (the modal tier — layer 0 is sticky notes, 1 is panel/content)
     // so it sits above the dock + any panel content, and clamped to
     // the full surface so the menu can anchor outside the panel rect.
     if let Some(menu) = &state.context_menu {
-        painter.set_layer(1);
-        text.set_layer(1);
+        painter.set_layer(2);
+        text.set_layer(2);
         let surface_bounds = lntrn_render::Rect::new(0.0, 0.0, surface_w as f32, surface_h as f32);
         crate::launcher::context_menu::draw(
             painter,
@@ -705,6 +723,7 @@ pub fn draw_content(
             painter,
             text,
             &state.usage.stats,
+            &state.usage.limits,
             panel.rect,
             top_y,
             panel.scale_factor,
@@ -853,11 +872,11 @@ pub fn draw_content(
         clamp_body_icon_clips(&mut icons, icons_before_body, original_panel_rect);
     }
 
-    // Calendar event context menu — overlay layer so it sits
+    // Calendar event context menu — modal layer so it sits
     //    above the day-detail panel.
     if let Some(menu) = &state.controls.clock.event_menu {
-        painter.set_layer(1);
-        text.set_layer(1);
+        painter.set_layer(2);
+        text.set_layer(2);
         crate::controls::clock::draw_event_menu(
             painter,
             text,
@@ -873,8 +892,8 @@ pub fn draw_content(
 
     // 5. Power confirm modal — overlay so it sits above everything.
     if let Some(action) = state.power_confirm {
-        painter.set_layer(1);
-        text.set_layer(1);
+        painter.set_layer(2);
+        text.set_layer(2);
         crate::power::draw_confirm(
             painter,
             text,

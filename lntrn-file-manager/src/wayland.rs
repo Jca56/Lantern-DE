@@ -93,6 +93,7 @@ pub(crate) struct State {
     // Keyboard
     pub(crate) ctrl: bool,
     pub(crate) shift: bool,
+    pub(crate) logo: bool,
     pub(crate) key_pressed: Option<u32>,
     // Key repeat
     pub(crate) held_key: Option<u32>,
@@ -128,7 +129,7 @@ impl State {
             pointer: None, pointer_surface: None,
             cursor_shape_mgr: None, cursor_shape_device: None,
             current_cursor_shape: None,
-            ctrl: false, shift: false, key_pressed: None,
+            ctrl: false, shift: false, logo: false, key_pressed: None,
             held_key: None, repeat_deadline: std::time::Instant::now(), repeat_started: false,
             popup_backend: None, popup_closed: false,
             data_device_manager: None, data_device: None,
@@ -166,6 +167,22 @@ fn first_filter_ext(pick: &PickConfig) -> Option<String> {
     None
 }
 
+/// File-manager context-menu style — matches the terminal's: a black panel
+/// (instead of the stock flat `surface_2` grey) with an accent-tinted border
+/// and hover so it follows the user's theme + accent override. The bg is
+/// Lantern's standard black (#0A0A0A) by explicit user preference — exempt
+/// from the no-hardcoded-colors rule.
+pub(crate) fn context_menu_style(palette: &FoxPalette) -> ContextMenuStyle {
+    let mut style = ContextMenuStyle::from_palette(palette);
+    style.bg = lntrn_render::Color::from_rgba8(10, 10, 10, 255);
+    style.bg_hover = palette.accent.with_alpha(0.16);
+    style.border = palette.accent.with_alpha(0.35);
+    style.border_width = 1.5;
+    style.corner_radius = 12.0;
+    style.separator = palette.accent.with_alpha(0.12);
+    style
+}
+
 // ── Entry point ─────────────────────────────────────────────────────────────
 
 pub fn run(pick: Option<PickConfig>, desktop: bool, start_dir: Option<std::path::PathBuf>) -> Result<()> {
@@ -191,6 +208,18 @@ pub fn run(pick: Option<PickConfig>, desktop: bool, start_dir: Option<std::path:
     }
 
     let settings = Settings::load();
+    // Rice mode is the default — the title bar only shows when the user has
+    // turned it back on (View menu toggle / Super+F11, persisted).
+    if !desktop {
+        crate::layout::CHROME_HIDDEN.store(
+            !settings.show_titlebar,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+    crate::sections::SOLID_DIVIDERS.store(
+        settings.solid_dividers,
+        std::sync::atomic::Ordering::Relaxed,
+    );
     let surface = compositor.create_surface(&qh, ());
 
     // Dummy toplevel ref — only used in window mode
@@ -293,7 +322,7 @@ pub fn run(pick: Option<PickConfig>, desktop: bool, start_dir: Option<std::path:
 
     let mut palette = FoxPalette::from_variant(settings.theme_variant());
     let mut view_menu = ContextMenu::new(ContextMenuStyle::from_palette(&palette));
-    let mut context_menu = ContextMenu::new(ContextMenuStyle::from_palette(&palette));
+    let mut context_menu = ContextMenu::new(context_menu_style(&palette));
     view_menu.set_scale(scale_f);
     context_menu.set_scale(scale_f);
     let mut open_with_apps: Vec<DesktopApp> = Vec::new();

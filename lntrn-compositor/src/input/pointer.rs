@@ -290,6 +290,13 @@ impl Lantern {
         let over_top_layer = ButtonState::Pressed == button_state
             && self.pointer_over_top_layer(pointer.current_location());
 
+        // A click while Super is held means Super is being used (drag/resize/
+        // focus), not tapped — cancel the pending Command Center toggle so it
+        // doesn't pop open when Super is released. See keyboard.rs.
+        if ButtonState::Pressed == button_state && self.super_pressed {
+            self.super_clean_tap = false;
+        }
+
         // Super+left-click: compositor-level move
         // Super+right-click: compositor-level resize
         if ButtonState::Pressed == button_state
@@ -311,13 +318,11 @@ impl Lantern {
                 if button == BTN_LEFT {
                     if let Some(wl_surface) = crate::window_ext::WindowExt::get_wl_surface(&window) {
                     let initial_window_location = self.workspaces.element_location(&window).unwrap_or_default();
-                    let was_snapped = self.is_snapped(&wl_surface);
                     let was_maximized = self.is_maximized(&wl_surface);
                     let grab = crate::grabs::MoveSurfaceGrab {
                         start_data,
                         window,
                         initial_window_location,
-                        was_snapped,
                         was_maximized,
                         restored_this_drag: false,
                         has_moved: false,
@@ -389,13 +394,11 @@ impl Lantern {
                             location: pos,
                         };
                         let initial_window_location = self.workspaces.element_location(&window).unwrap_or_default();
-                        let was_snapped = self.is_snapped(&wl_surface);
                         let was_maximized = self.is_maximized(&wl_surface);
                         let grab = crate::grabs::MoveSurfaceGrab {
                             start_data,
                             window,
                             initial_window_location,
-                            was_snapped,
                             was_maximized,
                             restored_this_drag: false,
                             has_moved: false,

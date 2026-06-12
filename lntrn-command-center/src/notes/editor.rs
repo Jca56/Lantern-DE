@@ -375,3 +375,72 @@ fn clamp_to_char_boundary(buf: &str, byte: usize) -> usize {
     }
     b
 }
+
+// ── Mouse → byte offset hit-testing ────────────────────────────────────────
+
+use lntrn_render::{Rect, TextRenderer};
+
+/// Layout-aware byte offset for a mouse position over the body editor.
+pub fn body_byte_at(
+    body_rect_inner: Rect,
+    buf: &str,
+    body_scroll: f32,
+    text_size: f32,
+    scale: f32,
+    px: f32,
+    py: f32,
+    text: &mut TextRenderer,
+) -> usize {
+    let font = (text_size * scale).max(15.0);
+    let line_h = super::body_line_height(text_size, scale);
+    let line_count = buf.split('\n').count().max(1);
+    let rel_y = py - body_rect_inner.y + body_scroll;
+    let line_idx = ((rel_y / line_h).floor() as i64)
+        .clamp(0, (line_count as i64) - 1) as usize;
+    // Compute byte offset of line start.
+    let mut line_start = 0usize;
+    for _ in 0..line_idx {
+        if let Some(off) = buf[line_start..].find('\n') {
+            line_start += off + 1;
+        } else {
+            line_start = buf.len();
+            break;
+        }
+    }
+    let line_end = buf[line_start..]
+        .find('\n')
+        .map(|i| line_start + i)
+        .unwrap_or(buf.len());
+    let line = &buf[line_start..line_end];
+    let target_x = (px - body_rect_inner.x).max(0.0);
+    line_start + byte_at_x_in_line(line, target_x, font, text)
+}
+
+/// Walk through chars in `line` measuring widths and return the byte
+/// offset whose visual gap is closest to `target_x`.
+pub fn byte_at_x_in_line(line: &str, target_x: f32, font: f32, text: &mut TextRenderer) -> usize {
+    let mut last_w = 0.0f32;
+    for (byte_idx, ch) in line.char_indices() {
+        let next_byte = byte_idx + ch.len_utf8();
+        let w = text.measure_width(&line[..next_byte], font);
+        let center = (last_w + w) * 0.5;
+        if target_x < center {
+            return byte_idx;
+        }
+        last_w = w;
+    }
+    line.len()
+}
+
+/// Single-line byte offset for inputs with a left padding and font.
+pub fn input_byte_at(
+    field_rect: Rect,
+    text_left_pad: f32,
+    buf: &str,
+    font: f32,
+    px: f32,
+    text: &mut TextRenderer,
+) -> usize {
+    let target_x = (px - field_rect.x - text_left_pad).max(0.0);
+    byte_at_x_in_line(buf, target_x, font, text)
+}

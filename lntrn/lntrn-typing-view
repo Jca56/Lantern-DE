@@ -1,0 +1,677 @@
+#!/usr/bin/env python3
+"""lntrn-typing-view — monkeytype-style TUI typing test.
+
+Monkeytype-style typing test with the amber lantern aesthetic: pick
+difficulty / length / mode, type over greyed-out text, get the full stats
+breakdown (net + raw wpm, accuracy, consistency, wpm-over-time graph).
+History and personal bests live at $XDG_DATA_HOME/lntrn/typing_history.json.
+stdlib only, no external deps. Launched by `lntrn --typing`.
+"""
+import json, math, os, random, re, select, shutil, signal, statistics, sys, termios, time, tty, unicodedata
+from pathlib import Path
+
+# ── Config ─────────────────────────────────────────────────────────────────
+MIN_COLS, MIN_ROWS = 56, 16
+TEXT_W_MAX = 66      # max width of the typing text block
+AHEAD      = 240     # chars of target kept generated ahead of the caret
+DIFFS     = [('easy', 'Easy'), ('hard', 'Hard')]
+DURATIONS = [(30, '30 seconds', '30s'), (60, '1 minute', '1m'), (180, '3 minutes', '3m')]
+MODES     = [('words', 'Random words'), ('para', 'Paragraph')]
+HIST_PATH = Path(os.environ.get('XDG_DATA_HOME') or Path.home() / '.local/share') / 'lntrn' / 'typing_history.json'
+
+# ── ANSI primitives ────────────────────────────────────────────────────────
+CSI = '\x1b['
+RESET, BOLD = CSI+'0m', CSI+'1m'
+UL, UL_OFF = CSI+'4m', CSI+'24m'
+HIDE_CUR, SHOW_CUR = CSI+'?25l', CSI+'?25h'
+ALT_ON,  ALT_OFF   = CSI+'?1049h', CSI+'?1049l'
+PASTE_ON, PASTE_OFF = CSI+'?2004h', CSI+'?2004l'
+HOME, CLR_SCREEN, CLR_LINE, CLR_EOS = CSI+'H', CSI+'2J', CSI+'K', CSI+'J'
+def fg(c): return f'{CSI}38;2;{c[0]};{c[1]};{c[2]}m'
+def bg(c): return f'{CSI}48;2;{c[0]};{c[1]};{c[2]}m'
+
+# ── Theme (matches lntrn-sysmon-view / lntrn-files-view) ───────────────────
+AMBER, AMBER_HI, AMBER_DIM = (212, 160, 32), (255, 186, 72), (135, 100, 55)
+BORDER_CLR                 = ( 95,  68, 30)
+TEXT, TEXT_DIM, TEXT_MUTED = (225, 205, 175), (150, 130, 100), (95, 85, 75)
+GREEN, YELLOW, RED         = (100, 205, 115), (240, 205, 70), (240, 70, 50)
+TYPED_CLR                  = (240, 232, 214)   # filled-in correct chars
+UNTYPED_CLR                = (105,  95,  82)   # greyed-out not-yet-typed
+BAD_SPACE_BG               = (110,  42,  32)   # wrong char where a space was expected
+
+# ── Glyphs ─────────────────────────────────────────────────────────────────
+BOX_TL, BOX_TR, BOX_BL, BOX_BR = '╭', '╮', '╰', '╯'
+BOX_H,  BOX_V                  = '─', '│'
+SPARK = '▁▂▃▄▅▆▇█'
+BOLT, CHECK, CROSS, STAR, RING, SEL = '⚡', '✓', '✗', '★', '◎', '❯'
+
+# ── Visible width & truncation (ANSI-aware) ────────────────────────────────
+ANSI_RE = re.compile(r'\x1b\[[0-9;]*[A-Za-z]')
+def char_w(ch):
+    return 2 if unicodedata.east_asian_width(ch) in ('W', 'F') else 1
+def vlen(s):
+    return sum(char_w(c) for c in ANSI_RE.sub('', s))
+def vtrunc(s, n):
+    if n <= 0: return ''
+    out, vis, i, L = [], 0, 0, len(s)
+    while i < L:
+        if s[i] == '\x1b':
+            j = i + 1
+            if j < L and s[j] == '[':
+                j += 1
+                while j < L and not s[j].isalpha(): j += 1
+                if j < L: j += 1
+            out.append(s[i:j]); i = j
+        else:
+            w = char_w(s[i])
+            if vis + w > n: break
+            out.append(s[i]); vis += w; i += 1
+    out.append(RESET)
+    return ''.join(out)
+def pad_center(s, w):
+    v = vlen(s)
+    if v > w: return vtrunc(s, w)
+    l = (w - v) // 2
+    return ' '*l + s + ' '*(w - v - l)
+def cline(s, cols):
+    return ' ' * max(0, (cols - vlen(s)) // 2) + s
+
+def lerp(a, b, t):
+    return (int(a[0]+(b[0]-a[0])*t), int(a[1]+(b[1]-a[1])*t), int(a[2]+(b[2]-a[2])*t))
+
+def fmt_t(secs):
+    secs = max(0, int(secs))
+    return f'{secs//60}:{secs%60:02d}'
+
+# ── Content: word pools ────────────────────────────────────────────────────
+WORDS = """the of and to in a is that it for as with on be at by this from or an
+are was but not you all have he they we she which do their time if will how
+each about out many then them these so some her would make like him into has
+look two more write go see number no way could people my than first water been
+call who its now find long down day did get come made may part over new sound
+take only little work know place year live me back give most very after thing
+our just name good man think say great where help through much before line
+right too mean old any same tell boy follow came want show also around form
+three small set put end does another well large must big even such because
+turn here why ask went men read need land different home us move try kind hand
+picture again change off play spell air away animal house point page letter
+mother answer found study still learn should world high every near add food
+between own below country plant last school father keep tree never start city
+earth eye light thought head under story saw left few while along might close
+something seem next hard open example begin life always those both paper
+together got group often run important until children side feet car mile night
+walk white sea began grow took river four carry state once book hear stop
+without second late miss idea enough eat face watch far real almost let above
+girl sometimes mountain cut young talk soon list song being leave family""".split()
+
+HARD_TOKENS = """sudo pacman -Syu emerge --ask grep -rn chmod 755 chown mount
+/etc/fstab /dev/null /proc/cpuinfo $HOME $PATH 2>&1 && || ~/.config ssh rsync
+-avz systemctl --user htop kill -9 v3.2.1 42 1991 2026 100% 0x7F i++ (void*)
+[ok] #!/bin/sh make -j16 ./configure --prefix=/usr tar -xzvf core.tar.gz
+localhost:8080 192.168.1.1 eth0 mkfs.ext4 uid=1000 :wq exit(0) g++ crontab -e
+base64 awk sed -i fsck lsblk df -h du -sh top free -m uname -r""".split()
+
+# ── Content: Linux paragraphs (easy = prose, hard = numbers + specials) ────
+def norm(s): return ' '.join(s.split())
+PARAGRAPHS = [
+    {'easy': norm("""the linux kernel began as a hobby project announced on a
+        usenet newsgroup by a student in finland who promised it would never be
+        anything big or professional. today it quietly runs most of the
+        internet, every android phone in every pocket, and the fastest
+        supercomputers on the planet. not bad for a hobby."""),
+     'hard': norm("""In 1991, Linus Torvalds announced a free kernel as "just
+        a hobby, won't be big and professional like gnu" - it now runs 100%
+        of the TOP500 supercomputers, roughly 71% of smartphones, and the
+        vast majority of the web's servers. Not bad for a $0 hobby
+        project.""")},
+    {'easy': norm("""some distros hold your hand and some simply hand you a
+        wiki. arch ships a minimal base system and trusts you to build
+        everything else yourself, which is exactly why its users never stop
+        telling everyone about it. you never need to ask whether someone
+        uses arch, because they will tell you."""),
+     'hard': norm("""Arch is a rolling release: run sudo pacman -Syu and you
+        ride the newest kernel within days. The AUR carries 90,000+ packages,
+        the wiki answers 99% of your questions, and every Arch user will
+        mention their distro within 5 minutes of meeting you. (i use arch
+        btw)""")},
+    {'easy': norm("""write programs that do one thing and do it well. write
+        programs that work together. write programs that handle text
+        streams, because that is a universal interface. fifty years later
+        the unix philosophy still shapes every command you pipe through a
+        terminal, one small sharp tool at a time."""),
+     'hard': norm("""The UNIX philosophy, circa 1978: write programs that do
+        1 thing well. Pipes glue them together - grep -i error log.txt | wc -l
+        chains 2 tools into a single answer. Everything is a file: /dev/null,
+        /proc/cpuinfo, even the terminal you are typing in right now at
+        /dev/tty.""")},
+    {'easy': norm("""the x window system served the desktop faithfully for
+        almost four decades before its many layers of legacy finally caught
+        up with it. wayland strips the stack down to a compositor and its
+        clients, trading ancient network transparency for clean frames, real
+        isolation between apps, and pixels that arrive exactly once."""),
+     'hard': norm("""X dates back to 1984; Wayland arrived in 2008 to
+        replace it. A modern compositor speaks DRM/KMS directly, schedules
+        frames at 240Hz with explicit sync, and isolates every client - no
+        more rogue apps logging keystrokes. Run echo $WAYLAND_DISPLAY to
+        check; wayland-1 means you made it.""")},
+    {'easy': norm("""free software is a matter of liberty rather than price.
+        the freedom to run, study, change, and share code is what built the
+        modern world, from the kernel all the way up to the browser. every
+        time you fix a bug and send the patch upstream, you join the longest
+        running collaborative project in human history."""),
+     'hard': norm("""GNU launched in 1983, and the GPLv2 license (1991) made
+        Linux legally possible. Over 90% of cloud infrastructure now runs
+        free software: git, gcc, systemd, OpenSSL - the whole toolchain. Fork
+        it, patch it, send the PR upstream - then chmod +x your ideas and
+        ship them.""")},
+]
+
+def gen_words(diff, n):
+    out = []
+    for _ in range(n):
+        if diff == 'hard' and random.random() < 0.35:
+            out.append(random.choice(HARD_TOKENS))
+        else:
+            w = random.choice(WORDS)
+            if diff == 'hard':
+                if random.random() < 0.15: w = w.capitalize()
+                if random.random() < 0.15: w += random.choice('.,;:!?')
+            out.append(w)
+    return out
+
+# ── History & personal bests ───────────────────────────────────────────────
+def load_hist():
+    try:
+        with open(HIST_PATH) as f: d = json.load(f)
+        if isinstance(d, dict) and isinstance(d.get('runs', []), list):
+            d.setdefault('runs', []); d.setdefault('settings', {}); d.setdefault('pbs', {})
+            if isinstance(d['pbs'], dict): return d
+    except (OSError, ValueError): pass
+    return {'runs': [], 'settings': {}, 'pbs': {}}
+
+def save_hist(d):
+    try:
+        HIST_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = HIST_PATH.with_suffix('.tmp')
+        with open(tmp, 'w') as f: json.dump(d, f)
+        os.replace(tmp, HIST_PATH)
+    except OSError: pass
+
+def pb_key(diff, mode, dur): return f'{diff}|{mode}|{dur}'
+
+def pb_for(hist, diff, mode, dur):
+    """PB cache wins over the (pruned) run log; scanning runs migrates old files."""
+    cached = hist['pbs'].get(pb_key(diff, mode, dur))
+    best = cached.get('wpm') if cached else None
+    for r in hist['runs']:
+        if r.get('diff') == diff and r.get('mode') == mode and r.get('dur') == dur:
+            w = r.get('wpm', 0)
+            if best is None or w > best: best = w
+    return best
+
+def best_overall(hist):
+    best = None
+    for r in list(hist['runs']) + list(hist['pbs'].values()):
+        if best is None or r.get('wpm', 0) > best.get('wpm', 0): best = r
+    return best
+
+# ── Key parsing ────────────────────────────────────────────────────────────
+def parse_key(buf):
+    """One key event from buf → (key, remaining). None = incomplete (need more
+    bytes); 'NOP' = complete-but-unmapped (consumed and ignored by all states)."""
+    if not buf: return None, b''
+    b0 = buf[0]
+    ARROWS = {'A': 'UP', 'B': 'DOWN', 'C': 'RIGHT', 'D': 'LEFT'}
+    if b0 == 0x1b:
+        if len(buf) == 1: return None, buf   # bare ESC or split sequence — caller decides
+        if buf[1] == ord('['):
+            i = 2
+            while i < len(buf) and not (0x40 <= buf[i] <= 0x7e): i += 1
+            if i >= len(buf): return None, buf
+            fin, params = chr(buf[i]), buf[2:i]
+            if fin == '~' and params == b'200': return 'PASTE_S', buf[i+1:]
+            if fin == '~' and params == b'201': return 'PASTE_E', buf[i+1:]
+            return ARROWS.get(fin, 'NOP'), buf[i+1:]
+        if buf[1] == ord('O'):               # SS3: F1-F4, app-cursor arrows
+            if len(buf) < 3: return None, buf
+            return ARROWS.get(chr(buf[2]), 'NOP'), buf[3:]
+        return 'ESC', buf[1:]                # alt+key — treat as ESC
+    if b0 in (0x0d, 0x0a): return 'ENTER',  buf[1:]
+    if b0 == 0x09:         return 'TAB',    buf[1:]
+    if b0 == 0x7f:         return 'BS',     buf[1:]
+    if b0 == 0x08:         return 'WORDBS', buf[1:]   # ctrl+backspace on most terms
+    if b0 == 0x03:         return 'CTRLC',  buf[1:]
+    if b0 == 0x17:         return 'WORDBS', buf[1:]   # ctrl+w
+    if b0 < 0x20:          return f'CTRL{chr(b0 + 0x40)}', buf[1:]
+    if b0 < 0x80:          return chr(b0), buf[1:]
+    if b0 >= 0xc0:
+        w = 2 if b0 < 0xe0 else (3 if b0 < 0xf0 else 4)
+        if len(buf) < w: return None, buf
+        try: return buf[:w].decode('utf-8'), buf[w:]
+        except UnicodeDecodeError: return 'NOP', buf[1:]
+    return 'NOP', buf[1:]
+
+# ── Big block digits for the results headline ──────────────────────────────
+BIG = {'0': ('███', '█ █', '█ █', '█ █', '███'), '1': (' █ ', '██ ', ' █ ', ' █ ', '███'),
+       '2': ('███', '  █', '███', '█  ', '███'), '3': ('███', '  █', '███', '  █', '███'),
+       '4': ('█ █', '█ █', '███', '  █', '  █'), '5': ('███', '█  ', '███', '  █', '███'),
+       '6': ('███', '█  ', '███', '█ █', '███'), '7': ('███', '  █', '  █', '  █', '  █'),
+       '8': ('███', '█ █', '███', '█ █', '███'), '9': ('███', '█ █', '███', '  █', '███')}
+def big_num(n):
+    return ['  '.join(''.join(c*2 for c in BIG[d][r]) for d in str(n)) for r in range(5)]
+
+# ── Text wrapping ──────────────────────────────────────────────────────────
+def wrap(target, width):
+    """Greedy word-wrap → list of (start, end) char ranges into target.
+    Each line owns its trailing space so the caret stays visible there."""
+    lines, pos, cur_start, cur_len = [], 0, 0, 0
+    for w in target.split(' '):
+        wl = len(w)
+        if cur_len and cur_len + 1 + wl > width:
+            lines.append((cur_start, pos))
+            cur_start, cur_len = pos, wl
+        else:
+            cur_len = wl if not cur_len else cur_len + 1 + wl
+        pos += wl + 1
+    lines.append((cur_start, min(pos, len(target))))
+    return lines
+
+def sparkline(vals, width):
+    if not vals: return ''
+    if len(vals) > width:
+        step = len(vals) / width
+        vals = [statistics.fmean(vals[int(i*step):max(int(i*step)+1, int((i+1)*step))])
+                for i in range(width)]
+    mx = max(vals) or 1
+    out = []
+    for v in vals:
+        t = v / mx
+        out.append(fg(lerp(AMBER_DIM, AMBER_HI, t)) + SPARK[min(7, int(t * 7.999))])
+    return ''.join(out) + RESET
+
+# ── App ────────────────────────────────────────────────────────────────────
+class App:
+    def __init__(self):
+        self.hist = load_hist()
+        s = self.hist['settings']
+        self.di = next((i for i, (k, _) in enumerate(DIFFS) if k == s.get('diff')), 0)
+        self.du = next((i for i, d in enumerate(DURATIONS) if d[0] == s.get('dur')), 1)
+        self.mo = next((i for i, (k, _) in enumerate(MODES) if k == s.get('mode')), 0)
+        self.state, self.row = 'menu', 0
+        self.t0 = None
+        self.result = {}
+        self.para_last = None
+        self.finish_t = 0.0
+
+    @property
+    def diff(self): return DIFFS[self.di][0]
+    @property
+    def dur(self):  return DURATIONS[self.du][0]
+    @property
+    def mode(self): return MODES[self.mo][0]
+    def combo_label(self):
+        return f'{DIFFS[self.di][1]} · {MODES[self.mo][1]} · {DURATIONS[self.du][2]}'
+
+    # ── Test lifecycle ──────────────────────────────────────────────────
+    def start_test(self):
+        self.target, self.marks = '', []
+        self.pos, self.t0 = 0, None
+        self.keys_total = self.keys_ok = self.keys_bad = 0
+        self.err_pos = set()   # positions ever struck wrong → 'fixed' if correct at end
+        self.samples = [0]
+        self.para_queue = []
+        self.ensure_target()
+        self.hist['settings'] = {'diff': self.diff, 'dur': self.dur, 'mode': self.mode}
+        save_hist(self.hist)
+        self.state = 'test'
+
+    def next_para(self):
+        if not self.para_queue:
+            order = list(range(len(PARAGRAPHS)))
+            random.shuffle(order)
+            if self.para_last is not None and order[0] == self.para_last and len(order) > 1:
+                order[0], order[-1] = order[-1], order[0]
+            self.para_queue = order
+        i = self.para_queue.pop(0)
+        self.para_last = i
+        return PARAGRAPHS[i][self.diff]
+
+    def ensure_target(self):
+        while len(self.target) < self.pos + AHEAD:
+            chunk = (' '.join(gen_words(self.diff, 40)) if self.mode == 'words'
+                     else self.next_para())
+            self.target += ('' if not self.target else ' ') + chunk
+        if len(self.marks) < len(self.target):
+            self.marks.extend([None] * (len(self.target) - len(self.marks)))
+
+    def elapsed(self):
+        return 0.0 if self.t0 is None else time.monotonic() - self.t0
+
+    def test_tick(self):
+        if self.t0 is None: return
+        el = self.elapsed()
+        last, tgt = len(self.samples) - 1, min(int(el), self.dur)
+        if tgt > last:   # interpolate across stalled seconds (ctrl+s, SIGSTOP, ...)
+            prev = self.samples[-1]
+            for i in range(last + 1, tgt + 1):
+                f = (i - last) / (tgt - last)
+                self.samples.append(round(prev + (self.keys_total - prev) * f))
+        if el >= self.dur: self.finish_test()
+
+    def backspace_one(self):
+        if self.pos > 0:
+            self.pos -= 1
+            self.marks[self.pos] = None
+
+    def test_key(self, key):
+        if key in ('ESC',): self.state = 'menu'; return False
+        if key == 'CTRLC': return True
+        if key == 'TAB': self.start_test(); return False
+        if self.t0 is not None and self.elapsed() >= self.dur: return False
+        if key == 'BS': self.backspace_one(); return False
+        if key == 'WORDBS':
+            while self.pos > 0 and self.target[self.pos-1] == ' ': self.backspace_one()
+            while self.pos > 0 and self.target[self.pos-1] != ' ': self.backspace_one()
+            return False
+        if len(key) == 1 and ' ' <= key <= '~':
+            if self.t0 is None: self.t0 = time.monotonic()
+            ok = key == self.target[self.pos]
+            self.marks[self.pos] = ok
+            self.keys_total += 1
+            if ok: self.keys_ok += 1
+            else:  self.keys_bad += 1; self.err_pos.add(self.pos)
+            self.pos += 1
+            self.ensure_target()
+        return False
+
+    def finish_test(self):
+        el = max(0.001, min(self.elapsed(), self.dur))
+        correct = sum(1 for m in self.marks[:self.pos] if m)
+        uncorr  = sum(1 for m in self.marks[:self.pos] if m is False)
+        minutes = el / 60
+        wpm = correct / 5 / minutes
+        raw = self.keys_total / 5 / minutes
+        acc = 100 * self.keys_ok / max(1, self.keys_total)
+        bursts = [(self.samples[i+1] - self.samples[i]) * 12
+                  for i in range(len(self.samples) - 1)]
+        con = self.consistency(bursts)
+        fixed = sum(1 for i in self.err_pos if i < self.pos and self.marks[i])
+        pb = pb_for(self.hist, self.diff, self.mode, self.dur)
+        new_pb = pb is None or wpm > pb
+        self.result = {'wpm': wpm, 'raw': raw, 'acc': acc, 'con': con, 'ok': correct,
+                       'bad': uncorr, 'fixed': fixed, 'keys': self.keys_total,
+                       'bursts': bursts, 'pb': pb, 'new_pb': new_pb}
+        if new_pb:   # PBs cached separately so pruning the run log can't lose them
+            self.hist['pbs'][pb_key(self.diff, self.mode, self.dur)] = {
+                'wpm': round(wpm, 2), 'diff': self.diff, 'mode': self.mode,
+                'dur': self.dur, 'ts': int(time.time())}
+        self.hist['runs'].append({'ts': int(time.time()), 'wpm': round(wpm, 2),
+                                  'raw': round(raw, 2), 'acc': round(acc, 2),
+                                  'con': round(con, 1), 'diff': self.diff,
+                                  'mode': self.mode, 'dur': self.dur, 'ok': correct,
+                                  'bad': uncorr, 'fixed': fixed,
+                                  'keys': self.keys_total})
+        self.hist['runs'] = self.hist['runs'][-500:]
+        save_hist(self.hist)
+        self.finish_t = time.monotonic()
+        self.state = 'results'
+
+    @staticmethod
+    def consistency(bursts):
+        b = [x for x in bursts if x >= 0]
+        if len(b) < 2: return 100.0
+        m = statistics.fmean(b)
+        if m <= 0: return 0.0
+        return max(0.0, min(100.0, 100.0 * (1 - statistics.pstdev(b) / m)))
+
+    # ── Key dispatch ────────────────────────────────────────────────────
+    def handle(self, key):
+        if key == 'CTRLC': return True
+        if self.state == 'menu':    return self.menu_key(key)
+        if self.state == 'test':    return self.test_key(key)
+        return self.results_key(key)
+
+    def menu_key(self, key):
+        if key in ('q', 'Q', 'ESC'): return True
+        if key == 'UP':   self.row = (self.row - 1) % 3
+        elif key in ('DOWN', 'TAB'): self.row = (self.row + 1) % 3
+        elif key in ('LEFT', 'RIGHT'):
+            d = 1 if key == 'RIGHT' else -1
+            if   self.row == 0: self.di = (self.di + d) % len(DIFFS)
+            elif self.row == 1: self.du = (self.du + d) % len(DURATIONS)
+            else:               self.mo = (self.mo + d) % len(MODES)
+        elif key == 'ENTER': self.start_test()
+        return False
+
+    def results_key(self, key):
+        # Grace window: keys still in flight when the timer expired must not
+        # retry/quit a results screen the user hasn't even seen yet
+        if time.monotonic() - self.finish_t < 0.4: return False
+        if key in ('q', 'Q'): return True
+        if key in ('r', 'TAB', 'ENTER'): self.start_test()
+        elif key in ('m', 'ESC'): self.state = 'menu'
+        return False
+
+    # ── Rendering ───────────────────────────────────────────────────────
+    def render(self, cols, rows):
+        if cols < MIN_COLS or rows < MIN_ROWS:
+            msg = f'lntrn typing needs ≥ {MIN_COLS}×{MIN_ROWS} (have {cols}×{rows})'
+            body = [cline(fg(TEXT_DIM) + msg + RESET, cols)]
+        elif self.state == 'menu':  body = self.menu_lines(cols)
+        elif self.state == 'test':  body = self.test_lines(cols)
+        else:                       body = self.results_lines(cols, rows)
+        return compose(body, cols, rows)
+
+    def menu_lines(self, cols):
+        title = (f'{fg(AMBER_HI)}{BOLT}{RESET}  {BOLD}{fg(AMBER)}L A N T E R N'
+                 f'   T Y P I N G   T E S T{RESET}  {fg(AMBER_HI)}{BOLT}{RESET}')
+        bw = min(cols - 4, vlen(title) + 8)
+        b = fg(BORDER_CLR)
+        out = [cline(b + BOX_TL + BOX_H*(bw-2) + BOX_TR + RESET, cols),
+               cline(b + BOX_V + RESET + pad_center(title, bw-2) + b + BOX_V + RESET, cols),
+               cline(b + BOX_BL + BOX_H*(bw-2) + BOX_BR + RESET, cols), '']
+        settings = [('Difficulty', DIFFS[self.di][1]), ('Length', DURATIONS[self.du][1]),
+                    ('Mode', MODES[self.mo][1])]
+        for i, (label, value) in enumerate(settings):
+            sel = i == self.row
+            mark = f'{fg(AMBER_HI)}{SEL} ' if sel else '  '
+            lab = (BOLD + fg(AMBER) if sel else fg(TEXT_DIM)) + f'{label:<12}' + RESET
+            val = (BOLD + fg(TEXT) + f'‹ {value} ›' if sel
+                   else fg(TEXT_MUTED) + f'  {value}') + RESET
+            vis = 14 + len(value) + (4 if sel else 2)   # all rows padded to one width
+            out.append(cline(mark + lab + val + ' ' * max(0, 34 - vis), cols))
+            out.append('')
+        out.pop()
+        out += ['', cline(fg(TEXT_MUTED) + '↑↓ choose · ←→ change · enter start · q quit' + RESET, cols), '']
+        pb = pb_for(self.hist, self.diff, self.mode, self.dur)
+        pb_lines = []
+        if pb is not None:
+            pb_lines.append(f'{fg(AMBER_DIM)}{STAR} this combo  {fg(TEXT_DIM)}{pb:.1f} wpm{RESET}')
+        else:
+            pb_lines.append(f'{fg(TEXT_MUTED)}{STAR} no runs yet for this combo{RESET}')
+        best = best_overall(self.hist)
+        if best:
+            dn, mn = dict(DIFFS), dict(MODES)
+            sn = {d: s for d, _, s in DURATIONS}
+            pb_lines.append(f'{fg(AMBER_DIM)}{STAR} all-time    {fg(TEXT_DIM)}{best["wpm"]:.1f} wpm · '
+                            f'{dn.get(best.get("diff"), "?")} · {mn.get(best.get("mode"), "?")} · '
+                            f'{sn.get(best.get("dur"), "?")}{RESET}')
+        lm = ' ' * max(0, (cols - max(map(vlen, pb_lines))) // 2)   # centred as a block
+        out += [lm + l for l in pb_lines]
+        return out
+
+    def hud_box(self, bw, cols):
+        b = fg(BORDER_CLR)
+        if self.t0 is None:
+            inner = (f'{BOLD}{fg(TEXT)}{fmt_t(self.dur)}{RESET}    '
+                     f'{fg(AMBER_DIM)}start typing!{RESET}')
+        else:
+            el = self.elapsed()
+            rem = math.ceil(max(0.0, self.dur - el))
+            correct = sum(1 for m in self.marks[:self.pos] if m)
+            errs    = sum(1 for m in self.marks[:self.pos] if m is False)
+            wpm = correct / 5 / (max(el, 2.0) / 60)
+            acc = 100 * self.keys_ok / max(1, self.keys_total)
+            acc_c = GREEN if acc >= 95 else YELLOW if acc >= 85 else RED
+            t_c = RED if rem <= 5 else TEXT
+            inner = (f'{BOLD}{fg(t_c)}{fmt_t(rem)}{RESET}    '
+                     f'{fg(AMBER_HI)}{BOLT}{BOLD}{wpm:3.0f}{RESET}{fg(TEXT_DIM)} wpm{RESET}    '
+                     f'{fg(acc_c)}{RING} {acc:4.1f}%{RESET}    '
+                     f'{fg(RED if errs else TEXT_MUTED)}{CROSS} {errs}{RESET}')
+        return [cline(b + BOX_TL + BOX_H*(bw-2) + BOX_TR + RESET, cols),
+                cline(b + BOX_V + RESET + pad_center(inner, bw-2) + b + BOX_V + RESET, cols),
+                cline(b + BOX_BL + BOX_H*(bw-2) + BOX_BR + RESET, cols)]
+
+    def render_text_line(self, s, e):
+        out, mode = [], None   # mode batches identical styles to keep strings short
+        for i in range(s, e):
+            ch, m = self.target[i], self.marks[i]
+            if i == self.pos:
+                out.append(RESET + UL + fg(AMBER_HI) + ch + UL_OFF); mode = None
+            elif m is True:
+                if mode != 'ok': out.append(RESET + fg(TYPED_CLR)); mode = 'ok'
+                out.append(ch)
+            elif m is False:
+                if ch == ' ':
+                    out.append(RESET + bg(BAD_SPACE_BG) + ' ' + RESET); mode = None
+                else:
+                    if mode != 'bad': out.append(RESET + fg(RED)); mode = 'bad'
+                    out.append(ch)
+            else:
+                if mode != 'dim': out.append(RESET + fg(UNTYPED_CLR)); mode = 'dim'
+                out.append(ch)
+        out.append(RESET)
+        return ''.join(out)
+
+    def test_lines(self, cols):
+        text_w = min(TEXT_W_MAX, cols - 10)
+        lines = wrap(self.target, text_w)
+        li = next((i for i, (s, e) in enumerate(lines) if s <= self.pos < e), 0)
+        w0 = 0 if li == 0 else li - 1
+        lm = ' ' * max(0, (cols - text_w) // 2)
+        out = self.hud_box(text_w + 4, cols) + ['']
+        for s, e in lines[w0:w0+3]:
+            out.append(lm + self.render_text_line(s, e))
+        while len(out) < 7: out.append('')
+        out += ['', cline(fg(TEXT_MUTED) + 'esc menu · tab restart' + RESET, cols)]
+        return out
+
+    def results_lines(self, cols, rows):
+        r = self.result
+        if not r: return [cline(fg(TEXT_DIM) + 'no results yet' + RESET, cols)]
+        lab = lambda s: fg(AMBER_DIM) + s + RESET
+        val = lambda s: fg(TEXT) + s + RESET
+        out = [cline(f'{fg(BORDER_CLR)}{BOX_H*3} {fg(AMBER)}results{fg(BORDER_CLR)} {BOX_H*3}{RESET}', cols), '']
+        for row in big_num(int(round(r['wpm']))):
+            out.append(cline(fg(AMBER_HI) + row + RESET, cols))
+        out.append(cline(fg(TEXT_DIM) + f'{r["wpm"]:.1f} net wpm' + RESET, cols))
+        out.append('')
+        if r['new_pb']:
+            out.append(cline(f'{BOLD}{fg(AMBER_HI)}{STAR} new personal best! {STAR}{RESET}', cols))
+        else:
+            out.append(cline(f'{fg(TEXT_MUTED)}{STAR} personal best {r["pb"]:.1f} wpm{RESET}', cols))
+        raw_s, acc_s, con_s = f'{r["raw"]:.1f}', f'{r["acc"]:.1f}%', f'{r["con"]:.0f}%'
+        out += ['',
+                cline(f'{lab("raw")} {val(raw_s)}    {lab("accuracy")} {val(acc_s)}    '
+                      f'{lab("consistency")} {val(con_s)}', cols),
+                cline(f'{lab("chars")} {fg(GREEN)}{r["ok"]}{CHECK}{RESET} {fg(RED)}{r["bad"]}{CROSS}{RESET} '
+                      f'{fg(YELLOW)}{r["fixed"]} fixed{RESET}    {lab("keys")} {val(str(r["keys"]))}', cols),
+                cline(f'{lab("time")} {val(fmt_t(self.dur))}    {fg(TEXT_DIM)}{self.combo_label()}{RESET}', cols),
+                '']
+        if len(r['bursts']) >= 2:
+            out.append(cline(fg(TEXT_MUTED) + 'raw wpm over time' + RESET, cols))
+            out.append(cline(sparkline(r['bursts'], min(50, cols - 10)), cols))
+            out.append('')
+        out.append(cline(fg(TEXT_MUTED) + 'r retry · m menu · q quit' + RESET, cols))
+        if len(out) > rows: out = [l for l in out if l != ''][:rows]
+        return out
+
+def compose(body, cols, rows):
+    body = body[:rows]
+    top = max(0, (rows - len(body)) // 2)
+    lines = [''] * top + body + [''] * (rows - top - len(body))
+    # cols-1: a line filling the last column leaves the cursor wrap-pending and
+    # the trailing CLR_LINE would erase the just-written final cell
+    lines = [vtrunc(l, cols - 1) if vlen(l) >= cols else l for l in lines]
+    return HOME + (CLR_LINE + '\n').join(lines) + CLR_LINE + CLR_EOS
+
+# ── Main loop ──────────────────────────────────────────────────────────────
+def main():
+    app = App()
+    fd = sys.stdin.fileno()
+    old_attrs = None
+
+    def cleanup():
+        # termios first: if stdout is wedged/gone the write below may raise,
+        # and the shell must get its terminal back regardless
+        if old_attrs is not None:
+            try: termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
+            except Exception: pass
+        try: sys.stdout.write(PASTE_OFF + SHOW_CUR + ALT_OFF); sys.stdout.flush()
+        except Exception: pass
+
+    signal.signal(signal.SIGTERM, lambda *_: (cleanup(), sys.exit(0)))
+    signal.signal(signal.SIGHUP,  lambda *_: (cleanup(), sys.exit(0)))
+    resized = [True]
+    signal.signal(signal.SIGWINCH, lambda *_: resized.__setitem__(0, True))
+    # Self-pipe: since PEP 475 a handled signal does NOT interrupt select(),
+    # so SIGWINCH must wake it explicitly or resize repaints stall
+    wake_r, wake_w = os.pipe()
+    os.set_blocking(wake_r, False); os.set_blocking(wake_w, False)
+    signal.set_wakeup_fd(wake_w, warn_on_full_buffer=False)
+
+    try:
+        old_attrs = termios.tcgetattr(fd); tty.setcbreak(fd)
+        mode = termios.tcgetattr(fd)
+        mode[0] &= ~termios.IXON   # ctrl+s must not freeze a typing test
+        termios.tcsetattr(fd, termios.TCSANOW, mode)
+    except Exception: pass
+
+    sys.stdout.write(ALT_ON + HIDE_CUR + PASTE_ON + CLR_SCREEN + HOME); sys.stdout.flush()
+
+    in_buf, in_paste = b'', False
+    try:
+        while True:
+            cols, rows_ = shutil.get_terminal_size((100, 30))
+            if app.state == 'test': app.test_tick()
+            sys.stdout.write(app.render(cols, rows_)); sys.stdout.flush()
+            resized[0] = False
+
+            timeout = (0.05 if (app.state == 'test' and app.t0 is not None)
+                       else 0.5 if app.state == 'test' else 30.0)
+            ready, _, _ = select.select([fd, wake_r], [], [], timeout)
+            if wake_r in ready:
+                try: os.read(wake_r, 64)
+                except (BlockingIOError, OSError): pass
+            if fd not in ready: continue
+            try: chunk = os.read(fd, 1024)
+            except BlockingIOError: chunk = None
+            if chunk == b'': return   # EOF: stdin closed / not a tty
+            if not chunk: continue
+            in_buf += chunk
+            while True:
+                key, rest = parse_key(in_buf)
+                if key is None:   # incomplete sequence — top up briefly
+                    if in_buf and in_buf[0] == 0x1b:
+                        r2, _, _ = select.select([fd], [], [], 0.02)
+                        if r2:
+                            try: more = os.read(fd, 64)
+                            except BlockingIOError: more = None
+                            if more: in_buf += more; continue
+                        if in_buf == b'\x1b':   # nothing followed: a real ESC press
+                            in_buf = b''
+                            if app.handle('ESC'): return
+                    break
+                in_buf = rest
+                if key == 'PASTE_S': in_paste = True
+                elif key == 'PASTE_E': in_paste = False
+                elif not in_paste and app.handle(key): return
+                if not in_buf: break
+    except KeyboardInterrupt:
+        pass
+    finally:
+        signal.set_wakeup_fd(-1)
+        cleanup()
+
+if __name__ == '__main__':
+    main()

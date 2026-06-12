@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use super::charwidth::char_width;
 use super::grid::{Cell, Color8, TerminalState, Wide, ANSI_COLORS, SYNC_OUTPUT_TIMEOUT};
+use super::mouse::MouseMode;
 
 // ── VTE Performer ───────────────────────────────────────────────────────────
 // Bridges the `vte` parser events into our TerminalState grid.
@@ -359,6 +360,25 @@ impl vte::Perform for Performer<'_> {
                             25 => {
                                 // DECTCEM — cursor visibility
                                 s.cursor_hidden = !set;
+                            }
+                            // Mouse reporting. Resetting any tracking mode
+                            // turns reporting off (apps disable them as a
+                            // batch: 1006l 1003l 1002l 1000l).
+                            1000 => {
+                                s.mouse_mode =
+                                    if set { MouseMode::Buttons } else { MouseMode::Off };
+                            }
+                            1002 => {
+                                s.mouse_mode =
+                                    if set { MouseMode::Drag } else { MouseMode::Off };
+                            }
+                            1003 => {
+                                s.mouse_mode =
+                                    if set { MouseMode::Any } else { MouseMode::Off };
+                            }
+                            1006 => {
+                                // SGR extended coordinates
+                                s.mouse_sgr = set;
                             }
                             1049 => {
                                 if set {

@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use lntrn_ui::gpu::{
-    ContextMenu, FoxPalette, InteractionContext, MenuEvent, PopupSurface, ScrollArea,
+    ContextMenu, FoxPalette, InteractionContext, MenuEvent, PopupSurface, ScrollArea, Scrollbar,
 };
 use wayland_client::{
     protocol::{wl_data_device_manager, wl_surface},
@@ -65,6 +65,13 @@ pub(crate) fn run_loop(
     // Favorite drag reorder state (mirrors tab_drag/tab_drag_press but axis is Y).
     let mut fav_drag: Option<usize> = None;
     let mut fav_drag_press: Option<(usize, f32)> = None;
+    // Scrollbar thumb drag: Some(grab_dy) = pointer offset from the thumb top.
+    let mut scrollbar_drag: Option<f32> = None;
+    // Smooth wheel scrolling: offset eases toward this target each frame.
+    // `scroll_anim_last` detects external offset writes (navigation, zoom,
+    // scrollbar drag) so the animation yields instead of yanking back.
+    let mut scroll_anim: Option<f32> = None;
+    let mut scroll_anim_last: f32 = 0.0;
 
     eprintln!("[fox] entering main loop, size={}x{}", state.width, state.height);
 
@@ -140,6 +147,16 @@ pub(crate) fn run_loop(
         let hf = gpu.ctx.height() as f32;
         let s = scale_f;
 
+        // Keep the popup backend's scale in sync with the frame scale. The
+        // menus re-read `s` on every open, but the backend used to keep its
+        // startup snapshot forever — after anything shifted fractional_scale
+        // (resize picking up late output info, scale switch, hotplug), popup
+        // buffers were allocated from the stale scale and every context menu
+        // rendered clipped on the right/bottom.
+        if let Some(backend) = &mut state.popup_backend {
+            backend.set_scale(s);
+        }
+
         // ── Cursor routing ──────────────────────────────────────────────
         let cx = (state.cursor_x as f32) * s;
         let cy = (state.cursor_y as f32) * s;
@@ -184,6 +201,12 @@ pub(crate) fn run_loop(
             };
             let desired = if on_preview_handle {
                 wp_cursor_shape_device_v1::Shape::EwResize
+            } else if scrollbar_drag.is_some()
+                || input.zone_at(cx, cy) == Some(crate::ZONE_SCROLLBAR)
+            {
+                // The scrollbar sits inside the resize border — don't flash
+                // resize arrows over it.
+                wp_cursor_shape_device_v1::Shape::Default
             } else if toplevel.is_some() && !state.maximized {
                 let border = 10.0 * s;
                 match edge_resize(cx, cy, wf, hf, border) {
@@ -214,6 +237,18 @@ pub(crate) fn run_loop(
                     .find(|&d| view_menu.popup_id_at_depth(d) == Some(pid))
             });
             view_menu.set_pointer_depth(vdepth);
+        }
+
+        // ── Scrollbar thumb drag ─────────────────────────────────────────
+        if let Some(grab_dy) = scrollbar_drag {
+            let content = content_rect(wf, hf, s);
+            let total_h = view_content_height(app, content.w, s);
+            let bar = Scrollbar::new(&content, total_h, app.scroll_offset);
+            app.scroll_offset = bar.offset_for_thumb_y(
+                cy - grab_dy + bar.thumb.h * 0.5,
+                total_h,
+                content.h,
+            );
         }
 
         // ── Rubber band update + edge auto-scroll ────────────────────────
@@ -256,7 +291,7 @@ pub(crate) fn run_loop(
         }
 
         // ── Drag detection ──────────────────────────────────────────────
-        if state.pointer_in_surface && app.drag_item.is_none() {
+        if state.pointer_in_surface && app.drag_item.is_none() && app.drag_tree_item.is_none() {
             if let (Some(idx), Some((px, py))) = (app.pending_open, app.press_pos) {
                 let dist = ((cx - px).powi(2) + (cy - py).powi(2)).sqrt();
                 if dist > 5.0 {
@@ -291,6 +326,30 @@ pub(crate) fn run_loop(
                 }
             }
 
+            // Tree rows arm their own pending slot — indices point into
+            // tree_entries, not entries (nested rows have no entries index).
+            // Only plain presses arm it, so no shift/rubber-band sub-branch.
+            if let (Some(ti), Some((px, py))) = (app.pending_tree_open, app.press_pos) {
+                let dist = ((cx - px).powi(2) + (cy - py).powi(2)).sqrt();
+                if dist > 5.0 && ti < app.tree_entries.len() {
+                    app.drag_tree_item = Some(ti);
+                    app.drag_pos = Some((cx, cy));
+                    app.pending_tree_open = None;
+                    app.press_pos = None;
+
+                    // Grabbing a selected row drags the whole selection;
+                    // anything else (incl. nested rows) drags solo.
+                    let path = app.tree_entries[ti].entry.path.clone();
+                    let selected = app.selected_paths();
+                    state.dnd_paths = if selected.iter().any(|p| p == &path) {
+                        selected
+                    } else {
+                        vec![path]
+                    };
+                    state.dnd_serial = state.pointer_serial;
+                }
+            }
+
             // Favorite drag-to-reorder detection (Y-axis threshold).
             if fav_drag.is_none() {
                 if let Some((fav_idx, press_y)) = fav_drag_press {
@@ -311,12 +370,14 @@ pub(crate) fn run_loop(
                 }
             }
         }
-        if app.drag_item.is_some() && state.pointer_in_surface {
+        if (app.drag_item.is_some() || app.drag_tree_item.is_some()) && state.pointer_in_surface {
             app.drag_pos = Some((cx, cy));
         }
 
         // ── Start Wayland DnD when cursor leaves window during drag ────
-        if app.drag_item.is_some() && !state.dnd_active && !state.dnd_paths.is_empty() {
+        if (app.drag_item.is_some() || app.drag_tree_item.is_some())
+            && !state.dnd_active && !state.dnd_paths.is_empty()
+        {
             let raw_cx = state.cursor_x as f32;
             let raw_cy = state.cursor_y as f32;
             let logical_w = state.width as f32;
@@ -338,22 +399,40 @@ pub(crate) fn run_loop(
                     state.dnd_active = true;
                     // Clear internal drag — compositor owns the drag now
                     app.drag_item = None;
+                    app.drag_tree_item = None;
                     app.drag_pos = None;
                 }
             }
         }
 
         // ── Clean up drag state after Wayland DnD ends ──────────────────
-        if !state.dnd_active && state.dnd_paths.is_empty() && app.drag_item.is_some()
+        if !state.dnd_active && state.dnd_paths.is_empty()
+            && (app.drag_item.is_some() || app.drag_tree_item.is_some())
             && !state.pointer_in_surface
         {
             app.drag_item = None;
+            app.drag_tree_item = None;
             app.drag_pos = None;
         }
 
         // ── Keyboard ────────────────────────────────────────────────────
         if let Some(key) = state.key_pressed.take() {
-            handle_key(app, settings, context_menu, &mut state.popup_backend, key, state.ctrl, state.shift, &mut state.running);
+            // Super+F11: "rice mode" — hide/show the title bar (window mode
+            // only). The compositor deliberately lets Super+F11 fall through;
+            // plain F11 still toggles compositor fullscreen.
+            const KEY_F11: u32 = 87;
+            if state.logo && key == KEY_F11 && !state.desktop_mode {
+                use std::sync::atomic::Ordering;
+                let hidden = !crate::layout::CHROME_HIDDEN.load(Ordering::Relaxed);
+                crate::layout::CHROME_HIDDEN.store(hidden, Ordering::Relaxed);
+                if hidden && view_menu.is_open() {
+                    if let Some(backend) = &mut state.popup_backend {
+                        view_menu.close_popups(backend);
+                    }
+                }
+            } else {
+                handle_key(app, settings, context_menu, &mut state.popup_backend, key, state.ctrl, state.shift, &mut state.running);
+            }
         }
 
         // Key repeat (for text editing modes)
@@ -371,21 +450,33 @@ pub(crate) fn run_loop(
         }
 
         // ── Scroll ──────────────────────────────────────────────────────
+        // Wheel detents move a boosted distance and ease toward the target
+        // instead of the old rigid 1:1 jump per event.
+        const SCROLL_STEP_MULT: f32 = 4.0;
         if state.scroll_delta.abs() > 0.01 {
-            let scroll = state.scroll_delta * s;
+            let scroll = state.scroll_delta * s * SCROLL_STEP_MULT;
             input.on_scroll(scroll);
             let content = content_rect(wf, hf, s);
-            let zoom = app.icon_zoom;
-            let total_h = match app.view_mode {
-                crate::app::ViewMode::Grid => {
-                    let cols = grid_columns(content.w, s, zoom);
-                    grid_content_height(app.entries.len(), cols, s, zoom)
-                }
-                crate::app::ViewMode::List => list_content_height(app.entries.len(), s, zoom),
-                crate::app::ViewMode::Tree => tree_content_height(app.tree_entries.len(), s, zoom),
-            };
-            ScrollArea::apply_scroll(&mut app.scroll_offset, scroll, total_h, content.h);
+            let total_h = view_content_height(app, content.w, s);
+            let max = (total_h - content.h).max(0.0);
+            let base = scroll_anim.unwrap_or(app.scroll_offset);
+            scroll_anim = Some((base + scroll).clamp(0.0, max));
+            scroll_anim_last = app.scroll_offset;
             state.scroll_delta = 0.0;
+        }
+        if let Some(target) = scroll_anim {
+            if app.scroll_offset != scroll_anim_last {
+                // Someone else moved the scroll since last step — yield.
+                scroll_anim = None;
+            } else {
+                let k = 1.0 - (-dt * 12.0).exp();
+                app.scroll_offset += (target - app.scroll_offset) * k;
+                if (target - app.scroll_offset).abs() < 0.5 {
+                    app.scroll_offset = target;
+                    scroll_anim = None;
+                }
+                scroll_anim_last = app.scroll_offset;
+            }
         }
 
         // ── Left press ──────────────────────────────────────────────────
@@ -461,18 +552,41 @@ pub(crate) fn run_loop(
                     view_menu.close_popups(backend);
                 }
             } else {
+                // Scrollbar grab — must win over edge-resize (the bar lives
+                // inside the resize border) and the rubber band.
+                let mut handled_scrollbar = false;
+                if input.zone_at(cx, cy) == Some(crate::ZONE_SCROLLBAR) {
+                    let content = content_rect(wf, hf, s);
+                    let total_h = view_content_height(app, content.w, s);
+                    let bar = Scrollbar::new(&content, total_h, app.scroll_offset);
+                    let grab_dy = if cy >= bar.thumb.y && cy <= bar.thumb.y + bar.thumb.h {
+                        cy - bar.thumb.y
+                    } else {
+                        // Track click: jump the thumb to the cursor, then drag.
+                        app.scroll_offset = bar.offset_for_thumb_y(cy, total_h, content.h);
+                        bar.thumb.h * 0.5
+                    };
+                    scrollbar_drag = Some(grab_dy);
+                    scroll_anim = None;
+                    // Take input capture so the thumb draws Pressed/Dragging
+                    // and other zones stop hovering during the drag.
+                    input.on_left_pressed();
+                    handled_scrollbar = true;
+                }
                 // Edge resize (window mode only)
                 let mut handled_resize = false;
                 if let Some(toplevel) = toplevel {
-                    let border = 10.0 * s;
-                    if let Some(edge) = edge_resize(cx, cy, wf, hf, border) {
-                        if let Some(seat) = &state.seat {
-                            toplevel.resize(seat, state.pointer_serial, edge);
+                    if !handled_scrollbar {
+                        let border = 10.0 * s;
+                        if let Some(edge) = edge_resize(cx, cy, wf, hf, border) {
+                            if let Some(seat) = &state.seat {
+                                toplevel.resize(seat, state.pointer_serial, edge);
+                            }
+                            handled_resize = true;
                         }
-                        handled_resize = true;
                     }
                 }
-                if !handled_resize {
+                if !handled_scrollbar && !handled_resize {
                     let prev_preview_open = app.preview_open;
                     let prev_view = app.view_mode;
                     let prev_places_collapsed = app.places_collapsed;
@@ -524,6 +638,7 @@ pub(crate) fn run_loop(
                                         toplevel._move(seat, state.pointer_serial);
                                     }
                                 } else if app.pending_open.is_none()
+                                    && app.pending_tree_open.is_none()
                                     && app.preview_drag.is_none()
                                     && !app.suppress_rubber_band
                                 {
@@ -535,6 +650,7 @@ pub(crate) fn run_loop(
                                     }
                                 }
                             } else if app.pending_open.is_none()
+                                && app.pending_tree_open.is_none()
                                 && app.preview_drag.is_none()
                                 && !app.suppress_rubber_band
                             {
@@ -578,6 +694,7 @@ pub(crate) fn run_loop(
                     }
                 }
             } else {
+                scrollbar_drag = None;
                 if app.rubber_band_start.is_some() {
                     app.rubber_band_start = None;
                     app.rubber_band_end = None;
@@ -643,15 +760,62 @@ pub(crate) fn run_loop(
                             }
                         }
                     }
-                } else if let Some(drag_idx) = app.drag_item.take() {
-                    let prev_fav_len = app.sidebar_favorites().len();
-                    handle_drop(app, input, wf, hf, s, drag_idx);
-                    if app.sidebar_favorites().len() != prev_fav_len {
-                        settings.favorites = app.favorites_paths();
-                        settings.save();
+                } else if app.drag_item.is_some() || app.drag_tree_item.is_some() {
+                    // Internal drop — sources from whichever drag kind is
+                    // live. Grabbing a selected item drags the whole
+                    // selection; anything else drags solo.
+                    let sources: Vec<std::path::PathBuf> = if let Some(drag_idx) = app.drag_item.take() {
+                        let selected = app.selected_paths();
+                        if selected.is_empty() || !app.entries[drag_idx].selected {
+                            vec![app.entries[drag_idx].path.clone()]
+                        } else {
+                            selected
+                        }
+                    } else if let Some(ti) = app.drag_tree_item.take() {
+                        if ti < app.tree_entries.len() {
+                            let path = app.tree_entries[ti].entry.path.clone();
+                            let selected = app.selected_paths();
+                            if selected.iter().any(|p| p == &path) { selected } else { vec![path] }
+                        } else {
+                            Vec::new()
+                        }
+                    } else {
+                        Vec::new()
+                    };
+                    if !sources.is_empty() {
+                        let prev_fav_len = app.sidebar_favorites().len();
+                        handle_drop(app, input, wf, hf, s, sources);
+                        if app.sidebar_favorites().len() != prev_fav_len {
+                            settings.favorites = app.favorites_paths();
+                            settings.save();
+                        }
                     }
                     app.pending_open = None;
+                    app.pending_tree_open = None;
+                    app.drag_pos = None;
                     state.dnd_paths.clear();
+                } else if let Some(ti) = app.pending_tree_open.take() {
+                    // Deferred tree-row action: the press armed a potential
+                    // drag instead of acting; no drag started, so act now.
+                    if ti < app.tree_entries.len() {
+                        let te = &app.tree_entries[ti];
+                        let path = te.entry.path.clone();
+                        if te.entry.is_dir {
+                            app.toggle_tree_expand(path);
+                        } else {
+                            let ext = path.extension()
+                                .and_then(|e| e.to_str())
+                                .map(|s| s.to_lowercase())
+                                .unwrap_or_default();
+                            if let Some(a) = crate::desktop::default_app_for_extension(&ext) {
+                                crate::desktop::launch_app(&a.exec, &path);
+                            } else {
+                                std::thread::spawn(move || {
+                                    let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
+                                });
+                            }
+                        }
+                    }
                 } else if let Some(idx) = app.pending_open.take() {
                     if app.press_ctrl {
                         // Ctrl+Click toggle already applied at press time —
@@ -688,6 +852,10 @@ pub(crate) fn run_loop(
                     context_menu.close_popups(backend);
                 }
             }
+            // Re-style from the live palette so a theme/accent change in
+            // System Settings shows up without restarting the file manager.
+            // (handle_right_click re-applies the scale before opening.)
+            context_menu.set_style(crate::wayland::context_menu_style(palette));
             handle_right_click(app, context_menu, &mut state.popup_backend, input, open_with_apps, wf, hf, s);
         }
 
@@ -733,7 +901,11 @@ pub(crate) fn run_loop(
             if matches!(evt, MenuEvent::Action(_)) {
                 context_menu.close();
             }
-            handle_ctx_event(app, settings, context_menu, &mut state.popup_backend, open_with_apps, file_info, evt);
+            if let MenuEvent::SliderChanged { id: crate::CTX_ICON_SIZE, value } = evt {
+                apply_icon_zoom(app, value, wf, hf, s);
+            } else {
+                handle_ctx_event(app, settings, context_menu, &mut state.popup_backend, open_with_apps, file_info, toplevel, state.maximized, &mut state.running, evt);
+            }
         }
 
         // ── Draw & render popup surfaces (window mode) ─────────────────
@@ -742,20 +914,35 @@ pub(crate) fn run_loop(
             if let Some(evt) = view_menu.draw_popups(backend) {
                 if let MenuEvent::SliderChanged { id, value } = evt {
                     if id == VIEW_SLIDER_ID {
-                        app.icon_zoom = value;
-                        let content = content_rect(wf, hf, s);
-                        ScrollArea::apply_scroll(
-                            &mut app.scroll_offset, 0.0,
-                            grid_content_height(app.entries.len(),
-                                grid_columns(content.w, s, value), s, value),
-                            content.h,
-                        );
+                        apply_icon_zoom(app, value, wf, hf, s);
                     }
                 } else if let MenuEvent::CheckboxToggled { id, checked } = evt {
                     if id == VIEW_SHOW_HIDDEN_ID {
                         app.show_hidden = checked;
                         settings.show_hidden = checked;
                         app.reload();
+                    } else if id == crate::VIEW_SHOW_TITLEBAR_ID {
+                        // Live toggle + persisted as the open-time default.
+                        // (Super+F11 stays a transient toggle, like the
+                        // terminal's rice mode.)
+                        crate::layout::CHROME_HIDDEN.store(
+                            !checked,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        settings.show_titlebar = checked;
+                        settings.save();
+                        // Hiding the bar removes the View label the menu is
+                        // anchored to — close it along with the bar.
+                        if !checked {
+                            view_menu.close_popups(backend);
+                        }
+                    } else if id == crate::VIEW_SOLID_DIVIDERS_ID {
+                        crate::sections::SOLID_DIVIDERS.store(
+                            checked,
+                            std::sync::atomic::Ordering::Relaxed,
+                        );
+                        settings.solid_dividers = checked;
+                        settings.save();
                     }
                 } else if matches!(evt, MenuEvent::Action(_)) {
                     view_menu.close_popups(backend);
@@ -766,7 +953,11 @@ pub(crate) fn run_loop(
                 if matches!(evt, MenuEvent::Action(_)) {
                     context_menu.close_popups(backend);
                 }
-                handle_ctx_event(app, settings, context_menu, &mut state.popup_backend, open_with_apps, file_info, evt);
+                if let MenuEvent::SliderChanged { id: crate::CTX_ICON_SIZE, value } = evt {
+                    apply_icon_zoom(app, value, wf, hf, s);
+                } else {
+                    handle_ctx_event(app, settings, context_menu, &mut state.popup_backend, open_with_apps, file_info, toplevel, state.maximized, &mut state.running, evt);
+                }
             }
             // Render popup surfaces, injecting folder icon textures for swatch items
             let swatches = context_menu.swatch_rects();
@@ -888,7 +1079,10 @@ pub(crate) fn run_loop(
         }
 
         needs_anim = view_menu.is_open() || context_menu.is_open()
-            || app.drag_item.is_some() || app.rubber_band_start.is_some()
+            || scroll_anim.is_some()
+            || scrollbar_drag.is_some()
+            || app.drag_item.is_some() || app.drag_tree_item.is_some()
+            || app.rubber_band_start.is_some()
             || state.held_key.is_some()
             || app.search_rx.is_some()
             || tab_drag.is_some()
@@ -899,6 +1093,37 @@ pub(crate) fn run_loop(
     }
 
     Ok(())
+}
+
+/// Total scrollable content height for the active view mode. Mirrors the
+/// geometry render.rs feeds its ScrollArea/Scrollbar, including the search
+/// results list (taller rows + header).
+fn view_content_height(app: &App, content_w: f32, s: f32) -> f32 {
+    let zoom = app.icon_zoom;
+    if app.searching && !app.search_buf.is_empty() {
+        return app.search_results.len() as f32 * crate::layout::search_list_row_h(s, zoom)
+            + 32.0 * crate::layout::list_zoom_multiplier(zoom) * s;
+    }
+    match app.view_mode {
+        crate::app::ViewMode::Grid => {
+            let cols = grid_columns(content_w, s, zoom);
+            grid_content_height(app.entries.len(), cols, s, zoom)
+        }
+        crate::app::ViewMode::List => list_content_height(app.entries.len(), s, zoom),
+        crate::app::ViewMode::Tree => tree_content_height(app.tree_entries.len(), s, zoom),
+    }
+}
+
+/// Apply a live icon-zoom change (View menu or right-click menu slider):
+/// set the zoom and re-clamp the scroll offset against the new grid height.
+fn apply_icon_zoom(app: &mut App, value: f32, wf: f32, hf: f32, s: f32) {
+    app.icon_zoom = value;
+    let content = content_rect(wf, hf, s);
+    ScrollArea::apply_scroll(
+        &mut app.scroll_offset, 0.0,
+        grid_content_height(app.entries.len(), grid_columns(content.w, s, value), s, value),
+        content.h,
+    );
 }
 
 /// Content rect with the preview pane subtracted (if it's open + this view
