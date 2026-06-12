@@ -624,6 +624,10 @@ impl ApplicationHandler<UserEvent> for App {
                         }
                         _ => {}
                     }
+                    // The menu auto-closed mid-frame (its geometry was
+                    // already queued) — paint once more so the close and
+                    // the action's result actually show.
+                    self.request_redraw();
                 }
             }
 

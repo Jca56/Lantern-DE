@@ -634,6 +634,19 @@ impl TerminalState {
         }
     }
 
+    /// Wipe the active scrollback buffer (main or alt, whichever is live).
+    /// Selection coordinates are absolute (scrollback-relative) so they'd
+    /// dangle after the wipe — clear them too, and snap back to the bottom.
+    pub fn clear_scrollback(&mut self) {
+        if self.alt_grid.is_some() {
+            self.alt_scrollback.clear();
+        } else {
+            self.scrollback.clear();
+        }
+        self.scroll_offset = 0;
+        self.clear_selection();
+    }
+
     pub fn display_line(&self, row: usize) -> &[Cell] {
         if self.scroll_offset == 0 {
             if row < self.grid.len() {

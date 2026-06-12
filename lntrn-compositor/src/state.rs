@@ -311,6 +311,13 @@ pub struct Lantern {
     pub wallpaper_frame_counter: u32,
     pub layer_surfaces: Vec<LayerSurface>,
     pub layer_surface_outputs: HashMap<WlSurface, Output>,
+    /// Layer-shell namespace per surface (the protocol-level LayerSurface
+    /// doesn't retain it past `new_layer_surface`).
+    pub layer_surface_namespaces: HashMap<WlSurface, String>,
+    /// Per-output offscreen target for badge-free screencopy (only
+    /// populated while a no-capture overlay — the recording indicator —
+    /// is on screen; dropped again on the next plain capture).
+    pub screencopy_offscreen: HashMap<String, crate::screencopy_render::OffscreenCapture>,
     /// System-wide background opacity from `[windows].background_opacity`.
     /// When < 1.0, the compositor pushes a blur backdrop behind every
     /// non-fullscreen, non-excluded window so the apps' translucent
@@ -562,6 +569,8 @@ impl Lantern {
             wallpaper_frame_counter: 0,
             layer_surfaces: Vec::new(),
             layer_surface_outputs: HashMap::new(),
+            layer_surface_namespaces: HashMap::new(),
+            screencopy_offscreen: HashMap::new(),
             system_bg_opacity: crate::read_config_f32("background_opacity", 1.0),
             blur_exclude: crate::read_config_list("windows", "blur_exclude"),
             default_window_size: crate::default_window_size(),
@@ -701,6 +710,22 @@ impl Lantern {
 
     // ── Surface hit-testing ─────────────────────────────────────────────
 
+    /// True if `window` is currently visible for input: it's on the active
+    /// workspace of its output, or it isn't workspace-tracked at all.
+    /// Override-redirect X11 popups (Steam menus, dropdowns) and the
+    /// scratchpad live only in the global `self.space` and float above every
+    /// workspace — `window_workspace` returns `None` for them, so they stay
+    /// hittable. Windows on an inactive workspace stay mapped in the global
+    /// Space but must NOT be hit (they're not on screen).
+    pub fn window_is_visible(&self, window: &Window) -> bool {
+        match crate::window_ext::WindowExt::get_wl_surface(window)
+            .and_then(|s| self.workspaces.window_workspace(&s))
+        {
+            Some((out, ws)) => ws == self.workspaces.active_id(&out),
+            None => true,
+        }
+    }
+
     pub fn surface_under(
         &self,
         pos: Point<f64, Logical>,
@@ -757,7 +782,15 @@ impl Lantern {
             }
         }
 
-        // Space only contains windows on active workspaces (unmapped elsewhere).
+        // The global `self.space` keeps EVERY window mapped, including those
+        // on inactive workspaces (`switch_workspace_on` never unmaps — it just
+        // flips which per-workspace Space renders). So we can't hit-test the
+        // space naively: a right-click on an empty desktop in workspace 2 would
+        // otherwise land on a window still mapped from workspace 1. Walk the
+        // global z-order top→bottom and skip anything not currently visible,
+        // so an inactive-workspace window never eats the click but the active
+        // window beneath it (and floating OR popups / the scratchpad) still do.
+        //
         // For XWayland fullscreen games at sub-native resolution, XWayland
         // attaches a wp_viewport (src = game's small buffer, dst = full output)
         // that scales BOTH the rendered image AND the pointer coordinates it
@@ -766,8 +799,11 @@ impl Lantern {
         // NO manual stretch — an extra inverse-transform here would double-scale
         // and desync the game's cursor.
         let window_hit = self.space
-            .element_under(pos)
-            .and_then(|(window, location)| {
+            .elements()
+            .rev()
+            .filter(|w| self.window_is_visible(w))
+            .find_map(|window| {
+                let location = self.space.element_location(window)?;
                 window
                     .surface_under(pos - location.to_f64(), WindowSurfaceType::ALL)
                     .map(|(s, p)| (s, (p + location).to_f64()))

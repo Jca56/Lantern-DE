@@ -206,6 +206,10 @@ impl ContextMenu {
     }
 
     pub fn set_scale(&mut self, scale: f32) { self.style.scale = scale; }
+
+    /// Replace the visual style (e.g. after a theme change). Call before
+    /// `open()` — does not retro-fit an already-open menu's width.
+    pub fn set_style(&mut self, style: ContextMenuStyle) { self.style = style; }
     pub fn is_open(&self) -> bool { self.open }
 
     /// Tell the menu which popup depth the pointer is currently on.

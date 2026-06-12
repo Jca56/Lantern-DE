@@ -134,7 +134,11 @@ pub(super) fn apply_key_autorepeat(wl: &mut WlState) {
 ///   8. Calendar add-event input — typed chars edit the title.
 ///   9. Files view — `Ctrl+H` toggles hidden, typing activates filter.
 ///   10. Default — launcher selection (Up/Down/Left/Right/Enter) + search.
-pub(super) fn handle_keypress(wl: &mut WlState, app: &mut AppState) {
+pub(super) fn handle_keypress(
+    wl: &mut WlState,
+    app: &mut AppState,
+    thumbs: &mut crate::thumbs::CcThumbsClient,
+) {
     let Some(key) = wl.pending_key.take() else { return };
     use crate::controls::bluetooth::PairPromptKind;
     use crate::search::input::*;
@@ -353,6 +357,7 @@ pub(super) fn handle_keypress(wl: &mut WlState, app: &mut AppState) {
                     if let Some(clip) = app.clipboard_handle.as_ref() {
                         clip.set_text(entry.glyph);
                     }
+                    thumbs.type_text(entry.glyph);
                     app.emojis.recent_copy = Some((0, std::time::Instant::now()));
                 }
             }

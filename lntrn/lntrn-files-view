@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-"""lntrn-files-view — two-pane TUI file manager.
+"""lntrn-files-view — single-pane TUI file manager.
 
-Midnight Commander-style: two panes side-by-side, Tab swaps active pane,
-arrow keys navigate, function keys perform actions. Amber lantern aesthetic
-matching the rest of Lantern DE. /proc + stdlib only, no external deps.
-Launched by `lntrn --files`.
+One full-width pane: arrow keys navigate, function keys perform actions.
+Amber lantern aesthetic matching the rest of Lantern DE. /proc + stdlib
+only, no external deps. Launched by `lntrn --files`.
 """
 import fcntl, os, re, select, shutil, signal, stat, sys, termios, time, tty, unicodedata
 from pathlib import Path
 
 # ── Config ─────────────────────────────────────────────────────────────────
-MIN_COLS, MIN_ROWS = 60, 16
+MIN_COLS, MIN_ROWS = 40, 16
 STATUS_DURATION   = 4.0
 
 # ── ANSI primitives ────────────────────────────────────────────────────────
@@ -24,9 +23,9 @@ def bg(c):  return f'{CSI}48;2;{c[0]};{c[1]};{c[2]}m'
 def cup(r, c): return f'{CSI}{r};{c}H'
 
 # ── Theme (matches lntrn-sysmon-view) ──────────────────────────────────────
-AMBER, AMBER_HI, AMBER_DIM    = (212, 160, 32), (255, 186, 72), (135, 100, 55)
+AMBER, AMBER_HI               = (212, 160, 32), (255, 186, 72)
 BORDER_CLR                    = ( 95,  68, 30)
-SEL_BG, SEL_BG_DIM            = ( 90,  62, 26), (45, 32, 14)
+SEL_BG                        = ( 90,  62, 26)
 TEXT, TEXT_DIM, TEXT_MUTED    = (225, 205, 175), (150, 130, 100), (95, 85, 75)
 DIR_CLR, EXEC_CLR, LINK_CLR   = (100, 170, 235), (100, 205, 115), (70, 195, 210)
 HIDDEN_CLR                    = (130, 100, 70)
@@ -35,7 +34,7 @@ RED, GREEN, YELLOW            = (240, 70, 50), (100, 205, 115), (240, 205, 70)
 # ── Glyphs ─────────────────────────────────────────────────────────────────
 BOX_TL, BOX_TR, BOX_BL, BOX_BR = '╭', '╮', '╰', '╯'
 BOX_H,  BOX_V                  = '─', '│'
-BOX_TD, BOX_TU, BOX_LR, BOX_RL, BOX_X = '┬', '┴', '├', '┤', '┼'
+BOX_LR, BOX_RL = '├', '┤'
 BOLT = '⚡'
 
 # ── Visible width & truncation (ANSI-aware) ────────────────────────────────
@@ -273,8 +272,7 @@ class App:
     def __init__(self, start_path):
         sp = Path(start_path).resolve()
         if not sp.is_dir(): sp = Path.home()
-        self.panes  = [Pane(sp), Pane(sp)]
-        self.active = 0
+        self.panes  = [Pane(sp)]
         self.show_hidden = False
         self.status_text  = ''
         self.status_color = TEXT_DIM
@@ -283,8 +281,7 @@ class App:
         self.pending = None
         for p in self.panes: p.refresh(self.show_hidden)
 
-    def pane(self):  return self.panes[self.active]
-    def other(self): return self.panes[1 - self.active]
+    def pane(self):  return self.panes[0]
 
     def set_status(self, msg, color=None):
         self.status_text = msg
@@ -385,7 +382,6 @@ def handle_key(app, key, content_h):
         ok, err = p.descend(app.show_hidden)
         if err: app.set_status(err, fg(RED))
     elif key in ('LEFT', 'BS'):  p.ascend(app.show_hidden)
-    elif key in ('TAB', 'STAB'): app.active = 1 - app.active
     elif key == 'F6':            app.start_rename()
     elif key == 'F7':            app.start_mkdir()
     elif key == 'F8':            app.start_delete()
@@ -401,12 +397,11 @@ def handle_key(app, key, content_h):
     return False
 
 # ── Render ─────────────────────────────────────────────────────────────────
-def render_pane_title(pane, active, width):
+def render_pane_title(pane, width):
     path = home_str(pane.cwd)
-    clr  = (BOLD + fg(AMBER_HI)) if active else fg(AMBER_DIM)
-    return pad_to(' ' + clr + path + RESET, width)
+    return pad_to(' ' + BOLD + fg(AMBER_HI) + path + RESET, width)
 
-def render_row(e, width, sel, active):
+def render_row(e, width, sel):
     suffix = '/' if e['dir'] else ('@' if e['link'] else ('*' if e['exec'] else ''))
     sz   = fmt_size(e['size']) if e['size'] is not None else '   - '
     mt   = fmt_mtime(e['mtime'])
@@ -419,12 +414,11 @@ def render_row(e, width, sel, active):
     pad_n = name_w - vlen(name)
     clr   = entry_color(e)
     if sel:
-        bgc = bg(SEL_BG) if active else bg(SEL_BG_DIM)
-        return (bgc + ' ' + clr + name + ' ' * pad_n
+        return (bg(SEL_BG) + ' ' + clr + name + ' ' * pad_n
                 + fg(TEXT_DIM) + right + RESET)
     return (' ' + clr + name + ' ' * pad_n + fg(TEXT_DIM) + right + RESET)
 
-def render_pane_body(pane, active, width, height):
+def render_pane_body(pane, width, height):
     pane.adjust_scroll(height)
     lines = []
     if pane.err:
@@ -437,7 +431,7 @@ def render_pane_body(pane, active, width, height):
                 lines.append(' ' * width)
             else:
                 e = pane.entries[idx]
-                lines.append(render_row(e, width, idx == pane.cursor, active))
+                lines.append(render_row(e, width, idx == pane.cursor))
     while len(lines) < height: lines.append(' ' * width)
     return lines
 
@@ -465,8 +459,6 @@ def render(app, cols, rows):
         return HOME + CLR_SCREEN + fg(AMBER) + (
             f'  lntrn files needs ≥ {MIN_COLS}×{MIN_ROWS} (have {cols}×{rows})' + RESET), None
     inner_w = cols - 2
-    left_w  = (inner_w - 1) // 2
-    right_w = inner_w - 1 - left_w
     content_h = rows - 6   # top + title + sep + bottom-sep + status + hint + bottom = 7; content = rows - 7
     if content_h < 1: content_h = 1
     # Total lines built below = 7 + content_h; reduce if needed
@@ -475,20 +467,18 @@ def render(app, cols, rows):
     lines = []
     border = fg(BORDER_CLR)
     # Top border
-    lines.append(border + BOX_TL + BOX_H * left_w + BOX_TD + BOX_H * right_w + BOX_TR + RESET)
+    lines.append(border + BOX_TL + BOX_H * inner_w + BOX_TR + RESET)
     # Title row
-    tl = render_pane_title(app.panes[0], app.active == 0, left_w)
-    tr = render_pane_title(app.panes[1], app.active == 1, right_w)
-    lines.append(border + BOX_V + RESET + tl + border + BOX_V + RESET + tr + border + BOX_V + RESET)
+    title = render_pane_title(app.pane(), inner_w)
+    lines.append(border + BOX_V + RESET + title + border + BOX_V + RESET)
     # Mid separator
-    lines.append(border + BOX_LR + BOX_H * left_w + BOX_X + BOX_H * right_w + BOX_RL + RESET)
+    lines.append(border + BOX_LR + BOX_H * inner_w + BOX_RL + RESET)
     # Body rows
-    lb = render_pane_body(app.panes[0], app.active == 0, left_w,  content_h)
-    rb = render_pane_body(app.panes[1], app.active == 1, right_w, content_h)
+    body = render_pane_body(app.pane(), inner_w, content_h)
     for i in range(content_h):
-        lines.append(border + BOX_V + RESET + lb[i] + border + BOX_V + RESET + rb[i] + border + BOX_V + RESET)
+        lines.append(border + BOX_V + RESET + body[i] + border + BOX_V + RESET)
     # Lower separator
-    lines.append(border + BOX_LR + BOX_H * left_w + BOX_TU + BOX_H * right_w + BOX_RL + RESET)
+    lines.append(border + BOX_LR + BOX_H * inner_w + BOX_RL + RESET)
     # Status / prompt row
     status_line, cursor_col = render_status_or_prompt(app, inner_w)
     lines.append(border + BOX_V + RESET + status_line + border + BOX_V + RESET)
@@ -498,7 +488,6 @@ def render(app, cols, rows):
             + fg(AMBER) + 'F7' + RESET + fg(TEXT_MUTED) + ' mkdir · '
             + fg(AMBER) + 'F8' + RESET + fg(TEXT_MUTED) + ' delete · '
             + fg(AMBER) + 'F9' + RESET + fg(TEXT_MUTED) + ' new · '
-            + fg(AMBER) + 'Tab' + RESET + fg(TEXT_MUTED) + ' swap · '
             + fg(AMBER) + '.' + RESET + fg(TEXT_MUTED) + ' hidden · '
             + fg(AMBER) + 'q' + RESET + fg(TEXT_MUTED) + ' quit' + RESET)
     lines.append(border + BOX_V + RESET + pad_to(hint, inner_w) + border + BOX_V + RESET)

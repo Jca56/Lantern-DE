@@ -37,7 +37,7 @@ fi
 
 # ── File manager mode ────────────────────────────────────────────────────────
 if [[ "${1:-}" == "--files" ]]; then
-    # Handoff to the 2-pane Python TUI file manager (installed or dev-tree)
+    # Handoff to the single-pane Python TUI file manager (installed or dev-tree)
     if [[ -f /usr/share/lntrn/lntrn-files-view ]]; then
         FILES_VIEW="/usr/share/lntrn/lntrn-files-view"
     else

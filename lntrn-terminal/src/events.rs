@@ -388,6 +388,21 @@ impl App {
                     terminal.set_selection_end(last_row, last_col);
                 }
             }
+            ui_chrome::ClickAction::NewTab => {
+                self.spawn_tab();
+            }
+            ui_chrome::ClickAction::CloseTab => {
+                if self.close_tab(self.active_tab) {
+                    event_loop.exit();
+                    return EventResult::Exit;
+                }
+            }
+            ui_chrome::ClickAction::ClearScrollback => {
+                if !self.tabs.is_empty() {
+                    let tab = &mut self.tabs[self.active_tab];
+                    tab.panes[tab.active_pane].terminal.clear_scrollback();
+                }
+            }
             ui_chrome::ClickAction::None => {
                 return self.handle_click_passthrough(screen_h);
             }
@@ -598,6 +613,7 @@ impl App {
                 false
             };
             let items = ui_chrome::build_context_menu(has_selection);
+            self.chrome.refresh_theme();
             self.chrome.context_menu.set_scale(self.scale);
             self.chrome.context_menu.open(x, y, items);
             self.chrome.context_menu.clamp_to_screen(screen_w as f32, screen_h as f32);

@@ -1,7 +1,7 @@
 //! Top-strip icons above the panel.
 //!
 //! Layout (from left to right, in the margin above the panel):
-//!   LEFT  : [Restart (X)] [Gear (Settings)] [Home] [Grow (Size)] [Desktop]
+//!   LEFT  : [Restart (X)] [Gear (Settings)] [Desktop]
 //!   CENTER: view dots
 //!   RIGHT : [Usage (Claude)] [Emoji] [Clipboard] [Notes]
 //!
@@ -37,7 +37,7 @@ pub const SIDE_PAD: f32 = 24.0;
 const ACTIVE_RGB: (u8, u8, u8) = (0xc8, 0x86, 0x0a);
 const INACTIVE_RGB: (u8, u8, u8) = (0xff, 0xff, 0xff);
 const INACTIVE_ALPHA: f32 = 0.35;
-const HOME_IDLE_ALPHA: f32 = 0.70;
+const ICON_IDLE_ALPHA: f32 = 0.70;
 
 /// Rect for the i-th view dot. Used for both rendering and clickable
 /// hit-zones (each dot is a tiny shortcut to that view).
@@ -92,8 +92,8 @@ fn right_slot_at(panel: Rect, scale: f32, right_logical_pad: f32, size: f32) -> 
 }
 
 /// Per-slot logical sizes for the LEFT strip in render order.
-/// 0 = Restart, 1 = Gear (Settings), 2 = Home, 3 = Desktop.
-const LEFT_SLOT_SIZES: [f32; 4] = [RESTART_SIZE, GEAR_SIZE, BTN_SIZE, BTN_SIZE];
+/// 0 = Restart, 1 = Gear (Settings), 2 = Desktop.
+const LEFT_SLOT_SIZES: [f32; 3] = [RESTART_SIZE, GEAR_SIZE, BTN_SIZE];
 
 /// X offset (logical, from panel left edge) of slot `idx`'s left edge.
 /// Walks the slot list cumulatively so a smaller gear at the front
@@ -118,11 +118,8 @@ pub fn restart_rect(panel: Rect, scale: f32) -> Rect {
 pub fn gear_rect(panel: Rect, scale: f32) -> Rect {
     left_slot_at(panel, scale, left_slot_x_logical(1), GEAR_SIZE)
 }
-pub fn home_rect(panel: Rect, scale: f32) -> Rect {
-    left_slot_at(panel, scale, left_slot_x_logical(2), BTN_SIZE)
-}
 pub fn desktop_button_rect(panel: Rect, scale: f32) -> Rect {
-    left_slot_at(panel, scale, left_slot_x_logical(3), BTN_SIZE)
+    left_slot_at(panel, scale, left_slot_x_logical(2), BTN_SIZE)
 }
 
 pub fn notes_rect(panel: Rect, scale: f32) -> Rect {
@@ -142,9 +139,6 @@ fn point_in(r: Rect, px: f32, py: f32) -> bool {
     px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h
 }
 
-pub fn hit_home(panel: Rect, scale: f32, px: f32, py: f32) -> bool {
-    point_in(home_rect(panel, scale), px, py)
-}
 pub fn hit_restart(panel: Rect, scale: f32, px: f32, py: f32) -> bool {
     point_in(restart_rect(panel, scale), px, py)
 }
@@ -166,7 +160,7 @@ fn glyph_color(hovered: bool, active: bool, alpha: f32) -> Color {
         Color::from_rgb8(ACTIVE_RGB.0, ACTIVE_RGB.1, ACTIVE_RGB.2).with_alpha(alpha)
     } else {
         Color::from_rgb8(INACTIVE_RGB.0, INACTIVE_RGB.1, INACTIVE_RGB.2)
-            .with_alpha(HOME_IDLE_ALPHA * alpha)
+            .with_alpha(ICON_IDLE_ALPHA * alpha)
     }
 }
 
@@ -254,34 +248,6 @@ pub fn draw_dots(painter: &mut Painter, panel: Rect, scale: f32, alpha: f32, cur
             );
         }
     }
-}
-
-pub fn draw_home(painter: &mut Painter, panel: Rect, scale: f32, alpha: f32, hovered: bool) {
-    let r = home_rect(panel, scale);
-    let stroke = 2.0 * scale;
-    let color = glyph_color(hovered, false, alpha);
-
-    let cx = r.x + r.w / 2.0;
-    let cy = r.y + r.h / 2.0;
-    let half = r.w * 0.40;
-    let body_top = cy - half * 0.20;
-    let body_bot = cy + half * 0.55;
-    let body_left = cx - half;
-    let body_right = cx + half;
-    let roof_apex_y = cy - half * 0.55;
-
-    painter.line_round(body_left - 2.0 * scale, body_top, cx, roof_apex_y, stroke, color);
-    painter.line_round(cx, roof_apex_y, body_right + 2.0 * scale, body_top, stroke, color);
-    painter.line_round(body_left, body_top, body_left, body_bot, stroke, color);
-    painter.line_round(body_right, body_top, body_right, body_bot, stroke, color);
-    painter.line_round(body_left, body_bot, body_right, body_bot, stroke, color);
-    let door_w = half * 0.35;
-    let door_h = half * 0.55;
-    painter.rect_filled(
-        Rect::new(cx - door_w / 2.0, body_bot - door_h, door_w, door_h),
-        1.0 * scale,
-        color,
-    );
 }
 
 /// Smiley-face glyph for the Emojis page.
@@ -445,4 +411,3 @@ pub fn draw_notes(
         painter.line_round(line_x, y, line_x + w, y, stroke * 0.85, color);
     }
 }
-

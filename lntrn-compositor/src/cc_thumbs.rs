@@ -126,6 +126,10 @@ pub struct CcThumbnails {
     /// at that location and activates it so click-outside-to-close also
     /// transfers focus.
     pending_focus_at: Vec<(i32, i32)>,
+    /// Pending `type:<text>` requests from the Command Center (emoji
+    /// picker). Drained each frame; each one is typed into the window
+    /// that held focus before CC grabbed it. See `text_inject.rs`.
+    pending_type: Vec<String>,
     /// Solid-color buffers reused across close-button renders. Resized
     /// as needed per close button.
     pub close_bg_idle: SolidColorBuffer,
@@ -160,6 +164,7 @@ impl CcThumbnails {
             live: Vec::new(),
             staged: None,
             pending_focus_at: Vec::new(),
+            pending_type: Vec::new(),
             close_bg_idle: SolidColorBuffer::new((1, 1), CLOSE_BG_IDLE),
             close_bg_hover: SolidColorBuffer::new((1, 1), CLOSE_BG_HOVER),
             x_glyph: build_x_glyph(X_GLYPH_SIZE, 2.0),
@@ -173,6 +178,11 @@ impl CcThumbnails {
     /// Drain pending click-outside focus-at requests from the CC.
     pub fn take_focus_at(&mut self) -> Vec<(i32, i32)> {
         std::mem::take(&mut self.pending_focus_at)
+    }
+
+    /// Drain pending emoji-picker `type:` requests from the CC.
+    pub fn take_type(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.pending_type)
     }
 
     pub fn poll(&mut self) {
@@ -236,6 +246,13 @@ impl CcThumbnails {
                             if let (Ok(x), Ok(y)) = (xs.parse::<i32>(), ys.parse::<i32>()) {
                                 self.pending_focus_at.push((x, y));
                             }
+                        }
+                    } else if let Some(rest) = msg.strip_prefix("type:") {
+                        // NB: `msg` is `line.trim()`, so a leading/trailing
+                        // space in the payload would be lost — emoji glyphs
+                        // never start/end with whitespace, so this is fine.
+                        if !rest.is_empty() {
+                            self.pending_type.push(rest.to_string());
                         }
                     }
                 }

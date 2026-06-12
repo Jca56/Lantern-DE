@@ -34,6 +34,14 @@ pub const TOP_CENTER_ZONE_HEIGHT: f64 = 12.0;
 /// is preserved so flipping this back to `true` re-enables the feature.
 const TOP_CENTER_HOT_EDGE_ENABLED: bool = false;
 
+/// Master switch for ALL hot corners (top-left switcher, bottom-right
+/// show-desktop, etc.). When `false`, no corner is ever detected, so no
+/// dwell timer arms, no glow renders, and nothing fires. All supporting
+/// code (zone math, glow shader, dwell timers, fire actions) is preserved
+/// so flipping this back to `true` re-enables the feature. Disabled while
+/// the corner glow positions are reworked for the new 4K monitor.
+const HOT_CORNERS_ENABLED: bool = false;
+
 /// Tracks pointer dwell state for hot corner detection.
 pub struct HotCornerState {
     pub corner: Option<ScreenCorner>,
@@ -58,6 +66,10 @@ impl Lantern {
         &self,
         pos: Point<f64, Logical>,
     ) -> Option<ScreenCorner> {
+        if !HOT_CORNERS_ENABLED {
+            return None;
+        }
+
         const ZONE: f64 = 2.0;
 
         let output = self.output_at_point(pos)?;
@@ -106,7 +118,7 @@ impl Lantern {
         // Suppress hot corners when the focused window is fullscreen
         let focused_is_fullscreen = self.focused_surface.as_ref()
             .is_some_and(|s| self.fullscreen_windows.iter().any(|e| e.surface == *s));
-        let corner = if focused_is_fullscreen {
+        let corner = if focused_is_fullscreen || self.modal_overlay_active() {
             None
         } else {
             self.detect_hot_corner(pos)
@@ -134,7 +146,13 @@ impl Lantern {
             };
             let timer = Timer::from_duration(dwell);
             if let Ok(token) = self.loop_handle.insert_source(timer, move |_, _, state| {
-                if state.hot_corner.corner == Some(which) && !state.hot_corner.triggered {
+                // Re-check the modal overlay at fire time: the screenshot UI
+                // may have opened during the dwell window with the pointer
+                // already parked in a corner (no motion → no state update).
+                if state.hot_corner.corner == Some(which)
+                    && !state.hot_corner.triggered
+                    && !state.modal_overlay_active()
+                {
                     state.hot_corner.triggered = true;
                     state.fire_hot_corner(which);
                 }
@@ -143,6 +161,26 @@ impl Lantern {
                 self.hot_corner.timer_token = Some(token);
             }
         }
+    }
+
+    /// True while any Overlay-layer surface holds Exclusive keyboard
+    /// interactivity — i.e. a modal UI is up (screenshot selection,
+    /// Command Center while open). Hot corners must not fire underneath
+    /// it: dragging a screenshot selection into a corner would otherwise
+    /// pop the window switcher or show-desktop mid-capture.
+    fn modal_overlay_active(&self) -> bool {
+        use smithay::wayland::compositor::with_states;
+        use smithay::wayland::shell::wlr_layer::{
+            KeyboardInteractivity, Layer, LayerSurfaceCachedState,
+        };
+
+        self.layer_surfaces.iter().any(|ls| {
+            ls.alive() && with_states(ls.wl_surface(), |states| {
+                let cached = *states.cached_state.get::<LayerSurfaceCachedState>().current();
+                cached.layer == Layer::Overlay
+                    && cached.keyboard_interactivity == KeyboardInteractivity::Exclusive
+            })
+        })
     }
 
     /// Execute the action for a hot corner.

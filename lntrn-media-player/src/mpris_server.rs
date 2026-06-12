@@ -249,9 +249,14 @@ fn encode_all_properties(iface: &str, state: &PlayerState) -> Vec<u8> {
         _ => &[],
     };
 
-    // Encode as a{sv}: array length placeholder, then entries
+    // Encode as a{sv}: array length placeholder, then entries. The length
+    // counts ONLY the element bytes, not the padding inserted to reach the
+    // dict-entry (8-byte) boundary after the u32 length — so align first,
+    // THEN mark the start. Counting the padding makes the array overrun its
+    // own body and the bus daemon drops us for a malformed message.
     let len_pos = buf.len();
     encode_u32(&mut buf, 0); // placeholder
+    align_to(&mut buf, 8);
     let array_start = buf.len();
 
     for prop in props {
@@ -268,10 +273,12 @@ fn encode_all_properties(iface: &str, state: &PlayerState) -> Vec<u8> {
 fn encode_variant_metadata(buf: &mut Vec<u8>, state: &PlayerState) {
     // variant signature: a{sv}
     encode_signature(buf, "a{sv}");
-    // Now encode the dict
+    // Now encode the dict. Align to the dict-entry boundary BEFORE marking
+    // the start so the length excludes the padding (see encode_all_properties).
     align_to(buf, 4);
     let len_pos = buf.len();
     encode_u32(buf, 0); // placeholder
+    align_to(buf, 8);
     let array_start = buf.len();
 
     // mpris:trackid (required)
@@ -316,10 +323,12 @@ fn emit_properties_changed(conn: &mut Connection, state: &PlayerState) {
     let mut body = Vec::new();
     encode_string(&mut body, IFACE_PLAYER);
 
-    // Changed properties dict: a{sv}
+    // Changed properties dict: a{sv} — align before marking the start so the
+    // length excludes the padding (see encode_all_properties).
     align_to(&mut body, 4);
     let len_pos = body.len();
     encode_u32(&mut body, 0);
+    align_to(&mut body, 8);
     let array_start = body.len();
 
     encode_dict_entry_sv(&mut body, "PlaybackStatus", |b| {

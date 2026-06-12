@@ -10,6 +10,7 @@
 //! the same `stop` flag; either side flipping the flag ends the
 //! recording.
 
+use std::os::fd::AsRawFd;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -39,6 +40,13 @@ const H: u32 = 60;
 const MARGIN: i32 = 16;
 
 const BTN_LEFT: u32 = 0x110;
+
+/// Normal redraw cadence (the timer only shows whole seconds; ~10 Hz
+/// keeps the dot pulse smooth without rendering at full refresh rate).
+const RENDER_INTERVAL: Duration = Duration::from_millis(100);
+/// If no frame callback arrives for this long (compositor coalesced or
+/// dropped one), redraw anyway so the timer never visibly stalls.
+const RENDER_FALLBACK: Duration = Duration::from_millis(500);
 
 pub fn spawn(
     output_name: String,
@@ -137,11 +145,29 @@ fn run(
     let mut text = TextRenderer::new(&gpu);
 
     state.frame_done = true;
+    // Force an immediate first paint, then ~10 Hz redraws after that.
+    let mut last_render = Instant::now() - RENDER_INTERVAL;
 
     while !stop.load(Ordering::SeqCst) {
-        // Pump events with a short timeout so the timer keeps ticking
-        // even when no input arrives.
+        // Pump events. `dispatch_pending` alone never reads the socket —
+        // it only processes events some other reader already queued — so
+        // frame callbacks (and stop-button clicks) would sit unread
+        // forever and the timer would freeze on the first frame. Do a
+        // real prepare_read/poll/read cycle, with the poll timeout
+        // doubling as the loop's tick.
         let _ = conn.flush();
+        if let Some(guard) = queue.prepare_read() {
+            let mut pfd = libc::pollfd {
+                fd: guard.connection_fd().as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            let ready = unsafe { libc::poll(&mut pfd, 1, 100) };
+            if ready > 0 {
+                let _ = guard.read();
+            }
+            // ready == 0 → timeout; dropping the guard cancels the read.
+        }
         let _ = queue.dispatch_pending(&mut state);
 
         // Click hit-test for the stop button.
@@ -160,8 +186,11 @@ fn run(
             }
         }
 
-        if state.frame_done {
+        let due = state.frame_done && last_render.elapsed() >= RENDER_INTERVAL;
+        let overdue = last_render.elapsed() >= RENDER_FALLBACK;
+        if due || overdue {
             state.frame_done = false;
+            last_render = Instant::now();
             let _ = surface.frame(&qh, ());
             let scale = compute_scale(&state);
             let cur_phys_w = ((state.width as f32) * scale) as u32;
@@ -197,8 +226,6 @@ fn run(
                 Err(_) => {}
             }
         }
-
-        std::thread::sleep(Duration::from_millis(100));
     }
 
     drop(text);

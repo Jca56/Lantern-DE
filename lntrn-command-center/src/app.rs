@@ -169,8 +169,6 @@ pub struct AppState {
     pub desktop_settings_open: bool,
     /// Which row inside the desktop settings popover the cursor is over.
     pub desktop_settings_hover: Option<crate::desktop_settings::HoverRow>,
-    /// True when the cursor is hovering the Home button above the panel.
-    pub home_hover: bool,
     /// True when the cursor is hovering the gear (settings) button.
     pub gear_hover: bool,
     /// True when the cursor is hovering the dev restart X button.
@@ -326,7 +324,6 @@ impl AppState {
             desktop_widgets: crate::desktop_settings::load(),
             desktop_settings_open: false,
             desktop_settings_hover: None,
-            home_hover: false,
             gear_hover: false,
             restart_hover: false,
             bar_sliders: crate::bar_sliders::BarSliderState::default(),

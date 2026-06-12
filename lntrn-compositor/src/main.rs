@@ -33,6 +33,7 @@ mod snap;
 pub mod ssd;
 mod state;
 mod switcher;
+mod text_inject;
 mod workspace_anim;
 mod workspace_ipc;
 mod workspaces;

@@ -63,6 +63,8 @@ impl WlrLayerShellHandler for Lantern {
 
         // Configure will be sent on first commit (in compositor.rs)
         // when the client's anchor/size state is available.
+        self.layer_surface_namespaces
+            .insert(surface.wl_surface().clone(), namespace);
         self.layer_surfaces.push(surface);
         self.schedule_render();
     }
@@ -70,6 +72,7 @@ impl WlrLayerShellHandler for Lantern {
     fn layer_destroyed(&mut self, surface: LayerSurface) {
         tracing::info!("Layer surface destroyed");
         self.layer_surface_outputs.remove(surface.wl_surface());
+        self.layer_surface_namespaces.remove(surface.wl_surface());
         self.layer_surfaces.retain(|ls| ls != &surface);
         self.schedule_render();
     }

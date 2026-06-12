@@ -61,6 +61,9 @@ pub const MENU_CURSOR_BEAM: u32 = 503;
 pub const CTX_COPY: u32 = 400;
 pub const CTX_PASTE: u32 = 401;
 pub const CTX_SELECT_ALL: u32 = 402;
+pub const CTX_CLEAR_SCROLLBACK: u32 = 403;
+pub const CTX_NEW_TAB: u32 = 404;
+pub const CTX_CLOSE_TAB: u32 = 405;
 
 // ── State ───────────────────────────────────────────────────────────────────
 
@@ -72,12 +75,20 @@ pub struct ChromeState {
 
 impl ChromeState {
     pub fn new() -> Self {
-        let palette = FoxPalette::dark();
+        let palette = FoxPalette::current();
         Self {
             menu_bar: MenuBar::new(&palette).with_font_size(MENU_FONT_BODY),
-            context_menu: ContextMenu::new(ContextMenuStyle::from_palette(&palette)),
+            context_menu: ContextMenu::new(context_menu_style(&palette)),
             palette,
         }
+    }
+
+    /// Re-read the active theme/accent and restyle the context menu. Called
+    /// right before opening so a theme change in System Settings shows up
+    /// without restarting the terminal.
+    pub fn refresh_theme(&mut self) {
+        self.palette = FoxPalette::current();
+        self.context_menu.set_style(context_menu_style(&self.palette));
     }
 
     pub fn has_overlay(&self) -> bool {
@@ -88,6 +99,20 @@ impl ChromeState {
         self.menu_bar.close();
         self.context_menu.close();
     }
+}
+
+/// Terminal context-menu style: a richer panel sunk toward the window bg
+/// (instead of the stock flat `surface_2` grey) with an accent-tinted
+/// border and hover so it follows the user's theme + accent override.
+pub fn context_menu_style(palette: &FoxPalette) -> ContextMenuStyle {
+    let mut style = ContextMenuStyle::from_palette(palette);
+    style.bg = palette.surface_2.lerp(palette.bg, 0.55);
+    style.bg_hover = palette.accent.with_alpha(0.16);
+    style.border = palette.accent.with_alpha(0.35);
+    style.border_width = 1.5;
+    style.corner_radius = 12.0;
+    style.separator = palette.accent.with_alpha(0.12);
+    style
 }
 
 // ── Click actions (kept for event dispatch compatibility) ───────────────────
@@ -109,6 +134,9 @@ pub enum ClickAction {
     Copy,
     Paste,
     SelectAll,
+    NewTab,
+    CloseTab,
+    ClearScrollback,
 }
 
 // ── Menu definitions ────────────────────────────────────────────────────────
@@ -156,6 +184,14 @@ pub fn build_context_menu(has_selection: bool) -> Vec<MenuItem> {
         copy,
         MenuItem::action_with(CTX_PASTE, "Paste", "Ctrl+Shift+V"),
         MenuItem::action(CTX_SELECT_ALL, "Select All"),
+        MenuItem::separator(),
+        MenuItem::action_with(MENU_SPLIT_RIGHT, "Split Right", "Ctrl+Shift+D"),
+        MenuItem::action_with(MENU_SPLIT_DOWN, "Split Down", "Ctrl+Shift+E"),
+        MenuItem::separator(),
+        MenuItem::action_with(CTX_NEW_TAB, "New Tab", "Ctrl+Shift+T"),
+        MenuItem::action(CTX_CLOSE_TAB, "Close Tab"),
+        MenuItem::separator(),
+        MenuItem::action(CTX_CLEAR_SCROLLBACK, "Clear Scrollback"),
     ]
 }
 
@@ -412,6 +448,9 @@ pub fn menu_event_to_action(event: &MenuEvent) -> ClickAction {
             CTX_COPY => ClickAction::Copy,
             CTX_PASTE => ClickAction::Paste,
             CTX_SELECT_ALL => ClickAction::SelectAll,
+            CTX_NEW_TAB => ClickAction::NewTab,
+            CTX_CLOSE_TAB => ClickAction::CloseTab,
+            CTX_CLEAR_SCROLLBACK => ClickAction::ClearScrollback,
             _ => ClickAction::None,
         },
         MenuEvent::Toggled { id, .. } => match *id {

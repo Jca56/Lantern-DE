@@ -283,6 +283,12 @@ impl App {
             // Process menu events from overlay
             if let Some(ref event) = menu_event {
                 self.pending_menu_event = Some(ui_chrome::menu_event_to_action(event));
+                // Plain actions (Copy, Paste, splits, ...) dismiss the menu
+                // immediately — sliders/toggles/radios stay open for
+                // live adjustment.
+                if matches!(event, MenuEvent::Action(_)) {
+                    self.chrome.close_all_menus();
+                }
                 if let MenuEvent::SliderChanged { id, value } = event {
                     match *id {
                         ui_chrome::MENU_FONT_SLIDER => {

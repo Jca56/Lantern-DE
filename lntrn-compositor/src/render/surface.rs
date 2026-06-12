@@ -197,6 +197,12 @@ pub fn render_surface(
             state.focus_window(&window, serial);
         }
     }
+    // Emoji-picker inserts: type each requested glyph into the window the
+    // user was last working in (the CC keeps focus). See `text_inject.rs`.
+    let type_requests = state.cc_thumbs.take_type();
+    for text in type_requests {
+        state.type_text_into_focused_window(&text);
+    }
 
     // Pre-compute fullscreen and maximized surfaces before udev borrows state.
     // Use slices for O(n) linear scan instead of HashSet allocation — these
@@ -1649,6 +1655,12 @@ pub fn render_surface(
 
     // Layer surfaces: single pass, bucket into top (above windows) and bottom (behind windows).
     let mut bottom_layer_elements: Vec<CustomRenderElements> = Vec::new();
+    // Element slots in `elements` occupied by no-capture overlays (the
+    // recording badge): rendered to the display like everything else,
+    // but skipped when fulfilling screencopy so the badge never appears
+    // in its own recording. Indices stay valid because everything after
+    // this loop only appends to `elements`.
+    let mut nocapture_indices: Vec<usize> = Vec::new();
     {
         use smithay::wayland::compositor::with_states;
         use smithay::wayland::shell::wlr_layer::{LayerSurfaceCachedState, Layer};
@@ -1685,6 +1697,13 @@ pub fn render_surface(
                     Kind::Unspecified,
                 );
             let target = if is_top { &mut elements } else { &mut bottom_layer_elements };
+            let no_capture = state
+                .layer_surface_namespaces
+                .get(ls.wl_surface())
+                .is_some_and(|ns| ns == crate::screencopy_render::NO_CAPTURE_NAMESPACE);
+            if is_top && no_capture {
+                nocapture_indices.extend(target.len()..target.len() + surface_elements.len());
+            }
             target.extend(surface_elements.into_iter().map(CustomRenderElements::Surface));
         }
     }
@@ -1916,6 +1935,7 @@ pub fn render_surface(
         // surface yet fall through to the BG_COLOR clear — that black frame is
         // the "cleared frame" the protocol requires before confirming the lock.
         elements.clear();
+        nocapture_indices.clear();
         let out_name = output.name();
         if let Some(data) = state.session_lock.as_ref() {
             if let Some(ls) = data.surfaces.get(&out_name) {
@@ -2023,7 +2043,29 @@ pub fn render_surface(
             .partition(|p| p.output == output);
         state.pending_screencopy = remaining;
         if !matching.is_empty() {
-            crate::screencopy_render::fulfill_screencopy(renderer, &output, matching);
+            if nocapture_indices.is_empty() {
+                // Nothing to hide → cheap direct-framebuffer readback, and
+                // any leftover offscreen target from a finished recording
+                // can be freed.
+                state.screencopy_offscreen.remove(&output.name());
+                crate::screencopy_render::fulfill_screencopy(renderer, &output, matching);
+            } else {
+                // Recording badge on screen: serve the capture from a
+                // badge-free offscreen composite instead.
+                let filtered: Vec<&CustomRenderElements> = elements
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| !nocapture_indices.contains(i))
+                    .map(|(_, e)| e)
+                    .collect();
+                crate::screencopy_render::fulfill_screencopy_filtered(
+                    renderer,
+                    &output,
+                    matching,
+                    &filtered,
+                    &mut state.screencopy_offscreen,
+                );
+            }
         }
     }
 

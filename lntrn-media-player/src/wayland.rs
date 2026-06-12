@@ -18,6 +18,9 @@ use wayland_client::{
 use wayland_protocols::wp::cursor_shape::v1::client::{
     wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1,
 };
+use wayland_protocols::wp::fractional_scale::v1::client::{
+    wp_fractional_scale_manager_v1, wp_fractional_scale_v1,
+};
 use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
@@ -60,12 +63,19 @@ struct State {
     height: u32,
     scale: i32,
     output_phys_width: u32,
+    /// Preferred fractional scale from the compositor, numerator over 120
+    /// (e.g. 168 → 1.4×). 0 until the first `preferred_scale` event.
+    frac_scale_120: u32,
     maximized: bool,
     fullscreen: bool,
     // Wayland objects
     compositor: Option<wl_compositor::WlCompositor>,
     wm_base: Option<xdg_wm_base::XdgWmBase>,
     viewporter: Option<wp_viewporter::WpViewporter>,
+    frac_scale_mgr: Option<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
+    // Kept alive for the surface's lifetime so the compositor keeps sending
+    // us scale updates; we never call methods on it directly.
+    _frac_scale: Option<wp_fractional_scale_v1::WpFractionalScaleV1>,
     surface: Option<wl_surface::WlSurface>,
     xdg_surface: Option<xdg_surface::XdgSurface>,
     toplevel: Option<xdg_toplevel::XdgToplevel>,
@@ -93,8 +103,10 @@ impl State {
         Self {
             running: true, configured: false, frame_done: true,
             width: 0, height: 0, scale: 1, output_phys_width: 0,
+            frac_scale_120: 0,
             maximized: false, fullscreen: false,
             compositor: None, wm_base: None, viewporter: None,
+            frac_scale_mgr: None, _frac_scale: None,
             surface: None, xdg_surface: None, toplevel: None, seat: None,
             cursor_x: 0.0, cursor_y: 0.0, pointer_in_surface: false,
             left_pressed: false, left_released: false,
@@ -106,7 +118,13 @@ impl State {
     }
 
     fn fractional_scale(&self) -> f64 {
-        if self.output_phys_width > 0 && self.width > 0 {
+        // Preferred: the compositor's per-surface fractional scale. It's
+        // correct for ANY window size and follows the surface across monitors
+        // — unlike dividing the output's physical width by the window width,
+        // which is only right when the window happens to fill the output.
+        if self.frac_scale_120 > 0 {
+            self.frac_scale_120 as f64 / 120.0
+        } else if self.output_phys_width > 0 && self.width > 0 {
             self.output_phys_width as f64 / self.width as f64
         } else {
             self.scale.max(1) as f64
@@ -129,6 +147,9 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 "wl_compositor" => { state.compositor = Some(registry.bind(name, version.min(6), qh, ())); }
                 "xdg_wm_base" => { state.wm_base = Some(registry.bind(name, version.min(5), qh, ())); }
                 "wp_viewporter" => { state.viewporter = Some(registry.bind(name, version.min(1), qh, ())); }
+                "wp_fractional_scale_manager_v1" => {
+                    state.frac_scale_mgr = Some(registry.bind(name, version.min(1), qh, ()));
+                }
                 "wl_output" => { let _: wl_output::WlOutput = registry.bind(name, version.min(4), qh, ()); }
                 "wl_seat" => { state.seat = Some(registry.bind(name, version.min(9), qh, ())); }
                 "wp_cursor_shape_manager_v1" => {
@@ -151,6 +172,22 @@ impl Dispatch<wp_viewporter::WpViewporter, ()> for State {
 }
 impl Dispatch<wp_viewport::WpViewport, ()> for State {
     fn event(_: &mut Self, _: &wp_viewport::WpViewport, _: wp_viewport::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
+impl Dispatch<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1, ()> for State {
+    fn event(_: &mut Self, _: &wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1, _: wp_fractional_scale_manager_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
+impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ()> for State {
+    fn event(
+        state: &mut Self, _: &wp_fractional_scale_v1::WpFractionalScaleV1,
+        event: wp_fractional_scale_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+    ) {
+        if let wp_fractional_scale_v1::Event::PreferredScale { scale } = event {
+            state.frac_scale_120 = scale;
+            // Wake the loop so the surface re-renders (and resizes) at the
+            // new scale even when paused/idle.
+            state.frame_done = true;
+        }
+    }
 }
 
 impl Dispatch<xdg_wm_base::XdgWmBase, ()> for State {
@@ -330,6 +367,10 @@ pub fn run(
     if state.height == 0 { state.height = 540; }
 
     let surface = compositor.create_surface(&qh, ());
+    // Ask the compositor for this surface's fractional scale. Robust across
+    // window sizes and monitors — unlike deriving it from the output mode.
+    let frac_scale = state.frac_scale_mgr.as_ref()
+        .map(|mgr| mgr.get_fractional_scale(&surface, &qh, ()));
     let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
     let toplevel = xdg_surface.get_toplevel(&qh, ());
     toplevel.set_title("Lantern Media Player".into());
@@ -340,6 +381,7 @@ pub fn run(
     state.surface = Some(surface.clone());
     state.xdg_surface = Some(xdg_surface);
     state.toplevel = Some(toplevel.clone());
+    state._frac_scale = frac_scale;
 
     // Wait for initial configure
     while !state.configured {
@@ -434,10 +476,14 @@ pub fn run(
 
         let scale_f = state.fractional_scale() as f32;
 
-        // Handle resize
-        if state.configured {
+        // Handle resize — on an explicit reconfigure, OR when the fractional
+        // scale changed the physical surface size out from under us (a late
+        // `preferred_scale` arriving after the first frame).
+        let target_w = state.phys_width().max(1);
+        let target_h = state.phys_height().max(1);
+        if state.configured || gpu.ctx.width() != target_w || gpu.ctx.height() != target_h {
             state.configured = false;
-            gpu.ctx.resize(state.phys_width().max(1), state.phys_height().max(1));
+            gpu.ctx.resize(target_w, target_h);
             surface.set_buffer_scale(1);
             if let Some(vp) = &viewport {
                 vp.set_destination(state.width as i32, state.height as i32);

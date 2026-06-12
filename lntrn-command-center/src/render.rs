@@ -425,20 +425,13 @@ pub fn draw_content(
         state.desktop_settings_open,
     );
 
-    // 1g. View dots + Home button in the strip above the panel.
+    // 1g. View dots in the strip above the panel.
     crate::view_indicator::draw_dots(
         painter,
         panel.rect,
         panel.scale_factor,
         panel.alpha,
         state.panel_view,
-    );
-    crate::view_indicator::draw_home(
-        painter,
-        panel.rect,
-        panel.scale_factor,
-        panel.alpha,
-        state.home_hover,
     );
     crate::view_indicator::draw_restart(
         painter,

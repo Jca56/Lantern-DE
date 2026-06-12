@@ -198,7 +198,6 @@ pub(super) fn handle_clicks(
             crate::power::hit_test(panel_rect, scale_f, phys_cx, phys_cy)
         };
         let arrow_hit = crate::view_arrows::hit_test(panel_rect, scale_f, phys_cx, phys_cy);
-        let home_hit = crate::view_indicator::hit_home(panel_rect, scale_f, phys_cx, phys_cy);
         let gear_hit = crate::view_indicator::hit_gear(panel_rect, scale_f, phys_cx, phys_cy);
         let restart_hit = crate::view_indicator::hit_restart(panel_rect, scale_f, phys_cx, phys_cy);
         let emoji_btn_hit = crate::view_indicator::hit_emoji(panel_rect, scale_f, phys_cx, phys_cy);
@@ -521,9 +520,14 @@ pub(super) fn handle_clicks(
                     let visible = app.emojis.visible_indices();
                     if let Some(&entry_idx) = visible.get(visible_idx) {
                         let entry = &crate::emojis::data::EMOJIS[entry_idx];
+                        // Copy to the clipboard (so paste works too)…
                         if let Some(clip) = app.clipboard_handle.as_ref() {
                             clip.set_text(entry.glyph);
                         }
+                        // …and ask the compositor to type it straight into
+                        // the window we were last working in. CC keeps focus,
+                        // so you can keep clicking to insert more.
+                        thumbs.type_text(entry.glyph);
                         app.emojis.recent_copy = Some((visible_idx, std::time::Instant::now()));
                     }
                     true
@@ -531,8 +535,6 @@ pub(super) fn handle_clicks(
             }
         } {
             // Already handled by emojis overlay.
-        } else if home_hit {
-            app.set_view(crate::app::PanelView::Default);
         } else if let Some(dot_idx) = dot_hit {
             if let Some(v) = crate::app::PanelView::ALL.get(dot_idx) {
                 app.set_view(*v);

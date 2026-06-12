@@ -678,7 +678,7 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         // Key auto-repeat: hold any key past `REPEAT_DELAY` and we
         // synthesize fresh pending-key events at `REPEAT_INTERVAL`.
         apply_key_autorepeat(&mut wl);
-        handle_keypress(&mut wl, &mut app);
+        handle_keypress(&mut wl, &mut app, &mut thumbs);
 
         // Terminal body selection (press → drag → release).
         handle_terminal_selection(&mut wl, &mut app);

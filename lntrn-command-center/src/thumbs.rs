@@ -116,6 +116,28 @@ impl CcThumbsClient {
         }
     }
 
+    /// Ask the compositor to type `text` into the window that held
+    /// keyboard focus before the Command Center grabbed it (i.e. the
+    /// window the user was last working in). Used by the emoji picker so
+    /// clicking an emoji inserts it straight into that window's text
+    /// field. The CC keeps focus, so you can keep clicking to pile in
+    /// more. `text` is the literal glyph(s) — newlines/tabs are stripped
+    /// to keep the line-delimited protocol intact.
+    pub fn type_text(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if !self.ensure_connected() {
+            return;
+        }
+        let line = format!("type:{}\n", sanitize(text));
+        if let Some(stream) = self.stream.as_mut() {
+            if stream.write_all(line.as_bytes()).is_err() {
+                self.stream = None;
+            }
+        }
+    }
+
     /// Tell the compositor to drop all CC thumbs (panel hidden).
     pub fn clear(&mut self) {
         if self.last_sent.is_empty() && self.stream.is_none() {

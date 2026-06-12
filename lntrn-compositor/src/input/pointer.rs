@@ -424,13 +424,7 @@ impl Lantern {
                 const OUTER_BORDER: f64 = 8.0;
                 let mut found = None;
                 let visible_windows: Vec<_> = self.space.elements()
-                    .filter(|w| {
-                        let Some(s) = crate::window_ext::WindowExt::get_wl_surface(*w) else { return true; };
-                        match self.workspaces.window_workspace(&s) {
-                            Some((out, ws)) => ws == self.workspaces.active_id(&out),
-                            None => true,
-                        }
-                    })
+                    .filter(|w| self.window_is_visible(w))
                     .cloned()
                     .collect();
                 for window in visible_windows {

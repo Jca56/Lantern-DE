@@ -114,6 +114,7 @@ pub fn dock_entries(
 }
 
 fn lookup_app_meta(apps: &AppsProvider, app_id: &str) -> (String, Option<String>) {
+    // 1) Exact match on the .desktop stem (the usual case).
     for i in 0..apps.count() {
         if let Some(e) = apps.get(i) {
             if e.app_id.eq_ignore_ascii_case(app_id) {
@@ -121,7 +122,23 @@ fn lookup_app_meta(apps: &AppsProvider, app_id: &str) -> (String, Option<String>
             }
         }
     }
-    (app_id.to_string(), None)
+    // 2) Fall back to matching the window's Wayland app_id against a
+    //    .desktop's `Icon=` name. Some apps set an app_id that differs from
+    //    their .desktop filename (e.g. window `lntrn-media-player` vs entry
+    //    `org.lantern.MediaPlayer`), but the app_id IS the icon name — so
+    //    this still recovers both the proper name and the icon.
+    for i in 0..apps.count() {
+        if let Some(e) = apps.get(i) {
+            if e.icon_name.as_deref()
+                .is_some_and(|n| n.eq_ignore_ascii_case(app_id))
+            {
+                return (e.name.clone(), e.icon_name.clone());
+            }
+        }
+    }
+    // 3) Last resort: use the app_id itself as the icon name, so any icon
+    //    file named after the app_id (all our lntrn-* apps) still resolves.
+    (app_id.to_string(), Some(app_id.to_string()))
 }
 
 /// Smooth Gaussian-shaped magnification curve. `d_slots` is the cursor's
