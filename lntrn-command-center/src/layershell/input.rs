@@ -8,7 +8,11 @@ use crate::app::{AppState, PanelRect};
 /// Drain the accumulated vertical scroll delta into whichever view is
 /// currently scrolling. Each view computes its own viewport rect so the
 /// max offset matches what the renderer actually shows.
-pub(super) fn handle_scroll(wl: &mut WlState, app: &mut AppState) {
+pub(super) fn handle_scroll(
+    wl: &mut WlState,
+    app: &mut AppState,
+    text: &mut lntrn_render::TextRenderer,
+) {
     if wl.scroll_delta_v.abs() <= 0.0 {
         return;
     }
@@ -59,12 +63,16 @@ pub(super) fn handle_scroll(wl: &mut WlState, app: &mut AppState) {
         let over_body = phys_cx >= body.x && phys_cx <= body.x + body.w
             && phys_cy >= body.y && phys_cy <= body.y + body.h;
         if over_body {
-            let line_count = app.notes.body.raw().split('\n').count();
+            let inner = crate::notes::body_inner_rect(body, scale_f);
+            let font = crate::notes::wrap::body_font(app.config.text_size, scale_f);
+            let vlines =
+                crate::notes::wrap::layout(app.notes.body.raw(), font, inner.w, text);
             let max = crate::notes::body_max_scroll(
-                line_count, body, scale_f, app.config.text_size,
+                vlines.len(), body, scale_f, app.config.text_size,
             );
-            // dy is in logical pixels here; body_scroll is too.
-            app.notes.body_scroll = (app.notes.body_scroll + dy).clamp(0.0, max);
+            // dy arrives in logical px; body_scroll is physical.
+            app.notes.body_scroll =
+                (app.notes.body_scroll + dy * scale_f).clamp(0.0, max);
         } else {
             let list = crate::notes::list_rect(panel_rect, top_y, scale_f, panel_bottom);
             let visible = app.notes.visible_indices();
@@ -138,6 +146,7 @@ pub(super) fn handle_keypress(
     wl: &mut WlState,
     app: &mut AppState,
     thumbs: &mut crate::thumbs::CcThumbsClient,
+    text: &mut lntrn_render::TextRenderer,
 ) {
     let Some(key) = wl.pending_key.take() else { return };
     use crate::controls::bluetooth::PairPromptKind;
@@ -295,8 +304,14 @@ pub(super) fn handle_keypress(
                             app.notes.flush_edits_to_selected();
                         }
                         crate::notes::NoteFocus::Body => {
-                            let _ = app.notes.body.on_key(key, wl.shift_held, wl.caps_lock);
-                            app.notes.flush_edits_to_selected();
+                            // Up/Down move by *visual* (soft-wrapped) line —
+                            // the editor's own arms only know hard lines.
+                            if matches!(key, KEY_UP | KEY_DOWN) {
+                                move_body_caret_visual(wl, app, text, key == KEY_UP);
+                            } else {
+                                let _ = app.notes.body.on_key(key, wl.shift_held, wl.caps_lock);
+                                app.notes.flush_edits_to_selected();
+                            }
                         }
                     }
                 }
@@ -316,7 +331,7 @@ pub(super) fn handle_keypress(
             let editor = crate::notes::editor_rect(panel_rect, top_y, scale_f, panel_bottom);
             let body = crate::notes::body_rect(editor, scale_f);
             app.notes.body_scroll = crate::notes::body_scroll_for_caret(
-                &app.notes, body, scale_f, app.config.text_size,
+                &app.notes, body, scale_f, app.config.text_size, text,
             );
         }
     } else if app.clipboard.open {
@@ -479,4 +494,45 @@ pub(super) fn handle_keypress(
             }
         }
     }
+}
+
+/// Move the notes-body caret one *visual* line up or down, preserving
+/// the caret's on-screen x. The editor's own Up/Down moves by hard
+/// ('\n') lines, which skips over the soft-wrap rows the renderer
+/// actually shows — vertical movement is resolved here instead, where
+/// the wrap layout is available.
+fn move_body_caret_visual(
+    wl: &WlState,
+    app: &mut AppState,
+    text: &mut lntrn_render::TextRenderer,
+    up: bool,
+) {
+    let scale_f = wl.fractional_scale() as f32;
+    let phys_w = wl.phys_width().max(1);
+    let panel = PanelRect::compute_with_dims(
+        phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical(),
+    );
+    let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
+    let top_y = crate::controls::content_top_y(panel_rect, scale_f);
+    let panel_bottom = panel_rect.y + panel_rect.h;
+    let editor = crate::notes::editor_rect(panel_rect, top_y, scale_f, panel_bottom);
+    let body = crate::notes::body_rect(editor, scale_f);
+    let inner = crate::notes::body_inner_rect(body, scale_f);
+
+    let font = crate::notes::wrap::body_font(app.config.text_size, scale_f);
+    let buf = app.notes.body.raw().to_string();
+    let cursor = app.notes.body.cursor_byte();
+    let vlines = crate::notes::wrap::layout(&buf, font, inner.w, text);
+    let cur = crate::notes::wrap::caret_vline(&vlines, cursor);
+    let target = if up {
+        cur.checked_sub(1)
+    } else {
+        (cur + 1 < vlines.len()).then_some(cur + 1)
+    };
+    let Some(target) = target else { return };
+    let x = text.measure_width(&buf[vlines[cur].start..cursor], font);
+    let t = vlines[target];
+    let byte = t.start
+        + crate::notes::editor::byte_at_x_in_line(&buf[t.start..t.end], x, font, text);
+    app.notes.body.place_cursor(byte);
 }

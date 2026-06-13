@@ -36,6 +36,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 bitflags = "2"
 xcursor = "0.3"
+# Already in-tree via smithay's xwayland feature; direct dep adds `render`
+# for ARGB32 root-cursor creation (src/x11_resources.rs).
+x11rb = { version = "0.13", default-features = false, features = ["render"] }
 libc = "0.2"
 lntrn-icons = { path = "../lntrn-icons" }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }

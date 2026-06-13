@@ -713,7 +713,7 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         // Drain accumulated scroll delta into whichever view is
         // currently scrolling (Wifi list, emoji grid, launcher results,
         // notes editor, terminal scrollback, …).
-        handle_scroll(&mut wl, &mut app);
+        handle_scroll(&mut wl, &mut app, &mut text);
 
         // Dispatch the next pending keypress.
         //
@@ -727,7 +727,7 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         // Key auto-repeat: hold any key past `REPEAT_DELAY` and we
         // synthesize fresh pending-key events at `REPEAT_INTERVAL`.
         apply_key_autorepeat(&mut wl);
-        handle_keypress(&mut wl, &mut app, &mut thumbs);
+        handle_keypress(&mut wl, &mut app, &mut thumbs, &mut text);
 
         // Terminal body selection (press → drag → release).
         handle_terminal_selection(&mut wl, &mut app);

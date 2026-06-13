@@ -268,7 +268,10 @@ pub fn run(pick: Option<PickConfig>, desktop: bool, start_dir: Option<std::path:
             .unwrap_or("Lantern File Manager");
         toplevel.set_title(title.into());
         toplevel.set_app_id("lntrn-file-manager".into());
-        toplevel.set_min_size(400, 300);
+        // min == max before the first configure asks the compositor for this
+        // exact startup size; relaxed to a plain floor right after.
+        toplevel.set_min_size(state.width as i32, state.height as i32);
+        toplevel.set_max_size(state.width as i32, state.height as i32);
         surface.commit();
 
         toplevel_holder = Some(toplevel.clone());
@@ -282,6 +285,13 @@ pub fn run(pick: Option<PickConfig>, desktop: bool, start_dir: Option<std::path:
         event_queue.blocking_dispatch(&mut state)?;
     }
     state.configured = false;
+
+    // Relax the exact-size declaration so the user can resize freely
+    // (max 0,0 = unlimited per the xdg-shell protocol).
+    if let Some(toplevel) = &toplevel_holder {
+        toplevel.set_min_size(400, 300);
+        toplevel.set_max_size(0, 0);
+    }
 
     let scale_f = state.fractional_scale() as f32;
     surface.set_buffer_scale(1);

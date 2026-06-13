@@ -375,7 +375,10 @@ pub fn run(
     let toplevel = xdg_surface.get_toplevel(&qh, ());
     toplevel.set_title("Lantern Media Player".into());
     toplevel.set_app_id("lntrn-media-player".into());
-    toplevel.set_min_size(480, 320);
+    // min == max before the first configure asks the compositor for this
+    // exact startup size; relaxed to a plain floor right after.
+    toplevel.set_min_size(state.width as i32, state.height as i32);
+    toplevel.set_max_size(state.width as i32, state.height as i32);
     surface.commit();
 
     state.surface = Some(surface.clone());
@@ -388,6 +391,11 @@ pub fn run(
         event_queue.blocking_dispatch(&mut state)?;
     }
     state.configured = false;
+
+    // Relax the exact-size declaration so the user can resize freely
+    // (max 0,0 = unlimited per the xdg-shell protocol).
+    toplevel.set_min_size(480, 320);
+    toplevel.set_max_size(0, 0);
 
     surface.set_buffer_scale(1);
     let viewport = state.viewporter.as_ref().map(|vp| {

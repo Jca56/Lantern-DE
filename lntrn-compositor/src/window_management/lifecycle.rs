@@ -169,18 +169,25 @@ impl Lantern {
 
         let Some(toplevel) = window.toplevel().cloned() else { return };
 
-        let (already_sent, app_id, client_min) = with_states(surface, |states| {
+        let (already_sent, app_id, client_min, client_exact) = with_states(surface, |states| {
             let data = states.data_map.get::<XdgToplevelSurfaceData>().unwrap().lock().unwrap();
             let already_sent = data.initial_configure_sent;
             let app_id = data.app_id.clone().unwrap_or_default();
             drop(data);
-            let min = states.cached_state.get::<SurfaceCachedState>().current().min_size;
+            let mut cache = states.cached_state.get::<SurfaceCachedState>();
+            let cached = cache.current();
+            let (min, max) = (cached.min_size, cached.max_size);
             let min_opt = if min.w > 0 && min.h > 0 {
                 Some((min.w, min.h))
             } else {
                 None
             };
-            (already_sent, app_id, min_opt)
+            // min == max before the first configure is a client declaring an
+            // exact startup size (lntrn-image-viewer's content-fit hint,
+            // fixed-size test windows). A bare min is just a resize floor —
+            // every toolkit app sets one — never a size request.
+            let exact = min_opt.filter(|_| max == min);
+            (already_sent, app_id, min_opt, exact)
         });
         if already_sent { return; }
 
@@ -191,20 +198,24 @@ impl Lantern {
         });
         if skip { return; }
 
-        // Priority: explicit [[window_rules]] entry → client-provided min_size
-        // hint → legacy `[windows] default_width/_height` → percentage of the
-        // primary output's work area (`default_size_pct`, the new UI knob).
-        // The min_size path lets apps like lntrn-image-viewer request a
-        // content-fit size at startup.
+        // Priority: explicit [[window_rules]] entry → client-declared exact
+        // size (min == max, lntrn-image-viewer's content-fit request) →
+        // legacy `[windows] default_width/_height` → percentage of the
+        // anchor output's work area (`default_size_pct`, the UI knob).
+        // The client's bare min_size only clamps the suggestion upward.
         let rule_size = self.window_rules.iter()
             .find(|r| r.app_id == app_id)
             .map(|r| (r.width, r.height));
         let pct_size = self.default_initial_size_from_pct();
-        let Some((w, h)) = rule_size
-            .or(client_min)
+        let Some((mut w, mut h)) = rule_size
+            .or(client_exact)
             .or(self.default_window_size)
             .or(pct_size)
         else { return };
+        if let Some((min_w, min_h)) = client_min {
+            w = w.max(min_w);
+            h = h.max(min_h);
+        }
 
         toplevel.with_pending_state(|state| {
             state.size = Some(Size::from((w, h)));

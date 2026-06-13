@@ -194,34 +194,11 @@ fn write_cursor_file(
             "could not parse cursor SVG",
         ));
     };
-    let tree_size = tree.size();
-
     let mut images = Vec::with_capacity(SIZES.len());
     for &nominal in SIZES {
-        let sx = nominal as f32 / tree_size.width();
-        let sy = nominal as f32 / tree_size.height();
-        let scale = sx.min(sy);
-        let w = (tree_size.width() * scale).round() as u32;
-        let h = (tree_size.height() * scale).round() as u32;
-        if w == 0 || h == 0 {
-            continue;
+        if let Some(img) = rasterize_tree(&tree, nominal, hotspot_viewbox) {
+            images.push(img);
         }
-        let Some(mut pixmap) = resvg::tiny_skia::Pixmap::new(w, h) else { continue };
-        let transform = resvg::tiny_skia::Transform::from_scale(scale, scale);
-        resvg::render(&tree, transform, &mut pixmap.as_mut());
-
-        let xhot = (hotspot_viewbox.0 * scale).round() as u32;
-        let yhot = (hotspot_viewbox.1 * scale).round() as u32;
-        images.push(XcursorImage {
-            nominal,
-            width: w,
-            height: h,
-            xhot,
-            yhot,
-            // resvg gives us premultiplied RGBA; Xcursor wants ARGB stored as
-            // little-endian u32 (i.e. on-disk byte order BGRA), also premultiplied.
-            pixels: rgba_to_bgra(pixmap.data()),
-        });
     }
 
     if images.is_empty() {
@@ -235,6 +212,53 @@ fn write_cursor_file(
     write_xcursor(&mut file, &images)
 }
 
+/// Rasterize one shape at one nominal size. Shared by the theme file writer
+/// (all sizes) and the X11 root cursor (single size, x11_resources.rs).
+fn rasterize_tree(
+    tree: &resvg::usvg::Tree,
+    nominal: u32,
+    hotspot_viewbox: (f32, f32),
+) -> Option<XcursorImage> {
+    let tree_size = tree.size();
+    let sx = nominal as f32 / tree_size.width();
+    let sy = nominal as f32 / tree_size.height();
+    let scale = sx.min(sy);
+    let w = (tree_size.width() * scale).round() as u32;
+    let h = (tree_size.height() * scale).round() as u32;
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(w, h)?;
+    let transform = resvg::tiny_skia::Transform::from_scale(scale, scale);
+    resvg::render(tree, transform, &mut pixmap.as_mut());
+
+    Some(XcursorImage {
+        nominal,
+        width: w,
+        height: h,
+        xhot: (hotspot_viewbox.0 * scale).round() as u32,
+        yhot: (hotspot_viewbox.1 * scale).round() as u32,
+        // resvg gives us premultiplied RGBA; Xcursor wants ARGB stored as
+        // little-endian u32 (i.e. on-disk byte order BGRA), also premultiplied.
+        pixels: rgba_to_bgra(pixmap.data()),
+    })
+}
+
+/// Rasterize the active default-arrow cursor at a single size — same source
+/// SVG, recolor rules, and hotspot as the theme's `default` shape. Used for
+/// the X11 root window cursor.
+pub fn rasterize_default_arrow(size: u32) -> Option<XcursorImage> {
+    let (_, data, recolor) = arrow_source();
+    let svg = if recolor {
+        recolor_cursor_svg(&data, "default")
+    } else {
+        data
+    };
+    let sanitized = strip_preserve_aspect_none(&svg);
+    let tree = resvg::usvg::Tree::from_data(&sanitized, &resvg::usvg::Options::default()).ok()?;
+    rasterize_tree(&tree, size, ARROW_HOTSPOT_FROM_CURSOR_RS())
+}
+
 fn rgba_to_bgra(rgba: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(rgba.len());
     for chunk in rgba.chunks_exact(4) {
@@ -246,13 +270,14 @@ fn rgba_to_bgra(rgba: &[u8]) -> Vec<u8> {
     out
 }
 
-struct XcursorImage {
+pub struct XcursorImage {
     nominal: u32,
-    width: u32,
-    height: u32,
-    xhot: u32,
-    yhot: u32,
-    pixels: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    pub xhot: u32,
+    pub yhot: u32,
+    /// Premultiplied u32 ARGB stored little-endian (byte order BGRA).
+    pub pixels: Vec<u8>,
 }
 
 // Xcursor binary format constants (xorg/lib/libXcursor file.c).

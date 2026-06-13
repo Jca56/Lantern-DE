@@ -184,10 +184,12 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
     let toplevel = xdg_surface.get_toplevel(&qh, ());
     toplevel.set_title("Lantern Image Viewer".into());
     toplevel.set_app_id("lntrn-image-viewer".into());
-    // Compositor reads min_size as the initial size hint when no per-app rule
-    // matches. We relax this back to (400, 300) right after the first configure
-    // so the user can still resize the window down freely.
+    // The compositor reads a min == max declaration before the first configure
+    // as an exact startup-size request (a bare min would only clamp its default
+    // suggestion). Relaxed right after the first configure so the user can
+    // still resize the window freely.
     toplevel.set_min_size(init_w as i32, init_h as i32);
+    toplevel.set_max_size(init_w as i32, init_h as i32);
     surface.commit();
 
     state.surface = Some(surface.clone());
@@ -205,8 +207,10 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
         event_queue.blocking_dispatch(&mut state)?;
     }
     state.configured = false;
-    // Relax the size hint so the user can shrink the window below the image size.
+    // Relax the exact-size declaration so the user can resize the window
+    // freely (max 0,0 = unlimited per the xdg-shell protocol).
     toplevel.set_min_size(400, 300);
+    toplevel.set_max_size(0, 0);
 
     surface.set_buffer_scale(1);
     let viewport = state.viewporter.as_ref().map(|vp| {

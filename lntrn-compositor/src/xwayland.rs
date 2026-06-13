@@ -161,6 +161,11 @@ fn handle_xwayland_ready(
     std::env::set_var("DISPLAY", &display_str);
     tracing::info!("XWayland ready on {}", display_str);
 
+    // Server-side cursor defaults: the RESOURCE_MANAGER root property
+    // (Chromium/CEF apps like Steam and Spotify read Xcursor.theme/.size from
+    // there, NOT from the env vars above) plus a themed root window cursor.
+    crate::x11_resources::apply(display_number);
+
     // (Do NOT set XRandR primary here — Steam's webhelper (CEF) hits a
     // NOTREACHED assertion shortly after XWayland reports a primary output
     // and the Steam UI never appears. `set_randr_primary` is kept for

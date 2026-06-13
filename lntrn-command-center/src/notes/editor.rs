@@ -106,9 +106,9 @@ impl Editor {
         self.touch();
     }
 
-    /// Move cursor without changing the anchor — used for click-to-place.
-    /// If no drag follows, the selection ends up empty.
-    #[allow(dead_code)]
+    /// Move cursor without changing the anchor — used for click-to-place
+    /// and visual-line Up/Down. If no drag follows, the selection ends
+    /// up empty.
     pub fn place_cursor(&mut self, byte: usize) {
         let byte = clamp_to_char_boundary(&self.buf, byte);
         self.cursor = byte;
@@ -162,6 +162,10 @@ impl Editor {
                     self.move_right()
                 }
             }
+            // Hard-line fallback only — the notes body intercepts
+            // Up/Down in `layershell::input` and moves by *visual*
+            // (soft-wrapped) line, which needs the wrap layout this
+            // editor doesn't have access to.
             KEY_UP => {
                 self.anchor = None;
                 self.move_up()
@@ -195,11 +199,6 @@ impl Editor {
             return true;
         }
         ((since / 500) % 2) == 0
-    }
-
-    /// Line index (0-based) the cursor currently sits on.
-    pub fn cursor_line(&self) -> usize {
-        self.buf[..self.cursor].matches('\n').count()
     }
 
     /// Byte offset of the start of the current line.
@@ -381,6 +380,9 @@ fn clamp_to_char_boundary(buf: &str, byte: usize) -> usize {
 use lntrn_render::{Rect, TextRenderer};
 
 /// Layout-aware byte offset for a mouse position over the body editor.
+/// Goes through `wrap::{body_font, layout}` — the same layout the
+/// renderer draws — so the byte under the cursor is the glyph under
+/// the cursor.
 pub fn body_byte_at(
     body_rect_inner: Rect,
     buf: &str,
@@ -391,29 +393,16 @@ pub fn body_byte_at(
     py: f32,
     text: &mut TextRenderer,
 ) -> usize {
-    let font = (text_size * scale).max(15.0);
+    let font = super::wrap::body_font(text_size, scale);
     let line_h = super::body_line_height(text_size, scale);
-    let line_count = buf.split('\n').count().max(1);
+    let vlines = super::wrap::layout(buf, font, body_rect_inner.w, text);
     let rel_y = py - body_rect_inner.y + body_scroll;
-    let line_idx = ((rel_y / line_h).floor() as i64)
-        .clamp(0, (line_count as i64) - 1) as usize;
-    // Compute byte offset of line start.
-    let mut line_start = 0usize;
-    for _ in 0..line_idx {
-        if let Some(off) = buf[line_start..].find('\n') {
-            line_start += off + 1;
-        } else {
-            line_start = buf.len();
-            break;
-        }
-    }
-    let line_end = buf[line_start..]
-        .find('\n')
-        .map(|i| line_start + i)
-        .unwrap_or(buf.len());
-    let line = &buf[line_start..line_end];
+    let idx = ((rel_y / line_h).floor() as i64)
+        .clamp(0, (vlines.len() as i64) - 1) as usize;
+    let vl = vlines[idx];
+    let line = &buf[vl.start..vl.end];
     let target_x = (px - body_rect_inner.x).max(0.0);
-    line_start + byte_at_x_in_line(line, target_x, font, text)
+    vl.start + byte_at_x_in_line(line, target_x, font, text)
 }
 
 /// Walk through chars in `line` measuring widths and return the byte

@@ -3,7 +3,7 @@
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
 use super::{
-    action_buttons, body_inner_height, body_line_height, body_max_scroll, body_rect,
+    action_buttons, body_line_height, body_max_scroll, body_rect,
     editor_rect, filter_rect, list_max_scroll, list_rect, list_row_rect, new_btn_rect,
     title_field_rect, NoteFocus, NotesState,
 };
@@ -449,15 +449,9 @@ fn draw_body_text(
     surface_w: u32,
     surface_h: u32,
 ) {
-    let pad = 12.0 * scale;
     let line_h = body_line_height(text_size, scale);
-    // Body gets a ~12% bump over the global text_size so prose feels
-    // comfortable to read inside the editor without inflating every
-    // other label on the page. Must match `body_line_height`'s formula.
-    let font = (text_size * scale * 1.12).max(16.0);
-    let inner_w = (body.w - pad * 2.0).max(0.0);
-    let inner_h = body_inner_height(body, scale);
-    let inner = Rect::new(body.x + pad, body.y + pad, inner_w, inner_h);
+    let font = super::wrap::body_font(text_size, scale);
+    let inner = super::body_inner_rect(body, scale);
     if inner.w <= 0.0 || inner.h <= 0.0 {
         return;
     }
@@ -467,6 +461,9 @@ fn draw_body_text(
     let buf = state.body.raw();
     let is_placeholder = buf.is_empty();
     let scroll_px = state.body_scroll;
+    // The soft-wrap layout every other body computation (hit-testing,
+    // caret auto-scroll, Up/Down movement) mirrors via wrap::layout.
+    let vlines = super::wrap::layout(buf, font, inner.w, text);
 
     if is_placeholder {
         text.queue(
@@ -485,45 +482,42 @@ fn draw_body_text(
 
         // Selection highlight rectangles — painted under the text.
         if let Some((sel_s, sel_e)) = state.body.selection_range() {
-            let mut line_start = 0usize;
-            for (i, line) in buf.split('\n').enumerate() {
-                let line_end = line_start + line.len();
+            for (i, vl) in vlines.iter().enumerate() {
                 let li = i as i32;
-                if li >= first_visible && li <= last_visible {
-                    // Intersect [sel_s, sel_e] with [line_start, line_end].
-                    let s = sel_s.max(line_start);
-                    let e = sel_e.min(line_end);
-                    if s < e {
-                        let x0 = inner.x
-                            + text.measure_width(&buf[line_start..s], font);
-                        let x1 = inner.x
-                            + text.measure_width(&buf[line_start..e], font);
-                        let y = inner.y + li as f32 * line_h - scroll_px;
-                        painter.rect_filled(
-                            Rect::new(x0, y, (x1 - x0).max(2.0 * scale), line_h),
-                            2.0 * scale,
-                            accent(0.30 * alpha),
-                        );
-                    } else if sel_s <= line_end && sel_e > line_end {
-                        // Selection wraps past end-of-line — paint a thin
-                        // trailing chunk so the user sees the newline is
-                        // selected too.
-                        let x0 = inner.x
-                            + text.measure_width(&buf[line_start..line_end], font);
-                        let y = inner.y + li as f32 * line_h - scroll_px;
-                        painter.rect_filled(
-                            Rect::new(x0, y, 6.0 * scale, line_h),
-                            2.0 * scale,
-                            accent(0.20 * alpha),
-                        );
-                    }
+                if li < first_visible || li > last_visible {
+                    continue;
                 }
-                // Next line starts past the '\n' (or at buf end on last line).
-                line_start = line_end + 1;
+                // Intersect [sel_s, sel_e] with this visual line.
+                let s = sel_s.max(vl.start);
+                let e = sel_e.min(vl.end);
+                if s < e {
+                    let x0 = inner.x
+                        + text.measure_width(&buf[vl.start..s], font);
+                    let x1 = inner.x
+                        + text.measure_width(&buf[vl.start..e], font);
+                    let y = inner.y + li as f32 * line_h - scroll_px;
+                    painter.rect_filled(
+                        Rect::new(x0, y, (x1 - x0).max(2.0 * scale), line_h),
+                        2.0 * scale,
+                        accent(0.30 * alpha),
+                    );
+                } else if vl.hard_break && sel_s <= vl.end && sel_e > vl.end {
+                    // Selection wraps past end-of-line — paint a thin
+                    // trailing chunk so the user sees the newline is
+                    // selected too.
+                    let x0 = inner.x
+                        + text.measure_width(&buf[vl.start..vl.end], font);
+                    let y = inner.y + li as f32 * line_h - scroll_px;
+                    painter.rect_filled(
+                        Rect::new(x0, y, 6.0 * scale, line_h),
+                        2.0 * scale,
+                        accent(0.20 * alpha),
+                    );
+                }
             }
         }
 
-        for (i, line) in buf.split('\n').enumerate() {
+        for (i, vl) in vlines.iter().enumerate() {
             let line_idx = i as i32;
             if line_idx < first_visible {
                 continue;
@@ -532,17 +526,27 @@ fn draw_body_text(
                 break;
             }
             let y = inner.y + line_idx as f32 * line_h - scroll_px;
-            text.queue(line, font, inner.x, y, white(0.95 * alpha), inner.w, surface_w, surface_h);
+            // Lines are pre-wrapped to inner.w — queue with NO_WRAP so
+            // the engine never re-wraps (and the layout shares the
+            // measuring cache entry).
+            text.queue(
+                &buf[vl.start..vl.end],
+                font,
+                inner.x,
+                y,
+                white(0.95 * alpha),
+                super::wrap::NO_WRAP,
+                surface_w,
+                surface_h,
+            );
         }
     }
 
     if focused && state.body.cursor_visible() {
         let cursor = state.body.cursor_byte();
-        let pre = &buf[..cursor];
-        let line_idx = pre.matches('\n').count();
-        let line_start = pre.rfind('\n').map(|i| i + 1).unwrap_or(0);
-        let col_text = &buf[line_start..cursor];
-        let caret_x_in_line = text.measure_width(col_text, font);
+        let line_idx = super::wrap::caret_vline(&vlines, cursor);
+        let vl = vlines[line_idx];
+        let caret_x_in_line = text.measure_width(&buf[vl.start..cursor], font);
         let caret_x = inner.x + caret_x_in_line;
         let caret_y = inner.y + line_idx as f32 * line_h - scroll_px;
         if caret_y >= inner.y - line_h && caret_y <= inner.y + inner.h {
@@ -557,9 +561,8 @@ fn draw_body_text(
     painter.pop_clip();
     text.pop_clip();
 
-    // Body scrollbar.
-    let line_count = buf.split('\n').count();
-    let max = body_max_scroll(line_count, body, scale, text_size);
+    // Body scrollbar — sized by visual (wrapped) lines.
+    let max = body_max_scroll(vlines.len(), body, scale, text_size);
     if max > 0.0 {
         let track_w = 4.0 * scale;
         let track_x = body.x + body.w - track_w - 4.0 * scale;

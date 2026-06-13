@@ -10,6 +10,7 @@ pub mod export;
 pub mod render;
 pub mod sticky;
 pub mod store;
+pub mod wrap;
 
 use std::sync::{Arc, Mutex};
 
@@ -441,14 +442,28 @@ pub fn body_inner_height(body: Rect, scale: f32) -> f32 {
     (body.h - 24.0 * scale).max(0.0)
 }
 
-/// Line height (logical px) used by the body editor at the given text
-/// size. Mirrors the constants used in `render::draw_body_text` — note
-/// the body uses a ~12% bump over the global text size for readability.
-pub fn body_line_height(text_size: f32, scale: f32) -> f32 {
-    let font = (text_size * scale * 1.12).max(16.0);
-    font * 1.25
+/// Inner text area of the body editor (plate minus padding) — the rect
+/// visual lines are laid out, drawn, and hit-tested in. Render and
+/// every input path must use this same rect or clicks drift.
+pub fn body_inner_rect(body: Rect, scale: f32) -> Rect {
+    let pad = 12.0 * scale;
+    Rect::new(
+        body.x + pad,
+        body.y + pad,
+        (body.w - pad * 2.0).max(0.0),
+        body_inner_height(body, scale),
+    )
 }
 
+/// Line height used by the body editor at the given text size. Built
+/// on `wrap::body_font` so it can't drift from what the renderer and
+/// hit-testing measure with.
+pub fn body_line_height(text_size: f32, scale: f32) -> f32 {
+    wrap::body_font(text_size, scale) * 1.25
+}
+
+/// `line_count` is the *visual* (soft-wrapped) line count from
+/// `wrap::layout`, not the '\n' count.
 pub fn body_max_scroll(line_count: usize, body: Rect, scale: f32, text_size: f32) -> f32 {
     let lh = body_line_height(text_size, scale);
     let total = (line_count as f32) * lh;
@@ -456,16 +471,20 @@ pub fn body_max_scroll(line_count: usize, body: Rect, scale: f32, text_size: f32
     (total - visible).max(0.0)
 }
 
-/// Clamp the body scroll so the caret line stays visible. Returns the
-/// new scroll value (in logical px).
+/// Clamp the body scroll so the caret's visual line stays visible.
+/// Returns the new scroll value (physical px).
 pub fn body_scroll_for_caret(
     state: &NotesState,
     body: Rect,
     scale: f32,
     text_size: f32,
+    text: &mut lntrn_render::TextRenderer,
 ) -> f32 {
+    let inner = body_inner_rect(body, scale);
+    let font = wrap::body_font(text_size, scale);
+    let vlines = wrap::layout(state.body.raw(), font, inner.w, text);
     let lh = body_line_height(text_size, scale);
-    let caret_line = state.body.cursor_line() as f32;
+    let caret_line = wrap::caret_vline(&vlines, state.body.cursor_byte()) as f32;
     let scroll_top_line = state.body_scroll / lh;
     let visible_lines = body_inner_height(body, scale) / lh;
     let new_top_line = if caret_line < scroll_top_line {

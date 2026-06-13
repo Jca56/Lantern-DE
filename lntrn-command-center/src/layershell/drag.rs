@@ -308,10 +308,7 @@ pub(super) fn handle_drag(
             Some(crate::notes::DragField::Body) => {
                 let editor = crate::notes::editor_rect(panel_rect, top_y, scale_f, panel_bottom);
                 let body = crate::notes::body_rect(editor, scale_f);
-                let pad = 12.0 * scale_f;
-                let inner = lntrn_render::Rect::new(
-                    body.x + pad, body.y + pad, body.w - pad * 2.0, body.h - pad * 2.0,
-                );
+                let inner = crate::notes::body_inner_rect(body, scale_f);
                 let buf = app.notes.body.raw().to_string();
                 let byte = crate::notes::body_byte_at(
                     inner, &buf, app.notes.body_scroll,

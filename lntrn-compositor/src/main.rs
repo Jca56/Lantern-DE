@@ -47,6 +47,7 @@ mod window_ext;
 mod window_management;
 mod window_state;
 mod winit;
+mod x11_resources;
 mod xcursor_export;
 mod xwayland;
 
