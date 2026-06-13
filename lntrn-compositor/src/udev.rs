@@ -373,13 +373,7 @@ pub fn init_udev(
         // Handle dead windows: animate client-initiated closes, clean up compositor-initiated ones.
         let dead_windows: Vec<_> = state.space.elements()
             .filter(|w| !w.alive())
-            .filter_map(|w| {
-                let surface = crate::window_ext::WindowExt::get_wl_surface(w)?;
-                let location = state.workspaces.element_location(w)?;
-                let size = w.geometry().size;
-                let had_ssd = state.ssd.has_ssd(&surface);
-                Some(crate::animation::ClosingWindow { surface, location, size, had_ssd })
-            })
+            .filter_map(|w| state.make_closing_window(w))
             .collect();
         if !dead_windows.is_empty() {
             // Purge the dead elements from the spaces RIGHT NOW so the next

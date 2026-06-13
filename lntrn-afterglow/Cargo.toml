@@ -1,0 +1,24 @@
+[package]
+name = "lntrn-afterglow"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "lntrn_afterglow"
+path = "src/lib.rs"
+
+[[bin]]
+name = "lntrn-afterglow"
+path = "src/main.rs"
+
+[[bin]]
+name = "lntrn-afterglowd"
+path = "src/daemon/main.rs"
+
+[dependencies]
+anyhow = "1"
+libc = "0.2"
+lntrn-render = { path = "../lntrn-render" }
+lntrn-ui = { path = "../lntrn-ui" }
+lntrn-theme = { path = "../lntrn-theme" }
+winit = { version = "0.30", features = ["wayland"] }

@@ -95,8 +95,18 @@ pub(super) fn capture_window_snapshot(
     let snap_size = Size::<i32, Physical>::from((snap_w, snap_h));
     let buf_size: Size<i32, BufferCoords> = Size::from((snap_w, snap_h));
 
+    // Render the surface tree shifted by -geometry().loc so the texture
+    // contains exactly the visible geometry box. Clients that draw CSD
+    // shadow margins outside their geometry (Firefox/GTK) have a nonzero
+    // offset — capturing at (0,0) shifts their content down-right and
+    // crops it, which made the close animation visibly jump.
+    let geo_loc = window.geometry().loc;
+    let origin: Point<i32, Physical> = Point::from((
+        -((geo_loc.x as f64 * output_scale).round() as i32),
+        -((geo_loc.y as f64 * output_scale).round() as i32),
+    ));
     let elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
-        window.render_elements(renderer, Point::from((0i32, 0i32)), Scale::from(output_scale), 1.0);
+        window.render_elements(renderer, origin, Scale::from(output_scale), 1.0);
     if elements.is_empty() { return None; }
 
     let mut tex = Offscreen::<GlesTexture>::create_buffer(renderer, Fourcc::Abgr8888, buf_size).ok()?;

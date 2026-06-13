@@ -344,13 +344,7 @@ pub fn init_winit(
                     // Handle dead windows: animate client-initiated closes
                     let dead_windows: Vec<_> = state.space.elements()
                         .filter(|w| !w.alive())
-                        .filter_map(|w| {
-                            let surface = crate::window_ext::WindowExt::get_wl_surface(w)?;
-                            let location = state.workspaces.element_location(w)?;
-                            let size = w.geometry().size;
-                            let had_ssd = state.ssd.has_ssd(&surface);
-                            Some(crate::animation::ClosingWindow { surface, location, size, had_ssd })
-                        })
+                        .filter_map(|w| state.make_closing_window(w))
                         .collect();
                     for cw in dead_windows {
                         if state.animations.take_close_done(&cw.surface) {

@@ -213,11 +213,20 @@ fn compute_slide(
 
 /// A window that died (client-initiated close) but still has a close animation playing.
 /// We render a fading shadow effect at its last known position.
+///
+/// Chrome facts (corner radius, rounding, fullscreen) are captured at death so
+/// the zombie renders the SAME border/corner chrome the live window had —
+/// otherwise the border and rounding pop off one frame before the animation.
 pub struct ClosingWindow {
     pub surface: WlSurface,
     pub location: Point<i32, Logical>,
     pub size: Size<i32, Logical>,
     pub had_ssd: bool,
+    pub fullscreen: bool,
+    /// Corner radius the chrome (border/shadow) was drawn with, logical px.
+    pub chrome_corner_r: f32,
+    /// Whether the live window's content was SDF-corner-rounded.
+    pub content_rounded: bool,
 }
 
 /// Tracks all active window animations.

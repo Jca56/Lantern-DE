@@ -462,4 +462,39 @@ impl Lantern {
         self.closing_windows.retain(|cw| cw.surface != *surface);
         self.forget_window(surface);
     }
+
+    /// Snapshot a just-died window's placement + chrome facts for the zombie
+    /// close animation. Must run BEFORE forget_window/space purge so the
+    /// tiled/maximized/snapped/fullscreen state is still queryable — the
+    /// zombie renderer uses these to draw the same border/corner chrome the
+    /// live window had (mirrors the live render path's `needs_rounding`).
+    pub fn make_closing_window(
+        &self,
+        window: &smithay::desktop::Window,
+    ) -> Option<crate::animation::ClosingWindow> {
+        let surface = crate::window_ext::WindowExt::get_wl_surface(window)?;
+        let location = self.workspaces.element_location(window)?;
+        let size = window.geometry().size;
+        let had_ssd = self.ssd.has_ssd(&surface);
+        let fullscreen = self.fullscreen_windows.iter().any(|e| e.surface == surface);
+        let is_maximized = self.maximized_windows.iter().any(|e| e.surface == surface);
+        let is_snapped = self.snapped_windows.iter().any(|e| e.surface == surface);
+        let is_tiled = self.workspaces.contains(&surface);
+        let chrome_corner_r = if is_tiled {
+            crate::ssd::tiled_corner_radius()
+        } else {
+            crate::ssd::corner_radius()
+        };
+        let content_rounded =
+            !fullscreen && !is_maximized && !is_snapped && !had_ssd && !is_tiled;
+        Some(crate::animation::ClosingWindow {
+            surface,
+            location,
+            size,
+            had_ssd,
+            fullscreen,
+            chrome_corner_r,
+            content_rounded,
+        })
+    }
 }

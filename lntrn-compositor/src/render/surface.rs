@@ -1103,7 +1103,7 @@ pub fn render_surface(
             let params = anim.render_params(zombie_eff, cw.size);
             let anim_alpha = params.alpha;
             let anim_scale = params.scale;
-            let (snap_tex, _snap_phys_size) = match state.window_snapshots.get(&cw.surface) {
+            let (snap_tex, snap_phys_size) = match state.window_snapshots.get(&cw.surface) {
                 Some(s) => s,
                 None => continue,
             };
@@ -1126,8 +1126,8 @@ pub fn render_surface(
                 (rx, ry, vw, vh)
             } else {
                 let render_location = cw.location - output_geo.loc;
-                let rel_x = render_location.x as f64 - output_geo.loc.x as f64;
-                let rel_y = render_location.y as f64 - output_geo.loc.y as f64;
+                let rel_x = render_location.x as f64;
+                let rel_y = render_location.y as f64;
                 let center_x = rel_x + win_w / 2.0;
                 let center_y = rel_y + win_h / 2.0;
                 let sx = center_x - (win_w / 2.0) * anim_scale;
@@ -1158,19 +1158,80 @@ pub fn render_surface(
                 None,
                 Kind::Unspecified,
             );
-            zombie_elements.push(CustomRenderElements::Backdrop(tex_elem));
+            // Corner-round the snapshot when the live window was rounded —
+            // RoundedBackdropElement with a full-texture src degenerates to
+            // a plain SDF corner mask, so no dedicated element/shader needed.
+            let dst_phys_w = (dst_w_log as f64 * output_scale) as f32;
+            let dst_phys_h = (dst_h_log as f64 * output_scale) as f32;
+            let corner_r_phys = (cw.chrome_corner_r * output_scale as f32)
+                .min(dst_phys_w / 2.0)
+                .min(dst_phys_h / 2.0);
+            match udev.backdrop_shader.as_ref().filter(|_| cw.content_rounded && corner_r_phys > 0.5) {
+                Some(shader) => {
+                    let rounded = crate::rounded_element::RoundedBackdropElement::new(
+                        tex_elem,
+                        shader.clone(),
+                        [dst_phys_w, dst_phys_h],
+                        corner_r_phys,
+                        [snap_phys_size.w as f32, snap_phys_size.h as f32],
+                    );
+                    zombie_elements.push(CustomRenderElements::RoundedBackdrop(rounded));
+                }
+                None => zombie_elements.push(CustomRenderElements::Backdrop(tex_elem)),
+            }
 
-            // Shadow behind the zombie
+            // Chrome rect shared by border + shadow: the zombie's visible
+            // rect including the (height-scaled) SSD bar strip on top.
+            let chrome_x = scaled_x.round() as i32;
+            let chrome_y = scaled_y.round() as i32 - ssd_bar;
+            let chrome_w = dst_w_log;
+            let chrome_h = dst_h_log + (ssd_bar as f64 * (dst_h / win_h.max(1.0))).round() as i32;
+
+            // Border ring — same shader + uniforms as the live path so the
+            // X-button close keeps the border through the whole animation
+            // instead of popping it off on the death frame.
+            if !cw.fullscreen && border_width > 0 {
+                if let Some(ref shader) = border_shader {
+                    let pad = border_width + 1;
+                    let border_area = Rectangle::<i32, Logical>::new(
+                        (chrome_x - pad, chrome_y - pad).into(),
+                        (chrome_w + pad * 2, chrome_h + pad * 2).into(),
+                    );
+                    let mut bc = state.border_color;
+                    bc[3] = 1.0;
+                    let border_elem = PixelShaderElement::new(
+                        shader.clone(),
+                        border_area,
+                        None,
+                        anim_alpha,
+                        vec![
+                            Uniform::new("window_size", [chrome_w as f32, chrome_h as f32]),
+                            Uniform::new("corner_radius", cw.chrome_corner_r),
+                            Uniform::new("border_width", border_width as f32),
+                            Uniform::new("border_color", bc),
+                        ],
+                        Kind::Unspecified,
+                    );
+                    zombie_elements.push(CustomRenderElements::Shader(border_elem));
+                }
+            }
+
+            // Shadow behind the zombie. Mirrors the live path's focus-glow
+            // selection so the glow doesn't snap to a dark shadow at death.
+            if cw.fullscreen { continue; }
             if let Some(ref shader) = shadow_shader {
                 let shadow_expand = 40i32;
-                let corner_r = crate::ssd::corner_radius();
-                let win_x = (scaled_x).round() as i32;
-                let win_y = (scaled_y).round() as i32 - ssd_bar;
-                let shadow_w = dst_w_log;
-                let shadow_h = dst_h_log + (ssd_bar as f64 * (dst_h / win_h.max(1.0))).round() as i32;
+                let corner_r = cw.chrome_corner_r;
+                let (sigma, shadow_color) = if state.focus_glow {
+                    let mut c = state.focus_glow_color;
+                    c[3] = state.focus_glow_intensity;
+                    (14.0f32, c)
+                } else {
+                    (12.0f32, [0.0f32, 0.0, 0.0, 0.4])
+                };
                 let shadow_area = Rectangle::<i32, Logical>::new(
-                    (win_x - shadow_expand, win_y - shadow_expand).into(),
-                    (shadow_w + shadow_expand * 2, shadow_h + shadow_expand * 2).into(),
+                    (chrome_x - shadow_expand, chrome_y - shadow_expand).into(),
+                    (chrome_w + shadow_expand * 2, chrome_h + shadow_expand * 2).into(),
                 );
                 let shadow_elem = PixelShaderElement::new(
                     shader.clone(),
@@ -1178,10 +1239,10 @@ pub fn render_surface(
                     None,
                     anim_alpha,
                     vec![
-                        Uniform::new("window_size", [shadow_w as f32, shadow_h as f32]),
-                        Uniform::new("sigma", 12.0f32),
+                        Uniform::new("window_size", [chrome_w as f32, chrome_h as f32]),
+                        Uniform::new("sigma", sigma),
                         Uniform::new("corner_radius", corner_r),
-                        Uniform::new("shadow_color", [0.0f32, 0.0, 0.0, 0.4]),
+                        Uniform::new("shadow_color", shadow_color),
                     ],
                     Kind::Unspecified,
                 );

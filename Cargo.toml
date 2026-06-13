@@ -40,6 +40,7 @@ members = [
     "lntrn-rice",
     "lntrn-lockscreen",
     "lntrn-spotify-theme",
+    "lntrn-afterglow",
 ]
 
 # Custom text engine in development — built standalone so it stays off the live
