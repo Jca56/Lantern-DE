@@ -53,7 +53,7 @@ fn handle_left_press(handler: &mut TextHandler, event_loop: &ActiveEventLoop) ->
     }
 
     // Menu bar gets first dibs.
-    let menus = render::file_menu_items();
+    let menus = crate::title_bar::file_menu_items();
     if handler
         .menu_bar
         .on_click(&mut handler.input, &menus, handler.scale)

@@ -9,7 +9,7 @@ use wayland_client::{
         wl_callback, wl_compositor, wl_keyboard, wl_output, wl_pointer, wl_region, wl_registry,
         wl_seat, wl_surface,
     },
-    Connection, Dispatch, QueueHandle,
+    Connection, Dispatch, Proxy, QueueHandle,
 };
 use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols_wlr::foreign_toplevel::v1::client::{
@@ -18,7 +18,7 @@ use wayland_protocols_wlr::foreign_toplevel::v1::client::{
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
 use super::{
-    WlState, BTN_LEFT, BTN_RIGHT, KEY_ESC, KEY_LEFTCTRL, KEY_LEFTSHIFT, KEY_RIGHTCTRL,
+    OutputData, WlState, BTN_LEFT, BTN_RIGHT, KEY_ESC, KEY_LEFTCTRL, KEY_LEFTSHIFT, KEY_RIGHTCTRL,
     KEY_RIGHTSHIFT,
 };
 
@@ -31,8 +31,8 @@ impl Dispatch<wl_registry::WlRegistry, ()> for WlState {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        if let wl_registry::Event::Global { name, interface, version } = event {
-            match interface.as_str() {
+        match event {
+            wl_registry::Event::Global { name, interface, version } => match interface.as_str() {
                 "wl_compositor" => {
                     state.compositor = Some(registry.bind(name, version.min(6), qh, ()));
                 }
@@ -43,7 +43,13 @@ impl Dispatch<wl_registry::WlRegistry, ()> for WlState {
                     state.viewporter = Some(registry.bind(name, version.min(1), qh, ()));
                 }
                 "wl_output" => {
-                    let _: wl_output::WlOutput = registry.bind(name, version.min(4), qh, ());
+                    // User data = registry global name, so GlobalRemove can
+                    // evict the right entry on monitor unplug.
+                    let output: wl_output::WlOutput = registry.bind(name, version.min(4), qh, name);
+                    state.outputs.insert(
+                        output.id(),
+                        OutputData { registry_name: name, ..Default::default() },
+                    );
                 }
                 "wl_seat" => {
                     let seat: wl_seat::WlSeat = registry.bind(name, version.min(9), qh, ());
@@ -54,7 +60,18 @@ impl Dispatch<wl_registry::WlRegistry, ()> for WlState {
                         registry.bind(name, version.min(3), qh, ());
                 }
                 _ => {}
+            },
+            wl_registry::Event::GlobalRemove { name } => {
+                // Monitor unplugged. Forget it; if it was the output we were
+                // on, fall back until the compositor re-enters our surface.
+                state.outputs.retain(|_, data| data.registry_name != name);
+                if let Some(current) = &state.current_output {
+                    if !state.outputs.contains_key(current) {
+                        state.current_output = None;
+                    }
+                }
             }
+            _ => {}
         }
     }
 }
@@ -63,7 +80,20 @@ impl Dispatch<wl_compositor::WlCompositor, ()> for WlState {
     fn event(_: &mut Self, _: &wl_compositor::WlCompositor, _: wl_compositor::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
 }
 impl Dispatch<wl_surface::WlSurface, ()> for WlState {
-    fn event(_: &mut Self, _: &wl_surface::WlSurface, _: wl_surface::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        state: &mut Self,
+        _: &wl_surface::WlSurface,
+        event: wl_surface::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        // Track which output our surface lives on — fractional_scale() must
+        // read THAT output's data, not the most recently announced one.
+        if let wl_surface::Event::Enter { output } = event {
+            state.current_output = Some(output.id());
+        }
+    }
 }
 impl Dispatch<wl_region::WlRegion, ()> for WlState {
     fn event(_: &mut Self, _: &wl_region::WlRegion, _: wl_region::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
@@ -78,18 +108,25 @@ impl Dispatch<zwlr_layer_shell_v1::ZwlrLayerShellV1, ()> for WlState {
     fn event(_: &mut Self, _: &zwlr_layer_shell_v1::ZwlrLayerShellV1, _: zwlr_layer_shell_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
 }
 
-impl Dispatch<wl_output::WlOutput, ()> for WlState {
+impl Dispatch<wl_output::WlOutput, u32> for WlState {
     fn event(
         state: &mut Self,
-        _: &wl_output::WlOutput,
+        output: &wl_output::WlOutput,
         event: wl_output::Event,
-        _: &(),
+        registry_name: &u32,
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        let data = state
+            .outputs
+            .entry(output.id())
+            .or_insert(OutputData { registry_name: *registry_name, ..Default::default() });
         match event {
-            wl_output::Event::Scale { factor } => state.scale = factor,
-            wl_output::Event::Mode { width, .. } => state.output_phys_width = width as u32,
+            wl_output::Event::Scale { factor } => {
+                data.scale = factor;
+                state.fallback_scale = factor;
+            }
+            wl_output::Event::Mode { width, .. } => data.phys_width = width as u32,
             _ => {}
         }
     }

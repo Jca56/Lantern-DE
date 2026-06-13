@@ -60,14 +60,19 @@ impl Lantern {
         if let Some((ref surface, surface_loc)) = under_now {
             with_pointer_constraint(surface, &pointer, |constraint| {
                 if let Some(constraint) = constraint {
-                    if !constraint.is_active() {
-                        return;
-                    }
                     // Region is surface-local; only honor the constraint while
                     // the pointer is actually inside it.
                     let point = (prev_loc - surface_loc).to_i32_round();
                     if !constraint.region().map_or(true, |r| r.contains(point)) {
                         return;
+                    }
+                    // A constraint created while its surface lacked pointer
+                    // focus is never activated by new_constraint — engage it
+                    // on the first motion over the surface instead (games
+                    // request their lock mid-fullscreen-dance, before focus
+                    // lands). Smithay deactivates on leave automatically.
+                    if !constraint.is_active() {
+                        constraint.activate();
                     }
                     match &*constraint {
                         PointerConstraint::Locked(_) => pointer_locked = true,

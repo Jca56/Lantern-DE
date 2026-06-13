@@ -24,6 +24,22 @@ pub fn lantern_config_path() -> Option<PathBuf> {
     Some(lantern_home()?.join("config/lantern.toml"))
 }
 
+/// Active proportional font family — `font_family` under `[appearance]`.
+///
+/// The legacy generic value `"sans-serif"` (and empty/missing) resolves to
+/// the theme default (`typography::FAMILY_PROPORTIONAL`), so existing
+/// configs pick up the DE font without an edit. Read once at app startup
+/// by `lntrn-render`'s font system; a change applies as apps restart.
+pub fn active_font_family() -> String {
+    let v = read_config_string("appearance", "font_family", "");
+    let v = v.trim();
+    if v.is_empty() || v == "sans-serif" {
+        crate::typography::FAMILY_PROPORTIONAL.to_string()
+    } else {
+        v.to_string()
+    }
+}
+
 /// Parse a theme name string into a `ThemeVariant`.
 pub fn parse_variant(name: &str) -> Option<ThemeVariant> {
     match name.trim() {

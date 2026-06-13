@@ -545,7 +545,9 @@ pub fn draw_preview(
             tile.x + (tile.w - lw) / 2.0,
             tile.y + tile.h - font - 6.0 * scale,
             Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(0.92 * alpha),
-            lw,
+            // Half-em slack: an exact measured-width bound can wrap the
+            // last glyph onto a clipped second line.
+            lw + font * 0.5,
             surface_w,
             surface_h,
         );

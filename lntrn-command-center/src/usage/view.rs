@@ -608,7 +608,9 @@ fn draw_limit_row(
                 reset_right - tw,
                 t_top,
                 muted(0.70 * alpha),
-                tw,
+                // Half-em slack: an exact measured-width bound can wrap the
+                // last glyph onto a clipped second line.
+                tw + chip * 0.5,
                 surface_w,
                 surface_h,
             );

@@ -679,9 +679,12 @@ pub(super) fn draw_pill_button(
     let lw = text.measure_width(label, font);
     let lx = rect.x + (rect.w - lw) / 2.0;
     let ly = rect.y + (rect.h - font) / 2.0;
+    // Wrap bound must be looser than the measured width: queue() quantizes
+    // max_width down by up to 0.125px, which wraps the last glyph onto a
+    // clipped second line ("Connect" → "Connec").
     text.queue(
         label, font, lx, ly, accent.with_alpha(0.95 * alpha),
-        lw, surface_w, surface_h,
+        rect.w.max(lw), surface_w, surface_h,
     );
 }
 

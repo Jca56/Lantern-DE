@@ -2,14 +2,40 @@
 //! so they feel like part of the document rather than chrome sitting on top.
 
 use lntrn_render::{Color, Painter, Rect};
-use lntrn_ui::gpu::{FoxPalette, InteractionContext};
+use lntrn_ui::gpu::{FoxPalette, InteractionContext, MenuItem};
 
 use crate::theme::Theme;
 use crate::tokens;
-use crate::{ZONE_CLOSE, ZONE_MAXIMIZE, ZONE_MINIMIZE};
+use crate::{
+    MENU_NEW, MENU_OPEN, MENU_SAVE, MENU_SAVE_AS, MENU_SAVE_DOCX, MENU_THEME_DARK,
+    MENU_THEME_PAPER, ZONE_CLOSE, ZONE_MAXIMIZE, ZONE_MINIMIZE,
+};
 
 /// Title bar height in logical pixels (multiplied by `scale` at draw time).
 pub const TITLE_BAR_H: f32 = 34.0;
+
+/// The File/View menu definitions shown in the title bar's menu bar.
+pub fn file_menu_items() -> Vec<(&'static str, Vec<MenuItem>)> {
+    vec![
+        (
+            "File",
+            vec![
+                MenuItem::action_with(MENU_NEW, "New", "Ctrl+N"),
+                MenuItem::action_with(MENU_OPEN, "Open", "Ctrl+O"),
+                MenuItem::action_with(MENU_SAVE, "Save", "Ctrl+S"),
+                MenuItem::action_with(MENU_SAVE_AS, "Save As…", "Ctrl+Shift+S"),
+                MenuItem::action_with(MENU_SAVE_DOCX, "Export .docx", ""),
+            ],
+        ),
+        (
+            "View",
+            vec![
+                MenuItem::action_with(MENU_THEME_PAPER, "Theme: Paper", ""),
+                MenuItem::action_with(MENU_THEME_DARK, "Theme: Dark", ""),
+            ],
+        ),
+    ]
+}
 
 /// Width of each window-control button (close / max / min).
 const WIN_BTN_W: f32 = 38.0;

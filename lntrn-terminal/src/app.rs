@@ -513,10 +513,11 @@ impl App {
     }
 }
 
-/// Initial window size: 16:9 at `[windows] default_size_pct` of the monitor
-/// width (the same knob the compositor uses for default window sizing, set
-/// in lntrn-system-settings). Falls back to 1500x1000 when winit hasn't
-/// learned about any outputs yet.
+/// Fallback initial window size: 16:9 at `[windows] default_size_pct` of
+/// the monitor width. Under Lantern the compositor suggests the real
+/// default (`default_size_pct` of the work area) in the initial configure
+/// and winit adopts it, so this only decides the size on other compositors
+/// — or when winit hasn't learned about any outputs yet (then 1500x1000).
 fn initial_window_size(event_loop: &ActiveEventLoop) -> LogicalSize<f64> {
     let pct = (lntrn_theme::read_config_f32("windows", "default_size_pct", 60.0)
         / 100.0)
@@ -551,7 +552,6 @@ impl ApplicationHandler<UserEvent> for App {
             .with_name("lntrn-terminal", "lntrn-terminal")
             .with_title("Lantern Terminal")
             .with_inner_size(initial_window_size(event_loop))
-            .with_min_inner_size(LogicalSize::new(480.0, 320.0))
             .with_decorations(false)
             .with_transparent(true);
 
@@ -570,6 +570,14 @@ impl ApplicationHandler<UserEvent> for App {
                 .create_window(attrs)
                 .expect("Failed to create window"),
         );
+
+        // Min size is set AFTER creation on purpose: a min-size hint that
+        // reaches the compositor before the first commit is Lantern's
+        // "content-fit" signal (it becomes the suggested startup size —
+        // the path lntrn-image-viewer uses) and would override the
+        // `[windows] default_size_pct` default. create_window blocks until
+        // the initial configure, so from here the hint is purely a floor.
+        window.set_min_inner_size(Some(LogicalSize::new(480.0, 320.0)));
 
         // Spawn the Wayland DnD receiver. We pull the raw wl_display
         // ptr from winit's window handle and share it with our own

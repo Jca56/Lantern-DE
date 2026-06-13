@@ -20,7 +20,8 @@ use lntrn_ui::gpu::{
 use crate::appearance_themes::ThemesPanelState;
 use crate::config::LanternConfig;
 use crate::panels::{
-    draw_color_swatch_row, draw_section_card, make_menu_items, slider_value_from_cursor,
+    draw_color_swatch_row, draw_section_card, draw_select_button, make_menu_items,
+    slider_value_from_cursor,
     PanelState, CARD_GAP, CARD_HEADER_H, CARD_INNER_PAD_H, CARD_INNER_PAD_V,
     CARD_OUTER_PAD_H, CARD_OUTER_PAD_V, GLOW_COLORS, LABEL_SIZE, ROW_H, SLIDER_H,
     SLIDER_W, VALUE_SIZE, VALUE_W,
@@ -91,6 +92,26 @@ const ACT_ANIM_PRESET: u32 = 370; // +0..3
 
 const PRESET_OPTIONS: &[&str] = &["Cinematic", "Snappy", "Springy", "Linear"];
 
+// Font card (Themes page, right column)
+const ZONE_FONT_BTN: u32 = 500;
+const ACT_FONT_BASE: u32 = 520; // +0..FONT_OPTIONS.len()
+
+/// DE-wide proportional font choices. Family names must match the faces
+/// bundled in `~/.lantern/fonts/`; applied via `[appearance] font_family`
+/// as each Lantern app restarts.
+const FONT_OPTIONS: &[&str] = &["Inter", "Lexend", "Atkinson Hyperlegible", "IBM Plex Sans"];
+
+/// Stored `font_family` → the family shown/selected in the picker. Empty
+/// and the legacy generic `"sans-serif"` mean the theme default.
+fn effective_font_family(stored: &str) -> String {
+    let s = stored.trim();
+    if s.is_empty() || s == "sans-serif" {
+        lntrn_theme::FAMILY_PROPORTIONAL.to_string()
+    } else {
+        s.to_string()
+    }
+}
+
 // ── Public entry ────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_arguments)]
@@ -135,13 +156,15 @@ pub fn draw_appearance_panel(
     let anim_card_h = card_chrome_h + 4.0 * row + 3.0 * (ROW_H * 0.75) * s;
     let glow_extra_rows = if config.window_manager.focus_glow { 2.0 } else { 0.0 };
     let focus_card_h = card_chrome_h + (1.0 + glow_extra_rows) * row;
+    let font_card_h = card_chrome_h + row;
 
     // Themes page is a single mega-panel: theme presets full-width, then a
     // two-column body. Left stack = Background Color → Blur & Effects → Borders.
-    // Right stack = Window Gradient → Focus Glow.
+    // Right stack = Window Gradient → Focus Glow → Font.
     let left_stack = bg_card_h + CARD_GAP * s + effects_card_h
         + CARD_GAP * s + borders_card_h;
-    let right_stack = gradient_card_h + CARD_GAP * s + focus_card_h;
+    let right_stack = gradient_card_h + CARD_GAP * s + focus_card_h
+        + CARD_GAP * s + font_card_h;
     let two_col_h = left_stack.max(right_stack);
 
     let content_height = match subpanel {
@@ -210,6 +233,11 @@ pub fn draw_appearance_panel(
                 right_x, ry, col_w, focus_card_h, s, sw, sh,
                 &ZONE_IDS_FOCUS,
             );
+            ry += focus_card_h + col_gap;
+            draw_font_card(
+                config, panel_state, painter, text, ix, fox,
+                right_x, ry, col_w, font_card_h, s, sw, sh,
+            );
         }
         Panel::Animations => {
             crate::appearance_animations::draw_animations_card(
@@ -238,6 +266,9 @@ pub fn draw_appearance_panel(
             if id >= ACT_ANIM_PRESET && id < ACT_ANIM_PRESET + PRESET_OPTIONS.len() as u32 {
                 config.animations.preset =
                     PRESET_OPTIONS[(id - ACT_ANIM_PRESET) as usize].to_lowercase();
+            } else if id >= ACT_FONT_BASE && id < ACT_FONT_BASE + FONT_OPTIONS.len() as u32 {
+                config.appearance.font_family =
+                    FONT_OPTIONS[(id - ACT_FONT_BASE) as usize].to_string();
             } else {
                 crate::appearance_themes::dispatch_theme_menu_action(
                     themes_state, config, id,
@@ -354,6 +385,47 @@ fn draw_background_color_card(
         "Accent", ZONE_ACCENT_BASE,
         &config.appearance.accent,
         label_x, ctrl_x, end_x, &mut cy, row, lsz, s, sw, sh,
+    );
+}
+
+// ── Font card ───────────────────────────────────────────────────────────────
+//
+// One select-button row that sets `[appearance] font_family` — the DE-wide
+// proportional font every lntrn-render app resolves at startup. Fonts are
+// bundled in ~/.lantern/fonts; a change applies as apps restart.
+
+#[allow(clippy::too_many_arguments)]
+fn draw_font_card(
+    config: &mut LanternConfig,
+    panel_state: &mut PanelState,
+    painter: &mut Painter,
+    text: &mut TextRenderer,
+    ix: &mut InteractionContext,
+    fox: &FoxPalette,
+    card_x: f32, card_y: f32, card_w: f32, card_h: f32,
+    s: f32, sw: u32, sh: u32,
+) {
+    let row = ROW_H * s;
+    let lsz = LABEL_SIZE * s;
+    let card_inner_x = card_x + CARD_INNER_PAD_H * s;
+    let label_x = card_inner_x;
+    let ctrl_x = card_inner_x + 130.0 * s;
+
+    let mut cy = draw_section_card(
+        painter, text, fox, "Font",
+        card_x, card_y, card_w, card_h, s, sw, sh,
+    );
+
+    let btn_w = 250.0 * s;
+    let btn_h = 40.0 * s;
+    let is_open = panel_state.active_dropdown == Some(ZONE_FONT_BTN);
+    let current = effective_font_family(&config.appearance.font_family);
+    let menu = &panel_state.dropdown_menu;
+    draw_select_button(
+        "DE Font", &current,
+        ZONE_FONT_BTN, is_open,
+        painter, text, ix, fox,
+        label_x, 130.0 * s, ctrl_x, btn_w, btn_h, row, lsz, s, sw, sh, &mut cy, menu,
     );
 }
 
@@ -693,6 +765,17 @@ pub fn handle_appearance_click(
                 );
                 panel_state.dropdown_menu.open(cursor_x, cursor_y + 16.0, items);
                 panel_state.active_dropdown = Some(ZONE_ANIM_PRESET_BTN);
+            }
+        }
+        // DE font dropdown — open menu under cursor
+        ZONE_FONT_BTN => {
+            if panel_state.active_dropdown == Some(ZONE_FONT_BTN) {
+                panel_state.close_dropdown();
+            } else {
+                let current = effective_font_family(&config.appearance.font_family);
+                let items = make_menu_items(FONT_OPTIONS, ACT_FONT_BASE, &current);
+                panel_state.dropdown_menu.open(cursor_x, cursor_y + 16.0, items);
+                panel_state.active_dropdown = Some(ZONE_FONT_BTN);
             }
         }
         // Accent swatches

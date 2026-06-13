@@ -521,6 +521,11 @@ fn connector_connected(
     // timer. See `hdr::safety` and `hdr::set_output_hdr`.
 
     render_device(state, node, Some(crtc));
+
+    // If Gaming Mode is active, this output just landed on its configured
+    // position — computed for desktop scale, so it may overlap the rescaled
+    // primary. Re-chain the layout. No-op when gaming mode is off.
+    state.reapply_gaming_layout();
 }
 
 pub fn connector_disconnected(state: &mut Lantern, node: DrmNode, crtc: crtc::Handle) {
@@ -730,6 +735,11 @@ pub fn apply_output_config(
             }
         }
     }
+
+    // Keep wlr-output-management heads in sync (and notify bound clients)
+    // — otherwise System Settings shows pre-apply positions/scales.
+    state.output_management_state.sync_applied_changes(&changes);
+    state.output_management_state.broadcast_done();
 
     // The primary output's scale may have changed — re-apply the XWayland
     // scale override so newly-spawned X11 games still see native physical

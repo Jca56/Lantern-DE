@@ -2340,29 +2340,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lntrn-bar"
-version = "0.4.0"
-dependencies = [
- "anyhow",
- "flate2",
- "libc",
- "lntrn-dbus",
- "lntrn-icons",
- "lntrn-render",
- "lntrn-ui",
- "png 0.17.16",
- "raw-window-handle",
- "resvg 0.45.1",
- "tracing",
- "tracing-subscriber",
- "wayland-backend",
- "wayland-client",
- "wayland-protocols",
- "wayland-protocols-wlr",
- "wgpu",
-]
-
-[[package]]
 name = "lntrn-calculator"
 version = "0.1.0"
 dependencies = [
@@ -2664,24 +2641,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lntrn-menu"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "libc",
- "lntrn-render",
- "lntrn-ui",
- "raw-window-handle",
- "tracing",
- "tracing-subscriber",
- "wayland-backend",
- "wayland-client",
- "wayland-protocols",
- "wayland-protocols-wlr",
- "wgpu",
-]
-
-[[package]]
 name = "lntrn-notepad"
 version = "0.1.0"
 dependencies = [
@@ -2900,6 +2859,7 @@ dependencies = [
  "glyphon",
  "lntrn-draw",
  "lntrn-gfx",
+ "lntrn-theme",
  "unicode-script",
  "wgpu",
 ]

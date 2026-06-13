@@ -37,9 +37,13 @@ pub fn lantern_font_system() -> FontSystem {
 
     evict_unrenderable_emoji(&mut db);
 
-    // Same generic-family defaults `FontSystem::new()` sets.
+    // Generic-family defaults. The sans-serif family is the DE font:
+    // `[appearance] font_family` from lantern.toml, falling back to the
+    // theme default (lntrn_theme::FAMILY_PROPORTIONAL). The DE fonts are
+    // bundled in ~/.lantern/fonts (loaded above); if the family is missing
+    // anyway, the fallback list below still resolves every glyph.
     db.set_monospace_family("Noto Sans Mono");
-    db.set_sans_serif_family("Open Sans");
+    db.set_sans_serif_family(lntrn_theme::active_font_family());
     db.set_serif_family("DejaVu Serif");
 
     FontSystem::new_with_locale_and_db_and_fallback(locale(), db, LanternFallback)
@@ -70,10 +74,9 @@ impl Fallback for LanternFallback {
         // SECOND — ahead of DejaVu Sans (whose monochrome emoticon outlines
         // shadowed color emoji) but behind Noto Sans. It must not be first:
         // emoji cmaps cover space/digits/#/* (keycap components) with em-wide
-        // advances, and since the generic sans-serif default ("Open Sans") is
-        // rarely installed, EVERY glyph resolves via this list — emoji-first
-        // shaped all spaces and digits emoji-wide (huge word gaps in every
-        // app). Keep in sync with src/font/fallback/unix.rs upstream.
+        // advances, and any glyph the DE font lacks resolves via this list —
+        // emoji-first shaped all spaces and digits emoji-wide (huge word gaps
+        // in every app). Keep in sync with src/font/fallback/unix.rs upstream.
         &[
             /* Sans-serif fallbacks */
             "Noto Sans",

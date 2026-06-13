@@ -211,6 +211,42 @@ impl Lantern {
         });
     }
 
+    /// Floating clients own their size. When a commit lands at a geometry
+    /// that matches neither the pending nor the last-acked configure size,
+    /// the client picked its own size (e.g. re-asserting a saved or fixed
+    /// size over our `default_size_pct` suggestion — configure sizes are
+    /// hints, clients may decline). Record it in the pending state (without
+    /// sending) so later configures (focus activation, decoration toggles)
+    /// carry the real size instead of snapping the window back to a stale
+    /// suggestion. Skipped while compositor state owns the size
+    /// (fullscreen/maximize/snap/pose/tile/anim) or an interactive resize
+    /// is in flight — there a mismatch is just ack lag, not a choice.
+    pub(crate) fn adopt_client_size(&mut self, window: &Window, surface: &WlSurface) {
+        let Some(toplevel) = window.toplevel() else { return };
+        let committed = window.geometry().size;
+        if committed.w <= 0 || committed.h <= 0 {
+            return;
+        }
+        if self.is_fullscreen(surface)
+            || self.is_maximized(surface)
+            || self.is_snapped(surface)
+            || self.posed_windows.contains_key(surface)
+            || self.solo_tiled_windows.iter().any(|e| e.surface == *surface)
+            || self.window_state_anim.current_rect(surface).is_some()
+            || crate::grabs::resize_grab::is_resizing(surface)
+        {
+            return;
+        }
+        if toplevel.current_state().size == Some(committed) {
+            return;
+        }
+        toplevel.with_pending_state(|state| {
+            if state.size != Some(committed) {
+                state.size = Some(committed);
+            }
+        });
+    }
+
     pub fn map_new_window(&mut self, window: Window) {
         let serial = smithay::utils::SERIAL_COUNTER.next_serial();
         let Some(surface) = window.get_wl_surface() else { return };

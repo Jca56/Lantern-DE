@@ -68,13 +68,17 @@ pub fn draw_tab_strip(
     sw: u32,
     sh: u32,
 ) {
-    let _ = wf; // strip bg is now the shared ribbon gradient; width unused.
     let y = tab_strip_y(s);
     let h = TAB_STRIP_H * s;
 
-    // No strip background or below-strip hairline here — the unified ribbon
-    // gradient (drawn earlier) and the ribbon↔desk seam (drawn after) handle
-    // those. Tabs paint only their own fills/glows on top of the gradient.
+    // Subtle wash over the ribbon gradient so the strip reads as its own
+    // settled band (and the active tab's page-tone fill pops against it).
+    // The ribbon↔desk seam hairline is still drawn after, in render.rs.
+    painter.rect_filled(
+        Rect::new(0.0, y, wf, h),
+        0.0,
+        tokens::tab_strip_wash(theme),
+    );
 
     let pad = TAB_PAD_X * s;
     let close_w = CLOSE_BTN_W * s;

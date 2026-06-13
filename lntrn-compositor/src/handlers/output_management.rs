@@ -163,6 +163,43 @@ impl OutputManagementState {
         }
     }
 
+    /// Sync stored head state after changes were applied to the live outputs
+    /// and push the new position/scale to all bound head instances. Without
+    /// this, wlr clients (System Settings) keep showing pre-apply data.
+    /// Mode changes update the stored index only — pushing `current_mode`
+    /// events needs the per-client mode instance, and the settings app
+    /// re-reads after applying anyway.
+    pub fn sync_applied_changes(&mut self, changes: &[OutputChange]) {
+        for change in changes {
+            let Some(head) = self
+                .heads
+                .iter_mut()
+                .find(|h| h.output_name == change.output_name)
+            else {
+                continue;
+            };
+            if let Some(pos) = change.position {
+                head.position = pos;
+            }
+            if let Some(scale) = change.scale {
+                head.scale = scale;
+            }
+            if let Some(drm_idx) = change.drm_mode_index {
+                if let Some(mi) = head.modes.iter().position(|m| m.drm_mode_index == drm_idx) {
+                    head.current_mode_idx = mi;
+                }
+            }
+            if head.enabled {
+                for weak in &head.instances {
+                    if let Ok(h) = weak.upgrade() {
+                        h.position(head.position.0, head.position.1);
+                        h.scale(head.scale);
+                    }
+                }
+            }
+        }
+    }
+
     /// Increment serial and send done to all managers.
     pub fn broadcast_done(&mut self) {
         self.serial = self.serial.wrapping_add(1);
@@ -433,9 +470,9 @@ impl Dispatch<ZwlrOutputConfigurationV1, Mutex<PendingConfig>, Lantern> for Lant
                 drop(pending);
 
                 if let Some(changes) = changes {
+                    // apply_output_config syncs heads + broadcasts done.
                     let ok = crate::udev_device::apply_output_config(state, changes);
                     if ok {
-                        state.output_management_state.broadcast_done();
                         config_obj.succeeded();
                     } else {
                         config_obj.failed();

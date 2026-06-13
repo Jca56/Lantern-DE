@@ -573,21 +573,6 @@ impl Lantern {
                     return FilterResult::Intercept(());
                 }
 
-                // Super+Shift+B: restart lntrn-bar
-                if event.state() == KeyState::Pressed
-                    && _modifiers.logo
-                    && _modifiers.shift
-                    && keysym.modified_sym().raw() == xkb::KEY_B
-                {
-                    tracing::info!("Super+Shift+B pressed, restarting lntrn-bar");
-                    spawn_detached_args(
-                        "sh",
-                        &["-c", "pkill lntrn-bar; sleep 0.2; lntrn-bar"],
-                        &data.socket_name,
-                    );
-                    return FilterResult::Intercept(());
-                }
-
                 // Super+Shift+C: restart compositor (exec replace)
                 if event.state() == KeyState::Pressed
                     && _modifiers.logo

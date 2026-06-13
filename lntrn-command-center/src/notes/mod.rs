@@ -251,16 +251,28 @@ impl NotesState {
 
     pub fn delete_selected(&mut self) {
         let Some(id) = self.selected_id else { return };
-        if let Some(idx) = self.notes.iter().position(|n| n.id == id) {
+        let removed_idx = self.notes.iter().position(|n| n.id == id);
+        if let Some(idx) = removed_idx {
             let removed = self.notes.remove(idx);
             let _ = store::delete_one(removed.id);
         }
-        self.selected_id = self.notes.first().map(|n| n.id);
-        if let Some(id) = self.selected_id {
+        // Clear the editor BEFORE selecting the next note: select() flushes
+        // the editor fields into the current selection, and right now they
+        // still hold the deleted note's text — flushing would overwrite the
+        // next note's content with the dead note's.
+        self.selected_id = None;
+        self.title.clear();
+        self.body.set_text("");
+        // Select the note that slid into the deleted note's slot (or the
+        // new last note when the deleted one was at the bottom).
+        let next_id = removed_idx
+            .and_then(|idx| {
+                let last = self.notes.len().checked_sub(1)?;
+                self.notes.get(idx.min(last))
+            })
+            .map(|n| n.id);
+        if let Some(id) = next_id {
             self.select(id);
-        } else {
-            self.title.clear();
-            self.body.set_text("");
         }
     }
 
@@ -529,8 +541,25 @@ pub fn hit_test(
     Hit::None
 }
 
-fn point_in(r: Rect, px: f32, py: f32) -> bool {
+pub fn point_in(r: Rect, px: f32, py: f32) -> bool {
     px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h
+}
+
+/// Confirm-delete modal geometry: `(dialog, cancel_btn, delete_btn)`.
+/// Shared by the renderer and the click handler so the buttons land
+/// exactly where they're drawn.
+pub fn confirm_delete_rects(panel: Rect, scale: f32) -> (Rect, Rect, Rect) {
+    let w = 380.0 * scale;
+    let h = 180.0 * scale;
+    let x = panel.x + (panel.w - w) / 2.0;
+    let y = panel.y + (panel.h - h) / 2.0;
+    let pad = 18.0 * scale;
+    let btn_h = 38.0 * scale;
+    let btn_w = (w - pad * 2.0 - 12.0 * scale) / 2.0;
+    let by = y + h - pad - btn_h;
+    let cancel = Rect::new(x + pad, by, btn_w, btn_h);
+    let delete = Rect::new(x + pad + btn_w + 12.0 * scale, by, btn_w, btn_h);
+    (Rect::new(x, y, w, h), cancel, delete)
 }
 
 /// Logical horizontal pad from the filter bar's left edge to where the

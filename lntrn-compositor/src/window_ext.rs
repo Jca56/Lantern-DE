@@ -121,7 +121,17 @@ impl WindowExt for Window {
 
     fn send_pending_configure(&self) {
         if let Some(toplevel) = self.toplevel() {
-            toplevel.send_pending_configure();
+            // Never flush before the client's first commit: smithay marks
+            // any pre-commit send as THE initial configure (size 0x0),
+            // firing before apply_initial_window_size can inject the
+            // `[windows] default_size_pct` default. focus_window() runs
+            // pre-commit for every new window (new_toplevel → map →
+            // focus), so without this guard no winit app ever received
+            // the default size. Pending state (activation etc.) simply
+            // rides along with the real initial configure on first commit.
+            if toplevel.is_initial_configure_sent() {
+                toplevel.send_pending_configure();
+            }
         }
         // X11 configures are immediate — no-op
     }

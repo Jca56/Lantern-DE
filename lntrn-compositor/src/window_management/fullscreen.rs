@@ -66,6 +66,22 @@ impl Lantern {
         self.update_foreign_toplevel_states(surface);
         if serial != Serial::from(0) {
             self.focus_window(&window, serial);
+            // If the cursor is parked on ANOTHER output, pull it into the
+            // fullscreened window first: the refocus below works on the
+            // cursor's current position, and pointer focus on the wrong
+            // monitor means the game never receives wl_pointer.enter — its
+            // pointer-lock constraint can't activate, so mouse input is dead
+            // until alt-tab. Same-output fullscreens (e.g. a video player
+            // under the cursor) are left alone.
+            if let Some(pos) = self.seat.get_pointer().map(|p| p.current_location()) {
+                if !output_geo.contains(pos.to_i32_round()) {
+                    let center = smithay::utils::Point::from((
+                        output_geo.loc.x as f64 + output_geo.size.w as f64 / 2.0,
+                        output_geo.loc.y as f64 + output_geo.size.h as f64 / 2.0,
+                    ));
+                    self.warp_pointer_to(center);
+                }
+            }
             // Establish POINTER focus too — keyboard focus alone leaves Proton
             // games unclickable when they fullscreen under a stationary cursor.
             self.refocus_pointer_at_cursor();

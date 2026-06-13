@@ -10,6 +10,7 @@ mod cursor;
 mod cursor_click;
 mod cursor_loading;
 mod easing;
+mod gaming_ipc;
 mod gaming_mode;
 mod gestures;
 mod grabs;

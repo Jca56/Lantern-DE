@@ -11,12 +11,15 @@
 //! - Phase 1: no input handling beyond pointer enter/leave to get focus.
 //!   Phase 1.8 adds Esc-to-close + click-outside.
 
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixListener;
 use std::time::Duration;
+
+use wayland_client::backend::ObjectId;
 
 use anyhow::{anyhow, Result};
 use lntrn_render::{GpuContext, Painter, TextRenderer, TexturePass};
@@ -95,14 +98,32 @@ impl HasWindowHandle for WaylandHandle {
     }
 }
 
+/// Physical data for one wl_output. Tracked per-output (keyed by proxy id)
+/// so a hotplugged monitor's Mode/Scale events can't clobber the scale of
+/// the output we actually render on — that bug shrank the panel to ~0.7×
+/// whenever a 1080p secondary was plugged in next to the scaled 4K primary.
+#[derive(Default, Clone, Copy)]
+struct OutputData {
+    /// wl_registry global name, so GlobalRemove can evict the right entry.
+    registry_name: u32,
+    /// Physical mode width in pixels (wl_output::Event::Mode).
+    phys_width: u32,
+    /// Integer scale (wl_output::Event::Scale).
+    scale: i32,
+}
+
 struct WlState {
     running: bool,
     configured: bool,
     frame_done: bool,
     width: u32,
     height: u32,
-    scale: i32,
-    output_phys_width: u32,
+    /// All advertised outputs, keyed by wl_output proxy id.
+    outputs: HashMap<ObjectId, OutputData>,
+    /// The output our layer surface is on (from wl_surface::Enter).
+    current_output: Option<ObjectId>,
+    /// Integer-scale fallback used only before the first Enter arrives.
+    fallback_scale: i32,
     compositor: Option<wl_compositor::WlCompositor>,
     layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
     viewporter: Option<wp_viewporter::WpViewporter>,
@@ -161,8 +182,9 @@ impl WlState {
             frame_done: true,
             width: 0,
             height: 0,
-            scale: 1,
-            output_phys_width: 0,
+            outputs: HashMap::new(),
+            current_output: None,
+            fallback_scale: 1,
             compositor: None,
             layer_shell: None,
             viewporter: None,
@@ -187,11 +209,27 @@ impl WlState {
     }
 
     fn fractional_scale(&self) -> f64 {
-        if self.output_phys_width > 0 && self.width > 0 {
-            self.output_phys_width as f64 / self.width as f64
+        // Scale must come from the output our surface is actually on, never
+        // from whichever output spoke most recently. Before the first
+        // wl_surface::Enter arrives, a lone output is unambiguous.
+        let current = self
+            .current_output
+            .as_ref()
+            .and_then(|id| self.outputs.get(id));
+        let single = if self.outputs.len() == 1 {
+            self.outputs.values().next()
         } else {
-            self.scale.max(1) as f64
+            None
+        };
+        if let Some(data) = current.or(single) {
+            if data.phys_width > 0 && self.width > 0 {
+                return data.phys_width as f64 / self.width as f64;
+            }
+            if data.scale > 0 {
+                return data.scale as f64;
+            }
         }
+        self.fallback_scale.max(1) as f64
     }
 
     fn phys_width(&self) -> u32 {

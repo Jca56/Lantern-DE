@@ -79,6 +79,10 @@ impl CompositorHandler for Lantern {
             let committed_size = window.geometry().size;
             self.window_state_anim
                 .clear_held_scale_if_matched(surface, committed_size);
+            // Floating clients own their size — adopt client-chosen sizes
+            // so later configures don't snap the window back to a stale
+            // suggestion (details on `adopt_client_size`).
+            self.adopt_client_size(window, surface);
         }
 
         // Center windows that are waiting for their first real geometry

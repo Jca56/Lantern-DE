@@ -21,6 +21,8 @@ pub mod clock;
 pub mod collapse;
 pub mod disk;
 pub mod events;
+pub mod gaming;
+pub mod gaming_ipc;
 pub mod gpu;
 pub mod network;
 pub mod sysmon;
@@ -80,6 +82,9 @@ pub enum TileId {
     /// Disk usage for `/` and `~`. Backed by its own lightweight
     /// `controls.disk` statfs poller.
     Disk,
+    /// Gaming Mode toggle — mirrors the compositor's Super+G state over
+    /// the gaming IPC socket; click to flip. No expanded view.
+    Gaming,
     /// Chevron button that toggles the panel between full and
     /// just-the-row "mini" modes. Special-cased in click handling.
     Collapse,
@@ -105,6 +110,7 @@ pub fn arrangeable_widgets() -> &'static [TileId] {
         TileId::Network,
         TileId::Gpu,
         TileId::Disk,
+        TileId::Gaming,
     ]
 }
 
@@ -134,6 +140,7 @@ impl TileId {
             TileId::Network => "network",
             TileId::Gpu => "gpu",
             TileId::Disk => "disk",
+            TileId::Gaming => "gaming",
             TileId::Collapse => "collapse",
             TileId::TerminalClear => "terminal_clear",
         }
@@ -153,6 +160,7 @@ impl TileId {
             "network" => TileId::Network,
             "gpu" => TileId::Gpu,
             "disk" => TileId::Disk,
+            "gaming" => TileId::Gaming,
             _ => return None,
         })
     }
@@ -172,6 +180,7 @@ impl TileId {
             TileId::Network => "Network",
             TileId::Gpu => "GPU",
             TileId::Disk => "Disk",
+            TileId::Gaming => "Gaming",
             TileId::Collapse => "Collapse",
             TileId::TerminalClear => "Clear",
         }
@@ -192,6 +201,7 @@ impl TileId {
             TileId::Network => network::TILE_WIDTH,
             TileId::Gpu => gpu::TILE_WIDTH,
             TileId::Disk => disk::TILE_WIDTH,
+            TileId::Gaming => gaming::TILE_WIDTH,
             TileId::Collapse => collapse::TILE_WIDTH,
             TileId::TerminalClear => terminal_header::TILE_WIDTH,
         }
@@ -211,6 +221,8 @@ pub struct Controls {
     pub battery: Battery,
     pub sysmon: SysMon,
     pub disk: Disk,
+    /// Gaming Mode state mirror + toggle channel (compositor IPC).
+    pub gaming_ipc: gaming_ipc::GamingIpc,
     /// User-customizable widget arrangement (zones + order + on/off).
     pub toolbar: toolbar::ToolbarLayout,
 }
@@ -227,6 +239,7 @@ impl Controls {
             battery: Battery::new(),
             sysmon: SysMon::new(),
             disk: Disk::new(),
+            gaming_ipc: gaming_ipc::GamingIpc::new(),
             toolbar: toolbar::ToolbarLayout::load(),
         }
     }
@@ -246,6 +259,9 @@ impl Controls {
             TileId::SysMon | TileId::Network | TileId::Temp => self.sysmon.is_present(),
             TileId::Gpu => self.sysmon.has_gpu(),
             TileId::Disk => self.disk.is_present(),
+            // Always present — when the compositor socket is down the tile
+            // renders dimmed rather than vanishing.
+            TileId::Gaming => true,
             TileId::Collapse | TileId::TerminalClear => true,
         }
     }
@@ -272,6 +288,7 @@ impl Controls {
         self.bluetooth.tick();
         self.battery.tick();
         self.disk.tick();
+        self.gaming_ipc.poll();
     }
 
     /// Ordered list of widgets currently rendered in the row, paired with
@@ -474,6 +491,9 @@ pub fn draw_row(
             TileId::Disk => disk::draw_inline(
                 painter, text, &controls.disk, layout, ws, alpha, surface_w, surface_h,
             ),
+            TileId::Gaming => gaming::draw_inline(
+                painter, text, &controls.gaming_ipc, layout, ws, alpha, surface_w, surface_h, lit,
+            ),
             TileId::Collapse => {} // drawn separately so we can pass `collapsed` state
             TileId::TerminalClear => {
                 terminal_header::draw_inline(painter, text, layout, ws, alpha)
@@ -539,6 +559,6 @@ pub fn draw_view(
         ),
         // Tiles that don't open an expanded view — their clicks are
         // intercepted in the input handler before reaching here.
-        TileId::Workspace | TileId::Collapse | TileId::TerminalClear => top_y,
+        TileId::Workspace | TileId::Gaming | TileId::Collapse | TileId::TerminalClear => top_y,
     };
 }

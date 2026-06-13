@@ -351,6 +351,14 @@ impl ResizeSurfaceState {
     }
 }
 
+/// Whether an interactive resize is in flight (or draining its last
+/// commit) for this surface. Commits during a grab lag the configured
+/// size, so callers like the floating-size reconcile must not treat
+/// them as client-chosen sizes.
+pub fn is_resizing(surface: &WlSurface) -> bool {
+    ResizeSurfaceState::with(surface, |st| !matches!(st, ResizeSurfaceState::Idle))
+}
+
 /// Per-commit anchor adjustment for a resize-by-drag. When the user
 /// grabs the LEFT or TOP edge, the **far** edge of the window must stay
 /// pinned where it was at grab-start; only the dragged edge follows the

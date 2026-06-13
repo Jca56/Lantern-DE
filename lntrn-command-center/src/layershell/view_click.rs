@@ -340,6 +340,7 @@ pub(super) fn handle_control_view_click(
         // No expanded view — click handling is shortcut in the press
         // path, so we never reach here for these.
         crate::controls::TileId::Workspace
+        | crate::controls::TileId::Gaming
         | crate::controls::TileId::Collapse
         | crate::controls::TileId::TerminalClear => false,
     }

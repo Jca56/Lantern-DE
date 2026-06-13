@@ -394,6 +394,16 @@ pub(super) fn handle_clicks(
             let top_y = crate::controls::content_top_y(panel_rect, scale_f);
             let panel_bottom = panel_rect.y + panel_rect.h;
             if app.notes.confirm_delete {
+                let (dialog, cancel, confirm) =
+                    crate::notes::confirm_delete_rects(panel_rect, scale_f);
+                if crate::notes::point_in(confirm, phys_cx, phys_cy) {
+                    app.notes.delete_selected();
+                    app.notes.confirm_delete = false;
+                } else if crate::notes::point_in(cancel, phys_cx, phys_cy)
+                    || !crate::notes::point_in(dialog, phys_cx, phys_cy)
+                {
+                    app.notes.confirm_delete = false;
+                }
                 true
             } else {
                 let hit = crate::notes::hit_test(
@@ -751,6 +761,15 @@ pub(super) fn handle_clicks(
                 }
                 crate::controls::TileId::Workspace => {
                     // Workspace number is a passive indicator — no view.
+                }
+                crate::controls::TileId::Gaming => {
+                    // Toggle Gaming Mode via IPC — no expanded view.
+                    // Optimistically flip so the tile reacts on this frame;
+                    // the compositor pushes the canonical state right back.
+                    app.controls.gaming_ipc.send_toggle();
+                    if let Some(cur) = app.controls.gaming_ipc.gaming_mode {
+                        app.controls.gaming_ipc.gaming_mode = Some(!cur);
+                    }
                 }
                 crate::controls::TileId::Audio => {
                     // Audio tile is split: speaker icon opens the

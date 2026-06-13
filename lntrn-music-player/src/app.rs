@@ -42,6 +42,15 @@ impl LanternMusicApp {
         };
         fox_theme.apply(&cc.egui_ctx);
 
+        // Lantern suggests a default window size in the initial configure
+        // and winit obeys it, overriding the saved size from
+        // with_inner_size — re-assert the saved size now that the window
+        // exists (the suggestion is meant for apps that don't pick their
+        // own).
+        cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(
+            egui::vec2(config.window.width, config.window.height),
+        ));
+
         let mut player = Player::new(config.playback.volume);
         let error_msg = if player.is_none() {
             Some("Failed to initialize audio output".to_string())

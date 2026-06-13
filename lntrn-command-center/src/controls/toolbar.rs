@@ -129,6 +129,7 @@ impl Default for ToolbarLayout {
             ],
             middle: Vec::new(),
             right: vec![
+                TileId::Gaming,
                 TileId::Disk,
                 TileId::Gpu,
                 TileId::Network,

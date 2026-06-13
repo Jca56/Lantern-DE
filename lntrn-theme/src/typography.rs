@@ -13,7 +13,7 @@ pub const FONT_LABEL: f32 = 22.0;
 
 // ── Font families ────────────────────────────────────────────────────────────
 
-pub const FAMILY_PROPORTIONAL: &str = "Ubuntu";
+pub const FAMILY_PROPORTIONAL: &str = "Inter";
 pub const FAMILY_MONOSPACE: &str = "JetBrains Mono";
 
 // ── Text scale ───────────────────────────────────────────────────────────────

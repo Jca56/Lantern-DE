@@ -108,6 +108,10 @@ pub fn handle_key(
                 handler.editor_mut().redo();
                 KeyAction::Consumed
             }
+            "S" | "s" => {
+                actions::save_as_dialog(handler);
+                KeyAction::Consumed
+            }
             "X" | "x" => {
                 handler
                     .editor_mut()

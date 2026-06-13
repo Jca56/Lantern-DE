@@ -5,8 +5,10 @@ mod find_bar;
 mod fonts;
 mod format;
 mod keys;
+mod metrics;
 mod mouse;
 mod page;
+mod persist;
 mod render;
 mod ribbon;
 mod scrollbar;
@@ -55,6 +57,7 @@ pub(crate) const MENU_NEW: u32 = 100;
 pub(crate) const MENU_OPEN: u32 = 101;
 pub(crate) const MENU_SAVE: u32 = 102;
 pub(crate) const MENU_SAVE_DOCX: u32 = 103;
+pub(crate) const MENU_SAVE_AS: u32 = 104;
 pub(crate) const MENU_THEME_PAPER: u32 = 200;
 pub(crate) const MENU_THEME_DARK: u32 = 202;
 
@@ -286,16 +289,22 @@ impl ApplicationHandler for TextHandler {
             return;
         }
 
+        let initial_size = winit::dpi::LogicalSize::new(900.0, 1100.0);
         let attrs = WindowAttributes::default()
             .with_name("lntrn-notepad", "lntrn-notepad")
             .with_title("lntrn-notepad")
-            .with_inner_size(winit::dpi::LogicalSize::new(900.0, 1100.0))
+            .with_inner_size(initial_size)
             .with_decorations(false)
             .with_transparent(true);
 
         let window = event_loop
             .create_window(attrs)
             .expect("Failed to create window");
+        // Lantern suggests `[windows] default_size_pct` in the initial
+        // configure and winit obeys it, overriding the size requested
+        // above — re-assert our deliberate compact size (the suggestion
+        // is meant for apps that don't pick their own).
+        let _ = window.request_inner_size(initial_size);
         self.scale = window.scale_factor() as f32;
 
         let size = window.inner_size();
@@ -466,6 +475,10 @@ impl ApplicationHandler for TextHandler {
                         MenuEvent::Action(MENU_SAVE) => {
                             self.menu_bar.close();
                             actions::save_file_dialog(self);
+                        }
+                        MenuEvent::Action(MENU_SAVE_AS) => {
+                            self.menu_bar.close();
+                            actions::save_as_dialog(self);
                         }
                         MenuEvent::Action(MENU_SAVE_DOCX) => {
                             self.menu_bar.close();

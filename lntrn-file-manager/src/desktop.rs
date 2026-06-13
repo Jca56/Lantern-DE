@@ -280,6 +280,7 @@ fn mime_from_extension(ext: &str) -> String {
     let mime = match ext.to_lowercase().as_str() {
         // Text
         "txt" | "log" | "cfg" | "conf" | "ini" => "text/plain",
+        "lnote" => "application/x-lnote",
         "md" | "markdown" => "text/markdown",
         "html" | "htm" => "text/html",
         "css" => "text/css",

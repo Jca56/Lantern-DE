@@ -12,4 +12,5 @@ glyphon = "0.10"
 unicode-script = "0.5"
 lntrn-draw = { path = "../draw" }
 lntrn-gfx = { path = "../gfx" }
+lntrn-theme = { path = "../../lntrn-theme" }
 wgpu = "28"

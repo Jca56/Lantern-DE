@@ -1,5 +1,5 @@
 use lntrn_render::{Color, FontStyle, FontWeight, Rect, TextRenderer};
-use lntrn_ui::gpu::{FoxPalette, InteractionContext, MenuBar, MenuEvent, MenuItem};
+use lntrn_ui::gpu::{FoxPalette, InteractionContext, MenuBar, MenuEvent};
 
 use crate::editor::{self, Editor};
 use crate::find_bar::{draw_find_bar, match_color, FindBar};
@@ -8,43 +8,23 @@ use crate::ribbon;
 use crate::scrollbar;
 use crate::tab_strip::{draw_tab_strip, TabLabel, TAB_STRIP_H};
 use crate::theme::Theme;
-use crate::title_bar::{draw_window_controls, title_content_rect, TITLE_BAR_H};
+use crate::title_bar::{
+    draw_window_controls, file_menu_items, title_content_rect, TITLE_BAR_H,
+};
 use crate::tokens;
 use crate::toolbar::{self, FormatToolbar};
-use crate::{
-    Gpu, MENU_NEW, MENU_OPEN, MENU_SAVE, MENU_SAVE_DOCX, MENU_THEME_DARK,
-    MENU_THEME_PAPER, ZONE_EDITOR, ZONE_EDITOR_SCROLL_THUMB,
-};
+use crate::{Gpu, ZONE_EDITOR, ZONE_EDITOR_SCROLL_THUMB};
 
 pub const TOOLBAR_H: f32 = 40.0;
 pub const STATUS_BAR_H: f32 = 30.0;
 
-/// `top_inset` is the find-bar height (or 0 when hidden).
+/// `top_inset` is the find-bar height (or 0 when hidden). The gap below the
+/// ribbon lives inside this rect's top edge so clicks/scroll stay consistent.
 pub fn editor_rect(wf: f32, hf: f32, s: f32, top_inset: f32) -> Rect {
-    let top = (TITLE_BAR_H + TAB_STRIP_H + TOOLBAR_H) * s + top_inset;
+    let top =
+        (TITLE_BAR_H + TAB_STRIP_H + TOOLBAR_H + tokens::RIBBON_PAGE_GAP) * s + top_inset;
     let bottom = STATUS_BAR_H * s;
     Rect::new(0.0, top, wf, (hf - top - bottom).max(0.0))
-}
-
-pub fn file_menu_items() -> Vec<(&'static str, Vec<MenuItem>)> {
-    vec![
-        (
-            "File",
-            vec![
-                MenuItem::action_with(MENU_NEW, "New", "Ctrl+N"),
-                MenuItem::action_with(MENU_OPEN, "Open", "Ctrl+O"),
-                MenuItem::action_with(MENU_SAVE, "Save", "Ctrl+S"),
-                MenuItem::action_with(MENU_SAVE_DOCX, "Export .docx", ""),
-            ],
-        ),
-        (
-            "View",
-            vec![
-                MenuItem::action_with(MENU_THEME_PAPER, "Theme: Paper", ""),
-                MenuItem::action_with(MENU_THEME_DARK, "Theme: Dark", ""),
-            ],
-        ),
-    ]
 }
 
 /// Measure the x-offset from content_x to a byte offset within a line,
@@ -226,8 +206,12 @@ pub fn render_frame(
     // Z-order is load-bearing: desk → shadow → sheet → edge → sheen.
 
     // Desk: a subtle vertical gradient so the gutter has depth, not flatness.
+    // Extends up over the ribbon↔page gap so the breathing room reads as desk
+    // (the page's top drop shadow gets to actually show there).
+    let gap = tokens::RIBBON_PAGE_GAP * s;
+    let desk_r = Rect::new(er.x, er.y - gap, er.w, er.h + gap);
     let (desk_top, desk_bot) = tokens::desk_gradient(pal.surface_2);
-    painter.rect_gradient_linear(er, 0.0, tokens::GRAD_ANGLE, desk_top, desk_bot);
+    painter.rect_gradient_linear(desk_r, 0.0, tokens::GRAD_ANGLE, desk_top, desk_bot);
 
     // Soft drop shadow under the sheet (before the sheet paints over it).
     let (sh_sigma, sh_color, sh_dx, sh_dy) = tokens::page_shadow(theme);

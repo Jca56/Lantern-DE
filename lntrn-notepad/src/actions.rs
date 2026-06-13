@@ -10,15 +10,29 @@ use crate::TextHandler;
 pub fn export_docx(editor: &Editor, path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     use crate::format::Alignment;
     use docx_rs::{
-        AlignmentType, Docx, LineSpacing, LineSpacingType, Paragraph, Run, SpecialIndentType,
+        AbstractNumbering, AlignmentType, Docx, IndentLevel, Level, LevelJc, LevelText,
+        LineSpacing, LineSpacingType, NumberFormat, Numbering, NumberingId, Paragraph, Run,
+        RunFonts, SpecialIndentType, Start,
     };
     use std::fs::File;
 
     let file = File::create(path)?;
-    let mut doc = Docx::new();
+    // Bullet-list numbering definition (id 1) for `para.bullet` paragraphs.
+    let mut doc = Docx::new()
+        .add_abstract_numbering(AbstractNumbering::new(1).add_level(Level::new(
+            0,
+            Start::new(1),
+            NumberFormat::new("bullet"),
+            LevelText::new("•"),
+            LevelJc::new("left"),
+        )))
+        .add_numbering(Numbering::new(1, 1));
     for (i, line) in editor.lines.iter().enumerate() {
         let mut para = Paragraph::new();
         let pa = editor.formats.get(i).para;
+        if pa.bullet {
+            para = para.numbering(NumberingId::new(1), IndentLevel::new(0));
+        }
 
         // Paragraph alignment
         para = para.align(match pa.alignment {
@@ -64,6 +78,14 @@ pub fn export_docx(editor: &Editor, path: &std::path::Path) -> Result<(), Box<dy
                 // docx uses half-points (24pt = size 48)
                 run = run.size((fs * 2.0) as usize);
             }
+            if let Some(family) =
+                span.attrs.font.and_then(|f| crate::fonts::family_for_index_static(f as usize))
+            {
+                run = run.fonts(RunFonts::new().ascii(family));
+            }
+            if let Some(rgb) = span.attrs.color {
+                run = run.color(format!("{rgb:06X}"));
+            }
             para = para.add_run(run);
         }
         doc = doc.add_paragraph(para);
@@ -90,15 +112,36 @@ pub fn open_file_dialog(handler: &mut TextHandler) {
     }
 }
 
-/// Save the active editor. If no file path is set, prompt for one via the
-/// file manager.
+/// Save the active editor. If no file path is set, fall through to Save As.
 pub fn save_file_dialog(handler: &mut TextHandler) {
     if handler.editor_mut().file_path.is_some() {
         let _ = handler.editor_mut().save_file();
         return;
     }
+    save_as_dialog(handler);
+}
+
+/// The active editor's filename without its extension ("Untitled" fallback).
+fn filename_stem(handler: &TextHandler) -> String {
+    std::path::Path::new(&handler.editor().filename)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "Untitled".to_string())
+}
+
+/// Prompt for a path and save there. Suggests the rich `.lnote` extension —
+/// this is also how an existing plain-text file upgrades to full formatting.
+/// Typing any other extension still saves plain text.
+pub fn save_as_dialog(handler: &mut TextHandler) {
+    let suggested = format!("{}.lnote", filename_stem(handler));
     let output = std::process::Command::new("lntrn-file-manager")
-        .args(["--pick-save", "--title", "Save File"])
+        .args([
+            "--pick-save",
+            "--title",
+            "Save As",
+            "--save-name",
+            &suggested,
+        ])
         .output();
     if let Ok(out) = output {
         if out.status.success() {
@@ -113,7 +156,7 @@ pub fn save_file_dialog(handler: &mut TextHandler) {
 
 /// Export the active editor's content as a `.docx` file via the picker.
 pub fn export_docx_dialog(handler: &mut TextHandler) {
-    let default_name = handler.editor().filename.replace(".txt", "").to_string() + ".docx";
+    let default_name = format!("{}.docx", filename_stem(handler));
     let output = std::process::Command::new("lntrn-file-manager")
         .args([
             "--pick-save",

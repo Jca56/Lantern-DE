@@ -385,6 +385,7 @@ pub struct Lantern {
     pub workspace_anim: WorkspaceAnimState,
     pub workspace_ipc: WorkspaceIpc,
     pub hdr_ipc: crate::hdr_ipc::HdrIpc,
+    pub gaming_ipc: crate::gaming_ipc::GamingIpc,
     /// Output names with HDR currently engaged (connector props committed).
     pub hdr_active_outputs: std::collections::HashSet<String>,
     /// Outputs awaiting "keep HDR" confirmation → their auto-revert deadline.
@@ -630,6 +631,7 @@ impl Lantern {
             workspace_anim: WorkspaceAnimState::new(),
             workspace_ipc: WorkspaceIpc::new(),
             hdr_ipc: crate::hdr_ipc::HdrIpc::new(),
+            gaming_ipc: crate::gaming_ipc::GamingIpc::new(),
             hdr_active_outputs: std::collections::HashSet::new(),
             hdr_pending_confirm: std::collections::HashMap::new(),
             gesture: GestureState::new(),

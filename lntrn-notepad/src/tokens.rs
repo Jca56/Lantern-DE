@@ -45,6 +45,9 @@ pub const FOCUS_GLOW_ALPHA: f32 = 0.18;
 
 /// Gold top-stripe / active-tab accent height (logical px).
 pub const TAB_STRIPE_H: f32 = 3.0;
+/// Breathing room between the ribbon (tab strip) and the desk/page below,
+/// so the chrome doesn't touch the document (logical px).
+pub const RIBBON_PAGE_GAP: f32 = 10.0;
 /// Find-bar focus-ring stroke width (logical px).
 pub const FOCUS_STROKE_W: f32 = 2.0;
 
@@ -106,6 +109,17 @@ pub fn ribbon_sheen(surface: Color) -> Color {
 /// Desk vertical gradient — subtle vignette toward the bottom.
 pub fn desk_gradient(surface_2: Color) -> (Color, Color) {
     (surface_2, surface_2.darken(0.06))
+}
+
+/// Translucent wash over the tab-strip band so it reads as its own settled
+/// layer between the toolbar and the page. Warm-tinted to match the hairline
+/// language; tabs paint their fills/glows on top of it.
+pub fn tab_strip_wash(theme: Theme) -> Color {
+    if theme.is_paper() {
+        Color::from_rgba8(60, 50, 35, 20)
+    } else {
+        Color::from_rgba8(232, 220, 200, 14)
+    }
 }
 
 // ── Gold derivations ──────────────────────────────────────────────────────────

@@ -3,7 +3,8 @@
 use smithay::{
     desktop::Window,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
-    utils::Serial,
+    utils::{Logical, Point, Serial},
+    wayland::pointer_constraints::with_pointer_constraint,
 };
 
 use crate::state::Lantern;
@@ -71,6 +72,46 @@ impl Lantern {
             },
         );
         pointer.frame(self);
+        // The surface under the cursor just gained pointer focus — if it has
+        // a pending pointer-constraint (game requested a lock before it had
+        // focus), activate it now.
+        self.maybe_activate_pointer_constraint();
+    }
+
+    /// Move the logical pointer position WITHOUT emitting client events.
+    /// Used when a game fullscreens on an output the cursor isn't on: warp
+    /// first, then `refocus_pointer_at_cursor()` delivers wl_pointer.enter
+    /// to the game at the new position.
+    pub fn warp_pointer_to(&mut self, target: Point<f64, Logical>) {
+        let Some(pointer) = self.seat.get_pointer() else { return };
+        pointer.set_location(target);
+        // Position changed out of band — the cached hit no longer matches.
+        self.last_pointer_under = None;
+        self.schedule_render();
+    }
+
+    /// Activate a pending (inactive) pointer constraint on the surface under
+    /// the cursor. `new_constraint` only activates when the surface already
+    /// has pointer focus at creation time; Proton games often request their
+    /// lock during the fullscreen dance BEFORE focus lands, so without this
+    /// re-check the lock never engages and mouse-look stays dead.
+    pub fn maybe_activate_pointer_constraint(&mut self) {
+        let Some(pointer) = self.seat.get_pointer() else { return };
+        let pos = pointer.current_location();
+        let Some((surface, surface_loc)) = self.surface_under(pos) else { return };
+        with_pointer_constraint(&surface, &pointer, |constraint| {
+            let Some(constraint) = constraint else { return };
+            if constraint.is_active() {
+                return;
+            }
+            // Only engage while the cursor is inside the constraint region
+            // (surface-local), matching the motion-path check.
+            let point = (pos - surface_loc).to_i32_round();
+            if !constraint.region().map_or(true, |r| r.contains(point)) {
+                return;
+            }
+            constraint.activate();
+        });
     }
 
     pub(crate) fn set_focus_surface(&mut self, surface: Option<WlSurface>, serial: Serial) {

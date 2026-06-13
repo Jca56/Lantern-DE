@@ -327,16 +327,22 @@ impl ApplicationHandler<UserEvent> for TextHandler {
             return;
         }
 
+        let initial_size = winit::dpi::LogicalSize::new(900.0, 700.0);
         let attrs = WindowAttributes::default()
             .with_name("lntrn-code", "lntrn-code")
             .with_title("lntrn-code")
-            .with_inner_size(winit::dpi::LogicalSize::new(900.0, 700.0))
+            .with_inner_size(initial_size)
             .with_decorations(false)
             .with_transparent(true);
 
         let window = event_loop
             .create_window(attrs)
             .expect("Failed to create window");
+        // Lantern suggests `[windows] default_size_pct` in the initial
+        // configure and winit obeys it, overriding the size requested
+        // above — re-assert our deliberate compact size (the suggestion
+        // is meant for apps that don't pick their own).
+        let _ = window.request_inner_size(initial_size);
         self.scale = window.scale_factor() as f32;
 
         let size = window.inner_size();

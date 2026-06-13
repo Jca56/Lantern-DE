@@ -166,6 +166,20 @@ impl TabletSeatHandler for Lantern {}
 delegate_cursor_shape!(Lantern);
 delegate_layer_shell!(Lantern);
 
+/// Send a configure for a decoration-mode change — but never before the
+/// client's first commit. smithay marks any pre-commit send as THE initial
+/// configure, which fires before `apply_initial_window_size` can inject the
+/// `[windows] default_size_pct` default. Every winit app binds
+/// xdg-decoration during window setup (pre-commit), so an unguarded send
+/// here made all of them miss the configured default size. Pre-commit, the
+/// pending decoration mode simply rides along with the real initial
+/// configure sent on first commit.
+fn send_decoration_configure(toplevel: &ToplevelSurface) {
+    if toplevel.is_initial_configure_sent() {
+        toplevel.send_configure();
+    }
+}
+
 impl XdgDecorationHandler for Lantern {
     fn new_decoration(&mut self, toplevel: ToplevelSurface) {
         // Client supports xdg-decoration — tell it we prefer SSD and add our decoration.
@@ -174,7 +188,7 @@ impl XdgDecorationHandler for Lantern {
             state.decoration_mode = Some(DecorationMode::ServerSide);
         });
         self.ssd.add(surface);
-        toplevel.send_configure();
+        send_decoration_configure(&toplevel);
     }
 
     fn request_mode(&mut self, toplevel: ToplevelSurface, mode: DecorationMode) {
@@ -192,7 +206,7 @@ impl XdgDecorationHandler for Lantern {
             // Already added in new_toplevel, but ensure it's there
             self.ssd.add(surface);
         }
-        toplevel.send_configure();
+        send_decoration_configure(&toplevel);
     }
 
     fn unset_mode(&mut self, toplevel: ToplevelSurface) {
@@ -200,7 +214,7 @@ impl XdgDecorationHandler for Lantern {
         toplevel.with_pending_state(|state| {
             state.decoration_mode = Some(DecorationMode::ServerSide);
         });
-        toplevel.send_configure();
+        send_decoration_configure(&toplevel);
     }
 }
 

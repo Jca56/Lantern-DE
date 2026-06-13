@@ -38,7 +38,7 @@ pub fn draw(
     draw_list(painter, text, state, panel, top_y, scale, text_size, alpha, panel_bottom, surface_w, surface_h);
     draw_editor(painter, text, state, panel, top_y, scale, text_size, alpha, panel_bottom, surface_w, surface_h);
     if state.confirm_delete {
-        draw_confirm_delete(painter, text, panel, scale, text_size, alpha, surface_w, surface_h);
+        draw_confirm_delete(painter, text, state, panel, scale, text_size, alpha, surface_w, surface_h);
     }
 }
 
@@ -730,6 +730,7 @@ fn ago(timestamp_ms: u128) -> String {
 fn draw_confirm_delete(
     painter: &mut Painter,
     text: &mut TextRenderer,
+    state: &NotesState,
     panel: Rect,
     scale: f32,
     text_size: f32,
@@ -738,37 +739,44 @@ fn draw_confirm_delete(
     surface_h: u32,
 ) {
     painter.rect_filled(panel, 0.0, Color::from_rgb8(0, 0, 0).with_alpha(0.45 * alpha));
-    let w = 380.0 * scale;
-    let h = 180.0 * scale;
-    let x = panel.x + (panel.w - w) / 2.0;
-    let y = panel.y + (panel.h - h) / 2.0;
-    let r = Rect::new(x, y, w, h);
+    let (r, cancel, confirm) = super::confirm_delete_rects(panel, scale);
+    let (x, y, w) = (r.x, r.y, r.w);
     painter.rect_filled(r, 16.0 * scale, Color::from_rgb8(40, 40, 44).with_alpha(0.97 * alpha));
     painter.rect_stroke_sdf(r, 16.0 * scale, 1.2 * scale, white(0.18 * alpha));
 
     let font_title = (text_size * scale).max(16.0);
     let font_body = (text_size * scale * 0.85).max(13.0);
     let pad = 18.0 * scale;
-    let title = "Delete this note?";
+    // Name the victim so it's obvious the right note is on the block.
+    let title = state
+        .selected_index()
+        .map(|i| {
+            let t = state.notes[i].title.trim();
+            if t.is_empty() {
+                "Delete “Untitled”?".to_string()
+            } else if t.chars().count() > 24 {
+                let short: String = t.chars().take(23).collect();
+                format!("Delete “{}…”?", short)
+            } else {
+                format!("Delete “{}”?", t)
+            }
+        })
+        .unwrap_or_else(|| "Delete this note?".to_string());
     let body = "This permanently removes the note file from disk.";
     let title_y = y + pad;
-    text.queue(title, font_title, x + pad, title_y, white(0.95 * alpha), w - pad * 2.0, surface_w, surface_h);
+    text.queue(&title, font_title, x + pad, title_y, white(0.95 * alpha), w - pad * 2.0, surface_w, surface_h);
     text.queue(body, font_body, x + pad, title_y + font_title * 1.5, white(0.65 * alpha), w - pad * 2.0, surface_w, surface_h);
 
-    let btn_h = 38.0 * scale;
-    let btn_w = (w - pad * 2.0 - 12.0 * scale) / 2.0;
-    let by = y + h - pad - btn_h;
-    let cancel = Rect::new(x + pad, by, btn_w, btn_h);
-    let confirm = Rect::new(x + pad + btn_w + 12.0 * scale, by, btn_w, btn_h);
     painter.rect_filled(cancel, 10.0 * scale, white(0.10 * alpha));
+    painter.rect_stroke_sdf(cancel, 10.0 * scale, 1.0 * scale, white(0.18 * alpha));
     let red = Color::from_rgb8(0xd0, 0x4a, 0x4a);
     painter.rect_filled(confirm, 10.0 * scale, red.with_alpha(0.85 * alpha));
     let fb = font_body;
-    let cl_text = "Esc — Cancel";
-    let yes_text = "Enter — Delete";
+    let cl_text = "Cancel (Esc)";
+    let yes_text = "Delete (Enter)";
     let cl_w = text.measure_width(cl_text, fb);
     let yes_w = text.measure_width(yes_text, fb);
-    let btn_text_y = by + (btn_h - fb) / 2.0;
-    text.queue(cl_text, fb, cancel.x + (cancel.w - cl_w) / 2.0, btn_text_y, white(0.85 * alpha), btn_w, surface_w, surface_h);
-    text.queue(yes_text, fb, confirm.x + (confirm.w - yes_w) / 2.0, btn_text_y, white(0.95 * alpha), btn_w, surface_w, surface_h);
+    let btn_text_y = cancel.y + (cancel.h - fb) / 2.0;
+    text.queue(cl_text, fb, cancel.x + (cancel.w - cl_w) / 2.0, btn_text_y, white(0.85 * alpha), cancel.w, surface_w, surface_h);
+    text.queue(yes_text, fb, confirm.x + (confirm.w - yes_w) / 2.0, btn_text_y, white(0.95 * alpha), confirm.w, surface_w, surface_h);
 }
