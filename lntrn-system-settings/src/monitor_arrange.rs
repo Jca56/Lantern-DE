@@ -28,6 +28,9 @@ struct MonRect {
     /// Logical size in "output space" (physical / scale).
     out_w: i32,
     out_h: i32,
+    /// False when the monitor is switched off — drawn greyed but still
+    /// selectable so it can be switched back on.
+    enabled: bool,
 }
 
 /// Persists across frames.
@@ -138,6 +141,40 @@ impl MonitorArrangeState {
                 out_y: oy,
                 out_w: logical_w,
                 out_h: logical_h,
+                enabled: true,
+            });
+        }
+
+        // Outputs the user switched off have no wl_output (the compositor tore
+        // it down), but their wlr head is kept. Surface them here — greyed and
+        // still selectable — so they can be switched back on.
+        for head in &output_mgr.heads {
+            if self.rects.iter().any(|r| r.name == head.name) {
+                continue;
+            }
+            let cfg = config.iter().find(|c| c.name == head.name);
+            let (res_w, res_h) = cfg
+                .and_then(|c| parse_resolution(&c.resolution))
+                .or_else(|| {
+                    head.current_mode
+                        .and_then(|mi| head.modes.get(mi))
+                        .map(|m| (m.width, m.height))
+                })
+                .or_else(|| head.modes.first().map(|m| (m.width, m.height)))
+                .unwrap_or((1920, 1080));
+            let scale = cfg.map(|c| c.scale).unwrap_or(head.scale as f32).max(0.01);
+            let logical_w = ((res_w as f32 / scale).round() as i32).max(1);
+            let logical_h = ((res_h as f32 / scale).round() as i32).max(1);
+            let (ox, oy) = cfg.map(|c| (c.x, c.y)).unwrap_or(head.position);
+            self.rects.push(MonRect {
+                name: head.name.clone(),
+                res_w,
+                res_h,
+                out_x: ox,
+                out_y: oy,
+                out_w: logical_w,
+                out_h: logical_h,
+                enabled: false,
             });
         }
     }
@@ -153,6 +190,7 @@ impl MonitorArrangeState {
                 mode_idx: None,
                 position: Some((r.out_x, r.out_y)),
                 scale: None,
+                enabled: None,
             })
         }).collect()
     }
@@ -175,6 +213,7 @@ impl MonitorArrangeState {
                     vrr: prev.vrr,
                     hdr: prev.hdr,
                     sdr_brightness: prev.sdr_brightness,
+                    enabled: prev.enabled,
                 }
             } else {
                 MonitorEntry {
@@ -189,6 +228,7 @@ impl MonitorArrangeState {
                     vrr: false,
                     hdr: false,
                     sdr_brightness: 203,
+                    enabled: true,
                 }
             }
         }).collect()
@@ -302,7 +342,8 @@ pub fn draw_monitor_arrange(
         let zone = ix.add_zone(zone_id, rect);
         let is_dragging = mas.dragging == i as i32;
 
-        // Monitor fill + border
+        // Monitor fill + border. A switched-off monitor stays selectable
+        // (so it can be turned back on) but is drawn dim.
         let is_selected = mas.selected == Some(i);
         let fill = if is_dragging {
             fox.accent.with_alpha(0.4)
@@ -310,20 +351,30 @@ pub fn draw_monitor_arrange(
             fox.accent.with_alpha(0.15)
         } else if zone.is_hovered() {
             fox.accent.with_alpha(0.25)
+        } else if !r.enabled {
+            fox.surface.with_alpha(0.3)
         } else {
             fox.bg.with_alpha(0.8)
         };
         let bw = if is_selected { 3.0 * s } else { 2.0 * s };
-        let border_color = if is_dragging || is_selected { fox.accent } else { fox.muted };
+        let border_color = if is_dragging || is_selected {
+            fox.accent
+        } else if !r.enabled {
+            fox.muted.with_alpha(0.5)
+        } else {
+            fox.muted
+        };
         let border_rect = Rect::new(rx - bw, ry - bw, rw + bw * 2.0, rh + bw * 2.0);
         painter.rect_filled(border_rect, 6.0 * s, border_color);
         painter.rect_filled(rect, 4.0 * s, fill);
 
-        // Monitor name centered
-        let name_w = r.name.len() as f32 * name_sz * 0.6;
+        // Monitor name centered (off monitors get an "(off)" suffix)
+        let name_label = if r.enabled { r.name.clone() } else { format!("{} (off)", r.name) };
+        let name_color = if r.enabled { fox.text } else { fox.text_secondary };
+        let name_w = name_label.len() as f32 * name_sz * 0.6;
         let name_x = rx + (rw - name_w) / 2.0;
         let name_y = ry + rh / 2.0 - name_sz;
-        text.queue(&r.name, name_sz, name_x, name_y, fox.text, rw, sw, sh);
+        text.queue(&name_label, name_sz, name_x, name_y, name_color, rw, sw, sh);
 
         // Resolution below name
         let res_str = format!("{}x{}", r.res_w, r.res_h);
@@ -391,6 +442,14 @@ pub fn handle_arrange_drag(
     let out_x = ((new_rx - mas.canvas_offset_x) / mas.view_scale).round() as i32;
     let out_y = ((new_ry - mas.canvas_offset_y) / mas.view_scale).round() as i32;
 
+    // A click that doesn't actually move the monitor must NOT mark the canvas
+    // dirty — otherwise selecting a display (mouse held still for a moment)
+    // triggers a config save + apply on release, the compositor reconfigures
+    // outputs, and the per-monitor settings flash then vanish.
+    if out_x == mas.rects[idx].out_x && out_y == mas.rects[idx].out_y {
+        return;
+    }
+
     mas.rects[idx].out_x = out_x;
     mas.rects[idx].out_y = out_y;
     mas.dirty = true;
@@ -404,7 +463,13 @@ pub fn handle_arrange_drag(
 pub fn handle_arrange_release(mas: &mut MonitorArrangeState) {
     if mas.dragging < 0 { return; }
     let idx = mas.dragging as usize;
+    let moved = mas.drag_moved;
     mas.dragging = -1;
+    mas.drag_moved = false;
+
+    // Pure click (no movement): the monitor is already selected — don't snap
+    // or reposition it, or clicking a display would nudge it around.
+    if !moved { return; }
 
     if idx >= mas.rects.len() { return; }
 

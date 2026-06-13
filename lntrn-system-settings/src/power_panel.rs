@@ -1,17 +1,18 @@
-//! Power panel: lid behavior, idle, battery thresholds, and WiFi power.
+//! Power panel: lid behavior, idle, and battery thresholds.
 //!
-//! Three cards:
-//! 1. **Lid & Idle** — Lid Close (Battery), Lid Close (AC), Dim Screen After,
-//!    Idle Timeout, Idle Action.
+//! Cards adapt to the hardware (see [`crate::machine`]):
+//! 1. **Lid & Idle** — Lid Close (Battery)/(AC) only when a lid is present,
+//!    plus Dim Screen After, Idle Timeout, Idle Action (universal). On a
+//!    lid-less desktop the card is titled just "Idle".
 //! 2. **Battery** — Low Battery Warning %, Critical Battery %, Critical Action.
-//! 3. **WiFi Power** — WiFi Power Save toggle and Power Scheme dropdown.
+//!    Hidden entirely on a desktop with no system battery.
 
 use lntrn_render::{Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{
-    FoxPalette, InteractionContext, MenuEvent, ScrollArea, Scrollbar, Slider, Toggle,
+    FoxPalette, InteractionContext, MenuEvent, ScrollArea, Scrollbar, Slider,
 };
 
-use crate::config::{LanternConfig, PowerConfig};
+use crate::config::LanternConfig;
 use crate::panels::{
     draw_section_card, draw_select_button, hidden_by_menu, make_menu_items,
     slider_value_from_cursor, PanelState,
@@ -29,20 +30,16 @@ const ZONE_PWR_IDLE_ACT_BTN: u32 = 404;
 const ZONE_PWR_LOW_BAT_SLIDER: u32 = 405;
 const ZONE_PWR_CRIT_BAT_SLIDER: u32 = 406;
 const ZONE_PWR_CRIT_BTN: u32 = 407;
-const ZONE_PWR_WIFI_PS: u32 = 408;
-const ZONE_PWR_WIFI_SCHEME_BTN: u32 = 409;
 
 // Action ID base values for the dropdown menus.
 const ACT_LID: u32 = 500;
 const ACT_LID_AC: u32 = 510;
 const ACT_IDLE: u32 = 520;
 const ACT_CRIT: u32 = 530;
-const ACT_WIFI_SCHEME: u32 = 540;
 
 const LID_OPTIONS: &[&str] = &["Suspend", "Hibernate", "Lock", "Nothing"];
 const IDLE_ACTION_OPTIONS: &[&str] = &["Suspend", "Lock", "Nothing"];
 const CRIT_OPTIONS: &[&str] = &["Suspend", "Hibernate", "Shutdown", "Nothing"];
-const WIFI_SCHEME_OPTIONS: &[&str] = &["Active", "Balanced", "Battery"];
 
 // ── Layout constants ────────────────────────────────────────────────────────
 
@@ -52,7 +49,6 @@ const VALUE_SIZE: f32 = 16.0;
 const SLIDER_H: f32 = 36.0;
 const SLIDER_W: f32 = 320.0;
 const BTN_H: f32 = 42.0;
-const TOGGLE_H: f32 = 36.0;
 const LABEL_W: f32 = 200.0;
 const VALUE_W: f32 = 60.0;
 
@@ -67,9 +63,12 @@ pub fn draw_power_panel(
     s: f32, sw: u32, sh: u32, scroll_delta: f32,
 ) {
     use crate::wayland::Panel;
+    // Hardware adaptation: lid rows and the battery card only make sense on a
+    // laptop. A lid-less/battery-less desktop hides them (see `crate::machine`).
+    let has_lid = crate::machine::has_lid();
+    let has_battery = crate::machine::has_battery();
     let show_lid     = matches!(subpanel, Panel::LidIdle);
-    let show_battery = matches!(subpanel, Panel::Battery);
-    let show_wifi    = matches!(subpanel, Panel::WifiPower);
+    let show_battery = matches!(subpanel, Panel::Battery) && has_battery;
     let row = ROW_H * s;
     let lsz = LABEL_SIZE * s;
     let vsz = VALUE_SIZE * s;
@@ -95,20 +94,17 @@ pub fn draw_power_panel(
     let btn_x = card_inner_x + label_w;
     let btn_w = card_inner_w - label_w;
 
-    // Card row counts
-    let lid_idle_rows: f32 = 5.0; // Lid Bat, Lid AC, Dim, Idle Timeout, Idle Action
+    // Card row counts. The two lid rows drop out on a lid-less desktop.
+    let lid_idle_rows: f32 = if has_lid { 5.0 } else { 3.0 }; // [Lid Bat, Lid AC,] Dim, Idle Timeout, Idle Action
     let battery_rows: f32 = 3.0;  // Low, Critical %, Critical Action
-    let wifi_rows: f32 = 2.0;     // WiFi Power Save, Power Scheme
 
     let card_chrome_h = CARD_HEADER_H * s + CARD_INNER_PAD_V * 2.0 * s;
     let lid_idle_card_h = card_chrome_h + lid_idle_rows * row;
     let battery_card_h = card_chrome_h + battery_rows * row;
-    let wifi_card_h = card_chrome_h + wifi_rows * row;
 
     let visible_heights: Vec<f32> = [
         (show_lid,     lid_idle_card_h),
         (show_battery, battery_card_h),
-        (show_wifi,    wifi_card_h),
     ].iter().filter_map(|(b, h)| if *b { Some(*h) } else { None }).collect();
     let content_height = CARD_OUTER_PAD_V * 2.0 * s
         + visible_heights.iter().sum::<f32>()
@@ -141,22 +137,26 @@ pub fn draw_power_panel(
     // Card 1: Lid & Idle
     // ─────────────────────────────────────────────────────────────────
     if show_lid {
+        // No lid → this card is just the idle settings.
+        let card_title = if has_lid { "Lid & Idle" } else { "Idle" };
         let mut cy = draw_section_card(
-            painter, text, fox, "Lid & Idle",
+            painter, text, fox, card_title,
             card_x, cy_top, card_w, lid_idle_card_h, s, sw, sh,
         );
 
-        // Row: Lid Close (Battery)
-        draw_select_button("Lid Close (Battery)", &config.power.lid_close_action,
-            ZONE_PWR_LID_BTN, active == Some(ZONE_PWR_LID_BTN),
-            painter, text, ix, fox,
-            label_x, label_w, btn_x, btn_w, btn_h, row, lsz, s, sw, sh, &mut cy, menu);
+        if has_lid {
+            // Row: Lid Close (Battery)
+            draw_select_button("Lid Close (Battery)", &config.power.lid_close_action,
+                ZONE_PWR_LID_BTN, active == Some(ZONE_PWR_LID_BTN),
+                painter, text, ix, fox,
+                label_x, label_w, btn_x, btn_w, btn_h, row, lsz, s, sw, sh, &mut cy, menu);
 
-        // Row: Lid Close (AC)
-        draw_select_button("Lid Close (AC)", &config.power.lid_close_on_ac,
-            ZONE_PWR_LID_AC_BTN, active == Some(ZONE_PWR_LID_AC_BTN),
-            painter, text, ix, fox,
-            label_x, label_w, btn_x, btn_w, btn_h, row, lsz, s, sw, sh, &mut cy, menu);
+            // Row: Lid Close (AC)
+            draw_select_button("Lid Close (AC)", &config.power.lid_close_on_ac,
+                ZONE_PWR_LID_AC_BTN, active == Some(ZONE_PWR_LID_AC_BTN),
+                painter, text, ix, fox,
+                label_x, label_w, btn_x, btn_w, btn_h, row, lsz, s, sw, sh, &mut cy, menu);
+        }
 
         // Row: Dim Screen After (0–600s, snapped to 30s)
         {
@@ -273,33 +273,7 @@ pub fn draw_power_panel(
             label_x, label_w, btn_x, btn_w, btn_h, row, lsz, s, sw, sh, &mut cy, menu);
         cy_top += battery_card_h + CARD_GAP * s;
     }
-
-    // ─────────────────────────────────────────────────────────────────
-    // Card 3: WiFi Power
-    // ─────────────────────────────────────────────────────────────────
-    if show_wifi {
-        let mut cy = draw_section_card(
-            painter, text, fox, "WiFi Power",
-            card_x, cy_top, card_w, wifi_card_h, s, sw, sh,
-        );
-
-        // Row: WiFi Power Save toggle
-        {
-            let rect = Rect::new(card_inner_x, cy, card_inner_w, TOGGLE_H * s);
-            let toggle = Toggle::new(rect, config.power.wifi_power_save)
-                .label("WiFi Power Save").scale(s);
-            let track = toggle.track_rect();
-            let zone = ix.add_zone(ZONE_PWR_WIFI_PS, track);
-            toggle.hovered(zone.is_hovered()).draw(painter, text, fox, sw, sh);
-            cy += row;
-        }
-
-        // Row: Power Scheme dropdown
-        draw_select_button("Power Scheme", &config.power.wifi_power_scheme,
-            ZONE_PWR_WIFI_SCHEME_BTN, active == Some(ZONE_PWR_WIFI_SCHEME_BTN),
-            painter, text, ix, fox,
-            label_x, label_w, btn_x, btn_w, btn_h, row, lsz, s, sw, sh, &mut cy, menu);
-    }
+    let _ = cy_top; // last card consumed; silence unused-assignment
 
     scroll_area.end(painter, text);
 
@@ -326,9 +300,6 @@ pub fn draw_power_panel(
                 id if id >= ACT_CRIT && id < ACT_CRIT + CRIT_OPTIONS.len() as u32 => {
                     config.power.critical_battery_action = CRIT_OPTIONS[(id - ACT_CRIT) as usize].to_lowercase();
                 }
-                id if id >= ACT_WIFI_SCHEME && id < ACT_WIFI_SCHEME + WIFI_SCHEME_OPTIONS.len() as u32 => {
-                    config.power.wifi_power_scheme = WIFI_SCHEME_OPTIONS[(id - ACT_WIFI_SCHEME) as usize].to_lowercase();
-                }
                 _ => {}
             }
             panel_state.close_dropdown();
@@ -345,17 +316,11 @@ pub fn handle_power_click(
     cursor_x: f32,
     cursor_y: f32,
 ) {
-    if zone_id == ZONE_PWR_WIFI_PS {
-        config.power.wifi_power_save = !config.power.wifi_power_save;
-        return;
-    }
-
     let dropdown_defs: &[(u32, &[&str], &str, u32)] = &[
         (ZONE_PWR_LID_BTN,         LID_OPTIONS,         &config.power.lid_close_action,        ACT_LID),
         (ZONE_PWR_LID_AC_BTN,      LID_OPTIONS,         &config.power.lid_close_on_ac,         ACT_LID_AC),
         (ZONE_PWR_IDLE_ACT_BTN,    IDLE_ACTION_OPTIONS, &config.power.idle_action,             ACT_IDLE),
         (ZONE_PWR_CRIT_BTN,        CRIT_OPTIONS,        &config.power.critical_battery_action, ACT_CRIT),
-        (ZONE_PWR_WIFI_SCHEME_BTN, WIFI_SCHEME_OPTIONS, &config.power.wifi_power_scheme,       ACT_WIFI_SCHEME),
     ];
 
     for (btn_zone, options, current, base_id) in dropdown_defs {
@@ -376,63 +341,4 @@ pub fn handle_power_click(
     if panel_state.dropdown_menu.is_open() {
         panel_state.close_dropdown();
     }
-}
-
-// ── WiFi power apply ────────────────────────────────────────────────────────
-
-/// Apply WiFi power settings immediately and persist to /etc/modprobe.d/.
-/// Spawns a background thread so pkexec dialogs don't block the Wayland event loop.
-/// Auto-detects the WiFi interface and driver — skips silently if no WiFi hardware found.
-pub fn apply_wifi_power(power: &PowerConfig) {
-    let power_save = power.wifi_power_save;
-    let scheme = power.wifi_power_scheme.clone();
-
-    std::thread::spawn(move || {
-        let Some((iface, driver)) = detect_wifi_interface() else {
-            eprintln!("[settings] No WiFi interface found, skipping WiFi power settings");
-            return;
-        };
-
-        let power_save_val = if power_save { 1 } else { 0 };
-        let scheme_val = match scheme.as_str() {
-            "active" => 1,
-            "balanced" => 2,
-            "battery" => 3,
-            _ => 2,
-        };
-
-        let conf = format!(
-            "options {driver} power_save={power_save_val}\noptions {driver} power_scheme={scheme_val}\n",
-        );
-        let modprobe_path = format!("/etc/modprobe.d/{driver}.conf");
-        let script = format!(
-            "printf '{}' > {modprobe_path}",
-            conf.replace('\'', "'\\''"),
-        );
-        let _ = std::process::Command::new("pkexec")
-            .args(["sh", "-c", &script])
-            .status();
-
-        let ps_arg = if power_save { "on" } else { "off" };
-        let _ = std::process::Command::new("pkexec")
-            .args(["iw", "dev", &iface, "set", "power_save", ps_arg])
-            .status();
-    });
-}
-
-/// Detect the first wireless network interface and its kernel driver.
-fn detect_wifi_interface() -> Option<(String, String)> {
-    let net_dir = std::fs::read_dir("/sys/class/net/").ok()?;
-    for entry in net_dir.flatten() {
-        let path = entry.path();
-        if path.join("wireless").exists() {
-            let iface = entry.file_name().to_string_lossy().into_owned();
-            let driver = std::fs::read_link(path.join("device/driver"))
-                .ok()
-                .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-                .unwrap_or_else(|| "iwlwifi".to_string());
-            return Some((iface, driver));
-        }
-    }
-    None
 }

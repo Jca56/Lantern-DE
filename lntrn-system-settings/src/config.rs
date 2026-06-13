@@ -432,10 +432,17 @@ pub struct MonitorEntry {
     /// reference is 203.
     #[serde(default = "default_sdr_brightness")]
     pub sdr_brightness: u32,
+    /// Whether this monitor's desktop is active. `false` = the user switched it
+    /// off in Display settings (it stays plugged in but the compositor tears
+    /// down its output so the pointer/windows can't wander into dead space).
+    /// Defaults to true so existing configs and new monitors stay on.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
 }
 
 fn default_monitor_scale() -> f32 { 1.0 }
 fn default_sdr_brightness() -> u32 { 203 }
+fn default_true() -> bool { true }
 
 
 // ── Power ───────────────────────────────────────────────────────────────────
@@ -451,8 +458,6 @@ pub struct PowerConfig {
     pub low_battery_threshold: u32,     // percentage for warning
     pub critical_battery_threshold: u32, // percentage for critical action
     pub critical_battery_action: String, // "suspend", "hibernate", "shutdown", "nothing"
-    pub wifi_power_save: bool,          // true = power saving on, false = always active
-    pub wifi_power_scheme: String,      // "active", "balanced", "battery"
 }
 
 impl Default for PowerConfig {
@@ -466,8 +471,6 @@ impl Default for PowerConfig {
             low_battery_threshold: 15,
             critical_battery_threshold: 5,
             critical_battery_action: "hibernate".into(),
-            wifi_power_save: true,
-            wifi_power_scheme: "balanced".into(),
         }
     }
 }
@@ -653,9 +656,6 @@ impl LanternConfig {
         self.input.cursor_corner_radius = self.input.cursor_corner_radius.clamp(0.0, 1.0);
         self.input.click_anim_size = self.input.click_anim_size.clamp(0.25, 3.0);
         self.display.scale = self.display.scale.clamp(0.5, 3.0);
-        if !["active", "balanced", "battery"].contains(&self.power.wifi_power_scheme.as_str()) {
-            self.power.wifi_power_scheme = "balanced".into();
-        }
         self.animations.speed = self.animations.speed.clamp(0.25, 3.0);
         if !["cinematic", "snappy", "springy", "linear"]
             .contains(&self.animations.preset.as_str())
@@ -737,7 +737,7 @@ mod tests {
             name: "DP-1".into(), x: 0, y: 0,
             resolution: "2560x1440".into(), refresh_rate: "144000".into(),
             scale: 1.0, wallpaper: String::new(), primary: true, vrr: false,
-            hdr: false, sdr_brightness: 203,
+            hdr: false, sdr_brightness: 203, enabled: true,
         });
         cfg.keybinds.set_enabled(true, Some("gentoo-pc"));
         let s = toml::to_string_pretty(&cfg).expect("serialize");

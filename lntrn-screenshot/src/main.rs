@@ -24,10 +24,14 @@ use lntrn_render::{
 mod capture;
 mod clipboard;
 mod selection;
+mod toolbar;
 mod wayland;
+mod window_query;
 
 use selection::{DragMode, HandleEdge, Selection, HANDLE_HIT, HANDLE_SIZE};
+use toolbar::{ToolbarAction, ToolbarLayout};
 use wayland::{FrameInput, LayerWindow};
+use window_query::WindowRect;
 
 // Lantern look. Inlined to avoid pulling lntrn-ui / lntrn-theme into a
 // tool this small (per project convention: apps style directly with
@@ -89,6 +93,11 @@ fn main() -> Result<()> {
         capture_width: cap.width,
         capture_height: cap.height,
         output_path,
+        mode: UiMode::Normal,
+        target_output,
+        windows: Vec::new(),
+        windows_queried: false,
+        hover_window: None,
     };
 
     let mut commit: Option<CommitAction> = None;
@@ -107,7 +116,7 @@ fn main() -> Result<()> {
         }
 
         let input = window.state.take_frame_input();
-        commit = ui.handle_input(&input);
+        commit = ui.handle_input(&input, cur_phys_w as f32, cur_phys_h as f32, scale);
         if commit.is_some() {
             break;
         }
@@ -166,6 +175,15 @@ enum CommitAction {
     Cancel,
 }
 
+/// Which interaction the overlay is in. Region selection is the default;
+/// `PickWindow` is the transient "click a window to grab it" state entered
+/// from the toolbar.
+#[derive(Clone, Copy, PartialEq)]
+enum UiMode {
+    Normal,
+    PickWindow,
+}
+
 struct SelectionUi {
     selection: Option<Selection>,
     drag_mode: DragMode,
@@ -174,11 +192,33 @@ struct SelectionUi {
     capture_width: u32,
     capture_height: u32,
     output_path: Option<PathBuf>,
+
+    mode: UiMode,
+    /// Output the overlay/capture is on, used to query its windows.
+    target_output: Option<String>,
+    /// Window rectangles for the captured output (physical px, output-local),
+    /// queried lazily the first time window-pick is entered. Bottom→top order.
+    windows: Vec<WindowRect>,
+    windows_queried: bool,
+    /// Index into `windows` of the window currently under the cursor.
+    hover_window: Option<usize>,
 }
 
 impl SelectionUi {
-    fn handle_input(&mut self, input: &FrameInput) -> Option<CommitAction> {
+    fn handle_input(
+        &mut self,
+        input: &FrameInput,
+        screen_w: f32,
+        screen_h: f32,
+        scale: f32,
+    ) -> Option<CommitAction> {
         if input.esc {
+            // While picking a window, Esc just backs out to normal mode
+            // instead of cancelling the whole screenshot.
+            if self.mode == UiMode::PickWindow {
+                self.mode = UiMode::Normal;
+                return None;
+            }
             return Some(CommitAction::Cancel);
         }
         if input.enter {
@@ -191,17 +231,85 @@ impl SelectionUi {
             return Some(CommitAction::SaveOnly);
         }
 
+        let toolbar = ToolbarLayout::compute(screen_w, screen_h, scale);
+
         if input.cursor_moved {
             self.cursor = (input.cursor_x, input.cursor_y);
-            self.on_cursor_moved(input.cursor_x, input.cursor_y);
+            if self.mode == UiMode::PickWindow {
+                self.update_hover_window(input.cursor_x, input.cursor_y);
+            } else {
+                self.on_cursor_moved(input.cursor_x, input.cursor_y);
+            }
         }
+
         if input.left_pressed {
-            self.on_left_pressed(self.cursor.0, self.cursor.1);
+            let (cx, cy) = self.cursor;
+            // The toolbar sits on top of everything and absorbs presses.
+            if toolbar.panel_contains(cx, cy) {
+                if let Some(action) = toolbar.button_at(cx, cy) {
+                    self.on_toolbar_action(action);
+                }
+                return None;
+            }
+            match self.mode {
+                UiMode::PickWindow => self.on_pick_window_click(cx, cy),
+                UiMode::Normal => self.on_left_pressed(cx, cy),
+            }
         }
-        if input.left_released {
+
+        if input.left_released && self.mode == UiMode::Normal {
             self.on_left_released();
         }
         None
+    }
+
+    fn on_toolbar_action(&mut self, action: ToolbarAction) {
+        match action {
+            ToolbarAction::FullScreen => {
+                self.mode = UiMode::Normal;
+                self.selection = Some(Selection::from_normalized(
+                    0.0,
+                    0.0,
+                    self.capture_width as f32,
+                    self.capture_height as f32,
+                ));
+                self.drag_mode = DragMode::None;
+            }
+            ToolbarAction::Window => {
+                if !self.windows_queried {
+                    self.windows = window_query::query_windows(self.target_output.as_deref());
+                    self.windows_queried = true;
+                }
+                self.mode = UiMode::PickWindow;
+                self.hover_window = None;
+                self.update_hover_window(self.cursor.0, self.cursor.1);
+            }
+        }
+    }
+
+    /// Topmost window under the cursor = last match in bottom→top order.
+    fn update_hover_window(&mut self, cx: f32, cy: f32) {
+        self.hover_window = self
+            .windows
+            .iter()
+            .rposition(|w| w.contains(cx, cy));
+    }
+
+    fn on_pick_window_click(&mut self, cx: f32, cy: f32) {
+        self.update_hover_window(cx, cy);
+        if let Some(idx) = self.hover_window {
+            let w = &self.windows[idx];
+            // Clamp to the captured area so an off-screen window edge can't
+            // produce a selection outside the image.
+            let x = w.x.max(0.0);
+            let y = w.y.max(0.0);
+            let right = (w.x + w.w).min(self.capture_width as f32);
+            let bottom = (w.y + w.h).min(self.capture_height as f32);
+            self.selection = Some(Selection::from_normalized(x, y, right - x, bottom - y));
+        }
+        // Whether or not we hit a window, leave pick mode — a stray click in
+        // empty space drops back to normal rather than trapping the user.
+        self.mode = UiMode::Normal;
     }
 
     fn on_cursor_moved(&mut self, cx: f32, cy: f32) {
@@ -275,6 +383,47 @@ impl SelectionUi {
         self.drag_mode = DragMode::None;
     }
 
+    /// Draw the window-pick overlay: dim everything except the hovered
+    /// window, outline it, and label it. With nothing hovered, dim the lot.
+    fn render_pick_window(
+        &self,
+        painter: &mut Painter,
+        text: &mut TextRenderer,
+        sw: f32,
+        sh: f32,
+        scale: f32,
+        dim: Color,
+    ) {
+        let Some(idx) = self.hover_window else {
+            painter.rect_filled(Rect::new(0.0, 0.0, sw, sh), 0.0, dim);
+            return;
+        };
+        let w = &self.windows[idx];
+        // Clamp the highlight to the screen so the dim cut-out lines up.
+        let x = w.x.max(0.0);
+        let y = w.y.max(0.0);
+        let rw = (w.x + w.w).min(sw) - x;
+        let rh = (w.y + w.h).min(sh) - y;
+
+        dim_around(painter, sw, sh, x, y, rw, rh, dim);
+        let stroke = (3.0 * scale).max(2.0);
+        painter.rect_stroke(Rect::new(x, y, rw, rh), 0.0, stroke, accent_orange());
+
+        if !w.label.is_empty() {
+            let lf = 20.0 * scale.max(1.0);
+            let lp = 8.0 * scale.max(1.0);
+            let lw = text.measure_width(&w.label, lf) + lp * 2.0;
+            let lh = lf + lp * 2.0;
+            let ly = if y > lh + 4.0 { y - lh - 4.0 } else { y + 4.0 };
+            painter.rect_filled(
+                Rect::new(x, ly, lw, lh),
+                6.0 * scale.max(1.0),
+                Color::from_rgba8(0, 0, 0, 210),
+            );
+            text.queue(&w.label, lf, x + lp, ly + lp, text_tan(), lw, sw as u32, sh as u32);
+        }
+    }
+
     fn render(
         &self,
         gpu: &mut GpuContext,
@@ -290,7 +439,9 @@ impl SelectionUi {
 
         painter.clear();
 
-        if let Some(ref sel) = self.selection {
+        if self.mode == UiMode::PickWindow {
+            self.render_pick_window(painter, text, sw, sh, scale, dim);
+        } else if let Some(ref sel) = self.selection {
             let (sx, sy, sw_, sh_) = sel.normalized();
 
             painter.rect_filled(Rect::new(0.0, 0.0, sw, sy), 0.0, dim);
@@ -349,11 +500,20 @@ impl SelectionUi {
             painter.rect_filled(Rect::new(0.0, 0.0, sw, sh), 0.0, dim);
         }
 
+        // Toolbar pill, drawn on top of the dim / selection.
+        let toolbar = ToolbarLayout::compute(sw, sh, scale);
+        let active = (self.mode == UiMode::PickWindow).then_some(ToolbarAction::Window);
+        toolbar.render(painter, text, self.cursor, active, sw as u32, sh as u32);
+
         // Hint bar — sized up for readability.
-        let hint = if self.selection.is_some() {
-            "Enter = save + copy   \u{00b7}   Ctrl+C = copy   \u{00b7}   Ctrl+S = save   \u{00b7}   Esc = cancel"
-        } else {
-            "Drag to select a region   \u{00b7}   Enter = capture full screen   \u{00b7}   Esc = cancel"
+        let hint = match self.mode {
+            UiMode::PickWindow => "Click a window to capture it   \u{00b7}   Esc = back",
+            UiMode::Normal if self.selection.is_some() => {
+                "Enter = save + copy   \u{00b7}   Ctrl+C = copy   \u{00b7}   Ctrl+S = save   \u{00b7}   Esc = cancel"
+            }
+            UiMode::Normal => {
+                "Drag to select   \u{00b7}   buttons capture screen / a window   \u{00b7}   Enter = full screen   \u{00b7}   Esc = cancel"
+            }
         };
         let hint_font = 26.0 * scale.max(1.0);
         let hint_pad_x = 28.0 * scale.max(1.0);
@@ -465,6 +625,15 @@ impl SelectionUi {
 // API completeness; the hit-test uses it internally).
 #[allow(dead_code)]
 const _: f32 = HANDLE_HIT;
+
+/// Fill the four bands around an inner rect with `dim`, leaving the rect
+/// itself untouched. Shared by region-selection and window-pick rendering.
+fn dim_around(painter: &mut Painter, sw: f32, sh: f32, x: f32, y: f32, w: f32, h: f32, dim: Color) {
+    painter.rect_filled(Rect::new(0.0, 0.0, sw, y), 0.0, dim);
+    painter.rect_filled(Rect::new(0.0, y + h, sw, sh - y - h), 0.0, dim);
+    painter.rect_filled(Rect::new(0.0, y, x, h), 0.0, dim);
+    painter.rect_filled(Rect::new(x + w, y, sw - x - w, h), 0.0, dim);
+}
 
 fn default_output_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());

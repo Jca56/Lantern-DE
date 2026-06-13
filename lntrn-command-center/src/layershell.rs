@@ -102,10 +102,14 @@ impl HasWindowHandle for WaylandHandle {
 /// so a hotplugged monitor's Mode/Scale events can't clobber the scale of
 /// the output we actually render on — that bug shrank the panel to ~0.7×
 /// whenever a 1080p secondary was plugged in next to the scaled 4K primary.
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone)]
 struct OutputData {
     /// wl_registry global name, so GlobalRemove can evict the right entry.
     registry_name: u32,
+    /// Connector name (wl_output::Event::Name, e.g. "DP-1"). This is the
+    /// key the compositor's workspace IPC uses, so we need it to look up
+    /// the active workspace for the output our surface is actually on.
+    name: String,
     /// Physical mode width in pixels (wl_output::Event::Mode).
     phys_width: u32,
     /// Integer scale (wl_output::Event::Scale).
@@ -230,6 +234,29 @@ impl WlState {
             }
         }
         self.fallback_scale.max(1) as f64
+    }
+
+    /// Connector name of the output our surface is on, used to look up the
+    /// per-output active workspace. Same resolution rule as
+    /// `fractional_scale`: prefer the output from wl_surface::Enter, and
+    /// before that arrives fall back only when a single output is
+    /// unambiguous. Returns `None` (rather than guessing) on multi-monitor
+    /// before Enter, so we never show a stale workspace from the wrong
+    /// monitor — the tile just waits a frame.
+    fn current_output_name(&self) -> Option<&str> {
+        let current = self
+            .current_output
+            .as_ref()
+            .and_then(|id| self.outputs.get(id));
+        let single = if self.outputs.len() == 1 {
+            self.outputs.values().next()
+        } else {
+            None
+        };
+        current
+            .or(single)
+            .map(|d| d.name.as_str())
+            .filter(|n| !n.is_empty())
     }
 
     fn phys_width(&self) -> u32 {

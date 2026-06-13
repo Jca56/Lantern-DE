@@ -2,7 +2,7 @@
 //! Drawn below the monitor arrangement in the Display panel.
 
 use lntrn_render::{Painter, Rect, TextRenderer};
-use lntrn_ui::gpu::{FoxPalette, InteractionContext};
+use lntrn_ui::gpu::{FoxPalette, InteractionContext, Toggle};
 
 use crate::config::{LanternConfig, MonitorEntry};
 use crate::output_manager::OutputManagerClient;
@@ -12,6 +12,7 @@ use crate::output_manager::OutputManagerClient;
 pub const ZONE_RES_BTN: u32 = 1100;
 pub const ZONE_REFRESH_BTN: u32 = 1101;
 pub const ZONE_SCALE_BTN: u32 = 1102;
+pub const ZONE_ENABLED: u32 = 1103;
 
 const ZONE_RES_BASE: u32 = 1110;
 const ZONE_REFRESH_BASE: u32 = 1140;
@@ -50,6 +51,9 @@ pub struct MonitorSettingsState {
     pub selected_hdr: Option<bool>,
     /// Selected SDR-white brightness in nits.
     pub selected_sdr_brightness: Option<u32>,
+    /// Selected on/off state for this monitor's desktop. `false` tears the
+    /// output down (no dead pointer/window zone); the monitor stays plugged in.
+    pub selected_enabled: Option<bool>,
     /// True when user has made changes that need applying.
     pub dirty: bool,
 }
@@ -63,6 +67,7 @@ impl MonitorSettingsState {
             selected_scale: None,
             selected_hdr: None,
             selected_sdr_brightness: None,
+            selected_enabled: None,
             dirty: false,
         }
     }
@@ -124,6 +129,12 @@ impl MonitorSettingsState {
             self.selected_sdr_brightness =
                 Some(config_entry.map(|c| c.sdr_brightness).unwrap_or(203));
         }
+        if self.selected_enabled.is_none() {
+            // Config is the persisted intent; fall back to the live head's
+            // advertised enabled flag (a disabled output reports enabled=0).
+            self.selected_enabled =
+                Some(config_entry.map(|c| c.enabled).unwrap_or(head.enabled));
+        }
     }
 
     /// Reset when selected monitor changes.
@@ -133,6 +144,7 @@ impl MonitorSettingsState {
         self.selected_scale = None;
         self.selected_hdr = None;
         self.selected_sdr_brightness = None;
+        self.selected_enabled = None;
         self.open_dropdown = OpenDropdown::None;
         self.dirty = false;
     }
@@ -187,6 +199,20 @@ pub fn draw_monitor_settings(
             sw,
             sh,
         );
+        cy += row_h;
+    }
+
+    // ── Monitor On/Off toggle ──────────────────────────────────────
+    // Off = the compositor tears this output's desktop down (no dead pointer
+    // or window zone) while the monitor stays physically plugged in.
+    {
+        let tog_h = BTN_H * s;
+        let tog_rect = Rect::new(label_x, cy + (row_h - tog_h) / 2.0, w - pad * 2.0, tog_h);
+        let on = mss.selected_enabled.unwrap_or(true);
+        let toggle = Toggle::new(tog_rect, on).label("Monitor Enabled").scale(s);
+        let track = toggle.track_rect();
+        let zone = ix.add_zone(ZONE_ENABLED, track);
+        toggle.hovered(zone.is_hovered()).draw(painter, text, fox, sw, sh);
         cy += row_h;
     }
 
@@ -401,6 +427,24 @@ pub fn handle_monitor_settings_click(
         return true;
     }
 
+    // Monitor on/off toggle
+    if zone_id == ZONE_ENABLED {
+        let now_on = mss.selected_enabled.unwrap_or(true);
+        if now_on {
+            // Turning off — never let the user switch off their only active
+            // monitor (the compositor would refuse anyway). Count live heads
+            // still advertised as enabled.
+            let enabled_count = output_mgr.heads.iter().filter(|h| h.enabled).count();
+            if enabled_count <= 1 {
+                return true; // ignore: keep at least one screen on
+            }
+        }
+        mss.selected_enabled = Some(!now_on);
+        mss.dirty = true;
+        mss.open_dropdown = OpenDropdown::None;
+        return true;
+    }
+
     false
 }
 
@@ -455,6 +499,7 @@ pub fn persist_monitor_settings(
     selected_mode_idx: Option<usize>,
     selected_hdr: Option<bool>,
     selected_sdr_brightness: Option<u32>,
+    selected_enabled: Option<bool>,
 ) {
     let entry = match config.monitors.iter_mut().find(|m| m.name == head_name) {
         Some(e) => e,
@@ -474,6 +519,7 @@ pub fn persist_monitor_settings(
                 vrr: false,
                 hdr: false,
                 sdr_brightness: 203,
+                enabled: true,
             });
             config.monitors.last_mut().unwrap()
         }
@@ -495,6 +541,9 @@ pub fn persist_monitor_settings(
     }
     if let Some(nits) = selected_sdr_brightness {
         entry.sdr_brightness = nits;
+    }
+    if let Some(enabled) = selected_enabled {
+        entry.enabled = enabled;
     }
 }
 

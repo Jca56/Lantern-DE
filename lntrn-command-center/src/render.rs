@@ -171,6 +171,9 @@ pub fn draw_content(
     panel: &PanelDraw,
     surface_w: u32,
     surface_h: u32,
+    // Active workspace for the output our surface is on, resolved by the
+    // caller (it has the wl_output state). `None` = unknown yet / hide.
+    workspace_num: Option<u32>,
 ) -> Vec<IconRequest> {
     let mut icons = Vec::new();
 
@@ -221,7 +224,6 @@ pub fn draw_content(
     if sliding {
         push_panel_clip(painter, text, mono_text);
     }
-    let workspace_num = state.workspace_ipc.active_id();
     for (view, off_frac) in &view_pairs {
         crate::controls::draw_row(
             painter,
@@ -435,7 +437,14 @@ pub fn draw_content(
                 state.desktop_button_hover, state.desktop_settings_open,
             ),
             OuterId::Usage => crate::usage_button::draw(
-                *r, panel.alpha, state.usage_hover, state.usage.open, &mut icons,
+                painter,
+                *r,
+                panel.scale_factor,
+                panel.alpha,
+                state.usage_hover,
+                state.usage.open,
+                state.usage.model_status.health,
+                &mut icons,
             ),
             OuterId::Emojis => crate::view_indicator::draw_emoji(
                 painter, *r, panel.scale_factor, panel.alpha, false, state.emoji_hover,
@@ -724,6 +733,7 @@ pub fn draw_content(
             text,
             &state.usage.stats,
             &state.usage.limits,
+            &state.usage.model_status,
             panel.rect,
             top_y,
             panel.scale_factor,

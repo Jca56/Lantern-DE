@@ -344,7 +344,7 @@ pub fn device_changed(state: &mut Lantern, node: DrmNode) {
     }
 }
 
-fn connector_connected(
+pub(crate) fn connector_connected(
     state: &mut Lantern,
     node: DrmNode,
     connector: connector::Info,
@@ -526,6 +526,11 @@ fn connector_connected(
     // position — computed for desktop scale, so it may overlap the rescaled
     // primary. Re-chain the layout. No-op when gaming mode is off.
     state.reapply_gaming_layout();
+
+    // Honor any monitor the user persisted as `enabled = false` in
+    // lantern.toml. Runs on every connect so connect-ordering doesn't matter;
+    // skips the output currently being deliberately re-enabled.
+    crate::output_toggle::reconcile_disabled_outputs(state);
 }
 
 pub fn connector_disconnected(state: &mut Lantern, node: DrmNode, crtc: crtc::Handle) {
@@ -606,6 +611,20 @@ pub fn apply_output_config(
     use smithay::output::{Mode as WlMode, Scale};
 
     for change in &changes {
+        // On/off toggles go through the output_toggle engine (teardown /
+        // rebuild). Such rows carry no mode/pos/scale to apply afterward.
+        match change.enabled {
+            Some(false) => {
+                crate::output_toggle::disable_output(state, &change.output_name);
+                continue;
+            }
+            Some(true) if state.disabled_outputs.contains_key(&change.output_name) => {
+                crate::output_toggle::enable_output(state, &change.output_name);
+                continue;
+            }
+            _ => {}
+        }
+
         let output = match state.workspaces.outputs_iter().find(|o| o.name() == change.output_name).cloned() {
             Some(o) => o,
             None => return false,

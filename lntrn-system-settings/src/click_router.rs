@@ -93,9 +93,6 @@ fn apply_save(
     state: &State,
     qh: &QueueHandle<State>,
 ) {
-    let wifi_changed = config.power.wifi_power_save != saved_config.power.wifi_power_save
-        || config.power.wifi_power_scheme != saved_config.power.wifi_power_scheme;
-
     if display_state.monitor_settings.dirty {
         if let Some(selected_name) = display_state.monitor_arrange.selected_output_name() {
             if let Some(hi) = state.output_mgr.heads.iter().position(|h| h.name == selected_name) {
@@ -104,6 +101,7 @@ fn apply_save(
                     mode_idx: display_state.monitor_settings.selected_mode_idx,
                     position: None,
                     scale: display_state.monitor_settings.selected_scale,
+                    enabled: display_state.monitor_settings.selected_enabled,
                 }];
                 apply_config(state, qh, &changes);
                 persist_monitor_settings(
@@ -115,6 +113,7 @@ fn apply_save(
                     display_state.monitor_settings.selected_mode_idx,
                     display_state.monitor_settings.selected_hdr,
                     display_state.monitor_settings.selected_sdr_brightness,
+                    display_state.monitor_settings.selected_enabled,
                 );
                 display_state.monitor_settings.dirty = false;
             }
@@ -122,9 +121,6 @@ fn apply_save(
     }
 
     config.save();
-    if wifi_changed {
-        power_panel::apply_wifi_power(&config.power);
-    }
     *saved_config = config.clone();
 }
 
@@ -151,7 +147,7 @@ fn route_panel_click(
         }
         // Window Sizes sliders are dragged live during draw — nothing to route.
         Panel::WindowSizes => {}
-        Panel::LidIdle | Panel::Battery | Panel::WifiPower => {
+        Panel::LidIdle | Panel::Battery => {
             power_panel::handle_power_click(config, panel_state, zone_id, cx, cy);
         }
         Panel::Monitors => {

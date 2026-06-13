@@ -88,10 +88,25 @@ impl WorkspaceIpc {
         }
     }
 
-    /// Active workspace id for the first output we've seen state from,
-    /// or `None` if we haven't received anything yet.
-    pub fn active_id(&self) -> Option<u32> {
-        self.state.values().next().map(|s| s.active)
+    /// Active workspace id for a specific output (by connector name, e.g.
+    /// "DP-1"). On a multi-monitor setup each output has its own active
+    /// workspace, so the caller must pass the output our surface is on —
+    /// otherwise we'd return an arbitrary monitor's workspace (HashMap
+    /// iteration order), which is why the tile used to get stuck on "1".
+    ///
+    /// `output` is `None` before we know which monitor we're on; in that
+    /// case we only answer when there's a single output (unambiguous),
+    /// returning `None` rather than guessing wrong on multi-monitor.
+    pub fn active_id_for(&self, output: Option<&str>) -> Option<u32> {
+        if let Some(name) = output {
+            if let Some(s) = self.state.get(name) {
+                return Some(s.active);
+            }
+        }
+        if self.state.len() == 1 {
+            return self.state.values().next().map(|s| s.active);
+        }
+        None
     }
 }
 

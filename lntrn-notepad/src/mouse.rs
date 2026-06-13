@@ -39,12 +39,50 @@ pub fn handle_mouse_input(
     match (button, state) {
         (MouseButton::Left, ElementState::Pressed) => handle_left_press(handler, event_loop),
         (MouseButton::Left, ElementState::Released) => handle_left_release(handler),
+        (MouseButton::Right, ElementState::Pressed) => handle_right_press(handler),
         (MouseButton::Middle, ElementState::Pressed) => handle_middle_press(handler),
         _ => MouseAction::Ignored,
     }
 }
 
+/// Right-click in the editor body opens the Copy/Cut/Paste/Select All context
+/// menu. With no active selection the caret hops to the click first, so a
+/// following Paste lands where the user clicked; an existing selection is kept
+/// so Copy/Cut act on it. Clicks on the chrome (title bar/tabs/toolbar) are
+/// left alone.
+fn handle_right_press(handler: &mut TextHandler) -> MouseAction {
+    let Some((cx, cy)) = handler.input.cursor() else {
+        return MouseAction::Ignored;
+    };
+    let er = editor_body_rect(handler);
+    if !er.contains(cx, cy) {
+        return MouseAction::Ignored;
+    }
+    commit_size_edit(handler);
+    handler.fmt_toolbar.close_all();
+    if !handler.editor().has_selection() {
+        handler.editor_mut().clear_selection();
+        handler.click_to_cursor(cx, cy);
+    }
+    handler.open_context_menu(cx, cy);
+    MouseAction::Consumed
+}
+
 fn handle_left_press(handler: &mut TextHandler, event_loop: &ActiveEventLoop) -> MouseAction {
+    // An open right-click menu owns this click: items land via the menu's own
+    // interaction zones during the overlay draw (so feed the press through),
+    // while a click outside dismisses it without disturbing the document
+    // underneath.
+    if handler.context_menu.is_open() {
+        handler.input.on_left_pressed();
+        if let Some((cx, cy)) = handler.input.cursor() {
+            if !handler.context_menu.contains(cx, cy) {
+                handler.context_menu.close();
+            }
+        }
+        return MouseAction::Consumed;
+    }
+
     if let Some(dir) = handler.edge_resize_direction() {
         if let Some(w) = &handler.window {
             let _ = w.drag_resize_window(dir);

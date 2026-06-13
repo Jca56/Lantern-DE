@@ -53,7 +53,7 @@ pub(crate) enum Panel {
     // Notifications
     NotifBehavior, NotifSound, NotifTesting,
     // Power
-    LidIdle, Battery, WifiPower,
+    LidIdle, Battery,
     // Apps
     AppIcons,
     // Lock Screen
@@ -80,7 +80,6 @@ fn parse_panel_arg() -> Option<Panel> {
         // Power
         "power" | "lid-idle" => Some(Panel::LidIdle),
         "battery"       => Some(Panel::Battery),
-        "wifi-power"    => Some(Panel::WifiPower),
         // Apps
         "app-icons" | "apps" => Some(Panel::AppIcons),
         // Lock Screen
@@ -148,6 +147,12 @@ pub fn run() -> Result<()> {
     if state.height == 0 { state.height = 1000; }
 
     let surface = compositor.create_surface(&qh, ());
+    // Ask the compositor for this surface's fractional scale. Robust across
+    // window sizes and monitors — and immune to a second output's wl_output
+    // events clobbering the global scale fields (which shrank the window when
+    // the secondary monitor was disabled).
+    let frac_scale = state.frac_scale_mgr.as_ref()
+        .map(|mgr| mgr.get_fractional_scale(&surface, &qh, ()));
     let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
     let toplevel = xdg_surface.get_toplevel(&qh, ());
     toplevel.set_title("System Settings".into());
@@ -158,6 +163,7 @@ pub fn run() -> Result<()> {
     state.surface = Some(surface.clone());
     state.xdg_surface = Some(xdg_surface);
     state.toplevel = Some(toplevel.clone());
+    state.frac_scale = frac_scale;
 
     // Wait for initial configure
     while !state.configured {
@@ -247,10 +253,15 @@ pub fn run() -> Result<()> {
 
         let s = state.fractional_scale() as f32;
 
-        // Handle resize
-        if state.configured {
+        // Handle resize — on an explicit reconfigure, OR when the fractional
+        // scale changed the physical surface size out from under us (a late
+        // `preferred_scale` arriving after the first frame, or moving the
+        // window to a monitor with a different scale).
+        let target_w = state.phys_width().max(1);
+        let target_h = state.phys_height().max(1);
+        if state.configured || gpu.width() != target_w || gpu.height() != target_h {
             state.configured = false;
-            gpu.resize(state.phys_width().max(1), state.phys_height().max(1));
+            gpu.resize(target_w, target_h);
             surface.set_buffer_scale(1);
             if let Some(vp) = &viewport {
                 vp.set_destination(state.width as i32, state.height as i32);
@@ -444,6 +455,7 @@ pub fn run() -> Result<()> {
                         mode_idx: display_state.monitor_settings.selected_mode_idx,
                         position: None,
                         scale: display_state.monitor_settings.selected_scale,
+                        enabled: display_state.monitor_settings.selected_enabled,
                     }];
                     crate::output_manager::apply_config(&state, &qh, &changes);
                     persist_monitor_settings(
@@ -455,6 +467,7 @@ pub fn run() -> Result<()> {
                         display_state.monitor_settings.selected_mode_idx,
                         display_state.monitor_settings.selected_hdr,
                         display_state.monitor_settings.selected_sdr_brightness,
+                        display_state.monitor_settings.selected_enabled,
                     );
                     // Live HDR apply over the compositor IPC socket.
                     if let Some(hdr_on) = display_state.monitor_settings.selected_hdr {
@@ -614,7 +627,7 @@ pub fn run() -> Result<()> {
                     content_x, panel_y, content_w, panel_h, s, sw, sh, frame_scroll,
                 );
             }
-            Panel::LidIdle | Panel::Battery | Panel::WifiPower => {
+            Panel::LidIdle | Panel::Battery => {
                 crate::power_panel::draw_power_panel(
                     active_panel,
                     &mut config, &mut panel_state, &mut painter, &mut text, &mut ix, &fox,

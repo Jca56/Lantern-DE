@@ -1,5 +1,7 @@
 use std::ffi::c_void;
+use std::os::fd::AsRawFd;
 use std::ptr::NonNull;
+use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use lntrn_render::{GpuContext, Painter, Rect, TextRenderer, TexturePass};
@@ -9,6 +11,7 @@ use raw_window_handle::{
     RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle, WindowHandle,
 };
 use wayland_client::{
+    backend::WaylandError,
     protocol::{
         wl_callback, wl_compositor, wl_keyboard, wl_output, wl_pointer, wl_registry, wl_seat,
         wl_surface,
@@ -450,36 +453,75 @@ pub fn run(
     let mut mpris_prev_volume = app.volume;
 
     while state.running {
-        // Non-blocking when playing, blocking when paused
-        if app.is_playing() {
-            if let Some(guard) = event_queue.prepare_read() {
-                let _ = guard.read();
-            }
-            if let Err(e) = event_queue.dispatch_pending(&mut state) {
-                eprintln!("[media-player] dispatch error: {e}");
-                break;
-            }
-            event_queue.flush()?;
-
-            app.tick(&gpu.ctx, &gpu.tex_pass);
-            if app.check_eos() { update_title(&toplevel, &app); }
-
-            // Wait for compositor frame callback. Audio-only playback caps at
-            // ~30fps (visualizer doesn't need more); video uses ~60fps.
-            if !state.frame_done {
-                let sleep_ms = if app.audio_only { 33 } else { 16 };
-                std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
-                continue;
-            }
+        // Pump Wayland events with a bounded wait — never block forever. When
+        // playing we pace to the frame interval (audio-only caps at ~30fps,
+        // video ~60fps); when paused we idle longer. Either way the timeout
+        // guarantees the loop keeps turning even when the window is minimized
+        // and the compositor has stopped sending frame callbacks — that's what
+        // lets MPRIS transport commands below still get serviced while audio
+        // keeps playing on GStreamer's own thread.
+        let pump_timeout = if app.is_playing() {
+            Duration::from_millis(if app.audio_only { 33 } else { 16 })
         } else {
-            if let Err(e) = event_queue.blocking_dispatch(&mut state) {
-                eprintln!("[media-player] dispatch error: {e}");
-                break;
-            }
-            app.tick(&gpu.ctx, &gpu.tex_pass);
-            if app.check_eos() { update_title(&toplevel, &app); }
-            if !state.frame_done { continue; }
+            Duration::from_millis(100)
+        };
+        if let Err(e) = pump_events(&mut event_queue, &mut state, pump_timeout) {
+            eprintln!("[media-player] dispatch error: {e}");
+            break;
         }
+
+        app.tick(&gpu.ctx, &gpu.tex_pass);
+        if app.check_eos() { update_title(&toplevel, &app); }
+
+        // ── MPRIS commands ──────────────────────────────────────────────
+        // Drained every iteration, BEFORE the frame-callback render gate
+        // below, so play/pause/next/prev from the Command Center (or media
+        // keys) keep working even while the window is minimized — when no
+        // frame callbacks arrive and the gate would otherwise `continue`.
+        while let Ok(cmd) = mpris_rx.try_recv() {
+            match cmd {
+                MprisCmd::PlayPause => app.toggle_play_pause(),
+                MprisCmd::Play => { if let Some(p) = &app.pipeline { p.play(); } }
+                MprisCmd::Pause => { if let Some(p) = &app.pipeline { p.pause(); } }
+                MprisCmd::Stop => { if let Some(p) = &app.pipeline { p.pause(); } }
+                MprisCmd::Next => { app.next_track(); update_title(&toplevel, &app); }
+                MprisCmd::Previous => { app.prev_track(); update_title(&toplevel, &app); }
+                MprisCmd::SetVolume(v) => {
+                    app.volume = v;
+                    if let Some(p) = &app.pipeline { p.set_volume(v); }
+                }
+                MprisCmd::Seek(offset_us) => {
+                    app.seek_relative(offset_us * 1000); // us → ns
+                }
+            }
+        }
+        // Send state to MPRIS server (throttled — see notes above the loop).
+        let playing = app.is_playing();
+        let mpris_dirty = playing != mpris_prev_playing
+            || app.file_name != mpris_prev_title
+            || (app.volume - mpris_prev_volume).abs() > 0.001;
+        if mpris_dirty || last_mpris_send.elapsed() >= Duration::from_millis(250) {
+            last_mpris_send = std::time::Instant::now();
+            mpris_prev_playing = playing;
+            mpris_prev_title = app.file_name.clone();
+            mpris_prev_volume = app.volume;
+            let _ = mpris_tx.send(PlayerState {
+                title: app.file_name.clone(),
+                file_path: app.file_path.as_ref()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                playing,
+                position_ns: app.position_ns,
+                duration_ns: app.duration_ns,
+                volume: app.volume,
+            });
+        }
+
+        // ── Render gate ── only paint when the compositor asked for a frame.
+        // Minimized windows get no frame callbacks, so we stop here (MPRIS and
+        // playback above already ran). Input events flip `frame_done` too, so
+        // interaction still drives a repaint.
+        if !state.frame_done { continue; }
         state.frame_done = false;
 
         let scale_f = state.fractional_scale() as f32;
@@ -660,46 +702,6 @@ pub fn run(
             input.on_left_released();
         }
 
-        // ── MPRIS commands ──────────────────────────────────────────────
-        while let Ok(cmd) = mpris_rx.try_recv() {
-            match cmd {
-                MprisCmd::PlayPause => app.toggle_play_pause(),
-                MprisCmd::Play => { if let Some(p) = &app.pipeline { p.play(); } }
-                MprisCmd::Pause => { if let Some(p) = &app.pipeline { p.pause(); } }
-                MprisCmd::Stop => { if let Some(p) = &app.pipeline { p.pause(); } }
-                MprisCmd::Next => { app.next_track(); update_title(&toplevel, &app); }
-                MprisCmd::Previous => { app.prev_track(); update_title(&toplevel, &app); }
-                MprisCmd::SetVolume(v) => {
-                    app.volume = v;
-                    if let Some(p) = &app.pipeline { p.set_volume(v); }
-                }
-                MprisCmd::Seek(offset_us) => {
-                    app.seek_relative(offset_us * 1000); // us → ns
-                }
-            }
-        }
-        // Send state to MPRIS server (throttled — see notes above the loop).
-        let playing = app.is_playing();
-        let mpris_dirty = playing != mpris_prev_playing
-            || app.file_name != mpris_prev_title
-            || (app.volume - mpris_prev_volume).abs() > 0.001;
-        if mpris_dirty || last_mpris_send.elapsed() >= std::time::Duration::from_millis(250) {
-            last_mpris_send = std::time::Instant::now();
-            mpris_prev_playing = playing;
-            mpris_prev_title = app.file_name.clone();
-            mpris_prev_volume = app.volume;
-            let _ = mpris_tx.send(PlayerState {
-                title: app.file_name.clone(),
-                file_path: app.file_path.as_ref()
-                    .map(|p| p.to_string_lossy().into_owned())
-                    .unwrap_or_default(),
-                playing,
-                position_ns: app.position_ns,
-                duration_ns: app.duration_ns,
-                volume: app.volume,
-            });
-        }
-
         // ── Render ──────────────────────────────────────────────────────
         let palette = FoxPalette::current();
         let opacity = lntrn_theme::background_opacity();
@@ -710,6 +712,74 @@ pub fn run(
 
         surface.frame(&qh, ());
         surface.commit();
+    }
+
+    // Remember where we left off so reopening the same file resumes from here.
+    app.save_current_position();
+
+    Ok(())
+}
+
+// ── Event pump ────────────────────────────────────────────────────────────
+
+/// Dispatch Wayland events, blocking at most `timeout` for socket activity.
+///
+/// This replaces `EventQueue::blocking_dispatch` so the main loop never waits
+/// forever: a minimized window receives no frame callbacks (and no input), so
+/// an unbounded block would freeze the loop and starve MPRIS transport commands
+/// arriving on the channel. A bounded `libc::poll` wakes promptly on Wayland
+/// activity and otherwise falls through on timeout so the caller can service
+/// MPRIS and keep playback ticking. (Mirrors the Command Center's
+/// `dispatch_with_timeout`.)
+fn pump_events(
+    event_queue: &mut EventQueue<State>,
+    state: &mut State,
+    timeout: Duration,
+) -> Result<()> {
+    event_queue.flush()?;
+    if event_queue.dispatch_pending(state)? > 0 {
+        return Ok(());
+    }
+
+    // Stake the next socket read before polling so events arriving between
+    // prepare and poll aren't lost (per `ReadEventsGuard`'s contract).
+    let guard = match event_queue.prepare_read() {
+        Some(g) => g,
+        None => {
+            event_queue.dispatch_pending(state)?;
+            return Ok(());
+        }
+    };
+
+    let timeout_ms = timeout.as_millis().min(i32::MAX as u128) as i32;
+    let mut fds = [libc::pollfd {
+        fd: guard.connection_fd().as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    }];
+    let ret = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout_ms) };
+
+    if ret < 0 {
+        let err = std::io::Error::last_os_error();
+        if err.kind() != std::io::ErrorKind::Interrupted {
+            return Err(err.into());
+        }
+        // EINTR: drop the guard so the next iteration can re-prepare.
+        drop(guard);
+        return Ok(());
+    }
+
+    if fds[0].revents & libc::POLLIN != 0 {
+        match guard.read() {
+            Ok(_) => {}
+            // Spurious wakeup: poll said ready but the socket had nothing.
+            Err(WaylandError::Io(io)) if io.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(e) => return Err(e.into()),
+        }
+        event_queue.dispatch_pending(state)?;
+    } else {
+        // Timed out — drop the guard to cancel the prepared read.
+        drop(guard);
     }
 
     Ok(())

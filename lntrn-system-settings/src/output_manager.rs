@@ -106,6 +106,9 @@ pub struct HeadChange {
     pub mode_idx: Option<usize>,
     pub position: Option<(i32, i32)>,
     pub scale: Option<f64>,
+    /// `Some(false)` switches the output off (disable_head); `Some(true)` or
+    /// `None` configures/keeps it on (enable_head).
+    pub enabled: Option<bool>,
 }
 
 pub fn apply_config(
@@ -117,6 +120,14 @@ pub fn apply_config(
     let config: ZwlrOutputConfigurationV1 = mgr.create_configuration(state.output_mgr.serial, qh, ());
     for change in changes {
         let Some(head) = state.output_mgr.heads.get(change.head_idx) else { continue };
+
+        // Switching the monitor off: disable_head and move on — no mode /
+        // position / scale applies to a disabled output.
+        if change.enabled == Some(false) {
+            config.disable_head(&head.head_obj);
+            continue;
+        }
+
         let head_config: ZwlrOutputConfigurationHeadV1 =
             config.enable_head(&head.head_obj, qh, ());
         if let Some(mode_idx) = change.mode_idx {
@@ -152,14 +163,17 @@ impl Dispatch<ZwlrOutputManagerV1, ()> for State {
             }
             zwlr_output_manager_v1::Event::Done { serial } => {
                 state.output_mgr.serial = serial;
-                // Swap building_heads into heads — but ONLY when this Done
-                // actually re-advertised heads. The compositor emits a bare
-                // Done (serial bump, no head re-advertisement) on routine
-                // output changes; taking an empty building_heads there would
-                // wipe `heads`, which makes a selected monitor stop matching
-                // and the per-monitor settings panel flash then vanish.
+                // Commit any newly-advertised heads staged in `building_heads`.
+                // Append rather than replace: in-place property updates to
+                // existing heads are now applied directly to `heads` (see the
+                // head dispatch), and a hotplug adds one head without re-sending
+                // the ones already present — replacing here would drop them. A
+                // bare Done with nothing staged is a harmless no-op, which also
+                // covers the post-apply serial bump that used to wipe `heads`
+                // and make the per-monitor settings panel flash then vanish.
                 if !state.output_mgr.building_heads.is_empty() {
-                    state.output_mgr.heads = std::mem::take(&mut state.output_mgr.building_heads);
+                    let staged = std::mem::take(&mut state.output_mgr.building_heads);
+                    state.output_mgr.heads.extend(staged);
                 }
             }
             zwlr_output_manager_v1::Event::Finished => {
@@ -186,29 +200,41 @@ impl Dispatch<ZwlrOutputHeadV1, ()> for State {
         _qh: &QueueHandle<Self>,
     ) {
 
-        // Find or create the building head for this proxy
-        let head = match state
+        // Resolve which list this head lives in. Property updates the
+        // compositor sends to an already-committed head (e.g. the position/
+        // scale events emitted right after a config apply) must be applied to
+        // `heads` IN PLACE — routing them into `building_heads` would spawn an
+        // empty placeholder and wipe the real head list on the next Done,
+        // which is exactly what made the per-monitor settings flash and vanish.
+        // Only a genuinely new head (in neither list) starts staging.
+        let head: &mut HeadInfo = if let Some(i) = state
+            .output_mgr
+            .heads
+            .iter()
+            .position(|h| h.head_obj == *proxy)
+        {
+            &mut state.output_mgr.heads[i]
+        } else if let Some(i) = state
             .output_mgr
             .building_heads
-            .iter_mut()
-            .find(|h| h.head_obj == *proxy)
+            .iter()
+            .position(|h| h.head_obj == *proxy)
         {
-            Some(h) => h,
-            None => {
-                // First event for this head — create placeholder
-                state.output_mgr.building_heads.push(HeadInfo {
-                    name: String::new(),
-                    enabled: false,
-                    position: (0, 0),
-                    scale: 1.0,
-                    phys_w: 0,
-                    phys_h: 0,
-                    modes: Vec::new(),
-                    current_mode: None,
-                    head_obj: proxy.clone(),
-                });
-                state.output_mgr.building_heads.last_mut().unwrap()
-            }
+            &mut state.output_mgr.building_heads[i]
+        } else {
+            // First event for this head — stage a placeholder.
+            state.output_mgr.building_heads.push(HeadInfo {
+                name: String::new(),
+                enabled: false,
+                position: (0, 0),
+                scale: 1.0,
+                phys_w: 0,
+                phys_h: 0,
+                modes: Vec::new(),
+                current_mode: None,
+                head_obj: proxy.clone(),
+            });
+            state.output_mgr.building_heads.last_mut().unwrap()
         };
 
         match event {
@@ -230,10 +256,15 @@ impl Dispatch<ZwlrOutputHeadV1, ()> for State {
                 head.current_mode = idx;
             }
             zwlr_output_head_v1::Event::Finished => {
+                // Drop the head from whichever list holds it — committed or
+                // still staging — so a re-advertised output (the compositor
+                // tears the old head down before re-adding it) doesn't leave a
+                // stale duplicate behind.
                 state
                     .output_mgr
                     .building_heads
                     .retain(|h| h.head_obj != *proxy);
+                state.output_mgr.heads.retain(|h| h.head_obj != *proxy);
             }
             _ => {}
         }

@@ -52,7 +52,6 @@ pub(crate) const CATEGORIES: &[CategoryDef] = &[
     CategoryDef { cat: Category::Power,         label: "Power",         icon_idx: 4, leaf_panel: None, children: &[
         (Panel::LidIdle,    "Lid & Idle"),
         (Panel::Battery,    "Battery"),
-        (Panel::WifiPower,  "WiFi Power"),
     ]},
     CategoryDef { cat: Category::Apps,          label: "Apps",          icon_idx: 5, leaf_panel: None, children: &[
         (Panel::AppIcons,   "Icons"),
@@ -80,7 +79,9 @@ pub(crate) fn category_of(panel: Panel) -> Category {
 pub(crate) fn panel_label(panel: Panel) -> &'static str {
     for cat in CATEGORIES {
         for (p, label) in cat.children {
-            if *p == panel { return label; }
+            if *p == panel {
+                return crate::machine::panel_display_label(panel, *label);
+            }
         }
         if cat.leaf_panel == Some(panel) {
             return cat.label;
@@ -230,6 +231,13 @@ pub(crate) fn draw_sidebar<'a>(
         // Children
         if !is_leaf && expanded {
             for (child_panel, child_label_str) in cat.children {
+                // Skip panels that don't apply to this hardware (e.g. Battery
+                // on a desktop with no system battery).
+                if !crate::machine::panel_available(*child_panel) {
+                    continue;
+                }
+                let child_label_str =
+                    crate::machine::panel_display_label(*child_panel, *child_label_str);
                 let row_idx = state.row_actions.len();
                 let zone_id = ZONE_SIDEBAR_BASE + row_idx as u32;
                 let child_rect = Rect::new(0.0, y, sidebar_w, child_h);

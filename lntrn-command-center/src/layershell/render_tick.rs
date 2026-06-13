@@ -83,10 +83,16 @@ pub(super) fn render_frame(
     text.set_layer(1);
     mono_text.set_layer(1);
 
+    // Active workspace for the output WE are on (multi-monitor: each
+    // output has its own). Resolve the connector name from wl_output
+    // state here, where `wl` is in scope, and hand the number to the
+    // renderer.
+    let workspace_num = app.workspace_ipc.active_id_for(wl.current_output_name());
+
     let panel_draw = crate::render::draw_panel(painter, &app, phys_w, scale_f);
     let icon_requests = if let Some(p) = &panel_draw {
         crate::render::draw_content(
-            painter, text, mono_text, app, p, phys_w, phys_h,
+            painter, text, mono_text, app, p, phys_w, phys_h, workspace_num,
         )
     } else {
         Vec::new()

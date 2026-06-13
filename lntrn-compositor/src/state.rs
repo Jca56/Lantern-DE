@@ -386,10 +386,19 @@ pub struct Lantern {
     pub workspace_ipc: WorkspaceIpc,
     pub hdr_ipc: crate::hdr_ipc::HdrIpc,
     pub gaming_ipc: crate::gaming_ipc::GamingIpc,
+    pub window_query_ipc: crate::window_query_ipc::WindowQueryIpc,
     /// Output names with HDR currently engaged (connector props committed).
     pub hdr_active_outputs: std::collections::HashSet<String>,
     /// Outputs awaiting "keep HDR" confirmation → their auto-revert deadline.
     pub hdr_pending_confirm: std::collections::HashMap<String, std::time::Instant>,
+    /// Monitors the user manually switched off. Their DRM output is torn down
+    /// (no dead pointer/window zone) but the connector stays plugged in, so we
+    /// stash what we need to rebuild it on re-enable. Keyed by output name.
+    pub disabled_outputs: std::collections::HashMap<String, crate::output_toggle::DisabledOutput>,
+    /// Set to the output name while it is being deliberately re-enabled, so the
+    /// startup "honor persisted-off" reconcile inside `connector_connected`
+    /// doesn't immediately tear the freshly-rebuilt output back down.
+    pub enabling_output: Option<String>,
     pub gesture: GestureState,
 
     // Scratchpad (dropdown terminal)
@@ -632,8 +641,11 @@ impl Lantern {
             workspace_ipc: WorkspaceIpc::new(),
             hdr_ipc: crate::hdr_ipc::HdrIpc::new(),
             gaming_ipc: crate::gaming_ipc::GamingIpc::new(),
+            window_query_ipc: crate::window_query_ipc::WindowQueryIpc::new(),
             hdr_active_outputs: std::collections::HashSet::new(),
             hdr_pending_confirm: std::collections::HashMap::new(),
+            disabled_outputs: std::collections::HashMap::new(),
+            enabling_output: None,
             gesture: GestureState::new(),
             scratchpad_surface: None,
             scratchpad_pending: false,

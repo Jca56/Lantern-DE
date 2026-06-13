@@ -47,6 +47,9 @@ pub struct OutputChange {
     pub drm_mode_index: Option<usize>,
     pub position: Option<(i32, i32)>,
     pub scale: Option<f64>,
+    /// `Some(false)` = switch the output off, `Some(true)` = (re)enable it,
+    /// `None` = leave its on/off state unchanged (only mode/pos/scale).
+    pub enabled: Option<bool>,
 }
 
 /// Pending configuration — stored as user data on ZwlrOutputConfigurationV1.
@@ -60,6 +63,9 @@ struct PendingHeadConfig {
     mode_idx: Option<usize>,
     position: Option<(i32, i32)>,
     scale: Option<f64>,
+    /// Client asked to switch this output off (disable_head) rather than
+    /// configure it (enable_head).
+    disable: bool,
 }
 
 /// User data for ZwlrOutputConfigurationHeadV1 — index into PendingConfig.heads.
@@ -103,6 +109,13 @@ impl OutputManagementState {
         phys_size: (i32, i32),
     ) {
         use smithay::reexports::drm::control::ModeTypeFlags;
+
+        // Re-adding an output that's already advertised (e.g. re-enabling a
+        // disabled monitor) — drop the stale head first so clients see a clean
+        // re-advertisement instead of a duplicate.
+        if self.heads.iter().any(|h| h.output_name == name) {
+            self.remove_head(name);
+        }
 
         let mode_infos: Vec<OutputModeInfo> = modes
             .iter()
@@ -160,6 +173,27 @@ impl OutputManagementState {
                 }
             }
             self.heads.remove(idx);
+        }
+    }
+
+    /// Flip a head's advertised on/off flag and notify bound clients. A
+    /// disabled head stays in the list (so System Settings can show it and
+    /// switch it back on) but stops advertising its position/scale.
+    pub fn set_head_enabled(&mut self, name: &str, enabled: bool) {
+        let Some(head) = self.heads.iter_mut().find(|h| h.output_name == name) else {
+            return;
+        };
+        head.enabled = enabled;
+        let position = head.position;
+        let scale = head.scale;
+        for weak in &head.instances {
+            if let Ok(h) = weak.upgrade() {
+                h.enabled(enabled as i32);
+                if enabled {
+                    h.position(position.0, position.1);
+                    h.scale(scale);
+                }
+            }
         }
     }
 
@@ -289,6 +323,7 @@ impl OutputManagementState {
                 drm_mode_index: drm_idx,
                 position: hc.position,
                 scale: hc.scale,
+                enabled: Some(!hc.disable),
             });
         }
         Some(changes)
@@ -450,6 +485,7 @@ impl Dispatch<ZwlrOutputConfigurationV1, Mutex<PendingConfig>, Lantern> for Lant
                     mode_idx: None,
                     position: None,
                     scale: None,
+                    disable: false,
                 });
                 drop(pending);
 
@@ -461,23 +497,64 @@ impl Dispatch<ZwlrOutputConfigurationV1, Mutex<PendingConfig>, Lantern> for Lant
                     },
                 );
             }
-            zwlr_output_configuration_v1::Request::DisableHead { head: _ } => {
-                // We don't support disabling outputs yet
+            zwlr_output_configuration_v1::Request::DisableHead { head } => {
+                // Record the disable intent; `apply_output_config` tears the
+                // output's desktop down on Apply. The head itself is kept
+                // (advertised as disabled) so it can be switched back on.
+                let head_idx = *head.data::<u32>().unwrap_or(&0) as usize;
+                let output_name = state
+                    .output_management_state
+                    .heads
+                    .get(head_idx)
+                    .map(|h| h.output_name.clone())
+                    .unwrap_or_default();
+                if !output_name.is_empty() {
+                    let mut pending = data.lock().unwrap();
+                    pending.heads.push(PendingHeadConfig {
+                        output_name,
+                        mode_idx: None,
+                        position: None,
+                        scale: None,
+                        disable: true,
+                    });
+                }
             }
             zwlr_output_configuration_v1::Request::Apply => {
                 let pending = data.lock().unwrap();
+                let client_serial = pending.serial;
+                let cur_serial = state.output_management_state.serial;
+                tracing::info!(
+                    "output-mgmt Apply: client_serial={client_serial} cur_serial={cur_serial} heads={}",
+                    pending.heads.len(),
+                );
+                for hc in &pending.heads {
+                    tracing::info!(
+                        "  head '{}' disable={} mode={:?} pos={:?} scale={:?}",
+                        hc.output_name,
+                        hc.disable,
+                        hc.mode_idx,
+                        hc.position,
+                        hc.scale,
+                    );
+                }
                 let changes = state.output_management_state.resolve_config(&pending);
                 drop(pending);
 
                 if let Some(changes) = changes {
+                    let n = changes.len();
                     // apply_output_config syncs heads + broadcasts done.
                     let ok = crate::udev_device::apply_output_config(state, changes);
+                    tracing::info!("output-mgmt Apply: applied {n} change(s), ok={ok}");
                     if ok {
                         config_obj.succeeded();
                     } else {
                         config_obj.failed();
                     }
                 } else {
+                    tracing::warn!(
+                        "output-mgmt Apply CANCELLED: client_serial={client_serial} != \
+                         cur_serial={cur_serial} (stale config — client missed a `done`)",
+                    );
                     config_obj.cancelled();
                 }
             }

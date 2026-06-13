@@ -18,6 +18,7 @@
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
 use super::limits::{RateLimits, RateWindow};
+use super::model_status::{ModelHealth, ModelStatus, MODEL_LABEL};
 use super::pricing::short_name;
 use super::stats::{DayBucket, UsageStats};
 
@@ -123,6 +124,7 @@ pub fn draw(
     text: &mut TextRenderer,
     stats: &UsageStats,
     limits: &RateLimits,
+    model_status: &ModelStatus,
     panel: Rect,
     top_y: f32,
     scale: f32,
@@ -147,6 +149,17 @@ pub fn draw(
     let hero_label = body * 0.95;
     // The big hero number is hand-scaled per card width so it can still
     // dominate the layout when the user picks a small text-size.
+
+    // 0a. Fable 5 availability — a compact "can I use it?" status row at
+    //     the very top. Driven by the model_status poller (live probe).
+    {
+        let row_h = body * 1.7;
+        draw_model_status_row(
+            painter, text, content_x, y, content_w, row_h, scale, body, stat, chip,
+            alpha, model_status, surface_w, surface_h,
+        );
+        y += row_h + pad * 0.6;
+    }
 
     // 0. Live limit bars — current 5-hour + weekly window utilization.
     //    Hidden until the limits poller delivers its first snapshot
@@ -522,6 +535,114 @@ fn draw_card(
         surface_w,
         surface_h,
     );
+}
+
+/// Compact model-availability row:
+///   `● Claude Fable 5 ················ Available · checked 2m ago`
+/// The dot + status word share a traffic-light color (green up, red down,
+/// grey while we wait for the first answer); the age chip is muted.
+#[allow(clippy::too_many_arguments)]
+fn draw_model_status_row(
+    painter: &mut Painter,
+    text: &mut TextRenderer,
+    x: f32,
+    y: f32,
+    w: f32,
+    row_h: f32,
+    scale: f32,
+    body: f32,
+    stat: f32,
+    chip: f32,
+    alpha: f32,
+    status: &ModelStatus,
+    surface_w: u32,
+    surface_h: u32,
+) {
+    let (dot, word) = match status.health {
+        ModelHealth::Up => (Color::from_rgb8(120, 220, 120), "Available"),
+        ModelHealth::Down => (Color::from_rgb8(255, 90, 90), "Unavailable"),
+        ModelHealth::Unknown => (Color::from_rgb8(150, 150, 150), "Checking\u{2026}"),
+    };
+
+    // Status dot (a fully-rounded square reads as a circle).
+    let dot_d = (body * 0.55).clamp(8.0 * scale, 14.0 * scale);
+    let dot_y = y + (row_h - dot_d) * 0.5;
+    painter.rect_filled(
+        Rect::new(x, dot_y, dot_d, dot_d),
+        dot_d / 2.0,
+        dot.with_alpha(alpha),
+    );
+
+    // Model label.
+    let l_top = y + (row_h - body) * 0.5 - body * 0.15;
+    let label_x = x + dot_d + 10.0 * scale;
+    text.queue(
+        MODEL_LABEL,
+        body,
+        label_x,
+        l_top,
+        white(0.92 * alpha),
+        w * 0.5,
+        surface_w,
+        surface_h,
+    );
+
+    // Right edge: status word (colored), with an optional muted "checked
+    // Nm ago" freshness chip to its right.
+    let right = x + w;
+    let mut word_right = right;
+    let age = status
+        .checked_at
+        .map(|t| {
+            let now = now_epoch();
+            if now >= t {
+                fmt_ago(now - t)
+            } else {
+                String::new()
+            }
+        })
+        .filter(|s| !s.is_empty());
+    if let Some(age) = age {
+        let age_text = format!("· {age}");
+        let aw = text.measure_width(&age_text, chip);
+        let a_top = y + (row_h - chip) * 0.5 - chip * 0.15;
+        text.queue(
+            &age_text,
+            chip,
+            right - aw,
+            a_top,
+            muted(0.6 * alpha),
+            // Half-em slack so the exact-width bound can't clip the last glyph.
+            aw + chip * 0.5,
+            surface_w,
+            surface_h,
+        );
+        word_right = right - aw - 10.0 * scale;
+    }
+    let ww = text.measure_width(word, stat);
+    let s_top = y + (row_h - stat) * 0.5 - stat * 0.15;
+    text.queue(
+        word,
+        stat,
+        word_right - ww,
+        s_top,
+        dot.with_alpha(alpha),
+        ww + stat * 0.5,
+        surface_w,
+        surface_h,
+    );
+}
+
+/// Coarse "time since" for the freshness chip: `just now`, `Nm ago`, `Nh ago`.
+fn fmt_ago(secs: u64) -> String {
+    let mins = secs / 60;
+    if mins < 1 {
+        "just now".to_string()
+    } else if mins < 60 {
+        format!("{mins}m ago")
+    } else {
+        format!("{}h ago", mins / 60)
+    }
 }
 
 /// One live rate-limit window row:

@@ -177,7 +177,7 @@ pub(crate) fn context_menu_style(palette: &FoxPalette) -> ContextMenuStyle {
     style.bg = lntrn_render::Color::from_rgba8(10, 10, 10, 255);
     style.bg_hover = palette.accent.with_alpha(0.16);
     style.border = palette.accent.with_alpha(0.35);
-    style.border_width = 1.5;
+    style.border_width = 2.5;
     style.corner_radius = 12.0;
     style.separator = palette.accent.with_alpha(0.12);
     style

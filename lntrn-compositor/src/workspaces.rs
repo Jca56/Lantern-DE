@@ -610,6 +610,24 @@ impl PerOutputWorkspaces {
             .unwrap_or_default()
     }
 
+    /// Every (surface, workspace_id) on an output across ALL its workspaces,
+    /// not just the active one. Used when disabling an output so windows on
+    /// inactive workspaces get rescued too.
+    pub fn all_surfaces_on_output(&self, output_name: &str) -> Vec<(WlSurface, u32)> {
+        self.per_output
+            .get(output_name)
+            .map(|ow| {
+                ow.workspaces
+                    .iter()
+                    .flat_map(|(id, ws)| {
+                        let id = *id;
+                        ws.windows.iter().cloned().map(move |s| (s, id))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// True if a surface is on the active workspace of its output (i.e., visible).
     pub fn is_on_active(&self, surface: &WlSurface) -> bool {
         let Some((output, id)) = self.window_workspace_ref(surface) else { return false };
@@ -1038,6 +1056,59 @@ impl Lantern {
             }
         }
         None
+    }
+
+    /// Move every window off `from` onto the active workspace of `to`,
+    /// clamped fully inside `to`'s geometry so nothing lands off-screen.
+    /// Used when an output is disabled so its windows aren't stranded on a
+    /// monitor that no longer has a desktop. No-op if `to` has no geometry.
+    pub fn migrate_windows_off_output(&mut self, from: &str, to: &str) {
+        let Some(to_output) = self
+            .workspaces
+            .outputs_iter()
+            .find(|o| o.name() == to)
+            .cloned()
+        else {
+            return;
+        };
+        let Some(to_geo) = self.workspaces.output_geometry(&to_output) else {
+            return;
+        };
+        let target_id = self.workspaces.active_id(to);
+
+        for (surface, src_id) in self.workspaces.all_surfaces_on_output(from) {
+            let window = self.find_window_anywhere(&surface);
+            let old_loc = window
+                .as_ref()
+                .and_then(|w| self.window_location(w))
+                .unwrap_or(to_geo.loc);
+            let win_size = window
+                .as_ref()
+                .map(|w| w.geometry().size)
+                .unwrap_or_default();
+
+            if !self.workspaces.move_window(&surface, to, target_id) {
+                continue;
+            }
+            let Some(window) = window else { continue };
+
+            if let Some(src_space) = self.workspace_space_mut(from, src_id) {
+                src_space.unmap_elem(&window);
+            }
+
+            // Clamp the window's old position into the target output so it's
+            // fully visible there rather than keeping coordinates that fell on
+            // the now-gone monitor.
+            let max_x = (to_geo.loc.x + to_geo.size.w - win_size.w).max(to_geo.loc.x);
+            let max_y = (to_geo.loc.y + to_geo.size.h - win_size.h).max(to_geo.loc.y);
+            let new_loc = Point::from((
+                old_loc.x.clamp(to_geo.loc.x, max_x),
+                old_loc.y.clamp(to_geo.loc.y, max_y),
+            ));
+            if let Some(tspace) = self.workspace_space_mut(to, target_id) {
+                tspace.map_element(window, new_loc, true);
+            }
+        }
     }
 
     /// Find a mapped Window on the ACTIVE workspace of any output.

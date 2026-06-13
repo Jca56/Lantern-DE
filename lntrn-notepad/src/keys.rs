@@ -29,6 +29,10 @@ pub fn handle_key(
     }
 
     if matches!(key, Key::Named(NamedKey::Escape)) {
+        if handler.context_menu.is_open() {
+            handler.context_menu.close();
+            return KeyAction::Consumed;
+        }
         if handler.fmt_toolbar.size_editing {
             handler.fmt_toolbar.size_editing = false;
             handler.fmt_toolbar.size_buffer.clear();

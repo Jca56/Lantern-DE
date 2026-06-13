@@ -134,6 +134,7 @@ impl Lantern {
                     drm_mode_index: None,
                     position: pos_change,
                     scale: scale_change,
+                    enabled: None,
                 });
             }
         }

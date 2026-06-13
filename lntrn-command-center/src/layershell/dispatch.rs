@@ -122,6 +122,7 @@ impl Dispatch<wl_output::WlOutput, u32> for WlState {
             .entry(output.id())
             .or_insert(OutputData { registry_name: *registry_name, ..Default::default() });
         match event {
+            wl_output::Event::Name { name } => data.name = name,
             wl_output::Event::Scale { factor } => {
                 data.scale = factor;
                 state.fallback_scale = factor;

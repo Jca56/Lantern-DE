@@ -28,27 +28,31 @@ const SLIDE_OUT_SECS: f32 = 0.4;
 const CRITICAL_DISPLAY_SECS: f32 = 10.0;
 
 fn notification_sound_path() -> Option<std::path::PathBuf> {
-    let xdg_data = std::env::var("XDG_DATA_HOME")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-            std::path::PathBuf::from(home).join(".local/share")
-        });
-    let path = xdg_data.join("lantern/notification.mp3");
-    if path.exists() { Some(path) } else { None }
+    let sounds = lntrn_theme::lantern_home()?.join("sounds");
+    // Prefer the lossless wav (cleaner, no encode clipping); fall back to the
+    // legacy mp3 so machines that only have the old asset still chime.
+    for name in ["notification.wav", "notification.mp3"] {
+        let path = sounds.join(name);
+        if path.exists() { return Some(path); }
+    }
+    None
 }
 
 fn play_notification_sound(volume: f32) {
     if volume <= 0.0 { return; }
     if let Some(path) = notification_sound_path() {
         let vol = volume.clamp(0.0, 1.0);
+        // One-shot jingle on its own rodio stream (same backend as the music
+        // player). `OutputStream` isn't `Send`, so build it inside the thread
+        // and hold it alive until playback finishes via `sleep_until_end`.
         std::thread::spawn(move || {
-            let _ = std::process::Command::new("pw-play")
-                .arg(format!("--volume={}", vol))
-                .arg(&path)
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status();
+            let Ok((_stream, handle)) = rodio::OutputStream::try_default() else { return };
+            let Ok(sink) = rodio::Sink::try_new(&handle) else { return };
+            sink.set_volume(vol);
+            let Ok(file) = std::fs::File::open(&path) else { return };
+            let Ok(source) = rodio::Decoder::new(std::io::BufReader::new(file)) else { return };
+            sink.append(source);
+            sink.sleep_until_end();
         });
     }
 }

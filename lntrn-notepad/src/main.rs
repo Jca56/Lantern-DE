@@ -1,5 +1,6 @@
 mod actions;
 mod clipboard;
+mod context_menu;
 mod editor;
 mod find_bar;
 mod fonts;
@@ -19,6 +20,7 @@ mod theme;
 mod title_bar;
 mod tokens;
 mod toolbar;
+mod window_size;
 mod wrap;
 
 use std::time::{Duration, Instant};
@@ -28,10 +30,11 @@ use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::ModifiersState;
 use winit::platform::wayland::WindowAttributesExtWayland;
+use winit::monitor::MonitorHandle;
 use winit::window::{CursorIcon, ResizeDirection, Window, WindowAttributes, WindowId};
 
 use lntrn_render::{GpuContext, Painter, TextRenderer};
-use lntrn_ui::gpu::{FoxPalette, InteractionContext, MenuBar, MenuEvent, ScrollArea};
+use lntrn_ui::gpu::{ContextMenu, FoxPalette, InteractionContext, MenuBar, MenuEvent, ScrollArea};
 
 use clipboard::WaylandClipboard;
 use editor::Editor;
@@ -92,6 +95,7 @@ pub(crate) struct TextHandler {
     pub(crate) find_bar: FindBar,
     pub(crate) input: InteractionContext,
     pub(crate) menu_bar: MenuBar,
+    pub(crate) context_menu: ContextMenu,
     pub(crate) fmt_toolbar: FormatToolbar,
     pub(crate) clipboard: Option<WaylandClipboard>,
     pub(crate) theme: Theme,
@@ -142,6 +146,7 @@ impl TextHandler {
             find_bar: FindBar::new(),
             input: InteractionContext::new(),
             menu_bar: MenuBar::new(&palette),
+            context_menu: ContextMenu::new(context_menu::context_menu_style(&palette)),
             fmt_toolbar: FormatToolbar::new(),
             clipboard: WaylandClipboard::new(),
             theme,
@@ -279,9 +284,32 @@ impl TextHandler {
         self.cursor_blink_deadline = Instant::now() + BLINK_INTERVAL;
     }
 
+    /// Open the right-click context menu at physical (x, y). Restyles from the
+    /// live theme/accent and bakes in the current scale so it renders crisp at
+    /// any output scale, then closes the title-bar dropdown so only one menu is
+    /// ever up.
+    pub(crate) fn open_context_menu(&mut self, x: f32, y: f32) {
+        self.menu_bar.close();
+        let style = context_menu::context_menu_style(&self.palette).with_scale(self.scale);
+        self.context_menu.set_style(style);
+        let has_sel = self.editor().has_selection();
+        self.context_menu.open(x, y, context_menu::build_items(has_sel));
+        self.needs_redraw = true;
+    }
+
 }
 
 // ── Application handler ──────────────────────────────────────────────────────
+
+/// The largest connected output by pixel area. winit gives us no current /
+/// primary monitor on Lantern and lists outputs smallest-first, so this is how
+/// we find the display the notepad should size itself against — the desktop's
+/// 4K primary, or the laptop's single panel.
+fn largest_monitor(event_loop: &ActiveEventLoop) -> Option<MonitorHandle> {
+    event_loop
+        .available_monitors()
+        .max_by_key(|m| m.size().width as u64 * m.size().height as u64)
+}
 
 impl ApplicationHandler for TextHandler {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
@@ -289,23 +317,38 @@ impl ApplicationHandler for TextHandler {
             return;
         }
 
-        let initial_size = winit::dpi::LogicalSize::new(900.0, 1100.0);
+        // A portrait window sized as a share of the active output — taller than
+        // wide, scale-agnostic on both the laptop and the 4K desktop. On this
+        // compositor winit reports neither a current nor a primary monitor and
+        // lists outputs smallest-first, so we size to the LARGEST output (the
+        // roomy desktop primary / the laptop's only panel) instead of guessing.
+        // The target is in PHYSICAL pixels (monitor physical size is accurate);
+        // we convert to the logical request via the window's REAL scale below.
+        let monitor = largest_monitor(event_loop);
+        let (target_w, target_h) = window_size::portrait_physical(monitor.as_ref());
         let attrs = WindowAttributes::default()
             .with_name("lntrn-notepad", "lntrn-notepad")
             .with_title("lntrn-notepad")
-            .with_inner_size(initial_size)
+            // First guess for the attribute (scale unknown pre-creation).
+            .with_inner_size(winit::dpi::LogicalSize::new(target_w, target_h))
             .with_decorations(false)
             .with_transparent(true);
 
         let window = event_loop
             .create_window(attrs)
             .expect("Failed to create window");
-        // Lantern suggests `[windows] default_size_pct` in the initial
-        // configure and winit obeys it, overriding the size requested
-        // above — re-assert our deliberate compact size (the suggestion
-        // is meant for apps that don't pick their own).
-        let _ = window.request_inner_size(initial_size);
         self.scale = window.scale_factor() as f32;
+        // Lantern suggests `[windows] default_size_pct` in the initial configure
+        // and winit adopts it, overriding the attribute above — re-assert our
+        // deliberate portrait size. winit turns a LogicalSize into a buffer of
+        // `logical × real_scale`, so divide the physical target by the window's
+        // true fractional scale (the MonitorHandle's is rounded to 2.0 on the
+        // 4K and would land the window ~30% too small). One request, no loop.
+        let real_scale = (window.scale_factor()).max(1.0);
+        let _ = window.request_inner_size(winit::dpi::LogicalSize::new(
+            target_w / real_scale,
+            target_h / real_scale,
+        ));
 
         let size = window.inner_size();
         let gpu_ctx = GpuContext::from_window(&window, size.width, size.height)
@@ -394,6 +437,16 @@ impl ApplicationHandler for TextHandler {
             }
 
             WindowEvent::MouseWheel { delta, .. } => {
+                // A scroll dismisses the right-click menu rather than leaving it
+                // floating over content that slides out from under it.
+                if self.context_menu.is_open() {
+                    self.context_menu.close();
+                    self.needs_redraw = true;
+                    if let Some(window) = &self.window {
+                        window.request_redraw();
+                    }
+                    return;
+                }
                 let scroll = match delta {
                     MouseScrollDelta::LineDelta(_, y) => -y * 60.0 * self.scale,
                     MouseScrollDelta::PixelDelta(pos) => -pos.y as f32,
@@ -443,7 +496,7 @@ impl ApplicationHandler for TextHandler {
                 let active = self.active_tab;
                 let editor = &mut self.tabs[active];
                 let find_bar = &self.find_bar;
-                let event = if let Some(gpu) = self.gpu.as_mut() {
+                let (event, ctx_event) = if let Some(gpu) = self.gpu.as_mut() {
                     render::render_frame(
                         gpu,
                         editor,
@@ -452,6 +505,7 @@ impl ApplicationHandler for TextHandler {
                         find_bar,
                         &mut self.input,
                         &mut self.menu_bar,
+                        &mut self.context_menu,
                         &mut self.fmt_toolbar,
                         &palette,
                         theme,
@@ -460,8 +514,14 @@ impl ApplicationHandler for TextHandler {
                         cursor_vis,
                     )
                 } else {
-                    None
+                    (None, None)
                 };
+                if let Some(evt) = ctx_event {
+                    if context_menu::handle_event(self, &evt) {
+                        self.context_menu.close();
+                    }
+                    self.needs_redraw = true;
+                }
                 if let Some(evt) = event {
                     match evt {
                         MenuEvent::Action(MENU_NEW) => {

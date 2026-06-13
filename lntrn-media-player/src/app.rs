@@ -4,6 +4,12 @@ use std::time::{Duration, Instant};
 use lntrn_render::{GpuContext, GpuTexture, TexturePass};
 
 use crate::pipeline::MediaPipeline;
+use crate::position_store::PositionStore;
+
+/// Resume positions in the first/last `RESUME_MARGIN_NS` of a file are dropped:
+/// the start isn't worth resuming, and the tail means the file basically
+/// finished — both should reopen from the beginning instead.
+const RESUME_MARGIN_NS: i64 = 5_000_000_000; // 5 seconds
 
 pub const VIS_BARS: usize = 20;
 
@@ -64,6 +70,11 @@ pub struct App {
     // Visualizer theme (index into vis_theme::VIS_THEMES) + View dropdown state.
     pub vis_theme_index: usize,
     pub view_menu_open: bool,
+    // Resume-where-you-left-off: remembered positions keyed by file URI,
+    // persisted to disk. `pending_resume_ns` is a seek queued at open time and
+    // applied once the pipeline prerolls (a known duration means it's seekable).
+    position_store: PositionStore,
+    pending_resume_ns: Option<u64>,
 }
 
 impl App {
@@ -93,6 +104,8 @@ impl App {
             last_query: Instant::now(),
             vis_theme_index: crate::vis_theme::load_theme_index(),
             view_menu_open: false,
+            position_store: PositionStore::load(),
+            pending_resume_ns: None,
         }
     }
 
@@ -116,6 +129,10 @@ impl App {
     }
 
     fn open_file_internal(&mut self, abs: &Path) {
+        // Remember where we were in the outgoing file before swapping pipelines
+        // (covers next/prev and folder auto-advance, not just app close).
+        self.save_current_position();
+
         let uri = format!("file://{}", abs.display());
         match MediaPipeline::new(&uri) {
             Ok(pipe) => {
@@ -136,6 +153,11 @@ impl App {
                 self.seeking = false;
                 self.audio_only = false;
                 self.vis_bars = vec![0.0; VIS_BARS];
+                // Queue a resume to the remembered spot. Can't seek yet — the
+                // pipeline hasn't prerolled — so `tick` applies it once a
+                // duration is known. None if we've never seen this file.
+                self.pending_resume_ns =
+                    self.position_store.get_position(&uri).map(|p| p as u64);
             }
             Err(e) => {
                 self.status_text = format!("Failed to open: {e}");
@@ -186,6 +208,18 @@ impl App {
             if self.duration_ns == 0 {
                 if let Some(dur) = pipe.duration() {
                     self.duration_ns = dur;
+                }
+            }
+            // Apply a queued resume once the pipeline has prerolled (a known
+            // duration means it's seekable). Clamp away from the very end and
+            // run it exactly once.
+            if let Some(target) = self.pending_resume_ns {
+                if self.duration_ns > 0 {
+                    let safe_end = self.duration_ns.saturating_sub(RESUME_MARGIN_NS as u64);
+                    let clamped = target.min(safe_end);
+                    pipe.seek(clamped);
+                    self.position_ns = clamped;
+                    self.pending_resume_ns = None;
                 }
             }
         }
@@ -359,6 +393,25 @@ impl App {
             pipe.seek(target);
         }
         self.seeking = false;
+    }
+
+    /// Persist the current playback position for the open file so reopening it
+    /// later resumes from here. Positions in the first or last `RESUME_MARGIN_NS`
+    /// are cleared instead — too trivial to resume, or the file effectively
+    /// finished. Safe to call any time (no-op when nothing is open).
+    pub fn save_current_position(&mut self) {
+        let Some(path) = &self.file_path else { return };
+        let uri = format!("file://{}", path.display());
+        let pos = self.position_ns as i64;
+        let dur = self.duration_ns as i64;
+        let resumable =
+            pos > RESUME_MARGIN_NS && (dur == 0 || pos < dur - RESUME_MARGIN_NS);
+        if resumable {
+            self.position_store.set_position(&uri, pos);
+        } else {
+            self.position_store.clear_position(&uri);
+        }
+        self.position_store.save();
     }
 
     pub fn adjust_volume(&mut self, delta: f64) {

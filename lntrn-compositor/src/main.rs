@@ -23,6 +23,7 @@ mod input;
 mod keyboard_focus;
 mod layer_position;
 mod minimize_anim;
+mod output_toggle;
 mod rect_anim;
 mod render;
 mod window_state_anim;
@@ -45,6 +46,7 @@ mod power;
 mod wallpaper;
 mod window_ext;
 mod window_management;
+mod window_query_ipc;
 mod window_state;
 mod winit;
 mod x11_resources;
@@ -256,6 +258,11 @@ pub(crate) struct MonitorConfig {
     /// Luminance (nits) that SDR white maps to inside the HDR signal. The
     /// BT.2408 reference is 203. Higher = brighter SDR content. Default 203.
     pub sdr_brightness: Option<u32>,
+    /// Whether this monitor's desktop is active. `false` = the user manually
+    /// switched it off in System Settings; the compositor tears down its
+    /// output (no dead pointer/window zone) but keeps it re-enableable. The
+    /// monitor stays physically plugged in. Defaults to true.
+    pub enabled: bool,
 }
 
 /// A per-app window sizing rule from `[[window_rules]]` in lantern.toml.
@@ -386,12 +393,14 @@ pub(crate) fn read_monitor_configs() -> Vec<MonitorConfig> {
     let mut vrr = false;
     let mut hdr = false;
     let mut sdr_brightness: Option<u32> = None;
+    let mut enabled = true;
 
     let mut flush = |name: &mut String, x: &mut Option<i32>, y: &mut Option<i32>,
                      resolution: &mut Option<String>, refresh_rate: &mut Option<u32>,
                      scale: &mut Option<f64>, wallpaper: &mut Option<String>,
                      primary: &mut bool, vrr: &mut bool,
                      hdr: &mut bool, sdr_brightness: &mut Option<u32>,
+                     enabled: &mut bool,
                      monitors: &mut Vec<MonitorConfig>| {
         if !name.is_empty() {
             monitors.push(MonitorConfig {
@@ -406,6 +415,10 @@ pub(crate) fn read_monitor_configs() -> Vec<MonitorConfig> {
                 vrr: std::mem::take(vrr),
                 hdr: std::mem::take(hdr),
                 sdr_brightness: sdr_brightness.take(),
+                // Reset to the default (true) for the next section — bare
+                // `mem::take` would leave it false and silently disable any
+                // following monitor that omits the key.
+                enabled: { let e = *enabled; *enabled = true; e },
             });
         }
     };
@@ -413,13 +426,13 @@ pub(crate) fn read_monitor_configs() -> Vec<MonitorConfig> {
     for line in contents.lines() {
         let trimmed = line.trim();
         if trimmed == "[[monitors]]" {
-            flush(&mut name, &mut x, &mut y, &mut resolution, &mut refresh_rate, &mut scale, &mut wallpaper, &mut primary, &mut vrr, &mut hdr, &mut sdr_brightness, &mut monitors);
+            flush(&mut name, &mut x, &mut y, &mut resolution, &mut refresh_rate, &mut scale, &mut wallpaper, &mut primary, &mut vrr, &mut hdr, &mut sdr_brightness, &mut enabled, &mut monitors);
             in_monitors = true;
             continue;
         }
         if trimmed.starts_with('[') {
             if in_monitors {
-                flush(&mut name, &mut x, &mut y, &mut resolution, &mut refresh_rate, &mut scale, &mut wallpaper, &mut primary, &mut vrr, &mut hdr, &mut sdr_brightness, &mut monitors);
+                flush(&mut name, &mut x, &mut y, &mut resolution, &mut refresh_rate, &mut scale, &mut wallpaper, &mut primary, &mut vrr, &mut hdr, &mut sdr_brightness, &mut enabled, &mut monitors);
             }
             in_monitors = false;
             continue;
@@ -440,6 +453,7 @@ pub(crate) fn read_monitor_configs() -> Vec<MonitorConfig> {
                     "vrr" => vrr = v == "true",
                     "hdr" => hdr = v == "true",
                     "sdr_brightness" => sdr_brightness = v.parse().ok(),
+                    "enabled" => enabled = v != "false",
                     _ => {}
                 }
             }
@@ -447,7 +461,7 @@ pub(crate) fn read_monitor_configs() -> Vec<MonitorConfig> {
     }
     // Flush last entry
     if in_monitors {
-        flush(&mut name, &mut x, &mut y, &mut resolution, &mut refresh_rate, &mut scale, &mut wallpaper, &mut primary, &mut vrr, &mut hdr, &mut sdr_brightness, &mut monitors);
+        flush(&mut name, &mut x, &mut y, &mut resolution, &mut refresh_rate, &mut scale, &mut wallpaper, &mut primary, &mut vrr, &mut hdr, &mut sdr_brightness, &mut enabled, &mut monitors);
     }
 
     monitors
@@ -515,6 +529,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Err(e) = crate::clipboard_manager::install_recheck_source(&mut state) {
         tracing::warn!("clipboard recheck source install failed: {e}");
     }
+    crate::window_query_ipc::install_source(&mut state);
 
     // Generate the Lantern Xcursor theme on disk before XWayland spawns so
     // X11 clients see our cursor instead of falling back to Adwaita / the

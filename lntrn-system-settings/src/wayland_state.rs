@@ -20,6 +20,9 @@ use wayland_client::{
 use wayland_protocols::wp::cursor_shape::v1::client::{
     wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1,
 };
+use wayland_protocols::wp::fractional_scale::v1::client::{
+    wp_fractional_scale_manager_v1, wp_fractional_scale_v1,
+};
 use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
@@ -70,6 +73,11 @@ pub(crate) struct State {
     pub height: u32,
     pub scale: i32,
     pub output_phys_width: u32,
+    /// Preferred fractional scale from the compositor, numerator over 120
+    /// (e.g. 168 → 1.4×). 0 until the first `preferred_scale` event. This is
+    /// per-surface, so it follows the window across monitors and is immune to
+    /// a second output's wl_output events clobbering the global scale fields.
+    pub frac_scale_120: u32,
     pub maximized: bool,
     /// Tracked outputs from wl_output events (key = global name from registry).
     pub outputs: Vec<(u32, OutputInfo)>,
@@ -79,6 +87,10 @@ pub(crate) struct State {
     pub compositor: Option<wl_compositor::WlCompositor>,
     pub wm_base: Option<xdg_wm_base::XdgWmBase>,
     pub viewporter: Option<wp_viewporter::WpViewporter>,
+    pub frac_scale_mgr: Option<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
+    /// Kept alive for the surface's lifetime so the compositor keeps sending
+    /// `preferred_scale` updates; we never call methods on it directly.
+    pub frac_scale: Option<wp_fractional_scale_v1::WpFractionalScaleV1>,
     pub surface: Option<wl_surface::WlSurface>,
     pub xdg_surface: Option<xdg_surface::XdgSurface>,
     pub toplevel: Option<xdg_toplevel::XdgToplevel>,
@@ -117,10 +129,12 @@ impl State {
     pub fn new() -> Self {
         Self {
             running: true, configured: false, frame_done: true,
-            width: 0, height: 0, scale: 1, output_phys_width: 0, maximized: false,
+            width: 0, height: 0, scale: 1, output_phys_width: 0,
+            frac_scale_120: 0, maximized: false,
             outputs: Vec::new(),
             output_pending: std::collections::HashMap::new(),
             compositor: None, wm_base: None, viewporter: None,
+            frac_scale_mgr: None, frac_scale: None,
             surface: None, xdg_surface: None, toplevel: None, seat: None,
             cursor_x: 0.0, cursor_y: 0.0, pointer_in_surface: false,
             left_pressed: false, left_released: false, right_pressed: false,
@@ -140,7 +154,15 @@ impl State {
     }
 
     pub fn fractional_scale(&self) -> f64 {
-        if self.output_phys_width > 0 && self.width > 0 {
+        // Preferred: the compositor's per-surface fractional scale. It's correct
+        // for any window size and follows the surface across monitors — unlike
+        // dividing an output's physical width by the window width, which is only
+        // right when the window fills the output AND breaks the moment a second
+        // output's wl_output events overwrite the global `output_phys_width`
+        // (that's what shrank the window when disabling the secondary monitor).
+        if self.frac_scale_120 > 0 {
+            self.frac_scale_120 as f64 / 120.0
+        } else if self.output_phys_width > 0 && self.width > 0 {
             self.output_phys_width as f64 / self.width as f64
         } else {
             self.scale.max(1) as f64
@@ -163,6 +185,9 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 "wl_compositor" => { state.compositor = Some(registry.bind(name, version.min(6), qh, ())); }
                 "xdg_wm_base" => { state.wm_base = Some(registry.bind(name, version.min(5), qh, ())); }
                 "wp_viewporter" => { state.viewporter = Some(registry.bind(name, version.min(1), qh, ())); }
+                "wp_fractional_scale_manager_v1" => {
+                    state.frac_scale_mgr = Some(registry.bind(name, version.min(1), qh, ()));
+                }
                 "wl_output" => { let _: wl_output::WlOutput = registry.bind(name, version.min(4), qh, name); }
                 "wl_seat" => { state.seat = Some(registry.bind(name, version.min(9), qh, ())); }
                 "wp_cursor_shape_manager_v1" => {
@@ -188,6 +213,22 @@ impl Dispatch<wp_viewporter::WpViewporter, ()> for State {
 }
 impl Dispatch<wp_viewport::WpViewport, ()> for State {
     fn event(_: &mut Self, _: &wp_viewport::WpViewport, _: wp_viewport::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
+impl Dispatch<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1, ()> for State {
+    fn event(_: &mut Self, _: &wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1, _: wp_fractional_scale_manager_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
+impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ()> for State {
+    fn event(
+        state: &mut Self, _: &wp_fractional_scale_v1::WpFractionalScaleV1,
+        event: wp_fractional_scale_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+    ) {
+        if let wp_fractional_scale_v1::Event::PreferredScale { scale } = event {
+            state.frac_scale_120 = scale;
+            // Wake the run loop so the surface re-renders (and resizes) at the
+            // new scale even when otherwise idle.
+            state.frame_done = true;
+        }
+    }
 }
 
 impl Dispatch<xdg_wm_base::XdgWmBase, ()> for State {

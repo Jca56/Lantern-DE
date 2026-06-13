@@ -51,6 +51,7 @@ mod input_panel;
 mod keybinds_panel;
 mod lock_style_panel;
 mod lock_wallpaper_panel;
+mod machine;
 mod monitor_arrange;
 mod notifications_panel;
 mod panels;

@@ -1,5 +1,5 @@
 use lntrn_render::{Color, FontStyle, FontWeight, Rect, TextRenderer};
-use lntrn_ui::gpu::{FoxPalette, InteractionContext, MenuBar, MenuEvent};
+use lntrn_ui::gpu::{ContextMenu, FoxPalette, InteractionContext, MenuBar, MenuEvent};
 
 use crate::editor::{self, Editor};
 use crate::find_bar::{draw_find_bar, match_color, FindBar};
@@ -107,13 +107,14 @@ pub fn render_frame(
     find_bar: &FindBar,
     input: &mut InteractionContext,
     menu_bar: &mut MenuBar,
+    context_menu: &mut ContextMenu,
     fmt_toolbar: &mut FormatToolbar,
     palette: &FoxPalette,
     theme: Theme,
     scale: f32,
     page_width_frac: f32,
     cursor_visible: bool,
-) -> Option<MenuEvent> {
+) -> (Option<MenuEvent>, Option<MenuEvent>) {
     let Gpu { ctx, painter, text } = gpu;
 
     let w = ctx.width();
@@ -517,6 +518,12 @@ pub fn render_frame(
     menu_bar.draw_with_labels(painter, text, pal, &labels, w, h, s);
     let menu_event = menu_bar.context_menu.draw(painter, text, input, w, h);
 
+    // Right-click context menu (Copy/Cut/Paste/Select All) — drawn last so it
+    // sits above the menu-bar dropdown. Same shared widget + style as the
+    // Terminal and File Manager menus.
+    context_menu.update(0.016);
+    let ctx_event = context_menu.draw(painter, text, input, w, h);
+
     // ── Submit frame (layered) ───────────────────────────────────────
     match ctx.begin_frame("lntrn-notepad") {
         Ok(mut frame) => {
@@ -534,7 +541,7 @@ pub fn render_frame(
             text.render_layer(1, ctx, frame.encoder_mut(), &view);
 
             // Cursor overlay (on top of text, but not on top of menus).
-            if cursor_visible && !menu_bar.context_menu.is_open() {
+            if cursor_visible && !menu_bar.context_menu.is_open() && !context_menu.is_open() {
                 let c_line = editor.cursor_line;
                 let c_wraps = &editor.wrap_rows[c_line];
                 let c_row_idx = c_wraps
@@ -576,6 +583,6 @@ pub fn render_frame(
         Err(e) => eprintln!("[lntrn-notepad] render error: {e}"),
     }
 
-    menu_event
+    (menu_event, ctx_event)
 }
 
