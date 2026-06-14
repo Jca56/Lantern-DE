@@ -30,10 +30,11 @@ BINARIES := \
 	lntrn-snapshot \
 	lntrn-snapshot-gui \
 	lntrn-screencopy \
+	lntrn-afterglow \
 	lntrn-lockscreen
 
 # Extra binaries from multi-binary crates
-EXTRA_BINARIES := notify-send
+EXTRA_BINARIES := notify-send lntrn-afterglowd
 
 .PHONY: all build deploy install install-bins install-icons install-config \
         install-desktop install-wallpaper install-session install-portal \
@@ -118,6 +119,7 @@ install-desktop: dirs
 		lntrn-notepad/lntrn-notepad.desktop \
 		lntrn-sysmon/lntrn-sysmon.desktop \
 		lntrn-git/lntrn-git.desktop \
+		lntrn-afterglow/lntrn-afterglow.desktop \
 	; do \
 		if [ -f "$$f" ]; then \
 			cp "$$f" $(APP_DIR)/ && echo "  ✓ $$(basename $$f)"; \
@@ -166,6 +168,17 @@ install-udev:
 	@sudo udevadm control --reload-rules
 	@sudo udevadm trigger
 	@echo "  ✓ udev rules installed (backlight + battery)"
+
+# OpenRC service for the Afterglow root daemon (Gentoo). Auto-detects the
+# desktop user, so no per-machine edits needed. Enable + start with:
+#   sudo rc-update add lntrn-afterglowd default && sudo rc-service lntrn-afterglowd start
+install-afterglow-service:
+	@echo "Installing lntrn-afterglowd OpenRC service..."
+	@sudo cp lntrn-afterglow/lntrn-afterglowd.initd /etc/init.d/lntrn-afterglowd
+	@sudo chmod +x /etc/init.d/lntrn-afterglowd
+	@echo "  ✓ /etc/init.d/lntrn-afterglowd"
+	@echo "    enable: sudo rc-update add lntrn-afterglowd default"
+	@echo "    start:  sudo rc-service lntrn-afterglowd start"
 
 # ── All system-level installs ───────────────────────────────────────────────
 

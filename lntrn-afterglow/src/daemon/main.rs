@@ -5,6 +5,9 @@
 //!
 //!   lntrn-afterglowd --probe              hardware discovery report, no socket
 //!   lntrn-afterglowd --config <path>      serve; re-apply profile iff stable=1
+//!   lntrn-afterglowd --owner <uid>        socket owner when there's no SUDO_UID
+//!                                         (boot service — the init script
+//!                                         auto-detects the desktop user)
 
 mod server;
 
@@ -18,11 +21,13 @@ use lntrn_afterglow::{profile, SOCKET_PATH};
 fn main() {
     let mut probe = false;
     let mut config: Option<PathBuf> = None;
+    let mut owner: Option<u32> = None;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--probe" => probe = true,
             "--config" => config = args.next().map(PathBuf::from),
+            "--owner" => owner = args.next().and_then(|s| s.parse().ok()),
             other => {
                 eprintln!("afterglowd: unknown arg {other}");
                 std::process::exit(2);
@@ -48,6 +53,7 @@ fn main() {
                 for e in hw.apply_profile(&p) {
                     eprintln!("afterglowd: profile apply: {e}");
                 }
+                arm_crash_seatbelt(cfg.clone());
             }
             Some(_) => eprintln!("afterglowd: profile present but not marked stable — booting stock"),
             None => eprintln!("afterglowd: no profile yet"),
@@ -69,10 +75,11 @@ fn main() {
         }
     };
 
-    // Hand the socket to the session user (sudo caller); keep it 0600+owner.
-    let owner_uid = std::env::var("SUDO_UID")
-        .ok()
-        .and_then(|s| s.parse::<u32>().ok())
+    // Hand the socket to the desktop user so the unprivileged GUI can open it;
+    // keep it 0600 so only that user (the owning uid) and root reach it.
+    // Priority: explicit --owner (boot service) > SUDO_UID (sudo run) > self.
+    let owner_uid = owner
+        .or_else(|| std::env::var("SUDO_UID").ok().and_then(|s| s.parse().ok()))
         .unwrap_or_else(|| unsafe { libc::getuid() });
     let owner_gid = std::env::var("SUDO_GID")
         .ok()
@@ -130,6 +137,31 @@ fn peer_uid(stream: &UnixStream) -> Option<u32> {
         )
     };
     (ret == 0).then_some(cred.uid)
+}
+
+/// Crash seatbelt: a profile that boots is trusted only after it survives a
+/// settle window. We disarm (`stable=0`) on disk immediately so a boot that
+/// wedges the machine falls back to stock next time, then re-arm (`stable=1`)
+/// after a quiet uptime window if we're still alive to do it.
+fn arm_crash_seatbelt(cfg: PathBuf) {
+    const SETTLE_SECS: u64 = 60;
+    if let Some(mut p) = profile::load(&cfg) {
+        p.stable = false;
+        if let Err(e) = profile::save(&cfg, &p) {
+            eprintln!("afterglowd: seatbelt disarm failed: {e}");
+            return;
+        }
+    }
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(SETTLE_SECS));
+        if let Some(mut p) = profile::load(&cfg) {
+            p.stable = true;
+            match profile::save(&cfg, &p) {
+                Ok(()) => eprintln!("afterglowd: re-armed profile stable after {SETTLE_SECS}s uptime"),
+                Err(e) => eprintln!("afterglowd: seatbelt re-arm failed: {e}"),
+            }
+        }
+    });
 }
 
 fn print_probe(hw: &mut server::Hw) {

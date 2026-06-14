@@ -2,8 +2,7 @@
 //! whole [`Lantern`] state — kept out of `surface.rs` so the giant
 //! `render_surface` body stays focused on the pipeline.
 
-use std::time::{Duration, Instant};
-
+use smithay::desktop::utils::OutputPresentationFeedback;
 use smithay::{
     backend::{
         allocator::Fourcc,
@@ -20,60 +19,49 @@ use smithay::{
 };
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 
-/// Drain a pending presentation-time feedback for every surface in `space`
-/// + each live layer surface, and either signal it as `presented` or
-/// `discarded` depending on `rendered`.
-pub(super) fn send_presentation_feedback(
+/// Collect (move out) the pending presentation-time feedback for every surface
+/// in `space` + each live layer surface into an [`OutputPresentationFeedback`].
+///
+/// This is the first half of correct presentation timing: the feedback is
+/// gathered at render-submit, stashed on the output's surface, and then fired
+/// at the *next vblank* (`frame_finish`) with the real DRM scanout timestamp
+/// and sequence number. The old code fired it here, pre-flip, with wall-clock
+/// time and `seq = 0`, which made pacing clients (game engines, Mesa's WSI)
+/// beat against the refresh and collapse 240→40fps.
+pub(super) fn collect_presentation_feedback(
     space: &smithay::desktop::Space<smithay::desktop::Window>,
     layer_surfaces: &[smithay::wayland::shell::wlr_layer::LayerSurface],
-    start_time: Instant,
     output: &smithay::output::Output,
-    rendered: bool,
-) {
-    use smithay::wayland::compositor::SurfaceData;
-    use smithay::wayland::presentation::{PresentationFeedbackCachedState, Refresh};
+) -> OutputPresentationFeedback {
+    use smithay::desktop::utils::take_presentation_feedback_surface_tree;
     use smithay::reexports::wayland_protocols::wp::presentation_time::server::wp_presentation_feedback;
 
-    let timestamp = start_time.elapsed();
-    let refresh_ns = output
-        .current_mode()
-        .map(|m| 1_000_000_000_000u64 / m.refresh.max(1) as u64)
-        .unwrap_or(16_666_666);
-    let refresh = Refresh::fixed(Duration::from_nanos(refresh_ns));
-    let seq = 0u64;
-
-    // Use the SurfaceData passed by with_surfaces_surface_tree directly —
-    // re-entering with_states from inside its callback deadlocks on the
-    // surface state mutex (caused freeze on first toplevel map).
-    let drain = |_surface: &WlSurface, states: &SurfaceData| {
-        let feedbacks = std::mem::take(
-            &mut states
-                .cached_state
-                .get::<PresentationFeedbackCachedState>()
-                .current()
-                .callbacks,
-        );
-        for feedback in feedbacks {
-            if rendered {
-                feedback.presented(output, timestamp, refresh, seq, wp_presentation_feedback::Kind::Vsync);
-            } else {
-                feedback.discarded();
-            }
-        }
-    };
+    let mut feedback = OutputPresentationFeedback::new(output);
 
     let surfaces: Vec<WlSurface> = space
         .elements()
         .filter_map(|w| crate::window_ext::WindowExt::get_wl_surface(w))
         .collect();
     for s in &surfaces {
-        smithay::desktop::utils::with_surfaces_surface_tree(s, drain);
+        take_presentation_feedback_surface_tree(
+            s,
+            &mut feedback,
+            |_, _| Some(output.clone()),
+            |_, _| wp_presentation_feedback::Kind::empty(),
+        );
     }
     for ls in layer_surfaces {
         if ls.alive() {
-            smithay::desktop::utils::with_surfaces_surface_tree(ls.wl_surface(), drain);
+            take_presentation_feedback_surface_tree(
+                ls.wl_surface(),
+                &mut feedback,
+                |_, _| Some(output.clone()),
+                |_, _| wp_presentation_feedback::Kind::empty(),
+            );
         }
     }
+
+    feedback
 }
 
 /// Capture a window's surface content into an offscreen texture so the

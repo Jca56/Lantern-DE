@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Afterglow
+GenericName=Hardware Tuning
+Comment=Monitor and tune your GPU and CPU
+Exec=lntrn-afterglow
+Icon=lntrn-afterglow
+Terminal=false
+Categories=System;Settings;Monitor;
+Keywords=overclock;gpu;cpu;fan;power;monitor;tuning;afterburner;

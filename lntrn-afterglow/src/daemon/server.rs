@@ -215,6 +215,9 @@ impl Hw {
         if !p.epp.is_empty() {
             run("epp", self.cpu.set_epp(&p.epp));
         }
+        if p.turbo >= 0 {
+            run("turbo", self.cpu.set_no_turbo(p.turbo == 0));
+        }
         if p.max_freq_pct < 100 {
             run("max_freq_pct", self.cpu.set_max_freq_pct(p.max_freq_pct));
         }

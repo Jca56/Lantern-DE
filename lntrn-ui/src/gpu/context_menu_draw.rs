@@ -277,7 +277,7 @@ pub(super) fn draw_panel(
             }
             MenuItem::Slider { id, label, value } => {
                 let slider_h = SLIDER_ITEM_HEIGHT * s;
-                let label_size = FONT_CAPTION * s;
+                let label_size = style.font_size * s;
                 let track_h = SLIDER_TRACK_H * s;
 
                 let item_rect = Rect::new(inner_x, cy, inner_w, slider_h);

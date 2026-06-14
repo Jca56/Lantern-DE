@@ -13,6 +13,11 @@ struct Core {
     id: usize,
     freq_dir: PathBuf,
     max_khz: u64,
+    /// True for performance-core threads. On Intel hybrid parts P-cores carry
+    /// an HT sibling (2 logical CPUs share a physical core) while E-cores run
+    /// solo — a far more reliable split than comparing max turbo bins, which
+    /// Turbo Boost Max 3.0 perturbs per favoured core.
+    is_pcore: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -76,7 +81,15 @@ impl Cpu {
                     continue;
                 }
                 let max_khz = read_u64(&freq_dir.join("cpuinfo_max_freq")).unwrap_or(0);
-                cores.push(Core { id, freq_dir, max_khz });
+                let siblings = read_trim(&entry.path().join("topology/thread_siblings_list"))
+                    .map(|s| count_cpu_list(&s))
+                    .unwrap_or(1);
+                cores.push(Core {
+                    id,
+                    freq_dir,
+                    max_khz,
+                    is_pcore: siblings > 1,
+                });
             }
         }
         cores.sort_by_key(|c| c.id);
@@ -107,7 +120,6 @@ impl Cpu {
             self.prev_stat = Some(s);
         }
 
-        let pcore_khz = self.cores.iter().map(|c| c.max_khz).max().unwrap_or(0);
         let cores = self
             .cores
             .iter()
@@ -116,7 +128,7 @@ impl Cpu {
                 mhz: (read_u64(&c.freq_dir.join("scaling_cur_freq")).unwrap_or(0) / 1000)
                     as u32,
                 util_pct: per_core_util.get(&c.id).copied().unwrap_or(0.0),
-                is_pcore: c.max_khz == pcore_khz,
+                is_pcore: c.is_pcore,
             })
             .collect();
 
@@ -197,6 +209,24 @@ impl Cpu {
         }
         Ok(())
     }
+}
+
+/// Counts the CPUs named by a sysfs cpu-list like "0,1" or "0-1,4". Used to
+/// tell how many logical threads share a physical core.
+fn count_cpu_list(list: &str) -> usize {
+    let mut count = 0;
+    for part in list.split(',') {
+        match part.split_once('-') {
+            Some((a, b)) => {
+                if let (Ok(a), Ok(b)) = (a.trim().parse::<usize>(), b.trim().parse::<usize>()) {
+                    count += b.saturating_sub(a) + 1;
+                }
+            }
+            None if !part.trim().is_empty() => count += 1,
+            None => {}
+        }
+    }
+    count.max(1)
 }
 
 fn util_pct(prev: (u64, u64), cur: (u64, u64)) -> f32 {

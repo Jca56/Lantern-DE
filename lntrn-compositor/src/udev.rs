@@ -33,7 +33,11 @@ use smithay::{
     },
 };
 use smithay::backend::input::InputEvent;
-use smithay::utils::IsAlive;
+use smithay::backend::drm::{DrmEventMetadata, DrmEventTime};
+use smithay::desktop::utils::{send_frames_surface_tree, OutputPresentationFeedback};
+use smithay::utils::{IsAlive, Monotonic, Time};
+use smithay::wayland::presentation::Refresh;
+use smithay::reexports::wayland_protocols::wp::presentation_time::server::wp_presentation_feedback;
 use smithay_drm_extras::drm_scanner::DrmScanner;
 use tracing::{error, info, trace, warn};
 
@@ -86,6 +90,10 @@ pub(crate) struct OutputSurface {
     /// Whether direct scanout was allowed on the previous frame. Used purely to
     /// log engage/disengage transitions (not every frame).
     pub scanout_active: bool,
+    /// Presentation-time feedback collected when this frame was submitted, fired
+    /// at the next vblank (`frame_finish`) with the real scanout timestamp +
+    /// sequence. `None` between vblanks / for idle surfaces.
+    pub pending_feedback: Option<OutputPresentationFeedback>,
 }
 
 /// Floor for the vblank watchdog timeout. The watchdog scales with the
@@ -139,9 +147,15 @@ pub struct UdevData {
     /// state every render and the fingerprint never matches.
     pub blur_states: std::collections::HashMap<UdevOutputId, crate::blur::BlurState>,
     /// One-shot timer token for demand-driven rendering.
-    /// When a render is scheduled, we insert a timer to flush it;
-    /// `None` means no timer is pending (idle — zero CPU).
+    /// When a render is scheduled, we insert an *immediate* timer to flush it
+    /// on the next loop iteration; `None` means no render is queued (idle — zero
+    /// CPU). Immediate (not interval-delayed) so a freshly-committed frame is
+    /// queued well before the next vblank instead of racing it.
     pub(crate) render_timer: Option<smithay::reexports::calloop::RegistrationToken>,
+    /// Separate one-shot slot for the dropped-flip recovery watchdog. Kept apart
+    /// from `render_timer` so the watchdog can never block a demand render (and
+    /// vice-versa); cancelled in `frame_finish` once the flip actually lands.
+    pub(crate) watchdog_timer: Option<smithay::reexports::calloop::RegistrationToken>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -196,6 +210,7 @@ pub fn init_udev(
         backdrop_shader: None,
         blur_states: HashMap::new(),
         render_timer: None,
+        watchdog_timer: None,
     };
     state.udev = Some(udev_data);
 
@@ -422,41 +437,130 @@ pub fn init_udev(
     Ok(())
 }
 
-pub(crate) fn frame_finish(state: &mut Lantern, node: DrmNode, crtc: crtc::Handle) {
-
-    let udev = match state.udev.as_mut() {
-        Some(u) => u,
-        None => return,
+pub(crate) fn frame_finish(
+    state: &mut Lantern,
+    node: DrmNode,
+    crtc: crtc::Handle,
+    meta: Option<DrmEventMetadata>,
+) {
+    // The real scanout timestamp + vblank sequence, straight from the DRM
+    // page-flip event. This is what `wp_presentation` and the wl_surface frame
+    // callback must carry — pacing clients (game engines, Mesa's WSI) lock onto
+    // it. Fall back to our monotonic clock if the driver reports a realtime
+    // stamp or none, so the value stays absolute-CLOCK_MONOTONIC as advertised.
+    let (present_time, sequence): (Duration, u64) = match meta {
+        Some(m) => {
+            let t = match m.time {
+                DrmEventTime::Monotonic(d) => d,
+                DrmEventTime::Realtime(_) => Duration::from(state.clock.now()),
+            };
+            (t, m.sequence as u64)
+        }
+        None => (Duration::from(state.clock.now()), 0),
     };
 
-    let backend = match udev.backends.get_mut(&node) {
-        Some(b) => b,
-        None => return,
-    };
+    // Release the just-scanned-out buffer and pull the feedback we stashed for
+    // this frame. Scoped so the udev borrow ends before we touch space/output.
+    let (feedback, pending_render) = {
+        let udev = match state.udev.as_mut() {
+            Some(u) => u,
+            None => return,
+        };
+        let backend = match udev.backends.get_mut(&node) {
+            Some(b) => b,
+            None => return,
+        };
+        let surface = match backend.surfaces.get_mut(&crtc) {
+            Some(s) => s,
+            None => return,
+        };
 
-    let surface = match backend.surfaces.get_mut(&crtc) {
-        Some(s) => s,
-        None => return,
-    };
+        surface.frame_pending = false;
+        surface.frame_pending_since = None;
 
-    surface.frame_pending = false;
-    surface.frame_pending_since = None;
-
-    trace!("vblank: frame_submitted starting");
-    let submit_result = surface.drm_output.frame_submitted();
-    trace!("vblank: frame_submitted done");
-
-    match submit_result {
-        Ok(_) => {}
-        Err(e) => {
+        trace!("vblank: frame_submitted starting");
+        if let Err(e) = surface.drm_output.frame_submitted() {
             warn!("Frame submit error: {:?}", e);
         }
+        trace!("vblank: frame_submitted done");
+
+        (surface.pending_feedback.take(), surface.pending_render)
     };
 
-    // Vblank IS the pacing source — if a render is pending, do it now.
-    // The cooldown check is for the timer-driven path; here we already know
-    // a frame just completed, so we have a full vblank budget for the next.
-    if surface.pending_render {
+    // The flip landed — cancel the dropped-flip watchdog so it can't fire a
+    // spurious recovery render. (take() first to drop the udev borrow before
+    // touching loop_handle.)
+    let watchdog_tok = state.udev.as_mut().and_then(|u| u.watchdog_timer.take());
+    if let Some(tok) = watchdog_tok {
+        state.loop_handle.remove(tok);
+    }
+
+    // Resolve the output that just flipped.
+    let output = state
+        .workspaces
+        .outputs_iter()
+        .find(|o| {
+            o.user_data()
+                .get::<UdevOutputId>()
+                .map(|id| id.device_id == node && id.crtc == crtc)
+                .unwrap_or(false)
+        })
+        .cloned();
+
+    if let Some(output) = output {
+        // Presentation-time: this is the actual scanout. Fire it with the real
+        // monotonic timestamp + vblank sequence (was: pre-flip wall clock +
+        // seq 0, which made pacing clients beat against the refresh).
+        if let Some(mut fb) = feedback {
+            let refresh = Refresh::fixed(frame_callback_interval(&output));
+            let t: Time<Monotonic> = present_time.into();
+            fb.presented(t, refresh, sequence, wp_presentation_feedback::Kind::Vsync);
+        }
+
+        // Frame callbacks fire HERE (at vblank), not at render-submit — so a
+        // client wakes the instant its frame is on screen, with a full refresh
+        // interval of budget. throttle = half the frame interval: it passes on
+        // every real vblank (even with jitter) but still dedupes a surface that
+        // happens to span two outputs.
+        let throttle = Some(frame_callback_interval(&output) / 2);
+        for window in state.space.elements() {
+            window.send_frame(&output, present_time, throttle, |_, _| Some(output.clone()));
+        }
+        for ls in &state.layer_surfaces {
+            if ls.alive() {
+                send_frames_surface_tree(
+                    ls.wl_surface(),
+                    &output,
+                    present_time,
+                    throttle,
+                    |_, _| Some(output.clone()),
+                );
+            }
+        }
+        // Lock surfaces need vsync pacing too, or the lock client never
+        // repaints (clock stops, password dots lag).
+        if let Some(data) = state.session_lock.as_ref() {
+            for ls in data.surfaces.values() {
+                if ls.alive() {
+                    send_frames_surface_tree(
+                        ls.wl_surface(),
+                        &output,
+                        present_time,
+                        throttle,
+                        |_, _| Some(output.clone()),
+                    );
+                }
+            }
+        }
+        state.last_callback_render = Instant::now();
+    } else if let Some(mut fb) = feedback {
+        // Output vanished mid-flight (hotplug) — don't strand the clients.
+        fb.discarded();
+    }
+
+    // Vblank IS the pacing source — if a render is pending, do it now. We just
+    // freed the buffer, so there's a full interval of budget for the next one.
+    if pending_render {
         render_surface(state, node, crtc);
     }
 }
@@ -471,70 +575,23 @@ pub fn schedule_render_all(state: &mut Lantern) {
 /// monitor(s) through a full element build + render pass — at 240Hz primary
 /// + secondary that over-render was pure waste. Falls back to all-outputs
 /// when the output has no udev identity (winit, mid-hotplug).
-pub fn schedule_render_output(state: &mut Lantern, output: &smithay::output::Output) {
-    let Some(id) = output.user_data().get::<UdevOutputId>().copied() else {
-        schedule_render(state, false);
+/// Queue a render to run on the *next* event-loop iteration via an immediate
+/// one-shot timer (no-op if one is already queued). Immediate — not interval-
+/// delayed — so a frame committed just after a vblank is rendered and queued to
+/// DRM well before the following vblank, hitting full refresh instead of racing
+/// the deadline (the old interval timer structurally lost every other vblank).
+fn arm_render_timer(state: &mut Lantern) {
+    let already = state
+        .udev
+        .as_ref()
+        .map(|u| u.render_timer.is_some())
+        .unwrap_or(true);
+    if already {
         return;
-    };
-    let interval = fastest_output_interval(state);
-    let udev = match state.udev.as_mut() {
-        Some(u) => u,
-        None => return,
-    };
-    let needs_timer = udev.render_timer.is_none();
-    if let Some(surface) = udev
-        .backends
-        .get_mut(&id.device_id)
-        .and_then(|b| b.surfaces.get_mut(&id.crtc))
-    {
-        surface.pending_render = true;
-    } else {
-        // Output not backed by a live surface right now — be conservative.
-        for (_, backend) in &mut udev.backends {
-            for (_, surface) in &mut backend.surfaces {
-                surface.pending_render = true;
-            }
-        }
     }
-
-    if needs_timer {
-        let token = state.loop_handle.insert_source(
-            Timer::from_duration(interval),
-            |_, _, state| {
-                if let Some(udev) = state.udev.as_mut() {
-                    udev.render_timer = None;
-                }
-                flush_pending_renders(state, false);
-                TimeoutAction::Drop
-            },
-        );
-        if let Ok(token) = token {
-            if let Some(udev) = state.udev.as_mut() {
-                udev.render_timer = Some(token);
-            }
-        }
-    }
-}
-
-/// Arm a one-shot timer that will run shortly after VBLANK_TIMEOUT, so that
-/// `flush_pending_renders` gets a chance to detect a dropped page-flip and
-/// recover. Called from the render path right after `queue_frame` succeeds.
-pub fn arm_vblank_watchdog(state: &mut Lantern) {
-    let timeout = vblank_timeout(state);
-    let udev = match state.udev.as_mut() {
-        Some(u) => u,
-        None => return,
-    };
-    if udev.render_timer.is_some() {
-        return; // an existing timer will already wake us up
-    }
-    let delay = timeout + Duration::from_millis(20);
     let token = state.loop_handle.insert_source(
-        Timer::from_duration(delay),
+        Timer::immediate(),
         |_, _, state| {
-            if state.debug_counters.enabled {
-                state.debug_counters.timer_fires += 1;
-            }
             if let Some(udev) = state.udev.as_mut() {
                 udev.render_timer = None;
             }
@@ -549,60 +606,127 @@ pub fn arm_vblank_watchdog(state: &mut Lantern) {
     }
 }
 
+pub fn schedule_render_output(state: &mut Lantern, output: &smithay::output::Output) {
+    let Some(id) = output.user_data().get::<UdevOutputId>().copied() else {
+        schedule_render(state, false);
+        return;
+    };
+    // Mark the target surface(s) dirty, and decide whether to arm a render now.
+    // We only arm when a surface has NO page-flip in flight — when one does, its
+    // vblank handler re-renders on completion. This is what stops a client that
+    // commits faster than vblank (e.g. egui in Mailbox at 700fps) from driving
+    // 700 renders/sec: extra commits just re-set the (already true) flag.
+    let arm = {
+        let udev = match state.udev.as_mut() {
+            Some(u) => u,
+            None => return,
+        };
+        let mut arm = false;
+        if let Some(surface) = udev
+            .backends
+            .get_mut(&id.device_id)
+            .and_then(|b| b.surfaces.get_mut(&id.crtc))
+        {
+            surface.pending_render = true;
+            arm = !surface.frame_pending;
+        } else {
+            // Output not backed by a live surface right now — be conservative.
+            for (_, backend) in &mut udev.backends {
+                for (_, surface) in &mut backend.surfaces {
+                    surface.pending_render = true;
+                    arm |= !surface.frame_pending;
+                }
+            }
+        }
+        arm
+    };
+
+    if arm {
+        arm_render_timer(state);
+    }
+}
+
+/// Arm a one-shot timer that will run shortly after VBLANK_TIMEOUT, so that
+/// `flush_pending_renders` gets a chance to detect a dropped page-flip and
+/// recover. Called from the render path right after `queue_frame` succeeds.
+pub fn arm_vblank_watchdog(state: &mut Lantern) {
+    let timeout = vblank_timeout(state);
+    let already = state
+        .udev
+        .as_ref()
+        .map(|u| u.watchdog_timer.is_some())
+        .unwrap_or(true);
+    if already {
+        return; // a watchdog is already armed
+    }
+    let delay = timeout + Duration::from_millis(20);
+    let token = state.loop_handle.insert_source(
+        Timer::from_duration(delay),
+        |_, _, state| {
+            if state.debug_counters.enabled {
+                state.debug_counters.timer_fires += 1;
+            }
+            if let Some(udev) = state.udev.as_mut() {
+                udev.watchdog_timer = None;
+            }
+            flush_pending_renders(state, false);
+            TimeoutAction::Drop
+        },
+    );
+    if let Ok(token) = token {
+        if let Some(udev) = state.udev.as_mut() {
+            udev.watchdog_timer = Some(token);
+        }
+    }
+}
+
 /// Force a re-render even if a frame is pending (for cursor motion)
 pub fn schedule_render_forced(state: &mut Lantern) {
     schedule_render(state, true);
 }
 
 fn schedule_render(state: &mut Lantern, force: bool) {
-    let interval = fastest_output_interval(state);
-
-    let udev = match state.udev.as_mut() {
-        Some(u) => u,
-        None => return,
-    };
-
     if force {
         // Forced renders (e.g., Super+Shift+R) render immediately.
-        let mut targets = Vec::new();
-        for (node, backend) in &mut udev.backends {
-            for (crtc, surface) in &mut backend.surfaces {
-                surface.pending_render = true;
-                targets.push((*node, *crtc));
+        let targets = {
+            let udev = match state.udev.as_mut() {
+                Some(u) => u,
+                None => return,
+            };
+            let mut targets = Vec::new();
+            for (node, backend) in &mut udev.backends {
+                for (crtc, surface) in &mut backend.surfaces {
+                    surface.pending_render = true;
+                    targets.push((*node, *crtc));
+                }
             }
-        }
+            targets
+        };
 
         for (node, crtc) in targets {
             render_surface(state, node, crtc);
         }
     } else {
-        // Normal path: set flags and ensure a one-shot timer will flush them.
-        // This prevents mouse motion events from blocking on GPU rendering
-        // while also avoiding a permanent polling timer that wastes CPU at idle.
-        let needs_timer = udev.render_timer.is_none();
-        for (_, backend) in &mut udev.backends {
-            for (_, surface) in &mut backend.surfaces {
-                surface.pending_render = true;
-            }
-        }
-
-        if needs_timer {
-            let token = state.loop_handle.insert_source(
-                Timer::from_duration(interval),
-                |_, _, state| {
-                    // Clear the token so the next schedule_render can insert a new one
-                    if let Some(udev) = state.udev.as_mut() {
-                        udev.render_timer = None;
-                    }
-                    flush_pending_renders(state, false);
-                    TimeoutAction::Drop
-                },
-            );
-            if let Ok(token) = token {
-                if let Some(udev) = state.udev.as_mut() {
-                    udev.render_timer = Some(token);
+        // Normal path: set flags and queue an immediate render on the next loop
+        // iteration. This keeps mouse motion / animation ticks from blocking on
+        // GPU work, avoids a permanent polling timer at idle, and (via the
+        // !frame_pending guard) coalesces to one render per vblank.
+        let arm = {
+            let udev = match state.udev.as_mut() {
+                Some(u) => u,
+                None => return,
+            };
+            let mut arm = false;
+            for (_, backend) in &mut udev.backends {
+                for (_, surface) in &mut backend.surfaces {
+                    surface.pending_render = true;
+                    arm |= !surface.frame_pending;
                 }
             }
+            arm
+        };
+        if arm {
+            arm_render_timer(state);
         }
     }
 }

@@ -230,6 +230,11 @@ impl DebugCounters {
 
 pub struct Lantern {
     pub start_time: std::time::Instant,
+    /// Absolute CLOCK_MONOTONIC clock. Used as the presentation-time / frame-
+    /// callback timestamp fallback when a DRM vblank reports no monotonic stamp
+    /// (`wp_presentation` advertises CLOCK_MONOTONIC, so the value must stay in
+    /// that domain, not a process-relative `Instant::elapsed`).
+    pub clock: smithay::utils::Clock<smithay::utils::Monotonic>,
     pub socket_name: OsString,
     pub display_handle: DisplayHandle,
     pub loop_handle: LoopHandle<'static, Lantern>,
@@ -547,6 +552,7 @@ impl Lantern {
 
         Self {
             start_time,
+            clock: smithay::utils::Clock::new(),
             display_handle: dh,
             loop_handle,
             space,

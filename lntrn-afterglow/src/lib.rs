@@ -6,6 +6,7 @@
 //! one-line-response text protocol.
 
 pub mod hw;
+pub mod ipc;
 pub mod profile;
 pub mod protocol;
 

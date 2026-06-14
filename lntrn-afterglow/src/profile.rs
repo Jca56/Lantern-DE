@@ -24,6 +24,8 @@ pub struct Profile {
     /// Empty = leave alone.
     pub governor: String,
     pub epp: String,
+    /// Intel turbo: -1 leave alone, 0 disable, 1 enable.
+    pub turbo: i8,
     pub max_freq_pct: u32,
     pub stable: bool,
 }
@@ -42,6 +44,7 @@ impl Default for Profile {
             pl2_w: 0,
             governor: String::new(),
             epp: String::new(),
+            turbo: -1,
             max_freq_pct: 100,
             stable: false,
         }
@@ -72,6 +75,7 @@ pub fn load(path: &Path) -> Option<Profile> {
             "pl2_w" => p.pl2_w = value.parse().unwrap_or(0),
             "governor" => p.governor = value.to_string(),
             "epp" => p.epp = value.to_string(),
+            "turbo" => p.turbo = value.parse().unwrap_or(-1),
             "max_freq_pct" => p.max_freq_pct = value.parse().unwrap_or(100),
             "stable" => p.stable = value == "1",
             _ => {}
@@ -97,6 +101,7 @@ pub fn save(path: &Path, p: &Profile) -> io::Result<()> {
          pl2_w = {}\n\
          governor = {}\n\
          epp = {}\n\
+         turbo = {}\n\
          max_freq_pct = {}\n\
          stable = {}\n",
         p.core_offset,
@@ -110,6 +115,7 @@ pub fn save(path: &Path, p: &Profile) -> io::Result<()> {
         p.pl2_w,
         p.governor,
         p.epp,
+        p.turbo,
         p.max_freq_pct,
         p.stable as u8,
     );

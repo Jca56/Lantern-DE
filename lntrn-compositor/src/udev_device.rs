@@ -99,13 +99,15 @@ pub fn device_added(
 
     let drm_registration = state
         .loop_handle
-        .insert_source(drm_notifier, move |event, _metadata, state| {
+        .insert_source(drm_notifier, move |event, metadata, state| {
             if state.debug_counters.enabled {
                 state.debug_counters.drm_fires += 1;
             }
             match event {
                 DrmEvent::VBlank(crtc) => {
-                    crate::udev::frame_finish(state, node, crtc);
+                    // Hand the real scanout timestamp + vblank sequence to the
+                    // pacing path — pre-refactor this metadata was discarded.
+                    crate::udev::frame_finish(state, node, crtc, metadata.take());
                 }
                 DrmEvent::Error(err) => {
                     error!("DRM error: {:?}", err);
@@ -497,6 +499,7 @@ pub(crate) fn connector_connected(
             frame_pending_since: None,
             pending_render: false,
             scanout_active: false,
+            pending_feedback: None,
         },
     );
 

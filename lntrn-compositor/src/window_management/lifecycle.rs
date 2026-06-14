@@ -17,6 +17,13 @@ impl Lantern {
     /// though the window's final placement may end up on a different output.
     /// Returns None if no outputs are registered yet.
     pub(crate) fn default_initial_size_from_pct(&self) -> Option<(i32, i32)> {
+        self.initial_size_for_pct(crate::default_size_pct())
+    }
+
+    /// Compute an initial window size as `pct` of the anchor output's work
+    /// area. Shared by the global `default_size_pct` default and per-app
+    /// `[[window_rules]] size_pct` overrides (e.g. Firefox at 95%).
+    pub(crate) fn initial_size_for_pct(&self, pct: f32) -> Option<(i32, i32)> {
         let pointer_pos = self.seat.get_pointer()
             .map(|p| p.current_location())
             .unwrap_or_default();
@@ -27,10 +34,22 @@ impl Lantern {
         let work_w = geo.size.w - left - right;
         let work_h = geo.size.h - top - bot;
         if work_w <= 0 || work_h <= 0 { return None; }
-        let pct = crate::default_size_pct();
         let w = (((work_w as f32) * pct).round() as i32).max(1);
         let h = (((work_h as f32) * pct).round() as i32).max(1);
         Some((w, h))
+    }
+
+    /// Resolve a matched `[[window_rules]]` entry to a concrete pixel size:
+    /// `size_pct` (a fraction of the live work area) takes priority over a
+    /// fixed `width`/`height`. Returns None if the rule has neither usable.
+    fn resolve_rule_size(&self, rule: &crate::WindowRule) -> Option<(i32, i32)> {
+        if let Some(pct) = rule.size_pct {
+            return self.initial_size_for_pct(pct);
+        }
+        match (rule.width, rule.height) {
+            (Some(w), Some(h)) => Some((w, h)),
+            _ => None,
+        }
     }
 
     pub fn track_window(&mut self, window: &Window) {
@@ -205,7 +224,8 @@ impl Lantern {
         // The client's bare min_size only clamps the suggestion upward.
         let rule_size = self.window_rules.iter()
             .find(|r| r.app_id == app_id)
-            .map(|r| (r.width, r.height));
+            .cloned()
+            .and_then(|r| self.resolve_rule_size(&r));
         let pct_size = self.default_initial_size_from_pct();
         let Some((mut w, mut h)) = rule_size
             .or(client_exact)

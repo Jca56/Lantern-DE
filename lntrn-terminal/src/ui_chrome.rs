@@ -223,6 +223,7 @@ pub fn build_context_menu(
     active_tab: usize,
     pane_count: usize,
     sidebar_visible: bool,
+    font_size: f32,
 ) -> Vec<MenuItem> {
     let copy = if has_selection {
         MenuItem::action_with(CTX_COPY, "Copy", "Ctrl+Shift+C")
@@ -243,20 +244,19 @@ pub fn build_context_menu(
     vec![
         controls,
         MenuItem::separator(),
+        MenuItem::slider(MENU_FONT_SLIDER, "Text Size", ((font_size - 6.0) / 24.0).clamp(0.0, 1.0)),
         MenuItem::action(CTX_OPEN_SIDEBAR, sidebar_label),
         MenuItem::separator(),
         copy,
         MenuItem::action_with(CTX_PASTE, "Paste", "Ctrl+Shift+V"),
         MenuItem::action(CTX_SELECT_ALL, "Select All"),
         MenuItem::separator(),
-        MenuItem::action_with(MENU_SPLIT_RIGHT, "Split Right", "Ctrl+Shift+D"),
-        MenuItem::action_with(MENU_SPLIT_DOWN, "Split Down", "Ctrl+Shift+E"),
-        MenuItem::action_with(MENU_CLOSE_PANE, "Close Pane", "Ctrl+Shift+W").enabled(pane_count > 1),
-        MenuItem::separator(),
         MenuItem::action_with(CTX_NEW_TAB, "New Tab", "Ctrl+Shift+T"),
         MenuItem::action(CTX_CLOSE_TAB, "Close Tab"),
         MenuItem::separator(),
-        MenuItem::action(CTX_CLEAR_SCROLLBACK, "Clear Scrollback"),
+        MenuItem::action_with(MENU_SPLIT_RIGHT, "Split Right", "Ctrl+Shift+D"),
+        MenuItem::action_with(MENU_SPLIT_DOWN, "Split Down", "Ctrl+Shift+E"),
+        MenuItem::action_with(MENU_CLOSE_PANE, "Close Pane", "Ctrl+Shift+W").enabled(pane_count > 1),
     ]
 }
 

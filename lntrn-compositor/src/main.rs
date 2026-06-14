@@ -266,11 +266,16 @@ pub(crate) struct MonitorConfig {
 }
 
 /// A per-app window sizing rule from `[[window_rules]]` in lantern.toml.
+/// A rule sizes a matching app either by a fraction of the work area
+/// (`size_pct`, preferred — adapts to whatever output/scale is live) or by
+/// fixed `width`/`height` pixels. `size_pct` wins when both are present.
 #[derive(Debug, Clone)]
 pub(crate) struct WindowRule {
     pub app_id: String,
-    pub width: i32,
-    pub height: i32,
+    pub width: Option<i32>,
+    pub height: Option<i32>,
+    /// Fraction of the anchor output's work area (0.05..=1.0), e.g. 0.95.
+    pub size_pct: Option<f32>,
 }
 
 /// Default window size from `[windows] default_width/default_height`.
@@ -328,27 +333,30 @@ pub(crate) fn read_window_rules() -> Vec<WindowRule> {
     let mut app_id = String::new();
     let mut width: Option<i32> = None;
     let mut height: Option<i32> = None;
+    let mut size_pct: Option<f32> = None;
 
-    let flush = |app_id: &mut String, width: &mut Option<i32>, height: &mut Option<i32>, rules: &mut Vec<WindowRule>| {
-        if !app_id.is_empty() {
-            if let (Some(w), Some(h)) = (width.take(), height.take()) {
-                rules.push(WindowRule { app_id: std::mem::take(app_id), width: w, height: h });
-            } else {
-                app_id.clear();
-            }
+    // A rule is valid with a percentage, or with both fixed dimensions.
+    let flush = |app_id: &mut String,
+                 width: &mut Option<i32>,
+                 height: &mut Option<i32>,
+                 size_pct: &mut Option<f32>,
+                 rules: &mut Vec<WindowRule>| {
+        let (id, w, h, pct) = (std::mem::take(app_id), width.take(), height.take(), size_pct.take());
+        if !id.is_empty() && (pct.is_some() || (w.is_some() && h.is_some())) {
+            rules.push(WindowRule { app_id: id, width: w, height: h, size_pct: pct });
         }
     };
 
     for line in contents.lines() {
         let trimmed = line.trim();
         if trimmed == "[[window_rules]]" {
-            flush(&mut app_id, &mut width, &mut height, &mut rules);
+            flush(&mut app_id, &mut width, &mut height, &mut size_pct, &mut rules);
             in_rule = true;
             continue;
         }
         if trimmed.starts_with('[') {
             if in_rule {
-                flush(&mut app_id, &mut width, &mut height, &mut rules);
+                flush(&mut app_id, &mut width, &mut height, &mut size_pct, &mut rules);
             }
             in_rule = false;
             continue;
@@ -361,13 +369,17 @@ pub(crate) fn read_window_rules() -> Vec<WindowRule> {
                     "app_id" => app_id = v.to_string(),
                     "width" => width = v.parse().ok(),
                     "height" => height = v.parse().ok(),
+                    // Accept an integer percent (e.g. 95), clamped to 5..=100.
+                    "size_pct" => {
+                        size_pct = v.parse::<u32>().ok().map(|p| p.clamp(5, 100) as f32 / 100.0)
+                    }
                     _ => {}
                 }
             }
         }
     }
     if in_rule {
-        flush(&mut app_id, &mut width, &mut height, &mut rules);
+        flush(&mut app_id, &mut width, &mut height, &mut size_pct, &mut rules);
     }
 
     rules

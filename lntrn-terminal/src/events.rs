@@ -737,6 +737,7 @@ impl App {
             self.active_tab,
             pane_count,
             self.sidebar.visible,
+            self.effective_font_size(),
         )
     }
 

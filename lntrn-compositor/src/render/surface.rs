@@ -28,10 +28,10 @@ use crate::shaders::{
     TOP_CENTER_GLOW_COLOR, TOP_CENTER_GLOW_HEIGHT, TOP_CENTER_GLOW_LINE_HALF,
     TOP_CENTER_GLOW_SIGMA, TOP_CENTER_GLOW_WIDTH,
 };
-use crate::udev::{frame_callback_interval, UdevOutputId, BG_COLOR};
+use crate::udev::{UdevOutputId, BG_COLOR};
 use crate::Lantern;
 
-use super::helpers::{capture_window_snapshot, send_presentation_feedback};
+use super::helpers::{capture_window_snapshot, collect_presentation_feedback};
 use super::CustomRenderElements;
 
 /// Inputs that parameterize a cached window-chrome shader element (shadow
@@ -2221,66 +2221,11 @@ pub fn render_surface(
         }
     }
 
-    // Send frame callbacks even if frame is empty (clients need them to
-    // know when to submit new content).
-    let mut frame_callback_count = 0;
-    if state.pending_client_frame_callbacks {
-        frame_callback_count = state.space.elements().count();
-        state.space.elements().for_each(|window| {
-            window.send_frame(
-                &output,
-                state.start_time.elapsed(),
-                Some(frame_callback_interval(&output)),
-                |_, _| Some(output.clone()),
-            );
-        });
-        // Frame callbacks: send from every output the layer surface is
-        // "on" (we send from all of them, mirroring how XDG toplevels are
-        // paced via `state.space.elements()`). Restricting to just the
-        // assigned output starves the client of vsync pacing whenever that
-        // output skips a render — animations stutter.
-        for ls in &state.layer_surfaces {
-            if !ls.alive() {
-                continue;
-            }
-            smithay::desktop::utils::send_frames_surface_tree(
-                ls.wl_surface(),
-                &output,
-                state.start_time.elapsed(),
-                Some(frame_callback_interval(&output)),
-                |_, _| Some(output.clone()),
-            );
-        }
-        // Lock surfaces need vsync pacing too, or the lock client never
-        // repaints (clock stops, password dots lag).
-        if let Some(data) = state.session_lock.as_ref() {
-            for ls in data.surfaces.values() {
-                if !ls.alive() {
-                    continue;
-                }
-                smithay::desktop::utils::send_frames_surface_tree(
-                    ls.wl_surface(),
-                    &output,
-                    state.start_time.elapsed(),
-                    Some(frame_callback_interval(&output)),
-                    |_, _| Some(output.clone()),
-                );
-            }
-        }
-        state.pending_client_frame_callbacks = false;
-    }
-
-    // presentation-time: fire feedback for every surface that has a pending
-    // callback. Games (Unity, Proton) use this for frame pacing — if we
-    // advertise the protocol but never fire feedback, callbacks pile up.
-    // Borrow individual fields so it coexists with the udev &mut borrow above.
-    send_presentation_feedback(
-        &state.space,
-        &state.layer_surfaces,
-        state.start_time,
-        &output,
-        rendered,
-    );
+    // NOTE: frame callbacks and presentation-time feedback are NOT sent here
+    // anymore. They are deferred to the vblank handler (`udev::frame_finish`),
+    // where the real DRM scanout timestamp + sequence are available. Sending
+    // them pre-flip (with wall-clock time + seq 0) detached client pacing from
+    // the actual refresh and collapsed self-limited clients 240→40fps.
 
     // Only submit to DRM when there's actual damage — skip the atomic
     // commit when nothing changed (saves GPU and bus bandwidth).
@@ -2301,15 +2246,37 @@ pub fn render_surface(
         trace!("render: frame is empty, skipping queue_frame");
     }
 
-    // Vblank watchdog: arm a recovery timer in case the page-flip we just
-    // queued never produces a vblank (e.g. DRM master timing during early
-    // session activation). Without this, frame_pending would stay true
-    // forever and the compositor would visually freeze.
+    // Stash this frame's presentation feedback on the surface to be fired at
+    // the next vblank with the true scanout time + sequence. (The `surface`
+    // borrow above has ended by here — `arm_vblank_watchdog(state)` below took
+    // `&mut state` already in the original code.)
     if queued {
+        let feedback =
+            collect_presentation_feedback(&state.space, &state.layer_surfaces, &output);
+        if let Some(udev) = state.udev.as_mut() {
+            if let Some(s) = udev
+                .backends
+                .get_mut(&node)
+                .and_then(|b| b.surfaces.get_mut(&crtc))
+            {
+                s.pending_feedback = Some(feedback);
+            }
+        }
+        // Vblank watchdog: arm a recovery timer in case the page-flip we just
+        // queued never produces a vblank (e.g. DRM master timing during early
+        // session activation). Without this, frame_pending would stay true
+        // forever and the compositor would visually freeze.
         crate::udev::arm_vblank_watchdog(state);
+    } else {
+        // No flip this frame — drain any queued presentation feedback for these
+        // surfaces and discard it so clients aren't left waiting on a
+        // `presented` that will never come.
+        let mut feedback =
+            collect_presentation_feedback(&state.space, &state.layer_surfaces, &output);
+        feedback.discarded();
     }
 
-    state.record_render(frame_callback_count);
+    state.record_render(0);
 
     // Keep rendering while animations are active
     // Also keep rendering while switcher is silently waiting for hold threshold
@@ -2328,10 +2295,8 @@ pub fn render_surface(
     // renders/sec on a 270Hz display, all running the full blur pipeline
     // before the damage check let us skip the actual page-flip. Clients drive
     // their own vblank stream by committing; each commit calls
-    // schedule_client_render, so frame callbacks still flow.
-    if frame_callback_count > 0 {
-        state.last_callback_render = Instant::now();
-    }
+    // schedule_client_render, so frame callbacks still flow (now from the
+    // vblank handler — `last_callback_render` is bumped there).
     if needs_anim_redraw {
         state.schedule_render();
     }

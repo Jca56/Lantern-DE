@@ -1,0 +1,64 @@
+#!/sbin/openrc-run
+# OpenRC service for lntrn-afterglowd — Afterglow's root hardware-tuning daemon.
+#
+# Runs as root (it owns every NVML/RAPL/cpufreq write) and hands its socket to
+# the desktop user so the unprivileged Afterglow GUI can connect. The owning
+# user is auto-detected from /run/user/<uid> so nothing is hardcoded per
+# machine; override with AFTERGLOW_OWNER in /etc/conf.d/lntrn-afterglowd.
+#
+#   rc-update add lntrn-afterglowd default
+#   rc-service lntrn-afterglowd start
+
+description="Lantern Afterglow hardware tuning daemon"
+pidfile="/run/lntrn-afterglowd.pid"
+
+: "${AFTERGLOW_OWNER:=}"
+
+depend() {
+	need localmount
+	after bootmisc
+}
+
+# First logged-in human (uid >= 1000 with a runtime dir).
+detect_owner() {
+	local d uid
+	for d in /run/user/*; do
+		[ -d "$d" ] || continue
+		uid=${d##*/}
+		if [ "$uid" -ge 1000 ] 2>/dev/null; then
+			echo "$uid"
+			return 0
+		fi
+	done
+	return 1
+}
+
+start() {
+	local uid home cmd cfg log
+	uid="${AFTERGLOW_OWNER:-$(detect_owner)}"
+	if [ -z "$uid" ]; then
+		ewarn "no desktop user found; set AFTERGLOW_OWNER in /etc/conf.d/lntrn-afterglowd"
+	fi
+	home="$(getent passwd "$uid" 2>/dev/null | cut -d: -f6)"
+	: "${home:=/root}"
+	cmd="$home/.lantern/bin/lntrn-afterglowd"
+	cfg="$home/.lantern/config/lntrn-afterglow/settings.toml"
+	log="$home/.lantern/log/afterglowd.log"
+
+	if [ ! -x "$cmd" ]; then
+		eerror "daemon not found at $cmd — run 'make deploy' first"
+		return 1
+	fi
+
+	ebegin "Starting lntrn-afterglowd (owner uid ${uid:-self})"
+	start-stop-daemon --start --background --make-pidfile --pidfile "$pidfile" \
+		--stderr "$log" --exec "$cmd" -- \
+		${uid:+--owner "$uid"} --config "$cfg"
+	eend $?
+}
+
+stop() {
+	ebegin "Stopping lntrn-afterglowd"
+	start-stop-daemon --stop --pidfile "$pidfile"
+	eend $?
+}
