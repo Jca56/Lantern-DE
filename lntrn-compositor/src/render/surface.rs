@@ -19,6 +19,7 @@ use smithay::{
     },
     utils::{Logical, Physical, Point, Rectangle, Scale, Size, Transform},
 };
+use smithay::desktop::utils::send_frames_surface_tree;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use tracing::{trace, warn};
 
@@ -2274,6 +2275,55 @@ pub fn render_surface(
         let mut feedback =
             collect_presentation_feedback(&state.space, &state.layer_surfaces, &output);
         feedback.discarded();
+
+        // A no-flip frame produces no vblank, so `frame_finish` (where callbacks
+        // normally fire) never runs. A client that just committed and is waiting
+        // on `wl_surface.frame` before drawing its next buffer — Firefox's strict
+        // dmabuf path is the textbook case — would otherwise stall forever
+        // (no flip → no vblank → no callback). The frame-callback contract
+        // requires firing even when we decide NOT to present.
+        //
+        // CRITICAL: this is EDGE-triggered, not level-triggered. We only send
+        // when a client commit actually created an obligation this cycle, and we
+        // CONSUME that edge here. Sending on EVERY no-flip render instead would
+        // let each callback provoke the client to commit again → another no-flip
+        // render → another callback → an unbounded commit/render storm (that is
+        // exactly what black-screened the boot once). With the edge consumed: no
+        // fresh commit → flag stays false → no callback → the loop cannot sustain
+        // itself. Firefox's answered frame carries real content next time, which
+        // damages → normal flip → vblank callback resumes.
+        if state.pending_client_frame_callbacks {
+            state.pending_client_frame_callbacks = false;
+            let now: Duration = Duration::from(state.clock.now());
+            let throttle = Some(crate::udev::frame_callback_interval(&output) / 2);
+            for window in state.space.elements() {
+                window.send_frame(&output, now, throttle, |_, _| Some(output.clone()));
+            }
+            for ls in &state.layer_surfaces {
+                if ls.alive() {
+                    send_frames_surface_tree(
+                        ls.wl_surface(),
+                        &output,
+                        now,
+                        throttle,
+                        |_, _| Some(output.clone()),
+                    );
+                }
+            }
+            if let Some(data) = state.session_lock.as_ref() {
+                for ls in data.surfaces.values() {
+                    if ls.alive() {
+                        send_frames_surface_tree(
+                            ls.wl_surface(),
+                            &output,
+                            now,
+                            throttle,
+                            |_, _| Some(output.clone()),
+                        );
+                    }
+                }
+            }
+        }
     }
 
     state.record_render(0);
