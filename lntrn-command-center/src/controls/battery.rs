@@ -324,13 +324,16 @@ pub fn draw_inline(
     let label_y = layout.y + (layout.h - label_font) / 2.0;
     let white = Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(alpha);
 
+    // Pad the wrap box past the measured width — passing the exact width as
+    // max_width lets quantization round the box too narrow, which wraps the
+    // percentage digits and clips all but the ones place (e.g. "87" → "7").
     text.queue(
         &number_str,
         label_font,
         group_x,
         label_y,
         white,
-        number_w,
+        number_w + 8.0 * scale,
         surface_w,
         surface_h,
     );
@@ -348,7 +351,7 @@ pub fn draw_inline(
             group_x + number_w,
             label_y,
             white,
-            suffix_w,
+            suffix_w + 8.0 * scale,
             surface_w,
             surface_h,
         );

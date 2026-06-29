@@ -101,13 +101,16 @@ pub fn draw_inline(
     let number_x = icon_left + icon_w + gap;
     let number_y = layout.y + (layout.h - number_font) / 2.0 - NUMBER_RISE * scale;
     let white = Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(alpha * 0.92);
+    // Wrap box gets a little slack past the measured width — feeding the
+    // exact width back as max_width lets quantization round the box a hair
+    // too narrow, which wraps the digits and clips all but the last one.
     text.queue(
         &number,
         number_font,
         number_x,
         number_y,
         white,
-        number_w,
+        number_w + 8.0 * scale,
         surface_w,
         surface_h,
     );
