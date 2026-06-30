@@ -124,7 +124,15 @@ pub(crate) fn run_loop(
         if since_last < frame_budget {
             std::thread::sleep(frame_budget - since_last);
         }
-        state.frame_done = true;
+        // Only force a render when something is actually animating. When idle
+        // we leave `frame_done` to the event-driven dispatch handlers (pointer
+        // motion, keys, configure, etc.) so an untouched window renders ZERO
+        // frames instead of a constant 60fps GPU pass — that idle spin was
+        // melting the laptop. The 16ms cap above still coalesces high-rate
+        // pointer motion into one frame during interaction.
+        if needs_anim {
+            state.frame_done = true;
+        }
 
         // Theme live-reload poll. The palette is re-resolved every frame
         // already (see `*palette = FoxPalette::current()` below), but we
@@ -1039,7 +1047,13 @@ pub(crate) fn run_loop(
             }
         }
 
-        surface.frame(qh, ());
+        // Only request the next frame callback while animating. The callback
+        // handler sets `frame_done = true`, so re-arming it every frame would
+        // keep waking the loop for a redraw forever even when idle. When still,
+        // input/dispatch events drive the next render instead.
+        if needs_anim {
+            surface.frame(qh, ());
+        }
         surface.commit();
 
         // Poll search results from background thread
