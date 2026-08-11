@@ -45,7 +45,11 @@ struct Globals {
     _pad: [f32; 2],
 }
 
-const MAX_INSTANCES: usize = 8192;
+/// Initial instance-buffer capacity. The buffer grows on demand in
+/// `ensure_uploaded` — a full-screen TUI can legitimately need one shape
+/// instance per grid cell (e.g. ~18k cells on a large window painting
+/// per-cell backgrounds), so a fixed cap is not safe.
+const INITIAL_INSTANCES: usize = 8192;
 
 pub trait TextPass {
     fn render_text(
@@ -66,6 +70,8 @@ pub struct Painter {
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
     instance_buffer: wgpu::Buffer,
+    /// Current capacity (in instances) of `instance_buffer`.
+    instance_capacity: usize,
     instances: Vec<Instance>,
     clip_stack: Vec<Rect>,
     clip_spans: Vec<ClipSpan>,
@@ -202,18 +208,14 @@ impl Painter {
             cache: None,
         });
 
-        let instance_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Instance Buffer"),
-            size: (MAX_INSTANCES * std::mem::size_of::<Instance>()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let instance_buffer = Self::create_instance_buffer(gpu, INITIAL_INSTANCES);
 
         Self {
             pipeline,
             globals_buffer,
             globals_bind_group,
             instance_buffer,
+            instance_capacity: INITIAL_INSTANCES,
             instances: Vec::with_capacity(1024),
             clip_stack: Vec::new(),
             clip_spans: vec![ClipSpan { start: 0, clip: None }],
@@ -280,13 +282,24 @@ impl Painter {
         (self.layer_breaks.len() as u8) + 1
     }
 
+    fn create_instance_buffer(gpu: &GpuContext, capacity: usize) -> wgpu::Buffer {
+        gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Instance Buffer"),
+            size: (capacity * std::mem::size_of::<Instance>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    }
+
     /// Upload instances to the GPU buffer. Called once before render_layer calls.
     fn ensure_uploaded(&mut self, gpu: &GpuContext) {
         if self.instances_uploaded {
             return;
         }
-        if self.instances.len() > MAX_INSTANCES {
-            self.instances.truncate(MAX_INSTANCES);
+        if self.instances.len() > self.instance_capacity {
+            let new_capacity = self.instances.len().next_power_of_two();
+            self.instance_buffer = Self::create_instance_buffer(gpu, new_capacity);
+            self.instance_capacity = new_capacity;
         }
         let globals = Globals {
             screen_size: [gpu.width() as f32, gpu.height() as f32],
