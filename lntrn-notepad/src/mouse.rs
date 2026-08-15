@@ -354,3 +354,61 @@ fn handle_middle_press(handler: &mut TextHandler) -> MouseAction {
     }
     MouseAction::Ignored
 }
+
+impl TextHandler {
+    /// Set cursor from a click at physical (cx, cy), using real text
+    /// measurement. Lives here with the rest of the pointer handling.
+    pub(crate) fn click_to_cursor(&mut self, cx: f32, cy: f32) {
+        let s = self.scale;
+        let (wf, hf) = self.window_size_pub();
+        let font_size = crate::editor::FONT_SIZE * s;
+        let pad = crate::editor::PAD * s;
+        let er = render::editor_rect(wf, hf, s, self.find_bar.height(s));
+        let active = self.active_tab;
+        let editor = &mut self.tabs[active];
+
+        let prev_pos = (editor.cursor_line, editor.cursor_col);
+        let (doc_line, row_start, row_end) = editor.wrap_row_at_y(cy, er, s);
+        editor.cursor_line = doc_line;
+
+        if let Some(gpu) = &mut self.gpu {
+            // Compute content_x matching render.rs page layout
+            let (page_x, page_w) = crate::page::geometry(er, self.page_width_frac, s);
+            let content_x = page_x + pad;
+            let content_max_w = (page_w - pad * 2.0).max(10.0);
+
+            // Alignment + indent + bullet offset for this row. Must match
+            // render::row_x_offset so clicks land on the right glyph.
+            let para = editor.formats.get(doc_line).para;
+            // wrap_rows can be stale (shorter than lines) until the next
+            // frame recomputes it — never index it blindly from a click.
+            let row_idx = editor
+                .wrap_rows
+                .get(doc_line)
+                .and_then(|w| w.iter().position(|&st| st == row_start))
+                .unwrap_or(0);
+            let bullet_off = if para.bullet { crate::editor::BULLET_INDENT * s } else { 0.0 };
+            let avail = (content_max_w - bullet_off).max(10.0);
+            let row_w = render::measure_range(
+                &mut gpu.text, editor, doc_line, row_start, row_end, font_size,
+            );
+            let align_off = render::alignment_offset(para.alignment, avail, row_w);
+            let indent_off = if row_idx == 0 { para.first_indent * s } else { 0.0 };
+            let effective_x = content_x + bullet_off + align_off + indent_off;
+
+            let base = render::measure_to_offset(
+                &mut gpu.text, editor, doc_line, row_start, font_size,
+            );
+            let col = editor.col_at_x(cx, doc_line, row_start, row_end, effective_x, |byte_off| {
+                render::measure_to_offset(&mut gpu.text, editor, doc_line, byte_off, font_size) - base
+            });
+            editor.cursor_col = col;
+        }
+
+        // A click that lands where the cursor already is keeps any pending
+        // format toggle — only actually moving the cursor drops it.
+        if (editor.cursor_line, editor.cursor_col) != prev_pos {
+            editor.pending_attrs = None;
+        }
+    }
+}

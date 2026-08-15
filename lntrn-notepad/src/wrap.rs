@@ -2,13 +2,20 @@
 //! where its visual rows begin, honouring per-span font metrics and the
 //! paragraph's first-line indent. Kept apart from `render.rs` so the frame
 //! renderer stays about painting, not measuring.
+//!
+//! Wraps are cached per line: each line's content + width-relevant formatting
+//! is hashed into a signature, and `compute` only re-wraps lines whose
+//! signature changed since the previous frame. The old recompute-everything
+//! path made every frame O(document) in text-measure calls, which pinned the
+//! main thread after a large paste. Hashing is self-healing — no edit path
+//! has to remember to invalidate anything.
 
 use lntrn_render::TextRenderer;
 
 use crate::editor::Editor;
 use crate::render::{span_family, span_rendering};
 
-/// Recompute all word-wrap info and store it on the editor.
+/// Recompute stale word-wrap info and store it on the editor.
 pub fn compute(
     text: &mut TextRenderer,
     editor: &mut Editor,
@@ -16,8 +23,26 @@ pub fn compute(
     scale: f32,
     default_font_size: f32,
 ) {
-    let mut wraps = Vec::with_capacity(editor.lines.len());
-    for i in 0..editor.lines.len() {
+    let key = (max_width.to_bits(), scale.to_bits(), default_font_size.to_bits());
+    let n = editor.lines.len();
+    let full = editor.wrap_key != Some(key)
+        || editor.wrap_rows.len() != n
+        || editor.wrap_sigs.len() != n;
+    if full {
+        // A computed row list is never empty (always at least [0]), so an
+        // empty vec marks the line as needing recompute below.
+        editor.wrap_rows.clear();
+        editor.wrap_rows.resize(n, Vec::new());
+        editor.wrap_sigs.clear();
+        editor.wrap_sigs.resize(n, 0);
+        editor.wrap_key = Some(key);
+    }
+
+    for i in 0..n {
+        let sig = line_signature(editor, i);
+        if editor.wrap_sigs[i] == sig && !editor.wrap_rows[i].is_empty() {
+            continue;
+        }
         let para = editor.formats.get(i).para;
         let indent_px = para.first_indent * scale;
         // Bullet paragraphs lose width to the hanging indent on every row.
@@ -26,9 +51,57 @@ pub fn compute(
         } else {
             max_width
         };
-        wraps.push(line_wraps(text, editor, i, line_w, indent_px, default_font_size));
+        editor.wrap_rows[i] =
+            line_wraps(text, editor, i, line_w, indent_px, default_font_size);
+        editor.wrap_sigs[i] = sig;
     }
-    editor.wrap_rows = wraps;
+}
+
+// ── Line signatures (FNV-1a, u64-chunked) ───────────────────────────────────
+
+const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+#[inline]
+fn fnv_u64(h: &mut u64, v: u64) {
+    *h ^= v;
+    *h = h.wrapping_mul(FNV_PRIME);
+}
+
+fn fnv_bytes(h: &mut u64, bytes: &[u8]) {
+    let mut chunks = bytes.chunks_exact(8);
+    for c in &mut chunks {
+        fnv_u64(h, u64::from_le_bytes(c.try_into().unwrap()));
+    }
+    let rem = chunks.remainder();
+    let mut last = [0u8; 8];
+    last[..rem.len()].copy_from_slice(rem);
+    // Mix the remainder length so "ab" and "ab\0" can't collide.
+    fnv_u64(h, u64::from_le_bytes(last) ^ ((rem.len() as u64 + 1) << 56));
+}
+
+/// Hash everything that affects a line's wrap result: its text plus the
+/// width-relevant parts of its formatting (span bounds, size, weight, style,
+/// family, first indent, bullet). Colors and decorations are excluded — they
+/// don't change measurement.
+fn line_signature(editor: &Editor, line: usize) -> u64 {
+    let mut h = FNV_OFFSET;
+    fnv_bytes(&mut h, editor.lines[line].as_bytes());
+    let lf = editor.formats.get(line);
+    for span in lf.spans() {
+        fnv_u64(&mut h, span.start as u64);
+        fnv_u64(&mut h, span.end as u64);
+        fnv_u64(&mut h, span.attrs.font_size.map_or(0, |f| f.to_bits() as u64 + 1));
+        fnv_u64(
+            &mut h,
+            (span.attrs.bold as u64)
+                | (span.attrs.italic as u64) << 1
+                | (span.attrs.font.map_or(0, |f| f as u64 + 1)) << 2,
+        );
+    }
+    fnv_u64(&mut h, lf.para.first_indent.to_bits() as u64);
+    fnv_u64(&mut h, lf.para.bullet as u64);
+    h
 }
 
 /// Compute word-wrap break points for a single document line.

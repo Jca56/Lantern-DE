@@ -96,7 +96,9 @@ impl FindBar {
     }
 
     /// Walk the document looking for occurrences of `query`. Updates
-    /// `self.matches` and resets `current` to 0.
+    /// `self.matches` and resets `current` to 0. Offsets in `matches` are
+    /// byte positions in the ORIGINAL lines (see `search` for why that
+    /// distinction matters when case folding).
     pub fn recompute(&mut self, editor: &Editor) {
         self.matches.clear();
         self.current = 0;
@@ -106,40 +108,39 @@ impl FindBar {
         let needle = if self.case_sensitive {
             self.query.clone()
         } else {
-            self.query.to_lowercase()
+            crate::search::fold(&self.query)
         };
+        let mut found: Vec<(usize, usize)> = Vec::new();
         for (line_idx, line) in editor.lines.iter().enumerate() {
-            let haystack: String = if self.case_sensitive {
-                line.clone()
-            } else {
-                line.to_lowercase()
-            };
-            let mut from = 0usize;
-            while let Some(pos) = haystack[from..].find(&needle) {
-                let start = from + pos;
-                let end = start + needle.len();
-                self.matches.push(MatchSpan {
-                    line: line_idx,
-                    start,
-                    end,
-                });
-                from = end;
-                if needle.is_empty() {
-                    break;
-                }
+            found.clear();
+            crate::search::find_in_line(line, &needle, self.case_sensitive, &mut found);
+            for &(start, end) in &found {
+                self.matches.push(MatchSpan { line: line_idx, start, end });
             }
         }
     }
 
     /// Move editor cursor to the current match (no scroll math here — the
-    /// next render frame will reveal it via natural scroll).
+    /// next render frame will reveal it via natural scroll). Offsets are
+    /// re-clamped against the live document: matches can predate an edit.
     pub fn focus_current(&self, editor: &mut Editor) {
         if let Some(m) = self.matches.get(self.current) {
+            if m.line >= editor.lines.len() {
+                return;
+            }
+            let line = &editor.lines[m.line];
+            let snap = |mut c: usize| {
+                c = c.min(line.len());
+                while c > 0 && !line.is_char_boundary(c) {
+                    c -= 1;
+                }
+                c
+            };
             editor.cursor_line = m.line;
-            editor.cursor_col = m.start;
+            editor.cursor_col = snap(m.start);
             editor.sel_anchor = Some(crate::editor::Pos {
                 line: m.line,
-                col: m.end,
+                col: snap(m.end),
             });
         }
     }

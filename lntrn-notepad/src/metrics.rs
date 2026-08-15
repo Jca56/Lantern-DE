@@ -4,26 +4,27 @@
 
 use crate::editor::{Editor, FONT_SIZE, LINE_HEIGHT, PAD};
 
+/// Clamp `i` into `line` and walk back to the nearest char boundary.
+fn snap_floor(line: &str, i: usize) -> usize {
+    let mut i = i.min(line.len());
+    while i > 0 && !line.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
 impl Editor {
     /// The largest font size (logical px, unscaled) used by any span within the
     /// byte range `[start, end)` of `line`. Falls back to the default size when
     /// the range is empty or has no size overrides. This is what drives a wrap
     /// row's height so larger text gets a taller row (no overlap).
     pub fn row_font_size(&self, line: usize, start: usize, end: usize) -> f32 {
-        let line_len = self.lines[line].len();
-        let mut max_fs = FONT_SIZE;
-        // An empty row (blank line) still uses any pending/size at col 0.
-        for span in self.formats.get(line).iter_spans(line_len) {
-            if span.end <= start || span.start >= end {
-                continue;
-            }
-            if let Some(fs) = span.attrs.font_size {
-                if fs > max_fs {
-                    max_fs = fs;
-                }
-            }
-        }
-        max_fs
+        // Allocation-free: this runs for every wrap row every frame, and the
+        // old `iter_spans` path allocated a Vec per call.
+        self.formats
+            .get(line)
+            .max_font_size_in(start, end)
+            .map_or(FONT_SIZE, |fs| fs.max(FONT_SIZE))
     }
 
     /// Physical height of a single wrap row: its max span font size ×
@@ -65,15 +66,26 @@ impl Editor {
         let text_y_start = editor_rect.y + PAD * scale * 1.5 - self.scroll_offset;
         let mut y = text_y_start;
 
-        for (i, wraps) in self.wrap_rows.iter().enumerate() {
+        // `wrap_rows` is only refreshed at render time, so an input event
+        // processed between an edit and the next frame sees stale rows: cap
+        // the line count and snap every byte offset back into the live line.
+        // (`content_height` has the same guard; clicking must too.)
+        let n = self.lines.len().min(self.wrap_rows.len());
+        for i in 0..n {
+            let wraps = &self.wrap_rows[i];
+            let line = &self.lines[i];
             let para = self.formats.get(i).para;
-            let line_len = self.lines[i].len();
             y += para.space_before * scale;
             for (row_idx, &row_start) in wraps.iter().enumerate() {
-                let row_end = wraps.get(row_idx + 1).copied().unwrap_or(line_len);
-                let row_h = self.row_height(i, row_start, row_end, scale);
+                let start = snap_floor(line, row_start);
+                let end = snap_floor(
+                    line,
+                    wraps.get(row_idx + 1).copied().unwrap_or(line.len()),
+                )
+                .max(start);
+                let row_h = self.row_height(i, start, end, scale);
                 if cy < y + row_h {
-                    return (i, row_start, row_end);
+                    return (i, start, end);
                 }
                 y += row_h;
             }
@@ -81,8 +93,10 @@ impl Editor {
         }
 
         let last = self.lines.len() - 1;
-        let last_start = *self.wrap_rows.get(last).and_then(|w| w.last()).unwrap_or(&0);
-        (last, last_start, self.lines[last].len())
+        let line = &self.lines[last];
+        let last_start =
+            snap_floor(line, *self.wrap_rows.get(last).and_then(|w| w.last()).unwrap_or(&0));
+        (last, last_start, line.len())
     }
 
     /// Find the byte column closest to click x within a wrap-row byte range.
@@ -99,7 +113,13 @@ impl Editor {
     ) -> usize {
         let rel_x = (cx - content_x).max(0.0);
 
+        if line_idx >= self.lines.len() {
+            return 0;
+        }
         let line = &self.lines[line_idx];
+        // Row bounds may come from stale wrap data — snap before slicing.
+        let row_start = snap_floor(line, row_start);
+        let row_end = snap_floor(line, row_end).max(row_start);
         let char_offsets: Vec<usize> = line[row_start..row_end]
             .char_indices()
             .map(|(i, _)| row_start + i)

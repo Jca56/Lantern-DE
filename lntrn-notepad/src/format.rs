@@ -118,6 +118,29 @@ impl LineFormats {
         Self::default()
     }
 
+    /// Raw span list (sorted, non-overlapping, gaps = default format).
+    pub fn spans(&self) -> &[FormatSpan] {
+        &self.spans
+    }
+
+    /// Largest explicit font-size override intersecting `[start, end)`, if
+    /// any. Allocation-free — this runs per wrap row per frame in the
+    /// row-height math, where `iter_spans`'s Vec would be a hot alloc.
+    pub fn max_font_size_in(&self, start: usize, end: usize) -> Option<f32> {
+        let mut max: Option<f32> = None;
+        for span in &self.spans {
+            if span.end <= start || span.start >= end {
+                continue;
+            }
+            if let Some(fs) = span.attrs.font_size {
+                if max.map_or(true, |m| fs > m) {
+                    max = Some(fs);
+                }
+            }
+        }
+        max
+    }
+
     /// Get the formatting at a specific byte offset.
     pub fn attrs_at(&self, offset: usize) -> TextAttrs {
         for span in &self.spans {
@@ -313,21 +336,47 @@ impl LineFormats {
         }
     }
 
-    /// Insert a formatted span for newly typed text at `byte_offset` with length `len`.
+    /// Insert a formatted span for newly typed text at `byte_offset` with
+    /// length `len`. The new text gets exactly `attrs` — a span that strictly
+    /// contains the insertion point is split around it rather than expanded
+    /// (expanding and then adding the new span on top left overlapping spans,
+    /// which double-drew the text; and with default `attrs` the old expansion
+    /// silently kept the surrounding format).
     pub fn insert_formatted(&mut self, byte_offset: usize, len: usize, attrs: TextAttrs) {
-        // First shift existing spans
-        self.insert_at(byte_offset, len);
-
-        // If attrs are non-default, add a span for the new text
+        if len == 0 {
+            return;
+        }
+        // Split the (at most one) span strictly containing the offset.
+        let mut split_right: Option<FormatSpan> = None;
+        for span in &mut self.spans {
+            if span.start < byte_offset && span.end > byte_offset {
+                split_right = Some(FormatSpan {
+                    start: byte_offset,
+                    end: span.end,
+                    attrs: span.attrs,
+                });
+                span.end = byte_offset;
+            }
+        }
+        if let Some(right) = split_right {
+            self.spans.push(right);
+        }
+        // No span crosses the offset now: shift everything at/after it.
+        for span in &mut self.spans {
+            if span.start >= byte_offset {
+                span.start += len;
+                span.end += len;
+            }
+        }
         if !attrs.is_default() {
             self.spans.push(FormatSpan {
                 start: byte_offset,
                 end: byte_offset + len,
                 attrs,
             });
-            self.spans.sort_by_key(|s| s.start);
-            self.merge_adjacent();
         }
+        self.spans.sort_by_key(|s| s.start);
+        self.merge_adjacent();
     }
 
     /// Delete the byte range `[start, end)` and shift remaining spans left.
@@ -438,6 +487,12 @@ impl DocFormats {
         self.lines.insert(index, formats);
     }
 
+    /// Insert many lines' formats at `index` in one splice. Pasting a large
+    /// multi-line blob would otherwise pay O(doc) per inserted line.
+    pub fn insert_lines(&mut self, index: usize, formats: Vec<LineFormats>) {
+        self.lines.splice(index..index, formats);
+    }
+
     pub fn remove_line(&mut self, index: usize) -> LineFormats {
         self.lines.remove(index)
     }
@@ -512,41 +567,3 @@ impl DocFormats {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Applying a font family to a plain range must leave a span carrying that
-    /// font index — the core of the font-picker feature.
-    #[test]
-    fn font_applies_to_range() {
-        let mut lf = LineFormats::new();
-        // "hello world", apply font index 3 to "world" (cols 6..11).
-        lf.apply_format(6, 11, |a| a.font = Some(3));
-        assert_eq!(lf.attrs_at(0).font, None, "plain text keeps default font");
-        assert_eq!(lf.attrs_at(7).font, Some(3), "selected range carries the font");
-        // Query uniform over the range should report the font.
-        assert_eq!(lf.query_uniform(6, 11).font, Some(3));
-    }
-
-    /// Font + bold can coexist on the same span.
-    #[test]
-    fn font_and_bold_coexist() {
-        let mut lf = LineFormats::new();
-        lf.apply_format(0, 5, |a| a.font = Some(2));
-        lf.apply_format(0, 5, |a| a.bold = true);
-        let at = lf.attrs_at(2);
-        assert_eq!(at.font, Some(2));
-        assert!(at.bold);
-    }
-
-    /// Bullet toggling lives on the paragraph, independent of spans.
-    #[test]
-    fn bullet_is_paragraph_level() {
-        let mut lf = LineFormats::new();
-        assert!(!lf.para.bullet);
-        lf.para.bullet = true;
-        assert!(lf.para.bullet);
-        assert_eq!(lf.para.line_spacing, 1.0, "default spacing is single");
-    }
-}

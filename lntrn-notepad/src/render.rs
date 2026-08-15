@@ -475,13 +475,16 @@ pub fn render_frame(
                     None => pal.text,
                 };
 
+                // Slack on the layout bound: quantization can round an
+                // exact-width bound down and clip the row's last glyph.
                 text.queue_full(
-                    span_text, fs, x, y, span_color, content_max_w, weight, style, family, w, h,
+                    span_text, fs, x, y, span_color, content_max_w + 4.0 * s, weight, style,
+                    family, w, h,
                 );
                 let span_w = text.measure_width_full(span_text, fs, weight, style, family);
 
                 if span.attrs.underline {
-                    let ul_y = y + fs + 2.0;
+                    let ul_y = y + fs + 2.0 * s;
                     painter.line(x, ul_y, x + span_w, ul_y, 1.5 * s, pal.text);
                 }
                 if span.attrs.strikethrough {
@@ -570,7 +573,7 @@ pub fn render_frame(
                 if cursor_y + c_row_h > er.y && cursor_y < er.y + er.h {
                     painter.clear();
                     painter.rect_filled(
-                        Rect::new(cursor_x, cursor_y, 2.5 * s, caret_fs + 2.0),
+                        Rect::new(cursor_x, cursor_y, 2.5 * s, caret_fs + 2.0 * s),
                         0.0,
                         pal.accent,
                     );

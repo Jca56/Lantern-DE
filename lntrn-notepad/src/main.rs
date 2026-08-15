@@ -1,9 +1,12 @@
 mod actions;
 mod clipboard;
 mod context_menu;
+mod crash_log;
 mod editor;
+mod editor_io;
 mod find_bar;
 mod fonts;
+mod history;
 mod format;
 mod keys;
 mod metrics;
@@ -13,9 +16,12 @@ mod persist;
 mod render;
 mod ribbon;
 mod scrollbar;
+mod search;
 mod status_bar;
 mod tab_strip;
 mod tabs;
+#[cfg(test)]
+mod tests;
 mod theme;
 mod title_bar;
 mod tokens;
@@ -67,6 +73,7 @@ pub(crate) const MENU_THEME_DARK: u32 = 202;
 // ── Main ────────────────────────────────────────────────────────────────────
 
 fn main() {
+    crash_log::install();
     let file_paths: Vec<String> = std::env::args().skip(1).collect();
     let event_loop = EventLoop::new().expect("Failed to create event loop");
     let mut handler = TextHandler::new(file_paths);
@@ -234,49 +241,6 @@ impl TextHandler {
         self.gpu = None;
         self.window = None;
         event_loop.exit();
-    }
-
-    /// Set cursor from a click at physical (cx, cy), using real text measurement.
-    fn click_to_cursor(&mut self, cx: f32, cy: f32) {
-        let s = self.scale;
-        let (wf, hf) = self.window_size();
-        let font_size = editor::FONT_SIZE * s;
-        let pad = editor::PAD * s;
-        let er = render::editor_rect(wf, hf, s, self.find_bar.height(s));
-        let active = self.active_tab;
-        let editor = &mut self.tabs[active];
-
-        let (doc_line, row_start, row_end) = editor.wrap_row_at_y(cy, er, s);
-        editor.cursor_line = doc_line;
-
-        if let Some(gpu) = &mut self.gpu {
-            // Compute content_x matching render.rs page layout
-            let (page_x, page_w) = page::geometry(er, self.page_width_frac, s);
-            let content_x = page_x + pad;
-            let content_max_w = (page_w - pad * 2.0).max(10.0);
-
-            // Alignment + indent + bullet offset for this row. Must match
-            // render::row_x_offset so clicks land on the right glyph.
-            let para = editor.formats.get(doc_line).para;
-            let wraps = &editor.wrap_rows[doc_line];
-            let row_idx = wraps.iter().position(|&st| st == row_start).unwrap_or(0);
-            let bullet_off = if para.bullet { editor::BULLET_INDENT * s } else { 0.0 };
-            let avail = (content_max_w - bullet_off).max(10.0);
-            let row_w = render::measure_range(
-                &mut gpu.text, editor, doc_line, row_start, row_end, font_size,
-            );
-            let align_off = render::alignment_offset(para.alignment, avail, row_w);
-            let indent_off = if row_idx == 0 { para.first_indent * s } else { 0.0 };
-            let effective_x = content_x + bullet_off + align_off + indent_off;
-
-            let base = render::measure_to_offset(
-                &mut gpu.text, editor, doc_line, row_start, font_size,
-            );
-            let col = editor.col_at_x(cx, doc_line, row_start, row_end, effective_x, |byte_off| {
-                render::measure_to_offset(&mut gpu.text, editor, doc_line, byte_off, font_size) - base
-            });
-            editor.cursor_col = col;
-        }
     }
 
     fn reset_blink(&mut self) {
