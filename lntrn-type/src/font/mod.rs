@@ -9,12 +9,16 @@ mod cmap;
 pub(crate) mod db;
 mod glyf;
 mod scan;
-mod sfnt;
+pub(crate) mod sfnt;
 mod tables;
 
 use std::fmt;
 
 use crate::raster::outline::Outline;
+use crate::shape::gpos::{self, GlyphPos};
+use crate::shape::gsub;
+use crate::shape::gtab::{GposPlan, GsubPlan};
+use crate::shape::kern;
 
 #[derive(Clone, Copy, Debug)]
 pub enum FontError {
@@ -67,6 +71,12 @@ pub(crate) struct Font {
     pub(crate) loca: (usize, usize),
     pub(crate) glyf: (usize, usize),
     hmtx: (usize, usize),
+    /// GPOS kern/mark lookups, gathered at parse (None = no GPOS table).
+    gpos_plan: Option<GposPlan>,
+    /// GSUB ligature/contextual lookups (None = no GSUB table).
+    gsub_plan: Option<GsubPlan>,
+    /// Legacy `kern` table, used only when GPOS has no kern feature.
+    kern: Option<(usize, usize)>,
 }
 
 impl Font {
@@ -87,6 +97,9 @@ impl Font {
             .ok_or(FontError::Unsupported("no `glyf` outlines (CFF lands in Phase 9)"))?;
         let loca = need(b"loca")?;
         let hmtx = need(b"hmtx")?;
+        let gpos_plan = dir.find(b"GPOS").map(|(off, _)| GposPlan::build(&data, off));
+        let gsub_plan = dir.find(b"GSUB").map(|(off, _)| GsubPlan::build(&data, off));
+        let kern = dir.find(b"kern");
 
         Ok(Font {
             data,
@@ -101,6 +114,9 @@ impl Font {
             loca,
             glyf,
             hmtx,
+            gpos_plan,
+            gsub_plan,
+            kern,
         })
     }
 
@@ -136,5 +152,37 @@ impl Font {
     /// Decode the glyph's outline (composites pre-flattened into one path).
     pub fn outline(&self, gid: u16) -> Result<Outline, FontError> {
         glyf::outline(self, gid)
+    }
+
+    /// Apply GSUB substitution (ligatures, contextual alternates) to a glyph
+    /// run. Substituted ids are clamped to the glyph count defensively.
+    pub fn substitute(&self, glyphs: &mut Vec<u16>) {
+        if let Some(plan) = &self.gsub_plan {
+            gsub::apply(&self.data, plan, glyphs);
+            for g in glyphs.iter_mut() {
+                if *g >= self.num_glyphs {
+                    *g = 0;
+                }
+            }
+        }
+    }
+
+    /// Apply positioning (GPOS kern/single/marks, or the legacy `kern` table
+    /// when GPOS carries no kern feature) to a glyph run, in font units.
+    pub fn position(&self, glyphs: &mut [GlyphPos]) {
+        let mut gpos_kerned = false;
+        if let Some(plan) = &self.gpos_plan {
+            gpos::apply(&self.data, plan, glyphs);
+            gpos_kerned = !plan.kern.is_empty();
+        }
+        if !gpos_kerned {
+            if let Some((off, len)) = self.kern {
+                if let Some(table) = self.data.get(off..off + len) {
+                    for i in 0..glyphs.len().saturating_sub(1) {
+                        glyphs[i].x_adv += kern::kern_pair(table, glyphs[i].gid, glyphs[i + 1].gid);
+                    }
+                }
+            }
+        }
     }
 }

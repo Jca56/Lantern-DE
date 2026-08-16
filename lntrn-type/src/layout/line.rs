@@ -7,6 +7,7 @@
 //! breaks; `\r` is ignored.
 
 use crate::font::db::{style_params, FontDb};
+use crate::shape;
 use crate::{FontStyle, FontWeight};
 
 /// One positioned glyph, relative to the layout origin. `y` is the baseline
@@ -61,48 +62,33 @@ pub(crate) fn build(
         }
         for token in tokens(src_line) {
             let is_space = token.chars().next().is_some_and(char::is_whitespace);
-            if !is_space && pen > 0.0 && pen + advance_width(db, primary, token, size, w, italic) > max_width
-            {
+            // Each token shapes once (fallback + GPOS kerning/marks); the
+            // shaped width drives both wrapping and emission so they agree.
+            let (glyphs, token_width) = shape::shape_token(db, primary, token, size, w, italic);
+            if !is_space && pen > 0.0 && pen + token_width > max_width {
                 layout.width = layout.width.max(pen);
                 pen = 0.0;
                 line_y += line_height;
             }
-            for ch in token.chars() {
-                if ch == '\r' {
-                    continue;
-                }
-                let (fid, gid) = db.glyph_for(primary, ch, w, italic);
-                let adv = db
-                    .font(fid)
-                    .map_or(0.0, |f| f.advance_units(gid) as f32 * f.scale(size));
+            for sg in glyphs {
                 // Glyph-level break for words wider than the whole bound.
-                if !is_space && pen > 0.0 && pen + adv > max_width {
+                if !is_space && pen > 0.0 && pen + sg.advance > max_width {
                     layout.width = layout.width.max(pen);
                     pen = 0.0;
                     line_y += line_height;
                 }
-                layout.glyphs.push(PlacedGlyph { face: fid as u16, gid, x: pen, y: line_y });
-                pen += adv;
+                layout.glyphs.push(PlacedGlyph {
+                    face: sg.face,
+                    gid: sg.gid,
+                    x: pen + sg.x_off,
+                    y: line_y + sg.y_off,
+                });
+                pen += sg.advance;
             }
         }
     }
     layout.width = layout.width.max(pen);
     layout
-}
-
-/// Advance width of one token (no wrapping), fallback-aware.
-fn advance_width(db: &mut FontDb, primary: usize, token: &str, size: f32, w: u16, italic: bool) -> f32 {
-    let mut width = 0.0;
-    for ch in token.chars() {
-        if ch == '\r' {
-            continue;
-        }
-        let (fid, gid) = db.glyph_for(primary, ch, w, italic);
-        width += db
-            .font(fid)
-            .map_or(0.0, |f| f.advance_units(gid) as f32 * f.scale(size));
-    }
-    width
 }
 
 /// Split a line into alternating whitespace / non-whitespace runs.

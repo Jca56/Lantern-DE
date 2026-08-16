@@ -206,16 +206,49 @@ Prove our own GPU text path end-to-end with a fake glyph before any font parsing
 - **Exit:** ✅ crispness parity at 14–24px verified visually + numerically in
   the harness.
 
-### Phase 5 — OpenType shaping I: GPOS / kerning 🔴
-- `GPOS`: pair kerning, mark-to-base, mark-to-mark, cursive attachment.
-- Legacy `kern` table fallback.
-- Shaper orchestration with simple-path (`simple.rs`) vs complex-path dispatch.
-- **Exit:** properly kerned proportional text.
+### Phase 5 — OpenType shaping I: GPOS / kerning 🔴 ✅ DONE
+- [x] `shape/gtab.rs` — shared OpenType layout plumbing (script→LangSys→
+  feature→lookup navigation, coverage + ClassDef lookups, extension
+  unwrapping), built once per font at parse into a `GposPlan`. **Reused
+  as-is by GSUB in Phase 6.** Script selection latn→DFLT→first (per-run
+  itemization comes with Phase 7).
+- [x] `shape/gpos.rs` — SinglePos (fmt 1+2), PairPos (fmt 1 glyph pairs +
+  fmt 2 class matrices), mark-to-base (type 4), mark-to-mark (type 6) via
+  anchor attachment. Cursive (3) + contextual (7/8) deferred to Phase 8;
+  lookup ignore-flags stored but unhonored until mark-heavy scripts.
+- [x] `shape/kern.rs` — legacy `kern` v0 fmt 0 fallback when GPOS has no kern
+  feature.
+- [x] `shape/mod.rs` — `shape_token`: per-char fallback resolution → per
+  same-font run positioning; layout builder wraps and emits from the same
+  shaped result so wrap decisions and rendering always agree.
+- **Exit:** ✅ kerned widths match glyphon **exactly** (asserted <0.5px) on
+  every ligature-free comparison row — 221.9=221.9, 269.5=269.5,
+  281.3=281.3, JBM 270.0=270.0. "Wave To Yo AVATAR" gap closed 22px → 8.8px;
+  the remainder is glyphon's `!=`→`≠`/`=>`→`⇒` GSUB substitutions (Phase 6's
+  scoreboard). "AV" asserts tighter than "A"+"V".
 
-### Phase 6 — OpenType shaping II: GSUB (ligatures) 🔴
-- `GSUB`: ligature, single/multiple/alternate, contextual + chaining context.
-- Script/language system selection; feature application (`liga`, `calt`, `dlig`).
-- **Exit:** programming ligatures (`=>` `!=` `>=`) fuse in code/terminal. 🎉
+### Phase 6 — OpenType shaping II: GSUB (ligatures) 🔴 ✅ DONE
+- [x] `shape/gsub.rs` — single (fmt 1+2), multiple, ligature, **contextual
+  (type 5, fmts 1–3) + chained context (type 6, fmts 1–3)** with nested
+  sequence-lookup application — the machinery modern fonts (Inter, JetBrains
+  Mono) actually use for `calt` programming ligatures. Extensions (type 7)
+  unwrapped at plan time. Type 3 (alternate, needs UI) and type 8 (reverse
+  chained, Phase 8) skipped.
+- [x] `gtab.rs` generalized: shared `gather_lookups` builds both GposPlan and
+  GsubPlan; features = ccmp/liga/clig/calt/rlig (HarfBuzz horizontal
+  defaults), applied in LookupList order across features; contextual rules
+  resolve arbitrary nested lookups via the retained LookupList offset.
+- [x] Shaper order: GSUB (may merge/split glyphs) → advances → GPOS.
+- Known simplifications (documented in code): nested records assume
+  length-preserving substitutions at earlier indices; per-token shaping means
+  cross-token backtrack context is empty (spaces — real fonts don't ligate
+  across them). One observed delta: we fuse standalone `!=` in JBM where
+  rustybuzz doesn't — width-identical, matches JBM's documented behavior;
+  revisit with hb-shape ground truth if terminal output ever looks off.
+- **Exit:** ✅ `=>` `!=` `>=` `<=` fuse (⇒ ≠ ⩾ ⩽ visible in `phase6.png`,
+  both Inter `calt` and JBM `calt`), and **every** comparison row's shaped
+  width now matches glyphon exactly (asserted <0.5px, ligature rows
+  included): 221.9/269.5/281.3/288.7/313.2 all equal. 🎉
 
 ### Phase 7 — Unicode segmentation 🔴
 - UAX#29 grapheme + word clustering (correct cursor/ZWJ handling).

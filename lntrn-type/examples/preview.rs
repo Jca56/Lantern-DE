@@ -1,11 +1,12 @@
-//! Phase 3 preview harness.
+//! Phase 6 preview harness.
 //!
 //! Spins up a headless wgpu device (no window/surface) and exercises the full
-//! lntrn-type stack: discovery/matching/fallback (Phase 2), plus the Phase 3
-//! layout engine — greedy wrapping, the one-line default cap, clip stack,
-//! `queue_clipped`, `occlude_rect`, and layers — rendered offscreen, read
-//! back into `phase3.png`, and **verified per-pixel**: regions that must be
-//! clipped are asserted empty, regions that must render are asserted lit.
+//! lntrn-type stack: discovery/matching/fallback (Phase 2), the layout engine
+//! (Phase 3: wrap, one-line cap, clips, occlusion, layers — verified
+//! per-pixel via readback), render quality (Phase 4: subpixel bins, atlas
+//! growth, glyphon side-by-side), GPOS kerning (Phase 5), and GSUB ligatures
+//! (Phase 6) — every comparison row's shaped width asserted equal to
+//! glyphon's. Output: `phase6.png`.
 //!
 //! This is the permanent visual-diff harness the plan calls for; later phases
 //! render richer scenes here and compare against glyphon output.
@@ -27,7 +28,7 @@ const COMPARE_ROWS: &[(&str, f32, f32, &str)] = &[
     ("The quick brown fox 0123456789", 17.0, 552.0, "Inter"),
     ("The quick brown fox jumps", 22.0, 580.0, "Inter"),
     ("Wave To Yo AVATAR != =>", 24.0, 612.0, "Inter"),
-    ("fn main() { let x = 42; }", 18.0, 650.0, "JetBrains Mono"),
+    ("x != y && a => b; c >= d <= e", 18.0, 650.0, "JetBrains Mono"),
 ];
 const COMPARE_RIGHT_X: f32 = 456.0;
 
@@ -277,14 +278,29 @@ when a single word overflows the bound.";
             "[lntrn-type]   row {i} ({size}px {family}): ours {ours_w:.1}px, glyphon {:.1}px",
             glyphon_widths[i]
         );
+        // With GSUB (Phase 6) + GPOS (Phase 5) both live, every row —
+        // including the ligature-triggering ones — must match glyphon's
+        // shaped width exactly.
+        assert!(
+            (ours_w - glyphon_widths[i]).abs() < 0.5,
+            "row {i} shaped width diverges: ours {ours_w} vs glyphon {}",
+            glyphon_widths[i]
+        );
     }
 
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/phase4.png");
+    // Kerning sanity without glyphon: "AV" must be narrower than A + V alone.
+    let av = text.measure_width_full("AV", 24.0, FontWeight::Normal, FontStyle::Normal, Some("Inter"));
+    let a = text.measure_width_full("A", 24.0, FontWeight::Normal, FontStyle::Normal, Some("Inter"));
+    let v = text.measure_width_full("V", 24.0, FontWeight::Normal, FontStyle::Normal, Some("Inter"));
+    println!("[lntrn-type] kern check: AV {av:.2}px vs A+V {:.2}px", a + v);
+    assert!(av < a + v - 0.5, "AV should kern tighter than A+V");
+
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/phase6.png");
     write_png(path, WIDTH, HEIGHT, &rgba).expect("failed to write PNG");
 
     let stats = text.stats();
     println!(
-        "[lntrn-type] Phase 4 preview: {queued} entries, {} cached layouts, {} atlas glyphs, {} hits / {} misses",
+        "[lntrn-type] Phase 6 preview: {queued} entries, {} cached layouts, {} atlas glyphs, {} hits / {} misses",
         stats.entries,
         text.atlas_glyph_count(),
         stats.cache_hits,
@@ -293,7 +309,7 @@ when a single word overflows the bound.";
     println!("[lntrn-type] rendered {lit} lit pixels of {}", WIDTH * HEIGHT);
     println!("[lntrn-type] wrote {path}");
     assert!(lit > 5_000, "expected real text to render; got {lit} lit pixels");
-    println!("[lntrn-type] Phase 4 OK ✅ — subpixel positioning + atlas growth + glyphon parity strip");
+    println!("[lntrn-type] Phase 6 OK ✅ — GSUB ligatures + GPOS kerning: every row matches glyphon exactly");
 }
 
 /// Render the comparison rows through glyphon (the stack being replaced) at

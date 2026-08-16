@@ -23,6 +23,7 @@ mod font;
 mod gpu;
 mod layout;
 mod raster;
+mod shape;
 
 use std::sync::Arc;
 
