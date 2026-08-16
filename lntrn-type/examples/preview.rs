@@ -1,4 +1,4 @@
-//! Phase 6 preview harness.
+//! Phase 8 preview harness.
 //!
 //! Spins up a headless wgpu device (no window/surface) and exercises the full
 //! lntrn-type stack: discovery/matching/fallback (Phase 2), the layout engine
@@ -6,7 +6,7 @@
 //! per-pixel via readback), render quality (Phase 4: subpixel bins, atlas
 //! growth, glyphon side-by-side), GPOS kerning (Phase 5), and GSUB ligatures
 //! (Phase 6) — every comparison row's shaped width asserted equal to
-//! glyphon's. Output: `phase6.png`.
+//! glyphon's. Output: `phase8.png`.
 //!
 //! This is the permanent visual-diff harness the plan calls for; later phases
 //! render richer scenes here and compare against glyphon output.
@@ -74,6 +74,15 @@ when a single word overflows the bound.";
     );
     text.occlude_rect([660.0, 78.0, 236.0, 30.0]);
 
+    // 3b) UAX#14 wrapping: spaceless Japanese wraps between characters
+    // (kinsoku-aware), and NBSP glues "12 km" onto one line.
+    text.push_clip([460.0, 115.0, 420.0, 110.0]);
+    text.queue(
+        "日本語のテキストは空白がなくても正しく折り返します。カーテンとちょっとは禁則処理で守られます。NBSP:\u{00A0}12\u{00A0}km stays together.",
+        20.0, 460.0, 115.0, Color::from_rgb8(0xf7, 0xe6, 0x3e), 400.0, WIDTH, HEIGHT,
+    );
+    text.pop_clip();
+
     // 4) queue_clipped: explicit clip rect slices glyphs mid-shape.
     text.queue_clipped(
         "queue_clipped slices glyphs mid-shape ->>>>>>>>",
@@ -94,6 +103,14 @@ when a single word overflows the bound.";
     text.queue_family("12:34:56", 40.0, 360.0, 406.0, Color::from_rgb8(0xff, 0x6b, 0x6b), f32::MAX, "Digital-7", WIDTH, HEIGHT);
     let (ink_h, ink_top) = text.measure_ink_height_family("12:34:56", 40.0, "Digital-7");
     println!("[lntrn-type] Digital-7 ink bounds: height {ink_h:.1}px, top offset {ink_top:.1}px");
+
+    // 6b) BiDi + Arabic joining: Hebrew/Arabic runs render right-to-left
+    // (mixed with Latin + numbers), Arabic letters take connected forms,
+    // and mirrored brackets flip inside RTL runs.
+    text.queue(
+        "RTL: שלום עולם — مرحبا بالعالم — (מספר 123)",
+        22.0, 16.0, 452.0, Color::from_rgb8(0x9e, 0xcb, 0xff), f32::MAX, WIDTH, HEIGHT,
+    );
 
     // 7) Force atlas growth mid-frame: huge glyphs, clipped to a zero-area
     // rect so nothing draws. Every already-queued quad must survive the grow
@@ -140,6 +157,20 @@ when a single word overflows the bound.";
     // Per-glyph fallback found something for kana.
     let kana = text.measure_width("カタカナ", 26.0);
     println!("[lntrn-type] kana fallback width: {kana:.2}px");
+
+    // Arabic positional forms actually applied: the joined word must measure
+    // differently than its letters shaped in isolation.
+    let joined = text.measure_width("سلام", 24.0);
+    let isolated: f32 = "سلام"
+        .chars()
+        .map(|c| text.measure_width(&c.to_string(), 24.0))
+        .sum();
+    println!("[lntrn-type] Arabic 'سلام': joined {joined:.2}px vs isolated {isolated:.2}px");
+    assert!(joined > 0.0, "Arabic should render via fallback");
+    assert!(
+        (joined - isolated).abs() > 0.5,
+        "Arabic joining should select positional forms"
+    );
     assert!(kana > 0.0, "kana should measure non-zero via fallback");
 
     // Digital-7 ink bounds are sane: visible ink, roughly digit-sized.
@@ -295,12 +326,12 @@ when a single word overflows the bound.";
     println!("[lntrn-type] kern check: AV {av:.2}px vs A+V {:.2}px", a + v);
     assert!(av < a + v - 0.5, "AV should kern tighter than A+V");
 
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/phase6.png");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/phase8.png");
     write_png(path, WIDTH, HEIGHT, &rgba).expect("failed to write PNG");
 
     let stats = text.stats();
     println!(
-        "[lntrn-type] Phase 6 preview: {queued} entries, {} cached layouts, {} atlas glyphs, {} hits / {} misses",
+        "[lntrn-type] Phase 8 preview: {queued} entries, {} cached layouts, {} atlas glyphs, {} hits / {} misses",
         stats.entries,
         text.atlas_glyph_count(),
         stats.cache_hits,
@@ -309,7 +340,7 @@ when a single word overflows the bound.";
     println!("[lntrn-type] rendered {lit} lit pixels of {}", WIDTH * HEIGHT);
     println!("[lntrn-type] wrote {path}");
     assert!(lit > 5_000, "expected real text to render; got {lit} lit pixels");
-    println!("[lntrn-type] Phase 6 OK ✅ — GSUB ligatures + GPOS kerning: every row matches glyphon exactly");
+    println!("[lntrn-type] Phase 8 OK ✅ — BiDi reordering, Arabic joining, mirrored brackets");
 }
 
 /// Render the comparison rows through glyphon (the stack being replaced) at

@@ -8,26 +8,64 @@
 //! Inter) implement `calt` ligatures like `=>` and `!=`. Type 3 (alternate)
 //! needs a selection UI and type 8 (reverse chained) is Phase 8 material.
 //!
+//! Every glyph carries its **cluster** (source byte offset). Substitutions
+//! preserve it: single/context keep it, multiple copies it, ligatures keep
+//! the first component's — so the layout engine can map glyphs back to text
+//! positions (Phase 7 uses this to drop line-break opportunities that a
+//! ligature swallowed).
+//!
 //! Simplification (documented): nested sequence-lookup records assume earlier
 //! records in the same rule don't shift later sequence indices — true for the
 //! length-preserving per-position substitutions real `calt` features use.
 
+use super::arabic::Form;
 use super::gtab::{coverage_index, glyph_class, GsubPlan, LookupRef};
 use crate::font::sfnt::read_u16_at;
+
+/// A glyph id + the byte offset of the source character it (still)
+/// represents + its Arabic positional form tag.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Glyph {
+    pub gid: u16,
+    pub cluster: u32,
+    pub form: Form,
+}
 
 /// Contextual rules can nest; real fonts stay shallow.
 const MAX_NESTING: u8 = 4;
 
-/// Apply the plan's substitution lookups, in lookup order, to `glyphs`.
-pub(crate) fn apply(d: &[u8], plan: &GsubPlan, glyphs: &mut Vec<u16>) {
+/// Apply the plan's substitution lookups to `glyphs`: composition, then the
+/// positional forms (each masked to glyphs tagged with that form), then the
+/// ligature/contextual set.
+pub(crate) fn apply(d: &[u8], plan: &GsubPlan, glyphs: &mut Vec<Glyph>) {
+    for lookup in &plan.ccmp {
+        apply_lookup(d, plan, lookup, glyphs, None, 0);
+    }
+    let forms = [Form::Isol, Form::Fina, Form::Medi, Form::Init];
+    for (bucket, form) in plan.positional.iter().zip(forms) {
+        for lookup in bucket {
+            apply_lookup(d, plan, lookup, glyphs, Some(form), 0);
+        }
+    }
     for lookup in &plan.subst {
-        apply_lookup(d, plan, lookup, glyphs, 0);
+        apply_lookup(d, plan, lookup, glyphs, None, 0);
     }
 }
 
-fn apply_lookup(d: &[u8], plan: &GsubPlan, lookup: &LookupRef, glyphs: &mut Vec<u16>, depth: u8) {
+fn apply_lookup(
+    d: &[u8],
+    plan: &GsubPlan,
+    lookup: &LookupRef,
+    glyphs: &mut Vec<Glyph>,
+    only_form: Option<Form>,
+    depth: u8,
+) {
     let mut i = 0;
     while i < glyphs.len() {
+        if only_form.is_some_and(|f| glyphs[i].form != f) {
+            i += 1;
+            continue;
+        }
         match apply_at(d, plan, lookup, glyphs, i, depth) {
             Some(consumed) => i += consumed.max(1),
             None => i += 1,
@@ -41,7 +79,7 @@ fn apply_at(
     d: &[u8],
     plan: &GsubPlan,
     lookup: &LookupRef,
-    glyphs: &mut Vec<u16>,
+    glyphs: &mut Vec<Glyph>,
     i: usize,
     depth: u8,
 ) -> Option<usize> {
@@ -61,14 +99,14 @@ fn apply_at(
     None
 }
 
-fn single(d: &[u8], sub: usize, glyphs: &mut [u16], i: usize) -> Option<usize> {
+fn single(d: &[u8], sub: usize, glyphs: &mut [Glyph], i: usize) -> Option<usize> {
     let format = read_u16_at(d, sub).ok()?;
     let cov = sub + read_u16_at(d, sub + 2).ok()? as usize;
-    let ci = coverage_index(d, cov, glyphs[i])?;
+    let ci = coverage_index(d, cov, glyphs[i].gid)?;
     match format {
         1 => {
             let delta = read_u16_at(d, sub + 4).ok()?;
-            glyphs[i] = glyphs[i].wrapping_add(delta);
+            glyphs[i].gid = glyphs[i].gid.wrapping_add(delta);
             Some(1)
         }
         2 => {
@@ -76,19 +114,19 @@ fn single(d: &[u8], sub: usize, glyphs: &mut [u16], i: usize) -> Option<usize> {
             if ci >= n {
                 return None;
             }
-            glyphs[i] = read_u16_at(d, sub + 6 + 2 * ci as usize).ok()?;
+            glyphs[i].gid = read_u16_at(d, sub + 6 + 2 * ci as usize).ok()?;
             Some(1)
         }
         _ => None,
     }
 }
 
-fn multiple(d: &[u8], sub: usize, glyphs: &mut Vec<u16>, i: usize) -> Option<usize> {
+fn multiple(d: &[u8], sub: usize, glyphs: &mut Vec<Glyph>, i: usize) -> Option<usize> {
     if read_u16_at(d, sub).ok()? != 1 {
         return None;
     }
     let cov = sub + read_u16_at(d, sub + 2).ok()? as usize;
-    let ci = coverage_index(d, cov, glyphs[i])?;
+    let ci = coverage_index(d, cov, glyphs[i].gid)?;
     let n = read_u16_at(d, sub + 4).ok()?;
     if ci >= n {
         return None;
@@ -100,19 +138,21 @@ fn multiple(d: &[u8], sub: usize, glyphs: &mut Vec<u16>, i: usize) -> Option<usi
         glyphs.remove(i);
         return Some(0);
     }
-    glyphs[i] = read_u16_at(d, seq + 2).ok()?;
+    let (cluster, form) = (glyphs[i].cluster, glyphs[i].form);
+    glyphs[i].gid = read_u16_at(d, seq + 2).ok()?;
     for k in 1..count {
-        glyphs.insert(i + k, read_u16_at(d, seq + 2 + 2 * k).ok()?);
+        let gid = read_u16_at(d, seq + 2 + 2 * k).ok()?;
+        glyphs.insert(i + k, Glyph { gid, cluster, form });
     }
     Some(count)
 }
 
-fn ligature(d: &[u8], sub: usize, glyphs: &mut Vec<u16>, i: usize) -> Option<usize> {
+fn ligature(d: &[u8], sub: usize, glyphs: &mut Vec<Glyph>, i: usize) -> Option<usize> {
     if read_u16_at(d, sub).ok()? != 1 {
         return None;
     }
     let cov = sub + read_u16_at(d, sub + 2).ok()? as usize;
-    let ci = coverage_index(d, cov, glyphs[i])?;
+    let ci = coverage_index(d, cov, glyphs[i].gid)?;
     let set_count = read_u16_at(d, sub + 4).ok()?;
     if ci >= set_count {
         return None;
@@ -127,9 +167,11 @@ fn ligature(d: &[u8], sub: usize, glyphs: &mut Vec<u16>, i: usize) -> Option<usi
             continue;
         }
         let tail_matches = (1..comp_count)
-            .all(|c| read_u16_at(d, lig + 4 + 2 * (c - 1)).is_ok_and(|g| g == glyphs[i + c]));
+            .all(|c| read_u16_at(d, lig + 4 + 2 * (c - 1)).is_ok_and(|g| g == glyphs[i + c].gid));
         if tail_matches {
-            glyphs[i] = lig_glyph;
+            // The ligature keeps the first component's cluster — the whole
+            // source span now maps to one glyph.
+            glyphs[i].gid = lig_glyph;
             glyphs.drain(i + 1..i + comp_count);
             return Some(1);
         }
@@ -154,9 +196,7 @@ impl Matcher {
         match *self {
             Matcher::Glyph => gid == value,
             Matcher::Class(cd) => glyph_class(d, cd, gid) == value,
-            Matcher::Coverage(base) => {
-                coverage_index(d, base + value as usize, gid).is_some()
-            }
+            Matcher::Coverage(base) => coverage_index(d, base + value as usize, gid).is_some(),
         }
     }
 }
@@ -165,7 +205,7 @@ impl Matcher {
 /// (forward).
 fn match_forward(
     d: &[u8],
-    glyphs: &[u16],
+    glyphs: &[Glyph],
     start: usize,
     values_off: usize,
     count: usize,
@@ -175,14 +215,14 @@ fn match_forward(
         return false;
     }
     (0..count).all(|k| {
-        read_u16_at(d, values_off + 2 * k).is_ok_and(|v| m.matches(d, glyphs[start + k], v))
+        read_u16_at(d, values_off + 2 * k).is_ok_and(|v| m.matches(d, glyphs[start + k].gid, v))
     })
 }
 
 /// Match backtrack values against the glyphs before `i`, closest-first.
 fn match_backtrack(
     d: &[u8],
-    glyphs: &[u16],
+    glyphs: &[Glyph],
     i: usize,
     values_off: usize,
     count: usize,
@@ -192,7 +232,7 @@ fn match_backtrack(
         return false;
     }
     (0..count).all(|k| {
-        read_u16_at(d, values_off + 2 * k).is_ok_and(|v| m.matches(d, glyphs[i - 1 - k], v))
+        read_u16_at(d, values_off + 2 * k).is_ok_and(|v| m.matches(d, glyphs[i - 1 - k].gid, v))
     })
 }
 
@@ -201,7 +241,7 @@ fn match_backtrack(
 fn apply_records(
     d: &[u8],
     plan: &GsubPlan,
-    glyphs: &mut Vec<u16>,
+    glyphs: &mut Vec<Glyph>,
     i: usize,
     records_off: usize,
     count: usize,
@@ -209,8 +249,7 @@ fn apply_records(
 ) {
     for r in 0..count {
         let rec = records_off + 4 * r;
-        let (Ok(seq_index), Ok(lookup_index)) =
-            (read_u16_at(d, rec), read_u16_at(d, rec + 2))
+        let (Ok(seq_index), Ok(lookup_index)) = (read_u16_at(d, rec), read_u16_at(d, rec + 2))
         else {
             return;
         };
@@ -230,7 +269,7 @@ fn apply_records(
 fn try_rule_set(
     d: &[u8],
     plan: &GsubPlan,
-    glyphs: &mut Vec<u16>,
+    glyphs: &mut Vec<Glyph>,
     i: usize,
     set: usize,
     chained: bool,
@@ -286,7 +325,7 @@ fn context(
     d: &[u8],
     plan: &GsubPlan,
     sub: usize,
-    glyphs: &mut Vec<u16>,
+    glyphs: &mut Vec<Glyph>,
     i: usize,
     depth: u8,
 ) -> Option<usize> {
@@ -296,7 +335,7 @@ fn context(
     match read_u16_at(d, sub).ok()? {
         1 => {
             let cov = sub + read_u16_at(d, sub + 2).ok()? as usize;
-            let ci = coverage_index(d, cov, glyphs[i])?;
+            let ci = coverage_index(d, cov, glyphs[i].gid)?;
             if ci >= read_u16_at(d, sub + 4).ok()? {
                 return None;
             }
@@ -306,9 +345,9 @@ fn context(
         }
         2 => {
             let cov = sub + read_u16_at(d, sub + 2).ok()? as usize;
-            coverage_index(d, cov, glyphs[i])?;
+            coverage_index(d, cov, glyphs[i].gid)?;
             let cd = sub + read_u16_at(d, sub + 4).ok()? as usize;
-            let class = glyph_class(d, cd, glyphs[i]);
+            let class = glyph_class(d, cd, glyphs[i].gid);
             if class >= read_u16_at(d, sub + 6).ok()? {
                 return None;
             }
@@ -342,7 +381,7 @@ fn chained(
     d: &[u8],
     plan: &GsubPlan,
     sub: usize,
-    glyphs: &mut Vec<u16>,
+    glyphs: &mut Vec<Glyph>,
     i: usize,
     depth: u8,
 ) -> Option<usize> {
@@ -352,7 +391,7 @@ fn chained(
     match read_u16_at(d, sub).ok()? {
         1 => {
             let cov = sub + read_u16_at(d, sub + 2).ok()? as usize;
-            let ci = coverage_index(d, cov, glyphs[i])?;
+            let ci = coverage_index(d, cov, glyphs[i].gid)?;
             if ci >= read_u16_at(d, sub + 4).ok()? {
                 return None;
             }
@@ -362,11 +401,11 @@ fn chained(
         }
         2 => {
             let cov = sub + read_u16_at(d, sub + 2).ok()? as usize;
-            coverage_index(d, cov, glyphs[i])?;
+            coverage_index(d, cov, glyphs[i].gid)?;
             let bt_cd = sub + read_u16_at(d, sub + 4).ok()? as usize;
             let in_cd = sub + read_u16_at(d, sub + 6).ok()? as usize;
             let la_cd = sub + read_u16_at(d, sub + 8).ok()? as usize;
-            let class = glyph_class(d, in_cd, glyphs[i]);
+            let class = glyph_class(d, in_cd, glyphs[i].gid);
             if class >= read_u16_at(d, sub + 10).ok()? {
                 return None;
             }

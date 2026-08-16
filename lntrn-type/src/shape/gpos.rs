@@ -55,11 +55,16 @@ fn add(g: &mut GlyphPos, v: ValueAdj) {
     g.x_adv += v.x_adv;
 }
 
+/// Lookup flag: skip glyphs GDEF classifies as marks when matching.
+const IGNORE_MARKS: u16 = 0x0008;
+
 /// Apply the plan's kern + mark lookups to a same-font glyph run.
-pub(crate) fn apply(d: &[u8], plan: &GposPlan, glyphs: &mut [GlyphPos]) {
+/// `marks[i]` = GDEF class 3, honored for IgnoreMarks pair kerning (so e.g.
+/// Arabic base-to-base kerning works across vowel marks).
+pub(crate) fn apply(d: &[u8], plan: &GposPlan, glyphs: &mut [GlyphPos], marks: &[bool]) {
     for lookup in &plan.kern {
         for i in 0..glyphs.len() {
-            apply_kern_at(d, lookup, glyphs, i);
+            apply_kern_at(d, lookup, glyphs, marks, i);
         }
     }
     if !plan.mark.is_empty() {
@@ -68,11 +73,24 @@ pub(crate) fn apply(d: &[u8], plan: &GposPlan, glyphs: &mut [GlyphPos]) {
 }
 
 /// Within a lookup, the first subtable that matches at a position wins.
-fn apply_kern_at(d: &[u8], lookup: &LookupRef, glyphs: &mut [GlyphPos], i: usize) {
+fn apply_kern_at(d: &[u8], lookup: &LookupRef, glyphs: &mut [GlyphPos], marks: &[bool], i: usize) {
+    let ignore_marks = lookup.flag & IGNORE_MARKS != 0;
+    if ignore_marks && marks.get(i).copied().unwrap_or(false) {
+        return;
+    }
+    // Pair partner: next glyph, skipping marks when the lookup asks to.
+    let next = if ignore_marks {
+        (i + 1..glyphs.len()).find(|&j| !marks[j])
+    } else {
+        (i + 1 < glyphs.len()).then_some(i + 1)
+    };
     for &(kind, sub) in &lookup.subtables {
         let applied = match kind {
             1 => apply_single(d, sub, glyphs, i),
-            2 => apply_pair(d, sub, glyphs, i),
+            2 => match next {
+                Some(j) => apply_pair(d, sub, glyphs, i, j),
+                None => false,
+            },
             _ => false,
         };
         if applied {
@@ -107,11 +125,8 @@ fn apply_single(d: &[u8], sub: usize, glyphs: &mut [GlyphPos], i: usize) -> bool
     true
 }
 
-fn apply_pair(d: &[u8], sub: usize, glyphs: &mut [GlyphPos], i: usize) -> bool {
-    if i + 1 >= glyphs.len() {
-        return false;
-    }
-    let (left, right) = (glyphs[i].gid, glyphs[i + 1].gid);
+fn apply_pair(d: &[u8], sub: usize, glyphs: &mut [GlyphPos], i: usize, j: usize) -> bool {
+    let (left, right) = (glyphs[i].gid, glyphs[j].gid);
     let Ok(format) = read_u16_at(d, sub) else {
         return false;
     };
@@ -175,7 +190,7 @@ fn apply_pair(d: &[u8], sub: usize, glyphs: &mut [GlyphPos], i: usize) -> bool {
         _ => return false,
     };
     add(&mut glyphs[i], pair.0);
-    add(&mut glyphs[i + 1], pair.1);
+    add(&mut glyphs[j], pair.1);
     true
 }
 

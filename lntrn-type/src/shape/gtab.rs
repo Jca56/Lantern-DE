@@ -16,10 +16,8 @@ const EXTENSION_POS: u16 = 9;
 const EXTENSION_SUB: u16 = 7;
 
 pub(crate) struct LookupRef {
-    /// Lookup flag (rtl / ignore-base/ligature/mark bits). Stored but not yet
-    /// honored — the ignore-* refinements matter for mark-heavy scripts
-    /// (Phase 8).
-    #[allow(dead_code)]
+    /// Lookup flag. IgnoreMarks (0x8) is honored in GPOS pair kerning;
+    /// the other ignore-* bits and mark-filtering sets are still pending.
     pub flag: u16,
     /// (resolved lookup type, absolute subtable offset); extensions unwrapped.
     pub subtables: Vec<(u16, usize)>,
@@ -36,9 +34,9 @@ pub(crate) struct GposPlan {
 impl GposPlan {
     /// Malformed tables yield an empty plan rather than an error — positioning
     /// is an enhancement, never a reason to reject a font.
-    pub fn build(data: &[u8], gpos_off: usize) -> GposPlan {
+    pub fn build(data: &[u8], gpos_off: usize, script: Option<[u8; 4]>) -> GposPlan {
         let groups: &[&[[u8; 4]]] = &[&[*b"kern"], &[*b"mark", *b"mkmk"]];
-        match gather_lookups(data, gpos_off, groups, EXTENSION_POS) {
+        match gather_lookups(data, gpos_off, groups, EXTENSION_POS, script) {
             Some((mut sets, _)) => {
                 let mark = sets.pop().unwrap_or_default();
                 let kern = sets.pop().unwrap_or_default();
@@ -49,11 +47,15 @@ impl GposPlan {
     }
 }
 
-/// The GSUB lookups this engine applies (default horizontal-text features,
-/// HarfBuzz-style: composition, standard + contextual ligatures, required
-/// ligatures), gathered once at font parse.
+/// The GSUB lookups this engine applies, gathered once at font parse.
+/// Composition first, then the Arabic-style positional forms (masked to
+/// glyphs the joining analysis tagged), then the ligature/contextual set.
 pub(crate) struct GsubPlan {
-    /// Substitution lookups, in LookupList order across all features.
+    /// `ccmp` — glyph de/composition, applied before everything.
+    pub ccmp: Vec<LookupRef>,
+    /// Positional forms in application order: isol, fina, medi, init.
+    pub positional: [Vec<LookupRef>; 4],
+    /// `rlig` + `liga` + `clig` + `calt`, in LookupList order.
     pub subst: Vec<LookupRef>,
     /// Absolute LookupList offset — contextual rules reference arbitrary
     /// lookups by index, resolved on demand via [`resolve_lookup`].
@@ -61,15 +63,36 @@ pub(crate) struct GsubPlan {
 }
 
 impl GsubPlan {
-    pub fn build(data: &[u8], gsub_off: usize) -> GsubPlan {
-        let groups: &[&[[u8; 4]]] =
-            &[&[*b"ccmp", *b"liga", *b"clig", *b"calt", *b"rlig"]];
-        match gather_lookups(data, gsub_off, groups, EXTENSION_SUB) {
-            Some((mut sets, lookup_list)) => GsubPlan {
-                subst: sets.pop().unwrap_or_default(),
-                lookup_list,
+    pub fn build(data: &[u8], gsub_off: usize, script: Option<[u8; 4]>) -> GsubPlan {
+        let groups: &[&[[u8; 4]]] = &[
+            &[*b"ccmp"],
+            &[*b"isol"],
+            &[*b"fina"],
+            &[*b"medi"],
+            &[*b"init"],
+            &[*b"liga", *b"clig", *b"calt", *b"rlig"],
+        ];
+        match gather_lookups(data, gsub_off, groups, EXTENSION_SUB, script) {
+            Some((mut sets, lookup_list)) => {
+                let subst = sets.pop().unwrap_or_default();
+                let init = sets.pop().unwrap_or_default();
+                let medi = sets.pop().unwrap_or_default();
+                let fina = sets.pop().unwrap_or_default();
+                let isol = sets.pop().unwrap_or_default();
+                let ccmp = sets.pop().unwrap_or_default();
+                GsubPlan {
+                    ccmp,
+                    positional: [isol, fina, medi, init],
+                    subst,
+                    lookup_list,
+                }
+            }
+            None => GsubPlan {
+                ccmp: Vec::new(),
+                positional: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+                subst: Vec::new(),
+                lookup_list: 0,
             },
-            None => GsubPlan { subst: Vec::new(), lookup_list: 0 },
         }
     }
 
@@ -82,20 +105,40 @@ impl GsubPlan {
     }
 }
 
+/// The script tags a layout table declares (for per-script plan building).
+pub(crate) fn script_tags(data: &[u8], t: usize) -> Vec<[u8; 4]> {
+    let mut out = Vec::new();
+    let Ok(list_rel) = read_u16_at(data, t + 4) else {
+        return out;
+    };
+    let script_list = t + list_rel as usize;
+    let Ok(count) = read_u16_at(data, script_list) else {
+        return out;
+    };
+    for i in 0..count as usize {
+        if let Ok(tag) = read_u32_at(data, script_list + 2 + 6 * i) {
+            out.push(tag.to_be_bytes());
+        }
+    }
+    out
+}
+
 /// Walk script → default LangSys → features, bucketing each wanted feature
 /// tag's lookup indices into its group. Returns the resolved lookups per
 /// group (LookupList order within each) plus the LookupList offset.
+/// `script`: exact script to use (None = latn → DFLT → first).
 fn gather_lookups(
     data: &[u8],
     t: usize,
     groups: &[&[[u8; 4]]],
     ext_kind: u16,
+    script: Option<[u8; 4]>,
 ) -> Option<(Vec<Vec<LookupRef>>, usize)> {
     let script_list = t + read_u16_at(data, t + 4).ok()? as usize;
     let feature_list = t + read_u16_at(data, t + 6).ok()? as usize;
     let lookup_list = t + read_u16_at(data, t + 8).ok()? as usize;
 
-    let script = pick_script(data, script_list)?;
+    let script = pick_script(data, script_list, script)?;
     let langsys = default_langsys(data, script)?;
 
     let mut sets: Vec<BTreeSet<u16>> = groups.iter().map(|_| BTreeSet::new()).collect();
@@ -131,13 +174,16 @@ fn gather_lookups(
     Some((resolved, lookup_list))
 }
 
-fn pick_script(data: &[u8], script_list: usize) -> Option<usize> {
+fn pick_script(data: &[u8], script_list: usize, want: Option<[u8; 4]>) -> Option<usize> {
     let count = read_u16_at(data, script_list).ok()? as usize;
     let (mut latn, mut dflt, mut first) = (None, None, None);
     for i in 0..count {
         let rec = script_list + 2 + 6 * i;
         let tag = read_u32_at(data, rec).ok()?.to_be_bytes();
         let off = script_list + read_u16_at(data, rec + 4).ok()? as usize;
+        if want == Some(tag) {
+            return Some(off);
+        }
         if first.is_none() {
             first = Some(off);
         }
@@ -146,6 +192,9 @@ fn pick_script(data: &[u8], script_list: usize) -> Option<usize> {
             b"DFLT" => dflt = Some(off),
             _ => {}
         }
+    }
+    if want.is_some() {
+        return None; // exact-script build: absent means no plan for it
     }
     latn.or(dflt).or(first)
 }

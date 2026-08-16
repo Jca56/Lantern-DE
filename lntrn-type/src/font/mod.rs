@@ -71,12 +71,26 @@ pub(crate) struct Font {
     pub(crate) loca: (usize, usize),
     pub(crate) glyf: (usize, usize),
     hmtx: (usize, usize),
-    /// GPOS kern/mark lookups, gathered at parse (None = no GPOS table).
-    gpos_plan: Option<GposPlan>,
-    /// GSUB ligature/contextual lookups (None = no GSUB table).
-    gsub_plan: Option<GsubPlan>,
+    /// GPOS kern/mark lookups per script tag, gathered at parse.
+    gpos_plans: Vec<([u8; 4], GposPlan)>,
+    /// GSUB substitution lookups per script tag, gathered at parse.
+    gsub_plans: Vec<([u8; 4], GsubPlan)>,
     /// Legacy `kern` table, used only when GPOS has no kern feature.
     kern: Option<(usize, usize)>,
+    /// GDEF glyph-class definition (absolute offset); class 3 = mark.
+    gdef_classes: Option<usize>,
+}
+
+/// Pick the plan for a shaping run's script: exact tag, else DFLT, else
+/// latn, else whatever the font has.
+fn plan_for<T>(plans: &[([u8; 4], T)], script: [u8; 4]) -> Option<&T> {
+    plans
+        .iter()
+        .find(|(t, _)| *t == script)
+        .or_else(|| plans.iter().find(|(t, _)| t == b"DFLT"))
+        .or_else(|| plans.iter().find(|(t, _)| t == b"latn"))
+        .or_else(|| plans.first())
+        .map(|(_, p)| p)
 }
 
 impl Font {
@@ -97,9 +111,32 @@ impl Font {
             .ok_or(FontError::Unsupported("no `glyf` outlines (CFF lands in Phase 9)"))?;
         let loca = need(b"loca")?;
         let hmtx = need(b"hmtx")?;
-        let gpos_plan = dir.find(b"GPOS").map(|(off, _)| GposPlan::build(&data, off));
-        let gsub_plan = dir.find(b"GSUB").map(|(off, _)| GsubPlan::build(&data, off));
+        // Build layout plans per script the tables declare (Arabic features
+        // live under `arab`, not the latn/DFLT default a single plan would
+        // pick). A shaping run selects by its script at runtime.
+        let mut gpos_plans = Vec::new();
+        if let Some((off, _)) = dir.find(b"GPOS") {
+            for tag in crate::shape::gtab::script_tags(&data, off) {
+                if !gpos_plans.iter().any(|(t, _)| *t == tag) {
+                    gpos_plans.push((tag, GposPlan::build(&data, off, Some(tag))));
+                }
+            }
+        }
+        let mut gsub_plans = Vec::new();
+        if let Some((off, _)) = dir.find(b"GSUB") {
+            for tag in crate::shape::gtab::script_tags(&data, off) {
+                if !gsub_plans.iter().any(|(t, _)| *t == tag) {
+                    gsub_plans.push((tag, GsubPlan::build(&data, off, Some(tag))));
+                }
+            }
+        }
         let kern = dir.find(b"kern");
+        let gdef_classes = dir.find(b"GDEF").and_then(|(off, _)| {
+            match crate::font::sfnt::read_u16_at(&data, off + 4) {
+                Ok(rel) if rel != 0 => Some(off + rel as usize),
+                _ => None,
+            }
+        });
 
         Ok(Font {
             data,
@@ -114,10 +151,17 @@ impl Font {
             loca,
             glyf,
             hmtx,
-            gpos_plan,
-            gsub_plan,
+            gpos_plans,
+            gsub_plans,
             kern,
+            gdef_classes,
         })
+    }
+
+    /// GDEF glyph class 3 = mark (used for lookup mark-filtering).
+    fn is_mark_glyph(&self, gid: u16) -> bool {
+        self.gdef_classes
+            .is_some_and(|cd| crate::shape::gtab::glyph_class(&self.data, cd, gid) == 3)
     }
 
     /// Pixels per font unit at `px` pixels-per-em.
@@ -154,25 +198,27 @@ impl Font {
         glyf::outline(self, gid)
     }
 
-    /// Apply GSUB substitution (ligatures, contextual alternates) to a glyph
-    /// run. Substituted ids are clamped to the glyph count defensively.
-    pub fn substitute(&self, glyphs: &mut Vec<u16>) {
-        if let Some(plan) = &self.gsub_plan {
+    /// Apply GSUB substitution (ligatures, contextual alternates, Arabic
+    /// positional forms) for `script` to a glyph run. Substituted ids are
+    /// clamped to the glyph count defensively.
+    pub fn substitute(&self, glyphs: &mut Vec<gsub::Glyph>, script: [u8; 4]) {
+        if let Some(plan) = plan_for(&self.gsub_plans, script) {
             gsub::apply(&self.data, plan, glyphs);
             for g in glyphs.iter_mut() {
-                if *g >= self.num_glyphs {
-                    *g = 0;
+                if g.gid >= self.num_glyphs {
+                    g.gid = 0;
                 }
             }
         }
     }
 
     /// Apply positioning (GPOS kern/single/marks, or the legacy `kern` table
-    /// when GPOS carries no kern feature) to a glyph run, in font units.
-    pub fn position(&self, glyphs: &mut [GlyphPos]) {
+    /// when GPOS carries no kern feature) for `script`, in font units.
+    pub fn position(&self, glyphs: &mut [GlyphPos], script: [u8; 4]) {
         let mut gpos_kerned = false;
-        if let Some(plan) = &self.gpos_plan {
-            gpos::apply(&self.data, plan, glyphs);
+        if let Some(plan) = plan_for(&self.gpos_plans, script) {
+            let marks: Vec<bool> = glyphs.iter().map(|g| self.is_mark_glyph(g.gid)).collect();
+            gpos::apply(&self.data, plan, glyphs, &marks);
             gpos_kerned = !plan.kern.is_empty();
         }
         if !gpos_kerned {

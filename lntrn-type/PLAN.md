@@ -250,17 +250,63 @@ Prove our own GPU text path end-to-end with a fake glyph before any font parsing
   width now matches glyphon exactly (asserted <0.5px, ligature rows
   included): 221.9/269.5/281.3/288.7/313.2 all equal. 🎉
 
-### Phase 7 — Unicode segmentation 🔴
-- UAX#29 grapheme + word clustering (correct cursor/ZWJ handling).
-- UAX#24 script itemization (drives shaping runs).
-- UAX#14 line breaking (replace greedy wrap with proper break opportunities).
-- Build the Unicode property tables ourselves (codegen from UCD data files).
-- **Exit:** correct wrapping + cluster-aware editing.
+### Phase 7 — Unicode segmentation 🔴 ✅ DONE
+- [x] **UCD codegen**: `ucd/` holds pinned Unicode 17.0.0 data files
+  (GraphemeBreakProperty, emoji-data, Scripts, LineBreak);
+  `examples/gen_unicode.rs` regenerates `src/unicode/tables.rs` (5.4k merged
+  ranges, binary-searched). No unicode-* crates, as decided.
+- [x] **UAX#29** (`unicode/grapheme.rs`): GB1–GB13+GB999 — CRLF, Hangul jamo,
+  Extend/ZWJ, spacing marks, prepend, emoji ZWJ sequences, RI flag pairs.
+  GB9c (Indic conjuncts, needs InCB) deferred to Phase 8. **Public API**:
+  `lntrn_type::unicode::{graphemes, next_grapheme_boundary}` for editors.
+- [x] **UAX#14** (`unicode/linebreak.rs`): rule cascade LB2–LB31 incl. space
+  runs, CM/ZWJ transparency, kinsoku (CJ→NS), Korean jamo, numbers, RI
+  pairs. Simplifications documented in the module (SA→AL, classic LB19
+  quotes, simplified LB25/28a/30). `break_opportunities` + `units` public.
+- [x] **UAX#24** (`unicode/script.rs`): script runs with Common/Inherited
+  adoption; crate-internal until Phase 8 per-script shaping.
+- [x] **Whole-line shaping with cluster tracking**: every glyph carries its
+  source byte offset through GSUB (ligature keeps first component's); the
+  line builder shapes entire lines and takes only break opportunities that
+  land on a surviving cluster boundary — a ligature spanning a break makes
+  it unbreakable, and ligatures/kerning now form across word boundaries like
+  the old HarfBuzz stack. Grapheme-cluster-aware fallback keeps combining
+  marks in their base's font.
+- **Exit:** ✅ 17 unit tests (ZWJ families, flags, jamo, kinsoku カー/ちょっ,
+  NBSP glue, hyphens, number units); spaceless Japanese wraps kinsoku-aware
+  in `phase7.png` next to NBSP-glued Latin; all glyphon width parity asserts
+  still exact.
 
-### Phase 8 — BiDi + complex scripts 🔴 (Tier 3)
-- UAX#9 bidirectional algorithm (reordering, embedding levels).
-- Arabic joining + mark filtering; Indic reordering shaper(s).
-- **Exit:** RTL (Arabic/Hebrew) + basic complex-script support.
+### Phase 8 — BiDi + complex scripts 🔴 (Tier 3) ✅ DONE
+- [x] **UAX#9** (`unicode/bidi.rs`): P2–P3, explicit-embedding stack
+  (RLE/LRE/RLO/LRO/PDF + overflow), W1–W7, N1–N2, I1–I2, L1; L2 reorder + L4
+  mirroring applied by layout. UCD additions: DerivedBidiClass (with
+  `@missing` default-range layering — unassigned Arabic blocks default AL),
+  BidiMirroring, ArabicShaping. Documented simplifications: isolates
+  (RLI/LRI/FSI/PDI) treated as neutrals (LRM/RLM strong marks fully work),
+  N0 paired brackets skipped, per-run sos/eos without isolating-sequence
+  chaining.
+- [x] **Arabic joining** (`shape/arabic.rs`): joining-type analysis
+  (transparent marks skipped) → isol/init/medi/fina form tags per glyph,
+  applied via masked GSUB positional-feature buckets. Also covers Syriac,
+  N'Ko, Mongolian (same table).
+- [x] **Per-script feature plans**: GSUB/GPOS plans now built per script tag
+  the tables declare, selected by each run's UAX#24 script at shape time
+  (exact → DFLT → latn → first). This was load-bearing: Arabic features live
+  under `arab`, invisible to the old latn-only plan.
+- [x] **GDEF + mark filtering**: glyph classes parsed; IgnoreMarks honored in
+  GPOS pair kerning (bases kern across vowel marks). GSUB-side ignore-flags
+  + mark-filtering sets still pending; Indic reordering shapers deferred
+  (script runs + dev2-era fonts do most positioning via GSUB/GPOS we run).
+- [x] **Layout**: default-ignorables (directional controls, joiners) render
+  no glyph; mirrored chars swap before shaping in odd-level runs; greedy
+  wrap stays logical; L2 reordering per row at *group* granularity (base +
+  its zero-advance marks move as one unit, keeping anchors valid).
+- **Exit:** ✅ mixed "RTL: שלום עולם — مرحبا بالعالم — (מספר 123)" renders
+  right-to-left with connected Arabic (joined سلام measures 49.3px vs 68.3px
+  isolated — asserted), LTR numbers inside RTL, mirrored bracket; 25 unit
+  tests incl. bidi levels/reorder + joining forms; all glyphon parity
+  asserts still exact.
 
 ### Phase 9 — CFF / CFF2 outlines 🔴
 - CFF Type2 charstring interpreter; CFF2 + blend for variable fonts.

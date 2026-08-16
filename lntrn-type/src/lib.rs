@@ -24,6 +24,7 @@ mod gpu;
 mod layout;
 mod raster;
 mod shape;
+pub mod unicode;
 
 use std::sync::Arc;
 
