@@ -21,8 +21,11 @@ pub struct RasterGlyph {
 const MAX_GLYPH_PX: f32 = 4096.0;
 
 /// Rasterize `outline` (font units, y up) at `scale` px-per-unit into a tight
-/// coverage bitmap. Returns `None` for empty/degenerate outlines (e.g. space).
-pub fn rasterize(outline: &Outline, scale: f32) -> Option<RasterGlyph> {
+/// coverage bitmap. `x_offset` (0..1 px) bakes a subpixel horizontal position
+/// into the coverage — the engine quantizes pen positions to quarter-pixel
+/// bins so proportional text keeps even spacing instead of snapping each
+/// glyph to whole pixels. Returns `None` for empty/degenerate outlines.
+pub fn rasterize(outline: &Outline, scale: f32, x_offset: f32) -> Option<RasterGlyph> {
     if outline.cmds.is_empty() || scale <= 0.0 {
         return None;
     }
@@ -33,7 +36,7 @@ pub fn rasterize(outline: &Outline, scale: f32) -> Option<RasterGlyph> {
     let mut max = [f32::MIN, f32::MIN];
     {
         let mut see = |p: &[f32; 2]| {
-            let x = p[0] * scale;
+            let x = p[0] * scale + x_offset;
             let y = -p[1] * scale;
             min[0] = min[0].min(x);
             min[1] = min[1].min(y);
@@ -67,13 +70,13 @@ pub fn rasterize(outline: &Outline, scale: f32) -> Option<RasterGlyph> {
     }
     let (w, h) = (w as usize, h as usize);
 
-    // Scale + y-flip + translate into bitmap space in one transform.
+    // Scale + y-flip + subpixel shift + translate into bitmap space.
     let t = Affine {
         a: scale,
         b: 0.0,
         c: 0.0,
         d: -scale,
-        e: -x0,
+        e: x_offset - x0,
         f: -y0,
     };
     let mut acc = Accumulator::new(w, h);

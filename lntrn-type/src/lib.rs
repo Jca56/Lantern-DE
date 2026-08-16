@@ -334,13 +334,17 @@ impl TextRenderer {
         };
         let (mut min_top, mut max_bottom) = (f32::MAX, f32::MIN);
         for g in &layout.glyphs {
+            // Bin 0 is fine for ink bounds: subpixel x-shift moves ink
+            // horizontally, not vertically.
             let entry = Self::raster_entry(
+                &self.device,
                 &mut self.atlas,
                 &mut self.db,
                 &self.queue,
                 g.face as usize,
                 g.gid,
                 size,
+                0,
             );
             if entry.height > 0 {
                 let top = g.y.round() - entry.top as f32;

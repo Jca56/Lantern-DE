@@ -29,32 +29,40 @@ pub(crate) struct QueuedEntry {
 }
 
 /// Atlas cache key for a rasterized glyph. High bit namespaces real glyphs;
-/// 16 bits of face id, 16 of glyph id, 24 of quarter-pixel size.
-fn glyph_cache_key(face_id: usize, gid: u16, size: f32) -> u64 {
-    let q = ((size * 4.0).round() as u64) & 0xFF_FFFF;
-    (1 << 63) | ((face_id as u64 & 0xFFFF) << 40) | ((gid as u64) << 24) | q
+/// 2 bits of subpixel bin, 16 of face id, 16 of glyph id, 28 of size grid.
+fn glyph_cache_key(face_id: usize, gid: u16, size: f32, bin: u32) -> u64 {
+    let q = ((size * 4.0).round() as u64) & 0x0FFF_FFFF;
+    (1 << 63)
+        | ((bin as u64 & 0x3) << 61)
+        | ((face_id as u64 & 0xFFFF) << 44)
+        | ((gid as u64) << 28)
+        | q
 }
 
 impl TextRenderer {
-    /// Fetch the atlas entry for a glyph, rasterizing on first use.
+    /// Fetch the atlas entry for a glyph at a quarter-pixel subpixel bin
+    /// (0–3 → 0/0.25/0.5/0.75px horizontal offset), rasterizing on first use.
     /// Associated fn (not `&mut self`) so callers can hold a cached-layout
     /// borrow from a sibling field while filling the atlas.
+    #[allow(clippy::too_many_arguments)] // split-borrowed fields + glyph identity
     pub(crate) fn raster_entry(
+        device: &wgpu::Device,
         atlas: &mut GlyphAtlas,
         db: &mut FontDb,
         gpu_queue: &wgpu::Queue,
         face_id: usize,
         gid: u16,
         size: f32,
+        bin: u32,
     ) -> AtlasEntry {
-        let key = glyph_cache_key(face_id, gid, size);
+        let key = glyph_cache_key(face_id, gid, size, bin);
         if let Some(entry) = atlas.get(key) {
             return entry;
         }
         let raster = db.font(face_id).and_then(|f| {
             let scale = f.scale(size);
             match f.outline(gid) {
-                Ok(outline) => raster::rasterize(&outline, scale),
+                Ok(outline) => raster::rasterize(&outline, scale, bin as f32 * 0.25),
                 Err(e) => {
                     eprintln!("[lntrn-type] face {face_id} glyph {gid}: {e}");
                     None
@@ -63,11 +71,23 @@ impl TextRenderer {
         });
         match raster {
             Some(g) => {
-                atlas.insert(gpu_queue, key, g.width, g.height, g.left, g.top, &g.coverage)
+                atlas.insert(device, gpu_queue, key, g.width, g.height, g.left, g.top, &g.coverage)
             }
             // Whitespace / empty outline: cache a zero-area entry so repeat
             // lookups stay cheap.
-            None => atlas.insert(gpu_queue, key, 0, 0, 0, 0, &[]),
+            None => atlas.insert(device, gpu_queue, key, 0, 0, 0, 0, &[]),
+        }
+    }
+
+    /// Split a pen x-position into (whole pixel, subpixel bin). Bin 4 rounds
+    /// up into the next pixel's bin 0.
+    fn subpixel_bin(pen_x: f32) -> (f32, u32) {
+        let xi = pen_x.floor();
+        let bin = ((pen_x - xi) * 4.0).round() as u32;
+        if bin == 4 {
+            (xi + 1.0, 0)
+        } else {
+            (xi, bin)
         }
     }
 
@@ -127,17 +147,20 @@ impl TextRenderer {
         let quad_start = self.queued.len() as u32;
         let rgba = [color.r, color.g, color.b, color.a];
         for g in &layout.glyphs {
+            let (pen_px, bin) = Self::subpixel_bin(x + g.x);
             let entry = Self::raster_entry(
+                &self.device,
                 &mut self.atlas,
                 &mut self.db,
                 &self.queue,
                 g.face as usize,
                 g.gid,
                 size,
+                bin,
             );
             if entry.width > 0 && entry.height > 0 {
                 self.queued.push(Quad {
-                    x: (x + g.x).round() + entry.left as f32,
+                    x: pen_px + entry.left as f32,
                     y: (y + g.y).round() - entry.top as f32,
                     w: entry.width as f32,
                     h: entry.height as f32,
@@ -228,8 +251,16 @@ impl TextRenderer {
             }
         }
         if !quads.is_empty() {
-            self.pipeline
-                .render(&self.device, &self.queue, encoder, view, width, height, &quads);
+            self.pipeline.render(
+                &self.device,
+                &self.queue,
+                encoder,
+                view,
+                width,
+                height,
+                &self.atlas,
+                &quads,
+            );
         }
     }
 }

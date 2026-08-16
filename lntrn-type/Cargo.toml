@@ -19,6 +19,9 @@ wgpu = "28"
 
 [dev-dependencies]
 pollster = "0.4"
+# The stack being replaced — dev-only, for the preview harness's side-by-side
+# quality comparison. Gone (with everything it pulls) at the Phase 12 swap.
+glyphon = "0.10"
 
 [[example]]
 name = "preview"

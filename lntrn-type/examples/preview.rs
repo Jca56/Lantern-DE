@@ -18,8 +18,18 @@ use lntrn_draw::Color;
 use lntrn_type::{FontStyle, FontWeight, TextRenderer};
 
 const WIDTH: u32 = 896; // ×4 bytes per px stays 256-aligned for readback
-const HEIGHT: u32 = 512;
+const HEIGHT: u32 = 768; // top 512: engine features; bottom: vs-glyphon strip
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+
+/// Rows rendered through BOTH engines (ours left, glyphon right).
+const COMPARE_ROWS: &[(&str, f32, f32, &str)] = &[
+    ("The quick brown fox 0123456789", 14.0, 528.0, "Inter"),
+    ("The quick brown fox 0123456789", 17.0, 552.0, "Inter"),
+    ("The quick brown fox jumps", 22.0, 580.0, "Inter"),
+    ("Wave To Yo AVATAR != =>", 24.0, 612.0, "Inter"),
+    ("fn main() { let x = 42; }", 18.0, 650.0, "JetBrains Mono"),
+];
+const COMPARE_RIGHT_X: f32 = 456.0;
 
 fn main() {
     let (device, queue) = headless_device();
@@ -83,6 +93,25 @@ when a single word overflows the bound.";
     text.queue_family("12:34:56", 40.0, 360.0, 406.0, Color::from_rgb8(0xff, 0x6b, 0x6b), f32::MAX, "Digital-7", WIDTH, HEIGHT);
     let (ink_h, ink_top) = text.measure_ink_height_family("12:34:56", 40.0, "Digital-7");
     println!("[lntrn-type] Digital-7 ink bounds: height {ink_h:.1}px, top offset {ink_top:.1}px");
+
+    // 7) Force atlas growth mid-frame: huge glyphs, clipped to a zero-area
+    // rect so nothing draws. Every already-queued quad must survive the grow
+    // (texel UVs + same-origin GPU copy) — the region asserts after render
+    // prove it. Expect "glyph atlas grew" logs from this.
+    for size in [200.0f32, 240.0] {
+        text.queue_clipped(
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+            size, 0.0, 0.0, white, f32::MAX,
+            [0.0, 0.0, 0.0, 0.0],
+        );
+    }
+
+    // 8) Side-by-side quality strip: same rows, ours left, glyphon right.
+    text.queue("lntrn-type (ours)", 16.0, 16.0, 500.0, grey, f32::MAX, WIDTH, HEIGHT);
+    text.queue("glyphon (old stack)", 16.0, COMPARE_RIGHT_X, 500.0, grey, f32::MAX, WIDTH, HEIGHT);
+    for &(s, size, y, family) in COMPARE_ROWS {
+        text.queue_full(s, size, 16.0, y, white, f32::MAX, FontWeight::Normal, FontStyle::Normal, Some(family), WIDTH, HEIGHT);
+    }
 
     // ── Behavior checks ──────────────────────────────────────────────────────
     // Wrap only constrains queueing — measurement uses the wrapper's fixed
@@ -179,8 +208,9 @@ when a single word overflows the bound.";
         });
     }
 
-    // Glyph pass.
+    // Glyph pass (ours), then glyphon's pass for the comparison strip.
     text.render(&mut encoder, &view, WIDTH, HEIGHT);
+    let glyphon_widths = render_glyphon_side(&device, &queue, &mut encoder, &view);
 
     // Copy → readback buffer.
     encoder.copy_texture_to_buffer(
@@ -231,12 +261,30 @@ when a single word overflows the bound.";
     let clipped_kept = count_lit(&rgba, 16, 254, 312, 280);
     assert!(clipped_kept > 100, "queue_clipped kept region should render, got {clipped_kept} px");
 
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/phase3.png");
+    // Side-by-side sanity: both engines put comparable amounts of ink down.
+    let ours_lit = count_lit(&rgba, 8, 520, 448, 700);
+    let glyphon_lit = count_lit(&rgba, 448, 520, 888, 700).max(1);
+    let ratio = ours_lit as f32 / glyphon_lit as f32;
+    println!("[lntrn-type] side-by-side ink: ours {ours_lit}px vs glyphon {glyphon_lit}px (ratio {ratio:.2})");
+    assert!(
+        (0.6..=1.7).contains(&ratio),
+        "engines diverge too much: ours {ours_lit} vs glyphon {glyphon_lit}"
+    );
+    for (i, &(s, size, _, family)) in COMPARE_ROWS.iter().enumerate() {
+        let ours_w =
+            text.measure_width_full(s, size, FontWeight::Normal, FontStyle::Normal, Some(family));
+        println!(
+            "[lntrn-type]   row {i} ({size}px {family}): ours {ours_w:.1}px, glyphon {:.1}px",
+            glyphon_widths[i]
+        );
+    }
+
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/phase4.png");
     write_png(path, WIDTH, HEIGHT, &rgba).expect("failed to write PNG");
 
     let stats = text.stats();
     println!(
-        "[lntrn-type] Phase 3 preview: {queued} entries, {} cached layouts, {} atlas glyphs, {} hits / {} misses",
+        "[lntrn-type] Phase 4 preview: {queued} entries, {} cached layouts, {} atlas glyphs, {} hits / {} misses",
         stats.entries,
         text.atlas_glyph_count(),
         stats.cache_hits,
@@ -245,7 +293,102 @@ when a single word overflows the bound.";
     println!("[lntrn-type] rendered {lit} lit pixels of {}", WIDTH * HEIGHT);
     println!("[lntrn-type] wrote {path}");
     assert!(lit > 5_000, "expected real text to render; got {lit} lit pixels");
-    println!("[lntrn-type] Phase 3 OK ✅ — wrap, clips, occlusion, and layers verified per-pixel");
+    println!("[lntrn-type] Phase 4 OK ✅ — subpixel positioning + atlas growth + glyphon parity strip");
+}
+
+/// Render the comparison rows through glyphon (the stack being replaced) at
+/// the right-hand column, mirroring the lntrn-render wrapper's settings:
+/// 1.2 line height, advanced shaping, sRGB u8 default color. Returns each
+/// row's laid-out width for the numeric comparison.
+fn render_glyphon_side(
+    device: &Arc<wgpu::Device>,
+    queue: &Arc<wgpu::Queue>,
+    encoder: &mut wgpu::CommandEncoder,
+    view: &wgpu::TextureView,
+) -> Vec<f32> {
+    use glyphon::{
+        fontdb, Attrs, Buffer, Cache, Color as GColor, Family, FontSystem, Metrics, Resolution,
+        Shaping, SwashCache, TextArea, TextAtlas, TextBounds, TextRenderer as GlyphonRenderer,
+        Viewport,
+    };
+
+    // Same font files our engine resolves, for an apples-to-apples face match.
+    let home = std::env::var("HOME").unwrap_or_default();
+    let mut db = fontdb::Database::new();
+    for f in ["Inter.ttf", "JetBrainsMono.ttf"] {
+        if let Ok(data) = std::fs::read(format!("{home}/.lantern/fonts/{f}")) {
+            db.load_font_data(data);
+        }
+    }
+    let mut font_system = FontSystem::new_with_locale_and_db("en-US".to_string(), db);
+    let mut swash = SwashCache::new();
+    let cache = Cache::new(device);
+    let mut viewport = Viewport::new(device, &cache);
+    let mut atlas = TextAtlas::new(device, queue, &cache, FORMAT);
+    let mut renderer =
+        GlyphonRenderer::new(&mut atlas, device, wgpu::MultisampleState::default(), None);
+
+    let buffers: Vec<Buffer> = COMPARE_ROWS
+        .iter()
+        .map(|&(s, size, _, family)| {
+            let mut b = Buffer::new(&mut font_system, Metrics::new(size, size * 1.2));
+            b.set_size(&mut font_system, Some(430.0), Some(size * 1.2));
+            b.set_text(
+                &mut font_system,
+                s,
+                &Attrs::new().family(Family::Name(family)),
+                Shaping::Advanced,
+                None,
+            );
+            b.shape_until_scroll(&mut font_system, false);
+            b
+        })
+        .collect();
+    let widths: Vec<f32> = buffers
+        .iter()
+        .map(|b| b.layout_runs().map(|r| r.line_w).fold(0.0f32, f32::max))
+        .collect();
+
+    viewport.update(queue, Resolution { width: WIDTH, height: HEIGHT });
+    let areas: Vec<TextArea> = buffers
+        .iter()
+        .zip(COMPARE_ROWS)
+        .map(|(b, &(_, _, y, _))| TextArea {
+            buffer: b,
+            left: COMPARE_RIGHT_X,
+            top: y,
+            scale: 1.0,
+            bounds: TextBounds {
+                left: 0,
+                top: 0,
+                right: WIDTH as i32,
+                bottom: HEIGHT as i32,
+            },
+            default_color: GColor::rgb(0xe8, 0xe8, 0xf0),
+            custom_glyphs: &[],
+        })
+        .collect();
+    renderer
+        .prepare(device, queue, &mut font_system, &mut atlas, &viewport, areas, &mut swash)
+        .expect("glyphon prepare failed");
+
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("glyphon compare"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            },
+            depth_slice: None,
+        })],
+        depth_stencil_attachment: None,
+        ..Default::default()
+    });
+    renderer.render(&atlas, &viewport, &mut pass).expect("glyphon render failed");
+    drop(pass);
+    widths
 }
 
 /// Count pixels meaningfully brighter than the clear color in a region.

@@ -35,14 +35,19 @@ struct Vertex {
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct ViewportUniform {
     size: [f32; 2],
-    _pad: [f32; 2],
+    /// Atlas edge length in texels — quads carry texel-space UVs so the atlas
+    /// can grow without invalidating them; the vertex shader normalizes.
+    atlas_size: [f32; 2],
 }
 
 const INITIAL_QUADS: usize = 256;
 
 pub struct GlyphPipeline {
     pipeline: wgpu::RenderPipeline,
+    bind_group_layout: wgpu::BindGroupLayout,
     bind_group: wgpu::BindGroup,
+    /// Atlas generation the bind group was built against; rebind on change.
+    atlas_generation: u64,
     uniform: wgpu::Buffer,
     vertex_buffer: wgpu::Buffer,
     vertex_capacity: usize,
@@ -96,24 +101,7 @@ impl GlyphPipeline {
                 ],
             });
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("lntrn-type bind group"),
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(atlas.view()),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(atlas.sampler()),
-                },
-            ],
-        });
+        let bind_group = make_bind_group(device, &bind_group_layout, &uniform, atlas);
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("lntrn-type pipeline layout"),
@@ -196,7 +184,9 @@ impl GlyphPipeline {
 
         Self {
             pipeline,
+            bind_group_layout,
             bind_group,
+            atlas_generation: atlas.generation(),
             uniform,
             vertex_buffer,
             vertex_capacity,
@@ -204,7 +194,8 @@ impl GlyphPipeline {
         }
     }
 
-    /// Draw `quads` into `view`, sized to `width`×`height` pixels.
+    /// Draw `quads` into `view`, sized to `width`×`height` pixels, sampling
+    /// `atlas` (rebinding it if it grew since the last draw).
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
@@ -214,8 +205,13 @@ impl GlyphPipeline {
         view: &wgpu::TextureView,
         width: u32,
         height: u32,
+        atlas: &GlyphAtlas,
         quads: &[Quad],
     ) {
+        if atlas.generation() != self.atlas_generation {
+            self.bind_group = make_bind_group(device, &self.bind_group_layout, &self.uniform, atlas);
+            self.atlas_generation = atlas.generation();
+        }
         self.verts.clear();
         for q in quads {
             let (x0, y0, x1, y1) = (q.x, q.y, q.x + q.w, q.y + q.h);
@@ -247,7 +243,7 @@ impl GlyphPipeline {
         queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&self.verts));
         let vp = ViewportUniform {
             size: [width as f32, height as f32],
-            _pad: [0.0, 0.0],
+            atlas_size: [atlas.size_px(), atlas.size_px()],
         };
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&vp));
 
@@ -270,4 +266,30 @@ impl GlyphPipeline {
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         pass.draw(0..self.verts.len() as u32, 0..1);
     }
+}
+
+fn make_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    uniform: &wgpu::Buffer,
+    atlas: &GlyphAtlas,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("lntrn-type bind group"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(atlas.view()),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(atlas.sampler()),
+            },
+        ],
+    })
 }

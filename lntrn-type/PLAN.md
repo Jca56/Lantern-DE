@@ -182,12 +182,29 @@ Prove our own GPU text path end-to-end with a fake glyph before any font parsing
   wrapper parity). The engine could drop in from here — old stack stays until
   Phase 12 regardless.
 
-### Phase 4 — Render quality: AA, gamma, hinting, subpixel 🟡
-- Gamma-correct coverage blending to match swash crispness.
-- Optional LCD subpixel AA path + shader variant.
-- Optional autohinting / grid-fitting for small sizes (user runs ≥16px, so this
-  is polish, not critical).
-- **Exit:** text as crisp as glyphon at 16–18px in the side-by-side harness.
+### Phase 4 — Render quality: AA, gamma, hinting, subpixel 🟡 ✅ DONE
+- [x] **Subpixel x-positioning**: pen positions quantize to quarter-pixel bins
+  (0/0.25/0.5/0.75px), each bin rasterized with the offset baked into
+  coverage; atlas key carries 2 bin bits. Proportional spacing no longer
+  snaps to whole pixels.
+- [x] **Atlas growth** (scheduled here since Phase 0): entries + quads store
+  **texel** UVs, normalized in the vertex shader via an atlas-size uniform;
+  on full the atlas doubles (to 8192² cap), GPU-copies old content to the
+  same origin, and bumps a generation counter the pipeline watches to
+  rebind. Harness force-grows mid-frame (giant glyphs clipped to a zero-area
+  rect) and proves ink output is bit-identical before/after.
+- [x] **Side-by-side vs glyphon**: dev-dep on glyphon 0.10, same font files,
+  wrapper-identical settings, ours left / glyphon right in `phase4.png`.
+  Ink ratio **0.99**; JetBrains Mono width **exactly equal** (270.0 = 270.0);
+  Inter rows within 1–2px. Visible deltas are precisely the pending phases:
+  kerning (~22px on "Wave To Yo AVATAR", Phase 5) and the `=>` ligature
+  glyphon fuses (Phase 6).
+- [x] Gamma decision: **none needed** — both engines blend linearly into the
+  same sRGB target and the ink ratio confirms parity. LCD subpixel AA and
+  hinting stay skipped as the plan allowed (user runs ≥16px; grayscale AA
+  matches the swash output the DE ships today).
+- **Exit:** ✅ crispness parity at 14–24px verified visually + numerically in
+  the harness.
 
 ### Phase 5 — OpenType shaping I: GPOS / kerning 🔴
 - `GPOS`: pair kerning, mark-to-base, mark-to-mark, cursive attachment.

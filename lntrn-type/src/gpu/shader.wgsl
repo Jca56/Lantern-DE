@@ -7,7 +7,9 @@
 
 struct Viewport {
     size: vec2<f32>,
-    _pad: vec2<f32>,
+    // Atlas edge length in texels: quad UVs arrive in texel space (so the
+    // atlas can grow without invalidating them) and normalize here.
+    atlas_size: vec2<f32>,
 };
 
 @group(0) @binding(0) var<uniform> viewport: Viewport;
@@ -33,7 +35,7 @@ fn vs_main(
     );
     var out: VsOut;
     out.clip_pos = vec4<f32>(ndc, 0.0, 1.0);
-    out.uv = uv;
+    out.uv = uv / viewport.atlas_size;
     out.color = color;
     return out;
 }
