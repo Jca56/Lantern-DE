@@ -57,12 +57,12 @@ pub struct GlyphPipeline {
 impl GlyphPipeline {
     pub fn new(device: &wgpu::Device, format: wgpu::TextureFormat, atlas: &GlyphAtlas) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("lntrn-type glyph shader"),
+            label: Some("lntrn-text glyph shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
 
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("lntrn-type viewport"),
+            label: Some("lntrn-text viewport"),
             size: std::mem::size_of::<ViewportUniform>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
@@ -70,7 +70,7 @@ impl GlyphPipeline {
 
         let bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("lntrn-type bind group layout"),
+                label: Some("lntrn-text bind group layout"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
@@ -104,13 +104,13 @@ impl GlyphPipeline {
         let bind_group = make_bind_group(device, &bind_group_layout, &uniform, atlas);
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("lntrn-type pipeline layout"),
+            label: Some("lntrn-text pipeline layout"),
             bind_group_layouts: &[&bind_group_layout],
             immediate_size: 0,
         });
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("lntrn-type pipeline"),
+            label: Some("lntrn-text pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
@@ -176,7 +176,7 @@ impl GlyphPipeline {
 
         let vertex_capacity = INITIAL_QUADS * 6;
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("lntrn-type vertex buffer"),
+            label: Some("lntrn-text vertex buffer"),
             size: (vertex_capacity * std::mem::size_of::<Vertex>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
@@ -233,7 +233,7 @@ impl GlyphPipeline {
         if self.verts.len() > self.vertex_capacity {
             self.vertex_capacity = self.verts.len().next_power_of_two();
             self.vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("lntrn-type vertex buffer"),
+                label: Some("lntrn-text vertex buffer"),
                 size: (self.vertex_capacity * std::mem::size_of::<Vertex>()) as u64,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
@@ -248,7 +248,7 @@ impl GlyphPipeline {
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&vp));
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("lntrn-type text pass"),
+            label: Some("lntrn-text text pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view,
                 resolve_target: None,
@@ -275,7 +275,7 @@ fn make_bind_group(
     atlas: &GlyphAtlas,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("lntrn-type bind group"),
+        label: Some("lntrn-text bind group"),
         layout,
         entries: &[
             wgpu::BindGroupEntry {

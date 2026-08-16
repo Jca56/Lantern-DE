@@ -9,5 +9,5 @@ edition = "2021"
 lntrn-draw = { path = "./draw" }
 lntrn-gfx = { path = "./gfx" }
 lntrn-tex = { path = "./tex" }
-lntrn-text = { path = "./text" }
+lntrn-text = { path = "../lntrn-text" }
 wgpu = "28"

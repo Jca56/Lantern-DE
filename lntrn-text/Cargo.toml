@@ -1,0 +1,24 @@
+[package]
+name = "lntrn-text"
+version = "0.1.0"
+description = "Lantern DE text engine — from-scratch parsing, shaping, layout, and GPU rendering (replaced glyphon/cosmic-text)"
+authors = ["Jca56"]
+edition = "2021"
+
+[dependencies]
+bytemuck = { version = "1", features = ["derive"] }
+lntrn-draw = { path = "../lntrn-render/draw" }
+lntrn-gfx = { path = "../lntrn-render/gfx" }
+lntrn-theme = { path = "../lntrn-theme" }
+wgpu = "28"
+
+[dev-dependencies]
+pollster = "0.4"
+
+[[example]]
+name = "preview"
+path = "examples/preview.rs"
+
+[[example]]
+name = "gen_unicode"
+path = "examples/gen_unicode.rs"

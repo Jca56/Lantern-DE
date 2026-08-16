@@ -1,28 +1,27 @@
-//! Phase 11 preview harness.
+//! lntrn-text preview harness (Phase 12: the engine IS the DE text stack).
 //!
 //! Spins up a headless wgpu device (no window/surface) and exercises the full
-//! lntrn-type stack: discovery/matching/fallback (Phase 2), the layout engine
-//! (Phase 3: wrap, one-line cap, clips, occlusion, layers — verified
-//! per-pixel via readback), render quality (Phase 4: subpixel bins, atlas
-//! growth, glyphon side-by-side), GPOS kerning (Phase 5), and GSUB ligatures
-//! (Phase 6) — every comparison row's shaped width asserted equal to
-//! glyphon's. Output: `phase11.png`.
+//! stack: discovery/matching/fallback, layout (wrap, one-line cap, clips,
+//! occlusion, layers — verified per-pixel via readback), render quality
+//! (subpixel bins, atlas growth), GPOS kerning, GSUB ligatures, Unicode
+//! segmentation + BiDi + Arabic joining, CFF, variable-font instances, and
+//! color emoji. Output: `swap.png`. During development (Phases 4–11) this
+//! harness also rendered every row through glyphon side-by-side and asserted
+//! width equality to the decimal — that parity record lives in PLAN.md; the
+//! comparison itself left with the old stack.
 //!
-//! This is the permanent visual-diff harness the plan calls for; later phases
-//! render richer scenes here and compare against glyphon output.
-//!
-//! Run: `cargo run --example preview` from the `lntrn-type/` directory.
+//! Run: `cargo run --example preview` from the `lntrn-text/` directory.
 
 use std::sync::Arc;
 
 use lntrn_draw::Color;
-use lntrn_type::{FontStyle, FontWeight, TextRenderer};
+use lntrn_text::{FontStyle, FontWeight, TextRenderer};
 
 const WIDTH: u32 = 896; // ×4 bytes per px stays 256-aligned for readback
-const HEIGHT: u32 = 768; // top 512: engine features; bottom: vs-glyphon strip
+const HEIGHT: u32 = 768; // top 512: engine features; bottom: regression rows
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
-/// Rows rendered through BOTH engines (ours left, glyphon right).
+/// Regression rows (formerly compared against glyphon at these exact widths).
 const COMPARE_ROWS: &[(&str, f32, f32, &str)] = &[
     ("The quick brown fox 0123456789", 14.0, 528.0, "Inter"),
     ("The quick brown fox 0123456789", 17.0, 552.0, "Inter"),
@@ -30,7 +29,6 @@ const COMPARE_ROWS: &[(&str, f32, f32, &str)] = &[
     ("Wave To Yo AVATAR != =>", 24.0, 612.0, "Inter"),
     ("x != y && a => b; c >= d <= e", 18.0, 650.0, "JetBrains Mono"),
 ];
-const COMPARE_RIGHT_X: f32 = 456.0;
 
 fn main() {
     let (device, queue) = headless_device();
@@ -38,7 +36,7 @@ fn main() {
     // lntrn-theme, exactly like the glyphon wrapper.
     let mut text = TextRenderer::from_wgpu(device.clone(), queue.clone(), FORMAT, false);
     assert!(text.font_count() > 0, "font discovery found nothing");
-    println!("[lntrn-type] discovered {} faces", text.font_count());
+    println!("[lntrn-text] discovered {} faces", text.font_count());
 
     // TTC container sanity: load a collection as embedded data if one is around.
     let home = std::env::var("HOME").unwrap_or_default();
@@ -46,7 +44,7 @@ fn main() {
         let before = text.font_count();
         text.load_font_data(ttc);
         assert_eq!(text.font_count(), before + 1, "ttc face 0 failed to parse");
-        println!("[lntrn-type] ttc container parse OK (Inter.ttc)");
+        println!("[lntrn-text] ttc container parse OK (Inter.ttc)");
     }
 
     // ── Build the scene ──────────────────────────────────────────────────────
@@ -102,7 +100,7 @@ when a single word overflows the bound.";
     text.queue("かな fallback カタカナ", 24.0, 16.0, 410.0, white, f32::MAX, WIDTH, HEIGHT);
     text.queue_family("12:34:56", 40.0, 360.0, 406.0, Color::from_rgb8(0xff, 0x6b, 0x6b), f32::MAX, "Digital-7", WIDTH, HEIGHT);
     let (ink_h, ink_top) = text.measure_ink_height_family("12:34:56", 40.0, "Digital-7");
-    println!("[lntrn-type] Digital-7 ink bounds: height {ink_h:.1}px, top offset {ink_top:.1}px");
+    println!("[lntrn-text] Digital-7 ink bounds: height {ink_h:.1}px, top offset {ink_top:.1}px");
 
     // 6b) BiDi + Arabic joining: Hebrew/Arabic runs render right-to-left
     // (mixed with Latin + numbers), Arabic letters take connected forms,
@@ -149,9 +147,8 @@ when a single word overflows the bound.";
         );
     }
 
-    // 8) Side-by-side quality strip: same rows, ours left, glyphon right.
-    text.queue("lntrn-type (ours)", 16.0, 16.0, 500.0, grey, f32::MAX, WIDTH, HEIGHT);
-    text.queue("glyphon (old stack)", 16.0, COMPARE_RIGHT_X, 500.0, grey, f32::MAX, WIDTH, HEIGHT);
+    // 8) Regression rows: shaped widths pinned to the glyphon-parity record.
+    text.queue("lntrn-text regression rows", 16.0, 16.0, 500.0, grey, f32::MAX, WIDTH, HEIGHT);
     for &(s, size, y, family) in COMPARE_ROWS {
         text.queue_full(s, size, 16.0, y, white, f32::MAX, FontWeight::Normal, FontStyle::Normal, Some(family), WIDTH, HEIGHT);
     }
@@ -164,7 +161,7 @@ when a single word overflows the bound.";
     // Bold resolves to a genuinely different (wider) face.
     let normal_w = text.measure_width_full("mmmmm", 24.0, FontWeight::Normal, FontStyle::Normal, Some("Inter"));
     let bold_w = text.measure_width_full("mmmmm", 24.0, FontWeight::Bold, FontStyle::Normal, Some("Inter"));
-    println!("[lntrn-type] Inter 'mmmmm': normal {normal_w:.2}px, bold {bold_w:.2}px");
+    println!("[lntrn-text] Inter 'mmmmm': normal {normal_w:.2}px, bold {bold_w:.2}px");
     assert!(bold_w > normal_w, "bold face should be wider than normal");
 
     // Monospace vs proportional family resolution.
@@ -181,7 +178,7 @@ when a single word overflows the bound.";
 
     // Per-glyph fallback found something for kana.
     let kana = text.measure_width("カタカナ", 26.0);
-    println!("[lntrn-type] kana fallback width: {kana:.2}px");
+    println!("[lntrn-text] kana fallback width: {kana:.2}px");
 
     // Arabic positional forms actually applied: the joined word must measure
     // differently than its letters shaped in isolation.
@@ -190,7 +187,7 @@ when a single word overflows the bound.";
         .chars()
         .map(|c| text.measure_width(&c.to_string(), 24.0))
         .sum();
-    println!("[lntrn-type] Arabic 'سلام': joined {joined:.2}px vs isolated {isolated:.2}px");
+    println!("[lntrn-text] Arabic 'سلام': joined {joined:.2}px vs isolated {isolated:.2}px");
     assert!(joined > 0.0, "Arabic should render via fallback");
     assert!(
         (joined - isolated).abs() > 0.5,
@@ -265,9 +262,8 @@ when a single word overflows the bound.";
         });
     }
 
-    // Glyph pass (ours), then glyphon's pass for the comparison strip.
+    // Glyph pass.
     text.render(&mut encoder, &view, WIDTH, HEIGHT);
-    let glyphon_widths = render_glyphon_side(&device, &queue, &mut encoder, &view);
 
     // Copy → readback buffer.
     encoder.copy_texture_to_buffer(
@@ -321,32 +317,22 @@ when a single word overflows the bound.";
     // Color emoji actually rendered in color: the emoji row's region must
     // contain strongly chromatic pixels (text is grayscale, emoji are not).
     let chroma = count_chroma(&rgba, 560, 480, 890, 506);
-    println!("[lntrn-type] emoji chroma pixels: {chroma}");
+    println!("[lntrn-text] emoji chroma pixels: {chroma}");
     assert!(chroma > 60, "emoji should render in color, got {chroma} chromatic px");
 
-    // Side-by-side sanity: both engines put comparable amounts of ink down.
-    let ours_lit = count_lit(&rgba, 8, 520, 448, 700);
-    let glyphon_lit = count_lit(&rgba, 448, 520, 888, 700).max(1);
-    let ratio = ours_lit as f32 / glyphon_lit as f32;
-    println!("[lntrn-type] side-by-side ink: ours {ours_lit}px vs glyphon {glyphon_lit}px (ratio {ratio:.2})");
-    assert!(
-        (0.6..=1.7).contains(&ratio),
-        "engines diverge too much: ours {ours_lit} vs glyphon {glyphon_lit}"
-    );
+    // Regression: shaped widths pinned to the values glyphon produced when
+    // both engines ran side-by-side (Phases 5–11) — kerning + ligatures
+    // must keep matching that record.
+    const PINNED_WIDTHS: [f32; 5] = [221.9, 269.5, 281.3, 288.7, 313.2];
+    let rows_lit = count_lit(&rgba, 8, 520, 888, 700);
+    assert!(rows_lit > 4_000, "regression rows should render, got {rows_lit} px");
     for (i, &(s, size, _, family)) in COMPARE_ROWS.iter().enumerate() {
-        let ours_w =
-            text.measure_width_full(s, size, FontWeight::Normal, FontStyle::Normal, Some(family));
-        println!(
-            "[lntrn-type]   row {i} ({size}px {family}): ours {ours_w:.1}px, glyphon {:.1}px",
-            glyphon_widths[i]
-        );
-        // With GSUB (Phase 6) + GPOS (Phase 5) both live, every row —
-        // including the ligature-triggering ones — must match glyphon's
-        // shaped width exactly.
+        let w = text.measure_width_full(s, size, FontWeight::Normal, FontStyle::Normal, Some(family));
+        println!("[lntrn-text]   row {i} ({size}px {family}): {w:.1}px (pinned {:.1})", PINNED_WIDTHS[i]);
         assert!(
-            (ours_w - glyphon_widths[i]).abs() < 0.5,
-            "row {i} shaped width diverges: ours {ours_w} vs glyphon {}",
-            glyphon_widths[i]
+            (w - PINNED_WIDTHS[i]).abs() < 0.5,
+            "row {i} drifted from the glyphon-parity record: {w} vs {}",
+            PINNED_WIDTHS[i]
         );
     }
 
@@ -354,119 +340,24 @@ when a single word overflows the bound.";
     let av = text.measure_width_full("AV", 24.0, FontWeight::Normal, FontStyle::Normal, Some("Inter"));
     let a = text.measure_width_full("A", 24.0, FontWeight::Normal, FontStyle::Normal, Some("Inter"));
     let v = text.measure_width_full("V", 24.0, FontWeight::Normal, FontStyle::Normal, Some("Inter"));
-    println!("[lntrn-type] kern check: AV {av:.2}px vs A+V {:.2}px", a + v);
+    println!("[lntrn-text] kern check: AV {av:.2}px vs A+V {:.2}px", a + v);
     assert!(av < a + v - 0.5, "AV should kern tighter than A+V");
 
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/phase11.png");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/swap.png");
     write_png(path, WIDTH, HEIGHT, &rgba).expect("failed to write PNG");
 
     let stats = text.stats();
     println!(
-        "[lntrn-type] Phase 11 preview: {queued} entries, {} cached layouts, {} atlas glyphs, {} hits / {} misses",
+        "[lntrn-text] Preview: {queued} entries, {} cached layouts, {} atlas glyphs, {} hits / {} misses",
         stats.entries,
         text.atlas_glyph_count(),
         stats.cache_hits,
         stats.cache_misses
     );
-    println!("[lntrn-type] rendered {lit} lit pixels of {}", WIDTH * HEIGHT);
-    println!("[lntrn-type] wrote {path}");
+    println!("[lntrn-text] rendered {lit} lit pixels of {}", WIDTH * HEIGHT);
+    println!("[lntrn-text] wrote {path}");
     assert!(lit > 5_000, "expected real text to render; got {lit} lit pixels");
-    println!("[lntrn-type] Phase 11 OK ✅ — COLOR EMOJI render (CBDT + our own PNG decoder) 🎉");
-}
-
-/// Render the comparison rows through glyphon (the stack being replaced) at
-/// the right-hand column, mirroring the lntrn-render wrapper's settings:
-/// 1.2 line height, advanced shaping, sRGB u8 default color. Returns each
-/// row's laid-out width for the numeric comparison.
-fn render_glyphon_side(
-    device: &Arc<wgpu::Device>,
-    queue: &Arc<wgpu::Queue>,
-    encoder: &mut wgpu::CommandEncoder,
-    view: &wgpu::TextureView,
-) -> Vec<f32> {
-    use glyphon::{
-        fontdb, Attrs, Buffer, Cache, Color as GColor, Family, FontSystem, Metrics, Resolution,
-        Shaping, SwashCache, TextArea, TextAtlas, TextBounds, TextRenderer as GlyphonRenderer,
-        Viewport,
-    };
-
-    // Same font files our engine resolves, for an apples-to-apples face match.
-    let home = std::env::var("HOME").unwrap_or_default();
-    let mut db = fontdb::Database::new();
-    for f in ["Inter.ttf", "JetBrainsMono.ttf"] {
-        if let Ok(data) = std::fs::read(format!("{home}/.lantern/fonts/{f}")) {
-            db.load_font_data(data);
-        }
-    }
-    let mut font_system = FontSystem::new_with_locale_and_db("en-US".to_string(), db);
-    let mut swash = SwashCache::new();
-    let cache = Cache::new(device);
-    let mut viewport = Viewport::new(device, &cache);
-    let mut atlas = TextAtlas::new(device, queue, &cache, FORMAT);
-    let mut renderer =
-        GlyphonRenderer::new(&mut atlas, device, wgpu::MultisampleState::default(), None);
-
-    let buffers: Vec<Buffer> = COMPARE_ROWS
-        .iter()
-        .map(|&(s, size, _, family)| {
-            let mut b = Buffer::new(&mut font_system, Metrics::new(size, size * 1.2));
-            b.set_size(&mut font_system, Some(430.0), Some(size * 1.2));
-            b.set_text(
-                &mut font_system,
-                s,
-                &Attrs::new().family(Family::Name(family)),
-                Shaping::Advanced,
-                None,
-            );
-            b.shape_until_scroll(&mut font_system, false);
-            b
-        })
-        .collect();
-    let widths: Vec<f32> = buffers
-        .iter()
-        .map(|b| b.layout_runs().map(|r| r.line_w).fold(0.0f32, f32::max))
-        .collect();
-
-    viewport.update(queue, Resolution { width: WIDTH, height: HEIGHT });
-    let areas: Vec<TextArea> = buffers
-        .iter()
-        .zip(COMPARE_ROWS)
-        .map(|(b, &(_, _, y, _))| TextArea {
-            buffer: b,
-            left: COMPARE_RIGHT_X,
-            top: y,
-            scale: 1.0,
-            bounds: TextBounds {
-                left: 0,
-                top: 0,
-                right: WIDTH as i32,
-                bottom: HEIGHT as i32,
-            },
-            default_color: GColor::rgb(0xe8, 0xe8, 0xf0),
-            custom_glyphs: &[],
-        })
-        .collect();
-    renderer
-        .prepare(device, queue, &mut font_system, &mut atlas, &viewport, areas, &mut swash)
-        .expect("glyphon prepare failed");
-
-    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("glyphon compare"),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Load,
-                store: wgpu::StoreOp::Store,
-            },
-            depth_slice: None,
-        })],
-        depth_stencil_attachment: None,
-        ..Default::default()
-    });
-    renderer.render(&atlas, &viewport, &mut pass).expect("glyphon render failed");
-    drop(pass);
-    widths
+    println!("[lntrn-text] lntrn-text OK ✅ — the DE text stack, fully in-house 🔦");
 }
 
 /// Count strongly chromatic pixels (channel spread > 40) in a region.
@@ -514,7 +405,7 @@ fn headless_device() -> (Arc<wgpu::Device>, Arc<wgpu::Queue>) {
     }))
     .expect("no suitable GPU adapter");
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        label: Some("lntrn-type preview"),
+        label: Some("lntrn-text preview"),
         required_features: wgpu::Features::empty(),
         required_limits: wgpu::Limits::default(),
         ..Default::default()

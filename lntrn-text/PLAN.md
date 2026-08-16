@@ -379,14 +379,31 @@ Prove our own GPU text path end-to-end with a fake glyph before any font parsing
   normal fallback chain; harness asserts 1.6k+ chromatic pixels; CBDT
   integration test decodes the fox and asserts it's orange. 🎉
 
-### Phase 12 — Integration + swap 🟢 (the payoff)
-- Benchmark vs glyphon; tune atlas eviction + cache sizes.
-- Rename `lntrn-type` → `lntrn-text`, delete `lntrn-render/text`, add to
-  workspace `members`, flip `lntrn-render`'s dependency.
-- Remove glyphon, cosmic-text, harfrust, skrifa, swash, fontdb, unicode-* from
-  `Cargo.lock`. Regression pass across every app (bar, terminal, code, notepad,
-  file-manager, command-center, matrix scene).
-- **Exit:** glyphon is gone. The DE renders entirely on Lantern text. 🔦🔥
+### Phase 12 — Integration + swap 🟢 ✅ DONE (the payoff) 🔦🔥
+- [x] Renamed `lntrn-type` → `lntrn-text` (git mv, history preserved),
+  deleted `lntrn-render/text` (the glyphon wrapper), added to workspace
+  `members`, removed the `exclude`, flipped `lntrn-render`'s dependency
+  path. The package name matching the wrapper's meant **zero** source
+  changes anywhere else — `pub use lntrn_text::TextRenderer` just resolves
+  to the new engine.
+- [x] Purged the old stack: **glyphon, cosmic-text, swash, harfrust, skrifa
+  — 0 entries in Cargo.lock**. (`fontdb`/`rustybuzz`/`unicode-*` remnants
+  survive only inside `usvg` — the SVG *icon* pipeline, a separate
+  subsystem and a future build-our-own candidate.) The harness's glyphon
+  dev-dep + side-by-side went with it; the comparison rows remain as
+  regression asserts **pinned to the exact widths glyphon produced**
+  (221.9 / 269.5 / 281.3 / 288.7 / 313.2 px — verified equal to the
+  decimal while both engines coexisted).
+- [x] Regression compile: full `cargo check --workspace` clean + release
+  builds of compositor, terminal, file-manager, command-center, notepad,
+  and rice (matrix scene). All 28 unit tests + the pixel-assert harness
+  green from the new location. Visual pass across running apps happens as
+  Alva relaunches them on the new binaries.
+- Post-swap notes: **Spark Studio must update its dependency** from
+  `lntrn-type` to `lntrn-text` (path + `use` statements). Atlas eviction
+  tuning deferred until a real workload shows pressure (the atlas grows to
+  8192² before dropping anything).
+- **Exit:** ✅ glyphon is gone. The DE renders entirely on Lantern text. 🔦
 
 ---
 

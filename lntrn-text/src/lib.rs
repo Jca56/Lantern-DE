@@ -1,22 +1,30 @@
-//! # lntrn-type — Lantern DE custom text engine
+//! # lntrn-text — the Lantern DE text engine
 //!
-//! From-scratch text rendering, layout, and shaping built to replace glyphon +
-//! cosmic-text (and their `harfrust`/`skrifa`/`swash`/`fontdb`/`unicode-*`
-//! dependency stack). See `PLAN.md` for the phased roadmap.
+//! From-scratch text rendering, shaping, and layout — zero external text
+//! crates. This crate replaced glyphon + cosmic-text (and their `harfrust`/
+//! `skrifa`/`swash`/`fontdb`/`unicode-*` stack) at Phase 12 of `PLAN.md`;
+//! every Lantern app renders through it via `lntrn_render::TextRenderer`.
 //!
-//! [`TextRenderer`] mirrors the public API of the current glyphon wrapper
-//! (`lntrn-render/text`) exactly, so swapping engines at the end of the project
-//! is a one-line dependency change with zero call-site churn.
+//! The stack, top to bottom:
+//! - **Fonts**: sfnt/ttc containers, TrueType `glyf` (incl. composites),
+//!   CFF Type2 charstrings, variable fonts (fvar/avar/gvar/HVAR instances),
+//!   CBDT/CBLC color emoji (with an in-house PNG decoder), COLRv0 layers.
+//! - **Discovery**: runtime scan of XDG/system/`~/.lantern` font dirs via
+//!   targeted metadata reads; family/weight/width/style matching; per-glyph
+//!   fallback (Lantern fallback chain + cmap-coverage search).
+//! - **Shaping**: grapheme-cluster-aware resolution, GSUB (ligatures +
+//!   contextual, per-script feature plans, Arabic positional forms), GPOS
+//!   (kerning, mark attachment), UAX#9 BiDi with reordering + mirroring.
+//! - **Layout**: whole-line shaping with cluster tracking, UAX#14 line
+//!   breaking (kinsoku included), the colorless shaped-layout LRU, clip
+//!   stack, occlusion, and render layers — API-identical to the old wrapper
+//!   (widths verified equal to glyphon to the decimal before the swap).
+//! - **Raster/GPU**: signed-area scanline AA with quarter-pixel subpixel
+//!   bins, a growable unified RGBA atlas, premultiplied single-pass blend.
 //!
-//! ## Status: Phase 3 — layout + full public API
-//! On top of the Phase 1–2 stack (TrueType parsing/rasterization, runtime
-//! discovery, family/weight/style matching, per-glyph fallback), the engine
-//! now has the full glyphon-wrapper API surface: greedy word/glyph wrapping
-//! at `max_width`, the colorless shaped-layout LRU cache (512 entries,
-//! 0.25px-quantized keys), the clip stack, `occlude_rect`, `queue_clipped`,
-//! and render layers. Default `queue` bounds clip to one line box, exactly
-//! like the wrapper. Remaining phases are quality (4), shaping (5–8), and
-//! format coverage (9–11).
+//! Property data is generated from the UCD files in `ucd/` by
+//! `examples/gen_unicode.rs`; the preview harness (`examples/preview.rs`)
+//! renders + pixel-asserts the whole feature surface.
 
 mod engine;
 mod font;
@@ -217,7 +225,7 @@ impl TextRenderer {
     /// without relying on them being installed system-wide.
     pub fn load_font_data(&mut self, data: Vec<u8>) {
         if let Err(e) = self.db.add_font_data(data) {
-            eprintln!("[lntrn-type] load_font_data: {e}");
+            eprintln!("[lntrn-text] load_font_data: {e}");
         }
     }
 

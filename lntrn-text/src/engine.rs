@@ -78,7 +78,7 @@ impl TextRenderer {
             match f.outline(gid) {
                 Ok(outline) => raster::rasterize(&outline, scale, bin as f32 * 0.25),
                 Err(e) => {
-                    eprintln!("[lntrn-type] face {face_id} glyph {gid}: {e}");
+                    eprintln!("[lntrn-text] face {face_id} glyph {gid}: {e}");
                     None
                 }
             }

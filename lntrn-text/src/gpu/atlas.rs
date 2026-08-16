@@ -58,7 +58,7 @@ impl GlyphAtlas {
         // anti-aliasing lives in the coverage values, not in filtering. Pairs
         // with a NonFiltering sampler binding (no `filterable` feature needed).
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("lntrn-type atlas sampler"),
+            label: Some("lntrn-text atlas sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
@@ -198,7 +198,7 @@ impl GlyphAtlas {
             }
             if !self.grow(device, queue) {
                 eprintln!(
-                    "[lntrn-type] glyph atlas at max size ({0}x{0}); dropping glyph key={1:#x}",
+                    "[lntrn-text] glyph atlas at max size ({0}x{0}); dropping glyph key={1:#x}",
                     self.size, key
                 );
                 let entry = AtlasEntry {
@@ -258,7 +258,7 @@ impl GlyphAtlas {
         }
         let (new_texture, new_view) = create_texture(device, new_size);
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("lntrn-type atlas grow"),
+            label: Some("lntrn-text atlas grow"),
         });
         encoder.copy_texture_to_texture(
             wgpu::TexelCopyTextureInfo {
@@ -280,7 +280,7 @@ impl GlyphAtlas {
             },
         );
         queue.submit(Some(encoder.finish()));
-        eprintln!("[lntrn-type] glyph atlas grew {0}x{0} → {1}x{1}", self.size, new_size);
+        eprintln!("[lntrn-text] glyph atlas grew {0}x{0} → {1}x{1}", self.size, new_size);
         self.texture = new_texture;
         self.view = new_view;
         self.size = new_size;
@@ -291,7 +291,7 @@ impl GlyphAtlas {
 
 fn create_texture(device: &wgpu::Device, size: u32) -> (wgpu::Texture, wgpu::TextureView) {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("lntrn-type glyph atlas"),
+        label: Some("lntrn-text glyph atlas"),
         size: wgpu::Extent3d {
             width: size,
             height: size,

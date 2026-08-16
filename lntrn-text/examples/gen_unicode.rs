@@ -6,7 +6,7 @@
 //! search at runtime. This is the project's "no unicode-* crates" answer:
 //! the data lives in-repo and regenerating is one command.
 //!
-//! Run: `cargo run --example gen_unicode` (from `lntrn-type/`), then rebuild.
+//! Run: `cargo run --example gen_unicode` (from `lntrn-text/`), then rebuild.
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;

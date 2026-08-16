@@ -512,7 +512,7 @@ impl Interp<'_> {
                     // endchar (seac-style accents unsupported; logged).
                     self.take_width_if(self.stack.len() == 1 || self.stack.len() == 5);
                     if self.stack.len() >= 4 {
-                        eprintln!("[lntrn-type] CFF seac accent composition skipped");
+                        eprintln!("[lntrn-text] CFF seac accent composition skipped");
                     }
                     self.stack.clear();
                     return Ok(());

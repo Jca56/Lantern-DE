@@ -176,7 +176,7 @@ pub fn rasterize(outline: &Outline, scale: f32, x_offset: f32) -> Option<RasterG
         return None; // zero-area ink (degenerate outline)
     }
     if w > MAX_GLYPH_PX || h > MAX_GLYPH_PX {
-        eprintln!("[lntrn-type] refusing to rasterize {w}x{h}px glyph (corrupt outline?)");
+        eprintln!("[lntrn-text] refusing to rasterize {w}x{h}px glyph (corrupt outline?)");
         return None;
     }
     let (w, h) = (w as usize, h as usize);

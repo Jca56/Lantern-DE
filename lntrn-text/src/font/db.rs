@@ -129,7 +129,7 @@ impl FontDb {
             }
         }
         eprintln!(
-            "[lntrn-type] font db: {} faces from {} files ({} skipped: CFF/bitmap/unreadable)",
+            "[lntrn-text] font db: {} faces from {} files ({} skipped: CFF/bitmap/unreadable)",
             records.len(),
             files.len(),
             skipped
@@ -273,12 +273,12 @@ impl FontDb {
                             Some(f)
                         }
                         Err(e) => {
-                            eprintln!("[lntrn-type] disabling face {}: {e}", path.display());
+                            eprintln!("[lntrn-text] disabling face {}: {e}", path.display());
                             None
                         }
                     },
                     Err(e) => {
-                        eprintln!("[lntrn-type] disabling face {}: {e}", path.display());
+                        eprintln!("[lntrn-text] disabling face {}: {e}", path.display());
                         None
                     }
                 },

@@ -4,7 +4,7 @@ members = [
     "lntrn-render/draw",
     "lntrn-render/gfx",
     "lntrn-ui/test",
-    "lntrn-render/text",
+    "lntrn-text",
     "lntrn-compositor",
     "lntrn-ui",
     "lntrn-render",
@@ -42,11 +42,6 @@ members = [
     "lntrn-spotify-theme",
     "lntrn-afterglow",
 ]
-
-# Custom text engine in development — built standalone so it stays off the live
-# DE build until it's finished (see lntrn-type/PLAN.md). Renamed to lntrn-text
-# and added to `members` at the end of the project.
-exclude = ["lntrn-type"]
 
 [profile.release]
 opt-level = 2

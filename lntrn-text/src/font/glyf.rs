@@ -295,7 +295,7 @@ fn emit_composite(
         } else {
             // Point-matching anchors: essentially unused by modern fonts.
             eprintln!(
-                "[lntrn-type] skipping point-matched composite component (glyph {})",
+                "[lntrn-text] skipping point-matched composite component (glyph {})",
                 comp.child
             );
         }
