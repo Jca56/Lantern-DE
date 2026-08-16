@@ -3,5 +3,5 @@
 mod atlas;
 mod pipeline;
 
-pub use atlas::GlyphAtlas;
+pub use atlas::{AtlasEntry, GlyphAtlas};
 pub use pipeline::{GlyphPipeline, Quad};

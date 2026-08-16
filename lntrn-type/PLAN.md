@@ -129,15 +129,33 @@ Prove our own GPU text path end-to-end with a fake glyph before any font parsing
   12–44px ladder, per-quad color, multi-line, translucent blending. Monospace
   advance equality + cache-hit-on-requeue asserted in the harness. 🎉
 
-### Phase 2 — Font discovery, matching, fallback 🟡
-- `name` + `OS/2` parsing; `post`.
-- Scan `~/.fonts`, `~/.local/share/fonts`, `/usr/share/fonts`, system dirs;
-  build family→file index with weight/style + per-font coverage (cmap ranges).
-  Autodetect dirs at runtime (no hardcoded distro paths — works Arch + Gentoo).
-- Family/weight/style matching; **per-glyph fallback chain** (katakana→UDEV
-  Gothic) — load-bearing for the matrix scene, not optional.
-- `load_font_data` for embedded fonts (notepad Google Fonts, Digital-7).
-- **Exit:** `queue_family`, bold/italic, and missing-glyph fallback all work.
+### Phase 2 — Font discovery, matching, fallback 🟡 ✅ DONE
+- [x] `name` (family IDs 16+1, UTF-16BE/MacRoman) + `OS/2` (weight/width/
+  italic) + `post` (isFixedPitch); `head.macStyle` fallback — `font/tables/`
+  split into `metrics.rs` / `name.rs` / `os2.rs`.
+- [x] Discovery via **targeted reads** (`font/scan.rs`): only header + table
+  dir + needed tables are read per file, never the whole font — 2.4k faces
+  scan in well under a second. Dirs autodetected at runtime (XDG_DATA_DIRS/
+  XDG_DATA_HOME + /usr/share/fonts + /usr/local/share/fonts + ~/.fonts +
+  ~/.local/share/fonts + ~/.lantern/fonts). Coverage = merged cmap ranges.
+- [x] `font/db.rs`: lazy face loading (parse on first render, auto-disable on
+  failure), family/weight/width/style ranking, resolve cache. Defaults mirror
+  the glyphon wrapper: sans = lantern.toml via `lntrn_theme`, mono = Noto Sans
+  Mono. Unknown families fall back to the default (wrapper parity).
+- [x] **Per-glyph fallback**: Lantern fallback family list (same order as the
+  wrapper's `LanternFallback`) + coverage-search last resort — kana in a Latin
+  UI font finds UDEV Gothic/Noto CJK with zero config. Cached per (char,
+  weight, italic).
+- [x] `load_font_data` registers embedded fonts in the db (family-matchable).
+- [x] All style/family API live: `queue_styled/full/family`,
+  `measure_width_styled/full/family`, plus `measure_ink_height_family`
+  (pulled forward from Phase 3 — trivial with atlas bearings).
+- **Exit:** ✅ `phase2.png`: real bold/italic/bold-italic faces, JetBrains
+  Mono via family, カタカナ・ひらがな fallback mid-Latin, Digital-7 7-segment
+  clock + ink bounds, unknown-family fallback. Harness asserts bold ≠ normal
+  width, mono advance equality, unknown-family == default, kana non-zero,
+  cache hits on requeue. CFF/bitmap-only faces (38 on the PC) are skipped at
+  scan with a counter until Phases 9/11.
 
 ### Phase 3 — Layout + full public API 🟡
 - Line layout, `\n` handling, greedy whitespace wrap at `max_width`.

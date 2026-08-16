@@ -1,12 +1,14 @@
-//! Font parsing: sfnt/ttc containers, metric tables, character mapping, and
-//! glyph outlines.
+//! Font parsing + the font database: sfnt/ttc containers, metric/naming
+//! tables, character mapping, glyph outlines, discovery, and fallback.
 //!
-//! Phase 1 scope: TrueType (`glyf`) outline fonts. CFF/CFF2 (Phase 9),
-//! variations (Phase 10), and color tables (Phase 11) come later; discovery,
-//! matching, and fallback (`db.rs`) land in Phase 2.
+//! Phase 1+2 scope: TrueType (`glyf`) outline fonts, discovered at runtime
+//! and matched by family/weight/style with per-glyph fallback. CFF/CFF2
+//! (Phase 9), variations (Phase 10), and color tables (Phase 11) come later.
 
 mod cmap;
+pub(crate) mod db;
 mod glyf;
+mod scan;
 mod sfnt;
 mod tables;
 

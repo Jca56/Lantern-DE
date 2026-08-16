@@ -48,6 +48,88 @@ impl Cmap {
         Ok(Cmap { off, format })
     }
 
+    /// The subtable's mapped codepoint ranges (sorted, merged, inclusive).
+    /// A coarse coverage summary for the font database: segment bounds are
+    /// reported as-is, so a range may include a few codepoints that still map
+    /// to `.notdef` — callers must treat this as a hint and confirm with
+    /// [`Cmap::glyph_index`] once the face is actually loaded.
+    pub fn coverage(&self, data: &[u8]) -> Vec<(u32, u32)> {
+        let s = self.off;
+        let mut ranges: Vec<(u32, u32)> = Vec::new();
+        match self.format {
+            0 => {
+                // 256-byte table: compress non-zero runs.
+                let mut run: Option<(u32, u32)> = None;
+                for c in 0..=0xFFu32 {
+                    let mapped = data.get(s + 6 + c as usize).is_some_and(|&g| g != 0);
+                    match (mapped, run) {
+                        (true, Some((st, _))) => run = Some((st, c)),
+                        (true, None) => run = Some((c, c)),
+                        (false, Some(r)) => {
+                            ranges.push(r);
+                            run = None;
+                        }
+                        (false, None) => {}
+                    }
+                }
+                if let Some(r) = run {
+                    ranges.push(r);
+                }
+            }
+            4 => {
+                let seg_x2 = read_u16_at(data, s + 6).unwrap_or(0) as usize;
+                let end_base = s + 14;
+                let start_base = end_base + seg_x2 + 2;
+                for i in 0..seg_x2 / 2 {
+                    let (Ok(end), Ok(start)) = (
+                        read_u16_at(data, end_base + 2 * i),
+                        read_u16_at(data, start_base + 2 * i),
+                    ) else {
+                        break;
+                    };
+                    if start == 0xFFFF && end == 0xFFFF {
+                        continue; // the required terminal sentinel segment
+                    }
+                    if start <= end {
+                        ranges.push((start as u32, end as u32));
+                    }
+                }
+            }
+            6 => {
+                let first = read_u16_at(data, s + 6).unwrap_or(0) as u32;
+                let count = read_u16_at(data, s + 8).unwrap_or(0) as u32;
+                if count > 0 {
+                    ranges.push((first, first + count - 1));
+                }
+            }
+            12 => {
+                let n = read_u32_at(data, s + 12).unwrap_or(0) as usize;
+                for i in 0..n.min(100_000) {
+                    let (Ok(start), Ok(end)) = (
+                        read_u32_at(data, s + 16 + 12 * i),
+                        read_u32_at(data, s + 16 + 12 * i + 4),
+                    ) else {
+                        break;
+                    };
+                    if start <= end {
+                        ranges.push((start, end));
+                    }
+                }
+            }
+            _ => {}
+        }
+        ranges.sort_unstable();
+        // Merge touching/overlapping ranges.
+        let mut merged: Vec<(u32, u32)> = Vec::with_capacity(ranges.len());
+        for (start, end) in ranges {
+            match merged.last_mut() {
+                Some((_, pe)) if start <= pe.saturating_add(1) => *pe = (*pe).max(end),
+                _ => merged.push((start, end)),
+            }
+        }
+        merged
+    }
+
     /// Map a Unicode scalar to a glyph index; 0 (`.notdef`) when unmapped.
     pub fn glyph_index(&self, data: &[u8], c: u32) -> u16 {
         let gid = match self.format {

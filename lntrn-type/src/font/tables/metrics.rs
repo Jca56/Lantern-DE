@@ -1,10 +1,7 @@
-//! Small fixed-layout metric tables: `head`, `hhea`, `maxp`, `hmtx`.
-//!
-//! `OS/2`, `name`, and `post` join this module in Phase 2 (font discovery and
-//! matching), at which point it splits into a `tables/` directory per the plan.
+//! Metric tables: `head`, `hhea`, `maxp`, `hmtx`.
 
-use super::sfnt::{read_i16_at, read_u16_at, read_u32_at};
-use super::FontError;
+use crate::font::sfnt::{read_i16_at, read_u16_at, read_u32_at};
+use crate::font::FontError;
 
 const HEAD_MAGIC: u32 = 0x5F0F_3CF5;
 

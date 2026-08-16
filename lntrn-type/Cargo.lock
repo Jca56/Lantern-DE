@@ -450,12 +450,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "lntrn-theme"
+version = "0.1.0"
+
+[[package]]
 name = "lntrn-type"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
  "lntrn-draw",
  "lntrn-gfx",
+ "lntrn-theme",
  "pollster",
  "wgpu",
 ]

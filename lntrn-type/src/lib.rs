@@ -8,14 +8,16 @@
 //! (`lntrn-render/text`) exactly, so swapping engines at the end of the project
 //! is a one-line dependency change with zero call-site churn.
 //!
-//! ## Status: Phase 1 — TrueType parsing + rasterization
-//! Real text renders end-to-end: sfnt/ttc containers, `head`/`hhea`/`maxp`/
-//! `hmtx` metrics, `cmap` (formats 0/4/6/12), `glyf` outlines including
-//! composites, quadratic-bézier flattening, and a signed-area scanline AA
-//! rasterizer feeding the Phase 0 atlas → pipeline path. `queue` draws real
-//! glyphs with correct advances; `measure_width` works. Font discovery/styles
-//! (Phase 2), wrapping/clipping/layers (Phase 3), and shaping (Phases 5+) are
-//! still pending.
+//! ## Status: Phase 2 — font discovery, matching, fallback
+//! On top of the Phase 1 TrueType stack (sfnt/ttc, metrics, cmap, glyf,
+//! bézier flattening, signed-area scanline AA raster), the engine now
+//! discovers fonts at runtime (XDG + system dirs + `~/.lantern/fonts`,
+//! metadata-only targeted reads), matches family/weight/style, and falls back
+//! per glyph through the Lantern fallback chain plus a coverage search. All
+//! `queue_*` and `measure_*` style/family variants work; the sans default is
+//! the DE font from lantern.toml, the mono default Noto Sans Mono — same as
+//! the glyphon wrapper. Wrapping/clipping/layers (Phase 3) and shaping
+//! (Phases 5+) are still pending.
 
 mod font;
 mod gpu;
@@ -26,11 +28,16 @@ use std::sync::Arc;
 use lntrn_draw::{Color, TextPass};
 use lntrn_gfx::GpuContext;
 
-use font::Font;
-use gpu::{GlyphAtlas, GlyphPipeline, Quad};
+use font::db::{style_params, FontDb};
+use gpu::{AtlasEntry, GlyphAtlas, GlyphPipeline, Quad};
 
 /// Atlas page size in texels. Single fixed page in Phase 0; grows in Phase 4.
 const ATLAS_SIZE: u32 = 1024;
+
+/// Generic monospace default, same as the glyphon wrapper's
+/// `set_monospace_family`. The sans default comes from lantern.toml via
+/// `lntrn_theme::active_font_family()`.
+const MONOSPACE_FAMILY: &str = "Noto Sans Mono";
 
 /// Snap sizes to a 0.25px grid so animated font sizes reuse cached rasters
 /// (same rule as the glyphon wrapper's `quantize_px`).
@@ -39,10 +46,10 @@ fn quantize_px(size: f32) -> f32 {
 }
 
 /// Atlas cache key for a rasterized glyph. High bit namespaces real glyphs;
-/// 8 bits of font slot, 16 of glyph id, 24 of quarter-pixel size.
-fn glyph_cache_key(font_idx: usize, gid: u16, size: f32) -> u64 {
+/// 16 bits of face id, 16 of glyph id, 24 of quarter-pixel size.
+fn glyph_cache_key(face_id: usize, gid: u16, size: f32) -> u64 {
     let q = ((size * 4.0).round() as u64) & 0xFF_FFFF;
-    (1 << 63) | ((font_idx as u64 & 0xFF) << 40) | ((gid as u64) << 24) | q
+    (1 << 63) | ((face_id as u64 & 0xFFFF) << 40) | ((gid as u64) << 24) | q
 }
 
 /// Font weight for styled text.
@@ -72,11 +79,9 @@ pub struct TextRenderer {
     queue: Arc<wgpu::Queue>,
     atlas: GlyphAtlas,
     pipeline: GlyphPipeline,
-    #[allow(dead_code)] // consumed once font selection lands (Phase 2)
+    /// Whether the renderer default is the monospace or the sans family.
     monospace: bool,
-    /// Loaded faces. Slot 0 is the default face until the Phase 2 font
-    /// database brings family/weight/style matching and fallback chains.
-    fonts: Vec<Font>,
+    db: FontDb,
     queued: Vec<Quad>,
     cache_hits: u64,
     cache_misses: u64,
@@ -118,7 +123,7 @@ impl TextRenderer {
             atlas,
             pipeline,
             monospace,
-            fonts: Vec::new(),
+            db: FontDb::discover(&lntrn_theme::active_font_family(), MONOSPACE_FAMILY),
             queued: Vec::new(),
             cache_hits: 0,
             cache_misses: 0,
@@ -139,9 +144,9 @@ impl TextRenderer {
         }
     }
 
-    /// Number of successfully loaded font faces.
+    /// Number of known font faces (discovered + embedded).
     pub fn font_count(&self) -> usize {
-        self.fonts.len()
+        self.db.face_count()
     }
 
     /// Render all queued glyph quads into `view` at the given pixel size, then
@@ -170,20 +175,63 @@ impl TextRenderer {
         self.render(encoder, view, gpu.width(), gpu.height());
     }
 
-    // ── Glyph queueing (Phase 1) ────────────────────────────────────────────
-    // Simple path: per-character cmap lookup + advance, no shaping (GSUB/GPOS
-    // land in Phases 5–6) and no wrapping (Phase 3). Pen positions round to
-    // whole pixels; subpixel positioning is Phase 4 quality work.
+    // ── Glyph engine (Phases 1–2) ───────────────────────────────────────────
+    // Simple path: per-character cmap lookup + advance with per-glyph
+    // fallback. No shaping (GSUB/GPOS land in Phases 5–6) and no wrapping
+    // (Phase 3). Pen positions round to whole pixels; subpixel positioning is
+    // Phase 4 quality work.
 
-    fn queue_text(&mut self, text: &str, font_size: f32, x: f32, y: f32, color: Color) {
-        if self.fonts.is_empty() {
-            return; // nothing loaded yet — discovery lands in Phase 2
+    /// Fetch the atlas entry for a glyph, rasterizing on first use.
+    fn atlas_entry(&mut self, face_id: usize, gid: u16, size: f32, ch: char) -> AtlasEntry {
+        let key = glyph_cache_key(face_id, gid, size);
+        if let Some(entry) = self.atlas.get(key) {
+            self.cache_hits += 1;
+            return entry;
         }
+        self.cache_misses += 1;
+        let raster = self.db.font(face_id).and_then(|f| {
+            let scale = f.scale(size);
+            match f.outline(gid) {
+                Ok(outline) => raster::rasterize(&outline, scale),
+                Err(e) => {
+                    eprintln!("[lntrn-type] glyph {gid} ({ch:?}): {e}");
+                    None
+                }
+            }
+        });
+        match raster {
+            Some(g) => {
+                self.atlas
+                    .insert(&self.queue, key, g.width, g.height, g.left, g.top, &g.coverage)
+            }
+            // Whitespace / empty outline: cache a zero-area entry so the
+            // advance still applies without re-deriving.
+            None => self.atlas.insert(&self.queue, key, 0, 0, 0, 0, &[]),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn queue_text_full(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        x: f32,
+        y: f32,
+        color: Color,
+        weight: FontWeight,
+        style: FontStyle,
+        family: Option<&str>,
+    ) {
+        let (w, italic) = style_params(weight, style);
+        let Some(primary) = self.db.resolve(family, self.monospace, weight, style) else {
+            return; // no usable font anywhere
+        };
         let size = quantize_px(font_size);
-        let font = &self.fonts[0];
-        let scale = font.scale(size);
+        let Some(ascent) = self.db.font(primary).map(|f| f.ascender_px(size)) else {
+            return;
+        };
         let line_height = size * 1.2;
-        let mut baseline = y + font.ascender_px(size);
+        let mut baseline = y + ascent;
         let mut pen_x = x;
 
         for ch in text.chars() {
@@ -195,38 +243,8 @@ impl TextRenderer {
             if ch == '\r' {
                 continue;
             }
-            let gid = font.glyph_index(ch);
-            let key = glyph_cache_key(0, gid, size);
-            let entry = match self.atlas.get(key) {
-                Some(e) => {
-                    self.cache_hits += 1;
-                    e
-                }
-                None => {
-                    self.cache_misses += 1;
-                    let raster = match font.outline(gid) {
-                        Ok(outline) => raster::rasterize(&outline, scale),
-                        Err(e) => {
-                            eprintln!("[lntrn-type] glyph {gid} ({ch:?}): {e}");
-                            None
-                        }
-                    };
-                    match raster {
-                        Some(g) => self.atlas.insert(
-                            &self.queue,
-                            key,
-                            g.width,
-                            g.height,
-                            g.left,
-                            g.top,
-                            &g.coverage,
-                        ),
-                        // Whitespace / empty outline: cache a zero-area entry
-                        // so the advance still applies without re-deriving.
-                        None => self.atlas.insert(&self.queue, key, 0, 0, 0, 0, &[]),
-                    }
-                }
-            };
+            let (fid, gid) = self.db.glyph_for(primary, ch, w, italic);
+            let entry = self.atlas_entry(fid, gid, size, ch);
             if entry.width > 0 && entry.height > 0 {
                 self.queued.push(Quad {
                     x: pen_x.round() + entry.left as f32,
@@ -238,8 +256,44 @@ impl TextRenderer {
                     color: [color.r, color.g, color.b, color.a],
                 });
             }
-            pen_x += font.advance_units(gid) as f32 * scale;
+            pen_x += self
+                .db
+                .font(fid)
+                .map_or(0.0, |f| f.advance_units(gid) as f32 * f.scale(size));
         }
+    }
+
+    fn measure_text_full(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        weight: FontWeight,
+        style: FontStyle,
+        family: Option<&str>,
+    ) -> f32 {
+        let (w, italic) = style_params(weight, style);
+        let Some(primary) = self.db.resolve(family, self.monospace, weight, style) else {
+            return 0.0;
+        };
+        let size = quantize_px(font_size);
+        let (mut line, mut widest) = (0.0f32, 0.0f32);
+        for ch in text.chars() {
+            match ch {
+                '\n' => {
+                    widest = widest.max(line);
+                    line = 0.0;
+                }
+                '\r' => {}
+                _ => {
+                    let (fid, gid) = self.db.glyph_for(primary, ch, w, italic);
+                    line += self
+                        .db
+                        .font(fid)
+                        .map_or(0.0, |f| f.advance_units(gid) as f32 * f.scale(size));
+                }
+            }
+        }
+        widest.max(line)
     }
 }
 
@@ -248,12 +302,13 @@ impl TextRenderer {
 // swap is call-site-free. Bodies arrive with the phases noted on each.
 #[allow(unused_variables)]
 impl TextRenderer {
-    /// Load a font from raw `.ttf`/`.ttc` bytes. The first successfully loaded
-    /// face becomes the default. (Phase 2 adds discovery + family matching.)
+    /// Load a font from raw `.ttf`/`.ttc` bytes into the font database. After
+    /// loading, its family name resolves via `queue_family`/`queue_full` —
+    /// used to bundle app-specific fonts (e.g. the notepad's Google Fonts)
+    /// without relying on them being installed system-wide.
     pub fn load_font_data(&mut self, data: Vec<u8>) {
-        match Font::parse(data, 0) {
-            Ok(f) => self.fonts.push(f),
-            Err(e) => eprintln!("[lntrn-type] load_font_data: {e}"),
+        if let Err(e) = self.db.add_font_data(data) {
+            eprintln!("[lntrn-type] load_font_data: {e}");
         }
     }
 
@@ -274,24 +329,10 @@ impl TextRenderer {
 
     /// Advance width of `text` in pixels (widest line for multi-line input).
     pub fn measure_width(&mut self, text: &str, font_size: f32) -> f32 {
-        let Some(font) = self.fonts.first() else {
-            return 0.0;
-        };
-        let scale = font.scale(quantize_px(font_size));
-        let (mut line, mut widest) = (0.0f32, 0.0f32);
-        for ch in text.chars() {
-            match ch {
-                '\n' => {
-                    widest = widest.max(line);
-                    line = 0.0;
-                }
-                '\r' => {}
-                _ => line += font.advance_units(font.glyph_index(ch)) as f32 * scale,
-            }
-        }
-        widest.max(line)
+        self.measure_text_full(text, font_size, FontWeight::Normal, FontStyle::Normal, None)
     }
 
+    /// Measure the pixel width of a styled string.
     pub fn measure_width_styled(
         &mut self,
         text: &str,
@@ -299,9 +340,11 @@ impl TextRenderer {
         weight: FontWeight,
         style: FontStyle,
     ) -> f32 {
-        todo!("Phase 3: measurement")
+        self.measure_text_full(text, font_size, weight, style, None)
     }
 
+    /// Measure a styled string with an optional font family. `None` family =
+    /// the renderer default.
     pub fn measure_width_full(
         &mut self,
         text: &str,
@@ -310,20 +353,61 @@ impl TextRenderer {
         style: FontStyle,
         family: Option<&str>,
     ) -> f32 {
-        todo!("Phase 3: measurement")
+        self.measure_text_full(text, font_size, weight, style, family.filter(|f| !f.is_empty()))
     }
 
+    /// Measure text width using a specific font family (e.g. `"Digital-7"`).
+    /// Falls back to the renderer default if the family isn't installed.
     pub fn measure_width_family(&mut self, text: &str, font_size: f32, family: &str) -> f32 {
-        todo!("Phase 3: measurement")
+        self.measure_text_full(text, font_size, FontWeight::Normal, FontStyle::Normal, Some(family))
     }
 
+    /// Measure the actual rendered *ink* bounds of `text` at `font_size` with
+    /// `family` — the visible pixel extent, not the padded line box. Returns
+    /// `(ink_height, ink_top)` in pixels, where `ink_top` is the offset from
+    /// the layout origin (the `y` passed to `queue_family`) down to the first
+    /// visible pixel. Returns `(0.0, 0.0)` when nothing rasterizes.
     pub fn measure_ink_height_family(
         &mut self,
         text: &str,
         font_size: f32,
         family: &str,
     ) -> (f32, f32) {
-        todo!("Phase 3: ink-bounds measurement")
+        let (w, italic) = style_params(FontWeight::Normal, FontStyle::Normal);
+        let Some(primary) =
+            self.db
+                .resolve(Some(family), self.monospace, FontWeight::Normal, FontStyle::Normal)
+        else {
+            return (0.0, 0.0);
+        };
+        let size = quantize_px(font_size);
+        let Some(ascent) = self.db.font(primary).map(|f| f.ascender_px(size)) else {
+            return (0.0, 0.0);
+        };
+        let line_height = size * 1.2;
+        let mut baseline = ascent; // offset below the layout origin
+        let (mut min_top, mut max_bottom) = (f32::MAX, f32::MIN);
+        for ch in text.chars() {
+            if ch == '\n' {
+                baseline += line_height;
+                continue;
+            }
+            if ch == '\r' {
+                continue;
+            }
+            let (fid, gid) = self.db.glyph_for(primary, ch, w, italic);
+            let entry = self.atlas_entry(fid, gid, size, ch);
+            if entry.height > 0 {
+                let top = baseline.round() - entry.top as f32;
+                min_top = min_top.min(top);
+                max_bottom = max_bottom.max(top + entry.height as f32);
+            }
+        }
+        if max_bottom <= min_top {
+            (0.0, 0.0)
+        } else {
+            (max_bottom - min_top, min_top)
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -341,9 +425,10 @@ impl TextRenderer {
         // Wrapping at `max_width` and screen-bounds culling arrive with the
         // Phase 3 layout engine; `\n` line breaks already work.
         let _ = (max_width, screen_w, screen_h);
-        self.queue_text(text, font_size, x, y, color);
+        self.queue_text_full(text, font_size, x, y, color, FontWeight::Normal, FontStyle::Normal, None);
     }
 
+    /// Queue styled text for rendering. Like `queue()` but with weight and style.
     #[allow(clippy::too_many_arguments)]
     pub fn queue_styled(
         &mut self,
@@ -358,9 +443,12 @@ impl TextRenderer {
         screen_w: u32,
         screen_h: u32,
     ) {
-        todo!("Phase 1–3: styled queue")
+        let _ = (max_width, screen_w, screen_h); // Phase 3
+        self.queue_text_full(text, font_size, x, y, color, weight, style, None);
     }
 
+    /// Queue styled text with an optional font family. Composes weight, style,
+    /// AND family. `None` family = the renderer default.
     #[allow(clippy::too_many_arguments)]
     pub fn queue_full(
         &mut self,
@@ -376,9 +464,21 @@ impl TextRenderer {
         screen_w: u32,
         screen_h: u32,
     ) {
-        todo!("Phase 1–3: full queue")
+        let _ = (max_width, screen_w, screen_h); // Phase 3
+        self.queue_text_full(
+            text,
+            font_size,
+            x,
+            y,
+            color,
+            weight,
+            style,
+            family.filter(|f| !f.is_empty()),
+        );
     }
 
+    /// Queue text using a specific font family (e.g. `"Digital-7"`).
+    /// Falls back to the renderer default if the family isn't installed.
     #[allow(clippy::too_many_arguments)]
     pub fn queue_family(
         &mut self,
@@ -392,7 +492,17 @@ impl TextRenderer {
         screen_w: u32,
         screen_h: u32,
     ) {
-        todo!("Phase 1–3: family queue")
+        let _ = (max_width, screen_w, screen_h); // Phase 3
+        self.queue_text_full(
+            text,
+            font_size,
+            x,
+            y,
+            color,
+            FontWeight::Normal,
+            FontStyle::Normal,
+            Some(family),
+        );
     }
 
     #[allow(clippy::too_many_arguments)]
