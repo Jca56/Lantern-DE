@@ -5,13 +5,17 @@
 //! and matched by family/weight/style with per-glyph fallback. CFF/CFF2
 //! (Phase 9), variations (Phase 10), and color tables (Phase 11) come later.
 
+mod cbdt;
 mod cff;
 mod cmap;
+mod colr;
 pub(crate) mod db;
 mod glyf;
+mod gvar;
 mod scan;
 pub(crate) mod sfnt;
 mod tables;
+pub(crate) mod variations;
 
 use std::fmt;
 
@@ -73,6 +77,10 @@ pub(crate) struct Font {
     pub(crate) glyf: (usize, usize),
     /// CFF outline source; `None` = TrueType `glyf`.
     cff: Option<cff::Cff>,
+    /// Color bitmap strikes (emoji).
+    cbdt: Option<cbdt::Cbdt>,
+    /// Layered color glyphs (COLRv0).
+    pub(crate) colr: Option<colr::Colr>,
     hmtx: (usize, usize),
     /// GPOS kern/mark lookups per script tag, gathered at parse.
     gpos_plans: Vec<([u8; 4], GposPlan)>,
@@ -82,6 +90,14 @@ pub(crate) struct Font {
     kern: Option<(usize, usize)>,
     /// GDEF glyph-class definition (absolute offset); class 3 = mark.
     gdef_classes: Option<usize>,
+    /// Variation axes from `fvar` (empty = static font).
+    axes: Vec<variations::Axis>,
+    /// `avar` table range for normalization remapping.
+    avar: Option<(usize, usize)>,
+    gvar: Option<gvar::Gvar>,
+    hvar: Option<variations::Hvar>,
+    /// Normalized design-space position (empty = default instance).
+    norm_coords: Vec<f32>,
 }
 
 /// Pick the plan for a shaping run's script: exact tag, else DFLT, else
@@ -109,15 +125,25 @@ impl Font {
         let hhea = tables::parse_hhea(table(need(b"hhea")?)?)?;
         let num_glyphs = tables::parse_maxp(table(need(b"maxp")?)?)?;
         let cmap = cmap::Cmap::parse(&data, need(b"cmap")?.0)?;
+        let cbdt = dir
+            .find(b"CBLC")
+            .zip(dir.find(b"CBDT"))
+            .and_then(|((cblc, _), (cbdt_off, _))| cbdt::Cbdt::parse(&data, cblc, cbdt_off));
         let (glyf, loca, cff) = if let Some(glyf) = dir.find(b"glyf") {
             (glyf, need(b"loca")?, None)
         } else if let Some(range) = dir.find(b"CFF ") {
             ((0, 0), (0, 0), Some(cff::Cff::parse(&data, range)?))
+        } else if cbdt.is_some() {
+            ((0, 0), (0, 0), None) // bitmap-only color font (CBDT strikes)
         } else {
             return Err(FontError::Unsupported(
-                "no `glyf` or `CFF ` outlines (CFF2 lands in Phase 10)",
+                "no `glyf`, `CFF `, or `CBDT` glyph source (CFF2 pending)",
             ));
         };
+        let colr = dir
+            .find(b"COLR")
+            .zip(dir.find(b"CPAL"))
+            .and_then(|((colr_off, _), (cpal_off, _))| colr::Colr::parse(&data, colr_off, cpal_off));
         let hmtx = need(b"hmtx")?;
         // Build layout plans per script the tables declare (Arabic features
         // live under `arab`, not the latn/DFLT default a single plan would
@@ -145,6 +171,15 @@ impl Font {
                 _ => None,
             }
         });
+        let axes = dir
+            .find(b"fvar")
+            .and_then(|r| data.get(r.0..r.0 + r.1))
+            .and_then(variations::parse_fvar)
+            .map(|(axes, _)| axes)
+            .unwrap_or_default();
+        let avar = dir.find(b"avar");
+        let gvar = dir.find(b"gvar").and_then(|(off, _)| gvar::Gvar::parse(&data, off));
+        let hvar = dir.find(b"HVAR").and_then(|(off, _)| variations::Hvar::parse(&data, off));
 
         Ok(Font {
             data,
@@ -159,12 +194,39 @@ impl Font {
             loca,
             glyf,
             cff,
+            cbdt,
+            colr,
             hmtx,
             gpos_plans,
             gsub_plans,
             kern,
             gdef_classes,
+            axes,
+            avar,
+            gvar,
+            hvar,
+            norm_coords: Vec::new(),
         })
+    }
+
+    /// Select a variable-font instance from user-space axis values (e.g.
+    /// `("wght", 700.0)`). No-op for static fonts.
+    pub fn set_instance(&mut self, user: &[([u8; 4], f32)]) {
+        if self.axes.is_empty() || user.is_empty() {
+            return;
+        }
+        let avar = self.avar.and_then(|(o, l)| self.data.get(o..o + l));
+        let coords = variations::normalize(&self.axes, avar, user);
+        // All-zero = the default instance; keep the static fast path.
+        self.norm_coords = if coords.iter().all(|&c| c == 0.0) { Vec::new() } else { coords };
+    }
+
+    /// gvar + normalized coords, when this font is a non-default instance.
+    pub(crate) fn variation(&self) -> Option<(&gvar::Gvar, &[f32])> {
+        match &self.gvar {
+            Some(g) if !self.norm_coords.is_empty() => Some((g, &self.norm_coords)),
+            _ => None,
+        }
     }
 
     /// GDEF glyph class 3 = mark (used for lookup mark-filtering).
@@ -193,13 +255,20 @@ impl Font {
         }
     }
 
-    /// Advance width in font units.
-    pub fn advance_units(&self, gid: u16) -> u16 {
+    /// Advance width in font units (HVAR-adjusted for variable instances).
+    pub fn advance_units(&self, gid: u16) -> i32 {
         let (off, len) = self.hmtx;
-        match self.data.get(off..off + len) {
-            Some(hmtx) => tables::hmtx_advance(hmtx, self.num_h_metrics, gid),
+        let base = match self.data.get(off..off + len) {
+            Some(hmtx) => tables::hmtx_advance(hmtx, self.num_h_metrics, gid) as i32,
             None => 0,
+        };
+        if !self.norm_coords.is_empty() {
+            if let Some(hvar) = &self.hvar {
+                return base
+                    + hvar.advance_delta(&self.data, gid, &self.norm_coords).round() as i32;
+            }
         }
+        base
     }
 
     /// Decode the glyph's outline (composites pre-flattened into one path).
@@ -213,8 +282,23 @@ impl Font {
                 cff::outline(&self.data, cff, gid, &mut out)?;
                 Ok(out)
             }
+            None if self.glyf.1 == 0 => Ok(Outline::default()), // bitmap-only face
             None => glyf::outline(self, gid),
         }
+    }
+
+    /// Color (RGBA) rendition of `gid` at `px`, when this face has one:
+    /// CBDT bitmap strikes first, then COLRv0 layers.
+    pub fn color_glyph(&self, gid: u16, px: f32) -> Option<crate::raster::RasterRgba> {
+        if let Some(cbdt) = &self.cbdt {
+            if let Some(glyph) = cbdt.glyph(&self.data, gid, px) {
+                return Some(glyph);
+            }
+        }
+        if self.colr.is_some() {
+            return colr::rasterize(self, gid, px);
+        }
+        None
     }
 
     /// Apply GSUB substitution (ligatures, contextual alternates, Arabic

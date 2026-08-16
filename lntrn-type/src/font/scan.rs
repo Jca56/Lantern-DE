@@ -16,8 +16,10 @@ use std::path::{Path, PathBuf};
 use super::cmap::Cmap;
 use super::sfnt;
 use super::tables::{name, os2};
+use super::variations;
 
 /// Everything the database needs to match and rank a face without loading it.
+#[derive(Clone)]
 pub(crate) struct FaceMeta {
     pub face_index: u32,
     /// Family names (IDs 16 + 1), trimmed + lowercased.
@@ -28,6 +30,82 @@ pub(crate) struct FaceMeta {
     pub monospace: bool,
     /// Sorted, merged, inclusive codepoint ranges from the best cmap subtable.
     pub coverage: Vec<(u32, u32)>,
+    /// Variable-font instance: user-space axis values (empty = static face).
+    pub var_coords: Vec<([u8; 4], f32)>,
+}
+
+/// Expand a variable font's base metadata into one entry per instance —
+/// that's how a single `wght`-axis file offers both Regular and Bold to the
+/// matcher. Named instances win; otherwise default + 400/700 synthesize.
+fn expand_instances(base: FaceMeta, fvar: Option<&[u8]>) -> Vec<FaceMeta> {
+    let Some((axes, instances)) = fvar.and_then(variations::parse_fvar) else {
+        return vec![base];
+    };
+    if axes.is_empty() {
+        return vec![base];
+    }
+    let axis_pos = |tag: &[u8; 4]| axes.iter().position(|a| a.tag == *tag);
+    let (wght, wdth, ital, slnt) =
+        (axis_pos(b"wght"), axis_pos(b"wdth"), axis_pos(b"ital"), axis_pos(b"slnt"));
+
+    let mut out: Vec<FaceMeta> = Vec::new();
+    let push = |coords: &[f32], out: &mut Vec<FaceMeta>| {
+        let mut m = base.clone();
+        m.var_coords = axes.iter().zip(coords).map(|(a, &v)| (a.tag, v)).collect();
+        if let Some(i) = wght {
+            m.weight = (coords[i].round() as i32).clamp(1, 1000) as u16;
+        }
+        if let Some(i) = ital {
+            m.italic = coords[i] >= 0.5;
+        }
+        if let Some(i) = slnt {
+            m.italic = m.italic || coords[i] < 0.0;
+        }
+        if let Some(i) = wdth {
+            m.width = width_class(coords[i]);
+        }
+        if !out.iter().any(|e: &FaceMeta| e.var_coords == m.var_coords) {
+            out.push(m);
+        }
+    };
+
+    if instances.is_empty() {
+        let defaults: Vec<f32> = axes.iter().map(|a| a.default).collect();
+        push(&defaults, &mut out);
+        if let Some(i) = wght {
+            for target in [400.0, 700.0] {
+                if axes[i].min <= target && target <= axes[i].max {
+                    let mut c = defaults.clone();
+                    c[i] = target;
+                    push(&c, &mut out);
+                }
+            }
+        }
+    } else {
+        for inst in &instances {
+            push(&inst.coords, &mut out);
+        }
+    }
+    if out.is_empty() {
+        vec![base]
+    } else {
+        out
+    }
+}
+
+/// usWidthClass (1–9) nearest to a `wdth` axis percentage.
+fn width_class(percent: f32) -> u16 {
+    const STOPS: [f32; 9] = [50.0, 62.5, 75.0, 87.5, 100.0, 112.5, 125.0, 150.0, 200.0];
+    let mut best = 5u16;
+    let mut best_d = f32::MAX;
+    for (i, &s) in STOPS.iter().enumerate() {
+        let d = (percent - s).abs();
+        if d < best_d {
+            best_d = d;
+            best = i as u16 + 1;
+        }
+    }
+    best
 }
 
 const SFNT_TRUETYPE: u32 = 0x0001_0000;
@@ -118,7 +196,7 @@ pub(crate) fn scan_file(path: &Path) -> Vec<FaceMeta> {
     };
     match be_u32(&hdr, 0) {
         Some(SFNT_TRUETYPE) | Some(SFNT_TRUE) | Some(SFNT_OTTO) => {
-            scan_face(&mut file, 0, file_len, 0).into_iter().collect()
+            scan_face(&mut file, 0, file_len, 0).unwrap_or_default()
         }
         Some(SFNT_TTCF) => {
             let num = be_u32(&hdr, 8).unwrap_or(0).min(MAX_TTC_FACES);
@@ -130,13 +208,19 @@ pub(crate) fn scan_file(path: &Path) -> Vec<FaceMeta> {
                     let off = be_u32(&offsets, 4 * i as usize)? as u64;
                     scan_face(&mut file, off, file_len, i)
                 })
+                .flatten()
                 .collect()
         }
         _ => Vec::new(),
     }
 }
 
-fn scan_face(file: &mut File, dir_off: u64, file_len: u64, face_index: u32) -> Option<FaceMeta> {
+fn scan_face(
+    file: &mut File,
+    dir_off: u64,
+    file_len: u64,
+    face_index: u32,
+) -> Option<Vec<FaceMeta>> {
     let hdr = read_at(file, dir_off, 12, file_len)?;
     if !matches!(be_u32(&hdr, 0), Some(SFNT_TRUETYPE) | Some(SFNT_TRUE) | Some(SFNT_OTTO)) {
         return None;
@@ -151,10 +235,21 @@ fn scan_face(file: &mut File, dir_off: u64, file_len: u64, face_index: u32) -> O
         })
     };
 
-    // Outlines required: TrueType `glyf` or PostScript `CFF ` (CFF2 lands in
-    // Phase 10; bitmap-only color faces in Phase 11).
-    if find(b"glyf").is_none() && find(b"CFF ").is_none() {
+    // Glyph source required: `glyf`, `CFF `, or CBDT color strikes.
+    if find(b"glyf").is_none() && find(b"CFF ").is_none() && find(b"CBDT").is_none() {
         return None;
+    }
+    // COLRv1-only faces rasterize to nothing (paint graphs unsupported) —
+    // exclude them like the old stack evicted them, so emoji fallback lands
+    // on a CBDT face instead.
+    if find(b"CBDT").is_none() {
+        if let Some((colr_off, _)) = find(b"COLR") {
+            if let Some(v) = read_at(file, colr_off, 2, file_len) {
+                if u16::from_be_bytes([v[0], v[1]]) >= 1 {
+                    return None;
+                }
+            }
+        }
     }
     let (head_off, head_len) = find(b"head")?;
     let head = read_at(file, head_off, head_len.min(54), file_len)?;
@@ -176,23 +271,44 @@ fn scan_face(file: &mut File, dir_off: u64, file_len: u64, face_index: u32) -> O
     let cm = Cmap::parse(&cmap_data, 0).ok()?;
     let coverage = cm.coverage(&cmap_data);
 
-    Some(FaceMeta {
-        face_index,
-        families,
-        weight: style.weight,
-        width: style.width,
-        italic: style.italic,
-        monospace,
-        coverage,
-    })
+    let fvar = find(b"fvar").and_then(|(o, l)| read_at(file, o, l.min(1 << 16), file_len));
+    Some(expand_instances(
+        FaceMeta {
+            face_index,
+            families,
+            weight: style.weight,
+            width: style.width,
+            italic: style.italic,
+            monospace,
+            coverage,
+            var_coords: Vec::new(),
+        },
+        fvar.as_deref(),
+    ))
 }
 
-/// Metadata from an in-memory font (the `load_font_data` embedded path).
-pub(crate) fn meta_from_slice(data: &[u8], face_index: u32) -> Option<FaceMeta> {
+/// Metadata from an in-memory font (the `load_font_data` embedded path) —
+/// one entry per variable-font instance, or a single entry for static fonts.
+pub(crate) fn meta_from_slice(data: &[u8], face_index: u32) -> Vec<FaceMeta> {
+    let Some(base) = base_meta_from_slice(data, face_index) else {
+        return Vec::new();
+    };
+    let dir = match sfnt::parse(data, face_index) {
+        Ok(dir) => dir,
+        Err(_) => return vec![base],
+    };
+    let fvar = dir.find(b"fvar").and_then(|(o, l)| data.get(o..o + l));
+    expand_instances(base, fvar)
+}
+
+fn base_meta_from_slice(data: &[u8], face_index: u32) -> Option<FaceMeta> {
     let dir = sfnt::parse(data, face_index).ok()?;
     let table = |range: (usize, usize)| data.get(range.0..range.0 + range.1);
 
-    if dir.find(b"glyf").is_none() && dir.find(b"CFF ").is_none() {
+    if dir.find(b"glyf").is_none()
+        && dir.find(b"CFF ").is_none()
+        && dir.find(b"CBDT").is_none()
+    {
         return None;
     }
     let head = dir.find(b"head").and_then(table)?;
@@ -218,6 +334,7 @@ pub(crate) fn meta_from_slice(data: &[u8], face_index: u32) -> Option<FaceMeta> 
         italic: style.italic,
         monospace,
         coverage,
+        var_coords: Vec::new(),
     })
 }
 

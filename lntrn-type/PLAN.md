@@ -327,14 +327,57 @@ Prove our own GPU text path end-to-end with a fake glyph before any font parsing
   the variation machinery (fvar/avar) it depends on lives.
 - **Exit:** ✅ PostScript-flavored `.otf` fonts render.
 
-### Phase 10 — Variable fonts 🔴
-- `fvar` / `gvar` / `avar`; named-instance + axis selection; CFF2 blend.
-- **Exit:** weight/width axes interpolate.
+### Phase 10 — Variable fonts 🔴 ✅ DONE
+- [x] `font/variations.rs` — `fvar` axes + named instances, `avar` segment
+  maps, user→normalized coordinate mapping, **ItemVariationStore** (region
+  scalars + word/byte delta rows), DeltaSetIndexMap, and `HVAR` advance
+  deltas.
+- [x] `font/gvar.rs` — full tuple-variation store: shared/embedded peaks,
+  intermediate regions, packed point numbers, packed deltas, per-tuple
+  **IUP** interpolation within contours, scaled accumulation; composite
+  glyphs vary their component offsets.
+- [x] **Instance expansion in discovery**: a variable font's named instances
+  (or synthesized default+400+700 for instance-less wght fonts) each become
+  a matchable face with weight/width/italic derived from axis values — one
+  `wght` file offers Regular AND Bold to the existing matcher. Works for
+  scanned files and `load_font_data` embedded fonts alike.
+- [x] `Font::set_instance(user coords)` → normalized position; glyf points
+  delta-shifted pre-emission; advances HVAR-adjusted (`advance_units` now
+  i32). MVAR (metric variations for ascender etc.) skipped — sub-pixel
+  vertical effect at DE sizes.
+- [x] Verified against Orbitron-VariableFont_wght: unit test asserts wght
+  400 vs 900 outlines differ with ≥1.15× ink; harness renders 400 vs 700
+  side by side (visibly heavier).
+- CFF2 blend: still deferred — **zero CFF2 fonts exist on either machine**
+  to test against; revisit pre-swap if one appears.
+- **Exit:** ✅ weight axes interpolate; single-file variable fonts serve
+  multiple weights through the standard `FontWeight` API.
 
-### Phase 11 — Color glyphs / emoji 🔴
-- `COLR`/`CPAL` v0 + v1 (gradients), `CBDT`/`CBLC`, `sbix`, SVG-in-OT.
-- Color atlas path + shader variant; composite onto the glyph quads.
-- **Exit:** 🎵 color emoji render.
+### Phase 11 — Color glyphs / emoji 🔴 ✅ DONE
+- [x] **From-scratch PNG decoder** (`raster/png.rs`): full DEFLATE inflater
+  (stored/fixed/dynamic Huffman), scanline defiltering (filters 0–4),
+  gray/RGB/palette/RGBA expansion. Pure std, ~330 lines.
+- [x] **CBDT/CBLC** (`font/cbdt.rs`): strike selection (smallest ≥ target),
+  index formats 1/2/3, image formats 17/18/19, metric scaling, area-average
+  downscale (alpha-weighted, no dark fringes). Bitmap-only fonts (the
+  bundled Noto Color Emoji has no glyf at all) now parse — **PC scan skips:
+  1 → 0**.
+- [x] **COLR v0 + CPAL** (`font/colr.rs`): layered glyphs rasterized through
+  the normal outline path and composited bottom-up. COLRv1 paint graphs
+  unsupported; v1-only faces excluded at scan exactly like the old stack's
+  eviction (so fallback lands on CBDT). `sbix`/SVG-in-OT: no test targets on
+  Linux, deferred.
+- [x] **Unified RGBA atlas**: one Rgba8UnormSrgb texture + one pipeline for
+  text AND emoji — coverage stored as premultiplied white with sRGB-encoded
+  RGB (hardware decode returns linear coverage), emoji stored premultiplied;
+  the shader's single `tint × texel` colors text and passes emoji through.
+  `AtlasEntry.is_color` switches the quad tint to white+alpha.
+- [x] **Emoji-aware clusters**: ZWJ/variation selectors keep their glyph only
+  when the cluster's font maps one (emoji GSUB sequences work; text fonts
+  don't render tofu boxes for controls).
+- **Exit:** ✅ 🦊🚀🎉😀🌈 render in full color inline with text via the
+  normal fallback chain; harness asserts 1.6k+ chromatic pixels; CBDT
+  integration test decodes the fox and asserts it's orange. 🎉
 
 ### Phase 12 — Integration + swap 🟢 (the payoff)
 - Benchmark vs glyphon; tune atlas eviction + cache sizes.

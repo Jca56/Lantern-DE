@@ -59,6 +59,20 @@ impl TextRenderer {
         if let Some(entry) = atlas.get(key) {
             return entry;
         }
+        // Color glyphs (CBDT emoji strikes / COLRv0 layers) take precedence
+        // over outlines for faces that carry them.
+        if let Some(color) = db.font(face_id).and_then(|f| f.color_glyph(gid, size)) {
+            return atlas.insert_rgba(
+                device,
+                gpu_queue,
+                key,
+                color.width,
+                color.height,
+                color.left,
+                color.top,
+                &color.rgba,
+            );
+        }
         let raster = db.font(face_id).and_then(|f| {
             let scale = f.scale(size);
             match f.outline(gid) {
@@ -166,7 +180,8 @@ impl TextRenderer {
                     h: entry.height as f32,
                     uv_min: entry.uv_min,
                     uv_max: entry.uv_max,
-                    color: rgba,
+                    // Emoji keep their own colors; only alpha applies.
+                    color: if entry.is_color { [1.0, 1.0, 1.0, rgba[3]] } else { rgba },
                 });
             }
         }

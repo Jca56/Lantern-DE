@@ -63,6 +63,8 @@ struct FaceRecord {
     italic: bool,
     monospace: bool,
     coverage: Vec<(u32, u32)>,
+    /// Variable-font instance coordinates (empty = static face).
+    var_coords: Vec<([u8; 4], f32)>,
 }
 
 impl FaceRecord {
@@ -76,6 +78,7 @@ impl FaceRecord {
             italic: meta.italic,
             monospace: meta.monospace,
             coverage: meta.coverage,
+            var_coords: meta.var_coords,
         }
     }
 
@@ -143,23 +146,32 @@ impl FontDb {
         }
     }
 
-    /// Register an embedded font (raw `.ttf`/`.ttc` bytes, face 0).
+    /// Register an embedded font (raw `.ttf`/`.ttc` bytes, face 0). Variable
+    /// fonts contribute one face per instance.
     pub fn add_font_data(&mut self, data: Vec<u8>) -> Result<(), FontError> {
-        let meta = scan::meta_from_slice(&data, 0);
-        let font = Font::parse(data, 0)?;
-        let meta = meta.unwrap_or(FaceMeta {
-            face_index: 0,
-            families: Vec::new(),
-            weight: 400,
-            width: 5,
-            italic: false,
-            monospace: false,
-            coverage: Vec::new(),
-        });
-        self.records.push(FaceRecord::from_meta(meta, FaceSource::Embedded));
-        self.fonts.push(Some(font));
-        self.dead.push(false);
-        // New face may satisfy earlier family/fallback misses.
+        let mut metas = scan::meta_from_slice(&data, 0);
+        if metas.is_empty() {
+            metas.push(FaceMeta {
+                face_index: 0,
+                families: Vec::new(),
+                weight: 400,
+                width: 5,
+                italic: false,
+                monospace: false,
+                coverage: Vec::new(),
+                var_coords: Vec::new(),
+            });
+        }
+        for meta in metas {
+            let mut font = Font::parse(data.clone(), 0)?;
+            if !meta.var_coords.is_empty() {
+                font.set_instance(&meta.var_coords);
+            }
+            self.records.push(FaceRecord::from_meta(meta, FaceSource::Embedded));
+            self.fonts.push(Some(font));
+            self.dead.push(false);
+        }
+        // New faces may satisfy earlier family/fallback misses.
         self.resolve_cache.clear();
         self.fallback_cache.clear();
         Ok(())
@@ -254,7 +266,12 @@ impl FontDb {
             let parsed = match &rec.source {
                 FaceSource::File(path) => match std::fs::read(path) {
                     Ok(data) => match Font::parse(data, rec.face_index) {
-                        Ok(f) => Some(f),
+                        Ok(mut f) => {
+                            if !rec.var_coords.is_empty() {
+                                f.set_instance(&rec.var_coords);
+                            }
+                            Some(f)
+                        }
                         Err(e) => {
                             eprintln!("[lntrn-type] disabling face {}: {e}", path.display());
                             None

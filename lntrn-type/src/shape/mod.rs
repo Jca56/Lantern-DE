@@ -81,28 +81,50 @@ pub(crate) fn shape_run(
     // Resolve per grapheme cluster: the base character picks the font and the
     // rest of the cluster (combining marks, ZWJ tails) tries that same font
     // first, so marks anchor to their base instead of landing in a different
-    // fallback face. Default-ignorable code points (directional controls,
-    // joiners) get no glyph — they exist for segmentation, not rendering.
+    // fallback face. "Soft" characters (default-ignorable controls, joiners,
+    // variation selectors) keep their glyph only when the cluster's font maps
+    // one — emoji fonts map ZWJ/VS16 for their GSUB sequences, text fonts
+    // usually don't — and never trigger a fallback search of their own.
+    let soft = |c: char| {
+        unicode::is_default_ignorable(c) || matches!(c as u32, 0xFE00..=0xFE0F)
+    };
     let mut resolved: Vec<(usize, gsub::Glyph)> = Vec::new();
     let mut cluster_base = 0usize;
     for cluster in crate::unicode::graphemes(text) {
         let start = cluster_base;
         cluster_base += cluster.len();
-        let mut chars = cluster
-            .char_indices()
-            .filter(|&(_, c)| c != '\r' && !unicode::is_default_ignorable(c));
+        let mut chars = cluster.char_indices().filter(|&(_, c)| c != '\r');
         let Some((_, base)) = chars.next() else {
             continue;
         };
-        let (fid, gid) = db.glyph_for(primary, base, weight, italic);
-        resolved.push((
-            fid,
-            gsub::Glyph { gid, cluster: start as u32, form: form_at(start as u32) },
-        ));
+        let fid = if soft(base) {
+            let gid = db.font(primary).map_or(0, |f| f.glyph_index(base));
+            if gid != 0 {
+                resolved.push((
+                    primary,
+                    gsub::Glyph { gid, cluster: start as u32, form: form_at(start as u32) },
+                ));
+            }
+            primary
+        } else {
+            let (fid, gid) = db.glyph_for(primary, base, weight, italic);
+            resolved.push((
+                fid,
+                gsub::Glyph { gid, cluster: start as u32, form: form_at(start as u32) },
+            ));
+            fid
+        };
         for (ci, c) in chars {
             let offset = (start + ci) as u32;
-            let (f, g) = db.glyph_for(fid, c, weight, italic);
-            resolved.push((f, gsub::Glyph { gid: g, cluster: offset, form: form_at(offset) }));
+            if soft(c) {
+                let gid = db.font(fid).map_or(0, |f| f.glyph_index(c));
+                if gid != 0 {
+                    resolved.push((fid, gsub::Glyph { gid, cluster: offset, form: form_at(offset) }));
+                }
+            } else {
+                let (f, g) = db.glyph_for(fid, c, weight, italic);
+                resolved.push((f, gsub::Glyph { gid: g, cluster: offset, form: form_at(offset) }));
+            }
         }
     }
 
@@ -130,7 +152,7 @@ pub(crate) fn shape_run(
             .iter()
             .map(|g| gpos::GlyphPos {
                 gid: g.gid,
-                x_adv: font.advance_units(g.gid) as i32,
+                x_adv: font.advance_units(g.gid),
                 x_off: 0,
                 y_off: 0,
             })

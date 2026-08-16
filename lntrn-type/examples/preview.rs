@@ -1,4 +1,4 @@
-//! Phase 9 preview harness.
+//! Phase 11 preview harness.
 //!
 //! Spins up a headless wgpu device (no window/surface) and exercises the full
 //! lntrn-type stack: discovery/matching/fallback (Phase 2), the layout engine
@@ -6,7 +6,7 @@
 //! per-pixel via readback), render quality (Phase 4: subpixel bins, atlas
 //! growth, glyphon side-by-side), GPOS kerning (Phase 5), and GSUB ligatures
 //! (Phase 6) — every comparison row's shaped width asserted equal to
-//! glyphon's. Output: `phase9.png`.
+//! glyphon's. Output: `phase11.png`.
 //!
 //! This is the permanent visual-diff harness the plan calls for; later phases
 //! render richer scenes here and compare against glyphon output.
@@ -119,6 +119,23 @@ when a single word overflows the bound.";
         "CFF: Nimbus Sans renders via Type2 charstrings",
         22.0, 460.0, 452.0, Color::from_rgb8(0x6b, 0xe5, 0x7a), f32::MAX, "Nimbus Sans", WIDTH, HEIGHT,
     );
+
+    // 6d) Variable fonts: a single wght-axis file provides Regular AND Bold
+    // via fvar instancing + gvar outline deltas. Loaded embedded so the
+    // variable file wins ranking ties over the static Orbitron weights that
+    // are also installed.
+    if let Ok(var_font) =
+        std::fs::read(format!("{home}/.local/share/fonts/Orbitron-VariableFont_wght.ttf"))
+    {
+        text.load_font_data(var_font);
+        text.queue_full("VAR wght 400", 18.0, 16.0, 478.0, white, f32::MAX, FontWeight::Normal, FontStyle::Normal, Some("Orbitron"), WIDTH, HEIGHT);
+        text.queue_full("VAR wght 700", 18.0, 240.0, 478.0, Color::from_rgb8(0xff, 0xb1, 0x42), f32::MAX, FontWeight::Bold, FontStyle::Normal, Some("Orbitron"), WIDTH, HEIGHT);
+    }
+
+    // 6e) COLOR EMOJI 🎉 — CBDT strikes via our own PNG decoder, routed
+    // through the normal fallback chain, mixed inline with text (including
+    // a ZWJ family sequence fused by the emoji font's GSUB).
+    text.queue("emoji: 🦊🚀🎉😀🌈👨\u{200D}👩\u{200D}👧 inline!", 24.0, 500.0, 474.0, white, f32::MAX, WIDTH, HEIGHT);
 
     // 7) Force atlas growth mid-frame: huge glyphs, clipped to a zero-area
     // rect so nothing draws. Every already-queued quad must survive the grow
@@ -301,6 +318,12 @@ when a single word overflows the bound.";
     let clipped_kept = count_lit(&rgba, 16, 254, 312, 280);
     assert!(clipped_kept > 100, "queue_clipped kept region should render, got {clipped_kept} px");
 
+    // Color emoji actually rendered in color: the emoji row's region must
+    // contain strongly chromatic pixels (text is grayscale, emoji are not).
+    let chroma = count_chroma(&rgba, 560, 480, 890, 506);
+    println!("[lntrn-type] emoji chroma pixels: {chroma}");
+    assert!(chroma > 60, "emoji should render in color, got {chroma} chromatic px");
+
     // Side-by-side sanity: both engines put comparable amounts of ink down.
     let ours_lit = count_lit(&rgba, 8, 520, 448, 700);
     let glyphon_lit = count_lit(&rgba, 448, 520, 888, 700).max(1);
@@ -334,12 +357,12 @@ when a single word overflows the bound.";
     println!("[lntrn-type] kern check: AV {av:.2}px vs A+V {:.2}px", a + v);
     assert!(av < a + v - 0.5, "AV should kern tighter than A+V");
 
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/phase9.png");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/phase11.png");
     write_png(path, WIDTH, HEIGHT, &rgba).expect("failed to write PNG");
 
     let stats = text.stats();
     println!(
-        "[lntrn-type] Phase 9 preview: {queued} entries, {} cached layouts, {} atlas glyphs, {} hits / {} misses",
+        "[lntrn-type] Phase 11 preview: {queued} entries, {} cached layouts, {} atlas glyphs, {} hits / {} misses",
         stats.entries,
         text.atlas_glyph_count(),
         stats.cache_hits,
@@ -348,7 +371,7 @@ when a single word overflows the bound.";
     println!("[lntrn-type] rendered {lit} lit pixels of {}", WIDTH * HEIGHT);
     println!("[lntrn-type] wrote {path}");
     assert!(lit > 5_000, "expected real text to render; got {lit} lit pixels");
-    println!("[lntrn-type] Phase 9 OK ✅ — CFF Type2 outlines render (OTF coverage unlocked)");
+    println!("[lntrn-type] Phase 11 OK ✅ — COLOR EMOJI render (CBDT + our own PNG decoder) 🎉");
 }
 
 /// Render the comparison rows through glyphon (the stack being replaced) at
@@ -444,6 +467,22 @@ fn render_glyphon_side(
     renderer.render(&atlas, &viewport, &mut pass).expect("glyphon render failed");
     drop(pass);
     widths
+}
+
+/// Count strongly chromatic pixels (channel spread > 40) in a region.
+fn count_chroma(rgba: &[u8], x0: u32, y0: u32, x1: u32, y1: u32) -> usize {
+    let mut n = 0;
+    for y in y0..y1.min(HEIGHT) {
+        for x in x0..x1.min(WIDTH) {
+            let i = ((y * WIDTH + x) * 4) as usize;
+            let (r, g, b) = (rgba[i] as i32, rgba[i + 1] as i32, rgba[i + 2] as i32);
+            let spread = r.max(g).max(b) - r.min(g).min(b);
+            if spread > 40 {
+                n += 1;
+            }
+        }
+    }
+    n
 }
 
 /// Count pixels meaningfully brighter than the clear color in a region.

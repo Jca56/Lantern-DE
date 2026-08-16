@@ -4,9 +4,14 @@
 //! midpoints) and composite glyphs (nested components with F2.14 affine
 //! transforms) into [`Outline`] path commands in font units.
 
+use super::gvar;
 use super::sfnt::{read_u16_at, read_u32_at, Reader};
 use super::{Font, FontError};
 use crate::raster::outline::{Affine, Outline, PathCmd};
+
+/// Phantom points appended for gvar delta arrays (metrics variations come
+/// from HVAR instead, so their values are placeholders).
+const PHANTOM_POINTS: usize = 4;
 
 /// Composite glyphs referencing composites; 8 levels is far beyond real fonts.
 const MAX_DEPTH: u8 = 8;
@@ -82,13 +87,15 @@ fn emit_glyph(
     let n_contours = r.i16()?;
     r.skip(8)?; // bounding box — recomputed from actual points at raster time
     if n_contours >= 0 {
-        emit_simple(&mut r, n_contours as usize, &t, out)
+        emit_simple(font, gid, &mut r, n_contours as usize, &t, out)
     } else {
-        emit_composite(font, &mut r, &t, depth, out)
+        emit_composite(font, gid, &mut r, &t, depth, out)
     }
 }
 
 fn emit_simple(
+    font: &Font,
+    gid: u16,
     r: &mut Reader,
     n_contours: usize,
     t: &Affine,
@@ -144,13 +151,22 @@ fn emit_simple(
         ys.push(y);
     }
 
+    // Variable instance: shift points by the gvar deltas before emission.
+    let mut pts: Vec<(f32, f32)> =
+        xs.iter().zip(&ys).map(|(&x, &y)| (x as f32, y as f32)).collect();
+    if let Some((gv, coords)) = font.variation() {
+        pts.extend(std::iter::repeat_n((0.0, 0.0), PHANTOM_POINTS));
+        gvar::apply(&font.data, gv, gid, coords, &mut pts, Some(&end_pts));
+        pts.truncate(n_points);
+    }
+
     let mut begin = 0usize;
     for &e in &end_pts {
         let end = e as usize + 1;
         if end > n_points || begin >= end {
             return Err(FontError::Truncated); // endPts must ascend
         }
-        emit_contour(&flags[begin..end], &xs[begin..end], &ys[begin..end], t, out);
+        emit_contour(&flags[begin..end], &pts[begin..end], t, out);
         begin = end;
     }
     Ok(())
@@ -159,13 +175,13 @@ fn emit_simple(
 /// One closed contour → path commands. Off-curve runs imply on-curve midpoints
 /// between consecutive control points; a contour may even start off-curve, in
 /// which case the start point is borrowed from the end or synthesized.
-fn emit_contour(flags: &[u8], xs: &[i32], ys: &[i32], t: &Affine, out: &mut Outline) {
+fn emit_contour(flags: &[u8], pts: &[(f32, f32)], t: &Affine, out: &mut Outline) {
     let n = flags.len();
     if n < 2 {
         return;
     }
     let on = |i: usize| flags[i] & ON_CURVE != 0;
-    let pt = |i: usize| (xs[i] as f32, ys[i] as f32);
+    let pt = |i: usize| pts[i];
     let mid = |a: (f32, f32), b: (f32, f32)| ((a.0 + b.0) * 0.5, (a.1 + b.1) * 0.5);
 
     let (start, lo, hi) = if on(0) {
@@ -197,11 +213,23 @@ fn emit_contour(flags: &[u8], xs: &[i32], ys: &[i32], t: &Affine, out: &mut Outl
 
 fn emit_composite(
     font: &Font,
+    gid: u16,
     r: &mut Reader,
     parent: &Affine,
     depth: u8,
     out: &mut Outline,
 ) -> Result<(), FontError> {
+    struct Component {
+        child: u16,
+        a: f32,
+        b: f32,
+        c: f32,
+        d: f32,
+        dx: f32,
+        dy: f32,
+        xy_args: bool,
+    }
+    let mut components: Vec<Component> = Vec::new();
     loop {
         let flags = r.u16()?;
         let child = r.u16()?;
@@ -224,19 +252,53 @@ fn emit_composite(
             c = r.f2dot14()?;
             d = r.f2dot14()?;
         }
-        if flags & ARGS_ARE_XY != 0 {
+        components.push(Component {
+            child,
+            a,
+            b,
+            c,
+            d,
+            dx: a1 as f32,
+            dy: a2 as f32,
+            xy_args: flags & ARGS_ARE_XY != 0,
+        });
+        if flags & MORE_COMPONENTS == 0 {
+            break;
+        }
+    }
+
+    // Variable instance: gvar points for a composite are its component
+    // offsets (no IUP; unreferenced components stay put).
+    if let Some((gv, coords)) = font.variation() {
+        let mut pts: Vec<(f32, f32)> = components.iter().map(|c| (c.dx, c.dy)).collect();
+        pts.extend(std::iter::repeat_n((0.0, 0.0), PHANTOM_POINTS));
+        gvar::apply(&font.data, gv, gid, coords, &mut pts, None);
+        for (comp, pt) in components.iter_mut().zip(pts) {
+            comp.dx = pt.0;
+            comp.dy = pt.1;
+        }
+    }
+
+    for comp in components {
+        if comp.xy_args {
             // Offsets are unscaled font units by default (the MS convention;
             // SCALED_COMPONENT_OFFSET is vanishingly rare in real fonts).
-            let local = Affine { a, b, c, d, e: a1 as f32, f: a2 as f32 };
-            emit_glyph(font, child, local.then(parent), depth + 1, out)?;
+            let local = Affine {
+                a: comp.a,
+                b: comp.b,
+                c: comp.c,
+                d: comp.d,
+                e: comp.dx,
+                f: comp.dy,
+            };
+            emit_glyph(font, comp.child, local.then(parent), depth + 1, out)?;
         } else {
             // Point-matching anchors: essentially unused by modern fonts.
             eprintln!(
-                "[lntrn-type] skipping point-matched composite component (glyph {child})"
+                "[lntrn-type] skipping point-matched composite component (glyph {})",
+                comp.child
             );
         }
-        if flags & MORE_COMPONENTS == 0 {
-            return Ok(());
-        }
     }
+    Ok(())
 }

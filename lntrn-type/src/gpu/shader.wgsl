@@ -42,8 +42,9 @@ fn vs_main(
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let coverage = textureSample(atlas_tex, atlas_samp, in.uv).r;
-    let a = in.color.a * coverage;
-    // Premultiplied output.
-    return vec4<f32>(in.color.rgb * a, a);
+    // Atlas texels are premultiplied: text = white × coverage (tinted by the
+    // quad color), emoji = premultiplied sRGB pixels (quad color is white +
+    // alpha). One multiply serves both; output stays premultiplied.
+    let texel = textureSample(atlas_tex, atlas_samp, in.uv);
+    return vec4<f32>(in.color.rgb * in.color.a * texel.rgb, in.color.a * texel.a);
 }

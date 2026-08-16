@@ -1,8 +1,12 @@
-//! Glyph coverage atlas.
+//! Glyph atlas.
 //!
-//! A single R8Unorm texture into which rasterized glyph coverage bitmaps are
-//! packed with a simple shelf packer. Each entry records its texel rectangle
-//! plus the glyph's pixel size and bearing for placement at queue time.
+//! A single RGBA (sRGB) texture into which glyph bitmaps are packed with a
+//! simple shelf packer. Text coverage is stored as premultiplied white with
+//! the RGB channels sRGB-*encoded* so hardware decode returns linear
+//! coverage; color emoji store premultiplied sRGB pixels directly. One
+//! texture, one pipeline — the shader multiplies texels by the quad tint,
+//! which colors text and passes emoji through. Each entry records its texel
+//! rectangle plus pixel size, bearings, and whether it is a color glyph.
 //!
 //! Entries store **texel** coordinates (normalized in the vertex shader via
 //! the atlas-size uniform), so when the atlas fills it can grow — allocate a
@@ -25,6 +29,8 @@ pub struct AtlasEntry {
     pub left: i32,
     /// Vertical bearing: pixels from the baseline up to the glyph's top edge.
     pub top: i32,
+    /// Color (emoji) glyph — rendered untinted apart from alpha.
+    pub is_color: bool,
 }
 
 /// Growth cap. 8192² is guaranteed by wgpu core limits and holds ~all glyph
@@ -103,9 +109,7 @@ impl GlyphAtlas {
     }
 
     /// Insert a coverage bitmap (`width * height` bytes, R8, row-major) under
-    /// `key`. `left`/`top` are the glyph bearings. Returns the resulting entry
-    /// (also cached). Re-inserting a present key returns the cached entry.
-    /// Grows the atlas as needed; only at [`MAX_ATLAS_SIZE`] are glyphs dropped.
+    /// `key`, stored as premultiplied white (see module docs).
     #[allow(clippy::too_many_arguments)]
     pub fn insert(
         &mut self,
@@ -121,9 +125,55 @@ impl GlyphAtlas {
         if let Some(existing) = self.entries.get(&key) {
             return *existing;
         }
+        let mut rgba = Vec::with_capacity(coverage.len() * 4);
+        for &c in coverage {
+            let e = srgb_encode(c);
+            rgba.extend_from_slice(&[e, e, e, c]);
+        }
+        self.insert_raw(device, queue, key, width, height, left, top, &rgba, false)
+    }
 
+    /// Insert a color glyph (straight-alpha RGBA, sRGB); premultiplied here.
+    #[allow(clippy::too_many_arguments)]
+    pub fn insert_rgba(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        key: u64,
+        width: u32,
+        height: u32,
+        left: i32,
+        top: i32,
+        rgba: &[u8],
+    ) -> AtlasEntry {
+        if let Some(existing) = self.entries.get(&key) {
+            return *existing;
+        }
+        let mut premul = rgba.to_vec();
+        for px in premul.chunks_exact_mut(4) {
+            let a = px[3] as u32;
+            px[0] = ((px[0] as u32 * a) / 255) as u8;
+            px[1] = ((px[1] as u32 * a) / 255) as u8;
+            px[2] = ((px[2] as u32 * a) / 255) as u8;
+        }
+        self.insert_raw(device, queue, key, width, height, left, top, &premul, true)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn insert_raw(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        key: u64,
+        width: u32,
+        height: u32,
+        left: i32,
+        top: i32,
+        rgba: &[u8],
+        is_color: bool,
+    ) -> AtlasEntry {
         // Whitespace / empty glyph: record a zero-area entry (still advances).
-        if width == 0 || height == 0 || coverage.is_empty() {
+        if width == 0 || height == 0 || rgba.is_empty() {
             let entry = AtlasEntry {
                 width,
                 height,
@@ -170,10 +220,10 @@ impl GlyphAtlas {
                 origin: wgpu::Origin3d { x, y, z: 0 },
                 aspect: wgpu::TextureAspect::All,
             },
-            coverage,
+            rgba,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(width),
+                bytes_per_row: Some(width * 4),
                 rows_per_image: Some(height),
             },
             wgpu::Extent3d {
@@ -190,6 +240,7 @@ impl GlyphAtlas {
             height,
             left,
             top,
+            is_color,
         };
 
         self.cursor_x += width + self.pad;
@@ -249,7 +300,7 @@ fn create_texture(device: &wgpu::Device, size: u32) -> (wgpu::Texture, wgpu::Tex
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::R8Unorm,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
         usage: wgpu::TextureUsages::TEXTURE_BINDING
             | wgpu::TextureUsages::COPY_DST
             | wgpu::TextureUsages::COPY_SRC,
@@ -257,4 +308,17 @@ fn create_texture(device: &wgpu::Device, size: u32) -> (wgpu::Texture, wgpu::Tex
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     (texture, view)
+}
+
+/// Encode a linear coverage byte to sRGB so the texture's hardware decode
+/// hands the shader linear coverage in the RGB channels (alpha is untouched
+/// by sRGB decode and stores coverage directly).
+fn srgb_encode(c: u8) -> u8 {
+    let l = c as f32 / 255.0;
+    let s = if l <= 0.003_130_8 {
+        12.92 * l
+    } else {
+        1.055 * l.powf(1.0 / 2.4) - 0.055
+    };
+    (s * 255.0 + 0.5) as u8
 }
