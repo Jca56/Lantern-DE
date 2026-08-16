@@ -12,9 +12,6 @@
 use std::collections::HashMap;
 
 /// A packed glyph's location in the atlas + its placement metrics.
-// `left`/`top` bearings are consumed by glyph placement in Phase 1; `get` by the
-// glyph cache in Phase 3. Kept now so the atlas API is stable across phases.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AtlasEntry {
     pub uv_min: [f32; 2],
@@ -91,14 +88,19 @@ impl GlyphAtlas {
         &self.sampler
     }
 
-    #[allow(dead_code)]
     pub fn get(&self, key: u64) -> Option<AtlasEntry> {
         self.entries.get(&key).copied()
+    }
+
+    /// Number of cached glyph entries (including zero-area whitespace ones).
+    pub fn len(&self) -> usize {
+        self.entries.len()
     }
 
     /// Insert a coverage bitmap (`width * height` bytes, R8, row-major) under
     /// `key`. `left`/`top` are the glyph bearings. Returns the resulting entry
     /// (also cached). Re-inserting a present key returns the cached entry.
+    #[allow(clippy::too_many_arguments)]
     pub fn insert(
         &mut self,
         queue: &wgpu::Queue,

@@ -113,12 +113,21 @@ Prove our own GPU text path end-to-end with a fake glyph before any font parsing
 - **Exit:** ✅ sampled-coverage quads render through our pipeline. 10 quads /
   ~30.8k lit px; AA + per-quad color + alpha blending verified visually.
 
-### Phase 1 — TrueType parsing + rasterization 🟢 (THE first-text milestone)
-- sfnt container + table directory; `head` `maxp` `hhea` `hmtx`.
-- `cmap` formats 4 + 12; `loca` + `glyf` (simple + composite glyphs).
-- Outline flattening (quadratic béziers) → signed-area scanline AA rasterizer.
-- Wire raster → atlas → pipeline.
-- **Exit:** real ASCII from JetBrains Mono renders with correct advances. 🎉
+### Phase 1 — TrueType parsing + rasterization 🟢 ✅ DONE (THE first-text milestone)
+- [x] sfnt container + table directory + `ttcf` collections (`src/font/sfnt.rs`);
+  `head` `maxp` `hhea` `hmtx` (`src/font/tables.rs`).
+- [x] `cmap` formats 0, 4, 6, 12 with best-subtable scoring, zero-copy
+  binary-search lookups (`src/font/cmap.rs`).
+- [x] `loca` + `glyf` simple + composite glyphs (F2.14 transforms, nesting,
+  implied on-curve midpoints, off-curve contour starts) — `src/font/glyf.rs`.
+- [x] Adaptive quadratic flattening (≤0.25px error) + signed-area scanline AA
+  rasterizer with winding via delta sign (`src/raster/`), unit-tested.
+- [x] Wired: `queue` (incl. `\n`), `measure_width`, `load_font_data`, glyph
+  cache keyed by (font, glyph, 0.25px-quantized size) into the Phase 0 atlas.
+- **Exit:** ✅ JetBrains Mono + Inter render from real outlines with correct
+  advances (`phase1.png`): pangrams, punctuation, composite accents (Åéçñü),
+  12–44px ladder, per-quad color, multi-line, translucent blending. Monospace
+  advance equality + cache-hit-on-requeue asserted in the harness. 🎉
 
 ### Phase 2 — Font discovery, matching, fallback 🟡
 - `name` + `OS/2` parsing; `post`.

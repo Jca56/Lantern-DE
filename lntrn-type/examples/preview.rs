@@ -1,52 +1,140 @@
-//! Phase 0 preview harness.
+//! Phase 1 preview harness.
 //!
-//! Spins up a headless wgpu device (no window/surface), feeds a few hand-built
-//! anti-aliased coverage glyphs through the `lntrn-type` atlas → pipeline →
-//! premultiplied-blend path, renders to an offscreen sRGB texture, reads it
-//! back, and writes `phase0.png` next to the crate. Also asserts that text
-//! actually rasterized (non-background pixels exist).
+//! Spins up a headless wgpu device (no window/surface), loads a real TrueType
+//! font from disk, renders text through the full lntrn-type stack — cmap →
+//! glyf → bézier flattening → scanline AA raster → atlas → pipeline — to an
+//! offscreen sRGB texture, reads it back, and writes `phase1.png` next to the
+//! crate. Asserts glyphs actually drew, advances are monospace-consistent, and
+//! the glyph cache produces hits on repeat queues.
 //!
 //! This is the permanent visual-diff harness the plan calls for; later phases
-//! render real strings here and compare against glyphon output.
+//! render richer scenes here and compare against glyphon output.
 //!
 //! Run: `cargo run --example preview` from the `lntrn-type/` directory.
+//! Override the test font with `LNTRN_TYPE_FONT=/path/to/font.ttf`.
 
 use std::sync::Arc;
 
 use lntrn_draw::Color;
 use lntrn_type::TextRenderer;
 
-const WIDTH: u32 = 512; // ×4 bytes = 2048, already 256-aligned for readback
-const HEIGHT: u32 = 256;
+const WIDTH: u32 = 896; // ×4 bytes per px stays 256-aligned for readback
+const HEIGHT: u32 = 512;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+
+fn find_font() -> Option<(String, Vec<u8>)> {
+    if let Ok(p) = std::env::var("LNTRN_TYPE_FONT") {
+        let data = std::fs::read(&p).ok()?;
+        return Some((p, data));
+    }
+    let home = std::env::var("HOME").unwrap_or_default();
+    for cand in [
+        format!("{home}/.lantern/fonts/JetBrainsMono.ttf"),
+        format!("{home}/.lantern/fonts/Inter.ttf"),
+        "/usr/share/fonts/noto/NotoSansMono-Regular.ttf".to_string(),
+    ] {
+        if let Ok(data) = std::fs::read(&cand) {
+            return Some((cand, data));
+        }
+    }
+    None
+}
 
 fn main() {
     let (device, queue) = headless_device();
     let mut text = TextRenderer::from_wgpu(device.clone(), queue.clone(), FORMAT, true);
 
+    let (font_path, font_data) =
+        find_font().expect("no test font found — set LNTRN_TYPE_FONT=/path/to/font.ttf");
+    text.load_font_data(font_data);
+    assert_eq!(text.font_count(), 1, "font failed to parse: {font_path}");
+    println!("[lntrn-type] loaded {font_path}");
+
+    // TTC container sanity: parse face 0 out of a collection if one is around.
+    let home = std::env::var("HOME").unwrap_or_default();
+    if let Ok(ttc) = std::fs::read(format!("{home}/.lantern/fonts/Inter.ttc")) {
+        let before = text.font_count();
+        text.load_font_data(ttc);
+        assert_eq!(text.font_count(), before + 1, "ttc face 0 failed to parse");
+        println!("[lntrn-type] ttc container parse OK (Inter.ttc)");
+    }
+
     // ── Build the scene ──────────────────────────────────────────────────────
-    // A row of opaque AA circles in varied colors (proves coverage + AA + color),
-    // plus two large translucent overlapping circles (proves premultiplied
-    // alpha blending).
+    let white = Color::from_rgb8(0xe8, 0xe8, 0xf0);
+    let grey = Color::from_rgb8(0x9a, 0x9a, 0xa8);
+    let mut y = 14.0;
+
+    text.queue("The quick brown fox jumps over the lazy dog", 32.0, 16.0, y, white, f32::MAX, WIDTH, HEIGHT);
+    y += 46.0;
+    text.queue("Sphinx of black quartz, judge my vow — 0123456789", 24.0, 16.0, y, Color::from_rgb8(0x9e, 0xcb, 0xff), f32::MAX, WIDTH, HEIGHT);
+    y += 36.0;
+    text.queue("!\"#$%&'()*+,-./ :;<=>?@ [\\]^_` {|}~", 24.0, 16.0, y, grey, f32::MAX, WIDTH, HEIGHT);
+    y += 36.0;
+    text.queue("Åéçñü öâì ÀÈÌÒÙ æøß — composite accents", 24.0, 16.0, y, Color::from_rgb8(0x6b, 0xe5, 0x7a), f32::MAX, WIDTH, HEIGHT);
+    y += 44.0;
+
+    // Size ladder (also exercises measure_width for placement).
+    let mut lx = 16.0;
+    for size in [12.0f32, 14.0, 16.0, 20.0, 26.0, 34.0, 44.0] {
+        text.queue("Aglr7", size, lx, y, white, f32::MAX, WIDTH, HEIGHT);
+        lx += text.measure_width("Aglr7", size) + 14.0;
+    }
+    y += 58.0;
+
+    // Per-quad color: one word per palette entry.
     let palette = [
         Color::from_rgb8(0xff, 0x6b, 0x6b),
         Color::from_rgb8(0xff, 0xb1, 0x42),
         Color::from_rgb8(0xf7, 0xe6, 0x3e),
         Color::from_rgb8(0x6b, 0xe5, 0x7a),
         Color::from_rgb8(0x4d, 0xd0, 0xe1),
-        Color::from_rgb8(0x5c, 0x9d, 0xff),
         Color::from_rgb8(0xb3, 0x88, 0xff),
-        Color::from_rgb8(0xff, 0x8a, 0xd8),
     ];
-    let dot = aa_circle(40);
-    for (i, color) in palette.iter().enumerate() {
-        let x = 18.0 + i as f32 * 60.0;
-        text.queue_coverage_glyph(x, 28.0, 40, 40, &dot, *color);
+    let words = ["lantern", "text", "engine", "phase", "one", "glyphs"];
+    let mut cx = 16.0;
+    for (word, color) in words.iter().zip(palette) {
+        text.queue(word, 28.0, cx, y, color, f32::MAX, WIDTH, HEIGHT);
+        cx += text.measure_width(word, 28.0) + 14.0;
     }
+    y += 44.0;
 
-    let blob = aa_circle(120);
-    text.queue_coverage_glyph(150.0, 110.0, 120, 120, &blob, Color::from_rgba8(0x4d, 0xd0, 0xe1, 140));
-    text.queue_coverage_glyph(230.0, 110.0, 120, 120, &blob, Color::from_rgba8(0xff, 0x6b, 0xd8, 140));
+    // Multi-line handling in a single queue call.
+    text.queue(
+        "multi-line queue:\nsecond line\n    third line (indented)",
+        20.0,
+        16.0,
+        y,
+        grey,
+        f32::MAX,
+        WIDTH,
+        HEIGHT,
+    );
+
+    // Translucent overlap: premultiplied blending on real glyphs.
+    text.queue("BLEND", 72.0, 560.0, 360.0, Color::from_rgba8(0x4d, 0xd0, 0xe1, 140), f32::MAX, WIDTH, HEIGHT);
+    text.queue("BLEND", 72.0, 590.0, 385.0, Color::from_rgba8(0xff, 0x6b, 0xd8, 140), f32::MAX, WIDTH, HEIGHT);
+
+    // ── Behavior checks ──────────────────────────────────────────────────────
+    let narrow = text.measure_width("iiiiiiiiii", 24.0);
+    let wide = text.measure_width("MMMMMMMMMM", 24.0);
+    println!("[lntrn-type] advances: i×10 = {narrow:.2}px, M×10 = {wide:.2}px");
+    if font_path.contains("Mono") {
+        assert!(
+            (narrow - wide).abs() < 0.01,
+            "monospace font produced unequal advances: {narrow} vs {wide}"
+        );
+    }
+    assert!(text.measure_width("mm", 24.0) > text.measure_width("m", 24.0));
+
+    let before = text.stats();
+    text.queue("The quick brown fox jumps over the lazy dog", 32.0, 16.0, 14.0, white, f32::MAX, WIDTH, HEIGHT);
+    let after = text.stats();
+    assert!(
+        after.cache_hits >= before.cache_hits + 30,
+        "repeat queue should hit the glyph cache ({} → {})",
+        before.cache_hits,
+        after.cache_hits
+    );
 
     let queued = text.stats().queued;
 
@@ -137,14 +225,18 @@ fn main() {
         }
     }
 
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/phase0.png");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/phase1.png");
     write_png(path, WIDTH, HEIGHT, &rgba).expect("failed to write PNG");
 
-    println!("[lntrn-type] Phase 0 preview: queued {queued} glyph quads");
+    let stats = text.stats();
+    println!(
+        "[lntrn-type] Phase 1 preview: {queued} quads, {} atlas entries, {} hits / {} misses",
+        stats.entries, stats.cache_hits, stats.cache_misses
+    );
     println!("[lntrn-type] rendered {lit} lit pixels of {}", WIDTH * HEIGHT);
     println!("[lntrn-type] wrote {path}");
-    assert!(lit > 2_000, "expected glyph coverage to render; got {lit} lit pixels");
-    println!("[lntrn-type] Phase 0 OK ✅ — atlas → pipeline → blend path works");
+    assert!(lit > 5_000, "expected real text to render; got {lit} lit pixels");
+    println!("[lntrn-type] Phase 1 OK ✅ — real TrueType glyphs render with correct advances");
 }
 
 /// Create a surface-less wgpu device + queue for offscreen rendering.
@@ -167,23 +259,6 @@ fn headless_device() -> (Arc<wgpu::Device>, Arc<wgpu::Queue>) {
     }))
     .expect("failed to create device");
     (Arc::new(device), Arc::new(queue))
-}
-
-/// An anti-aliased filled circle as an R8 coverage bitmap, `diameter` square.
-fn aa_circle(diameter: u32) -> Vec<u8> {
-    let r = diameter as f32 / 2.0;
-    let mut cov = vec![0u8; (diameter * diameter) as usize];
-    for y in 0..diameter {
-        for x in 0..diameter {
-            let dx = x as f32 + 0.5 - r;
-            let dy = y as f32 + 0.5 - r;
-            let dist = (dx * dx + dy * dy).sqrt();
-            // 1px-wide coverage ramp at the edge.
-            let c = (r - dist + 0.5).clamp(0.0, 1.0);
-            cov[(y * diameter + x) as usize] = (c * 255.0 + 0.5) as u8;
-        }
-    }
-    cov
 }
 
 // ── Minimal PNG encoder (no external crates) ─────────────────────────────────
