@@ -157,14 +157,30 @@ Prove our own GPU text path end-to-end with a fake glyph before any font parsing
   cache hits on requeue. CFF/bitmap-only faces (38 on the PC) are skipped at
   scan with a counter until Phases 9/11.
 
-### Phase 3 — Layout + full public API 🟡
-- Line layout, `\n` handling, greedy whitespace wrap at `max_width`.
-- Implement **all** real API methods: `measure_width*`,
-  `measure_ink_height_family`, `queue_clipped`, clip stack, `occlude_rect`,
-  layers (`set_layer`/`render_layer`), `stats`.
-- Port the layout LRU cache + `quantize_px` logic verbatim.
-- **Exit:** full API parity for Latin/CJK monospace. (Could drop in here — but we
-  keep going. Old stack stays.)
+### Phase 3 — Layout + full public API 🟡 ✅ DONE
+- [x] `src/layout/` — `line.rs` greedy word wrap at `max_width` with per-glyph
+  breaks for overlong words (cosmic `Wrap::WordOrGlyph` parity); `mod.rs`
+  colorless layout LRU (512 entries, tick-based, ported semantics; keys =
+  text/size/max_width/weight/style/family, all 0.25px-quantized).
+- [x] Every remaining API method real: clip stack (`push_clip` intersects like
+  the wrapper), `queue_clipped`, `occlude_rect` (entry-level, wrapper logic
+  verbatim), layers (`set_layer`/`layer_count`/`render_layer`), `stats`
+  (entries = cached layouts, queued = entries).
+- [x] Wrapper-parity default bounds: no clip → `[0, 0, screen_w, y+size*1.2]`
+  — `queue()` clips to ONE line box, exactly like the old stack (callers
+  pre-wrap; see notes in memory).
+- [x] Quads build at queue time but clip at render time (proportional UV
+  trim), so `occlude_rect` can shrink bounds post-queue. Storing quads by
+  value also makes the wrapper's eviction footgun (evicted layout → dropped
+  glyphs at render) structurally impossible.
+- [x] `lib.rs` split: public API surface stays in `lib.rs` (frozen contract),
+  machinery moved to `src/engine.rs`.
+- **Exit:** ✅ full API parity. `phase3.png` verified **per-pixel** in the
+  harness: one-line cap region empty, wrapped lines lit inside a pushed clip
+  and empty below it, occluded region empty with the kept part lit,
+  `queue_clipped` slices mid-glyph. Measure ignores wrap bounds (10000px key,
+  wrapper parity). The engine could drop in from here — old stack stays until
+  Phase 12 regardless.
 
 ### Phase 4 — Render quality: AA, gamma, hinting, subpixel 🟡
 - Gamma-correct coverage blending to match swash crispness.

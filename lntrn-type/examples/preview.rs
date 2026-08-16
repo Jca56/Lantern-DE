@@ -1,11 +1,11 @@
-//! Phase 2 preview harness.
+//! Phase 3 preview harness.
 //!
 //! Spins up a headless wgpu device (no window/surface) and exercises the full
-//! lntrn-type stack: runtime font discovery, family/weight/style matching,
-//! per-glyph fallback (kana through a Latin default), embedded fonts, and the
-//! cmap → glyf → bézier flattening → scanline AA raster → atlas → pipeline
-//! render path — to an offscreen sRGB texture, read back into `phase2.png`
-//! next to the crate.
+//! lntrn-type stack: discovery/matching/fallback (Phase 2), plus the Phase 3
+//! layout engine — greedy wrapping, the one-line default cap, clip stack,
+//! `queue_clipped`, `occlude_rect`, and layers — rendered offscreen, read
+//! back into `phase3.png`, and **verified per-pixel**: regions that must be
+//! clipped are asserted empty, regions that must render are asserted lit.
 //!
 //! This is the permanent visual-diff harness the plan calls for; later phases
 //! render richer scenes here and compare against glyphon output.
@@ -41,29 +41,54 @@ fn main() {
     // ── Build the scene ──────────────────────────────────────────────────────
     let white = Color::from_rgb8(0xe8, 0xe8, 0xf0);
     let grey = Color::from_rgb8(0x9a, 0x9a, 0xa8);
-    let mut y = 12.0;
 
-    text.queue("Default sans — The quick brown fox jumps 0123456789", 28.0, 16.0, y, white, f32::MAX, WIDTH, HEIGHT);
-    y += 40.0;
-    text.queue_styled("Bold weight — grumpy wizards make toxic brew", 26.0, 16.0, y, Color::from_rgb8(0xff, 0xb1, 0x42), f32::MAX, FontWeight::Bold, FontStyle::Normal, WIDTH, HEIGHT);
-    y += 38.0;
-    text.queue_styled("Italic style — grumpy wizards make toxic brew", 26.0, 16.0, y, Color::from_rgb8(0x9e, 0xcb, 0xff), f32::MAX, FontWeight::Normal, FontStyle::Italic, WIDTH, HEIGHT);
-    y += 38.0;
-    text.queue_styled("Bold italic — grumpy wizards make toxic brew", 26.0, 16.0, y, Color::from_rgb8(0xff, 0x8a, 0xd8), f32::MAX, FontWeight::Bold, FontStyle::Italic, WIDTH, HEIGHT);
-    y += 44.0;
-    text.queue_full("JetBrains Mono: fn main() { let x = 42; }", 24.0, 16.0, y, Color::from_rgb8(0x6b, 0xe5, 0x7a), f32::MAX, FontWeight::Normal, FontStyle::Normal, Some("JetBrains Mono"), WIDTH, HEIGHT);
-    y += 34.0;
-    text.queue_full("JetBrains Mono Bold: x != y && a >= b", 24.0, 16.0, y, Color::from_rgb8(0x4d, 0xd0, 0xe1), f32::MAX, FontWeight::Bold, FontStyle::Normal, Some("JetBrains Mono"), WIDTH, HEIGHT);
-    y += 44.0;
-    text.queue("Fallback: カタカナ・ひらがな mixed with Latin", 26.0, 16.0, y, white, f32::MAX, WIDTH, HEIGHT);
-    y += 42.0;
-    text.queue_family("12:34:56", 40.0, 16.0, y, Color::from_rgb8(0xff, 0x6b, 0x6b), f32::MAX, "Digital-7", WIDTH, HEIGHT);
+    // 1) Default one-line cap: second line must be clipped away.
+    text.queue(
+        "One-line default cap: this renders\nTHIS SECOND LINE MUST BE CLIPPED",
+        22.0, 16.0, 8.0, white, f32::MAX, WIDTH, HEIGHT,
+    );
+
+    // 2) Greedy wrap inside a pushed clip (clip taller than one line).
+    let paragraph = "The Lantern text engine wraps long paragraphs greedily at \
+word boundaries and even breaks Supercalifragilisticexpialidociousantidisestablishmentarianism \
+when a single word overflows the bound.";
+    text.push_clip([16.0, 80.0, 420.0, 80.0]);
+    text.queue(paragraph, 18.0, 16.0, 80.0, Color::from_rgb8(0x9e, 0xcb, 0xff), 400.0, WIDTH, HEIGHT);
+    text.pop_clip();
+
+    // 3) Occlusion: chop the right side off an already-queued line.
+    text.queue(
+        "occlusion occlusion occlusion occlusion occlusion",
+        20.0, 460.0, 80.0, Color::from_rgb8(0x6b, 0xe5, 0x7a), f32::MAX, WIDTH, HEIGHT,
+    );
+    text.occlude_rect([660.0, 78.0, 236.0, 30.0]);
+
+    // 4) queue_clipped: explicit clip rect slices glyphs mid-shape.
+    text.queue_clipped(
+        "queue_clipped slices glyphs mid-shape ->>>>>>>>",
+        24.0, 16.0, 250.0, Color::from_rgb8(0xff, 0xb1, 0x42), f32::MAX,
+        [16.0, 248.0, 300.0, 40.0],
+    );
+
+    // 5) Layers: base + overlay both render via render().
+    text.queue("Layer 0: base layer text", 22.0, 16.0, 320.0, grey, f32::MAX, WIDTH, HEIGHT);
+    text.set_layer(1);
+    text.queue("Layer 1: overlay text", 22.0, 400.0, 320.0, Color::from_rgb8(0xf7, 0xe6, 0x3e), f32::MAX, WIDTH, HEIGHT);
+    assert_eq!(text.layer_count(), 2, "set_layer should create a second layer");
+
+    // 6) Continuity rows from Phase 2 (styles, fallback, families).
+    text.queue_styled("Bold — grumpy wizards", 24.0, 16.0, 366.0, Color::from_rgb8(0xff, 0x8a, 0xd8), f32::MAX, FontWeight::Bold, FontStyle::Normal, WIDTH, HEIGHT);
+    text.queue_full("JB Mono: let x = 42;", 24.0, 330.0, 366.0, Color::from_rgb8(0x4d, 0xd0, 0xe1), f32::MAX, FontWeight::Normal, FontStyle::Normal, Some("JetBrains Mono"), WIDTH, HEIGHT);
+    text.queue("かな fallback カタカナ", 24.0, 16.0, 410.0, white, f32::MAX, WIDTH, HEIGHT);
+    text.queue_family("12:34:56", 40.0, 360.0, 406.0, Color::from_rgb8(0xff, 0x6b, 0x6b), f32::MAX, "Digital-7", WIDTH, HEIGHT);
     let (ink_h, ink_top) = text.measure_ink_height_family("12:34:56", 40.0, "Digital-7");
     println!("[lntrn-type] Digital-7 ink bounds: height {ink_h:.1}px, top offset {ink_top:.1}px");
-    y += 56.0;
-    text.queue_family("Unknown family — falls back to the default sans", 22.0, 16.0, y, grey, f32::MAX, "Nonexistent Family XYZ", WIDTH, HEIGHT);
 
     // ── Behavior checks ──────────────────────────────────────────────────────
+    // Wrap only constrains queueing — measurement uses the wrapper's fixed
+    // 10000px bound, so a long paragraph measures wider than the wrap box.
+    let para_w = text.measure_width(paragraph, 18.0);
+    assert!(para_w > 420.0, "measure should ignore wrap bounds, got {para_w}");
     // Bold resolves to a genuinely different (wider) face.
     let normal_w = text.measure_width_full("mmmmm", 24.0, FontWeight::Normal, FontStyle::Normal, Some("Inter"));
     let bold_w = text.measure_width_full("mmmmm", 24.0, FontWeight::Bold, FontStyle::Normal, Some("Inter"));
@@ -96,13 +121,16 @@ fn main() {
     let mm = mono.measure_width("MMMMM", 24.0);
     assert!((mi - mm).abs() < 0.01, "monospace default should have equal advances");
 
-    // Repeat queue hits the glyph cache.
+    // Repeat queue hits the layout cache (one hit per identical queue call).
     let before = text.stats();
-    text.queue("Default sans — The quick brown fox jumps 0123456789", 28.0, 16.0, 12.0, white, f32::MAX, WIDTH, HEIGHT);
+    text.queue(
+        "One-line default cap: this renders\nTHIS SECOND LINE MUST BE CLIPPED",
+        22.0, 16.0, 8.0, white, f32::MAX, WIDTH, HEIGHT,
+    );
     let after = text.stats();
     assert!(
-        after.cache_hits >= before.cache_hits + 30,
-        "repeat queue should hit the glyph cache ({} → {})",
+        after.cache_hits > before.cache_hits,
+        "repeat queue should hit the layout cache ({} → {})",
         before.cache_hits,
         after.cache_hits
     );
@@ -185,29 +213,55 @@ fn main() {
     readback.unmap();
 
     // ── Verify + write PNG ───────────────────────────────────────────────────
-    let bg = [
-        (0.07f32.powf(1.0 / 2.4) * 255.0) as u8, // rough sRGB of the clear color
-    ];
-    let mut lit = 0usize;
-    for px in rgba.chunks_exact(4) {
-        // Any pixel meaningfully brighter than the background counts as drawn.
-        if px[0].max(px[1]).max(px[2]) > bg[0] + 12 {
-            lit += 1;
-        }
-    }
+    let lit = count_lit(&rgba, 0, 0, WIDTH, HEIGHT);
 
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/phase2.png");
+    // Pixel-region proofs that clipping semantics actually hold on screen.
+    let second_line = count_lit(&rgba, 16, 40, 870, 72);
+    assert_eq!(second_line, 0, "one-line cap leaked {second_line} px below the line box");
+    let wrapped = count_lit(&rgba, 16, 105, 436, 158);
+    assert!(wrapped > 300, "wrap inside clip should light rows 2-3, got {wrapped} px");
+    let below_clip = count_lit(&rgba, 16, 162, 436, 200);
+    assert_eq!(below_clip, 0, "clip bottom leaked {below_clip} px");
+    let occluded = count_lit(&rgba, 662, 80, 894, 102);
+    assert_eq!(occluded, 0, "occlude_rect leaked {occluded} px");
+    let kept = count_lit(&rgba, 460, 82, 640, 100);
+    assert!(kept > 100, "unoccluded left part should stay visible, got {kept} px");
+    let clipped_right = count_lit(&rgba, 320, 252, 700, 284);
+    assert_eq!(clipped_right, 0, "queue_clipped leaked {clipped_right} px past its rect");
+    let clipped_kept = count_lit(&rgba, 16, 254, 312, 280);
+    assert!(clipped_kept > 100, "queue_clipped kept region should render, got {clipped_kept} px");
+
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/phase3.png");
     write_png(path, WIDTH, HEIGHT, &rgba).expect("failed to write PNG");
 
     let stats = text.stats();
     println!(
-        "[lntrn-type] Phase 2 preview: {queued} quads, {} atlas entries, {} hits / {} misses",
-        stats.entries, stats.cache_hits, stats.cache_misses
+        "[lntrn-type] Phase 3 preview: {queued} entries, {} cached layouts, {} atlas glyphs, {} hits / {} misses",
+        stats.entries,
+        text.atlas_glyph_count(),
+        stats.cache_hits,
+        stats.cache_misses
     );
     println!("[lntrn-type] rendered {lit} lit pixels of {}", WIDTH * HEIGHT);
     println!("[lntrn-type] wrote {path}");
     assert!(lit > 5_000, "expected real text to render; got {lit} lit pixels");
-    println!("[lntrn-type] Phase 2 OK ✅ — discovery, styles, families, and fallback all work");
+    println!("[lntrn-type] Phase 3 OK ✅ — wrap, clips, occlusion, and layers verified per-pixel");
+}
+
+/// Count pixels meaningfully brighter than the clear color in a region.
+fn count_lit(rgba: &[u8], x0: u32, y0: u32, x1: u32, y1: u32) -> usize {
+    // ~sRGB of the 0.07-linear clear color (≈84) plus noise margin.
+    const THRESHOLD: u8 = 96;
+    let mut lit = 0;
+    for y in y0..y1.min(HEIGHT) {
+        for x in x0..x1.min(WIDTH) {
+            let i = ((y * WIDTH + x) * 4) as usize;
+            if rgba[i].max(rgba[i + 1]).max(rgba[i + 2]) > THRESHOLD {
+                lit += 1;
+            }
+        }
+    }
+    lit
 }
 
 /// Create a surface-less wgpu device + queue for offscreen rendering.
