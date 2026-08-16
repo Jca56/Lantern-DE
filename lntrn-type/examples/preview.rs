@@ -1,4 +1,4 @@
-//! Phase 8 preview harness.
+//! Phase 9 preview harness.
 //!
 //! Spins up a headless wgpu device (no window/surface) and exercises the full
 //! lntrn-type stack: discovery/matching/fallback (Phase 2), the layout engine
@@ -6,7 +6,7 @@
 //! per-pixel via readback), render quality (Phase 4: subpixel bins, atlas
 //! growth, glyphon side-by-side), GPOS kerning (Phase 5), and GSUB ligatures
 //! (Phase 6) — every comparison row's shaped width asserted equal to
-//! glyphon's. Output: `phase8.png`.
+//! glyphon's. Output: `phase9.png`.
 //!
 //! This is the permanent visual-diff harness the plan calls for; later phases
 //! render richer scenes here and compare against glyphon output.
@@ -110,6 +110,14 @@ when a single word overflows the bound.";
     text.queue(
         "RTL: שלום עולם — مرحبا بالعالم — (מספר 123)",
         22.0, 16.0, 452.0, Color::from_rgb8(0x9e, 0xcb, 0xff), f32::MAX, WIDTH, HEIGHT,
+    );
+
+    // 6c) CFF outlines: URW Nimbus is a classic PostScript-flavored OTF —
+    // rendered via our Type2 charstring interpreter (falls back to the
+    // default sans on machines without urw-fonts).
+    text.queue_family(
+        "CFF: Nimbus Sans renders via Type2 charstrings",
+        22.0, 460.0, 452.0, Color::from_rgb8(0x6b, 0xe5, 0x7a), f32::MAX, "Nimbus Sans", WIDTH, HEIGHT,
     );
 
     // 7) Force atlas growth mid-frame: huge glyphs, clipped to a zero-area
@@ -326,12 +334,12 @@ when a single word overflows the bound.";
     println!("[lntrn-type] kern check: AV {av:.2}px vs A+V {:.2}px", a + v);
     assert!(av < a + v - 0.5, "AV should kern tighter than A+V");
 
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/phase8.png");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/phase9.png");
     write_png(path, WIDTH, HEIGHT, &rgba).expect("failed to write PNG");
 
     let stats = text.stats();
     println!(
-        "[lntrn-type] Phase 8 preview: {queued} entries, {} cached layouts, {} atlas glyphs, {} hits / {} misses",
+        "[lntrn-type] Phase 9 preview: {queued} entries, {} cached layouts, {} atlas glyphs, {} hits / {} misses",
         stats.entries,
         text.atlas_glyph_count(),
         stats.cache_hits,
@@ -340,7 +348,7 @@ when a single word overflows the bound.";
     println!("[lntrn-type] rendered {lit} lit pixels of {}", WIDTH * HEIGHT);
     println!("[lntrn-type] wrote {path}");
     assert!(lit > 5_000, "expected real text to render; got {lit} lit pixels");
-    println!("[lntrn-type] Phase 8 OK ✅ — BiDi reordering, Arabic joining, mirrored brackets");
+    println!("[lntrn-type] Phase 9 OK ✅ — CFF Type2 outlines render (OTF coverage unlocked)");
 }
 
 /// Render the comparison rows through glyphon (the stack being replaced) at

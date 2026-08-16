@@ -50,6 +50,11 @@ pub fn rasterize(outline: &Outline, scale: f32, x_offset: f32) -> Option<RasterG
                     see(c);
                     see(p);
                 }
+                PathCmd::Cubic(c1, c2, p) => {
+                    see(c1);
+                    see(c2);
+                    see(p);
+                }
             }
         }
     }

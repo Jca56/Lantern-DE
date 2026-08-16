@@ -52,8 +52,10 @@ impl Affine {
 pub enum PathCmd {
     Move([f32; 2]),
     Line([f32; 2]),
-    /// Quadratic bézier: control point, end point.
+    /// Quadratic bézier: control point, end point (TrueType `glyf`).
     Quad([f32; 2], [f32; 2]),
+    /// Cubic bézier: two control points, end point (CFF charstrings).
+    Cubic([f32; 2], [f32; 2], [f32; 2]),
 }
 
 /// A glyph outline as a flat command list in font units. Composite glyphs are
@@ -93,6 +95,11 @@ pub fn flatten(cmds: &[PathCmd], t: &Affine, mut sink: impl FnMut([f32; 2], [f32
                 flatten_quad(cur, c, q, &mut sink);
                 cur = q;
             }
+            PathCmd::Cubic(c1, c2, p) => {
+                let (c1, c2, q) = (tp(c1), tp(c2), tp(p));
+                flatten_cubic(cur, c1, c2, q, &mut sink);
+                cur = q;
+            }
         }
     }
     if open && cur != start {
@@ -115,6 +122,35 @@ fn flatten_quad(p0: [f32; 2], c: [f32; 2], p1: [f32; 2], sink: &mut impl FnMut([
         let q = [
             mt * mt * p0[0] + 2.0 * mt * t * c[0] + t * t * p1[0],
             mt * mt * p0[1] + 2.0 * mt * t * c[1] + t * t * p1[1],
+        ];
+        sink(prev, q);
+        prev = q;
+    }
+}
+
+/// Adaptive cubic flattening. The chord deviation is bounded by the second
+/// differences of the control polygon (×3/4), shrinking by `n²` per split.
+fn flatten_cubic(
+    p0: [f32; 2],
+    c1: [f32; 2],
+    c2: [f32; 2],
+    p1: [f32; 2],
+    sink: &mut impl FnMut([f32; 2], [f32; 2]),
+) {
+    let d1x = p0[0] - 2.0 * c1[0] + c2[0];
+    let d1y = p0[1] - 2.0 * c1[1] + c2[1];
+    let d2x = c1[0] - 2.0 * c2[0] + p1[0];
+    let d2y = c1[1] - 2.0 * c2[1] + p1[1];
+    let dev = (d1x * d1x + d1y * d1y).max(d2x * d2x + d2y * d2y).sqrt() * 0.75;
+    let n = (dev / (4.0 * FLATTEN_TOL)).sqrt().ceil().clamp(1.0, 96.0) as usize;
+    let mut prev = p0;
+    for i in 1..=n {
+        let t = i as f32 / n as f32;
+        let mt = 1.0 - t;
+        let (a, b, c, d) = (mt * mt * mt, 3.0 * mt * mt * t, 3.0 * mt * t * t, t * t * t);
+        let q = [
+            a * p0[0] + b * c1[0] + c * c2[0] + d * p1[0],
+            a * p0[1] + b * c1[1] + c * c2[1] + d * p1[1],
         ];
         sink(prev, q);
         prev = q;

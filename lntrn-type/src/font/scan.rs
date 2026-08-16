@@ -33,6 +33,7 @@ pub(crate) struct FaceMeta {
 const SFNT_TRUETYPE: u32 = 0x0001_0000;
 const SFNT_TRUE: u32 = 0x7472_7565;
 const SFNT_TTCF: u32 = 0x7474_6366;
+const SFNT_OTTO: u32 = 0x4F54_544F;
 const MAX_TTC_FACES: u32 = 64;
 
 /// Font directories to scan, in discovery order. Later entries (user +
@@ -116,7 +117,7 @@ pub(crate) fn scan_file(path: &Path) -> Vec<FaceMeta> {
         return Vec::new();
     };
     match be_u32(&hdr, 0) {
-        Some(SFNT_TRUETYPE) | Some(SFNT_TRUE) => {
+        Some(SFNT_TRUETYPE) | Some(SFNT_TRUE) | Some(SFNT_OTTO) => {
             scan_face(&mut file, 0, file_len, 0).into_iter().collect()
         }
         Some(SFNT_TTCF) => {
@@ -137,7 +138,7 @@ pub(crate) fn scan_file(path: &Path) -> Vec<FaceMeta> {
 
 fn scan_face(file: &mut File, dir_off: u64, file_len: u64, face_index: u32) -> Option<FaceMeta> {
     let hdr = read_at(file, dir_off, 12, file_len)?;
-    if !matches!(be_u32(&hdr, 0), Some(SFNT_TRUETYPE) | Some(SFNT_TRUE)) {
+    if !matches!(be_u32(&hdr, 0), Some(SFNT_TRUETYPE) | Some(SFNT_TRUE) | Some(SFNT_OTTO)) {
         return None;
     }
     let num_tables = (be_u16(&hdr, 4)? as usize).min(512);
@@ -150,7 +151,11 @@ fn scan_face(file: &mut File, dir_off: u64, file_len: u64, face_index: u32) -> O
         })
     };
 
-    find(b"glyf")?; // CFF / bitmap-only faces are Phase 9 / 11
+    // Outlines required: TrueType `glyf` or PostScript `CFF ` (CFF2 lands in
+    // Phase 10; bitmap-only color faces in Phase 11).
+    if find(b"glyf").is_none() && find(b"CFF ").is_none() {
+        return None;
+    }
     let (head_off, head_len) = find(b"head")?;
     let head = read_at(file, head_off, head_len.min(54), file_len)?;
 
@@ -187,7 +192,9 @@ pub(crate) fn meta_from_slice(data: &[u8], face_index: u32) -> Option<FaceMeta> 
     let dir = sfnt::parse(data, face_index).ok()?;
     let table = |range: (usize, usize)| data.get(range.0..range.0 + range.1);
 
-    dir.find(b"glyf")?;
+    if dir.find(b"glyf").is_none() && dir.find(b"CFF ").is_none() {
+        return None;
+    }
     let head = dir.find(b"head").and_then(table)?;
     let style = match dir.find(b"OS/2").and_then(table) {
         Some(t) => os2::parse_os2(t),

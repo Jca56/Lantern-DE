@@ -94,7 +94,7 @@ const SFNT_TTCF: u32 = 0x7474_6366; // 'ttcf' (collection)
 /// (only collections have more than one face; `index` is ignored otherwise).
 pub(crate) fn parse(data: &[u8], index: u32) -> Result<TableDir, FontError> {
     match read_u32_at(data, 0)? {
-        SFNT_TRUETYPE | SFNT_TRUE => parse_dir(data, 0),
+        SFNT_TRUETYPE | SFNT_TRUE | SFNT_OTTO => parse_dir(data, 0),
         SFNT_TTCF => {
             let num_fonts = read_u32_at(data, 8)?;
             if index >= num_fonts {
@@ -102,12 +102,10 @@ pub(crate) fn parse(data: &[u8], index: u32) -> Result<TableDir, FontError> {
             }
             let off = read_u32_at(data, 12 + 4 * index as usize)? as usize;
             match read_u32_at(data, off)? {
-                SFNT_TRUETYPE | SFNT_TRUE => parse_dir(data, off),
-                SFNT_OTTO => Err(FontError::Unsupported("CFF outlines (Phase 9)")),
+                SFNT_TRUETYPE | SFNT_TRUE | SFNT_OTTO => parse_dir(data, off),
                 other => Err(FontError::BadMagic(other)),
             }
         }
-        SFNT_OTTO => Err(FontError::Unsupported("CFF outlines (Phase 9)")),
         other => Err(FontError::BadMagic(other)),
     }
 }

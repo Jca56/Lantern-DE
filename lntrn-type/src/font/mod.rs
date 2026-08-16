@@ -5,6 +5,7 @@
 //! and matched by family/weight/style with per-glyph fallback. CFF/CFF2
 //! (Phase 9), variations (Phase 10), and color tables (Phase 11) come later.
 
+mod cff;
 mod cmap;
 pub(crate) mod db;
 mod glyf;
@@ -67,9 +68,11 @@ pub(crate) struct Font {
     pub(crate) num_glyphs: u16,
     pub(crate) long_loca: bool,
     cmap: cmap::Cmap,
-    /// (offset, length) into `data`.
+    /// (offset, length) into `data` (zeroed for CFF-outline fonts).
     pub(crate) loca: (usize, usize),
     pub(crate) glyf: (usize, usize),
+    /// CFF outline source; `None` = TrueType `glyf`.
+    cff: Option<cff::Cff>,
     hmtx: (usize, usize),
     /// GPOS kern/mark lookups per script tag, gathered at parse.
     gpos_plans: Vec<([u8; 4], GposPlan)>,
@@ -106,10 +109,15 @@ impl Font {
         let hhea = tables::parse_hhea(table(need(b"hhea")?)?)?;
         let num_glyphs = tables::parse_maxp(table(need(b"maxp")?)?)?;
         let cmap = cmap::Cmap::parse(&data, need(b"cmap")?.0)?;
-        let glyf = dir
-            .find(b"glyf")
-            .ok_or(FontError::Unsupported("no `glyf` outlines (CFF lands in Phase 9)"))?;
-        let loca = need(b"loca")?;
+        let (glyf, loca, cff) = if let Some(glyf) = dir.find(b"glyf") {
+            (glyf, need(b"loca")?, None)
+        } else if let Some(range) = dir.find(b"CFF ") {
+            ((0, 0), (0, 0), Some(cff::Cff::parse(&data, range)?))
+        } else {
+            return Err(FontError::Unsupported(
+                "no `glyf` or `CFF ` outlines (CFF2 lands in Phase 10)",
+            ));
+        };
         let hmtx = need(b"hmtx")?;
         // Build layout plans per script the tables declare (Arabic features
         // live under `arab`, not the latn/DFLT default a single plan would
@@ -150,6 +158,7 @@ impl Font {
             cmap,
             loca,
             glyf,
+            cff,
             hmtx,
             gpos_plans,
             gsub_plans,
@@ -195,7 +204,17 @@ impl Font {
 
     /// Decode the glyph's outline (composites pre-flattened into one path).
     pub fn outline(&self, gid: u16) -> Result<Outline, FontError> {
-        glyf::outline(self, gid)
+        match &self.cff {
+            Some(cff) => {
+                if gid >= self.num_glyphs {
+                    return Err(FontError::BadGlyph(gid));
+                }
+                let mut out = Outline::default();
+                cff::outline(&self.data, cff, gid, &mut out)?;
+                Ok(out)
+            }
+            None => glyf::outline(self, gid),
+        }
     }
 
     /// Apply GSUB substitution (ligatures, contextual alternates, Arabic

@@ -308,10 +308,24 @@ Prove our own GPU text path end-to-end with a fake glyph before any font parsing
   tests incl. bidi levels/reorder + joining forms; all glyphon parity
   asserts still exact.
 
-### Phase 9 — CFF / CFF2 outlines 🔴
-- CFF Type2 charstring interpreter; CFF2 + blend for variable fonts.
-- **Exit:** OTF / PostScript-flavored fonts render. (All current fonts are
-  TrueType `glyf`, so this is coverage insurance.)
+### Phase 9 — CFF / CFF2 outlines 🔴 ✅ DONE (CFF1; CFF2 moves to Phase 10)
+- [x] `font/cff.rs`: INDEX/DICT parsing (incl. nibble-encoded reals), Type2
+  charstring interpreter — all path ops, hint counting + hintmask skipping,
+  width extraction, local/global subrs with count bias, the full flex
+  family, and **CID-keyed fonts** (FDSelect fmt 0/3 → per-FD private dicts,
+  i.e. Noto CJK OTFs). `seac` accents skipped (logged; extinct in modern
+  fonts). Slightly over the file-length guideline (650) — the container +
+  interpreter are one spec and split poorly.
+- [x] Cubic béziers end-to-end: `PathCmd::Cubic` + adaptive flattening +
+  bbox coverage in the rasterizer.
+- [x] `OTTO` accepted in sfnt + scan (standalone and inside `.ttc`); faces
+  with `CFF ` outlines now discovered. **PC skip count: 38 → 1** (only the
+  bitmap-only color emoji remains, Phase 11's job) — +37 faces indexed.
+- [x] Integration test parses + rasterizes a real system OTF (URW Nimbus);
+  harness renders a Nimbus Sans row through the interpreter.
+- CFF2 (variable, blend operators) deliberately deferred to Phase 10 where
+  the variation machinery (fvar/avar) it depends on lives.
+- **Exit:** ✅ PostScript-flavored `.otf` fonts render.
 
 ### Phase 10 — Variable fonts 🔴
 - `fvar` / `gvar` / `avar`; named-instance + axis selection; CFF2 blend.
