@@ -53,7 +53,19 @@ pub struct Settings {
     /// accent-colored lines. Toggled from the View menu.
     #[serde(default)]
     pub solid_dividers: bool,
+    /// Split view: open at exit, divider ratio, and the right pane's last
+    /// directory + view mode so the layout restores exactly.
+    #[serde(default)]
+    pub split_open: bool,
+    #[serde(default = "default_split_ratio")]
+    pub split_ratio: f32,
+    #[serde(default)]
+    pub split_right_path: String,
+    #[serde(default = "default_view_mode")]
+    pub split_right_view: String,
 }
+
+fn default_split_ratio() -> f32 { 0.5 }
 
 fn default_preview_width() -> f32 { 360.0 }
 fn default_view_mode() -> String { "grid".into() }
@@ -89,6 +101,10 @@ impl Default for Settings {
             favorites: Vec::new(),
             show_titlebar: false,
             solid_dividers: false,
+            split_open: false,
+            split_ratio: 0.5,
+            split_right_path: String::new(),
+            split_right_view: "grid".into(),
         }
     }
 }

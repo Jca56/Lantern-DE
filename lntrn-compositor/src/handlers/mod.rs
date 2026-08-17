@@ -160,6 +160,41 @@ impl FractionalScaleHandler for Lantern {
 }
 
 delegate_fractional_scale!(Lantern);
+
+/// Push the current per-output fractional scale to every mapped surface.
+/// Smithay only sends preferred_scale when the client creates its
+/// wp_fractional_scale object, so live scale changes (Settings slider,
+/// Gaming Mode) need this sweep. `set_preferred_scale` dedupes and no-ops
+/// for surfaces whose client never bound the protocol, so it's safe to
+/// call on everything.
+pub fn refresh_fractional_scales(state: &Lantern) {
+    use crate::window_ext::WindowExt;
+    let fallback = state.workspaces.outputs_iter().next()
+        .map(|o| o.current_scale().fractional_scale())
+        .unwrap_or(lantern_output_scale());
+    // The global Space holds every mapped window (all workspaces, active or
+    // not, plus scratchpad and override-redirect); minimized windows live
+    // nowhere, so sweep them separately.
+    let minimized = state.minimized_windows.iter().map(|e| &e.window);
+    for window in state.space.elements().chain(minimized) {
+        let Some(surface) = window.get_wl_surface() else { continue };
+        let scale = state.output_for_window(window)
+            .map(|o| o.current_scale().fractional_scale())
+            .unwrap_or(fallback);
+        with_states(&surface, |states| {
+            fractional_scale::with_fractional_scale(states, |f| f.set_preferred_scale(scale));
+        });
+    }
+    for output in state.workspaces.outputs_iter() {
+        let scale = output.current_scale().fractional_scale();
+        let map = smithay::desktop::layer_map_for_output(output);
+        for layer in map.layers() {
+            with_states(layer.wl_surface(), |states| {
+                fractional_scale::with_fractional_scale(states, |f| f.set_preferred_scale(scale));
+            });
+        }
+    }
+}
 delegate_viewporter!(Lantern);
 
 impl TabletSeatHandler for Lantern {}

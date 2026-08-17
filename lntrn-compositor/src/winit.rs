@@ -16,7 +16,7 @@ use smithay::{
         timer::{TimeoutAction, Timer},
         EventLoop,
     },
-    utils::{IsAlive, Physical, Point, Rectangle, Transform},
+    utils::{Physical, Point, Rectangle, Transform},
 };
 
 use crate::Lantern;
@@ -341,23 +341,11 @@ pub fn init_winit(
                         state.schedule_render();
                     }
 
-                    // Handle dead windows: animate client-initiated closes
-                    let dead_windows: Vec<_> = state.space.elements()
-                        .filter(|w| !w.alive())
-                        .filter_map(|w| state.make_closing_window(w))
-                        .collect();
-                    for cw in dead_windows {
-                        if state.animations.take_close_done(&cw.surface) {
-                            state.forget_window(&cw.surface);
-                        } else {
-                            let surface = cw.surface.clone();
-                            let source = smithay::utils::Rectangle::new(cw.location, cw.size);
-                            let target = state.minimize_target_at_point(cw.location);
-                            state.animations.start_close_zombie(&surface, source, target);
-                            state.closing_windows.push(cw);
-                            state.schedule_render();
-                        }
-                    }
+                    // Reap dead windows (must run BEFORE space.refresh —
+                    // refresh silently purges dead elements). xdg toplevels
+                    // are handled deterministically in toplevel_destroyed;
+                    // this poll catches X11 windows and abrupt disconnects.
+                    state.reap_dead_windows();
                     state.space.refresh();
                     state.popups.cleanup();
                     state.check_exclusive_zone_change();

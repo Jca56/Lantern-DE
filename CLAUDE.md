@@ -25,6 +25,11 @@ Lantern DE runs on two machines:
 
 Never hardcode pixel sizes, monitor counts, monitor names, resolutions, or DPI values that would break the other setup. Layout has to adapt to the active output(s) at runtime — query compositor/output state, use relative units, or pull from config. Don't hardcode distro-specific paths or package-manager assumptions either. The desktop's monitors and scales change over time (monitor upgrades, scale switching between ~1.0–1.4, secondary monitor may come and go) — don't assume any specific resolution or scale, even in conversation; check the live config/output state when it matters.
 
+## Hard boundaries (never break these)
+- **NEVER screenshot, capture, or record the screen.** Not for testing, not for verification, not under any circumstance. Alva is at the machine to test and will screenshot and share images when necessary.
+- **NEVER modify any project/crate outside the one currently being worked on.** If a change in another crate seems necessary or useful (even a one-line fix), ask first and wait for explicit approval before touching it.
+- **NEVER install anything on the machine** (packages, tools, binaries, files outside the current project's normal build/deploy flow) without explicit permission for that specific install.
+
 ## Preferences
 - Always prefer building our own dependencies over using external crates. Minimal outside dependencies — we build all our own stuff! Only reach for an external crate when it would be incredibly difficult to implement ourselves.
 - Output scale varies per session (1.0 / 1.3 / 1.4 on the 4K primary; secondary usually 1.0) — read it from lantern.toml / compositor state, never assume. Non-Lantern apps scaled via env vars (GDK_DPI_SCALE=1.25, QT_SCALE_FACTOR=1.25).

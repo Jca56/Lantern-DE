@@ -234,6 +234,8 @@ pub enum DriveDialog {
     ConfirmFormat { drive: Drive, error: Option<String> },
     /// Read-only properties view — single OK button.
     Properties { drive: Drive },
+    /// Generic message/error notice — title + wrapped body, single OK button.
+    Message { title: String, body: String },
 }
 
 pub fn draw(
@@ -252,7 +254,102 @@ pub fn draw(
         DriveDialog::Properties { drive } => {
             draw_properties(drive, painter, text, palette, input, screen, s);
         }
+        DriveDialog::Message { title, body } => {
+            draw_message(title, body, painter, text, palette, input, screen, s);
+        }
     }
+}
+
+/// Greedy word-wrap `body` (honoring explicit `\n`) into lines no wider than
+/// `max_w` at `font_size`, measured with the real text engine so proportional
+/// fonts wrap accurately.
+fn wrap_lines(text: &mut TextRenderer, body: &str, font_size: f32, max_w: f32) -> Vec<String> {
+    let mut lines = Vec::new();
+    for para in body.split('\n') {
+        let mut cur = String::new();
+        for word in para.split_whitespace() {
+            let trial = if cur.is_empty() {
+                word.to_string()
+            } else {
+                format!("{cur} {word}")
+            };
+            if cur.is_empty() || text.measure_width(&trial, font_size) <= max_w {
+                cur = trial;
+            } else {
+                lines.push(std::mem::take(&mut cur));
+                cur = word.to_string();
+            }
+        }
+        lines.push(cur);
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
+}
+
+fn draw_message(
+    title: &str,
+    body: &str,
+    painter: &mut Painter,
+    text: &mut TextRenderer,
+    pal: &FoxPalette,
+    input: &mut InteractionContext,
+    screen: (u32, u32),
+    s: f32,
+) {
+    let (sw, sh) = screen;
+    let screen_w = sw as f32;
+    let screen_h = sh as f32;
+
+    let pad = 24.0 * s;
+    let cr = 12.0 * s;
+    let title_font = 26.0 * s;
+    let body_font = 18.0 * s;
+    let line_gap = 6.0 * s;
+    let btn_h = 40.0 * s;
+    let btn_w = 120.0 * s;
+    let dialog_w = 480.0 * s;
+
+    let text_w = dialog_w - pad * 2.0;
+    let lines = wrap_lines(text, body, body_font, text_w);
+    let line_h = body_font + line_gap;
+
+    let dialog_h = pad * 2.0
+        + title_font + pad * 0.6
+        + line_h * lines.len() as f32
+        + pad
+        + btn_h;
+
+    let dx = (screen_w - dialog_w) * 0.5;
+    let dy = (screen_h - dialog_h) * 0.5;
+
+    draw_overlay(painter, input, screen_w, screen_h, dx, dy, dialog_w, dialog_h, cr, pal, s);
+
+    let mut cy = dy + pad;
+    TextLabel::new(title, dx + pad, cy)
+        .size(FontSize::Custom(title_font))
+        .color(pal.text)
+        .max_width(text_w)
+        .draw(text, sw, sh);
+    cy += title_font + pad * 0.6;
+
+    for line in &lines {
+        TextLabel::new(line, dx + pad, cy)
+            .size(FontSize::Custom(body_font))
+            .color(pal.text_secondary)
+            // Slack so the measured last glyph isn't clipped by the wrap bound.
+            .max_width(text_w + 4.0 * s)
+            .draw(text, sw, sh);
+        cy += line_h;
+    }
+
+    cy += pad - line_gap;
+
+    let ok_rect = Rect::new(dx + dialog_w - pad - btn_w, cy, btn_w, btn_h);
+    let ok_state = input.add_zone(ZONE_DRIVE_DIALOG_OK, ok_rect);
+    draw_button(painter, text, ok_rect, "OK",
+        ok_state.is_hovered(), pal, ButtonStyle::Primary, sw, sh, s);
 }
 
 fn draw_confirm_format(

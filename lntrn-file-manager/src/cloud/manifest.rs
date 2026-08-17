@@ -11,10 +11,24 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+/// Stat snapshot paired with a manifest sha: "a file at this path with exactly
+/// this (size, mtime) hashed to `entries[path]`". Lets the local scan skip
+/// re-hashing unchanged files — with a large ~/Cloud, hashing every file on
+/// every reconcile was constant CPU+disk churn.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+pub struct FileMeta {
+    pub size: u64,
+    pub mtime: u64,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Manifest {
     /// Relative path (forward-slashed) → last-synced sha256.
     pub entries: HashMap<String, String>,
+    /// Stat cache keyed like `entries`. `#[serde(default)]` keeps old
+    /// manifest.json files (and older builds re-saving) compatible.
+    #[serde(default)]
+    pub meta: HashMap<String, FileMeta>,
 }
 
 impl Manifest {
@@ -47,7 +61,23 @@ impl Manifest {
         self.entries.insert(rel, sha);
     }
 
+    pub fn set_meta(&mut self, rel: String, size: u64, mtime: u64) {
+        self.meta.insert(rel, FileMeta { size, mtime });
+    }
+
+    /// Stat-cache lookup: the last-synced sha for `rel`, valid only if the
+    /// file's current (size, mtime) still matches the recorded snapshot.
+    pub fn cached_sha(&self, rel: &str, size: u64, mtime: u64) -> Option<&str> {
+        let m = self.meta.get(rel)?;
+        if m.size == size && m.mtime == mtime {
+            self.entries.get(rel).map(|s| s.as_str())
+        } else {
+            None
+        }
+    }
+
     pub fn remove(&mut self, rel: &str) {
         self.entries.remove(rel);
+        self.meta.remove(rel);
     }
 }

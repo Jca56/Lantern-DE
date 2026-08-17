@@ -1,17 +1,23 @@
 use crate::{grabs::resize_grab, state::ClientState, window_ext::WindowExt, Lantern};
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
-    delegate_compositor, delegate_shm,
-    reexports::wayland_server::{
-        protocol::{wl_buffer, wl_surface::WlSurface},
-        Client,
+    delegate_compositor, delegate_drm_syncobj, delegate_shm,
+    reexports::{
+        calloop::Interest,
+        wayland_server::{
+            protocol::{wl_buffer, wl_surface::WlSurface},
+            Client, Resource,
+        },
     },
     wayland::{
         buffer::BufferHandler,
         compositor::{
-            get_parent, is_sync_subsurface, with_states, CompositorClientState,
-            CompositorHandler, CompositorState,
+            add_blocker, add_pre_commit_hook, get_parent, is_sync_subsurface, with_states,
+            BufferAssignment, CompositorClientState, CompositorHandler, CompositorState,
+            SurfaceAttributes,
         },
+        dmabuf::get_dmabuf,
+        drm_syncobj::{DrmSyncobjCachedState, DrmSyncobjHandler, DrmSyncobjState},
         shell::xdg::XdgToplevelSurfaceData,
         shm::{ShmHandler, ShmState},
     },
@@ -33,6 +39,68 @@ impl CompositorHandler for Lantern {
             return &state.compositor_state;
         }
         panic!("Unknown client data type");
+    }
+
+    fn new_surface(&mut self, surface: &WlSurface) {
+        // Explicit-sync commit gate. Clients (browsers especially) attach
+        // dmabuf buffers whose GPU rendering may still be in flight; on
+        // NVIDIA there is no implicit fence to save us, so sampling early
+        // shows garbage/flicker. Block the transaction until the client's
+        // acquire point signals (linux-drm-syncobj-v1), falling back to
+        // dmabuf read-readiness for implicit-sync clients (Mesa).
+        add_pre_commit_hook::<Self, _>(surface, move |state, _dh, surface| {
+            let mut acquire_point = None;
+            let maybe_dmabuf = with_states(surface, |surface_data| {
+                acquire_point.clone_from(
+                    &surface_data
+                        .cached_state
+                        .get::<DrmSyncobjCachedState>()
+                        .pending()
+                        .acquire_point,
+                );
+                surface_data
+                    .cached_state
+                    .get::<SurfaceAttributes>()
+                    .pending()
+                    .buffer
+                    .as_ref()
+                    .and_then(|assignment| match assignment {
+                        BufferAssignment::NewBuffer(buffer) => get_dmabuf(buffer).cloned().ok(),
+                        _ => None,
+                    })
+            });
+            let Some(dmabuf) = maybe_dmabuf else { return };
+            if let Some(acquire_point) = acquire_point {
+                if let Ok((blocker, source)) = acquire_point.generate_blocker() {
+                    if let Some(client) = surface.client() {
+                        let res = state.loop_handle.insert_source(source, move |_, _, state| {
+                            let dh = state.display_handle.clone();
+                            state.client_compositor_state(&client).blocker_cleared(state, &dh);
+                            Ok(())
+                        });
+                        if res.is_ok() {
+                            add_blocker(surface, blocker);
+                            return;
+                        }
+                    }
+                }
+            }
+            // Implicit-sync fallback: poll the dmabuf for read-readiness.
+            // On Mesa this waits out the attached fence; with no fence
+            // pending it clears within the same dispatch cycle.
+            if let Ok((blocker, source)) = dmabuf.generate_blocker(Interest::READ) {
+                if let Some(client) = surface.client() {
+                    let res = state.loop_handle.insert_source(source, move |_, _, state| {
+                        let dh = state.display_handle.clone();
+                        state.client_compositor_state(&client).blocker_cleared(state, &dh);
+                        Ok(())
+                    });
+                    if res.is_ok() {
+                        add_blocker(surface, blocker);
+                    }
+                }
+            }
+        });
     }
 
     fn commit(&mut self, surface: &WlSurface) {
@@ -242,5 +310,12 @@ impl ShmHandler for Lantern {
     }
 }
 
+impl DrmSyncobjHandler for Lantern {
+    fn drm_syncobj_state(&mut self) -> Option<&mut DrmSyncobjState> {
+        self.syncobj_state.as_mut()
+    }
+}
+
 delegate_compositor!(Lantern);
 delegate_shm!(Lantern);
+delegate_drm_syncobj!(Lantern);

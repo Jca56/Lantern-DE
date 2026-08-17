@@ -42,6 +42,12 @@ x11rb = { version = "0.13", default-features = false, features = ["render"] }
 libc = "0.2"
 lntrn-icons = { path = "../lntrn-icons" }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+# Direct dep purely to enable `libwayland_server_1_23`: it gates
+# `Handle::set_default_max_buffer_size` even on the pure-Rust backend
+# (upstream cfg quirk). With the rs backend it's a plain cfg flag — no
+# libwayland linkage. Growable client send buffers replace the fixed 4 KiB
+# buffer that silently killed clients during event bursts.
+wayland-backend = { version = "0.3.17", features = ["libwayland_server_1_23"] }
 wayland-protocols = { version = "0.32", features = ["server", "unstable"] }
 wayland-protocols-wlr = { version = "0.3", features = ["server"] }
 rand = { version = "0.8", default-features = false, features = ["std", "std_rng"] }

@@ -262,6 +262,11 @@ pub struct Lantern {
     pub idle_inhibit_manager_state: IdleInhibitManagerState,
     pub dmabuf_state: DmabufState,
     pub dmabuf_global: Option<DmabufGlobal>,
+    /// Explicit sync (linux-drm-syncobj-v1). `None` on the winit backend and
+    /// on DRM devices without syncobj-eventfd support. NVIDIA's EGL path has
+    /// no implicit sync, so without this global, browsers (Chrome/Firefox
+    /// dmabuf clients) get sampled mid-render → constant flicker.
+    pub syncobj_state: Option<smithay::wayland::drm_syncobj::DrmSyncobjState>,
     pub screencopy_state: ScreencopyManagerState,
     pub pending_screencopy: Vec<PendingScreencopy>,
     pub foreign_toplevel_state: ForeignToplevelManagerState,
@@ -577,6 +582,7 @@ impl Lantern {
             idle_inhibit_manager_state,
             dmabuf_state,
             dmabuf_global: None,
+            syncobj_state: None,
             screencopy_state,
             pending_screencopy: Vec::new(),
             foreign_toplevel_state,
@@ -694,6 +700,19 @@ impl Lantern {
         let socket_name = listening_socket.socket_name().to_os_string();
         let loop_handle = event_loop.handle();
 
+        // Growable per-client send buffers (wayland-backend ≥ 0.3.13). The
+        // old fixed 4 KiB buffer meant that once a client's kernel socket
+        // filled during an event burst (1000Hz pointer motion, focus-change
+        // storms), the very next event write returned E2BIG and the backend
+        // silently killed the client — months of daily unattributed
+        // "Broken pipe" crashes across the DE. With a 4 MiB cap, bursts
+        // against a briefly-stalled client queue in RAM instead; only a
+        // truly hung client ever hits the cap.
+        display
+            .handle()
+            .backend_handle()
+            .set_default_max_buffer_size(4 * 1024 * 1024);
+
         loop_handle
             .insert_source(listening_socket, move |client_stream, _, state| {
                 if state.debug_counters.enabled {
@@ -704,8 +723,14 @@ impl Lantern {
                 // process at its connect-time identity, not whatever it
                 // execs into later.
                 let is_trusted = crate::security::compute_trust_at_connect(&client_stream);
+                // Capture identity NOW: at disconnect time the process (and
+                // its /proc entry) may already be gone, and disconnect
+                // logging without attribution is useless.
+                let (pid, exe) = crate::security::peer_identity(&client_stream);
                 let client_state = ClientState {
                     is_trusted,
+                    pid,
+                    exe,
                     ..ClientState::default()
                 };
                 state
@@ -1271,11 +1296,41 @@ pub struct ClientState {
     /// once at connect time from `/proc/<pid>/exe` via `SO_PEERCRED`.
     /// See `crate::security::compute_trust_at_connect`.
     pub is_trusted: bool,
+    /// Connect-time identity for disconnect attribution — the process may
+    /// be gone by the time `disconnected` fires.
+    pub pid: Option<i32>,
+    pub exe: Option<std::path::PathBuf>,
 }
 
 impl ClientData for ClientState {
     fn initialized(&self, _client_id: ClientId) {}
-    fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {
+    fn disconnected(&self, client_id: ClientId, reason: DisconnectReason) {
+        // The backend kills clients without logging (protocol error posted,
+        // write failure, connection closed) — this callback is the ONLY
+        // place the reason ever surfaces, so log every disconnect.
+        let exe = self
+            .exe
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "?".into());
+        match &reason {
+            DisconnectReason::ProtocolError(e) => tracing::warn!(
+                ?client_id,
+                pid = self.pid,
+                exe,
+                code = e.code,
+                object_id = e.object_id,
+                interface = %e.object_interface,
+                message = %e.message,
+                "client disconnected: protocol error"
+            ),
+            DisconnectReason::ConnectionClosed => tracing::info!(
+                ?client_id,
+                pid = self.pid,
+                exe,
+                "client disconnected"
+            ),
+        }
         // Wake the main loop so the clipboard manager can recheck whether
         // the disconnecting client owned the active selection.
         if let Some(ping) = crate::clipboard_manager::RECHECK_PING.get() {

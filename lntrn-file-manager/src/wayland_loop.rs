@@ -154,9 +154,11 @@ pub(crate) fn run_loop(
         let dt = now.duration_since(last_frame).as_secs_f32().min(0.05);
         last_frame = now;
 
-        // Handle resize
-        if state.configured {
+        // Handle resize (xdg configure, or a preferred-scale change which
+        // alters phys size without any configure)
+        if state.configured || state.scale_changed {
             state.configured = false;
+            state.scale_changed = false;
             gpu.ctx.resize(state.phys_width().max(1), state.phys_height().max(1));
             surface.set_buffer_scale(1);
             if let Some(vp) = viewport {
@@ -209,7 +211,8 @@ pub(crate) fn run_loop(
                 let view = if app.searching && !app.search_buf.is_empty() {
                     crate::app::ViewMode::List
                 } else { app.view_mode };
-                let supported = matches!(view, crate::app::ViewMode::List | crate::app::ViewMode::Tree);
+                let supported = matches!(view, crate::app::ViewMode::List | crate::app::ViewMode::Tree)
+                    && app.split.is_none();
                 if supported && app.preview_open {
                     let full = if app.pick.is_some() {
                         let bottom = hf - crate::pick_bar::PICK_BAR_H * s;
@@ -222,7 +225,13 @@ pub(crate) fn run_loop(
                     h_rect.contains(cx, cy)
                 } else { false }
             };
-            let desired = if on_preview_handle {
+            // Split divider gets the same EW treatment.
+            let on_split_divider = app.split.as_ref().map_or(false, |sp| {
+                sp.divider_drag.is_some() || {
+                    crate::layout::split_divider_rect(wf, hf, sp.ratio, s).contains(cx, cy)
+                }
+            });
+            let desired = if on_preview_handle || on_split_divider {
                 wp_cursor_shape_device_v1::Shape::EwResize
             } else if scrollbar_drag.is_some()
                 || input.zone_at(cx, cy) == Some(crate::ZONE_SCROLLBAR)
@@ -264,7 +273,7 @@ pub(crate) fn run_loop(
 
         // ── Scrollbar thumb drag ─────────────────────────────────────────
         if let Some(grab_dy) = scrollbar_drag {
-            let content = content_rect(wf, hf, s);
+            let content = active_content_rect(app, wf, hf, s);
             let total_h = view_content_height(app, content.w, s);
             let bar = Scrollbar::new(&content, total_h, app.scroll_offset);
             app.scroll_offset = bar.offset_for_thumb_y(
@@ -311,6 +320,20 @@ pub(crate) fn run_loop(
                 .max(crate::layout::PREVIEW_MIN_W)
                 .min((wf / s) * crate::layout::PREVIEW_MAX_FRACTION);
             app.preview_width = new_w;
+        }
+
+        // ── Split divider drag ──────────────────────────────────────────
+        if app.split.as_ref().map_or(false, |sp| sp.divider_drag.is_some()) {
+            let x0 = crate::layout::sidebar_w(s);
+            let avail = wf - x0 - crate::layout::SPLIT_HANDLE_W * s;
+            if avail > 0.0 {
+                let ratio = ((cx - x0) / avail)
+                    .clamp(crate::layout::SPLIT_RATIO_MIN, crate::layout::SPLIT_RATIO_MAX);
+                if let Some(sp) = app.split.as_mut() {
+                    sp.ratio = ratio;
+                }
+                app.split_ratio = ratio;
+            }
         }
 
         // ── Drag detection ──────────────────────────────────────────────
@@ -479,12 +502,25 @@ pub(crate) fn run_loop(
         if state.scroll_delta.abs() > 0.01 {
             let scroll = state.scroll_delta * s * SCROLL_STEP_MULT;
             input.on_scroll(scroll);
-            let content = content_rect(wf, hf, s);
-            let total_h = view_content_height(app, content.w, s);
-            let max = (total_h - content.h).max(0.0);
-            let base = scroll_anim.unwrap_or(app.scroll_offset);
-            scroll_anim = Some((base + scroll).clamp(0.0, max));
-            scroll_anim_last = app.scroll_offset;
+            // Wheel over the unfocused split pane scrolls THAT pane (no
+            // focus steal — hover-scroll like any modern split UI).
+            let over_inactive = app
+                .inactive_content_rect(wf, hf, s)
+                .filter(|r| r.contains(cx, cy));
+            if let Some(r) = over_inactive {
+                if let Some(total_h) = inactive_view_content_height(app, r.w, s) {
+                    if let Some(off) = app.inactive_scroll_mut() {
+                        ScrollArea::apply_scroll(off, scroll, total_h, r.h);
+                    }
+                }
+            } else {
+                let content = active_content_rect(app, wf, hf, s);
+                let total_h = view_content_height(app, content.w, s);
+                let max = (total_h - content.h).max(0.0);
+                let base = scroll_anim.unwrap_or(app.scroll_offset);
+                scroll_anim = Some((base + scroll).clamp(0.0, max));
+                scroll_anim_last = app.scroll_offset;
+            }
             state.scroll_delta = 0.0;
         }
         if let Some(target) = scroll_anim {
@@ -724,6 +760,11 @@ pub(crate) fn run_loop(
                 }
                 if app.preview_drag.take().is_some() {
                     settings.preview_width = app.preview_width;
+                    settings.save();
+                }
+                // Split divider drag release — persist the ratio.
+                if app.split.as_mut().map_or(false, |sp| sp.divider_drag.take().is_some()) {
+                    settings.split_ratio = app.split_ratio;
                     settings.save();
                 }
                 // Favorite drag release — reorder
@@ -1183,26 +1224,40 @@ fn apply_icon_zoom(app: &mut App, value: f32, wf: f32, hf: f32, s: f32) {
     );
 }
 
-/// Content rect with the preview pane subtracted (if it's open + this view
-/// supports it). Used for hit-testing the rubber-band selection so the band
-/// doesn't start inside the info pane.
+/// The focused pane's content rect (split/pick aware) with the preview pane
+/// subtracted (if it's open + this view supports it). Used for hit-testing
+/// the rubber-band selection so the band doesn't start inside the info pane.
 fn active_content_rect(app: &App, wf: f32, hf: f32, s: f32) -> lntrn_render::Rect {
-    let full = if app.pick.is_some() {
-        let bottom = hf - crate::pick_bar::PICK_BAR_H * s;
-        crate::layout::content_rect_with_bottom(wf, bottom, s)
-    } else {
-        content_rect(wf, hf, s)
-    };
+    let full = app.active_content_rect(wf, hf, s);
     let view = if app.searching && !app.search_buf.is_empty() {
         crate::app::ViewMode::List
     } else {
         app.view_mode
     };
-    let preview_supported = matches!(view, crate::app::ViewMode::List | crate::app::ViewMode::Tree);
+    let preview_supported = matches!(view, crate::app::ViewMode::List | crate::app::ViewMode::Tree)
+        && app.split.is_none();
     let preview_w = if preview_supported {
         crate::layout::preview_effective_w(full.w, app.preview_width, app.preview_open, s)
     } else {
         0.0
     };
     lntrn_render::Rect::new(full.x, full.y, full.w - preview_w, full.h)
+}
+
+/// Scrollable content height of the UNFOCUSED split pane (None when split
+/// view is off). Mirrors `view_content_height` using the parked view state.
+fn inactive_view_content_height(app: &App, content_w: f32, s: f32) -> Option<f32> {
+    let (tab, view, _) = app.inactive_pane()?;
+    let zoom = app.icon_zoom;
+    Some(match view.view_mode {
+        crate::app::ViewMode::Grid => {
+            let cols = grid_columns(content_w, s, zoom);
+            grid_content_height(tab.entries.len(), cols, s, zoom)
+        }
+        crate::app::ViewMode::List => {
+            list_content_height(tab.entries.len(), s, zoom)
+                + 32.0 * crate::layout::list_zoom_multiplier(zoom) * s
+        }
+        crate::app::ViewMode::Tree => tree_content_height(view.tree_entries.len(), s, zoom),
+    })
 }

@@ -4,7 +4,7 @@
 use smithay::{
     desktop::Window,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
-    utils::{Logical, Point, Size},
+    utils::{IsAlive, Logical, Point, Size},
 };
 
 use crate::state::Lantern;
@@ -493,7 +493,12 @@ impl Lantern {
         window: &smithay::desktop::Window,
     ) -> Option<crate::animation::ClosingWindow> {
         let surface = crate::window_ext::WindowExt::get_wl_surface(window)?;
-        let location = self.workspaces.element_location(window)?;
+        // Scratchpad and other un-workspaced windows live only in the global
+        // Space, so fall back there or their close is never animated/reaped.
+        let location = self
+            .workspaces
+            .element_location(window)
+            .or_else(|| self.space.element_location(window))?;
         let size = window.geometry().size;
         let had_ssd = self.ssd.has_ssd(&surface);
         let fullscreen = self.fullscreen_windows.iter().any(|e| e.surface == surface);
@@ -516,5 +521,66 @@ impl Lantern {
             chrome_corner_r,
             content_rounded,
         })
+    }
+
+    /// Deterministic cleanup for a toplevel whose surface just died
+    /// (xdg `toplevel_destroyed`, or the polling reaper below). If the
+    /// window was still mapped, start the zombie close animation and defer
+    /// `forget_window` to `finish_zombie_close` — forgetting now would drop
+    /// the window snapshot the zombie renderer draws from. Otherwise
+    /// (minimized, never mapped, already handled) clean up immediately so
+    /// the foreign-toplevel Closed event reaches the dock.
+    pub fn reap_dead_toplevel(&mut self, surface: &WlSurface) {
+        // Zombie animation already in flight — finish_zombie_close forgets.
+        if self.closing_windows.iter().any(|cw| cw.surface == *surface) {
+            return;
+        }
+        if let Some(window) = self.find_mapped_window(surface) {
+            // Snapshot placement/chrome BEFORE unmapping — it reads the
+            // window's location out of the Spaces.
+            let cw = self.make_closing_window(&window);
+            // Purge from the Spaces NOW so a Space::refresh (which silently
+            // drops dead elements) or a re-scan can't double-handle it.
+            self.unmap_window_everywhere(&window);
+            if let Some(cw) = cw {
+                let source = smithay::utils::Rectangle::new(cw.location, cw.size);
+                let target = self.minimize_target_at_point(cw.location);
+                self.animations.start_close_zombie(surface, source, target);
+                self.closing_windows.push(cw);
+                self.schedule_render();
+                return;
+            }
+        }
+        self.forget_window(surface);
+    }
+
+    /// Poll-based reaper for windows whose client died without a protocol
+    /// destroy notification reaching us first (X11, abrupt disconnects).
+    /// Must run BEFORE any `Space::refresh` — refresh silently drops dead
+    /// elements, hiding them from this scan forever (that race is exactly
+    /// how stale dock entries used to leak).
+    pub fn reap_dead_windows(&mut self) {
+        let dead: Vec<WlSurface> = self
+            .space
+            .elements()
+            .filter(|w| !w.alive())
+            .filter_map(WindowExt::get_wl_surface)
+            .collect();
+        for surface in dead {
+            self.reap_dead_toplevel(&surface);
+        }
+        // Windows that died while minimized are in no Space at all, so the
+        // scan above can never see them.
+        let dead_minimized: Vec<WlSurface> = self
+            .minimized_windows
+            .iter()
+            .filter(|e| !e.window.alive())
+            .map(|e| e.surface.clone())
+            .collect();
+        for surface in dead_minimized {
+            self.forget_window(&surface);
+        }
+        // Final safety net: a dead surface must never keep a dock entry.
+        self.foreign_toplevel_state.reap_dead();
     }
 }

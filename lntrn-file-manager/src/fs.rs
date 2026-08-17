@@ -616,6 +616,26 @@ pub fn is_path_mounted(path: &Path) -> bool {
     false
 }
 
+/// True if `cmd` resolves to an executable on `$PATH`.
+fn has_command(cmd: &str) -> bool {
+    std::env::var_os("PATH").map_or(false, |paths| {
+        std::env::split_paths(&paths).any(|dir| dir.join(cmd).is_file())
+    })
+}
+
+/// Install hint tailored to the local package manager — Gentoo PC (`emerge`)
+/// vs Arch laptop (`pacman`). Pass the full command for each; falls back to
+/// listing both when neither manager is found.
+fn install_hint(gentoo: &str, arch: &str) -> String {
+    if has_command("emerge") {
+        format!("run: {gentoo}")
+    } else if has_command("pacman") {
+        format!("run: {arch}")
+    } else {
+        format!("install it \u{2014} {gentoo} (or {arch})")
+    }
+}
+
 /// Mount a phone via jmtpfs. Creates the mount directory if needed and waits
 /// for the mount to settle. Returns Err with a human-readable message if the
 /// jmtpfs binary is missing or the mount fails.
@@ -631,13 +651,22 @@ pub fn mount_phone(phone: &Phone) -> Result<(), String> {
         .status()
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
-                "jmtpfs not installed (run: yay -S jmtpfs)".to_string()
+                format!(
+                    "jmtpfs is not installed \u{2014} {}",
+                    install_hint("sudo emerge sys-fs/jmtpfs", "yay -S jmtpfs")
+                )
             } else {
                 format!("spawn jmtpfs: {e}")
             }
         })?;
     if !status.success() {
-        return Err(format!("jmtpfs exited with {status}"));
+        // Almost always the phone is locked or still in charge-only mode.
+        return Err(
+            "jmtpfs couldn\u{2019}t open the phone. Unlock it and set USB mode to \
+             \u{201C}File transfer\u{201D} (tap the USB notification on the phone), \
+             then try again."
+                .to_string(),
+        );
     }
     // jmtpfs returns once mount is established, but give it a beat.
     for _ in 0..20 {
@@ -659,7 +688,10 @@ pub fn mount_drive(drive: &Drive) -> Result<PathBuf, String> {
         .output()
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
-                "udisks2 not installed (run: sudo pacman -S udisks2)".to_string()
+                format!(
+                    "udisks2 is not installed \u{2014} {}",
+                    install_hint("sudo emerge sys-fs/udisks", "sudo pacman -S udisks2")
+                )
             } else {
                 format!("spawn udisksctl: {e}")
             }

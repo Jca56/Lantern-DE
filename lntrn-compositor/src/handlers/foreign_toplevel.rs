@@ -188,6 +188,19 @@ impl ForeignToplevelManagerState {
             .collect()
     }
 
+    /// Drop entries whose surface is dead. Safety net so a client crash can
+    /// never leave a ghost dock entry, whatever cleanup path was missed —
+    /// stale entries otherwise survive forever and get re-announced to every
+    /// freshly-bound manager (ghost windows in the CC dock).
+    pub fn reap_dead(&mut self) {
+        for entry in &mut self.toplevels {
+            if !entry.surface.is_alive() {
+                entry.broadcast_closed();
+            }
+        }
+        self.toplevels.retain(|e| e.surface.is_alive());
+    }
+
     /// Update the state flags for a toplevel and broadcast.
     pub fn set_states(&mut self, surface: &WlSurface, new_states: Vec<u32>) {
         if let Some(entry) = self

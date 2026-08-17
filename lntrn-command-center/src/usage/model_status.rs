@@ -7,10 +7,18 @@
 //! case today — listed, but `POST /v1/messages` answers
 //! `404 "Claude Fable 5 is not available"`. So we send a 1-token
 //! `POST /v1/messages` to the model and read the result:
-//!   - HTTP 200      → it served            → Up
-//!   - HTTP 404      → not available to you → Down
-//!   - anything else → inconclusive (rate limit / overload / network) —
+//!   - HTTP 200      → it served                       → Up
+//!   - HTTP 429      → throttled, but past the gate     → Up
+//!   - HTTP 404      → not available to you             → Down
+//!   - anything else → inconclusive (overload / token / network) —
 //!                     keep the last good status rather than flapping.
+//! The 429 case matters: the API validates the model (404 for a gated or
+//! unknown model) *before* it applies the shared-token rate limit — a gated
+//! model 404s straight through even a saturated token. So a 429 means the
+//! request already cleared the availability gate; the model is up, just
+//! rate-limited (typically because Claude Code is actively using the same
+//! OAuth token). Treating it as inconclusive left the tile stuck on
+//! "Checking…" the whole time you were using Claude Code.
 //! Because we use the same OAuth credential Claude Code uses, the answer
 //! matches what you see in Claude Code.
 //!
@@ -170,12 +178,17 @@ fn probe() -> Option<ModelHealth> {
     }
     let code: u32 = String::from_utf8_lossy(&out.stdout).trim().parse().ok()?;
     match code {
-        200 => Some(ModelHealth::Up),
+        // 200 = served live. 429 = throttled, but the API validates the
+        // model (404 for gated/unknown) *before* the shared-token rate
+        // limit, so a 429 already cleared the availability gate — it's up,
+        // just rate-limited (usually because Claude Code is hammering the
+        // same OAuth token). Treat both as Up, else the tile stays stuck on
+        // "Checking…" for as long as you're using Claude Code.
+        200 | 429 => Some(ModelHealth::Up),
         404 => Some(ModelHealth::Down),
-        // 429 (shared rate window), 529 (overloaded), 5xx, or 401/403
-        // (token) don't tell us about availability — stay inconclusive and
-        // keep the last good status. A recovery that coincides with a 429
-        // is simply caught on the next poll.
+        // 529 (overloaded), other 5xx, or 401/403 (token) still tell us
+        // nothing about availability — stay inconclusive and keep the last
+        // good status.
         _ => None,
     }
 }

@@ -41,6 +41,19 @@ pub struct FileDoc {
     pub mime: String,
     pub device: String,
     pub deleted: bool,
+    /// Client-set write stamp (unix millis) — the incremental-pull cursor
+    /// field. `None` on docs written by builds predating delta sync; those
+    /// are invisible to `query_changed_since` and only picked up by full
+    /// lists, so keep both machines on delta-aware builds.
+    #[serde(default)]
+    pub updated_at: Option<u64>,
+}
+
+pub fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 fn base_url(authed: &Authed) -> String {
@@ -61,6 +74,8 @@ fn doc_url(authed: &Authed, rel_path: &str) -> String {
 // ── Firestore typed value JSON helpers ─────────────────────────────────────
 
 fn to_fields(doc: &FileDoc) -> serde_json::Value {
+    // Every write gets a fresh stamp — this is what delta pulls key on.
+    let stamp = doc.updated_at.unwrap_or_else(now_ms);
     serde_json::json!({
         "path":    { "stringValue":  doc.path },
         "sha256":  { "stringValue":  doc.sha256 },
@@ -69,6 +84,7 @@ fn to_fields(doc: &FileDoc) -> serde_json::Value {
         "mime":    { "stringValue":  doc.mime },
         "device":  { "stringValue":  doc.device },
         "deleted": { "booleanValue": doc.deleted },
+        "updated_at": { "integerValue": stamp.to_string() },
     })
 }
 
@@ -90,6 +106,7 @@ fn from_fields(fields: &serde_json::Value) -> Option<FileDoc> {
         mime: s("mime").unwrap_or_default(),
         device: s("device").unwrap_or_default(),
         deleted: b("deleted").unwrap_or(false),
+        updated_at: i("updated_at"),
     })
 }
 
@@ -117,6 +134,46 @@ pub fn get(authed: &Authed, rel_path: &str) -> anyhow::Result<Option<FileDoc>> {
             }
         }
     }
+}
+
+/// Incremental pull: every doc whose `updated_at` (client-set millis) is
+/// strictly greater than `since_ms`. Firestore bills one read per RETURNED
+/// doc (minimum one per query), so a quiet poll costs ~1 read instead of the
+/// full collection — this is what lets the sync loop poll every 30s. Docs
+/// without the field (written by pre-delta builds) never match; the periodic
+/// full list covers those.
+pub fn query_changed_since(authed: &Authed, since_ms: u64) -> anyhow::Result<Vec<FileDoc>> {
+    let url = format!("{}/users/{}:runQuery", base_url(authed), authed.user_id());
+    let body = serde_json::json!({
+        "structuredQuery": {
+            "from": [{ "collectionId": "files" }],
+            "where": {
+                "fieldFilter": {
+                    "field": { "fieldPath": "updated_at" },
+                    "op": "GREATER_THAN",
+                    "value": { "integerValue": since_ms.to_string() },
+                }
+            },
+            "orderBy": [
+                { "field": { "fieldPath": "updated_at" }, "direction": "ASCENDING" }
+            ],
+        }
+    });
+    let resp = authed.post_json(&url, body)?;
+    let v: serde_json::Value = resp.into_json()?;
+    // runQuery streams a JSON array; entries carry "document" (a result) or
+    // just bookkeeping ("readTime"/"done") — skip the latter.
+    let mut out = Vec::new();
+    if let Some(entries) = v.as_array() {
+        for e in entries {
+            if let Some(fields) = e.get("document").and_then(|d| d.get("fields")) {
+                if let Some(fd) = from_fields(fields) {
+                    out.push(fd);
+                }
+            }
+        }
+    }
+    Ok(out)
 }
 
 pub fn list_all(authed: &Authed) -> anyhow::Result<Vec<FileDoc>> {

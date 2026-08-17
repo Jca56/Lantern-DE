@@ -36,13 +36,13 @@ struct LocalFile {
     sha: String,
 }
 
-fn scan_local(root: &Path) -> HashMap<String, LocalFile> {
+fn scan_local(root: &Path, manifest: &Manifest) -> HashMap<String, LocalFile> {
     let mut out: HashMap<String, LocalFile> = HashMap::new();
-    walk(root, root, &mut out);
+    walk(root, root, manifest, &mut out);
     out
 }
 
-fn walk(root: &Path, dir: &Path, out: &mut HashMap<String, LocalFile>) {
+fn walk(root: &Path, dir: &Path, manifest: &Manifest, out: &mut HashMap<String, LocalFile>) {
     let Ok(rd) = std::fs::read_dir(dir) else { return };
     for entry in rd.flatten() {
         let abs = entry.path();
@@ -51,7 +51,7 @@ fn walk(root: &Path, dir: &Path, out: &mut HashMap<String, LocalFile>) {
             continue;
         }
         if ft.is_dir() {
-            walk(root, &abs, out);
+            walk(root, &abs, manifest, out);
             continue;
         }
         if !ft.is_file() {
@@ -70,12 +70,17 @@ fn walk(root: &Path, dir: &Path, out: &mut HashMap<String, LocalFile>) {
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let sha = match sha256_file(&abs) {
-            Ok(s) => s,
-            Err(e) => {
-                super::log_line(&format!("hash {} failed: {e}", abs.display()));
-                continue;
-            }
+        // Stat cache: an unchanged (size, mtime) means the last-synced sha
+        // still describes this file — skip the sha256 read entirely.
+        let sha = match manifest.cached_sha(&rel, size, mtime) {
+            Some(cached) => cached.to_string(),
+            None => match sha256_file(&abs) {
+                Ok(s) => s,
+                Err(e) => {
+                    super::log_line(&format!("hash {} failed: {e}", abs.display()));
+                    continue;
+                }
+            },
         };
         out.insert(
             rel.clone(),
@@ -162,9 +167,11 @@ fn upload_local(
         mime,
         device: device.to_string(),
         deleted: false,
+        updated_at: None, // stamped with now_ms() by firestore::put
     };
     firestore::put(authed, &doc)?;
     manifest.set(local.rel.clone(), local.sha.clone());
+    manifest.set_meta(local.rel.clone(), local.size, local.mtime);
     super::log_line(&format!("↑ {}", local.rel));
     Ok(())
 }
@@ -186,6 +193,17 @@ fn download_remote(
     std::fs::write(&tmp, &bytes)?;
     std::fs::rename(&tmp, &abs)?;
     manifest.set(doc.path.clone(), doc.sha256.clone());
+    // Stat AFTER the rename — the freshly-written file's (size, mtime) is
+    // what future scans will see for this exact content.
+    if let Ok(md) = std::fs::metadata(&abs) {
+        let mtime = md
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        manifest.set_meta(doc.path.clone(), md.len(), mtime);
+    }
     super::log_line(&format!("↓ {}", doc.path));
     Ok(())
 }
@@ -214,6 +232,7 @@ fn tombstone_remote(
         mime: String::new(),
         device: device.to_string(),
         deleted: true,
+        updated_at: None, // stamped with now_ms() by firestore::put
     };
     firestore::put(authed, &doc)?;
     manifest.remove(rel);
@@ -254,18 +273,31 @@ fn resolve_conflict(
 
 // ── Reconcile pass ─────────────────────────────────────────────────────────
 
-pub fn reconcile_all(authed: &Authed) -> anyhow::Result<()> {
+/// Three-way merge of the local tree against a REMOTE SNAPSHOT (the cached
+/// remote index — see cloud/remote_index.rs). Does no Firestore listing of
+/// its own; per-path uploads/downloads/tombstones are the only network here.
+pub fn reconcile_with(
+    authed: &Authed,
+    remotes: &HashMap<String, FileDoc>,
+) -> anyhow::Result<()> {
     let root = cloud_root();
     std::fs::create_dir_all(&root)?;
     let device = device_name();
 
-    let locals = scan_local(&root);
-    let remotes_vec = firestore::list_all(authed)?;
-    let mut remotes: HashMap<String, FileDoc> = HashMap::new();
-    for d in remotes_vec {
-        remotes.insert(d.path.clone(), d);
-    }
+    // Manifest first — the local scan needs its stat cache to skip hashing
+    // unchanged files.
     let mut manifest = Manifest::load();
+    let locals = scan_local(&root, &manifest);
+
+    // Persist the stat cache for every file whose fresh hash matches the
+    // already-agreed manifest sha before any network work — a failed pass
+    // then pays the full hashing cost once, not on every retry.
+    for (rel, local) in &locals {
+        if manifest.get(rel) == Some(local.sha.as_str()) {
+            manifest.set_meta(rel.clone(), local.size, local.mtime);
+        }
+    }
+    let _ = manifest.save();
 
     let mut all_paths: HashSet<String> = HashSet::new();
     all_paths.extend(locals.keys().cloned());
@@ -380,6 +412,17 @@ pub fn reconcile_all(authed: &Authed) -> anyhow::Result<()> {
         if let Err(e) = result {
             super::log_line(&format!("reconcile {path} failed: {e}"));
             failures.push(format!("{path}: {e}"));
+        }
+    }
+
+    // Warm the stat cache for every path whose scan sha ended up as the
+    // agreed manifest sha (covers freshly-hashed in-sync files; uploads and
+    // downloads already recorded theirs inline). A mismatch means an action
+    // failed or the file changed mid-pass — leave those uncached so the next
+    // scan re-hashes them.
+    for (rel, local) in &locals {
+        if manifest.get(rel) == Some(local.sha.as_str()) {
+            manifest.set_meta(rel.clone(), local.size, local.mtime);
         }
     }
 

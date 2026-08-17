@@ -70,6 +70,9 @@ impl App {
     }
 
     pub fn on_favorite_click(&mut self, index: usize) {
+        // Sidebar navigation always drives the LEFT pane in split view.
+        self.focus_pane(super::PaneSide::Left);
+
         if let Some(fav) = self.favorites.get(index) {
             let path = fav.path.clone();
             self.navigate_to(path);
@@ -85,6 +88,9 @@ impl App {
     }
 
     pub fn on_drive_click(&mut self, index: usize) {
+        // Sidebar navigation always drives the LEFT pane in split view.
+        self.focus_pane(super::PaneSide::Left);
+
         let Some(drive) = self.drives.get(index).cloned() else { return; };
         if drive.mounted {
             self.navigate_to(drive.mount_point);
@@ -95,8 +101,17 @@ impl App {
                 self.refresh_drives();
                 self.navigate_to(mount);
             }
-            Err(msg) => eprintln!("drive mount failed: {msg}"),
+            Err(msg) => self.show_message(format!("Couldn\u{2019}t mount {}", drive.name), msg),
         }
+    }
+
+    /// Show a modal notice (used to surface mount/eject errors instead of
+    /// swallowing them into stderr where the user never sees them).
+    pub fn show_message(&mut self, title: impl Into<String>, body: impl Into<String>) {
+        self.drive_dialog = Some(crate::dialogs::DriveDialog::Message {
+            title: title.into(),
+            body: body.into(),
+        });
     }
 
     pub fn refresh_phones(&mut self) {
@@ -106,7 +121,7 @@ impl App {
     pub fn eject_drive(&mut self, index: usize) {
         let Some(drive) = self.drives.get(index).cloned() else { return; };
         if let Err(msg) = fs::unmount_drive(&drive) {
-            eprintln!("eject failed: {msg}");
+            self.show_message(format!("Couldn\u{2019}t eject {}", drive.name), msg);
             return;
         }
         // If we were viewing it, navigate home
@@ -154,10 +169,13 @@ impl App {
     }
 
     pub fn on_phone_click(&mut self, index: usize) {
+        // Sidebar navigation always drives the LEFT pane in split view.
+        self.focus_pane(super::PaneSide::Left);
+
         let Some(phone) = self.phones.get(index).cloned() else { return; };
         match fs::mount_phone(&phone) {
             Ok(()) => self.navigate_to(phone.mount_point),
-            Err(msg) => eprintln!("phone mount failed: {msg}"),
+            Err(msg) => self.show_message(format!("Couldn\u{2019}t open {}", phone.name), msg),
         }
     }
 
@@ -166,6 +184,9 @@ impl App {
     }
 
     pub fn on_sidebar_click(&mut self, index: usize) {
+        // Sidebar navigation always drives the LEFT pane in split view.
+        self.focus_pane(super::PaneSide::Left);
+
         if let Some(place) = self.places.get(index) {
             // Cloud entry funnels through the auth gate so the user sees the
             // login dialog instead of an empty folder.

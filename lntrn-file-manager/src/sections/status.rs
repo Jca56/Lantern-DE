@@ -54,6 +54,9 @@ pub fn draw_status_bar(
             SyncStatus::Syncing => ("Syncing\u{2026}", palette.accent),
             SyncStatus::Error   => ("Sync error", palette.danger),
             SyncStatus::Offline => ("Offline",    palette.muted),
+            // Deliberate pause, not a failure — daily quota resets at
+            // midnight PT and the loop retries on its own.
+            SyncStatus::RateLimited => ("Sync paused (quota)", palette.muted),
         };
         let label_w = label.chars().count() as f32 * cw;
         let icon_w  = 22.0 * s;

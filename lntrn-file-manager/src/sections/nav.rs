@@ -55,12 +55,12 @@ pub fn draw_nav_bar(
         Color::WHITE.with_alpha(0.08),
     );
 
-    // ── Cloud quick-link button ───────────────────────────────────────────
-    let cloud_color = if cloud_hovered { palette.text } else { palette.text_secondary };
-    if cloud_hovered {
-        painter.rect_filled(cloud_rect, 5.0 * s, palette.surface_2.with_alpha(0.5));
-    }
-    {
+    // ── Cloud quick-link button (hidden in split view: zero-width rect) ──
+    if cloud_rect.w > 0.0 {
+        let cloud_color = if cloud_hovered { palette.text } else { palette.text_secondary };
+        if cloud_hovered {
+            painter.rect_filled(cloud_rect, 5.0 * s, palette.surface_2.with_alpha(0.5));
+        }
         // Cloud silhouette sized for a 44×44 button — ~30% larger than the
         // sidebar version so it reads as the marquee shortcut it is.
         let cx = cloud_rect.center_x();
@@ -70,14 +70,14 @@ pub fn draw_nav_bar(
         painter.circle_filled(cx + 1.0*u, cy - 3.5*u, 5.5*u, cloud_color);
         painter.circle_filled(cx + 5.0*u, cy,         4.0*u, cloud_color);
         painter.rect_filled(Rect::new(cx - 7.0*u, cy - 1.0*u, 14.0*u, 5.0*u), 2.0*u, cloud_color);
-    }
 
-    // Vertical divider between cloud and back
-    painter.rect_filled(
-        Rect::new(cloud_rect.x + cloud_rect.w + 4.0 * s, nav_rect.y + 12.0 * s, 1.0, 24.0 * s),
-        0.0,
-        Color::WHITE.with_alpha(0.08),
-    );
+        // Vertical divider between cloud and back
+        painter.rect_filled(
+            Rect::new(cloud_rect.x + cloud_rect.w + 4.0 * s, nav_rect.y + 12.0 * s, 1.0, 24.0 * s),
+            0.0,
+            Color::WHITE.with_alpha(0.08),
+        );
+    }
 
     // ── Back button ────────────────────────────────────────────────────────
     let back_color = if app.can_go_back() {
@@ -231,8 +231,10 @@ pub fn draw_nav_bar(
         }
     }
 
-    // ── Preview pane toggle ───────────────────────────────────────────────
-    if preview_supported {
+    // ── Preview pane toggle (hidden in split view: zero-width rect) ──────
+    if preview_rect.w <= 0.0 {
+        // fall through to sort/search below
+    } else if preview_supported {
         let pv_active = app.preview_open;
         let pv_color = if pv_active { palette.accent }
             else if preview_hovered { palette.text }

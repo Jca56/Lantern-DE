@@ -41,6 +41,15 @@ impl XdgShellHandler for Lantern {
         self.map_new_window(window);
     }
 
+    fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
+        // Deterministic close cleanup. The polling dead-window reaper races
+        // against Space::refresh (which silently purges dead elements) and
+        // can't see minimized windows at all — both leaked stale
+        // foreign-toplevel entries (ghost dock windows).
+        let wl_surface = surface.wl_surface().clone();
+        self.reap_dead_toplevel(&wl_surface);
+    }
+
     fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
         self.unconstrain_popup(&surface);
         let _ = self.popups.track_popup(PopupKind::Xdg(surface));

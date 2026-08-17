@@ -129,6 +129,15 @@ fn peer_pid(stream: &UnixStream) -> Option<i32> {
     }
 }
 
+/// Identify a connecting client for disconnect forensics: SO_PEERCRED pid
+/// plus resolved `/proc/<pid>/exe`. Must be captured at connect time — at
+/// disconnect the process (and its /proc entry) may already be gone.
+pub fn peer_identity(stream: &UnixStream) -> (Option<i32>, Option<PathBuf>) {
+    let pid = peer_pid(stream);
+    let exe = pid.and_then(exe_for_pid);
+    (pid, exe)
+}
+
 /// Compute trust for a freshly-connecting client.
 ///
 /// Called from the Wayland listener once per connection, before any

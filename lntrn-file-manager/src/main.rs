@@ -189,6 +189,26 @@ pub const ZONE_PROPS_ICON_BASE: u32 = 2000;  // 2000+, one per shown icon
 // Quick Look overlay — full-screen backdrop, click closes.
 pub const ZONE_QUICK_LOOK: u32 = 905;
 
+// ── Split view ──────────────────────────────────────────────────────────────
+// The focused pane uses the standard zones above; the UNFOCUSED pane
+// registers this P2 family instead — clicking one focuses that pane, then
+// re-dispatches as the standard equivalent (see wayland_actions/click.rs).
+pub const ZONE_SPLIT_TOGGLE: u32 = 85;
+pub const ZONE_SPLIT_DIVIDER: u32 = 86;
+pub const ZONE_P2_CONTENT: u32 = 87;
+pub const ZONE_P2_SCROLLBAR: u32 = 88;
+pub const ZONE_P2_VIEW_TOGGLE: u32 = 89;
+pub const ZONE_P2_BACK: u32 = 90;
+pub const ZONE_P2_FORWARD: u32 = 91;
+pub const ZONE_P2_UP: u32 = 92;
+pub const ZONE_P2_SORT: u32 = 93;
+pub const ZONE_P2_SEARCH: u32 = 94;
+pub const ZONE_P2_PATH: u32 = 95;
+// File/tree items of the unfocused pane — far above every active range so a
+// huge directory can't collide with other zone families.
+pub const ZONE_P2_FILE_BASE: u32 = 100_000;
+pub const ZONE_P2_TREE_BASE: u32 = 200_000;
+
 // ── Shared types ────────────────────────────────────────────────────────────
 
 pub struct Gpu {

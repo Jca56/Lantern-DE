@@ -21,6 +21,9 @@ use wayland_client::{
 use wayland_protocols::wp::cursor_shape::v1::client::{
     wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1,
 };
+use wayland_protocols::wp::fractional_scale::v1::client::{
+    wp_fractional_scale_manager_v1, wp_fractional_scale_v1,
+};
 use wayland_protocols::wp::viewporter::client::wp_viewporter;
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
@@ -59,14 +62,21 @@ pub(crate) struct State {
     pub(crate) width: u32,
     pub(crate) height: u32,
     pub(crate) scale: i32,
-    pub(crate) output_phys_width: u32,
-    pub(crate) output_logical_width: u32,
+    /// Compositor-preferred fractional scale in 120ths (wp_fractional_scale_v1),
+    /// 0 until the first preferred_scale event arrives.
+    pub(crate) preferred_scale_120: u32,
+    /// Set when preferred_scale changes so the render loop re-sizes the
+    /// swapchain + viewport even without an xdg configure.
+    pub(crate) scale_changed: bool,
     pub(crate) maximized: bool,
     pub(crate) desktop_mode: bool,
     // Wayland objects
     pub(crate) compositor: Option<wl_compositor::WlCompositor>,
     pub(crate) wm_base: Option<xdg_wm_base::XdgWmBase>,
     pub(crate) viewporter: Option<wp_viewporter::WpViewporter>,
+    pub(crate) fractional_scale_mgr:
+        Option<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1>,
+    pub(crate) fractional_scale_obj: Option<wp_fractional_scale_v1::WpFractionalScaleV1>,
     pub(crate) surface: Option<wl_surface::WlSurface>,
     pub(crate) xdg_surface: Option<xdg_surface::XdgSurface>,
     pub(crate) toplevel: Option<xdg_toplevel::XdgToplevel>,
@@ -118,9 +128,11 @@ impl State {
     fn new() -> Self {
         Self {
             running: true, configured: false, frame_done: true,
-            width: 0, height: 0, scale: 1, output_phys_width: 0, output_logical_width: 0, maximized: false,
+            width: 0, height: 0, scale: 1, preferred_scale_120: 0, scale_changed: false,
+            maximized: false,
             desktop_mode: false,
             compositor: None, wm_base: None, viewporter: None,
+            fractional_scale_mgr: None, fractional_scale_obj: None,
             surface: None, xdg_surface: None, toplevel: None, seat: None,
             layer_shell: None, layer_surface: None,
             cursor_x: 0.0, cursor_y: 0.0, pointer_in_surface: false,
@@ -140,8 +152,8 @@ impl State {
     }
 
     pub(crate) fn fractional_scale(&self) -> f64 {
-        if self.output_phys_width > 0 && self.output_logical_width > 0 {
-            self.output_phys_width as f64 / self.output_logical_width as f64
+        if self.preferred_scale_120 > 0 {
+            self.preferred_scale_120 as f64 / 120.0
         } else {
             self.scale.max(1) as f64
         }
@@ -221,6 +233,13 @@ pub fn run(pick: Option<PickConfig>, desktop: bool, start_dir: Option<std::path:
         std::sync::atomic::Ordering::Relaxed,
     );
     let surface = compositor.create_surface(&qh, ());
+
+    // Ask the compositor for this surface's preferred fractional scale
+    // (wp_fractional_scale_v1). The compositor replies immediately on
+    // creation, so the value is in before GPU init sizes the swapchain.
+    if let Some(mgr) = &state.fractional_scale_mgr {
+        state.fractional_scale_obj = Some(mgr.get_fractional_scale(&surface, &qh, ()));
+    }
 
     // Dummy toplevel ref — only used in window mode
     let mut toplevel_holder: Option<xdg_toplevel::XdgToplevel> = None;
@@ -406,6 +425,20 @@ pub fn run(pick: Option<PickConfig>, desktop: bool, start_dir: Option<std::path:
             app.current_tab = 0;
             app.switch_tab(0);
         }
+        // Restore split view exactly as it was left.
+        app.split_ratio = settings.split_ratio.clamp(
+            crate::layout::SPLIT_RATIO_MIN,
+            crate::layout::SPLIT_RATIO_MAX,
+        );
+        if settings.split_open && !desktop {
+            let right = std::path::PathBuf::from(&settings.split_right_path);
+            let view = match settings.split_right_view.as_str() {
+                "list" => crate::app::ViewMode::List,
+                "tree" => crate::app::ViewMode::Tree,
+                _ => crate::app::ViewMode::Grid,
+            };
+            app.restore_split(right, view);
+        }
     }
 
     let mut input = InteractionContext::new();
@@ -440,10 +473,25 @@ pub fn run(pick: Option<PickConfig>, desktop: bool, start_dir: Option<std::path:
     }
 
     // Save settings on exit (normal mode only)
+    // Focus the left pane first so the flat fields (zoom/sort/view) describe
+    // the primary pane, and the right pane's state parks where we can read it.
+    app.focus_pane(crate::app::PaneSide::Left);
     settings.icon_zoom = app.icon_zoom;
     settings.show_hidden = app.show_hidden;
     settings.set_sort_by(app.sort_by);
     settings.set_sort_dir(app.sort_dir);
+    settings.set_view_mode(app.view_mode);
+    settings.split_open = app.split.is_some();
+    settings.split_ratio = app.split_ratio;
+    if let Some(sp) = &app.split {
+        settings.split_right_path = sp.right_tab.path.to_string_lossy().to_string();
+        settings.split_right_view = match sp.parked_view.view_mode {
+            crate::app::ViewMode::Grid => "grid",
+            crate::app::ViewMode::List => "list",
+            crate::app::ViewMode::Tree => "tree",
+        }
+        .to_string();
+    }
     // Intentionally do NOT persist the window size — Fox always opens at the
     // default 1500x1000 (settings.rs) regardless of any in-session resize.
     // Overwrite with defaults so stale values in the on-disk config get wiped.

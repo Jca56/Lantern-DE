@@ -124,6 +124,10 @@ pub(crate) fn handle_click(
             }
             return ClickAction::None;
         }
+        // ── Split view: a press in the unfocused pane focuses it, then
+        // re-dispatches as the standard zone. Zone geometry was registered
+        // from the same parked state focus_pane swaps in, so indices match.
+        let zone_id = translate_split_zone(app, zone_id);
         // If path editing, commit on any click outside the path input
         // (breadcrumb clicks cancel edit and fall through to navigate)
         if app.path_editing && zone_id != ZONE_PATH_INPUT {
@@ -221,7 +225,17 @@ pub(crate) fn handle_click(
                     // the popup positioner — the title bar offset is in the
                     // sort_button_rect's y already, so convert from physical.
                     app.context_target = Some(ContextTarget::Empty);
-                    let btn = crate::layout::sort_button_rect(wf, s);
+                    // Anchor under the focused pane's sort button in split mode.
+                    let btn = match app.split.as_ref() {
+                        Some(sp) => {
+                            let (lx, lw, rx, rw) = crate::layout::split_pane_cols(wf, sp.ratio, s);
+                            match sp.focused {
+                                crate::app::PaneSide::Left => crate::layout::pane_sort_rect(lx, lw, s),
+                                crate::app::PaneSide::Right => crate::layout::pane_sort_rect(rx, rw, s),
+                            }
+                        }
+                        None => crate::layout::sort_button_rect(wf, s),
+                    };
                     let lx = (btn.x / s) as f32;
                     let ly = ((btn.y + btn.h) / s) as f32;
                     context_menu.set_scale(s);
@@ -444,6 +458,20 @@ pub(crate) fn handle_click(
                 let cur = app.current_dir.clone();
                 app.add_favorite(cur);
             }
+            crate::ZONE_SPLIT_TOGGLE => {
+                // Remember the divider position for future splits.
+                if let Some(sp) = &app.split {
+                    app.split_ratio = sp.ratio;
+                }
+                app.toggle_split();
+            }
+            crate::ZONE_SPLIT_DIVIDER => {
+                if let Some((cx, _)) = input.cursor() {
+                    if let Some(sp) = app.split.as_mut() {
+                        sp.divider_drag = Some((cx, sp.ratio));
+                    }
+                }
+            }
             crate::ZONE_PROGRESS_CANCEL => {
                 app.cancel_op();
             }
@@ -468,4 +496,37 @@ pub(crate) fn handle_click(
         }
     }
     ClickAction::None
+}
+
+/// Map a `ZONE_P2_*` (unfocused split pane) zone to its standard equivalent,
+/// focusing that pane as a side effect. Non-P2 zones pass through untouched.
+/// `u32::MAX` means "focus was the whole action" (e.g. the path strip — a
+/// second click starts editing).
+fn translate_split_zone(app: &mut App, zone_id: u32) -> u32 {
+    use crate::{
+        ZONE_CONTENT, ZONE_P2_BACK, ZONE_P2_CONTENT, ZONE_P2_FILE_BASE, ZONE_P2_FORWARD,
+        ZONE_P2_PATH, ZONE_P2_SCROLLBAR, ZONE_P2_SEARCH, ZONE_P2_SORT, ZONE_P2_TREE_BASE,
+        ZONE_P2_UP, ZONE_P2_VIEW_TOGGLE, ZONE_SCROLLBAR,
+    };
+    let Some(split) = app.split.as_ref() else { return zone_id };
+    let other = match split.focused {
+        crate::app::PaneSide::Left => crate::app::PaneSide::Right,
+        crate::app::PaneSide::Right => crate::app::PaneSide::Left,
+    };
+    let mapped = match zone_id {
+        ZONE_P2_CONTENT => ZONE_CONTENT,
+        ZONE_P2_SCROLLBAR => ZONE_SCROLLBAR,
+        ZONE_P2_VIEW_TOGGLE => ZONE_NAV_VIEW_TOGGLE,
+        ZONE_P2_BACK => ZONE_NAV_BACK,
+        ZONE_P2_FORWARD => ZONE_NAV_FORWARD,
+        ZONE_P2_UP => ZONE_NAV_UP,
+        ZONE_P2_SORT => ZONE_NAV_SORT,
+        ZONE_P2_SEARCH => ZONE_NAV_SEARCH,
+        ZONE_P2_PATH => u32::MAX,
+        id if id >= ZONE_P2_TREE_BASE => ZONE_TREE_ITEM_BASE + (id - ZONE_P2_TREE_BASE),
+        id if id >= ZONE_P2_FILE_BASE => ZONE_FILE_ITEM_BASE + (id - ZONE_P2_FILE_BASE),
+        _ => return zone_id,
+    };
+    app.focus_pane(other);
+    mapped
 }

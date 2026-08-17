@@ -60,12 +60,12 @@ pub fn render_frame(
     if let Some(ql) = &mut app.quick_look {
         ql.poll_upload(ctx, tex_pass);
     }
-    let full_content = if app.pick.is_some() {
-        let bottom = hf - crate::pick_bar::PICK_BAR_H * s;
-        content_rect_with_bottom(wf, bottom, s)
-    } else {
-        content_rect(wf, hf, s)
-    };
+    // Split view geometry: (left_x, left_w, right_x, right_w) + focused side.
+    let split_geom = app.split.as_ref().map(|sp| {
+        (split_pane_cols(wf, sp.ratio, s), sp.focused)
+    });
+    // The focused pane's content column (single-pane: the whole content area).
+    let full_content = app.active_content_rect(wf, hf, s);
     let zoom = app.icon_zoom;
     // When searching, show search results in list mode
     let is_searching = app.searching && !app.search_buf.is_empty();
@@ -75,8 +75,10 @@ pub fn render_frame(
         &app.entries
     };
     let view_mode = if is_searching { ViewMode::List } else { app.view_mode };
-    // Preview pane: only shown in List/Tree (and during search, which renders as List).
-    let preview_supported = matches!(view_mode, ViewMode::List | ViewMode::Tree);
+    // Preview pane: only shown in List/Tree (and during search, which renders
+    // as List). Split view claims the width — preview stays off until then.
+    let preview_supported =
+        matches!(view_mode, ViewMode::List | ViewMode::Tree) && app.split.is_none();
     let preview_w_px = if preview_supported {
         preview_effective_w(full_content.w, app.preview_width, app.preview_open, s)
     } else {
@@ -219,18 +221,47 @@ pub fn render_frame(
     }
 
     // ── Nav bar ───────────────────────────────────────────────────────
-    let nav_rect = nav_bar_rect(wf, s);
-    let vt_rect = view_toggle_rect(s);
+    // In split mode the focused pane's nav bar shrinks to its column (cloud
+    // and preview buttons drop out — a zero-width rect skips both zone and
+    // draw), but keeps the standard zone IDs so click handling is unchanged.
+    let active_col = split_geom.map(|((lx, lw, rx, rw), focused)| {
+        match focused {
+            crate::app::PaneSide::Left => (lx, lw),
+            crate::app::PaneSide::Right => (rx, rw),
+        }
+    });
+    let (nav_rect, vt_rect, back_rect, fwd_rect, up_rect, cloud_rect, p_rect) =
+        if let Some((px, pw)) = active_col {
+            let is_right = matches!(split_geom, Some((_, crate::app::PaneSide::Right)));
+            (
+                pane_nav_bar_rect(px, pw, s),
+                pane_view_toggle_rect(px, s),
+                pane_back_rect(px, s),
+                pane_forward_rect(px, s),
+                pane_up_rect(px, s),
+                Rect::new(0.0, 0.0, 0.0, 0.0),
+                pane_path_rect(px, pw, is_right, s),
+            )
+        } else {
+            (
+                nav_bar_rect(wf, s),
+                view_toggle_rect(s),
+                back_button_rect(s),
+                forward_button_rect(s),
+                up_button_rect(s),
+                crate::layout::cloud_button_rect(s),
+                path_rect(wf, s),
+            )
+        };
     let vt_state = input.add_zone(ZONE_NAV_VIEW_TOGGLE, vt_rect);
-    let back_rect = back_button_rect(s);
     let back_state = input.add_zone(ZONE_NAV_BACK, back_rect);
-    let fwd_rect = forward_button_rect(s);
     let fwd_state = input.add_zone(ZONE_NAV_FORWARD, fwd_rect);
-    let up_rect = up_button_rect(s);
     let up_state = input.add_zone(ZONE_NAV_UP, up_rect);
-    let cloud_rect = crate::layout::cloud_button_rect(s);
-    let cloud_state = input.add_zone(crate::ZONE_NAV_CLOUD, cloud_rect);
-    let p_rect = path_rect(wf, s);
+    let cloud_state = if cloud_rect.w > 0.0 {
+        input.add_zone(crate::ZONE_NAV_CLOUD, cloud_rect)
+    } else {
+        lntrn_ui::gpu::InteractionState::Idle
+    };
     let mut breadcrumb_hovered = Vec::new();
     let path_hovered;
     if !app.path_editing && !app.searching {
@@ -285,7 +316,11 @@ pub fn render_frame(
         let zone = input.add_zone(ZONE_PATH_INPUT, p_rect);
         path_hovered = zone.is_hovered();
     };
-    let preview_btn_rect = preview_toggle_rect(wf, s);
+    let preview_btn_rect = if active_col.is_some() {
+        Rect::new(0.0, 0.0, 0.0, 0.0)
+    } else {
+        preview_toggle_rect(wf, s)
+    };
     // Only register the preview toggle zone when the active view supports it,
     // so it can't be clicked in Grid mode.
     let preview_btn_state = if preview_supported {
@@ -293,10 +328,44 @@ pub fn render_frame(
     } else {
         lntrn_ui::gpu::InteractionState::Idle
     };
-    let sort_rect = sort_button_rect(wf, s);
+    let (sort_rect, srch_rect) = if let Some((px, pw)) = active_col {
+        (pane_sort_rect(px, pw, s), pane_search_rect(px, pw, s))
+    } else {
+        (sort_button_rect(wf, s), search_button_rect(wf, s))
+    };
     let sort_state = input.add_zone(ZONE_NAV_SORT, sort_rect);
-    let srch_rect = search_button_rect(wf, s);
     let srch_state = input.add_zone(ZONE_NAV_SEARCH, srch_rect);
+
+    // Split toggle: top-right of the window — the single nav bar, or the
+    // right pane's nav when split is on and the right pane is focused (the
+    // unfocused right pane registers it in render_inactive_pane instead).
+    let split_btn_rect = match split_geom {
+        None => Some(split_toggle_rect(wf, s)),
+        Some(((_, _, rx, rw), crate::app::PaneSide::Right)) => {
+            Some(pane_split_toggle_rect(rx, rw, s))
+        }
+        Some((_, crate::app::PaneSide::Left)) => None,
+    };
+    if let Some(sb_rect) = split_btn_rect {
+        let sb_hov = input.add_zone(crate::ZONE_SPLIT_TOGGLE, sb_rect).is_hovered();
+        let active = app.split.is_some();
+        let color = if active {
+            pal.accent
+        } else if sb_hov {
+            pal.text
+        } else {
+            pal.text_secondary
+        };
+        if sb_hov || active {
+            let bg = if active {
+                pal.accent.with_alpha(0.15)
+            } else {
+                pal.surface_2.with_alpha(0.5)
+            };
+            painter.rect_filled(sb_rect, 4.0 * s, bg);
+        }
+        crate::sections::draw_split_toggle_icon(painter, sb_rect, color, s);
+    }
     draw_nav_bar(
         painter, text, pal, app,
         nav_rect, vt_rect, vt_state.is_hovered(),
@@ -311,10 +380,24 @@ pub fn render_frame(
         (w, h), s,
     );
 
+    // Focused-pane indicator: accent underline beneath the focused pane's
+    // nav bar so it's obvious which pane keyboard/actions apply to.
+    if active_col.is_some() {
+        painter.rect_filled(
+            Rect::new(nav_rect.x + 6.0 * s, nav_rect.y + nav_rect.h - 2.0 * s, nav_rect.w - 12.0 * s, 2.0 * s),
+            1.0 * s,
+            pal.accent.with_alpha(0.7),
+        );
+    }
+
     draw_gradient_h(painter, pal, 0.0, nav_rect.y + nav_rect.h, wf, s);
 
-    // ── Tab bar ─────────────────────────────────────────────────────
-    let tab_rect = tab_bar_rect(wf, s);
+    // ── Tab bar (always the LEFT pane's — the right pane has no tabs) ──
+    let tab_rect = if let Some(((lx, lw, _, _), _)) = split_geom {
+        pane_tab_bar_rect(lx, lw, s)
+    } else {
+        tab_bar_rect(wf, s)
+    };
     let tab_labels = app.tab_labels();
     let tab_label_refs: Vec<&str> = tab_labels.iter().map(|s| s.as_str()).collect();
 
@@ -694,6 +777,40 @@ pub fn render_frame(
         draw_status_bar(painter, text, pal, status, &app.entries, file_info, cloud_status, app.op_progress.as_ref(), git.branch(), input, (w, h), s);
     }
 
+    // ── Inactive split pane + divider ─────────────────────────────────
+    // The scroll offset update is deferred to the end of the frame — `app`
+    // still has immutable borrows (`entries`) live here.
+    let mut p2_scroll_new: Option<f32> = None;
+    if let Some(((lx, lw, rx, rw), focused)) = split_geom {
+        if let Some((tab, view, _side)) = app.inactive_pane() {
+            let is_right = focused == crate::app::PaneSide::Left;
+            let (px, pw) = if is_right { (rx, rw) } else { (lx, lw) };
+            let dragging = app.drag_item.is_some() || app.drag_tree_item.is_some();
+            p2_scroll_new = Some(crate::sections::render_inactive_pane(
+                painter, text, ctx, tex_pass, input, icon_cache, git, pal,
+                crate::sections::InactivePane {
+                    tab,
+                    view,
+                    is_right,
+                    pane_x: px,
+                    pane_w: pw,
+                    scroll: tab.scroll_offset,
+                    zoom,
+                    dragging,
+                },
+                hf, (w, h), s,
+            ));
+        }
+        // Divider handle between the panes.
+        let split_ratio = app.split.as_ref().map(|sp| sp.ratio).unwrap_or(0.5);
+        let divider = split_divider_rect(wf, hf, split_ratio, s);
+        let div_state = input.add_zone(crate::ZONE_SPLIT_DIVIDER, divider);
+        let div_active = app.split.as_ref().map_or(false, |sp| sp.divider_drag.is_some());
+        crate::sections::draw_split_divider(
+            painter, divider, div_state.is_hovered() || div_active, pal, s,
+        );
+    }
+
     // ── Rubber band selection overlay ─────────────────────────────────
     if let (Some(start), Some(end)) = (app.rubber_band_start, app.rubber_band_end) {
         draw_rubber_band(painter, pal, start, end, content);
@@ -803,6 +920,91 @@ pub fn render_frame(
                 .collect()
         }
     };
+
+    // ── Inactive split pane icon draws ────────────────────────────────
+    // The unfocused pane's content was painted in render_inactive_pane, but
+    // its icon TEXTURES render here — all icons must go through the single
+    // tex_draws pass (a second render_pass would clobber the shared
+    // instance buffer). Geometry mirrors render_inactive_pane exactly.
+    if let (Some(icr), Some((tab, view, _))) = (
+        app.inactive_content_rect(wf, hf, s),
+        app.inactive_pane(),
+    ) {
+        let p2_clip = [icr.x, icr.y, icr.w, icr.h];
+        let p2_entries = &tab.entries;
+        // Mirror ScrollArea's clamp so icons can't drift from the rows for
+        // a frame when the stored offset exceeds the new max.
+        let clamp_scroll = |total_h: f32| -> f32 {
+            tab.scroll_offset.min((total_h - icr.h).max(0.0)).max(0.0)
+        };
+        match view.view_mode {
+            ViewMode::Grid => {
+                let p2_cols = grid_columns(icr.w, s, zoom);
+                let total_h = grid_content_height(p2_entries.len(), p2_cols, s, zoom);
+                let p2_base_y = icr.y - clamp_scroll(total_h);
+                tex_draws.extend((0..p2_entries.len()).filter_map(|i| {
+                    let ir = file_item_rect(i, p2_cols, icr.x, p2_base_y, s, zoom);
+                    if ir.intersect(&icr).is_none() {
+                        return None;
+                    }
+                    let icon_x = ir.x + (ir.w - icsz) * 0.5;
+                    let label_font = 16.0 * s;
+                    let content_h = icsz + 2.0 * s + label_font;
+                    let icon_y = ir.y + (ir.h - content_h) * 0.5;
+                    let tex = icon_cache.get(&p2_entries[i])?;
+                    let (dx, dy, dw, dh) = icons::fit_in_box(tex, icon_x, icon_y, icsz, icsz);
+                    let mut draw = TextureDraw::new(tex, dx, dy, dw, dh);
+                    draw.clip = Some(p2_clip);
+                    Some(draw)
+                }));
+            }
+            ViewMode::List => {
+                let m = list_zoom_multiplier(zoom);
+                let row_h = list_row_h(s, zoom);
+                let hdr_h = 32.0 * m * s;
+                let list_icon_sz = 28.0 * m * s;
+                let total_h = p2_entries.len() as f32 * row_h + hdr_h;
+                let p2_base_y = icr.y - clamp_scroll(total_h);
+                tex_draws.extend((0..p2_entries.len()).filter_map(|i| {
+                    let y = p2_base_y + hdr_h + i as f32 * row_h;
+                    if y + row_h < icr.y || y > icr.y + icr.h {
+                        return None;
+                    }
+                    let icon_x = icr.x + 8.0 * m * s;
+                    let icon_y = y + (row_h - list_icon_sz) * 0.5;
+                    let tex = icon_cache.get(&p2_entries[i])?;
+                    let (dx, dy, dw, dh) =
+                        icons::fit_in_box(tex, icon_x, icon_y, list_icon_sz, list_icon_sz);
+                    let mut draw = TextureDraw::new(tex, dx, dy, dw, dh);
+                    draw.clip = Some(p2_clip);
+                    Some(draw)
+                }));
+            }
+            ViewMode::Tree => {
+                let m = list_zoom_multiplier(zoom);
+                let row_h = tree_row_h(s, zoom);
+                let tree_indent = 28.0 * m * s;
+                let tree_icon_sz = 24.0 * m * s;
+                let total_h = tree_content_height(view.tree_entries.len(), s, zoom);
+                let p2_base_y = icr.y - clamp_scroll(total_h);
+                tex_draws.extend((0..view.tree_entries.len()).filter_map(|i| {
+                    let te = &view.tree_entries[i];
+                    let y = p2_base_y + i as f32 * row_h;
+                    if y + row_h < icr.y || y > icr.y + icr.h {
+                        return None;
+                    }
+                    let icon_x = icr.x + 8.0 * m * s + te.depth as f32 * tree_indent + 16.0 * m * s;
+                    let icon_y = y + (row_h - tree_icon_sz) * 0.5;
+                    let tex = icon_cache.get(&te.entry)?;
+                    let (dx, dy, dw, dh) =
+                        icons::fit_in_box(tex, icon_x, icon_y, tree_icon_sz, tree_icon_sz);
+                    let mut draw = TextureDraw::new(tex, dx, dy, dw, dh);
+                    draw.clip = Some(p2_clip);
+                    Some(draw)
+                }));
+            }
+        }
+    }
 
     // ── Play-button overlays for video thumbnails ─────────────────────
     // Recompute the drawn icon rect for any video entry that has a real
@@ -968,6 +1170,14 @@ pub fn render_frame(
             }
         }
     }
+    // Deferred inactive-pane scroll write-back (see the split pane block —
+    // `entries` borrows were still live there).
+    if let Some(v) = p2_scroll_new {
+        if let Some(scroll) = app.inactive_scroll_mut() {
+            *scroll = v;
+        }
+    }
+
     if props_close { app.properties = None; }
     if let Some((folder, icon_path)) = props_icon_chosen {
         // Defer xattr + invalidation to the next frame — icon_cache is

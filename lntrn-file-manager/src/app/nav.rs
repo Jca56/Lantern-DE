@@ -86,8 +86,9 @@ impl App {
             return;
         }
         self.root_mode = false;
-        let tab = &mut self.tabs[self.current_tab];
-        tab.history_back.push(self.current_dir.clone());
+        let cur = self.current_dir.clone();
+        let tab = self.active_nav_tab();
+        tab.history_back.push(cur);
         tab.history_forward.clear();
         tab.path = path.clone();
         tab.scroll_offset = 0.0;
@@ -120,7 +121,7 @@ impl App {
             return;
         }
         self.current_dir = path.clone();
-        self.tabs[self.current_tab].path = path;
+        self.active_nav_tab().path = path;
         self.reload();
     }
 
@@ -154,12 +155,18 @@ impl App {
                 self.entries.retain(|e| e.is_dir || matches_filter(&e.name, &patterns));
             }
         }
-        self.tabs[self.current_tab].entries = self.entries.clone();
+        let entries = self.entries.clone();
+        self.active_nav_tab().entries = entries;
         self.renaming = renaming_path
             .and_then(|p| self.entries.iter().position(|e| e.path == p));
         if self.view_mode == ViewMode::Tree {
             self.rebuild_tree();
         }
+        // Split view: keep the unfocused pane fresh too. Every mutation path
+        // (paste, drop, trash, undo, fs-watch events, navigation) funnels
+        // through reload(), so this one hook keeps both panes honest — vital
+        // when a drop just landed files in the other pane's directory.
+        self.reload_inactive_pane();
     }
 
     pub fn reload_tab(&mut self, tab_idx: usize) {
@@ -184,11 +191,11 @@ impl App {
     }
 
     pub fn can_go_back(&self) -> bool {
-        !self.tabs[self.current_tab].history_back.is_empty()
+        !self.active_nav_tab_ref().history_back.is_empty()
     }
 
     pub fn can_go_forward(&self) -> bool {
-        !self.tabs[self.current_tab].history_forward.is_empty()
+        !self.active_nav_tab_ref().history_forward.is_empty()
     }
 
     pub fn can_go_up(&self) -> bool {
@@ -203,9 +210,10 @@ impl App {
     }
 
     pub fn go_back(&mut self) {
-        let tab = &mut self.tabs[self.current_tab];
+        let cur = self.current_dir.clone();
+        let tab = self.active_nav_tab();
         if let Some(prev) = tab.history_back.pop() {
-            tab.history_forward.push(self.current_dir.clone());
+            tab.history_forward.push(cur);
             tab.path = prev.clone();
             tab.scroll_offset = 0.0;
             self.current_dir = prev;
@@ -215,9 +223,10 @@ impl App {
     }
 
     pub fn go_forward(&mut self) {
-        let tab = &mut self.tabs[self.current_tab];
+        let cur = self.current_dir.clone();
+        let tab = self.active_nav_tab();
         if let Some(next) = tab.history_forward.pop() {
-            tab.history_back.push(self.current_dir.clone());
+            tab.history_back.push(cur);
             tab.path = next.clone();
             tab.scroll_offset = 0.0;
             self.current_dir = next;

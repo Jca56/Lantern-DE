@@ -35,7 +35,7 @@ use smithay::{
 use smithay::backend::input::InputEvent;
 use smithay::backend::drm::{DrmEventMetadata, DrmEventTime};
 use smithay::desktop::utils::{send_frames_surface_tree, OutputPresentationFeedback};
-use smithay::utils::{IsAlive, Monotonic, Time};
+use smithay::utils::{Monotonic, Time};
 use smithay::wayland::presentation::Refresh;
 use smithay::reexports::wayland_protocols::wp::presentation_time::server::wp_presentation_feedback;
 use smithay_drm_extras::drm_scanner::DrmScanner;
@@ -262,6 +262,32 @@ pub fn init_udev(
         }
     }
 
+    // Explicit sync (linux-drm-syncobj-v1). NVIDIA's EGL/GLX paths have no
+    // implicit sync, so without this global browsers flicker and show
+    // garbage frames (they submit dmabufs whose rendering is still in
+    // flight). Only expose it if the DRM device supports syncobj-eventfd —
+    // the commit blocker can't be created otherwise (same gate Mutter uses).
+    if state.syncobj_state.is_none() {
+        let import_device = state.udev.as_ref().and_then(|udev| {
+            udev.backends
+                .get(&udev.primary_gpu)
+                .or_else(|| udev.backends.values().next())
+                .map(|b| b.drm_output_manager.device().device_fd().clone())
+        });
+        if let Some(import_device) = import_device {
+            use smithay::wayland::drm_syncobj::{supports_syncobj_eventfd, DrmSyncobjState};
+            if supports_syncobj_eventfd(&import_device) {
+                state.syncobj_state = Some(DrmSyncobjState::new::<Lantern>(
+                    &state.display_handle,
+                    import_device,
+                ));
+                info!("linux-drm-syncobj global initialized (explicit sync)");
+            } else {
+                info!("DRM device lacks syncobj-eventfd — explicit sync disabled");
+            }
+        }
+    }
+
     // Verify we have at least one working output
     let has_outputs = state
         .udev
@@ -385,32 +411,11 @@ pub fn init_udev(
             state.debug_counters.loop_iters += 1;
             Some(std::time::Instant::now())
         } else { None };
-        // Handle dead windows: animate client-initiated closes, clean up compositor-initiated ones.
-        let dead_windows: Vec<_> = state.space.elements()
-            .filter(|w| !w.alive())
-            .filter_map(|w| state.make_closing_window(w))
-            .collect();
-        if !dead_windows.is_empty() {
-            // Purge the dead elements from the spaces RIGHT NOW so the next
-            // dispatch round can't re-detect them — zombie close animations
-            // must start exactly once per window.
-            state.space.refresh();
-            state.refresh_all_spaces();
-        }
-        for cw in dead_windows {
-            if state.animations.take_close_done(&cw.surface) {
-                // Compositor-initiated close (Super+Q) already animated — just clean up
-                state.forget_window(&cw.surface);
-            } else {
-                // Client-initiated close — start zombie close animation
-                let surface = cw.surface.clone();
-                let source = smithay::utils::Rectangle::new(cw.location, cw.size);
-                let target = state.minimize_target_at_point(cw.location);
-                state.animations.start_close_zombie(&surface, source, target);
-                state.closing_windows.push(cw);
-                state.schedule_render();
-            }
-        }
+        // Reap dead windows: animate client-initiated closes, clean up the
+        // rest. xdg toplevels are handled deterministically in
+        // toplevel_destroyed; this poll catches X11 windows and abrupt
+        // client disconnects (and is idempotent with the handler path).
+        state.reap_dead_windows();
         // NOTE: the unconditional Space::refresh (global + per-workspace)
         // moved into render_surface. This callback fires after EVERY
         // dispatch round — at 1000Hz mouse polling that was ~7000 refresh

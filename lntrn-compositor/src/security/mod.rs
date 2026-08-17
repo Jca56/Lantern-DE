@@ -23,4 +23,6 @@
 
 pub mod client_trust;
 
-pub use client_trust::{compute_trust_at_connect, is_trusted_client, is_trusted_surface};
+pub use client_trust::{
+    compute_trust_at_connect, is_trusted_client, is_trusted_surface, peer_identity,
+};

@@ -50,6 +50,9 @@ impl App {
     // ── Tab management ────────────────────────────────────────────────
 
     pub fn new_tab(&mut self) {
+        // Tabs belong to the left pane — pull focus there first so the tab
+        // swap doesn't capture the right pane's state.
+        self.focus_pane(super::PaneSide::Left);
         self.sync_to_tab();
         let home = super::dirs_home();
         let mut tab = DirectoryTab::new(home.clone());
@@ -60,6 +63,7 @@ impl App {
     }
 
     pub fn switch_tab(&mut self, index: usize) {
+        self.focus_pane(super::PaneSide::Left);
         if index >= self.tabs.len() || index == self.current_tab {
             return;
         }
@@ -86,6 +90,7 @@ impl App {
         }
         // Don't close pinned tabs
         if self.tabs[index].pinned { return; }
+        self.focus_pane(super::PaneSide::Left);
         self.sync_to_tab();
         self.tabs.remove(index);
         if self.current_tab >= self.tabs.len() {

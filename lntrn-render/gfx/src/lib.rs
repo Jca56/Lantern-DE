@@ -197,6 +197,12 @@ impl GpuContext {
         if width == 0 || height == 0 {
             return;
         }
+        // Surface textures above the device's 2D-texture limit fail wgpu
+        // validation and abort the process. Clamp instead: the frame renders
+        // at the cap and the compositor/viewport stretches it — mildly soft
+        // beats dead.
+        let max_dim = self.device.limits().max_texture_dimension_2d;
+        let (width, height) = (width.min(max_dim), height.min(max_dim));
         if self.config.width == width && self.config.height == height {
             return;
         }
@@ -383,11 +389,14 @@ where
     };
     eprintln!("[lntrn-gfx] alpha_mode={:?} available={:?} format={:?}", alpha_mode, caps.alpha_modes, format);
 
+    // Same guard as GpuContext::resize — an initial size past the device
+    // limit would abort in surface.configure below.
+    let max_dim = device.limits().max_texture_dimension_2d;
     let config = wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format,
-        width,
-        height,
+        width: width.min(max_dim),
+        height: height.min(max_dim),
         present_mode,
         alpha_mode,
         view_formats: vec![],

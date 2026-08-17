@@ -8,7 +8,18 @@ mod nav;
 mod places;
 mod search;
 mod select;
+mod split;
 mod tabs;
+
+pub use split::{PaneView, SplitState};
+
+/// Which pane of the split view. `Left` is the primary pane (tabs, sidebar
+/// navigation); `Right` only exists while split view is on.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PaneSide {
+    Left,
+    Right,
+}
 
 /// Read `[input].double_click_to_open` from ~/.lantern/config/lantern.toml.
 /// Defaults to false (single-click opens) on any error or missing key.
@@ -144,6 +155,11 @@ pub struct App {
     // Tab state
     pub tabs: Vec<DirectoryTab>,
     pub current_tab: usize,
+
+    // Split view (None = single pane). See app/split.rs for the model.
+    pub split: Option<SplitState>,
+    /// Persisted divider ratio used to seed new splits.
+    pub split_ratio: f32,
 
     // These are convenience aliases kept in sync with current tab
     pub current_dir: PathBuf,
@@ -342,6 +358,8 @@ impl App {
         Self {
             tabs: vec![tab],
             current_tab: 0,
+            split: None,
+            split_ratio: 0.5,
             current_dir: home,
             entries: Vec::new(),
             scroll_offset: 0.0,

@@ -112,9 +112,15 @@ pub fn path_rect(width: f32, s: f32) -> Rect {
     let x = SIDEBAR_W * s;
     let y = nav_bar_y(s);
     let path_x = x + 224.0 * s;
-    // Reserve space for preview-toggle, sort, and search buttons (each 36px + gap).
-    let trailing_space = 130.0 * s;
+    // Reserve space for split-toggle, preview-toggle, sort, and search buttons.
+    let trailing_space = 172.0 * s;
     Rect::new(path_x, y + 5.0 * s, width - path_x - trailing_space, 38.0 * s)
+}
+
+/// Split-view toggle button — sits left of the preview toggle.
+pub fn split_toggle_rect(width: f32, s: f32) -> Rect {
+    let y = nav_bar_y(s);
+    Rect::new(width - 168.0 * s, y + 6.0 * s, 36.0 * s, 36.0 * s)
 }
 
 pub fn preview_toggle_rect(width: f32, s: f32) -> Rect {
@@ -280,6 +286,90 @@ pub fn content_rect(width: f32, height: f32, s: f32) -> Rect {
     let top = content_top(s);
     let bottom = content_bottom(height, s);
     Rect::new(SIDEBAR_W * s, top, width - SIDEBAR_W * s, bottom - top)
+}
+
+// ── Split view layout ───────────────────────────────────────────────────────
+//
+// Two pane columns share the area right of the sidebar, separated by a
+// draggable divider. The left pane keeps the tab bar; the right pane's
+// content reclaims that strip (it has no tabs).
+
+/// Width of the draggable divider between the panes.
+pub const SPLIT_HANDLE_W: f32 = 8.0;
+
+/// Divider ratio bounds (fraction of the content area given to the left pane).
+pub const SPLIT_RATIO_MIN: f32 = 0.2;
+pub const SPLIT_RATIO_MAX: f32 = 0.8;
+
+/// Horizontal columns of the two panes: (left_x, left_w, right_x, right_w).
+pub fn split_pane_cols(width: f32, ratio: f32, s: f32) -> (f32, f32, f32, f32) {
+    let x0 = SIDEBAR_W * s;
+    let handle = SPLIT_HANDLE_W * s;
+    let avail = (width - x0 - handle).max(0.0);
+    let lw = avail * ratio.clamp(SPLIT_RATIO_MIN, SPLIT_RATIO_MAX);
+    let rx = x0 + lw + handle;
+    (x0, lw, rx, (width - rx).max(0.0))
+}
+
+/// The divider handle, spanning nav bar through content.
+pub fn split_divider_rect(width: f32, height: f32, ratio: f32, s: f32) -> Rect {
+    let (lx, lw, _, _) = split_pane_cols(width, ratio, s);
+    let top = nav_bar_y(s);
+    Rect::new(lx + lw, top, SPLIT_HANDLE_W * s, content_bottom(height, s) - top)
+}
+
+/// Per-pane nav bar strip.
+pub fn pane_nav_bar_rect(pane_x: f32, pane_w: f32, s: f32) -> Rect {
+    Rect::new(pane_x, nav_bar_y(s), pane_w, NAV_BAR_H * s)
+}
+
+fn pane_nav_button(pane_x: f32, offset: f32, s: f32) -> Rect {
+    Rect::new(pane_x + offset * s, nav_bar_y(s) + 6.0 * s, 36.0 * s, 36.0 * s)
+}
+
+/// Pane nav buttons, left-aligned. Split mode drops the cloud button — it
+/// stays a sidebar/single-pane affordance — so the row is tighter than the
+/// single-pane layout.
+pub fn pane_view_toggle_rect(pane_x: f32, s: f32) -> Rect { pane_nav_button(pane_x, 6.0, s) }
+pub fn pane_back_rect(pane_x: f32, s: f32) -> Rect { pane_nav_button(pane_x, 48.0, s) }
+pub fn pane_forward_rect(pane_x: f32, s: f32) -> Rect { pane_nav_button(pane_x, 86.0, s) }
+pub fn pane_up_rect(pane_x: f32, s: f32) -> Rect { pane_nav_button(pane_x, 124.0, s) }
+
+fn pane_nav_button_right(pane_x: f32, pane_w: f32, from_right: f32, s: f32) -> Rect {
+    Rect::new(pane_x + pane_w - from_right * s, nav_bar_y(s) + 6.0 * s, 36.0 * s, 36.0 * s)
+}
+
+/// Pane nav buttons, right-aligned.
+pub fn pane_search_rect(pane_x: f32, pane_w: f32, s: f32) -> Rect {
+    pane_nav_button_right(pane_x, pane_w, 42.0, s)
+}
+pub fn pane_sort_rect(pane_x: f32, pane_w: f32, s: f32) -> Rect {
+    pane_nav_button_right(pane_x, pane_w, 84.0, s)
+}
+/// Split-close toggle — rendered on the right pane only, keeping the button
+/// at the window's top-right where the user opened the split from.
+pub fn pane_split_toggle_rect(pane_x: f32, pane_w: f32, s: f32) -> Rect {
+    pane_nav_button_right(pane_x, pane_w, 126.0, s)
+}
+
+/// Pane path/breadcrumb strip. `reserve_split_btn` is true for the right
+/// pane, whose trailing button row also holds the split-close toggle.
+pub fn pane_path_rect(pane_x: f32, pane_w: f32, reserve_split_btn: bool, s: f32) -> Rect {
+    let px = pane_x + 168.0 * s;
+    let trailing = if reserve_split_btn { 134.0 } else { 92.0 } * s;
+    Rect::new(px, nav_bar_y(s) + 5.0 * s, (pane_x + pane_w - trailing - px).max(40.0 * s), 38.0 * s)
+}
+
+/// Left-pane tab bar (right pane has no tabs).
+pub fn pane_tab_bar_rect(pane_x: f32, pane_w: f32, s: f32) -> Rect {
+    Rect::new(pane_x, tab_bar_y(s), pane_w, TAB_BAR_H * s)
+}
+
+/// Pane content column. The right pane (no tab bar) starts higher.
+pub fn pane_content_rect(pane_x: f32, pane_w: f32, height: f32, s: f32, has_tab_bar: bool) -> Rect {
+    let top = if has_tab_bar { content_top(s) } else { tab_bar_y(s) };
+    let bottom = content_bottom(height, s);
+    Rect::new(pane_x, top, pane_w, bottom - top)
 }
 
 /// Width of the resize handle that sits on the preview pane's left edge.

@@ -146,6 +146,9 @@ pub fn render_surface(
     // here from the calloop post-dispatch callback — there it ran after
     // EVERY dispatch round (≈7000 sweeps/sec under 1000Hz mouse polling);
     // here it runs at most once per output frame.
+    // Reap dead windows FIRST: refresh() silently purges dead elements, and
+    // losing the race meant forget_window never ran (stale dock entries).
+    state.reap_dead_windows();
     state.space.refresh();
     state.refresh_all_spaces();
 

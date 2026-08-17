@@ -9,6 +9,9 @@ use wayland_client::{
 use wayland_protocols::wp::cursor_shape::v1::client::{
     wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1,
 };
+use wayland_protocols::wp::fractional_scale::v1::client::{
+    wp_fractional_scale_manager_v1, wp_fractional_scale_v1,
+};
 use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
@@ -51,6 +54,10 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                 "wp_cursor_shape_manager_v1" => {
                     state.cursor_shape_mgr = Some(registry.bind(name, version.min(1), qh, ()));
                 }
+                "wp_fractional_scale_manager_v1" => {
+                    state.fractional_scale_mgr =
+                        Some(registry.bind(name, version.min(1), qh, ()));
+                }
                 _ => {}
             }
         }
@@ -68,6 +75,23 @@ impl Dispatch<wp_viewporter::WpViewporter, ()> for State {
 }
 impl Dispatch<wp_viewport::WpViewport, ()> for State {
     fn event(_: &mut Self, _: &wp_viewport::WpViewport, _: wp_viewport::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
+impl Dispatch<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1, ()> for State {
+    fn event(_: &mut Self, _: &wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1, _: wp_fractional_scale_manager_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
+impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ()> for State {
+    fn event(
+        state: &mut Self, _: &wp_fractional_scale_v1::WpFractionalScaleV1,
+        event: wp_fractional_scale_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+    ) {
+        if let wp_fractional_scale_v1::Event::PreferredScale { scale } = event {
+            if scale > 0 && scale != state.preferred_scale_120 {
+                state.preferred_scale_120 = scale;
+                state.scale_changed = true;
+                state.frame_done = true;
+            }
+        }
+    }
 }
 
 impl Dispatch<xdg_wm_base::XdgWmBase, ()> for State {
@@ -101,14 +125,7 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
     ) {
         match event {
             xdg_toplevel::Event::Configure { width, height, states } => {
-                if width > 0 {
-                    state.width = width as u32;
-                    // Store the initial configure width as the output logical width
-                    // (before any user resize). This stays constant for fractional_scale().
-                    if state.output_logical_width == 0 {
-                        state.output_logical_width = width as u32;
-                    }
-                }
+                if width > 0 { state.width = width as u32; }
                 if height > 0 { state.height = height as u32; }
                 // Parse states to detect maximized
                 state.maximized = states.chunks_exact(4).any(|chunk| {
@@ -130,12 +147,10 @@ impl Dispatch<wl_output::WlOutput, ()> for State {
         state: &mut Self, _: &wl_output::WlOutput,
         event: wl_output::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
     ) {
-        match event {
-            wl_output::Event::Scale { factor } => { state.scale = factor; }
-            wl_output::Event::Mode { width, .. } => {
-                state.output_phys_width = width as u32;
-            }
-            _ => {}
+        // Integer wl_output scale, only used as a fallback when the compositor
+        // doesn't offer wp_fractional_scale_v1 (see State::fractional_scale).
+        if let wl_output::Event::Scale { factor } = event {
+            state.scale = factor;
         }
     }
 }

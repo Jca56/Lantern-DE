@@ -6,7 +6,7 @@ use lntrn_ui::gpu::{ContextMenu, InteractionContext, MenuEvent, MenuItem, Waylan
 use crate::app::{App, ContextTarget};
 use crate::desktop::{self, DesktopApp};
 use crate::fs::SortBy;
-use crate::layout::{build_sidebar_layout, content_rect};
+use crate::layout::build_sidebar_layout;
 use crate::settings::Settings;
 use crate::wayland::State;
 use crate::{
@@ -206,7 +206,28 @@ pub(crate) fn handle_right_click(
         }
     }
 
-    let cr = content_rect(wf, hf, s);
+    // Split view: right-clicking the unfocused pane focuses it first, so the
+    // flow below (which reads the flat = focused-pane state) targets the pane
+    // that was actually clicked. Zone ids stay P2 — the row match below
+    // handles both families.
+    if app.split.is_some() {
+        let is_p2 = matches!(
+            input.zone_at(cx, cy),
+            Some(zone) if zone == crate::ZONE_P2_CONTENT
+                || zone == crate::ZONE_P2_SCROLLBAR
+                || (crate::ZONE_P2_VIEW_TOGGLE..=crate::ZONE_P2_PATH).contains(&zone)
+                || zone >= crate::ZONE_P2_FILE_BASE
+        );
+        if is_p2 {
+            let other = match app.split_focused() {
+                Some(crate::app::PaneSide::Left) => crate::app::PaneSide::Right,
+                _ => crate::app::PaneSide::Left,
+            };
+            app.focus_pane(other);
+        }
+    }
+
+    let cr = app.active_content_rect(wf, hf, s);
     if !cr.contains(cx, cy) { return; }
 
     // Search mode: use list-based hit detection against search_results
@@ -270,6 +291,26 @@ pub(crate) fn handle_right_click(
         None,
     }
     let clicked_row = match input.zone_at(cx, cy) {
+        // Unfocused-pane rows (the pane was focused above, so the flat
+        // state these indices point into is the right pane's).
+        Some(zone) if zone >= crate::ZONE_P2_TREE_BASE => {
+            let ti = (zone - crate::ZONE_P2_TREE_BASE) as usize;
+            if let Some(te) = app.tree_entries.get(ti) {
+                let path = te.entry.path.clone();
+                let is_dir = te.entry.is_dir;
+                if let Some(idx) = app.entries.iter().position(|e| e.path == path) {
+                    ClickedRow::Item(idx)
+                } else {
+                    ClickedRow::NestedPath(path, is_dir)
+                }
+            } else {
+                ClickedRow::None
+            }
+        }
+        Some(zone) if zone >= crate::ZONE_P2_FILE_BASE => {
+            let fi = (zone - crate::ZONE_P2_FILE_BASE) as usize;
+            if fi < app.entries.len() { ClickedRow::Item(fi) } else { ClickedRow::None }
+        }
         Some(zone) if zone >= crate::ZONE_TREE_ITEM_BASE => {
             let ti = (zone - crate::ZONE_TREE_ITEM_BASE) as usize;
             if let Some(te) = app.tree_entries.get(ti) {

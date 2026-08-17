@@ -22,6 +22,7 @@ pub mod hash;
 pub mod http;
 pub mod manifest;
 pub mod reconcile;
+pub mod remote_index;
 pub mod session;
 pub mod storage;
 pub mod sync;

@@ -5,11 +5,13 @@ mod grid;
 mod icons;
 mod nav;
 mod sidebar;
+mod split;
 mod status;
 
 pub use grid::{draw_content_grid, draw_rubber_band};
 pub use nav::draw_nav_bar;
 pub use sidebar::{draw_sidebar, SidebarHovered};
+pub use split::{draw_split_divider, draw_split_toggle_icon, render_inactive_pane, InactivePane};
 pub use status::draw_status_bar;
 
 pub fn selection_tint(_palette: &FoxPalette) -> Color {

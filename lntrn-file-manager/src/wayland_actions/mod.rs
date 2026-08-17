@@ -5,7 +5,7 @@ use wayland_protocols::xdg::shell::client::xdg_toplevel;
 
 use crate::app::App;
 use crate::fs::{SortBy, SortDir};
-use crate::layout::{content_rect, file_item_rect, grid_columns};
+use crate::layout::{file_item_rect, grid_columns};
 use crate::settings::Settings;
 use crate::{CTX_SORT_DATE, CTX_SORT_NAME, CTX_SORT_SIZE, CTX_SORT_TYPE};
 
@@ -97,7 +97,7 @@ pub(crate) fn update_rubber_band(app: &mut App, wf: f32, hf: f32, s: f32) {
     // Search results render as a list but have no selection model — leave the
     // (hidden) directory entries alone.
     if app.searching && !app.search_buf.is_empty() { return; }
-    let cr = content_rect(wf, hf, s);
+    let cr = app.active_content_rect(wf, hf, s);
     let zoom = app.icon_zoom;
     let base_y = cr.y - app.scroll_offset;
     let band = Rect::new(

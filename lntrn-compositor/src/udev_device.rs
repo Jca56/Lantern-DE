@@ -768,6 +768,12 @@ pub fn apply_output_config(
     // resolution under the new UI scale.
     crate::xwayland::refresh_xwayland_scale(state);
 
+    // Tell Wayland-native clients about the new scale too — Smithay only
+    // sends wp_fractional_scale preferred_scale at object creation, so
+    // scale-aware apps (Fox, …) would otherwise keep rendering at the old
+    // scale until restart.
+    crate::handlers::refresh_fractional_scales(state);
+
     // Invalidate wallpaper cache
     state.wallpaper.clear_cache();
 
