@@ -224,6 +224,23 @@ impl TextRenderer {
         width
     }
 
+    /// Per-cluster cumulative advances for one line — see [`line::advances`].
+    /// Unlike measurement this bypasses the layout cache: the caller keeps the
+    /// result (one shaping pass covers every offset in the line), and caching a
+    /// per-line array would evict the queue's shared entries for no gain.
+    pub(crate) fn advances_full(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        weight: FontWeight,
+        style: FontStyle,
+        family: Option<&str>,
+        out: &mut Vec<(u32, f32)>,
+    ) {
+        let size = quantize_px(font_size);
+        line::advances(&mut self.db, self.monospace, text, size, weight, style, family, out);
+    }
+
     /// Draw the entry range, clipping each quad to its entry's bounds (with
     /// proportional UV trimming so partially clipped glyphs stay undistorted).
     pub(crate) fn render_range(

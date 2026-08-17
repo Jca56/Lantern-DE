@@ -33,6 +33,55 @@ pub(crate) struct Layout {
     pub width: f32,
 }
 
+/// Cumulative pen advance at every cluster boundary of a **single** line of
+/// text, in logical (byte) order. Fills `out` with `(byte_offset, x)` pairs
+/// starting at `(0, 0.0)` and ending at `(text.len(), total_width)`.
+///
+/// This is the metric an editor needs: one shaping pass yields every caret and
+/// selection x in the line, kerning included, instead of re-shaping a prefix
+/// substring per query. Offsets interior to a ligature or a mark cluster are
+/// absent — they have no distinct pen position — so callers landing between two
+/// entries should interpolate.
+///
+/// Bidi is deliberately not applied: the result is a logical-order pen walk, so
+/// x is monotonic. Visual placement of RTL runs stays with [`build`].
+pub(crate) fn advances(
+    db: &mut FontDb,
+    monospace: bool,
+    text: &str,
+    size: f32,
+    weight: FontWeight,
+    style: FontStyle,
+    family: Option<&str>,
+    out: &mut Vec<(u32, f32)>,
+) {
+    out.clear();
+    let line = text.split('\n').next().unwrap_or("");
+    let (w, italic) = style_params(weight, style);
+    let Some(primary) = db.resolve(family, monospace, weight, style) else {
+        out.push((0, 0.0));
+        out.push((line.len() as u32, 0.0));
+        return;
+    };
+    let (glyphs, _) = shape::shape_run(db, primary, line, size, w, italic);
+
+    let mut pen = 0.0f32;
+    let mut prev_cluster = u32::MAX;
+    for g in &glyphs {
+        // Clusters are non-decreasing; the first glyph of each one carries the
+        // boundary. Ligature components and marks fold into the one before.
+        if g.cluster != prev_cluster {
+            out.push((g.cluster, pen));
+            prev_cluster = g.cluster;
+        }
+        pen += g.advance;
+    }
+    if out.first().map_or(true, |&(c, _)| c != 0) {
+        out.insert(0, (0, 0.0));
+    }
+    out.push((line.len() as u32, pen));
+}
+
 /// Build a layout. `size` and `max_width` arrive pre-quantized. Returns an
 /// empty layout when no font resolves at all.
 #[allow(clippy::too_many_arguments)] // the full styling context, by design

@@ -300,6 +300,33 @@ impl TextRenderer {
         self.measure_text_full(text, font_size, weight, style, family.filter(|f| !f.is_empty()))
     }
 
+    /// Cumulative x advance at every cluster boundary of a single line of
+    /// `text`, filling `out` with `(byte_offset, x)` pairs from `(0, 0.0)` to
+    /// `(text.len(), width)`.
+    ///
+    /// One shaping pass answers every caret/selection query in a line, so a
+    /// text editor never has to re-measure a prefix substring per keystroke or
+    /// per pointer move. Offsets inside a ligature or mark cluster have no
+    /// distinct pen position and are absent — interpolate between neighbours.
+    pub fn measure_advances(
+        &mut self,
+        text: &str,
+        font_size: f32,
+        weight: FontWeight,
+        style: FontStyle,
+        family: Option<&str>,
+        out: &mut Vec<(u32, f32)>,
+    ) {
+        self.advances_full(
+            text,
+            font_size,
+            weight,
+            style,
+            family.filter(|f| !f.is_empty()),
+            out,
+        )
+    }
+
     /// Measure text width using a specific font family (e.g. `"Digital-7"`).
     /// Falls back to the renderer default if the family isn't installed.
     pub fn measure_width_family(&mut self, text: &str, font_size: f32, family: &str) -> f32 {
