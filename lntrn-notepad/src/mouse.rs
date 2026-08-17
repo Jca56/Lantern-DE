@@ -286,6 +286,61 @@ pub(crate) fn editor_body_rect(handler: &TextHandler) -> Rect {
     render::editor_rect(wf, hf, s, handler.find_bar.height(s))
 }
 
+// ── Drag-select auto-scroll ─────────────────────────────────────────────────
+
+/// Vertical auto-scroll speed (physical px/sec) for a drag-select at pointer
+/// `cy`. Zero inside the body, ramping up once the pointer enters a one-row
+/// hot zone at either edge and further as it travels outside the window.
+/// Negative scrolls up. Without this a drag can only ever reach the last
+/// *visible* row, which is why selecting past the bottom of the screen failed.
+pub(crate) fn drag_scroll_speed(er: Rect, cy: f32, scale: f32) -> f32 {
+    let row = crate::editor::FONT_SIZE * scale;
+    let over = if cy < er.y + row {
+        cy - (er.y + row)
+    } else if cy > er.y + er.h - row {
+        cy - (er.y + er.h - row)
+    } else {
+        return 0.0;
+    };
+    // 2 rows/sec right at the edge, ramping to a 40 rows/sec cap the further
+    // out the pointer goes — fast enough to cross a long document, slow enough
+    // to land on a specific line.
+    let rows_out = (over.abs() / row).min(8.0);
+    let rows_per_sec = (2.0 + rows_out * 5.0).min(40.0);
+    over.signum() * rows_per_sec * row
+}
+
+/// One auto-scroll step of a drag-select. Scrolls by `dt` worth of travel and
+/// re-runs the hit-test so the selection extends to whatever slid into view.
+/// Returns true if anything moved (caller keeps the animation ticking).
+pub fn tick_drag_scroll(handler: &mut TextHandler, dt: f32) -> bool {
+    if !handler.dragging {
+        return false;
+    }
+    let Some((cx, cy)) = handler.input.cursor() else {
+        return false;
+    };
+    let s = handler.scale;
+    let er = editor_body_rect(handler);
+    let v = drag_scroll_speed(er, cy, s);
+    if v == 0.0 {
+        return false;
+    }
+    let max = (handler.editor().content_height(s) - er.h).max(0.0);
+    let editor = handler.editor_mut();
+    let next = (editor.scroll_offset + v * dt).clamp(0.0, max);
+    if (next - editor.scroll_offset).abs() < 0.01 {
+        return false;
+    }
+    // Both offset and target move: this scroll is driven by the pointer, so
+    // there is nothing to ease toward — and the hit-test below reads `offset`.
+    editor.scroll_offset = next;
+    editor.scroll_target = next;
+    editor.scrollbar.ping();
+    handler.click_to_cursor(cx, cy);
+    true
+}
+
 fn begin_editor_scroll_drag(handler: &mut TextHandler, is_track: bool) {
     let Some((_, cy)) = handler.input.cursor() else {
         return;
@@ -361,9 +416,13 @@ impl TextHandler {
     pub(crate) fn click_to_cursor(&mut self, cx: f32, cy: f32) {
         let s = self.scale;
         let (wf, hf) = self.window_size_pub();
-        let font_size = crate::editor::FONT_SIZE * s;
         let pad = crate::editor::PAD * s;
         let er = render::editor_rect(wf, hf, s, self.find_bar.height(s));
+        // Page geometry, matching render.rs.
+        let (page_x, page_w) = crate::page::geometry(er, self.page_width_frac, s);
+        let content_x = page_x + pad;
+        let content_max_w = (page_w - pad * 2.0).max(10.0);
+
         let active = self.active_tab;
         let editor = &mut self.tabs[active];
 
@@ -371,38 +430,17 @@ impl TextHandler {
         let (doc_line, row_start, row_end) = editor.wrap_row_at_y(cy, er, s);
         editor.cursor_line = doc_line;
 
-        if let Some(gpu) = &mut self.gpu {
-            // Compute content_x matching render.rs page layout
-            let (page_x, page_w) = crate::page::geometry(er, self.page_width_frac, s);
-            let content_x = page_x + pad;
-            let content_max_w = (page_w - pad * 2.0).max(10.0);
-
-            // Alignment + indent + bullet offset for this row. Must match
-            // render::row_x_offset so clicks land on the right glyph.
-            let para = editor.formats.get(doc_line).para;
-            // wrap_rows can be stale (shorter than lines) until the next
-            // frame recomputes it — never index it blindly from a click.
-            let row_idx = editor
-                .wrap_rows
-                .get(doc_line)
-                .and_then(|w| w.iter().position(|&st| st == row_start))
-                .unwrap_or(0);
-            let bullet_off = if para.bullet { crate::editor::BULLET_INDENT * s } else { 0.0 };
-            let avail = (content_max_w - bullet_off).max(10.0);
-            let row_w = render::measure_range(
-                &mut gpu.text, editor, doc_line, row_start, row_end, font_size,
-            );
-            let align_off = render::alignment_offset(para.alignment, avail, row_w);
-            let indent_off = if row_idx == 0 { para.first_indent * s } else { 0.0 };
-            let effective_x = content_x + bullet_off + align_off + indent_off;
-
-            let base = render::measure_to_offset(
-                &mut gpu.text, editor, doc_line, row_start, font_size,
-            );
-            let col = editor.col_at_x(cx, doc_line, row_start, row_end, effective_x, |byte_off| {
-                render::measure_to_offset(&mut gpu.text, editor, doc_line, byte_off, font_size) - base
-            });
-            editor.cursor_col = col;
+        // Alignment + indent + bullet offset for this row, resolved through the
+        // same helper the renderer uses so a click lands on the glyph it hit.
+        // The layout can lag an edit by a frame, so a missing line means "leave
+        // the column alone" rather than an index panic.
+        let para = editor.formats.get(doc_line).para;
+        let x_off = editor.line_layout(doc_line).map(|l| {
+            let row_idx = l.row_at(row_start);
+            crate::body::row_x_offset(l, &para, row_idx, content_max_w, s)
+        });
+        if let Some(x_off) = x_off {
+            editor.cursor_col = editor.col_at_x(cx - content_x - x_off, doc_line, row_start, row_end);
         }
 
         // A click that lands where the cursor already is keeps any pending

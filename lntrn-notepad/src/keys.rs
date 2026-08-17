@@ -11,8 +11,13 @@ use crate::TextHandler;
 pub enum KeyAction {
     /// Nothing happened (key was unrecognized or consumed without state change).
     Ignored,
-    /// Something changed — request a redraw and reset cursor blink.
+    /// Something changed — request a redraw, reset cursor blink, and bring the
+    /// caret back into view.
     Consumed,
+    /// Consumed, but the view stays put. For actions that park the caret
+    /// somewhere far away without the user navigating there — Select All leaves
+    /// it at EOF, and jumping to the bottom of the document would be jarring.
+    ConsumedNoScroll,
 }
 
 /// Handle a single pressed key event.
@@ -144,7 +149,7 @@ pub fn handle_key(
             }
             "a" => {
                 handler.editor_mut().select_all();
-                KeyAction::Consumed
+                KeyAction::ConsumedNoScroll
             }
             "c" => {
                 actions::do_copy(handler);

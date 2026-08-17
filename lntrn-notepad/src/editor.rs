@@ -1,13 +1,12 @@
 use std::path::PathBuf;
 
 use crate::format::{Alignment, DocFormats, LineFormats, ParagraphAttrs, TextAttrs};
+use crate::layout::LineLayout;
 use crate::scrollbar::ScrollbarState;
 
 /// Default font size for editor text (logical pixels, scaled at draw time).
 /// Spans may override this per-run via `TextAttrs::font_size`.
 pub const FONT_SIZE: f32 = 24.0;
-/// Line height multiplier. 1.0 = tight single spacing (the only spacing now).
-pub const LINE_HEIGHT: f32 = 1.0;
 /// Padding inside the editor area.
 pub const PAD: f32 = 14.0;
 /// Hanging indent (logical px) for bullet-list paragraphs: the text is pushed
@@ -55,16 +54,21 @@ pub struct Editor {
     /// Where the editor wants to be scrolled to. Updated by the wheel /
     /// keyboard nav; `scroll_offset` interpolates toward it each frame.
     pub scroll_target: f32,
-    /// Per-line word-wrap row starts (byte offsets). Maintained by
-    /// `wrap::compute`, which recomputes a line only when its signature
-    /// (`wrap_sigs`) changes — NOT the whole document every frame.
-    pub wrap_rows: Vec<Vec<usize>>,
-    /// Per-line wrap-cache signatures, paired 1:1 with `wrap_rows`. A
-    /// computed row vec is never empty, so empty = "recompute me".
-    pub wrap_sigs: Vec<u64>,
-    /// Global wrap inputs (width/scale/font-size bits) the cache was built
+    /// Set when the caret moved and the view should follow it. Consumed by the
+    /// renderer, which is the only place wrap rows are guaranteed fresh — an
+    /// input handler running between an edit and the next frame would measure
+    /// against stale rows and scroll to the wrong place.
+    pub follow_caret: bool,
+    /// Per-line geometry cache — wrap rows, advances, row sizes, stacking.
+    /// Maintained by `layout::compute`, which rebuilds a line only when its
+    /// content signature changes, NOT the whole document every frame.
+    pub layout: Vec<LineLayout>,
+    /// Global layout inputs (width/scale/font-size bits) the cache was built
     /// against. Any change invalidates every line.
-    pub wrap_key: Option<(u32, u32, u32)>,
+    pub layout_key: Option<(u32, u32, u32)>,
+    /// Stacked height of every line including paragraph spacing, excluding the
+    /// editor's own padding. Maintained by `layout::compute`.
+    pub total_h: f32,
     pub scrollbar: ScrollbarState,
     pub(crate) undo_stack: Vec<crate::history::Snapshot>,
     pub(crate) redo_stack: Vec<crate::history::Snapshot>,
@@ -85,9 +89,10 @@ impl Editor {
             tab_id: 0,
             scroll_offset: 0.0,
             scroll_target: 0.0,
-            wrap_rows: vec![vec![0]],
-            wrap_sigs: vec![0],
-            wrap_key: None,
+            follow_caret: false,
+            layout: Vec::new(),
+            layout_key: None,
+            total_h: 0.0,
             scrollbar: ScrollbarState::new(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),

@@ -1,8 +1,9 @@
-use lntrn_render::{Color, FontStyle, FontWeight, Rect, TextRenderer};
+use lntrn_render::{Color, FontStyle, FontWeight, Rect};
 use lntrn_ui::gpu::{ContextMenu, FoxPalette, InteractionContext, MenuBar, MenuEvent};
 
+use crate::body;
 use crate::editor::{self, Editor};
-use crate::find_bar::{draw_find_bar, match_color, FindBar};
+use crate::find_bar::{draw_find_bar, FindBar};
 use crate::format::{Alignment, FormatSpan};
 use crate::ribbon;
 use crate::scrollbar;
@@ -27,38 +28,6 @@ pub fn editor_rect(wf: f32, hf: f32, s: f32, top_inset: f32) -> Rect {
     Rect::new(0.0, top, wf, (hf - top - bottom).max(0.0))
 }
 
-/// Measure the x-offset from content_x to a byte offset within a line,
-/// accounting for per-span font size and weight/style.
-pub fn measure_to_offset(
-    text: &mut TextRenderer,
-    editor: &Editor,
-    line: usize,
-    byte_offset: usize,
-    default_font_size: f32,
-) -> f32 {
-    if byte_offset == 0 {
-        return 0.0;
-    }
-    let line_str = &editor.lines[line];
-    let spans = editor.formats.get(line).iter_spans(line_str.len());
-    let mut x = 0.0;
-    for span in &spans {
-        if span.start >= byte_offset {
-            break;
-        }
-        let end = span.end.min(byte_offset);
-        let span_text = &line_str[span.start..end];
-        if !span_text.is_empty() {
-            let (fs, weight, style) = span_rendering(&span, default_font_size);
-            x += text.measure_width_full(span_text, fs, weight, style, span_family(&span));
-        }
-        if span.end >= byte_offset {
-            break;
-        }
-    }
-    x
-}
-
 /// Convert a FormatSpan's attrs into (font_size, FontWeight, FontStyle).
 pub(crate) fn span_rendering(span: &FormatSpan, default_font_size: f32) -> (f32, FontWeight, FontStyle) {
     let fs = span.attrs.font_size.unwrap_or(default_font_size);
@@ -81,22 +50,6 @@ pub fn alignment_offset(align: Alignment, content_max_w: f32, row_w: f32) -> f32
         Alignment::Center => (content_max_w - row_w).max(0.0) * 0.5,
         Alignment::Right => (content_max_w - row_w).max(0.0),
     }
-}
-
-/// Measure the pixel width of a byte range within a line.
-pub fn measure_range(
-    text: &mut TextRenderer,
-    editor: &Editor,
-    line: usize,
-    from: usize,
-    to: usize,
-    default_font_size: f32,
-) -> f32 {
-    if from >= to {
-        return 0.0;
-    }
-    measure_to_offset(text, editor, line, to, default_font_size)
-        - measure_to_offset(text, editor, line, from, default_font_size)
 }
 
 pub fn render_frame(
@@ -236,178 +189,59 @@ pub fn render_frame(
     toolbar::register_font_option_zones(fmt_toolbar, input, s);
     toolbar::register_size_option_zones(fmt_toolbar, &fmt_state, input, s);
 
-    // ── Compute word wraps ────────────────────────────────────────────
-    crate::wrap::compute(text, editor, content_max_w, s, font_size);
+    // ── Lay out the document ──────────────────────────────────────────
+    // Rebuilds only the lines whose content changed, and restacks. Everything
+    // below reads cached geometry; nothing measures text during a frame.
+    crate::layout::compute(text, editor, content_max_w, s, font_size);
 
-    // Build per-line and per-row y-start positions. Each wrap row's height is
-    // driven by the largest font size on that row, so big text gets a taller
-    // row (no overlap) — this is what makes font-size changes actually work.
-    let mut line_y_starts: Vec<f32> = Vec::with_capacity(editor.lines.len());
-    let mut row_y_starts: Vec<Vec<f32>> = Vec::with_capacity(editor.lines.len());
-    let mut y_accum = text_y_start;
-    for (i, wraps) in editor.wrap_rows.iter().enumerate() {
-        let para = editor.formats.get(i).para;
-        let line_len = editor.lines[i].len();
-        y_accum += para.space_before * s;
-        line_y_starts.push(y_accum);
-        let mut rows: Vec<f32> = Vec::with_capacity(wraps.len());
-        for (row_idx, &row_start) in wraps.iter().enumerate() {
-            let row_end = wraps.get(row_idx + 1).copied().unwrap_or(line_len);
-            rows.push(y_accum);
-            y_accum += editor.row_height(i, row_start, row_end, s);
-        }
-        row_y_starts.push(rows);
-        y_accum += para.space_after * s;
-    }
-
-    // Determine visible doc lines via y-coordinate comparison. A line's bottom
-    // edge is the last wrap row's y plus that row's (font-size-driven) height.
-    let first_doc = line_y_starts
-        .iter()
-        .enumerate()
-        .position(|(i, _)| {
-            let rows = &row_y_starts[i];
-            let last_idx = rows.len().saturating_sub(1);
-            let last_start = *editor.wrap_rows[i].last().unwrap_or(&0);
-            let line_len = editor.lines[i].len();
-            let last_h = editor.row_height(i, last_start, line_len, s);
-            rows.get(last_idx).map_or(false, |&ly| ly + last_h >= er.y)
-        })
-        .unwrap_or(0);
-    let last_doc = line_y_starts
-        .iter()
-        .position(|&y| y > er.y + er.h)
-        .unwrap_or(editor.lines.len())
-        .min(editor.lines.len());
-
-    /// Per-row x-offset for alignment + first-line indent + bullet hanging
-    /// indent (which applies to every row of a bullet paragraph).
-    #[inline]
-    fn row_x_offset(
-        text: &mut TextRenderer,
-        editor: &Editor,
-        line: usize,
-        row_idx: usize,
-        row_start: usize,
-        row_end: usize,
-        content_max_w: f32,
-        font_size: f32,
-        s: f32,
-    ) -> f32 {
-        let para = editor.formats.get(line).para;
-        let bullet = if para.bullet { editor::BULLET_INDENT * s } else { 0.0 };
-        let avail = (content_max_w - bullet).max(10.0);
-        let row_w = measure_range(text, editor, line, row_start, row_end, font_size);
-        let align = alignment_offset(para.alignment, avail, row_w);
-        let indent = if row_idx == 0 { para.first_indent * s } else { 0.0 };
-        bullet + align + indent
-    }
-
-    // ── Selection highlight ───────────────────────────────────────────
-    let sel_color = theme.selection_color();
-    if let Some((sel_start, sel_end)) = editor.selection_range() {
-        for i in first_doc..last_doc {
-            let line_len = editor.lines[i].len();
-            let (sel_begin, sel_finish) = if i < sel_start.line || i > sel_end.line {
-                continue;
-            } else if i == sel_start.line && i == sel_end.line {
-                (sel_start.col, sel_end.col)
-            } else if i == sel_start.line {
-                (sel_start.col, line_len)
-            } else if i == sel_end.line {
-                (0, sel_end.col)
+    // ── Follow the caret ──────────────────────────────────────────────
+    // Resolved here, where the layout is guaranteed fresh: the scroll TARGET is
+    // nudged so the caret's row sits inside the viewport and the animation tick
+    // eases the visible offset over. Without this the caret walks off-screen on
+    // arrow keys, typing, and find-jumps.
+    if editor.follow_caret {
+        editor.follow_caret = false;
+        let (row_idx, _, _) = editor.caret_row();
+        let c_line = editor.cursor_line.min(editor.laid_out_lines().saturating_sub(1));
+        let caret_row = editor.line_layout(c_line).and_then(|l| {
+            let h = *l.row_h.get(row_idx)?;
+            Some((text_y_start + l.top + l.row_offset_y(row_idx), h))
+        });
+        if let Some((y, row_h)) = caret_row {
+            // Keep half a pad of breathing room between caret row and edge.
+            let margin = pad * 0.5;
+            let delta = if y - margin < er.y {
+                (y - margin) - er.y
+            } else if y + row_h + margin > er.y + er.h {
+                (y + row_h + margin) - (er.y + er.h)
             } else {
-                (0, line_len)
+                0.0
             };
-
-            let wraps = &editor.wrap_rows[i];
-            for (row_idx, &row_start) in wraps.iter().enumerate() {
-                let row_end = wraps.get(row_idx + 1).copied().unwrap_or(line_len);
-                let y = row_y_starts[i][row_idx];
-                let row_h = editor.row_height(i, row_start, row_end, s);
-                if y + row_h < er.y || y > er.y + er.h {
-                    continue;
-                }
-                let x_off = row_x_offset(
-                    text, editor, i, row_idx, row_start, row_end,
-                    content_max_w, font_size, s,
-                );
-
-                let hl_start = sel_begin.max(row_start);
-                let hl_end = sel_finish.min(row_end);
-                if hl_start >= hl_end {
-                    if i != sel_end.line && row_idx == wraps.len() - 1 && sel_finish >= row_end {
-                        let x_end = content_x + x_off
-                            + measure_range(text, editor, i, row_start, row_end, font_size);
-                        painter.rect_filled(
-                            Rect::new(x_end, y, font_size * 0.4, row_h),
-                            0.0,
-                            sel_color,
-                        );
-                    }
-                    continue;
-                }
-
-                let x1 = content_x + x_off
-                    + measure_range(text, editor, i, row_start, hl_start, font_size);
-                let x2 = content_x + x_off
-                    + measure_range(text, editor, i, row_start, hl_end, font_size);
-                let extra =
-                    if i != sel_end.line && row_idx == wraps.len() - 1 && hl_end == line_len {
-                        font_size * 0.4
-                    } else {
-                        0.0
-                    };
-                if x2 > x1 || extra > 0.0 {
-                    painter.rect_filled(
-                        Rect::new(x1, y, (x2 - x1) + extra, row_h),
-                        0.0,
-                        sel_color,
-                    );
-                }
+            if delta != 0.0 {
+                let max = (editor.content_height(s) - er.h).max(0.0);
+                // `y` was measured against scroll_offset, so offset is the base.
+                editor.scroll_target = (editor.scroll_offset + delta).clamp(0.0, max);
+                editor.scrollbar.ping();
             }
         }
     }
 
-    // ── Find-bar match highlights ─────────────────────────────────────
+    // Visible line range, by binary search over the stacked line tops.
+    let geom = body::BodyGeom {
+        er,
+        content_x,
+        content_max_w,
+        text_y: text_y_start,
+        font_size,
+        scale: s,
+        first: editor.line_at_doc_y(er.y - text_y_start),
+        last: editor.line_after_doc_y(er.y + er.h - text_y_start),
+    };
+
+    // ── Selection + find highlights ───────────────────────────────────
+    body::draw_selection(painter, editor, &geom, theme.selection_color());
     if !find_bar.matches.is_empty() {
-        for (m_idx, m) in find_bar.matches.iter().enumerate() {
-            if m.line < first_doc || m.line >= last_doc {
-                continue;
-            }
-            let wraps = &editor.wrap_rows[m.line];
-            for (row_idx, &row_start) in wraps.iter().enumerate() {
-                let row_end = wraps
-                    .get(row_idx + 1)
-                    .copied()
-                    .unwrap_or_else(|| editor.lines[m.line].len());
-                if m.end <= row_start || m.start >= row_end {
-                    continue;
-                }
-                let y = row_y_starts[m.line][row_idx];
-                let row_h = editor.row_height(m.line, row_start, row_end, s);
-                if y + row_h < er.y || y > er.y + er.h {
-                    continue;
-                }
-                let x_off = row_x_offset(
-                    text, editor, m.line, row_idx, row_start, row_end,
-                    content_max_w, font_size, s,
-                );
-                let hl_start = m.start.max(row_start);
-                let hl_end = m.end.min(row_end);
-                let x1 = content_x + x_off
-                    + measure_range(text, editor, m.line, row_start, hl_start, font_size);
-                let x2 = content_x + x_off
-                    + measure_range(text, editor, m.line, row_start, hl_end, font_size);
-                if x2 > x1 {
-                    painter.rect_filled(
-                        Rect::new(x1, y, x2 - x1, row_h),
-                        2.0 * s,
-                        match_color(m_idx == find_bar.current, theme),
-                    );
-                }
-            }
-        }
+        body::draw_matches(painter, editor, find_bar, &geom, theme);
     }
 
     // ── Clip the editor body so headings / large fonts can't bleed
@@ -415,87 +249,7 @@ pub fn render_frame(
     painter.push_clip(er);
     text.push_clip([er.x, er.y, er.w, er.h]);
 
-    // ── Draw text lines with formatting spans ─────────────────────────
-    for i in first_doc..last_doc {
-        let line_str = &editor.lines[i];
-        let wraps = &editor.wrap_rows[i];
-
-        let para = editor.formats.get(i).para;
-        for (row_idx, &row_start) in wraps.iter().enumerate() {
-            let row_end = wraps.get(row_idx + 1).copied().unwrap_or(line_str.len());
-            let y = row_y_starts[i][row_idx];
-            let row_h = editor.row_height(i, row_start, row_end, s);
-            if y + row_h < er.y || y > er.y + er.h {
-                continue;
-            }
-
-            // Bullet glyph on the first row of a bullet paragraph (even when the
-            // line has no text yet). The dot is centered on the text's visual
-            // midline (~0.58 of the font size below the row top, where glyph ink
-            // actually sits given the 1.2 line-height), not the row-box middle.
-            if para.bullet && row_idx == 0 {
-                let row_fs = editor.row_font_size(i, row_start, row_end) * s;
-                let dot_r = (row_fs * 0.16).max(4.0 * s);
-                let dot_x = content_x + editor::BULLET_INDENT * 0.5 * s;
-                let dot_y = y + row_fs * 0.58;
-                painter.circle_filled(dot_x, dot_y, dot_r, pal.text);
-            }
-
-            if row_start >= row_end {
-                continue;
-            }
-
-            let x_off = row_x_offset(
-                text, editor, i, row_idx, row_start, row_end,
-                content_max_w, font_size, s,
-            );
-
-            // Draw format spans clipped to this wrap row.
-            let spans = editor.formats.get(i).iter_spans(line_str.len());
-            let mut x = content_x + x_off;
-            for span in &spans {
-                if span.end <= row_start || span.start >= row_end {
-                    continue;
-                }
-                let clip_start = span.start.max(row_start);
-                let clip_end = span.end.min(row_end);
-                let span_text = &line_str[clip_start..clip_end];
-                if span_text.is_empty() {
-                    continue;
-                }
-
-                let (fs, weight, style) = span_rendering(&span, font_size);
-                let family = span_family(&span);
-                let span_color = match span.attrs.color {
-                    Some(rgb) => Color::from_rgb8(
-                        ((rgb >> 16) & 0xFF) as u8,
-                        ((rgb >> 8) & 0xFF) as u8,
-                        (rgb & 0xFF) as u8,
-                    ),
-                    None => pal.text,
-                };
-
-                // Slack on the layout bound: quantization can round an
-                // exact-width bound down and clip the row's last glyph.
-                text.queue_full(
-                    span_text, fs, x, y, span_color, content_max_w + 4.0 * s, weight, style,
-                    family, w, h,
-                );
-                let span_w = text.measure_width_full(span_text, fs, weight, style, family);
-
-                if span.attrs.underline {
-                    let ul_y = y + fs + 2.0 * s;
-                    painter.line(x, ul_y, x + span_w, ul_y, 1.5 * s, pal.text);
-                }
-                if span.attrs.strikethrough {
-                    let st_y = y + fs * 0.55;
-                    painter.line(x, st_y, x + span_w, st_y, 1.5 * s, pal.text);
-                }
-
-                x += span_w;
-            }
-        }
-    }
+    body::draw_text(painter, text, editor, &geom, pal, w, h);
 
     // Done with editor body — release the clip so chrome can paint freely.
     painter.pop_clip();
@@ -545,38 +299,9 @@ pub fn render_frame(
 
             // Cursor overlay (on top of text, but not on top of menus).
             if cursor_visible && !menu_bar.context_menu.is_open() && !context_menu.is_open() {
-                let c_line = editor.cursor_line;
-                let c_wraps = &editor.wrap_rows[c_line];
-                let c_row_idx = c_wraps
-                    .partition_point(|&s| s <= editor.cursor_col)
-                    .saturating_sub(1);
-                let c_row_start = c_wraps[c_row_idx];
-                let c_row_end = c_wraps.get(c_row_idx + 1).copied().unwrap_or(editor.lines[c_line].len());
-                let c_row_h = editor.row_height(c_line, c_row_start, c_row_end, s);
-                let cursor_y = row_y_starts[c_line][c_row_idx];
-                // Caret height tracks the row's font size so it's tall on big text.
-                let caret_fs = editor.row_font_size(c_line, c_row_start, c_row_end) * s;
-                let c_x_off = row_x_offset(
-                    text, editor, c_line, c_row_idx, c_row_start, c_row_end,
-                    content_max_w, font_size, s,
-                );
-                let cursor_x = content_x + c_x_off
-                    + measure_range(
-                        text,
-                        editor,
-                        c_line,
-                        c_row_start,
-                        editor.cursor_col,
-                        font_size,
-                    );
-
-                if cursor_y + c_row_h > er.y && cursor_y < er.y + er.h {
+                if let Some(caret) = body::caret_rect(editor, &geom) {
                     painter.clear();
-                    painter.rect_filled(
-                        Rect::new(cursor_x, cursor_y, 2.5 * s, caret_fs + 2.0 * s),
-                        0.0,
-                        pal.accent,
-                    );
+                    painter.rect_filled(caret, 0.0, pal.accent);
                     painter.render_pass_overlay(ctx, frame.encoder_mut(), &view);
                 }
             }

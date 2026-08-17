@@ -426,7 +426,6 @@ mod tests {
         let mut e = crate::editor::Editor::new();
         e.lines = vec!["hello world".to_string()];
         e.formats = DocFormats::new(1);
-        e.wrap_rows = vec![vec![0]];
         e.formats.get_mut(0).apply_format(6, 11, |a| a.bold = true);
         e.formats.get_mut(0).para.bullet = true;
         e.file_path = Some(path.clone());

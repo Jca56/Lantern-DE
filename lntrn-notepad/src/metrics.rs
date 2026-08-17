@@ -1,8 +1,10 @@
-//! Editor layout metrics — row heights, total content height, and the
-//! y/x → document-position mapping used by clicks and scrolling. Pulled out
-//! of `editor.rs` so that file stays focused on state + editing ops.
+//! Editor layout queries — content height, and the y/x → document-position
+//! mapping used by clicks and scrolling. Everything here reads the per-line
+//! cache in `layout.rs`; nothing measures text. Pulled out of `editor.rs` so
+//! that file stays focused on state + editing ops.
 
-use crate::editor::{Editor, FONT_SIZE, LINE_HEIGHT, PAD};
+use crate::editor::{Editor, FONT_SIZE, PAD};
+use crate::layout::LineLayout;
 
 /// Clamp `i` into `line` and walk back to the nearest char boundary.
 fn snap_floor(line: &str, i: usize) -> usize {
@@ -16,43 +18,59 @@ fn snap_floor(line: &str, i: usize) -> usize {
 impl Editor {
     /// The largest font size (logical px, unscaled) used by any span within the
     /// byte range `[start, end)` of `line`. Falls back to the default size when
-    /// the range is empty or has no size overrides. This is what drives a wrap
-    /// row's height so larger text gets a taller row (no overlap).
+    /// the range is empty or has no size overrides. Drives caret height and
+    /// bullet size; row heights come pre-computed from the layout cache.
     pub fn row_font_size(&self, line: usize, start: usize, end: usize) -> f32 {
-        // Allocation-free: this runs for every wrap row every frame, and the
-        // old `iter_spans` path allocated a Vec per call.
         self.formats
             .get(line)
             .max_font_size_in(start, end)
             .map_or(FONT_SIZE, |fs| fs.max(FONT_SIZE))
     }
 
-    /// Physical height of a single wrap row: its max span font size ×
-    /// line spacing × scale.
-    pub fn row_height(&self, line: usize, start: usize, end: usize, scale: f32) -> f32 {
-        let para = self.formats.get(line).para;
-        self.row_font_size(line, start, end) * para.line_spacing * scale
+    /// The layout of `line`, or `None` if the cache has not caught up with an
+    /// edit yet (input events can land between an edit and the next frame).
+    pub fn line_layout(&self, line: usize) -> Option<&LineLayout> {
+        if line >= self.lines.len() {
+            return None;
+        }
+        self.layout.get(line)
     }
 
-    /// Total content height in physical pixels (accounts for word-wrap rows,
-    /// per-row font size, and spacing before+after each paragraph).
+    /// How many lines have valid layout. Edits grow `lines` before the next
+    /// frame rebuilds `layout`, so every walk stops here.
+    pub fn laid_out_lines(&self) -> usize {
+        self.lines.len().min(self.layout.len())
+    }
+
+    /// Total content height in physical pixels. O(1) — the stacking pass keeps
+    /// the running total, which used to be a full-document walk per query (and
+    /// the scrollbar asks for it every single frame).
     pub fn content_height(&self, scale: f32) -> f32 {
-        let mut h = PAD * scale * 2.0;
-        if self.wrap_rows.len() == self.lines.len() {
-            for (i, wraps) in self.wrap_rows.iter().enumerate() {
-                let para = self.formats.get(i).para;
-                let line_len = self.lines[i].len();
-                for (row_idx, &row_start) in wraps.iter().enumerate() {
-                    let row_end = wraps.get(row_idx + 1).copied().unwrap_or(line_len);
-                    h += self.row_height(i, row_start, row_end, scale);
-                }
-                h += (para.space_before + para.space_after) * scale;
-            }
-        } else {
-            let row_h = FONT_SIZE * LINE_HEIGHT * scale;
-            h += self.lines.len() as f32 * row_h;
+        PAD * scale * 2.0 + self.total_h
+    }
+
+    /// Screen y where the document's first row starts, at the current scroll.
+    pub fn text_origin_y(&self, editor_rect: lntrn_render::Rect, scale: f32) -> f32 {
+        editor_rect.y + PAD * scale * 1.5 - self.scroll_offset
+    }
+
+    /// Index of the first line whose bottom edge reaches `y_doc` (doc-space y,
+    /// measured from the text origin). Binary search over the stacked tops.
+    pub fn line_at_doc_y(&self, y_doc: f32) -> usize {
+        let n = self.laid_out_lines();
+        if n == 0 {
+            return 0;
         }
-        h
+        self.layout[..n]
+            .partition_point(|l| l.top + l.height < y_doc)
+            .min(n - 1)
+    }
+
+    /// Index of the first line that starts below `y_doc` — the exclusive end of
+    /// a visible range.
+    pub fn line_after_doc_y(&self, y_doc: f32) -> usize {
+        let n = self.laid_out_lines();
+        self.layout[..n].partition_point(|l| l.top <= y_doc)
     }
 
     /// Resolve which doc line and wrap-row byte range a click y falls on.
@@ -63,78 +81,52 @@ impl Editor {
         editor_rect: lntrn_render::Rect,
         scale: f32,
     ) -> (usize, usize, usize) {
-        let text_y_start = editor_rect.y + PAD * scale * 1.5 - self.scroll_offset;
-        let mut y = text_y_start;
-
-        // `wrap_rows` is only refreshed at render time, so an input event
-        // processed between an edit and the next frame sees stale rows: cap
-        // the line count and snap every byte offset back into the live line.
-        // (`content_height` has the same guard; clicking must too.)
-        let n = self.lines.len().min(self.wrap_rows.len());
-        for i in 0..n {
-            let wraps = &self.wrap_rows[i];
-            let line = &self.lines[i];
-            let para = self.formats.get(i).para;
-            y += para.space_before * scale;
-            for (row_idx, &row_start) in wraps.iter().enumerate() {
-                let start = snap_floor(line, row_start);
-                let end = snap_floor(
-                    line,
-                    wraps.get(row_idx + 1).copied().unwrap_or(line.len()),
-                )
-                .max(start);
-                let row_h = self.row_height(i, start, end, scale);
-                if cy < y + row_h {
-                    return (i, start, end);
-                }
-                y += row_h;
-            }
-            y += para.space_after * scale;
+        let n = self.laid_out_lines();
+        if n == 0 {
+            let last = self.lines.len().saturating_sub(1);
+            return (last, 0, self.lines[last].len());
         }
+        let y_doc = cy - self.text_origin_y(editor_rect, scale);
+        let i = self.line_at_doc_y(y_doc);
+        let line = &self.lines[i];
+        let l = &self.layout[i];
 
-        let last = self.lines.len() - 1;
-        let line = &self.lines[last];
-        let last_start =
-            snap_floor(line, *self.wrap_rows.get(last).and_then(|w| w.last()).unwrap_or(&0));
-        (last, last_start, line.len())
+        let mut ry = l.top;
+        let last_row = l.row_count().saturating_sub(1);
+        for idx in 0..l.row_count() {
+            let h = l.row_h[idx];
+            if y_doc < ry + h || idx == last_row {
+                let (s, e) = l.row_range(idx, line.len());
+                let s = snap_floor(line, s);
+                return (i, s, snap_floor(line, e).max(s));
+            }
+            ry += h;
+        }
+        (i, 0, line.len())
     }
 
-    /// Find the byte column closest to click x within a wrap-row byte range.
-    /// `content_x` is the pixel x where text starts (accounts for page
-    /// centering, padding, alignment offset, and first-line indent).
-    pub fn col_at_x(
-        &self,
-        cx: f32,
-        line_idx: usize,
-        row_start: usize,
-        row_end: usize,
-        content_x: f32,
-        mut measure_fn: impl FnMut(usize) -> f32,
-    ) -> usize {
-        let rel_x = (cx - content_x).max(0.0);
-
-        if line_idx >= self.lines.len() {
-            return 0;
-        }
+    /// Byte column nearest to `rel_x` pixels from the row's text start.
+    pub fn col_at_x(&self, rel_x: f32, line_idx: usize, row_start: usize, row_end: usize) -> usize {
+        let Some(l) = self.line_layout(line_idx) else {
+            return row_start;
+        };
         let line = &self.lines[line_idx];
-        // Row bounds may come from stale wrap data — snap before slicing.
-        let row_start = snap_floor(line, row_start);
-        let row_end = snap_floor(line, row_end).max(row_start);
-        let char_offsets: Vec<usize> = line[row_start..row_end]
-            .char_indices()
-            .map(|(i, _)| row_start + i)
-            .chain(std::iter::once(row_end))
-            .collect();
+        let start = snap_floor(line, row_start);
+        let end = snap_floor(line, row_end).max(start);
+        snap_floor(line, l.col_at_x(rel_x, start, end))
+    }
 
-        let mut best_col = row_start;
-        let mut best_dist = f32::MAX;
-        for &byte_off in &char_offsets {
-            let dist = (measure_fn(byte_off) - rel_x).abs();
-            if dist < best_dist {
-                best_dist = dist;
-                best_col = byte_off;
+    /// The wrap row the caret sits on, as `(row_index, row_start, row_end)`.
+    pub fn caret_row(&self) -> (usize, usize, usize) {
+        let line = self.cursor_line.min(self.lines.len().saturating_sub(1));
+        let line_len = self.lines[line].len();
+        match self.line_layout(line) {
+            Some(l) => {
+                let idx = l.row_at(self.cursor_col);
+                let (s, e) = l.row_range(idx, line_len);
+                (idx, s, e)
             }
+            None => (0, 0, line_len),
         }
-        best_col
     }
 }

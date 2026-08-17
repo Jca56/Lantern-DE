@@ -19,9 +19,9 @@ impl Editor {
         let (lines, formats) = crate::persist::parse(&path, &content);
         self.lines = lines;
         self.formats = formats;
-        self.wrap_rows = vec![vec![0]; self.lines.len()];
-        self.wrap_sigs = vec![0; self.lines.len()];
-        self.wrap_key = None;
+        self.layout.clear();
+        self.layout_key = None;
+        self.total_h = 0.0;
         self.filename = path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())

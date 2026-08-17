@@ -53,8 +53,16 @@ pub fn handle_event(handler: &mut TextHandler, event: &MenuEvent) -> bool {
     };
     match *id {
         CTX_COPY => actions::do_copy(handler),
-        CTX_CUT => actions::do_cut(handler),
-        CTX_PASTE => actions::do_paste(handler),
+        // Cut/Paste move the caret — bring the view along (Select All parks it
+        // at EOF without the user going there, so that one stays put).
+        CTX_CUT => {
+            actions::do_cut(handler);
+            handler.editor_mut().follow_caret = true;
+        }
+        CTX_PASTE => {
+            actions::do_paste(handler);
+            handler.editor_mut().follow_caret = true;
+        }
         CTX_SELECT_ALL => handler.editor_mut().select_all(),
         _ => return false,
     }

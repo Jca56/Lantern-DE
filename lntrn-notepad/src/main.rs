@@ -1,4 +1,5 @@
 mod actions;
+mod body;
 mod clipboard;
 mod context_menu;
 mod crash_log;
@@ -9,6 +10,7 @@ mod fonts;
 mod history;
 mod format;
 mod keys;
+mod layout;
 mod metrics;
 mod mouse;
 mod page;
@@ -27,7 +29,6 @@ mod title_bar;
 mod tokens;
 mod toolbar;
 mod window_size;
-mod wrap;
 
 use std::time::{Duration, Instant};
 
@@ -438,9 +439,17 @@ impl ApplicationHandler for TextHandler {
                     return;
                 }
                 let mods = self.modifiers;
-                if let KeyAction::Consumed = keys::handle_key(self, &event.logical_key, mods) {
-                    self.reset_blink();
-                    self.needs_redraw = true;
+                match keys::handle_key(self, &event.logical_key, mods) {
+                    KeyAction::Consumed => {
+                        self.reset_blink();
+                        self.editor_mut().follow_caret = true;
+                        self.needs_redraw = true;
+                    }
+                    KeyAction::ConsumedNoScroll => {
+                        self.reset_blink();
+                        self.needs_redraw = true;
+                    }
+                    KeyAction::Ignored => {}
                 }
             }
 
@@ -554,6 +563,13 @@ impl ApplicationHandler for TextHandler {
                 tab.scroll_offset = tab.scroll_target;
             }
         }
+        // ── Drag-select edge auto-scroll ──────────────────────────────
+        // Driven on the tick, not on CursorMoved: holding the pointer still at
+        // the edge produces no motion events, but the view must keep travelling.
+        if mouse::tick_drag_scroll(self, dt) {
+            animating = true;
+        }
+
         if animating {
             self.needs_redraw = true;
         }
