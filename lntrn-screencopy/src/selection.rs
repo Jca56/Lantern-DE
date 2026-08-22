@@ -30,9 +30,18 @@ pub enum HandleEdge {
 #[derive(Clone, Copy, PartialEq)]
 pub enum DragMode {
     None,
-    New { start_x: f32, start_y: f32 },
-    Handle { edge: HandleEdge, orig: (f32, f32, f32, f32) },
-    Move { offset_x: f32, offset_y: f32 },
+    New {
+        start_x: f32,
+        start_y: f32,
+    },
+    Handle {
+        edge: HandleEdge,
+        orig: (f32, f32, f32, f32),
+    },
+    Move {
+        offset_x: f32,
+        offset_y: f32,
+    },
 }
 
 impl Selection {
@@ -64,14 +73,30 @@ impl Selection {
         let in_x = cx >= x - half && cx <= x + w + half;
         let in_y = cy >= y - half && cy <= y + h + half;
 
-        if on_top && on_left { return Some(HandleEdge::TopLeft); }
-        if on_top && on_right { return Some(HandleEdge::TopRight); }
-        if on_bottom && on_left { return Some(HandleEdge::BottomLeft); }
-        if on_bottom && on_right { return Some(HandleEdge::BottomRight); }
-        if on_top && in_x { return Some(HandleEdge::Top); }
-        if on_bottom && in_x { return Some(HandleEdge::Bottom); }
-        if on_left && in_y { return Some(HandleEdge::Left); }
-        if on_right && in_y { return Some(HandleEdge::Right); }
+        if on_top && on_left {
+            return Some(HandleEdge::TopLeft);
+        }
+        if on_top && on_right {
+            return Some(HandleEdge::TopRight);
+        }
+        if on_bottom && on_left {
+            return Some(HandleEdge::BottomLeft);
+        }
+        if on_bottom && on_right {
+            return Some(HandleEdge::BottomRight);
+        }
+        if on_top && in_x {
+            return Some(HandleEdge::Top);
+        }
+        if on_bottom && in_x {
+            return Some(HandleEdge::Bottom);
+        }
+        if on_left && in_y {
+            return Some(HandleEdge::Left);
+        }
+        if on_right && in_y {
+            return Some(HandleEdge::Right);
+        }
         None
     }
 

@@ -65,17 +65,33 @@ pub struct Settings {
     pub split_right_view: String,
 }
 
-fn default_split_ratio() -> f32 { 0.5 }
+fn default_split_ratio() -> f32 {
+    0.5
+}
 
-fn default_preview_width() -> f32 { 360.0 }
-fn default_view_mode() -> String { "grid".into() }
+fn default_preview_width() -> f32 {
+    360.0
+}
+fn default_view_mode() -> String {
+    "grid".into()
+}
 
-fn default_desktop_opacity() -> f32 { 0.0 }
-fn default_desktop_w() -> f32 { 800.0 }
-fn default_desktop_h() -> f32 { 600.0 }
+fn default_desktop_opacity() -> f32 {
+    0.0
+}
+fn default_desktop_w() -> f32 {
+    800.0
+}
+fn default_desktop_h() -> f32 {
+    600.0
+}
 
-fn default_sort() -> String { "name".into() }
-fn default_sort_dir() -> String { "asc".into() }
+fn default_sort() -> String {
+    "name".into()
+}
+fn default_sort_dir() -> String {
+    "asc".into()
+}
 
 impl Default for Settings {
     fn default() -> Self {
@@ -113,10 +129,14 @@ impl Settings {
     fn config_path() -> PathBuf {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
         let new = PathBuf::from(&home).join(".lantern/config/file-manager.json");
-        if new.exists() { return new; }
+        if new.exists() {
+            return new;
+        }
         // Old path fallback for migration
         let old = PathBuf::from(&home).join(".config/lantern/fox.json");
-        if old.exists() { return old; }
+        if old.exists() {
+            return old;
+        }
         new
     }
 
@@ -151,7 +171,8 @@ impl Settings {
             crate::app::ViewMode::Grid => "grid",
             crate::app::ViewMode::List => "list",
             crate::app::ViewMode::Tree => "tree",
-        }.into();
+        }
+        .into();
     }
 
     pub fn sort_by_enum(&self) -> crate::fs::SortBy {
@@ -176,7 +197,8 @@ impl Settings {
             crate::fs::SortBy::Size => "size",
             crate::fs::SortBy::Date => "date",
             crate::fs::SortBy::Type => "type",
-        }.into();
+        }
+        .into();
     }
 
     pub fn sort_dir_enum(&self) -> crate::fs::SortDir {
@@ -190,6 +212,7 @@ impl Settings {
         self.sort_dir = match dir {
             crate::fs::SortDir::Asc => "asc",
             crate::fs::SortDir::Desc => "desc",
-        }.into();
+        }
+        .into();
     }
 }

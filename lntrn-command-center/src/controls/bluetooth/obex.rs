@@ -137,7 +137,10 @@ fn obex_thread(tx: mpsc::Sender<BtEvent>, cmd_rx: mpsc::Receiver<ObexCmd>) {
     // failure (sends don't need it).
     let agent_ok = register_agent(&mut conn);
     if agent_ok {
-        tracing::info!(path = AGENT_PATH, "OBEX agent registered — ready to receive");
+        tracing::info!(
+            path = AGENT_PATH,
+            "OBEX agent registered — ready to receive"
+        );
     } else {
         tracing::warn!("OBEX agent registration failed — receiving disabled (already-registered conflict? bluez-obex missing?)");
     }
@@ -269,19 +272,14 @@ fn obex_thread(tx: mpsc::Sender<BtEvent>, cmd_rx: mpsc::Receiver<ObexCmd>) {
                     Direction::Receive => {
                         // No dedicated incoming-failed event; surface as
                         // a generic error so the UI can show it.
-                        let _ = tx.send(BtEvent::Error(format!(
-                            "Receive failed: {}",
-                            msg
-                        )));
+                        let _ = tx.send(BtEvent::Error(format!("Receive failed: {}", msg)));
                     }
                 },
             }
         }
 
         // 4) Periodic property poll as a fallback for missed signals.
-        if !active.is_empty()
-            && last_poll.elapsed().as_millis() >= PROGRESS_POLL_MS as u128
-        {
+        if !active.is_empty() && last_poll.elapsed().as_millis() >= PROGRESS_POLL_MS as u128 {
             let mut updates: Vec<(usize, FinishKind)> = Vec::new();
             for (i, t) in active.iter_mut().enumerate() {
                 match poll_transfer_status(&mut conn, &t.transfer_path) {
@@ -408,9 +406,7 @@ fn create_session(conn: &mut Connection, mac: &str) -> Result<String, String> {
         .read_reply(serial)
         .map_err(|e| format!("OBEX session failed: {e}"))?;
     if reply.is_error() {
-        return Err(
-            "Failed to create OBEX session — is bluez-obex installed and running?".into(),
-        );
+        return Err("Failed to create OBEX session — is bluez-obex installed and running?".into());
     }
 
     let mut reader = BodyReader::new(&reply.body, &reply.signature);
@@ -432,14 +428,7 @@ fn push_file(
     let mut body = Vec::new();
     encode_string(&mut body, file_path);
 
-    let serial = conn.method_call(
-        OBEX_DEST,
-        session,
-        OBEX_PUSH_IFACE,
-        "SendFile",
-        "s",
-        &body,
-    );
+    let serial = conn.method_call(OBEX_DEST, session, OBEX_PUSH_IFACE, "SendFile", "s", &body);
     let reply = conn
         .read_reply(serial)
         .map_err(|e| format!("SendFile failed: {e}"))?;
@@ -485,7 +474,14 @@ fn remove_session(conn: &mut Connection, session: &str) {
 }
 
 fn cancel_transfer(conn: &mut Connection, transfer_path: &str) {
-    conn.method_call(OBEX_DEST, transfer_path, OBEX_TRANSFER_IFACE, "Cancel", "", &[]);
+    conn.method_call(
+        OBEX_DEST,
+        transfer_path,
+        OBEX_TRANSFER_IFACE,
+        "Cancel",
+        "",
+        &[],
+    );
 }
 
 // ── Progress polling ───────────────────────────────────────────────────────
@@ -496,10 +492,7 @@ enum TransferPoll {
     Error(String),
 }
 
-fn poll_transfer_status(
-    conn: &mut Connection,
-    transfer_path: &str,
-) -> Option<TransferPoll> {
+fn poll_transfer_status(conn: &mut Connection, transfer_path: &str) -> Option<TransferPoll> {
     let status = get_property_string(conn, transfer_path, OBEX_TRANSFER_IFACE, "Status")?;
     match status.as_str() {
         "complete" => Some(TransferPoll::Complete),
@@ -508,8 +501,8 @@ fn poll_transfer_status(
             let transferred =
                 get_property_u64(conn, transfer_path, OBEX_TRANSFER_IFACE, "Transferred")
                     .unwrap_or(0);
-            let total = get_property_u64(conn, transfer_path, OBEX_TRANSFER_IFACE, "Size")
-                .unwrap_or(0);
+            let total =
+                get_property_u64(conn, transfer_path, OBEX_TRANSFER_IFACE, "Size").unwrap_or(0);
             Some(TransferPoll::Active { transferred, total })
         }
         _ => None,
@@ -536,12 +529,7 @@ fn get_property_string(
         .and_then(|v| v.as_str().map(|s| s.to_string()))
 }
 
-fn get_property_u64(
-    conn: &mut Connection,
-    path: &str,
-    iface: &str,
-    prop: &str,
-) -> Option<u64> {
+fn get_property_u64(conn: &mut Connection, path: &str, iface: &str, prop: &str) -> Option<u64> {
     let mut body = Vec::new();
     encode_string(&mut body, iface);
     encode_string(&mut body, prop);
@@ -587,11 +575,10 @@ fn handle_agent_call(
             let mut reader = BodyReader::new(&msg.body, &msg.signature);
             let transfer_path = reader.read_string();
 
-            let filename =
-                get_property_string(conn, &transfer_path, OBEX_TRANSFER_IFACE, "Name")
-                    .unwrap_or_else(|| "unknown".into());
-            let size = get_property_u64(conn, &transfer_path, OBEX_TRANSFER_IFACE, "Size")
-                .unwrap_or(0);
+            let filename = get_property_string(conn, &transfer_path, OBEX_TRANSFER_IFACE, "Name")
+                .unwrap_or_else(|| "unknown".into());
+            let size =
+                get_property_u64(conn, &transfer_path, OBEX_TRANSFER_IFACE, "Size").unwrap_or(0);
             let device_name = sender_device_name(conn, &transfer_path);
 
             let auth_id = *next_auth_id;
@@ -685,8 +672,7 @@ fn handle_progress_signal(
                 match status {
                     "complete" => transfer.finished = Some(FinishKind::Complete),
                     "error" => {
-                        transfer.finished =
-                            Some(FinishKind::Error("Transfer failed".into()));
+                        transfer.finished = Some(FinishKind::Error("Transfer failed".into()));
                     }
                     _ => {}
                 }

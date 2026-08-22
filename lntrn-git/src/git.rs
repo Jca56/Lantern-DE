@@ -45,14 +45,14 @@ pub struct RepoStatus {
 /// Find git repos in common locations (scans 2 levels deep).
 pub fn find_repos() -> Vec<PathBuf> {
     let home = std::env::var("HOME").unwrap_or_default();
-    let search_dirs = [
-        format!("{home}/Projects"),
-    ];
+    let search_dirs = [format!("{home}/Projects")];
 
     let mut repos = Vec::new();
     for dir in &search_dirs {
         let path = Path::new(dir);
-        if !path.is_dir() { continue; }
+        if !path.is_dir() {
+            continue;
+        }
         scan_repos(path, &mut repos, 2);
     }
     repos.sort();
@@ -61,14 +61,22 @@ pub fn find_repos() -> Vec<PathBuf> {
 }
 
 fn scan_repos(dir: &Path, repos: &mut Vec<PathBuf>, depth: u32) {
-    if depth == 0 { return; }
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    if depth == 0 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let p = entry.path();
-        if !p.is_dir() { continue; }
+        if !p.is_dir() {
+            continue;
+        }
         // Skip hidden dirs (except .config which we explicitly search)
         if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
-            if name.starts_with('.') { continue; }
+            if name.starts_with('.') {
+                continue;
+            }
         }
         if p.join(".git").exists() {
             repos.push(p);
@@ -84,7 +92,8 @@ pub fn current_branch(repo: &Path) -> String {
         .args(["branch", "--show-current"])
         .current_dir(repo)
         .output();
-    output.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    output
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_else(|_| "unknown".into())
 }
 
@@ -95,7 +104,9 @@ pub fn ahead_behind(repo: &Path) -> (u32, u32) {
         .current_dir(repo)
         .output();
     let Ok(output) = output else { return (0, 0) };
-    if !output.status.success() { return (0, 0); }
+    if !output.status.success() {
+        return (0, 0);
+    }
     let s = String::from_utf8_lossy(&output.stdout);
     let parts: Vec<&str> = s.trim().split_whitespace().collect();
     if parts.len() == 2 {
@@ -115,7 +126,9 @@ pub fn submodule_paths(repo: &Path) -> Vec<String> {
         .args(["ls-files", "--stage"])
         .current_dir(repo)
         .output();
-    let Ok(output) = output else { return Vec::new() };
+    let Ok(output) = output else {
+        return Vec::new();
+    };
     // Submodules show as mode 160000 in the index
     String::from_utf8_lossy(&output.stdout)
         .lines()
@@ -146,7 +159,9 @@ pub fn status(repo: &Path) -> RepoStatus {
     if let Ok(output) = output {
         let stdout = String::from_utf8_lossy(&output.stdout);
         for line in stdout.lines() {
-            if line.len() < 4 { continue; }
+            if line.len() < 4 {
+                continue;
+            }
             let index = line.as_bytes()[0];
             let worktree = line.as_bytes()[1];
             let path = line[3..].to_string();
@@ -161,35 +176,67 @@ pub fn status(repo: &Path) -> RepoStatus {
                     b'R' => FileState::Renamed,
                     _ => FileState::Modified,
                 };
-                files.push(FileStatus { path: path.clone(), status: state, staged: true, is_submodule: is_sub });
+                files.push(FileStatus {
+                    path: path.clone(),
+                    status: state,
+                    staged: true,
+                    is_submodule: is_sub,
+                });
             }
 
             // Unstaged changes (worktree column)
             if worktree == b'M' || worktree == b'D' {
-                let state = if worktree == b'D' { FileState::Deleted } else { FileState::Modified };
-                files.push(FileStatus { path: path.clone(), status: state, staged: false, is_submodule: is_sub });
+                let state = if worktree == b'D' {
+                    FileState::Deleted
+                } else {
+                    FileState::Modified
+                };
+                files.push(FileStatus {
+                    path: path.clone(),
+                    status: state,
+                    staged: false,
+                    is_submodule: is_sub,
+                });
             }
 
             // Untracked
             if index == b'?' {
-                files.push(FileStatus { path, status: FileState::Untracked, staged: false, is_submodule: is_sub });
+                files.push(FileStatus {
+                    path,
+                    status: FileState::Untracked,
+                    staged: false,
+                    is_submodule: is_sub,
+                });
             }
         }
     }
 
-    RepoStatus { branch, files, ahead, behind }
+    RepoStatus {
+        branch,
+        files,
+        ahead,
+        behind,
+    }
 }
 
 /// Stage a file.
 pub fn stage(repo: &Path, path: &str) -> bool {
-    Command::new("git").args(["add", path]).current_dir(repo).output()
-        .map(|o| o.status.success()).unwrap_or(false)
+    Command::new("git")
+        .args(["add", path])
+        .current_dir(repo)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Unstage a file.
 pub fn unstage(repo: &Path, path: &str) -> bool {
-    Command::new("git").args(["restore", "--staged", path]).current_dir(repo).output()
-        .map(|o| o.status.success()).unwrap_or(false)
+    Command::new("git")
+        .args(["restore", "--staged", path])
+        .current_dir(repo)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Commit staged changes.
@@ -215,11 +262,18 @@ pub fn push(repo: &Path) -> Result<String, String> {
         .map_err(|e| e.to_string())?;
     if output.status.success() {
         let msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Ok(if msg.is_empty() { "Pushed successfully".into() } else { msg });
+        return Ok(if msg.is_empty() {
+            "Pushed successfully".into()
+        } else {
+            msg
+        });
     }
     // If push failed due to no upstream, auto-set it
     let stderr = String::from_utf8_lossy(&output.stderr);
-    if stderr.contains("no upstream") || stderr.contains("has no upstream") || stderr.contains("set the remote as upstream") {
+    if stderr.contains("no upstream")
+        || stderr.contains("has no upstream")
+        || stderr.contains("set the remote as upstream")
+    {
         let branch = current_branch(repo);
         return push_new_branch(repo, &branch);
     }
@@ -298,7 +352,9 @@ pub fn list_branches(repo: &Path) -> Vec<BranchInfo> {
         .args(["branch", "--list"])
         .current_dir(repo)
         .output();
-    let Ok(output) = output else { return Vec::new() };
+    let Ok(output) = output else {
+        return Vec::new();
+    };
     String::from_utf8_lossy(&output.stdout)
         .lines()
         .map(|line| {
@@ -333,7 +389,11 @@ pub fn push_new_branch(repo: &Path, name: &str) -> Result<String, String> {
         .map_err(|e| e.to_string())?;
     if output.status.success() {
         let msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        Ok(if msg.is_empty() { format!("Pushed '{name}' to origin") } else { msg })
+        Ok(if msg.is_empty() {
+            format!("Pushed '{name}' to origin")
+        } else {
+            msg
+        })
     } else {
         Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
     }
@@ -373,7 +433,9 @@ pub fn ahead_behind_branches(repo: &Path, a: &str, b: &str) -> (u32, u32) {
         .current_dir(repo)
         .output();
     let Ok(output) = output else { return (0, 0) };
-    if !output.status.success() { return (0, 0); }
+    if !output.status.success() {
+        return (0, 0);
+    }
     let s = String::from_utf8_lossy(&output.stdout);
     let parts: Vec<&str> = s.trim().split_whitespace().collect();
     if parts.len() == 2 {
@@ -386,10 +448,13 @@ pub fn ahead_behind_branches(repo: &Path, a: &str, b: &str) -> (u32, u32) {
 /// List all branches with ahead/behind relative to main (or master).
 pub fn list_branches_detailed(repo: &Path) -> Vec<BranchDetail> {
     let branches = list_branches(repo);
-    if branches.is_empty() { return Vec::new(); }
+    if branches.is_empty() {
+        return Vec::new();
+    }
 
     // Find the base branch name (main or master)
-    let base = branches.iter()
+    let base = branches
+        .iter()
         .find(|b| b.name == "main" || b.name == "master")
         .map(|b| b.name.clone())
         .unwrap_or_else(|| branches[0].name.clone());
@@ -399,40 +464,49 @@ pub fn list_branches_detailed(repo: &Path) -> Vec<BranchDetail> {
         .args(["branch", "--format=%(refname:short)\t%(subject)", "--list"])
         .current_dir(repo)
         .output();
-    let subjects: Vec<(String, String)> = output.map(|o| {
-        String::from_utf8_lossy(&o.stdout)
-            .lines()
-            .filter_map(|line| {
-                let mut parts = line.splitn(2, '\t');
-                let name = parts.next()?.to_string();
-                let subject = parts.next().unwrap_or("").to_string();
-                Some((name, subject))
-            })
-            .collect()
-    }).unwrap_or_default();
+    let subjects: Vec<(String, String)> = output
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .filter_map(|line| {
+                    let mut parts = line.splitn(2, '\t');
+                    let name = parts.next()?.to_string();
+                    let subject = parts.next().unwrap_or("").to_string();
+                    Some((name, subject))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
 
-    branches.iter().map(|b| {
-        let (ahead, behind) = if b.name == base {
-            (0, 0)
-        } else {
-            ahead_behind_branches(repo, &b.name, &base)
-        };
-        let last_commit = subjects.iter()
-            .find(|(n, _)| n == &b.name)
-            .map(|(_, s)| s.clone())
-            .unwrap_or_default();
-        let has_upstream = Command::new("git")
-            .args(["config", &format!("branch.{}.remote", b.name)])
-            .current_dir(repo)
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        BranchDetail {
-            name: b.name.clone(),
-            is_current: b.is_current,
-            ahead, behind, last_commit, has_upstream,
-        }
-    }).collect()
+    branches
+        .iter()
+        .map(|b| {
+            let (ahead, behind) = if b.name == base {
+                (0, 0)
+            } else {
+                ahead_behind_branches(repo, &b.name, &base)
+            };
+            let last_commit = subjects
+                .iter()
+                .find(|(n, _)| n == &b.name)
+                .map(|(_, s)| s.clone())
+                .unwrap_or_default();
+            let has_upstream = Command::new("git")
+                .args(["config", &format!("branch.{}.remote", b.name)])
+                .current_dir(repo)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            BranchDetail {
+                name: b.name.clone(),
+                is_current: b.is_current,
+                ahead,
+                behind,
+                last_commit,
+                has_upstream,
+            }
+        })
+        .collect()
 }
 
 /// Merge another branch into the current branch.
@@ -466,35 +540,44 @@ pub fn log_structured(repo: &Path, count: usize) -> Vec<GraphCommit> {
     // NUL-separated fields, record separator between commits
     let output = Command::new("git")
         .args([
-            "log", "--all", "--topo-order",
+            "log",
+            "--all",
+            "--topo-order",
             &format!("-n{count}"),
             "--format=%H%x00%h%x00%P%x00%s%x00%D",
         ])
         .current_dir(repo)
         .output();
-    let Ok(output) = output else { return Vec::new() };
+    let Ok(output) = output else {
+        return Vec::new();
+    };
     let stdout = String::from_utf8_lossy(&output.stdout);
-    stdout.lines().filter_map(|line| {
-        let parts: Vec<&str> = line.splitn(5, '\0').collect();
-        if parts.len() < 5 { return None; }
-        let parents = if parts[2].is_empty() {
-            Vec::new()
-        } else {
-            parts[2].split(' ').map(|s| s.to_string()).collect()
-        };
-        let decorations = if parts[4].is_empty() {
-            Vec::new()
-        } else {
-            parts[4].split(", ").map(|s| s.trim().to_string()).collect()
-        };
-        Some(GraphCommit {
-            hash: parts[0].to_string(),
-            short_hash: parts[1].to_string(),
-            parents,
-            subject: parts[3].to_string(),
-            decorations,
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.splitn(5, '\0').collect();
+            if parts.len() < 5 {
+                return None;
+            }
+            let parents = if parts[2].is_empty() {
+                Vec::new()
+            } else {
+                parts[2].split(' ').map(|s| s.to_string()).collect()
+            };
+            let decorations = if parts[4].is_empty() {
+                Vec::new()
+            } else {
+                parts[4].split(", ").map(|s| s.trim().to_string()).collect()
+            };
+            Some(GraphCommit {
+                hash: parts[0].to_string(),
+                short_hash: parts[1].to_string(),
+                parents,
+                subject: parts[3].to_string(),
+                decorations,
+            })
         })
-    }).collect()
+        .collect()
 }
 
 /// Get the repo name from the path.

@@ -21,7 +21,12 @@ impl Dispatch<wl_registry::WlRegistry, ()> for App {
         _: &Connection,
         qh: &QueueHandle<App>,
     ) {
-        if let wl_registry::Event::Global { name, interface, version } = event {
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
             match interface.as_str() {
                 "wl_compositor" => {
                     let v = version.min(4);
@@ -38,9 +43,8 @@ impl Dispatch<wl_registry::WlRegistry, ()> for App {
                     app.discovered.push(output);
                 }
                 "ext_session_lock_manager_v1" => {
-                    app.lock_mgr = Some(
-                        registry.bind::<ExtSessionLockManagerV1, _, _>(name, 1, qh, ()),
-                    );
+                    app.lock_mgr =
+                        Some(registry.bind::<ExtSessionLockManagerV1, _, _>(name, 1, qh, ()));
                 }
                 _ => {}
             }
@@ -51,19 +55,51 @@ impl Dispatch<wl_registry::WlRegistry, ()> for App {
 // ── Stateless globals ─────────────────────────────────────────────────────────
 
 impl Dispatch<wl_compositor::WlCompositor, ()> for App {
-    fn event(_: &mut Self, _: &wl_compositor::WlCompositor, _: wl_compositor::Event, _: &(), _: &Connection, _: &QueueHandle<App>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_compositor::WlCompositor,
+        _: wl_compositor::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<App>,
+    ) {
+    }
 }
 
 impl Dispatch<wl_surface::WlSurface, ()> for App {
-    fn event(_: &mut Self, _: &wl_surface::WlSurface, _: wl_surface::Event, _: &(), _: &Connection, _: &QueueHandle<App>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_surface::WlSurface,
+        _: wl_surface::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<App>,
+    ) {
+    }
 }
 
 impl Dispatch<ExtSessionLockManagerV1, ()> for App {
-    fn event(_: &mut Self, _: &ExtSessionLockManagerV1, _: <ExtSessionLockManagerV1 as Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<App>) {}
+    fn event(
+        _: &mut Self,
+        _: &ExtSessionLockManagerV1,
+        _: <ExtSessionLockManagerV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<App>,
+    ) {
+    }
 }
 
 impl Dispatch<wl_callback::WlCallback, ()> for App {
-    fn event(_: &mut Self, _: &wl_callback::WlCallback, _: wl_callback::Event, _: &(), _: &Connection, _: &QueueHandle<App>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_callback::WlCallback,
+        _: wl_callback::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<App>,
+    ) {
+    }
 }
 
 // ── Output ───────────────────────────────────────────────────────────────────
@@ -101,7 +137,10 @@ impl Dispatch<wl_seat::WlSeat, ()> for App {
         _: &Connection,
         qh: &QueueHandle<App>,
     ) {
-        if let wl_seat::Event::Capabilities { capabilities: WEnum::Value(caps) } = event {
+        if let wl_seat::Event::Capabilities {
+            capabilities: WEnum::Value(caps),
+        } = event
+        {
             if caps.contains(wl_seat::Capability::Keyboard) {
                 seat.get_keyboard(qh, ());
             }
@@ -179,7 +218,12 @@ impl Dispatch<ExtSessionLockSurfaceV1, ()> for App {
         _: &Connection,
         _: &QueueHandle<App>,
     ) {
-        if let ext_session_lock_surface_v1::Event::Configure { serial, width, height } = event {
+        if let ext_session_lock_surface_v1::Event::Configure {
+            serial,
+            width,
+            height,
+        } = event
+        {
             let lsid = lock_surface.id();
             if let Some(out) = app.output_by_lock_surface(&lsid) {
                 out.width = width;

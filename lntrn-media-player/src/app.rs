@@ -14,8 +14,8 @@ const RESUME_MARGIN_NS: i64 = 5_000_000_000; // 5 seconds
 pub const VIS_BARS: usize = 20;
 
 const MEDIA_EXTENSIONS: &[&str] = &[
-    "mp4", "mkv", "webm", "avi", "mov", "flv", "wmv", "m4v",
-    "mp3", "flac", "wav", "ogg", "m4a", "aac", "opus", "wma",
+    "mp4", "mkv", "webm", "avi", "mov", "flv", "wmv", "m4v", "mp3", "flac", "wav", "ogg", "m4a",
+    "aac", "opus", "wma",
 ];
 
 /// What happens when the current track reaches the end.
@@ -156,8 +156,7 @@ impl App {
                 // Queue a resume to the remembered spot. Can't seek yet — the
                 // pipeline hasn't prerolled — so `tick` applies it once a
                 // duration is known. None if we've never seen this file.
-                self.pending_resume_ns =
-                    self.position_store.get_position(&uri).map(|p| p as u64);
+                self.pending_resume_ns = self.position_store.get_position(&uri).map(|p| p as u64);
             }
             Err(e) => {
                 self.status_text = format!("Failed to open: {e}");
@@ -250,7 +249,13 @@ impl App {
             self.audio_only = false;
             self.video_width = frame.width;
             self.video_height = frame.height;
-            tex_pass.upload_reuse(gpu, &mut self.video_texture, &frame.rgba, frame.width, frame.height);
+            tex_pass.upload_reuse(
+                gpu,
+                &mut self.video_texture,
+                &frame.rgba,
+                frame.width,
+                frame.height,
+            );
             return true;
         }
 
@@ -260,7 +265,9 @@ impl App {
     /// Check for end-of-stream. Returns true if a new track was loaded.
     pub fn check_eos(&mut self) -> bool {
         let is_eos = self.pipeline.as_ref().map(|p| p.is_eos()).unwrap_or(false);
-        if !is_eos { return false; }
+        if !is_eos {
+            return false;
+        }
         self.handle_eos()
     }
 
@@ -293,7 +300,9 @@ impl App {
     }
 
     pub fn next_track(&mut self) -> bool {
-        if self.playlist.len() <= 1 { return false; }
+        if self.playlist.len() <= 1 {
+            return false;
+        }
         if self.playlist_index + 1 < self.playlist.len() {
             self.playlist_index += 1;
         } else {
@@ -306,7 +315,9 @@ impl App {
     }
 
     pub fn prev_track(&mut self) -> bool {
-        if self.playlist.len() <= 1 { return false; }
+        if self.playlist.len() <= 1 {
+            return false;
+        }
         // If we're past 3 seconds, restart current track instead
         if self.position_ns > 3_000_000_000 {
             if let Some(pipe) = &self.pipeline {
@@ -349,7 +360,11 @@ impl App {
         };
 
         // Fade rate: ~180ms in, ~250ms out
-        let rate = if target > self.controls_alpha { 1.0 / 0.18 } else { 1.0 / 0.25 };
+        let rate = if target > self.controls_alpha {
+            1.0 / 0.18
+        } else {
+            1.0 / 0.25
+        };
         let step = rate * dt;
         if (target - self.controls_alpha).abs() <= step {
             self.controls_alpha = target;
@@ -365,7 +380,10 @@ impl App {
     }
 
     pub fn is_playing(&self) -> bool {
-        self.pipeline.as_ref().map(|p| p.is_playing()).unwrap_or(false)
+        self.pipeline
+            .as_ref()
+            .map(|p| p.is_playing())
+            .unwrap_or(false)
     }
 
     pub fn toggle_play_pause(&mut self) {
@@ -404,8 +422,7 @@ impl App {
         let uri = format!("file://{}", path.display());
         let pos = self.position_ns as i64;
         let dur = self.duration_ns as i64;
-        let resumable =
-            pos > RESUME_MARGIN_NS && (dur == 0 || pos < dur - RESUME_MARGIN_NS);
+        let resumable = pos > RESUME_MARGIN_NS && (dur == 0 || pos < dur - RESUME_MARGIN_NS);
         if resumable {
             self.position_store.set_position(&uri, pos);
         } else {
@@ -422,8 +439,11 @@ impl App {
     }
 
     pub fn progress_fraction(&self) -> f32 {
-        if self.duration_ns == 0 { 0.0 }
-        else { (self.position_ns as f64 / self.duration_ns as f64) as f32 }
+        if self.duration_ns == 0 {
+            0.0
+        } else {
+            (self.position_ns as f64 / self.duration_ns as f64) as f32
+        }
     }
 
     pub fn format_time(ns: u64) -> String {

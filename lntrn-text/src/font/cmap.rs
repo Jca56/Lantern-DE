@@ -43,8 +43,9 @@ impl Cmap {
                 best = Some((score, off, format));
             }
         }
-        let (_, off, format) =
-            best.ok_or(FontError::Unsupported("no usable cmap subtable (formats 0/4/6/12)"))?;
+        let (_, off, format) = best.ok_or(FontError::Unsupported(
+            "no usable cmap subtable (formats 0/4/6/12)",
+        ))?;
         Ok(Cmap { off, format })
     }
 

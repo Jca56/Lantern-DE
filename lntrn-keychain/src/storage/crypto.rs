@@ -71,14 +71,23 @@ pub fn derive_key(
     salt: &[u8; SALT_LEN],
     params: &KdfParams,
 ) -> Result<MasterKey, Error> {
-    let p = Params::new(params.m_cost_kib, params.t_cost, params.p_cost, Some(KEY_LEN))
-        .map_err(|_| Error::Argon2)?;
+    let p = Params::new(
+        params.m_cost_kib,
+        params.t_cost,
+        params.p_cost,
+        Some(KEY_LEN),
+    )
+    .map_err(|_| Error::Argon2)?;
     let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, p);
     let mut key = [0u8; KEY_LEN];
     argon
         .hash_password_into(passphrase.as_bytes(), salt, &mut key)
         .map_err(|_| Error::Argon2)?;
-    Ok(MasterKey { key, salt: *salt, params: params.clone() })
+    Ok(MasterKey {
+        key,
+        salt: *salt,
+        params: params.clone(),
+    })
 }
 
 /// Encrypt plaintext under the master key. Returns (nonce, ciphertext_with_tag).
@@ -88,16 +97,24 @@ pub fn encrypt(key: &MasterKey, plaintext: &[u8]) -> Result<([u8; NONCE_LEN], Ve
     let nonce_arr = Aes256Gcm::generate_nonce(&mut AeadOsRng);
     let mut nonce = [0u8; NONCE_LEN];
     nonce.copy_from_slice(nonce_arr.as_slice());
-    let ct = cipher.encrypt(&nonce_arr, plaintext).map_err(|_| Error::Aead)?;
+    let ct = cipher
+        .encrypt(&nonce_arr, plaintext)
+        .map_err(|_| Error::Aead)?;
     Ok((nonce, ct))
 }
 
 /// Decrypt + verify ciphertext under the master key. Returns plaintext.
-pub fn decrypt(key: &MasterKey, nonce: &[u8; NONCE_LEN], ciphertext: &[u8]) -> Result<Vec<u8>, Error> {
+pub fn decrypt(
+    key: &MasterKey,
+    nonce: &[u8; NONCE_LEN],
+    ciphertext: &[u8],
+) -> Result<Vec<u8>, Error> {
     let k = Key::<Aes256Gcm>::from_slice(&key.key);
     let cipher = Aes256Gcm::new(k);
     let nonce_obj = Nonce::from_slice(nonce);
-    let mut pt = cipher.decrypt(nonce_obj, ciphertext).map_err(|_| Error::Aead)?;
+    let mut pt = cipher
+        .decrypt(nonce_obj, ciphertext)
+        .map_err(|_| Error::Aead)?;
     let out = pt.clone();
     pt.zeroize();
     Ok(out)

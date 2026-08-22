@@ -7,7 +7,10 @@ use crate::TextHandler;
 
 /// Export an editor's content to a `.docx` file. Lives here (not on
 /// `Editor`) to keep the editor module focused on text editing.
-pub fn export_docx(editor: &Editor, path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+pub fn export_docx(
+    editor: &Editor,
+    path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
     use crate::format::Alignment;
     use docx_rs::{
         AbstractNumbering, AlignmentType, Docx, IndentLevel, Level, LevelJc, LevelText,
@@ -70,16 +73,26 @@ pub fn export_docx(editor: &Editor, path: &std::path::Path) -> Result<(), Box<dy
         for span in &spans {
             let text = &line[span.start..span.end];
             let mut run = Run::new().add_text(text);
-            if span.attrs.bold { run = run.bold(); }
-            if span.attrs.italic { run = run.italic(); }
-            if span.attrs.underline { run = run.underline("single"); }
-            if span.attrs.strikethrough { run = run.strike(); }
+            if span.attrs.bold {
+                run = run.bold();
+            }
+            if span.attrs.italic {
+                run = run.italic();
+            }
+            if span.attrs.underline {
+                run = run.underline("single");
+            }
+            if span.attrs.strikethrough {
+                run = run.strike();
+            }
             if let Some(fs) = span.attrs.font_size {
                 // docx uses half-points (24pt = size 48)
                 run = run.size((fs * 2.0) as usize);
             }
-            if let Some(family) =
-                span.attrs.font.and_then(|f| crate::fonts::family_for_index_static(f as usize))
+            if let Some(family) = span
+                .attrs
+                .font
+                .and_then(|f| crate::fonts::family_for_index_static(f as usize))
             {
                 run = run.fonts(RunFonts::new().ascii(family));
             }

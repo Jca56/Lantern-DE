@@ -43,7 +43,10 @@ pub(crate) struct LayoutCache {
 
 impl LayoutCache {
     pub fn new() -> Self {
-        Self { map: HashMap::new(), use_tick: 0 }
+        Self {
+            map: HashMap::new(),
+            use_tick: 0,
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -76,7 +79,10 @@ impl LayoutCache {
         &self
             .map
             .entry(key)
-            .insert_entry(CachedLayout { layout, last_used: tick })
+            .insert_entry(CachedLayout {
+                layout,
+                last_used: tick,
+            })
             .into_mut()
             .layout
     }

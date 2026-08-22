@@ -1,8 +1,8 @@
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{FontSize, FoxPalette, InteractionContext, TextInput, TextLabel};
 
-use crate::fs::Drive;
 use crate::conflict::ConflictDialog;
+use crate::fs::Drive;
 use crate::sudo::PendingPrivOp;
 use crate::{
     ZONE_CLOUD_LOGIN_CANCEL, ZONE_CLOUD_LOGIN_EMAIL, ZONE_CLOUD_LOGIN_PASSWORD,
@@ -93,8 +93,10 @@ pub fn draw_cloud_login(
     let err_lines: f32 = if dialog.error.is_some() { 1.0 } else { 0.0 };
 
     let dialog_h = pad * 2.0
-        + title_font + pad * 0.4
-        + body_font * body_lines + row_gap
+        + title_font
+        + pad * 0.4
+        + body_font * body_lines
+        + row_gap
         + (label_font + 4.0 * s + field_h + row_gap) * 2.0
         + (err_lines * (body_font + row_gap * 0.5))
         + pad * 0.4
@@ -104,7 +106,17 @@ pub fn draw_cloud_login(
     let dy = (screen_h - dialog_h) * 0.5;
 
     draw_overlay_with_scrim(
-        painter, input, screen_w, screen_h, dx, dy, dialog_w, dialog_h, cr, pal, s,
+        painter,
+        input,
+        screen_w,
+        screen_h,
+        dx,
+        dy,
+        dialog_w,
+        dialog_h,
+        cr,
+        pal,
+        s,
         ZONE_CLOUD_LOGIN_SCRIM,
     );
 
@@ -116,11 +128,15 @@ pub fn draw_cloud_login(
         .draw(text, sw, sh);
     cy += title_font + pad * 0.4;
 
-    TextLabel::new("Use the email + password you set in your Firebase", dx + pad, cy)
-        .size(FontSize::Custom(body_font))
-        .color(pal.text_secondary)
-        .max_width(dialog_w - pad * 2.0)
-        .draw(text, sw, sh);
+    TextLabel::new(
+        "Use the email + password you set in your Firebase",
+        dx + pad,
+        cy,
+    )
+    .size(FontSize::Custom(body_font))
+    .color(pal.text_secondary)
+    .max_width(dialog_w - pad * 2.0)
+    .draw(text, sw, sh);
     cy += body_font + 4.0 * s;
     TextLabel::new("project's Authentication console.", dx + pad, cy)
         .size(FontSize::Custom(body_font))
@@ -185,11 +201,23 @@ pub fn draw_cloud_login(
     let cancel_rect = Rect::new(btn_x, cy, btn_w, btn_h);
     let cancel_state = input.add_zone(ZONE_CLOUD_LOGIN_CANCEL, cancel_rect);
     draw_button(
-        painter, text, cancel_rect, "Cancel",
-        cancel_state.is_hovered(), pal, ButtonStyle::Secondary, sw, sh, s,
+        painter,
+        text,
+        cancel_rect,
+        "Cancel",
+        cancel_state.is_hovered(),
+        pal,
+        ButtonStyle::Secondary,
+        sw,
+        sh,
+        s,
     );
 
-    let submit_label = if dialog.submitting { "Signing in..." } else { "Sign In" };
+    let submit_label = if dialog.submitting {
+        "Signing in..."
+    } else {
+        "Sign In"
+    };
     let submit_rect = Rect::new(btn_x + btn_w + btn_gap, cy, btn_w, btn_h);
     let submit_state = input.add_zone(ZONE_CLOUD_LOGIN_SUBMIT, submit_rect);
     let submit_style = if dialog.can_submit() {
@@ -198,9 +226,16 @@ pub fn draw_cloud_login(
         ButtonStyle::Secondary
     };
     draw_button(
-        painter, text, submit_rect, submit_label,
+        painter,
+        text,
+        submit_rect,
+        submit_label,
         submit_state.is_hovered() && dialog.can_submit(),
-        pal, submit_style, sw, sh, s,
+        pal,
+        submit_style,
+        sw,
+        sh,
+        s,
     );
 }
 
@@ -209,8 +244,10 @@ fn draw_overlay_with_scrim(
     input: &mut InteractionContext,
     screen_w: f32,
     screen_h: f32,
-    dx: f32, dy: f32,
-    dialog_w: f32, dialog_h: f32,
+    dx: f32,
+    dy: f32,
+    dialog_w: f32,
+    dialog_h: f32,
     cr: f32,
     pal: &FoxPalette,
     s: f32,
@@ -221,7 +258,12 @@ fn draw_overlay_with_scrim(
     painter.rect_filled(backdrop, 0.0, Color::rgba(0.0, 0.0, 0.0, 0.55));
 
     let panel = Rect::new(dx, dy, dialog_w, dialog_h);
-    let shadow = Rect::new(dx - 8.0 * s, dy - 4.0 * s, dialog_w + 16.0 * s, dialog_h + 16.0 * s);
+    let shadow = Rect::new(
+        dx - 8.0 * s,
+        dy - 4.0 * s,
+        dialog_w + 16.0 * s,
+        dialog_h + 16.0 * s,
+    );
     painter.rect_filled(shadow, cr + 4.0 * s, Color::rgba(0.0, 0.0, 0.0, 0.3));
     painter.rect_filled(panel, cr, pal.surface);
     painter.rect_stroke_sdf(panel, cr, 1.0 * s, pal.muted.with_alpha(0.2));
@@ -249,7 +291,16 @@ pub fn draw(
 ) {
     match dialog {
         DriveDialog::ConfirmFormat { drive, error } => {
-            draw_confirm_format(drive, error.as_deref(), painter, text, palette, input, screen, s);
+            draw_confirm_format(
+                drive,
+                error.as_deref(),
+                painter,
+                text,
+                palette,
+                input,
+                screen,
+                s,
+            );
         }
         DriveDialog::Properties { drive } => {
             draw_properties(drive, painter, text, palette, input, screen, s);
@@ -315,16 +366,14 @@ fn draw_message(
     let lines = wrap_lines(text, body, body_font, text_w);
     let line_h = body_font + line_gap;
 
-    let dialog_h = pad * 2.0
-        + title_font + pad * 0.6
-        + line_h * lines.len() as f32
-        + pad
-        + btn_h;
+    let dialog_h = pad * 2.0 + title_font + pad * 0.6 + line_h * lines.len() as f32 + pad + btn_h;
 
     let dx = (screen_w - dialog_w) * 0.5;
     let dy = (screen_h - dialog_h) * 0.5;
 
-    draw_overlay(painter, input, screen_w, screen_h, dx, dy, dialog_w, dialog_h, cr, pal, s);
+    draw_overlay(
+        painter, input, screen_w, screen_h, dx, dy, dialog_w, dialog_h, cr, pal, s,
+    );
 
     let mut cy = dy + pad;
     TextLabel::new(title, dx + pad, cy)
@@ -348,8 +397,18 @@ fn draw_message(
 
     let ok_rect = Rect::new(dx + dialog_w - pad - btn_w, cy, btn_w, btn_h);
     let ok_state = input.add_zone(ZONE_DRIVE_DIALOG_OK, ok_rect);
-    draw_button(painter, text, ok_rect, "OK",
-        ok_state.is_hovered(), pal, ButtonStyle::Primary, sw, sh, s);
+    draw_button(
+        painter,
+        text,
+        ok_rect,
+        "OK",
+        ok_state.is_hovered(),
+        pal,
+        ButtonStyle::Primary,
+        sw,
+        sh,
+        s,
+    );
 }
 
 fn draw_confirm_format(
@@ -378,15 +437,19 @@ fn draw_confirm_format(
 
     let body_lines: f32 = if error.is_some() { 4.0 } else { 3.0 };
     let dialog_h = pad * 2.0
-        + title_font + pad * 0.6
-        + body_font * body_lines + row_gap * (body_lines - 1.0)
+        + title_font
+        + pad * 0.6
+        + body_font * body_lines
+        + row_gap * (body_lines - 1.0)
         + pad
         + btn_h;
 
     let dx = (screen_w - dialog_w) * 0.5;
     let dy = (screen_h - dialog_h) * 0.5;
 
-    draw_overlay(painter, input, screen_w, screen_h, dx, dy, dialog_w, dialog_h, cr, pal, s);
+    draw_overlay(
+        painter, input, screen_w, screen_h, dx, dy, dialog_w, dialog_h, cr, pal, s,
+    );
 
     let mut cy = dy + pad;
     TextLabel::new(&format!("Format {}?", drive.name), dx + pad, cy)
@@ -398,22 +461,30 @@ fn draw_confirm_format(
 
     let body_color = pal.text_secondary;
     TextLabel::new(&format!("Device: {}", drive.device), dx + pad, cy)
-        .size(FontSize::Custom(body_font)).color(body_color)
-        .max_width(dialog_w - pad * 2.0).draw(text, sw, sh);
+        .size(FontSize::Custom(body_font))
+        .color(body_color)
+        .max_width(dialog_w - pad * 2.0)
+        .draw(text, sw, sh);
     cy += body_font + row_gap;
     TextLabel::new(&format!("Size: {}", drive.total_display()), dx + pad, cy)
-        .size(FontSize::Custom(body_font)).color(body_color)
-        .max_width(dialog_w - pad * 2.0).draw(text, sw, sh);
+        .size(FontSize::Custom(body_font))
+        .color(body_color)
+        .max_width(dialog_w - pad * 2.0)
+        .draw(text, sw, sh);
     cy += body_font + row_gap;
     TextLabel::new("All data on this drive will be erased.", dx + pad, cy)
-        .size(FontSize::Custom(body_font)).color(pal.danger)
-        .max_width(dialog_w - pad * 2.0).draw(text, sw, sh);
+        .size(FontSize::Custom(body_font))
+        .color(pal.danger)
+        .max_width(dialog_w - pad * 2.0)
+        .draw(text, sw, sh);
     cy += body_font + row_gap;
 
     if let Some(err) = error {
         TextLabel::new(&format!("Error: {err}"), dx + pad, cy)
-            .size(FontSize::Custom(body_font)).color(pal.danger)
-            .max_width(dialog_w - pad * 2.0).draw(text, sw, sh);
+            .size(FontSize::Custom(body_font))
+            .color(pal.danger)
+            .max_width(dialog_w - pad * 2.0)
+            .draw(text, sw, sh);
         cy += body_font + row_gap;
     }
 
@@ -424,13 +495,33 @@ fn draw_confirm_format(
 
     let cancel_rect = Rect::new(btn_x, cy, btn_w, btn_h);
     let cancel_state = input.add_zone(ZONE_DRIVE_DIALOG_CANCEL, cancel_rect);
-    draw_button(painter, text, cancel_rect, "Cancel",
-        cancel_state.is_hovered(), pal, ButtonStyle::Secondary, sw, sh, s);
+    draw_button(
+        painter,
+        text,
+        cancel_rect,
+        "Cancel",
+        cancel_state.is_hovered(),
+        pal,
+        ButtonStyle::Secondary,
+        sw,
+        sh,
+        s,
+    );
 
     let confirm_rect = Rect::new(btn_x + btn_w + btn_gap, cy, btn_w, btn_h);
     let confirm_state = input.add_zone(ZONE_DRIVE_DIALOG_CONFIRM, confirm_rect);
-    draw_button(painter, text, confirm_rect, "Format",
-        confirm_state.is_hovered(), pal, ButtonStyle::Danger, sw, sh, s);
+    draw_button(
+        painter,
+        text,
+        confirm_rect,
+        "Format",
+        confirm_state.is_hovered(),
+        pal,
+        ButtonStyle::Danger,
+        sw,
+        sh,
+        s,
+    );
 }
 
 fn draw_properties(
@@ -460,7 +551,11 @@ fn draw_properties(
     rows.push(("Device", drive.device.clone()));
     rows.push((
         "Filesystem",
-        if drive.fstype.is_empty() { "—".into() } else { drive.fstype.clone() },
+        if drive.fstype.is_empty() {
+            "—".into()
+        } else {
+            drive.fstype.clone()
+        },
     ));
     rows.push(("Size", drive.total_display()));
     if drive.mounted {
@@ -471,18 +566,23 @@ fn draw_properties(
     } else {
         rows.push(("Mounted", "no".into()));
     }
-    rows.push(("Removable", if drive.removable { "yes".into() } else { "no".into() }));
+    rows.push((
+        "Removable",
+        if drive.removable {
+            "yes".into()
+        } else {
+            "no".into()
+        },
+    ));
 
-    let dialog_h = pad * 2.0
-        + title_font + pad * 0.6
-        + row_h * rows.len() as f32
-        + pad
-        + btn_h;
+    let dialog_h = pad * 2.0 + title_font + pad * 0.6 + row_h * rows.len() as f32 + pad + btn_h;
 
     let dx = (screen_w - dialog_w) * 0.5;
     let dy = (screen_h - dialog_h) * 0.5;
 
-    draw_overlay(painter, input, screen_w, screen_h, dx, dy, dialog_w, dialog_h, cr, pal, s);
+    draw_overlay(
+        painter, input, screen_w, screen_h, dx, dy, dialog_w, dialog_h, cr, pal, s,
+    );
 
     let mut cy = dy + pad;
     TextLabel::new(&format!("{} — Properties", drive.name), dx + pad, cy)
@@ -497,7 +597,8 @@ fn draw_properties(
         TextLabel::new(label, dx + pad, cy)
             .size(FontSize::Custom(label_font))
             .color(pal.text_secondary)
-            .max_width(label_col_w).draw(text, sw, sh);
+            .max_width(label_col_w)
+            .draw(text, sw, sh);
         TextLabel::new(value, dx + pad + label_col_w, cy)
             .size(FontSize::Custom(label_font))
             .color(pal.text)
@@ -510,8 +611,18 @@ fn draw_properties(
 
     let ok_rect = Rect::new(dx + dialog_w - pad - btn_w, cy, btn_w, btn_h);
     let ok_state = input.add_zone(ZONE_DRIVE_DIALOG_OK, ok_rect);
-    draw_button(painter, text, ok_rect, "OK",
-        ok_state.is_hovered(), pal, ButtonStyle::Primary, sw, sh, s);
+    draw_button(
+        painter,
+        text,
+        ok_rect,
+        "OK",
+        ok_state.is_hovered(),
+        pal,
+        ButtonStyle::Primary,
+        sw,
+        sh,
+        s,
+    );
 }
 
 fn draw_overlay(
@@ -519,8 +630,10 @@ fn draw_overlay(
     input: &mut InteractionContext,
     screen_w: f32,
     screen_h: f32,
-    dx: f32, dy: f32,
-    dialog_w: f32, dialog_h: f32,
+    dx: f32,
+    dy: f32,
+    dialog_w: f32,
+    dialog_h: f32,
     cr: f32,
     pal: &FoxPalette,
     s: f32,
@@ -530,14 +643,23 @@ fn draw_overlay(
     painter.rect_filled(backdrop, 0.0, Color::rgba(0.0, 0.0, 0.0, 0.55));
 
     let panel = Rect::new(dx, dy, dialog_w, dialog_h);
-    let shadow = Rect::new(dx - 8.0 * s, dy - 4.0 * s, dialog_w + 16.0 * s, dialog_h + 16.0 * s);
+    let shadow = Rect::new(
+        dx - 8.0 * s,
+        dy - 4.0 * s,
+        dialog_w + 16.0 * s,
+        dialog_h + 16.0 * s,
+    );
     painter.rect_filled(shadow, cr + 4.0 * s, Color::rgba(0.0, 0.0, 0.0, 0.3));
     painter.rect_filled(panel, cr, pal.surface);
     painter.rect_stroke_sdf(panel, cr, 1.0 * s, pal.muted.with_alpha(0.2));
 }
 
 #[derive(Clone, Copy)]
-enum ButtonStyle { Primary, Secondary, Danger }
+enum ButtonStyle {
+    Primary,
+    Secondary,
+    Danger,
+}
 
 fn draw_button(
     painter: &mut Painter,
@@ -547,7 +669,9 @@ fn draw_button(
     hovered: bool,
     pal: &FoxPalette,
     style: ButtonStyle,
-    sw: u32, sh: u32, s: f32,
+    sw: u32,
+    sh: u32,
+    s: f32,
 ) {
     let cr = 8.0 * s;
     let (bg, fg, stroke) = match style {
@@ -653,9 +777,14 @@ pub fn draw_sudo_prompt(
     let action_desc = dialog.op.description();
     let err_lines: f32 = if dialog.error.is_some() { 1.0 } else { 0.0 };
     let dialog_h = pad * 2.0
-        + title_font + pad * 0.4
-        + body_font + row_gap
-        + label_font + 4.0 * s + field_h + row_gap
+        + title_font
+        + pad * 0.4
+        + body_font
+        + row_gap
+        + label_font
+        + 4.0 * s
+        + field_h
+        + row_gap
         + (err_lines * (body_font + row_gap * 0.5))
         + pad * 0.4
         + btn_h;
@@ -664,7 +793,17 @@ pub fn draw_sudo_prompt(
     let dy = (screen_h - dialog_h) * 0.5;
 
     draw_overlay_with_scrim(
-        painter, input, screen_w, screen_h, dx, dy, dialog_w, dialog_h, cr, pal, s,
+        painter,
+        input,
+        screen_w,
+        screen_h,
+        dx,
+        dy,
+        dialog_w,
+        dialog_h,
+        cr,
+        pal,
+        s,
         ZONE_SUDO_SCRIM,
     );
 
@@ -718,11 +857,23 @@ pub fn draw_sudo_prompt(
     let cancel_rect = Rect::new(btn_x, cy, btn_w, btn_h);
     let cancel_state = input.add_zone(ZONE_SUDO_CANCEL, cancel_rect);
     draw_button(
-        painter, text, cancel_rect, "Cancel",
-        cancel_state.is_hovered(), pal, ButtonStyle::Secondary, sw, sh, s,
+        painter,
+        text,
+        cancel_rect,
+        "Cancel",
+        cancel_state.is_hovered(),
+        pal,
+        ButtonStyle::Secondary,
+        sw,
+        sh,
+        s,
     );
 
-    let submit_label = if dialog.submitting { "Authenticating..." } else { "Authenticate" };
+    let submit_label = if dialog.submitting {
+        "Authenticating..."
+    } else {
+        "Authenticate"
+    };
     let submit_rect = Rect::new(btn_x + btn_w + btn_gap, cy, btn_w, btn_h);
     let submit_state = input.add_zone(ZONE_SUDO_SUBMIT, submit_rect);
     let submit_style = if dialog.can_submit() {
@@ -731,9 +882,16 @@ pub fn draw_sudo_prompt(
         ButtonStyle::Secondary
     };
     draw_button(
-        painter, text, submit_rect, submit_label,
+        painter,
+        text,
+        submit_rect,
+        submit_label,
         submit_state.is_hovered() && dialog.can_submit(),
-        pal, submit_style, sw, sh, s,
+        pal,
+        submit_style,
+        sw,
+        sh,
+        s,
     );
 }
 
@@ -765,12 +923,19 @@ pub fn draw_conflict_dialog(
     let dialog_w = 600.0 * s;
     let checkbox_size = 20.0 * s;
 
-    let name = dialog.target.file_name()
+    let name = dialog
+        .target
+        .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
-    let dest_label = dialog.target.parent()
-        .map(|p| p.file_name().map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| p.display().to_string()))
+    let dest_label = dialog
+        .target
+        .parent()
+        .map(|p| {
+            p.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| p.display().to_string())
+        })
         .unwrap_or_default();
     let title = format!("\u{201C}{name}\u{201D} already exists");
     let subtitle = format!("in \u{201C}{dest_label}\u{201D}");
@@ -794,67 +959,109 @@ pub fn draw_conflict_dialog(
     let dy = (screen_h - dialog_h) * 0.5;
 
     draw_overlay_with_scrim(
-        painter, input, screen_w, screen_h, dx, dy, dialog_w, dialog_h, cr, pal, s,
+        painter,
+        input,
+        screen_w,
+        screen_h,
+        dx,
+        dy,
+        dialog_w,
+        dialog_h,
+        cr,
+        pal,
+        s,
         ZONE_CONFLICT_SCRIM,
     );
 
     let mut cy = dy + pad;
     TextLabel::new(&title, dx + pad, cy)
-        .size(FontSize::Custom(title_font)).color(pal.text)
+        .size(FontSize::Custom(title_font))
+        .color(pal.text)
         .max_width(dialog_w - pad * 2.0)
         .draw(text, sw, sh);
     cy += title_font + row_gap;
 
     TextLabel::new(&subtitle, dx + pad, cy)
-        .size(FontSize::Custom(body_font)).color(pal.text_secondary)
+        .size(FontSize::Custom(body_font))
+        .color(pal.text_secondary)
         .max_width(dialog_w - pad * 2.0)
         .draw(text, sw, sh);
     cy += body_font + section_gap;
 
     // Existing file metadata.
     TextLabel::new("Existing", dx + pad, cy)
-        .size(FontSize::Custom(body_font)).color(pal.accent)
+        .size(FontSize::Custom(body_font))
+        .color(pal.accent)
         .draw(text, sw, sh);
     cy += body_font + row_gap;
-    TextLabel::new(&format_meta_line(&dialog.target_meta), dx + pad + 12.0 * s, cy)
-        .size(FontSize::Custom(meta_font)).color(pal.text)
-        .max_width(dialog_w - pad * 2.0 - 12.0 * s).draw(text, sw, sh);
+    TextLabel::new(
+        &format_meta_line(&dialog.target_meta),
+        dx + pad + 12.0 * s,
+        cy,
+    )
+    .size(FontSize::Custom(meta_font))
+    .color(pal.text)
+    .max_width(dialog_w - pad * 2.0 - 12.0 * s)
+    .draw(text, sw, sh);
     cy += meta_font + row_gap;
     TextLabel::new(&format_mtime(&dialog.target_meta), dx + pad + 12.0 * s, cy)
-        .size(FontSize::Custom(meta_font)).color(pal.muted)
-        .max_width(dialog_w - pad * 2.0 - 12.0 * s).draw(text, sw, sh);
+        .size(FontSize::Custom(meta_font))
+        .color(pal.muted)
+        .max_width(dialog_w - pad * 2.0 - 12.0 * s)
+        .draw(text, sw, sh);
     cy += meta_font + section_gap;
 
     // Source metadata.
     TextLabel::new("Replacement", dx + pad, cy)
-        .size(FontSize::Custom(body_font)).color(pal.accent)
+        .size(FontSize::Custom(body_font))
+        .color(pal.accent)
         .draw(text, sw, sh);
     cy += body_font + row_gap;
-    TextLabel::new(&format_meta_line(&dialog.source_meta), dx + pad + 12.0 * s, cy)
-        .size(FontSize::Custom(meta_font)).color(pal.text)
-        .max_width(dialog_w - pad * 2.0 - 12.0 * s).draw(text, sw, sh);
+    TextLabel::new(
+        &format_meta_line(&dialog.source_meta),
+        dx + pad + 12.0 * s,
+        cy,
+    )
+    .size(FontSize::Custom(meta_font))
+    .color(pal.text)
+    .max_width(dialog_w - pad * 2.0 - 12.0 * s)
+    .draw(text, sw, sh);
     cy += meta_font + row_gap;
     TextLabel::new(&format_mtime(&dialog.source_meta), dx + pad + 12.0 * s, cy)
-        .size(FontSize::Custom(meta_font)).color(pal.muted)
-        .max_width(dialog_w - pad * 2.0 - 12.0 * s).draw(text, sw, sh);
+        .size(FontSize::Custom(meta_font))
+        .color(pal.muted)
+        .max_width(dialog_w - pad * 2.0 - 12.0 * s)
+        .draw(text, sw, sh);
     cy += meta_font + section_gap;
 
     // Apply-to-all checkbox.
     if dialog.remaining_count > 0 {
         let cbox = Rect::new(dx + pad, cy, checkbox_size, checkbox_size);
-        let hit = Rect::new(dx + pad, cy - 4.0 * s, dialog_w - pad * 2.0, checkbox_size + 8.0 * s);
+        let hit = Rect::new(
+            dx + pad,
+            cy - 4.0 * s,
+            dialog_w - pad * 2.0,
+            checkbox_size + 8.0 * s,
+        );
         input.add_zone(ZONE_CONFLICT_APPLY_TO_ALL, hit);
         painter.rect_stroke_sdf(cbox, 4.0 * s, 1.5 * s, pal.muted.with_alpha(0.6));
         if dialog.apply_to_all {
-            let inner = Rect::new(cbox.x + 4.0 * s, cbox.y + 4.0 * s,
-                cbox.w - 8.0 * s, cbox.h - 8.0 * s);
+            let inner = Rect::new(
+                cbox.x + 4.0 * s,
+                cbox.y + 4.0 * s,
+                cbox.w - 8.0 * s,
+                cbox.h - 8.0 * s,
+            );
             painter.rect_filled(inner, 2.0 * s, pal.accent);
         }
-        let label = format!("Apply to the remaining {} conflict{}",
+        let label = format!(
+            "Apply to the remaining {} conflict{}",
             dialog.remaining_count,
-            if dialog.remaining_count == 1 { "" } else { "s" });
+            if dialog.remaining_count == 1 { "" } else { "s" }
+        );
         TextLabel::new(&label, dx + pad + checkbox_size + 10.0 * s, cy + 2.0 * s)
-            .size(FontSize::Custom(meta_font)).color(pal.text)
+            .size(FontSize::Custom(meta_font))
+            .color(pal.text)
             .draw(text, sw, sh);
         cy += checkbox_size + row_gap;
     }
@@ -866,22 +1073,70 @@ pub fn draw_conflict_dialog(
 
     let skip_rect = Rect::new(bx, cy, btn_w, btn_h);
     let skip_hov = input.add_zone(ZONE_CONFLICT_SKIP, skip_rect).is_hovered();
-    draw_button(painter, text, skip_rect, "Skip", skip_hov, pal, ButtonStyle::Secondary, sw, sh, s);
+    draw_button(
+        painter,
+        text,
+        skip_rect,
+        "Skip",
+        skip_hov,
+        pal,
+        ButtonStyle::Secondary,
+        sw,
+        sh,
+        s,
+    );
     bx += btn_w + btn_gap;
 
     let kb_rect = Rect::new(bx, cy, btn_w, btn_h);
-    let kb_hov = input.add_zone(ZONE_CONFLICT_KEEP_BOTH, kb_rect).is_hovered();
-    draw_button(painter, text, kb_rect, "Keep Both", kb_hov, pal, ButtonStyle::Secondary, sw, sh, s);
+    let kb_hov = input
+        .add_zone(ZONE_CONFLICT_KEEP_BOTH, kb_rect)
+        .is_hovered();
+    draw_button(
+        painter,
+        text,
+        kb_rect,
+        "Keep Both",
+        kb_hov,
+        pal,
+        ButtonStyle::Secondary,
+        sw,
+        sh,
+        s,
+    );
     bx += btn_w + btn_gap;
 
     let rep_rect = Rect::new(bx, cy, btn_w, btn_h);
     let rep_hov = input.add_zone(ZONE_CONFLICT_REPLACE, rep_rect).is_hovered();
-    draw_button(painter, text, rep_rect, "Replace", rep_hov, pal, ButtonStyle::Danger, sw, sh, s);
+    draw_button(
+        painter,
+        text,
+        rep_rect,
+        "Replace",
+        rep_hov,
+        pal,
+        ButtonStyle::Danger,
+        sw,
+        sh,
+        s,
+    );
 
     // Cancel sits on the left so it's not next to Replace (avoid misclick).
     let cancel_rect = Rect::new(dx + pad, cy, btn_w, btn_h);
-    let cancel_hov = input.add_zone(ZONE_CONFLICT_CANCEL, cancel_rect).is_hovered();
-    draw_button(painter, text, cancel_rect, "Cancel All", cancel_hov, pal, ButtonStyle::Secondary, sw, sh, s);
+    let cancel_hov = input
+        .add_zone(ZONE_CONFLICT_CANCEL, cancel_rect)
+        .is_hovered();
+    draw_button(
+        painter,
+        text,
+        cancel_rect,
+        "Cancel All",
+        cancel_hov,
+        pal,
+        ButtonStyle::Secondary,
+        sw,
+        sh,
+        s,
+    );
 }
 
 fn format_meta_line(meta: &crate::conflict::ConflictMeta) -> String {
@@ -890,8 +1145,13 @@ fn format_meta_line(meta: &crate::conflict::ConflictMeta) -> String {
 }
 
 fn format_mtime(meta: &crate::conflict::ConflictMeta) -> String {
-    let Some(t) = meta.mtime else { return "Modified: unknown".into(); };
-    let secs = t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let Some(t) = meta.mtime else {
+        return "Modified: unknown".into();
+    };
+    let secs = t
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     let days = secs / 86400;
     let time_of_day = secs % 86400;
     let h = time_of_day / 3600;
@@ -901,16 +1161,35 @@ fn format_mtime(meta: &crate::conflict::ConflictMeta) -> String {
     loop {
         let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
         let yd = if leap { 366 } else { 365 };
-        if remaining < yd { break; }
+        if remaining < yd {
+            break;
+        }
         remaining -= yd;
         y += 1;
     }
     let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-    let months = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let months = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut mo = 0usize;
     while mo < 12 && remaining >= months[mo] as u64 {
         remaining -= months[mo] as u64;
         mo += 1;
     }
-    format!("Modified: {y:04}-{:02}-{:02} {h:02}:{m:02}", mo + 1, remaining + 1)
+    format!(
+        "Modified: {y:04}-{:02}-{:02} {h:02}:{m:02}",
+        mo + 1,
+        remaining + 1
+    )
 }

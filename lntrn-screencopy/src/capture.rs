@@ -278,11 +278,14 @@ fn blit_region(
 ) {
     let dst_stride = (cw * 4) as usize;
     for row in 0..ch {
-        let src_row = if y_invert { src_h - 1 - (cy + row) } else { cy + row };
+        let src_row = if y_invert {
+            src_h - 1 - (cy + row)
+        } else {
+            cy + row
+        };
         let src_off = (src_row as usize) * (src_stride as usize) + (cx as usize) * 4;
         let dst_off = (row as usize) * dst_stride;
-        dst[dst_off..dst_off + dst_stride]
-            .copy_from_slice(&src[src_off..src_off + dst_stride]);
+        dst[dst_off..dst_off + dst_stride].copy_from_slice(&src[src_off..src_off + dst_stride]);
     }
 }
 
@@ -302,19 +305,32 @@ fn spawn_ffmpeg(
     let child = Command::new("ffmpeg")
         .args([
             "-hide_banner",
-            "-loglevel", "warning",
-            "-f", "rawvideo",
-            "-pixel_format", "bgra",
-            "-video_size", &format!("{width}x{height}"),
-            "-framerate", &framerate.to_string(),
-            "-i", "pipe:0",
-            "-c:v", "h264_nvenc",
-            "-preset", "p4",
-            "-tune", "hq",
-            "-rc", "vbr",
-            "-cq", "20",
-            "-b:v", "0",
-            "-pix_fmt", "yuv420p",
+            "-loglevel",
+            "warning",
+            "-f",
+            "rawvideo",
+            "-pixel_format",
+            "bgra",
+            "-video_size",
+            &format!("{width}x{height}"),
+            "-framerate",
+            &framerate.to_string(),
+            "-i",
+            "pipe:0",
+            "-c:v",
+            "h264_nvenc",
+            "-preset",
+            "p4",
+            "-tune",
+            "hq",
+            "-rc",
+            "vbr",
+            "-cq",
+            "20",
+            "-b:v",
+            "0",
+            "-pix_fmt",
+            "yuv420p",
             "-y",
             output_path.to_str().unwrap_or("output.mp4"),
         ])
@@ -351,9 +367,10 @@ fn create_shm_fd(size: usize) -> Result<OwnedFd> {
 fn bind_all_outputs(globals: &GlobalList, qh: &QueueHandle<State>, state: &mut State) {
     for global in globals.contents().clone_list() {
         if global.interface == "wl_output" {
-            let proxy: wl_output::WlOutput = globals
-                .registry()
-                .bind(global.name, global.version.min(4), qh, ());
+            let proxy: wl_output::WlOutput =
+                globals
+                    .registry()
+                    .bind(global.name, global.version.min(4), qh, ());
             state.outputs.push((proxy, None));
         }
     }
@@ -363,24 +380,58 @@ fn bind_all_outputs(globals: &GlobalList, qh: &QueueHandle<State>, state: &mut S
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
     fn event(
-        _: &mut Self, _: &wl_registry::WlRegistry, _: wl_registry::Event,
-        _: &GlobalListContents, _: &Connection, _: &QueueHandle<Self>,
-    ) {}
+        _: &mut Self,
+        _: &wl_registry::WlRegistry,
+        _: wl_registry::Event,
+        _: &GlobalListContents,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wl_shm::WlShm, ()> for State {
-    fn event(_: &mut Self, _: &wl_shm::WlShm, _: wl_shm::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_shm::WlShm,
+        _: wl_shm::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wl_shm_pool::WlShmPool, ()> for State {
-    fn event(_: &mut Self, _: &wl_shm_pool::WlShmPool, _: wl_shm_pool::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_shm_pool::WlShmPool,
+        _: wl_shm_pool::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wl_buffer::WlBuffer, ()> for State {
-    fn event(_: &mut Self, _: &wl_buffer::WlBuffer, _: wl_buffer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_buffer::WlBuffer,
+        _: wl_buffer::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1, ()> for State {
     fn event(
-        _: &mut Self, _: &zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1,
-        _: zwlr_screencopy_manager_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
-    ) {}
+        _: &mut Self,
+        _: &zwlr_screencopy_manager_v1::ZwlrScreencopyManagerV1,
+        _: zwlr_screencopy_manager_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 impl Dispatch<wl_output::WlOutput, ()> for State {
@@ -411,7 +462,12 @@ impl Dispatch<zwlr_screencopy_frame_v1::ZwlrScreencopyFrameV1, ()> for State {
         _: &QueueHandle<Self>,
     ) {
         match event {
-            zwlr_screencopy_frame_v1::Event::Buffer { format, width, height, stride } => {
+            zwlr_screencopy_frame_v1::Event::Buffer {
+                format,
+                width,
+                height,
+                stride,
+            } => {
                 if let WEnum::Value(fmt) = format {
                     if state.buf_format.is_none()
                         && (fmt == wl_shm::Format::Xrgb8888 || fmt == wl_shm::Format::Argb8888)

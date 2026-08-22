@@ -103,13 +103,13 @@ impl Theme {
         match self {
             // VS Code Light+ palette.
             Theme::Paper => match kind {
-                TokenKind::Keyword => Color::from_rgb8(175, 0, 219),    // #AF00DB
-                TokenKind::String => Color::from_rgb8(163, 21, 21),     // #A31515
-                TokenKind::Number => Color::from_rgb8(9, 134, 88),      // #098658
-                TokenKind::Comment => Color::from_rgb8(0, 128, 0),      // #008000
-                TokenKind::Type => Color::from_rgb8(38, 127, 153),      // #267F99
-                TokenKind::Function => Color::from_rgb8(121, 94, 38),   // #795E26
-                TokenKind::Boolean => Color::from_rgb8(0, 0, 255),      // #0000FF
+                TokenKind::Keyword => Color::from_rgb8(175, 0, 219), // #AF00DB
+                TokenKind::String => Color::from_rgb8(163, 21, 21),  // #A31515
+                TokenKind::Number => Color::from_rgb8(9, 134, 88),   // #098658
+                TokenKind::Comment => Color::from_rgb8(0, 128, 0),   // #008000
+                TokenKind::Type => Color::from_rgb8(38, 127, 153),   // #267F99
+                TokenKind::Function => Color::from_rgb8(121, 94, 38), // #795E26
+                TokenKind::Boolean => Color::from_rgb8(0, 0, 255),   // #0000FF
                 TokenKind::Macro => Color::from_rgb8(175, 0, 219),
                 TokenKind::Lifetime => Color::from_rgb8(0, 0, 255),
                 TokenKind::Decorator => Color::from_rgb8(121, 94, 38),
@@ -117,7 +117,7 @@ impl Theme {
                 // page reads as one consistent bracket palette.
                 TokenKind::Interpolation => Color::from_rgb8(168, 130, 30),
                 // VS Code Light+ variable color (deep navy blue).
-                TokenKind::Variable => Color::from_rgb8(0, 16, 128),         // #001080
+                TokenKind::Variable => Color::from_rgb8(0, 16, 128), // #001080
                 // Warm gold for brackets — readable on white paper.
                 TokenKind::Bracket => Color::from_rgb8(168, 130, 30),
             },
@@ -156,13 +156,13 @@ impl Theme {
             // magenta, Lifetime shares Boolean's blue, Decorator shares
             // Function's yellow — matches what a VS Code user expects.
             Theme::Dark => match kind {
-                TokenKind::Keyword => Color::from_rgb8(197, 134, 192),  // #C586C0
-                TokenKind::String => Color::from_rgb8(206, 145, 120),   // #CE9178
-                TokenKind::Number => Color::from_rgb8(181, 206, 168),   // #B5CEA8
-                TokenKind::Comment => Color::from_rgb8(106, 153, 85),   // #6A9955
-                TokenKind::Type => Color::from_rgb8(78, 201, 176),      // #4EC9B0
+                TokenKind::Keyword => Color::from_rgb8(197, 134, 192), // #C586C0
+                TokenKind::String => Color::from_rgb8(206, 145, 120),  // #CE9178
+                TokenKind::Number => Color::from_rgb8(181, 206, 168),  // #B5CEA8
+                TokenKind::Comment => Color::from_rgb8(106, 153, 85),  // #6A9955
+                TokenKind::Type => Color::from_rgb8(78, 201, 176),     // #4EC9B0
                 TokenKind::Function => Color::from_rgb8(220, 220, 170), // #DCDCAA
-                TokenKind::Boolean => Color::from_rgb8(86, 156, 214),   // #569CD6
+                TokenKind::Boolean => Color::from_rgb8(86, 156, 214),  // #569CD6
                 TokenKind::Macro => Color::from_rgb8(197, 134, 192),
                 TokenKind::Lifetime => Color::from_rgb8(86, 156, 214),
                 TokenKind::Decorator => Color::from_rgb8(220, 220, 170),

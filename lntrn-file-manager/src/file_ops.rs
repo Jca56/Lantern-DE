@@ -1,5 +1,5 @@
+use super::app::{dirs_home, App, ClipboardOp};
 use std::path::PathBuf;
-use super::app::{App, ClipboardOp, dirs_home};
 
 fn trash_dir() -> PathBuf {
     dirs_home().join(".local/share/Trash")
@@ -21,19 +21,40 @@ fn chrono_now() -> String {
     loop {
         let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
         let year_days = if leap { 366 } else { 365 };
-        if remaining < year_days { break; }
+        if remaining < year_days {
+            break;
+        }
         remaining -= year_days;
         y += 1;
     }
     let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-    let month_days = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let month_days = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut m = 0usize;
     for &md in &month_days {
-        if remaining < md { break; }
+        if remaining < md {
+            break;
+        }
         remaining -= md;
         m += 1;
     }
-    format!("{y}-{:02}-{:02}T{hours:02}:{mins:02}:{s:02}", m + 1, remaining + 1)
+    format!(
+        "{y}-{:02}-{:02}T{hours:02}:{mins:02}:{s:02}",
+        m + 1,
+        remaining + 1
+    )
 }
 
 pub fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
@@ -53,9 +74,12 @@ pub fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::
 /// Returns true if the path looks like an extractable archive.
 pub fn is_archive(path: &std::path::Path) -> bool {
     let name = path.to_string_lossy().to_lowercase();
-    name.ends_with(".tar.gz") || name.ends_with(".tgz")
-        || name.ends_with(".tar.bz2") || name.ends_with(".tbz2")
-        || name.ends_with(".tar.xz") || name.ends_with(".txz")
+    name.ends_with(".tar.gz")
+        || name.ends_with(".tgz")
+        || name.ends_with(".tar.bz2")
+        || name.ends_with(".tbz2")
+        || name.ends_with(".tar.xz")
+        || name.ends_with(".txz")
         || name.ends_with(".tar")
         || name.ends_with(".zip")
         || name.ends_with(".7z")
@@ -78,7 +102,9 @@ impl App {
     }
 
     pub fn paste(&mut self) {
-        let Some(op) = self.clipboard.take() else { return };
+        let Some(op) = self.clipboard.take() else {
+            return;
+        };
         let dest = self.current_dir.clone();
 
         // Root mode: skip the direct attempt, route straight to sudo. The
@@ -88,10 +114,12 @@ impl App {
         if self.root_mode {
             let priv_op = match &op {
                 ClipboardOp::Copy(paths) => crate::sudo::PendingPrivOp::Copy {
-                    sources: paths.clone(), dest: dest.clone(),
+                    sources: paths.clone(),
+                    dest: dest.clone(),
                 },
                 ClipboardOp::Cut(paths) => crate::sudo::PendingPrivOp::Move {
-                    sources: paths.clone(), dest: dest.clone(),
+                    sources: paths.clone(),
+                    dest: dest.clone(),
                 },
             };
             if let ClipboardOp::Copy(_) = &op {
@@ -119,21 +147,25 @@ impl App {
         dest: std::path::PathBuf,
         reload_tab: Option<usize>,
     ) {
-        if sources.is_empty() { return; }
+        if sources.is_empty() {
+            return;
+        }
 
         // Mirror the root-mode bypass from paste(): elevated cp/mv handle
         // overwrites natively, so we skip the conflict dialog there.
         if self.root_mode {
             let priv_op = match mode {
-                crate::conflict::PasteMode::Copy => crate::sudo::PendingPrivOp::Copy {
-                    sources, dest,
-                },
-                crate::conflict::PasteMode::Cut => crate::sudo::PendingPrivOp::Move {
-                    sources, dest,
-                },
+                crate::conflict::PasteMode::Copy => {
+                    crate::sudo::PendingPrivOp::Copy { sources, dest }
+                }
+                crate::conflict::PasteMode::Cut => {
+                    crate::sudo::PendingPrivOp::Move { sources, dest }
+                }
             };
             self.priv_run(priv_op);
-            if let Some(idx) = reload_tab { self.reload_tab(idx); }
+            if let Some(idx) = reload_tab {
+                self.reload_tab(idx);
+            }
             return;
         }
 
@@ -146,10 +178,12 @@ impl App {
     /// Drive the pending paste queue forward until either the queue is
     /// drained or we hit a conflict that needs the dialog.
     pub fn advance_paste(&mut self) {
-        use crate::conflict::{ConflictDialog, ConflictMeta, PasteMode, ConflictAction};
+        use crate::conflict::{ConflictAction, ConflictDialog, ConflictMeta, PasteMode};
 
         loop {
-            let Some(paste) = self.pending_paste.as_mut() else { return };
+            let Some(paste) = self.pending_paste.as_mut() else {
+                return;
+            };
             let Some(src) = paste.remaining.first().cloned() else {
                 // Drained — finalize.
                 self.finalize_paste();
@@ -200,7 +234,9 @@ impl App {
 
             // Past resolution. Pop the head and perform the op.
             paste.remaining.remove(0);
-            if skip { continue; }
+            if skip {
+                continue;
+            }
 
             match paste.mode {
                 PasteMode::Copy => {
@@ -223,22 +259,28 @@ impl App {
     }
 
     fn finalize_paste(&mut self) {
-        let Some(paste) = self.pending_paste.take() else { return };
+        let Some(paste) = self.pending_paste.take() else {
+            return;
+        };
         use crate::conflict::PasteMode;
 
         let reload_tab = paste.reload_tab;
         match paste.mode {
             PasteMode::Cut => {
                 if !paste.moves.is_empty() {
-                    self.undo_stack.push(crate::undo::UndoAction::Move(paste.moves));
+                    self.undo_stack
+                        .push(crate::undo::UndoAction::Move(paste.moves));
                 }
                 if !paste.perm_fails.is_empty() {
                     self.priv_run(crate::sudo::PendingPrivOp::Move {
-                        sources: paste.perm_fails, dest: paste.dest,
+                        sources: paste.perm_fails,
+                        dest: paste.dest,
                     });
                 }
                 self.reload();
-                if let Some(idx) = reload_tab { self.reload_tab(idx); }
+                if let Some(idx) = reload_tab {
+                    self.reload_tab(idx);
+                }
             }
             PasteMode::Copy => {
                 // Spawn the copy worker. The main loop will poll its
@@ -247,7 +289,9 @@ impl App {
                     // Nothing to copy (all skipped, etc.) — re-arm clipboard, done.
                     self.clipboard = Some(ClipboardOp::Copy(paste.originals));
                     self.reload();
-                    if let Some(idx) = reload_tab { self.reload_tab(idx); }
+                    if let Some(idx) = reload_tab {
+                        self.reload_tab(idx);
+                    }
                     return;
                 }
                 let mut handle = crate::ops::spawn_copy_worker(
@@ -265,7 +309,9 @@ impl App {
     /// Drain progress from the running copy worker. Called every frame by
     /// the main loop. Returns true if state changed (forces a redraw).
     pub fn poll_op_progress(&mut self) -> bool {
-        let Some(handle) = self.op_progress.as_mut() else { return false; };
+        let Some(handle) = self.op_progress.as_mut() else {
+            return false;
+        };
         let dirty = handle.poll();
         if handle.finished {
             // Finalize: push undo entries, route perm_fails through sudo.
@@ -281,12 +327,15 @@ impl App {
                 self.clipboard = Some(ClipboardOp::Copy(handle.originals));
                 if !perm_fails.is_empty() {
                     self.priv_run(crate::sudo::PendingPrivOp::Copy {
-                        sources: perm_fails, dest: handle.dest,
+                        sources: perm_fails,
+                        dest: handle.dest,
                     });
                 }
             }
             self.reload();
-            if let Some(idx) = reload_tab { self.reload_tab(idx); }
+            if let Some(idx) = reload_tab {
+                self.reload_tab(idx);
+            }
             return true;
         }
         dirty
@@ -303,7 +352,9 @@ impl App {
     pub fn resolve_rename_conflict(&mut self, action: crate::conflict::ConflictAction) {
         use crate::conflict::ConflictAction;
         self.conflict_dialog = None;
-        let Some(pending) = self.pending_rename.take() else { return; };
+        let Some(pending) = self.pending_rename.take() else {
+            return;
+        };
         match action {
             ConflictAction::Skip => {}
             ConflictAction::Replace => {
@@ -332,7 +383,11 @@ impl App {
     /// optionally promotes the action to apply-to-all, and resumes the
     /// pending paste walk.
     pub fn resolve_conflict(&mut self, action: crate::conflict::ConflictAction) {
-        let apply_to_all = self.conflict_dialog.as_ref().map(|d| d.apply_to_all).unwrap_or(false);
+        let apply_to_all = self
+            .conflict_dialog
+            .as_ref()
+            .map(|d| d.apply_to_all)
+            .unwrap_or(false);
         self.conflict_dialog = None;
         if let Some(paste) = self.pending_paste.as_mut() {
             if apply_to_all {
@@ -350,8 +405,10 @@ impl App {
     /// Apply `action` to just the source at the head of the paste queue,
     /// then resume the walk. Used when the "Apply to all" checkbox is off.
     fn apply_single_conflict_action(&mut self, action: crate::conflict::ConflictAction) {
-        use crate::conflict::{PasteMode, ConflictAction};
-        let Some(paste) = self.pending_paste.as_mut() else { return; };
+        use crate::conflict::{ConflictAction, PasteMode};
+        let Some(paste) = self.pending_paste.as_mut() else {
+            return;
+        };
         let Some(src) = paste.remaining.first().cloned() else {
             self.finalize_paste();
             return;
@@ -385,15 +442,13 @@ impl App {
             PasteMode::Copy => {
                 paste.resolved_pairs.push((src, effective_target));
             }
-            PasteMode::Cut => {
-                match std::fs::rename(&src, &effective_target) {
-                    Ok(()) => paste.moves.push((src.clone(), effective_target)),
-                    Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-                        paste.perm_fails.push(src);
-                    }
-                    Err(_) => {}
+            PasteMode::Cut => match std::fs::rename(&src, &effective_target) {
+                Ok(()) => paste.moves.push((src.clone(), effective_target)),
+                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                    paste.perm_fails.push(src);
                 }
-            }
+                Err(_) => {}
+            },
         }
         self.advance_paste();
     }
@@ -417,7 +472,8 @@ impl App {
                 }
                 PasteMode::Cut => {
                     if !paste.moves.is_empty() {
-                        self.undo_stack.push(crate::undo::UndoAction::Move(paste.moves));
+                        self.undo_stack
+                            .push(crate::undo::UndoAction::Move(paste.moves));
                     }
                 }
             }
@@ -446,14 +502,19 @@ impl App {
             }
             // Only files that actually sit under .../Trash/files are restorable
             // via the trashinfo flow — defensively skip anything else.
-            let Ok(rel) = entry.path.strip_prefix(&files_dir) else { continue };
+            let Ok(rel) = entry.path.strip_prefix(&files_dir) else {
+                continue;
+            };
             let top = match rel.iter().next() {
                 Some(c) => c.to_string_lossy().into_owned(),
                 None => continue,
             };
             let info_path = info_dir.join(format!("{top}.trashinfo"));
             let Some(original) = read_trashinfo_path(&info_path) else {
-                eprintln!("[fox] restore: missing or unreadable {}", info_path.display());
+                eprintln!(
+                    "[fox] restore: missing or unreadable {}",
+                    info_path.display()
+                );
                 continue;
             };
 
@@ -494,16 +555,27 @@ impl App {
         let mut undo_entries = Vec::new();
         let mut permission_failures: Vec<PathBuf> = Vec::new();
         for entry in &self.entries {
-            if !entry.selected { continue; }
-            let name = entry.path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            if !entry.selected {
+                continue;
+            }
+            let name = entry
+                .path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
 
             let mut dest_name = name.clone();
             let mut counter = 1u32;
             while trash_files_dir.join(&dest_name).exists() {
-                let stem = std::path::Path::new(&name).file_stem()
-                    .map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-                let ext = std::path::Path::new(&name).extension()
-                    .map(|s| format!(".{}", s.to_string_lossy())).unwrap_or_default();
+                let stem = std::path::Path::new(&name)
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let ext = std::path::Path::new(&name)
+                    .extension()
+                    .map(|s| format!(".{}", s.to_string_lossy()))
+                    .unwrap_or_default();
                 dest_name = format!("{stem}.{counter}{ext}");
                 counter += 1;
             }
@@ -511,7 +583,8 @@ impl App {
             let now = chrono_now();
             let info_content = format!(
                 "[Trash Info]\nPath={}\nDeletionDate={}\n",
-                entry.path.display(), now
+                entry.path.display(),
+                now
             );
             let info_path = trash_info_dir.join(format!("{dest_name}.trashinfo"));
             let file_path = trash_files_dir.join(&dest_name);
@@ -530,7 +603,8 @@ impl App {
             }
         }
         if !undo_entries.is_empty() {
-            self.undo_stack.push(crate::undo::UndoAction::Trash(undo_entries));
+            self.undo_stack
+                .push(crate::undo::UndoAction::Trash(undo_entries));
         }
         // Items we couldn't trash because they're owned by root → route
         // through the sudo prompt as a permanent delete (mv into trash would
@@ -552,7 +626,9 @@ impl App {
         let mut hit_permission_denied = false;
         for sub in ["files", "info"] {
             let dir = trash.join(sub);
-            let Ok(entries) = std::fs::read_dir(&dir) else { continue; };
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
             for entry in entries.flatten() {
                 let path = entry.path();
                 let res = if path.is_dir() {
@@ -576,7 +652,9 @@ impl App {
     }
 
     pub fn delete_selected(&mut self) {
-        let paths: Vec<PathBuf> = self.entries.iter()
+        let paths: Vec<PathBuf> = self
+            .entries
+            .iter()
             .filter(|e| e.selected)
             .map(|e| e.path.clone())
             .collect();
@@ -606,7 +684,9 @@ impl App {
     }
 
     pub fn open_selected(&mut self) {
-        let selected: Vec<_> = self.entries.iter()
+        let selected: Vec<_> = self
+            .entries
+            .iter()
             .enumerate()
             .filter(|(_, e)| e.selected)
             .map(|(i, _)| i)
@@ -638,7 +718,9 @@ impl App {
     #[allow(dead_code)]
     pub fn open_with(&self, app_name: &str) {
         for entry in &self.entries {
-            if !entry.selected { continue; }
+            if !entry.selected {
+                continue;
+            }
             let path = entry.path.clone();
             let app = app_name.to_string();
             std::thread::spawn(move || {
@@ -649,11 +731,15 @@ impl App {
 
     #[allow(dead_code)]
     pub fn copy_path_to_clipboard(&self) {
-        let paths: Vec<String> = self.entries.iter()
+        let paths: Vec<String> = self
+            .entries
+            .iter()
             .filter(|e| e.selected)
             .map(|e| e.path.display().to_string())
             .collect();
-        if paths.is_empty() { return; }
+        if paths.is_empty() {
+            return;
+        }
         let text = paths.join("\n");
         if let Some(clip) = &self.wayland_clipboard {
             clip.set_text(&text);
@@ -662,11 +748,15 @@ impl App {
 
     #[allow(dead_code)]
     pub fn copy_name_to_clipboard(&self) {
-        let names: Vec<String> = self.entries.iter()
+        let names: Vec<String> = self
+            .entries
+            .iter()
             .filter(|e| e.selected)
             .map(|e| e.name.clone())
             .collect();
-        if names.is_empty() { return; }
+        if names.is_empty() {
+            return;
+        }
         let text = names.join("\n");
         if let Some(clip) = &self.wayland_clipboard {
             clip.set_text(&text);
@@ -674,17 +764,23 @@ impl App {
     }
 
     pub fn duplicate_selected(&mut self) {
-        let selected: Vec<_> = self.entries.iter()
+        let selected: Vec<_> = self
+            .entries
+            .iter()
             .filter(|e| e.selected)
             .map(|e| (e.path.clone(), e.name.clone(), e.is_dir))
             .collect();
         let root_mode = self.root_mode;
         for (path, name, is_dir) in selected {
             let parent = path.parent().unwrap_or(&self.current_dir).to_path_buf();
-            let stem = std::path::Path::new(&name).file_stem()
-                .map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-            let ext = std::path::Path::new(&name).extension()
-                .map(|s| format!(".{}", s.to_string_lossy())).unwrap_or_default();
+            let stem = std::path::Path::new(&name)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let ext = std::path::Path::new(&name)
+                .extension()
+                .map(|s| format!(".{}", s.to_string_lossy()))
+                .unwrap_or_default();
 
             let mut dest_name = format!("{stem} (copy){ext}");
             let mut counter = 2u32;
@@ -699,31 +795,40 @@ impl App {
                 std::thread::spawn(move || {
                     let _ = std::process::Command::new("pkexec")
                         .args(["cp", "-r", "--"])
-                        .arg(&src).arg(&d)
+                        .arg(&src)
+                        .arg(&d)
                         .status();
                 });
             } else if is_dir {
                 let src = path.clone();
                 let d = dest.clone();
-                std::thread::spawn(move || { let _ = copy_dir_recursive(&src, &d); });
+                std::thread::spawn(move || {
+                    let _ = copy_dir_recursive(&src, &d);
+                });
             } else {
                 let _ = std::fs::copy(&path, &dest);
             }
             self.undo_stack.push(crate::undo::UndoAction::Copy {
-                sources: vec![path], created: vec![dest],
+                sources: vec![path],
+                created: vec![dest],
             });
         }
         self.reload();
     }
 
     pub fn compress_selected(&mut self) {
-        let selected: Vec<PathBuf> = self.entries.iter()
+        let selected: Vec<PathBuf> = self
+            .entries
+            .iter()
             .filter(|e| e.selected)
             .map(|e| e.path.clone())
             .collect();
-        if selected.is_empty() { return; }
+        if selected.is_empty() {
+            return;
+        }
 
-        let base_name = selected[0].file_stem()
+        let base_name = selected[0]
+            .file_stem()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "archive".into());
         let mut archive_name = format!("{base_name}.tar.gz");
@@ -736,7 +841,8 @@ impl App {
         let dir = self.current_dir.clone();
         let root_mode = self.root_mode;
         std::thread::spawn(move || {
-            let file_args: Vec<String> = selected.iter()
+            let file_args: Vec<String> = selected
+                .iter()
                 .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
                 .collect();
             if root_mode {
@@ -748,7 +854,8 @@ impl App {
                     .status();
             } else {
                 let _ = std::process::Command::new("tar")
-                    .arg("czf").arg(&archive_name)
+                    .arg("czf")
+                    .arg(&archive_name)
                     .args(&file_args)
                     .current_dir(&dir)
                     .status();
@@ -757,7 +864,9 @@ impl App {
     }
 
     pub fn extract_selected(&mut self) {
-        let selected: Vec<PathBuf> = self.entries.iter()
+        let selected: Vec<PathBuf> = self
+            .entries
+            .iter()
             .filter(|e| e.selected)
             .map(|e| e.path.clone())
             .collect();
@@ -765,14 +874,16 @@ impl App {
         let root_mode = self.root_mode;
         std::thread::spawn(move || {
             for path in &selected {
-                let ext = path.extension()
+                let ext = path
+                    .extension()
                     .map(|e| e.to_string_lossy().to_lowercase())
                     .unwrap_or_default();
                 let name = path.to_string_lossy();
 
                 // Derive subfolder name from archive filename (strip extensions)
                 let stem = {
-                    let file_name = path.file_name()
+                    let file_name = path
+                        .file_name()
                         .map(|n| n.to_string_lossy().to_string())
                         .unwrap_or_default();
                     // Strip compound extensions like .tar.gz, .tar.bz2, etc.
@@ -780,7 +891,8 @@ impl App {
                     if s.ends_with(".tar.gz") || s.ends_with(".tar.bz2") || s.ends_with(".tar.xz") {
                         s.rsplitn(3, '.').last().unwrap_or(s).to_string()
                     } else {
-                        std::path::Path::new(&file_name).file_stem()
+                        std::path::Path::new(&file_name)
+                            .file_stem()
                             .map(|s| s.to_string_lossy().to_string())
                             .unwrap_or(file_name)
                     }
@@ -789,31 +901,71 @@ impl App {
                 let _ = std::fs::create_dir_all(&extract_dir);
 
                 // Build (program, args) for each archive type
-                let (prog, args): (&str, Vec<std::ffi::OsString>) = if name.ends_with(".tar.gz") || name.ends_with(".tgz") {
-                    ("tar", vec!["xzf".into(), path.as_os_str().into(), "-C".into(), extract_dir.as_os_str().into()])
-                } else if name.ends_with(".tar.bz2") || name.ends_with(".tbz2") {
-                    ("tar", vec!["xjf".into(), path.as_os_str().into(), "-C".into(), extract_dir.as_os_str().into()])
-                } else if name.ends_with(".tar.xz") || name.ends_with(".txz") {
-                    ("tar", vec!["xJf".into(), path.as_os_str().into(), "-C".into(), extract_dir.as_os_str().into()])
-                } else if name.ends_with(".tar") {
-                    ("tar", vec!["xf".into(), path.as_os_str().into(), "-C".into(), extract_dir.as_os_str().into()])
-                } else if ext == "zip" {
-                    ("unzip", vec!["-o".into(), path.as_os_str().into(), "-d".into(), extract_dir.as_os_str().into()])
-                } else if ext == "7z" {
-                    let out_flag: std::ffi::OsString = format!("-o{}", extract_dir.display()).into();
-                    ("7z", vec!["x".into(), path.as_os_str().into(), out_flag])
-                } else {
-                    continue;
-                };
+                let (prog, args): (&str, Vec<std::ffi::OsString>) =
+                    if name.ends_with(".tar.gz") || name.ends_with(".tgz") {
+                        (
+                            "tar",
+                            vec![
+                                "xzf".into(),
+                                path.as_os_str().into(),
+                                "-C".into(),
+                                extract_dir.as_os_str().into(),
+                            ],
+                        )
+                    } else if name.ends_with(".tar.bz2") || name.ends_with(".tbz2") {
+                        (
+                            "tar",
+                            vec![
+                                "xjf".into(),
+                                path.as_os_str().into(),
+                                "-C".into(),
+                                extract_dir.as_os_str().into(),
+                            ],
+                        )
+                    } else if name.ends_with(".tar.xz") || name.ends_with(".txz") {
+                        (
+                            "tar",
+                            vec![
+                                "xJf".into(),
+                                path.as_os_str().into(),
+                                "-C".into(),
+                                extract_dir.as_os_str().into(),
+                            ],
+                        )
+                    } else if name.ends_with(".tar") {
+                        (
+                            "tar",
+                            vec![
+                                "xf".into(),
+                                path.as_os_str().into(),
+                                "-C".into(),
+                                extract_dir.as_os_str().into(),
+                            ],
+                        )
+                    } else if ext == "zip" {
+                        (
+                            "unzip",
+                            vec![
+                                "-o".into(),
+                                path.as_os_str().into(),
+                                "-d".into(),
+                                extract_dir.as_os_str().into(),
+                            ],
+                        )
+                    } else if ext == "7z" {
+                        let out_flag: std::ffi::OsString =
+                            format!("-o{}", extract_dir.display()).into();
+                        ("7z", vec!["x".into(), path.as_os_str().into(), out_flag])
+                    } else {
+                        continue;
+                    };
 
                 if root_mode {
                     let mut cmd = std::process::Command::new("pkexec");
                     cmd.arg(prog).args(&args);
                     let _ = cmd.status();
                 } else {
-                    let _ = std::process::Command::new(prog)
-                        .args(&args)
-                        .status();
+                    let _ = std::process::Command::new(prog).args(&args).status();
                 }
             }
         });
@@ -821,7 +973,9 @@ impl App {
 
     pub fn open_as_root(&mut self) {
         // Navigate into the selected folder with root mode enabled
-        let selected: Vec<PathBuf> = self.entries.iter()
+        let selected: Vec<PathBuf> = self
+            .entries
+            .iter()
             .filter(|e| e.selected && e.is_dir)
             .map(|e| e.path.clone())
             .collect();
@@ -875,12 +1029,18 @@ impl App {
     /// supplied password. On success closes the modal + reloads; on failure
     /// surfaces the error message in the modal.
     pub fn submit_sudo_prompt(&mut self) {
-        let Some(prompt) = self.sudo_prompt.as_ref() else { return; };
-        if !prompt.can_submit() { return; }
+        let Some(prompt) = self.sudo_prompt.as_ref() else {
+            return;
+        };
+        if !prompt.can_submit() {
+            return;
+        }
         let password = prompt.password.clone();
         let op = prompt.op.clone();
         // Mark submitting so the button re-labels.
-        if let Some(p) = self.sudo_prompt.as_mut() { p.submitting = true; }
+        if let Some(p) = self.sudo_prompt.as_mut() {
+            p.submitting = true;
+        }
         match crate::sudo::run_with_password(&op, &password) {
             Ok(()) => {
                 self.sudo_prompt = None;
@@ -947,8 +1107,14 @@ fn pick_restore_dest(original: &std::path::Path) -> PathBuf {
         return original.to_path_buf();
     }
     let parent = original.parent().unwrap_or(std::path::Path::new("/"));
-    let stem = original.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-    let ext = original.extension().map(|s| format!(".{}", s.to_string_lossy())).unwrap_or_default();
+    let stem = original
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let ext = original
+        .extension()
+        .map(|s| format!(".{}", s.to_string_lossy()))
+        .unwrap_or_default();
     for n in 1u32..1000 {
         let candidate = parent.join(format!("{stem} (restored {n}){ext}"));
         if !candidate.exists() {

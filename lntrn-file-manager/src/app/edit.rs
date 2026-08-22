@@ -6,7 +6,9 @@ impl App {
     // ── Rename ────────────────────────────────────────────────────────
 
     pub fn start_rename(&mut self, index: usize) {
-        if index >= self.entries.len() { return; }
+        if index >= self.entries.len() {
+            return;
+        }
         self.rename_buf = self.entries[index].name.clone();
         // Files: select the basename (everything before the final '.'). If
         // there's no extension or it's a dotfile, select all. Folders: select all.
@@ -20,7 +22,11 @@ impl App {
                 Some(dot) => dot,
             }
         };
-        self.rename_selection = if select_end > 0 { Some((0, select_end)) } else { None };
+        self.rename_selection = if select_end > 0 {
+            Some((0, select_end))
+        } else {
+            None
+        };
         self.rename_cursor = select_end;
         self.renaming = Some(index);
     }
@@ -45,7 +51,8 @@ impl App {
                             mode: crate::conflict::PasteMode::Cut,
                         };
                         self.pending_rename = Some(crate::conflict::PendingRename {
-                            from: old, to: new_path,
+                            from: old,
+                            to: new_path,
                         });
                         self.conflict_dialog = Some(dialog);
                         self.rename_buf.clear();
@@ -65,24 +72,22 @@ impl App {
 
     /// Execute a rename + push an Undo entry. Used by both the normal commit
     /// path and the conflict-resolved Replace / Keep Both paths.
-    pub(crate) fn perform_rename(
-        &mut self,
-        from: std::path::PathBuf,
-        to: std::path::PathBuf,
-    ) {
+    pub(crate) fn perform_rename(&mut self, from: std::path::PathBuf, to: std::path::PathBuf) {
         if self.root_mode {
             let from_cmd = from.clone();
             let to_cmd = to.clone();
             std::thread::spawn(move || {
                 let _ = std::process::Command::new("pkexec")
                     .args(["mv", "--"])
-                    .arg(&from_cmd).arg(&to_cmd)
+                    .arg(&from_cmd)
+                    .arg(&to_cmd)
                     .status();
             });
         } else {
             let _ = std::fs::rename(&from, &to);
         }
-        self.undo_stack.push(crate::undo::UndoAction::Rename { from, to });
+        self.undo_stack
+            .push(crate::undo::UndoAction::Rename { from, to });
     }
 
     pub fn cancel_rename(&mut self) {
@@ -95,10 +100,14 @@ impl App {
     /// Delete the currently selected text in the save-name buffer (if any).
     /// Returns true if anything was deleted. Mirrors `rename_delete_selection`.
     pub fn save_name_delete_selection(&mut self) -> bool {
-        let Some((a, b)) = self.save_name_selection.take() else { return false };
+        let Some((a, b)) = self.save_name_selection.take() else {
+            return false;
+        };
         let start = a.min(b).min(self.save_name_buf.len());
         let end = a.max(b).min(self.save_name_buf.len());
-        if start == end { return false; }
+        if start == end {
+            return false;
+        }
         self.save_name_buf.replace_range(start..end, "");
         self.save_name_cursor = start;
         true
@@ -108,10 +117,14 @@ impl App {
     /// Returns true if anything was deleted. Cursor lands at the start of the
     /// former selection. Selection offsets are byte indices.
     pub fn rename_delete_selection(&mut self) -> bool {
-        let Some((a, b)) = self.rename_selection.take() else { return false };
+        let Some((a, b)) = self.rename_selection.take() else {
+            return false;
+        };
         let start = a.min(b).min(self.rename_buf.len());
         let end = a.max(b).min(self.rename_buf.len());
-        if start == end { return false; }
+        if start == end {
+            return false;
+        }
         self.rename_buf.replace_range(start..end, "");
         self.rename_cursor = start;
         true
@@ -147,7 +160,9 @@ impl App {
     /// Get the currently selected text in the path bar, or the full path if all selected.
     pub fn path_selected_text(&self) -> Option<String> {
         let (start, end) = self.path_selection?;
-        if start == end { return None; }
+        if start == end {
+            return None;
+        }
         let s = start.min(end);
         let e = start.max(end);
         let text: String = self.path_buf.chars().skip(s).take(e - s).collect();

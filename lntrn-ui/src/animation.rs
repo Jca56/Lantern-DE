@@ -59,4 +59,3 @@ pub fn progress(elapsed: f32, duration: f32) -> f32 {
 pub fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
-

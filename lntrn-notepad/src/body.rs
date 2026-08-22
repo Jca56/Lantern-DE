@@ -47,9 +47,23 @@ impl BodyGeom {
 /// Per-row x-offset: bullet hanging indent + alignment + first-line indent.
 /// Left-aligned text — the common case — costs nothing but two adds. Clicks
 /// resolve through this same function so they land on the glyph they hit.
-pub(crate) fn row_x_offset(l: &LineLayout, para: &ParagraphAttrs, row_idx: usize, max_w: f32, s: f32) -> f32 {
-    let bullet = if para.bullet { editor::BULLET_INDENT * s } else { 0.0 };
-    let indent = if row_idx == 0 { para.first_indent * s } else { 0.0 };
+pub(crate) fn row_x_offset(
+    l: &LineLayout,
+    para: &ParagraphAttrs,
+    row_idx: usize,
+    max_w: f32,
+    s: f32,
+) -> f32 {
+    let bullet = if para.bullet {
+        editor::BULLET_INDENT * s
+    } else {
+        0.0
+    };
+    let indent = if row_idx == 0 {
+        para.first_indent * s
+    } else {
+        0.0
+    };
     let align = match para.alignment {
         Alignment::Left | Alignment::Justify => 0.0,
         a => {
@@ -69,7 +83,9 @@ pub fn draw_selection(painter: &mut Painter, editor: &Editor, g: &BodyGeom, colo
         if i < sel_start.line || i > sel_end.line {
             continue;
         }
-        let Some(l) = editor.line_layout(i) else { continue };
+        let Some(l) = editor.line_layout(i) else {
+            continue;
+        };
         let line_len = editor.lines[i].len();
         let para = editor.formats.get(i).para;
 
@@ -131,7 +147,9 @@ pub fn draw_matches(
         if m.line < g.first || m.line >= g.last {
             continue;
         }
-        let Some(l) = editor.line_layout(m.line) else { continue };
+        let Some(l) = editor.line_layout(m.line) else {
+            continue;
+        };
         let line_len = editor.lines[m.line].len();
         let para = editor.formats.get(m.line).para;
 
@@ -172,7 +190,9 @@ pub fn draw_text(
 ) {
     let s = g.scale;
     for i in g.first..g.last {
-        let Some(l) = editor.line_layout(i) else { continue };
+        let Some(l) = editor.line_layout(i) else {
+            continue;
+        };
         let line_str = &editor.lines[i];
         let para = editor.formats.get(i).para;
         let spans = editor.formats.get(i).iter_spans(line_str.len());
@@ -228,8 +248,17 @@ pub fn draw_text(
                 // Slack on the layout bound: quantization can round an
                 // exact-width bound down and clip the row's last glyph.
                 text.queue_full(
-                    span_text, fs, x, y, span_color, g.content_max_w + 4.0 * s, weight, style,
-                    family, screen_w, screen_h,
+                    span_text,
+                    fs,
+                    x,
+                    y,
+                    span_color,
+                    g.content_max_w + 4.0 * s,
+                    weight,
+                    style,
+                    family,
+                    screen_w,
+                    screen_h,
                 );
 
                 // Advance from the cached table — the run was measured once,

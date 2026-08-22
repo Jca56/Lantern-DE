@@ -62,7 +62,9 @@ impl WorkspaceIpc {
         if self.reader.is_none() {
             self.try_connect();
         }
-        let Some(reader) = &mut self.reader else { return };
+        let Some(reader) = &mut self.reader else {
+            return;
+        };
 
         let mut line = String::new();
         let mut disconnect = false;

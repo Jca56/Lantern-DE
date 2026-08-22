@@ -103,18 +103,33 @@ fn clock_row_rect(panel: Rect, top_y: f32, scale: f32) -> Rect {
 
 fn visualizer_row_rect(panel: Rect, top_y: f32, scale: f32) -> Rect {
     let clock_r = clock_row_rect(panel, top_y, scale);
-    Rect::new(clock_r.x, clock_r.y + clock_r.h + ROW_GAP * scale, clock_r.w, clock_r.h)
+    Rect::new(
+        clock_r.x,
+        clock_r.y + clock_r.h + ROW_GAP * scale,
+        clock_r.w,
+        clock_r.h,
+    )
 }
 
 fn rainbow_row_rect(panel: Rect, top_y: f32, scale: f32) -> Rect {
     let viz_r = visualizer_row_rect(panel, top_y, scale);
-    Rect::new(viz_r.x, viz_r.y + viz_r.h + ROW_GAP * scale, viz_r.w, viz_r.h)
+    Rect::new(
+        viz_r.x,
+        viz_r.y + viz_r.h + ROW_GAP * scale,
+        viz_r.w,
+        viz_r.h,
+    )
 }
 
 fn toggle_rect_in(row: Rect, scale: f32) -> Rect {
     let w = TOGGLE_W * scale;
     let h = TOGGLE_H * scale;
-    Rect::new(row.x + row.w - w - 16.0 * scale, row.y + (row.h - h) / 2.0, w, h)
+    Rect::new(
+        row.x + row.w - w - 16.0 * scale,
+        row.y + (row.h - h) / 2.0,
+        w,
+        h,
+    )
 }
 
 pub fn hit_test_page(panel: Rect, top_y: f32, scale: f32, px: f32, py: f32) -> PageHit {

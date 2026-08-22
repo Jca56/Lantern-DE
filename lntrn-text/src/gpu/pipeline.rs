@@ -68,38 +68,37 @@ impl GlyphPipeline {
             mapped_at_creation: false,
         });
 
-        let bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("lntrn-text bind group layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::VERTEX,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("lntrn-text bind group layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
-                        count: None,
-                    },
-                ],
-            });
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    count: None,
+                },
+            ],
+        });
 
         let bind_group = make_bind_group(device, &bind_group_layout, &uniform, atlas);
 
@@ -209,7 +208,8 @@ impl GlyphPipeline {
         quads: &[Quad],
     ) {
         if atlas.generation() != self.atlas_generation {
-            self.bind_group = make_bind_group(device, &self.bind_group_layout, &self.uniform, atlas);
+            self.bind_group =
+                make_bind_group(device, &self.bind_group_layout, &self.uniform, atlas);
             self.atlas_generation = atlas.generation();
         }
         self.verts.clear();
@@ -219,12 +219,36 @@ impl GlyphPipeline {
             let [u1, v1] = q.uv_max;
             let c = q.color;
             // Two triangles: (TL, BL, BR) + (TL, BR, TR).
-            self.verts.push(Vertex { pos: [x0, y0], uv: [u0, v0], color: c });
-            self.verts.push(Vertex { pos: [x0, y1], uv: [u0, v1], color: c });
-            self.verts.push(Vertex { pos: [x1, y1], uv: [u1, v1], color: c });
-            self.verts.push(Vertex { pos: [x0, y0], uv: [u0, v0], color: c });
-            self.verts.push(Vertex { pos: [x1, y1], uv: [u1, v1], color: c });
-            self.verts.push(Vertex { pos: [x1, y0], uv: [u1, v0], color: c });
+            self.verts.push(Vertex {
+                pos: [x0, y0],
+                uv: [u0, v0],
+                color: c,
+            });
+            self.verts.push(Vertex {
+                pos: [x0, y1],
+                uv: [u0, v1],
+                color: c,
+            });
+            self.verts.push(Vertex {
+                pos: [x1, y1],
+                uv: [u1, v1],
+                color: c,
+            });
+            self.verts.push(Vertex {
+                pos: [x0, y0],
+                uv: [u0, v0],
+                color: c,
+            });
+            self.verts.push(Vertex {
+                pos: [x1, y1],
+                uv: [u1, v1],
+                color: c,
+            });
+            self.verts.push(Vertex {
+                pos: [x1, y0],
+                uv: [u1, v0],
+                color: c,
+            });
         }
         if self.verts.is_empty() {
             return;

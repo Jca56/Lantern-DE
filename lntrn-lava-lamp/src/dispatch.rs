@@ -18,10 +18,19 @@ use crate::wayland::{State, BTN_LEFT};
 
 impl Dispatch<wl_registry::WlRegistry, ()> for State {
     fn event(
-        state: &mut Self, registry: &wl_registry::WlRegistry,
-        event: wl_registry::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>,
+        state: &mut Self,
+        registry: &wl_registry::WlRegistry,
+        event: wl_registry::Event,
+        _: &(),
+        _: &Connection,
+        qh: &QueueHandle<Self>,
     ) {
-        if let wl_registry::Event::Global { name, interface, version } = event {
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
             match interface.as_str() {
                 "wl_compositor" => {
                     state.compositor = Some(registry.bind(name, version.min(6), qh, ()));
@@ -53,36 +62,104 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
 // ── No-op dispatchers ──────────────────────────────────────────────────
 
 impl Dispatch<wl_compositor::WlCompositor, ()> for State {
-    fn event(_: &mut Self, _: &wl_compositor::WlCompositor, _: wl_compositor::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_compositor::WlCompositor,
+        _: wl_compositor::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wl_surface::WlSurface, ()> for State {
-    fn event(_: &mut Self, _: &wl_surface::WlSurface, _: wl_surface::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_surface::WlSurface,
+        _: wl_surface::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wp_viewporter::WpViewporter, ()> for State {
-    fn event(_: &mut Self, _: &wp_viewporter::WpViewporter, _: wp_viewporter::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wp_viewporter::WpViewporter,
+        _: wp_viewporter::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wp_viewport::WpViewport, ()> for State {
-    fn event(_: &mut Self, _: &wp_viewport::WpViewport, _: wp_viewport::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wp_viewport::WpViewport,
+        _: wp_viewport::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1, ()> for State {
-    fn event(_: &mut Self, _: &wp_cursor_shape_manager_v1::WpCursorShapeManagerV1, _: wp_cursor_shape_manager_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wp_cursor_shape_manager_v1::WpCursorShapeManagerV1,
+        _: wp_cursor_shape_manager_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1, ()> for State {
-    fn event(_: &mut Self, _: &wp_cursor_shape_device_v1::WpCursorShapeDeviceV1, _: wp_cursor_shape_device_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wp_cursor_shape_device_v1::WpCursorShapeDeviceV1,
+        _: wp_cursor_shape_device_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<zxdg_decoration_manager_v1::ZxdgDecorationManagerV1, ()> for State {
-    fn event(_: &mut Self, _: &zxdg_decoration_manager_v1::ZxdgDecorationManagerV1, _: zxdg_decoration_manager_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &zxdg_decoration_manager_v1::ZxdgDecorationManagerV1,
+        _: zxdg_decoration_manager_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1, ()> for State {
-    fn event(_: &mut Self, _: &zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1, _: zxdg_toplevel_decoration_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1,
+        _: zxdg_toplevel_decoration_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 // ── XDG shell ──────────────────────────────────────────────────────────
 
 impl Dispatch<xdg_wm_base::XdgWmBase, ()> for State {
     fn event(
-        _: &mut Self, wm_base: &xdg_wm_base::XdgWmBase,
-        event: xdg_wm_base::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        _: &mut Self,
+        wm_base: &xdg_wm_base::XdgWmBase,
+        event: xdg_wm_base::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         if let xdg_wm_base::Event::Ping { serial } = event {
             wm_base.pong(serial);
@@ -92,8 +169,12 @@ impl Dispatch<xdg_wm_base::XdgWmBase, ()> for State {
 
 impl Dispatch<xdg_surface::XdgSurface, ()> for State {
     fn event(
-        state: &mut Self, xdg_surface: &xdg_surface::XdgSurface,
-        event: xdg_surface::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        xdg_surface: &xdg_surface::XdgSurface,
+        event: xdg_surface::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         if let xdg_surface::Event::Configure { serial } = event {
             xdg_surface.ack_configure(serial);
@@ -105,15 +186,25 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for State {
 
 impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
     fn event(
-        state: &mut Self, _: &xdg_toplevel::XdgToplevel,
-        event: xdg_toplevel::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        _: &xdg_toplevel::XdgToplevel,
+        event: xdg_toplevel::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         match event {
             xdg_toplevel::Event::Configure { width, height, .. } => {
-                if width > 0 { state.width = width as u32; }
-                if height > 0 { state.height = height as u32; }
+                if width > 0 {
+                    state.width = width as u32;
+                }
+                if height > 0 {
+                    state.height = height as u32;
+                }
             }
-            xdg_toplevel::Event::Close => { state.running = false; }
+            xdg_toplevel::Event::Close => {
+                state.running = false;
+            }
             _ => {}
         }
     }
@@ -123,12 +214,20 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
 
 impl Dispatch<wl_output::WlOutput, ()> for State {
     fn event(
-        state: &mut Self, _: &wl_output::WlOutput,
-        event: wl_output::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        _: &wl_output::WlOutput,
+        event: wl_output::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         match event {
-            wl_output::Event::Scale { factor } => { state.scale = factor; }
-            wl_output::Event::Mode { width, .. } => { state.output_phys_width = width as u32; }
+            wl_output::Event::Scale { factor } => {
+                state.scale = factor;
+            }
+            wl_output::Event::Mode { width, .. } => {
+                state.output_phys_width = width as u32;
+            }
             _ => {}
         }
     }
@@ -138,8 +237,12 @@ impl Dispatch<wl_output::WlOutput, ()> for State {
 
 impl Dispatch<wl_callback::WlCallback, ()> for State {
     fn event(
-        state: &mut Self, _: &wl_callback::WlCallback, _: wl_callback::Event,
-        _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        _: &wl_callback::WlCallback,
+        _: wl_callback::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         state.frame_done = true;
     }
@@ -149,10 +252,17 @@ impl Dispatch<wl_callback::WlCallback, ()> for State {
 
 impl Dispatch<wl_seat::WlSeat, ()> for State {
     fn event(
-        state: &mut Self, seat: &wl_seat::WlSeat,
-        event: wl_seat::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>,
+        state: &mut Self,
+        seat: &wl_seat::WlSeat,
+        event: wl_seat::Event,
+        _: &(),
+        _: &Connection,
+        qh: &QueueHandle<Self>,
     ) {
-        if let wl_seat::Event::Capabilities { capabilities: WEnum::Value(cap) } = event {
+        if let wl_seat::Event::Capabilities {
+            capabilities: WEnum::Value(cap),
+        } = event
+        {
             if cap.contains(wl_seat::Capability::Pointer) {
                 let ptr = seat.get_pointer(qh, ());
                 if let Some(mgr) = &state.cursor_shape_mgr {
@@ -169,8 +279,12 @@ impl Dispatch<wl_seat::WlSeat, ()> for State {
 
 impl Dispatch<wl_pointer::WlPointer, ()> for State {
     fn event(
-        state: &mut Self, _: &wl_pointer::WlPointer,
-        event: wl_pointer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        _: &wl_pointer::WlPointer,
+        event: wl_pointer::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         match event {
             wl_pointer::Event::Enter { serial, .. } => {
@@ -183,26 +297,41 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 state.pointer_in_surface = false;
                 state.frame_done = true;
             }
-            wl_pointer::Event::Button { button, state: btn_state, serial, .. } => {
+            wl_pointer::Event::Button {
+                button,
+                state: btn_state,
+                serial,
+                ..
+            } => {
                 state.pointer_serial = serial;
-                if button == BTN_LEFT
-                    && btn_state == WEnum::Value(wl_pointer::ButtonState::Pressed)
+                if button == BTN_LEFT && btn_state == WEnum::Value(wl_pointer::ButtonState::Pressed)
                 {
                     state.left_pressed = true;
                 }
                 state.frame_done = true;
             }
-            _ => { state.frame_done = true; }
+            _ => {
+                state.frame_done = true;
+            }
         }
     }
 }
 
 impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
     fn event(
-        state: &mut Self, _: &wl_keyboard::WlKeyboard,
-        event: wl_keyboard::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        _: &wl_keyboard::WlKeyboard,
+        event: wl_keyboard::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
-        if let wl_keyboard::Event::Key { key, state: key_state, .. } = event {
+        if let wl_keyboard::Event::Key {
+            key,
+            state: key_state,
+            ..
+        } = event
+        {
             if key_state == WEnum::Value(wl_keyboard::KeyState::Pressed) {
                 state.key_pressed = Some(key);
             }

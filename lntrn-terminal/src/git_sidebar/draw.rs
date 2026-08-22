@@ -46,14 +46,26 @@ pub fn draw_git_sidebar(
         // Chevron
         let chev_color = if header_hover { c(ACCENT) } else { c(TEXT_DIM) };
         text.queue(
-            chevron, small_font, pad, y + (section_h - small_font) / 2.0,
-            chev_color, 16.0 * scale, screen_w, screen_h,
+            chevron,
+            small_font,
+            pad,
+            y + (section_h - small_font) / 2.0,
+            chev_color,
+            16.0 * scale,
+            screen_w,
+            screen_h,
         );
         // Branch name
         let name_color = if header_hover { c(ACCENT) } else { c(TEXT_C) };
         text.queue(
-            &status.branch, font, pad + 18.0 * scale, y + 5.0 * scale,
-            name_color, sw - pad * 2.0 - 60.0 * scale, screen_w, screen_h,
+            &status.branch,
+            font,
+            pad + 18.0 * scale,
+            y + 5.0 * scale,
+            name_color,
+            sw - pad * 2.0 - 60.0 * scale,
+            screen_w,
+            screen_h,
         );
         if header_hover {
             painter.rect_filled(header_rect, 0.0, c(SURFACE_HOVER));
@@ -64,23 +76,41 @@ pub fn draw_git_sidebar(
         let ref_x = sw - pad - ref_w;
         let ref_rect = Rect::new(ref_x, y + 2.0 * scale, ref_w, section_h - 4.0 * scale);
         let ref_hover = cursor_pos.map_or(false, |(cx, cy)| {
-            cx >= ref_rect.x && cx <= ref_rect.x + ref_rect.w
-                && cy >= ref_rect.y && cy <= ref_rect.y + ref_rect.h
+            cx >= ref_rect.x
+                && cx <= ref_rect.x + ref_rect.w
+                && cy >= ref_rect.y
+                && cy <= ref_rect.y + ref_rect.h
         });
-        let ref_bg = if ref_hover { c(SURFACE_HOVER) } else { c(BTN_BG) };
+        let ref_bg = if ref_hover {
+            c(SURFACE_HOVER)
+        } else {
+            c(BTN_BG)
+        };
         painter.rect_filled(ref_rect, 4.0 * scale, ref_bg);
         let ref_color = if ref_hover { c(ACCENT) } else { c(TEXT_DIM) };
         text.queue(
-            "R", small_font, ref_x + (ref_w - small_font * 0.55) / 2.0,
-            y + (section_h - small_font) / 2.0, ref_color, ref_w, screen_w, screen_h,
+            "R",
+            small_font,
+            ref_x + (ref_w - small_font * 0.55) / 2.0,
+            y + (section_h - small_font) / 2.0,
+            ref_color,
+            ref_w,
+            screen_w,
+            screen_h,
         );
 
         // Ahead/behind (left of refresh)
         let ab = format!("{}  {}", status.ahead, status.behind);
         let ab_x = ref_x - 8.0 * scale - ab.len() as f32 * small_font * 0.55;
         text.queue(
-            &ab, small_font, ab_x, y + 8.0 * scale, c(TEXT_DIM),
-            100.0 * scale, screen_w, screen_h,
+            &ab,
+            small_font,
+            ab_x,
+            y + 8.0 * scale,
+            c(TEXT_DIM),
+            100.0 * scale,
+            screen_w,
+            screen_h,
         );
         y += section_h;
 
@@ -89,7 +119,10 @@ pub fn draw_git_sidebar(
             for branch in &state.branches {
                 let item_rect = Rect::new(4.0 * scale, y, sw - 8.0 * scale, item_h);
                 let hovered = cursor_pos.map_or(false, |(cx, cy)| {
-                    cx >= 0.0 && cx <= sw && cy >= y.max(top_y) && cy < (y + item_h).min(screen_h as f32)
+                    cx >= 0.0
+                        && cx <= sw
+                        && cy >= y.max(top_y)
+                        && cy < (y + item_h).min(screen_h as f32)
                 });
                 if hovered && !branch.is_current {
                     painter.rect_filled(item_rect, 4.0 * scale, c(SURFACE_HOVER));
@@ -102,10 +135,25 @@ pub fn draw_git_sidebar(
                 } else {
                     c(TEXT_C)
                 };
-                text.queue(icon, font, pad + 10.0 * scale, y + (item_h - font) / 2.0, c(ACCENT), 16.0 * scale, screen_w, screen_h);
                 text.queue(
-                    &branch.name, font, pad + 28.0 * scale, y + (item_h - font) / 2.0,
-                    name_color, sw - pad * 2.0 - 28.0 * scale, screen_w, screen_h,
+                    icon,
+                    font,
+                    pad + 10.0 * scale,
+                    y + (item_h - font) / 2.0,
+                    c(ACCENT),
+                    16.0 * scale,
+                    screen_w,
+                    screen_h,
+                );
+                text.queue(
+                    &branch.name,
+                    font,
+                    pad + 28.0 * scale,
+                    y + (item_h - font) / 2.0,
+                    name_color,
+                    sw - pad * 2.0 - 28.0 * scale,
+                    screen_w,
+                    screen_h,
                 );
                 y += item_h;
             }
@@ -117,21 +165,63 @@ pub fn draw_git_sidebar(
 
         // ── 2. Commit section ───────────────────────────────────────
         text.queue(
-            "COMMIT", small_font, pad, y + 6.0 * scale, c(TEXT_DIM),
-            sw - pad * 2.0, screen_w, screen_h,
+            "COMMIT",
+            small_font,
+            pad,
+            y + 6.0 * scale,
+            c(TEXT_DIM),
+            sw - pad * 2.0,
+            screen_w,
+            screen_h,
         );
         y += section_h;
 
         draw_commit_input(painter, text, state, sw, y, screen_w, screen_h, scale);
         y += input_h + 4.0 * scale;
 
-        draw_button_at(painter, text, "Commit", pad, sw - pad * 2.0, y, screen_w, screen_h, cursor_pos, c(ACCENT), scale);
+        draw_button_at(
+            painter,
+            text,
+            "Commit",
+            pad,
+            sw - pad * 2.0,
+            y,
+            screen_w,
+            screen_h,
+            cursor_pos,
+            c(ACCENT),
+            scale,
+        );
         y += button_h;
 
         // Push / Pull side by side
         let half = (sw - pad * 3.0) / 2.0;
-        draw_button_at(painter, text, "Push", pad, half, y, screen_w, screen_h, cursor_pos, c(BLUE), scale);
-        draw_button_at(painter, text, "Pull", pad * 2.0 + half, half, y, screen_w, screen_h, cursor_pos, c(BLUE), scale);
+        draw_button_at(
+            painter,
+            text,
+            "Push",
+            pad,
+            half,
+            y,
+            screen_w,
+            screen_h,
+            cursor_pos,
+            c(BLUE),
+            scale,
+        );
+        draw_button_at(
+            painter,
+            text,
+            "Pull",
+            pad * 2.0 + half,
+            half,
+            y,
+            screen_w,
+            screen_h,
+            cursor_pos,
+            c(BLUE),
+            scale,
+        );
         y += button_h + 4.0 * scale;
 
         divider(painter, y, sw, scale);
@@ -141,12 +231,20 @@ pub fn draw_git_sidebar(
         let staged: Vec<&FileStatus> = status.files.iter().filter(|f| f.staged).collect();
         if !staged.is_empty() {
             text.queue(
-                "STAGED", small_font, pad, y + 6.0 * scale, c(GREEN),
-                sw - pad * 2.0, screen_w, screen_h,
+                "STAGED",
+                small_font,
+                pad,
+                y + 6.0 * scale,
+                c(GREEN),
+                sw - pad * 2.0,
+                screen_w,
+                screen_h,
             );
             y += section_h;
             for file in &staged {
-                draw_file_item(painter, text, file, sw, y, screen_w, screen_h, cursor_pos, scale);
+                draw_file_item(
+                    painter, text, file, sw, y, screen_w, screen_h, cursor_pos, scale,
+                );
                 y += item_h;
             }
         }
@@ -154,20 +252,34 @@ pub fn draw_git_sidebar(
         let unstaged: Vec<&FileStatus> = status.files.iter().filter(|f| !f.staged).collect();
         if !unstaged.is_empty() {
             text.queue(
-                "CHANGES", small_font, pad, y + 6.0 * scale, c(RED),
-                sw - pad * 2.0, screen_w, screen_h,
+                "CHANGES",
+                small_font,
+                pad,
+                y + 6.0 * scale,
+                c(RED),
+                sw - pad * 2.0,
+                screen_w,
+                screen_h,
             );
             y += section_h;
             for file in &unstaged {
-                draw_file_item(painter, text, file, sw, y, screen_w, screen_h, cursor_pos, scale);
+                draw_file_item(
+                    painter, text, file, sw, y, screen_w, screen_h, cursor_pos, scale,
+                );
                 y += item_h;
             }
         }
 
         if status.files.is_empty() {
             text.queue(
-                "Clean working tree", font, pad, y + 6.0 * scale, c(TEXT_DIM),
-                sw - pad * 2.0, screen_w, screen_h,
+                "Clean working tree",
+                font,
+                pad,
+                y + 6.0 * scale,
+                c(TEXT_DIM),
+                sw - pad * 2.0,
+                screen_w,
+                screen_h,
             );
             y += item_h;
         }
@@ -176,8 +288,32 @@ pub fn draw_git_sidebar(
         if !status.files.is_empty() {
             y += 4.0 * scale;
             let half = (sw - pad * 3.0) / 2.0;
-            draw_button_at(painter, text, "Stage All", pad, half, y, screen_w, screen_h, cursor_pos, c(GREEN), scale);
-            draw_button_at(painter, text, "Unstage All", pad * 2.0 + half, half, y, screen_w, screen_h, cursor_pos, c(TEXT_DIM), scale);
+            draw_button_at(
+                painter,
+                text,
+                "Stage All",
+                pad,
+                half,
+                y,
+                screen_w,
+                screen_h,
+                cursor_pos,
+                c(GREEN),
+                scale,
+            );
+            draw_button_at(
+                painter,
+                text,
+                "Unstage All",
+                pad * 2.0 + half,
+                half,
+                y,
+                screen_w,
+                screen_h,
+                cursor_pos,
+                c(TEXT_DIM),
+                scale,
+            );
             y += button_h + 4.0 * scale;
         }
 
@@ -185,36 +321,70 @@ pub fn draw_git_sidebar(
         y += 8.0 * scale;
     } else {
         text.queue(
-            "No repo found", font, pad, y + 6.0 * scale, c(TEXT_DIM),
-            sw - pad * 2.0, screen_w, screen_h,
+            "No repo found",
+            font,
+            pad,
+            y + 6.0 * scale,
+            c(TEXT_DIM),
+            sw - pad * 2.0,
+            screen_w,
+            screen_h,
         );
         y += item_h + 8.0 * scale;
     }
 
     // ── 4. Recent commits ───────────────────────────────────────────
     text.queue(
-        "RECENT", small_font, pad, y + 6.0 * scale, c(TEXT_DIM),
-        sw - pad * 2.0, screen_w, screen_h,
+        "RECENT",
+        small_font,
+        pad,
+        y + 6.0 * scale,
+        c(TEXT_DIM),
+        sw - pad * 2.0,
+        screen_w,
+        screen_h,
     );
     y += section_h;
 
     for commit in state.graph.iter().take(30) {
         let has_deco = !commit.decorations.is_empty();
-        let row_h = if has_deco { item_h + small_font } else { item_h };
+        let row_h = if has_deco {
+            item_h + small_font
+        } else {
+            item_h
+        };
 
         text.queue(
-            &commit.short_hash, small_font, pad, y + 6.0 * scale,
-            c(BLUE), 60.0 * scale, screen_w, screen_h,
+            &commit.short_hash,
+            small_font,
+            pad,
+            y + 6.0 * scale,
+            c(BLUE),
+            60.0 * scale,
+            screen_w,
+            screen_h,
         );
         text.queue(
-            &commit.subject, small_font, pad + 65.0 * scale, y + 6.0 * scale,
-            c(TEXT_C), sw - pad - 65.0 * scale, screen_w, screen_h,
+            &commit.subject,
+            small_font,
+            pad + 65.0 * scale,
+            y + 6.0 * scale,
+            c(TEXT_C),
+            sw - pad - 65.0 * scale,
+            screen_w,
+            screen_h,
         );
         if has_deco {
             let deco = commit.decorations.join(", ");
             text.queue(
-                &deco, small_font - 2.0 * scale, pad + 65.0 * scale, y + 6.0 * scale + small_font + 2.0 * scale,
-                c(ACCENT), sw - pad - 65.0 * scale, screen_w, screen_h,
+                &deco,
+                small_font - 2.0 * scale,
+                pad + 65.0 * scale,
+                y + 6.0 * scale + small_font + 2.0 * scale,
+                c(ACCENT),
+                sw - pad - 65.0 * scale,
+                screen_w,
+                screen_h,
             );
         }
         y += row_h;
@@ -258,8 +428,14 @@ pub fn draw_git_sidebar(
         // (~one font-height below y) would chop everything past line 1.
         text.push_clip([0.0, toast_y, sw, toast_h]);
         text.queue(
-            msg, small_font, pad, toast_y + vpad,
-            c(Color8::from_rgb(255, 255, 255)), inner_w, screen_w, screen_h,
+            msg,
+            small_font,
+            pad,
+            toast_y + vpad,
+            c(Color8::from_rgb(255, 255, 255)),
+            inner_w,
+            screen_w,
+            screen_h,
         );
         text.pop_clip();
     }
@@ -269,7 +445,11 @@ pub fn draw_git_sidebar(
 
 fn divider(painter: &mut Painter, y: f32, sw: f32, scale: f32) {
     let pad = PAD * scale;
-    painter.rect_filled(Rect::new(pad, y, sw - pad * 2.0, 1.0 * scale), 0.0, c(DIVIDER));
+    painter.rect_filled(
+        Rect::new(pad, y, sw - pad * 2.0, 1.0 * scale),
+        0.0,
+        c(DIVIDER),
+    );
 }
 
 fn draw_file_item(
@@ -302,15 +482,42 @@ fn draw_file_item(
         FileState::Untracked => c(TEXT_DIM),
     };
     let label = file.status.label();
-    text.queue(label, font, pad, y + (item_h - font) / 2.0, status_color, 20.0 * scale, screen_w, screen_h);
+    text.queue(
+        label,
+        font,
+        pad,
+        y + (item_h - font) / 2.0,
+        status_color,
+        20.0 * scale,
+        screen_w,
+        screen_h,
+    );
 
     let dot = if file.staged { "+" } else { " " };
     let dot_color = if file.staged { c(GREEN) } else { c(TEXT_DIM) };
-    text.queue(dot, font, pad + 20.0 * scale, y + (item_h - font) / 2.0, dot_color, 14.0 * scale, screen_w, screen_h);
+    text.queue(
+        dot,
+        font,
+        pad + 20.0 * scale,
+        y + (item_h - font) / 2.0,
+        dot_color,
+        14.0 * scale,
+        screen_w,
+        screen_h,
+    );
 
     let name = file.path.rsplit('/').next().unwrap_or(&file.path);
     let name_color = if hovered { c(ACCENT) } else { c(TEXT_C) };
-    text.queue(name, font, pad + 36.0 * scale, y + (item_h - font) / 2.0, name_color, sw - pad - 36.0 * scale, screen_w, screen_h);
+    text.queue(
+        name,
+        font,
+        pad + 36.0 * scale,
+        y + (item_h - font) / 2.0,
+        name_color,
+        sw - pad - 36.0 * scale,
+        screen_w,
+        screen_h,
+    );
 }
 
 fn draw_button_at(
@@ -340,7 +547,16 @@ fn draw_button_at(
     painter.rect_filled(btn, 6.0 * scale, bg);
     let text_w = label.len() as f32 * font * 0.55;
     let tx = x + (w - text_w) / 2.0;
-    text.queue(label, font, tx, y + (button_h - 4.0 * scale - font) / 2.0, label_color, w, screen_w, screen_h);
+    text.queue(
+        label,
+        font,
+        tx,
+        y + (button_h - 4.0 * scale - font) / 2.0,
+        label_color,
+        w,
+        screen_w,
+        screen_h,
+    );
 }
 
 fn draw_commit_input(
@@ -366,7 +582,11 @@ fn draw_commit_input(
     painter.rect_filled(r, 4.0 * scale, c(Color8::from_rgba(40, 40, 40, 255)));
 
     // Border
-    let border_color = if state.commit_focused { c(ACCENT) } else { c(Color8::from_rgba(80, 80, 80, 255)) };
+    let border_color = if state.commit_focused {
+        c(ACCENT)
+    } else {
+        c(Color8::from_rgba(80, 80, 80, 255))
+    };
     let b = 1.5 * scale;
     painter.rect_filled(Rect::new(r.x, r.y, r.w, b), 0.0, border_color);
     painter.rect_filled(Rect::new(r.x, r.y + r.h - b, r.w, b), 0.0, border_color);
@@ -376,7 +596,16 @@ fn draw_commit_input(
     let ty = y + (input_h - 4.0 * scale - font) / 2.0;
 
     if state.commit_msg.is_empty() && !state.commit_focused {
-        text.queue("commit message...", font, x + 8.0 * scale, ty, c(TEXT_DIM), inner_w, screen_w, screen_h);
+        text.queue(
+            "commit message...",
+            font,
+            x + 8.0 * scale,
+            ty,
+            c(TEXT_DIM),
+            inner_w,
+            screen_w,
+            screen_h,
+        );
         return;
     }
 
@@ -396,12 +625,25 @@ fn draw_commit_input(
     } else {
         ""
     };
-    text.queue(display, font, x + 8.0 * scale, ty, c(TEXT_C), inner_w + 200.0 * scale, screen_w, screen_h);
+    text.queue(
+        display,
+        font,
+        x + 8.0 * scale,
+        ty,
+        c(TEXT_C),
+        inner_w + 200.0 * scale,
+        screen_w,
+        screen_h,
+    );
 
     // Cursor
     if state.commit_focused {
         let cursor_x = x + 8.0 * scale + (state.commit_cursor - scroll_chars) as f32 * char_w;
-        painter.rect_filled(Rect::new(cursor_x, ty, 2.0 * scale, font + 2.0 * scale), 0.0, c(TEXT_C));
+        painter.rect_filled(
+            Rect::new(cursor_x, ty, 2.0 * scale, font + 2.0 * scale),
+            0.0,
+            c(TEXT_C),
+        );
     }
 
     painter.pop_clip();

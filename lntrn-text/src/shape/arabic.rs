@@ -20,9 +20,14 @@ pub(crate) enum Form {
 /// joining letters (D/R/L types). Empty for text with no cursive script —
 /// the cheap common case.
 pub(crate) fn joining_forms(text: &str) -> Vec<(u32, Form)> {
-    let chars: Vec<(usize, JT)> =
-        text.char_indices().map(|(i, c)| (i, joining_type(c))).collect();
-    if !chars.iter().any(|&(_, t)| matches!(t, JT::D | JT::R | JT::L)) {
+    let chars: Vec<(usize, JT)> = text
+        .char_indices()
+        .map(|(i, c)| (i, joining_type(c)))
+        .collect();
+    if !chars
+        .iter()
+        .any(|&(_, t)| matches!(t, JT::D | JT::R | JT::L))
+    {
         return Vec::new();
     }
 
@@ -32,7 +37,11 @@ pub(crate) fn joining_forms(text: &str) -> Vec<(u32, Form)> {
             continue;
         }
         // Nearest non-transparent neighbors (marks are transparent).
-        let prev = chars[..k].iter().rev().map(|&(_, t)| t).find(|&t| t != JT::T);
+        let prev = chars[..k]
+            .iter()
+            .rev()
+            .map(|&(_, t)| t)
+            .find(|&t| t != JT::T);
         let next = chars[k + 1..].iter().map(|&(_, t)| t).find(|&t| t != JT::T);
         // The previous letter extends a connection if dual/causing; the next
         // can receive one if dual/causing/right-joining.
@@ -89,7 +98,10 @@ mod tests {
     #[test]
     fn marks_are_transparent() {
         // ب + fatha mark + ب : the mark must not break the join.
-        let forms: Vec<Form> = joining_forms("ب\u{064E}ب").iter().map(|&(_, f)| f).collect();
+        let forms: Vec<Form> = joining_forms("ب\u{064E}ب")
+            .iter()
+            .map(|&(_, f)| f)
+            .collect();
         assert_eq!(forms, vec![Form::Init, Form::Fina]);
     }
 }

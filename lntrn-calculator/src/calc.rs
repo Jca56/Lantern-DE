@@ -100,7 +100,8 @@ impl Calculator {
         let current = self.display_value();
         if self.accumulator.is_none() {
             // First operand — append to expression (preserves parens/prior context)
-            self.expression.push_str(&format!("{} {} ", format_number(current), op.symbol()));
+            self.expression
+                .push_str(&format!("{} {} ", format_number(current), op.symbol()));
             self.accumulator = Some(current);
         } else if !self.start_new {
             // Chaining: append current number, evaluate, then add new op
@@ -108,7 +109,12 @@ impl Calculator {
             if self.error {
                 return;
             }
-            self.expression = format!("{}{} {} ", self.expression, format_number(current), op.symbol());
+            self.expression = format!(
+                "{}{} {} ",
+                self.expression,
+                format_number(current),
+                op.symbol()
+            );
         } else if self.pending_op.is_some() {
             // Just changing the operator (no new number typed yet) — replace last op
             let trimmed = self.expression.trim_end();
@@ -132,8 +138,7 @@ impl Calculator {
             let acc = self.accumulator.unwrap_or(0.0);
             // Append final operand to the expression chain
             if !self.start_new {
-                self.expression = format!("{}{}",
-                    self.expression, format_number(current));
+                self.expression = format!("{}{}", self.expression, format_number(current));
             }
             let result = op.apply(acc, current);
             if result.is_nan() || result.is_infinite() {

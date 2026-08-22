@@ -43,9 +43,7 @@ impl Rapl {
             if !fname.starts_with("intel-rapl:") || fname.matches(':').count() != 1 {
                 continue;
             }
-            if read_trim(&path.join("name"))
-                .is_some_and(|n| n.starts_with("package"))
-            {
+            if read_trim(&path.join("name")).is_some_and(|n| n.starts_with("package")) {
                 zone = Some(path);
                 break;
             }

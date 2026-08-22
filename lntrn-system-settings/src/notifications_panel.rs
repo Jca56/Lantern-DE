@@ -1,5 +1,7 @@
 use lntrn_render::{Painter, Rect, TextRenderer};
-use lntrn_ui::gpu::{Button, ButtonVariant, FoxPalette, InteractionContext, ScrollArea, Scrollbar, Slider, Toggle};
+use lntrn_ui::gpu::{
+    Button, ButtonVariant, FoxPalette, InteractionContext, ScrollArea, Scrollbar, Slider, Toggle,
+};
 
 use crate::config::LanternConfig;
 use crate::panels::{
@@ -57,8 +59,8 @@ pub fn draw_notifications_panel(
     use crate::wayland::Panel;
     // Behavior subpanel groups DnD + display (where toasts appear, how long).
     let show_behavior = matches!(subpanel, Panel::NotifBehavior);
-    let show_sound    = matches!(subpanel, Panel::NotifSound);
-    let show_testing  = matches!(subpanel, Panel::NotifTesting);
+    let show_sound = matches!(subpanel, Panel::NotifSound);
+    let show_testing = matches!(subpanel, Panel::NotifTesting);
     let row = ROW_H * s;
     let lsz = LABEL_SIZE * s;
     let vsz = VALUE_SIZE * s;
@@ -84,7 +86,11 @@ pub fn draw_notifications_panel(
     // Card 2: Display — Show toggle + Duration slider + Position picker (4 buttons in 2x2)
     let display_card_h = card_chrome_h + 4.0 * row;
     // Card 3: Sound — toggle + (volume only if sound enabled)
-    let sound_rows: f32 = if config.notifications.play_sound { 2.0 } else { 1.0 };
+    let sound_rows: f32 = if config.notifications.play_sound {
+        2.0
+    } else {
+        1.0
+    };
     let sound_card_h = card_chrome_h + sound_rows * row;
     // Card 4: Testing — fire a test notification
     let testing_card_h = card_chrome_h + row * 1.5;
@@ -92,15 +98,23 @@ pub fn draw_notifications_panel(
     let visible_heights: Vec<f32> = [
         (show_behavior, dnd_card_h),
         (show_behavior, display_card_h),
-        (show_sound,    sound_card_h),
-        (show_testing,  testing_card_h),
-    ].iter().filter_map(|(b, h)| if *b { Some(*h) } else { None }).collect();
+        (show_sound, sound_card_h),
+        (show_testing, testing_card_h),
+    ]
+    .iter()
+    .filter_map(|(b, h)| if *b { Some(*h) } else { None })
+    .collect();
     let content_height = CARD_OUTER_PAD_V * 2.0 * s
         + visible_heights.iter().sum::<f32>()
         + CARD_GAP * s * visible_heights.len().saturating_sub(1) as f32;
 
     if scroll_delta != 0.0 {
-        ScrollArea::apply_scroll(&mut state.scroll, scroll_delta * 40.0, content_height, panel_h);
+        ScrollArea::apply_scroll(
+            &mut state.scroll,
+            scroll_delta * 40.0,
+            content_height,
+            panel_h,
+        );
     }
 
     let viewport = Rect::new(x, y, w, panel_h);
@@ -112,8 +126,17 @@ pub fn draw_notifications_panel(
     // ── Do Not Disturb ──────────────────────────────────────────────
     if show_behavior {
         let mut cy = draw_section_card(
-            painter, text, fox, "Do Not Disturb",
-            card_x, cy_top, card_w, dnd_card_h, s, sw, sh,
+            painter,
+            text,
+            fox,
+            "Do Not Disturb",
+            card_x,
+            cy_top,
+            card_w,
+            dnd_card_h,
+            s,
+            sw,
+            sh,
         );
         let rect = Rect::new(card_inner_x, cy, card_inner_w, TOGGLE_H * s);
         let toggle = Toggle::new(rect, config.notifications.do_not_disturb)
@@ -121,7 +144,9 @@ pub fn draw_notifications_panel(
             .scale(s);
         let track = toggle.track_rect();
         let zone = ix.add_zone(ZONE_NOTIF_DND, track);
-        toggle.hovered(zone.is_hovered()).draw(painter, text, fox, sw, sh);
+        toggle
+            .hovered(zone.is_hovered())
+            .draw(painter, text, fox, sw, sh);
         cy += row;
         let _ = cy;
         cy_top += dnd_card_h + CARD_GAP * s;
@@ -130,8 +155,17 @@ pub fn draw_notifications_panel(
     // ── Display ─────────────────────────────────────────────────────
     if show_behavior {
         let mut cy = draw_section_card(
-            painter, text, fox, "Display",
-            card_x, cy_top, card_w, display_card_h, s, sw, sh,
+            painter,
+            text,
+            fox,
+            "Display",
+            card_x,
+            cy_top,
+            card_w,
+            display_card_h,
+            s,
+            sw,
+            sh,
         );
 
         // Show toggle
@@ -142,14 +176,25 @@ pub fn draw_notifications_panel(
                 .scale(s);
             let track = toggle.track_rect();
             let zone = ix.add_zone(ZONE_NOTIF_SHOW, track);
-            toggle.hovered(zone.is_hovered()).draw(painter, text, fox, sw, sh);
+            toggle
+                .hovered(zone.is_hovered())
+                .draw(painter, text, fox, sw, sh);
             cy += row;
         }
 
         // Duration slider (1.0 – 10.0 s)
         {
             let label_y = cy + (row - lsz) / 2.0;
-            text.queue("Duration", lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
+            text.queue(
+                "Duration",
+                lsz,
+                label_x,
+                label_y,
+                fox.text,
+                ctrl_x - label_x,
+                sw,
+                sh,
+            );
             let frac = ((config.notifications.default_duration_secs - 1.0) / 9.0).clamp(0.0, 1.0);
             let rect = Rect::new(ctrl_x, cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
             let zone = ix.add_zone(ZONE_NOTIF_DURATION, rect);
@@ -163,14 +208,32 @@ pub fn draw_notifications_panel(
                 .active(zone.is_active())
                 .draw(painter, fox);
             let val = format!("{:.1}s", config.notifications.default_duration_secs);
-            text.queue(&val, vsz, value_x, label_y, fox.text_secondary, VALUE_W * s, sw, sh);
+            text.queue(
+                &val,
+                vsz,
+                value_x,
+                label_y,
+                fox.text_secondary,
+                VALUE_W * s,
+                sw,
+                sh,
+            );
             cy += row;
         }
 
         // Position picker — 2x2 grid of buttons (labels in screen-corner layout)
         {
             let label_y = cy + (row - lsz) / 2.0;
-            text.queue("Position", lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
+            text.queue(
+                "Position",
+                lsz,
+                label_x,
+                label_y,
+                fox.text,
+                ctrl_x - label_x,
+                sw,
+                sh,
+            );
             let btn_w = 130.0 * s;
             let btn_h = 36.0 * s;
             let btn_gap = 8.0 * s;
@@ -181,7 +244,11 @@ pub fn draw_notifications_panel(
                 let zone = ix.add_zone(*zone_id, rect);
                 let selected = config.notifications.position.eq_ignore_ascii_case(value);
                 Button::new(rect, label)
-                    .variant(if selected { ButtonVariant::Primary } else { ButtonVariant::Ghost })
+                    .variant(if selected {
+                        ButtonVariant::Primary
+                    } else {
+                        ButtonVariant::Ghost
+                    })
                     .hovered(zone.is_hovered())
                     .pressed(zone.is_active())
                     .scale(s)
@@ -197,7 +264,11 @@ pub fn draw_notifications_panel(
                 let zone = ix.add_zone(*zone_id, rect);
                 let selected = config.notifications.position.eq_ignore_ascii_case(value);
                 Button::new(rect, label)
-                    .variant(if selected { ButtonVariant::Primary } else { ButtonVariant::Ghost })
+                    .variant(if selected {
+                        ButtonVariant::Primary
+                    } else {
+                        ButtonVariant::Ghost
+                    })
                     .hovered(zone.is_hovered())
                     .pressed(zone.is_active())
                     .scale(s)
@@ -210,8 +281,17 @@ pub fn draw_notifications_panel(
     // ── Sound ───────────────────────────────────────────────────────
     if show_sound {
         let mut cy = draw_section_card(
-            painter, text, fox, "Sound",
-            card_x, cy_top, card_w, sound_card_h, s, sw, sh,
+            painter,
+            text,
+            fox,
+            "Sound",
+            card_x,
+            cy_top,
+            card_w,
+            sound_card_h,
+            s,
+            sw,
+            sh,
         );
         {
             let rect = Rect::new(card_inner_x, cy, card_inner_w, TOGGLE_H * s);
@@ -220,13 +300,24 @@ pub fn draw_notifications_panel(
                 .scale(s);
             let track = toggle.track_rect();
             let zone = ix.add_zone(ZONE_NOTIF_SOUND, track);
-            toggle.hovered(zone.is_hovered()).draw(painter, text, fox, sw, sh);
+            toggle
+                .hovered(zone.is_hovered())
+                .draw(painter, text, fox, sw, sh);
             cy += row;
         }
 
         if config.notifications.play_sound {
             let label_y = cy + (row - lsz) / 2.0;
-            text.queue("Volume", lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
+            text.queue(
+                "Volume",
+                lsz,
+                label_x,
+                label_y,
+                fox.text,
+                ctrl_x - label_x,
+                sw,
+                sh,
+            );
             let frac = config.notifications.volume.clamp(0.0, 1.0);
             let rect = Rect::new(ctrl_x, cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
             let zone = ix.add_zone(ZONE_NOTIF_VOLUME, rect);
@@ -239,7 +330,16 @@ pub fn draw_notifications_panel(
                 .active(zone.is_active())
                 .draw(painter, fox);
             let val = format!("{:.0}%", config.notifications.volume * 100.0);
-            text.queue(&val, vsz, value_x, label_y, fox.text_secondary, VALUE_W * s, sw, sh);
+            text.queue(
+                &val,
+                vsz,
+                value_x,
+                label_y,
+                fox.text_secondary,
+                VALUE_W * s,
+                sw,
+                sh,
+            );
         }
         cy_top += sound_card_h + CARD_GAP * s;
     }
@@ -247,8 +347,17 @@ pub fn draw_notifications_panel(
     // ── Testing ─────────────────────────────────────────────────────
     if show_testing {
         let cy = draw_section_card(
-            painter, text, fox, "Testing",
-            card_x, cy_top, card_w, testing_card_h, s, sw, sh,
+            painter,
+            text,
+            fox,
+            "Testing",
+            card_x,
+            cy_top,
+            card_w,
+            testing_card_h,
+            s,
+            sw,
+            sh,
         );
         let btn_w = 220.0 * s;
         let btn_h = 44.0 * s;
@@ -265,10 +374,26 @@ pub fn draw_notifications_panel(
         let hint2 = "the current duration, position, and sound.";
         let hint_x = card_inner_x + btn_w + 16.0 * s;
         let hint_y = cy + (btn_h - vsz * 2.0 - 4.0 * s) / 2.0;
-        text.queue(hint, vsz, hint_x, hint_y, fox.text_secondary,
-            card_inner_w - btn_w - 16.0 * s, sw, sh);
-        text.queue(hint2, vsz, hint_x, hint_y + vsz + 4.0 * s, fox.text_secondary,
-            card_inner_w - btn_w - 16.0 * s, sw, sh);
+        text.queue(
+            hint,
+            vsz,
+            hint_x,
+            hint_y,
+            fox.text_secondary,
+            card_inner_w - btn_w - 16.0 * s,
+            sw,
+            sh,
+        );
+        text.queue(
+            hint2,
+            vsz,
+            hint_x,
+            hint_y + vsz + 4.0 * s,
+            fox.text_secondary,
+            card_inner_w - btn_w - 16.0 * s,
+            sw,
+            sh,
+        );
     }
 
     scroll_area.end(painter, text);

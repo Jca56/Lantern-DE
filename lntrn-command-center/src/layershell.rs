@@ -52,10 +52,10 @@ mod util;
 mod view_click;
 use click::handle_clicks;
 use drag::{handle_drag, handle_terminal_selection};
-use right_click::handle_right_click;
 use hover::track_hovers;
 use input::{apply_key_autorepeat, handle_keypress, handle_scroll};
 use render_tick::render_frame;
+use right_click::handle_right_click;
 use util::{commit_transparent, files_strip_rect, set_active_input, sort_menu_items};
 #[allow(unused_imports)]
 use view_click::handle_control_view_click;
@@ -267,7 +267,6 @@ impl WlState {
     }
 }
 
-
 // ── Entry point ─────────────────────────────────────────────────────────────
 
 /// Idle tick when the panel is hidden — bound the loop to ~20Hz so we
@@ -353,9 +352,7 @@ fn dispatch_with_timeout(
         },
     ];
 
-    let ret = unsafe {
-        libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout_ms)
-    };
+    let ret = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout_ms) };
 
     if ret < 0 {
         let err = std::io::Error::last_os_error();
@@ -371,9 +368,7 @@ fn dispatch_with_timeout(
         // Wayland fd has data — actually read it into our queue.
         match guard.read() {
             Ok(_) => {}
-            Err(WaylandError::Io(io))
-                if io.kind() == std::io::ErrorKind::WouldBlock =>
-            {
+            Err(WaylandError::Io(io)) if io.kind() == std::io::ErrorKind::WouldBlock => {
                 // Spurious wakeup: poll reported ready but the socket
                 // had nothing for us once we attempted the read.
             }
@@ -433,9 +428,8 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         // Start with keyboard interactivity off so we don't grab focus
         // away from windows below until the panel is actually visible.
         // We flip this to Exclusive on visibility transitions below.
-        layer_surface.set_keyboard_interactivity(
-            zwlr_layer_surface_v1::KeyboardInteractivity::None,
-        );
+        layer_surface
+            .set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::None);
     }
     // Empty input region during init — flip to None when visible so
     // pointer events land on us (for click-outside dismiss), and flip
@@ -451,7 +445,11 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
     }
     event_queue.roundtrip(&mut wl)?;
 
-    tracing::info!(w = wl.width, h = wl.height, "command-center overlay configured");
+    tracing::info!(
+        w = wl.width,
+        h = wl.height,
+        "command-center overlay configured"
+    );
 
     surface.set_buffer_scale(1);
     let viewport = wl.viewporter.as_ref().map(|vp| {
@@ -539,7 +537,8 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                 match act.kind {
                     WindowActionKind::Activate => {
                         if let Some(seat) = wl.seat.as_ref() {
-                            wl.toplevels.activate(&act.app_id, &act.title, act.instance, seat);
+                            wl.toplevels
+                                .activate(&act.app_id, &act.title, act.instance, seat);
                         }
                     }
                     WindowActionKind::Close => {
@@ -586,9 +585,7 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
                 || app.controls.bluetooth.pair_request.is_some()
             {
                 tracing::info!("incoming BT file/pair → auto-opening panel to BT view");
-                app.mode = crate::app::PanelMode::Control(
-                    crate::controls::TileId::Bluetooth,
-                );
+                app.mode = crate::app::PanelMode::Control(crate::controls::TileId::Bluetooth);
                 app.open();
                 continue;
             }
@@ -665,10 +662,7 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         // wave) without reaching into wayland state.
         {
             let scale_f = wl.fractional_scale() as f32;
-            app.cursor_phys = (
-                wl.cursor_x as f32 * scale_f,
-                wl.cursor_y as f32 * scale_f,
-            );
+            app.cursor_phys = (wl.cursor_x as f32 * scale_f, wl.cursor_y as f32 * scale_f);
             // Sync the split-panel gap once per loop iteration so every
             // hit test + render call below sees the correct offset.
             crate::app::set_split_gap_px(crate::app::effective_split_gap_px(&app, scale_f));
@@ -681,14 +675,18 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         if app.panel_view == crate::app::PanelView::Terminal {
             let scale_f = wl.fractional_scale() as f32;
             let phys_w = wl.phys_width().max(1);
-            let panel = PanelRect::compute_with_dims(phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical());
+            let panel = PanelRect::compute_with_dims(
+                phys_w,
+                scale_f,
+                app.desired_panel_w_logical(),
+                app.desired_panel_h_logical(),
+            );
             let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
             let top_y = crate::controls::content_top_y(panel_rect, scale_f);
             // Single source of truth for cell metrics + grid size so the
             // PTY's wrap column matches what we actually paint.
-            let (_, _, _, cols, rows) = crate::terminal::body_metrics(
-                panel_rect, top_y, scale_f, app.config.text_size,
-            );
+            let (_, _, _, cols, rows) =
+                crate::terminal::body_metrics(panel_rect, top_y, scale_f, app.config.text_size);
             app.terminal.ensure_spawned(cols.max(20), rows.max(5));
         }
         // Drain any pending PTY output into the grid so new bytes
@@ -726,8 +724,7 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         // so the inline Accept/Reject isn't hidden behind another view.
         if bt_incoming_after && !bt_incoming_before {
             tracing::info!("incoming BT file/pair while panel visible → switching to BT view");
-            app.mode =
-                crate::app::PanelMode::Control(crate::controls::TileId::Bluetooth);
+            app.mode = crate::app::PanelMode::Control(crate::controls::TileId::Bluetooth);
         }
 
         // Handle Esc → close.
@@ -760,13 +757,17 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
         handle_terminal_selection(&mut wl, &mut app);
 
         // Files-view click: toolbar (controls row) + body (sidebar + list).
-        if app.panel_view == crate::app::PanelView::Files && wl.left_clicked
+        if app.panel_view == crate::app::PanelView::Files
+            && wl.left_clicked
             && app.context_menu.is_none()
         {
             let scale_f = wl.fractional_scale() as f32;
             let phys_w = wl.phys_width().max(1);
             let panel = PanelRect::compute_with_dims(
-                phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical(),
+                phys_w,
+                scale_f,
+                app.desired_panel_w_logical(),
+                app.desired_panel_h_logical(),
             );
             let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
             let top_y = crate::controls::content_top_y(panel_rect, scale_f);
@@ -774,9 +775,8 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
             let phys_cy = wl.cursor_y as f32 * scale_f;
 
             // Toolbar strip in the top-most row takes precedence.
-            let strip_hit = files_strip_rect(&app, panel_rect, scale_f).map(|s| {
-                crate::files::hit_strip(&app.files, s, scale_f, phys_cx, phys_cy)
-            });
+            let strip_hit = files_strip_rect(&app, panel_rect, scale_f)
+                .map(|s| crate::files::hit_strip(&app.files, s, scale_f, phys_cx, phys_cy));
             if let Some(hit) = strip_hit {
                 match hit {
                     crate::files::FilesHit::Nav(crate::files::NavButton::Back) => {
@@ -838,8 +838,13 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
 
             // Body: sidebar + list.
             match crate::files::hit_body(
-                &app.files, panel_rect, top_y, scale_f,
-                app.config.text_size, phys_cx, phys_cy,
+                &app.files,
+                panel_rect,
+                top_y,
+                scale_f,
+                app.config.text_size,
+                phys_cx,
+                phys_cy,
             ) {
                 crate::files::FilesHit::Sidebar(loc) => {
                     let p = loc.path();
@@ -896,9 +901,19 @@ pub fn run(sock: UnixListener, initial_visible: bool) -> Result<()> {
 
         let scale_f = wl.fractional_scale() as f32;
         render_frame(
-            &mut wl, &mut app, &mut gpu, &surface, &viewport,
-            &mut painter, &mut text, &mut mono_text, &mut thumbs,
-            &mut icon_cache, &tex_pass, &qh, scale_f,
+            &mut wl,
+            &mut app,
+            &mut gpu,
+            &surface,
+            &viewport,
+            &mut painter,
+            &mut text,
+            &mut mono_text,
+            &mut thumbs,
+            &mut icon_cache,
+            &tex_pass,
+            &qh,
+            scale_f,
         );
     }
 

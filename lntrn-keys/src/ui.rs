@@ -4,12 +4,12 @@ use crate::state::{AddStage, Mode, State};
 use crate::term::{self, bg, bold, clear_all, clear_eol, fg, move_to, reset};
 
 /// Lantern palette in 256-color terminal codes.
-const TAN: u8 = 180;       // #e8dcc8-ish — primary text
-const ORANGE: u8 = 208;    // accent
+const TAN: u8 = 180; // #e8dcc8-ish — primary text
+const ORANGE: u8 = 208; // accent
 const DIM_GREY: u8 = 244;
 const RED: u8 = 196;
 const GREEN: u8 = 76;
-const BG_PANEL: u8 = 234;  // dark grey
+const BG_PANEL: u8 = 234; // dark grey
 const BG_HILITE: u8 = 237;
 
 pub fn render(state: &State, term_size: (u16, u16)) -> Vec<u8> {
@@ -42,7 +42,9 @@ fn draw_header(buf: &mut Vec<u8>, state: &State, cols: u16) {
     fg(buf, DIM_GREY);
     let count = format!("{} items", state.all.len());
     let pad = (cols as usize).saturating_sub(title.len() + count.len() + 2);
-    for _ in 0..pad { buf.push(b' '); }
+    for _ in 0..pad {
+        buf.push(b' ');
+    }
     buf.extend_from_slice(count.as_bytes());
     buf.extend_from_slice(b"  ");
     reset(buf);
@@ -59,7 +61,9 @@ fn draw_header(buf: &mut Vec<u8>, state: &State, cols: u16) {
     } else {
         buf.extend_from_slice(state.filter.as_bytes());
         if state.mode == Mode::Filtering {
-            bg(buf, ORANGE); buf.push(b' '); reset(buf);
+            bg(buf, ORANGE);
+            buf.push(b' ');
+            reset(buf);
         }
     }
     clear_eol(buf);
@@ -82,13 +86,19 @@ fn draw_list(buf: &mut Vec<u8>, state: &State, cols: u16, rows: u16) {
                 buf.extend_from_slice(b"   ");
             }
             fg(buf, if selected { TAN } else { TAN });
-            if selected { bold(buf); }
+            if selected {
+                bold(buf);
+            }
             let label_w = ((cols as usize) / 3).max(20).min(40);
             let label = truncate(&item.label, label_w);
             buf.extend_from_slice(label.as_bytes());
-            for _ in label.chars().count()..label_w { buf.push(b' '); }
+            for _ in label.chars().count()..label_w {
+                buf.push(b' ');
+            }
             reset(buf);
-            if selected { bg(buf, BG_HILITE); }
+            if selected {
+                bg(buf, BG_HILITE);
+            }
             fg(buf, DIM_GREY);
             let attrs_summary = attrs_to_string(item, (cols as usize).saturating_sub(label_w + 6));
             buf.extend_from_slice(attrs_summary.as_bytes());
@@ -112,17 +122,36 @@ fn draw_footer(buf: &mut Vec<u8>, state: &State, cols: u16, rows: u16) {
     move_to(buf, 0, row);
     bg(buf, BG_PANEL);
     fg(buf, DIM_GREY);
-    for _ in 0..cols { buf.push(b' '); }
+    for _ in 0..cols {
+        buf.push(b' ');
+    }
     move_to(buf, 1, row);
     fg(buf, TAN);
     buf.extend_from_slice(b" ");
-    fg(buf, ORANGE); buf.extend_from_slice(b"\xe2\x86\xb5"); // ↵
-    fg(buf, TAN); buf.extend_from_slice(b" copy   ");
-    fg(buf, ORANGE); buf.extend_from_slice(b"space"); fg(buf, TAN); buf.extend_from_slice(b" reveal   ");
-    fg(buf, ORANGE); buf.extend_from_slice(b"a"); fg(buf, TAN); buf.extend_from_slice(b" add   ");
-    fg(buf, ORANGE); buf.extend_from_slice(b"d"); fg(buf, TAN); buf.extend_from_slice(b" delete   ");
-    fg(buf, ORANGE); buf.extend_from_slice(b"/"); fg(buf, TAN); buf.extend_from_slice(b" filter   ");
-    fg(buf, ORANGE); buf.extend_from_slice(b"q"); fg(buf, TAN); buf.extend_from_slice(b" quit");
+    fg(buf, ORANGE);
+    buf.extend_from_slice(b"\xe2\x86\xb5"); // ↵
+    fg(buf, TAN);
+    buf.extend_from_slice(b" copy   ");
+    fg(buf, ORANGE);
+    buf.extend_from_slice(b"space");
+    fg(buf, TAN);
+    buf.extend_from_slice(b" reveal   ");
+    fg(buf, ORANGE);
+    buf.extend_from_slice(b"a");
+    fg(buf, TAN);
+    buf.extend_from_slice(b" add   ");
+    fg(buf, ORANGE);
+    buf.extend_from_slice(b"d");
+    fg(buf, TAN);
+    buf.extend_from_slice(b" delete   ");
+    fg(buf, ORANGE);
+    buf.extend_from_slice(b"/");
+    fg(buf, TAN);
+    buf.extend_from_slice(b" filter   ");
+    fg(buf, ORANGE);
+    buf.extend_from_slice(b"q");
+    fg(buf, TAN);
+    buf.extend_from_slice(b" quit");
     reset(buf);
 
     move_to(buf, 0, rows.saturating_sub(1));
@@ -144,7 +173,9 @@ fn draw_reveal(buf: &mut Vec<u8>, secret: &str, cols: u16, rows: u16) {
     fg(buf, ORANGE);
     move_to(buf, x, y);
     buf.push(b'+');
-    for _ in 0..(w - 2) { buf.push(b'-'); }
+    for _ in 0..(w - 2) {
+        buf.push(b'-');
+    }
     buf.push(b'+');
     for i in 1..(h - 1) {
         move_to(buf, x, y + i);
@@ -152,7 +183,9 @@ fn draw_reveal(buf: &mut Vec<u8>, secret: &str, cols: u16, rows: u16) {
         fg(buf, ORANGE);
         buf.push(b'|');
         fg(buf, TAN);
-        for _ in 0..(w - 2) { buf.push(b' '); }
+        for _ in 0..(w - 2) {
+            buf.push(b' ');
+        }
         fg(buf, ORANGE);
         buf.push(b'|');
         reset(buf);
@@ -160,11 +193,14 @@ fn draw_reveal(buf: &mut Vec<u8>, secret: &str, cols: u16, rows: u16) {
     move_to(buf, x, y + h - 1);
     fg(buf, ORANGE);
     buf.push(b'+');
-    for _ in 0..(w - 2) { buf.push(b'-'); }
+    for _ in 0..(w - 2) {
+        buf.push(b'-');
+    }
     buf.push(b'+');
     // header
     move_to(buf, x + 2, y + 1);
-    bold(buf); fg(buf, ORANGE);
+    bold(buf);
+    fg(buf, ORANGE);
     buf.extend_from_slice(b"Revealed secret");
     reset(buf);
     fg(buf, DIM_GREY);
@@ -184,27 +220,48 @@ fn draw_add_prompt(buf: &mut Vec<u8>, stage: &AddStage, cols: u16, rows: u16) {
     let x = (cols.saturating_sub(w as u16)) / 2;
     let y = (rows.saturating_sub(h)) / 2;
     fg(buf, ORANGE);
-    move_to(buf, x, y); buf.push(b'+'); for _ in 0..(w-2) { buf.push(b'-'); } buf.push(b'+');
-    for i in 1..(h-1) {
-        move_to(buf, x, y+i);
-        bg(buf, BG_PANEL); fg(buf, ORANGE); buf.push(b'|');
-        for _ in 0..(w-2) { buf.push(b' '); }
-        buf.push(b'|'); reset(buf);
+    move_to(buf, x, y);
+    buf.push(b'+');
+    for _ in 0..(w - 2) {
+        buf.push(b'-');
     }
-    move_to(buf, x, y+h-1); fg(buf, ORANGE);
-    buf.push(b'+'); for _ in 0..(w-2) { buf.push(b'-'); } buf.push(b'+');
+    buf.push(b'+');
+    for i in 1..(h - 1) {
+        move_to(buf, x, y + i);
+        bg(buf, BG_PANEL);
+        fg(buf, ORANGE);
+        buf.push(b'|');
+        for _ in 0..(w - 2) {
+            buf.push(b' ');
+        }
+        buf.push(b'|');
+        reset(buf);
+    }
+    move_to(buf, x, y + h - 1);
+    fg(buf, ORANGE);
+    buf.push(b'+');
+    for _ in 0..(w - 2) {
+        buf.push(b'-');
+    }
+    buf.push(b'+');
 
     let title = match stage {
         AddStage::Name(_) => "Add a key  (step 1 of 2)",
         AddStage::Secret { .. } => "Add a key  (step 2 of 2)",
     };
-    move_to(buf, x + 2, y + 1); bold(buf); fg(buf, ORANGE);
-    buf.extend_from_slice(title.as_bytes()); reset(buf);
+    move_to(buf, x + 2, y + 1);
+    bold(buf);
+    fg(buf, ORANGE);
+    buf.extend_from_slice(title.as_bytes());
+    reset(buf);
 
-    move_to(buf, x + 2, y + 2); fg(buf, DIM_GREY);
+    move_to(buf, x + 2, y + 2);
+    fg(buf, DIM_GREY);
     match stage {
         AddStage::Name(_) => {
-            buf.extend_from_slice("What you'll call this key later, e.g. \"GitHub PAT\"".as_bytes());
+            buf.extend_from_slice(
+                "What you'll call this key later, e.g. \"GitHub PAT\"".as_bytes(),
+            );
         }
         AddStage::Secret { name, .. } => {
             buf.extend_from_slice(b"Storing: ");
@@ -214,20 +271,27 @@ fn draw_add_prompt(buf: &mut Vec<u8>, stage: &AddStage, cols: u16, rows: u16) {
     }
     reset(buf);
 
-    move_to(buf, x + 2, y + 4); fg(buf, TAN); bold(buf);
+    move_to(buf, x + 2, y + 4);
+    fg(buf, TAN);
+    bold(buf);
     let (prompt_label, value, masked): (&str, &str, bool) = match stage {
         AddStage::Name(v) => ("Name", v.as_str(), false),
         AddStage::Secret { value, .. } => ("Secret (typing hidden)", value.as_str(), true),
     };
     buf.extend_from_slice(prompt_label.as_bytes());
-    buf.extend_from_slice(b": "); reset(buf);
+    buf.extend_from_slice(b": ");
+    reset(buf);
     fg(buf, TAN);
     if masked {
-        for _ in value.chars() { buf.push(b'*'); }
+        for _ in value.chars() {
+            buf.push(b'*');
+        }
     } else {
         buf.extend_from_slice(value.as_bytes());
     }
-    bg(buf, ORANGE); buf.push(b' '); reset(buf);
+    bg(buf, ORANGE);
+    buf.push(b' ');
+    reset(buf);
     move_to(buf, x + 2, y + 5);
     fg(buf, DIM_GREY);
     buf.extend_from_slice(b"Enter = next   Esc = cancel");
@@ -235,23 +299,42 @@ fn draw_add_prompt(buf: &mut Vec<u8>, stage: &AddStage, cols: u16, rows: u16) {
 }
 
 fn draw_confirm_delete(buf: &mut Vec<u8>, state: &State, cols: u16, rows: u16) {
-    let label = state.selected().map(|i| i.label.clone()).unwrap_or_default();
+    let label = state
+        .selected()
+        .map(|i| i.label.clone())
+        .unwrap_or_default();
     let msg = format!("Delete \"{label}\"?  (y / n)");
     let w = (msg.len() + 6).min(cols as usize);
     let h: u16 = 3;
     let x = (cols.saturating_sub(w as u16)) / 2;
     let y = (rows.saturating_sub(h)) / 2;
     fg(buf, RED);
-    move_to(buf, x, y); buf.push(b'+'); for _ in 0..(w-2) { buf.push(b'-'); } buf.push(b'+');
-    move_to(buf, x, y+1);
-    bg(buf, BG_PANEL); fg(buf, RED); buf.push(b'|');
+    move_to(buf, x, y);
+    buf.push(b'+');
+    for _ in 0..(w - 2) {
+        buf.push(b'-');
+    }
+    buf.push(b'+');
+    move_to(buf, x, y + 1);
+    bg(buf, BG_PANEL);
+    fg(buf, RED);
+    buf.push(b'|');
     fg(buf, TAN);
     buf.extend_from_slice(b" ");
     buf.extend_from_slice(msg.as_bytes());
-    for _ in (msg.len()+2)..(w-1) { buf.push(b' '); }
-    fg(buf, RED); buf.push(b'|'); reset(buf);
-    move_to(buf, x, y+2); fg(buf, RED);
-    buf.push(b'+'); for _ in 0..(w-2) { buf.push(b'-'); } buf.push(b'+');
+    for _ in (msg.len() + 2)..(w - 1) {
+        buf.push(b' ');
+    }
+    fg(buf, RED);
+    buf.push(b'|');
+    reset(buf);
+    move_to(buf, x, y + 2);
+    fg(buf, RED);
+    buf.push(b'+');
+    for _ in 0..(w - 2) {
+        buf.push(b'-');
+    }
+    buf.push(b'+');
     reset(buf);
 }
 
@@ -261,29 +344,39 @@ fn attrs_to_string(item: &crate::secret::Item, max: usize) -> String {
     // Skip `name` (redundant with label) and any FDO/xdg machinery — we just
     // want to show the human-meaningful tags that a non-lkeys client (Git,
     // Chromium, etc.) might have set.
-    let mut keys: Vec<&String> = item.attributes.keys()
+    let mut keys: Vec<&String> = item
+        .attributes
+        .keys()
         .filter(|k| !k.starts_with("xdg:") && k.as_str() != "name")
         .collect();
     keys.sort();
     let mut out = String::new();
     for k in keys {
-        if !out.is_empty() { out.push_str(" · "); }
+        if !out.is_empty() {
+            out.push_str(" · ");
+        }
         out.push_str(&format!("{}={}", k, item.attributes[k]));
-        if out.chars().count() >= max { break; }
+        if out.chars().count() >= max {
+            break;
+        }
     }
     truncate(&out, max)
 }
 
 fn truncate(s: &str, w: usize) -> String {
     let n = s.chars().count();
-    if n <= w { return s.to_string(); }
+    if n <= w {
+        return s.to_string();
+    }
     let mut out: String = s.chars().take(w.saturating_sub(1)).collect();
     out.push('…');
     out
 }
 
 fn wrap(s: &str, w: usize) -> Vec<String> {
-    if w == 0 { return vec![s.to_string()]; }
+    if w == 0 {
+        return vec![s.to_string()];
+    }
     let mut out = Vec::new();
     let chars: Vec<char> = s.chars().collect();
     let mut i = 0;
@@ -292,7 +385,9 @@ fn wrap(s: &str, w: usize) -> Vec<String> {
         out.push(chars[i..end].iter().collect());
         i = end;
     }
-    if out.is_empty() { out.push(String::new()); }
+    if out.is_empty() {
+        out.push(String::new());
+    }
     out
 }
 

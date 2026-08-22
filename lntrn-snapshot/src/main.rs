@@ -118,10 +118,7 @@ fn parse_target_flag(args: &[String]) -> Option<String> {
 }
 
 fn make_manager(config: &Config, target: &SnapshotTarget) -> SnapshotManager {
-    let mut mgr = SnapshotManager::new(
-        target.source.clone(),
-        target.snapshot_dir.clone(),
-    );
+    let mut mgr = SnapshotManager::new(target.source.clone(), target.snapshot_dir.clone());
     mgr.retention_mut(&config.retention);
     mgr
 }
@@ -193,11 +190,7 @@ fn cmd_init(config: &Config) {
                 target.source.display(),
                 target.snapshot_dir.display()
             ),
-            Err(e) => eprintln!(
-                "error creating {}: {}",
-                target.snapshot_dir.display(),
-                e
-            ),
+            Err(e) => eprintln!("error creating {}: {}", target.snapshot_dir.display(), e),
         }
     }
 }
@@ -207,16 +200,8 @@ fn cmd_create(config: &Config, kind: SnapshotKind) {
         let mgr = make_manager(config, target);
 
         match mgr.create(kind) {
-            Ok(snap) => println!(
-                "created {} -> {}",
-                snap.name,
-                snap.path.display()
-            ),
-            Err(e) => eprintln!(
-                "error snapshotting {}: {}",
-                target.source.display(),
-                e
-            ),
+            Ok(snap) => println!("created {} -> {}", snap.name, snap.path.display()),
+            Err(e) => eprintln!("error snapshotting {}: {}", target.source.display(), e),
         }
     }
 

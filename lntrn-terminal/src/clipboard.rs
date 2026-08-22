@@ -105,8 +105,11 @@ fn clipboard_thread(rx: mpsc::Receiver<Cmd>) -> Result<(), Box<dyn std::error::E
     // Prefer ext-data-control (upstream-standard, KDE Plasma 6.2+, GNOME 47+).
     // Fall back to wlr-data-control (wlroots, Lantern DE).
     let backend = if let Ok(mgr) = globals
-        .bind::<ext_dc::ext_data_control_manager_v1::ExtDataControlManagerV1, _, _>(&qh, 1..=1, ())
-    {
+        .bind::<ext_dc::ext_data_control_manager_v1::ExtDataControlManagerV1, _, _>(
+        &qh,
+        1..=1,
+        (),
+    ) {
         let device = mgr.get_data_device(&seat, &qh, ());
         Backend::Ext { mgr, device }
     } else {

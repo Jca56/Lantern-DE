@@ -50,13 +50,21 @@ pub(super) fn run(tx: mpsc::Sender<MediaEvent>, cmd_rx: mpsc::Receiver<MediaCmd>
                     MediaCmd::Next => "Next",
                     MediaCmd::Previous => "Previous",
                 };
-                let _ = c.call_method(Some(player.as_str()), MPRIS_PATH, Some(PLAYER_IFACE), method, &());
+                let _ = c.call_method(
+                    Some(player.as_str()),
+                    MPRIS_PATH,
+                    Some(PLAYER_IFACE),
+                    method,
+                    &(),
+                );
             }
             // Reflect the new state quickly after acting on a command.
             force_poll = true;
         }
 
-        let due = last_poll.map(|t| t.elapsed() >= POLL_INTERVAL).unwrap_or(true);
+        let due = last_poll
+            .map(|t| t.elapsed() >= POLL_INTERVAL)
+            .unwrap_or(true);
         if conn.is_some() && (due || force_poll) {
             let c = conn.as_ref().unwrap();
             let (track, player) = poll(c);
@@ -108,7 +116,10 @@ fn mpris_names(conn: &Connection) -> Vec<String> {
         .ok()
         .and_then(|r| r.body().deserialize::<Vec<String>>().ok())
         .unwrap_or_default();
-    names.into_iter().filter(|n| n.starts_with(MPRIS_PREFIX)).collect()
+    names
+        .into_iter()
+        .filter(|n| n.starts_with(MPRIS_PREFIX))
+        .collect()
 }
 
 /// True if the bus answers a trivial call — used to distinguish "no
@@ -126,7 +137,13 @@ fn bus_alive(conn: &Connection) -> bool {
 
 fn read_player(conn: &Connection, name: &str) -> Option<Track> {
     let reply = conn
-        .call_method(Some(name), MPRIS_PATH, Some(PROPS_IFACE), "GetAll", &(PLAYER_IFACE,))
+        .call_method(
+            Some(name),
+            MPRIS_PATH,
+            Some(PROPS_IFACE),
+            "GetAll",
+            &(PLAYER_IFACE,),
+        )
         .ok()?;
     let props: HashMap<String, OwnedValue> = reply.body().deserialize().ok()?;
 
@@ -158,7 +175,11 @@ fn read_player(conn: &Connection, name: &str) -> Option<Track> {
     let position_us = props.get("Position").and_then(as_i64).unwrap_or(0);
 
     Some(Track {
-        title: if title.is_empty() { "Unknown".to_string() } else { title },
+        title: if title.is_empty() {
+            "Unknown".to_string()
+        } else {
+            title
+        },
         artist,
         status,
         position_us,

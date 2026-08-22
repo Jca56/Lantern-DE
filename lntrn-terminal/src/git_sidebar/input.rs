@@ -1,8 +1,6 @@
 use crate::git::ops::FileStatus;
 
-use super::{
-    GitAction, GitSidebarState, BUTTON_H, INPUT_H, ITEM_H, PAD, SECTION_H,
-};
+use super::{GitAction, GitSidebarState, BUTTON_H, INPUT_H, ITEM_H, PAD, SECTION_H};
 
 // ── Hit testing ─────────────────────────────────────────────────────────────
 
@@ -34,7 +32,11 @@ pub fn handle_click(
         // Refresh button
         let ref_w = 28.0 * scale;
         let ref_x = sw - pad - ref_w;
-        if cx >= ref_x && cx <= ref_x + ref_w && cy >= y + 2.0 * scale && cy < y + section_h - 2.0 * scale {
+        if cx >= ref_x
+            && cx <= ref_x + ref_w
+            && cy >= y + 2.0 * scale
+            && cy < y + section_h - 2.0 * scale
+        {
             state.commit_focused = false;
             return GitAction::Refresh;
         }

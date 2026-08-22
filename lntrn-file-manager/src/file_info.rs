@@ -16,7 +16,9 @@ pub struct FileInfo {
 
 impl FileInfoCache {
     pub fn new() -> Self {
-        Self { cache: HashMap::new() }
+        Self {
+            cache: HashMap::new(),
+        }
     }
 
     pub fn get(&mut self, path: &Path) -> &FileInfo {
@@ -35,7 +37,8 @@ impl FileInfoCache {
 }
 
 fn build_info(path: &Path) -> FileInfo {
-    let ext = path.extension()
+    let ext = path
+        .extension()
         .map(|e| e.to_string_lossy().to_lowercase())
         .unwrap_or_default();
 
@@ -62,16 +65,21 @@ fn build_info(path: &Path) -> FileInfo {
 
 // ── File categories ─────────────────────────────────────────────────────────
 
-enum FileCategory { Image, Video, Audio, Other }
+enum FileCategory {
+    Image,
+    Video,
+    Audio,
+    Other,
+}
 
 fn file_category(ext: &str) -> FileCategory {
     match ext {
-        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "ico" | "tiff" | "tif"
-        | "svg" | "avif" | "heic" | "heif" => FileCategory::Image,
-        "mp4" | "mkv" | "avi" | "mov" | "webm" | "flv" | "wmv" | "m4v" | "ts"
-        | "mpg" | "mpeg" | "3gp" => FileCategory::Video,
-        "mp3" | "flac" | "ogg" | "wav" | "aac" | "m4a" | "wma" | "opus"
-        | "aiff" | "ape" | "alac" => FileCategory::Audio,
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "ico" | "tiff" | "tif" | "svg"
+        | "avif" | "heic" | "heif" => FileCategory::Image,
+        "mp4" | "mkv" | "avi" | "mov" | "webm" | "flv" | "wmv" | "m4v" | "ts" | "mpg" | "mpeg"
+        | "3gp" => FileCategory::Video,
+        "mp3" | "flac" | "ogg" | "wav" | "aac" | "m4a" | "wma" | "opus" | "aiff" | "ape"
+        | "alac" => FileCategory::Audio,
         _ => FileCategory::Other,
     }
 }
@@ -150,7 +158,8 @@ fn type_name_from_ext(ext: &str) -> String {
         "appimage" => "AppImage",
         "" => "File",
         other => return format!("{} File", other.to_uppercase()),
-    }.to_string()
+    }
+    .to_string()
 }
 
 // ── Image header reading (no external crates) ───────────────────────────────
@@ -173,8 +182,12 @@ fn read_image_dimensions(path: &Path) -> Option<(u32, u32)> {
 
 fn read_png_dims(buf: &[u8]) -> Option<(u32, u32)> {
     // PNG IHDR: bytes 16-19 = width, 20-23 = height (big-endian)
-    if buf.len() < 24 { return None; }
-    if &buf[0..8] != b"\x89PNG\r\n\x1a\n" { return None; }
+    if buf.len() < 24 {
+        return None;
+    }
+    if &buf[0..8] != b"\x89PNG\r\n\x1a\n" {
+        return None;
+    }
     let w = u32::from_be_bytes([buf[16], buf[17], buf[18], buf[19]]);
     let h = u32::from_be_bytes([buf[20], buf[21], buf[22], buf[23]]);
     Some((w, h))
@@ -183,10 +196,15 @@ fn read_png_dims(buf: &[u8]) -> Option<(u32, u32)> {
 fn read_jpeg_dims(path: &Path) -> Option<(u32, u32)> {
     // JPEG: scan for SOF0/SOF2 markers (0xFF 0xC0 or 0xFF 0xC2)
     let data = std::fs::read(path).ok()?;
-    if data.len() < 2 || data[0] != 0xFF || data[1] != 0xD8 { return None; }
+    if data.len() < 2 || data[0] != 0xFF || data[1] != 0xD8 {
+        return None;
+    }
     let mut i = 2;
     while i + 1 < data.len() {
-        if data[i] != 0xFF { i += 1; continue; }
+        if data[i] != 0xFF {
+            i += 1;
+            continue;
+        }
         let marker = data[i + 1];
         if marker == 0xC0 || marker == 0xC2 {
             if i + 9 < data.len() {
@@ -195,7 +213,9 @@ fn read_jpeg_dims(path: &Path) -> Option<(u32, u32)> {
                 return Some((w, h));
             }
         }
-        if marker == 0xD9 || marker == 0xDA { break; } // EOI or SOS
+        if marker == 0xD9 || marker == 0xDA {
+            break;
+        } // EOI or SOS
         if i + 3 < data.len() {
             let len = u16::from_be_bytes([data[i + 2], data[i + 3]]) as usize;
             i += 2 + len;
@@ -208,8 +228,12 @@ fn read_jpeg_dims(path: &Path) -> Option<(u32, u32)> {
 
 fn read_gif_dims(buf: &[u8]) -> Option<(u32, u32)> {
     // GIF: bytes 6-7 = width, 8-9 = height (little-endian)
-    if buf.len() < 10 { return None; }
-    if &buf[0..3] != b"GIF" { return None; }
+    if buf.len() < 10 {
+        return None;
+    }
+    if &buf[0..3] != b"GIF" {
+        return None;
+    }
     let w = u16::from_le_bytes([buf[6], buf[7]]) as u32;
     let h = u16::from_le_bytes([buf[8], buf[9]]) as u32;
     Some((w, h))
@@ -217,8 +241,12 @@ fn read_gif_dims(buf: &[u8]) -> Option<(u32, u32)> {
 
 fn read_bmp_dims(buf: &[u8]) -> Option<(u32, u32)> {
     // BMP: bytes 18-21 = width, 22-25 = height (little-endian, signed)
-    if buf.len() < 26 { return None; }
-    if &buf[0..2] != b"BM" { return None; }
+    if buf.len() < 26 {
+        return None;
+    }
+    if &buf[0..2] != b"BM" {
+        return None;
+    }
     let w = i32::from_le_bytes([buf[18], buf[19], buf[20], buf[21]]).unsigned_abs();
     let h = i32::from_le_bytes([buf[22], buf[23], buf[24], buf[25]]).unsigned_abs();
     Some((w, h))
@@ -228,8 +256,12 @@ fn read_webp_dims(path: &Path) -> Option<(u32, u32)> {
     let mut file = std::fs::File::open(path).ok()?;
     let mut buf = [0u8; 30];
     file.read(&mut buf).ok()?;
-    if buf.len() < 30 { return None; }
-    if &buf[0..4] != b"RIFF" || &buf[8..12] != b"WEBP" { return None; }
+    if buf.len() < 30 {
+        return None;
+    }
+    if &buf[0..4] != b"RIFF" || &buf[8..12] != b"WEBP" {
+        return None;
+    }
     // VP8 lossy
     if &buf[12..16] == b"VP8 " && buf.len() >= 30 {
         let w = (u16::from_le_bytes([buf[26], buf[27]]) & 0x3FFF) as u32;
@@ -255,8 +287,10 @@ fn read_webp_dims(path: &Path) -> Option<(u32, u32)> {
 fn probe_media(path: &Path) -> (Option<(u32, u32)>, Option<String>) {
     let output = std::process::Command::new("ffprobe")
         .args([
-            "-v", "quiet",
-            "-print_format", "json",
+            "-v",
+            "quiet",
+            "-print_format",
+            "json",
             "-show_format",
             "-show_streams",
         ])
@@ -298,7 +332,9 @@ fn parse_duration(json: &str) -> Option<String> {
     // Look for "duration": "123.456" in format section
     let dur_str = extract_json_str(json, "\"duration\"")?;
     let secs: f64 = dur_str.parse().ok()?;
-    if secs <= 0.0 { return None; }
+    if secs <= 0.0 {
+        return None;
+    }
     let total_secs = secs.round() as u64;
     let hours = total_secs / 3600;
     let mins = (total_secs % 3600) / 60;
@@ -315,7 +351,9 @@ fn extract_json_u32(json: &str, key: &str) -> Option<u32> {
     let after = &json[pos + key.len()..];
     let colon = after.find(':')?;
     let rest = after[colon + 1..].trim_start();
-    let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+    let end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
     rest[..end].parse().ok()
 }
 
@@ -324,7 +362,9 @@ fn extract_json_str<'a>(json: &'a str, key: &str) -> Option<&'a str> {
     let after = &json[pos + key.len()..];
     let colon = after.find(':')?;
     let rest = after[colon + 1..].trim_start();
-    if !rest.starts_with('"') { return None; }
+    if !rest.starts_with('"') {
+        return None;
+    }
     let inner = &rest[1..];
     let end = inner.find('"')?;
     Some(&inner[..end])

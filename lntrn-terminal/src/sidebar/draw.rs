@@ -54,13 +54,23 @@ pub fn draw_sidebar(
     // actively dragging the resize handle, so the edge is discoverable.
     let handle_hot = state.resizing || state.resize_handle_hit(cursor_pos, chrome_h);
     if handle_hot {
-        painter.rect_filled(Rect::new(sw - 2.0 * scale, chrome_h, 2.0 * scale, h), 0.0, c(ACCENT));
+        painter.rect_filled(
+            Rect::new(sw - 2.0 * scale, chrome_h, 2.0 * scale, h),
+            0.0,
+            c(ACCENT),
+        );
     } else {
-        painter.rect_filled(Rect::new(sw - 1.0 * scale, chrome_h, 1.0 * scale, h), 0.0, c(DIVIDER));
+        painter.rect_filled(
+            Rect::new(sw - 1.0 * scale, chrome_h, 1.0 * scale, h),
+            0.0,
+            c(DIVIDER),
+        );
     }
 
     // Mode toggle buttons [Files] [Git]
-    draw_mode_toggle(painter, text, state, chrome_h, sw, screen_w, screen_h, cursor_pos);
+    draw_mode_toggle(
+        painter, text, state, chrome_h, sw, screen_w, screen_h, cursor_pos,
+    );
 
     // In Git mode, the git_sidebar module draws the content below the toggle
     if state.mode == SidebarMode::Git {
@@ -119,7 +129,11 @@ pub fn draw_sidebar(
 
         // Icon — git status badge replaces · for tracked files
         let git_ch = if !entry.is_dir {
-            state.git_marks.iter().find(|(p, _)| *p == entry.path).map(|(_, ch)| *ch)
+            state
+                .git_marks
+                .iter()
+                .find(|(p, _)| *p == entry.path)
+                .map(|(_, ch)| *ch)
         } else {
             None
         };
@@ -132,12 +146,30 @@ pub fn draw_sidebar(
                 'D' => c(DANGER),
                 _ => c(TEXT_DIM),
             };
-            (match ch { 'M'=>"M", 'A'=>"A", 'D'=>"D", 'R'=>"R", '?'=>"?", _=>"·" }, col)
+            (
+                match ch {
+                    'M' => "M",
+                    'A' => "A",
+                    'D' => "D",
+                    'R' => "R",
+                    '?' => "?",
+                    _ => "·",
+                },
+                col,
+            )
         } else {
             ("·", c(TEXT_DIM))
         };
-        text.queue(icon, icon_font, indent, y + (item_height - icon_font) / 2.0,
-            icon_color, 16.0 * scale, screen_w, screen_h);
+        text.queue(
+            icon,
+            icon_font,
+            indent,
+            y + (item_height - icon_font) / 2.0,
+            icon_color,
+            16.0 * scale,
+            screen_w,
+            screen_h,
+        );
 
         // Line count (right-aligned, color-coded by size)
         if let Some(lines) = entry.line_count {
@@ -153,16 +185,24 @@ pub fn draw_sidebar(
             };
             let fs = font_size - 6.0 * scale;
             let cw = count_str.len() as f32 * fs * 0.55;
-            text.queue(&count_str, fs, sw - cw - 10.0 * scale,
+            text.queue(
+                &count_str,
+                fs,
+                sw - cw - 10.0 * scale,
                 y + (item_height - fs) / 2.0,
-                line_color, cw + 4.0 * scale, screen_w, screen_h);
+                line_color,
+                cw + 4.0 * scale,
+                screen_w,
+                screen_h,
+            );
         }
 
         // Name — or inline edit field
         let name_x = indent + 16.0 * scale;
-        let is_editing = state.edit.as_ref().map_or(false, |e| {
-            e.mode == EditMode::Rename && e.entry_idx == i
-        });
+        let is_editing = state
+            .edit
+            .as_ref()
+            .map_or(false, |e| e.mode == EditMode::Rename && e.entry_idx == i);
 
         if is_editing {
             let edit = state.edit.as_ref().unwrap();
@@ -171,13 +211,23 @@ pub fn draw_sidebar(
 
             // Edit background
             painter.rect_filled(
-                Rect::new(name_x - 4.0 * scale, y + 4.0 * scale, max_w + 8.0 * scale, item_height - 8.0 * scale),
+                Rect::new(
+                    name_x - 4.0 * scale,
+                    y + 4.0 * scale,
+                    max_w + 8.0 * scale,
+                    item_height - 8.0 * scale,
+                ),
                 4.0 * scale,
                 c(Color8::from_rgba(50, 50, 50, 255)),
             );
             // Gold border
             let b = 1.5 * scale;
-            let er = Rect::new(name_x - 4.0 * scale, y + 4.0 * scale, max_w + 8.0 * scale, item_height - 8.0 * scale);
+            let er = Rect::new(
+                name_x - 4.0 * scale,
+                y + 4.0 * scale,
+                max_w + 8.0 * scale,
+                item_height - 8.0 * scale,
+            );
             painter.rect_filled(Rect::new(er.x, er.y, er.w, b), 0.0, c(ACCENT));
             painter.rect_filled(Rect::new(er.x, er.y + er.h - b, er.w, b), 0.0, c(ACCENT));
             painter.rect_filled(Rect::new(er.x, er.y, b, er.h), 0.0, c(ACCENT));
@@ -230,15 +280,29 @@ pub fn draw_sidebar(
             } else {
                 0
             };
-            let insert_y = entry_y_position(edit.entry_idx, &state.entries, list_y, state.scroll_offset, scale);
+            let insert_y = entry_y_position(
+                edit.entry_idx,
+                &state.entries,
+                list_y,
+                state.scroll_offset,
+                scale,
+            );
             let indent = depth as f32 * indent_px + 10.0 * scale;
             let name_x = indent + 16.0 * scale;
             let text_y = insert_y + (item_height - font_size) / 2.0;
             let max_w = sw - name_x - 8.0 * scale;
 
             // Icon
-            let icon = if edit.mode == EditMode::NewFolder { "▸" } else { "·" };
-            let icon_color = if edit.mode == EditMode::NewFolder { c(ACCENT) } else { c(TEXT_DIM) };
+            let icon = if edit.mode == EditMode::NewFolder {
+                "▸"
+            } else {
+                "·"
+            };
+            let icon_color = if edit.mode == EditMode::NewFolder {
+                c(ACCENT)
+            } else {
+                c(TEXT_DIM)
+            };
             text.queue(
                 icon,
                 icon_font,
@@ -252,12 +316,22 @@ pub fn draw_sidebar(
 
             // Edit background
             painter.rect_filled(
-                Rect::new(name_x - 4.0 * scale, insert_y + 4.0 * scale, max_w + 8.0 * scale, item_height - 8.0 * scale),
+                Rect::new(
+                    name_x - 4.0 * scale,
+                    insert_y + 4.0 * scale,
+                    max_w + 8.0 * scale,
+                    item_height - 8.0 * scale,
+                ),
                 4.0 * scale,
                 c(Color8::from_rgba(50, 50, 50, 255)),
             );
             let b = 1.5 * scale;
-            let er = Rect::new(name_x - 4.0 * scale, insert_y + 4.0 * scale, max_w + 8.0 * scale, item_height - 8.0 * scale);
+            let er = Rect::new(
+                name_x - 4.0 * scale,
+                insert_y + 4.0 * scale,
+                max_w + 8.0 * scale,
+                item_height - 8.0 * scale,
+            );
             painter.rect_filled(Rect::new(er.x, er.y, er.w, b), 0.0, c(ACCENT));
             painter.rect_filled(Rect::new(er.x, er.y + er.h - b, er.w, b), 0.0, c(ACCENT));
             painter.rect_filled(Rect::new(er.x, er.y, b, er.h), 0.0, c(ACCENT));
@@ -337,12 +411,22 @@ fn draw_mode_toggle(
     } else {
         c(Color8::from_rgba(55, 55, 55, 255))
     };
-    let files_fg = if files_active { c(Color8::from_rgb(255, 255, 255)) } else { c(TEXT_DIM) };
+    let files_fg = if files_active {
+        c(Color8::from_rgb(255, 255, 255))
+    } else {
+        c(TEXT_DIM)
+    };
     painter.rect_filled(files_rect, 4.0 * scale, files_bg);
     let ft_w = 5.0 * char_width;
     text.queue(
-        "Files", font_size, fx + (btn_w - ft_w) / 2.0, y + (btn_h - font_size) / 2.0,
-        files_fg, btn_w, screen_w, screen_h,
+        "Files",
+        font_size,
+        fx + (btn_w - ft_w) / 2.0,
+        y + (btn_h - font_size) / 2.0,
+        files_fg,
+        btn_w,
+        screen_w,
+        screen_h,
     );
 
     // Git button
@@ -357,11 +441,21 @@ fn draw_mode_toggle(
     } else {
         c(Color8::from_rgba(55, 55, 55, 255))
     };
-    let git_fg = if git_active { c(Color8::from_rgb(255, 255, 255)) } else { c(TEXT_DIM) };
+    let git_fg = if git_active {
+        c(Color8::from_rgb(255, 255, 255))
+    } else {
+        c(TEXT_DIM)
+    };
     painter.rect_filled(git_rect, 4.0 * scale, git_bg);
     let gt_w = 3.0 * char_width;
     text.queue(
-        "Git", font_size, gx + (btn_w - gt_w) / 2.0, y + (btn_h - font_size) / 2.0,
-        git_fg, btn_w, screen_w, screen_h,
+        "Git",
+        font_size,
+        gx + (btn_w - gt_w) / 2.0,
+        y + (btn_h - font_size) / 2.0,
+        git_fg,
+        btn_w,
+        screen_w,
+        screen_h,
     );
 }

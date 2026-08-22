@@ -35,7 +35,9 @@ pub fn list_canvases() -> Vec<CanvasEntry> {
                 .file_stem()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default(),
-            modified: std::fs::metadata(&path).ok().and_then(|m| m.modified().ok()),
+            modified: std::fs::metadata(&path)
+                .ok()
+                .and_then(|m| m.modified().ok()),
             path,
         })
         .collect();
@@ -74,7 +76,11 @@ pub fn sanitize_name(name: &str) -> String {
         .map(|c| if c == '/' || c == '\0' { '-' } else { c })
         .collect();
     let trimmed = cleaned.trim();
-    if trimmed.is_empty() { "Untitled".into() } else { trimmed.to_string() }
+    if trimmed.is_empty() {
+        "Untitled".into()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// Format a timestamp as "YYYY-MM-DD HH:MM" (local-naive: UTC + TZ not worth a
@@ -89,7 +95,11 @@ pub fn format_date(t: SystemTime) -> String {
     let days = secs.div_euclid(86_400);
     let rem = secs.rem_euclid(86_400);
     let (y, m, d) = civil_from_days(days);
-    format!("{y:04}-{m:02}-{d:02} {:02}:{:02}", rem / 3600, (rem % 3600) / 60)
+    format!(
+        "{y:04}-{m:02}-{d:02} {:02}:{:02}",
+        rem / 3600,
+        (rem % 3600) / 60
+    )
 }
 
 /// Howard Hinnant's days-from-civil inverse: days since 1970-01-01 → (y, m, d).

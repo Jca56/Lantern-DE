@@ -18,12 +18,7 @@ pub fn fold(s: &str) -> String {
 /// Append `needle`'s occurrences in `line` to `out` as byte ranges into the
 /// ORIGINAL line. For case-insensitive searches the needle must already be
 /// folded with [`fold`]. Every returned offset is a char boundary of `line`.
-pub fn find_in_line(
-    line: &str,
-    needle: &str,
-    case_sensitive: bool,
-    out: &mut Vec<(usize, usize)>,
-) {
+pub fn find_in_line(line: &str, needle: &str, case_sensitive: bool, out: &mut Vec<(usize, usize)>) {
     if needle.is_empty() {
         return;
     }
@@ -95,7 +90,10 @@ mod tests {
     /// Every returned range must slice the original line without panicking.
     fn assert_sliceable(line: &str, ranges: &[(usize, usize)]) {
         for &(s, e) in ranges {
-            assert!(line.is_char_boundary(s) && line.is_char_boundary(e), "bad range {s}..{e} in {line:?}");
+            assert!(
+                line.is_char_boundary(s) && line.is_char_boundary(e),
+                "bad range {s}..{e} in {line:?}"
+            );
             let _ = &line[s..e];
         }
     }

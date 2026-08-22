@@ -1,11 +1,11 @@
-use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Instant;
 use std::ffi::c_void;
 use std::ptr::NonNull;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
 
 use raw_window_handle::{
-    HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle,
-    XlibDisplayHandle, XlibWindowHandle,
+    HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle, XlibDisplayHandle,
+    XlibWindowHandle,
 };
 
 struct X11Surface {
@@ -68,7 +68,11 @@ pub struct FrameTimingSnapshot {
 unsafe impl Send for GpuContext {}
 
 impl GpuContext {
-    pub fn new(x11_window: u32, width: u32, height: u32) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(
+        x11_window: u32,
+        width: u32,
+        height: u32,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let xlib_display = unsafe { x11::xlib::XOpenDisplay(std::ptr::null()) };
         if xlib_display.is_null() {
             return Err("Failed to open Xlib display".into());
@@ -94,11 +98,16 @@ impl GpuContext {
         })
     }
 
-    pub fn from_window<W>(window: &W, width: u32, height: u32) -> Result<Self, Box<dyn std::error::Error>>
+    pub fn from_window<W>(
+        window: &W,
+        width: u32,
+        height: u32,
+    ) -> Result<Self, Box<dyn std::error::Error>>
     where
         W: HasDisplayHandle + HasWindowHandle,
     {
-        let (instance, device, queue, surface, config, format) = create_surface_context(window, width, height)?;
+        let (instance, device, queue, surface, config, format) =
+            create_surface_context(window, width, height)?;
 
         Ok(Self {
             device: Arc::new(device),
@@ -122,7 +131,9 @@ impl GpuContext {
         W: HasDisplayHandle + HasWindowHandle,
     {
         let surface = unsafe {
-            parent.instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::from_window(window)?)
+            parent
+                .instance
+                .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::from_window(window)?)
         }?;
 
         let config = wgpu::SurfaceConfiguration {
@@ -189,9 +200,15 @@ impl GpuContext {
         })
     }
 
-    pub fn instance_arc(&self) -> Arc<wgpu::Instance> { Arc::clone(&self.instance) }
-    pub fn device_arc(&self) -> Arc<wgpu::Device> { Arc::clone(&self.device) }
-    pub fn queue_arc(&self) -> Arc<wgpu::Queue> { Arc::clone(&self.queue) }
+    pub fn instance_arc(&self) -> Arc<wgpu::Instance> {
+        Arc::clone(&self.instance)
+    }
+    pub fn device_arc(&self) -> Arc<wgpu::Device> {
+        Arc::clone(&self.device)
+    }
+    pub fn queue_arc(&self) -> Arc<wgpu::Queue> {
+        Arc::clone(&self.queue)
+    }
 
     pub fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 {
@@ -244,7 +261,10 @@ impl GpuContext {
     }
 
     pub fn timing_snapshot(&self) -> FrameTimingSnapshot {
-        self.timing.lock().map(|snapshot| snapshot.clone()).unwrap_or_default()
+        self.timing
+            .lock()
+            .map(|snapshot| snapshot.clone())
+            .unwrap_or_default()
     }
 
     pub fn width(&self) -> u32 {
@@ -271,9 +291,10 @@ impl Frame {
     pub fn flush(&mut self, gpu: &GpuContext) {
         let old = std::mem::replace(
             &mut self.encoder,
-            gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some(self.label),
-            }),
+            gpu.device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some(self.label),
+                }),
         );
         gpu.queue.submit(std::iter::once(old.finish()));
     }
@@ -345,9 +366,8 @@ where
         ..Default::default()
     });
 
-    let surface = unsafe {
-        instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::from_window(window)?)
-    }?;
+    let surface =
+        unsafe { instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::from_window(window)?) }?;
 
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::HighPerformance,
@@ -355,14 +375,12 @@ where
         force_fallback_adapter: false,
     }))?;
 
-    let (device, queue) = pollster::block_on(adapter.request_device(
-        &wgpu::DeviceDescriptor {
-            label: Some("Lantern Gfx"),
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            ..Default::default()
-        },
-    ))?;
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("Lantern Gfx"),
+        required_features: wgpu::Features::empty(),
+        required_limits: wgpu::Limits::default(),
+        ..Default::default()
+    }))?;
 
     let caps = surface.get_capabilities(&adapter);
     let format = caps
@@ -378,16 +396,28 @@ where
         caps.present_modes[0]
     };
 
-    let alpha_mode = if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::PreMultiplied) {
+    let alpha_mode = if caps
+        .alpha_modes
+        .contains(&wgpu::CompositeAlphaMode::PreMultiplied)
+    {
         wgpu::CompositeAlphaMode::PreMultiplied
-    } else if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::PostMultiplied) {
+    } else if caps
+        .alpha_modes
+        .contains(&wgpu::CompositeAlphaMode::PostMultiplied)
+    {
         wgpu::CompositeAlphaMode::PostMultiplied
-    } else if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::Inherit) {
+    } else if caps
+        .alpha_modes
+        .contains(&wgpu::CompositeAlphaMode::Inherit)
+    {
         wgpu::CompositeAlphaMode::Inherit
     } else {
         caps.alpha_modes[0]
     };
-    eprintln!("[lntrn-gfx] alpha_mode={:?} available={:?} format={:?}", alpha_mode, caps.alpha_modes, format);
+    eprintln!(
+        "[lntrn-gfx] alpha_mode={:?} available={:?} format={:?}",
+        alpha_mode, caps.alpha_modes, format
+    );
 
     // Same guard as GpuContext::resize — an initial size past the device
     // limit would abort in surface.configure below.

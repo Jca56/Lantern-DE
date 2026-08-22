@@ -129,7 +129,10 @@ mod tests {
         let mut acc = Accumulator::new(4, 4);
         rect(&mut acc, 0.0, 0.0, 4.0, 4.0);
         let bmp = acc.finish();
-        assert!(bmp.iter().all(|&c| c == 255), "expected full coverage, got {bmp:?}");
+        assert!(
+            bmp.iter().all(|&c| c == 255),
+            "expected full coverage, got {bmp:?}"
+        );
     }
 
     #[test]

@@ -150,8 +150,7 @@ unsafe impl Send for Nvml {}
 impl Nvml {
     /// Returns `Ok(None)` on machines without an NVIDIA driver.
     pub fn load() -> Result<Option<Nvml>, String> {
-        let lib =
-            unsafe { libc::dlopen(b"libnvidia-ml.so.1\0".as_ptr().cast(), libc::RTLD_NOW) };
+        let lib = unsafe { libc::dlopen(b"libnvidia-ml.so.1\0".as_ptr().cast(), libc::RTLD_NOW) };
         if lib.is_null() {
             return Ok(None);
         }
@@ -294,7 +293,11 @@ impl Nvml {
             unsafe { (self.get_utilization)(self.dev, &mut util) },
             "GetUtilization",
         )?;
-        let mut mem = MemoryInfo { total: 0, free: 0, used: 0 };
+        let mut mem = MemoryInfo {
+            total: 0,
+            free: 0,
+            used: 0,
+        };
         self.check(
             unsafe { (self.get_memory_info)(self.dev, &mut mem) },
             "GetMemoryInfo",
@@ -407,7 +410,10 @@ impl Nvml {
     /// the V/F curve.
     pub fn lock_core_clocks(&self, min_mhz: u32, max_mhz: u32) -> Result<(), String> {
         let f = self.lock_gpu_clocks.ok_or("locked clocks not supported")?;
-        self.check(unsafe { f(self.dev, min_mhz, max_mhz) }, "SetGpuLockedClocks")
+        self.check(
+            unsafe { f(self.dev, min_mhz, max_mhz) },
+            "SetGpuLockedClocks",
+        )
     }
 
     pub fn unlock_core_clocks(&self) -> Result<(), String> {

@@ -200,7 +200,10 @@ pub struct AppState {
     pub widget_settings_open: Option<crate::controls::TileId>,
     /// Which widget + which slider (size/space) is being dragged in its
     /// settings popover, if any.
-    pub widget_slider_drag: Option<(crate::controls::TileId, crate::controls::widget_settings::WidgetSlider)>,
+    pub widget_slider_drag: Option<(
+        crate::controls::TileId,
+        crate::controls::widget_settings::WidgetSlider,
+    )>,
     /// Hover state for the right-side strip icons.
     pub emoji_hover: bool,
     pub clipboard_hover: bool,
@@ -450,7 +453,10 @@ impl AppState {
             self.notes.open = false;
             self.usage.open = false;
         }
-        tracing::info!(open = self.desktop_settings_open, "desktop settings toggled");
+        tracing::info!(
+            open = self.desktop_settings_open,
+            "desktop settings toggled"
+        );
     }
 
     /// Toggle the Emojis overlay page.
@@ -564,11 +570,7 @@ pub enum PanelView {
 }
 
 impl PanelView {
-    pub const ALL: [PanelView; 3] = [
-        PanelView::Default,
-        PanelView::Terminal,
-        PanelView::Files,
-    ];
+    pub const ALL: [PanelView; 3] = [PanelView::Default, PanelView::Terminal, PanelView::Files];
     pub fn next(self) -> Self {
         let idx = Self::ALL.iter().position(|v| *v == self).unwrap_or(0);
         Self::ALL[(idx + 1) % Self::ALL.len()]
@@ -654,7 +656,9 @@ pub(crate) fn spawn_detached(exec: &str) {
 }
 
 pub(super) fn reap(mut child: std::process::Child) {
-    std::thread::spawn(move || { let _ = child.wait(); });
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
 }
 
 /// Open a filesystem path detached from the panel. Directories go to
@@ -711,9 +715,13 @@ pub fn set_split_gap_px(px: f32) {
 /// Compute the effective gap in physical pixels for the current state.
 /// Returns 0 when split mode is off or the panel is fully collapsed.
 pub fn effective_split_gap_px(state: &AppState, scale: f32) -> f32 {
-    if !state.config.panel_split { return 0.0; }
+    if !state.config.panel_split {
+        return 0.0;
+    }
     let expansion = 1.0 - state.collapse_progress();
-    if expansion <= 0.001 { return 0.0; }
+    if expansion <= 0.001 {
+        return 0.0;
+    }
     state.config.panel_split_gap.max(0.0) * scale * expansion
 }
 
@@ -748,12 +756,7 @@ impl PanelRect {
 
     /// Like [`compute_with_height`] but also takes a custom width — the
     /// grow toggle uses this to add a width bonus on both sides.
-    pub fn compute_with_dims(
-        surface_w: u32,
-        scale: f32,
-        w_logical: f32,
-        h_logical: f32,
-    ) -> Self {
+    pub fn compute_with_dims(surface_w: u32, scale: f32, w_logical: f32, h_logical: f32) -> Self {
         let w = w_logical * scale;
         let h = h_logical * scale;
         let x = (surface_w as f32 - w) / 2.0;

@@ -35,14 +35,13 @@ pub enum FileKind {
 impl FileKind {
     pub fn from_extension(ext: &str) -> Self {
         match ext.to_ascii_lowercase().as_str() {
-            "txt" | "md" | "markdown" | "log" | "rst" | "cfg" | "conf" | "ini"
-            | "toml" | "yaml" | "yml" | "json" | "csv" => Self::Text,
-            "rs" | "py" | "js" | "ts" | "tsx" | "jsx" | "c" | "h" | "cpp" | "hpp"
-            | "cc" | "go" | "java" | "kt" | "rb" | "lua" | "php" | "swift" | "sh"
-            | "bash" | "zsh" | "fish" | "vue" | "svelte" | "html" | "htm" | "css"
-            | "scss" | "sass" | "less" => Self::Code,
-            "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "ico" | "tiff" | "tif"
-            | "svg" | "avif" | "heic" | "heif" => Self::Image,
+            "txt" | "md" | "markdown" | "log" | "rst" | "cfg" | "conf" | "ini" | "toml"
+            | "yaml" | "yml" | "json" | "csv" => Self::Text,
+            "rs" | "py" | "js" | "ts" | "tsx" | "jsx" | "c" | "h" | "cpp" | "hpp" | "cc" | "go"
+            | "java" | "kt" | "rb" | "lua" | "php" | "swift" | "sh" | "bash" | "zsh" | "fish"
+            | "vue" | "svelte" | "html" | "htm" | "css" | "scss" | "sass" | "less" => Self::Code,
+            "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "ico" | "tiff" | "tif" | "svg"
+            | "avif" | "heic" | "heif" => Self::Image,
             "mp4" | "mkv" | "avi" | "mov" | "webm" | "flv" | "wmv" | "m4v" => Self::Video,
             "mp3" | "flac" | "ogg" | "oga" | "wav" | "aac" | "m4a" | "wma" | "opus" => Self::Audio,
             "pdf" => Self::Pdf,
@@ -66,13 +65,16 @@ impl DesktopItem {
         let kind = if is_dir {
             IconKind::Folder
         } else {
-            let ext = path
-                .extension()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
+            let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
             IconKind::File(FileKind::from_extension(ext))
         };
-        Some(Self { path, name, is_dir, kind, mtime })
+        Some(Self {
+            path,
+            name,
+            is_dir,
+            kind,
+            mtime,
+        })
     }
 }
 
@@ -109,7 +111,9 @@ pub fn ensure_desktop_dir() -> PathBuf {
 /// Send a file to the XDG trash (~/.local/share/Trash/files + .trashinfo).
 /// Returns true on success.
 pub fn move_to_trash(path: &Path) -> bool {
-    let Ok(home) = std::env::var("HOME") else { return false };
+    let Ok(home) = std::env::var("HOME") else {
+        return false;
+    };
     let trash_root = PathBuf::from(&home).join(".local/share/Trash");
     let files_dir = trash_root.join("files");
     let info_dir = trash_root.join("info");
@@ -119,16 +123,13 @@ pub fn move_to_trash(path: &Path) -> bool {
     if std::fs::create_dir_all(&info_dir).is_err() {
         return false;
     }
-    let Some(orig_name) = path.file_name() else { return false };
+    let Some(orig_name) = path.file_name() else {
+        return false;
+    };
     let mut target_name = orig_name.to_os_string();
     let mut counter = 1;
     while files_dir.join(&target_name).exists() {
-        target_name = format!(
-            "{}.{}",
-            orig_name.to_string_lossy(),
-            counter
-        )
-        .into();
+        target_name = format!("{}.{}", orig_name.to_string_lossy(), counter).into();
         counter += 1;
     }
     let dest = files_dir.join(&target_name);
@@ -188,16 +189,16 @@ pub fn open_with_default(path: &Path) {
                 .arg(&path)
                 .spawn();
         } else {
-            let _ = std::process::Command::new("xdg-open")
-                .arg(&path)
-                .spawn();
+            let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
         }
     });
 }
 
 /// Rename a file/folder. Returns true on success.
 pub fn rename(old: &Path, new_name: &str) -> bool {
-    let Some(parent) = old.parent() else { return false };
+    let Some(parent) = old.parent() else {
+        return false;
+    };
     let dest = parent.join(new_name);
     if dest.exists() {
         return false;

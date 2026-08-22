@@ -5,11 +5,13 @@
 
 // ── Bar status icons ────────────────────────────────────────────────────────
 
-const SPARK_BATTERY_CHARGING: &[u8] = include_bytes!("../../icons/bar/spark-battery-charging(1).svg");
+const SPARK_BATTERY_CHARGING: &[u8] =
+    include_bytes!("../../icons/bar/spark-battery-charging(1).svg");
 const SPARK_BATTERY_HIGH: &[u8] = include_bytes!("../../icons/bar/spark-battery-high.svg");
 const SPARK_BATTERY_LOW: &[u8] = include_bytes!("../../icons/bar/spark-battery-low.svg");
 const SPARK_BATTERY_MEDIUM: &[u8] = include_bytes!("../../icons/bar/spark-battery-medium.svg");
-const SPARK_BLUETOOTH_CONNECTED: &[u8] = include_bytes!("../../icons/bar/spark-bluetooth-connected.svg");
+const SPARK_BLUETOOTH_CONNECTED: &[u8] =
+    include_bytes!("../../icons/bar/spark-bluetooth-connected.svg");
 const SPARK_BLUETOOTH_OFF: &[u8] = include_bytes!("../../icons/bar/spark-bluetooth-off.svg");
 const SPARK_BLUETOOTH_ON: &[u8] = include_bytes!("../../icons/bar/spark-bluetooth-on.svg");
 const SPARK_BRIGHTNESS_HIGH: &[u8] = include_bytes!("../../icons/bar/spark-brightness-high.svg");
@@ -27,7 +29,8 @@ const SPARK_MENU_SETTINGS: &[u8] = include_bytes!("../../icons/bar/spark-menu-se
 const SPARK_MENU_SHUTDOWN: &[u8] = include_bytes!("../../icons/bar/spark-menu-shutdown.svg");
 const SPARK_MENU_SLEEP: &[u8] = include_bytes!("../../icons/bar/spark-menu-sleep.svg");
 const SPARK_MENU_SYSTEM: &[u8] = include_bytes!("../../icons/bar/spark-menu-system.svg");
-const SPARK_NOTIFICATION_BELL: &[u8] = include_bytes!("../../icons/bar/spark-notification-bell.svg");
+const SPARK_NOTIFICATION_BELL: &[u8] =
+    include_bytes!("../../icons/bar/spark-notification-bell.svg");
 const SPARK_SOUND_HIGH: &[u8] = include_bytes!("../../icons/bar/spark-sound-high.svg");
 const SPARK_SOUND_LOW: &[u8] = include_bytes!("../../icons/bar/spark-sound-low.svg");
 const SPARK_SOUND_MEDIUM: &[u8] = include_bytes!("../../icons/bar/spark-sound-medium.svg");
@@ -67,13 +70,19 @@ const CURSOR_NWSE: &[u8] = include_bytes!("../../icons/cursors/lntrn-cursor-nwse
 
 // ── Folder icons: Standard ──────────────────────────────────────────────────
 
-const FOLDER_FILE_MANAGER: &[u8] = include_bytes!("../../icons/folders/Standard/lntrn-file-manager.svg");
-const FOLDER_DESKTOP: &[u8] = include_bytes!("../../icons/folders/Standard/lntrn-folder-desktop.svg");
-const FOLDER_DOCUMENTS: &[u8] = include_bytes!("../../icons/folders/Standard/lntrn-folder-documents.svg");
-const FOLDER_DOWNLOADS: &[u8] = include_bytes!("../../icons/folders/Standard/lntrn-folder-downloads.svg");
+const FOLDER_FILE_MANAGER: &[u8] =
+    include_bytes!("../../icons/folders/Standard/lntrn-file-manager.svg");
+const FOLDER_DESKTOP: &[u8] =
+    include_bytes!("../../icons/folders/Standard/lntrn-folder-desktop.svg");
+const FOLDER_DOCUMENTS: &[u8] =
+    include_bytes!("../../icons/folders/Standard/lntrn-folder-documents.svg");
+const FOLDER_DOWNLOADS: &[u8] =
+    include_bytes!("../../icons/folders/Standard/lntrn-folder-downloads.svg");
 const FOLDER_MUSIC: &[u8] = include_bytes!("../../icons/folders/Standard/lntrn-folder-music.svg");
-const FOLDER_PICTURES: &[u8] = include_bytes!("../../icons/folders/Standard/lntrn-folder-pictures.svg");
-const FOLDER_PROJECTS: &[u8] = include_bytes!("../../icons/folders/Standard/lntrn-folder-projects.svg");
+const FOLDER_PICTURES: &[u8] =
+    include_bytes!("../../icons/folders/Standard/lntrn-folder-pictures.svg");
+const FOLDER_PROJECTS: &[u8] =
+    include_bytes!("../../icons/folders/Standard/lntrn-folder-projects.svg");
 const FOLDER_VIDEOS: &[u8] = include_bytes!("../../icons/folders/Standard/lntrn-folder-videos.svg");
 
 // ── Folder icons: Colors ────────────────────────────────────────────────────
@@ -88,29 +97,41 @@ const FOLDER_YELLOW: &[u8] = include_bytes!("../../icons/folders/Colors/lntrn-fo
 
 // ── Folder icons: Awesome ───────────────────────────────────────────────────
 
-const FOLDER_ALCHEMY: &[u8] = include_bytes!("../../icons/folders/Awesome/lntrn-folder-alchemy.svg");
+const FOLDER_ALCHEMY: &[u8] =
+    include_bytes!("../../icons/folders/Awesome/lntrn-folder-alchemy.svg");
 const FOLDER_ARCADE: &[u8] = include_bytes!("../../icons/folders/Awesome/lntrn-folder-arcade.svg");
 const FOLDER_ARCTIC: &[u8] = include_bytes!("../../icons/folders/Awesome/lntrn-folder-arctic.svg");
 const FOLDER_AURORA: &[u8] = include_bytes!("../../icons/folders/Awesome/lntrn-folder-aurora.svg");
-const FOLDER_BUTTERFLY: &[u8] = include_bytes!("../../icons/folders/Awesome/lntrn-folder-butterfly.svg");
+const FOLDER_BUTTERFLY: &[u8] =
+    include_bytes!("../../icons/folders/Awesome/lntrn-folder-butterfly.svg");
 const FOLDER_CASINO: &[u8] = include_bytes!("../../icons/folders/Awesome/lntrn-folder-casino.svg");
-const FOLDER_CHERRYBLOSSOM: &[u8] = include_bytes!("../../icons/folders/Awesome/lntrn-folder-cherryblossom.svg");
-const FOLDER_CIRCUIT: &[u8] = include_bytes!("../../icons/folders/Awesome/lntrn-folder-circuit.svg");
+const FOLDER_CHERRYBLOSSOM: &[u8] =
+    include_bytes!("../../icons/folders/Awesome/lntrn-folder-cherryblossom.svg");
+const FOLDER_CIRCUIT: &[u8] =
+    include_bytes!("../../icons/folders/Awesome/lntrn-folder-circuit.svg");
 const FOLDER_COSMIC: &[u8] = include_bytes!("../../icons/folders/Awesome/lntrn-folder-cosmic.svg");
-const FOLDER_CRYSTAL: &[u8] = include_bytes!("../../icons/folders/Awesome/lntrn-folder-crystal.svg");
-const FOLDER_CYBERPUNK: &[u8] = include_bytes!("../../icons/folders/Awesome/lntrn-folder-cyberpunk.svg");
+const FOLDER_CRYSTAL: &[u8] =
+    include_bytes!("../../icons/folders/Awesome/lntrn-folder-crystal.svg");
+const FOLDER_CYBERPUNK: &[u8] =
+    include_bytes!("../../icons/folders/Awesome/lntrn-folder-cyberpunk.svg");
 const FOLDER_DESERT: &[u8] = include_bytes!("../../icons/folders/Awesome/lntrn-folder-desert.svg");
 const FOLDER_DNA: &[u8] = include_bytes!("../../icons/folders/Awesome/lntrn-folder-dna.svg");
-const FOLDER_ENCHANTED: &[u8] = include_bytes!("../../icons/folders/Awesome/lntrn-folder-enchanted.svg");
-const FOLDER_HAUNTED: &[u8] = include_bytes!("../../icons/folders/Awesome/lntrn-folder-haunted.svg");
+const FOLDER_ENCHANTED: &[u8] =
+    include_bytes!("../../icons/folders/Awesome/lntrn-folder-enchanted.svg");
+const FOLDER_HAUNTED: &[u8] =
+    include_bytes!("../../icons/folders/Awesome/lntrn-folder-haunted.svg");
 const FOLDER_LAVA: &[u8] = include_bytes!("../../icons/folders/Awesome/lntrn-folder-lava.svg");
 const FOLDER_MATRIX: &[u8] = include_bytes!("../../icons/folders/Awesome/lntrn-folder-matrix.svg");
-const FOLDER_MUSHROOM: &[u8] = include_bytes!("../../icons/folders/Awesome/lntrn-folder-mushroom.svg");
-const FOLDER_OBSERVATORY: &[u8] = include_bytes!("../../icons/folders/Awesome/lntrn-folder-observatory.svg");
+const FOLDER_MUSHROOM: &[u8] =
+    include_bytes!("../../icons/folders/Awesome/lntrn-folder-mushroom.svg");
+const FOLDER_OBSERVATORY: &[u8] =
+    include_bytes!("../../icons/folders/Awesome/lntrn-folder-observatory.svg");
 const FOLDER_OCEAN: &[u8] = include_bytes!("../../icons/folders/Awesome/lntrn-folder-ocean.svg");
 const FOLDER_STORM: &[u8] = include_bytes!("../../icons/folders/Awesome/lntrn-folder-storm.svg");
-const FOLDER_TREASURE: &[u8] = include_bytes!("../../icons/folders/Awesome/lntrn-folder-treasure.svg");
-const FOLDER_VAPORWAVE: &[u8] = include_bytes!("../../icons/folders/Awesome/lntrn-folder-vaporwave.svg");
+const FOLDER_TREASURE: &[u8] =
+    include_bytes!("../../icons/folders/Awesome/lntrn-folder-treasure.svg");
+const FOLDER_VAPORWAVE: &[u8] =
+    include_bytes!("../../icons/folders/Awesome/lntrn-folder-vaporwave.svg");
 const FOLDER_WAVE: &[u8] = include_bytes!("../../icons/folders/Awesome/lntrn-folder-wave.svg");
 
 // ── Public API ──────────────────────────────────────────────────────────────

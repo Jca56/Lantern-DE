@@ -62,7 +62,10 @@ pub(super) fn render_frame(
         let sh = phys_h as f32;
         let hover = if app.sticky_drag.is_none() {
             let panel = crate::app::PanelRect::compute_with_dims(
-                phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical(),
+                phys_w,
+                scale_f,
+                app.desired_panel_w_logical(),
+                app.desired_panel_h_logical(),
             );
             let phys_cx = wl.cursor_x as f32 * scale_f;
             let phys_cy = wl.cursor_y as f32 * scale_f;
@@ -75,8 +78,16 @@ pub(super) fn render_frame(
             None
         };
         drew_stickies = crate::notes::sticky::draw(
-            painter, text, &app.notes, hover, app.sticky_drag,
-            scale_f, app.config.text_size, sticky_alpha, phys_w, phys_h,
+            painter,
+            text,
+            &app.notes,
+            hover,
+            app.sticky_drag,
+            scale_f,
+            app.config.text_size,
+            sticky_alpha,
+            phys_w,
+            phys_h,
         );
     }
     painter.set_layer(1);
@@ -92,7 +103,14 @@ pub(super) fn render_frame(
     let panel_draw = crate::render::draw_panel(painter, &app, phys_w, scale_f);
     let icon_requests = if let Some(p) = &panel_draw {
         crate::render::draw_content(
-            painter, text, mono_text, app, p, phys_w, phys_h, workspace_num,
+            painter,
+            text,
+            mono_text,
+            app,
+            p,
+            phys_w,
+            phys_h,
+            workspace_num,
         )
     } else {
         Vec::new()
@@ -130,19 +148,17 @@ pub(super) fn render_frame(
                 &pinned,
                 &app.toplevels,
                 &app.apps,
-                Some((
-                    wl.cursor_x as f32 * scale_f,
-                    wl.cursor_y as f32 * scale_f,
-                )),
+                Some((wl.cursor_x as f32 * scale_f, wl.cursor_y as f32 * scale_f)),
             );
             let entry = layout.as_ref().and_then(|l| l.entries.get(idx)).cloned();
             if let (Some(layout), Some(entry)) = (layout.as_ref(), entry) {
-                let windows = crate::mini_dock::windows_for_app(
-                    &app.toplevels, &entry.app_id,
-                );
+                let windows = crate::mini_dock::windows_for_app(&app.toplevels, &entry.app_id);
                 if !windows.is_empty() {
                     let tiles = crate::mini_dock::preview_tile_rects(
-                        layout, panel_logical, idx, windows.len(),
+                        layout,
+                        panel_logical,
+                        idx,
+                        windows.len(),
                     );
                     let inv = 1.0 / scale_f;
                     let phys_cx = wl.cursor_x as f32 * scale_f;

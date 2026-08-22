@@ -11,16 +11,16 @@ mod lsp;
 mod markdown;
 mod minimap;
 mod mouse;
-mod run;
-mod term;
-mod term_panel;
 mod render;
+mod run;
 mod scrollbar;
 mod sidebar;
 mod status_bar;
 mod syntax;
 mod tab_strip;
 mod tabs;
+mod term;
+mod term_panel;
 mod theme;
 mod title_bar;
 mod wrap;
@@ -241,9 +241,9 @@ impl TextHandler {
     }
 
     fn window_size(&self) -> (f32, f32) {
-        self.gpu
-            .as_ref()
-            .map_or((800.0, 600.0), |g| (g.ctx.width() as f32, g.ctx.height() as f32))
+        self.gpu.as_ref().map_or((800.0, 600.0), |g| {
+            (g.ctx.width() as f32, g.ctx.height() as f32)
+        })
     }
 
     /// Crate-visible alias so sibling modules (mouse.rs) can read window
@@ -299,7 +299,6 @@ impl TextHandler {
         self.cursor_visible = true;
         self.cursor_blink_deadline = Instant::now() + BLINK_INTERVAL;
     }
-
 }
 
 // ── Application handler ──────────────────────────────────────────────────────
@@ -357,12 +356,7 @@ impl ApplicationHandler<UserEvent> for TextHandler {
         self.window = Some(window);
     }
 
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _id: WindowId,
-        event: WindowEvent,
-    ) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => self.shutdown(event_loop),
 
@@ -491,12 +485,7 @@ impl ApplicationHandler<UserEvent> for TextHandler {
                 let total_h = editor.content_height(s);
                 // Apply scroll to the TARGET; the animation tick eases the
                 // visible offset toward it for a smooth feel.
-                ScrollArea::apply_scroll(
-                    &mut editor.scroll_target,
-                    scroll,
-                    total_h,
-                    editor_rect.h,
-                );
+                ScrollArea::apply_scroll(&mut editor.scroll_target, scroll, total_h, editor_rect.h);
                 editor.scrollbar.ping();
                 self.needs_redraw = true;
             }

@@ -150,7 +150,8 @@ impl<'a> TextInput<'a> {
         // Determine caret byte offset (cursor_pos is in characters, strings need bytes)
         let caret_byte = if self.focused {
             let char_pos = self.cursor_pos.unwrap_or(self.text.chars().count());
-            self.text.char_indices()
+            self.text
+                .char_indices()
                 .nth(char_pos)
                 .map(|(i, _)| i)
                 .unwrap_or(self.text.len())
@@ -175,8 +176,10 @@ impl<'a> TextInput<'a> {
 
         // Clip text to input bounds
         let clip_rect = Rect::new(
-            self.rect.x + text_pad_x, self.rect.y,
-            max_text_w, self.rect.h,
+            self.rect.x + text_pad_x,
+            self.rect.y,
+            max_text_w,
+            self.rect.h,
         );
         painter.push_clip(clip_rect);
         text_renderer.push_clip([clip_rect.x, clip_rect.y, clip_rect.w, clip_rect.h]);
@@ -216,10 +219,22 @@ impl<'a> TextInput<'a> {
                 let s_min = sel_start.min(sel_end);
                 let s_max = sel_start.max(sel_end);
                 if s_min != s_max {
-                    let byte_start = self.text.char_indices().nth(s_min).map(|(i,_)| i).unwrap_or(0);
-                    let byte_end = self.text.char_indices().nth(s_max).map(|(i,_)| i).unwrap_or(self.text.len());
-                    let x_start = text_x + text_renderer.measure_width(&self.text[..byte_start], font_size);
-                    let x_end = text_x + text_renderer.measure_width(&self.text[..byte_end], font_size);
+                    let byte_start = self
+                        .text
+                        .char_indices()
+                        .nth(s_min)
+                        .map(|(i, _)| i)
+                        .unwrap_or(0);
+                    let byte_end = self
+                        .text
+                        .char_indices()
+                        .nth(s_max)
+                        .map(|(i, _)| i)
+                        .unwrap_or(self.text.len());
+                    let x_start =
+                        text_x + text_renderer.measure_width(&self.text[..byte_start], font_size);
+                    let x_end =
+                        text_x + text_renderer.measure_width(&self.text[..byte_end], font_size);
                     let sel_y = self.rect.y + (self.rect.h - font_size) * 0.5 - 1.0 * s;
                     let sel_h = font_size + 2.0 * s;
                     painter.rect_filled(

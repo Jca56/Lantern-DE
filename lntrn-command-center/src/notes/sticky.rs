@@ -66,8 +66,16 @@ pub struct StickyDrag {
 /// sticky placed on the big monitor still lands on-screen on the
 /// laptop (geometry is stored in logical px).
 pub fn rect(note: &Note, scale: f32, surface_w: f32, surface_h: f32) -> Rect {
-    let w = if note.sticky_w > 0.0 { note.sticky_w } else { DEFAULT_W };
-    let h = if note.sticky_h > 0.0 { note.sticky_h } else { DEFAULT_H };
+    let w = if note.sticky_w > 0.0 {
+        note.sticky_w
+    } else {
+        DEFAULT_W
+    };
+    let h = if note.sticky_h > 0.0 {
+        note.sticky_h
+    } else {
+        DEFAULT_H
+    };
     let w = (w * scale).min(surface_w);
     let h = (h * scale).min(surface_h);
     let x = (note.sticky_x * scale).clamp(0.0, (surface_w - w).max(0.0));
@@ -170,13 +178,21 @@ pub fn draw(
         // The selected note mirrors the live editor buffers while the
         // Notes page is open, so edits show up on the paper instantly.
         let live = state.open && state.selected_id == Some(note.id);
-        let title = if live { state.title.query() } else { note.title.as_str() };
-        let body = if live { state.body.raw() } else { note.body.as_str() };
+        let title = if live {
+            state.title.query()
+        } else {
+            note.title.as_str()
+        };
+        let body = if live {
+            state.body.raw()
+        } else {
+            note.body.as_str()
+        };
         let hovered = hover.map(|(id, _)| id) == Some(note.id);
         let dragging = drag.map(|d| d.id) == Some(note.id);
         draw_one(
-            painter, text, note, title, body, hovered, dragging,
-            scale, text_size, alpha, sw, sh, surface_w, surface_h,
+            painter, text, note, title, body, hovered, dragging, scale, text_size, alpha, sw, sh,
+            surface_w, surface_h,
         );
         drew = true;
     }
@@ -207,9 +223,12 @@ fn draw_one(
     // Paper, with a soft drop shadow that deepens while dragging.
     let shadow_a = if dragging { 0.45 } else { 0.30 };
     painter.shadow(
-        r, radius, 8.0 * scale,
+        r,
+        radius,
+        8.0 * scale,
         Color::from_rgb8(0, 0, 0).with_alpha(shadow_a * alpha),
-        0.0, 3.0 * scale,
+        0.0,
+        3.0 * scale,
     );
     painter.rect_filled(r, radius, paper(note.id).with_alpha(0.97 * alpha));
     if dragging {
@@ -221,26 +240,51 @@ fn draw_one(
 
     // Title + divider.
     let title_font = (text_size * scale * 1.04).max(16.0);
-    let shown_title = if title.trim().is_empty() { "Untitled" } else { title };
+    let shown_title = if title.trim().is_empty() {
+        "Untitled"
+    } else {
+        title
+    };
     let title_a = if title.trim().is_empty() { 0.45 } else { 0.92 };
     let text_w = r.w - pad * 2.0;
     text.queue(
-        shown_title, title_font, r.x + pad, r.y + pad * 0.85,
-        ink(title_a * alpha), text_w - UNSTICK * scale * 0.6, surface_w, surface_h,
+        shown_title,
+        title_font,
+        r.x + pad,
+        r.y + pad * 0.85,
+        ink(title_a * alpha),
+        text_w - UNSTICK * scale * 0.6,
+        surface_w,
+        surface_h,
     );
     let div_y = r.y + pad * 0.85 + title_font * 1.35;
-    painter.line(r.x + pad, div_y, r.x + r.w - pad, div_y, 1.0 * scale, ink(0.22 * alpha));
+    painter.line(
+        r.x + pad,
+        div_y,
+        r.x + r.w - pad,
+        div_y,
+        1.0 * scale,
+        ink(0.22 * alpha),
+    );
 
     // Body, word-wrapped to the paper width.
     let body_font = (text_size * scale * 0.94).max(15.0);
     let line_h = body_font * 1.32;
     let body_top = div_y + 8.0 * scale;
-    let max_lines = (((r.y + r.h - pad * 0.7) - body_top) / line_h).floor().max(0.0) as usize;
+    let max_lines = (((r.y + r.h - pad * 0.7) - body_top) / line_h)
+        .floor()
+        .max(0.0) as usize;
     let lines = wrap(text, body, body_font, text_w, max_lines);
     for (i, line) in lines.iter().enumerate() {
         text.queue(
-            line, body_font, r.x + pad, body_top + i as f32 * line_h,
-            ink(0.80 * alpha), text_w, surface_w, surface_h,
+            line,
+            body_font,
+            r.x + pad,
+            body_top + i as f32 * line_h,
+            ink(0.80 * alpha),
+            text_w,
+            surface_w,
+            surface_h,
         );
     }
 
@@ -249,8 +293,10 @@ fn draw_one(
     for i in 0..3u32 {
         let off = (6.0 + i as f32 * 6.0) * scale;
         painter.circle_filled(
-            r.x + r.w - off, r.y + r.h - off,
-            1.8 * scale, ink(grip_a * alpha),
+            r.x + r.w - off,
+            r.y + r.h - off,
+            1.8 * scale,
+            ink(grip_a * alpha),
         );
     }
 
@@ -261,8 +307,22 @@ fn draw_one(
         let cy = r.y + s * 0.5;
         let arm = s * 0.16;
         painter.circle_filled(cx, cy, s * 0.32, ink(0.12 * alpha));
-        painter.line(cx - arm, cy - arm, cx + arm, cy + arm, 1.8 * scale, ink(0.75 * alpha));
-        painter.line(cx - arm, cy + arm, cx + arm, cy - arm, 1.8 * scale, ink(0.75 * alpha));
+        painter.line(
+            cx - arm,
+            cy - arm,
+            cx + arm,
+            cy + arm,
+            1.8 * scale,
+            ink(0.75 * alpha),
+        );
+        painter.line(
+            cx - arm,
+            cy + arm,
+            cx + arm,
+            cy - arm,
+            1.8 * scale,
+            ink(0.75 * alpha),
+        );
     }
 
     text.pop_clip();
@@ -272,13 +332,7 @@ fn draw_one(
 /// Greedy word-wrap using real measured widths. A single over-long
 /// word goes on its own line and lets the clip eat the overflow. The
 /// final line gets an ellipsis when the note didn't fit.
-fn wrap(
-    text: &mut TextRenderer,
-    s: &str,
-    font: f32,
-    max_w: f32,
-    max_lines: usize,
-) -> Vec<String> {
+fn wrap(text: &mut TextRenderer, s: &str, font: f32, max_w: f32, max_lines: usize) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut truncated = false;
     'outer: for raw in s.split('\n') {

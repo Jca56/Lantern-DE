@@ -29,14 +29,19 @@ fn main() -> ExitCode {
     log::info(&format!("D-Bus connected as {}", conn.unique_name()));
 
     if !conn.request_name(BUS_NAME) {
-        log::error(&format!("Failed to claim {BUS_NAME} — another secret service is running?"));
+        log::error(&format!(
+            "Failed to claim {BUS_NAME} — another secret service is running?"
+        ));
         return ExitCode::from(2);
     }
     log::info(&format!("Claimed {BUS_NAME}"));
 
     let mut state = ServiceState::new();
     service::init(&mut state);
-    log::info(&format!("discovered {} collection(s) on disk", state.collections.len()));
+    log::info(&format!(
+        "discovered {} collection(s) on disk",
+        state.collections.len()
+    ));
 
     loop {
         while let Some(msg) = conn.try_read() {

@@ -36,7 +36,11 @@ pub fn draw(
 ) {
     // The colored Claude SVG dims slightly when idle, full opacity when
     // hovered or active — same convention as the other strip glyphs.
-    let icon_alpha = if hovered || active { alpha } else { alpha * 0.75 };
+    let icon_alpha = if hovered || active {
+        alpha
+    } else {
+        alpha * 0.75
+    };
     icons.push(IconRequest {
         app_id: CLAUDE_ICON_APP_ID.to_string(),
         icon_name: Some(claude_icon_path()),

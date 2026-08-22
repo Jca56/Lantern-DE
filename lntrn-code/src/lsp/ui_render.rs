@@ -7,9 +7,7 @@ use lntrn_ui::gpu::{FontSize, FoxPalette, TextLabel};
 
 use crate::editor::Editor;
 
-use super::protocol::{
-    Diagnostic, SEVERITY_ERROR, SEVERITY_HINT, SEVERITY_INFO, SEVERITY_WARNING,
-};
+use super::protocol::{Diagnostic, SEVERITY_ERROR, SEVERITY_HINT, SEVERITY_INFO, SEVERITY_WARNING};
 use super::{CompletionState, HoverState};
 
 /// Everything needed to map a (doc line, byte column) to an on-screen X.
@@ -53,8 +51,7 @@ pub fn draw_diagnostics(
     let gutter_x = layout.er.x + 6.0 * layout.scale;
 
     // Collapse diagnostics per line to one dot + the highest severity.
-    let mut per_line_sev: std::collections::HashMap<usize, u8> =
-        std::collections::HashMap::new();
+    let mut per_line_sev: std::collections::HashMap<usize, u8> = std::collections::HashMap::new();
     for d in diagnostics {
         let line = d.range.start.line as usize;
         let sev = d.severity.unwrap_or(SEVERITY_ERROR);
@@ -73,8 +70,7 @@ pub fn draw_diagnostics(
         }
         let wraps = &editor.wrap_rows[*line];
         let vis_row = layout.vis_offsets[*line];
-        let y = layout.text_y_start + vis_row as f32 * layout.line_h
-            + layout.line_h * 0.5;
+        let y = layout.text_y_start + vis_row as f32 * layout.line_h + layout.line_h * 0.5;
         let _ = wraps; // first wrap row is enough
         let color = severity_color(*sev, palette);
         painter.rect_filled(
@@ -109,7 +105,9 @@ fn draw_squiggly_range(
         if line_idx < layout.first_doc || line_idx >= layout.last_doc {
             continue;
         }
-        let Some(line_str) = editor.lines.get(line_idx) else { continue };
+        let Some(line_str) = editor.lines.get(line_idx) else {
+            continue;
+        };
         let line_len = line_str.len();
 
         let start_byte = if line_idx == start_line {
@@ -141,9 +139,23 @@ fn draw_squiggly_range(
             let y_underline = y_row + layout.font_size + 2.0 * layout.scale;
 
             let x1 = layout.content_x
-                + crate::render::measure_range(text, editor, line_idx, row_start, lo, layout.font_size);
+                + crate::render::measure_range(
+                    text,
+                    editor,
+                    line_idx,
+                    row_start,
+                    lo,
+                    layout.font_size,
+                );
             let x2 = layout.content_x
-                + crate::render::measure_range(text, editor, line_idx, row_start, hi, layout.font_size);
+                + crate::render::measure_range(
+                    text,
+                    editor,
+                    line_idx,
+                    row_start,
+                    hi,
+                    layout.font_size,
+                );
             if x2 <= x1 {
                 continue;
             }
@@ -291,9 +303,17 @@ fn draw_popup_frame(painter: &mut Painter, palette: &FoxPalette, rect: Rect, sca
     // 1px border — use four thin rects (painter has no stroke_rect).
     let c = Color::from_rgba8(0, 0, 0, 40);
     painter.rect_filled(Rect::new(rect.x, rect.y, rect.w, 1.0 * scale), 0.0, c);
-    painter.rect_filled(Rect::new(rect.x, rect.y + rect.h - 1.0 * scale, rect.w, 1.0 * scale), 0.0, c);
+    painter.rect_filled(
+        Rect::new(rect.x, rect.y + rect.h - 1.0 * scale, rect.w, 1.0 * scale),
+        0.0,
+        c,
+    );
     painter.rect_filled(Rect::new(rect.x, rect.y, 1.0 * scale, rect.h), 0.0, c);
-    painter.rect_filled(Rect::new(rect.x + rect.w - 1.0 * scale, rect.y, 1.0 * scale, rect.h), 0.0, c);
+    painter.rect_filled(
+        Rect::new(rect.x + rect.w - 1.0 * scale, rect.y, 1.0 * scale, rect.h),
+        0.0,
+        c,
+    );
 }
 
 // ── Completion popup ─────────────────────────────────────────────────────────
@@ -345,14 +365,11 @@ pub fn draw_completion(
     draw_popup_frame(painter, palette, Rect::new(x, y, w, h), scale);
 
     // Visible window around the selected item.
-    let start = completion.selected.saturating_sub(visible_rows.saturating_sub(1));
+    let start = completion
+        .selected
+        .saturating_sub(visible_rows.saturating_sub(1));
     let start = start.min(items.len().saturating_sub(visible_rows));
-    for (row, it) in items
-        .iter()
-        .enumerate()
-        .skip(start)
-        .take(visible_rows)
-    {
+    for (row, it) in items.iter().enumerate().skip(start).take(visible_rows) {
         let rel = row - start;
         let row_y = y + pad * 0.5 + rel as f32 * row_h;
         let highlighted = row == completion.selected;

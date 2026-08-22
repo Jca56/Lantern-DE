@@ -67,7 +67,9 @@ impl BranchDropdown {
     }
 
     pub fn on_scroll(&mut self, delta: f32) {
-        if !self.open { return; }
+        if !self.open {
+            return;
+        }
         let count = self.branches.len() as f32;
         let content_h = count * 40.0 + 60.0; // rough estimate
         self.scroll.scroll_by(delta, content_h, 300.0);
@@ -78,7 +80,9 @@ impl BranchDropdown {
     }
 
     pub fn on_key(&mut self, key: u32, shift: bool) -> BranchAction {
-        if !self.input_focused { return BranchAction::None; }
+        if !self.input_focused {
+            return BranchAction::None;
+        }
         match key {
             keys::KEY_ESC => {
                 self.input_focused = false;
@@ -115,7 +119,9 @@ impl BranchDropdown {
     /// Returns (action, consumed). If consumed is false, the caller should
     /// process the click normally (the dropdown just closed itself).
     pub fn on_click(&mut self, ix: &InteractionContext, px: f32, py: f32) -> (BranchAction, bool) {
-        if !self.open { return (BranchAction::None, false); }
+        if !self.open {
+            return (BranchAction::None, false);
+        }
 
         // Check if click is inside the dropdown panel area
         let Some(zone) = ix.zone_at(px, py) else {
@@ -172,12 +178,19 @@ impl BranchDropdown {
 
     /// Draw the dropdown anchored below `anchor_rect`.
     pub fn draw(
-        &mut self, painter: &mut Painter, text: &mut TextRenderer,
-        ix: &mut InteractionContext, palette: &FoxPalette,
+        &mut self,
+        painter: &mut Painter,
+        text: &mut TextRenderer,
+        ix: &mut InteractionContext,
+        palette: &FoxPalette,
         anchor_rect: Rect,
-        s: f32, sw: u32, sh: u32,
+        s: f32,
+        sw: u32,
+        sh: u32,
     ) {
-        if !self.open { return; }
+        if !self.open {
+            return;
+        }
 
         let body_font = 20.0 * s;
         let small_font = 16.0 * s;
@@ -231,7 +244,8 @@ impl BranchDropdown {
         let btn_rect = Rect::new(
             dx + dropdown_w - pad - btn_w,
             input_y + (input_h - btn_h) / 2.0,
-            btn_w, btn_h,
+            btn_w,
+            btn_h,
         );
         let btn_state = ix.add_zone(ZONE_NEW_BTN, btn_rect);
         let btn_color = if self.input.trim().is_empty() {
@@ -243,9 +257,16 @@ impl BranchDropdown {
         };
         painter.rect_filled(btn_rect, 6.0 * s, btn_color);
         let ty = btn_rect.y + (btn_h - small_font) / 2.0;
-        text.queue("+", body_font,
-            btn_rect.x + (btn_w - body_font * 0.5) / 2.0, ty,
-            palette.text, btn_w, sw, sh);
+        text.queue(
+            "+",
+            body_font,
+            btn_rect.x + (btn_w - body_font * 0.5) / 2.0,
+            ty,
+            palette.text,
+            btn_w,
+            sw,
+            sh,
+        );
 
         // ── Push to GitHub toggle ──────────────────────────────────────────
         let toggle_y = input_y + input_h + 4.0 * s;
@@ -286,13 +307,36 @@ impl BranchDropdown {
 
             // Current branch indicator
             let indicator = if branch.is_current { "●" } else { "  " };
-            let ind_color = if branch.is_current { palette.accent } else { palette.muted };
-            text.queue(indicator, small_font, dx + pad, ty + 2.0 * s, ind_color,
-                20.0 * s, sw, sh);
+            let ind_color = if branch.is_current {
+                palette.accent
+            } else {
+                palette.muted
+            };
+            text.queue(
+                indicator,
+                small_font,
+                dx + pad,
+                ty + 2.0 * s,
+                ind_color,
+                20.0 * s,
+                sw,
+                sh,
+            );
 
-            text.queue(&branch.name, body_font, dx + pad + 22.0 * s, ty,
-                if branch.is_current { palette.accent } else { palette.text },
-                dropdown_w - pad * 2.0 - 22.0 * s, sw, sh);
+            text.queue(
+                &branch.name,
+                body_font,
+                dx + pad + 22.0 * s,
+                ty,
+                if branch.is_current {
+                    palette.accent
+                } else {
+                    palette.text
+                },
+                dropdown_w - pad * 2.0 - 22.0 * s,
+                sw,
+                sh,
+            );
         }
 
         scroll.end(painter, text);

@@ -30,7 +30,7 @@ use crate::canvas::tex_cache::CanvasTexCache;
 use crate::render_launcher::{self, LauncherState};
 use crate::{
     AppMode, Gpu, ZONE_CANVAS, ZONE_CLOSE, ZONE_LAUNCHER_ITEM_BASE, ZONE_LAUNCHER_NEW,
-    ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_NAV_PREV, ZONE_NAV_NEXT, ZONE_SHUFFLE,
+    ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_NAV_NEXT, ZONE_NAV_PREV, ZONE_SHUFFLE,
 };
 
 // ── WaylandHandle for wgpu ──────────────────────────────────────────────────
@@ -111,20 +111,46 @@ pub(crate) struct State {
 impl State {
     fn new(dnd_tx: mpsc::Sender<Vec<PathBuf>>) -> Self {
         Self {
-            running: true, close_requested: false, configured: false, frame_done: true,
-            width: 0, height: 0, scale: 1,
-            output_phys_width: 0, output_phys_height: 0, maximized: false,
-            compositor: None, wm_base: None, viewporter: None,
-            surface: None, xdg_surface: None, toplevel: None, seat: None,
-            cursor_shape_mgr: None, cursor_shape_device: None, current_cursor_shape: None,
-            cursor_x: 0.0, cursor_y: 0.0, pointer_in_surface: false,
-            left_pressed: false, left_released: false,
-            middle_pressed: false, middle_released: false,
-            scroll_delta: 0.0, pointer_serial: 0, enter_serial: 0,
-            ctrl: false, shift: false, key_pressed: None,
+            running: true,
+            close_requested: false,
+            configured: false,
+            frame_done: true,
+            width: 0,
+            height: 0,
+            scale: 1,
+            output_phys_width: 0,
+            output_phys_height: 0,
+            maximized: false,
+            compositor: None,
+            wm_base: None,
+            viewporter: None,
+            surface: None,
+            xdg_surface: None,
+            toplevel: None,
+            seat: None,
+            cursor_shape_mgr: None,
+            cursor_shape_device: None,
+            current_cursor_shape: None,
+            cursor_x: 0.0,
+            cursor_y: 0.0,
+            pointer_in_surface: false,
+            left_pressed: false,
+            left_released: false,
+            middle_pressed: false,
+            middle_released: false,
+            scroll_delta: 0.0,
+            pointer_serial: 0,
+            enter_serial: 0,
+            ctrl: false,
+            shift: false,
+            key_pressed: None,
             data_device_manager: None,
-            dnd_mimes: Vec::new(), dnd_offer: None,
-            dnd_x: 0.0, dnd_y: 0.0, dnd_reading: false, dnd_tx,
+            dnd_mimes: Vec::new(),
+            dnd_offer: None,
+            dnd_x: 0.0,
+            dnd_y: 0.0,
+            dnd_reading: false,
+            dnd_tx,
         }
     }
 
@@ -136,8 +162,12 @@ impl State {
         }
     }
 
-    fn phys_width(&self) -> u32 { (self.width as f64 * self.fractional_scale()).round() as u32 }
-    fn phys_height(&self) -> u32 { (self.height as f64 * self.fractional_scale()).round() as u32 }
+    fn phys_width(&self) -> u32 {
+        (self.width as f64 * self.fractional_scale()).round() as u32
+    }
+    fn phys_height(&self) -> u32 {
+        (self.height as f64 * self.fractional_scale()).round() as u32
+    }
 }
 
 // ── Entry point ─────────────────────────────────────────────────────────────
@@ -155,9 +185,13 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
     // Second roundtrip so wl_output.Mode/Scale events arrive before we size the window.
     event_queue.roundtrip(&mut state)?;
 
-    let compositor = state.compositor.as_ref()
+    let compositor = state
+        .compositor
+        .as_ref()
         .ok_or_else(|| anyhow!("wl_compositor not available"))?;
-    let wm_base = state.wm_base.as_ref()
+    let wm_base = state
+        .wm_base
+        .as_ref()
         .ok_or_else(|| anyhow!("xdg_wm_base not available"))?;
 
     // Compute initial window size from the image's native dimensions, capped to
@@ -166,18 +200,27 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
     let scale_i = state.scale.max(1) as u32;
     let screen_logical_w = if state.output_phys_width > 0 {
         state.output_phys_width / scale_i
-    } else { 1920 };
+    } else {
+        1920
+    };
     let screen_logical_h = if state.output_phys_height > 0 {
         state.output_phys_height / scale_i
-    } else { 1080 };
+    } else {
+        1080
+    };
 
-    let (init_w, init_h) = initial_path.as_deref()
+    let (init_w, init_h) = initial_path
+        .as_deref()
         .and_then(|p| crate::app::peek_image_dimensions(Path::new(p)))
         .map(|(w, h)| fit_to_screen(w, h, screen_logical_w, screen_logical_h))
         .unwrap_or((960, 640));
 
-    if state.width == 0 { state.width = init_w; }
-    if state.height == 0 { state.height = init_h; }
+    if state.width == 0 {
+        state.width = init_w;
+    }
+    if state.height == 0 {
+        state.height = init_h;
+    }
 
     let surface = compositor.create_surface(&qh, ());
     let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
@@ -274,8 +317,8 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
         // Non-blocking dispatch while anything animates or a DnD read is in
         // flight (those complete off the wayland socket, so blocking_dispatch
         // would never wake for them); blocking otherwise.
-        let canvas_busy = mode == AppMode::Canvas
-            && (sidebar.scroll.is_animating() || sidebar.has_pending());
+        let canvas_busy =
+            mode == AppMode::Canvas && (sidebar.scroll.is_animating() || sidebar.has_pending());
         if app.gif.is_some() || canvas_busy || state.dnd_reading {
             if let Some(guard) = event_queue.prepare_read() {
                 let _ = guard.read();
@@ -298,10 +341,11 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
                     state.frame_done = true;
                 } else {
                     // Sleep until next GIF frame is due (or a short poll interval)
-                    let sleep = app.gif.as_ref()
+                    let sleep = app
+                        .gif
+                        .as_ref()
                         .map(|g| {
-                            let remaining = g.current_delay()
-                                .saturating_sub(g.last_swap.elapsed());
+                            let remaining = g.current_delay().saturating_sub(g.last_swap.elapsed());
                             remaining.min(std::time::Duration::from_millis(16))
                         })
                         .unwrap_or(std::time::Duration::from_millis(16));
@@ -314,7 +358,9 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
                 eprintln!("[image-viewer] dispatch error: {e}");
                 break;
             }
-            if !state.frame_done { continue; }
+            if !state.frame_done {
+                continue;
+            }
         }
         state.frame_done = false;
 
@@ -323,7 +369,8 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
         // Handle resize
         if state.configured {
             state.configured = false;
-            gpu.ctx.resize(state.phys_width().max(1), state.phys_height().max(1));
+            gpu.ctx
+                .resize(state.phys_width().max(1), state.phys_height().max(1));
             surface.set_buffer_scale(1);
             if let Some(vp) = &viewport {
                 vp.set_destination(state.width as i32, state.height as i32);
@@ -356,7 +403,9 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
         // ── DnD drops (read off-thread, results polled here) ────────────
         while let Ok(paths) = dnd_rx.try_recv() {
             state.dnd_reading = false;
-            if paths.is_empty() { continue; }
+            if paths.is_empty() {
+                continue;
+            }
             match mode {
                 AppMode::Canvas => {
                     let dx = (state.dnd_x as f32) * s;
@@ -383,7 +432,13 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
                     let canvas = Rect::new(0.0, title_h, wf, hf - title_h - status_h);
                     if canvas.contains(cx, cy) {
                         let factor = if delta < 0.0 { 1.03 } else { 1.0 / 1.03 };
-                        app.zoom_at(factor, cx, cy, canvas.x + canvas.w * 0.5, canvas.y + canvas.h * 0.5);
+                        app.zoom_at(
+                            factor,
+                            cx,
+                            cy,
+                            canvas.x + canvas.w * 0.5,
+                            canvas.y + canvas.h * 0.5,
+                        );
                     }
                 }
                 AppMode::Canvas => {
@@ -401,7 +456,14 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
                 AppMode::Viewer => handle_key(&mut app, &mut gpu, key, state.ctrl),
                 AppMode::Canvas => {
                     let action = canvas_input::on_key(
-                        &mut editor, &mut sidebar, key, state.ctrl, state.shift, wf, hf, s,
+                        &mut editor,
+                        &mut sidebar,
+                        key,
+                        state.ctrl,
+                        state.shift,
+                        wf,
+                        hf,
+                        s,
                     );
                     if matches!(action, CanvasAction::Quit) {
                         state.running = false;
@@ -434,10 +496,15 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
                             state.running = false;
                         }
                     }
-                    ZONE_MINIMIZE => { toplevel.set_minimized(); }
+                    ZONE_MINIMIZE => {
+                        toplevel.set_minimized();
+                    }
                     ZONE_MAXIMIZE => {
-                        if state.maximized { toplevel.unset_maximized(); }
-                        else { toplevel.set_maximized(); }
+                        if state.maximized {
+                            toplevel.unset_maximized();
+                        } else {
+                            toplevel.set_maximized();
+                        }
                     }
                     _ => match mode {
                         AppMode::Viewer => match zone_id {
@@ -447,14 +514,27 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
                                 app.last_pan_x = cx;
                                 app.last_pan_y = cy;
                             }
-                            ZONE_NAV_PREV => { app.prev_image(&gpu.ctx, &gpu.tex_pass); }
-                            ZONE_NAV_NEXT => { app.next_image(&gpu.ctx, &gpu.tex_pass); }
-                            ZONE_SHUFFLE => { app.toggle_shuffle(); }
+                            ZONE_NAV_PREV => {
+                                app.prev_image(&gpu.ctx, &gpu.tex_pass);
+                            }
+                            ZONE_NAV_NEXT => {
+                                app.next_image(&gpu.ctx, &gpu.tex_pass);
+                            }
+                            ZONE_SHUFFLE => {
+                                app.toggle_shuffle();
+                            }
                             _ => {}
                         },
                         AppMode::Canvas => {
                             let action = canvas_input::on_zone_pressed(
-                                &mut editor, &mut sidebar, zone_id, cx, cy, wf, hf, s,
+                                &mut editor,
+                                &mut sidebar,
+                                zone_id,
+                                cx,
+                                cy,
+                                wf,
+                                hf,
+                                s,
                             );
                             if matches!(action, CanvasAction::Quit) {
                                 state.running = false;
@@ -472,15 +552,15 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
                                     match persist::load_canvas(&entry.path) {
                                         Ok(doc) => {
                                             editor = CanvasEditor::from_doc(
-                                                doc, Some(entry.path.clone()),
+                                                doc,
+                                                Some(entry.path.clone()),
                                             );
                                             tex_cache.clear();
                                             mode = AppMode::Canvas;
                                         }
                                         Err(e) => {
-                                            launcher.error = Some(format!(
-                                                "Couldn't open {}: {e}", entry.name,
-                                            ));
+                                            launcher.error =
+                                                Some(format!("Couldn't open {}: {e}", entry.name,));
                                         }
                                     }
                                 }
@@ -511,7 +591,10 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
                 }
                 AppMode::Canvas => {
                     if editor.dialog.is_none() {
-                        editor.drag = DragMode::PanningCanvas { last_x: cx, last_y: cy };
+                        editor.drag = DragMode::PanningCanvas {
+                            last_x: cx,
+                            last_y: cy,
+                        };
                     }
                 }
                 AppMode::Launcher => {}
@@ -543,9 +626,7 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
         if state.middle_released {
             state.middle_released = false;
             app.is_panning = false;
-            if mode == AppMode::Canvas
-                && matches!(editor.drag, DragMode::PanningCanvas { .. })
-            {
+            if mode == AppMode::Canvas && matches!(editor.drag, DragMode::PanningCanvas { .. }) {
                 editor.drag = DragMode::Idle;
             }
         }
@@ -601,12 +682,24 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
                 crate::render::render_frame(&mut gpu, &app, &mut input, &palette, s);
             }
             AppMode::Launcher => {
-                render_launcher::render_launcher_frame(&mut gpu, &mut launcher, &mut input, &palette, s);
+                render_launcher::render_launcher_frame(
+                    &mut gpu,
+                    &mut launcher,
+                    &mut input,
+                    &palette,
+                    s,
+                );
             }
             AppMode::Canvas => {
                 crate::render_canvas::render_canvas_frame(
-                    &mut gpu, &mut editor, &mut sidebar, &mut tex_cache, &mut input,
-                    &palette, s, dt,
+                    &mut gpu,
+                    &mut editor,
+                    &mut sidebar,
+                    &mut tex_cache,
+                    &mut input,
+                    &palette,
+                    s,
+                    dt,
                 );
             }
         }
@@ -681,14 +774,26 @@ const KEY_RIGHT: u32 = 106;
 
 fn handle_key(app: &mut App, gpu: &mut Gpu, key: u32, ctrl: bool) {
     match key {
-        KEY_LEFT => { app.prev_image(&gpu.ctx, &gpu.tex_pass); }
-        KEY_RIGHT => { app.next_image(&gpu.ctx, &gpu.tex_pass); }
-        KEY_S if !ctrl => { app.toggle_shuffle(); }
+        KEY_LEFT => {
+            app.prev_image(&gpu.ctx, &gpu.tex_pass);
+        }
+        KEY_RIGHT => {
+            app.next_image(&gpu.ctx, &gpu.tex_pass);
+        }
+        KEY_S if !ctrl => {
+            app.toggle_shuffle();
+        }
         _ if ctrl => match key {
             KEY_Q => std::process::exit(0),
-            KEY_EQUAL => { app.zoom = (app.zoom * 1.05).min(50.0); }
-            KEY_MINUS => { app.zoom = (app.zoom / 1.05).max(0.05); }
-            KEY_0 => { app.fit_to_view(); }
+            KEY_EQUAL => {
+                app.zoom = (app.zoom * 1.05).min(50.0);
+            }
+            KEY_MINUS => {
+                app.zoom = (app.zoom / 1.05).max(0.05);
+            }
+            KEY_0 => {
+                app.fit_to_view();
+            }
             _ => {}
         },
         _ => {}

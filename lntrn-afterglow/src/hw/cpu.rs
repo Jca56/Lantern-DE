@@ -125,8 +125,7 @@ impl Cpu {
             .iter()
             .map(|c| CoreStat {
                 id: c.id,
-                mhz: (read_u64(&c.freq_dir.join("scaling_cur_freq")).unwrap_or(0) / 1000)
-                    as u32,
+                mhz: (read_u64(&c.freq_dir.join("scaling_cur_freq")).unwrap_or(0) / 1000) as u32,
                 util_pct: per_core_util.get(&c.id).copied().unwrap_or(0.0),
                 is_pcore: c.is_pcore,
             })
@@ -156,10 +155,7 @@ impl Cpu {
                 .map(|s| s.split_whitespace().map(str::to_string).collect())
                 .unwrap_or_default()
         };
-        let max_freq_pct = match (
-            read_u64(&c0.freq_dir.join("scaling_max_freq")),
-            c0.max_khz,
-        ) {
+        let max_freq_pct = match (read_u64(&c0.freq_dir.join("scaling_max_freq")), c0.max_khz) {
             (Some(cur), max) if max > 0 => ((cur * 100 + max / 2) / max) as u32,
             _ => 100,
         };

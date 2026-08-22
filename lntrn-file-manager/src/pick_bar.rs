@@ -27,7 +27,11 @@ pub fn draw_pick_bar(
     painter.rect_filled(bar_rect, 0.0, palette.surface);
 
     // Separator line at top
-    painter.rect_filled(Rect::new(0.0, y, w, 1.0 * s), 0.0, palette.muted.with_alpha(0.3));
+    painter.rect_filled(
+        Rect::new(0.0, y, w, 1.0 * s),
+        0.0,
+        palette.muted.with_alpha(0.3),
+    );
 
     let pad = 12.0 * s;
     let btn_h = 36.0 * s;

@@ -7,10 +7,7 @@ use crate::editor::Editor;
 use crate::format::FormatSpan;
 
 /// Convert a `FormatSpan`'s attrs into `(font_size, FontWeight, FontStyle)`.
-pub fn span_rendering(
-    span: &FormatSpan,
-    default_font_size: f32,
-) -> (f32, FontWeight, FontStyle) {
+pub fn span_rendering(span: &FormatSpan, default_font_size: f32) -> (f32, FontWeight, FontStyle) {
     let fs = span.attrs.font_size.unwrap_or(default_font_size);
     let weight = if span.attrs.bold {
         FontWeight::Bold
@@ -143,7 +140,13 @@ pub fn compute_wraps(
     }
     let mut wraps = Vec::with_capacity(editor.lines.len());
     for i in 0..editor.lines.len() {
-        wraps.push(compute_line_wraps(text, editor, i, max_width, default_font_size));
+        wraps.push(compute_line_wraps(
+            text,
+            editor,
+            i,
+            max_width,
+            default_font_size,
+        ));
     }
     editor.wrap_rows = wraps;
 }

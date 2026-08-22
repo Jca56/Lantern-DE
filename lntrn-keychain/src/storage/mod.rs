@@ -47,10 +47,26 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-impl From<std::io::Error> for Error { fn from(e: std::io::Error) -> Self { Self::Io(e) } }
-impl From<serde_json::Error> for Error { fn from(e: serde_json::Error) -> Self { Self::Json(e) } }
-impl From<crypto::Error> for Error { fn from(e: crypto::Error) -> Self { Self::Crypto(e) } }
-impl From<format::Error> for Error { fn from(e: format::Error) -> Self { Self::Format(e) } }
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+impl From<serde_json::Error> for Error {
+    fn from(e: serde_json::Error) -> Self {
+        Self::Json(e)
+    }
+}
+impl From<crypto::Error> for Error {
+    fn from(e: crypto::Error) -> Self {
+        Self::Crypto(e)
+    }
+}
+impl From<format::Error> for Error {
+    fn from(e: format::Error) -> Self {
+        Self::Format(e)
+    }
+}
 
 // ── Domain types ────────────────────────────────────────────────────────────
 
@@ -100,10 +116,14 @@ mod serde_bytes {
             out.push(T[(((b0 & 0x03) << 4) | (b1 >> 4)) as usize] as char);
             if chunk.len() > 1 {
                 out.push(T[(((b1 & 0x0f) << 2) | (b2 >> 6)) as usize] as char);
-            } else { out.push('='); }
+            } else {
+                out.push('=');
+            }
             if chunk.len() > 2 {
                 out.push(T[(b2 & 0x3f) as usize] as char);
-            } else { out.push('='); }
+            } else {
+                out.push('=');
+            }
         }
         out
     }
@@ -121,7 +141,9 @@ mod serde_bytes {
         let bytes = s.as_bytes();
         let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
         for chunk in bytes.chunks(4) {
-            if chunk.len() < 4 { return Err("truncated b64"); }
+            if chunk.len() < 4 {
+                return Err("truncated b64");
+            }
             let v0 = val(chunk[0])?;
             let v1 = val(chunk[1])?;
             out.push((v0 << 2) | (v1 >> 4));
@@ -160,8 +182,8 @@ pub fn unlock(id: &str, passphrase: &str) -> Result<(DecryptedCollection, Master
     let raw = std::fs::read(&path)?;
     let blob = FileBlob::parse(&raw)?;
     let key = derive_key(passphrase, &blob.salt, &blob.kdf_params)?;
-    let plaintext = decrypt(&key, &blob.nonce, &blob.ciphertext)
-        .map_err(|_| Error::BadPassphrase)?;
+    let plaintext =
+        decrypt(&key, &blob.nonce, &blob.ciphertext).map_err(|_| Error::BadPassphrase)?;
     let coll: DecryptedCollection = serde_json::from_slice(&plaintext)?;
     Ok((coll, key))
 }
@@ -214,7 +236,11 @@ pub fn create(id: &str, label: &str, passphrase: &str) -> Result<MasterKey, Erro
     let key = derive_key(passphrase, &salt, &params)?;
     let now = unix_now();
     let coll = DecryptedCollection {
-        meta: CollectionMeta { label: label.into(), created: now, modified: now },
+        meta: CollectionMeta {
+            label: label.into(),
+            created: now,
+            modified: now,
+        },
         items: Vec::new(),
     };
     save(id, &coll, &key)?;
@@ -287,7 +313,8 @@ mod tests {
             id: "abc123".into(),
             label: "github.com".into(),
             attributes: [("host".to_string(), "github.com".to_string())]
-                .into_iter().collect(),
+                .into_iter()
+                .collect(),
             content_type: "text/plain".into(),
             secret: b"ghp_secret_token".to_vec(),
             created: now,
@@ -317,14 +344,20 @@ mod tempdir_t {
     impl TempDir {
         pub fn new() -> Self {
             let nanos = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
             let path = std::env::temp_dir().join(format!("lntrn-keychain-test-{nanos}"));
             std::fs::create_dir_all(&path).unwrap();
             Self(path)
         }
-        pub fn path(&self) -> &std::path::Path { &self.0 }
+        pub fn path(&self) -> &std::path::Path {
+            &self.0
+        }
     }
     impl Drop for TempDir {
-        fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); }
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
     }
 }

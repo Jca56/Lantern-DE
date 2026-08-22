@@ -115,8 +115,14 @@ pub fn unique_keep_both_path(target: &Path) -> PathBuf {
         return target.to_path_buf();
     }
     let parent = target.parent().unwrap_or(Path::new("."));
-    let stem = target.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-    let ext = target.extension().map(|s| format!(".{}", s.to_string_lossy())).unwrap_or_default();
+    let stem = target
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let ext = target
+        .extension()
+        .map(|s| format!(".{}", s.to_string_lossy()))
+        .unwrap_or_default();
     for n in 2u32..1000 {
         let candidate = parent.join(format!("{stem} ({n}){ext}"));
         if !candidate.exists() {

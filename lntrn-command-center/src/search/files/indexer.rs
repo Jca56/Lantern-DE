@@ -58,7 +58,11 @@ pub fn run(entries: Arc<Mutex<Vec<FileEntry>>>, ready: Arc<AtomicBool>, roots: V
             "inotify_init1 failed — file search will be a static snapshot",
         );
         // Still build a one-shot snapshot so search isn't dead.
-        let mut w = Watcher { fd: -1, wd_to_dir: HashMap::new(), warned_enospc: false };
+        let mut w = Watcher {
+            fd: -1,
+            wd_to_dir: HashMap::new(),
+            warned_enospc: false,
+        };
         for root in roots {
             walk(&mut w, &entries, root);
         }
@@ -66,7 +70,11 @@ pub fn run(entries: Arc<Mutex<Vec<FileEntry>>>, ready: Arc<AtomicBool>, roots: V
         return;
     }
 
-    let mut w = Watcher { fd, wd_to_dir: HashMap::new(), warned_enospc: false };
+    let mut w = Watcher {
+        fd,
+        wd_to_dir: HashMap::new(),
+        warned_enospc: false,
+    };
 
     let t0 = std::time::Instant::now();
     for root in roots {
@@ -139,9 +147,7 @@ fn walk(w: &mut Watcher, entries: &Arc<Mutex<Vec<FileEntry>>>, root: PathBuf) {
 fn watch_loop(w: &mut Watcher, entries: &Arc<Mutex<Vec<FileEntry>>>) {
     let mut buf = [0u8; 16 * 1024];
     loop {
-        let n = unsafe {
-            libc::read(w.fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
-        };
+        let n = unsafe { libc::read(w.fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
         if n < 0 {
             let err = std::io::Error::last_os_error();
             if err.raw_os_error() == Some(libc::EINTR) {
@@ -200,7 +206,9 @@ fn handle_event(
         return;
     }
     let Some(name) = name else { return };
-    let Some(dir) = w.wd_to_dir.get(&wd).cloned() else { return };
+    let Some(dir) = w.wd_to_dir.get(&wd).cloned() else {
+        return;
+    };
     let full = dir.join(&name);
     let is_dir = mask & libc::IN_ISDIR as u32 != 0;
 

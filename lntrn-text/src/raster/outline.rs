@@ -110,7 +110,12 @@ pub fn flatten(cmds: &[PathCmd], t: &Affine, mut sink: impl FnMut([f32; 2], [f32
 /// Adaptive quadratic flattening. Max deviation of a quad from its chord is
 /// `|p0 − 2c + p1| / 4`; splitting into `n` pieces shrinks it by `n²`, so
 /// `n = ⌈√(dev / 4·tol)⌉` keeps error under `FLATTEN_TOL`.
-fn flatten_quad(p0: [f32; 2], c: [f32; 2], p1: [f32; 2], sink: &mut impl FnMut([f32; 2], [f32; 2])) {
+fn flatten_quad(
+    p0: [f32; 2],
+    c: [f32; 2],
+    p1: [f32; 2],
+    sink: &mut impl FnMut([f32; 2], [f32; 2]),
+) {
     let devx = p0[0] - 2.0 * c[0] + p1[0];
     let devy = p0[1] - 2.0 * c[1] + p1[1];
     let dev = (devx * devx + devy * devy).sqrt();

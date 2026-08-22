@@ -24,7 +24,7 @@ fn parse_cpu_totals(s: &str) -> Option<CpuTotals> {
     let line = s.lines().find(|l| l.starts_with("cpu "))?;
     let mut parts = line.split_whitespace();
     parts.next()?; // "cpu"
-    // Fields: user nice system idle iowait irq softirq steal guest guest_nice
+                   // Fields: user nice system idle iowait irq softirq steal guest guest_nice
     let nums: Vec<u64> = parts.filter_map(|p| p.parse().ok()).collect();
     if nums.len() < 4 {
         return None;
@@ -106,7 +106,10 @@ fn parse_net_total(s: &str) -> NetCounters {
         if iface == "lo" || iface.starts_with("docker") || iface.starts_with("veth") {
             continue;
         }
-        let nums: Vec<u64> = rest.split_whitespace().filter_map(|n| n.parse().ok()).collect();
+        let nums: Vec<u64> = rest
+            .split_whitespace()
+            .filter_map(|n| n.parse().ok())
+            .collect();
         // rx_bytes is column 0, tx_bytes is column 8 (after 8 rx fields).
         if nums.len() >= 9 {
             out.rx_bytes = out.rx_bytes.saturating_add(nums[0]);
@@ -230,7 +233,12 @@ fn read_one(pid: i32, pgsz: u64) -> Option<ProcRaw> {
     let resident_pages: u64 = statm.split_whitespace().nth(1)?.parse().ok()?;
     let rss_bytes = resident_pages.saturating_mul(pgsz);
 
-    Some(ProcRaw { pid, comm, cpu_jiffies, rss_bytes })
+    Some(ProcRaw {
+        pid,
+        comm,
+        cpu_jiffies,
+        rss_bytes,
+    })
 }
 
 /// Format a byte count as a human-friendly string (e.g. "1.2 GB").

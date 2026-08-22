@@ -152,8 +152,11 @@ fn emit_simple(
     }
 
     // Variable instance: shift points by the gvar deltas before emission.
-    let mut pts: Vec<(f32, f32)> =
-        xs.iter().zip(&ys).map(|(&x, &y)| (x as f32, y as f32)).collect();
+    let mut pts: Vec<(f32, f32)> = xs
+        .iter()
+        .zip(&ys)
+        .map(|(&x, &y)| (x as f32, y as f32))
+        .collect();
     if let Some((gv, coords)) = font.variation() {
         pts.extend(std::iter::repeat_n((0.0, 0.0), PHANTOM_POINTS));
         gvar::apply(&font.data, gv, gid, coords, &mut pts, Some(&end_pts));

@@ -103,8 +103,14 @@ pub(crate) fn rasterize(font: &Font, gid: u16, px: f32) -> Option<RasterRgba> {
     // Union frame in "left/top bearing" space.
     let left = rendered.iter().map(|(g, _)| g.left).min()?;
     let top = rendered.iter().map(|(g, _)| g.top).max()?;
-    let right = rendered.iter().map(|(g, _)| g.left + g.width as i32).max()?;
-    let bottom = rendered.iter().map(|(g, _)| g.top - g.height as i32).min()?;
+    let right = rendered
+        .iter()
+        .map(|(g, _)| g.left + g.width as i32)
+        .max()?;
+    let bottom = rendered
+        .iter()
+        .map(|(g, _)| g.top - g.height as i32)
+        .min()?;
     let width = (right - left).max(1) as u32;
     let height = (top - bottom).max(1) as u32;
 
@@ -117,5 +123,11 @@ pub(crate) fn rasterize(font: &Font, gid: u16, px: f32) -> Option<RasterRgba> {
         })
         .collect();
     let rgba = raster::composite_layers(width, height, &placed);
-    Some(RasterRgba { width, height, left, top, rgba })
+    Some(RasterRgba {
+        width,
+        height,
+        left,
+        top,
+        rgba,
+    })
 }

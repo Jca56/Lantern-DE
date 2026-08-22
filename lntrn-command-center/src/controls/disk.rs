@@ -65,7 +65,10 @@ impl Disk {
 
     /// Re-stat on the lazy interval. Cheap to call every frame.
     pub fn tick(&mut self) {
-        let due = self.last_poll.map(|p| p.elapsed() >= POLL_INTERVAL).unwrap_or(true);
+        let due = self
+            .last_poll
+            .map(|p| p.elapsed() >= POLL_INTERVAL)
+            .unwrap_or(true);
         if due {
             self.poll();
         }
@@ -73,10 +76,7 @@ impl Disk {
 
     fn poll(&mut self) {
         self.root_frac = statfs_used_fraction("/");
-        self.home_frac = self
-            .home_path
-            .as_deref()
-            .and_then(statfs_used_fraction);
+        self.home_frac = self.home_path.as_deref().and_then(statfs_used_fraction);
         self.last_poll = Some(Instant::now());
     }
 
@@ -85,15 +85,24 @@ impl Disk {
     fn entries(&self) -> Vec<Entry> {
         let mut out = Vec::new();
         if let Some(f) = self.root_frac {
-            out.push(Entry { label: "/", frac: f });
+            out.push(Entry {
+                label: "/",
+                frac: f,
+            });
         }
         // Only show home if it differs from root (separate partition).
         if let (Some(h), Some(r)) = (self.home_frac, self.root_frac) {
             if (h - r).abs() > 0.001 {
-                out.push(Entry { label: "~", frac: h });
+                out.push(Entry {
+                    label: "~",
+                    frac: h,
+                });
             }
         } else if let Some(h) = self.home_frac {
-            out.push(Entry { label: "~", frac: h });
+            out.push(Entry {
+                label: "~",
+                frac: h,
+            });
         }
         out
     }

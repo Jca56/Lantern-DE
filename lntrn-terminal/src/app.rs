@@ -149,8 +149,9 @@ impl App {
 
         // Spawn git worker thread
         let git_proxy = proxy.clone();
-        let (git_cmd_tx, git_event_rx) =
-            git::worker::spawn(move || { git_proxy.send_event(UserEvent::GitUpdate).ok(); });
+        let (git_cmd_tx, git_event_rx) = git::worker::spawn(move || {
+            git_proxy.send_event(UserEvent::GitUpdate).ok();
+        });
 
         Self {
             config,
@@ -259,7 +260,11 @@ impl App {
     /// so the cell count tracks the new cell size. Cheap; safe to call on
     /// every `ScaleFactorChanged`.
     pub(crate) fn apply_scale(&mut self, scale: f32) {
-        let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+        let scale = if scale.is_finite() && scale > 0.0 {
+            scale
+        } else {
+            1.0
+        };
         if (scale - self.scale).abs() < f32::EPSILON {
             return;
         }
@@ -430,7 +435,13 @@ impl App {
         let screen_w = self.gpu.as_ref().map_or(800, |g| g.width());
         let screen_h = self.gpu.as_ref().map_or(600, |g| g.height());
         let tab = &self.tabs[self.active_tab];
-        let rects = Self::pane_rects_for_tab(tab, screen_w, screen_h, self.sidebar_offset(), self.chrome_height());
+        let rects = Self::pane_rects_for_tab(
+            tab,
+            screen_w,
+            screen_h,
+            self.sidebar_offset(),
+            self.chrome_height(),
+        );
         let font_size = self.effective_font_size();
         let (cell_w, cell_h) = render::measure_cell(font_size);
 
@@ -519,8 +530,7 @@ impl App {
 /// and winit adopts it, so this only decides the size on other compositors
 /// — or when winit hasn't learned about any outputs yet (then 1500x1000).
 fn initial_window_size(event_loop: &ActiveEventLoop) -> LogicalSize<f64> {
-    let pct = (lntrn_theme::read_config_f32("windows", "default_size_pct", 60.0)
-        / 100.0)
+    let pct = (lntrn_theme::read_config_f32("windows", "default_size_pct", 60.0) / 100.0)
         .clamp(0.2, 1.0) as f64;
 
     let Some(monitor) = event_loop
@@ -652,9 +662,10 @@ impl ApplicationHandler<UserEvent> for App {
                 // letters, duplicated lines). The redraw will be re-armed
                 // when drain_pty observes sync clear, or when the fallback
                 // deadline expires in about_to_wait.
-                let syncing = self.tabs.iter().any(|tab| {
-                    tab.panes.iter().any(|pane| pane.terminal.is_syncing())
-                });
+                let syncing = self
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.panes.iter().any(|pane| pane.terminal.is_syncing()));
                 if syncing {
                     return;
                 }
@@ -669,7 +680,11 @@ impl ApplicationHandler<UserEvent> for App {
                             | ui_chrome::ClickAction::NextTab
                             | ui_chrome::ClickAction::SelectTab(_)
                     );
-                    match self.dispatch_chrome_action(action, event_loop, self.gpu.as_ref().map_or(600, |g| g.height())) {
+                    match self.dispatch_chrome_action(
+                        action,
+                        event_loop,
+                        self.gpu.as_ref().map_or(600, |g| g.height()),
+                    ) {
                         EventResult::Exit => {
                             event_loop.exit();
                             return;
@@ -823,8 +838,7 @@ impl ApplicationHandler<UserEvent> for App {
         // animation-frame rate.
         if now.duration_since(self.last_theme_poll).as_millis() >= 500 {
             self.last_theme_poll = now;
-            self.scroll_speed =
-                lntrn_theme::read_config_f32("terminal", "scroll_speed", 8.0);
+            self.scroll_speed = lntrn_theme::read_config_f32("terminal", "scroll_speed", 8.0);
             let new_theme = crate::theme::Theme::current();
             if new_theme.bg != self.theme.bg
                 || new_theme.terminal_fg != self.theme.terminal_fg
@@ -860,9 +874,7 @@ impl ApplicationHandler<UserEvent> for App {
                         pane.terminal.sync_deadline = None;
                         sync_expired = true;
                     } else {
-                        earliest_sync = Some(
-                            earliest_sync.map_or(deadline, |e| e.min(deadline)),
-                        );
+                        earliest_sync = Some(earliest_sync.map_or(deadline, |e| e.min(deadline)));
                     }
                 }
             }

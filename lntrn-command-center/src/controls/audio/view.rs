@@ -52,7 +52,15 @@ pub fn draw_inline(
         Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(alpha)
     };
     let icon_y = layout.y + (layout.h - icon_size) / 2.0;
-    draw_speaker_colored(painter, group_x, icon_y, icon_size, icon_size, audio.is_muted(), icon_color);
+    draw_speaker_colored(
+        painter,
+        group_x,
+        icon_y,
+        icon_size,
+        icon_size,
+        audio.is_muted(),
+        icon_color,
+    );
 
     // Volume bar.
     let bar_x = group_x + icon_size + icon_bar_gap;
@@ -63,21 +71,23 @@ pub fn draw_inline(
     painter.rect_filled(
         Rect::new(bar_x, bar_y, bar_w, bar_h),
         radius,
-        Color::from_rgb8(BAR_TRACK_RGB.0, BAR_TRACK_RGB.1, BAR_TRACK_RGB.2)
-            .with_alpha(alpha),
+        Color::from_rgb8(BAR_TRACK_RGB.0, BAR_TRACK_RGB.1, BAR_TRACK_RGB.2).with_alpha(alpha),
     );
 
     // Fill — proportional to volume, clamped at 100% (anything over is
     // boost territory and the inline visual just sits at full).
-    let v = if audio.is_muted() { 0.0 } else { audio.volume().min(1.0) };
+    let v = if audio.is_muted() {
+        0.0
+    } else {
+        audio.volume().min(1.0)
+    };
     if v > 0.0 {
         let raw = bar_w * v;
         let fill_w = raw.max(bar_h);
         painter.rect_filled(
             Rect::new(bar_x, bar_y, fill_w, bar_h),
             radius,
-            Color::from_rgb8(BAR_FILL_RGB.0, BAR_FILL_RGB.1, BAR_FILL_RGB.2)
-                .with_alpha(alpha),
+            Color::from_rgb8(BAR_FILL_RGB.0, BAR_FILL_RGB.1, BAR_FILL_RGB.2).with_alpha(alpha),
         );
     }
 
@@ -206,7 +216,13 @@ pub fn icon_rect_for(panel: Rect, panel_top_y: f32, dir: Direction, scale: f32) 
 }
 
 /// Hit-test pointer position against either section's mute icon.
-pub fn hit_test_icon(panel: Rect, panel_top_y: f32, scale: f32, x: f32, y: f32) -> Option<Direction> {
+pub fn hit_test_icon(
+    panel: Rect,
+    panel_top_y: f32,
+    scale: f32,
+    x: f32,
+    y: f32,
+) -> Option<Direction> {
     for &dir in &[Direction::Output, Direction::Input] {
         let r = icon_rect_for(panel, panel_top_y, dir, scale);
         if x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h {
@@ -281,7 +297,14 @@ pub fn hit_test_device_dir(
 /// Backwards-compat alias kept around so the layershell keeps building
 /// while it migrates to `hit_test_device_dir`.
 #[allow(dead_code)]
-pub fn hit_test_device(audio: &Audio, panel: Rect, top_y: f32, scale: f32, x: f32, y: f32) -> Option<u32> {
+pub fn hit_test_device(
+    audio: &Audio,
+    panel: Rect,
+    top_y: f32,
+    scale: f32,
+    x: f32,
+    y: f32,
+) -> Option<u32> {
     hit_test_device_dir(audio, panel, top_y, scale, x, y).map(|(_, id)| id)
 }
 
@@ -297,12 +320,28 @@ pub fn draw_view(
     surface_h: u32,
 ) -> f32 {
     draw_section(
-        painter, text, audio, Direction::Output,
-        panel, top_y, scale, alpha, surface_w, surface_h,
+        painter,
+        text,
+        audio,
+        Direction::Output,
+        panel,
+        top_y,
+        scale,
+        alpha,
+        surface_w,
+        surface_h,
     );
     draw_section(
-        painter, text, audio, Direction::Input,
-        panel, top_y, scale, alpha, surface_w, surface_h,
+        painter,
+        text,
+        audio,
+        Direction::Input,
+        panel,
+        top_y,
+        scale,
+        alpha,
+        surface_w,
+        surface_h,
     );
     top_y + (section_top_logical(Direction::Input) + section_logical_height()) * scale
 }
@@ -340,12 +379,7 @@ fn draw_section(
 
     // Per-direction values.
     let (label, vol, muted, devices) = match dir {
-        Direction::Output => (
-            "Output",
-            audio.volume(),
-            audio.is_muted(),
-            audio.sinks(),
-        ),
+        Direction::Output => ("Output", audio.volume(), audio.is_muted(), audio.sinks()),
         Direction::Input => (
             "Input",
             audio.input_volume(),
@@ -404,16 +438,15 @@ fn draw_section(
     let knob_cx = track.x + track.w * (v / 1.2);
     let knob_cy = track.y + track.h * 0.5;
     let knob_r = track.h * 1.6;
-    painter.circle_filled(
-        knob_cx,
-        knob_cy,
-        knob_r,
-        white.with_alpha(alpha),
-    );
+    painter.circle_filled(knob_cx, knob_cy, knob_r, white.with_alpha(alpha));
 
     // Percentage label on the right.
     let pct = (v * 100.0).round() as i32;
-    let pct_str = if muted { "Muted".to_string() } else { format!("{}%", pct) };
+    let pct_str = if muted {
+        "Muted".to_string()
+    } else {
+        format!("{}%", pct)
+    };
     let pct_text_w = text.measure_width(&pct_str, percent_font);
     let pct_x = inner_x + inner_w - percent_w + (percent_w - pct_text_w);
     let pct_y = section_top + header_font + header_gap;
@@ -441,12 +474,7 @@ fn draw_section(
         let dot_cy = row_y + device_row_h * 0.5;
         if dev.is_default {
             // Active = filled white circle.
-            painter.circle_filled(
-                dot_cx,
-                dot_cy,
-                dot_size * 0.5,
-                white.with_alpha(alpha),
-            );
+            painter.circle_filled(dot_cx, dot_cy, dot_size * 0.5, white.with_alpha(alpha));
         } else {
             // Available = hollow gold ring.
             painter.circle_stroke(

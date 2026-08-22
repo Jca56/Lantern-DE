@@ -17,7 +17,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use super::{CloudConfig, Session};
 
 fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 #[derive(Debug, Deserialize)]
@@ -109,8 +112,7 @@ pub fn refresh(cfg: &CloudConfig, session: &mut Session) -> anyhow::Result<()> {
         .send_string(&format!(
             "grant_type=refresh_token&refresh_token={}",
             urlencoding::encode(&session.refresh_token)
-        ))
-    {
+        )) {
         Ok(r) => r,
         Err(ureq::Error::Status(_code, r)) => {
             let body = r.into_string().unwrap_or_default();

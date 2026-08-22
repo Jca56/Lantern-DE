@@ -38,7 +38,12 @@ pub fn draw_inline(
     let radius = 12.0 * scale;
 
     painter.rect_filled(box_rect, radius, Color::rgba(1.0, 1.0, 1.0, 0.06 * alpha));
-    painter.rect_stroke_sdf(box_rect, radius, 1.5 * scale, Color::rgba(1.0, 1.0, 1.0, 0.14 * alpha));
+    painter.rect_stroke_sdf(
+        box_rect,
+        radius,
+        1.5 * scale,
+        Color::rgba(1.0, 1.0, 1.0, 0.14 * alpha),
+    );
 
     let num = ws.to_string();
     let num_font = NUM_FONT * scale;

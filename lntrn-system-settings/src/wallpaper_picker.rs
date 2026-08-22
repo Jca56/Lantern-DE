@@ -29,7 +29,13 @@ impl WallpaperPicker {
         }
     }
 
-    pub fn load_directory(&mut self, dir: &str, tex_pass: &TexturePass, gpu: &GpuContext, force: bool) {
+    pub fn load_directory(
+        &mut self,
+        dir: &str,
+        tex_pass: &TexturePass,
+        gpu: &GpuContext,
+        force: bool,
+    ) {
         if !force && dir == self.loaded_dir {
             return;
         }

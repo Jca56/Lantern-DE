@@ -7,8 +7,8 @@ mod editor;
 mod editor_io;
 mod find_bar;
 mod fonts;
-mod history;
 mod format;
+mod history;
 mod keys;
 mod layout;
 mod metrics;
@@ -36,8 +36,8 @@ use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::ModifiersState;
-use winit::platform::wayland::WindowAttributesExtWayland;
 use winit::monitor::MonitorHandle;
+use winit::platform::wayland::WindowAttributesExtWayland;
 use winit::window::{CursorIcon, ResizeDirection, Window, WindowAttributes, WindowId};
 
 use lntrn_render::{GpuContext, Painter, TextRenderer};
@@ -227,9 +227,9 @@ impl TextHandler {
     }
 
     fn window_size(&self) -> (f32, f32) {
-        self.gpu
-            .as_ref()
-            .map_or((800.0, 600.0), |g| (g.ctx.width() as f32, g.ctx.height() as f32))
+        self.gpu.as_ref().map_or((800.0, 600.0), |g| {
+            (g.ctx.width() as f32, g.ctx.height() as f32)
+        })
     }
 
     /// Crate-visible alias so sibling modules (mouse.rs) can read window
@@ -258,10 +258,10 @@ impl TextHandler {
         let style = context_menu::context_menu_style(&self.palette).with_scale(self.scale);
         self.context_menu.set_style(style);
         let has_sel = self.editor().has_selection();
-        self.context_menu.open(x, y, context_menu::build_items(has_sel));
+        self.context_menu
+            .open(x, y, context_menu::build_items(has_sel));
         self.needs_redraw = true;
     }
-
 }
 
 // ── Application handler ──────────────────────────────────────────────────────
@@ -330,12 +330,7 @@ impl ApplicationHandler for TextHandler {
         self.window = Some(window);
     }
 
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _id: WindowId,
-        event: WindowEvent,
-    ) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => self.shutdown(event_loop),
 
@@ -424,12 +419,7 @@ impl ApplicationHandler for TextHandler {
                 let total_h = editor.content_height(s);
                 // Apply scroll to the TARGET; the animation tick eases the
                 // visible offset toward it for a smooth feel.
-                ScrollArea::apply_scroll(
-                    &mut editor.scroll_target,
-                    scroll,
-                    total_h,
-                    editor_rect.h,
-                );
+                ScrollArea::apply_scroll(&mut editor.scroll_target, scroll, total_h, editor_rect.h);
                 editor.scrollbar.ping();
                 self.needs_redraw = true;
             }

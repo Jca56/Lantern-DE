@@ -45,7 +45,13 @@ impl AppState {
             return bar_w;
         }
         match self.collapse_anim_start {
-            None => if self.collapsed { bar_w } else { win_w },
+            None => {
+                if self.collapsed {
+                    bar_w
+                } else {
+                    win_w
+                }
+            }
             Some(start) => {
                 let dur = self.config.view_anim_duration.max(0.05);
                 let phase_dur = dur / 2.0;
@@ -85,7 +91,10 @@ impl AppState {
     /// click further "right" in the dots slides leftward (and vice
     /// versa) — matches the spatial intuition of the row.
     pub fn set_view(&mut self, view: PanelView) {
-        let from_i = PanelView::ALL.iter().position(|v| *v == self.panel_view).unwrap_or(0) as i32;
+        let from_i = PanelView::ALL
+            .iter()
+            .position(|v| *v == self.panel_view)
+            .unwrap_or(0) as i32;
         let to_i = PanelView::ALL.iter().position(|v| *v == view).unwrap_or(0) as i32;
         let dir = if to_i >= from_i { 1 } else { -1 };
         self.transition_to(view, dir);
@@ -127,7 +136,11 @@ impl AppState {
         self.collapse_anim_origin = current;
         self.collapse_anim_target = if self.collapsed { 1.0 } else { 0.0 };
         self.collapse_anim_start = Some(now);
-        tracing::info!(collapsed = self.collapsed, current, "panel collapse toggled");
+        tracing::info!(
+            collapsed = self.collapsed,
+            current,
+            "panel collapse toggled"
+        );
         self.save_persisted_state();
     }
 
@@ -198,7 +211,13 @@ impl AppState {
     /// same as in the single-phase case.
     pub fn collapse_progress(&self) -> f32 {
         match self.collapse_anim_start {
-            None => if self.collapsed { 1.0 } else { 0.0 },
+            None => {
+                if self.collapsed {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
             Some(start) => {
                 let dur = self.config.view_anim_duration.max(0.05);
                 let elapsed = start.elapsed().as_secs_f32();

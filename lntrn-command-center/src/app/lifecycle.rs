@@ -46,8 +46,8 @@ impl AppState {
                 let close_p = self.progress(now);
                 let open_p = (1.0 - close_p).clamp(0.0, 1.0);
                 self.visibility = Visibility::Opening;
-                self.anim_start = now
-                    - std::time::Duration::from_secs_f32(ANIM_DURATION_SECS * open_p);
+                self.anim_start =
+                    now - std::time::Duration::from_secs_f32(ANIM_DURATION_SECS * open_p);
             }
         }
     }
@@ -249,7 +249,8 @@ impl AppState {
         let was_empty = self.search.input.is_empty();
         let effect = self.search.input.on_key(key, shift, caps_lock);
         if effect == KeyEffect::ContentChanged {
-            self.search.refresh_results(&self.apps, self.launcher.hidden());
+            self.search
+                .refresh_results(&self.apps, self.launcher.hidden());
             // Selection follows context: when the user starts typing,
             // jump from Pin(*) to Result(0); when they delete back to
             // empty, return to Pin(0).
@@ -442,8 +443,8 @@ impl AppState {
                 let open_p = self.progress(now);
                 let close_p = (1.0 - open_p).clamp(0.0, 1.0);
                 self.visibility = Visibility::Closing;
-                self.anim_start = now
-                    - std::time::Duration::from_secs_f32(ANIM_DURATION_SECS * close_p);
+                self.anim_start =
+                    now - std::time::Duration::from_secs_f32(ANIM_DURATION_SECS * close_p);
             }
         }
     }
@@ -519,8 +520,7 @@ impl AppState {
         };
 
         let view = self.config.view_anim_duration.max(0.05);
-        in_flight(self.view_anim_start, view)
-            || in_flight(self.collapse_anim_start, view)
+        in_flight(self.view_anim_start, view) || in_flight(self.collapse_anim_start, view)
     }
 
     /// Animation progress in `[0.0, 1.0]`. Saturates at 1.0.

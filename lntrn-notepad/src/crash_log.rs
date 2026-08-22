@@ -19,7 +19,11 @@ pub fn install() {
         );
         if let Some(home) = std::env::var_os("HOME") {
             let path = std::path::Path::new(&home).join(".lantern/log/notepad.log");
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+            {
                 let _ = f.write_all(msg.as_bytes());
             }
         }

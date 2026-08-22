@@ -102,20 +102,42 @@ impl<'a> TabBar<'a> {
     }
 
     // Scaled helpers
-    fn s(&self) -> f32 { self.scale }
-    fn font_size(&self) -> f32 { TAB_FONT_SIZE * self.s() }
-    fn pad_x(&self) -> f32 { TAB_PAD_X * self.s() }
-    fn close_size(&self) -> f32 { CLOSE_SIZE * self.s() }
-    fn close_icon(&self) -> f32 { CLOSE_ICON * self.s() }
-    fn close_gap(&self) -> f32 { CLOSE_GAP * self.s() }
-    fn indicator_h(&self) -> f32 { INDICATOR_HEIGHT * self.s() }
-    fn indicator_r(&self) -> f32 { INDICATOR_RADIUS * self.s() }
-    fn new_tab_size(&self) -> f32 { NEW_TAB_SIZE * self.s() }
+    fn s(&self) -> f32 {
+        self.scale
+    }
+    fn font_size(&self) -> f32 {
+        TAB_FONT_SIZE * self.s()
+    }
+    fn pad_x(&self) -> f32 {
+        TAB_PAD_X * self.s()
+    }
+    fn close_size(&self) -> f32 {
+        CLOSE_SIZE * self.s()
+    }
+    fn close_icon(&self) -> f32 {
+        CLOSE_ICON * self.s()
+    }
+    fn close_gap(&self) -> f32 {
+        CLOSE_GAP * self.s()
+    }
+    fn indicator_h(&self) -> f32 {
+        INDICATOR_HEIGHT * self.s()
+    }
+    fn indicator_r(&self) -> f32 {
+        INDICATOR_RADIUS * self.s()
+    }
+    fn new_tab_size(&self) -> f32 {
+        NEW_TAB_SIZE * self.s()
+    }
 
     /// Width of a single tab including close button space if closable.
     fn tab_width(&self, label: &str) -> f32 {
         let text_w = label.len() as f32 * self.font_size() * 0.52;
-        let close_extra = if self.closable { self.close_gap() + self.close_size() } else { 0.0 };
+        let close_extra = if self.closable {
+            self.close_gap() + self.close_size()
+        } else {
+            0.0
+        };
         text_w + self.pad_x() * 2.0 + close_extra
     }
 
@@ -135,18 +157,22 @@ impl<'a> TabBar<'a> {
     pub fn close_rects(&self) -> Vec<Rect> {
         let cs = self.close_size();
         let tab_rects = self.tab_rects();
-        tab_rects.iter().map(|tr| {
-            let cx = tr.x + tr.w - self.pad_x() * 0.5 - cs;
-            let cy = tr.y + (tr.h - cs) * 0.5;
-            Rect::new(cx, cy, cs, cs)
-        }).collect()
+        tab_rects
+            .iter()
+            .map(|tr| {
+                let cx = tr.x + tr.w - self.pad_x() * 0.5 - cs;
+                let cy = tr.y + (tr.h - cs) * 0.5;
+                Rect::new(cx, cy, cs, cs)
+            })
+            .collect()
     }
 
     /// Compute the "+" new-tab button rect (positioned after the last tab).
     pub fn new_tab_rect(&self) -> Rect {
         let nts = self.new_tab_size();
         let tab_rects = self.tab_rects();
-        let x = tab_rects.last()
+        let x = tab_rects
+            .last()
             .map(|r| r.x + r.w + 4.0 * self.s())
             .unwrap_or(self.rect.x);
         let y = self.rect.y + (self.rect.h - nts) * 0.5;
@@ -184,7 +210,11 @@ impl<'a> TabBar<'a> {
 
         // -- Tabs --
         let tab_rects = self.tab_rects();
-        let close_rects = if self.closable { self.close_rects() } else { Vec::new() };
+        let close_rects = if self.closable {
+            self.close_rects()
+        } else {
+            Vec::new()
+        };
 
         for (i, (label, tab_rect)) in self.tabs.iter().zip(&tab_rects).enumerate() {
             let is_selected = i == self.selected;
@@ -247,8 +277,22 @@ impl<'a> TabBar<'a> {
                 let ccy = cr.y + cr.h * 0.5;
                 let half = self.close_icon() * 0.5;
                 let stroke = 1.5 * s;
-                painter.line(ccx - half, ccy - half, ccx + half, ccy + half, stroke, close_color);
-                painter.line(ccx + half, ccy - half, ccx - half, ccy + half, stroke, close_color);
+                painter.line(
+                    ccx - half,
+                    ccy - half,
+                    ccx + half,
+                    ccy + half,
+                    stroke,
+                    close_color,
+                );
+                painter.line(
+                    ccx + half,
+                    ccy - half,
+                    ccx - half,
+                    ccy + half,
+                    stroke,
+                    close_color,
+                );
             }
 
             // Active tab indicator bar

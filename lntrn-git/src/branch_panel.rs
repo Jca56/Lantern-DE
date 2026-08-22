@@ -27,7 +27,8 @@ impl BranchPanel {
     }
 
     pub fn on_scroll(&mut self, delta: f32) {
-        self.scroll.scroll_by(delta, self.content_height, self.viewport_h);
+        self.scroll
+            .scroll_by(delta, self.content_height, self.viewport_h);
     }
 
     pub fn tick_scroll(&mut self, dt: f32) -> bool {
@@ -35,10 +36,18 @@ impl BranchPanel {
     }
 
     pub fn draw(
-        &mut self, painter: &mut Painter, text: &mut TextRenderer,
-        ix: &mut InteractionContext, palette: &FoxPalette,
-        cx: f32, cy: f32, cw: f32, ch: f32,
-        s: f32, sw: u32, sh: u32,
+        &mut self,
+        painter: &mut Painter,
+        text: &mut TextRenderer,
+        ix: &mut InteractionContext,
+        palette: &FoxPalette,
+        cx: f32,
+        cy: f32,
+        cw: f32,
+        ch: f32,
+        s: f32,
+        sw: u32,
+        sh: u32,
     ) {
         let title_font = 24.0 * s;
         let body_font = 22.0 * s;
@@ -51,16 +60,36 @@ impl BranchPanel {
         let mut y = cy + gap;
 
         // Header
-        text.queue("Branches", title_font, cx + pad, y, palette.text, cw, sw, sh);
+        text.queue(
+            "Branches",
+            title_font,
+            cx + pad,
+            y,
+            palette.text,
+            cw,
+            sw,
+            sh,
+        );
         y += title_font + gap;
 
         if self.branches.is_empty() {
-            text.queue("Loading branches...", body_font, cx + pad, y, palette.muted, cw, sw, sh);
+            text.queue(
+                "Loading branches...",
+                body_font,
+                cx + pad,
+                y,
+                palette.muted,
+                cw,
+                sw,
+                sh,
+            );
             return;
         }
 
         // Find base branch name for label
-        let base_name = self.branches.iter()
+        let base_name = self
+            .branches
+            .iter()
             .find(|b| b.name == "main" || b.name == "master")
             .map(|b| b.name.as_str())
             .unwrap_or("main");
@@ -80,7 +109,9 @@ impl BranchPanel {
         let base_y = scroll.content_y();
         for (i, branch) in self.branches.iter().enumerate() {
             let fy = base_y + i as f32 * row_h;
-            if fy + row_h < list_top || fy > list_top + list_h { continue; }
+            if fy + row_h < list_top || fy > list_top + list_h {
+                continue;
+            }
 
             let row_rect = Rect::new(cx, fy, cw, row_h);
             let zone_id = ZONE_BRANCH_ROW_BASE + i as u32;
@@ -107,8 +138,21 @@ impl BranchPanel {
             }
 
             // Branch name
-            let name_color = if branch.is_current { palette.accent } else { palette.text };
-            text.queue(&branch.name, body_font, lx, ty, name_color, cw * 0.4, sw, sh);
+            let name_color = if branch.is_current {
+                palette.accent
+            } else {
+                palette.text
+            };
+            text.queue(
+                &branch.name,
+                body_font,
+                lx,
+                ty,
+                name_color,
+                cw * 0.4,
+                sw,
+                sh,
+            );
 
             // Ahead/behind badges (relative to main)
             let badge_x = cx + cw * 0.5;
@@ -123,41 +167,87 @@ impl BranchPanel {
 
                 let ahead_rect = Rect::new(badge_x, badge_y, aw, badge_h);
                 painter.rect_filled(ahead_rect, 4.0 * s, palette.accent.with_alpha(0.15));
-                text.queue(&ahead_str, badge_font,
-                    badge_x + 6.0 * s, badge_y + (badge_h - badge_font) * 0.5,
-                    palette.accent, aw, sw, sh);
+                text.queue(
+                    &ahead_str,
+                    badge_font,
+                    badge_x + 6.0 * s,
+                    badge_y + (badge_h - badge_font) * 0.5,
+                    palette.accent,
+                    aw,
+                    sw,
+                    sh,
+                );
 
                 // Behind badge
                 let bw = behind_str.len() as f32 * badge_font * 0.55 + 12.0 * s;
                 let behind_rect = Rect::new(badge_x + aw + 6.0 * s, badge_y, bw, badge_h);
                 painter.rect_filled(behind_rect, 4.0 * s, palette.warning.with_alpha(0.15));
-                text.queue(&behind_str, badge_font,
-                    behind_rect.x + 6.0 * s, badge_y + (badge_h - badge_font) * 0.5,
-                    palette.warning, bw, sw, sh);
+                text.queue(
+                    &behind_str,
+                    badge_font,
+                    behind_rect.x + 6.0 * s,
+                    badge_y + (badge_h - badge_font) * 0.5,
+                    palette.warning,
+                    bw,
+                    sw,
+                    sh,
+                );
 
                 // "vs main" label
                 let vs_x = behind_rect.x + bw + 8.0 * s;
-                text.queue(&format!("vs {base_name}"), small_font, vs_x,
-                    ty + 2.0 * s, palette.muted, 100.0 * s, sw, sh);
+                text.queue(
+                    &format!("vs {base_name}"),
+                    small_font,
+                    vs_x,
+                    ty + 2.0 * s,
+                    palette.muted,
+                    100.0 * s,
+                    sw,
+                    sh,
+                );
             } else if branch.name == base_name {
-                text.queue("base", badge_font, badge_x, ty + 2.0 * s,
-                    palette.muted, 60.0 * s, sw, sh);
+                text.queue(
+                    "base",
+                    badge_font,
+                    badge_x,
+                    ty + 2.0 * s,
+                    palette.muted,
+                    60.0 * s,
+                    sw,
+                    sh,
+                );
             }
 
             // Upstream indicator
             if !branch.has_upstream {
                 let no_remote = "local only";
                 let nr_x = cx + cw - pad - 100.0 * s;
-                text.queue(no_remote, small_font, nr_x, ty + 2.0 * s,
-                    palette.warning.with_alpha(0.7), 100.0 * s, sw, sh);
+                text.queue(
+                    no_remote,
+                    small_font,
+                    nr_x,
+                    ty + 2.0 * s,
+                    palette.warning.with_alpha(0.7),
+                    100.0 * s,
+                    sw,
+                    sh,
+                );
             }
 
             // Last commit subject (second line)
             if !branch.last_commit.is_empty() {
                 let commit_y = ty + body_font + 4.0 * s;
                 let commit_x = cx + pad + 20.0 * s;
-                text.queue(&branch.last_commit, small_font, commit_x, commit_y,
-                    palette.muted, cw - pad * 2.0 - 20.0 * s, sw, sh);
+                text.queue(
+                    &branch.last_commit,
+                    small_font,
+                    commit_x,
+                    commit_y,
+                    palette.muted,
+                    cw - pad * 2.0 - 20.0 * s,
+                    sw,
+                    sh,
+                );
             }
 
             // Divider
@@ -165,7 +255,8 @@ impl BranchPanel {
                 let div_y = fy + row_h - 1.0 * s;
                 painter.rect_filled(
                     Rect::new(cx + pad, div_y, cw - pad * 2.0, 1.0 * s),
-                    0.0, palette.muted.with_alpha(0.12),
+                    0.0,
+                    palette.muted.with_alpha(0.12),
                 );
             }
         }

@@ -10,16 +10,20 @@
 //! around) — the smallest unit of cancellation is one file/folder.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
 use std::thread;
 
 /// Events the worker sends to the main loop.
 #[derive(Debug)]
 pub enum OpProgress {
     /// Starting work on a new file/folder.
-    StartedItem { index: usize, total: usize, name: String },
+    StartedItem {
+        index: usize,
+        total: usize,
+        name: String,
+    },
     /// All items processed. Carries undo + sudo-fallback data.
     Done {
         created: Vec<PathBuf>,
@@ -63,7 +67,11 @@ impl OpHandle {
                     self.current_name = name;
                     dirty = true;
                 }
-                OpProgress::Done { created, perm_fails, cancelled } => {
+                OpProgress::Done {
+                    created,
+                    perm_fails,
+                    cancelled,
+                } => {
                     self.done_payload = Some((created, perm_fails, cancelled));
                     self.finished = true;
                     dirty = true;
@@ -74,8 +82,11 @@ impl OpHandle {
     }
 
     pub fn percent(&self) -> f32 {
-        if self.total == 0 { 0.0 }
-        else { (self.index as f32 / self.total as f32).clamp(0.0, 1.0) }
+        if self.total == 0 {
+            0.0
+        } else {
+            (self.index as f32 / self.total as f32).clamp(0.0, 1.0)
+        }
     }
 
     pub fn request_cancel(&self) {
@@ -96,9 +107,12 @@ pub fn spawn_copy_worker(
     let cancel_clone = cancel.clone();
     let total = pairs.len();
 
-    thread::Builder::new().name("fox-copy".into()).spawn(move || {
-        run_copy(pairs, tx, cancel_clone);
-    }).expect("spawn fox-copy thread");
+    thread::Builder::new()
+        .name("fox-copy".into())
+        .spawn(move || {
+            run_copy(pairs, tx, cancel_clone);
+        })
+        .expect("spawn fox-copy thread");
 
     OpHandle {
         rx,
@@ -116,11 +130,7 @@ pub fn spawn_copy_worker(
     }
 }
 
-fn run_copy(
-    pairs: Vec<(PathBuf, PathBuf)>,
-    tx: Sender<OpProgress>,
-    cancel: Arc<AtomicBool>,
-) {
+fn run_copy(pairs: Vec<(PathBuf, PathBuf)>, tx: Sender<OpProgress>, cancel: Arc<AtomicBool>) {
     let total = pairs.len();
     let mut created = Vec::new();
     let mut perm_fails = Vec::new();
@@ -131,10 +141,15 @@ fn run_copy(
             cancelled = true;
             break;
         }
-        let name = target.file_name()
+        let name = target
+            .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| target.display().to_string());
-        let _ = tx.send(OpProgress::StartedItem { index: i, total, name });
+        let _ = tx.send(OpProgress::StartedItem {
+            index: i,
+            total,
+            name,
+        });
 
         let res = if src.is_dir() {
             crate::file_ops::copy_dir_recursive(&src, &target)
@@ -151,7 +166,13 @@ fn run_copy(
     }
     // Final tick so the bar reaches 100% before the Done event.
     let _ = tx.send(OpProgress::StartedItem {
-        index: total, total, name: String::new(),
+        index: total,
+        total,
+        name: String::new(),
     });
-    let _ = tx.send(OpProgress::Done { created, perm_fails, cancelled });
+    let _ = tx.send(OpProgress::Done {
+        created,
+        perm_fails,
+        cancelled,
+    });
 }

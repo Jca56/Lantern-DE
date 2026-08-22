@@ -33,7 +33,10 @@ impl GradientStrip {
 
     pub fn draw(&self, painter: &mut Painter) {
         let rect = Rect::new(self.x, self.y, self.width, self.height);
-        let stops: Vec<(f32, Color)> = self.colors.iter().enumerate()
+        let stops: Vec<(f32, Color)> = self
+            .colors
+            .iter()
+            .enumerate()
             .map(|(i, &c)| (i as f32 / (self.colors.len() - 1) as f32, c))
             .collect();
         painter.rect_gradient_multi(rect, self.height * 0.5, 0.0, &stops);

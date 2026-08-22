@@ -113,7 +113,9 @@ impl State {
         // the integer wl_output scale.
         if self.output_phys_width > 0 && self.width > 0 {
             let s = self.output_phys_width as f64 / self.width as f64;
-            if s >= 1.0 && s <= 3.0 { return s; }
+            if s >= 1.0 && s <= 3.0 {
+                return s;
+            }
         }
         self.scale.max(1) as f64
     }
@@ -179,11 +181,7 @@ fn draw_lamp(painter: &mut Painter, sim: &LavaSimulation, theme: &Theme, w: f32,
                 let br = a.radius.min(b.radius) * strength * 0.6;
                 let mx = (a.x + b.x) * 0.5;
                 let my = (a.y + b.y) * 0.5;
-                painter.rect_filled(
-                    Rect::new(mx - br, my - br, br * 2.0, br * 2.0),
-                    br,
-                    blend,
-                );
+                painter.rect_filled(Rect::new(mx - br, my - br, br * 2.0, br * 2.0), br, blend);
             }
         }
     }
@@ -276,8 +274,12 @@ pub fn run(blob_count: usize, theme_name: &str) -> Result<()> {
         .clone()
         .ok_or_else(|| anyhow!("xdg_wm_base not available"))?;
 
-    if state.width == 0 { state.width = 300; }
-    if state.height == 0 { state.height = 700; }
+    if state.width == 0 {
+        state.width = 300;
+    }
+    if state.height == 0 {
+        state.height = 700;
+    }
 
     let surface = compositor.create_surface(&qh, ());
     let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
@@ -333,7 +335,9 @@ pub fn run(blob_count: usize, theme_name: &str) -> Result<()> {
             eprintln!("[lava-lamp] dispatch error: {e}");
             break;
         }
-        if !state.frame_done { continue; }
+        if !state.frame_done {
+            continue;
+        }
         state.frame_done = false;
 
         // Frame timing

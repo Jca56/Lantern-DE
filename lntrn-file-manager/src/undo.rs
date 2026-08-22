@@ -12,7 +12,10 @@ pub enum UndoAction {
     /// Files were moved (cut+paste). Each entry: (source, destination).
     Move(Vec<(PathBuf, PathBuf)>),
     /// Files were copied (copy+paste or duplicate). sources + created destinations.
-    Copy { sources: Vec<PathBuf>, created: Vec<PathBuf> },
+    Copy {
+        sources: Vec<PathBuf>,
+        created: Vec<PathBuf>,
+    },
 }
 
 const MAX_UNDO: usize = 50;
@@ -24,7 +27,10 @@ pub struct UndoStack {
 
 impl UndoStack {
     pub fn new() -> Self {
-        Self { undo: Vec::new(), redo: Vec::new() }
+        Self {
+            undo: Vec::new(),
+            redo: Vec::new(),
+        }
     }
 
     pub fn push(&mut self, action: UndoAction) {
@@ -35,8 +41,12 @@ impl UndoStack {
         }
     }
 
-    pub fn can_undo(&self) -> bool { !self.undo.is_empty() }
-    pub fn can_redo(&self) -> bool { !self.redo.is_empty() }
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+    pub fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
+    }
 
     /// Pop the most recent action and execute its reverse. Returns a description.
     pub fn undo(&mut self, root_mode: bool) -> Option<String> {
@@ -63,8 +73,11 @@ fn execute_reverse(action: &UndoAction, root_mode: bool) -> String {
             let ok = if root_mode {
                 std::process::Command::new("pkexec")
                     .args(["mv", "--"])
-                    .arg(to).arg(from)
-                    .status().map(|s| s.success()).unwrap_or(false)
+                    .arg(to)
+                    .arg(from)
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false)
             } else {
                 std::fs::rename(to, from).is_ok()
             };
@@ -93,7 +106,9 @@ fn execute_reverse(action: &UndoAction, root_mode: bool) -> String {
                 } else {
                     std::fs::remove_file(path).is_ok()
                 };
-                if ok { removed += 1; }
+                if ok {
+                    removed += 1;
+                }
             }
             format!("Removed {removed} created item(s)")
         }
@@ -104,12 +119,17 @@ fn execute_reverse(action: &UndoAction, root_mode: bool) -> String {
                 let ok = if root_mode {
                     std::process::Command::new("pkexec")
                         .args(["mv", "--"])
-                        .arg(dst).arg(src)
-                        .status().map(|s| s.success()).unwrap_or(false)
+                        .arg(dst)
+                        .arg(src)
+                        .status()
+                        .map(|s| s.success())
+                        .unwrap_or(false)
                 } else {
                     std::fs::rename(dst, src).is_ok()
                 };
-                if ok { moved += 1; }
+                if ok {
+                    moved += 1;
+                }
             }
             format!("Moved {moved} item(s) back")
         }
@@ -121,7 +141,9 @@ fn execute_reverse(action: &UndoAction, root_mode: bool) -> String {
                 } else {
                     std::fs::remove_file(path).is_ok()
                 };
-                if ok { removed += 1; }
+                if ok {
+                    removed += 1;
+                }
             }
             format!("Removed {removed} copied item(s)")
         }
@@ -135,12 +157,19 @@ fn execute_forward(action: &UndoAction, root_mode: bool) -> String {
             let ok = if root_mode {
                 std::process::Command::new("pkexec")
                     .args(["mv", "--"])
-                    .arg(from).arg(to)
-                    .status().map(|s| s.success()).unwrap_or(false)
+                    .arg(from)
+                    .arg(to)
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false)
             } else {
                 std::fs::rename(from, to).is_ok()
             };
-            if ok { format!("Redid rename") } else { format!("Failed to redo rename") }
+            if ok {
+                format!("Redid rename")
+            } else {
+                format!("Failed to redo rename")
+            }
         }
         UndoAction::Trash(entries) => {
             let mut trashed = 0;
@@ -166,9 +195,13 @@ fn execute_forward(action: &UndoAction, root_mode: bool) -> String {
             for path in paths {
                 // We can only recreate empty files/folders
                 if path.extension().is_none() || path.to_string_lossy().ends_with('/') {
-                    if std::fs::create_dir_all(path).is_ok() { created += 1; }
+                    if std::fs::create_dir_all(path).is_ok() {
+                        created += 1;
+                    }
                 } else {
-                    if std::fs::write(path, "").is_ok() { created += 1; }
+                    if std::fs::write(path, "").is_ok() {
+                        created += 1;
+                    }
                 }
             }
             format!("Re-created {created} item(s)")
@@ -179,12 +212,17 @@ fn execute_forward(action: &UndoAction, root_mode: bool) -> String {
                 let ok = if root_mode {
                     std::process::Command::new("pkexec")
                         .args(["mv", "--"])
-                        .arg(src).arg(dst)
-                        .status().map(|s| s.success()).unwrap_or(false)
+                        .arg(src)
+                        .arg(dst)
+                        .status()
+                        .map(|s| s.success())
+                        .unwrap_or(false)
                 } else {
                     std::fs::rename(src, dst).is_ok()
                 };
-                if ok { moved += 1; }
+                if ok {
+                    moved += 1;
+                }
             }
             format!("Re-moved {moved} item(s)")
         }
@@ -196,7 +234,9 @@ fn execute_forward(action: &UndoAction, root_mode: bool) -> String {
                 } else {
                     std::fs::copy(src, dst).is_ok()
                 };
-                if ok { copied += 1; }
+                if ok {
+                    copied += 1;
+                }
             }
             format!("Re-copied {copied} item(s)")
         }
@@ -222,18 +262,38 @@ fn days_to_ymd(mut days: i64) -> (i64, i64, i64) {
     let mut y = 1970;
     loop {
         let ydays = if is_leap(y) { 366 } else { 365 };
-        if days < ydays { break; }
+        if days < ydays {
+            break;
+        }
         days -= ydays;
         y += 1;
     }
     let leap = is_leap(y);
-    let mdays = [31, if leap {29} else {28}, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mdays = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut mo = 0;
     for (i, &md) in mdays.iter().enumerate() {
-        if days < md { mo = i as i64 + 1; break; }
+        if days < md {
+            mo = i as i64 + 1;
+            break;
+        }
         days -= md;
     }
     (y, mo, days + 1)
 }
 
-fn is_leap(y: i64) -> bool { y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) }
+fn is_leap(y: i64) -> bool {
+    y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)
+}

@@ -71,7 +71,16 @@ fn geom(card: Rect, scale: f32) -> Geom {
     let artist_y = top + title_font + line_gap;
     let progress = Rect::new(text_x, artist_y + artist_font + tp_gap, text_w, progress_h);
 
-    Geom { prev, play, next, text_x, text_w, title_y, artist_y, progress }
+    Geom {
+        prev,
+        play,
+        next,
+        text_x,
+        text_w,
+        title_y,
+        artist_y,
+        progress,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -93,9 +102,25 @@ pub fn draw_floating(
     };
 
     // Floating plate so it reads as a control over the desktop.
-    painter.shadow(card, RADIUS * scale, 18.0 * scale, Color::BLACK.with_alpha(0.35 * alpha), 0.0, 4.0 * scale);
-    painter.rect_filled(card, RADIUS * scale, Color::from_rgb8(CARD_RGB.0, CARD_RGB.1, CARD_RGB.2).with_alpha(0.78 * alpha));
-    painter.rect_stroke_sdf(card, RADIUS * scale, 1.0 * scale, Color::rgba(1.0, 1.0, 1.0, 0.10 * alpha));
+    painter.shadow(
+        card,
+        RADIUS * scale,
+        18.0 * scale,
+        Color::BLACK.with_alpha(0.35 * alpha),
+        0.0,
+        4.0 * scale,
+    );
+    painter.rect_filled(
+        card,
+        RADIUS * scale,
+        Color::from_rgb8(CARD_RGB.0, CARD_RGB.1, CARD_RGB.2).with_alpha(0.78 * alpha),
+    );
+    painter.rect_stroke_sdf(
+        card,
+        RADIUS * scale,
+        1.0 * scale,
+        Color::rgba(1.0, 1.0, 1.0, 0.10 * alpha),
+    );
 
     let g = geom(card, scale);
     let icon = Color::rgba(1.0, 1.0, 1.0, 0.92 * alpha);
@@ -117,10 +142,21 @@ pub fn draw_floating(
     let white = Color::rgba(1.0, 1.0, 1.0, alpha);
     let secondary = Color::rgba(1.0, 1.0, 1.0, 0.6 * alpha);
     let title = truncate(text, &track.title, title_font, g.text_w);
-    text.queue(&title, title_font, g.text_x, g.title_y, white, g.text_w, surface_w, surface_h);
+    text.queue(
+        &title, title_font, g.text_x, g.title_y, white, g.text_w, surface_w, surface_h,
+    );
     if !track.artist.is_empty() {
         let artist = truncate(text, &track.artist, artist_font, g.text_w);
-        text.queue(&artist, artist_font, g.text_x, g.artist_y, secondary, g.text_w, surface_w, surface_h);
+        text.queue(
+            &artist,
+            artist_font,
+            g.text_x,
+            g.artist_y,
+            secondary,
+            g.text_w,
+            surface_w,
+            surface_h,
+        );
     }
 
     let p = g.progress;
@@ -166,7 +202,11 @@ fn draw_play(painter: &mut Painter, r: Rect, col: Color) {
     let cx = r.x + r.w / 2.0;
     let cy = r.y + r.h / 2.0;
     let s = r.h * 0.24;
-    let pts = [(cx - s * 0.75, cy - s), (cx - s * 0.75, cy + s), (cx + s, cy)];
+    let pts = [
+        (cx - s * 0.75, cy - s),
+        (cx - s * 0.75, cy + s),
+        (cx + s, cy),
+    ];
     painter.polygon(&pts, col);
 }
 
@@ -176,15 +216,27 @@ fn draw_pause(painter: &mut Painter, r: Rect, col: Color) {
     let bw = r.w * 0.12;
     let bh = r.h * 0.44;
     let gap = r.w * 0.14;
-    painter.rect_filled(Rect::new(cx - gap / 2.0 - bw, cy - bh / 2.0, bw, bh), bw * 0.3, col);
-    painter.rect_filled(Rect::new(cx + gap / 2.0, cy - bh / 2.0, bw, bh), bw * 0.3, col);
+    painter.rect_filled(
+        Rect::new(cx - gap / 2.0 - bw, cy - bh / 2.0, bw, bh),
+        bw * 0.3,
+        col,
+    );
+    painter.rect_filled(
+        Rect::new(cx + gap / 2.0, cy - bh / 2.0, bw, bh),
+        bw * 0.3,
+        col,
+    );
 }
 
 fn draw_next(painter: &mut Painter, r: Rect, col: Color) {
     let cx = r.x + r.w / 2.0;
     let cy = r.y + r.h / 2.0;
     let s = r.h * 0.22;
-    let pts = [(cx - s * 1.1, cy - s), (cx - s * 1.1, cy + s), (cx + s * 0.3, cy)];
+    let pts = [
+        (cx - s * 1.1, cy - s),
+        (cx - s * 1.1, cy + s),
+        (cx + s * 0.3, cy),
+    ];
     painter.polygon(&pts, col);
     let bw = r.w * 0.10;
     painter.rect_filled(Rect::new(cx + s * 0.45, cy - s, bw, s * 2.0), bw * 0.3, col);
@@ -194,10 +246,18 @@ fn draw_prev(painter: &mut Painter, r: Rect, col: Color) {
     let cx = r.x + r.w / 2.0;
     let cy = r.y + r.h / 2.0;
     let s = r.h * 0.22;
-    let pts = [(cx + s * 1.1, cy - s), (cx + s * 1.1, cy + s), (cx - s * 0.3, cy)];
+    let pts = [
+        (cx + s * 1.1, cy - s),
+        (cx + s * 1.1, cy + s),
+        (cx - s * 0.3, cy),
+    ];
     painter.polygon(&pts, col);
     let bw = r.w * 0.10;
-    painter.rect_filled(Rect::new(cx - s * 0.45 - bw, cy - s, bw, s * 2.0), bw * 0.3, col);
+    painter.rect_filled(
+        Rect::new(cx - s * 0.45 - bw, cy - s, bw, s * 2.0),
+        bw * 0.3,
+        col,
+    );
 }
 
 /// Truncate `s` with an ellipsis so it fits `max_w` at `font` px.

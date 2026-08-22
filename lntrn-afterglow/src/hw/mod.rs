@@ -11,7 +11,9 @@ use std::io;
 use std::path::Path;
 
 pub(crate) fn read_trim(path: &Path) -> Option<String> {
-    std::fs::read_to_string(path).ok().map(|s| s.trim().to_string())
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|s| s.trim().to_string())
 }
 
 pub(crate) fn read_u64(path: &Path) -> Option<u64> {

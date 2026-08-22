@@ -57,7 +57,11 @@ impl GitStatus {
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             let (branch, marks) = scan(&dir);
-            let _ = tx.send(GitResult { generation, branch, marks });
+            let _ = tx.send(GitResult {
+                generation,
+                branch,
+                marks,
+            });
         });
     }
 
@@ -99,19 +103,30 @@ fn scan(dir: &Path) -> (Option<String>, HashMap<PathBuf, GitMark>) {
     // -z: NUL separators, no quoting of unusual filenames. Pathspec "."
     // restricts output to the viewed subtree; paths are repo-root-relative.
     let mut marks = HashMap::new();
-    if let Some(out) = git_stdout(dir, &["status", "--porcelain=v1", "-z", "--no-renames", "."]) {
+    if let Some(out) = git_stdout(
+        dir,
+        &["status", "--porcelain=v1", "-z", "--no-renames", "."],
+    ) {
         for record in out.split('\0').filter(|r| r.len() > 3) {
             let (xy, rel) = record.split_at(2);
             if xy == "!!" {
                 continue; // ignored files
             }
-            let mark = if xy == "??" { GitMark::Untracked } else { GitMark::Modified };
+            let mark = if xy == "??" {
+                GitMark::Untracked
+            } else {
+                GitMark::Modified
+            };
             let abs = root.join(rel.trim_start().trim_end_matches('/'));
             // Badge the entry the user can actually see: the path itself if
             // it sits directly in `dir`, else the top-level subdir of `dir`
             // that contains it. Modified outranks Untracked when both occur.
-            let Ok(below) = abs.strip_prefix(dir) else { continue };
-            let Some(first) = below.components().next() else { continue };
+            let Ok(below) = abs.strip_prefix(dir) else {
+                continue;
+            };
+            let Some(first) = below.components().next() else {
+                continue;
+            };
             let entry = dir.join(first.as_os_str());
             match marks.get(&entry) {
                 Some(GitMark::Modified) => {}

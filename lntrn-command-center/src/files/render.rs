@@ -2,12 +2,12 @@
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
-use crate::render::IconRequest;
 use super::{
-    crumb_segments, file_kind, format_meta, format_size_or_count, home_dir, list_rect,
-    row_height, row_icon_size, sidebar_icon_size, sidebar_rect, sidebar_tile_rect, strip_layout,
-    FileEntry, FileKind, FilesState, Location, NavButton, ROW_PAD_X,
+    crumb_segments, file_kind, format_meta, format_size_or_count, home_dir, list_rect, row_height,
+    row_icon_size, sidebar_icon_size, sidebar_rect, sidebar_tile_rect, strip_layout, FileEntry,
+    FileKind, FilesState, Location, NavButton, ROW_PAD_X,
 };
+use crate::render::IconRequest;
 
 const TEXT_RGB: (u8, u8, u8) = (0xff, 0xff, 0xff);
 const ACCENT_RGB: (u8, u8, u8) = (0xc8, 0x86, 0x0a);
@@ -39,8 +39,12 @@ pub fn draw(
     surface_w: u32,
     surface_h: u32,
 ) {
-    draw_sidebar(painter, text, icons, state, panel, top_y, scale, text_size, alpha, surface_w, surface_h);
-    draw_list(painter, text, icons, state, panel, top_y, scale, text_size, alpha, surface_w, surface_h);
+    draw_sidebar(
+        painter, text, icons, state, panel, top_y, scale, text_size, alpha, surface_w, surface_h,
+    );
+    draw_list(
+        painter, text, icons, state, panel, top_y, scale, text_size, alpha, surface_w, surface_h,
+    );
 }
 
 // ── Controls-row strip ─────────────────────────────────────────────────────
@@ -75,11 +79,26 @@ pub fn draw_controls_strip(
         state.hover_nav == Some(NavButton::Back) && back_enabled,
         false,
     );
-    draw_back_glyph(painter, layout.back, scale, alpha * if back_enabled { 0.95 } else { 0.28 });
+    draw_back_glyph(
+        painter,
+        layout.back,
+        scale,
+        alpha * if back_enabled { 0.95 } else { 0.28 },
+    );
     let _ = home_dir;
 
     // Pathbar (breadcrumb or filter input).
-    draw_pathbar(painter, text, state, layout.pathbar, scale, text_size, alpha, surface_w, surface_h);
+    draw_pathbar(
+        painter,
+        text,
+        state,
+        layout.pathbar,
+        scale,
+        text_size,
+        alpha,
+        surface_w,
+        surface_h,
+    );
 
     // Magnifier toggle.
     draw_btn(
@@ -120,10 +139,25 @@ pub fn draw_controls_strip(
 
 fn draw_btn(painter: &mut Painter, r: Rect, scale: f32, alpha: f32, hovered: bool, active: bool) {
     let radius = 10.0 * scale;
-    let plate_alpha = if hovered { 0.22 } else if active { 0.14 } else { 0.08 };
-    painter.rect_filled(r, radius, Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(plate_alpha * alpha));
+    let plate_alpha = if hovered {
+        0.22
+    } else if active {
+        0.14
+    } else {
+        0.08
+    };
+    painter.rect_filled(
+        r,
+        radius,
+        Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(plate_alpha * alpha),
+    );
     if hovered || active {
-        painter.rect_stroke_sdf(r, radius, 1.4 * scale, accent_color(if active { 0.75 } else { 0.6 } * alpha));
+        painter.rect_stroke_sdf(
+            r,
+            radius,
+            1.4 * scale,
+            accent_color(if active { 0.75 } else { 0.6 } * alpha),
+        );
     }
 }
 
@@ -153,7 +187,11 @@ fn draw_sort_glyph(painter: &mut Painter, r: Rect, scale: f32, alpha: f32) {
 }
 
 fn draw_magnifier_glyph(painter: &mut Painter, r: Rect, scale: f32, alpha: f32, active: bool) {
-    let color = if active { accent_color(alpha) } else { text_color(0.92 * alpha) };
+    let color = if active {
+        accent_color(alpha)
+    } else {
+        text_color(0.92 * alpha)
+    };
     let cx = r.x + r.w * 0.43;
     let cy = r.y + r.h * 0.43;
     let radius = r.w * 0.18;
@@ -173,11 +211,22 @@ fn draw_magnifier_glyph(painter: &mut Painter, r: Rect, scale: f32, alpha: f32, 
     // Handle.
     let hx = cx + radius * 0.78;
     let hy = cy + radius * 0.78;
-    painter.line_round(hx, hy, hx + radius * 0.95, hy + radius * 0.95, stroke * 1.1, color);
+    painter.line_round(
+        hx,
+        hy,
+        hx + radius * 0.95,
+        hy + radius * 0.95,
+        stroke * 1.1,
+        color,
+    );
 }
 
 fn draw_eye_glyph(painter: &mut Painter, r: Rect, scale: f32, on: bool, alpha: f32) {
-    let color = if on { accent_color(alpha) } else { text_color(0.9 * alpha) };
+    let color = if on {
+        accent_color(alpha)
+    } else {
+        text_color(0.9 * alpha)
+    };
     let cx = r.x + r.w / 2.0;
     let cy = r.y + r.h / 2.0;
     let stroke = 2.2 * scale;
@@ -227,7 +276,11 @@ fn draw_pathbar(
     }
     let radius = 10.0 * scale;
     let bg_alpha = if state.filter_active { 0.10 } else { 0.06 };
-    painter.rect_filled(r, radius, Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(bg_alpha * alpha));
+    painter.rect_filled(
+        r,
+        radius,
+        Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(bg_alpha * alpha),
+    );
     painter.rect_stroke_sdf(
         r,
         radius,
@@ -248,7 +301,16 @@ fn draw_pathbar(
         } else {
             (q, text_color(0.96 * alpha))
         };
-        text.queue(s, font, r.x + pad, baseline_y, color, r.w - pad * 2.0, surface_w, surface_h);
+        text.queue(
+            s,
+            font,
+            r.x + pad,
+            baseline_y,
+            color,
+            r.w - pad * 2.0,
+            surface_w,
+            surface_h,
+        );
         // Result count badge on the right side.
         if !q.is_empty() {
             let count = format!("{}/{}", state.visible.len(), state.entries.len());
@@ -273,21 +335,50 @@ fn draw_pathbar(
         let mut x = r.x + pad;
         let max_x = r.x + r.w - pad;
         for (i, seg) in segs.iter().enumerate() {
-            if x >= max_x { break; }
+            if x >= max_x {
+                break;
+            }
             let w = text.measure_width(seg, font);
             let hovered = state.hover_crumb == Some(i);
             if hovered {
                 painter.rect_filled(
-                    Rect::new(x - 4.0 * scale, r.y + 5.0 * scale, w + 8.0 * scale, r.h - 10.0 * scale),
+                    Rect::new(
+                        x - 4.0 * scale,
+                        r.y + 5.0 * scale,
+                        w + 8.0 * scale,
+                        r.h - 10.0 * scale,
+                    ),
                     6.0 * scale,
                     Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(0.18 * alpha),
                 );
             }
-            let color = if hovered { accent_color(alpha) } else { text_color(0.95 * alpha) };
-            text.queue(seg, font, x, baseline_y, color, w + 4.0 * scale, surface_w, surface_h);
+            let color = if hovered {
+                accent_color(alpha)
+            } else {
+                text_color(0.95 * alpha)
+            };
+            text.queue(
+                seg,
+                font,
+                x,
+                baseline_y,
+                color,
+                w + 4.0 * scale,
+                surface_w,
+                surface_h,
+            );
             x += w;
             if i + 1 < segs.len() {
-                text.queue(sep, font, x, baseline_y, dim_color(alpha), sep_w + 4.0 * scale, surface_w, surface_h);
+                text.queue(
+                    sep,
+                    font,
+                    x,
+                    baseline_y,
+                    dim_color(alpha),
+                    sep_w + 4.0 * scale,
+                    surface_w,
+                    surface_h,
+                );
                 x += sep_w;
             }
         }
@@ -320,14 +411,26 @@ fn draw_sidebar(
 
     for (i, loc) in Location::ALL.iter().enumerate() {
         let r = sidebar_tile_rect(panel, top_y, scale, text_size, i);
-        if r.y > sb.y + sb.h { break; }
+        if r.y > sb.y + sb.h {
+            break;
+        }
         let hovered = state.hover_location == Some(*loc);
         let active = (*loc == Location::Home && state.cwd == home_dir())
             || (*loc != Location::Home && state.cwd.starts_with(loc.path()));
         let radius = 10.0 * scale;
-        let plate_alpha = if hovered { 0.16 } else if active { 0.10 } else { 0.0 };
+        let plate_alpha = if hovered {
+            0.16
+        } else if active {
+            0.10
+        } else {
+            0.0
+        };
         if plate_alpha > 0.001 {
-            painter.rect_filled(r, radius, Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(plate_alpha * alpha));
+            painter.rect_filled(
+                r,
+                radius,
+                Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(plate_alpha * alpha),
+            );
         }
         if active {
             painter.rect_stroke_sdf(r, radius, 1.2 * scale, accent_color(0.55 * alpha));
@@ -347,7 +450,11 @@ fn draw_sidebar(
         let font = (text_size * 0.95) * scale;
         let label_x = ic_x + icon_size + 12.0 * scale;
         let label_y = r.y + (r.h - font) / 2.0;
-        let label_color = if active || hovered { accent_color(alpha) } else { text_color(0.92 * alpha) };
+        let label_color = if active || hovered {
+            accent_color(alpha)
+        } else {
+            text_color(0.92 * alpha)
+        };
         text.queue(
             loc.label(),
             font,
@@ -389,7 +496,11 @@ fn draw_list(
 
     if state.visible.is_empty() {
         let f = (text_size * 1.10) * scale;
-        let msg = if state.filter.query().is_empty() { "(empty)" } else { "no matches" };
+        let msg = if state.filter.query().is_empty() {
+            "(empty)"
+        } else {
+            "no matches"
+        };
         text.queue(
             msg,
             f,
@@ -411,7 +522,9 @@ fn draw_list(
     let last_visible = (first_visible + visible_count).min(state.visible.len());
 
     for i in first_visible..last_visible {
-        let Some(entry) = state.entry_for_visible(i) else { continue };
+        let Some(entry) = state.entry_for_visible(i) else {
+            continue;
+        };
         let row_y = list.y + i as f32 * row_h - state.scroll;
         let row = Rect::new(list.x, row_y, list.w, row_h);
 
@@ -422,7 +535,9 @@ fn draw_list(
                 Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(HOVER_PLATE_ALPHA * alpha),
             );
         }
-        draw_row(painter, text, icons, entry, row, scale, text_size, alpha, list, surface_w, surface_h);
+        draw_row(
+            painter, text, icons, entry, row, scale, text_size, alpha, list, surface_w, surface_h,
+        );
     }
 
     painter.pop_clip();
@@ -506,10 +621,37 @@ fn draw_row(
     let size_x = row.x + row.w - ROW_PAD_X * scale - size_w;
     let name_max_w = (size_x - name_x - 12.0 * scale).max(20.0);
 
-    text.queue(&entry.name, name_font, name_x, name_y, text_color(0.96 * alpha), name_max_w, surface_w, surface_h);
-    text.queue(&meta, meta_font, name_x, meta_y, dim_color(alpha), name_max_w, surface_w, surface_h);
+    text.queue(
+        &entry.name,
+        name_font,
+        name_x,
+        name_y,
+        text_color(0.96 * alpha),
+        name_max_w,
+        surface_w,
+        surface_h,
+    );
+    text.queue(
+        &meta,
+        meta_font,
+        name_x,
+        meta_y,
+        dim_color(alpha),
+        name_max_w,
+        surface_w,
+        surface_h,
+    );
     if !size.is_empty() {
-        text.queue(&size, meta_font, size_x, meta_y, dim_color(alpha), size_w + 4.0 * scale, surface_w, surface_h);
+        text.queue(
+            &size,
+            meta_font,
+            size_x,
+            meta_y,
+            dim_color(alpha),
+            size_w + 4.0 * scale,
+            surface_w,
+            surface_h,
+        );
     }
 }
 
@@ -538,11 +680,37 @@ fn draw_file_glyph(painter: &mut Painter, r: Rect, scale: f32, alpha: f32) {
     let color = text_color(0.78 * alpha);
     let radius = 4.0 * scale;
     let inset = r.w * 0.08;
-    let body = Rect::new(r.x + inset, r.y + inset, r.w - inset * 2.0, r.h - inset * 2.0);
+    let body = Rect::new(
+        r.x + inset,
+        r.y + inset,
+        r.w - inset * 2.0,
+        r.h - inset * 2.0,
+    );
     painter.rect_stroke_sdf(body, radius, 2.0 * scale, color);
     let fold = body.w * 0.30;
     let stroke = 2.0 * scale;
-    painter.line_round(body.x + body.w - fold, body.y, body.x + body.w, body.y + fold, stroke, color);
-    painter.line_round(body.x + body.w - fold, body.y, body.x + body.w - fold, body.y + fold, stroke, color);
-    painter.line_round(body.x + body.w - fold, body.y + fold, body.x + body.w, body.y + fold, stroke, color);
+    painter.line_round(
+        body.x + body.w - fold,
+        body.y,
+        body.x + body.w,
+        body.y + fold,
+        stroke,
+        color,
+    );
+    painter.line_round(
+        body.x + body.w - fold,
+        body.y,
+        body.x + body.w - fold,
+        body.y + fold,
+        stroke,
+        color,
+    );
+    painter.line_round(
+        body.x + body.w - fold,
+        body.y + fold,
+        body.x + body.w,
+        body.y + fold,
+        stroke,
+        color,
+    );
 }

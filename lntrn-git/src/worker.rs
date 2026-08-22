@@ -40,13 +40,21 @@ pub enum GitCmd {
     Push,
     Pull,
     FetchGitHubRepos,
-    CreateRepo { name: String, parent: PathBuf, github: bool, private: bool },
+    CreateRepo {
+        name: String,
+        parent: PathBuf,
+        github: bool,
+        private: bool,
+    },
     ListBranches,
     ListBranchesDetailed,
     FetchGraph(usize),
     CreateBranch(String, bool),
     SwitchBranch(String),
-    Merge { source: String, target: String },
+    Merge {
+        source: String,
+        target: String,
+    },
 }
 
 /// Spawn the worker thread — returns the command sender and event receiver.
@@ -126,24 +134,36 @@ fn run(tx: mpsc::Sender<GitEvent>, rx: mpsc::Receiver<GitCmd>) {
             GitCmd::Commit(msg) => {
                 if let Some(ref path) = repo_path {
                     match git::commit(path, &msg) {
-                        Ok(out) => { let _ = tx.send(GitEvent::Message(out)); }
-                        Err(err) => { let _ = tx.send(GitEvent::Error(err)); }
+                        Ok(out) => {
+                            let _ = tx.send(GitEvent::Message(out));
+                        }
+                        Err(err) => {
+                            let _ = tx.send(GitEvent::Error(err));
+                        }
                     }
                 }
             }
             GitCmd::Push => {
                 if let Some(ref path) = repo_path {
                     match git::push(path) {
-                        Ok(out) => { let _ = tx.send(GitEvent::Message(out)); }
-                        Err(err) => { let _ = tx.send(GitEvent::Error(err)); }
+                        Ok(out) => {
+                            let _ = tx.send(GitEvent::Message(out));
+                        }
+                        Err(err) => {
+                            let _ = tx.send(GitEvent::Error(err));
+                        }
                     }
                 }
             }
             GitCmd::Pull => {
                 if let Some(ref path) = repo_path {
                     match git::pull(path) {
-                        Ok(out) => { let _ = tx.send(GitEvent::Message(out)); }
-                        Err(err) => { let _ = tx.send(GitEvent::Error(err)); }
+                        Ok(out) => {
+                            let _ = tx.send(GitEvent::Message(out));
+                        }
+                        Err(err) => {
+                            let _ = tx.send(GitEvent::Error(err));
+                        }
                     }
                 }
             }
@@ -151,7 +171,12 @@ fn run(tx: mpsc::Sender<GitEvent>, rx: mpsc::Receiver<GitCmd>) {
                 let result = github::fetch_github_repos();
                 let _ = tx.send(GitEvent::RemoteRepos(result));
             }
-            GitCmd::CreateRepo { name, parent, github, private } => {
+            GitCmd::CreateRepo {
+                name,
+                parent,
+                github,
+                private,
+            } => {
                 let result = git::init_repo(&parent, &name).map(|path| {
                     let github_error = if github {
                         github::create_github_repo(&path, &name, private).err()
@@ -186,7 +211,9 @@ fn run(tx: mpsc::Sender<GitEvent>, rx: mpsc::Receiver<GitCmd>) {
                         Ok(mut msg) => {
                             if push {
                                 match git::push_new_branch(path, &name) {
-                                    Ok(push_msg) => { msg = format!("{msg} — {push_msg}"); }
+                                    Ok(push_msg) => {
+                                        msg = format!("{msg} — {push_msg}");
+                                    }
                                     Err(push_err) => {
                                         let _ = tx.send(GitEvent::Error(push_err));
                                         let branches = git::list_branches(path);
@@ -199,7 +226,9 @@ fn run(tx: mpsc::Sender<GitEvent>, rx: mpsc::Receiver<GitCmd>) {
                             let branches = git::list_branches(path);
                             let _ = tx.send(GitEvent::Branches(branches));
                         }
-                        Err(err) => { let _ = tx.send(GitEvent::Error(err)); }
+                        Err(err) => {
+                            let _ = tx.send(GitEvent::Error(err));
+                        }
                     }
                 }
             }
@@ -213,7 +242,9 @@ fn run(tx: mpsc::Sender<GitEvent>, rx: mpsc::Receiver<GitCmd>) {
                             let _ = tx.send(GitEvent::Status(status));
                             let _ = tx.send(GitEvent::Branches(branches));
                         }
-                        Err(err) => { let _ = tx.send(GitEvent::Error(err)); }
+                        Err(err) => {
+                            let _ = tx.send(GitEvent::Error(err));
+                        }
                     }
                 }
             }
@@ -233,7 +264,9 @@ fn run(tx: mpsc::Sender<GitEvent>, rx: mpsc::Receiver<GitCmd>) {
                             let status = git::status(path);
                             let _ = tx.send(GitEvent::Status(status));
                         }
-                        Err(err) => { let _ = tx.send(GitEvent::Error(err)); }
+                        Err(err) => {
+                            let _ = tx.send(GitEvent::Error(err));
+                        }
                     }
                 }
             }

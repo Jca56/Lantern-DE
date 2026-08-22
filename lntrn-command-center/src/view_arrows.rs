@@ -47,18 +47,16 @@ pub fn hit_test(panel: Rect, scale: f32, px: f32, py: f32) -> Option<Side> {
     None
 }
 
-pub fn draw(
-    painter: &mut Painter,
-    panel: Rect,
-    scale: f32,
-    alpha: f32,
-    hovered: Option<Side>,
-) {
+pub fn draw(painter: &mut Painter, panel: Rect, scale: f32, alpha: f32, hovered: Option<Side>) {
     let radius = RADIUS * scale;
     for side in [Side::Left, Side::Right] {
         let r = button_rect(panel, scale, side);
         let is_hovered = hovered == Some(side);
-        let bg_a = if is_hovered { BG_ALPHA_HOVER } else { BG_ALPHA_IDLE };
+        let bg_a = if is_hovered {
+            BG_ALPHA_HOVER
+        } else {
+            BG_ALPHA_IDLE
+        };
         let bg = Color::from_rgb8(BG_RGB.0, BG_RGB.1, BG_RGB.2).with_alpha(bg_a * alpha);
         painter.rect_filled(r, radius, bg);
         if is_hovered {

@@ -15,8 +15,11 @@ pub struct FileEntry {
 impl FileEntry {
     /// File extension (lowercase), or empty string for dirs / no extension.
     pub fn extension(&self) -> String {
-        if self.is_dir { return String::new(); }
-        self.path.extension()
+        if self.is_dir {
+            return String::new();
+        }
+        self.path
+            .extension()
             .map(|e| e.to_string_lossy().to_lowercase())
             .unwrap_or_default()
     }
@@ -57,7 +60,9 @@ pub fn default_dir(sort_by: SortBy) -> SortDir {
 /// /media/<X>, or /mnt/<X>. Used to hide ext4's `lost+found` system folder.
 fn is_removable_mount_root(path: &Path) -> bool {
     let comps = |prefix: &str| -> Option<usize> {
-        path.strip_prefix(prefix).ok().map(|p| p.components().count())
+        path.strip_prefix(prefix)
+            .ok()
+            .map(|p| p.components().count())
     };
     matches!(comps("/run/media"), Some(2))
         || matches!(comps("/media"), Some(2))
@@ -65,7 +70,12 @@ fn is_removable_mount_root(path: &Path) -> bool {
 }
 
 /// List a directory, returning sorted entries (dirs first, then files).
-pub fn list_directory(path: &Path, show_hidden: bool, sort_by: SortBy, sort_dir: SortDir) -> Vec<FileEntry> {
+pub fn list_directory(
+    path: &Path,
+    show_hidden: bool,
+    sort_by: SortBy,
+    sort_dir: SortDir,
+) -> Vec<FileEntry> {
     let Ok(read_dir) = std::fs::read_dir(path) else {
         return Vec::new();
     };
@@ -156,7 +166,9 @@ pub struct Drive {
 
 impl Drive {
     pub fn usage_fraction(&self) -> f32 {
-        if self.total_bytes == 0 { return 0.0; }
+        if self.total_bytes == 0 {
+            return 0.0;
+        }
         self.used_bytes as f32 / self.total_bytes as f32
     }
 
@@ -203,7 +215,9 @@ pub fn detect_drives() -> Vec<Drive> {
     // Sort: System, Boot, mounted alphabetical, unmounted last
     drives.sort_by(|a, b| {
         let ord = |d: &Drive| -> u8 {
-            if !d.mounted { return 3; }
+            if !d.mounted {
+                return 3;
+            }
             match d.name.as_str() {
                 "System" => 0,
                 "Boot" => 1,
@@ -241,18 +255,28 @@ pub fn parent_disk_of(device: &str) -> String {
         }
     }
     // Fallback: trim digit suffix (and trailing 'p' for nvme/mmc).
-    let stripped: String = basename.trim_end_matches(|c: char| c.is_ascii_digit()).to_string();
+    let stripped: String = basename
+        .trim_end_matches(|c: char| c.is_ascii_digit())
+        .to_string();
     let stripped = stripped.trim_end_matches('p');
     format!("/dev/{}", stripped)
 }
 
 fn disk_friendly_name(disk_basename: &str) -> Option<String> {
     let v = std::fs::read_to_string(format!("/sys/class/block/{}/device/vendor", disk_basename))
-        .ok().map(|s| s.trim().to_string()).unwrap_or_default();
+        .ok()
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
     let m = std::fs::read_to_string(format!("/sys/class/block/{}/device/model", disk_basename))
-        .ok().map(|s| s.trim().to_string()).unwrap_or_default();
+        .ok()
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
     let combined = format!("{v} {m}").trim().to_string();
-    if combined.is_empty() { None } else { Some(combined) }
+    if combined.is_empty() {
+        None
+    } else {
+        Some(combined)
+    }
 }
 
 fn disk_size_bytes(disk_basename: &str) -> u64 {
@@ -279,7 +303,8 @@ fn group_removable_by_disk(drives: Vec<Drive>) -> Vec<Drive> {
         // Pick representative: prefer mounted, then largest mount.
         let mut sorted = group;
         sorted.sort_by(|a, b| {
-            b.mounted.cmp(&a.mounted)
+            b.mounted
+                .cmp(&a.mounted)
                 .then_with(|| b.total_bytes.cmp(&a.total_bytes))
         });
         let mut rep = sorted.into_iter().next().unwrap();
@@ -293,7 +318,9 @@ fn group_removable_by_disk(drives: Vec<Drive>) -> Vec<Drive> {
         // (Format always targets parent_disk regardless.)
         if !rep.mounted {
             let whole = disk_size_bytes(basename);
-            if whole > 0 { rep.total_bytes = whole; }
+            if whole > 0 {
+                rep.total_bytes = whole;
+            }
         }
         result.push(rep);
     }
@@ -311,19 +338,25 @@ fn detect_mounted_drives() -> Vec<Drive> {
 
     for line in contents.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 3 { continue; }
+        if parts.len() < 3 {
+            continue;
+        }
         let device = parts[0];
         let mount = parts[1];
         let fstype = parts[2];
 
         // Only real block devices
-        if !device.starts_with("/dev/") { continue; }
+        if !device.starts_with("/dev/") {
+            continue;
+        }
         // Skip snap/loop
-        if device.contains("loop") { continue; }
+        if device.contains("loop") {
+            continue;
+        }
 
-        let entry = by_device.entry(device.to_string()).or_insert_with(|| {
-            (mount.to_string(), fstype.to_string())
-        });
+        let entry = by_device
+            .entry(device.to_string())
+            .or_insert_with(|| (mount.to_string(), fstype.to_string()));
         // Keep the shortest mount point (usually the "main" one)
         if mount.len() < entry.0.len() {
             *entry = (mount.to_string(), fstype.to_string());
@@ -343,7 +376,10 @@ fn detect_mounted_drives() -> Vec<Drive> {
                 "System".to_string()
             } else if mount == "/boot" {
                 "Boot".to_string()
-            } else if mount.starts_with("/media/") || mount.starts_with("/mnt/") || mount.starts_with("/run/media/") {
+            } else if mount.starts_with("/media/")
+                || mount.starts_with("/mnt/")
+                || mount.starts_with("/run/media/")
+            {
                 mount.rsplit('/').next().unwrap_or("Drive").to_string()
             } else if mount == "/home" {
                 // Skip /home if it's on the same device as /
@@ -374,18 +410,26 @@ fn detect_mounted_drives() -> Vec<Drive> {
 
 /// True if `/sys/class/block/<basename>/removable` (or its parent disk's) is "1".
 fn is_block_removable(device: &str) -> bool {
-    let Some(name) = device.strip_prefix("/dev/") else { return false; };
+    let Some(name) = device.strip_prefix("/dev/") else {
+        return false;
+    };
     let direct = format!("/sys/class/block/{name}/removable");
     if let Ok(s) = std::fs::read_to_string(&direct) {
-        if s.trim() == "1" { return true; }
+        if s.trim() == "1" {
+            return true;
+        }
     }
     // For a partition like sda1, also check the parent disk sda.
-    let parent: String = name.trim_end_matches(|c: char| c.is_ascii_digit())
-        .trim_end_matches('p').to_string();
+    let parent: String = name
+        .trim_end_matches(|c: char| c.is_ascii_digit())
+        .trim_end_matches('p')
+        .to_string();
     if !parent.is_empty() && parent != name {
         let p = format!("/sys/class/block/{parent}/removable");
         if let Ok(s) = std::fs::read_to_string(&p) {
-            if s.trim() == "1" { return true; }
+            if s.trim() == "1" {
+                return true;
+            }
         }
     }
     false
@@ -396,8 +440,10 @@ fn is_block_removable(device: &str) -> bool {
 fn detect_unmounted_removable() -> Vec<Drive> {
     let output = match std::process::Command::new("lsblk")
         .args([
-            "-J", "-b",
-            "-o", "NAME,LABEL,FSTYPE,SIZE,RM,MOUNTPOINT,PATH,TYPE",
+            "-J",
+            "-b",
+            "-o",
+            "NAME,LABEL,FSTYPE,SIZE,RM,MOUNTPOINT,PATH,TYPE",
         ])
         .output()
     {
@@ -425,14 +471,27 @@ fn collect_unmounted(node: &LsblkNode, parent_rm: bool, out: &mut Vec<Drive>) {
         return;
     }
     // Leaf: a partition or a disk with no children.
-    if !rm { return; }
-    if node.mountpoint.is_some() { return; }
-    let Some(fstype) = node.fstype.clone() else { return; };
-    if fstype.is_empty() { return; }
+    if !rm {
+        return;
+    }
+    if node.mountpoint.is_some() {
+        return;
+    }
+    let Some(fstype) = node.fstype.clone() else {
+        return;
+    };
+    if fstype.is_empty() {
+        return;
+    }
     // Skip swap and unknown pseudo-fs that udisks won't handle gracefully.
-    if fstype == "swap" || fstype == "linux_raid_member" { return; }
+    if fstype == "swap" || fstype == "linux_raid_member" {
+        return;
+    }
 
-    let device = node.path.clone().unwrap_or_else(|| format!("/dev/{}", node.name));
+    let device = node
+        .path
+        .clone()
+        .unwrap_or_else(|| format!("/dev/{}", node.name));
     let label = node.label.clone().filter(|l| !l.is_empty());
     let name = label.unwrap_or_else(|| node.name.clone());
     let size = node.size.unwrap_or(0);
@@ -539,21 +598,29 @@ pub fn detect_phones() -> Vec<Phone> {
 }
 
 fn device_has_image_class(dev_path: &Path, dev_name: &str) -> bool {
-    let Ok(read_dir) = std::fs::read_dir(dev_path) else { return false; };
+    let Ok(read_dir) = std::fs::read_dir(dev_path) else {
+        return false;
+    };
     let prefix = format!("{dev_name}:");
     for entry in read_dir.flatten() {
         let n = entry.file_name();
         let n = n.to_string_lossy();
-        if !n.starts_with(&prefix) { continue; }
+        if !n.starts_with(&prefix) {
+            continue;
+        }
         if let Some(class) = read_trim(&entry.path().join("bInterfaceClass")) {
-            if class.eq_ignore_ascii_case("06") { return true; }
+            if class.eq_ignore_ascii_case("06") {
+                return true;
+            }
         }
     }
     false
 }
 
 fn read_trim(path: &Path) -> Option<String> {
-    std::fs::read_to_string(path).ok().map(|s| s.trim().to_string())
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|s| s.trim().to_string())
 }
 
 fn display_name(manufacturer: &str, product: &str) -> String {
@@ -591,8 +658,16 @@ fn slugify(name: &str, serial: &str) -> String {
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect();
     let trimmed = base.trim_matches('-').to_string();
-    let short = if serial.len() >= 4 { &serial[..4] } else { serial };
-    if short.is_empty() { trimmed } else { format!("{trimmed}-{short}") }
+    let short = if serial.len() >= 4 {
+        &serial[..4]
+    } else {
+        serial
+    };
+    if short.is_empty() {
+        trimmed
+    } else {
+        format!("{trimmed}-{short}")
+    }
 }
 
 fn mounts_root() -> PathBuf {
@@ -604,13 +679,19 @@ fn mounts_root() -> PathBuf {
 
 /// Returns true when something is mounted at `path` (per /proc/mounts).
 pub fn is_path_mounted(path: &Path) -> bool {
-    let Ok(target) = path.canonicalize() else { return false; };
-    let Ok(contents) = std::fs::read_to_string("/proc/mounts") else { return false; };
+    let Ok(target) = path.canonicalize() else {
+        return false;
+    };
+    let Ok(contents) = std::fs::read_to_string("/proc/mounts") else {
+        return false;
+    };
     for line in contents.lines() {
         let mut parts = line.split_whitespace();
         let _device = parts.next();
         if let Some(mp) = parts.next() {
-            if Path::new(mp) == target { return true; }
+            if Path::new(mp) == target {
+                return true;
+            }
         }
     }
     false
@@ -670,7 +751,9 @@ pub fn mount_phone(phone: &Phone) -> Result<(), String> {
     }
     // jmtpfs returns once mount is established, but give it a beat.
     for _ in 0..20 {
-        if is_path_mounted(&phone.mount_point) { return Ok(()); }
+        if is_path_mounted(&phone.mount_point) {
+            return Ok(());
+        }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
     Ok(())
@@ -752,7 +835,8 @@ pub fn format_drive_ext4(drive: &Drive, label: &str) -> Result<(), String> {
     // calling user — without it, ext4 belongs to root and the user can't
     // write to their own USB.
     let mut args: Vec<String> = vec![
-        "call".into(), "--system".into(),
+        "call".into(),
+        "--system".into(),
         "org.freedesktop.UDisks2".into(),
         obj_path,
         "org.freedesktop.UDisks2.Block".into(),
@@ -786,11 +870,17 @@ pub fn format_drive_ext4(drive: &Drive, label: &str) -> Result<(), String> {
 /// are ignored — Format will surface a meaningful message if anything is
 /// still busy.
 fn unmount_all_on_disk(disk_device: &str) {
-    let Ok(contents) = std::fs::read_to_string("/proc/mounts") else { return; };
+    let Ok(contents) = std::fs::read_to_string("/proc/mounts") else {
+        return;
+    };
     for line in contents.lines() {
         let mut parts = line.split_whitespace();
-        let Some(device) = parts.next() else { continue; };
-        if !device.starts_with("/dev/") { continue; }
+        let Some(device) = parts.next() else {
+            continue;
+        };
+        if !device.starts_with("/dev/") {
+            continue;
+        }
         let parent = parent_disk_of(device);
         if device == disk_device || parent == disk_device {
             let _ = std::process::Command::new("udisksctl")
@@ -811,7 +901,8 @@ pub fn relabel_drive(drive: &Drive, new_label: &str) -> Result<(), String> {
 
     let output = std::process::Command::new("busctl")
         .args([
-            "call", "--system",
+            "call",
+            "--system",
             "org.freedesktop.UDisks2",
             &obj_path,
             "org.freedesktop.UDisks2.Filesystem",
@@ -845,7 +936,9 @@ pub fn unmount_drive(drive: &Drive) -> Result<(), String> {
 /// Unmount a phone via fusermount.
 #[allow(dead_code)]
 pub fn unmount_phone(phone: &Phone) {
-    if !is_path_mounted(&phone.mount_point) { return; }
+    if !is_path_mounted(&phone.mount_point) {
+        return;
+    }
     let _ = std::process::Command::new("fusermount")
         .arg("-u")
         .arg(&phone.mount_point)
@@ -879,7 +972,9 @@ fn statvfs(path: &str) -> Option<StatVfs> {
     let c_path = CString::new(path).ok()?;
     let mut buf = MaybeUninit::<libc_statvfs>::uninit();
     let ret = unsafe { statvfs(c_path.as_ptr(), buf.as_mut_ptr()) };
-    if ret != 0 { return None; }
+    if ret != 0 {
+        return None;
+    }
     let buf = unsafe { buf.assume_init() };
     Some(StatVfs {
         block_size: buf.f_frsize,

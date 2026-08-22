@@ -22,8 +22,8 @@ use crate::controls::bluetooth::BtEvent;
 fn obex_incoming_agent(tx: mpsc::Sender<BtEvent>, reply_rx: mpsc::Receiver<bool>) {
     use std::io::{BufRead, BufReader, Write};
     use std::process::Stdio;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
 
     // Restart loop — if obexctl ever exits unexpectedly (bluez restart,
     // OBEX session reset, etc.), back off briefly and respawn.
@@ -58,7 +58,9 @@ fn obex_incoming_agent(tx: mpsc::Sender<BtEvent>, reply_rx: mpsc::Receiver<bool>
             thread::spawn(move || {
                 let reader = BufReader::new(stdout);
                 for line in reader.lines().map_while(Result::ok) {
-                    if done.load(Ordering::Relaxed) { break; }
+                    if done.load(Ordering::Relaxed) {
+                        break;
+                    }
                     let _ = line_tx.send(strip_ansi(&line));
                 }
             });
@@ -69,7 +71,9 @@ fn obex_incoming_agent(tx: mpsc::Sender<BtEvent>, reply_rx: mpsc::Receiver<bool>
             thread::spawn(move || {
                 let reader = BufReader::new(stderr);
                 for line in reader.lines().map_while(Result::ok) {
-                    if done.load(Ordering::Relaxed) { break; }
+                    if done.load(Ordering::Relaxed) {
+                        break;
+                    }
                     let _ = line_tx.send(strip_ansi(&line));
                 }
             });
@@ -219,8 +223,8 @@ fn obex_send(tx: &mpsc::Sender<BtEvent>, mac: &str, file_path: &str) {
     use std::io::{BufRead, BufReader, Write};
     use std::path::Path;
     use std::process::Stdio;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
 
     let filename = Path::new(file_path)
         .file_name()
@@ -229,9 +233,7 @@ fn obex_send(tx: &mpsc::Sender<BtEvent>, mac: &str, file_path: &str) {
 
     // File size for progress percentage. obexctl reports bytes
     // transferred without a total, so we look it up ourselves.
-    let bytes_total = std::fs::metadata(file_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let bytes_total = std::fs::metadata(file_path).map(|m| m.len()).unwrap_or(0);
 
     let _ = tx.send(BtEvent::SendProgress {
         mac: mac.to_string(),
@@ -269,7 +271,9 @@ fn obex_send(tx: &mpsc::Sender<BtEvent>, mac: &str, file_path: &str) {
         thread::spawn(move || {
             let reader = BufReader::new(stdout);
             for line in reader.lines().map_while(Result::ok) {
-                if done.load(Ordering::Relaxed) { break; }
+                if done.load(Ordering::Relaxed) {
+                    break;
+                }
                 let _ = line_tx.send(strip_ansi(&line));
             }
         });
@@ -280,7 +284,9 @@ fn obex_send(tx: &mpsc::Sender<BtEvent>, mac: &str, file_path: &str) {
         thread::spawn(move || {
             let reader = BufReader::new(stderr);
             for line in reader.lines().map_while(Result::ok) {
-                if done.load(Ordering::Relaxed) { break; }
+                if done.load(Ordering::Relaxed) {
+                    break;
+                }
                 let _ = line_tx.send(strip_ansi(&line));
             }
         });
@@ -304,10 +310,7 @@ fn obex_send(tx: &mpsc::Sender<BtEvent>, mac: &str, file_path: &str) {
                     connected = true;
                     break;
                 }
-                if l.contains("failed")
-                    || l.contains("error")
-                    || l.contains("not available")
-                {
+                if l.contains("failed") || l.contains("error") || l.contains("not available") {
                     let _ = tx.send(BtEvent::SendFailed {
                         mac: mac.to_string(),
                         msg: line,
@@ -363,10 +366,7 @@ fn obex_send(tx: &mpsc::Sender<BtEvent>, mac: &str, file_path: &str) {
                     });
                     break;
                 }
-                if l.contains("failed")
-                    || l.contains("error")
-                    || l.contains("rejected")
-                {
+                if l.contains("failed") || l.contains("error") || l.contains("rejected") {
                     let _ = tx.send(BtEvent::SendFailed {
                         mac: mac.to_string(),
                         msg: line,

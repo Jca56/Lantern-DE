@@ -19,11 +19,7 @@ pub enum KeyAction {
 }
 
 /// Handle a single pressed key event.
-pub fn handle_key(
-    handler: &mut TextHandler,
-    key: &Key,
-    mods: ModifiersState,
-) -> KeyAction {
+pub fn handle_key(handler: &mut TextHandler, key: &Key, mods: ModifiersState) -> KeyAction {
     // Escape closes any floating LSP UI first, then the menu/find bar.
     if matches!(key, Key::Named(NamedKey::Escape)) {
         if handler.completion.visible {
@@ -51,14 +47,12 @@ pub fn handle_key(
             Key::Named(NamedKey::ArrowDown) => {
                 let n = handler.completion.filtered().len();
                 if n > 0 {
-                    handler.completion.selected =
-                        (handler.completion.selected + 1).min(n - 1);
+                    handler.completion.selected = (handler.completion.selected + 1).min(n - 1);
                 }
                 return KeyAction::Consumed;
             }
             Key::Named(NamedKey::ArrowUp) => {
-                handler.completion.selected =
-                    handler.completion.selected.saturating_sub(1);
+                handler.completion.selected = handler.completion.selected.saturating_sub(1);
                 return KeyAction::Consumed;
             }
             Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Tab) => {

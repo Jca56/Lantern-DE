@@ -7918,4 +7918,3 @@ pub static JOINING_TYPE: &[(u32, u32, JoiningType)] = &[
     (0x1e900, 0x1e943, JoiningType::D),
     (0x1e94b, 0x1e94b, JoiningType::T),
 ];
-

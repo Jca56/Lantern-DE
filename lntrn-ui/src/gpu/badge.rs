@@ -69,14 +69,7 @@ impl<'a> Badge<'a> {
         let text_x = self.x + PADDING_H;
         let text_y = self.y + PADDING_V;
         text_renderer.queue(
-            self.text,
-            font_px,
-            text_x,
-            text_y,
-            color,
-            w,
-            screen_w,
-            screen_h,
+            self.text, font_px, text_x, text_y, color, w, screen_w, screen_h,
         );
     }
 

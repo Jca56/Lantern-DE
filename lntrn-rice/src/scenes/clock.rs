@@ -2,8 +2,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use lntrn_render::{Color, Painter, TextRenderer};
 
-use crate::app::FrameCtx;
 use super::{draw_theme_background, Scene};
+use crate::app::FrameCtx;
 
 const FONT: &str = "Square Sans Serif 7";
 
@@ -47,7 +47,17 @@ impl Scene for Clock {
 
         let screen_w = ctx.wf.round().max(1.0) as u32;
         let screen_h = ctx.hf.round().max(1.0) as u32;
-        text.queue_family(&s, font_size, x, y, Color::WHITE, ctx.wf, FONT, screen_w, screen_h);
+        text.queue_family(
+            &s,
+            font_size,
+            x,
+            y,
+            Color::WHITE,
+            ctx.wf,
+            FONT,
+            screen_w,
+            screen_h,
+        );
     }
 }
 

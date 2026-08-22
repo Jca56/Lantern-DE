@@ -81,7 +81,12 @@ impl<'a> RadioButton<'a> {
             // Accent-filled ring
             painter.circle_filled(cx, cy, OUTER_RADIUS, palette.accent.with_alpha(opacity));
             // Inner dot (contrasting)
-            painter.circle_filled(cx, cy, INNER_RADIUS, Color::from_rgb8(20, 20, 20).with_alpha(opacity));
+            painter.circle_filled(
+                cx,
+                cy,
+                INNER_RADIUS,
+                Color::from_rgb8(20, 20, 20).with_alpha(opacity),
+            );
         } else {
             // Empty circle with border
             let bg = if self.hovered && !self.disabled {

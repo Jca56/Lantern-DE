@@ -53,7 +53,15 @@ impl Dc<'_> {
     }
 
     /// A stat tile: small label, big value, an optional sub-line and gauge.
-    pub fn tile(&mut self, rect: Rect, label: &str, value: &str, sub: Option<&str>, accent: Color, bar: Option<f32>) {
+    pub fn tile(
+        &mut self,
+        rect: Rect,
+        label: &str,
+        value: &str,
+        sub: Option<&str>,
+        accent: Color,
+        bar: Option<f32>,
+    ) {
         let s = self.s;
         self.p.rect_filled(rect, 10.0 * s, self.pal.surface_2);
         let x = rect.x + 14.0 * s;

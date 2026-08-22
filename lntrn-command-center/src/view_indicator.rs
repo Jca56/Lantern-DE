@@ -297,7 +297,14 @@ pub fn draw_notes(
     let fr_y = body_y;
     painter.line_round(fr_x, fr_y, fr_x + fold, fr_y + fold, stroke, color);
     painter.line_round(fr_x, fr_y, fr_x, fr_y + fold, stroke * 0.7, color);
-    painter.line_round(fr_x, fr_y + fold, fr_x + fold, fr_y + fold, stroke * 0.7, color);
+    painter.line_round(
+        fr_x,
+        fr_y + fold,
+        fr_x + fold,
+        fr_y + fold,
+        stroke * 0.7,
+        color,
+    );
 
     // Three short horizontal text lines.
     let line_w = body_w * 0.55;

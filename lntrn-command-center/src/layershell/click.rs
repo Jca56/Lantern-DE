@@ -27,7 +27,12 @@ pub(super) fn handle_clicks(
         let scale_f = wl.fractional_scale() as f32;
         let phys_w = wl.phys_width().max(1);
         let phys_h = wl.phys_height().max(1);
-        let panel = PanelRect::compute_with_dims(phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical());
+        let panel = PanelRect::compute_with_dims(
+            phys_w,
+            scale_f,
+            app.desired_panel_w_logical(),
+            app.desired_panel_h_logical(),
+        );
         let phys_cx = wl.cursor_x as f32 * scale_f;
         let phys_cy = wl.cursor_y as f32 * scale_f;
         let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
@@ -51,7 +56,14 @@ pub(super) fn handle_clicks(
                 if let Some(h) = ws::hit(id, &app.controls, panel_rect, scale_f, phys_cx, phys_cy) {
                     match h {
                         ws::Hit::Slider(slider) => {
-                            let v = ws::slider_value_at(id, slider, &app.controls, panel_rect, scale_f, phys_cx);
+                            let v = ws::slider_value_at(
+                                id,
+                                slider,
+                                &app.controls,
+                                panel_rect,
+                                scale_f,
+                                phys_cx,
+                            );
                             let o = app.controls.toolbar.opts_mut(id);
                             match slider {
                                 ws::WidgetSlider::Size => o.size = v,
@@ -59,17 +71,27 @@ pub(super) fn handle_clicks(
                             }
                             app.widget_slider_drag = Some((id, slider));
                         }
-                        ws::Hit::ToggleDate => app.controls.toolbar.opts_mut(id).clock.show_date ^= true,
-                        ws::Hit::SetDatePos(p) => app.controls.toolbar.opts_mut(id).clock.date_pos = p,
-                        ws::Hit::Toggle24h => app.controls.toolbar.opts_mut(id).clock.hour24 ^= true,
-                        ws::Hit::ToggleSeconds => app.controls.toolbar.opts_mut(id).clock.seconds ^= true,
+                        ws::Hit::ToggleDate => {
+                            app.controls.toolbar.opts_mut(id).clock.show_date ^= true
+                        }
+                        ws::Hit::SetDatePos(p) => {
+                            app.controls.toolbar.opts_mut(id).clock.date_pos = p
+                        }
+                        ws::Hit::Toggle24h => {
+                            app.controls.toolbar.opts_mut(id).clock.hour24 ^= true
+                        }
+                        ws::Hit::ToggleSeconds => {
+                            app.controls.toolbar.opts_mut(id).clock.seconds ^= true
+                        }
                     }
                     app.controls.toolbar.save();
                     return;
                 }
                 // Clicking another widget's ⚙ switches the popover; Done
                 // still works; anything else just closes the popover.
-                if let Some(gid) = te::hit_gear_badge(&app.controls, panel_rect, scale_f, phys_cx, phys_cy) {
+                if let Some(gid) =
+                    te::hit_gear_badge(&app.controls, panel_rect, scale_f, phys_cx, phys_cy)
+                {
                     app.widget_settings_open = if gid == id { None } else { Some(gid) };
                 } else if te::hit_done(panel_rect, scale_f, phys_cx, phys_cy) {
                     app.exit_toolbar_edit();
@@ -93,21 +115,26 @@ pub(super) fn handle_clicks(
             } else if let Some(id) =
                 te::hit_tray_chip(&app.controls, panel_rect, scale_f, phys_cx, phys_cy)
             {
-                app.widget_drag = Some(te::WidgetDrag { id, from_tray: true, cursor: (phys_cx, phys_cy) });
+                app.widget_drag = Some(te::WidgetDrag {
+                    id,
+                    from_tray: true,
+                    cursor: (phys_cx, phys_cy),
+                });
             } else if let Some(id) =
                 te::hit_widget(&app.controls, panel_rect, scale_f, phys_cx, phys_cy)
             {
-                app.widget_drag = Some(te::WidgetDrag { id, from_tray: false, cursor: (phys_cx, phys_cy) });
+                app.widget_drag = Some(te::WidgetDrag {
+                    id,
+                    from_tray: false,
+                    cursor: (phys_cx, phys_cy),
+                });
             } else {
                 // Outer-chrome widgets (strip buttons, dots, sliders,
                 // media) — edit mode includes the media slot even when
                 // nothing is playing so it stays grabbable.
-                let outer_pos = crate::outer_zones::positions(
-                    &app.outer, panel_rect, scale_f, true,
-                );
-                if let Some(id) =
-                    crate::outer_zones::hit_widget(&outer_pos, phys_cx, phys_cy)
-                {
+                let outer_pos =
+                    crate::outer_zones::positions(&app.outer, panel_rect, scale_f, true);
+                if let Some(id) = crate::outer_zones::hit_widget(&outer_pos, phys_cx, phys_cy) {
                     app.outer_drag = Some(crate::outer_edit::OuterDrag {
                         id,
                         cursor: (phys_cx, phys_cy),
@@ -135,8 +162,7 @@ pub(super) fn handle_clicks(
             if let Some(slot) =
                 crate::outer_zones::rect_in(&outer_pos, crate::outer_zones::OuterId::Sliders)
             {
-                if let Some(slider) =
-                    crate::bar_sliders::hit_test(slot, scale_f, phys_cx, phys_cy)
+                if let Some(slider) = crate::bar_sliders::hit_test(slot, scale_f, phys_cx, phys_cy)
                 {
                     let v = crate::bar_sliders::value_at_cursor(slot, scale_f, slider, phys_cx);
                     crate::bar_sliders::set_value(slider, v);
@@ -169,10 +195,17 @@ pub(super) fn handle_clicks(
             // the menu was drawn with, so dock menus that anchor
             // outside the panel are still clickable.
             let surface_bounds = lntrn_render::Rect::new(
-                0.0, 0.0, wl.phys_width().max(1) as f32, wl.phys_height().max(1) as f32,
+                0.0,
+                0.0,
+                wl.phys_width().max(1) as f32,
+                wl.phys_height().max(1) as f32,
             );
             if let Some(action) = crate::launcher::context_menu::hit_test(
-                &menu, surface_bounds, scale_f, phys_cx, phys_cy,
+                &menu,
+                surface_bounds,
+                scale_f,
+                phys_cx,
+                phys_cy,
             ) {
                 app.run_menu_action(action);
             } else {
@@ -182,7 +215,11 @@ pub(super) fn handle_clicks(
         } else if let Some(event_menu) = app.controls.clock.event_menu.clone() {
             // Event-row menu intercepts: Delete row → remove event.
             if crate::controls::clock::event_menu_hit_delete(
-                &event_menu, panel_rect, scale_f, phys_cx, phys_cy,
+                &event_menu,
+                panel_rect,
+                scale_f,
+                phys_cx,
+                phys_cy,
             ) {
                 app.controls
                     .events
@@ -198,17 +235,20 @@ pub(super) fn handle_clicks(
         // click hit one of its interactive widgets (battery toggle,
         // audio slider, audio device list). Skip when an overlay
         // (context menu, power confirm) has the click.
-        let consumed_by_view = !menu_consumed && app.power_confirm.is_none()
-            && handle_control_view_click(
-                app, text, panel_rect, scale_f, phys_cx, phys_cy,
-            );
+        let consumed_by_view = !menu_consumed
+            && app.power_confirm.is_none()
+            && handle_control_view_click(app, text, panel_rect, scale_f, phys_cx, phys_cy);
 
         // Power confirm modal intercepts every click while open.
         let confirm_consumed = if let Some(pending) = app.power_confirm {
             let surface_w_px = wl.phys_width().max(1);
             let surface_h_px = wl.phys_height().max(1);
             match crate::power::hit_test_confirm(
-                surface_w_px, surface_h_px, scale_f, phys_cx, phys_cy,
+                surface_w_px,
+                surface_h_px,
+                scale_f,
+                phys_cx,
+                phys_cy,
             ) {
                 Some(crate::power::ConfirmHit::Confirm) => {
                     tracing::debug!(?pending, "power confirm → run");
@@ -260,18 +300,26 @@ pub(super) fn handle_clicks(
             let pinned = app.launcher.pinned_entries(&app.apps);
             let phys_h_f = wl.phys_height().max(1) as f32;
             if let Some(layout) = crate::mini_dock::compute_layout(
-                panel_rect, phys_h_f, scale_f, &pinned, &app.toplevels, &app.apps,
+                panel_rect,
+                phys_h_f,
+                scale_f,
+                &pinned,
+                &app.toplevels,
+                &app.apps,
                 Some((phys_cx, phys_cy)),
             ) {
                 if let Some(hover_idx) = app.mini_dock_hover {
                     if let Some(entry) = layout.entries.get(hover_idx) {
-                        let windows = crate::mini_dock::windows_for_app(
-                            &app.toplevels, &entry.app_id,
-                        );
+                        let windows =
+                            crate::mini_dock::windows_for_app(&app.toplevels, &entry.app_id);
                         if !windows.is_empty() {
                             dock_preview_hit = crate::mini_dock::hit_test_preview(
-                                &layout, panel_rect, hover_idx,
-                                windows.len(), phys_cx, phys_cy,
+                                &layout,
+                                panel_rect,
+                                hover_idx,
+                                windows.len(),
+                                phys_cx,
+                                phys_cy,
                             )
                             .map(|(wi, h)| (hover_idx, wi, h));
                         }
@@ -315,8 +363,7 @@ pub(super) fn handle_clicks(
             // While the settings page is open all clicks inside the
             // panel route to the settings hit-test first. Offset by the
             // scroll so clicks line up with the on-screen rows.
-            let top_y =
-                crate::controls::content_top_y(panel_rect, scale_f) - app.settings_scroll;
+            let top_y = crate::controls::content_top_y(panel_rect, scale_f) - app.settings_scroll;
             let rows = crate::settings::layout(panel_rect, top_y, scale_f, app.config.text_size);
             if let Some(hit) = crate::settings::hit_test(&rows, phys_cx, phys_cy) {
                 match hit {
@@ -407,7 +454,13 @@ pub(super) fn handle_clicks(
                 true
             } else {
                 let hit = crate::notes::hit_test(
-                    &app.notes, panel_rect, top_y, scale_f, panel_bottom, phys_cx, phys_cy,
+                    &app.notes,
+                    panel_rect,
+                    top_y,
+                    scale_f,
+                    panel_bottom,
+                    phys_cx,
+                    phys_cy,
                 );
                 match hit {
                     crate::notes::Hit::None => false,
@@ -441,13 +494,19 @@ pub(super) fn handle_clicks(
                     crate::notes::Hit::TitleInput => {
                         app.notes.focus = crate::notes::NoteFocus::Title;
                         // Begin a drag-selection in the title input.
-                        let editor = crate::notes::editor_rect(panel_rect, top_y, scale_f, panel_bottom);
+                        let editor =
+                            crate::notes::editor_rect(panel_rect, top_y, scale_f, panel_bottom);
                         let title_field = crate::notes::title_field_rect(editor, scale_f);
                         let title_pad = 12.0 * scale_f;
                         let title_font = (app.config.text_size * scale_f).max(15.0);
                         let q = app.notes.title.query().to_string();
                         let byte = crate::notes::input_byte_at(
-                            title_field, title_pad, &q, title_font, phys_cx, text,
+                            title_field,
+                            title_pad,
+                            &q,
+                            title_font,
+                            phys_cx,
+                            text,
                         );
                         app.notes.title.begin_drag_at(byte);
                         app.notes.drag_field = Some(crate::notes::DragField::Title);
@@ -456,13 +515,20 @@ pub(super) fn handle_clicks(
                     crate::notes::Hit::BodyEditor => {
                         app.notes.focus = crate::notes::NoteFocus::Body;
                         // Begin a drag-selection in the body editor.
-                        let editor = crate::notes::editor_rect(panel_rect, top_y, scale_f, panel_bottom);
+                        let editor =
+                            crate::notes::editor_rect(panel_rect, top_y, scale_f, panel_bottom);
                         let body = crate::notes::body_rect(editor, scale_f);
                         let inner = crate::notes::body_inner_rect(body, scale_f);
                         let buf = app.notes.body.raw().to_string();
                         let byte = crate::notes::body_byte_at(
-                            inner, &buf, app.notes.body_scroll,
-                            app.config.text_size, scale_f, phys_cx, phys_cy, text,
+                            inner,
+                            &buf,
+                            app.notes.body_scroll,
+                            app.config.text_size,
+                            scale_f,
+                            phys_cx,
+                            phys_cy,
+                            text,
                         );
                         app.notes.body.begin_drag_at(byte);
                         app.notes.drag_field = Some(crate::notes::DragField::Body);
@@ -475,8 +541,11 @@ pub(super) fn handle_clicks(
                     crate::notes::Hit::StickyAction => {
                         app.notes.flush_edits_to_selected();
                         let spawn = crate::notes::sticky::spawn_pos(
-                            &app.notes.notes, panel_rect, scale_f,
-                            phys_w as f32, phys_h as f32,
+                            &app.notes.notes,
+                            panel_rect,
+                            scale_f,
+                            phys_w as f32,
+                            phys_h as f32,
                         );
                         crate::notes::sticky::toggle_selected(&mut app.notes, spawn);
                         true
@@ -504,7 +573,13 @@ pub(super) fn handle_clicks(
                 true
             } else {
                 let hit = crate::clipboard::hit_test(
-                    &app.clipboard, panel_rect, top_y, scale_f, panel_bottom, phys_cx, phys_cy,
+                    &app.clipboard,
+                    panel_rect,
+                    top_y,
+                    scale_f,
+                    panel_bottom,
+                    phys_cx,
+                    phys_cy,
                 );
                 match hit {
                     crate::clipboard::Hit::None => false,
@@ -561,7 +636,13 @@ pub(super) fn handle_clicks(
             let top_y = crate::controls::content_top_y(panel_rect, scale_f);
             let panel_bottom = panel_rect.y + panel_rect.h;
             let hit = crate::emojis::hit_test(
-                &app.emojis, panel_rect, top_y, scale_f, panel_bottom, phys_cx, phys_cy,
+                &app.emojis,
+                panel_rect,
+                top_y,
+                scale_f,
+                panel_bottom,
+                phys_cx,
+                phys_cy,
             );
             match hit {
                 crate::emojis::Hit::None => false,
@@ -615,9 +696,7 @@ pub(super) fn handle_clicks(
                 .and_then(|l| l.entries.get(idx))
                 .cloned();
             if let Some(entry) = entry {
-                let windows = crate::mini_dock::windows_for_app(
-                    &app.toplevels, &entry.app_id,
-                );
+                let windows = crate::mini_dock::windows_for_app(&app.toplevels, &entry.app_id);
                 if let Some(target) = windows.get(window_idx).copied() {
                     match hit {
                         crate::mini_dock::PreviewHit::Body => {
@@ -660,16 +739,12 @@ pub(super) fn handle_clicks(
                 .and_then(|l| l.entries.get(dock_idx))
                 .cloned();
             if let Some(entry) = entry {
-                let windows = crate::mini_dock::windows_for_app(
-                    &app.toplevels, &entry.app_id,
-                );
+                let windows = crate::mini_dock::windows_for_app(&app.toplevels, &entry.app_id);
                 if windows.is_empty() && entry.pinned {
                     tracing::debug!(pin = dock_idx, "mini-dock click → launch (no windows)");
                     app.activate_at(crate::app::HitTarget::Pin(dock_idx));
                 } else if !windows.is_empty() {
-                    let next_idx = if let Some(cur) =
-                        windows.iter().position(|w| w.activated)
-                    {
+                    let next_idx = if let Some(cur) = windows.iter().position(|w| w.activated) {
                         (cur + 1) % windows.len()
                     } else {
                         0
@@ -693,8 +768,12 @@ pub(super) fn handle_clicks(
         } else if let Some((id, part)) = (!panel.contains(phys_cx, phys_cy))
             .then(|| {
                 crate::notes::sticky::hit(
-                    &app.notes.notes, scale_f, phys_w as f32, phys_h as f32,
-                    phys_cx, phys_cy,
+                    &app.notes.notes,
+                    scale_f,
+                    phys_w as f32,
+                    phys_h as f32,
+                    phys_cx,
+                    phys_cy,
                 )
             })
             .flatten()
@@ -711,9 +790,8 @@ pub(super) fn handle_clicks(
                 }
                 StickyPart::Body | StickyPart::Resize => {
                     if let Some(n) = app.notes.notes.iter().find(|n| n.id == id) {
-                        let r = crate::notes::sticky::rect(
-                            n, scale_f, phys_w as f32, phys_h as f32,
-                        );
+                        let r =
+                            crate::notes::sticky::rect(n, scale_f, phys_w as f32, phys_h as f32);
                         let resize = part == StickyPart::Resize;
                         let grab = if resize {
                             (r.x + r.w - phys_cx, r.y + r.h - phys_cy)
@@ -741,13 +819,10 @@ pub(super) fn handle_clicks(
             app.dismiss();
         } else if consumed_by_view {
             // Already handled.
-        } else if let Some(tile_id) = app.controls.hit_test(
-            panel_rect,
-            scale_f,
-            phys_cx,
-            phys_cy,
-            app.panel_view,
-        ) {
+        } else if let Some(tile_id) =
+            app.controls
+                .hit_test(panel_rect, scale_f, phys_cx, phys_cy, app.panel_view)
+        {
             match tile_id {
                 crate::controls::TileId::Collapse => {
                     tracing::debug!("collapse chevron click → toggle");
@@ -786,14 +861,10 @@ pub(super) fn handle_clicks(
                                 app.show_control(crate::controls::TileId::Audio);
                             }
                             Some(InlineHit::VolumeBar) => {
-                                let bar = crate::controls::audio::inline_bar_rect(
-                                    &layout, scale_f,
-                                );
-                                let frac =
-                                    ((phys_cx - bar.x) / bar.w).clamp(0.0, 1.0);
+                                let bar = crate::controls::audio::inline_bar_rect(&layout, scale_f);
+                                let frac = ((phys_cx - bar.x) / bar.w).clamp(0.0, 1.0);
                                 app.controls.audio.set_volume(frac);
-                                app.dragging =
-                                    Some(crate::app::DragTarget::AudioInlineSlider);
+                                app.dragging = Some(crate::app::DragTarget::AudioInlineSlider);
                             }
                             None => {}
                         }
@@ -870,7 +941,10 @@ pub(super) fn handle_clicks(
             let scale_f = wl.fractional_scale() as f32;
             let phys_w = wl.phys_width().max(1);
             let panel = PanelRect::compute_with_dims(
-                phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical(),
+                phys_w,
+                scale_f,
+                app.desired_panel_w_logical(),
+                app.desired_panel_h_logical(),
             );
             let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
             if drag.started {
@@ -882,8 +956,12 @@ pub(super) fn handle_clicks(
                 let row_top = crate::launcher::pins_row_top_y(pin_top_y, scale_f);
                 let num_pins = app.launcher.pinned_items(&app.apps).len();
                 let to = crate::launcher::pin_drop_slot(
-                    panel_rect, scale_f, row_top, num_pins,
-                    drag.current_x, drag.current_y,
+                    panel_rect,
+                    scale_f,
+                    row_top,
+                    num_pins,
+                    drag.current_x,
+                    drag.current_y,
                 );
                 tracing::info!(from = drag.from_idx, to, "pin drag commit");
                 app.launcher.reorder_pins(drag.from_idx, to, &app.apps);
@@ -893,5 +971,4 @@ pub(super) fn handle_clicks(
             }
         }
     }
-
 }

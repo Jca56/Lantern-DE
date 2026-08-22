@@ -19,8 +19,7 @@ impl ChecksumJob {
         let result = Arc::new(Mutex::new(None));
         let slot = Arc::clone(&result);
         std::thread::spawn(move || {
-            let hex = compute_sha256(&path)
-                .unwrap_or_else(|| "Unreadable".to_string());
+            let hex = compute_sha256(&path).unwrap_or_else(|| "Unreadable".to_string());
             *slot.lock().unwrap() = Some(hex);
         });
         Self { result }

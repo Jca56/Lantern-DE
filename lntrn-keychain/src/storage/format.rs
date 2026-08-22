@@ -20,8 +20,7 @@ pub const FILE_MAGIC: &[u8; 4] = b"LNKC";
 pub const FORMAT_VERSION: u16 = 1;
 pub const KDF_ARGON2ID: u8 = 1;
 
-const HEADER_LEN: usize =
-    4 + 2 + 1 + 1 + SALT_LEN + 4 + 4 + 4 + NONCE_LEN + 4;
+const HEADER_LEN: usize = 4 + 2 + 1 + 1 + SALT_LEN + 4 + 4 + 4 + NONCE_LEN + 4;
 
 #[derive(Debug)]
 pub enum Error {
@@ -60,43 +59,71 @@ impl FileBlob {
     }
 
     pub fn parse(buf: &[u8]) -> Result<Self, Error> {
-        if buf.len() < HEADER_LEN { return Err(Error::Truncated); }
+        if buf.len() < HEADER_LEN {
+            return Err(Error::Truncated);
+        }
         let mut cur = 0;
 
         let mut magic = [0u8; 4];
-        magic.copy_from_slice(&buf[cur..cur+4]); cur += 4;
-        if &magic != FILE_MAGIC { return Err(Error::BadMagic); }
+        magic.copy_from_slice(&buf[cur..cur + 4]);
+        cur += 4;
+        if &magic != FILE_MAGIC {
+            return Err(Error::BadMagic);
+        }
 
-        let version = u16::from_le_bytes([buf[cur], buf[cur+1]]); cur += 2;
-        if version != FORMAT_VERSION { return Err(Error::UnsupportedVersion(version)); }
+        let version = u16::from_le_bytes([buf[cur], buf[cur + 1]]);
+        cur += 2;
+        if version != FORMAT_VERSION {
+            return Err(Error::UnsupportedVersion(version));
+        }
 
-        let kdf_id = buf[cur]; cur += 1;
-        if kdf_id != KDF_ARGON2ID { return Err(Error::UnsupportedKdf(kdf_id)); }
+        let kdf_id = buf[cur];
+        cur += 1;
+        if kdf_id != KDF_ARGON2ID {
+            return Err(Error::UnsupportedKdf(kdf_id));
+        }
         cur += 1; // reserved
 
         let mut salt = [0u8; SALT_LEN];
-        salt.copy_from_slice(&buf[cur..cur+SALT_LEN]); cur += SALT_LEN;
+        salt.copy_from_slice(&buf[cur..cur + SALT_LEN]);
+        cur += SALT_LEN;
 
-        let m_cost_kib = u32::from_le_bytes(buf[cur..cur+4].try_into().unwrap()); cur += 4;
-        let t_cost     = u32::from_le_bytes(buf[cur..cur+4].try_into().unwrap()); cur += 4;
-        let p_cost     = u32::from_le_bytes(buf[cur..cur+4].try_into().unwrap()); cur += 4;
+        let m_cost_kib = u32::from_le_bytes(buf[cur..cur + 4].try_into().unwrap());
+        cur += 4;
+        let t_cost = u32::from_le_bytes(buf[cur..cur + 4].try_into().unwrap());
+        cur += 4;
+        let p_cost = u32::from_le_bytes(buf[cur..cur + 4].try_into().unwrap());
+        cur += 4;
 
         let mut nonce = [0u8; NONCE_LEN];
-        nonce.copy_from_slice(&buf[cur..cur+NONCE_LEN]); cur += NONCE_LEN;
+        nonce.copy_from_slice(&buf[cur..cur + NONCE_LEN]);
+        cur += NONCE_LEN;
 
-        let ct_len = u32::from_le_bytes(buf[cur..cur+4].try_into().unwrap()) as usize;
+        let ct_len = u32::from_le_bytes(buf[cur..cur + 4].try_into().unwrap()) as usize;
         cur += 4;
 
         // Sanity cap: refuse > 64 MiB ciphertext.
-        if ct_len > 64 * 1024 * 1024 { return Err(Error::OversizedCiphertext); }
-        if buf.len() < cur + ct_len { return Err(Error::Truncated); }
+        if ct_len > 64 * 1024 * 1024 {
+            return Err(Error::OversizedCiphertext);
+        }
+        if buf.len() < cur + ct_len {
+            return Err(Error::Truncated);
+        }
 
-        let ciphertext = buf[cur..cur+ct_len].to_vec();
+        let ciphertext = buf[cur..cur + ct_len].to_vec();
 
         Ok(Self {
-            magic, version, kdf_id, salt,
-            kdf_params: KdfParams { m_cost_kib, t_cost, p_cost },
-            nonce, ciphertext,
+            magic,
+            version,
+            kdf_id,
+            salt,
+            kdf_params: KdfParams {
+                m_cost_kib,
+                t_cost,
+                p_cost,
+            },
+            nonce,
+            ciphertext,
         })
     }
 }
@@ -112,7 +139,11 @@ mod tests {
             version: FORMAT_VERSION,
             kdf_id: KDF_ARGON2ID,
             salt: [7u8; SALT_LEN],
-            kdf_params: KdfParams { m_cost_kib: 4096, t_cost: 2, p_cost: 1 },
+            kdf_params: KdfParams {
+                m_cost_kib: 4096,
+                t_cost: 2,
+                p_cost: 1,
+            },
             nonce: [9u8; NONCE_LEN],
             ciphertext: vec![1, 2, 3, 4, 5, 6, 7, 8],
         };
@@ -134,7 +165,8 @@ mod tests {
             kdf_params: KdfParams::default(),
             nonce: [0u8; NONCE_LEN],
             ciphertext: vec![],
-        }.encode();
+        }
+        .encode();
         bytes[0] = b'X';
         assert!(matches!(FileBlob::parse(&bytes), Err(Error::BadMagic)));
     }

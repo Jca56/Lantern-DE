@@ -46,7 +46,10 @@ impl PairAgent {
         let mut conn = match Connection::connect_system() {
             Ok(c) => c,
             Err(e) => {
-                tracing::warn!(?e, "BT pair agent: system-bus connect failed — incoming pairing disabled");
+                tracing::warn!(
+                    ?e,
+                    "BT pair agent: system-bus connect failed — incoming pairing disabled"
+                );
                 return None;
             }
         };
@@ -77,11 +80,18 @@ impl PairAgent {
                     &body2,
                 );
                 let _ = conn.read_reply(s2);
-                tracing::info!("BT pair agent registered as default — ready to accept incoming pairings");
-                Some(Self { conn, pending: None })
+                tracing::info!(
+                    "BT pair agent registered as default — ready to accept incoming pairings"
+                );
+                Some(Self {
+                    conn,
+                    pending: None,
+                })
             }
             Ok(_) => {
-                tracing::warn!("BT pair agent: RegisterAgent returned an error reply (already registered?)");
+                tracing::warn!(
+                    "BT pair agent: RegisterAgent returned an error reply (already registered?)"
+                );
                 None
             }
             Err(e) => {
@@ -202,7 +212,9 @@ impl PairAgent {
     /// the alias is a best-effort Properties.Get.
     fn device_id_from_path(&mut self, device_path: &str) -> (String, String) {
         let mac = mac_from_device_path(device_path);
-        let alias = self.device_alias(device_path).unwrap_or_else(|| mac.clone());
+        let alias = self
+            .device_alias(device_path)
+            .unwrap_or_else(|| mac.clone());
         (mac, alias)
     }
 

@@ -8,19 +8,35 @@ use super::paths::{self, IFACE_SERVICE};
 use super::session;
 use super::state::{PromptKind, ServiceState};
 use super::wire::{
-    encode_object_paths, encode_secret_struct,
-    read_dict_ss, read_dict_sv, read_object_paths,
+    encode_object_paths, encode_secret_struct, read_dict_ss, read_dict_sv, read_object_paths,
 };
 
 /// Dispatch a method on the Service interface. Returns true if handled.
 pub fn dispatch(conn: &mut Connection, msg: &Message, state: &mut ServiceState) -> bool {
-    if msg.interface != IFACE_SERVICE { return false; }
+    if msg.interface != IFACE_SERVICE {
+        return false;
+    }
     match msg.member.as_str() {
-        "OpenSession" => { session::open_session(conn, msg, state); true }
-        "CreateCollection" => { create_collection(conn, msg, state); true }
-        "SearchItems" => { search_items(conn, msg, state); true }
-        "Unlock" => { unlock(conn, msg, state); true }
-        "Lock" => { lock(conn, msg, state); true }
+        "OpenSession" => {
+            session::open_session(conn, msg, state);
+            true
+        }
+        "CreateCollection" => {
+            create_collection(conn, msg, state);
+            true
+        }
+        "SearchItems" => {
+            search_items(conn, msg, state);
+            true
+        }
+        "Unlock" => {
+            unlock(conn, msg, state);
+            true
+        }
+        "Lock" => {
+            lock(conn, msg, state);
+            true
+        }
         "LockService" => {
             for coll in state.collections.values_mut() {
                 coll.master_key = None;
@@ -28,9 +44,18 @@ pub fn dispatch(conn: &mut Connection, msg: &Message, state: &mut ServiceState) 
             conn.send_reply(msg.serial, &msg.sender, "", &[]);
             true
         }
-        "GetSecrets" => { get_secrets(conn, msg, state); true }
-        "ReadAlias" => { read_alias(conn, msg, state); true }
-        "SetAlias" => { set_alias(conn, msg, state); true }
+        "GetSecrets" => {
+            get_secrets(conn, msg, state);
+            true
+        }
+        "ReadAlias" => {
+            read_alias(conn, msg, state);
+            true
+        }
+        "SetAlias" => {
+            set_alias(conn, msg, state);
+            true
+        }
         _ => false,
     }
 }
@@ -52,7 +77,11 @@ fn create_collection(conn: &mut Connection, msg: &Message, state: &mut ServiceSt
     let prompt_path = super::prompt::create(
         state,
         msg.sender.clone(),
-        PromptKind::CreateCollection { id, label, alias: opt(alias) },
+        PromptKind::CreateCollection {
+            id,
+            label,
+            alias: opt(alias),
+        },
     );
 
     // (collection, prompt) — return empty path for collection (prompt will
@@ -95,8 +124,10 @@ fn search_items(conn: &mut Connection, msg: &Message, state: &ServiceState) {
     conn.send_reply(msg.serial, &msg.sender, "aoao", &body);
 }
 
-fn matches_attrs(have: &std::collections::HashMap<String, String>,
-                 want: &std::collections::HashMap<String, String>) -> bool {
+fn matches_attrs(
+    have: &std::collections::HashMap<String, String>,
+    want: &std::collections::HashMap<String, String>,
+) -> bool {
     for (k, v) in want {
         match have.get(k) {
             Some(hv) if hv == v => {}
@@ -119,9 +150,10 @@ fn unlock(conn: &mut Connection, msg: &Message, state: &mut ServiceState) {
         let coll_id = match paths::classify(o) {
             super::paths::ObjectKind::Collection(id) => id.to_string(),
             super::paths::ObjectKind::Item(c, _) => c.to_string(),
-            super::paths::ObjectKind::Alias(name) => {
-                match state.aliases.get(name) { Some(id) => id.clone(), None => continue }
-            }
+            super::paths::ObjectKind::Alias(name) => match state.aliases.get(name) {
+                Some(id) => id.clone(),
+                None => continue,
+            },
             _ => continue,
         };
         match state.collections.get(&coll_id) {
@@ -137,8 +169,11 @@ fn unlock(conn: &mut Connection, msg: &Message, state: &mut ServiceState) {
         "/".to_string()
     } else {
         super::prompt::create(
-            state, msg.sender.clone(),
-            PromptKind::Unlock { collection_ids: need_unlock },
+            state,
+            msg.sender.clone(),
+            PromptKind::Unlock {
+                collection_ids: need_unlock,
+            },
         )
     };
 
@@ -157,9 +192,10 @@ fn lock(conn: &mut Connection, msg: &Message, state: &mut ServiceState) {
         let coll_id = match paths::classify(o) {
             super::paths::ObjectKind::Collection(id) => id.to_string(),
             super::paths::ObjectKind::Item(c, _) => c.to_string(),
-            super::paths::ObjectKind::Alias(name) => {
-                match state.aliases.get(name) { Some(id) => id.clone(), None => continue }
-            }
+            super::paths::ObjectKind::Alias(name) => match state.aliases.get(name) {
+                Some(id) => id.clone(),
+                None => continue,
+            },
             _ => continue,
         };
         if state.collections.contains_key(&coll_id) {
@@ -198,8 +234,10 @@ fn get_secrets(conn: &mut Connection, msg: &Message, state: &ServiceState) {
 }
 
 fn encode_secrets_dict(
-    out: &mut Vec<u8>, state: &ServiceState,
-    items: &[String], session_id: Option<u64>,
+    out: &mut Vec<u8>,
+    state: &ServiceState,
+    items: &[String],
+    session_id: Option<u64>,
 ) {
     use lntrn_dbus::{align_to, encode_u32};
     align_to(out, 4);
@@ -208,21 +246,37 @@ fn encode_secrets_dict(
     align_to(out, 8);
     let body_start = out.len();
     for path in items {
-        let (coll_id, item_id) = match paths::parse_item(path) { Some(x) => x, None => continue };
-        let coll = match state.collections.get(coll_id) { Some(c) => c, None => continue };
-        if coll.is_locked() { continue; }
-        let it = match coll.items.get(item_id) { Some(it) => it, None => continue };
-        let (params, value) = match session_id
-            .and_then(|sid| session::encrypt_for_session(state, sid, &it.secret))
-        {
-            Some(pair) => pair,
-            None => (Vec::new(), it.secret.clone()),
+        let (coll_id, item_id) = match paths::parse_item(path) {
+            Some(x) => x,
+            None => continue,
         };
+        let coll = match state.collections.get(coll_id) {
+            Some(c) => c,
+            None => continue,
+        };
+        if coll.is_locked() {
+            continue;
+        }
+        let it = match coll.items.get(item_id) {
+            Some(it) => it,
+            None => continue,
+        };
+        let (params, value) =
+            match session_id.and_then(|sid| session::encrypt_for_session(state, sid, &it.secret)) {
+                Some(pair) => pair,
+                None => (Vec::new(), it.secret.clone()),
+            };
         align_to(out, 8);
         encode_string(out, path);
-        encode_secret_struct(out,
-            &session_id.map(paths::session_path).unwrap_or_else(|| "/".into()),
-            &params, &value, &it.content_type);
+        encode_secret_struct(
+            out,
+            &session_id
+                .map(paths::session_path)
+                .unwrap_or_else(|| "/".into()),
+            &params,
+            &value,
+            &it.content_type,
+        );
     }
     let body_len = (out.len() - body_start) as u32;
     out[len_pos..len_pos + 4].copy_from_slice(&body_len.to_le_bytes());
@@ -233,7 +287,9 @@ fn encode_secrets_dict(
 fn read_alias(conn: &mut Connection, msg: &Message, state: &ServiceState) {
     let mut r = BodyReader::new(&msg.body, &msg.signature);
     let name = r.read_string();
-    let path = state.aliases.get(&name)
+    let path = state
+        .aliases
+        .get(&name)
         .map(|id| paths::collection_path(id))
         .unwrap_or_else(|| "/".into());
     let mut body = Vec::new();
@@ -250,8 +306,12 @@ fn set_alias(conn: &mut Connection, msg: &Message, state: &mut ServiceState) {
     } else if let super::paths::ObjectKind::Collection(id) = paths::classify(&path) {
         state.aliases.insert(name, id.to_string());
     } else {
-        conn.send_error(msg.serial, &msg.sender,
-            "org.freedesktop.DBus.Error.InvalidArgs", "not a collection path");
+        conn.send_error(
+            msg.serial,
+            &msg.sender,
+            "org.freedesktop.DBus.Error.InvalidArgs",
+            "not a collection path",
+        );
         return;
     }
     conn.send_reply(msg.serial, &msg.sender, "", &[]);
@@ -262,34 +322,74 @@ fn set_alias(conn: &mut Connection, msg: &Message, state: &mut ServiceState) {
 pub fn emit_collection_created(conn: &mut Connection, coll_path: &str) {
     let mut body = Vec::new();
     encode_string(&mut body, coll_path);
-    conn.send_signal(paths::SERVICE_PATH, IFACE_SERVICE, "CollectionCreated", "o", &body);
+    conn.send_signal(
+        paths::SERVICE_PATH,
+        IFACE_SERVICE,
+        "CollectionCreated",
+        "o",
+        &body,
+    );
 }
 
 pub fn emit_collection_deleted(conn: &mut Connection, coll_path: &str) {
     let mut body = Vec::new();
     encode_string(&mut body, coll_path);
-    conn.send_signal(paths::SERVICE_PATH, IFACE_SERVICE, "CollectionDeleted", "o", &body);
+    conn.send_signal(
+        paths::SERVICE_PATH,
+        IFACE_SERVICE,
+        "CollectionDeleted",
+        "o",
+        &body,
+    );
 }
 
 pub fn emit_collection_changed(conn: &mut Connection, coll_path: &str) {
     let mut body = Vec::new();
     encode_string(&mut body, coll_path);
-    conn.send_signal(paths::SERVICE_PATH, IFACE_SERVICE, "CollectionChanged", "o", &body);
+    conn.send_signal(
+        paths::SERVICE_PATH,
+        IFACE_SERVICE,
+        "CollectionChanged",
+        "o",
+        &body,
+    );
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-fn slugify(label: &str, existing: &std::collections::HashMap<String, super::state::Collection>) -> String {
-    let mut base: String = label.chars().map(|c| {
-        if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' }
-    }).collect();
-    if base.is_empty() { base = "keyring".into(); }
-    if !existing.contains_key(&base) { return base; }
+fn slugify(
+    label: &str,
+    existing: &std::collections::HashMap<String, super::state::Collection>,
+) -> String {
+    let mut base: String = label
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if base.is_empty() {
+        base = "keyring".into();
+    }
+    if !existing.contains_key(&base) {
+        return base;
+    }
     for n in 2..u32::MAX {
         let s = format!("{base}_{n}");
-        if !existing.contains_key(&s) { return s; }
+        if !existing.contains_key(&s) {
+            return s;
+        }
     }
     base
 }
 
-fn opt(s: String) -> Option<String> { if s.is_empty() { None } else { Some(s) } }
+fn opt(s: String) -> Option<String> {
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}

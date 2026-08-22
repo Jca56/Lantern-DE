@@ -298,7 +298,11 @@ impl Wifi {
     /// new state and update the indicator.
     pub fn toggle_vpn(&mut self) {
         let next = !self.vpn_connected.unwrap_or(false);
-        let cmd = if next { "mullvad connect" } else { "mullvad disconnect" };
+        let cmd = if next {
+            "mullvad connect"
+        } else {
+            "mullvad disconnect"
+        };
         crate::app::spawn_detached(cmd);
         // Optimistic flip so the label changes immediately; the next
         // worker tick will confirm or correct it.
@@ -402,7 +406,9 @@ impl Wifi {
     /// Submit the current prompt's password and try to connect.
     /// No-op if the prompt is empty.
     pub fn submit_prompt(&mut self) {
-        let Some(prompt) = &mut self.prompt else { return };
+        let Some(prompt) = &mut self.prompt else {
+            return;
+        };
         if prompt.input.query().is_empty() {
             return;
         }
@@ -463,7 +469,11 @@ impl Wifi {
         // applied next time the user clicks Connect (and we'll write
         // wifi.bssid then).
         if saved {
-            self.connecting_ssid = if in_use { Some(ssid.to_string()) } else { self.connecting_ssid.clone() };
+            self.connecting_ssid = if in_use {
+                Some(ssid.to_string())
+            } else {
+                self.connecting_ssid.clone()
+            };
             self.last_error = None;
             let band = self.band_pref_for(ssid);
             // On unpin, pass `Some("")` so the worker writes an empty
@@ -542,7 +552,9 @@ impl Wifi {
 
     /// Delete a saved NM profile by UUID. Refreshed via the next scan.
     pub fn delete_profile(&mut self, uuid: &str) {
-        let _ = self.cmd_tx.send(WifiCmd::DeleteProfile { uuid: uuid.to_string() });
+        let _ = self.cmd_tx.send(WifiCmd::DeleteProfile {
+            uuid: uuid.to_string(),
+        });
     }
 
     /// Activate the saved profile with `name` (NM's `connection.id`).
@@ -550,6 +562,8 @@ impl Wifi {
     /// wants to pick a specific one.
     pub fn activate_profile(&mut self, name: &str) {
         self.last_error = None;
-        let _ = self.cmd_tx.send(WifiCmd::ActivateProfile { name: name.to_string() });
+        let _ = self.cmd_tx.send(WifiCmd::ActivateProfile {
+            name: name.to_string(),
+        });
     }
 }

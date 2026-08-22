@@ -1,12 +1,14 @@
 use crate::color::Color;
-use crate::rect::Rect;
 use crate::painter::Painter;
+use crate::rect::Rect;
 
 /// Compound shape methods built on top of Painter primitives.
 impl Painter {
     /// Connected line strip through a list of points.
     pub fn polyline(&mut self, points: &[(f32, f32)], width: f32, color: Color) {
-        if color.a < 0.004 || points.len() < 2 { return; }
+        if color.a < 0.004 || points.len() < 2 {
+            return;
+        }
         for seg in points.windows(2) {
             self.line(seg[0].0, seg[0].1, seg[1].0, seg[1].1, width, color);
         }
@@ -14,7 +16,9 @@ impl Painter {
 
     /// Closed polyline (connects last point back to first).
     pub fn polyline_closed(&mut self, points: &[(f32, f32)], width: f32, color: Color) {
-        if color.a < 0.004 || points.len() < 2 { return; }
+        if color.a < 0.004 || points.len() < 2 {
+            return;
+        }
         self.polyline(points, width, color);
         let first = points[0];
         let last = points[points.len() - 1];
@@ -24,7 +28,9 @@ impl Painter {
     /// Filled convex polygon via fan triangulation from the first vertex.
     /// For non-convex polygons, results will be incorrect — triangulate externally.
     pub fn polygon(&mut self, points: &[(f32, f32)], color: Color) {
-        if color.a < 0.004 || points.len() < 3 { return; }
+        if color.a < 0.004 || points.len() < 3 {
+            return;
+        }
         let (ax, ay) = points[0];
         for i in 1..points.len() - 1 {
             let (bx, by) = points[i];
@@ -35,7 +41,9 @@ impl Painter {
 
     /// Line with rounded end caps (circles at each endpoint).
     pub fn line_round(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, width: f32, color: Color) {
-        if color.a < 0.004 { return; }
+        if color.a < 0.004 {
+            return;
+        }
         self.line(x1, y1, x2, y2, width, color);
         let r = width * 0.5;
         self.circle_filled(x1, y1, r, color);
@@ -44,7 +52,9 @@ impl Painter {
 
     /// Connected line strip with rounded joins and caps.
     pub fn polyline_round(&mut self, points: &[(f32, f32)], width: f32, color: Color) {
-        if color.a < 0.004 || points.len() < 2 { return; }
+        if color.a < 0.004 || points.len() < 2 {
+            return;
+        }
         let r = width * 0.5;
         for seg in points.windows(2) {
             self.line(seg[0].0, seg[0].1, seg[1].0, seg[1].1, width, color);
@@ -70,7 +80,9 @@ impl Painter {
         angle: f32,
         stops: &[(f32, Color)],
     ) {
-        if stops.len() < 2 { return; }
+        if stops.len() < 2 {
+            return;
+        }
         if stops.len() == 2 {
             self.rect_gradient_linear(rect, corner_radius, angle, stops[0].1, stops[1].1);
             return;
@@ -95,12 +107,18 @@ impl Painter {
     /// Adaptively tessellated into line segments for smooth rendering.
     pub fn bezier_quad(
         &mut self,
-        x0: f32, y0: f32,
-        cx: f32, cy: f32,
-        x1: f32, y1: f32,
-        width: f32, color: Color,
+        x0: f32,
+        y0: f32,
+        cx: f32,
+        cy: f32,
+        x1: f32,
+        y1: f32,
+        width: f32,
+        color: Color,
     ) {
-        if color.a < 0.004 { return; }
+        if color.a < 0.004 {
+            return;
+        }
         self.tessellate_quad(x0, y0, cx, cy, x1, y1, width, color, 0);
     }
 
@@ -108,51 +126,86 @@ impl Painter {
     /// Adaptively tessellated into line segments for smooth rendering.
     pub fn bezier_cubic(
         &mut self,
-        x0: f32, y0: f32,
-        cx0: f32, cy0: f32,
-        cx1: f32, cy1: f32,
-        x1: f32, y1: f32,
-        width: f32, color: Color,
+        x0: f32,
+        y0: f32,
+        cx0: f32,
+        cy0: f32,
+        cx1: f32,
+        cy1: f32,
+        x1: f32,
+        y1: f32,
+        width: f32,
+        color: Color,
     ) {
-        if color.a < 0.004 { return; }
+        if color.a < 0.004 {
+            return;
+        }
         self.tessellate_cubic(x0, y0, cx0, cy0, cx1, cy1, x1, y1, width, color, 0);
     }
 
     /// Dashed quadratic bezier curve.
     pub fn bezier_quad_dashed(
         &mut self,
-        x0: f32, y0: f32,
-        cx: f32, cy: f32,
-        x1: f32, y1: f32,
-        width: f32, dash: f32, gap: f32, color: Color,
+        x0: f32,
+        y0: f32,
+        cx: f32,
+        cy: f32,
+        x1: f32,
+        y1: f32,
+        width: f32,
+        dash: f32,
+        gap: f32,
+        color: Color,
     ) {
-        if color.a < 0.004 { return; }
+        if color.a < 0.004 {
+            return;
+        }
         let segments = flatten_quad(x0, y0, cx, cy, x1, y1, 0);
         for seg in segments.windows(2) {
-            self.line_dashed(seg[0].0, seg[0].1, seg[1].0, seg[1].1, width, dash, gap, color);
+            self.line_dashed(
+                seg[0].0, seg[0].1, seg[1].0, seg[1].1, width, dash, gap, color,
+            );
         }
     }
 
     /// Dashed cubic bezier curve.
     pub fn bezier_cubic_dashed(
         &mut self,
-        x0: f32, y0: f32,
-        cx0: f32, cy0: f32,
-        cx1: f32, cy1: f32,
-        x1: f32, y1: f32,
-        width: f32, dash: f32, gap: f32, color: Color,
+        x0: f32,
+        y0: f32,
+        cx0: f32,
+        cy0: f32,
+        cx1: f32,
+        cy1: f32,
+        x1: f32,
+        y1: f32,
+        width: f32,
+        dash: f32,
+        gap: f32,
+        color: Color,
     ) {
-        if color.a < 0.004 { return; }
+        if color.a < 0.004 {
+            return;
+        }
         let segments = flatten_cubic(x0, y0, cx0, cy0, cx1, cy1, x1, y1, 0);
         for seg in segments.windows(2) {
-            self.line_dashed(seg[0].0, seg[0].1, seg[1].0, seg[1].1, width, dash, gap, color);
+            self.line_dashed(
+                seg[0].0, seg[0].1, seg[1].0, seg[1].1, width, dash, gap, color,
+            );
         }
     }
 
     fn tessellate_quad(
         &mut self,
-        x0: f32, y0: f32, cx: f32, cy: f32, x1: f32, y1: f32,
-        width: f32, color: Color, depth: u8,
+        x0: f32,
+        y0: f32,
+        cx: f32,
+        cy: f32,
+        x1: f32,
+        y1: f32,
+        width: f32,
+        color: Color,
+        depth: u8,
     ) {
         if depth >= BEZIER_MAX_DEPTH || quad_flat_enough(x0, y0, cx, cy, x1, y1) {
             self.line(x0, y0, x1, y1, width, color);
@@ -170,24 +223,60 @@ impl Painter {
 
     fn tessellate_cubic(
         &mut self,
-        x0: f32, y0: f32, cx0: f32, cy0: f32,
-        cx1: f32, cy1: f32, x1: f32, y1: f32,
-        width: f32, color: Color, depth: u8,
+        x0: f32,
+        y0: f32,
+        cx0: f32,
+        cy0: f32,
+        cx1: f32,
+        cy1: f32,
+        x1: f32,
+        y1: f32,
+        width: f32,
+        color: Color,
+        depth: u8,
     ) {
-        if depth >= BEZIER_MAX_DEPTH
-            || cubic_flat_enough(x0, y0, cx0, cy0, cx1, cy1, x1, y1)
-        {
+        if depth >= BEZIER_MAX_DEPTH || cubic_flat_enough(x0, y0, cx0, cy0, cx1, cy1, x1, y1) {
             self.line(x0, y0, x1, y1, width, color);
             return;
         }
-        let m01x = (x0 + cx0) * 0.5;   let m01y = (y0 + cy0) * 0.5;
-        let m12x = (cx0 + cx1) * 0.5;  let m12y = (cy0 + cy1) * 0.5;
-        let m23x = (cx1 + x1) * 0.5;   let m23y = (cy1 + y1) * 0.5;
-        let ma_x = (m01x + m12x) * 0.5; let ma_y = (m01y + m12y) * 0.5;
-        let mb_x = (m12x + m23x) * 0.5; let mb_y = (m12y + m23y) * 0.5;
-        let mx = (ma_x + mb_x) * 0.5;   let my = (ma_y + mb_y) * 0.5;
-        self.tessellate_cubic(x0, y0, m01x, m01y, ma_x, ma_y, mx, my, width, color, depth + 1);
-        self.tessellate_cubic(mx, my, mb_x, mb_y, m23x, m23y, x1, y1, width, color, depth + 1);
+        let m01x = (x0 + cx0) * 0.5;
+        let m01y = (y0 + cy0) * 0.5;
+        let m12x = (cx0 + cx1) * 0.5;
+        let m12y = (cy0 + cy1) * 0.5;
+        let m23x = (cx1 + x1) * 0.5;
+        let m23y = (cy1 + y1) * 0.5;
+        let ma_x = (m01x + m12x) * 0.5;
+        let ma_y = (m01y + m12y) * 0.5;
+        let mb_x = (m12x + m23x) * 0.5;
+        let mb_y = (m12y + m23y) * 0.5;
+        let mx = (ma_x + mb_x) * 0.5;
+        let my = (ma_y + mb_y) * 0.5;
+        self.tessellate_cubic(
+            x0,
+            y0,
+            m01x,
+            m01y,
+            ma_x,
+            ma_y,
+            mx,
+            my,
+            width,
+            color,
+            depth + 1,
+        );
+        self.tessellate_cubic(
+            mx,
+            my,
+            mb_x,
+            mb_y,
+            m23x,
+            m23y,
+            x1,
+            y1,
+            width,
+            color,
+            depth + 1,
+        );
     }
 }
 
@@ -205,8 +294,14 @@ fn quad_flat_enough(x0: f32, y0: f32, cx: f32, cy: f32, x1: f32, y1: f32) -> boo
 }
 
 fn cubic_flat_enough(
-    x0: f32, y0: f32, cx0: f32, cy0: f32,
-    cx1: f32, cy1: f32, x1: f32, y1: f32,
+    x0: f32,
+    y0: f32,
+    cx0: f32,
+    cy0: f32,
+    cx1: f32,
+    cy1: f32,
+    x1: f32,
+    y1: f32,
 ) -> bool {
     let ux = 3.0 * cx0 - 2.0 * x0 - x1;
     let uy = 3.0 * cy0 - 2.0 * y0 - y1;
@@ -218,14 +313,23 @@ fn cubic_flat_enough(
 }
 
 fn flatten_quad(
-    x0: f32, y0: f32, cx: f32, cy: f32, x1: f32, y1: f32, depth: u8,
+    x0: f32,
+    y0: f32,
+    cx: f32,
+    cy: f32,
+    x1: f32,
+    y1: f32,
+    depth: u8,
 ) -> Vec<(f32, f32)> {
     if depth >= BEZIER_MAX_DEPTH || quad_flat_enough(x0, y0, cx, cy, x1, y1) {
         return vec![(x0, y0), (x1, y1)];
     }
-    let mx01 = (x0 + cx) * 0.5; let my01 = (y0 + cy) * 0.5;
-    let mx12 = (cx + x1) * 0.5; let my12 = (cy + y1) * 0.5;
-    let mx = (mx01 + mx12) * 0.5; let my = (my01 + my12) * 0.5;
+    let mx01 = (x0 + cx) * 0.5;
+    let my01 = (y0 + cy) * 0.5;
+    let mx12 = (cx + x1) * 0.5;
+    let my12 = (cy + y1) * 0.5;
+    let mx = (mx01 + mx12) * 0.5;
+    let my = (my01 + my12) * 0.5;
     let mut pts = flatten_quad(x0, y0, mx01, my01, mx, my, depth + 1);
     let right = flatten_quad(mx, my, mx12, my12, x1, y1, depth + 1);
     pts.extend_from_slice(&right[1..]);
@@ -233,20 +337,31 @@ fn flatten_quad(
 }
 
 fn flatten_cubic(
-    x0: f32, y0: f32, cx0: f32, cy0: f32,
-    cx1: f32, cy1: f32, x1: f32, y1: f32, depth: u8,
+    x0: f32,
+    y0: f32,
+    cx0: f32,
+    cy0: f32,
+    cx1: f32,
+    cy1: f32,
+    x1: f32,
+    y1: f32,
+    depth: u8,
 ) -> Vec<(f32, f32)> {
-    if depth >= BEZIER_MAX_DEPTH
-        || cubic_flat_enough(x0, y0, cx0, cy0, cx1, cy1, x1, y1)
-    {
+    if depth >= BEZIER_MAX_DEPTH || cubic_flat_enough(x0, y0, cx0, cy0, cx1, cy1, x1, y1) {
         return vec![(x0, y0), (x1, y1)];
     }
-    let m01x = (x0 + cx0) * 0.5;   let m01y = (y0 + cy0) * 0.5;
-    let m12x = (cx0 + cx1) * 0.5;  let m12y = (cy0 + cy1) * 0.5;
-    let m23x = (cx1 + x1) * 0.5;   let m23y = (cy1 + y1) * 0.5;
-    let ma_x = (m01x + m12x) * 0.5; let ma_y = (m01y + m12y) * 0.5;
-    let mb_x = (m12x + m23x) * 0.5; let mb_y = (m12y + m23y) * 0.5;
-    let mx = (ma_x + mb_x) * 0.5;   let my = (ma_y + mb_y) * 0.5;
+    let m01x = (x0 + cx0) * 0.5;
+    let m01y = (y0 + cy0) * 0.5;
+    let m12x = (cx0 + cx1) * 0.5;
+    let m12y = (cy0 + cy1) * 0.5;
+    let m23x = (cx1 + x1) * 0.5;
+    let m23y = (cy1 + y1) * 0.5;
+    let ma_x = (m01x + m12x) * 0.5;
+    let ma_y = (m01y + m12y) * 0.5;
+    let mb_x = (m12x + m23x) * 0.5;
+    let mb_y = (m12y + m23y) * 0.5;
+    let mx = (ma_x + mb_x) * 0.5;
+    let my = (ma_y + mb_y) * 0.5;
     let mut pts = flatten_cubic(x0, y0, m01x, m01y, ma_x, ma_y, mx, my, depth + 1);
     let right = flatten_cubic(mx, my, mb_x, mb_y, m23x, m23y, x1, y1, depth + 1);
     pts.extend_from_slice(&right[1..]);

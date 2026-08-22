@@ -7,9 +7,7 @@ use lntrn_dbus::{encode_string, BodyReader, Connection, Message};
 use super::paths::{self, IFACE_COLLECTION};
 use super::session;
 use super::state::{Item, PromptKind, ServiceState};
-use super::wire::{
-    encode_object_paths, read_dict_ss, read_dict_sv, read_secret_struct,
-};
+use super::wire::{encode_object_paths, read_dict_ss, read_dict_sv, read_secret_struct};
 use crate::storage;
 use crate::storage::crypto::MasterKey;
 
@@ -20,11 +18,22 @@ pub fn dispatch(
     state: &mut ServiceState,
     coll_id: &str,
 ) -> bool {
-    if msg.interface != IFACE_COLLECTION { return false; }
+    if msg.interface != IFACE_COLLECTION {
+        return false;
+    }
     match msg.member.as_str() {
-        "Delete" => { delete(conn, msg, state, coll_id); true }
-        "SearchItems" => { search_items(conn, msg, state, coll_id); true }
-        "CreateItem" => { create_item(conn, msg, state, coll_id); true }
+        "Delete" => {
+            delete(conn, msg, state, coll_id);
+            true
+        }
+        "SearchItems" => {
+            search_items(conn, msg, state, coll_id);
+            true
+        }
+        "CreateItem" => {
+            create_item(conn, msg, state, coll_id);
+            true
+        }
         _ => false,
     }
 }
@@ -33,7 +42,9 @@ fn delete(conn: &mut Connection, msg: &Message, state: &mut ServiceState, coll_i
     let prompt_path = super::prompt::create(
         state,
         msg.sender.clone(),
-        PromptKind::DeleteCollection { collection_id: coll_id.to_string() },
+        PromptKind::DeleteCollection {
+            collection_id: coll_id.to_string(),
+        },
     );
     let mut body = Vec::new();
     encode_string(&mut body, &prompt_path);
@@ -67,15 +78,18 @@ fn create_item(conn: &mut Connection, msg: &Message, state: &mut ServiceState, c
     let (session_path, params, value, content_type) = read_secret_struct(&mut r);
     let replace = r.read_bool();
 
-    let label = props.get("org.freedesktop.Secret.Item.Label")
-        .and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let label = props
+        .get("org.freedesktop.Secret.Item.Label")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     let attrs: std::collections::HashMap<String, String> = props
         .get("org.freedesktop.Secret.Item.Attributes")
         .and_then(|v| match v {
             lntrn_dbus::Value::Dict(d) => Some(
-                d.iter().filter_map(|(k, v)| {
-                    v.as_str().map(|s| (k.clone(), s.to_string()))
-                }).collect()
+                d.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                    .collect(),
             ),
             _ => None,
         })
@@ -92,12 +106,19 @@ fn create_item(conn: &mut Connection, msg: &Message, state: &mut ServiceState, c
         }
     };
 
-    let key: MasterKey = match state.collections.get(coll_id).and_then(|c| c.master_key.as_ref()) {
+    let key: MasterKey = match state
+        .collections
+        .get(coll_id)
+        .and_then(|c| c.master_key.as_ref())
+    {
         Some(k) => clone_key(k),
         None => {
-            conn.send_error(msg.serial, &msg.sender,
+            conn.send_error(
+                msg.serial,
+                &msg.sender,
                 "org.freedesktop.Secret.Error.IsLocked",
-                "Collection is locked");
+                "Collection is locked",
+            );
             return;
         }
     };
@@ -106,11 +127,15 @@ fn create_item(conn: &mut Connection, msg: &Message, state: &mut ServiceState, c
 
     // Replace by exact attribute match (the spec's default lookup mode)
     if replace {
-        let existing: Vec<String> = coll.items.iter()
+        let existing: Vec<String> = coll
+            .items
+            .iter()
             .filter(|(_, it)| it.attributes == attrs)
             .map(|(k, _)| k.clone())
             .collect();
-        for id in existing { coll.items.remove(&id); }
+        for id in existing {
+            coll.items.remove(&id);
+        }
     }
 
     let now = storage::unix_now();
@@ -121,7 +146,11 @@ fn create_item(conn: &mut Connection, msg: &Message, state: &mut ServiceState, c
         id: item_id.clone(),
         label,
         attributes: attrs,
-        content_type: if content_type.is_empty() { "text/plain".into() } else { content_type },
+        content_type: if content_type.is_empty() {
+            "text/plain".into()
+        } else {
+            content_type
+        },
         secret: plaintext,
         created: now,
         modified: now,
@@ -142,8 +171,10 @@ fn create_item(conn: &mut Connection, msg: &Message, state: &mut ServiceState, c
     conn.send_reply(msg.serial, &msg.sender, "oo", &body);
 }
 
-fn matches(have: &std::collections::HashMap<String, String>,
-           want: &std::collections::HashMap<String, String>) -> bool {
+fn matches(
+    have: &std::collections::HashMap<String, String>,
+    want: &std::collections::HashMap<String, String>,
+) -> bool {
     for (k, v) in want {
         match have.get(k) {
             Some(hv) if hv == v => {}
@@ -154,7 +185,11 @@ fn matches(have: &std::collections::HashMap<String, String>,
 }
 
 fn clone_key(k: &MasterKey) -> MasterKey {
-    MasterKey { key: k.key, salt: k.salt, params: k.params.clone() }
+    MasterKey {
+        key: k.key,
+        salt: k.salt,
+        params: k.params.clone(),
+    }
 }
 
 // ── Signals ─────────────────────────────────────────────────────────────────

@@ -16,7 +16,12 @@ pub struct Ui {
 
 impl Ui {
     pub fn new() -> Self {
-        Self { pw_len: 0, error: None, checking: false, caps_lock: false }
+        Self {
+            pw_len: 0,
+            error: None,
+            checking: false,
+            caps_lock: false,
+        }
     }
 }
 
@@ -30,11 +35,28 @@ fn now_local() -> libc::tm {
     }
 }
 
-const WEEKDAYS: [&str; 7] =
-    ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const WEEKDAYS: [&str; 7] = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+];
 const MONTHS: [&str; 12] = [
-    "January", "February", "March", "April", "May", "June", "July", "August",
-    "September", "October", "November", "December",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
 ];
 
 fn time_string(tm: &libc::tm) -> String {
@@ -60,7 +82,11 @@ pub fn draw(
     sh: u32,
 ) {
     // Darkening scrim so the clock/field stay legible over any wallpaper.
-    painter.rect_filled(Rect::new(0.0, 0.0, w, h), 0.0, Color::rgba(0.0, 0.0, 0.0, style.scrim_opacity));
+    painter.rect_filled(
+        Rect::new(0.0, 0.0, w, h),
+        0.0,
+        Color::rgba(0.0, 0.0, 0.0, style.scrim_opacity),
+    );
 
     let white = Color::from_rgb8(245, 245, 245);
     let dim = Color::from_rgba8(230, 230, 230, 180);
@@ -72,13 +98,31 @@ pub fn draw(
     let clock = time_string(&tm);
     let cw = text.measure_width(&clock, clock_size);
     let clock_y = h * 0.18;
-    text.queue(&clock, clock_size, center_x - cw / 2.0, clock_y, white, w, sw, sh);
+    text.queue(
+        &clock,
+        clock_size,
+        center_x - cw / 2.0,
+        clock_y,
+        white,
+        w,
+        sw,
+        sh,
+    );
 
     let date_size = (clock_size * 0.26).clamp(28.0, 56.0);
     let date = date_string(&tm);
     let dw = text.measure_width(&date, date_size);
     let date_y = clock_y + clock_size * 1.05;
-    text.queue(&date, date_size, center_x - dw / 2.0, date_y, dim, w, sw, sh);
+    text.queue(
+        &date,
+        date_size,
+        center_x - dw / 2.0,
+        date_y,
+        dim,
+        w,
+        sw,
+        sh,
+    );
 
     // ── Password field ─────────────────────────────────────────────────────────
     let field_w = (w * 0.32).clamp(360.0, 640.0);
@@ -108,12 +152,30 @@ pub fn draw(
     if ui.checking {
         let msg = "Checking…";
         let mw = text.measure_width(msg, date_size * 0.7);
-        text.queue(msg, date_size * 0.7, center_x - mw / 2.0, cy - date_size * 0.35, dim, w, sw, sh);
+        text.queue(
+            msg,
+            date_size * 0.7,
+            center_x - mw / 2.0,
+            cy - date_size * 0.35,
+            dim,
+            w,
+            sw,
+            sh,
+        );
     } else if ui.pw_len == 0 {
         let placeholder = "Enter Password";
         let psize = field_h * 0.36;
         let pw = text.measure_width(placeholder, psize);
-        text.queue(placeholder, psize, center_x - pw / 2.0, cy - psize * 0.55, Color::from_rgba8(220, 220, 220, 120), w, sw, sh);
+        text.queue(
+            placeholder,
+            psize,
+            center_x - pw / 2.0,
+            cy - psize * 0.55,
+            Color::from_rgba8(220, 220, 220, 120),
+            w,
+            sw,
+            sh,
+        );
     } else {
         // Masked dots, centered.
         let dot_r = (field_h * 0.10).clamp(5.0, 10.0);
@@ -132,11 +194,29 @@ pub fn draw(
     if let Some(err) = &ui.error {
         let esize = (field_h * 0.32).clamp(22.0, 36.0);
         let ew = text.measure_width(err, esize);
-        text.queue(err, esize, center_x - ew / 2.0, status_y, Color::from_rgb8(240, 100, 100), w, sw, sh);
+        text.queue(
+            err,
+            esize,
+            center_x - ew / 2.0,
+            status_y,
+            Color::from_rgb8(240, 100, 100),
+            w,
+            sw,
+            sh,
+        );
     } else if ui.caps_lock {
         let msg = "Caps Lock is on";
         let esize = (field_h * 0.30).clamp(20.0, 32.0);
         let mw = text.measure_width(msg, esize);
-        text.queue(msg, esize, center_x - mw / 2.0, status_y, Color::from_rgb8(240, 200, 90), w, sw, sh);
+        text.queue(
+            msg,
+            esize,
+            center_x - mw / 2.0,
+            status_y,
+            Color::from_rgb8(240, 200, 90),
+            w,
+            sw,
+            sh,
+        );
     }
 }

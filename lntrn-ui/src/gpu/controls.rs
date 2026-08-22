@@ -47,19 +47,36 @@ impl Slider {
         let fill_w = (track.w * self.value).clamp(track_h, track.w.max(track_h));
         let fill = Rect::new(track.x, track.y, fill_w, track.h);
         let thumb_x = track.x + track.w * self.value;
-        let thumb_r = if self.active { 12.0 } else if self.hovered { 11.0 } else { 10.0 };
+        let thumb_r = if self.active {
+            12.0
+        } else if self.hovered {
+            11.0
+        } else {
+            10.0
+        };
 
         painter.rect_filled(track, track_h * 0.5, palette.surface_2.with_alpha(0.95));
-        painter.rect_stroke(track, track_h * 0.5, 1.0, palette.text_secondary.with_alpha(0.16));
+        painter.rect_stroke(
+            track,
+            track_h * 0.5,
+            1.0,
+            palette.text_secondary.with_alpha(0.16),
+        );
         painter.rect_gradient_linear(fill, track_h * 0.5, 0.0, self.fill_start, self.fill_end);
 
-        painter.circle_filled(thumb_x, self.rect.y + self.rect.h * 0.5, thumb_r, self.thumb_color);
+        painter.circle_filled(
+            thumb_x,
+            self.rect.y + self.rect.h * 0.5,
+            thumb_r,
+            self.thumb_color,
+        );
         painter.circle_stroke(
             thumb_x,
             self.rect.y + self.rect.h * 0.5,
             thumb_r + 3.0,
             2.0,
-            self.fill_end.with_alpha(if self.active { 0.46 } else { 0.22 }),
+            self.fill_end
+                .with_alpha(if self.active { 0.46 } else { 0.22 }),
         );
         painter.circle_stroke(
             thumb_x,

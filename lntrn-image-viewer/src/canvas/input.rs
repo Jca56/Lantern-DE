@@ -51,7 +51,13 @@ pub fn on_zone_pressed(
             if let Some((idx, handle)) = ed.hit_handle(cx, cy, &vp, s) {
                 let orig = ed.doc.items[idx].clone();
                 let (gx, gy) = ed.to_canvas(cx, cy, &vp, s);
-                ed.drag = DragMode::ResizingItem { idx, handle, orig, grab_cx: gx, grab_cy: gy };
+                ed.drag = DragMode::ResizingItem {
+                    idx,
+                    handle,
+                    orig,
+                    grab_cx: gx,
+                    grab_cy: gy,
+                };
             } else if let Some(idx) = ed.hit_item(cx, cy, &vp, s) {
                 ed.selected = Some(idx);
                 let (ccx, ccy) = ed.to_canvas(cx, cy, &vp, s);
@@ -63,7 +69,10 @@ pub fn on_zone_pressed(
                 };
             } else {
                 ed.selected = None;
-                ed.drag = DragMode::PanningCanvas { last_x: cx, last_y: cy };
+                ed.drag = DragMode::PanningCanvas {
+                    last_x: cx,
+                    last_y: cy,
+                };
             }
         }
         ZONE_SEL_DELETE => ed.delete_selected(),
@@ -130,7 +139,9 @@ pub fn on_motion(
         if dist > DRAG_THRESHOLD * s {
             if let Some(entry) = entry_for_row(sb, row) {
                 if !entry.is_dir {
-                    ed.drag = DragMode::SidebarDrag { path: entry.path.clone() };
+                    ed.drag = DragMode::SidebarDrag {
+                        path: entry.path.clone(),
+                    };
                 }
             }
             sb.pressed = None;
@@ -142,7 +153,8 @@ pub fn on_motion(
         let rows_vp = sidebar::rows_viewport(sb, hf, s);
         let content_h = sidebar::content_height(sb, s);
         let bar = lntrn_ui::gpu::Scrollbar::new(&rows_vp, content_h, sb.scroll.offset);
-        sb.scroll.set(bar.offset_for_thumb_y(cy, content_h, rows_vp.h));
+        sb.scroll
+            .set(bar.offset_for_thumb_y(cy, content_h, rows_vp.h));
     }
 
     match &mut ed.drag {
@@ -152,7 +164,11 @@ pub fn on_motion(
             *last_y = cy;
             ed.pan_by_screen(dx, dy, s);
         }
-        DragMode::MovingItem { idx, grab_dx, grab_dy } => {
+        DragMode::MovingItem {
+            idx,
+            grab_dx,
+            grab_dy,
+        } => {
             let (idx, gdx, gdy) = (*idx, *grab_dx, *grab_dy);
             let (ccx, ccy) = ed.to_canvas(cx, cy, &vp, s);
             if let Some(item) = ed.doc.items.get_mut(idx) {
@@ -161,7 +177,13 @@ pub fn on_motion(
                 ed.dirty = true;
             }
         }
-        DragMode::ResizingItem { idx, handle, orig, grab_cx, grab_cy } => {
+        DragMode::ResizingItem {
+            idx,
+            handle,
+            orig,
+            grab_cx,
+            grab_cy,
+        } => {
             let (idx, handle, orig, gx, gy) = (*idx, *handle, orig.clone(), *grab_cx, *grab_cy);
             let (ccx, ccy) = ed.to_canvas(cx, cy, &vp, s);
             ed.apply_resize(idx, handle, &orig, ccx, ccy, gx, gy);
@@ -203,7 +225,9 @@ pub fn on_release(
             sb.navigate_up();
             return;
         }
-        let Some(entry) = entry_for_row(sb, row) else { return };
+        let Some(entry) = entry_for_row(sb, row) else {
+            return;
+        };
         let (is_dir, path) = (entry.is_dir, entry.path.clone());
         if is_dir {
             sb.navigate(path);
@@ -232,7 +256,11 @@ fn entry_for_row(sb: &SidebarState, row: usize) -> Option<&super::sidebar::Sideb
     if is_parent_row(sb, row) {
         return None; // handled by caller via navigate_up
     }
-    let skip = if sb.current_dir.parent().is_some() { 1 } else { 0 };
+    let skip = if sb.current_dir.parent().is_some() {
+        1
+    } else {
+        0
+    };
     sb.entries.get(row - skip)
 }
 
@@ -254,7 +282,8 @@ pub fn on_scroll(
     let side = sidebar::sidebar_rect(sb, hf, s);
     if !sb.collapsed && side.contains(cx, cy) {
         let rows_vp = sidebar::rows_viewport(sb, hf, s);
-        sb.scroll.scroll_by(delta * s * 4.0, sidebar::content_height(sb, s), rows_vp.h);
+        sb.scroll
+            .scroll_by(delta * s * 4.0, sidebar::content_height(sb, s), rows_vp.h);
         return;
     }
     let vp = canvas_viewport(wf, hf, s, sb.phys_width(s));
@@ -457,7 +486,14 @@ pub fn add_dropped(
             continue;
         }
         let (ccx, ccy) = ed.to_canvas(drop_x, drop_y, &vp, s);
-        add_at(ed, path.clone(), ccx + n as f32 * step, ccy + n as f32 * step, &vp, s);
+        add_at(
+            ed,
+            path.clone(),
+            ccx + n as f32 * step,
+            ccy + n as f32 * step,
+            &vp,
+            s,
+        );
         n += 1;
     }
 }
@@ -472,24 +508,72 @@ fn keycode_to_char(key: u32, shift: bool) -> Option<char> {
                 b"1234567890"[(key - 2) as usize]
             }
         }
-        12 => if shift { b'_' } else { b'-' },
-        13 => if shift { b'+' } else { b'=' },
+        12 => {
+            if shift {
+                b'_'
+            } else {
+                b'-'
+            }
+        }
+        13 => {
+            if shift {
+                b'+'
+            } else {
+                b'='
+            }
+        }
         16..=25 => {
             let base = b"qwertyuiop"[(key - 16) as usize];
-            if shift { base.to_ascii_uppercase() } else { base }
+            if shift {
+                base.to_ascii_uppercase()
+            } else {
+                base
+            }
         }
         30..=38 => {
             let base = b"asdfghjkl"[(key - 30) as usize];
-            if shift { base.to_ascii_uppercase() } else { base }
+            if shift {
+                base.to_ascii_uppercase()
+            } else {
+                base
+            }
         }
         44..=50 => {
             let base = b"zxcvbnm"[(key - 44) as usize];
-            if shift { base.to_ascii_uppercase() } else { base }
+            if shift {
+                base.to_ascii_uppercase()
+            } else {
+                base
+            }
         }
-        39 => if shift { b':' } else { b';' },
-        40 => if shift { b'"' } else { b'\'' },
-        51 => if shift { b'<' } else { b',' },
-        52 => if shift { b'>' } else { b'.' },
+        39 => {
+            if shift {
+                b':'
+            } else {
+                b';'
+            }
+        }
+        40 => {
+            if shift {
+                b'"'
+            } else {
+                b'\''
+            }
+        }
+        51 => {
+            if shift {
+                b'<'
+            } else {
+                b','
+            }
+        }
+        52 => {
+            if shift {
+                b'>'
+            } else {
+                b'.'
+            }
+        }
         57 => b' ',
         _ => return None,
     };

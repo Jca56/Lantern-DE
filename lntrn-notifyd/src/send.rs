@@ -82,7 +82,7 @@ fn send_notification(
         &(
             app_name,
             0u32, // replaces_id
-            "",    // app_icon
+            "",   // app_icon
             summary,
             body,
             Vec::<String>::new(), // actions

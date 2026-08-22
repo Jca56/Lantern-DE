@@ -159,7 +159,11 @@ pub fn draw_desktop<'a>(
                 .fold(0.0f32, f32::max);
             let bg_w = (widest + 12.0).min(CELL_W - 4.0);
             let bg_x = ox + (CELL_W - bg_w) * 0.5;
-            let bg = if selected { LABEL_BG_SELECTED } else { LABEL_BG };
+            let bg = if selected {
+                LABEL_BG_SELECTED
+            } else {
+                LABEL_BG
+            };
             painter.rect_filled(
                 Rect::new(
                     bg_x * scale,
@@ -201,7 +205,9 @@ pub fn draw_desktop<'a>(
 
         if let Some(rn) = &state.renaming {
             if rn.idx == i {
-                draw_rename_box(painter, text, rn, scale, ox, label_y, sw_f, surface_w, surface_h);
+                draw_rename_box(
+                    painter, text, rn, scale, ox, label_y, sw_f, surface_w, surface_h,
+                );
             }
         }
     }

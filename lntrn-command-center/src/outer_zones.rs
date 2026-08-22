@@ -88,7 +88,10 @@ pub const ALL_ZONES: [OuterZone; 6] = [
 
 impl OuterZone {
     pub fn is_top(self) -> bool {
-        matches!(self, OuterZone::TopLeft | OuterZone::TopMiddle | OuterZone::TopRight)
+        matches!(
+            self,
+            OuterZone::TopLeft | OuterZone::TopMiddle | OuterZone::TopRight
+        )
     }
 
     /// Horizontal third (0 = left, 1 = middle, 2 = right).
@@ -129,7 +132,10 @@ impl OuterId {
     }
 
     pub fn from_config_key(key: &str) -> Option<Self> {
-        ALL_WIDGETS.iter().copied().find(|id| id.config_key() == key)
+        ALL_WIDGETS
+            .iter()
+            .copied()
+            .find(|id| id.config_key() == key)
     }
 
     pub fn display_name(self) -> &'static str {
@@ -174,7 +180,10 @@ impl OuterId {
                 // Visible dots plus a 6 px hit pad on every side so the
                 // unit is grabbable without pixel-perfect aim.
                 let n = crate::app::PanelView::ALL.len() as f32;
-                (n * DOT_DIAMETER + (n - 1.0) * DOT_GAP + 12.0, DOT_DIAMETER + 12.0)
+                (
+                    n * DOT_DIAMETER + (n - 1.0) * DOT_GAP + 12.0,
+                    DOT_DIAMETER + 12.0,
+                )
             }
             OuterId::Sliders => (crate::bar_sliders::BLOCK_W, crate::bar_sliders::BLOCK_H),
             OuterId::Media => (crate::media::render::CARD_W, crate::media::render::CARD_H),
@@ -371,8 +380,8 @@ pub fn positions(
         if ids.is_empty() {
             continue;
         }
-        let total_w: f32 = ids.iter().map(|id| id.size().0 * scale).sum::<f32>()
-            + gap * (ids.len() - 1) as f32;
+        let total_w: f32 =
+            ids.iter().map(|id| id.size().0 * scale).sum::<f32>() + gap * (ids.len() - 1) as f32;
         let third = panel.w / 3.0;
         let col_x = panel.x + third * zone.column() as f32;
         let mut x = match zone.column() {
@@ -424,7 +433,12 @@ pub fn zone_rect(zone: OuterZone, panel: Rect, scale: f32) -> Rect {
     let third = panel.w / 3.0;
     let x = panel.x + third * zone.column() as f32;
     if zone.is_top() {
-        Rect::new(x, panel.y - TOP_BAND_H * scale, third, (TOP_BAND_H - 2.0) * scale)
+        Rect::new(
+            x,
+            panel.y - TOP_BAND_H * scale,
+            third,
+            (TOP_BAND_H - 2.0) * scale,
+        )
     } else {
         Rect::new(
             x,

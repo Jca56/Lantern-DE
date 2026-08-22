@@ -85,10 +85,12 @@ pub struct Painter {
 
 impl Painter {
     pub fn new(gpu: &GpuContext) -> Self {
-        let shader = gpu.device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Lantern 2D Shader"),
-            source: wgpu::ShaderSource::Wgsl(SHADER_2D.into()),
-        });
+        let shader = gpu
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("Lantern 2D Shader"),
+                source: wgpu::ShaderSource::Wgsl(SHADER_2D.into()),
+            });
 
         let globals_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Globals"),
@@ -97,19 +99,21 @@ impl Painter {
             mapped_at_creation: false,
         });
 
-        let globals_layout = gpu.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Globals Layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
+        let globals_layout =
+            gpu.device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("Globals Layout"),
+                    entries: &[wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    }],
+                });
 
         let globals_bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Globals Bind Group"),
@@ -120,11 +124,13 @@ impl Painter {
             }],
         });
 
-        let pipeline_layout = gpu.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("2D Pipeline Layout"),
-            bind_group_layouts: &[&globals_layout],
-            immediate_size: 0,
-        });
+        let pipeline_layout = gpu
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("2D Pipeline Layout"),
+                bind_group_layouts: &[&globals_layout],
+                immediate_size: 0,
+            });
 
         let instance_layout = wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<Instance>() as u64,
@@ -163,50 +169,52 @@ impl Painter {
             ],
         };
 
-        let pipeline = gpu.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("2D Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[instance_layout],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: gpu.format,
-                    blend: Some(wgpu::BlendState {
-                        color: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::One,
-                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                        alpha: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::One,
-                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                    }),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleStrip,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        let pipeline = gpu
+            .device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("2D Pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[instance_layout],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: gpu.format,
+                        blend: Some(wgpu::BlendState {
+                            color: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::One,
+                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                            alpha: wgpu::BlendComponent {
+                                src_factor: wgpu::BlendFactor::One,
+                                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                                operation: wgpu::BlendOperation::Add,
+                            },
+                        }),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleStrip,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            });
 
         let instance_buffer = Self::create_instance_buffer(gpu, INITIAL_INSTANCES);
 
@@ -218,7 +226,10 @@ impl Painter {
             instance_capacity: INITIAL_INSTANCES,
             instances: Vec::with_capacity(1024),
             clip_stack: Vec::new(),
-            clip_spans: vec![ClipSpan { start: 0, clip: None }],
+            clip_spans: vec![ClipSpan {
+                start: 0,
+                clip: None,
+            }],
             current_layer: 0,
             layer_breaks: Vec::new(),
             instances_uploaded: false,
@@ -229,7 +240,10 @@ impl Painter {
         self.instances.clear();
         self.clip_stack.clear();
         self.clip_spans.clear();
-        self.clip_spans.push(ClipSpan { start: 0, clip: None });
+        self.clip_spans.push(ClipSpan {
+            start: 0,
+            clip: None,
+        });
         self.current_layer = 0;
         self.layer_breaks.clear();
         self.instances_uploaded = false;
@@ -239,7 +253,9 @@ impl Painter {
     /// to the intersection of all active clip rects on the stack.
     pub fn push_clip(&mut self, rect: Rect) {
         let effective = if let Some(current) = self.clip_stack.last() {
-            current.intersect(&rect).unwrap_or(Rect::new(0.0, 0.0, 0.0, 0.0))
+            current
+                .intersect(&rect)
+                .unwrap_or(Rect::new(0.0, 0.0, 0.0, 0.0))
         } else {
             rect
         };
@@ -272,8 +288,10 @@ impl Painter {
             .push((self.instances.len() as u32, self.clip_spans.len()));
         // Reset clip state for new layer
         self.clip_stack.clear();
-        self.clip_spans
-            .push(ClipSpan { start: self.instances.len() as u32, clip: None });
+        self.clip_spans.push(ClipSpan {
+            start: self.instances.len() as u32,
+            clip: None,
+        });
         self.current_layer = layer;
     }
 
@@ -414,10 +432,8 @@ impl Painter {
                     Some(rect) => {
                         let sx = (rect.x.max(0.0) as u32).min(gpu.width().saturating_sub(1));
                         let sy = (rect.y.max(0.0) as u32).min(gpu.height().saturating_sub(1));
-                        let sw =
-                            (rect.w.max(0.0) as u32).min(gpu.width().saturating_sub(sx));
-                        let sh =
-                            (rect.h.max(0.0) as u32).min(gpu.height().saturating_sub(sy));
+                        let sw = (rect.w.max(0.0) as u32).min(gpu.width().saturating_sub(sx));
+                        let sh = (rect.h.max(0.0) as u32).min(gpu.height().saturating_sub(sy));
                         if sw == 0 || sh == 0 {
                             continue;
                         }
@@ -434,7 +450,9 @@ impl Painter {
     }
 
     pub fn rect_filled(&mut self, rect: Rect, corner_radius: f32, color: Color) {
-        if color.a < 0.004 { return; }
+        if color.a < 0.004 {
+            return;
+        }
         self.instances.push(Instance {
             bounds: [rect.x, rect.y, rect.w, rect.h],
             color: [color.r, color.g, color.b, color.a],
@@ -446,7 +464,9 @@ impl Painter {
     }
 
     pub fn circle_filled(&mut self, cx: f32, cy: f32, radius: f32, color: Color) {
-        if color.a < 0.004 { return; }
+        if color.a < 0.004 {
+            return;
+        }
         let size = radius * 2.0;
         self.instances.push(Instance {
             bounds: [cx - radius, cy - radius, size, size],
@@ -459,7 +479,9 @@ impl Painter {
     }
 
     pub fn line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, width: f32, color: Color) {
-        if color.a < 0.004 { return; }
+        if color.a < 0.004 {
+            return;
+        }
         self.instances.push(Instance {
             bounds: [x1, y1, 0.0, 0.0],
             color: [color.r, color.g, color.b, color.a],
@@ -470,8 +492,17 @@ impl Painter {
         });
     }
 
-    pub fn circle_stroke(&mut self, cx: f32, cy: f32, radius: f32, stroke_width: f32, color: Color) {
-        if color.a < 0.004 { return; }
+    pub fn circle_stroke(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        radius: f32,
+        stroke_width: f32,
+        color: Color,
+    ) {
+        if color.a < 0.004 {
+            return;
+        }
         let expand = stroke_width * 0.5 + 3.0;
         let size = (radius + expand) * 2.0;
         self.instances.push(Instance {
@@ -517,7 +548,9 @@ impl Painter {
         angle: f32,
         colors: &[Color],
     ) {
-        if colors.len() < 3 { return; }
+        if colors.len() < 3 {
+            return;
+        }
         let c0 = colors[0];
         let c1 = colors[1];
         let c2 = colors[2];
@@ -599,7 +632,12 @@ impl Painter {
     ) {
         self.instances.push(Instance {
             bounds: [rect.x, rect.y, rect.w, rect.h],
-            color: [center_color.r, center_color.g, center_color.b, center_color.a],
+            color: [
+                center_color.r,
+                center_color.g,
+                center_color.b,
+                center_color.a,
+            ],
             params: [corner_radius, 0.0, 0.0, SHAPE_GRADIENT_RADIAL],
             color_b: [edge_color.r, edge_color.g, edge_color.b, edge_color.a],
             color_c: [0.0; 4],
@@ -610,7 +648,9 @@ impl Painter {
     /// Proper SDF-based rounded rect outline. Unlike `rect_stroke` which draws
     /// 4 separate rects, this produces smooth continuous corners.
     pub fn rect_stroke_sdf(&mut self, rect: Rect, corner_radius: f32, width: f32, color: Color) {
-        if color.a < 0.004 { return; }
+        if color.a < 0.004 {
+            return;
+        }
         let expand = width * 0.5 + 2.0;
         let expanded = rect.expand(expand);
         self.instances.push(Instance {
@@ -629,7 +669,9 @@ impl Painter {
     /// rounded for any thickness — unlike `rect_stroke_sdf` which collapses
     /// to a square inner corner once width approaches the outer radius.
     pub fn rect_border(&mut self, rect: Rect, outer_radius: f32, width: f32, color: Color) {
-        if color.a < 0.004 || width <= 0.0 { return; }
+        if color.a < 0.004 || width <= 0.0 {
+            return;
+        }
         let expanded = rect.expand(2.0);
         self.instances.push(Instance {
             bounds: [expanded.x, expanded.y, expanded.w, expanded.h],
@@ -646,15 +688,27 @@ impl Painter {
     /// `progress` ranges from 1.0 (full border) to 0.0 (invisible),
     /// sweeping clockwise from the top-left corner.
     pub fn rect_stroke_progress(
-        &mut self, rect: Rect, corner_radius: f32, width: f32, color: Color, progress: f32,
+        &mut self,
+        rect: Rect,
+        corner_radius: f32,
+        width: f32,
+        color: Color,
+        progress: f32,
     ) {
-        if color.a < 0.004 || progress <= 0.0 { return; }
+        if color.a < 0.004 || progress <= 0.0 {
+            return;
+        }
         let expand = width * 0.5 + 2.0;
         let expanded = rect.expand(expand);
         self.instances.push(Instance {
             bounds: [expanded.x, expanded.y, expanded.w, expanded.h],
             color: [color.r, color.g, color.b, color.a],
-            params: [corner_radius, width, progress.clamp(0.0, 1.0), SHAPE_RECT_STROKE_PROGRESS],
+            params: [
+                corner_radius,
+                width,
+                progress.clamp(0.0, 1.0),
+                SHAPE_RECT_STROKE_PROGRESS,
+            ],
             color_b: [0.0; 4],
             color_c: [0.0; 4],
             color_d: [0.0; 4],
@@ -664,7 +718,9 @@ impl Painter {
     /// Rounded rect with different radius per corner.
     /// Order: top-left, top-right, bottom-left, bottom-right.
     pub fn rect_4corner(&mut self, rect: Rect, radii: [f32; 4], color: Color) {
-        if color.a < 0.004 { return; }
+        if color.a < 0.004 {
+            return;
+        }
         self.instances.push(Instance {
             bounds: [rect.x, rect.y, rect.w, rect.h],
             color: [color.r, color.g, color.b, color.a],
@@ -677,7 +733,9 @@ impl Painter {
 
     /// Filled triangle from 3 points.
     pub fn triangle(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x3: f32, y3: f32, color: Color) {
-        if color.a < 0.004 { return; }
+        if color.a < 0.004 {
+            return;
+        }
         self.instances.push(Instance {
             bounds: [x1, y1, x2, y2],
             color: [color.r, color.g, color.b, color.a],
@@ -691,10 +749,17 @@ impl Painter {
     /// Soft drop shadow for a rounded rect. `sigma` controls blur spread.
     /// `offset_x` / `offset_y` shift the shadow (positive = right/down).
     pub fn shadow(
-        &mut self, rect: Rect, corner_radius: f32, sigma: f32, color: Color,
-        offset_x: f32, offset_y: f32,
+        &mut self,
+        rect: Rect,
+        corner_radius: f32,
+        sigma: f32,
+        color: Color,
+        offset_x: f32,
+        offset_y: f32,
     ) {
-        if color.a < 0.004 { return; }
+        if color.a < 0.004 {
+            return;
+        }
         let expand = sigma * 3.0;
         let shifted = Rect::new(rect.x + offset_x, rect.y + offset_y, rect.w, rect.h);
         let expanded = shifted.expand(expand);
@@ -712,10 +777,17 @@ impl Painter {
     /// The shadow is drawn *inside* the rect. `offset_x` / `offset_y` control
     /// the light direction (e.g. negative Y = light from top).
     pub fn inner_shadow(
-        &mut self, rect: Rect, corner_radius: f32, sigma: f32, color: Color,
-        offset_x: f32, offset_y: f32,
+        &mut self,
+        rect: Rect,
+        corner_radius: f32,
+        sigma: f32,
+        color: Color,
+        offset_x: f32,
+        offset_y: f32,
     ) {
-        if color.a < 0.004 { return; }
+        if color.a < 0.004 {
+            return;
+        }
         self.instances.push(Instance {
             bounds: [rect.x, rect.y, rect.w, rect.h],
             color: [color.r, color.g, color.b, color.a],
@@ -732,10 +804,17 @@ impl Painter {
     /// transition arc uses `taper_curve` so the curve length is independent
     /// of the end radii (pass ≥ `corner_radius`).
     pub fn tapered_pill(
-        &mut self, rect: Rect, corner_radius: f32, split_x: f32, taper_amt: f32,
-        taper_curve: f32, color: Color,
+        &mut self,
+        rect: Rect,
+        corner_radius: f32,
+        split_x: f32,
+        taper_amt: f32,
+        taper_curve: f32,
+        color: Color,
     ) {
-        if color.a < 0.004 { return; }
+        if color.a < 0.004 {
+            return;
+        }
         self.instances.push(Instance {
             bounds: [rect.x, rect.y, rect.w, rect.h],
             color: [color.r, color.g, color.b, color.a],
@@ -748,10 +827,20 @@ impl Painter {
 
     /// Soft drop shadow for a tapered pill.
     pub fn tapered_pill_shadow(
-        &mut self, rect: Rect, corner_radius: f32, split_x: f32, taper_amt: f32,
-        taper_curve: f32, sigma: f32, color: Color, offset_x: f32, offset_y: f32,
+        &mut self,
+        rect: Rect,
+        corner_radius: f32,
+        split_x: f32,
+        taper_amt: f32,
+        taper_curve: f32,
+        sigma: f32,
+        color: Color,
+        offset_x: f32,
+        offset_y: f32,
     ) {
-        if color.a < 0.004 { return; }
+        if color.a < 0.004 {
+            return;
+        }
         let expand = sigma * 3.0;
         let shifted = Rect::new(rect.x + offset_x, rect.y + offset_y, rect.w, rect.h);
         let expanded = shifted.expand(expand);
@@ -767,14 +856,29 @@ impl Painter {
 
     /// Inset shadow for a tapered pill — bevel that follows the taper curve.
     pub fn tapered_pill_inner_shadow(
-        &mut self, rect: Rect, corner_radius: f32, split_x: f32, taper_amt: f32,
-        taper_curve: f32, sigma: f32, color: Color, offset_x: f32, offset_y: f32,
+        &mut self,
+        rect: Rect,
+        corner_radius: f32,
+        split_x: f32,
+        taper_amt: f32,
+        taper_curve: f32,
+        sigma: f32,
+        color: Color,
+        offset_x: f32,
+        offset_y: f32,
     ) {
-        if color.a < 0.004 { return; }
+        if color.a < 0.004 {
+            return;
+        }
         self.instances.push(Instance {
             bounds: [rect.x, rect.y, rect.w, rect.h],
             color: [color.r, color.g, color.b, color.a],
-            params: [corner_radius, split_x, taper_amt, SHAPE_TAPERED_PILL_INNER_SHADOW],
+            params: [
+                corner_radius,
+                split_x,
+                taper_amt,
+                SHAPE_TAPERED_PILL_INNER_SHADOW,
+            ],
             color_b: [sigma, offset_x, offset_y, taper_curve],
             color_c: [0.0; 4],
             color_d: [0.0; 4],
@@ -787,16 +891,31 @@ impl Painter {
     /// `inner_radius` creates a donut shape (0 for full pie).
     pub fn arc(
         &mut self,
-        cx: f32, cy: f32, outer_radius: f32,
-        start_angle: f32, sweep_angle: f32,
-        stroke_width: f32, inner_radius: f32,
+        cx: f32,
+        cy: f32,
+        outer_radius: f32,
+        start_angle: f32,
+        sweep_angle: f32,
+        stroke_width: f32,
+        inner_radius: f32,
         color: Color,
     ) {
-        if color.a < 0.004 { return; }
-        let expand = if stroke_width > 0.0 { stroke_width * 0.5 + 2.0 } else { 2.0 };
+        if color.a < 0.004 {
+            return;
+        }
+        let expand = if stroke_width > 0.0 {
+            stroke_width * 0.5 + 2.0
+        } else {
+            2.0
+        };
         let size = (outer_radius + expand) * 2.0;
         self.instances.push(Instance {
-            bounds: [cx - outer_radius - expand, cy - outer_radius - expand, size, size],
+            bounds: [
+                cx - outer_radius - expand,
+                cy - outer_radius - expand,
+                size,
+                size,
+            ],
             color: [color.r, color.g, color.b, color.a],
             params: [stroke_width, start_angle, sweep_angle, SHAPE_ARC],
             color_b: [inner_radius, 0.0, 0.0, 0.0],
@@ -808,11 +927,18 @@ impl Painter {
     /// Dashed line between two points.
     pub fn line_dashed(
         &mut self,
-        x1: f32, y1: f32, x2: f32, y2: f32,
-        width: f32, dash: f32, gap: f32,
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        width: f32,
+        dash: f32,
+        gap: f32,
         color: Color,
     ) {
-        if color.a < 0.004 { return; }
+        if color.a < 0.004 {
+            return;
+        }
         self.instances.push(Instance {
             bounds: [x1, y1, 0.0, 0.0],
             color: [color.r, color.g, color.b, color.a],
@@ -826,10 +952,31 @@ impl Painter {
     /// Legacy rounded rect stroke using 4 filled rects. Prefer `rect_stroke_sdf` for
     /// proper rounded corners.
     pub fn rect_stroke(&mut self, rect: Rect, corner_radius: f32, width: f32, color: Color) {
-        self.rect_filled(Rect::new(rect.x, rect.y, rect.w, width), corner_radius.min(width), color);
-        self.rect_filled(Rect::new(rect.x, rect.y + rect.h - width, rect.w, width), corner_radius.min(width), color);
-        self.rect_filled(Rect::new(rect.x, rect.y + width, width, rect.h - width * 2.0), 0.0, color);
-        self.rect_filled(Rect::new(rect.x + rect.w - width, rect.y + width, width, rect.h - width * 2.0), 0.0, color);
+        self.rect_filled(
+            Rect::new(rect.x, rect.y, rect.w, width),
+            corner_radius.min(width),
+            color,
+        );
+        self.rect_filled(
+            Rect::new(rect.x, rect.y + rect.h - width, rect.w, width),
+            corner_radius.min(width),
+            color,
+        );
+        self.rect_filled(
+            Rect::new(rect.x, rect.y + width, width, rect.h - width * 2.0),
+            0.0,
+            color,
+        );
+        self.rect_filled(
+            Rect::new(
+                rect.x + rect.w - width,
+                rect.y + width,
+                width,
+                rect.h - width * 2.0,
+            ),
+            0.0,
+            color,
+        );
     }
 
     pub fn render_pass(
@@ -840,8 +987,10 @@ impl Painter {
         clear_color: Color,
     ) {
         let load = wgpu::LoadOp::Clear(wgpu::Color {
-            r: clear_color.r as f64, g: clear_color.g as f64,
-            b: clear_color.b as f64, a: clear_color.a as f64,
+            r: clear_color.r as f64,
+            g: clear_color.g as f64,
+            b: clear_color.b as f64,
+            a: clear_color.a as f64,
         });
         self.execute_pass(gpu, encoder, view, load, "Lantern 2D Pass");
     }
@@ -872,7 +1021,10 @@ impl Painter {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view,
                 resolve_target: None,
-                ops: wgpu::Operations { load, store: wgpu::StoreOp::Store },
+                ops: wgpu::Operations {
+                    load,
+                    store: wgpu::StoreOp::Store,
+                },
                 depth_slice: None,
             })],
             depth_stencil_attachment: None,
@@ -895,7 +1047,9 @@ impl Painter {
                     total
                 };
 
-                if end <= span.start { continue; }
+                if end <= span.start {
+                    continue;
+                }
 
                 match span.clip {
                     Some(rect) => {
@@ -903,7 +1057,9 @@ impl Painter {
                         let sy = (rect.y.max(0.0) as u32).min(gpu.height().saturating_sub(1));
                         let sw = (rect.w.max(0.0) as u32).min(gpu.width().saturating_sub(sx));
                         let sh = (rect.h.max(0.0) as u32).min(gpu.height().saturating_sub(sy));
-                        if sw == 0 || sh == 0 { continue; }
+                        if sw == 0 || sh == 0 {
+                            continue;
+                        }
                         pass.set_scissor_rect(sx, sy, sw, sh);
                     }
                     None => {
@@ -916,7 +1072,11 @@ impl Painter {
         }
     }
 
-    pub fn render(&mut self, gpu: &GpuContext, clear_color: Color) -> Result<(), wgpu::SurfaceError> {
+    pub fn render(
+        &mut self,
+        gpu: &GpuContext,
+        clear_color: Color,
+    ) -> Result<(), wgpu::SurfaceError> {
         let mut frame = gpu.begin_frame("Lantern 2D Encoder")?;
         self.render_into(gpu, &mut frame, clear_color);
         frame.submit(&gpu.queue);
@@ -942,5 +1102,3 @@ impl Painter {
         Ok(())
     }
 }
-
-

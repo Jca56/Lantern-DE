@@ -57,11 +57,10 @@ impl Hw {
         let num_i32 = || arg.parse::<i32>().map_err(|_| format!("bad value: {arg}"));
         let num_u32 = || arg.parse::<u32>().map_err(|_| format!("bad value: {arg}"));
         let result: Result<(), String> = match key {
-            "core_offset" => num_i32()
-                .and_then(|v| self.gpu()?.set_clock_offset(CLOCK_GRAPHICS, v)),
-            "mem_offset" => {
-                num_i32().and_then(|v| self.gpu()?.set_clock_offset(CLOCK_MEM, v))
+            "core_offset" => {
+                num_i32().and_then(|v| self.gpu()?.set_clock_offset(CLOCK_GRAPHICS, v))
             }
+            "mem_offset" => num_i32().and_then(|v| self.gpu()?.set_clock_offset(CLOCK_MEM, v)),
             "power_limit" => num_u32().and_then(|v| self.gpu()?.set_power_limit_w(v)),
             "fan" => {
                 if arg == "auto" {
@@ -142,8 +141,7 @@ impl Hw {
                     f.push("vram_used", s.vram_used_mb);
                     f.push("vram_total", s.vram_total_mb);
                     f.push("plimit", format!("{:.0}", s.power_limit_w));
-                    let fans: Vec<String> =
-                        s.fans_pct.iter().map(|p| p.to_string()).collect();
+                    let fans: Vec<String> = s.fans_pct.iter().map(|p| p.to_string()).collect();
                     f.push("fan", fans.join(","));
                 }
                 Err(e) => return err(e),
@@ -191,7 +189,10 @@ impl Hw {
             }
         };
         if let Some(n) = &self.nvml {
-            run("core_offset", n.set_clock_offset(CLOCK_GRAPHICS, p.core_offset));
+            run(
+                "core_offset",
+                n.set_clock_offset(CLOCK_GRAPHICS, p.core_offset),
+            );
             run("mem_offset", n.set_clock_offset(CLOCK_MEM, p.mem_offset));
             if p.power_limit_w > 0 {
                 run("power_limit", n.set_power_limit_w(p.power_limit_w));

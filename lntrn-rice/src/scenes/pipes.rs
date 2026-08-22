@@ -3,8 +3,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
-use crate::app::FrameCtx;
 use super::{draw_theme_background, Scene};
+use crate::app::FrameCtx;
 
 // ── Tunables ─────────────────────────────────────────────────────────────────
 const CELL_PX: f32 = 36.0; // target grid cell size, logical px (scaled at runtime)
@@ -41,7 +41,9 @@ pub struct Pipes {
 }
 
 impl Default for Pipes {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Pipes {
@@ -108,7 +110,11 @@ impl Pipes {
             if rng_next(&mut rng) % 100 < TURN_PCT {
                 let (dx, dy) = pipe.dir;
                 // turn 90° left or right — never reverse
-                pipe.dir = if rng_next(&mut rng) & 1 == 0 { (-dy, dx) } else { (dy, -dx) };
+                pipe.dir = if rng_next(&mut rng) & 1 == 0 {
+                    (-dy, dx)
+                } else {
+                    (dy, -dx)
+                };
             }
             let (hx, hy) = *pipe.cells.last().unwrap();
             let (nx, ny) = (hx + pipe.dir.0, hy + pipe.dir.1);
@@ -164,7 +170,10 @@ impl Scene for Pipes {
         let gx = (ctx.wf - cols as f32 * cell) * 0.5;
         let gy = (ctx.hf - rows as f32 * cell) * 0.5;
         let center = |c: (i32, i32)| -> (f32, f32) {
-            (gx + (c.0 as f32 + 0.5) * cell, gy + (c.1 as f32 + 0.5) * cell)
+            (
+                gx + (c.0 as f32 + 0.5) * cell,
+                gy + (c.1 as f32 + 0.5) * cell,
+            )
         };
 
         // Tube/ball/shadow geometry. Light comes from the upper-left.
@@ -218,10 +227,10 @@ impl Scene for Pipes {
 
             // 4-stop cylinder ramp: bright edge → base → dark edge.
             let ramp = [
-                pipe.color.lighten(0.5),  // glossy highlight streak
-                pipe.color.lighten(0.1),  // upper body — stays saturated
-                pipe.color,               // vivid base
-                pipe.color.darken(0.5),   // shaded rim
+                pipe.color.lighten(0.5), // glossy highlight streak
+                pipe.color.lighten(0.1), // upper body — stays saturated
+                pipe.color,              // vivid base
+                pipe.color.darken(0.5),  // shaded rim
             ];
 
             // ── Shadow sub-pass (all behind the bodies of this pipe) ──
@@ -273,7 +282,13 @@ fn ball(p: &mut Painter, c: (f32, f32), r: f32, base: Color, bright: bool) {
     let lift = if bright { 0.55 } else { 0.30 };
     p.rect_gradient_radial(rect, r, base.lighten(lift), base.darken(0.55));
     let glint = if bright { 0.9 } else { 0.6 };
-    p.rect_radial_glow(rect, r, (0.32, 0.30), r * 0.95, Color::WHITE.with_alpha(glint));
+    p.rect_radial_glow(
+        rect,
+        r,
+        (0.32, 0.30),
+        r * 0.95,
+        Color::WHITE.with_alpha(glint),
+    );
 }
 
 fn ball_shadow(p: &mut Painter, c: (f32, f32), r: f32, sigma: f32, off: f32, color: Color) {

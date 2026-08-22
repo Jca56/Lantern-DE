@@ -84,9 +84,16 @@ impl TextRenderer {
             }
         });
         match raster {
-            Some(g) => {
-                atlas.insert(device, gpu_queue, key, g.width, g.height, g.left, g.top, &g.coverage)
-            }
+            Some(g) => atlas.insert(
+                device,
+                gpu_queue,
+                key,
+                g.width,
+                g.height,
+                g.left,
+                g.top,
+                &g.coverage,
+            ),
             // Whitespace / empty outline: cache a zero-area entry so repeat
             // lookups stay cheap.
             None => atlas.insert(device, gpu_queue, key, 0, 0, 0, 0, &[]),
@@ -150,8 +157,16 @@ impl TextRenderer {
             self.cache_hits = self.cache_hits.saturating_add(1);
         } else {
             self.cache_misses = self.cache_misses.saturating_add(1);
-            let built =
-                line::build(&mut self.db, self.monospace, text, size, max_width, weight, style, family);
+            let built = line::build(
+                &mut self.db,
+                self.monospace,
+                text,
+                size,
+                max_width,
+                weight,
+                style,
+                family,
+            );
             self.layouts.insert(key.clone(), built);
         }
         let Some(layout) = self.layouts.get(&key) else {
@@ -181,7 +196,11 @@ impl TextRenderer {
                     uv_min: entry.uv_min,
                     uv_max: entry.uv_max,
                     // Emoji keep their own colors; only alpha applies.
-                    color: if entry.is_color { [1.0, 1.0, 1.0, rgba[3]] } else { rgba },
+                    color: if entry.is_color {
+                        [1.0, 1.0, 1.0, rgba[3]]
+                    } else {
+                        rgba
+                    },
                 });
             }
         }
@@ -217,8 +236,16 @@ impl TextRenderer {
         if let Some(layout) = self.layouts.get(&key) {
             return layout.width;
         }
-        let built =
-            line::build(&mut self.db, self.monospace, text, size, 10000.0, weight, style, family);
+        let built = line::build(
+            &mut self.db,
+            self.monospace,
+            text,
+            size,
+            10000.0,
+            weight,
+            style,
+            family,
+        );
         let width = built.width;
         self.layouts.insert(key, built);
         width
@@ -238,7 +265,16 @@ impl TextRenderer {
         out: &mut Vec<(u32, f32)>,
     ) {
         let size = quantize_px(font_size);
-        line::advances(&mut self.db, self.monospace, text, size, weight, style, family, out);
+        line::advances(
+            &mut self.db,
+            self.monospace,
+            text,
+            size,
+            weight,
+            style,
+            family,
+            out,
+        );
     }
 
     /// Draw the entry range, clipping each quad to its entry's bounds (with

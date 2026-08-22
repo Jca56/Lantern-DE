@@ -118,7 +118,8 @@ impl Font {
         let dir = sfnt::parse(&data, index)?;
         let need = |tag: &[u8; 4]| dir.find(tag).ok_or(FontError::MissingTable(*tag));
         let table = |range: (usize, usize)| {
-            data.get(range.0..range.0 + range.1).ok_or(FontError::Truncated)
+            data.get(range.0..range.0 + range.1)
+                .ok_or(FontError::Truncated)
         };
 
         let head = tables::parse_head(table(need(b"head")?)?)?;
@@ -140,10 +141,12 @@ impl Font {
                 "no `glyf`, `CFF `, or `CBDT` glyph source (CFF2 pending)",
             ));
         };
-        let colr = dir
-            .find(b"COLR")
-            .zip(dir.find(b"CPAL"))
-            .and_then(|((colr_off, _), (cpal_off, _))| colr::Colr::parse(&data, colr_off, cpal_off));
+        let colr =
+            dir.find(b"COLR")
+                .zip(dir.find(b"CPAL"))
+                .and_then(|((colr_off, _), (cpal_off, _))| {
+                    colr::Colr::parse(&data, colr_off, cpal_off)
+                });
         let hmtx = need(b"hmtx")?;
         // Build layout plans per script the tables declare (Arabic features
         // live under `arab`, not the latn/DFLT default a single plan would
@@ -178,8 +181,12 @@ impl Font {
             .map(|(axes, _)| axes)
             .unwrap_or_default();
         let avar = dir.find(b"avar");
-        let gvar = dir.find(b"gvar").and_then(|(off, _)| gvar::Gvar::parse(&data, off));
-        let hvar = dir.find(b"HVAR").and_then(|(off, _)| variations::Hvar::parse(&data, off));
+        let gvar = dir
+            .find(b"gvar")
+            .and_then(|(off, _)| gvar::Gvar::parse(&data, off));
+        let hvar = dir
+            .find(b"HVAR")
+            .and_then(|(off, _)| variations::Hvar::parse(&data, off));
 
         Ok(Font {
             data,
@@ -218,7 +225,11 @@ impl Font {
         let avar = self.avar.and_then(|(o, l)| self.data.get(o..o + l));
         let coords = variations::normalize(&self.axes, avar, user);
         // All-zero = the default instance; keep the static fast path.
-        self.norm_coords = if coords.iter().all(|&c| c == 0.0) { Vec::new() } else { coords };
+        self.norm_coords = if coords.iter().all(|&c| c == 0.0) {
+            Vec::new()
+        } else {
+            coords
+        };
     }
 
     /// gvar + normalized coords, when this font is a non-default instance.
@@ -265,7 +276,9 @@ impl Font {
         if !self.norm_coords.is_empty() {
             if let Some(hvar) = &self.hvar {
                 return base
-                    + hvar.advance_delta(&self.data, gid, &self.norm_coords).round() as i32;
+                    + hvar
+                        .advance_delta(&self.data, gid, &self.norm_coords)
+                        .round() as i32;
             }
         }
         base

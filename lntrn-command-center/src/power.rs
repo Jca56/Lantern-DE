@@ -66,16 +66,25 @@ impl PowerAction {
         match self {
             PowerAction::Lock => ("lntrn-lockscreen", &[]),
             PowerAction::Sleep => {
-                if systemd { ("systemctl", &["suspend"]) }
-                else { ("loginctl", &["suspend"]) }
+                if systemd {
+                    ("systemctl", &["suspend"])
+                } else {
+                    ("loginctl", &["suspend"])
+                }
             }
             PowerAction::Restart => {
-                if systemd { ("systemctl", &["reboot"]) }
-                else { ("loginctl", &["reboot"]) }
+                if systemd {
+                    ("systemctl", &["reboot"])
+                } else {
+                    ("loginctl", &["reboot"])
+                }
             }
             PowerAction::Shutdown => {
-                if systemd { ("systemctl", &["poweroff"]) }
-                else { ("loginctl", &["poweroff"]) }
+                if systemd {
+                    ("systemctl", &["poweroff"])
+                } else {
+                    ("loginctl", &["poweroff"])
+                }
             }
         }
     }
@@ -116,8 +125,7 @@ pub fn button_rect(panel: Rect, scale: f32, idx: usize) -> Rect {
     let gap = BUTTON_GAP * scale;
     let left_gap = COLUMN_LEFT_GAP * scale;
     let x = panel.x + panel.w + left_gap;
-    let total = PowerAction::ALL.len() as f32 * size
-        + (PowerAction::ALL.len() as f32 - 1.0) * gap;
+    let total = PowerAction::ALL.len() as f32 * size + (PowerAction::ALL.len() as f32 - 1.0) * gap;
     let column_top = panel.y + panel.h - total;
     let y = column_top + idx as f32 * (size + gap);
     Rect::new(x, y, size, size)
@@ -153,12 +161,16 @@ pub fn draw(
     for (i, action) in PowerAction::ALL.iter().enumerate() {
         let r = button_rect(panel, scale, i);
         let is_hovered = hovered == Some(*action);
-        let bg_a = if is_hovered { BG_ALPHA_HOVER } else { BG_ALPHA_IDLE };
+        let bg_a = if is_hovered {
+            BG_ALPHA_HOVER
+        } else {
+            BG_ALPHA_IDLE
+        };
         let bg = Color::from_rgb8(BG_RGB.0, BG_RGB.1, BG_RGB.2).with_alpha(bg_a * alpha);
         painter.rect_filled(r, radius, bg);
         if is_hovered {
-            let accent = Color::from_rgb8(ACCENT_RGB.0, ACCENT_RGB.1, ACCENT_RGB.2)
-                .with_alpha(0.65 * alpha);
+            let accent =
+                Color::from_rgb8(ACCENT_RGB.0, ACCENT_RGB.1, ACCENT_RGB.2).with_alpha(0.65 * alpha);
             painter.rect_stroke_sdf(r, radius, 2.0 * scale, accent);
         }
 
@@ -262,19 +274,17 @@ pub fn hit_test_confirm(
     let card = modal_card_rect(surface_w, surface_h, scale);
     let cancel = cancel_button_rect(card, scale);
     let confirm = confirm_button_rect(card, scale);
-    if px >= confirm.x && px <= confirm.x + confirm.w
-        && py >= confirm.y && py <= confirm.y + confirm.h
+    if px >= confirm.x
+        && px <= confirm.x + confirm.w
+        && py >= confirm.y
+        && py <= confirm.y + confirm.h
     {
         return Some(ConfirmHit::Confirm);
     }
-    if px >= cancel.x && px <= cancel.x + cancel.w
-        && py >= cancel.y && py <= cancel.y + cancel.h
-    {
+    if px >= cancel.x && px <= cancel.x + cancel.w && py >= cancel.y && py <= cancel.y + cancel.h {
         return Some(ConfirmHit::Cancel);
     }
-    if px >= card.x && px <= card.x + card.w
-        && py >= card.y && py <= card.y + card.h
-    {
+    if px >= card.x && px <= card.x + card.w && py >= card.y && py <= card.y + card.h {
         return Some(ConfirmHit::CardBody);
     }
     None

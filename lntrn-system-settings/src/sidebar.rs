@@ -20,7 +20,13 @@ pub(crate) const SIDEBAR_ICON_DRAW: f32 = 32.0;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Category {
-    Appearance, Display, Input, Notifications, Power, Apps, LockScreen,
+    Appearance,
+    Display,
+    Input,
+    Notifications,
+    Power,
+    Apps,
+    LockScreen,
 }
 
 pub(crate) struct CategoryDef {
@@ -34,32 +40,66 @@ pub(crate) struct CategoryDef {
 }
 
 pub(crate) const CATEGORIES: &[CategoryDef] = &[
-    CategoryDef { cat: Category::Appearance,    label: "Appearance",    icon_idx: 0, leaf_panel: None, children: &[
-        (Panel::Themes,      "Themes"),
-        (Panel::WindowSizes, "Window Sizes"),
-        (Panel::Animations,  "Animations"),
-    ]},
-    CategoryDef { cat: Category::Display,       label: "Display",       icon_idx: 1, children: &[], leaf_panel: Some(Panel::Monitors) },
-    CategoryDef { cat: Category::Input,         label: "Input",         icon_idx: 2, leaf_panel: None, children: &[
-        (Panel::Mouse,       "Mouse"),
-        (Panel::Keybindings, "Keybindings"),
-    ]},
-    CategoryDef { cat: Category::Notifications, label: "Notifications", icon_idx: 3, leaf_panel: None, children: &[
-        (Panel::NotifBehavior, "Behavior"),
-        (Panel::NotifSound,    "Sound"),
-        (Panel::NotifTesting,  "Testing"),
-    ]},
-    CategoryDef { cat: Category::Power,         label: "Power",         icon_idx: 4, leaf_panel: None, children: &[
-        (Panel::LidIdle,    "Lid & Idle"),
-        (Panel::Battery,    "Battery"),
-    ]},
-    CategoryDef { cat: Category::Apps,          label: "Apps",          icon_idx: 5, leaf_panel: None, children: &[
-        (Panel::AppIcons,   "Icons"),
-    ]},
-    CategoryDef { cat: Category::LockScreen,    label: "Lock Screen",   icon_idx: 6, leaf_panel: None, children: &[
-        (Panel::LockWallpaper, "Wallpaper"),
-        (Panel::LockStyle,     "Style"),
-    ]},
+    CategoryDef {
+        cat: Category::Appearance,
+        label: "Appearance",
+        icon_idx: 0,
+        leaf_panel: None,
+        children: &[
+            (Panel::Themes, "Themes"),
+            (Panel::WindowSizes, "Window Sizes"),
+            (Panel::Animations, "Animations"),
+        ],
+    },
+    CategoryDef {
+        cat: Category::Display,
+        label: "Display",
+        icon_idx: 1,
+        children: &[],
+        leaf_panel: Some(Panel::Monitors),
+    },
+    CategoryDef {
+        cat: Category::Input,
+        label: "Input",
+        icon_idx: 2,
+        leaf_panel: None,
+        children: &[(Panel::Mouse, "Mouse"), (Panel::Keybindings, "Keybindings")],
+    },
+    CategoryDef {
+        cat: Category::Notifications,
+        label: "Notifications",
+        icon_idx: 3,
+        leaf_panel: None,
+        children: &[
+            (Panel::NotifBehavior, "Behavior"),
+            (Panel::NotifSound, "Sound"),
+            (Panel::NotifTesting, "Testing"),
+        ],
+    },
+    CategoryDef {
+        cat: Category::Power,
+        label: "Power",
+        icon_idx: 4,
+        leaf_panel: None,
+        children: &[(Panel::LidIdle, "Lid & Idle"), (Panel::Battery, "Battery")],
+    },
+    CategoryDef {
+        cat: Category::Apps,
+        label: "Apps",
+        icon_idx: 5,
+        leaf_panel: None,
+        children: &[(Panel::AppIcons, "Icons")],
+    },
+    CategoryDef {
+        cat: Category::LockScreen,
+        label: "Lock Screen",
+        icon_idx: 6,
+        leaf_panel: None,
+        children: &[
+            (Panel::LockWallpaper, "Wallpaper"),
+            (Panel::LockStyle, "Style"),
+        ],
+    },
 ];
 
 /// Find the category that owns `panel` (so we can auto-expand it).
@@ -112,11 +152,16 @@ impl SidebarState {
         if let Some(i) = CATEGORIES.iter().position(|c| c.cat == active_cat) {
             expanded[i] = true;
         }
-        Self { expanded, row_actions: Vec::new() }
+        Self {
+            expanded,
+            row_actions: Vec::new(),
+        }
     }
 
     pub(crate) fn toggle(&mut self, idx: usize) {
-        if idx < self.expanded.len() { self.expanded[idx] = !self.expanded[idx]; }
+        if idx < self.expanded.len() {
+            self.expanded[idx] = !self.expanded[idx];
+        }
     }
 
     pub(crate) fn ensure_expanded(&mut self, cat: Category) {
@@ -152,10 +197,10 @@ pub(crate) fn draw_sidebar<'a>(
 ) {
     state.row_actions.clear();
     let parent_h = SIDEBAR_ITEM_H * s;
-    let child_h  = SIDEBAR_CHILD_H * s;
-    let label_size  = 22.0 * s;
+    let child_h = SIDEBAR_CHILD_H * s;
+    let label_size = 22.0 * s;
     let child_label = 19.0 * s;
-    let icon_draw   = SIDEBAR_ICON_DRAW * s;
+    let icon_draw = SIDEBAR_ICON_DRAW * s;
 
     // Divider line between sidebar and content.
     painter.rect_filled(
@@ -208,20 +253,37 @@ pub(crate) fn draw_sidebar<'a>(
         // Label
         let text_x = icon_x + icon_draw + 14.0 * s;
         let text_y = y + (parent_h - label_size) / 2.0;
-        let text_color = if is_active_leaf || is_active_parent { fox.accent } else { fox.text };
-        text.queue(cat.label, label_size, text_x, text_y, text_color, sidebar_w - text_x, sw, sh);
+        let text_color = if is_active_leaf || is_active_parent {
+            fox.accent
+        } else {
+            fox.text
+        };
+        text.queue(
+            cat.label,
+            label_size,
+            text_x,
+            text_y,
+            text_color,
+            sidebar_w - text_x,
+            sw,
+            sh,
+        );
 
         // Chevron on the right for parents (only when they have children).
         if !is_leaf {
             let chev_size = 18.0 * s;
             let chev_x = sidebar_w - chev_size - 20.0 * s;
             let chev_y = y + (parent_h - chev_size) / 2.0;
-            draw_chevron(painter, fox, chev_x, chev_y, chev_size, expanded, text_color);
+            draw_chevron(
+                painter, fox, chev_x, chev_y, chev_size, expanded, text_color,
+            );
         }
 
         // Record the click action for this row.
         if is_leaf {
-            state.row_actions.push(SidebarAction::SelectPanel(cat.leaf_panel.unwrap_or(Panel::Monitors)));
+            state.row_actions.push(SidebarAction::SelectPanel(
+                cat.leaf_panel.unwrap_or(Panel::Monitors),
+            ));
         } else {
             state.row_actions.push(SidebarAction::ToggleCategory(cat_i));
         }
@@ -252,10 +314,25 @@ pub(crate) fn draw_sidebar<'a>(
 
                 let label_x_child = icon_x + icon_draw + 14.0 * s;
                 let label_y_child = y + (child_h - child_label) / 2.0;
-                let col = if is_active { fox.accent } else { fox.text.with_alpha(0.85) };
-                text.queue(child_label_str, child_label, label_x_child, label_y_child, col, sidebar_w - label_x_child, sw, sh);
+                let col = if is_active {
+                    fox.accent
+                } else {
+                    fox.text.with_alpha(0.85)
+                };
+                text.queue(
+                    child_label_str,
+                    child_label,
+                    label_x_child,
+                    label_y_child,
+                    col,
+                    sidebar_w - label_x_child,
+                    sw,
+                    sh,
+                );
 
-                state.row_actions.push(SidebarAction::SelectPanel(*child_panel));
+                state
+                    .row_actions
+                    .push(SidebarAction::SelectPanel(*child_panel));
                 y += child_h;
             }
             y += 4.0 * s; // small gap after a group
@@ -263,10 +340,23 @@ pub(crate) fn draw_sidebar<'a>(
     }
 }
 
-fn draw_active_pill(painter: &mut Painter, fox: &FoxPalette, x: f32, y: f32, w: f32, h: f32, s: f32) {
+fn draw_active_pill(
+    painter: &mut Painter,
+    fox: &FoxPalette,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    s: f32,
+) {
     let inset_x = 10.0 * s;
     let inset_y = 4.0 * s;
-    let pill = Rect::new(x + inset_x, y + inset_y, w - inset_x * 2.0, h - inset_y * 2.0);
+    let pill = Rect::new(
+        x + inset_x,
+        y + inset_y,
+        w - inset_x * 2.0,
+        h - inset_y * 2.0,
+    );
     let radius = 8.0 * s;
     painter.rect_filled(pill, radius, Color::from_rgba8(255, 180, 30, 56));
     painter.rect_stroke_sdf(pill, radius, 1.0 * s, Color::from_rgba8(255, 180, 30, 110));
@@ -277,10 +367,23 @@ fn draw_active_pill(painter: &mut Painter, fox: &FoxPalette, x: f32, y: f32, w: 
     );
 }
 
-fn draw_active_pill_child(painter: &mut Painter, fox: &FoxPalette, x: f32, y: f32, w: f32, h: f32, s: f32) {
+fn draw_active_pill_child(
+    painter: &mut Painter,
+    fox: &FoxPalette,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    s: f32,
+) {
     let inset_x = 18.0 * s;
     let inset_y = 3.0 * s;
-    let pill = Rect::new(x + inset_x, y + inset_y, w - inset_x * 2.0, h - inset_y * 2.0);
+    let pill = Rect::new(
+        x + inset_x,
+        y + inset_y,
+        w - inset_x * 2.0,
+        h - inset_y * 2.0,
+    );
     let radius = 6.0 * s;
     painter.rect_filled(pill, radius, Color::from_rgba8(255, 180, 30, 42));
     painter.rect_filled(
@@ -290,39 +393,79 @@ fn draw_active_pill_child(painter: &mut Painter, fox: &FoxPalette, x: f32, y: f3
     );
 }
 
-fn draw_hover_pill(painter: &mut Painter, fox: &FoxPalette, x: f32, y: f32, w: f32, h: f32, s: f32) {
+fn draw_hover_pill(
+    painter: &mut Painter,
+    fox: &FoxPalette,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    s: f32,
+) {
     let inset_x = 10.0 * s;
     let inset_y = 4.0 * s;
-    let pill = Rect::new(x + inset_x, y + inset_y, w - inset_x * 2.0, h - inset_y * 2.0);
+    let pill = Rect::new(
+        x + inset_x,
+        y + inset_y,
+        w - inset_x * 2.0,
+        h - inset_y * 2.0,
+    );
     painter.rect_filled(pill, 8.0 * s, fox.text.with_alpha(0.06));
 }
 
-fn draw_hover_pill_child(painter: &mut Painter, fox: &FoxPalette, x: f32, y: f32, w: f32, h: f32, s: f32) {
+fn draw_hover_pill_child(
+    painter: &mut Painter,
+    fox: &FoxPalette,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    s: f32,
+) {
     let inset_x = 18.0 * s;
     let inset_y = 3.0 * s;
-    let pill = Rect::new(x + inset_x, y + inset_y, w - inset_x * 2.0, h - inset_y * 2.0);
+    let pill = Rect::new(
+        x + inset_x,
+        y + inset_y,
+        w - inset_x * 2.0,
+        h - inset_y * 2.0,
+    );
     painter.rect_filled(pill, 6.0 * s, fox.text.with_alpha(0.05));
 }
 
 /// Chevron pointing right (collapsed) or down (expanded). Two short line
 /// segments meeting at the apex.
-fn draw_chevron(painter: &mut Painter, _fox: &FoxPalette, x: f32, y: f32, size: f32, expanded: bool, color: Color) {
+fn draw_chevron(
+    painter: &mut Painter,
+    _fox: &FoxPalette,
+    x: f32,
+    y: f32,
+    size: f32,
+    expanded: bool,
+    color: Color,
+) {
     let stroke = (size * 0.16).max(2.0);
     let c = color.with_alpha(0.75);
     if expanded {
         // v — apex bottom-center, lines coming down from top-left and top-right
         let pad = size * 0.18;
-        let ax = x + pad;             let ay = y + pad;
-        let bx = x + size - pad;      let by = y + pad;
-        let mx = x + size * 0.5;      let my = y + size - pad;
+        let ax = x + pad;
+        let ay = y + pad;
+        let bx = x + size - pad;
+        let by = y + pad;
+        let mx = x + size * 0.5;
+        let my = y + size - pad;
         painter.line(ax, ay, mx, my, stroke, c);
         painter.line(bx, by, mx, my, stroke, c);
     } else {
         // > — apex right-center
         let pad = size * 0.18;
-        let ax = x + pad;             let ay = y + pad;
-        let bx = x + pad;             let by = y + size - pad;
-        let mx = x + size - pad;      let my = y + size * 0.5;
+        let ax = x + pad;
+        let ay = y + pad;
+        let bx = x + pad;
+        let by = y + size - pad;
+        let mx = x + size - pad;
+        let my = y + size * 0.5;
         painter.line(ax, ay, mx, my, stroke, c);
         painter.line(bx, by, mx, my, stroke, c);
     }

@@ -111,9 +111,8 @@ fn run(
         // No keyboard grab — we only need pointer clicks on the stop
         // button. The user must remain able to type into whatever
         // they're actually recording.
-        layer_surface.set_keyboard_interactivity(
-            zwlr_layer_surface_v1::KeyboardInteractivity::None,
-        );
+        layer_surface
+            .set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::None);
     }
     surface.commit();
 
@@ -431,7 +430,12 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        if let wl_registry::Event::Global { name, interface, version } = event {
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
             match interface.as_str() {
                 "wl_compositor" => {
                     state.compositor = Some(registry.bind(name, version.min(6), qh, ()));
@@ -460,7 +464,15 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
 }
 
 impl Dispatch<wl_compositor::WlCompositor, ()> for State {
-    fn event(_: &mut Self, _: &wl_compositor::WlCompositor, _: wl_compositor::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_compositor::WlCompositor,
+        _: wl_compositor::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wl_surface::WlSurface, ()> for State {
     fn event(
@@ -477,13 +489,37 @@ impl Dispatch<wl_surface::WlSurface, ()> for State {
     }
 }
 impl Dispatch<wp_viewporter::WpViewporter, ()> for State {
-    fn event(_: &mut Self, _: &wp_viewporter::WpViewporter, _: wp_viewporter::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wp_viewporter::WpViewporter,
+        _: wp_viewporter::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wp_viewport::WpViewport, ()> for State {
-    fn event(_: &mut Self, _: &wp_viewport::WpViewport, _: wp_viewport::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wp_viewport::WpViewport,
+        _: wp_viewport::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<zwlr_layer_shell_v1::ZwlrLayerShellV1, ()> for State {
-    fn event(_: &mut Self, _: &zwlr_layer_shell_v1::ZwlrLayerShellV1, _: zwlr_layer_shell_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &zwlr_layer_shell_v1::ZwlrLayerShellV1,
+        _: zwlr_layer_shell_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wl_output::WlOutput, ()> for State {
     fn event(
@@ -495,7 +531,9 @@ impl Dispatch<wl_output::WlOutput, ()> for State {
         _: &QueueHandle<Self>,
     ) {
         let id = output.id();
-        let Some(tracked) = state.outputs.iter_mut().find(|o| o.proxy.id() == id) else { return; };
+        let Some(tracked) = state.outputs.iter_mut().find(|o| o.proxy.id() == id) else {
+            return;
+        };
         match event {
             wl_output::Event::Name { name } => tracked.name = Some(name),
             wl_output::Event::Mode { width, .. } => tracked.mode_width = width as u32,
@@ -524,10 +562,19 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for State {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        if let zwlr_layer_surface_v1::Event::Configure { serial, width, height } = event {
+        if let zwlr_layer_surface_v1::Event::Configure {
+            serial,
+            width,
+            height,
+        } = event
+        {
             layer_surface.ack_configure(serial);
-            if width > 0 { state.width = width; }
-            if height > 0 { state.height = height; }
+            if width > 0 {
+                state.width = width;
+            }
+            if height > 0 {
+                state.height = height;
+            }
             state.configured = true;
             state.frame_done = true;
         }
@@ -542,7 +589,10 @@ impl Dispatch<wl_seat::WlSeat, ()> for State {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        if let wl_seat::Event::Capabilities { capabilities: caps, .. } = event {
+        if let wl_seat::Event::Capabilities {
+            capabilities: caps, ..
+        } = event
+        {
             if let WEnum::Value(caps) = caps {
                 if caps.contains(wl_seat::Capability::Pointer) {
                     seat.get_pointer(qh, ());
@@ -561,17 +611,27 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
         _: &QueueHandle<Self>,
     ) {
         match event {
-            wl_pointer::Event::Enter { surface_x, surface_y, .. } => {
+            wl_pointer::Event::Enter {
+                surface_x,
+                surface_y,
+                ..
+            } => {
                 state.cursor_x = surface_x;
                 state.cursor_y = surface_y;
                 state.cursor_in = true;
             }
             wl_pointer::Event::Leave { .. } => state.cursor_in = false,
-            wl_pointer::Event::Motion { surface_x, surface_y, .. } => {
+            wl_pointer::Event::Motion {
+                surface_x,
+                surface_y,
+                ..
+            } => {
                 state.cursor_x = surface_x;
                 state.cursor_y = surface_y;
             }
-            wl_pointer::Event::Button { button, state: bs, .. } => {
+            wl_pointer::Event::Button {
+                button, state: bs, ..
+            } => {
                 if button == BTN_LEFT && bs == WEnum::Value(wl_pointer::ButtonState::Pressed) {
                     state.click_pending = true;
                 }

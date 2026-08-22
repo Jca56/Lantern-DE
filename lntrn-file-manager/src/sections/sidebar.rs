@@ -40,14 +40,26 @@ pub fn draw_sidebar(
     // this region. Painting `palette.sidebar` here would compound the alpha
     // and read as opaque under transparency. The gradient strip on the
     // right edge still provides a clear visual separator from the content.
-    draw_gradient_v(painter, palette, sw - 4.0 * s, sidebar_rect.y, sidebar_rect.h, s);
+    draw_gradient_v(
+        painter,
+        palette,
+        sw - 4.0 * s,
+        sidebar_rect.y,
+        sidebar_rect.h,
+        s,
+    );
 
     // ── PLACES section ───────────────────────────────────────────────
     draw_section_header(
-        painter, text, palette,
-        "PLACES", layout.places_header,
-        app.places_collapsed, hov.places_header,
-        screen, s,
+        painter,
+        text,
+        palette,
+        "PLACES",
+        layout.places_header,
+        app.places_collapsed,
+        hov.places_header,
+        screen,
+        s,
     );
     if !app.places_collapsed {
         let places = app.sidebar_places();
@@ -56,9 +68,16 @@ pub fn draw_sidebar(
             let is_active = app.is_active_place(i);
             let is_hovered = hov.places.get(i).copied().unwrap_or(false);
             draw_place_row(
-                painter, text, palette,
-                &place.name, r, is_active, is_hovered, dragging,
-                screen, s,
+                painter,
+                text,
+                palette,
+                &place.name,
+                r,
+                is_active,
+                is_hovered,
+                dragging,
+                screen,
+                s,
             );
             if i + 1 < places.len() {
                 draw_divider(painter, r.y + r.h, sw, s);
@@ -68,12 +87,23 @@ pub fn draw_sidebar(
 
     // ── FAVORITES section ────────────────────────────────────────────
     draw_section_header(
-        painter, text, palette,
-        "FAVORITES", layout.favorites_header,
-        app.favorites_collapsed, hov.favorites_header,
-        screen, s,
+        painter,
+        text,
+        palette,
+        "FAVORITES",
+        layout.favorites_header,
+        app.favorites_collapsed,
+        hov.favorites_header,
+        screen,
+        s,
     );
-    draw_plus_button(painter, palette, layout.favorites_plus, hov.favorites_plus, s);
+    draw_plus_button(
+        painter,
+        palette,
+        layout.favorites_plus,
+        hov.favorites_plus,
+        s,
+    );
     if !app.favorites_collapsed {
         let favorites = app.sidebar_favorites();
         if favorites.is_empty() {
@@ -100,9 +130,7 @@ pub fn draw_sidebar(
                 painter.rect_filled(r, 6.0 * s, palette.accent.with_alpha(0.22));
             }
             draw_place_row(
-                painter, text, palette,
-                &fav.name, r, is_active, is_hovered, dragging,
-                screen, s,
+                painter, text, palette, &fav.name, r, is_active, is_hovered, dragging, screen, s,
             );
             // Drag source: overlay a translucent veil to read as "lifted".
             if is_drag_source {
@@ -115,12 +143,19 @@ pub fn draw_sidebar(
     }
 
     // ── DEVICES section ──────────────────────────────────────────────
-    if !layout.has_devices { return; }
+    if !layout.has_devices {
+        return;
+    }
     draw_section_header(
-        painter, text, palette,
-        "DEVICES", layout.devices_header,
-        app.devices_collapsed, hov.devices_header,
-        screen, s,
+        painter,
+        text,
+        palette,
+        "DEVICES",
+        layout.devices_header,
+        app.devices_collapsed,
+        hov.devices_header,
+        screen,
+        s,
     );
     if !app.devices_collapsed {
         for (i, drive) in app.drives.iter().enumerate() {
@@ -159,7 +194,11 @@ fn draw_section_header(
     let _ = painter;
     // Section headers follow the theme accent; hover brightens to full text
     // so the collapse affordance still reads.
-    let color = if hovered { palette.text } else { palette.accent };
+    let color = if hovered {
+        palette.text
+    } else {
+        palette.accent
+    };
     // Chevron sits to the left of the label so the click target reads as a
     // disclosure toggle on the whole header row.
     let chev_x = 14.0 * s;
@@ -198,20 +237,38 @@ fn draw_chevron(painter: &mut Painter, cx: f32, cy: f32, expanded: bool, color: 
     }
 }
 
-fn draw_plus_button(painter: &mut Painter, palette: &FoxPalette, rect: Rect, hovered: bool, s: f32) {
+fn draw_plus_button(
+    painter: &mut Painter,
+    palette: &FoxPalette,
+    rect: Rect,
+    hovered: bool,
+    s: f32,
+) {
     let bg = if hovered {
         palette.accent.with_alpha(0.18)
     } else {
         Color::WHITE.with_alpha(0.06)
     };
-    let fg = if hovered { palette.accent } else { palette.text_secondary };
+    let fg = if hovered {
+        palette.accent
+    } else {
+        palette.text_secondary
+    };
     painter.rect_filled(rect, rect.h * 0.5, bg);
     let arm = 12.0 * s;
     let thick = 2.5 * s;
     let cx = rect.x + rect.w * 0.5;
     let cy = rect.y + rect.h * 0.5;
-    painter.rect_filled(Rect::new(cx - arm * 0.5, cy - thick * 0.5, arm, thick), thick * 0.5, fg);
-    painter.rect_filled(Rect::new(cx - thick * 0.5, cy - arm * 0.5, thick, arm), thick * 0.5, fg);
+    painter.rect_filled(
+        Rect::new(cx - arm * 0.5, cy - thick * 0.5, arm, thick),
+        thick * 0.5,
+        fg,
+    );
+    painter.rect_filled(
+        Rect::new(cx - thick * 0.5, cy - arm * 0.5, thick, arm),
+        thick * 0.5,
+        fg,
+    );
 }
 
 fn draw_divider(painter: &mut Painter, y: f32, sw: f32, s: f32) {
@@ -246,7 +303,14 @@ fn draw_place_row(
     } else {
         palette.text_secondary.with_alpha(0.75)
     };
-    draw_place_icon(painter, name, 19.0 * s, rect.y + rect.h * 0.5, icon_color, s);
+    draw_place_icon(
+        painter,
+        name,
+        19.0 * s,
+        rect.y + rect.h * 0.5,
+        icon_color,
+        s,
+    );
     TextLabel::new(name, 38.0 * s, rect.y + (rect.h - 26.0 * s) * 0.5)
         .size(FontSize::Custom(26.0 * s))
         .color(palette.text)
@@ -265,7 +329,11 @@ fn draw_drive_row(
     s: f32,
 ) {
     let sw = sidebar_w(s);
-    let icon_color = if is_hovered { palette.text } else { palette.text_secondary.with_alpha(0.75) };
+    let icon_color = if is_hovered {
+        palette.text
+    } else {
+        palette.text_secondary.with_alpha(0.75)
+    };
     let icx = 19.0 * s;
     let icy = rect.y + 18.0 * s;
     draw_drive_icon(painter, icx, icy, icon_color, s);
@@ -289,7 +357,11 @@ fn draw_drive_row(
         let bar_w = sw - 52.0 * s;
         let bar_h = 6.0 * s;
         let frac = drive.usage_fraction();
-        painter.rect_filled(Rect::new(bar_x, bar_y, bar_w, bar_h), bar_h * 0.5, palette.surface_2);
+        painter.rect_filled(
+            Rect::new(bar_x, bar_y, bar_w, bar_h),
+            bar_h * 0.5,
+            palette.surface_2,
+        );
         let fill_w = (bar_w * frac).max(bar_h);
         let fill_color = if frac > 0.9 {
             palette.danger
@@ -298,9 +370,17 @@ fn draw_drive_row(
         } else {
             palette.accent
         };
-        painter.rect_filled(Rect::new(bar_x, bar_y, fill_w, bar_h), bar_h * 0.5, fill_color);
+        painter.rect_filled(
+            Rect::new(bar_x, bar_y, fill_w, bar_h),
+            bar_h * 0.5,
+            fill_color,
+        );
     } else {
-        let subtitle = format!("Tap to mount \u{00B7} {} \u{00B7} {}", drive.total_display(), drive.fstype);
+        let subtitle = format!(
+            "Tap to mount \u{00B7} {} \u{00B7} {}",
+            drive.total_display(),
+            drive.fstype
+        );
         TextLabel::new(&subtitle, 38.0 * s, rect.y + 32.0 * s)
             .size(FontSize::Custom(16.0 * s))
             .color(palette.accent)
@@ -320,7 +400,11 @@ fn draw_phone_row(
     s: f32,
 ) {
     let sw = sidebar_w(s);
-    let icon_color = if is_hovered { palette.text } else { palette.text_secondary.with_alpha(0.75) };
+    let icon_color = if is_hovered {
+        palette.text
+    } else {
+        palette.text_secondary.with_alpha(0.75)
+    };
     draw_phone_icon(painter, 19.0 * s, rect.y + 24.0 * s, icon_color, s);
 
     TextLabel::new(&phone.name, 38.0 * s, rect.y + 8.0 * s)

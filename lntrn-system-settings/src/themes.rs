@@ -90,7 +90,11 @@ pub struct ThemeFile {
     pub input: CursorPreset,
     /// Optional per-output wallpapers. When present, each entry overrides the
     /// matching `[[monitors]].wallpaper` in lantern.toml on apply.
-    #[serde(default, rename = "monitor_wallpaper", skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        rename = "monitor_wallpaper",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub monitor_wallpapers: Vec<MonitorWallpaper>,
 }
 
@@ -103,13 +107,22 @@ pub struct ThemePreset {
 // Convenience for callers building menus from a preset reference.
 
 impl ThemePreset {
-    pub fn name(&self) -> &str { &self.file.name }
+    pub fn name(&self) -> &str {
+        &self.file.name
+    }
     pub fn wallpaper(&self) -> Option<&str> {
-        self.file.appearance.wallpaper.as_deref().filter(|s| !s.is_empty())
+        self.file
+            .appearance
+            .wallpaper
+            .as_deref()
+            .filter(|s| !s.is_empty())
     }
     /// Accent hex string fallback chain: appearance.accent → border_color → "#C8860A".
     pub fn accent_hex(&self) -> &str {
-        self.file.appearance.accent.as_deref()
+        self.file
+            .appearance
+            .accent
+            .as_deref()
             .or(self.file.window_manager.border_color.as_deref())
             .unwrap_or("#C8860A")
     }
@@ -132,22 +145,35 @@ fn ensure_dir() -> io::Result<()> {
 
 pub fn list_themes() -> Vec<ThemePreset> {
     let dir = themes_dir();
-    let Ok(entries) = fs::read_dir(&dir) else { return Vec::new(); };
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return Vec::new();
+    };
 
     let mut out = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         // Skip the order manifest (and any other dot/underscore files we use
         // for bookkeeping).
-        if path.file_name().and_then(|n| n.to_str())
-            .map(|n| n.starts_with('_')).unwrap_or(false)
-        { continue; }
+        if path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n.starts_with('_'))
+            .unwrap_or(false)
+        {
+            continue;
+        }
         if path.extension().and_then(|e| e.to_str()) != Some("toml") {
             continue;
         }
-        let Some(slug) = path.file_stem().and_then(|s| s.to_str()).map(String::from) else { continue };
-        let Ok(text) = fs::read_to_string(&path) else { continue };
-        let Ok(mut file) = toml::from_str::<ThemeFile>(&text) else { continue };
+        let Some(slug) = path.file_stem().and_then(|s| s.to_str()).map(String::from) else {
+            continue;
+        };
+        let Ok(text) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(mut file) = toml::from_str::<ThemeFile>(&text) else {
+            continue;
+        };
         if file.name.is_empty() {
             file.name = slug.clone();
         }
@@ -158,13 +184,11 @@ pub fn list_themes() -> Vec<ThemePreset> {
     // alphabetized (so new themes don't randomly insert in the middle).
     let order = load_order();
     let order_idx = |slug: &str| order.iter().position(|s| s == slug);
-    out.sort_by(|a, b| {
-        match (order_idx(&a.slug), order_idx(&b.slug)) {
-            (Some(ai), Some(bi)) => ai.cmp(&bi),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => a.file.name.to_lowercase().cmp(&b.file.name.to_lowercase()),
-        }
+    out.sort_by(|a, b| match (order_idx(&a.slug), order_idx(&b.slug)) {
+        (Some(ai), Some(bi)) => ai.cmp(&bi),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.file.name.to_lowercase().cmp(&b.file.name.to_lowercase()),
     });
     out
 }
@@ -177,26 +201,35 @@ struct OrderFile {
     order: Vec<String>,
 }
 
-fn order_path() -> PathBuf { themes_dir().join("_order.toml") }
+fn order_path() -> PathBuf {
+    themes_dir().join("_order.toml")
+}
 
 fn load_order() -> Vec<String> {
     let path = order_path();
-    let Ok(text) = fs::read_to_string(&path) else { return Vec::new(); };
+    let Ok(text) = fs::read_to_string(&path) else {
+        return Vec::new();
+    };
     let parsed: OrderFile = toml::from_str(&text).unwrap_or_default();
     parsed.order
 }
 
 fn save_order(order: &[String]) -> io::Result<()> {
     ensure_dir()?;
-    let file = OrderFile { order: order.to_vec() };
-    let text = toml::to_string_pretty(&file)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let file = OrderFile {
+        order: order.to_vec(),
+    };
+    let text =
+        toml::to_string_pretty(&file).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     fs::write(order_path(), text)
 }
 
 /// Direction of a reorder hop.
 #[derive(Debug, Clone, Copy)]
-pub enum MoveDir { Left, Right }
+pub enum MoveDir {
+    Left,
+    Right,
+}
 
 /// Move a theme one position left or right in the user's order. Themes not
 /// yet in the order list get appended in their current list order before
@@ -205,7 +238,9 @@ pub fn move_theme(slug: &str, dir: MoveDir) -> io::Result<()> {
     // Build a complete order from `list_themes` (so unordered themes get a
     // stable position) and apply the move.
     let mut order: Vec<String> = list_themes().into_iter().map(|t| t.slug).collect();
-    let Some(idx) = order.iter().position(|s| s == slug) else { return Ok(()); };
+    let Some(idx) = order.iter().position(|s| s == slug) else {
+        return Ok(());
+    };
     let new_idx = match dir {
         MoveDir::Left if idx > 0 => idx - 1,
         MoveDir::Right if idx + 1 < order.len() => idx + 1,
@@ -222,7 +257,9 @@ pub fn save_theme(name: &str, cfg: &LanternConfig) -> io::Result<ThemePreset> {
     write_theme_file(&slug, &file)?;
     // Append to the order list so the new tile lands at the end.
     let mut order = load_order();
-    if !order.contains(&slug) { order.push(slug.clone()); }
+    if !order.contains(&slug) {
+        order.push(slug.clone());
+    }
     let _ = save_order(&order);
     Ok(ThemePreset { slug, file })
 }
@@ -238,8 +275,8 @@ pub fn rename_theme(slug: &str, new_name: &str) -> io::Result<String> {
     // Load existing
     let path = themes_dir().join(format!("{slug}.toml"));
     let text = fs::read_to_string(&path)?;
-    let mut file: ThemeFile = toml::from_str(&text)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let mut file: ThemeFile =
+        toml::from_str(&text).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     file.name = new_name.to_string();
     // Slug stays the same to keep references stable.
     write_theme_file(slug, &file)?;
@@ -260,8 +297,8 @@ pub fn delete_theme(slug: &str) -> io::Result<()> {
 
 fn write_theme_file(slug: &str, file: &ThemeFile) -> io::Result<()> {
     let path = themes_dir().join(format!("{slug}.toml"));
-    let text = toml::to_string_pretty(file)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let text =
+        toml::to_string_pretty(file).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     fs::write(path, text)
 }
 
@@ -271,7 +308,9 @@ fn capture(name: &str, cfg: &LanternConfig) -> ThemeFile {
     // Snapshot every connected monitor that has its own wallpaper set, so a
     // multi-display layout round-trips through "Save theme" / "Apply theme"
     // with each output keeping its own picture.
-    let monitor_wallpapers: Vec<MonitorWallpaper> = cfg.monitors.iter()
+    let monitor_wallpapers: Vec<MonitorWallpaper> = cfg
+        .monitors
+        .iter()
         .filter(|m| !m.wallpaper.is_empty())
         .map(|m| MonitorWallpaper {
             name: m.name.clone(),
@@ -336,10 +375,16 @@ pub fn apply_theme(preset: &ThemePreset, cfg: &mut LanternConfig) {
 /// per-monitor overrides quietly win at the compositor, so the screen never
 /// changes.
 fn apply_monitor_wallpapers(theme: &ThemeFile, cfg: &mut LanternConfig) {
-    let global = theme.appearance.wallpaper.as_deref().filter(|s| !s.is_empty());
+    let global = theme
+        .appearance
+        .wallpaper
+        .as_deref()
+        .filter(|s| !s.is_empty());
 
     for monitor in cfg.monitors.iter_mut() {
-        let per_output = theme.monitor_wallpapers.iter()
+        let per_output = theme
+            .monitor_wallpapers
+            .iter()
             .find(|w| w.name == monitor.name)
             .map(|w| w.wallpaper.as_str())
             .filter(|s| !s.is_empty());
@@ -353,37 +398,81 @@ fn apply_monitor_wallpapers(theme: &ThemeFile, cfg: &mut LanternConfig) {
 }
 
 fn apply_appearance(p: &AppearancePreset, c: &mut AppearanceConfig) {
-    if let Some(v) = &p.theme { c.theme = v.clone(); }
-    if let Some(v) = &p.accent { c.accent = v.clone(); }
-    if let Some(v) = &p.font_family { c.font_family = v.clone(); }
-    if let Some(v) = p.font_size { c.font_size = v; }
-    if let Some(v) = &p.wallpaper { c.wallpaper = v.clone(); }
-    if let Some(v) = &p.background_color { c.background_color = v.clone(); }
+    if let Some(v) = &p.theme {
+        c.theme = v.clone();
+    }
+    if let Some(v) = &p.accent {
+        c.accent = v.clone();
+    }
+    if let Some(v) = &p.font_family {
+        c.font_family = v.clone();
+    }
+    if let Some(v) = p.font_size {
+        c.font_size = v;
+    }
+    if let Some(v) = &p.wallpaper {
+        c.wallpaper = v.clone();
+    }
+    if let Some(v) = &p.background_color {
+        c.background_color = v.clone();
+    }
 }
 
 fn apply_wm(p: &WmPreset, c: &mut WmConfig) {
-    if let Some(v) = p.border_width { c.border_width = v; }
-    if let Some(v) = &p.border_color { c.border_color = v.clone(); }
-    if let Some(v) = p.titlebar_height { c.titlebar_height = v; }
-    if let Some(v) = p.gap { c.gap = v; }
-    if let Some(v) = p.corner_radius { c.corner_radius = v; }
-    if let Some(v) = p.focus_follows_mouse { c.focus_follows_mouse = v; }
-    if let Some(v) = p.focus_glow { c.focus_glow = v; }
-    if let Some(v) = &p.focus_glow_color { c.focus_glow_color = v.clone(); }
-    if let Some(v) = p.focus_glow_intensity { c.focus_glow_intensity = v; }
+    if let Some(v) = p.border_width {
+        c.border_width = v;
+    }
+    if let Some(v) = &p.border_color {
+        c.border_color = v.clone();
+    }
+    if let Some(v) = p.titlebar_height {
+        c.titlebar_height = v;
+    }
+    if let Some(v) = p.gap {
+        c.gap = v;
+    }
+    if let Some(v) = p.corner_radius {
+        c.corner_radius = v;
+    }
+    if let Some(v) = p.focus_follows_mouse {
+        c.focus_follows_mouse = v;
+    }
+    if let Some(v) = p.focus_glow {
+        c.focus_glow = v;
+    }
+    if let Some(v) = &p.focus_glow_color {
+        c.focus_glow_color = v.clone();
+    }
+    if let Some(v) = p.focus_glow_intensity {
+        c.focus_glow_intensity = v;
+    }
 }
 
 fn apply_windows(p: &WindowsPreset, c: &mut WindowsConfig) {
-    if let Some(v) = p.blur_intensity { c.blur_intensity = v; }
-    if let Some(v) = p.blur_tint { c.blur_tint = v; }
-    if let Some(v) = &p.blur_tint_color { c.blur_tint_color = v.clone(); }
-    if let Some(v) = p.blur_darken { c.blur_darken = v; }
-    if let Some(v) = p.background_opacity { c.background_opacity = v; }
+    if let Some(v) = p.blur_intensity {
+        c.blur_intensity = v;
+    }
+    if let Some(v) = p.blur_tint {
+        c.blur_tint = v;
+    }
+    if let Some(v) = &p.blur_tint_color {
+        c.blur_tint_color = v.clone();
+    }
+    if let Some(v) = p.blur_darken {
+        c.blur_darken = v;
+    }
+    if let Some(v) = p.background_opacity {
+        c.background_opacity = v;
+    }
 }
 
 fn apply_cursor(p: &CursorPreset, c: &mut InputConfig) {
-    if let Some(v) = p.cursor_size { c.cursor_size = v; }
-    if let Some(v) = &p.cursor_theme { c.cursor_theme = v.clone(); }
+    if let Some(v) = p.cursor_size {
+        c.cursor_size = v;
+    }
+    if let Some(v) = &p.cursor_theme {
+        c.cursor_theme = v.clone();
+    }
 }
 
 // ── Slug helpers ────────────────────────────────────────────────────────────
@@ -400,8 +489,12 @@ fn slugify(name: &str) -> String {
             last_dash = true;
         }
     }
-    while out.ends_with('-') { out.pop(); }
-    if out.is_empty() { out.push_str("theme"); }
+    while out.ends_with('-') {
+        out.pop();
+    }
+    if out.is_empty() {
+        out.push_str("theme");
+    }
     out
 }
 

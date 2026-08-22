@@ -85,9 +85,7 @@ pub(crate) fn shape_run(
     // variation selectors) keep their glyph only when the cluster's font maps
     // one — emoji fonts map ZWJ/VS16 for their GSUB sequences, text fonts
     // usually don't — and never trigger a fallback search of their own.
-    let soft = |c: char| {
-        unicode::is_default_ignorable(c) || matches!(c as u32, 0xFE00..=0xFE0F)
-    };
+    let soft = |c: char| unicode::is_default_ignorable(c) || matches!(c as u32, 0xFE00..=0xFE0F);
     let mut resolved: Vec<(usize, gsub::Glyph)> = Vec::new();
     let mut cluster_base = 0usize;
     for cluster in crate::unicode::graphemes(text) {
@@ -102,7 +100,11 @@ pub(crate) fn shape_run(
             if gid != 0 {
                 resolved.push((
                     primary,
-                    gsub::Glyph { gid, cluster: start as u32, form: form_at(start as u32) },
+                    gsub::Glyph {
+                        gid,
+                        cluster: start as u32,
+                        form: form_at(start as u32),
+                    },
                 ));
             }
             primary
@@ -110,7 +112,11 @@ pub(crate) fn shape_run(
             let (fid, gid) = db.glyph_for(primary, base, weight, italic);
             resolved.push((
                 fid,
-                gsub::Glyph { gid, cluster: start as u32, form: form_at(start as u32) },
+                gsub::Glyph {
+                    gid,
+                    cluster: start as u32,
+                    form: form_at(start as u32),
+                },
             ));
             fid
         };
@@ -119,11 +125,25 @@ pub(crate) fn shape_run(
             if soft(c) {
                 let gid = db.font(fid).map_or(0, |f| f.glyph_index(c));
                 if gid != 0 {
-                    resolved.push((fid, gsub::Glyph { gid, cluster: offset, form: form_at(offset) }));
+                    resolved.push((
+                        fid,
+                        gsub::Glyph {
+                            gid,
+                            cluster: offset,
+                            form: form_at(offset),
+                        },
+                    ));
                 }
             } else {
                 let (f, g) = db.glyph_for(fid, c, weight, italic);
-                resolved.push((f, gsub::Glyph { gid: g, cluster: offset, form: form_at(offset) }));
+                resolved.push((
+                    f,
+                    gsub::Glyph {
+                        gid: g,
+                        cluster: offset,
+                        form: form_at(offset),
+                    },
+                ));
             }
         }
     }

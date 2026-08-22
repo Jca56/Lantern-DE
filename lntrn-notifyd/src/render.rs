@@ -33,7 +33,12 @@ fn amber() -> Color {
 fn accent_for(urgency: Urgency) -> Color {
     match urgency {
         Urgency::Low | Urgency::Normal => amber(),
-        Urgency::Critical => Color { r: 0.95, g: 0.30, b: 0.25, a: 1.0 },
+        Urgency::Critical => Color {
+            r: 0.95,
+            g: 0.30,
+            b: 0.25,
+            a: 1.0,
+        },
     }
 }
 
@@ -115,7 +120,9 @@ impl<'a> ToastStack<'a> {
         self
     }
 
-    fn s(&self, v: f32) -> f32 { v * self.scale }
+    fn s(&self, v: f32) -> f32 {
+        v * self.scale
+    }
 
     fn toast_pos(&self, index: usize, screen_w: f32) -> (f32, f32) {
         let w = self.s(TOAST_W);
@@ -198,22 +205,43 @@ impl<'a> ToastStack<'a> {
         // Progress border (off-white countdown ring; accent stays on title only).
         let progress_color = Color::from_rgb8(232, 220, 200).with_alpha(0.75);
         painter.rect_stroke_progress(
-            Rect::new(x, y, w, h), r, self.s(BORDER_W),
-            progress_color, toast.progress,
+            Rect::new(x, y, w, h),
+            r,
+            self.s(BORDER_W),
+            progress_color,
+            toast.progress,
         );
 
         // Title text (amber).
         let title_font = self.s(TITLE_SIZE);
         let title_y = y + pad;
         let max_w = w - pad * 2.0;
-        text.queue(&toast.title, title_font, x + pad, title_y, accent, max_w, screen_w, screen_h);
+        text.queue(
+            &toast.title,
+            title_font,
+            x + pad,
+            title_y,
+            accent,
+            max_w,
+            screen_w,
+            screen_h,
+        );
 
         // Body text (muted silver).
         if !toast.body.is_empty() {
             let body_font = self.s(BODY_SIZE);
             let body_y = title_y + title_font + self.s(8.0);
             let body_color = Color::rgb(0.65, 0.60, 0.75);
-            text.queue(&toast.body, body_font, x + pad, body_y, body_color, max_w, screen_w, screen_h);
+            text.queue(
+                &toast.body,
+                body_font,
+                x + pad,
+                body_y,
+                body_color,
+                max_w,
+                screen_w,
+                screen_h,
+            );
         }
 
         // Close X (top-right). Bold tan strokes — no circle.
@@ -224,7 +252,21 @@ impl<'a> ToastStack<'a> {
         let bx = x + w - hit - cpad;
         let by = y + cpad;
         let x_color = Color::from_rgb8(232, 220, 200);
-        painter.line(bx + inset, by + inset, bx + hit - inset, by + hit - inset, stroke, x_color);
-        painter.line(bx + hit - inset, by + inset, bx + inset, by + hit - inset, stroke, x_color);
+        painter.line(
+            bx + inset,
+            by + inset,
+            bx + hit - inset,
+            by + hit - inset,
+            stroke,
+            x_color,
+        );
+        painter.line(
+            bx + hit - inset,
+            by + inset,
+            bx + inset,
+            by + hit - inset,
+            stroke,
+            x_color,
+        );
     }
 }

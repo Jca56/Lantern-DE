@@ -136,8 +136,8 @@ fn icon_dirs() -> Vec<String> {
     // pick up the sharpest available size (coverage varies per game — some
     // only ship a 32x32, so we have to go all the way down to 16x16).
     for size in [
-        "scalable", "512x512", "256x256", "128x128", "96x96", "64x64",
-        "48x48", "32x32", "24x24", "16x16",
+        "scalable", "512x512", "256x256", "128x128", "96x96", "64x64", "48x48", "32x32", "24x24",
+        "16x16",
     ] {
         dirs.push(format!("{home}/.local/share/icons/hicolor/{size}/apps"));
     }
@@ -151,7 +151,9 @@ fn icon_dirs() -> Vec<String> {
         "/var/lib/flatpak/exports/share/icons".to_string(),
         format!("{home}/.local/share/flatpak/exports/share/icons"),
     ] {
-        for size in ["scalable", "512x512", "256x256", "128x128", "64x64", "48x48"] {
+        for size in [
+            "scalable", "512x512", "256x256", "128x128", "64x64", "48x48",
+        ] {
             dirs.push(format!("{base}/hicolor/{size}/apps"));
         }
     }
@@ -206,8 +208,8 @@ fn rasterize(
     let rgba = match ext.as_deref() {
         Some("svg") | Some("svgz") => rasterize_svg(&data, size, size)?,
         Some("png") => rasterize_png(&data, size, size)?,
-        Some("jpg") | Some("jpeg") | Some("gif") | Some("webp") | Some("bmp")
-        | Some("tif") | Some("tiff") | Some("ico") => rasterize_image_crate(&data, size, size)?,
+        Some("jpg") | Some("jpeg") | Some("gif") | Some("webp") | Some("bmp") | Some("tif")
+        | Some("tiff") | Some("ico") => rasterize_image_crate(&data, size, size)?,
         _ => return None,
     };
 
@@ -272,11 +274,7 @@ fn extract_video_thumb(src: &Path, dst: &Path, size: u32) -> bool {
     use std::process::{Command, Stdio};
     let scale = format!("scale={}:-1:force_original_aspect_ratio=decrease", size);
     let status = Command::new("ffmpeg")
-        .args([
-            "-y",
-            "-ss", "1",
-            "-i",
-        ])
+        .args(["-y", "-ss", "1", "-i"])
         .arg(src)
         .args(["-vframes", "1", "-vf"])
         .arg(&scale)
@@ -303,12 +301,7 @@ fn rasterize_image_crate(data: &[u8], w: u32, h: u32) -> Option<Vec<u8>> {
     let s = sx.min(sy);
     let rw = (sw as f32 * s).round().max(1.0) as u32;
     let rh = (sh as f32 * s).round().max(1.0) as u32;
-    let resized = image::imageops::resize(
-        &rgba,
-        rw,
-        rh,
-        image::imageops::FilterType::Triangle,
-    );
+    let resized = image::imageops::resize(&rgba, rw, rh, image::imageops::FilterType::Triangle);
     let mut out = vec![0u8; (w * h * 4) as usize];
     let off_x = (w - rw) / 2;
     let off_y = (h - rh) / 2;
@@ -342,8 +335,8 @@ fn rasterize_svg(data: &[u8], w: u32, h: u32) -> Option<Vec<u8>> {
     let off_y = (h as f32 - rendered_h) / 2.0;
 
     let mut pixmap = resvg::tiny_skia::Pixmap::new(w, h)?;
-    let transform = resvg::tiny_skia::Transform::from_translate(off_x, off_y)
-        .post_scale(scale, scale);
+    let transform =
+        resvg::tiny_skia::Transform::from_translate(off_x, off_y).post_scale(scale, scale);
     resvg::render(&tree, transform, &mut pixmap.as_mut());
 
     let mut rgba = pixmap.take();

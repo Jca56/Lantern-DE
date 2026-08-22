@@ -63,11 +63,7 @@ pub(crate) fn parse_fvar(t: &[u8]) -> Option<(Vec<Axis>, Vec<Instance>)> {
 
 /// User coords → normalized [-1, 1] per axis (fvar order), with `avar`
 /// remapping when present. `user` pairs may cover any subset of axes.
-pub(crate) fn normalize(
-    axes: &[Axis],
-    avar: Option<&[u8]>,
-    user: &[([u8; 4], f32)],
-) -> Vec<f32> {
+pub(crate) fn normalize(axes: &[Axis], avar: Option<&[u8]>, user: &[([u8; 4], f32)]) -> Vec<f32> {
     let mut out = Vec::with_capacity(axes.len());
     for axis in axes {
         let v = user
@@ -107,7 +103,10 @@ fn apply_avar(t: &[u8], coords: &mut [f32]) {
             continue;
         }
         let pair = |i: usize| -> Option<(f32, f32)> {
-            Some((f2dot14(t, map_base + i * 4)?, f2dot14(t, map_base + i * 4 + 2)?))
+            Some((
+                f2dot14(t, map_base + i * 4)?,
+                f2dot14(t, map_base + i * 4 + 2)?,
+            ))
         };
         let v = *coord;
         let mut mapped = v;
@@ -181,8 +180,7 @@ impl ItemVariationStore {
         if outer >= data_count {
             return None;
         }
-        let data =
-            self.off + read_u32_at(d, self.off + 8 + outer as usize * 4).ok()? as usize;
+        let data = self.off + read_u32_at(d, self.off + 8 + outer as usize * 4).ok()? as usize;
 
         let axis_count = read_u16_at(d, region_list).ok()? as usize;
         let item_count = read_u16_at(d, data).ok()?;
@@ -195,7 +193,8 @@ impl ItemVariationStore {
         let region_count = read_u16_at(d, data + 4).ok()? as usize;
         let regions_idx = data + 6;
         let (word_size, small_size) = if long_words { (4, 2) } else { (2, 1) };
-        let row_size = word_count * word_size + region_count.saturating_sub(word_count) * small_size;
+        let row_size =
+            word_count * word_size + region_count.saturating_sub(word_count) * small_size;
         let row = regions_idx + region_count * 2 + inner as usize * row_size;
 
         let mut total = 0.0f32;
@@ -288,5 +287,8 @@ fn delta_set_index(d: &[u8], map: usize, gid: u16) -> Option<(u16, u16)> {
     for k in 0..entry_size {
         value = (value << 8) | read_u8_at(d, map + 4 + index * entry_size + k).ok()? as u32;
     }
-    Some(((value >> inner_bits) as u16, (value & ((1 << inner_bits) - 1)) as u16))
+    Some((
+        (value >> inner_bits) as u16,
+        (value & ((1 << inner_bits) - 1)) as u16,
+    ))
 }

@@ -45,9 +45,14 @@ impl App {
                 .iter()
                 .map(|t| {
                     let title = t.custom_name.as_deref().unwrap_or_else(|| {
-                        t.panes.get(t.active_pane).map_or("Shell", |p| p.title.as_str())
+                        t.panes
+                            .get(t.active_pane)
+                            .map_or("Shell", |p| p.title.as_str())
                     });
-                    tab_bar::TabDisplay { title, pinned: t.pinned }
+                    tab_bar::TabDisplay {
+                        title,
+                        pinned: t.pinned,
+                    }
                 })
                 .collect();
             let menus = ui_chrome::build_menus(
@@ -84,7 +89,9 @@ impl App {
         if self.selecting && !self.tabs.is_empty() {
             if let Some((_pane_idx, row, col)) = self.pixel_to_pane_cell(x, y) {
                 let tab = &mut self.tabs[self.active_tab];
-                tab.panes[tab.active_pane].terminal.set_selection_end(row, col);
+                tab.panes[tab.active_pane]
+                    .terminal
+                    .set_selection_end(row, col);
             }
         }
 
@@ -109,7 +116,10 @@ impl App {
         let hovering_link = if !self.tabs.is_empty() {
             if let Some((_pane_idx, row, col)) = self.pixel_to_pane_cell(x, y) {
                 let tab = &self.tabs[self.active_tab];
-                tab.panes[tab.active_pane].terminal.hyperlink_at(row, col).is_some()
+                tab.panes[tab.active_pane]
+                    .terminal
+                    .hyperlink_at(row, col)
+                    .is_some()
             } else {
                 false
             }
@@ -246,7 +256,11 @@ impl App {
         // opening a dropdown that captures all input.
         if let Some((x, y)) = self.cursor_pos {
             if y <= self.chrome_height() {
-                if ui_chrome::is_files_label_hit(x, &crate::config::WindowMode::current(), self.scale) {
+                if ui_chrome::is_files_label_hit(
+                    x,
+                    &crate::config::WindowMode::current(),
+                    self.scale,
+                ) {
                     self.chrome.close_all_menus();
                     match self.dispatch_chrome_action(
                         ui_chrome::ClickAction::ToggleSidebar,
@@ -332,8 +346,8 @@ impl App {
             ui_chrome::ClickAction::WindowModeChanged => {
                 // Theme now comes from System Settings (`[appearance].theme`);
                 // re-resolve and propagate to every open pane's terminal.
-                use crate::theme::Theme;
                 use crate::terminal::Color8;
+                use crate::theme::Theme;
                 self.theme = Theme::current();
                 for tab in &mut self.tabs {
                     for pane in &mut tab.panes {
@@ -363,9 +377,7 @@ impl App {
                         .osc7_cwd
                         .clone()
                         .or_else(|| pane.pty.cwd())
-                        .unwrap_or_else(|| {
-                            std::env::var("HOME").unwrap_or_else(|_| "/".into())
-                        });
+                        .unwrap_or_else(|| std::env::var("HOME").unwrap_or_else(|_| "/".into()));
                     self.sidebar.set_root(std::path::Path::new(&cwd));
                 }
                 self.update_grid_size();
@@ -497,7 +509,10 @@ impl App {
         // double-click on the handle resets to auto-fit width.
         if self.sidebar.resize_handle_hit(self.cursor_pos, chrome_h) {
             let now = Instant::now();
-            let double = now.duration_since(self.last_resize_handle_click).as_millis() < 400;
+            let double = now
+                .duration_since(self.last_resize_handle_click)
+                .as_millis()
+                < 400;
             self.last_resize_handle_click = now;
             if double {
                 self.sidebar.reset_width();
@@ -512,7 +527,9 @@ impl App {
         }
 
         // Check sidebar mode toggle first
-        if let Some(new_mode) = sidebar::handle_mode_click(&mut self.sidebar, self.cursor_pos, chrome_h) {
+        if let Some(new_mode) =
+            sidebar::handle_mode_click(&mut self.sidebar, self.cursor_pos, chrome_h)
+        {
             self.handle_sidebar_mode_change(new_mode);
             self.request_redraw();
             return EventResult::Handled;
@@ -521,7 +538,12 @@ impl App {
         // Git sidebar click handling
         if self.sidebar.visible && self.sidebar.mode == sidebar::SidebarMode::Git {
             let git_top = chrome_h + sidebar::TOGGLE_H * self.sidebar.scale;
-            if git_sidebar::contains(self.cursor_pos, self.sidebar.width, git_top, self.git_sidebar.scale) {
+            if git_sidebar::contains(
+                self.cursor_pos,
+                self.sidebar.width,
+                git_top,
+                self.git_sidebar.scale,
+            ) {
                 let action = git_sidebar::handle_click(
                     &mut self.git_sidebar,
                     self.cursor_pos,
@@ -537,13 +559,8 @@ impl App {
         // Check file sidebar click
         if sidebar::contains(&self.sidebar, self.cursor_pos, chrome_h) {
             let ctrl = self.modifiers.contains(ModifiersState::CONTROL);
-            let result = sidebar::handle_click(
-                &mut self.sidebar,
-                self.cursor_pos,
-                chrome_h,
-                screen_h,
-                ctrl,
-            );
+            let result =
+                sidebar::handle_click(&mut self.sidebar, self.cursor_pos, chrome_h, screen_h, ctrl);
             match result {
                 sidebar::ClickResult::CopyPath(path_str) => {
                     if let Some(ref cb) = self.clipboard {
@@ -629,11 +646,9 @@ impl App {
         let chrome_h = self.chrome_height();
         // Sidebar right-click — stays routable in rice mode (the handler
         // no-ops when the sidebar is closed).
-        if let Some(target) = sidebar::handle_right_click(
-            &mut self.sidebar,
-            self.cursor_pos,
-            chrome_h,
-        ) {
+        if let Some(target) =
+            sidebar::handle_right_click(&mut self.sidebar, self.cursor_pos, chrome_h)
+        {
             self.open_sidebar_context_menu(&target, screen_w, screen_h);
             return;
         }
@@ -650,9 +665,14 @@ impl App {
             .iter()
             .map(|t| {
                 let title = t.custom_name.as_deref().unwrap_or_else(|| {
-                    t.panes.get(t.active_pane).map_or("Shell", |p| p.title.as_str())
+                    t.panes
+                        .get(t.active_pane)
+                        .map_or("Shell", |p| p.title.as_str())
                 });
-                tab_bar::TabDisplay { title, pinned: t.pinned }
+                tab_bar::TabDisplay {
+                    title,
+                    pinned: t.pinned,
+                }
             })
             .collect();
         let menus = ui_chrome::build_menus(
@@ -668,12 +688,8 @@ impl App {
             self.scale,
             &crate::config::WindowMode::current(),
         );
-        if tab_bar::handle_right_click(
-            &mut self.tab_bar,
-            self.cursor_pos,
-            &tab_displays,
-            tabs_rect,
-        ) {
+        if tab_bar::handle_right_click(&mut self.tab_bar, self.cursor_pos, &tab_displays, tabs_rect)
+        {
             self.chrome.close_all_menus();
             self.sidebar.close_menu();
             self.request_redraw();
@@ -690,7 +706,9 @@ impl App {
         screen_w: u32,
         screen_h: u32,
     ) {
-        let Some((x, y)) = self.cursor_pos else { return };
+        let Some((x, y)) = self.cursor_pos else {
+            return;
+        };
         self.tab_bar.context_menu = None;
         self.chrome.menu_bar.close();
 
@@ -699,14 +717,18 @@ impl App {
         self.chrome.refresh_theme();
         self.chrome.context_menu.set_scale(self.scale);
         self.chrome.context_menu.open(x, y, items);
-        self.chrome.context_menu.clamp_to_screen(screen_w as f32, screen_h as f32);
+        self.chrome
+            .context_menu
+            .clamp_to_screen(screen_w as f32, screen_h as f32);
         self.request_redraw();
     }
 
     /// Open the terminal's right-click context menu at the cursor. Shared by
     /// the normal path and rice mode (where it doubles as the title bar).
     fn open_terminal_context_menu(&mut self, screen_w: u32, screen_h: u32) {
-        let Some((x, y)) = self.cursor_pos else { return };
+        let Some((x, y)) = self.cursor_pos else {
+            return;
+        };
         self.tab_bar.context_menu = None;
         self.sidebar.close_menu();
         self.chrome.menu_bar.close();
@@ -715,22 +737,18 @@ impl App {
         self.chrome.refresh_theme();
         self.chrome.context_menu.set_scale(self.scale);
         self.chrome.context_menu.open(x, y, items);
-        self.chrome.context_menu.clamp_to_screen(screen_w as f32, screen_h as f32);
+        self.chrome
+            .context_menu
+            .clamp_to_screen(screen_w as f32, screen_h as f32);
         self.request_redraw();
     }
 
     /// Context-menu items for the current terminal state.
     fn context_menu_items(&self) -> Vec<lntrn_ui::gpu::MenuItem> {
-        let has_selection = self
-            .tabs
-            .get(self.active_tab)
-            .map_or(false, |t| {
-                t.panes[t.active_pane].terminal.selection_range().is_some()
-            });
-        let pane_count = self
-            .tabs
-            .get(self.active_tab)
-            .map_or(0, |t| t.panes.len());
+        let has_selection = self.tabs.get(self.active_tab).map_or(false, |t| {
+            t.panes[t.active_pane].terminal.selection_range().is_some()
+        });
+        let pane_count = self.tabs.get(self.active_tab).map_or(0, |t| t.panes.len());
         ui_chrome::build_context_menu(
             has_selection,
             self.tabs.len(),
@@ -784,7 +802,9 @@ impl App {
                 };
                 if let Some(key) = key_str {
                     git_sidebar::handle_key(&mut self.git_sidebar, key);
-                } else if let winit::keyboard::Key::Named(winit::keyboard::NamedKey::Space) = &event.logical_key {
+                } else if let winit::keyboard::Key::Named(winit::keyboard::NamedKey::Space) =
+                    &event.logical_key
+                {
                     git_sidebar::handle_char(&mut self.git_sidebar, ' ');
                 } else if let winit::keyboard::Key::Character(s) = &event.logical_key {
                     for ch in s.chars() {
@@ -847,7 +867,9 @@ impl App {
                     if let Some(action) = tab_bar::handle_rename_key(&mut self.tab_bar, key) {
                         self.handle_tab_bar_action(action, event_loop);
                     }
-                } else if let winit::keyboard::Key::Named(winit::keyboard::NamedKey::Space) = &event.logical_key {
+                } else if let winit::keyboard::Key::Named(winit::keyboard::NamedKey::Space) =
+                    &event.logical_key
+                {
                     tab_bar::handle_rename_char(&mut self.tab_bar, ' ');
                 } else if let winit::keyboard::Key::Character(s) = &event.logical_key {
                     for ch in s.chars() {
@@ -903,8 +925,7 @@ impl App {
             }
 
             // Ctrl+Tab / Ctrl+Shift+Tab for tab switching
-            if let winit::keyboard::Key::Named(winit::keyboard::NamedKey::Tab) =
-                &event.logical_key
+            if let winit::keyboard::Key::Named(winit::keyboard::NamedKey::Tab) = &event.logical_key
             {
                 if ctrl && self.tabs.len() > 1 {
                     if shift {
@@ -998,9 +1019,7 @@ impl App {
                 self.request_redraw();
                 Some(EventResult::Handled)
             }
-            winit::keyboard::Key::Character(s)
-                if s.as_str() == "[" || s.as_str() == "{" =>
-            {
+            winit::keyboard::Key::Character(s) if s.as_str() == "[" || s.as_str() == "{" => {
                 if !self.tabs.is_empty() {
                     let tab = &mut self.tabs[self.active_tab];
                     if tab.panes.len() > 1 {
@@ -1014,9 +1033,7 @@ impl App {
                 self.request_redraw();
                 Some(EventResult::Handled)
             }
-            winit::keyboard::Key::Character(s)
-                if s.as_str() == "]" || s.as_str() == "}" =>
-            {
+            winit::keyboard::Key::Character(s) if s.as_str() == "]" || s.as_str() == "}" => {
                 if !self.tabs.is_empty() {
                     let tab = &mut self.tabs[self.active_tab];
                     if tab.panes.len() > 1 {
@@ -1036,7 +1053,12 @@ impl App {
         // Git sidebar scroll
         if self.sidebar.visible && self.sidebar.mode == sidebar::SidebarMode::Git {
             let git_top = chrome_h + sidebar::TOGGLE_H * self.sidebar.scale;
-            if git_sidebar::contains(self.cursor_pos, self.sidebar.width, git_top, self.git_sidebar.scale) {
+            if git_sidebar::contains(
+                self.cursor_pos,
+                self.sidebar.width,
+                git_top,
+                self.git_sidebar.scale,
+            ) {
                 let dy = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 20.0,
@@ -1121,8 +1143,7 @@ impl App {
 
         let bytes = if mouse_on {
             let (col, row) = self.hovered_cell(tab, pane);
-            let report =
-                crate::terminal::mouse::wheel_report(terminal.mouse_sgr, up, col, row);
+            let report = crate::terminal::mouse::wheel_report(terminal.mouse_sgr, up, col, row);
             report.repeat(ticks.unsigned_abs() as usize)
         } else {
             crate::terminal::mouse::alternate_scroll(
@@ -1152,8 +1173,7 @@ impl App {
         if tab.active_pane >= rects.len() {
             return (1, 1);
         }
-        let (gx, gy, _, _) =
-            Self::pane_grid_bounds(pane, rects[tab.active_pane], font_size);
+        let (gx, gy, _, _) = Self::pane_grid_bounds(pane, rects[tab.active_pane], font_size);
         let (cx, cy) = self.cursor_pos.unwrap_or((gx, gy));
         let col = ((cx - gx) / cell_w).floor().max(0.0) as usize;
         let row = ((cy - gy) / cell_h).floor().max(0.0) as usize;
@@ -1184,7 +1204,13 @@ impl App {
         let screen_h = self.gpu.as_ref().map_or(600, |g| g.height());
         let tab = &self.tabs[self.active_tab];
         let pane = &tab.panes[tab.active_pane];
-        let rects = Self::pane_rects_for_tab(tab, screen_w, screen_h, self.sidebar_offset(), self.chrome_height());
+        let rects = Self::pane_rects_for_tab(
+            tab,
+            screen_w,
+            screen_h,
+            self.sidebar_offset(),
+            self.chrome_height(),
+        );
         if tab.active_pane >= rects.len() {
             return None;
         }
@@ -1218,7 +1244,13 @@ impl App {
         let screen_h = self.gpu.as_ref().map_or(600, |g| g.height());
         let tab = &self.tabs[self.active_tab];
         let pane = &tab.panes[tab.active_pane];
-        let rects = Self::pane_rects_for_tab(tab, screen_w, screen_h, self.sidebar_offset(), self.chrome_height());
+        let rects = Self::pane_rects_for_tab(
+            tab,
+            screen_w,
+            screen_h,
+            self.sidebar_offset(),
+            self.chrome_height(),
+        );
         if tab.active_pane >= rects.len() {
             return;
         }
@@ -1226,11 +1258,8 @@ impl App {
             Self::pane_grid_bounds(pane, rects[tab.active_pane], self.effective_font_size());
         let viewport = lntrn_render::Rect::new(gx, gy, gw, gh);
         let inverted_offset = hit.max_scroll - self.scroll_current_px.min(hit.max_scroll);
-        let scrollbar = lntrn_ui::gpu::scroll::Scrollbar::new(
-            &viewport,
-            hit.content_height,
-            inverted_offset,
-        );
+        let scrollbar =
+            lntrn_ui::gpu::scroll::Scrollbar::new(&viewport, hit.content_height, inverted_offset);
         let raw = scrollbar.offset_for_thumb_y(cy, hit.content_height, gh);
         let new_offset = hit.max_scroll - raw;
         self.scroll_target_px = new_offset;

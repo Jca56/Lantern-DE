@@ -158,7 +158,12 @@ impl<'a> Modal<'a> {
 
         // -- Panel --
         painter.rect_filled(panel, MODAL_RADIUS, palette.surface);
-        painter.rect_stroke(panel, MODAL_RADIUS, MODAL_BORDER, palette.muted.with_alpha(0.2));
+        painter.rect_stroke(
+            panel,
+            MODAL_RADIUS,
+            MODAL_BORDER,
+            palette.muted.with_alpha(0.2),
+        );
 
         let mut cy = panel.y + PADDING;
 
@@ -198,8 +203,7 @@ impl<'a> Modal<'a> {
 
         let total_btns = self.buttons.len();
         let btn_area_w = panel.w - PADDING * 2.0;
-        let btn_w =
-            (btn_area_w - (total_btns as f32 - 1.0) * BUTTON_GAP) / total_btns as f32;
+        let btn_w = (btn_area_w - (total_btns as f32 - 1.0) * BUTTON_GAP) / total_btns as f32;
         let btn_y = panel.y + panel.h - PADDING - BUTTON_H;
 
         for (i, btn) in self.buttons.iter().enumerate() {

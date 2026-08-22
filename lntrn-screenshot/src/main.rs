@@ -37,8 +37,12 @@ use window_query::WindowRect;
 // tool this small (per project convention: apps style directly with
 // Painter rather than depending on the shared theme crates).
 // Built via `from_rgba8` (sRGB → linear), so these can't be `const`.
-fn text_tan() -> Color { Color::from_rgba8(0xe8, 0xdc, 0xc8, 0xff) }
-fn accent_orange() -> Color { Color::from_rgba8(0xff, 0x9b, 0x42, 0xff) }
+fn text_tan() -> Color {
+    Color::from_rgba8(0xe8, 0xdc, 0xc8, 0xff)
+}
+fn accent_orange() -> Color {
+    Color::from_rgba8(0xff, 0x9b, 0x42, 0xff)
+}
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -123,7 +127,14 @@ fn main() -> Result<()> {
 
         if window.state.frame_done {
             window.request_frame();
-            match ui.render(&mut gpu, &mut painter, &mut text, &tex_pass, &screenshot_tex, scale) {
+            match ui.render(
+                &mut gpu,
+                &mut painter,
+                &mut text,
+                &tex_pass,
+                &screenshot_tex,
+                scale,
+            ) {
                 Ok(()) => {
                     window.surface.commit();
                     let _ = window.conn.flush();
@@ -289,10 +300,7 @@ impl SelectionUi {
 
     /// Topmost window under the cursor = last match in bottom→top order.
     fn update_hover_window(&mut self, cx: f32, cy: f32) {
-        self.hover_window = self
-            .windows
-            .iter()
-            .rposition(|w| w.contains(cx, cy));
+        self.hover_window = self.windows.iter().rposition(|w| w.contains(cx, cy));
     }
 
     fn on_pick_window_click(&mut self, cx: f32, cy: f32) {
@@ -367,7 +375,10 @@ impl SelectionUi {
                 return;
             }
         }
-        self.drag_mode = DragMode::New { start_x: cx, start_y: cy };
+        self.drag_mode = DragMode::New {
+            start_x: cx,
+            start_y: cy,
+        };
         self.selection = None;
     }
 
@@ -420,7 +431,16 @@ impl SelectionUi {
                 6.0 * scale.max(1.0),
                 Color::from_rgba8(0, 0, 0, 210),
             );
-            text.queue(&w.label, lf, x + lp, ly + lp, text_tan(), lw, sw as u32, sh as u32);
+            text.queue(
+                &w.label,
+                lf,
+                x + lp,
+                ly + lp,
+                text_tan(),
+                lw,
+                sw as u32,
+                sh as u32,
+            );
         }
     }
 

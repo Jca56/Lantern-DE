@@ -45,7 +45,11 @@ fn list(devs: &mut Devices) {
         if d.dpi().is_some() {
             caps.push("dpi");
         }
-        let caps = if caps.is_empty() { "—".to_string() } else { caps.join(", ") };
+        let caps = if caps.is_empty() {
+            "—".to_string()
+        } else {
+            caps.join(", ")
+        };
         println!("  [{i}] {} ({})  caps: {caps}", d.name(), d.kind().label());
     }
 }
@@ -54,7 +58,10 @@ fn info(devs: &mut Devices) {
     for (i, d) in devs.iter_mut().enumerate() {
         println!("[{i}] {} ({})", d.name(), d.kind().label());
         if let Some(dpi) = d.dpi() {
-            let cur = dpi.get().map(|v| v.to_string()).unwrap_or_else(|_| "?".into());
+            let cur = dpi
+                .get()
+                .map(|v| v.to_string())
+                .unwrap_or_else(|_| "?".into());
             let rng = dpi
                 .range()
                 .map(|r| format!("{}–{} step {}", r.min, r.max, r.step))

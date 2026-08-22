@@ -19,11 +19,20 @@ pub enum PendingPrivOp {
     /// Wipe `~/.local/share/Trash/{files,info}`.
     EmptyTrash,
     /// `mv <src> <dest>` for each source (used by move + trash).
-    Move { sources: Vec<PathBuf>, dest: PathBuf },
+    Move {
+        sources: Vec<PathBuf>,
+        dest: PathBuf,
+    },
     /// `cp -r <src> <dest>` for each source.
-    Copy { sources: Vec<PathBuf>, dest: PathBuf },
+    Copy {
+        sources: Vec<PathBuf>,
+        dest: PathBuf,
+    },
     /// `mkdir <path>` + optional color sidecar.
-    NewFolder { path: PathBuf, color: Option<&'static str> },
+    NewFolder {
+        path: PathBuf,
+        color: Option<&'static str>,
+    },
     /// `touch <path>`.
     NewFile(PathBuf),
 }
@@ -42,18 +51,30 @@ impl PendingPrivOp {
             PendingPrivOp::EmptyTrash => "Empty the Trash".into(),
             PendingPrivOp::Move { sources, dest } => {
                 let plural = if sources.len() == 1 { "item" } else { "items" };
-                format!("Move {} {} to \u{201C}{}\u{201D}",
-                    sources.len(), plural, name_of(dest))
+                format!(
+                    "Move {} {} to \u{201C}{}\u{201D}",
+                    sources.len(),
+                    plural,
+                    name_of(dest)
+                )
             }
             PendingPrivOp::Copy { sources, dest } => {
                 let plural = if sources.len() == 1 { "item" } else { "items" };
-                format!("Copy {} {} to \u{201C}{}\u{201D}",
-                    sources.len(), plural, name_of(dest))
+                format!(
+                    "Copy {} {} to \u{201C}{}\u{201D}",
+                    sources.len(),
+                    plural,
+                    name_of(dest)
+                )
             }
-            PendingPrivOp::NewFolder { path, .. } =>
-                format!("Create folder in \u{201C}{}\u{201D}", name_of(path.parent().unwrap_or(path))),
-            PendingPrivOp::NewFile(path) =>
-                format!("Create file in \u{201C}{}\u{201D}", name_of(path.parent().unwrap_or(path))),
+            PendingPrivOp::NewFolder { path, .. } => format!(
+                "Create folder in \u{201C}{}\u{201D}",
+                name_of(path.parent().unwrap_or(path))
+            ),
+            PendingPrivOp::NewFile(path) => format!(
+                "Create file in \u{201C}{}\u{201D}",
+                name_of(path.parent().unwrap_or(path))
+            ),
         }
     }
 }
@@ -110,7 +131,9 @@ fn run_with_sudo(op: &PendingPrivOp, password: Option<&str>) -> CachedResult {
         for a in &cmd_argv {
             cmd.arg(a);
         }
-        cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
         let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => return CachedResult::Failed(format!("Failed to spawn sudo: {e}")),
@@ -134,7 +157,10 @@ fn run_with_sudo(op: &PendingPrivOp, password: Option<&str>) -> CachedResult {
                 return CachedResult::NeedPassword;
             }
             let msg = if stderr.trim().is_empty() {
-                format!("Command failed (exit {})", output.status.code().unwrap_or(-1))
+                format!(
+                    "Command failed (exit {})",
+                    output.status.code().unwrap_or(-1)
+                )
             } else {
                 stderr.trim().to_string()
             };
@@ -165,8 +191,9 @@ fn build_argv(op: &PendingPrivOp) -> Vec<Vec<OsString>> {
             );
             vec![vec!["sh".into(), "-c".into(), script.into()]]
         }
-        PendingPrivOp::Move { sources, dest } => {
-            sources.iter().filter_map(|s| {
+        PendingPrivOp::Move { sources, dest } => sources
+            .iter()
+            .filter_map(|s| {
                 let name = s.file_name()?;
                 let target = dest.join(name);
                 Some(vec![
@@ -174,10 +201,11 @@ fn build_argv(op: &PendingPrivOp) -> Vec<Vec<OsString>> {
                     s.as_os_str().to_owned(),
                     target.into_os_string(),
                 ])
-            }).collect()
-        }
-        PendingPrivOp::Copy { sources, dest } => {
-            sources.iter().filter_map(|s| {
+            })
+            .collect(),
+        PendingPrivOp::Copy { sources, dest } => sources
+            .iter()
+            .filter_map(|s| {
                 let name = s.file_name()?;
                 let target = dest.join(name);
                 Some(vec![
@@ -187,10 +215,14 @@ fn build_argv(op: &PendingPrivOp) -> Vec<Vec<OsString>> {
                     s.as_os_str().to_owned(),
                     target.into_os_string(),
                 ])
-            }).collect()
-        }
+            })
+            .collect(),
         PendingPrivOp::NewFolder { path, color } => {
-            let mut cmds = vec![vec!["mkdir".into(), "--".into(), path.as_os_str().to_owned()]];
+            let mut cmds = vec![vec![
+                "mkdir".into(),
+                "--".into(),
+                path.as_os_str().to_owned(),
+            ]];
             if let Some(c) = color {
                 // Mirror icons::set_folder_color → user.lantern.folder_color xattr.
                 cmds.push(vec![
@@ -205,7 +237,11 @@ fn build_argv(op: &PendingPrivOp) -> Vec<Vec<OsString>> {
             cmds
         }
         PendingPrivOp::NewFile(path) => {
-            vec![vec!["touch".into(), "--".into(), path.as_os_str().to_owned()]]
+            vec![vec![
+                "touch".into(),
+                "--".into(),
+                path.as_os_str().to_owned(),
+            ]]
         }
     }
 }

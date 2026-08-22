@@ -101,12 +101,7 @@ pub fn draw_panel(
     let cy = base.y + base.h / 2.0;
     let scaled_w = base.w * s;
     let scaled_h = base.h * s;
-    let mut rect = Rect::new(
-        cx - scaled_w / 2.0,
-        cy - scaled_h / 2.0,
-        scaled_w,
-        scaled_h,
-    );
+    let mut rect = Rect::new(cx - scaled_w / 2.0, cy - scaled_h / 2.0, scaled_w, scaled_h);
     if slide && factor < 1.0 {
         // Everything below positions off this rect, so shifting it is
         // the whole slide. Clearance puts the panel's bottom outer band
@@ -133,16 +128,37 @@ pub fn draw_panel(
         let bar_rect = Rect::new(rect.x, rect.y, rect.w, bar_h);
         let body_y = rect.y + bar_h + split_gap;
         let body_h = (rect.y + rect.h - body_y).max(0.0);
-        painter.shadow(bar_rect, radius, 24.0 * scale, Color::BLACK.with_alpha(shadow_alpha), 0.0, 4.0 * scale);
+        painter.shadow(
+            bar_rect,
+            radius,
+            24.0 * scale,
+            Color::BLACK.with_alpha(shadow_alpha),
+            0.0,
+            4.0 * scale,
+        );
         painter.rect_filled(bar_rect, radius, surface_col);
         if body_h > 0.5 {
             let body_rect = Rect::new(rect.x, body_y, rect.w, body_h);
-            painter.shadow(body_rect, radius, 24.0 * scale, Color::BLACK.with_alpha(shadow_alpha), 0.0, 4.0 * scale);
+            painter.shadow(
+                body_rect,
+                radius,
+                24.0 * scale,
+                Color::BLACK.with_alpha(shadow_alpha),
+                0.0,
+                4.0 * scale,
+            );
             painter.rect_filled(body_rect, radius, surface_col);
         }
     } else {
         // Standard mode: one combined slab.
-        painter.shadow(rect, radius, 24.0 * scale, Color::BLACK.with_alpha(shadow_alpha), 0.0, 4.0 * scale);
+        painter.shadow(
+            rect,
+            radius,
+            24.0 * scale,
+            Color::BLACK.with_alpha(shadow_alpha),
+            0.0,
+            4.0 * scale,
+        );
         painter.rect_filled(rect, radius, surface_col);
     }
 
@@ -202,22 +218,24 @@ pub fn draw_content(
             panel.rect.h,
         )
     };
-    let push_panel_clip = |painter: &mut Painter, text: &mut TextRenderer, mono_text: &mut TextRenderer| {
-        painter.push_clip(original_panel_rect);
-        let r = [
-            original_panel_rect.x,
-            original_panel_rect.y,
-            original_panel_rect.w,
-            original_panel_rect.h,
-        ];
-        text.push_clip(r);
-        mono_text.push_clip(r);
-    };
-    let pop_panel_clip = |painter: &mut Painter, text: &mut TextRenderer, mono_text: &mut TextRenderer| {
-        painter.pop_clip();
-        text.pop_clip();
-        mono_text.pop_clip();
-    };
+    let push_panel_clip =
+        |painter: &mut Painter, text: &mut TextRenderer, mono_text: &mut TextRenderer| {
+            painter.push_clip(original_panel_rect);
+            let r = [
+                original_panel_rect.x,
+                original_panel_rect.y,
+                original_panel_rect.w,
+                original_panel_rect.h,
+            ];
+            text.push_clip(r);
+            mono_text.push_clip(r);
+        };
+    let pop_panel_clip =
+        |painter: &mut Painter, text: &mut TextRenderer, mono_text: &mut TextRenderer| {
+            painter.pop_clip();
+            text.pop_clip();
+            mono_text.pop_clip();
+        };
 
     // 1. Controls row + underline. When a slide is active each view
     //    is drawn in its own shifted rect; they glide past one another.
@@ -325,8 +343,7 @@ pub fn draw_content(
                 // everything moves together. Margin covers magnified
                 // icons poking above the plate plus its shadow.
                 if slide && slide_vis < 1.0 {
-                    let off = (surface_h as f32 - layout.plate.y
-                        + 80.0 * panel.scale_factor)
+                    let off = (surface_h as f32 - layout.plate.y + 80.0 * panel.scale_factor)
                         * (1.0 - slide_vis);
                     layout.plate.y += off;
                     for r in &mut layout.icons {
@@ -357,10 +374,8 @@ pub fn draw_content(
                 let preview_hover = state.mini_dock_hover;
                 if let Some(hover_idx) = preview_hover {
                     if let Some(entry) = layout.entries.get(hover_idx) {
-                        let windows = crate::mini_dock::windows_for_app(
-                            &state.toplevels,
-                            &entry.app_id,
-                        );
+                        let windows =
+                            crate::mini_dock::windows_for_app(&state.toplevels, &entry.app_id);
                         if !windows.is_empty() {
                             let tiles = crate::mini_dock::preview_tile_rects(
                                 &layout,
@@ -396,12 +411,8 @@ pub fn draw_content(
     //      collapsed-bar furniture that fades with collapse_p (and hides
     //      during edit mode, where labeled plates stand in for them).
     let media_active = crate::media::render::is_active(&state.media);
-    let outer_pos = crate::outer_zones::positions(
-        &state.outer,
-        panel.rect,
-        panel.scale_factor,
-        media_active,
-    );
+    let outer_pos =
+        crate::outer_zones::positions(&state.outer, panel.rect, panel.scale_factor, media_active);
     let bar_chrome_alpha = panel.alpha * collapse_p.clamp(0.0, 1.0);
     for (id, r) in &outer_pos {
         use crate::outer_zones::OuterId;
@@ -409,32 +420,60 @@ pub fn draw_content(
             OuterId::Sliders => {
                 if collapse_p > 0.005 && !state.toolbar_edit {
                     crate::bar_sliders::draw(
-                        painter, text, *r, panel.scale_factor, bar_chrome_alpha,
-                        state.bar_sliders, surface_w, surface_h,
+                        painter,
+                        text,
+                        *r,
+                        panel.scale_factor,
+                        bar_chrome_alpha,
+                        state.bar_sliders,
+                        surface_w,
+                        surface_h,
                     );
                 }
             }
             OuterId::Media => {
                 if collapse_p > 0.005 && !state.toolbar_edit {
                     crate::media::render::draw_floating(
-                        painter, text, &state.media, *r, panel.scale_factor,
-                        bar_chrome_alpha, surface_w, surface_h,
+                        painter,
+                        text,
+                        &state.media,
+                        *r,
+                        panel.scale_factor,
+                        bar_chrome_alpha,
+                        surface_w,
+                        surface_h,
                     );
                 }
             }
             OuterId::Dots => crate::view_indicator::draw_dots(
-                painter, *r, panel.scale_factor, panel.alpha, state.panel_view,
+                painter,
+                *r,
+                panel.scale_factor,
+                panel.alpha,
+                state.panel_view,
             ),
             OuterId::Close => crate::view_indicator::draw_restart(
-                painter, *r, panel.scale_factor, panel.alpha, state.restart_hover,
+                painter,
+                *r,
+                panel.scale_factor,
+                panel.alpha,
+                state.restart_hover,
             ),
             OuterId::Settings => crate::view_indicator::draw_gear(
-                painter, *r, panel.scale_factor, panel.alpha,
-                state.gear_hover, state.settings_open,
+                painter,
+                *r,
+                panel.scale_factor,
+                panel.alpha,
+                state.gear_hover,
+                state.settings_open,
             ),
             OuterId::Desktop => crate::desktop_settings::draw_button(
-                painter, *r, panel.scale_factor, panel.alpha,
-                state.desktop_button_hover, state.desktop_settings_open,
+                painter,
+                *r,
+                panel.scale_factor,
+                panel.alpha,
+                state.desktop_button_hover,
+                state.desktop_settings_open,
             ),
             OuterId::Usage => crate::usage_button::draw(
                 painter,
@@ -447,13 +486,28 @@ pub fn draw_content(
                 &mut icons,
             ),
             OuterId::Emojis => crate::view_indicator::draw_emoji(
-                painter, *r, panel.scale_factor, panel.alpha, false, state.emoji_hover,
+                painter,
+                *r,
+                panel.scale_factor,
+                panel.alpha,
+                false,
+                state.emoji_hover,
             ),
             OuterId::Clipboard => crate::view_indicator::draw_clipboard(
-                painter, *r, panel.scale_factor, panel.alpha, false, state.clipboard_hover,
+                painter,
+                *r,
+                panel.scale_factor,
+                panel.alpha,
+                false,
+                state.clipboard_hover,
             ),
             OuterId::Notes => crate::view_indicator::draw_notes(
-                painter, *r, panel.scale_factor, panel.alpha, false, state.notes_hover,
+                painter,
+                *r,
+                panel.scale_factor,
+                panel.alpha,
+                false,
+                state.notes_hover,
             ),
         }
     }
@@ -798,7 +852,8 @@ pub fn draw_content(
                             surface_h,
                         );
                         if let Some(drag) = state.pin_drag.as_ref() {
-                            let row_top = crate::launcher::pins_row_top_y(top_y, panel.scale_factor);
+                            let row_top =
+                                crate::launcher::pins_row_top_y(top_y, panel.scale_factor);
                             crate::launcher::draw_pin_drag_overlay(
                                 painter,
                                 &mut icons,
@@ -917,7 +972,6 @@ pub fn draw_content(
         painter.set_layer(0);
         text.set_layer(0);
     }
-
 
     icons
 }

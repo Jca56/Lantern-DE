@@ -2,10 +2,10 @@ use std::ffi::c_void;
 use std::ptr::NonNull;
 
 use anyhow::{anyhow, Result};
-use lntrn_render::{Color, GpuContext, GpuTexture, Painter, Rect, TextureDraw, TexturePass, TextRenderer};
-use lntrn_ui::gpu::{
-    FoxPalette, InteractionContext, PopupSurface, WaylandPopupBackend,
+use lntrn_render::{
+    Color, GpuContext, GpuTexture, Painter, Rect, TextRenderer, TextureDraw, TexturePass,
 };
+use lntrn_ui::gpu::{FoxPalette, InteractionContext, PopupSurface, WaylandPopupBackend};
 
 use crate::config::LanternConfig;
 use crate::display_panel::{self, DisplayPanelState};
@@ -17,7 +17,7 @@ use crate::monitor_arrange;
 use crate::monitor_settings::persist_monitor_settings;
 use crate::notifications_panel::{self, NotifPanelState};
 use crate::panels::{self, PanelState};
-use crate::text_edit::{KeyboardState, keycode_to_char};
+use crate::text_edit::{keycode_to_char, KeyboardState};
 use crate::wayland_state::WaylandHandle;
 // Re-exported so sibling modules (popup_backend, output_manager) can import
 // them via the stable `crate::wayland::` path.
@@ -27,7 +27,7 @@ use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1;
 use wayland_protocols::xdg::shell::client::xdg_toplevel;
 
 const KEY_ESC: u32 = 1;
-use crate::chrome::{self, TITLE_BAR_H, CORNER_RADIUS};
+use crate::chrome::{self, CORNER_RADIUS, TITLE_BAR_H};
 
 use crate::sidebar::{draw_sidebar, SidebarState, SIDEBAR_W};
 
@@ -45,19 +45,26 @@ pub(crate) const ZONE_SIDEBAR_BASE: u32 = 200;
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub(crate) enum Panel {
     // Appearance
-    Themes, WindowSizes, Animations,
+    Themes,
+    WindowSizes,
+    Animations,
     // Display (also hosts the wallpaper picker)
     Monitors,
     // Input
-    Mouse, Keybindings,
+    Mouse,
+    Keybindings,
     // Notifications
-    NotifBehavior, NotifSound, NotifTesting,
+    NotifBehavior,
+    NotifSound,
+    NotifTesting,
     // Power
-    LidIdle, Battery,
+    LidIdle,
+    Battery,
     // Apps
     AppIcons,
     // Lock Screen
-    LockWallpaper, LockStyle,
+    LockWallpaper,
+    LockStyle,
 }
 
 fn parse_panel_arg() -> Option<Panel> {
@@ -67,7 +74,7 @@ fn parse_panel_arg() -> Option<Panel> {
         // Appearance subpanels (legacy "colors"/"windows"/"focus" all fold into Themes)
         "appearance" | "themes" | "colors" | "windows" | "focus" => Some(Panel::Themes),
         "window-sizes" | "sizes" => Some(Panel::WindowSizes),
-        "animations"    => Some(Panel::Animations),
+        "animations" => Some(Panel::Animations),
         // Display (wallpaper now lives here too)
         "home" | "display" | "monitors" | "wallpaper" => Some(Panel::Monitors),
         // Input (legacy "scrolling"/"clicking"/"cursor" all roll into Mouse)
@@ -75,29 +82,38 @@ fn parse_panel_arg() -> Option<Panel> {
         "keybindings" | "keybinds" | "shortcuts" | "keyboard" => Some(Panel::Keybindings),
         // Notifications
         "notifications" | "notif-behavior" => Some(Panel::NotifBehavior),
-        "notif-sound"   => Some(Panel::NotifSound),
+        "notif-sound" => Some(Panel::NotifSound),
         "notif-testing" => Some(Panel::NotifTesting),
         // Power
         "power" | "lid-idle" => Some(Panel::LidIdle),
-        "battery"       => Some(Panel::Battery),
+        "battery" => Some(Panel::Battery),
         // Apps
         "app-icons" | "apps" => Some(Panel::AppIcons),
         // Lock Screen
         "lock-screen" | "lockscreen" => Some(Panel::LockWallpaper),
-        "lock-style"    => Some(Panel::LockStyle),
+        "lock-style" => Some(Panel::LockStyle),
         _ => None,
     }
 }
 
 // ── Edge resize helper ──────────────────────────────────────────────────────
 
-fn edge_resize(cx: f32, cy: f32, w: f32, h: f32, border: f32, controls_x: f32) -> Option<xdg_toplevel::ResizeEdge> {
+fn edge_resize(
+    cx: f32,
+    cy: f32,
+    w: f32,
+    h: f32,
+    border: f32,
+    controls_x: f32,
+) -> Option<xdg_toplevel::ResizeEdge> {
     let left = cx < border;
     let right = cx > w - border;
     let top = cy < border;
     let bottom = cy > h - border;
     // Don't resize in the window controls area (top-right)
-    if top && cx > controls_x { return None; }
+    if top && cx > controls_x {
+        return None;
+    }
     match (left, right, top, bottom) {
         (true, _, true, _) => Some(xdg_toplevel::ResizeEdge::TopLeft),
         (_, true, true, _) => Some(xdg_toplevel::ResizeEdge::TopRight),
@@ -138,20 +154,30 @@ pub fn run() -> Result<()> {
     display.get_registry(&qh, ());
     event_queue.roundtrip(&mut state)?;
 
-    let compositor = state.compositor.clone()
+    let compositor = state
+        .compositor
+        .clone()
         .ok_or_else(|| anyhow!("wl_compositor not available"))?;
-    let wm_base = state.wm_base.clone()
+    let wm_base = state
+        .wm_base
+        .clone()
         .ok_or_else(|| anyhow!("xdg_wm_base not available"))?;
 
-    if state.width == 0 { state.width = 1500; }
-    if state.height == 0 { state.height = 1000; }
+    if state.width == 0 {
+        state.width = 1500;
+    }
+    if state.height == 0 {
+        state.height = 1000;
+    }
 
     let surface = compositor.create_surface(&qh, ());
     // Ask the compositor for this surface's fractional scale. Robust across
     // window sizes and monitors — and immune to a second output's wl_output
     // events clobbering the global scale fields (which shrank the window when
     // the secondary monitor was disabled).
-    let frac_scale = state.frac_scale_mgr.as_ref()
+    let frac_scale = state
+        .frac_scale_mgr
+        .as_ref()
         .map(|mgr| mgr.get_fractional_scale(&surface, &qh, ()));
     let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
     let toplevel = xdg_surface.get_toplevel(&qh, ());
@@ -202,7 +228,14 @@ pub fn run() -> Result<()> {
         let vp = state.viewporter.as_ref();
         let scale = state.fractional_scale() as f32;
         state.popup_backend = Some(WaylandPopupBackend::new(
-            &conn, &compositor, &wm_base, &xdg_surf, vp, &gpu, scale, &qh,
+            &conn,
+            &compositor,
+            &wm_base,
+            &xdg_surf,
+            vp,
+            &gpu,
+            scale,
+            &qh,
         ));
     }
 
@@ -210,18 +243,21 @@ pub fn run() -> Result<()> {
     // `sidebar::CategoryDef::icon_idx`.
     let tex_pass = TexturePass::new(&gpu);
     let icon_defs: [(Vec<icons::PathCmd>, Color); 7] = [
-        (icons::icon_appearance(),     Color::from_rgb8(255, 180, 120)), // warm peach
-        (icons::icon_display(),        Color::from_rgb8(100, 200, 180)), // teal
-        (icons::icon_input(),          Color::from_rgb8(180, 140, 220)), // lavender
-        (icons::icon_notifications(),  Color::from_rgb8(255, 200, 100)), // amber
-        (icons::icon_power(),          Color::from_rgb8(120, 210, 120)), // green
-        (icons::icon_app_icons(),      Color::from_rgb8(230, 130, 180)), // pink
-        (icons::icon_lock(),           Color::from_rgb8(150, 180, 255)), // periwinkle
+        (icons::icon_appearance(), Color::from_rgb8(255, 180, 120)), // warm peach
+        (icons::icon_display(), Color::from_rgb8(100, 200, 180)),    // teal
+        (icons::icon_input(), Color::from_rgb8(180, 140, 220)),      // lavender
+        (icons::icon_notifications(), Color::from_rgb8(255, 200, 100)), // amber
+        (icons::icon_power(), Color::from_rgb8(120, 210, 120)),      // green
+        (icons::icon_app_icons(), Color::from_rgb8(230, 130, 180)),  // pink
+        (icons::icon_lock(), Color::from_rgb8(150, 180, 255)),       // periwinkle
     ];
-    let icon_textures: Vec<GpuTexture> = icon_defs.iter().map(|(cmds, color)| {
-        let rgba = icons::rasterize_path(cmds, 24.0, 24.0, ICON_SIZE, ICON_SIZE, *color);
-        tex_pass.upload(&gpu, &rgba, ICON_SIZE, ICON_SIZE)
-    }).collect();
+    let icon_textures: Vec<GpuTexture> = icon_defs
+        .iter()
+        .map(|(cmds, color)| {
+            let rgba = icons::rasterize_path(cmds, 24.0, 24.0, ICON_SIZE, ICON_SIZE, *color);
+            tex_pass.upload(&gpu, &rgba, ICON_SIZE, ICON_SIZE)
+        })
+        .collect();
 
     let mut active_panel = parse_panel_arg().unwrap_or(Panel::Monitors);
     let mut sidebar_state = SidebarState::new(active_panel);
@@ -245,7 +281,9 @@ pub fn run() -> Result<()> {
             eprintln!("[system-settings] dispatch error: {e}");
             break;
         }
-        if !state.frame_done { continue; }
+        if !state.frame_done {
+            continue;
+        }
         state.frame_done = false;
 
         // Pull any HDR capability updates from the compositor.
@@ -282,7 +320,10 @@ pub fn run() -> Result<()> {
 
         // Pointer routing
         let pointer_on_popup = state.pointer_surface.as_ref().and_then(|ps| {
-            state.popup_backend.as_ref()?.find_popup_id_by_wl_surface(ps)
+            state
+                .popup_backend
+                .as_ref()?
+                .find_popup_id_by_wl_surface(ps)
         });
 
         let cx = (state.cursor_x as f32) * s;
@@ -295,7 +336,11 @@ pub fn run() -> Result<()> {
             ix.on_cursor_left();
         }
         if let Some(backend) = &mut state.popup_backend {
-            let active = if state.pointer_in_surface { pointer_on_popup } else { None };
+            let active = if state.pointer_in_surface {
+                pointer_on_popup
+            } else {
+                None
+            };
             backend.route_cursor(active, cx, cy);
         }
 
@@ -321,7 +366,8 @@ pub fn run() -> Result<()> {
                     28 => xkbcommon::xkb::Keysym::new(0xff0d), // Return
                     _ => sym,
                 };
-                let fallback_utf8 = utf8.or_else(|| keycode_to_char(key, state.shift).map(|c| c.to_string()));
+                let fallback_utf8 =
+                    utf8.or_else(|| keycode_to_char(key, state.shift).map(|c| c.to_string()));
                 (fallback_sym, fallback_utf8)
             } else {
                 (sym, utf8)
@@ -366,8 +412,11 @@ pub fn run() -> Result<()> {
                     if dist_close < hit_r {
                         state.running = false;
                     } else if dist_max < hit_r {
-                        if state.maximized { toplevel.unset_maximized(); }
-                        else { toplevel.set_maximized(); }
+                        if state.maximized {
+                            toplevel.unset_maximized();
+                        } else {
+                            toplevel.set_maximized();
+                        }
                     } else if dist_min < hit_r {
                         toplevel.set_minimized();
                     } else {
@@ -423,7 +472,8 @@ pub fn run() -> Result<()> {
                     // matches the canvas immediately — without this the outputs
                     // stay at their old (often overlapping) coordinates and
                     // the cursor crosses an invisible duplicate boundary.
-                    let changes = display_state.monitor_arrange
+                    let changes = display_state
+                        .monitor_arrange
                         .position_changes(&state.output_mgr);
                     if !changes.is_empty() {
                         crate::output_manager::apply_config(&state, &qh, &changes);
@@ -449,7 +499,12 @@ pub fn run() -> Result<()> {
         // Display changes shouldn't need the Save button.
         if display_state.monitor_settings.dirty {
             if let Some(selected_name) = display_state.monitor_arrange.selected_output_name() {
-                if let Some(hi) = state.output_mgr.heads.iter().position(|h| h.name == selected_name) {
+                if let Some(hi) = state
+                    .output_mgr
+                    .heads
+                    .iter()
+                    .position(|h| h.name == selected_name)
+                {
                     let changes = vec![crate::output_manager::HeadChange {
                         head_idx: hi,
                         mode_idx: display_state.monitor_settings.selected_mode_idx,
@@ -471,7 +526,10 @@ pub fn run() -> Result<()> {
                     );
                     // Live HDR apply over the compositor IPC socket.
                     if let Some(hdr_on) = display_state.monitor_settings.selected_hdr {
-                        let nits = display_state.monitor_settings.selected_sdr_brightness.unwrap_or(203);
+                        let nits = display_state
+                            .monitor_settings
+                            .selected_sdr_brightness
+                            .unwrap_or(203);
                         state.hdr_client.set_hdr(&selected_name, hdr_on, nits);
                     }
                     config.save();
@@ -522,7 +580,11 @@ pub fn run() -> Result<()> {
 
         let sw = gpu.width();
         let sh = gpu.height();
-        let r = if state.maximized { 0.0 } else { CORNER_RADIUS * s };
+        let r = if state.maximized {
+            0.0
+        } else {
+            CORNER_RADIUS * s
+        };
 
         // Pick the palette from the current window mode each frame so live
         // theme switches take effect immediately.
@@ -539,16 +601,35 @@ pub fn run() -> Result<()> {
         let mut tex_draws: Vec<TextureDraw> = Vec::new();
         draw_sidebar(
             &mut sidebar_state,
-            &mut painter, &mut text, &mut ix, &fox,
-            &icon_textures, &mut tex_draws,
-            active_panel, sidebar_w, body_y, hf, s, sw, sh,
+            &mut painter,
+            &mut text,
+            &mut ix,
+            &fox,
+            &icon_textures,
+            &mut tex_draws,
+            active_panel,
+            sidebar_w,
+            body_y,
+            hf,
+            s,
+            sw,
+            sh,
         );
 
         // ── Content area header ────────────────────────────────────────
         let header_label = crate::sidebar::panel_label(active_panel);
         let header_size = 26.0 * s;
         let header_y = body_y + 16.0 * s;
-        text.queue(header_label, header_size, content_x + 24.0 * s, header_y, fox.text, content_w, sw, sh);
+        text.queue(
+            header_label,
+            header_size,
+            content_x + 24.0 * s,
+            header_y,
+            fox.text,
+            content_w,
+            sw,
+            sh,
+        );
 
         // Separator under content header
         let sep_y = header_y + header_size + 12.0 * s;
@@ -564,10 +645,24 @@ pub fn run() -> Result<()> {
             Panel::Themes | Panel::Animations => {
                 crate::appearance_panel::draw_appearance_panel(
                     active_panel,
-                    &mut config, &mut panel_state, &mut themes_state,
-                    &mut painter, &mut text, &mut ix, &tex_pass, &gpu, &fox,
+                    &mut config,
+                    &mut panel_state,
+                    &mut themes_state,
+                    &mut painter,
+                    &mut text,
+                    &mut ix,
+                    &tex_pass,
+                    &gpu,
+                    &fox,
                     &mut tex_draws,
-                    content_x, panel_y, content_w, panel_h, s, sw, sh, frame_scroll,
+                    content_x,
+                    panel_y,
+                    content_w,
+                    panel_h,
+                    s,
+                    sw,
+                    sh,
+                    frame_scroll,
                 );
                 // Themes modal + thumbnails — only on the Themes subpanel.
                 // Otherwise stale tile_layouts from the last visit would keep
@@ -575,8 +670,16 @@ pub fn run() -> Result<()> {
                 if active_panel == Panel::Themes {
                     if themes_state.modal_open() {
                         crate::appearance_themes::draw_themes_modal(
-                            &mut themes_state, &mut painter, &mut text, &mut ix, &fox,
-                            wf, hf, s, sw, sh,
+                            &mut themes_state,
+                            &mut painter,
+                            &mut text,
+                            &mut ix,
+                            &fox,
+                            wf,
+                            hf,
+                            s,
+                            sw,
+                            sh,
                         );
                     }
                     for td in crate::appearance_themes::collect_theme_thumbs(&themes_state) {
@@ -586,76 +689,189 @@ pub fn run() -> Result<()> {
             }
             Panel::WindowSizes => {
                 crate::appearance_window_sizes::draw_window_sizes_page(
-                    &mut config, &mut panel_state,
-                    &mut painter, &mut text, &mut ix, &fox,
-                    content_x, panel_y, content_w, panel_h, s, sw, sh, frame_scroll,
+                    &mut config,
+                    &mut panel_state,
+                    &mut painter,
+                    &mut text,
+                    &mut ix,
+                    &fox,
+                    content_x,
+                    panel_y,
+                    content_w,
+                    panel_h,
+                    s,
+                    sw,
+                    sh,
+                    frame_scroll,
                 );
             }
             Panel::Monitors => {
                 display_panel::draw_display_panel(
                     active_panel,
-                    &mut config, &mut display_state,
-                    &mut painter, &mut text, &mut ix, &tex_pass, &fox, &gpu,
-                    content_x, panel_y, content_w, panel_h, s, sw, sh,
-                    frame_scroll, &state.outputs, &state.output_mgr, &state.hdr_client,
+                    &mut config,
+                    &mut display_state,
+                    &mut painter,
+                    &mut text,
+                    &mut ix,
+                    &tex_pass,
+                    &fox,
+                    &gpu,
+                    content_x,
+                    panel_y,
+                    content_w,
+                    panel_h,
+                    s,
+                    sw,
+                    sh,
+                    frame_scroll,
+                    &state.outputs,
+                    &state.output_mgr,
+                    &state.hdr_client,
                 );
                 let thumb_draws = display_panel::collect_thumb_draws(&display_state, s);
-                for td in thumb_draws { tex_draws.push(td); }
+                for td in thumb_draws {
+                    tex_draws.push(td);
+                }
             }
             Panel::Mouse => {
                 input_panel::draw_input_panel(
                     active_panel,
-                    &mut config, &mut input_state,
-                    &mut painter, &mut text, &mut ix,
-                    &tex_pass, &fox, &gpu,
-                    content_x, panel_y, content_w, panel_h, s, sw, sh,
-                    frame_scroll, &mut tex_draws,
+                    &mut config,
+                    &mut input_state,
+                    &mut painter,
+                    &mut text,
+                    &mut ix,
+                    &tex_pass,
+                    &fox,
+                    &gpu,
+                    content_x,
+                    panel_y,
+                    content_w,
+                    panel_h,
+                    s,
+                    sw,
+                    sh,
+                    frame_scroll,
+                    &mut tex_draws,
                 );
             }
             Panel::Keybindings => {
                 keybinds_panel::draw_keybinds_panel(
-                    &mut config, &mut keybinds_state,
-                    &mut painter, &mut text, &mut ix, &fox,
-                    content_x, panel_y, content_w, panel_h, s, sw, sh, frame_scroll,
+                    &mut config,
+                    &mut keybinds_state,
+                    &mut painter,
+                    &mut text,
+                    &mut ix,
+                    &fox,
+                    content_x,
+                    panel_y,
+                    content_w,
+                    panel_h,
+                    s,
+                    sw,
+                    sh,
+                    frame_scroll,
                 );
             }
             Panel::NotifBehavior | Panel::NotifSound | Panel::NotifTesting => {
                 notifications_panel::draw_notifications_panel(
                     active_panel,
-                    &mut config, &mut notif_state,
-                    &mut painter, &mut text, &mut ix, &fox,
-                    content_x, panel_y, content_w, panel_h, s, sw, sh, frame_scroll,
+                    &mut config,
+                    &mut notif_state,
+                    &mut painter,
+                    &mut text,
+                    &mut ix,
+                    &fox,
+                    content_x,
+                    panel_y,
+                    content_w,
+                    panel_h,
+                    s,
+                    sw,
+                    sh,
+                    frame_scroll,
                 );
             }
             Panel::LidIdle | Panel::Battery => {
                 crate::power_panel::draw_power_panel(
                     active_panel,
-                    &mut config, &mut panel_state, &mut painter, &mut text, &mut ix, &fox,
-                    content_x, panel_y, content_w, panel_h, s, sw, sh, frame_scroll,
+                    &mut config,
+                    &mut panel_state,
+                    &mut painter,
+                    &mut text,
+                    &mut ix,
+                    &fox,
+                    content_x,
+                    panel_y,
+                    content_w,
+                    panel_h,
+                    s,
+                    sw,
+                    sh,
+                    frame_scroll,
                 );
             }
             Panel::AppIcons => {
                 icon_panel::draw_icon_panel(
                     &mut icon_panel_state,
-                    &mut painter, &mut text, &mut ix, &tex_pass, &fox, &gpu,
-                    content_x, panel_y, content_w, panel_h, s, sw, sh,
-                    frame_scroll, &mut tex_draws,
+                    &mut painter,
+                    &mut text,
+                    &mut ix,
+                    &tex_pass,
+                    &fox,
+                    &gpu,
+                    content_x,
+                    panel_y,
+                    content_w,
+                    panel_h,
+                    s,
+                    sw,
+                    sh,
+                    frame_scroll,
+                    &mut tex_draws,
                 );
             }
             Panel::LockWallpaper => {
                 crate::lock_wallpaper_panel::draw_lock_wallpaper_panel(
-                    &mut config, &mut lock_wp_state,
-                    &mut painter, &mut text, &mut ix, &tex_pass, &fox, &gpu,
-                    content_x, panel_y, content_w, panel_h, s, sw, sh, frame_scroll,
+                    &mut config,
+                    &mut lock_wp_state,
+                    &mut painter,
+                    &mut text,
+                    &mut ix,
+                    &tex_pass,
+                    &fox,
+                    &gpu,
+                    content_x,
+                    panel_y,
+                    content_w,
+                    panel_h,
+                    s,
+                    sw,
+                    sh,
+                    frame_scroll,
                 );
-                let thumb_draws = crate::lock_wallpaper_panel::collect_thumb_draws(&lock_wp_state, s);
-                for td in thumb_draws { tex_draws.push(td); }
+                let thumb_draws =
+                    crate::lock_wallpaper_panel::collect_thumb_draws(&lock_wp_state, s);
+                for td in thumb_draws {
+                    tex_draws.push(td);
+                }
             }
             Panel::LockStyle => {
                 crate::lock_style_panel::draw_lock_style_panel(
-                    &mut config, &mut lock_style_state,
-                    &mut painter, &mut text, &mut ix, &fox,
-                    content_x, panel_y, content_w, panel_h, s, sw, sh, frame_scroll,
+                    &mut config,
+                    &mut lock_style_state,
+                    &mut painter,
+                    &mut text,
+                    &mut ix,
+                    &fox,
+                    content_x,
+                    panel_y,
+                    content_w,
+                    panel_h,
+                    s,
+                    sw,
+                    sh,
+                    frame_scroll,
                 );
             }
         }
@@ -664,8 +880,16 @@ pub fn run() -> Result<()> {
         let dirty = config != saved_config;
         if dirty {
             panels::draw_save_cancel_bar(
-                &mut painter, &mut text, &mut ix, &fox,
-                content_x, content_w, hf, s, sw, sh,
+                &mut painter,
+                &mut text,
+                &mut ix,
+                &fox,
+                content_x,
+                content_w,
+                hf,
+                s,
+                sw,
+                sh,
             );
         }
 
@@ -684,7 +908,10 @@ pub fn run() -> Result<()> {
 
             // Layer 0: base shapes + thumbnail textures + base text.
             painter.render_layer(
-                0, &gpu, frame.encoder_mut(), &view,
+                0,
+                &gpu,
+                frame.encoder_mut(),
+                &view,
                 Some(Color::rgba(0.0, 0.0, 0.0, 0.0)),
             );
             if !tex_draws.is_empty() {

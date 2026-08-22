@@ -121,7 +121,9 @@ impl vte::Perform for Performer<'_> {
                 s.wrap_next = false;
                 s.cursor_col = 0;
             }
-            0x07 => { s.bell = true; }
+            0x07 => {
+                s.bell = true;
+            }
             _ => {}
         }
     }
@@ -428,7 +430,8 @@ impl vte::Perform for Performer<'_> {
                 if intermediates == [b'>'] {
                     // XTVERSION — report terminal name and version
                     // Response: DCS > | Lantern 0.1.0 ST
-                    s.pending_responses.push(b"\x1bP>|Lantern 0.1.0\x1b\\".to_vec());
+                    s.pending_responses
+                        .push(b"\x1bP>|Lantern 0.1.0\x1b\\".to_vec());
                 } else if intermediates == [b' '] {
                     // DECSCUSR — set cursor shape
                     s.cursor_shape = p(0, 0) as u8;
@@ -512,7 +515,9 @@ impl vte::Perform for Performer<'_> {
                 // Format: ESC ] 9 ; <message> ST
                 if params.len() > 1 {
                     if let Ok(msg) = std::str::from_utf8(params[1]) {
-                        self.state.pending_notifications.push(("Terminal".to_string(), msg.to_string()));
+                        self.state
+                            .pending_notifications
+                            .push(("Terminal".to_string(), msg.to_string()));
                     }
                 }
             }
@@ -598,7 +603,9 @@ impl vte::Perform for Performer<'_> {
                 if params.len() >= 3 {
                     if let Ok(cmd) = std::str::from_utf8(params[1]) {
                         if cmd == "notify" {
-                            let title = std::str::from_utf8(params[2]).unwrap_or("Terminal").to_string();
+                            let title = std::str::from_utf8(params[2])
+                                .unwrap_or("Terminal")
+                                .to_string();
                             let body = if params.len() > 3 {
                                 std::str::from_utf8(params[3]).unwrap_or("").to_string()
                             } else {

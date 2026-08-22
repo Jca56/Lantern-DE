@@ -115,7 +115,11 @@ impl FindBar {
             found.clear();
             crate::search::find_in_line(line, &needle, self.case_sensitive, &mut found);
             for &(start, end) in &found {
-                self.matches.push(MatchSpan { line: line_idx, start, end });
+                self.matches.push(MatchSpan {
+                    line: line_idx,
+                    start,
+                    end,
+                });
             }
         }
     }
@@ -206,12 +210,7 @@ impl FindBar {
     }
 
     /// Returns true if the key was consumed.
-    pub fn handle_key(
-        &mut self,
-        key: &Key,
-        mods: ModifiersState,
-        editor: &mut Editor,
-    ) -> bool {
+    pub fn handle_key(&mut self, key: &Key, mods: ModifiersState, editor: &mut Editor) -> bool {
         let ctrl = mods.contains(ModifiersState::CONTROL);
         let shift = mods.contains(ModifiersState::SHIFT);
 
@@ -406,7 +405,14 @@ pub fn draw_find_bar(
 
     // Floating panel dropping from the top: a soft drop shadow under the bar,
     // then the plate tone (matches the footer plate, not the desk).
-    painter.shadow(bar_rect, 0.0, 4.0 * s, Color::from_rgba8(0, 0, 0, 50), 0.0, 2.0 * s);
+    painter.shadow(
+        bar_rect,
+        0.0,
+        4.0 * s,
+        Color::from_rgba8(0, 0, 0, 50),
+        0.0,
+        2.0 * s,
+    );
     painter.rect_filled(bar_rect, 0.0, palette.sidebar);
     // Bottom hairline separator.
     painter.rect_filled(
@@ -546,9 +552,21 @@ fn draw_field_row(
         );
     }
     painter.rect_filled(input_rect, input_r, palette.bg);
-    painter.inner_shadow(input_rect, input_r, 3.0 * s, Color::from_rgba8(0, 0, 0, 36), 0.0, 2.0 * s);
+    painter.inner_shadow(
+        input_rect,
+        input_r,
+        3.0 * s,
+        Color::from_rgba8(0, 0, 0, 36),
+        0.0,
+        2.0 * s,
+    );
     if focused {
-        painter.rect_stroke_sdf(input_rect, input_r, tokens::FOCUS_STROKE_W * s, palette.accent);
+        painter.rect_stroke_sdf(
+            input_rect,
+            input_r,
+            tokens::FOCUS_STROKE_W * s,
+            palette.accent,
+        );
     } else {
         painter.rect_stroke_sdf(input_rect, input_r, 1.5 * s, theme.hairline());
     }

@@ -42,10 +42,15 @@ pub fn read_key() -> std::io::Result<Key> {
                 Key::Char(c as char)
             } else {
                 let mut buf = vec![c];
-                let extra = if c & 0xE0 == 0xC0 { 1 }
-                    else if c & 0xF0 == 0xE0 { 2 }
-                    else if c & 0xF8 == 0xF0 { 3 }
-                    else { 0 };
+                let extra = if c & 0xE0 == 0xC0 {
+                    1
+                } else if c & 0xF0 == 0xE0 {
+                    2
+                } else if c & 0xF8 == 0xF0 {
+                    3
+                } else {
+                    0
+                };
                 for _ in 0..extra {
                     buf.push(term::read_byte()?);
                 }
@@ -75,9 +80,18 @@ fn read_escape() -> std::io::Result<Key> {
         b'D' => Key::Left,
         b'H' => Key::Home,
         b'F' => Key::End,
-        b'3' => { let _ = term::read_byte()?; Key::Delete }
-        b'5' => { let _ = term::read_byte()?; Key::PageUp }
-        b'6' => { let _ = term::read_byte()?; Key::PageDown }
+        b'3' => {
+            let _ = term::read_byte()?;
+            Key::Delete
+        }
+        b'5' => {
+            let _ = term::read_byte()?;
+            Key::PageUp
+        }
+        b'6' => {
+            let _ = term::read_byte()?;
+            Key::PageDown
+        }
         b'2' => parse_paste_or_other()?,
         _ => Key::Unknown,
     })
@@ -122,8 +136,14 @@ fn parse_paste_or_other() -> std::io::Result<Key> {
 fn read_byte_nonblock() -> Option<u8> {
     use std::os::fd::AsRawFd;
     let fd = std::io::stdin().as_raw_fd();
-    let mut pfd = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+    let mut pfd = libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
     let r = unsafe { libc::poll(&mut pfd, 1, 5) };
-    if r <= 0 { return None; }
+    if r <= 0 {
+        return None;
+    }
     term::read_byte().ok()
 }

@@ -27,7 +27,12 @@ const COMPARE_ROWS: &[(&str, f32, f32, &str)] = &[
     ("The quick brown fox 0123456789", 17.0, 552.0, "Inter"),
     ("The quick brown fox jumps", 22.0, 580.0, "Inter"),
     ("Wave To Yo AVATAR != =>", 24.0, 612.0, "Inter"),
-    ("x != y && a => b; c >= d <= e", 18.0, 650.0, "JetBrains Mono"),
+    (
+        "x != y && a => b; c >= d <= e",
+        18.0,
+        650.0,
+        "JetBrains Mono",
+    ),
 ];
 
 fn main() {
@@ -54,7 +59,13 @@ fn main() {
     // 1) Default one-line cap: second line must be clipped away.
     text.queue(
         "One-line default cap: this renders\nTHIS SECOND LINE MUST BE CLIPPED",
-        22.0, 16.0, 8.0, white, f32::MAX, WIDTH, HEIGHT,
+        22.0,
+        16.0,
+        8.0,
+        white,
+        f32::MAX,
+        WIDTH,
+        HEIGHT,
     );
 
     // 2) Greedy wrap inside a pushed clip (clip taller than one line).
@@ -62,13 +73,28 @@ fn main() {
 word boundaries and even breaks Supercalifragilisticexpialidociousantidisestablishmentarianism \
 when a single word overflows the bound.";
     text.push_clip([16.0, 80.0, 420.0, 80.0]);
-    text.queue(paragraph, 18.0, 16.0, 80.0, Color::from_rgb8(0x9e, 0xcb, 0xff), 400.0, WIDTH, HEIGHT);
+    text.queue(
+        paragraph,
+        18.0,
+        16.0,
+        80.0,
+        Color::from_rgb8(0x9e, 0xcb, 0xff),
+        400.0,
+        WIDTH,
+        HEIGHT,
+    );
     text.pop_clip();
 
     // 3) Occlusion: chop the right side off an already-queued line.
     text.queue(
         "occlusion occlusion occlusion occlusion occlusion",
-        20.0, 460.0, 80.0, Color::from_rgb8(0x6b, 0xe5, 0x7a), f32::MAX, WIDTH, HEIGHT,
+        20.0,
+        460.0,
+        80.0,
+        Color::from_rgb8(0x6b, 0xe5, 0x7a),
+        f32::MAX,
+        WIDTH,
+        HEIGHT,
     );
     text.occlude_rect([660.0, 78.0, 236.0, 30.0]);
 
@@ -84,21 +110,89 @@ when a single word overflows the bound.";
     // 4) queue_clipped: explicit clip rect slices glyphs mid-shape.
     text.queue_clipped(
         "queue_clipped slices glyphs mid-shape ->>>>>>>>",
-        24.0, 16.0, 250.0, Color::from_rgb8(0xff, 0xb1, 0x42), f32::MAX,
+        24.0,
+        16.0,
+        250.0,
+        Color::from_rgb8(0xff, 0xb1, 0x42),
+        f32::MAX,
         [16.0, 248.0, 300.0, 40.0],
     );
 
     // 5) Layers: base + overlay both render via render().
-    text.queue("Layer 0: base layer text", 22.0, 16.0, 320.0, grey, f32::MAX, WIDTH, HEIGHT);
+    text.queue(
+        "Layer 0: base layer text",
+        22.0,
+        16.0,
+        320.0,
+        grey,
+        f32::MAX,
+        WIDTH,
+        HEIGHT,
+    );
     text.set_layer(1);
-    text.queue("Layer 1: overlay text", 22.0, 400.0, 320.0, Color::from_rgb8(0xf7, 0xe6, 0x3e), f32::MAX, WIDTH, HEIGHT);
-    assert_eq!(text.layer_count(), 2, "set_layer should create a second layer");
+    text.queue(
+        "Layer 1: overlay text",
+        22.0,
+        400.0,
+        320.0,
+        Color::from_rgb8(0xf7, 0xe6, 0x3e),
+        f32::MAX,
+        WIDTH,
+        HEIGHT,
+    );
+    assert_eq!(
+        text.layer_count(),
+        2,
+        "set_layer should create a second layer"
+    );
 
     // 6) Continuity rows from Phase 2 (styles, fallback, families).
-    text.queue_styled("Bold — grumpy wizards", 24.0, 16.0, 366.0, Color::from_rgb8(0xff, 0x8a, 0xd8), f32::MAX, FontWeight::Bold, FontStyle::Normal, WIDTH, HEIGHT);
-    text.queue_full("JB Mono: let x = 42;", 24.0, 330.0, 366.0, Color::from_rgb8(0x4d, 0xd0, 0xe1), f32::MAX, FontWeight::Normal, FontStyle::Normal, Some("JetBrains Mono"), WIDTH, HEIGHT);
-    text.queue("かな fallback カタカナ", 24.0, 16.0, 410.0, white, f32::MAX, WIDTH, HEIGHT);
-    text.queue_family("12:34:56", 40.0, 360.0, 406.0, Color::from_rgb8(0xff, 0x6b, 0x6b), f32::MAX, "Digital-7", WIDTH, HEIGHT);
+    text.queue_styled(
+        "Bold — grumpy wizards",
+        24.0,
+        16.0,
+        366.0,
+        Color::from_rgb8(0xff, 0x8a, 0xd8),
+        f32::MAX,
+        FontWeight::Bold,
+        FontStyle::Normal,
+        WIDTH,
+        HEIGHT,
+    );
+    text.queue_full(
+        "JB Mono: let x = 42;",
+        24.0,
+        330.0,
+        366.0,
+        Color::from_rgb8(0x4d, 0xd0, 0xe1),
+        f32::MAX,
+        FontWeight::Normal,
+        FontStyle::Normal,
+        Some("JetBrains Mono"),
+        WIDTH,
+        HEIGHT,
+    );
+    text.queue(
+        "かな fallback カタカナ",
+        24.0,
+        16.0,
+        410.0,
+        white,
+        f32::MAX,
+        WIDTH,
+        HEIGHT,
+    );
+    text.queue_family(
+        "12:34:56",
+        40.0,
+        360.0,
+        406.0,
+        Color::from_rgb8(0xff, 0x6b, 0x6b),
+        f32::MAX,
+        "Digital-7",
+        WIDTH,
+        HEIGHT,
+    );
     let (ink_h, ink_top) = text.measure_ink_height_family("12:34:56", 40.0, "Digital-7");
     println!("[lntrn-text] Digital-7 ink bounds: height {ink_h:.1}px, top offset {ink_top:.1}px");
 
@@ -107,7 +201,13 @@ when a single word overflows the bound.";
     // and mirrored brackets flip inside RTL runs.
     text.queue(
         "RTL: שלום עולם — مرحبا بالعالم — (מספר 123)",
-        22.0, 16.0, 452.0, Color::from_rgb8(0x9e, 0xcb, 0xff), f32::MAX, WIDTH, HEIGHT,
+        22.0,
+        16.0,
+        452.0,
+        Color::from_rgb8(0x9e, 0xcb, 0xff),
+        f32::MAX,
+        WIDTH,
+        HEIGHT,
     );
 
     // 6c) CFF outlines: URW Nimbus is a classic PostScript-flavored OTF —
@@ -115,25 +215,65 @@ when a single word overflows the bound.";
     // default sans on machines without urw-fonts).
     text.queue_family(
         "CFF: Nimbus Sans renders via Type2 charstrings",
-        22.0, 460.0, 452.0, Color::from_rgb8(0x6b, 0xe5, 0x7a), f32::MAX, "Nimbus Sans", WIDTH, HEIGHT,
+        22.0,
+        460.0,
+        452.0,
+        Color::from_rgb8(0x6b, 0xe5, 0x7a),
+        f32::MAX,
+        "Nimbus Sans",
+        WIDTH,
+        HEIGHT,
     );
 
     // 6d) Variable fonts: a single wght-axis file provides Regular AND Bold
     // via fvar instancing + gvar outline deltas. Loaded embedded so the
     // variable file wins ranking ties over the static Orbitron weights that
     // are also installed.
-    if let Ok(var_font) =
-        std::fs::read(format!("{home}/.local/share/fonts/Orbitron-VariableFont_wght.ttf"))
-    {
+    if let Ok(var_font) = std::fs::read(format!(
+        "{home}/.local/share/fonts/Orbitron-VariableFont_wght.ttf"
+    )) {
         text.load_font_data(var_font);
-        text.queue_full("VAR wght 400", 18.0, 16.0, 478.0, white, f32::MAX, FontWeight::Normal, FontStyle::Normal, Some("Orbitron"), WIDTH, HEIGHT);
-        text.queue_full("VAR wght 700", 18.0, 240.0, 478.0, Color::from_rgb8(0xff, 0xb1, 0x42), f32::MAX, FontWeight::Bold, FontStyle::Normal, Some("Orbitron"), WIDTH, HEIGHT);
+        text.queue_full(
+            "VAR wght 400",
+            18.0,
+            16.0,
+            478.0,
+            white,
+            f32::MAX,
+            FontWeight::Normal,
+            FontStyle::Normal,
+            Some("Orbitron"),
+            WIDTH,
+            HEIGHT,
+        );
+        text.queue_full(
+            "VAR wght 700",
+            18.0,
+            240.0,
+            478.0,
+            Color::from_rgb8(0xff, 0xb1, 0x42),
+            f32::MAX,
+            FontWeight::Bold,
+            FontStyle::Normal,
+            Some("Orbitron"),
+            WIDTH,
+            HEIGHT,
+        );
     }
 
     // 6e) COLOR EMOJI 🎉 — CBDT strikes via our own PNG decoder, routed
     // through the normal fallback chain, mixed inline with text (including
     // a ZWJ family sequence fused by the emoji font's GSUB).
-    text.queue("emoji: 🦊🚀🎉😀🌈👨\u{200D}👩\u{200D}👧 inline!", 24.0, 500.0, 474.0, white, f32::MAX, WIDTH, HEIGHT);
+    text.queue(
+        "emoji: 🦊🚀🎉😀🌈👨\u{200D}👩\u{200D}👧 inline!",
+        24.0,
+        500.0,
+        474.0,
+        white,
+        f32::MAX,
+        WIDTH,
+        HEIGHT,
+    );
 
     // 7) Force atlas growth mid-frame: huge glyphs, clipped to a zero-area
     // rect so nothing draws. Every already-queued quad must survive the grow
@@ -142,39 +282,94 @@ when a single word overflows the bound.";
     for size in [200.0f32, 240.0] {
         text.queue_clipped(
             "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
-            size, 0.0, 0.0, white, f32::MAX,
+            size,
+            0.0,
+            0.0,
+            white,
+            f32::MAX,
             [0.0, 0.0, 0.0, 0.0],
         );
     }
 
     // 8) Regression rows: shaped widths pinned to the glyphon-parity record.
-    text.queue("lntrn-text regression rows", 16.0, 16.0, 500.0, grey, f32::MAX, WIDTH, HEIGHT);
+    text.queue(
+        "lntrn-text regression rows",
+        16.0,
+        16.0,
+        500.0,
+        grey,
+        f32::MAX,
+        WIDTH,
+        HEIGHT,
+    );
     for &(s, size, y, family) in COMPARE_ROWS {
-        text.queue_full(s, size, 16.0, y, white, f32::MAX, FontWeight::Normal, FontStyle::Normal, Some(family), WIDTH, HEIGHT);
+        text.queue_full(
+            s,
+            size,
+            16.0,
+            y,
+            white,
+            f32::MAX,
+            FontWeight::Normal,
+            FontStyle::Normal,
+            Some(family),
+            WIDTH,
+            HEIGHT,
+        );
     }
 
     // ── Behavior checks ──────────────────────────────────────────────────────
     // Wrap only constrains queueing — measurement uses the wrapper's fixed
     // 10000px bound, so a long paragraph measures wider than the wrap box.
     let para_w = text.measure_width(paragraph, 18.0);
-    assert!(para_w > 420.0, "measure should ignore wrap bounds, got {para_w}");
+    assert!(
+        para_w > 420.0,
+        "measure should ignore wrap bounds, got {para_w}"
+    );
     // Bold resolves to a genuinely different (wider) face.
-    let normal_w = text.measure_width_full("mmmmm", 24.0, FontWeight::Normal, FontStyle::Normal, Some("Inter"));
-    let bold_w = text.measure_width_full("mmmmm", 24.0, FontWeight::Bold, FontStyle::Normal, Some("Inter"));
+    let normal_w = text.measure_width_full(
+        "mmmmm",
+        24.0,
+        FontWeight::Normal,
+        FontStyle::Normal,
+        Some("Inter"),
+    );
+    let bold_w = text.measure_width_full(
+        "mmmmm",
+        24.0,
+        FontWeight::Bold,
+        FontStyle::Normal,
+        Some("Inter"),
+    );
     println!("[lntrn-text] Inter 'mmmmm': normal {normal_w:.2}px, bold {bold_w:.2}px");
     assert!(bold_w > normal_w, "bold face should be wider than normal");
 
     // Monospace vs proportional family resolution.
     let mono_i = text.measure_width_family("iiiii", 24.0, "JetBrains Mono");
     let mono_m = text.measure_width_family("MMMMM", 24.0, "JetBrains Mono");
-    assert!((mono_i - mono_m).abs() < 0.01, "JetBrains Mono advances must be equal");
-    let sans_i = text.measure_width_full("iiiii", 24.0, FontWeight::Normal, FontStyle::Normal, Some("Inter"));
-    assert!(sans_i < mono_i, "proportional 'i' should be narrower than monospace");
+    assert!(
+        (mono_i - mono_m).abs() < 0.01,
+        "JetBrains Mono advances must be equal"
+    );
+    let sans_i = text.measure_width_full(
+        "iiiii",
+        24.0,
+        FontWeight::Normal,
+        FontStyle::Normal,
+        Some("Inter"),
+    );
+    assert!(
+        sans_i < mono_i,
+        "proportional 'i' should be narrower than monospace"
+    );
 
     // Unknown family behaves exactly like the default.
     let unknown = text.measure_width_family("fallback test", 24.0, "Nonexistent Family XYZ");
     let default = text.measure_width("fallback test", 24.0);
-    assert!((unknown - default).abs() < 0.01, "unknown family must fall back to default");
+    assert!(
+        (unknown - default).abs() < 0.01,
+        "unknown family must fall back to default"
+    );
 
     // Per-glyph fallback found something for kana.
     let kana = text.measure_width("カタカナ", 26.0);
@@ -196,19 +391,31 @@ when a single word overflows the bound.";
     assert!(kana > 0.0, "kana should measure non-zero via fallback");
 
     // Digital-7 ink bounds are sane: visible ink, roughly digit-sized.
-    assert!(ink_h > 10.0 && ink_h <= 48.0, "Digital-7 ink height looks wrong: {ink_h}");
+    assert!(
+        ink_h > 10.0 && ink_h <= 48.0,
+        "Digital-7 ink height looks wrong: {ink_h}"
+    );
 
     // A monospace-default renderer resolves a mono face for plain queue().
     let mut mono = TextRenderer::from_wgpu(device.clone(), queue.clone(), FORMAT, true);
     let mi = mono.measure_width("iiiii", 24.0);
     let mm = mono.measure_width("MMMMM", 24.0);
-    assert!((mi - mm).abs() < 0.01, "monospace default should have equal advances");
+    assert!(
+        (mi - mm).abs() < 0.01,
+        "monospace default should have equal advances"
+    );
 
     // Repeat queue hits the layout cache (one hit per identical queue call).
     let before = text.stats();
     text.queue(
         "One-line default cap: this renders\nTHIS SECOND LINE MUST BE CLIPPED",
-        22.0, 16.0, 8.0, white, f32::MAX, WIDTH, HEIGHT,
+        22.0,
+        16.0,
+        8.0,
+        white,
+        f32::MAX,
+        WIDTH,
+        HEIGHT,
     );
     let after = text.stats();
     assert!(
@@ -223,7 +430,11 @@ when a single word overflows the bound.";
     // ── Render offscreen ─────────────────────────────────────────────────────
     let target = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("preview target"),
-        size: wgpu::Extent3d { width: WIDTH, height: HEIGHT, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width: WIDTH,
+            height: HEIGHT,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -241,8 +452,9 @@ when a single word overflows the bound.";
         mapped_at_creation: false,
     });
 
-    let mut encoder =
-        device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("preview") });
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("preview"),
+    });
 
     // Clear pass (dark background).
     {
@@ -252,7 +464,12 @@ when a single word overflows the bound.";
                 view: &view,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.07, g: 0.07, b: 0.09, a: 1.0 }),
+                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                        r: 0.07,
+                        g: 0.07,
+                        b: 0.09,
+                        a: 1.0,
+                    }),
                     store: wgpu::StoreOp::Store,
                 },
                 depth_slice: None,
@@ -281,7 +498,11 @@ when a single word overflows the bound.";
                 rows_per_image: Some(HEIGHT),
             },
         },
-        wgpu::Extent3d { width: WIDTH, height: HEIGHT, depth_or_array_layers: 1 },
+        wgpu::Extent3d {
+            width: WIDTH,
+            height: HEIGHT,
+            depth_or_array_layers: 1,
+        },
     );
 
     queue.submit(Some(encoder.finish()));
@@ -290,7 +511,10 @@ when a single word overflows the bound.";
     let slice = readback.slice(..);
     slice.map_async(wgpu::MapMode::Read, |res| res.expect("buffer map failed"));
     device
-        .poll(wgpu::PollType::Wait { submission_index: None, timeout: None })
+        .poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        })
         .expect("device poll failed");
     let rgba = slice.get_mapped_range().to_vec();
     readback.unmap();
@@ -300,35 +524,60 @@ when a single word overflows the bound.";
 
     // Pixel-region proofs that clipping semantics actually hold on screen.
     let second_line = count_lit(&rgba, 16, 40, 870, 72);
-    assert_eq!(second_line, 0, "one-line cap leaked {second_line} px below the line box");
+    assert_eq!(
+        second_line, 0,
+        "one-line cap leaked {second_line} px below the line box"
+    );
     let wrapped = count_lit(&rgba, 16, 105, 436, 158);
-    assert!(wrapped > 300, "wrap inside clip should light rows 2-3, got {wrapped} px");
+    assert!(
+        wrapped > 300,
+        "wrap inside clip should light rows 2-3, got {wrapped} px"
+    );
     let below_clip = count_lit(&rgba, 16, 162, 436, 200);
     assert_eq!(below_clip, 0, "clip bottom leaked {below_clip} px");
     let occluded = count_lit(&rgba, 662, 80, 894, 102);
     assert_eq!(occluded, 0, "occlude_rect leaked {occluded} px");
     let kept = count_lit(&rgba, 460, 82, 640, 100);
-    assert!(kept > 100, "unoccluded left part should stay visible, got {kept} px");
+    assert!(
+        kept > 100,
+        "unoccluded left part should stay visible, got {kept} px"
+    );
     let clipped_right = count_lit(&rgba, 320, 252, 700, 284);
-    assert_eq!(clipped_right, 0, "queue_clipped leaked {clipped_right} px past its rect");
+    assert_eq!(
+        clipped_right, 0,
+        "queue_clipped leaked {clipped_right} px past its rect"
+    );
     let clipped_kept = count_lit(&rgba, 16, 254, 312, 280);
-    assert!(clipped_kept > 100, "queue_clipped kept region should render, got {clipped_kept} px");
+    assert!(
+        clipped_kept > 100,
+        "queue_clipped kept region should render, got {clipped_kept} px"
+    );
 
     // Color emoji actually rendered in color: the emoji row's region must
     // contain strongly chromatic pixels (text is grayscale, emoji are not).
     let chroma = count_chroma(&rgba, 560, 480, 890, 506);
     println!("[lntrn-text] emoji chroma pixels: {chroma}");
-    assert!(chroma > 60, "emoji should render in color, got {chroma} chromatic px");
+    assert!(
+        chroma > 60,
+        "emoji should render in color, got {chroma} chromatic px"
+    );
 
     // Regression: shaped widths pinned to the values glyphon produced when
     // both engines ran side-by-side (Phases 5–11) — kerning + ligatures
     // must keep matching that record.
     const PINNED_WIDTHS: [f32; 5] = [221.9, 269.5, 281.3, 288.7, 313.2];
     let rows_lit = count_lit(&rgba, 8, 520, 888, 700);
-    assert!(rows_lit > 4_000, "regression rows should render, got {rows_lit} px");
+    assert!(
+        rows_lit > 4_000,
+        "regression rows should render, got {rows_lit} px"
+    );
     for (i, &(s, size, _, family)) in COMPARE_ROWS.iter().enumerate() {
-        let w = text.measure_width_full(s, size, FontWeight::Normal, FontStyle::Normal, Some(family));
-        println!("[lntrn-text]   row {i} ({size}px {family}): {w:.1}px (pinned {:.1})", PINNED_WIDTHS[i]);
+        let w =
+            text.measure_width_full(s, size, FontWeight::Normal, FontStyle::Normal, Some(family));
+        println!(
+            "[lntrn-text]   row {i} ({size}px {family}): {w:.1}px (pinned {:.1})",
+            PINNED_WIDTHS[i]
+        );
         assert!(
             (w - PINNED_WIDTHS[i]).abs() < 0.5,
             "row {i} drifted from the glyphon-parity record: {w} vs {}",
@@ -337,10 +586,31 @@ when a single word overflows the bound.";
     }
 
     // Kerning sanity without glyphon: "AV" must be narrower than A + V alone.
-    let av = text.measure_width_full("AV", 24.0, FontWeight::Normal, FontStyle::Normal, Some("Inter"));
-    let a = text.measure_width_full("A", 24.0, FontWeight::Normal, FontStyle::Normal, Some("Inter"));
-    let v = text.measure_width_full("V", 24.0, FontWeight::Normal, FontStyle::Normal, Some("Inter"));
-    println!("[lntrn-text] kern check: AV {av:.2}px vs A+V {:.2}px", a + v);
+    let av = text.measure_width_full(
+        "AV",
+        24.0,
+        FontWeight::Normal,
+        FontStyle::Normal,
+        Some("Inter"),
+    );
+    let a = text.measure_width_full(
+        "A",
+        24.0,
+        FontWeight::Normal,
+        FontStyle::Normal,
+        Some("Inter"),
+    );
+    let v = text.measure_width_full(
+        "V",
+        24.0,
+        FontWeight::Normal,
+        FontStyle::Normal,
+        Some("Inter"),
+    );
+    println!(
+        "[lntrn-text] kern check: AV {av:.2}px vs A+V {:.2}px",
+        a + v
+    );
     assert!(av < a + v - 0.5, "AV should kern tighter than A+V");
 
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/swap.png");
@@ -354,9 +624,15 @@ when a single word overflows the bound.";
         stats.cache_hits,
         stats.cache_misses
     );
-    println!("[lntrn-text] rendered {lit} lit pixels of {}", WIDTH * HEIGHT);
+    println!(
+        "[lntrn-text] rendered {lit} lit pixels of {}",
+        WIDTH * HEIGHT
+    );
     println!("[lntrn-text] wrote {path}");
-    assert!(lit > 5_000, "expected real text to render; got {lit} lit pixels");
+    assert!(
+        lit > 5_000,
+        "expected real text to render; got {lit} lit pixels"
+    );
     println!("[lntrn-text] lntrn-text OK ✅ — the DE text stack, fully in-house 🔦");
 }
 
@@ -476,7 +752,11 @@ fn crc32(data: &[u8]) -> u32 {
     for &b in data {
         crc ^= b as u32;
         for _ in 0..8 {
-            crc = if crc & 1 != 0 { (crc >> 1) ^ 0xedb8_8320 } else { crc >> 1 };
+            crc = if crc & 1 != 0 {
+                (crc >> 1) ^ 0xedb8_8320
+            } else {
+                crc >> 1
+            };
         }
     }
     !crc

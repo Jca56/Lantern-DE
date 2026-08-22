@@ -159,11 +159,7 @@ impl<'a> Dropdown<'a> {
         );
 
         // Selected text
-        let label = self
-            .options
-            .get(self.selected)
-            .copied()
-            .unwrap_or("—");
+        let label = self.options.get(self.selected).copied().unwrap_or("—");
         let text_y = self.rect.y + (self.rect.h - font_size) * 0.5;
         text_renderer.queue(
             label,
@@ -182,11 +178,39 @@ impl<'a> Dropdown<'a> {
         let chev_color = palette.text_secondary.with_alpha(opacity);
         let line_w = 1.5 * s;
         if self.open {
-            painter.line(chev_x, chev_cy + chev_size * 0.35, chev_x + chev_size * 0.5, chev_cy - chev_size * 0.35, line_w, chev_color);
-            painter.line(chev_x + chev_size * 0.5, chev_cy - chev_size * 0.35, chev_x + chev_size, chev_cy + chev_size * 0.35, line_w, chev_color);
+            painter.line(
+                chev_x,
+                chev_cy + chev_size * 0.35,
+                chev_x + chev_size * 0.5,
+                chev_cy - chev_size * 0.35,
+                line_w,
+                chev_color,
+            );
+            painter.line(
+                chev_x + chev_size * 0.5,
+                chev_cy - chev_size * 0.35,
+                chev_x + chev_size,
+                chev_cy + chev_size * 0.35,
+                line_w,
+                chev_color,
+            );
         } else {
-            painter.line(chev_x, chev_cy - chev_size * 0.35, chev_x + chev_size * 0.5, chev_cy + chev_size * 0.35, line_w, chev_color);
-            painter.line(chev_x + chev_size * 0.5, chev_cy + chev_size * 0.35, chev_x + chev_size, chev_cy - chev_size * 0.35, line_w, chev_color);
+            painter.line(
+                chev_x,
+                chev_cy - chev_size * 0.35,
+                chev_x + chev_size * 0.5,
+                chev_cy + chev_size * 0.35,
+                line_w,
+                chev_color,
+            );
+            painter.line(
+                chev_x + chev_size * 0.5,
+                chev_cy + chev_size * 0.35,
+                chev_x + chev_size,
+                chev_cy - chev_size * 0.35,
+                line_w,
+                chev_color,
+            );
         }
 
         // -- Dropdown list (only when open) --
@@ -198,7 +222,11 @@ impl<'a> Dropdown<'a> {
 
         // Shadow
         let shadow = list.expand(4.0 * s);
-        painter.rect_filled(shadow, drop_r + 2.0 * s, Color::BLACK.with_alpha(DROPDOWN_SHADOW_ALPHA));
+        painter.rect_filled(
+            shadow,
+            drop_r + 2.0 * s,
+            Color::BLACK.with_alpha(DROPDOWN_SHADOW_ALPHA),
+        );
 
         // Background
         painter.rect_filled(list, drop_r, palette.surface);
@@ -214,21 +242,43 @@ impl<'a> Dropdown<'a> {
                 painter.rect_filled(item_rect, corner_r, palette.surface_2);
             }
 
-            let text_color = if is_selected { palette.accent } else { palette.text };
+            let text_color = if is_selected {
+                palette.accent
+            } else {
+                palette.text
+            };
             let item_text_y = item_rect.y + (item_h - font_size) * 0.5;
             text_renderer.queue(
-                option, font_size,
-                item_rect.x + pad_h, item_text_y,
-                text_color, item_rect.w - pad_h * 2.0,
-                screen_w, screen_h,
+                option,
+                font_size,
+                item_rect.x + pad_h,
+                item_text_y,
+                text_color,
+                item_rect.w - pad_h * 2.0,
+                screen_w,
+                screen_h,
             );
 
             // Checkmark for selected item
             if is_selected {
                 let check_x = item_rect.x + item_rect.w - pad_h - 4.0 * s;
                 let check_cy = item_rect.y + item_h * 0.5;
-                painter.line(check_x, check_cy, check_x + 4.0 * s, check_cy + 4.0 * s, 2.0 * s, palette.accent);
-                painter.line(check_x + 4.0 * s, check_cy + 4.0 * s, check_x + 12.0 * s, check_cy - 4.0 * s, 2.0 * s, palette.accent);
+                painter.line(
+                    check_x,
+                    check_cy,
+                    check_x + 4.0 * s,
+                    check_cy + 4.0 * s,
+                    2.0 * s,
+                    palette.accent,
+                );
+                painter.line(
+                    check_x + 4.0 * s,
+                    check_cy + 4.0 * s,
+                    check_x + 12.0 * s,
+                    check_cy - 4.0 * s,
+                    2.0 * s,
+                    palette.accent,
+                );
             }
         }
     }

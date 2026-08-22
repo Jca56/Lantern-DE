@@ -44,10 +44,7 @@ pub const FONTS: &[(&str, &str)] = &[
 pub fn family_index(family: Option<&str>) -> usize {
     match family {
         None => 0,
-        Some(f) => FONTS
-            .iter()
-            .position(|(name, _)| *name == f)
-            .unwrap_or(0),
+        Some(f) => FONTS.iter().position(|(name, _)| *name == f).unwrap_or(0),
     }
 }
 

@@ -129,20 +129,21 @@ pub fn draw_preview_pane(
     let row_label_w = 88.0 * s;
     let row_font = 16.0 * s;
     let row_h = row_font + 8.0 * s;
-    let row = |label: &str, value: &str, painter: &mut Painter, text: &mut TextRenderer, cy: &mut f32| {
-        TextLabel::new(label, inner_x, *cy)
-            .size(FontSize::Custom(row_font))
-            .color(palette.text_secondary)
-            .max_width(row_label_w)
-            .draw(text, screen.0, screen.1);
-        TextLabel::new(value, inner_x + row_label_w, *cy)
-            .size(FontSize::Custom(row_font))
-            .color(palette.text)
-            .max_width(inner_w - row_label_w)
-            .draw(text, screen.0, screen.1);
-        *cy += row_h;
-        let _ = painter; // silence unused
-    };
+    let row =
+        |label: &str, value: &str, painter: &mut Painter, text: &mut TextRenderer, cy: &mut f32| {
+            TextLabel::new(label, inner_x, *cy)
+                .size(FontSize::Custom(row_font))
+                .color(palette.text_secondary)
+                .max_width(row_label_w)
+                .draw(text, screen.0, screen.1);
+            TextLabel::new(value, inner_x + row_label_w, *cy)
+                .size(FontSize::Custom(row_font))
+                .color(palette.text)
+                .max_width(inner_w - row_label_w)
+                .draw(text, screen.0, screen.1);
+            *cy += row_h;
+            let _ = painter; // silence unused
+        };
     row("Kind", &kind, painter, text, &mut cy);
     row("Size", &size, painter, text, &mut cy);
     row("Modified", &modified, painter, text, &mut cy);
@@ -187,15 +188,24 @@ fn format_bytes(size: u64) -> String {
     const MB: f64 = KB * 1024.0;
     const GB: f64 = MB * 1024.0;
     let f = size as f64;
-    if f >= GB { format!("{:.2} GB", f / GB) }
-    else if f >= MB { format!("{:.1} MB", f / MB) }
-    else if f >= KB { format!("{:.0} KB", f / KB) }
-    else { format!("{} B", size) }
+    if f >= GB {
+        format!("{:.2} GB", f / GB)
+    } else if f >= MB {
+        format!("{:.1} MB", f / MB)
+    } else if f >= KB {
+        format!("{:.0} KB", f / KB)
+    } else {
+        format!("{} B", size)
+    }
 }
 
 fn format_date(modified: Option<SystemTime>) -> String {
-    let Some(t) = modified else { return "—".into() };
-    let Ok(dur) = t.duration_since(SystemTime::UNIX_EPOCH) else { return "—".into() };
+    let Some(t) = modified else {
+        return "—".into();
+    };
+    let Ok(dur) = t.duration_since(SystemTime::UNIX_EPOCH) else {
+        return "—".into();
+    };
     let secs = dur.as_secs();
     let days = secs / 86400;
     let tod = secs % 86400;
@@ -206,19 +216,50 @@ fn format_date(modified: Option<SystemTime>) -> String {
     loop {
         let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
         let yd = if leap { 366 } else { 365 };
-        if remaining < yd { break; }
+        if remaining < yd {
+            break;
+        }
         remaining -= yd;
         y += 1;
     }
     let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-    let md = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    let mn = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let md = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
+    let mn = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
     let mut m = 0usize;
     while m < 12 && remaining >= md[m] {
         remaining -= md[m];
         m += 1;
     }
-    let h12 = if hh == 0 { 12 } else if hh > 12 { hh - 12 } else { hh };
+    let h12 = if hh == 0 {
+        12
+    } else if hh > 12 {
+        hh - 12
+    } else {
+        hh
+    };
     let ampm = if hh < 12 { "AM" } else { "PM" };
-    format!("{} {}, {} · {:02}:{:02} {}", mn[m], remaining + 1, y, h12, mm, ampm)
+    format!(
+        "{} {}, {} · {:02}:{:02} {}",
+        mn[m],
+        remaining + 1,
+        y,
+        h12,
+        mm,
+        ampm
+    )
 }

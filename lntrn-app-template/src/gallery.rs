@@ -2,13 +2,13 @@ use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
 // ── Gallery palette ────────────────────────────────────────────────────────
 
-const TEXT_PRIMARY: Color   = Color::rgb(0.88, 0.85, 0.95);
+const TEXT_PRIMARY: Color = Color::rgb(0.88, 0.85, 0.95);
 const TEXT_SECONDARY: Color = Color::rgb(0.50, 0.45, 0.62);
-const ACCENT: Color         = Color::rgb(0.82, 0.50, 0.02);  // bright gold
-const ACCENT_DIM: Color     = Color::rgb(0.45, 0.18, 0.01);  // dark amber/ember
-const SURFACE: Color        = Color::rgba(0.10, 0.06, 0.18, 0.45);
-const WIDGET_BG: Color      = Color::rgba(0.06, 0.03, 0.12, 0.55);
-const BORDER: Color         = Color::rgba(0.35, 0.25, 0.55, 0.25);
+const ACCENT: Color = Color::rgb(0.82, 0.50, 0.02); // bright gold
+const ACCENT_DIM: Color = Color::rgb(0.45, 0.18, 0.01); // dark amber/ember
+const SURFACE: Color = Color::rgba(0.10, 0.06, 0.18, 0.45);
+const WIDGET_BG: Color = Color::rgba(0.06, 0.03, 0.12, 0.55);
+const BORDER: Color = Color::rgba(0.35, 0.25, 0.55, 0.25);
 
 // ── Gallery state ──────────────────────────────────────────────────────────
 
@@ -49,11 +49,21 @@ fn in_rect(cx: f32, cy: f32, x: f32, y: f32, w: f32, h: f32) -> bool {
 // Layout constants
 const TAB_NAMES: &[&str] = &["Widgets", "Colors", "Layout", "Settings"];
 
-fn tabs_y(s: f32, title_h: f32) -> f32 { title_h + 16.0 * s }
-fn widgets_base_y(s: f32, title_h: f32) -> f32 { tabs_y(s, title_h) + 40.0 * s }
+fn tabs_y(s: f32, title_h: f32) -> f32 {
+    title_h + 16.0 * s
+}
+fn widgets_base_y(s: f32, title_h: f32) -> f32 {
+    tabs_y(s, title_h) + 40.0 * s
+}
 
 pub fn handle_click(
-    cx: f32, cy: f32, s: f32, title_h: f32, wf: f32, hf: f32, gs: &mut GalleryState,
+    cx: f32,
+    cy: f32,
+    s: f32,
+    title_h: f32,
+    wf: f32,
+    hf: f32,
+    gs: &mut GalleryState,
 ) -> bool {
     let col1 = 32.0 * s;
     let col2 = 520.0 * s;
@@ -112,7 +122,14 @@ pub fn handle_click(
     let slider_y = base_y + row_h * 2.0 + 34.0 * s;
     let track_x = col1;
     let track_w = 340.0 * s;
-    if in_rect(cx, cy, track_x - 12.0 * s, slider_y - 16.0 * s, track_w + 24.0 * s, 32.0 * s) {
+    if in_rect(
+        cx,
+        cy,
+        track_x - 12.0 * s,
+        slider_y - 16.0 * s,
+        track_w + 24.0 * s,
+        32.0 * s,
+    ) {
         gs.slider_value = ((cx - track_x) / track_w).clamp(0.0, 1.0);
         gs.slider_dragging = true;
         return true;
@@ -142,9 +159,17 @@ pub fn handle_release(gs: &mut GalleryState) {
 // ── Drawing ────────────────────────────────────────────────────────────────
 
 pub fn draw(
-    p: &mut Painter, t: &mut TextRenderer,
-    cx: f32, cy: f32, s: f32, title_h: f32,
-    gs: &GalleryState, wf: f32, hf: f32, sw: u32, sh: u32,
+    p: &mut Painter,
+    t: &mut TextRenderer,
+    cx: f32,
+    cy: f32,
+    s: f32,
+    title_h: f32,
+    gs: &GalleryState,
+    wf: f32,
+    hf: f32,
+    sw: u32,
+    sh: u32,
 ) {
     let col1 = 32.0 * s;
     let col2 = 520.0 * s;
@@ -154,7 +179,9 @@ pub fn draw(
     // ── Tabs ────────────────────────────────────────────────────────
 
     let tabs_y = title_h + 16.0 * s;
-    if tabs_y > hf { return; }
+    if tabs_y > hf {
+        return;
+    }
     let tab_h = 34.0 * s;
     let mut tx = col1;
     for i in 0..TAB_NAMES.len() {
@@ -164,16 +191,29 @@ pub fn draw(
         if active {
             p.rect_filled(Rect::new(tx, tabs_y, tw, tab_h), 8.0 * s, SURFACE);
         } else if hov {
-            p.rect_filled(Rect::new(tx, tabs_y, tw, tab_h), 8.0 * s,
-                WIDGET_BG.with_alpha(0.3));
+            p.rect_filled(
+                Rect::new(tx, tabs_y, tw, tab_h),
+                8.0 * s,
+                WIDGET_BG.with_alpha(0.3),
+            );
         }
         let tc = if active { ACCENT } else { TEXT_SECONDARY };
-        t.queue(TAB_NAMES[i], 18.0 * s, tx + 12.0 * s, tabs_y + 6.0 * s, tc, wf, sw, sh);
+        t.queue(
+            TAB_NAMES[i],
+            18.0 * s,
+            tx + 12.0 * s,
+            tabs_y + 6.0 * s,
+            tc,
+            wf,
+            sw,
+            sh,
+        );
         tx += tw + 6.0 * s;
     }
     // Tab bar bottom line
     p.rect_filled(
-        Rect::new(col1, tabs_y + tab_h, wf - col1 * 2.0, 1.0 * s), 0.0,
+        Rect::new(col1, tabs_y + tab_h, wf - col1 * 2.0, 1.0 * s),
+        0.0,
         BORDER.with_alpha(0.15),
     );
 
@@ -182,19 +222,36 @@ pub fn draw(
 
     // Row 1: Text Input
     let r1 = base_y + row_h;
-    if r1 > hf { return; }
+    if r1 > hf {
+        return;
+    }
     t.queue("Text Input", label_sz, col1, r1, TEXT_SECONDARY, wf, sw, sh);
     let inp_y = r1 + wy;
     let inp_w = 340.0 * s;
     let inp_h = 38.0 * s;
     p.rect_filled(Rect::new(col1, inp_y, inp_w, inp_h), 6.0 * s, WIDGET_BG);
-    p.rect_stroke_sdf(Rect::new(col1, inp_y, inp_w, inp_h), 6.0 * s, 1.0 * s, BORDER);
-    t.queue("Text Input", 16.0 * s, col1 + 14.0 * s, inp_y + 9.0 * s,
-        TEXT_SECONDARY, wf, sw, sh);
+    p.rect_stroke_sdf(
+        Rect::new(col1, inp_y, inp_w, inp_h),
+        6.0 * s,
+        1.0 * s,
+        BORDER,
+    );
+    t.queue(
+        "Text Input",
+        16.0 * s,
+        col1 + 14.0 * s,
+        inp_y + 9.0 * s,
+        TEXT_SECONDARY,
+        wf,
+        sw,
+        sh,
+    );
 
     // Row 2: Slider
     let r2 = base_y + row_h * 2.0;
-    if r2 > hf { return; }
+    if r2 > hf {
+        return;
+    }
     t.queue("Slider", label_sz, col1, r2, TEXT_SECONDARY, wf, sw, sh);
     let sl_y = r2 + 34.0 * s;
     let track_w = 340.0 * s;
@@ -202,27 +259,43 @@ pub fn draw(
     p.rect_filled(Rect::new(col1, sl_y, track_w, track_h), 3.0 * s, WIDGET_BG);
     let fill_w = track_w * gs.slider_value;
     p.rect_gradient_linear(
-        Rect::new(col1, sl_y, fill_w, track_h), 3.0 * s,
-        0.0, ACCENT_DIM, ACCENT,
+        Rect::new(col1, sl_y, fill_w, track_h),
+        3.0 * s,
+        0.0,
+        ACCENT_DIM,
+        ACCENT,
     );
     let tx = col1 + fill_w;
     let ty = sl_y + track_h * 0.5;
     p.circle_filled(tx, ty, 9.0 * s, ACCENT);
     p.circle_filled(tx, ty, 5.0 * s, Color::rgb(0.95, 0.92, 0.85));
     let val_str = format!("{:.0}%", gs.slider_value * 100.0);
-    t.queue(&val_str, 14.0 * s, col1 + track_w + 14.0 * s, r2 + 28.0 * s,
-        TEXT_SECONDARY, wf, sw, sh);
+    t.queue(
+        &val_str,
+        14.0 * s,
+        col1 + track_w + 14.0 * s,
+        r2 + 28.0 * s,
+        TEXT_SECONDARY,
+        wf,
+        sw,
+        sh,
+    );
 
     // Row 3: Progress Bar
     let r3 = base_y + row_h * 3.0;
-    if r3 > hf { return; }
+    if r3 > hf {
+        return;
+    }
     t.queue("Progress", label_sz, col1, r3, TEXT_SECONDARY, wf, sw, sh);
     let pg_y = r3 + 32.0 * s;
     let pg_h = 8.0 * s;
     p.rect_filled(Rect::new(col1, pg_y, track_w, pg_h), 4.0 * s, WIDGET_BG);
     p.rect_gradient_linear(
-        Rect::new(col1, pg_y, track_w * gs.progress, pg_h), 4.0 * s,
-        0.0, ACCENT_DIM, ACCENT,
+        Rect::new(col1, pg_y, track_w * gs.progress, pg_h),
+        4.0 * s,
+        0.0,
+        ACCENT_DIM,
+        ACCENT,
     );
 
     // ── Column 2 ────────────────────────────────────────────────────
@@ -240,11 +313,26 @@ pub fn draw(
         p.rect_stroke_sdf(Rect::new(col2, tog_y, tog_w, tog_h), tog_r, 1.0 * s, BORDER);
     }
     let toff = (tog_h - tsz) * 0.5;
-    let tx = if gs.toggle_on { col2 + tog_w - tsz - toff } else { col2 + toff };
-    p.rect_filled(Rect::new(tx, tog_y + toff, tsz, tsz), tsz * 0.5,
-        Color::rgb(0.95, 0.95, 1.0));
-    t.queue(if gs.toggle_on { "On" } else { "Off" }, 16.0 * s,
-        col2 + tog_w + 14.0 * s, tog_y + 3.0 * s, TEXT_PRIMARY, wf, sw, sh);
+    let tx = if gs.toggle_on {
+        col2 + tog_w - tsz - toff
+    } else {
+        col2 + toff
+    };
+    p.rect_filled(
+        Rect::new(tx, tog_y + toff, tsz, tsz),
+        tsz * 0.5,
+        Color::rgb(0.95, 0.95, 1.0),
+    );
+    t.queue(
+        if gs.toggle_on { "On" } else { "Off" },
+        16.0 * s,
+        col2 + tog_w + 14.0 * s,
+        tog_y + 3.0 * s,
+        TEXT_PRIMARY,
+        wf,
+        sw,
+        sh,
+    );
 
     // Row 1: Checkbox
     let r1 = base_y + row_h;
@@ -253,17 +341,28 @@ pub fn draw(
     let cb = 24.0 * s;
     if gs.checkbox_checked {
         p.rect_filled(Rect::new(col2, cb_y, cb, cb), 5.0 * s, ACCENT);
-        let x1 = col2 + 5.0 * s; let y1 = cb_y + 12.0 * s;
-        let x2 = col2 + 10.0 * s; let y2 = cb_y + 18.0 * s;
-        let x3 = col2 + 19.0 * s; let y3 = cb_y + 6.0 * s;
+        let x1 = col2 + 5.0 * s;
+        let y1 = cb_y + 12.0 * s;
+        let x2 = col2 + 10.0 * s;
+        let y2 = cb_y + 18.0 * s;
+        let x3 = col2 + 19.0 * s;
+        let y3 = cb_y + 6.0 * s;
         p.line(x1, y1, x2, y2, 2.5 * s, Color::WHITE);
         p.line(x2, y2, x3, y3, 2.5 * s, Color::WHITE);
     } else {
         p.rect_filled(Rect::new(col2, cb_y, cb, cb), 5.0 * s, WIDGET_BG);
         p.rect_stroke_sdf(Rect::new(col2, cb_y, cb, cb), 5.0 * s, 1.0 * s, BORDER);
     }
-    t.queue("Checkbox", 16.0 * s, col2 + cb + 12.0 * s, cb_y + 2.0 * s,
-        TEXT_PRIMARY, wf, sw, sh);
+    t.queue(
+        "Checkbox",
+        16.0 * s,
+        col2 + cb + 12.0 * s,
+        cb_y + 2.0 * s,
+        TEXT_PRIMARY,
+        wf,
+        sw,
+        sh,
+    );
 
     // Row 2: Radio Buttons
     let r2 = base_y + row_h * 2.0;
@@ -275,11 +374,26 @@ pub fn draw(
         let sel = gs.radio_selected == i;
         let rcx = col2 + 11.0 * s;
         let rcy = ry + 1.0 * s;
-        p.circle_stroke(rcx, rcy, 10.0 * s, 1.5 * s,
-            if sel { ACCENT } else { BORDER.with_alpha(0.5) });
-        if sel { p.circle_filled(rcx, rcy, 5.0 * s, ACCENT); }
-        t.queue(labels[i as usize], 16.0 * s, col2 + 28.0 * s, ry - 7.0 * s,
-            TEXT_PRIMARY, wf, sw, sh);
+        p.circle_stroke(
+            rcx,
+            rcy,
+            10.0 * s,
+            1.5 * s,
+            if sel { ACCENT } else { BORDER.with_alpha(0.5) },
+        );
+        if sel {
+            p.circle_filled(rcx, rcy, 5.0 * s, ACCENT);
+        }
+        t.queue(
+            labels[i as usize],
+            16.0 * s,
+            col2 + 28.0 * s,
+            ry - 7.0 * s,
+            TEXT_PRIMARY,
+            wf,
+            sw,
+            sh,
+        );
     }
 
     // Row 3: Badges (below radio, with proper spacing)
@@ -297,8 +411,16 @@ pub fn draw(
     for (label, color) in badges {
         let bw = label.len() as f32 * 10.0 * s + 24.0 * s;
         p.rect_filled(Rect::new(bx, by, bw, bh), br, *color);
-        t.queue(label, 14.0 * s, bx + 12.0 * s, by + 5.0 * s,
-            Color::rgb(0.95, 0.95, 1.0), wf, sw, sh);
+        t.queue(
+            label,
+            14.0 * s,
+            bx + 12.0 * s,
+            by + 5.0 * s,
+            Color::rgb(0.95, 0.95, 1.0),
+            wf,
+            sw,
+            sh,
+        );
         bx += bw + 10.0 * s;
     }
 

@@ -164,11 +164,21 @@ pub fn draw_inline(
     opts: &ClockOpts,
 ) {
     let now = Local::now();
-    let time_str = format_time(now.hour(), now.minute(), now.second(), opts.hour24, opts.seconds);
+    let time_str = format_time(
+        now.hour(),
+        now.minute(),
+        now.second(),
+        opts.hour24,
+        opts.seconds,
+    );
 
     let time_font = TIME_FONT * scale;
     let date_font = DATE_FONT * scale;
-    let primary = if lit { accent_color(alpha) } else { text_color(alpha) };
+    let primary = if lit {
+        accent_color(alpha)
+    } else {
+        text_color(alpha)
+    };
     let secondary = if lit {
         accent_color(SECONDARY_ALPHA * alpha)
     } else {
@@ -180,7 +190,9 @@ pub fn draw_inline(
     if !opts.show_date {
         let tx = layout.x + (layout.w - time_w) / 2.0;
         let ty = layout.y + (layout.h - time_font) / 2.0 - time_font * V_CENTER_RISE;
-        text.queue(&time_str, time_font, tx, ty, primary, layout.w, surface_w, surface_h);
+        text.queue(
+            &time_str, time_font, tx, ty, primary, layout.w, surface_w, surface_h,
+        );
         return;
     }
 
@@ -194,7 +206,16 @@ pub fn draw_inline(
             let cy = layout.y + (layout.h - stack_h) / 2.0 - time_font * V_CENTER_RISE;
             let group_w = time_w.max(date_w);
             let gx = layout.x + (layout.w - group_w) / 2.0;
-            text.queue(&time_str, time_font, gx + (group_w - time_w) / 2.0, cy, primary, layout.w, surface_w, surface_h);
+            text.queue(
+                &time_str,
+                time_font,
+                gx + (group_w - time_w) / 2.0,
+                cy,
+                primary,
+                layout.w,
+                surface_w,
+                surface_h,
+            );
             text.queue(
                 &date_str,
                 date_font,
@@ -217,8 +238,12 @@ pub fn draw_inline(
             } else {
                 (gx, gx + time_w + side_gap)
             };
-            text.queue(&time_str, time_font, time_x, ty, primary, layout.w, surface_w, surface_h);
-            text.queue(&date_str, date_font, date_x, dy, secondary, layout.w, surface_w, surface_h);
+            text.queue(
+                &time_str, time_font, time_x, ty, primary, layout.w, surface_w, surface_h,
+            );
+            text.queue(
+                &date_str, date_font, date_x, dy, secondary, layout.w, surface_w, surface_h,
+            );
         }
     }
 }
@@ -308,7 +333,11 @@ pub fn draw_view(
     } else {
         0.0
     };
-    let detail_gap = if clock.selected_day.is_some() { 16.0 * scale } else { 0.0 };
+    let detail_gap = if clock.selected_day.is_some() {
+        16.0 * scale
+    } else {
+        0.0
+    };
     let cal_x = inner_x + detail_w + detail_gap;
     let cal_w = inner_w - detail_w - detail_gap;
 
@@ -316,9 +345,19 @@ pub fn draw_view(
     // anything that overlaps (it shouldn't, but order is cheap).
     if let Some(date) = clock.selected_day {
         draw_detail_panel(
-            painter, text, clock, events, date,
-            inner_x, top_y, detail_w, panel.h - (top_y - panel.y),
-            scale, alpha, surface_w, surface_h,
+            painter,
+            text,
+            clock,
+            events,
+            date,
+            inner_x,
+            top_y,
+            detail_w,
+            panel.h - (top_y - panel.y),
+            scale,
+            alpha,
+            surface_w,
+            surface_h,
         );
     }
 
@@ -379,7 +418,7 @@ pub fn draw_view(
     let max_cell = CAL_MAX_CELL * scale;
     let cell_w = raw_cell_w.min(max_cell);
     let cell_h = cell_w; // square cells
-    // Center the grid horizontally when capped.
+                         // Center the grid horizontally when capped.
     let grid_w = cell_w * 7.0 + cell_gap * 6.0;
     let grid_x = cal_x + (cal_w - grid_w) / 2.0;
     for (i, label) in WEEKDAY_LABELS.iter().enumerate() {
@@ -399,8 +438,8 @@ pub fn draw_view(
     y += weekday_font + cell_gap;
 
     // Day grid. Sunday = column 0 (matches the WEEKDAY_LABELS order).
-    let first = NaiveDate::from_ymd_opt(view_year, view_month, 1)
-        .unwrap_or_else(|| NaiveDate::default());
+    let first =
+        NaiveDate::from_ymd_opt(view_year, view_month, 1).unwrap_or_else(|| NaiveDate::default());
     let first_col = first.weekday().num_days_from_sunday() as usize;
     let days_in_month = days_in_month(view_year, view_month);
 
@@ -417,18 +456,12 @@ pub fn draw_view(
         let cy = y + row as f32 * (cell_h + cell_gap);
         let cell_rect = Rect::new(cx, cy, cell_w, cell_h);
 
-        let is_today = today.day() == d
-            && today.month() == view_month
-            && today.year() == view_year;
+        let is_today = today.day() == d && today.month() == view_month && today.year() == view_year;
         let cell_date = NaiveDate::from_ymd_opt(view_year, view_month, d);
         let is_selected = clock.selected_day == cell_date;
 
         if is_today {
-            painter.rect_filled(
-                cell_rect,
-                cell_w * 0.18,
-                accent_color(0.65 * alpha),
-            );
+            painter.rect_filled(cell_rect, cell_w * 0.18, accent_color(0.65 * alpha));
         }
         if is_selected && !is_today {
             // Subtle accent ring for selected (but not today) days so
@@ -453,24 +486,14 @@ pub fn draw_view(
         let day_x = cx + (cell_w - day_w) / 2.0;
         let day_y = cy + cell_pad;
         text.queue(
-            &day_str,
-            day_font,
-            day_x,
-            day_y,
-            day_color,
-            cell_w,
-            surface_w,
-            surface_h,
+            &day_str, day_font, day_x, day_y, day_color, cell_w, surface_w, surface_h,
         );
 
         // Event title underneath. Show first event's title; if more
         // exist, show a "+N" suffix on the title line so all info is
         // visible at a glance without cluttering the cell.
         if let Some(date) = cell_date {
-            let day_events: Vec<&str> = events
-                .on_date(date)
-                .map(|e| e.title.as_str())
-                .collect();
+            let day_events: Vec<&str> = events.on_date(date).map(|e| e.title.as_str()).collect();
             if !day_events.is_empty() {
                 let extra = day_events.len() - 1;
                 let label_owned;
@@ -699,7 +722,11 @@ pub fn hit_test_view(
     } else {
         0.0
     };
-    let detail_gap = if clock.selected_day.is_some() { 16.0 * scale } else { 0.0 };
+    let detail_gap = if clock.selected_day.is_some() {
+        16.0 * scale
+    } else {
+        0.0
+    };
     let cal_x = inner_x + detail_w + detail_gap;
     let cal_w = inner_w - detail_w - detail_gap;
 
@@ -758,8 +785,8 @@ pub fn hit_test_view(
     let grid_x = cal_x + (cal_w - grid_w) / 2.0;
     y += weekday_font + cell_gap;
 
-    let first = NaiveDate::from_ymd_opt(view_year, view_month, 1)
-        .unwrap_or_else(|| NaiveDate::default());
+    let first =
+        NaiveDate::from_ymd_opt(view_year, view_month, 1).unwrap_or_else(|| NaiveDate::default());
     let first_col = first.weekday().num_days_from_sunday() as usize;
     let dim = days_in_month(view_year, view_month);
     for d in 1..=dim {
@@ -811,10 +838,7 @@ pub fn event_menu_hit_delete(
     let pad_v = EVENT_MENU_PAD_V * scale;
     let row_y = rect.y + pad_v;
     let row_h = EVENT_MENU_ROW_H * scale;
-    phys_x >= rect.x
-        && phys_x <= rect.x + rect.w
-        && phys_y >= row_y
-        && phys_y <= row_y + row_h
+    phys_x >= rect.x && phys_x <= rect.x + rect.w && phys_y >= row_y && phys_y <= row_y + row_h
 }
 
 /// Returns true if the click is anywhere on the menu surface.
@@ -850,12 +874,7 @@ pub fn draw_event_menu(
         4.0 * scale,
     );
     painter.rect_filled(rect, radius, Color::rgba(0.125, 0.125, 0.125, 0.98));
-    painter.rect_stroke_sdf(
-        rect,
-        radius,
-        1.0 * scale,
-        Color::rgba(1.0, 1.0, 1.0, 0.18),
-    );
+    painter.rect_stroke_sdf(rect, radius, 1.0 * scale, Color::rgba(1.0, 1.0, 1.0, 0.18));
 
     let pad_v = EVENT_MENU_PAD_V * scale;
     let pad_h = 16.0 * scale;
@@ -1019,18 +1038,36 @@ fn weekday_short(w: chrono::Weekday) -> &'static str {
 
 fn month_short(m: u32) -> &'static str {
     match m {
-        1 => "Jan", 2 => "Feb", 3 => "Mar", 4 => "Apr",
-        5 => "May", 6 => "Jun", 7 => "Jul", 8 => "Aug",
-        9 => "Sep", 10 => "Oct", 11 => "Nov", 12 => "Dec",
+        1 => "Jan",
+        2 => "Feb",
+        3 => "Mar",
+        4 => "Apr",
+        5 => "May",
+        6 => "Jun",
+        7 => "Jul",
+        8 => "Aug",
+        9 => "Sep",
+        10 => "Oct",
+        11 => "Nov",
+        12 => "Dec",
         _ => "?",
     }
 }
 
 fn month_name(m: u32) -> &'static str {
     match m {
-        1 => "January", 2 => "February", 3 => "March", 4 => "April",
-        5 => "May", 6 => "June", 7 => "July", 8 => "August",
-        9 => "September", 10 => "October", 11 => "November", 12 => "December",
+        1 => "January",
+        2 => "February",
+        3 => "March",
+        4 => "April",
+        5 => "May",
+        6 => "June",
+        7 => "July",
+        8 => "August",
+        9 => "September",
+        10 => "October",
+        11 => "November",
+        12 => "December",
         _ => "?",
     }
 }

@@ -33,13 +33,18 @@ pub const ZONE_FMT_ALIGN_RIGHT: u32 = 42;
 pub const ZONE_FMT_FONT_BTN: u32 = 60;
 pub const ZONE_FMT_FONT_OPT_BASE: u32 = 70; // .. +fonts::FONTS.len()
 
-pub const FONT_SIZES: &[f32] = &[11.0, 12.0, 14.0, 16.0, 18.0, 20.0, 24.0, 28.0, 32.0, 36.0, 48.0, 72.0];
+pub const FONT_SIZES: &[f32] = &[
+    11.0, 12.0, 14.0, 16.0, 18.0, 20.0, 24.0, 28.0, 32.0, 36.0, 48.0, 72.0,
+];
 /// Min/max for the editable size field.
 pub const SIZE_MIN: f32 = 6.0;
 pub const SIZE_MAX: f32 = 300.0;
 
 pub fn font_size_index(size: f32) -> usize {
-    FONT_SIZES.iter().position(|&s| (s - size).abs() < 0.5).unwrap_or(4)
+    FONT_SIZES
+        .iter()
+        .position(|&s| (s - size).abs() < 0.5)
+        .unwrap_or(4)
 }
 
 /// Formatting toolbar state.
@@ -169,10 +174,34 @@ pub fn draw_toolbar(
 
     // ── B / I / U / S toggle buttons ──────────────────────────────────
     let buttons: [(u32, &str, bool, FontWeight, FontStyle); 4] = [
-        (ZONE_FMT_BOLD, "B", fmt_state.bold, FontWeight::Bold, FontStyle::Normal),
-        (ZONE_FMT_ITALIC, "I", fmt_state.italic, FontWeight::Normal, FontStyle::Italic),
-        (ZONE_FMT_UNDERLINE, "U", fmt_state.underline, FontWeight::Normal, FontStyle::Normal),
-        (ZONE_FMT_STRIKE, "S", fmt_state.strikethrough, FontWeight::Normal, FontStyle::Normal),
+        (
+            ZONE_FMT_BOLD,
+            "B",
+            fmt_state.bold,
+            FontWeight::Bold,
+            FontStyle::Normal,
+        ),
+        (
+            ZONE_FMT_ITALIC,
+            "I",
+            fmt_state.italic,
+            FontWeight::Normal,
+            FontStyle::Italic,
+        ),
+        (
+            ZONE_FMT_UNDERLINE,
+            "U",
+            fmt_state.underline,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        ),
+        (
+            ZONE_FMT_STRIKE,
+            "S",
+            fmt_state.strikethrough,
+            FontWeight::Normal,
+            FontStyle::Normal,
+        ),
     ];
 
     for (i, (zone_id, label, active, weight, style)) in buttons.iter().enumerate() {
@@ -188,8 +217,16 @@ pub fn draw_toolbar(
         let label_y = btn_y + (btn_size - font_sz) * 0.5;
         let label_color = if *active { gold } else { palette.text };
         text.queue_styled(
-            label, font_sz, label_x, label_y, label_color,
-            btn_size, *weight, *style, screen_w, screen_h,
+            label,
+            font_sz,
+            label_x,
+            label_y,
+            label_color,
+            btn_size,
+            *weight,
+            *style,
+            screen_w,
+            screen_h,
         );
         if *zone_id == ZONE_FMT_UNDERLINE {
             let ul_y = label_y + font_sz + 1.0;
@@ -201,7 +238,14 @@ pub fn draw_toolbar(
         }
     }
 
-    separator(painter, palette, start_x + 4.0 * (btn_size + btn_gap) + 4.0 * s, btn_y, btn_size, s);
+    separator(
+        painter,
+        palette,
+        start_x + 4.0 * (btn_size + btn_gap) + 4.0 * s,
+        btn_y,
+        btn_size,
+        s,
+    );
 
     // ── Bullet list toggle ────────────────────────────────────────────
     {
@@ -223,7 +267,14 @@ pub fn draw_toolbar(
         }
     }
 
-    separator(painter, palette, lay.bullet_x + btn_size + 4.0 * s, btn_y, btn_size, s);
+    separator(
+        painter,
+        palette,
+        lay.bullet_x + btn_size + 4.0 * s,
+        btn_y,
+        btn_size,
+        s,
+    );
 
     // ── Font-family picker button ─────────────────────────────────────
     {
@@ -233,7 +284,9 @@ pub fn draw_toolbar(
         pill_bg(painter, rect, toolbar.font_dropdown_open, hovered, gold, s);
 
         let fam_idx = fonts::family_index(
-            fmt_state.font.and_then(|i| fonts::family_for_index_static(i as usize)),
+            fmt_state
+                .font
+                .and_then(|i| fonts::family_for_index_static(i as usize)),
         );
         let fam_name = fonts::FONTS
             .get(fam_idx)
@@ -245,14 +298,31 @@ pub fn draw_toolbar(
         let ty = rect.y + (rect.h - font_sz) * 0.5;
         // Render the label in its own typeface for a live preview.
         text.queue_full(
-            fam_name, font_sz, rect.x + 12.0 * s, ty, palette.text,
-            rect.w - 30.0 * s, FontWeight::Normal, FontStyle::Normal, fam_family, screen_w, screen_h,
+            fam_name,
+            font_sz,
+            rect.x + 12.0 * s,
+            ty,
+            palette.text,
+            rect.w - 30.0 * s,
+            FontWeight::Normal,
+            FontStyle::Normal,
+            fam_family,
+            screen_w,
+            screen_h,
         );
-        caret(painter, rect.x + rect.w - 16.0 * s, rect.center_y(), palette.text_secondary, s);
+        caret(
+            painter,
+            rect.x + rect.w - 16.0 * s,
+            rect.center_y(),
+            palette.text_secondary,
+            s,
+        );
     }
 
     // ── Size group: [−] [ box ] [+] [▾] ───────────────────────────────
-    draw_size_group(toolbar, fmt_state, painter, text, input, palette, &lay, s, screen_w, screen_h);
+    draw_size_group(
+        toolbar, fmt_state, painter, text, input, palette, &lay, s, screen_w, screen_h,
+    );
 
     // ── Alignment buttons ─────────────────────────────────────────────
     let align_zones = [
@@ -281,7 +351,11 @@ pub fn draw_toolbar(
                 Alignment::Right => ix + (iw - w),
                 _ => ix,
             };
-            painter.rect_filled(Rect::new(lx, iy + r as f32 * gap, w, line_h), 0.0, icon_color);
+            painter.rect_filled(
+                Rect::new(lx, iy + r as f32 * gap, w, line_h),
+                0.0,
+                icon_color,
+            );
         }
     }
 }
@@ -312,9 +386,17 @@ fn draw_size_group(
         let cx = rect.center_x();
         let cy = rect.center_y();
         let hw = 6.0 * s;
-        painter.rect_filled(Rect::new(cx - hw, cy - 1.0 * s, hw * 2.0, 2.0 * s), 1.0 * s, palette.text);
+        painter.rect_filled(
+            Rect::new(cx - hw, cy - 1.0 * s, hw * 2.0, 2.0 * s),
+            1.0 * s,
+            palette.text,
+        );
         if !glyph_minus {
-            painter.rect_filled(Rect::new(cx - 1.0 * s, cy - hw, 2.0 * s, hw * 2.0), 1.0 * s, palette.text);
+            painter.rect_filled(
+                Rect::new(cx - 1.0 * s, cy - hw, 2.0 * s, hw * 2.0),
+                1.0 * s,
+                palette.text,
+            );
         }
     }
 
@@ -326,7 +408,11 @@ fn draw_size_group(
     if focused {
         painter.rect_stroke_sdf(box_r, tokens::RADIUS_INPUT * s, 2.0 * s, gold);
     } else {
-        let edge = if st.is_hovered() { gold.with_alpha(0.5) } else { palette.muted.with_alpha(0.5) };
+        let edge = if st.is_hovered() {
+            gold.with_alpha(0.5)
+        } else {
+            palette.muted.with_alpha(0.5)
+        };
         painter.rect_stroke_sdf(box_r, tokens::RADIUS_INPUT * s, 1.0 * s, edge);
     }
     let shown = if focused {
@@ -338,16 +424,42 @@ fn draw_size_group(
     let tw = text.measure_width(&shown, font_sz);
     let tx = box_r.x + (box_r.w - tw) * 0.5;
     let ty = box_r.y + (box_r.h - font_sz) * 0.5;
-    text.queue(&shown, font_sz, tx, ty, palette.text, box_r.w, screen_w, screen_h);
+    text.queue(
+        &shown,
+        font_sz,
+        tx,
+        ty,
+        palette.text,
+        box_r.w,
+        screen_w,
+        screen_h,
+    );
     if focused {
-        painter.rect_filled(Rect::new(tx + tw + 1.0 * s, ty, 2.0 * s, font_sz), 0.0, gold);
+        painter.rect_filled(
+            Rect::new(tx + tw + 1.0 * s, ty, 2.0 * s, font_sz),
+            0.0,
+            gold,
+        );
     }
 
     // Preset caret.
     let caret_r = lay.size_caret;
     let cst = input.add_zone(ZONE_FMT_SIZE_CARET, caret_r);
-    pill_bg(painter, caret_r, toolbar.size_dropdown_open, cst.is_hovered(), gold, s);
-    caret(painter, caret_r.center_x(), caret_r.center_y(), palette.text_secondary, s);
+    pill_bg(
+        painter,
+        caret_r,
+        toolbar.size_dropdown_open,
+        cst.is_hovered(),
+        gold,
+        s,
+    );
+    caret(
+        painter,
+        caret_r.center_x(),
+        caret_r.center_y(),
+        palette.text_secondary,
+        s,
+    );
 }
 
 /// Draw open dropdown overlays (call on layer 1 so they render above text).
@@ -369,10 +481,18 @@ pub fn draw_toolbar_overlays(
 
     // Size preset dropdown — opens under the caret, spanning box+caret width.
     if toolbar.size_dropdown_open {
-        let dd_rect = Rect::new(lay.size_box.x, lay.size_box.y, lay.size_box.w + lay.size_caret.w, lay.size_box.h);
+        let dd_rect = Rect::new(
+            lay.size_box.x,
+            lay.size_box.y,
+            lay.size_box.w + lay.size_caret.w,
+            lay.size_box.h,
+        );
         let cur = displayed_size(fmt_state);
         let sel = font_size_index(cur);
-        let labels: Vec<String> = FONT_SIZES.iter().map(|sz| format!("{}", *sz as u32)).collect();
+        let labels: Vec<String> = FONT_SIZES
+            .iter()
+            .map(|sz| format!("{}", *sz as u32))
+            .collect();
         let refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
         Dropdown::new(dd_rect, &refs, sel)
             .scale(s)
@@ -383,7 +503,9 @@ pub fn draw_toolbar_overlays(
 
     // Font-family dropdown — each option rendered in its own face.
     if toolbar.font_dropdown_open {
-        draw_font_dropdown(toolbar, fmt_state, painter, text, palette, &lay, s, screen_w, screen_h);
+        draw_font_dropdown(
+            toolbar, fmt_state, painter, text, palette, &lay, s, screen_w, screen_h,
+        );
     }
 }
 
@@ -404,26 +526,53 @@ fn draw_font_dropdown(
     let row_h = 30.0 * s;
     let n = fonts::FONTS.len();
     let panel = Rect::new(r.x, r.y + r.h + 2.0 * s, r.w, row_h * n as f32 + 8.0 * s);
-    painter.shadow(panel, 8.0 * s, 8.0 * s, Color::from_rgba8(0, 0, 0, 70), 0.0, 4.0 * s);
+    painter.shadow(
+        panel,
+        8.0 * s,
+        8.0 * s,
+        Color::from_rgba8(0, 0, 0, 70),
+        0.0,
+        4.0 * s,
+    );
     painter.rect_filled(panel, 8.0 * s, palette.bg);
     painter.rect_stroke_sdf(panel, 8.0 * s, 1.0 * s, palette.muted.with_alpha(0.4));
 
     let cur_idx = fonts::family_index(
-        fmt_state.font.and_then(|i| fonts::family_for_index_static(i as usize)),
+        fmt_state
+            .font
+            .and_then(|i| fonts::family_for_index_static(i as usize)),
     );
     let font_sz = 18.0 * s;
     for (i, (name, _)) in fonts::FONTS.iter().enumerate() {
-        let row = Rect::new(panel.x + 4.0 * s, panel.y + 4.0 * s + i as f32 * row_h, panel.w - 8.0 * s, row_h);
+        let row = Rect::new(
+            panel.x + 4.0 * s,
+            panel.y + 4.0 * s + i as f32 * row_h,
+            panel.w - 8.0 * s,
+            row_h,
+        );
         let hovered = toolbar.hovered_font_option == Some(i);
         if hovered {
             painter.rect_filled(row, 5.0 * s, palette.accent.with_alpha(0.16));
         }
         let fam = fonts::family_for_index_static(i);
-        let col = if i == cur_idx { palette.accent } else { palette.text };
+        let col = if i == cur_idx {
+            palette.accent
+        } else {
+            palette.text
+        };
         let ty = row.y + (row.h - font_sz) * 0.5;
         text.queue_full(
-            name, font_sz, row.x + 10.0 * s, ty, col, row.w - 16.0 * s,
-            FontWeight::Normal, FontStyle::Normal, fam, screen_w, screen_h,
+            name,
+            font_sz,
+            row.x + 10.0 * s,
+            ty,
+            col,
+            row.w - 16.0 * s,
+            FontWeight::Normal,
+            FontStyle::Normal,
+            fam,
+            screen_w,
+            screen_h,
         );
     }
 }
@@ -466,10 +615,18 @@ pub fn register_size_option_zones(
         return;
     }
     let lay = layout(s);
-    let dd_rect = Rect::new(lay.size_box.x, lay.size_box.y, lay.size_box.w + lay.size_caret.w, lay.size_box.h);
+    let dd_rect = Rect::new(
+        lay.size_box.x,
+        lay.size_box.y,
+        lay.size_box.w + lay.size_caret.w,
+        lay.size_box.h,
+    );
     let cur = displayed_size(fmt_state);
     let sel = font_size_index(cur);
-    let labels: Vec<String> = FONT_SIZES.iter().map(|sz| format!("{}", *sz as u32)).collect();
+    let labels: Vec<String> = FONT_SIZES
+        .iter()
+        .map(|sz| format!("{}", *sz as u32))
+        .collect();
     let refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
     let dd = Dropdown::new(dd_rect, &refs, sel).scale(s).open(true);
     toolbar.hovered_size_option = None;
@@ -504,15 +661,34 @@ fn pill_bg(painter: &mut Painter, rect: Rect, active: bool, hovered: bool, gold:
 }
 
 /// Vertical group separator.
-fn separator(painter: &mut Painter, palette: &FoxPalette, x: f32, btn_y: f32, btn_size: f32, s: f32) {
+fn separator(
+    painter: &mut Painter,
+    palette: &FoxPalette,
+    x: f32,
+    btn_y: f32,
+    btn_size: f32,
+    s: f32,
+) {
     painter.line(
-        x, btn_y + 4.0 * s, x, btn_y + btn_size - 4.0 * s,
-        1.0 * s, palette.muted.with_alpha(0.3),
+        x,
+        btn_y + 4.0 * s,
+        x,
+        btn_y + btn_size - 4.0 * s,
+        1.0 * s,
+        palette.muted.with_alpha(0.3),
     );
 }
 
 /// A small downward chevron (▾).
 fn caret(painter: &mut Painter, cx: f32, cy: f32, color: Color, s: f32) {
     let w = 4.0 * s;
-    painter.triangle(cx - w, cy - w * 0.5, cx + w, cy - w * 0.5, cx, cy + w * 0.7, color);
+    painter.triangle(
+        cx - w,
+        cy - w * 0.5,
+        cx + w,
+        cy - w * 0.5,
+        cx,
+        cy + w * 0.7,
+        color,
+    );
 }

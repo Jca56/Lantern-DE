@@ -61,7 +61,11 @@ impl ThumbPool {
 
     pub fn submit(&self, key: String, path: PathBuf, is_video: bool) {
         let (lock, cv) = &*self.queue;
-        lock.lock().unwrap().push_back(ThumbJob { key, path, is_video });
+        lock.lock().unwrap().push_back(ThumbJob {
+            key,
+            path,
+            is_video,
+        });
         cv.notify_one();
     }
 
@@ -156,7 +160,10 @@ pub fn generate(path: &Path, is_video: bool) -> Option<(Vec<u8>, u32, u32)> {
 /// Decode with explicit limits so a huge or malicious file errors out
 /// instead of exhausting memory, then downscale to thumbnail size.
 fn decode_image_limited(path: &Path) -> Option<image::RgbaImage> {
-    let mut reader = image::ImageReader::open(path).ok()?.with_guessed_format().ok()?;
+    let mut reader = image::ImageReader::open(path)
+        .ok()?
+        .with_guessed_format()
+        .ok()?;
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(MAX_DECODE_DIM);
     limits.max_image_height = Some(MAX_DECODE_DIM);
@@ -186,11 +193,19 @@ fn video_frame(path: &Path) -> Option<image::RgbaImage> {
         .args(["-ss", "1", "-i"])
         .arg(path)
         .args([
-            "-frames:v", "1",
-            "-vf", &format!("scale={s}:{s}:force_original_aspect_ratio=decrease", s = THUMB_SIZE),
-            "-f", "image2pipe",
-            "-vcodec", "png",
-            "-loglevel", "error",
+            "-frames:v",
+            "1",
+            "-vf",
+            &format!(
+                "scale={s}:{s}:force_original_aspect_ratio=decrease",
+                s = THUMB_SIZE
+            ),
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "png",
+            "-loglevel",
+            "error",
             "pipe:1",
         ])
         .output()

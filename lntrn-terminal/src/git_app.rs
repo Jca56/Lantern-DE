@@ -12,7 +12,10 @@ impl App {
         let cwd = self.active_pane_cwd();
         let root = git::ops::find_git_root(std::path::Path::new(&cwd));
 
-        eprintln!("[git-sidebar] open_git_repo cwd={cwd:?} root={root:?} prev={:?}", self.git_sidebar.repo_path);
+        eprintln!(
+            "[git-sidebar] open_git_repo cwd={cwd:?} root={root:?} prev={:?}",
+            self.git_sidebar.repo_path
+        );
 
         if root == self.git_sidebar.repo_path {
             return;
@@ -99,14 +102,22 @@ impl App {
             eprintln!("[git-sidebar] got event");
             match event {
                 git::worker::GitEvent::Status(status) => {
-                    eprintln!("[git-sidebar] Status: branch={} files={}", status.branch, status.files.len());
+                    eprintln!(
+                        "[git-sidebar] Status: branch={} files={}",
+                        status.branch,
+                        status.files.len()
+                    );
                     // Update file sidebar git marks
                     if let Some(ref repo) = self.git_sidebar.repo_path {
-                        self.sidebar.git_marks = status.files.iter().map(|f| {
-                            let abs = repo.join(&f.path);
-                            let ch = f.status.label().chars().next().unwrap_or('?');
-                            (abs, ch)
-                        }).collect();
+                        self.sidebar.git_marks = status
+                            .files
+                            .iter()
+                            .map(|f| {
+                                let abs = repo.join(&f.path);
+                                let ch = f.status.label().chars().next().unwrap_or('?');
+                                (abs, ch)
+                            })
+                            .collect();
                     }
                     self.git_sidebar.status = Some(status);
                 }
@@ -141,8 +152,7 @@ impl App {
     pub(crate) fn on_sidebar_files_mode(&mut self) {
         if self.sidebar.visible && !self.tabs.is_empty() {
             let cwd = self.active_pane_cwd();
-            self.sidebar
-                .set_root(std::path::Path::new(&cwd));
+            self.sidebar.set_root(std::path::Path::new(&cwd));
         }
     }
 

@@ -103,8 +103,12 @@ impl App {
             return;
         }
         let mut right_tab = DirectoryTab::new(self.current_dir.clone());
-        right_tab.entries =
-            fs::list_directory(&right_tab.path, self.show_hidden, self.sort_by, self.sort_dir);
+        right_tab.entries = fs::list_directory(
+            &right_tab.path,
+            self.show_hidden,
+            self.sort_by,
+            self.sort_dir,
+        );
         // The right pane starts in the left's view mode — except Tree, whose
         // row list is built lazily on focus; List is the honest default there.
         let start_mode = if self.view_mode == ViewMode::Tree {
@@ -137,10 +141,18 @@ impl App {
         if self.split.is_some() || self.pick.is_some() {
             return;
         }
-        let path = if right_path.is_dir() { right_path } else { super::dirs_home() };
+        let path = if right_path.is_dir() {
+            right_path
+        } else {
+            super::dirs_home()
+        };
         let mut right_tab = DirectoryTab::new(path);
-        right_tab.entries =
-            fs::list_directory(&right_tab.path, self.show_hidden, self.sort_by, self.sort_dir);
+        right_tab.entries = fs::list_directory(
+            &right_tab.path,
+            self.show_hidden,
+            self.sort_by,
+            self.sort_dir,
+        );
         self.toggle_split();
         if let Some(split) = self.split.as_mut() {
             split.right_tab = right_tab;
@@ -155,7 +167,9 @@ impl App {
     /// Move focus to the given pane, swapping its parked state into the flat
     /// fields. No-op when split is off or the pane is already focused.
     pub fn focus_pane(&mut self, side: PaneSide) {
-        let Some(cur) = self.split_focused() else { return };
+        let Some(cur) = self.split_focused() else {
+            return;
+        };
         if cur == side {
             return;
         }
@@ -195,7 +209,9 @@ impl App {
     }
 
     fn swap_view_with_parked(&mut self) {
-        let Some(split) = self.split.as_mut() else { return };
+        let Some(split) = self.split.as_mut() else {
+            return;
+        };
         let p = &mut split.parked_view;
         std::mem::swap(&mut self.view_mode, &mut p.view_mode);
         std::mem::swap(&mut self.sort_by, &mut p.sort_by);
@@ -263,7 +279,9 @@ impl App {
     /// Refresh the unfocused pane's listing from disk (after file operations
     /// that may have touched its directory). Uses the parked view's sort.
     pub fn reload_inactive_pane(&mut self) {
-        let Some(split) = self.split.as_mut() else { return };
+        let Some(split) = self.split.as_mut() else {
+            return;
+        };
         let (sort_by, sort_dir) = (split.parked_view.sort_by, split.parked_view.sort_dir);
         let tab = match split.focused {
             PaneSide::Left => &mut split.right_tab,

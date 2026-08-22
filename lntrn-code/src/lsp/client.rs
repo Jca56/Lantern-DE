@@ -27,9 +27,21 @@ use super::{ServerId, ServerMessage};
 #[derive(Debug, Clone)]
 pub enum PendingKind {
     Initialize,
-    Hover { uri: String },
-    Completion { uri: String, line: u32, col: u32, prefix: String, tab_id: u64 },
-    Definition { uri: String, tab_id: u64, new_tab: bool },
+    Hover {
+        uri: String,
+    },
+    Completion {
+        uri: String,
+        line: u32,
+        col: u32,
+        prefix: String,
+        tab_id: u64,
+    },
+    Definition {
+        uri: String,
+        tab_id: u64,
+        new_tab: bool,
+    },
 }
 
 /// Configuration for one LSP server binary.
@@ -94,10 +106,7 @@ impl LspClient {
                     }
                     Ok(None) => break,
                     Err(e) => {
-                        eprintln!(
-                            "[lntrn-code] lsp read error ({:?}): {e}",
-                            server_id
-                        );
+                        eprintln!("[lntrn-code] lsp read error ({:?}): {e}", server_id);
                         break;
                     }
                 }
@@ -189,7 +198,10 @@ impl LspClient {
                 name: folder_name,
             }]),
             capabilities: caps,
-            client_info: ClientInfo { name: "lntrn-code", version: env!("CARGO_PKG_VERSION") },
+            client_info: ClientInfo {
+                name: "lntrn-code",
+                version: env!("CARGO_PKG_VERSION"),
+            },
             trace: "off",
         };
         let id = self.send_request("initialize", &params)?;
@@ -240,7 +252,8 @@ impl LspClient {
         if !self.ready {
             // Collapse duplicate opens/changes while buffering.
             self.pending_changes.retain(|(u, _)| u != uri);
-            self.pending_changes.push((uri.to_string(), text.to_string()));
+            self.pending_changes
+                .push((uri.to_string(), text.to_string()));
             return Ok(());
         }
         self.send_did_change(uri, text)
@@ -254,7 +267,9 @@ impl LspClient {
                 uri: uri.to_string(),
                 version: *version,
             },
-            content_changes: vec![TextDocumentContentChangeEvent { text: text.to_string() }],
+            content_changes: vec![TextDocumentContentChangeEvent {
+                text: text.to_string(),
+            }],
         };
         self.send_notification("textDocument/didChange", &params)
     }
@@ -264,7 +279,9 @@ impl LspClient {
             return Ok(());
         }
         let params = DidSaveParams {
-            text_document: TextDocumentIdentifier { uri: uri.to_string() },
+            text_document: TextDocumentIdentifier {
+                uri: uri.to_string(),
+            },
             text: text.map(|s| s.to_string()),
         };
         self.send_notification("textDocument/didSave", &params)
@@ -278,21 +295,24 @@ impl LspClient {
             return Ok(());
         }
         let params = DidCloseParams {
-            text_document: TextDocumentIdentifier { uri: uri.to_string() },
+            text_document: TextDocumentIdentifier {
+                uri: uri.to_string(),
+            },
         };
         self.send_notification("textDocument/didClose", &params)
     }
 
     // ── Request senders ──────────────────────────────────────────────
 
-    pub fn send_request<P: Serialize>(
-        &mut self,
-        method: &str,
-        params: &P,
-    ) -> std::io::Result<u64> {
+    pub fn send_request<P: Serialize>(&mut self, method: &str, params: &P) -> std::io::Result<u64> {
         let id = self.next_id;
         self.next_id += 1;
-        let req = Request { jsonrpc: "2.0", id, method, params };
+        let req = Request {
+            jsonrpc: "2.0",
+            id,
+            method,
+            params,
+        };
         let body = serde_json::to_vec(&req)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         framing::write_message(&mut self.stdin, &body)?;
@@ -304,7 +324,11 @@ impl LspClient {
         method: &str,
         params: &P,
     ) -> std::io::Result<()> {
-        let note = Notification { jsonrpc: "2.0", method, params };
+        let note = Notification {
+            jsonrpc: "2.0",
+            method,
+            params,
+        };
         let body = serde_json::to_vec(&note)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         framing::write_message(&mut self.stdin, &body)?;

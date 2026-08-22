@@ -9,9 +9,7 @@ use wayland_protocols::wp::cursor_shape::v1::client::{
     wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1,
 };
 use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
-use wayland_protocols_wlr::layer_shell::v1::client::{
-    zwlr_layer_shell_v1, zwlr_layer_surface_v1,
-};
+use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
 use crate::wayland::{State, BTN_LEFT, BTN_RIGHT};
 
@@ -24,7 +22,12 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        if let wl_registry::Event::Global { name, interface, version } = event {
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
             match interface.as_str() {
                 "wl_compositor" => {
                     state.compositor = Some(registry.bind(name, version.min(6), qh, ()));
@@ -138,7 +141,11 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for State {
         _: &QueueHandle<Self>,
     ) {
         match event {
-            zwlr_layer_surface_v1::Event::Configure { serial, width, height } => {
+            zwlr_layer_surface_v1::Event::Configure {
+                serial,
+                width,
+                height,
+            } => {
                 layer_surface.ack_configure(serial);
                 if width > 0 {
                     state.width = width;
@@ -199,7 +206,10 @@ impl Dispatch<wl_seat::WlSeat, ()> for State {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        if let wl_seat::Event::Capabilities { capabilities: WEnum::Value(cap) } = event {
+        if let wl_seat::Event::Capabilities {
+            capabilities: WEnum::Value(cap),
+        } = event
+        {
             if cap.contains(wl_seat::Capability::Pointer) {
                 let ptr = seat.get_pointer(qh, ());
                 if let Some(mgr) = &state.cursor_shape_mgr {
@@ -226,7 +236,12 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
         _: &QueueHandle<Self>,
     ) {
         match event {
-            wl_pointer::Event::Enter { serial, surface_x, surface_y, .. } => {
+            wl_pointer::Event::Enter {
+                serial,
+                surface_x,
+                surface_y,
+                ..
+            } => {
                 state.pointer_in_surface = true;
                 state.cursor_x = surface_x;
                 state.cursor_y = surface_y;
@@ -237,12 +252,21 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 state.pointer_in_surface = false;
                 state.frame_done = true;
             }
-            wl_pointer::Event::Motion { surface_x, surface_y, .. } => {
+            wl_pointer::Event::Motion {
+                surface_x,
+                surface_y,
+                ..
+            } => {
                 state.cursor_x = surface_x;
                 state.cursor_y = surface_y;
                 state.frame_done = true;
             }
-            wl_pointer::Event::Button { button, state: btn_state, serial, .. } => {
+            wl_pointer::Event::Button {
+                button,
+                state: btn_state,
+                serial,
+                ..
+            } => {
                 state.pointer_serial = serial;
                 let pressed = btn_state == WEnum::Value(wl_pointer::ButtonState::Pressed);
                 let released = btn_state == WEnum::Value(wl_pointer::ButtonState::Released);
@@ -288,10 +312,13 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
                 group,
                 ..
             } => {
-                state.modifiers_pending =
-                    Some((mods_depressed, mods_latched, mods_locked, group));
+                state.modifiers_pending = Some((mods_depressed, mods_latched, mods_locked, group));
             }
-            wl_keyboard::Event::Key { key, state: key_state, .. } => {
+            wl_keyboard::Event::Key {
+                key,
+                state: key_state,
+                ..
+            } => {
                 if key_state == WEnum::Value(wl_keyboard::KeyState::Pressed) {
                     state.key_pressed = Some(key);
                 }

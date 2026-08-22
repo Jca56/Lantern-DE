@@ -135,7 +135,11 @@ pub fn draw_status_bar(
             .iter()
             .map(|l| l.split_whitespace().count())
             .sum();
-        let chars: usize = editor.lines.iter().map(|l| l.chars().count()).sum::<usize>()
+        let chars: usize = editor
+            .lines
+            .iter()
+            .map(|l| l.chars().count())
+            .sum::<usize>()
             + editor.lines.len().saturating_sub(1);
         let chars_label = if chars >= 1000 {
             format!("{:.1}k chars", chars as f32 / 1000.0)

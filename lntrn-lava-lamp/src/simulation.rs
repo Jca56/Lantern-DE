@@ -87,7 +87,12 @@ impl LavaSimulation {
             })
             .collect();
 
-        Self { blobs, time: 0.0, rng, initialized: false }
+        Self {
+            blobs,
+            time: 0.0,
+            rng,
+            initialized: false,
+        }
     }
 
     pub fn update(&mut self, dt: f32, bounds: Rect) {
@@ -98,11 +103,13 @@ impl LavaSimulation {
             for i in 0..count {
                 let r = self.blobs[i].base_radius_frac * bounds.w;
                 self.blobs[i].radius = r;
-                self.blobs[i].x =
-                    self.rng.range(bounds.x + r + 5.0, bounds.x + bounds.w - r - 5.0);
+                self.blobs[i].x = self
+                    .rng
+                    .range(bounds.x + r + 5.0, bounds.x + bounds.w - r - 5.0);
                 // Spread blobs across the full height
-                self.blobs[i].y =
-                    self.rng.range(bounds.y + r + 5.0, bounds.y + bounds.h - r - 5.0);
+                self.blobs[i].y = self
+                    .rng
+                    .range(bounds.y + r + 5.0, bounds.y + bounds.h - r - 5.0);
                 // Hot blobs start rising, cool ones start sinking
                 if self.blobs[i].heat > 0.5 {
                     self.blobs[i].vy = self.rng.range(-120.0, -40.0);
@@ -151,10 +158,22 @@ impl LavaSimulation {
             let top = bounds.y + blob.radius;
             let bottom = bounds.y + bounds.h - blob.radius;
 
-            if blob.x < left { blob.x = left; blob.vx = blob.vx.abs() * 0.3; }
-            if blob.x > right { blob.x = right; blob.vx = -blob.vx.abs() * 0.3; }
-            if blob.y < top { blob.y = top; blob.vy = blob.vy.abs() * 0.5; }
-            if blob.y > bottom { blob.y = bottom; blob.vy = -blob.vy.abs() * 0.5; }
+            if blob.x < left {
+                blob.x = left;
+                blob.vx = blob.vx.abs() * 0.3;
+            }
+            if blob.x > right {
+                blob.x = right;
+                blob.vx = -blob.vx.abs() * 0.3;
+            }
+            if blob.y < top {
+                blob.y = top;
+                blob.vy = blob.vy.abs() * 0.5;
+            }
+            if blob.y > bottom {
+                blob.y = bottom;
+                blob.vy = -blob.vy.abs() * 0.5;
+            }
         }
 
         // Soft repulsion so blobs don't stack

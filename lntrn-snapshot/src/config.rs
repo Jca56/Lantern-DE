@@ -1,5 +1,4 @@
 ///! Simple config file parser — no serde, no toml crate, just vibes
-
 use crate::btrfs;
 use crate::manager::RetentionPolicy;
 use std::fs;

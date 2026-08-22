@@ -4,88 +4,313 @@ use crate::app::ViewMode;
 
 // ── Sidebar place icons ─────────────────────────────────────────────────────
 
-pub(super) fn draw_place_icon(painter: &mut Painter, name: &str, cx: f32, cy: f32, color: Color, s: f32) {
+pub(super) fn draw_place_icon(
+    painter: &mut Painter,
+    name: &str,
+    cx: f32,
+    cy: f32,
+    color: Color,
+    s: f32,
+) {
     let sw = 1.5 * s; // stroke width
     let u = s; // unit scale
     match name {
         "Home" => {
-            painter.line(cx - 7.0*u, cy + 1.0*u, cx, cy - 7.0*u, sw, color);
-            painter.line(cx, cy - 7.0*u, cx + 7.0*u, cy + 1.0*u, sw, color);
-            painter.rect_stroke(Rect::new(cx - 5.0*u, cy + 1.0*u, 10.0*u, 7.0*u), 0.0, sw, color);
+            painter.line(cx - 7.0 * u, cy + 1.0 * u, cx, cy - 7.0 * u, sw, color);
+            painter.line(cx, cy - 7.0 * u, cx + 7.0 * u, cy + 1.0 * u, sw, color);
+            painter.rect_stroke(
+                Rect::new(cx - 5.0 * u, cy + 1.0 * u, 10.0 * u, 7.0 * u),
+                0.0,
+                sw,
+                color,
+            );
         }
         "Desktop" => {
-            painter.rect_stroke(Rect::new(cx - 7.0*u, cy - 6.0*u, 14.0*u, 10.0*u), 1.0*u, sw, color);
-            painter.line(cx, cy + 4.0*u, cx, cy + 7.0*u, sw, color);
-            painter.line(cx - 4.0*u, cy + 7.0*u, cx + 4.0*u, cy + 7.0*u, sw, color);
+            painter.rect_stroke(
+                Rect::new(cx - 7.0 * u, cy - 6.0 * u, 14.0 * u, 10.0 * u),
+                1.0 * u,
+                sw,
+                color,
+            );
+            painter.line(cx, cy + 4.0 * u, cx, cy + 7.0 * u, sw, color);
+            painter.line(
+                cx - 4.0 * u,
+                cy + 7.0 * u,
+                cx + 4.0 * u,
+                cy + 7.0 * u,
+                sw,
+                color,
+            );
         }
         "Documents" => {
-            painter.rect_stroke(Rect::new(cx - 5.0*u, cy - 7.0*u, 10.0*u, 14.0*u), 0.0, sw, color);
-            painter.line(cx + 5.0*u, cy - 7.0*u, cx + 5.0*u, cy - 3.0*u, sw * 0.75, color);
-            painter.line(cx + 1.0*u, cy - 7.0*u, cx + 5.0*u, cy - 3.0*u, sw * 0.75, color);
-            painter.line(cx - 3.0*u, cy - 1.0*u, cx + 3.0*u, cy - 1.0*u, 1.0*u, color);
-            painter.line(cx - 3.0*u, cy + 2.0*u, cx + 3.0*u, cy + 2.0*u, 1.0*u, color);
-            painter.line(cx - 3.0*u, cy + 5.0*u, cx + 1.0*u, cy + 5.0*u, 1.0*u, color);
+            painter.rect_stroke(
+                Rect::new(cx - 5.0 * u, cy - 7.0 * u, 10.0 * u, 14.0 * u),
+                0.0,
+                sw,
+                color,
+            );
+            painter.line(
+                cx + 5.0 * u,
+                cy - 7.0 * u,
+                cx + 5.0 * u,
+                cy - 3.0 * u,
+                sw * 0.75,
+                color,
+            );
+            painter.line(
+                cx + 1.0 * u,
+                cy - 7.0 * u,
+                cx + 5.0 * u,
+                cy - 3.0 * u,
+                sw * 0.75,
+                color,
+            );
+            painter.line(
+                cx - 3.0 * u,
+                cy - 1.0 * u,
+                cx + 3.0 * u,
+                cy - 1.0 * u,
+                1.0 * u,
+                color,
+            );
+            painter.line(
+                cx - 3.0 * u,
+                cy + 2.0 * u,
+                cx + 3.0 * u,
+                cy + 2.0 * u,
+                1.0 * u,
+                color,
+            );
+            painter.line(
+                cx - 3.0 * u,
+                cy + 5.0 * u,
+                cx + 1.0 * u,
+                cy + 5.0 * u,
+                1.0 * u,
+                color,
+            );
         }
         "Downloads" => {
-            painter.line(cx, cy - 6.0*u, cx, cy + 2.0*u, sw, color);
-            painter.line(cx - 4.0*u, cy - 2.0*u, cx, cy + 2.0*u, sw, color);
-            painter.line(cx + 4.0*u, cy - 2.0*u, cx, cy + 2.0*u, sw, color);
-            painter.line(cx - 6.0*u, cy + 3.0*u, cx - 6.0*u, cy + 7.0*u, sw, color);
-            painter.line(cx - 6.0*u, cy + 7.0*u, cx + 6.0*u, cy + 7.0*u, sw, color);
-            painter.line(cx + 6.0*u, cy + 3.0*u, cx + 6.0*u, cy + 7.0*u, sw, color);
+            painter.line(cx, cy - 6.0 * u, cx, cy + 2.0 * u, sw, color);
+            painter.line(cx - 4.0 * u, cy - 2.0 * u, cx, cy + 2.0 * u, sw, color);
+            painter.line(cx + 4.0 * u, cy - 2.0 * u, cx, cy + 2.0 * u, sw, color);
+            painter.line(
+                cx - 6.0 * u,
+                cy + 3.0 * u,
+                cx - 6.0 * u,
+                cy + 7.0 * u,
+                sw,
+                color,
+            );
+            painter.line(
+                cx - 6.0 * u,
+                cy + 7.0 * u,
+                cx + 6.0 * u,
+                cy + 7.0 * u,
+                sw,
+                color,
+            );
+            painter.line(
+                cx + 6.0 * u,
+                cy + 3.0 * u,
+                cx + 6.0 * u,
+                cy + 7.0 * u,
+                sw,
+                color,
+            );
         }
         "Music" => {
-            painter.line(cx - 2.0*u, cy - 6.0*u, cx - 2.0*u, cy + 4.0*u, sw, color);
-            painter.circle_filled(cx - 4.0*u, cy + 5.0*u, 3.0*u, color);
-            painter.line(cx - 2.0*u, cy - 6.0*u, cx + 4.0*u, cy - 4.0*u, sw, color);
-            painter.line(cx + 4.0*u, cy - 4.0*u, cx + 4.0*u, cy + 1.0*u, sw, color);
-            painter.circle_filled(cx + 2.0*u, cy + 2.0*u, 2.5*u, color);
+            painter.line(
+                cx - 2.0 * u,
+                cy - 6.0 * u,
+                cx - 2.0 * u,
+                cy + 4.0 * u,
+                sw,
+                color,
+            );
+            painter.circle_filled(cx - 4.0 * u, cy + 5.0 * u, 3.0 * u, color);
+            painter.line(
+                cx - 2.0 * u,
+                cy - 6.0 * u,
+                cx + 4.0 * u,
+                cy - 4.0 * u,
+                sw,
+                color,
+            );
+            painter.line(
+                cx + 4.0 * u,
+                cy - 4.0 * u,
+                cx + 4.0 * u,
+                cy + 1.0 * u,
+                sw,
+                color,
+            );
+            painter.circle_filled(cx + 2.0 * u, cy + 2.0 * u, 2.5 * u, color);
         }
         "Pictures" => {
-            painter.rect_stroke(Rect::new(cx - 7.0*u, cy - 5.0*u, 14.0*u, 12.0*u), 0.0, sw, color);
-            painter.line(cx - 4.0*u, cy + 5.0*u, cx - 1.0*u, cy, sw, color);
-            painter.line(cx - 1.0*u, cy, cx + 2.0*u, cy + 3.0*u, sw, color);
-            painter.line(cx + 2.0*u, cy + 3.0*u, cx + 5.0*u, cy - 1.0*u, sw, color);
-            painter.circle_filled(cx + 3.0*u, cy - 2.0*u, 2.0*u, color);
+            painter.rect_stroke(
+                Rect::new(cx - 7.0 * u, cy - 5.0 * u, 14.0 * u, 12.0 * u),
+                0.0,
+                sw,
+                color,
+            );
+            painter.line(cx - 4.0 * u, cy + 5.0 * u, cx - 1.0 * u, cy, sw, color);
+            painter.line(cx - 1.0 * u, cy, cx + 2.0 * u, cy + 3.0 * u, sw, color);
+            painter.line(
+                cx + 2.0 * u,
+                cy + 3.0 * u,
+                cx + 5.0 * u,
+                cy - 1.0 * u,
+                sw,
+                color,
+            );
+            painter.circle_filled(cx + 3.0 * u, cy - 2.0 * u, 2.0 * u, color);
         }
         "Videos" => {
-            painter.rect_stroke(Rect::new(cx - 7.0*u, cy - 5.0*u, 14.0*u, 12.0*u), 1.0*u, sw, color);
-            painter.line(cx - 2.0*u, cy - 3.0*u, cx - 2.0*u, cy + 5.0*u, sw, color);
-            painter.line(cx - 2.0*u, cy - 3.0*u, cx + 4.0*u, cy + 1.0*u, sw, color);
-            painter.line(cx + 4.0*u, cy + 1.0*u, cx - 2.0*u, cy + 5.0*u, sw, color);
+            painter.rect_stroke(
+                Rect::new(cx - 7.0 * u, cy - 5.0 * u, 14.0 * u, 12.0 * u),
+                1.0 * u,
+                sw,
+                color,
+            );
+            painter.line(
+                cx - 2.0 * u,
+                cy - 3.0 * u,
+                cx - 2.0 * u,
+                cy + 5.0 * u,
+                sw,
+                color,
+            );
+            painter.line(
+                cx - 2.0 * u,
+                cy - 3.0 * u,
+                cx + 4.0 * u,
+                cy + 1.0 * u,
+                sw,
+                color,
+            );
+            painter.line(
+                cx + 4.0 * u,
+                cy + 1.0 * u,
+                cx - 2.0 * u,
+                cy + 5.0 * u,
+                sw,
+                color,
+            );
         }
         "Cloud" => {
             // Cloud silhouette: two bumps + flat bottom.
-            painter.circle_filled(cx - 4.0*u, cy - 1.0*u, 4.0*u, color);
-            painter.circle_filled(cx + 1.0*u, cy - 3.0*u, 5.0*u, color);
-            painter.circle_filled(cx + 5.0*u, cy, 3.5*u, color);
-            painter.rect_filled(Rect::new(cx - 7.0*u, cy - 1.0*u, 14.0*u, 5.0*u), 2.0*u, color);
+            painter.circle_filled(cx - 4.0 * u, cy - 1.0 * u, 4.0 * u, color);
+            painter.circle_filled(cx + 1.0 * u, cy - 3.0 * u, 5.0 * u, color);
+            painter.circle_filled(cx + 5.0 * u, cy, 3.5 * u, color);
+            painter.rect_filled(
+                Rect::new(cx - 7.0 * u, cy - 1.0 * u, 14.0 * u, 5.0 * u),
+                2.0 * u,
+                color,
+            );
         }
         "Trash" => {
             // Lid
-            painter.line(cx - 6.0*u, cy - 5.0*u, cx + 6.0*u, cy - 5.0*u, sw, color);
-            painter.line(cx - 2.0*u, cy - 7.0*u, cx + 2.0*u, cy - 7.0*u, sw, color);
-            painter.line(cx - 2.0*u, cy - 7.0*u, cx - 2.0*u, cy - 5.0*u, sw * 0.75, color);
-            painter.line(cx + 2.0*u, cy - 7.0*u, cx + 2.0*u, cy - 5.0*u, sw * 0.75, color);
+            painter.line(
+                cx - 6.0 * u,
+                cy - 5.0 * u,
+                cx + 6.0 * u,
+                cy - 5.0 * u,
+                sw,
+                color,
+            );
+            painter.line(
+                cx - 2.0 * u,
+                cy - 7.0 * u,
+                cx + 2.0 * u,
+                cy - 7.0 * u,
+                sw,
+                color,
+            );
+            painter.line(
+                cx - 2.0 * u,
+                cy - 7.0 * u,
+                cx - 2.0 * u,
+                cy - 5.0 * u,
+                sw * 0.75,
+                color,
+            );
+            painter.line(
+                cx + 2.0 * u,
+                cy - 7.0 * u,
+                cx + 2.0 * u,
+                cy - 5.0 * u,
+                sw * 0.75,
+                color,
+            );
             // Body (tapered)
-            painter.line(cx - 5.0*u, cy - 4.0*u, cx - 4.0*u, cy + 7.0*u, sw, color);
-            painter.line(cx + 5.0*u, cy - 4.0*u, cx + 4.0*u, cy + 7.0*u, sw, color);
-            painter.line(cx - 4.0*u, cy + 7.0*u, cx + 4.0*u, cy + 7.0*u, sw, color);
+            painter.line(
+                cx - 5.0 * u,
+                cy - 4.0 * u,
+                cx - 4.0 * u,
+                cy + 7.0 * u,
+                sw,
+                color,
+            );
+            painter.line(
+                cx + 5.0 * u,
+                cy - 4.0 * u,
+                cx + 4.0 * u,
+                cy + 7.0 * u,
+                sw,
+                color,
+            );
+            painter.line(
+                cx - 4.0 * u,
+                cy + 7.0 * u,
+                cx + 4.0 * u,
+                cy + 7.0 * u,
+                sw,
+                color,
+            );
             // Ribs
-            painter.line(cx - 2.0*u, cy - 2.0*u, cx - 2.0*u, cy + 5.0*u, sw * 0.75, color);
-            painter.line(cx, cy - 2.0*u, cx, cy + 5.0*u, sw * 0.75, color);
-            painter.line(cx + 2.0*u, cy - 2.0*u, cx + 2.0*u, cy + 5.0*u, sw * 0.75, color);
+            painter.line(
+                cx - 2.0 * u,
+                cy - 2.0 * u,
+                cx - 2.0 * u,
+                cy + 5.0 * u,
+                sw * 0.75,
+                color,
+            );
+            painter.line(cx, cy - 2.0 * u, cx, cy + 5.0 * u, sw * 0.75, color);
+            painter.line(
+                cx + 2.0 * u,
+                cy - 2.0 * u,
+                cx + 2.0 * u,
+                cy + 5.0 * u,
+                sw * 0.75,
+                color,
+            );
         }
         _ => {
-            painter.rect_filled(Rect::new(cx - 8.0*u, cy - 2.0*u, 16.0*u, 10.0*u), 2.0*u, color);
-            painter.rect_filled(Rect::new(cx - 8.0*u, cy - 4.0*u, 8.0*u, 4.0*u), 1.0*u, color);
+            painter.rect_filled(
+                Rect::new(cx - 8.0 * u, cy - 2.0 * u, 16.0 * u, 10.0 * u),
+                2.0 * u,
+                color,
+            );
+            painter.rect_filled(
+                Rect::new(cx - 8.0 * u, cy - 4.0 * u, 8.0 * u, 4.0 * u),
+                1.0 * u,
+                color,
+            );
         }
     }
 }
 
 // ── View mode icon ──────────────────────────────────────────────────────────
 
-pub(super) fn draw_view_mode_icon(painter: &mut Painter, mode: ViewMode, r: Rect, color: Color, s: f32) {
+pub(super) fn draw_view_mode_icon(
+    painter: &mut Painter,
+    mode: ViewMode,
+    r: Rect,
+    color: Color,
+    s: f32,
+) {
     match mode {
         ViewMode::Grid => {
             // 2x2 squares
@@ -96,7 +321,11 @@ pub(super) fn draw_view_mode_icon(painter: &mut Painter, mode: ViewMode, r: Rect
             painter.rect_filled(Rect::new(vx, vy, sq, sq), 1.0 * s, color);
             painter.rect_filled(Rect::new(vx + sq + gap, vy, sq, sq), 1.0 * s, color);
             painter.rect_filled(Rect::new(vx, vy + sq + gap, sq, sq), 1.0 * s, color);
-            painter.rect_filled(Rect::new(vx + sq + gap, vy + sq + gap, sq, sq), 1.0 * s, color);
+            painter.rect_filled(
+                Rect::new(vx + sq + gap, vy + sq + gap, sq, sq),
+                1.0 * s,
+                color,
+            );
         }
         ViewMode::List => {
             // Three horizontal lines with bullet dots
@@ -119,13 +348,25 @@ pub(super) fn draw_view_mode_icon(painter: &mut Painter, mode: ViewMode, r: Rect
             painter.line(tx, ty, tx, ty + 18.0 * s, sw, color);
             // Branch 1
             painter.line(tx, ty + 3.0 * s, tx + 8.0 * s, ty + 3.0 * s, sw, color);
-            painter.rect_filled(Rect::new(tx + 10.0 * s, ty + 1.0 * s, 8.0 * s, 4.0 * s), 1.0 * s, color);
+            painter.rect_filled(
+                Rect::new(tx + 10.0 * s, ty + 1.0 * s, 8.0 * s, 4.0 * s),
+                1.0 * s,
+                color,
+            );
             // Branch 2
             painter.line(tx, ty + 10.0 * s, tx + 8.0 * s, ty + 10.0 * s, sw, color);
-            painter.rect_filled(Rect::new(tx + 10.0 * s, ty + 8.0 * s, 8.0 * s, 4.0 * s), 1.0 * s, color);
+            painter.rect_filled(
+                Rect::new(tx + 10.0 * s, ty + 8.0 * s, 8.0 * s, 4.0 * s),
+                1.0 * s,
+                color,
+            );
             // Branch 3
             painter.line(tx, ty + 17.0 * s, tx + 8.0 * s, ty + 17.0 * s, sw, color);
-            painter.rect_filled(Rect::new(tx + 10.0 * s, ty + 15.0 * s, 8.0 * s, 4.0 * s), 1.0 * s, color);
+            painter.rect_filled(
+                Rect::new(tx + 10.0 * s, ty + 15.0 * s, 8.0 * s, 4.0 * s),
+                1.0 * s,
+                color,
+            );
         }
     }
 }
@@ -139,7 +380,14 @@ pub(super) fn draw_preview_pane_icon(painter: &mut Painter, r: Rect, color: Colo
     painter.rect_stroke(outer, 2.0 * s, sw, color);
     // Vertical divider ~2/3 of the way across — marks the preview side
     let dx = outer.x + outer.w * 0.62;
-    painter.line(dx, outer.y + 2.0 * s, dx, outer.y + outer.h - 2.0 * s, sw, color);
+    painter.line(
+        dx,
+        outer.y + 2.0 * s,
+        dx,
+        outer.y + outer.h - 2.0 * s,
+        sw,
+        color,
+    );
     // A couple of mini "content" rows on the preview side
     let lx = dx + 2.0 * s;
     let lw = outer.x + outer.w - lx - 2.5 * s;
@@ -151,7 +399,13 @@ pub(super) fn draw_preview_pane_icon(painter: &mut Painter, r: Rect, color: Colo
 
 /// Sort icon — three horizontal lines of decreasing length + a small arrow
 /// at the right indicating direction.
-pub(super) fn draw_sort_icon(painter: &mut Painter, r: Rect, color: Color, dir: crate::fs::SortDir, s: f32) {
+pub(super) fn draw_sort_icon(
+    painter: &mut Painter,
+    r: Rect,
+    color: Color,
+    dir: crate::fs::SortDir,
+    s: f32,
+) {
     let lx = r.x + 7.0 * s;
     let ly = r.y + 10.0 * s;
     let gap = 5.0 * s;
@@ -201,7 +455,14 @@ pub(super) fn draw_phone_icon(painter: &mut Painter, cx: f32, cy: f32, color: Co
         color,
     );
     // Speaker slit at top
-    painter.line(cx - 1.5 * u, cy - 8.0 * u, cx + 1.5 * u, cy - 8.0 * u, sw * 0.75, color);
+    painter.line(
+        cx - 1.5 * u,
+        cy - 8.0 * u,
+        cx + 1.5 * u,
+        cy - 8.0 * u,
+        sw * 0.75,
+        color,
+    );
     // Home dot at bottom
     painter.circle_filled(cx, cy + 7.5 * u, 0.9 * u, color);
 }
@@ -211,12 +472,28 @@ pub(super) fn draw_drive_icon(painter: &mut Painter, cx: f32, cy: f32, color: Co
     let u = s;
     // Simple disk/drive shape
     painter.rect_stroke(
-        Rect::new(cx - 8.0*u, cy - 5.0*u, 16.0*u, 10.0*u),
-        2.0*u, sw, color,
+        Rect::new(cx - 8.0 * u, cy - 5.0 * u, 16.0 * u, 10.0 * u),
+        2.0 * u,
+        sw,
+        color,
     );
     // Drive bay lines
-    painter.line(cx - 5.0*u, cy - 1.0*u, cx + 5.0*u, cy - 1.0*u, 1.0*u, color);
-    painter.line(cx - 5.0*u, cy + 2.0*u, cx + 5.0*u, cy + 2.0*u, 1.0*u, color);
+    painter.line(
+        cx - 5.0 * u,
+        cy - 1.0 * u,
+        cx + 5.0 * u,
+        cy - 1.0 * u,
+        1.0 * u,
+        color,
+    );
+    painter.line(
+        cx - 5.0 * u,
+        cy + 2.0 * u,
+        cx + 5.0 * u,
+        cy + 2.0 * u,
+        1.0 * u,
+        color,
+    );
     // Activity LED dot
-    painter.circle_filled(cx + 5.0*u, cy - 3.0*u, 1.5*u, color);
+    painter.circle_filled(cx + 5.0 * u, cy - 3.0 * u, 1.5 * u, color);
 }

@@ -83,7 +83,9 @@ impl MonitorSettingsState {
         head_idx: usize,
         config_entry: Option<&MonitorEntry>,
     ) {
-        let Some(head) = output_mgr.heads.get(head_idx) else { return };
+        let Some(head) = output_mgr.heads.get(head_idx) else {
+            return;
+        };
 
         if self.selected_resolution.is_none() {
             let from_config = config_entry
@@ -100,7 +102,9 @@ impl MonitorSettingsState {
                                 && refresh.map_or(false, |r| m.refresh == r)
                         })
                         .or_else(|| {
-                            head.modes.iter().position(|m| m.width == w && m.height == h)
+                            head.modes
+                                .iter()
+                                .position(|m| m.width == w && m.height == h)
                         })
                         .map(|mi| (w, h, mi))
                 });
@@ -117,9 +121,7 @@ impl MonitorSettingsState {
         }
 
         if self.selected_scale.is_none() {
-            self.selected_scale = config_entry
-                .map(|c| c.scale as f64)
-                .or(Some(head.scale));
+            self.selected_scale = config_entry.map(|c| c.scale as f64).or(Some(head.scale));
         }
 
         if self.selected_hdr.is_none() {
@@ -132,8 +134,7 @@ impl MonitorSettingsState {
         if self.selected_enabled.is_none() {
             // Config is the persisted intent; fall back to the live head's
             // advertised enabled flag (a disabled output reports enabled=0).
-            self.selected_enabled =
-                Some(config_entry.map(|c| c.enabled).unwrap_or(head.enabled));
+            self.selected_enabled = Some(config_entry.map(|c| c.enabled).unwrap_or(head.enabled));
         }
     }
 
@@ -173,7 +174,9 @@ pub fn draw_monitor_settings(
     sh: u32,
     show_header: bool,
 ) -> f32 {
-    let Some(head) = output_mgr.heads.get(head_idx) else { return 0.0 };
+    let Some(head) = output_mgr.heads.get(head_idx) else {
+        return 0.0;
+    };
     mss.sync_from_head(output_mgr, head_idx, config_entry);
 
     let pad = PAD * s;
@@ -212,13 +215,24 @@ pub fn draw_monitor_settings(
         let toggle = Toggle::new(tog_rect, on).label("Monitor Enabled").scale(s);
         let track = toggle.track_rect();
         let zone = ix.add_zone(ZONE_ENABLED, track);
-        toggle.hovered(zone.is_hovered()).draw(painter, text, fox, sw, sh);
+        toggle
+            .hovered(zone.is_hovered())
+            .draw(painter, text, fox, sw, sh);
         cy += row_h;
     }
 
     // ── Resolution row ─────────────────────────────────────────────
     let res_label_y = cy + (row_h - lsz) / 2.0;
-    text.queue("Resolution", lsz, label_x, res_label_y, fox.text, label_w, sw, sh);
+    text.queue(
+        "Resolution",
+        lsz,
+        label_x,
+        res_label_y,
+        fox.text,
+        label_w,
+        sw,
+        sh,
+    );
 
     let resolutions = output_mgr.resolutions_for_head(head_idx);
     let cur_res = mss.selected_resolution.unwrap_or((0, 0));
@@ -226,21 +240,40 @@ pub fn draw_monitor_settings(
 
     let btn_rect = Rect::new(btn_x, cy + (row_h - btn_h) / 2.0, btn_w, btn_h);
     let btn_zone = ix.add_zone(ZONE_RES_BTN, btn_rect);
-    draw_dropdown_button(painter, text, &btn_rect, &res_text, btn_zone.is_hovered(), fox, s, sw, sh);
+    draw_dropdown_button(
+        painter,
+        text,
+        &btn_rect,
+        &res_text,
+        btn_zone.is_hovered(),
+        fox,
+        s,
+        sw,
+        sh,
+    );
     cy += row_h;
 
     // Resolution dropdown items (if open)
     if mss.open_dropdown == OpenDropdown::Resolution {
         let item_h = DROPDOWN_ITEM_H * s;
         for (i, (rw, rh)) in resolutions.iter().enumerate() {
-            if i as u32 >= MAX_ITEMS { break; }
+            if i as u32 >= MAX_ITEMS {
+                break;
+            }
             let item_rect = Rect::new(btn_x, cy, btn_w, item_h);
             let zone = ix.add_zone(ZONE_RES_BASE + i as u32, item_rect);
             let is_current = cur_res == (*rw, *rh);
             draw_dropdown_item(
-                painter, text, &item_rect,
+                painter,
+                text,
+                &item_rect,
                 &format!("{}x{}", rw, rh),
-                zone.is_hovered(), is_current, fox, s, sw, sh,
+                zone.is_hovered(),
+                is_current,
+                fox,
+                s,
+                sw,
+                sh,
             );
             cy += item_h;
         }
@@ -249,7 +282,16 @@ pub fn draw_monitor_settings(
 
     // ── Refresh Rate row ───────────────────────────────────────────
     let ref_label_y = cy + (row_h - lsz) / 2.0;
-    text.queue("Refresh Rate", lsz, label_x, ref_label_y, fox.text, label_w, sw, sh);
+    text.queue(
+        "Refresh Rate",
+        lsz,
+        label_x,
+        ref_label_y,
+        fox.text,
+        label_w,
+        sw,
+        sh,
+    );
 
     let rates = output_mgr.refresh_rates_for_resolution(head_idx, cur_res.0, cur_res.1);
     let cur_mode = mss.selected_mode_idx.unwrap_or(usize::MAX);
@@ -261,21 +303,40 @@ pub fn draw_monitor_settings(
 
     let btn_rect = Rect::new(btn_x, cy + (row_h - btn_h) / 2.0, btn_w, btn_h);
     let btn_zone = ix.add_zone(ZONE_REFRESH_BTN, btn_rect);
-    draw_dropdown_button(painter, text, &btn_rect, &rate_text, btn_zone.is_hovered(), fox, s, sw, sh);
+    draw_dropdown_button(
+        painter,
+        text,
+        &btn_rect,
+        &rate_text,
+        btn_zone.is_hovered(),
+        fox,
+        s,
+        sw,
+        sh,
+    );
     cy += row_h;
 
     // Refresh rate dropdown items
     if mss.open_dropdown == OpenDropdown::RefreshRate {
         let item_h = DROPDOWN_ITEM_H * s;
         for (i, (refresh, mode_idx)) in rates.iter().enumerate() {
-            if i as u32 >= MAX_ITEMS { break; }
+            if i as u32 >= MAX_ITEMS {
+                break;
+            }
             let item_rect = Rect::new(btn_x, cy, btn_w, item_h);
             let zone = ix.add_zone(ZONE_REFRESH_BASE + i as u32, item_rect);
             let is_current = *mode_idx == cur_mode;
             draw_dropdown_item(
-                painter, text, &item_rect,
+                painter,
+                text,
+                &item_rect,
                 &format!("{:.1} Hz", *refresh as f64 / 1000.0),
-                zone.is_hovered(), is_current, fox, s, sw, sh,
+                zone.is_hovered(),
+                is_current,
+                fox,
+                s,
+                sw,
+                sh,
             );
             cy += item_h;
         }
@@ -284,7 +345,16 @@ pub fn draw_monitor_settings(
 
     // ── Scale row ──────────────────────────────────────────────────
     let scale_label_y = cy + (row_h - lsz) / 2.0;
-    text.queue("Scale", lsz, label_x, scale_label_y, fox.text, label_w, sw, sh);
+    text.queue(
+        "Scale",
+        lsz,
+        label_x,
+        scale_label_y,
+        fox.text,
+        label_w,
+        sw,
+        sh,
+    );
 
     let scales = [1.0, 1.1, 1.2, 1.3, 1.4, 1.5];
     let cur_scale = mss.selected_scale.unwrap_or(1.0);
@@ -296,7 +366,17 @@ pub fn draw_monitor_settings(
 
     let btn_rect = Rect::new(btn_x, cy + (row_h - btn_h) / 2.0, btn_w, btn_h);
     let btn_zone = ix.add_zone(ZONE_SCALE_BTN, btn_rect);
-    draw_dropdown_button(painter, text, &btn_rect, &scale_text, btn_zone.is_hovered(), fox, s, sw, sh);
+    draw_dropdown_button(
+        painter,
+        text,
+        &btn_rect,
+        &scale_text,
+        btn_zone.is_hovered(),
+        fox,
+        s,
+        sw,
+        sh,
+    );
     cy += row_h;
 
     // Scale dropdown items
@@ -312,9 +392,16 @@ pub fn draw_monitor_settings(
                 format!("{:.1}x", scale_val)
             };
             draw_dropdown_item(
-                painter, text, &item_rect,
+                painter,
+                text,
+                &item_rect,
                 &label,
-                zone.is_hovered(), is_current, fox, s, sw, sh,
+                zone.is_hovered(),
+                is_current,
+                fox,
+                s,
+                sw,
+                sh,
             );
             cy += item_h;
         }
@@ -327,8 +414,19 @@ pub fn draw_monitor_settings(
         let sdr_nits = mss.selected_sdr_brightness.unwrap_or(203);
         let max_nits = hdr_caps.map(|c| c.max_nits).unwrap_or(0);
         let res = crate::hdr_panel::draw_hdr_row(
-            painter, text, ix, fox, hdr_on, sdr_nits, max_nits, hdr_pending_secs,
-            x, cy, s, sw, sh,
+            painter,
+            text,
+            ix,
+            fox,
+            hdr_on,
+            sdr_nits,
+            max_nits,
+            hdr_pending_secs,
+            x,
+            cy,
+            s,
+            sw,
+            sh,
         );
         if let Some(nits) = res.dragged_sdr_nits {
             if mss.selected_sdr_brightness != Some(nits) {
@@ -479,8 +577,22 @@ fn draw_dropdown_button(
     let chev_x = rect.x + rect.w - 20.0 * s;
     let chev_y = rect.y + rect.h / 2.0;
     let cs = 4.0 * s;
-    painter.line(chev_x - cs, chev_y - cs * 0.6, chev_x, chev_y + cs * 0.4, 1.5 * s, fox.text_secondary);
-    painter.line(chev_x, chev_y + cs * 0.4, chev_x + cs, chev_y - cs * 0.6, 1.5 * s, fox.text_secondary);
+    painter.line(
+        chev_x - cs,
+        chev_y - cs * 0.6,
+        chev_x,
+        chev_y + cs * 0.4,
+        1.5 * s,
+        fox.text_secondary,
+    );
+    painter.line(
+        chev_x,
+        chev_y + cs * 0.4,
+        chev_x + cs,
+        chev_y - cs * 0.6,
+        1.5 * s,
+        fox.text_secondary,
+    );
 }
 
 // ── Persistence ────────────────────────────────────────────────────
@@ -504,7 +616,9 @@ pub fn persist_monitor_settings(
     let entry = match config.monitors.iter_mut().find(|m| m.name == head_name) {
         Some(e) => e,
         None => {
-            let (x, y) = output_mgr.heads.get(head_idx)
+            let (x, y) = output_mgr
+                .heads
+                .get(head_idx)
                 .map(|h| h.position)
                 .unwrap_or((0, 0));
             config.monitors.push(MonitorEntry {

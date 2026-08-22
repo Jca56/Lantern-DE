@@ -51,7 +51,11 @@ pub(super) fn draw_right_column(
         let header_font = BSSID_HEADER_FONT * scale;
         let header_y = body_top + EXPAND_PAD_TOP * scale;
         text.queue(
-            if n == 1 { "Access point" } else { "Top access points" },
+            if n == 1 {
+                "Access point"
+            } else {
+                "Top access points"
+            },
             header_font,
             right_x,
             header_y,
@@ -173,19 +177,9 @@ pub(super) fn draw_right_column(
             };
             painter.rect_filled(card, radius, bg);
             if p.active {
-                painter.rect_stroke_sdf(
-                    card,
-                    radius,
-                    1.4 * scale,
-                    gold.with_alpha(0.80 * alpha),
-                );
+                painter.rect_stroke_sdf(card, radius, 1.4 * scale, gold.with_alpha(0.80 * alpha));
             } else {
-                painter.rect_stroke_sdf(
-                    card,
-                    radius,
-                    1.0 * scale,
-                    white.with_alpha(0.14 * alpha),
-                );
+                painter.rect_stroke_sdf(card, radius, 1.0 * scale, white.with_alpha(0.14 * alpha));
             }
 
             // Active dot on the left.
@@ -198,20 +192,18 @@ pub(super) fn draw_right_column(
                 white.with_alpha(0.20 * alpha)
             };
             painter.rect_filled(
-                Rect::new(
-                    dot_cx - dot_d / 2.0,
-                    dot_cy - dot_d / 2.0,
-                    dot_d,
-                    dot_d,
-                ),
+                Rect::new(dot_cx - dot_d / 2.0, dot_cy - dot_d / 2.0, dot_d, dot_d),
                 dot_d / 2.0,
                 dot_color,
             );
 
             // Name + meta.
             let text_x = dot_cx + dot_d / 2.0 + 10.0 * scale;
-            let text_max_w =
-                card.w - (text_x - card.x) - PROFILE_DELETE_SIZE * scale - PROFILE_DELETE_PAD * scale - 6.0 * scale;
+            let text_max_w = card.w
+                - (text_x - card.x)
+                - PROFILE_DELETE_SIZE * scale
+                - PROFILE_DELETE_PAD * scale
+                - 6.0 * scale;
             let name_y = card.y + 8.0 * scale;
             text.queue(
                 &p.name,

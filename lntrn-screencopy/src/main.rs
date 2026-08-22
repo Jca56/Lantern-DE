@@ -27,9 +27,15 @@ use selection_window::{FrameInput, LayerWindow};
 static STOP: AtomicBool = AtomicBool::new(false);
 static FRAME_COUNT: AtomicU64 = AtomicU64::new(0);
 
-fn text_tan() -> Color { Color::from_rgba8(0xe8, 0xdc, 0xc8, 0xff) }
-fn accent_orange() -> Color { Color::from_rgba8(0xff, 0x9b, 0x42, 0xff) }
-fn accent_red() -> Color { Color::from_rgba8(0xff, 0x60, 0x60, 0xff) }
+fn text_tan() -> Color {
+    Color::from_rgba8(0xe8, 0xdc, 0xc8, 0xff)
+}
+fn accent_orange() -> Color {
+    Color::from_rgba8(0xff, 0x9b, 0x42, 0xff)
+}
+fn accent_red() -> Color {
+    Color::from_rgba8(0xff, 0x60, 0x60, 0xff)
+}
 
 fn main() -> Result<()> {
     // First invocation while another recorder is running? Toggle it
@@ -72,7 +78,11 @@ fn main() -> Result<()> {
             let secs = started_at.elapsed().as_secs_f64();
             eprintln!(
                 "\nRecording finished: {frames} frames, {secs:.1}s, avg {:.1} fps",
-                if secs > 0.0 { frames as f64 / secs } else { 0.0 }
+                if secs > 0.0 {
+                    frames as f64 / secs
+                } else {
+                    0.0
+                }
             );
             if let Ok(meta) = std::fs::metadata(&output_path) {
                 let mb = meta.len() as f64 / (1024.0 * 1024.0);
@@ -129,7 +139,9 @@ fn run_selection_ui() -> Result<Option<(String, Region)>> {
 
         let input = window.state.take_frame_input();
         commit = ui.handle_input(&input);
-        if commit.is_some() { break; }
+        if commit.is_some() {
+            break;
+        }
 
         if window.state.frame_done {
             window.request_frame();
@@ -159,14 +171,19 @@ fn run_selection_ui() -> Result<Option<(String, Region)>> {
         _ => None,
     };
 
-    drop(text); drop(painter); drop(gpu);
+    drop(text);
+    drop(painter);
+    drop(gpu);
     window.destroy();
 
     Ok(result.map(|r| (output_name, r)))
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum CommitAction { Confirm, Cancel }
+enum CommitAction {
+    Confirm,
+    Cancel,
+}
 
 struct SelectionUi {
     selection: Option<Selection>,
@@ -176,15 +193,23 @@ struct SelectionUi {
 
 impl SelectionUi {
     fn handle_input(&mut self, input: &FrameInput) -> Option<CommitAction> {
-        if input.esc { return Some(CommitAction::Cancel); }
-        if input.enter { return Some(CommitAction::Confirm); }
+        if input.esc {
+            return Some(CommitAction::Cancel);
+        }
+        if input.enter {
+            return Some(CommitAction::Confirm);
+        }
 
         if input.cursor_moved {
             self.cursor = (input.cursor_x, input.cursor_y);
             self.on_cursor_moved(input.cursor_x, input.cursor_y);
         }
-        if input.left_pressed { self.on_left_pressed(self.cursor.0, self.cursor.1); }
-        if input.left_released { self.on_left_released(); }
+        if input.left_pressed {
+            self.on_left_pressed(self.cursor.0, self.cursor.1);
+        }
+        if input.left_released {
+            self.on_left_released();
+        }
         None
     }
 
@@ -192,7 +217,10 @@ impl SelectionUi {
         match self.drag_mode {
             DragMode::New { start_x, start_y } => {
                 self.selection = Some(Selection {
-                    x: start_x, y: start_y, w: cx - start_x, h: cy - start_y,
+                    x: start_x,
+                    y: start_y,
+                    w: cx - start_x,
+                    h: cy - start_y,
                 });
             }
             DragMode::Handle { edge, orig } => {
@@ -213,7 +241,10 @@ impl SelectionUi {
                 if let Some(ref sel) = self.selection {
                     let (_, _, w, h) = sel.normalized();
                     self.selection = Some(Selection::from_normalized(
-                        cx - offset_x, cy - offset_y, w, h,
+                        cx - offset_x,
+                        cy - offset_y,
+                        w,
+                        h,
                     ));
                 }
             }
@@ -230,11 +261,17 @@ impl SelectionUi {
             }
             if sel.contains(cx, cy) {
                 let (sx, sy, _, _) = sel.normalized();
-                self.drag_mode = DragMode::Move { offset_x: cx - sx, offset_y: cy - sy };
+                self.drag_mode = DragMode::Move {
+                    offset_x: cx - sx,
+                    offset_y: cy - sy,
+                };
                 return;
             }
         }
-        self.drag_mode = DragMode::New { start_x: cx, start_y: cy };
+        self.drag_mode = DragMode::New {
+            start_x: cx,
+            start_y: cy,
+        };
         self.selection = None;
     }
 
@@ -309,11 +346,14 @@ impl SelectionUi {
                 Color::from_rgba8(0, 0, 0, 200),
             );
             text.queue(
-                &label, label_font,
-                sx + label_pad, label_y + label_pad,
+                &label,
+                label_font,
+                sx + label_pad,
+                label_y + label_pad,
                 text_tan(),
                 label_box_w - label_pad * 2.0,
-                sw as u32, sh as u32,
+                sw as u32,
+                sh as u32,
             );
         } else {
             painter.rect_filled(Rect::new(0.0, 0.0, sw, sh), 0.0, dim);
@@ -338,11 +378,14 @@ impl SelectionUi {
             Color::from_rgba8(0, 0, 0, 210),
         );
         text.queue(
-            hint, hint_font,
-            hint_x + hint_pad_x, hint_y + hint_pad_y,
+            hint,
+            hint_font,
+            hint_x + hint_pad_x,
+            hint_y + hint_pad_y,
             accent_orange(),
             hint_box_w - hint_pad_x * 2.0,
-            sw as u32, sh as u32,
+            sw as u32,
+            sh as u32,
         );
 
         let mut frame = gpu.begin_frame("selection")?;
@@ -381,24 +424,31 @@ fn parse_args() -> (PathBuf, u32) {
     while i < args.len() {
         match args[i].as_str() {
             "-o" | "--output" if i + 1 < args.len() => {
-                output = Some(PathBuf::from(&args[i + 1])); i += 2;
+                output = Some(PathBuf::from(&args[i + 1]));
+                i += 2;
             }
             "-r" | "--framerate" if i + 1 < args.len() => {
                 framerate = args[i + 1].parse().unwrap_or_else(|_| {
-                    eprintln!("--framerate requires a number"); std::process::exit(1);
+                    eprintln!("--framerate requires a number");
+                    std::process::exit(1);
                 });
                 i += 2;
             }
             "-h" | "--help" => {
                 eprintln!("Usage: lntrn-screencopy [OPTIONS]");
-                eprintln!("  -o, --output <PATH>    Output file (default: ~/Videos/recording_*.mp4)");
+                eprintln!(
+                    "  -o, --output <PATH>    Output file (default: ~/Videos/recording_*.mp4)"
+                );
                 eprintln!("  -r, --framerate <FPS>  Target framerate (default: 60)");
                 eprintln!("  -h, --help             Show this help");
                 eprintln!();
                 eprintln!("Run a second time during recording to stop and finalize.");
                 std::process::exit(0);
             }
-            _ => { eprintln!("Unknown argument: {}", args[i]); std::process::exit(1); }
+            _ => {
+                eprintln!("Unknown argument: {}", args[i]);
+                std::process::exit(1);
+            }
         }
     }
     (output.unwrap_or_else(default_output_path), framerate)
@@ -406,7 +456,9 @@ fn parse_args() -> (PathBuf, u32) {
 
 fn default_output_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(home).join("Videos").join(format!("recording_{}.mp4", timestamp()))
+    PathBuf::from(home)
+        .join("Videos")
+        .join(format!("recording_{}.mp4", timestamp()))
 }
 
 fn timestamp() -> String {
@@ -414,12 +466,18 @@ fn timestamp() -> String {
         let mut t: libc::time_t = 0;
         libc::time(&mut t);
         let tm = libc::localtime(&t);
-        if tm.is_null() { return format!("{t}"); }
+        if tm.is_null() {
+            return format!("{t}");
+        }
         let tm = &*tm;
         format!(
             "{:04}-{:02}-{:02}_{:02}-{:02}-{:02}",
-            tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
-            tm.tm_hour, tm.tm_min, tm.tm_sec,
+            tm.tm_year + 1900,
+            tm.tm_mon + 1,
+            tm.tm_mday,
+            tm.tm_hour,
+            tm.tm_min,
+            tm.tm_sec,
         )
     }
 }

@@ -86,11 +86,7 @@ pub fn draw_window_controls(
         painter.rect_filled(close_rect, r, close_bg);
         // Square off the bottom-left, top-left, and bottom-right so only the
         // top-right corner stays rounded (matches the window corner radius).
-        painter.rect_filled(
-            Rect::new(close_rect.x, close_rect.y, r, r),
-            0.0,
-            close_bg,
-        );
+        painter.rect_filled(Rect::new(close_rect.x, close_rect.y, r, r), 0.0, close_bg);
         painter.rect_filled(
             Rect::new(close_rect.x, close_rect.y + close_rect.h - r, r, r),
             0.0,
@@ -116,9 +112,19 @@ pub fn draw_window_controls(
         icon_color
     };
     painter.line(
-        cx - half, cy - half, cx + half, cy + half, stroke, close_icon_color,
+        cx - half,
+        cy - half,
+        cx + half,
+        cy + half,
+        stroke,
+        close_icon_color,
     );
     painter.line(
-        cx + half, cy - half, cx - half, cy + half, stroke, close_icon_color,
+        cx + half,
+        cy - half,
+        cx - half,
+        cy + half,
+        stroke,
+        close_icon_color,
     );
 }

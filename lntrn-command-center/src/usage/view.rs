@@ -155,8 +155,20 @@ pub fn draw(
     {
         let row_h = body * 1.7;
         draw_model_status_row(
-            painter, text, content_x, y, content_w, row_h, scale, body, stat, chip,
-            alpha, model_status, surface_w, surface_h,
+            painter,
+            text,
+            content_x,
+            y,
+            content_w,
+            row_h,
+            scale,
+            body,
+            stat,
+            chip,
+            alpha,
+            model_status,
+            surface_w,
+            surface_h,
         );
         y += row_h + pad * 0.6;
     }
@@ -175,8 +187,8 @@ pub fn draw(
             let Some(win) = win else { continue };
             let ry = y + drawn as f32 * row_h;
             draw_limit_row(
-                painter, text, content_x, ry, content_w, row_h, scale,
-                body, stat, chip, alpha, label, win, surface_w, surface_h,
+                painter, text, content_x, ry, content_w, row_h, scale, body, stat, chip, alpha,
+                label, win, surface_w, surface_h,
             );
             drawn += 1;
         }
@@ -196,17 +208,7 @@ pub fn draw(
         let x = content_x + (card_w + card_gap) * i as f32;
         let r = Rect::new(x, y, card_w, card_h);
         draw_card(
-            painter,
-            text,
-            r,
-            big,
-            label,
-            *headline,
-            scale,
-            body,
-            hero_label,
-            alpha,
-            surface_w,
+            painter, text, r, big, label, *headline, scale, body, hero_label, alpha, surface_w,
             surface_h,
         );
     }
@@ -226,7 +228,12 @@ pub fn draw(
         ("Today", today_turns, today_tok, today_cost),
         ("This week", week_turns, week_tok, week_cost),
         ("This month", month_turns, month_tok, month_cost),
-        ("All time", stats.turns, stats.total_tokens(), stats.cost_usd),
+        (
+            "All time",
+            stats.turns,
+            stats.total_tokens(),
+            stats.cost_usd,
+        ),
     ];
 
     // Shared column-grid anchors used by every numeric row on the page.
@@ -294,7 +301,16 @@ pub fn draw(
         ];
         for (v, right_x) in values.iter() {
             let vw = text.measure_width(v, stat);
-            text.queue(v, stat, right_x - vw, s_top, col_color, vw, surface_w, surface_h);
+            text.queue(
+                v,
+                stat,
+                right_x - vw,
+                s_top,
+                col_color,
+                vw,
+                surface_w,
+                surface_h,
+            );
         }
     }
     y += row_h * rows.len() as f32 + pad;
@@ -479,7 +495,11 @@ fn draw_card(
     if headline {
         painter.rect_stroke_sdf(r, 16.0 * scale, 1.5 * scale, accent(0.45 * alpha));
     }
-    let big_color = if headline { accent(alpha) } else { white(alpha) };
+    let big_color = if headline {
+        accent(alpha)
+    } else {
+        white(alpha)
+    };
 
     // Carve the card into two stacked zones so the big number and the
     // label never overlap regardless of how aggressively the number
@@ -512,14 +532,7 @@ fn draw_card(
     let big_x = r.x + (r.w - big_w) * 0.5;
     let big_y = r.y + (big_zone_h - big_font) * 0.5;
     text.queue(
-        big,
-        big_font,
-        big_x,
-        big_y,
-        big_color,
-        r.w,
-        surface_w,
-        surface_h,
+        big, big_font, big_x, big_y, big_color, r.w, surface_w, surface_h,
     );
 
     let label_w = text.measure_width(label, label_font);

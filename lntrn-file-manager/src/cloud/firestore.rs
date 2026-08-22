@@ -89,7 +89,13 @@ fn to_fields(doc: &FileDoc) -> serde_json::Value {
 }
 
 fn from_fields(fields: &serde_json::Value) -> Option<FileDoc> {
-    let s = |k: &str| fields.get(k)?.get("stringValue")?.as_str().map(|s| s.to_string());
+    let s = |k: &str| {
+        fields
+            .get(k)?
+            .get("stringValue")?
+            .as_str()
+            .map(|s| s.to_string())
+    };
     let i = |k: &str| {
         fields
             .get(k)?
@@ -195,7 +201,10 @@ pub fn list_all(authed: &Authed) -> anyhow::Result<Vec<FileDoc>> {
                 }
             }
         }
-        page_token = v.get("nextPageToken").and_then(|t| t.as_str()).map(|s| s.to_string());
+        page_token = v
+            .get("nextPageToken")
+            .and_then(|t| t.as_str())
+            .map(|s| s.to_string());
         if page_token.is_none() {
             break;
         }

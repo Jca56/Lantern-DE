@@ -59,9 +59,16 @@ fn load_background() -> BgImage {
         if let Ok(img) = image::open(&path) {
             let rgba = img.to_rgba8();
             let (w, h) = rgba.dimensions();
-            return BgImage { rgba: rgba.into_raw(), w, h };
+            return BgImage {
+                rgba: rgba.into_raw(),
+                w,
+                h,
+            };
         }
-        eprintln!("[lntrn-lockscreen] failed to decode background: {}", path.display());
+        eprintln!(
+            "[lntrn-lockscreen] failed to decode background: {}",
+            path.display()
+        );
     }
     solid_fallback(config::accent())
 }

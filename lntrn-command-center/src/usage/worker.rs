@@ -70,11 +70,19 @@ impl Accumulator {
     fn snapshot(&self) -> UsageStats {
         let mut s = self.stats.clone();
         s.by_project = self.by_project.values().cloned().collect();
-        s.by_project.sort_by(|a, b| b.cost_usd.partial_cmp(&a.cost_usd).unwrap_or(std::cmp::Ordering::Equal));
+        s.by_project.sort_by(|a, b| {
+            b.cost_usd
+                .partial_cmp(&a.cost_usd)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         s.by_day = self.by_day.values().cloned().collect();
         s.by_day.sort_by(|a, b| a.day.cmp(&b.day));
         s.by_model = self.by_model.values().cloned().collect();
-        s.by_model.sort_by(|a, b| b.cost_usd.partial_cmp(&a.cost_usd).unwrap_or(std::cmp::Ordering::Equal));
+        s.by_model.sort_by(|a, b| {
+            b.cost_usd
+                .partial_cmp(&a.cost_usd)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         s.sessions = self.sessions.len() as u64;
         s.first_ts = self.first_ts.clone();
         s.last_ts = self.last_ts.clone();
@@ -102,11 +110,7 @@ fn run(tx: Sender<UsageStats>) {
 
 /// One pass over every transcript file. Returns true if anything new
 /// was consumed (so the caller publishes a fresh snapshot).
-fn sweep(
-    root: &PathBuf,
-    files: &mut HashMap<PathBuf, FileState>,
-    acc: &mut Accumulator,
-) -> bool {
+fn sweep(root: &PathBuf, files: &mut HashMap<PathBuf, FileState>, acc: &mut Accumulator) -> bool {
     let mut any = false;
     let Ok(project_dirs) = fs::read_dir(root) else {
         return false;
@@ -156,7 +160,9 @@ fn sweep(
 
 /// Read from `start_off` to EOF, parse each line, fold into `acc`.
 fn read_tail(path: &PathBuf, start_off: u64, project: &str, acc: &mut Accumulator) -> bool {
-    let Ok(mut f) = File::open(path) else { return false };
+    let Ok(mut f) = File::open(path) else {
+        return false;
+    };
     if f.seek(SeekFrom::Start(start_off)).is_err() {
         return false;
     }
@@ -310,23 +316,29 @@ fn fold(p: Parsed, project: &str, acc: &mut Accumulator) {
     }
 
     // Per-project.
-    let pb = acc.by_project.entry(project.to_string()).or_insert_with(|| ProjectBucket {
-        label: project.to_string(),
-        turns: 0,
-        tokens: 0,
-        cost_usd: 0.0,
-    });
+    let pb = acc
+        .by_project
+        .entry(project.to_string())
+        .or_insert_with(|| ProjectBucket {
+            label: project.to_string(),
+            turns: 0,
+            tokens: 0,
+            cost_usd: 0.0,
+        });
     pb.turns += 1;
     pb.tokens += tokens;
     pb.cost_usd += cost;
 
     // Per-model.
-    let mb = acc.by_model.entry(p.model.clone()).or_insert_with(|| ProjectBucket {
-        label: p.model.clone(),
-        turns: 0,
-        tokens: 0,
-        cost_usd: 0.0,
-    });
+    let mb = acc
+        .by_model
+        .entry(p.model.clone())
+        .or_insert_with(|| ProjectBucket {
+            label: p.model.clone(),
+            turns: 0,
+            tokens: 0,
+            cost_usd: 0.0,
+        });
     mb.turns += 1;
     mb.tokens += tokens;
     mb.cost_usd += cost;
@@ -334,12 +346,15 @@ fn fold(p: Parsed, project: &str, acc: &mut Accumulator) {
     // Per-day. Use date prefix YYYY-MM-DD from ISO timestamp.
     if p.timestamp.len() >= 10 {
         let day = &p.timestamp[..10];
-        let db = acc.by_day.entry(day.to_string()).or_insert_with(|| DayBucket {
-            day: day.to_string(),
-            turns: 0,
-            tokens: 0,
-            cost_usd: 0.0,
-        });
+        let db = acc
+            .by_day
+            .entry(day.to_string())
+            .or_insert_with(|| DayBucket {
+                day: day.to_string(),
+                turns: 0,
+                tokens: 0,
+                cost_usd: 0.0,
+            });
         db.turns += 1;
         db.tokens += tokens;
         db.cost_usd += cost;

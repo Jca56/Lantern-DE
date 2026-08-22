@@ -74,11 +74,7 @@ pub fn draw_tab_strip(
     // Subtle wash over the ribbon gradient so the strip reads as its own
     // settled band (and the active tab's page-tone fill pops against it).
     // The ribbon↔desk seam hairline is still drawn after, in render.rs.
-    painter.rect_filled(
-        Rect::new(0.0, y, wf, h),
-        0.0,
-        tokens::tab_strip_wash(theme),
-    );
+    painter.rect_filled(Rect::new(0.0, y, wf, h), 0.0, tokens::tab_strip_wash(theme));
 
     let pad = TAB_PAD_X * s;
     let close_w = CLOSE_BTN_W * s;
@@ -89,12 +85,15 @@ pub fn draw_tab_strip(
     let mut x = 0.0;
     for (i, tab) in tabs.iter().enumerate() {
         let is_active = i == active;
-        let weight = if is_active { FontWeight::Bold } else { FontWeight::Normal };
+        let weight = if is_active {
+            FontWeight::Bold
+        } else {
+            FontWeight::Normal
+        };
 
         let label = display_label(tab);
         let label_w = text.measure_width_styled(&label, font_px, weight, FontStyle::Normal);
-        let tab_w = (label_w + pad * 2.0 + close_w)
-            .clamp(TAB_MIN_W * s, TAB_MAX_W * s);
+        let tab_w = (label_w + pad * 2.0 + close_w).clamp(TAB_MIN_W * s, TAB_MAX_W * s);
         let tab_r = Rect::new(x, y, tab_w, h);
 
         let zone = input.add_zone(ZONE_TAB_BASE + i as u32, tab_r);
@@ -103,8 +102,12 @@ pub fn draw_tab_strip(
         if is_active {
             // Gold radial glow pooling at the page seam, then the tab fuses
             // into the page tone with a gold top stripe.
-            let glow_r =
-                Rect::new(tab_r.x - 10.0 * s, tab_r.y, tab_r.w + 20.0 * s, tab_r.h + 6.0 * s);
+            let glow_r = Rect::new(
+                tab_r.x - 10.0 * s,
+                tab_r.y,
+                tab_r.w + 20.0 * s,
+                tab_r.h + 6.0 * s,
+            );
             painter.rect_radial_glow(
                 glow_r,
                 0.0,
@@ -156,8 +159,16 @@ pub fn draw_tab_strip(
         let label_x = tab_r.x + pad;
         let label_y = tab_r.y + (h - font_px) * 0.5;
         text.queue_styled(
-            &label, font_px, label_x, label_y, label_color,
-            tab_r.w - pad * 2.0 - close_w, weight, FontStyle::Normal, sw, sh,
+            &label,
+            font_px,
+            label_x,
+            label_y,
+            label_color,
+            tab_r.w - pad * 2.0 - close_w,
+            weight,
+            FontStyle::Normal,
+            sw,
+            sh,
         );
 
         // ── Close button (visible on hover or active) ───────────
@@ -186,10 +197,20 @@ pub fn draw_tab_strip(
             let cy = close_r.center_y();
             let half = 5.0 * s;
             painter.line(
-                cx - half, cy - half, cx + half, cy + half, 1.5 * s, icon_color,
+                cx - half,
+                cy - half,
+                cx + half,
+                cy + half,
+                1.5 * s,
+                icon_color,
             );
             painter.line(
-                cx + half, cy - half, cx - half, cy + half, 1.5 * s, icon_color,
+                cx + half,
+                cy - half,
+                cx - half,
+                cy + half,
+                1.5 * s,
+                icon_color,
             );
         }
 
@@ -217,12 +238,22 @@ pub fn draw_tab_strip(
     let plus_cy = new_r.center_y();
     let plus_half = 6.0 * s;
     painter.rect_filled(
-        Rect::new(plus_cx - plus_half, plus_cy - 0.75 * s, plus_half * 2.0, 1.5 * s),
+        Rect::new(
+            plus_cx - plus_half,
+            plus_cy - 0.75 * s,
+            plus_half * 2.0,
+            1.5 * s,
+        ),
         0.0,
         plus_color,
     );
     painter.rect_filled(
-        Rect::new(plus_cx - 0.75 * s, plus_cy - plus_half, 1.5 * s, plus_half * 2.0),
+        Rect::new(
+            plus_cx - 0.75 * s,
+            plus_cy - plus_half,
+            1.5 * s,
+            plus_half * 2.0,
+        ),
         0.0,
         plus_color,
     );

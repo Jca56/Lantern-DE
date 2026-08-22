@@ -175,10 +175,7 @@ impl SidebarState {
             return false;
         }
         match pos {
-            Some((x, y)) => {
-                y >= chrome_h
-                    && (x - self.width).abs() <= RESIZE_HANDLE_W * self.scale
-            }
+            Some((x, y)) => y >= chrome_h && (x - self.width).abs() <= RESIZE_HANDLE_W * self.scale,
             None => false,
         }
     }
@@ -244,11 +241,7 @@ impl SidebarState {
         });
 
         for (name, path, is_dir) in children {
-            let line_count = if !is_dir {
-                count_lines_rs(&path)
-            } else {
-                None
-            };
+            let line_count = if !is_dir { count_lines_rs(&path) } else { None };
             self.entries.push(DirEntry {
                 name,
                 path,
@@ -273,9 +266,7 @@ impl SidebarState {
             let parent_depth = self.entries[idx].depth;
             let remove_start = idx + 1;
             let mut remove_end = remove_start;
-            while remove_end < self.entries.len()
-                && self.entries[remove_end].depth > parent_depth
-            {
+            while remove_end < self.entries.len() && self.entries[remove_end].depth > parent_depth {
                 remove_end += 1;
             }
             self.entries.drain(remove_start..remove_end);
@@ -347,10 +338,16 @@ impl SidebarState {
     }
 
     fn menu_begin_create(&mut self, mode: EditMode) {
-        let Some(idx) = self.menu_target.take() else { return };
+        let Some(idx) = self.menu_target.take() else {
+            return;
+        };
         // ROOT_CTX anchors the inline edit after the last visible entry.
         let entry_idx = if idx == ROOT_CTX {
-            if self.entries.is_empty() { 0 } else { self.entries.len() - 1 }
+            if self.entries.is_empty() {
+                0
+            } else {
+                self.entries.len() - 1
+            }
         } else {
             idx
         };
@@ -363,7 +360,9 @@ impl SidebarState {
     }
 
     pub fn menu_rename(&mut self) {
-        let Some(idx) = self.menu_target.take() else { return };
+        let Some(idx) = self.menu_target.take() else {
+            return;
+        };
         if idx >= self.entries.len() {
             return;
         }
@@ -378,12 +377,16 @@ impl SidebarState {
     }
 
     pub fn menu_delete(&mut self) {
-        let Some(idx) = self.menu_target.take() else { return };
+        let Some(idx) = self.menu_target.take() else {
+            return;
+        };
         self.do_delete(idx);
     }
 
     pub fn menu_open_code(&mut self) {
-        let Some(idx) = self.menu_target.take() else { return };
+        let Some(idx) = self.menu_target.take() else {
+            return;
+        };
         if idx >= self.entries.len() {
             return;
         }

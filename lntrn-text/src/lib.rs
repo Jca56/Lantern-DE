@@ -297,7 +297,13 @@ impl TextRenderer {
         style: FontStyle,
         family: Option<&str>,
     ) -> f32 {
-        self.measure_text_full(text, font_size, weight, style, family.filter(|f| !f.is_empty()))
+        self.measure_text_full(
+            text,
+            font_size,
+            weight,
+            style,
+            family.filter(|f| !f.is_empty()),
+        )
     }
 
     /// Cumulative x advance at every cluster boundary of a single line of
@@ -330,7 +336,13 @@ impl TextRenderer {
     /// Measure text width using a specific font family (e.g. `"Digital-7"`).
     /// Falls back to the renderer default if the family isn't installed.
     pub fn measure_width_family(&mut self, text: &str, font_size: f32, family: &str) -> f32 {
-        self.measure_text_full(text, font_size, FontWeight::Normal, FontStyle::Normal, Some(family))
+        self.measure_text_full(
+            text,
+            font_size,
+            FontWeight::Normal,
+            FontStyle::Normal,
+            Some(family),
+        )
     }
 
     /// Measure the actual rendered *ink* bounds of `text` at `font_size` with
@@ -410,8 +422,17 @@ impl TextRenderer {
     ) {
         let _ = screen_h;
         self.queue_entry(
-            text, font_size, x, y, color, max_width,
-            FontWeight::Normal, FontStyle::Normal, None, screen_w, None,
+            text,
+            font_size,
+            x,
+            y,
+            color,
+            max_width,
+            FontWeight::Normal,
+            FontStyle::Normal,
+            None,
+            screen_w,
+            None,
         );
     }
 
@@ -431,7 +452,9 @@ impl TextRenderer {
         screen_h: u32,
     ) {
         let _ = screen_h;
-        self.queue_entry(text, font_size, x, y, color, max_width, weight, style, None, screen_w, None);
+        self.queue_entry(
+            text, font_size, x, y, color, max_width, weight, style, None, screen_w, None,
+        );
     }
 
     /// Queue styled text with an optional font family. Composes weight, style,

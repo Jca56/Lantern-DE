@@ -12,7 +12,11 @@ pub struct KeyboardState {
 impl KeyboardState {
     pub fn new() -> Self {
         let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-        Self { context, keymap: None, state: None }
+        Self {
+            context,
+            keymap: None,
+            state: None,
+        }
     }
 
     /// Called when wl_keyboard sends a keymap event (format XkbV1). Takes

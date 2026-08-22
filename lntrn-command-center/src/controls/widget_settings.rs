@@ -87,7 +87,14 @@ fn layout(id: TileId, controls: &Controls, panel: Rect, scale: f32) -> PopLayout
 
     // Row 0: size slider. Row 1: space slider.
     let track_h = TRACK_H * scale;
-    let track_at = |i: usize| Rect::new(ctrl_x, row_y(i) + (ROW_H * scale - track_h) / 2.0, ctrl_w, track_h);
+    let track_at = |i: usize| {
+        Rect::new(
+            ctrl_x,
+            row_y(i) + (ROW_H * scale - track_h) / 2.0,
+            ctrl_w,
+            track_h,
+        )
+    };
     let size_track = track_at(0);
     let space_track = track_at(1);
 
@@ -112,13 +119,26 @@ fn layout(id: TileId, controls: &Controls, panel: Rect, scale: f32) -> PopLayout
         // Row 4: two pills (24h, Seconds).
         let r4y = row_y(4) + (ROW_H * scale - pill_h) / 2.0;
         let h = Rect::new(ctrl_x, r4y, pill_w, pill_h);
-        let s = Rect::new(ctrl_x + pill_w + 12.0 * scale, r4y, pill_w + 18.0 * scale, pill_h);
+        let s = Rect::new(
+            ctrl_x + pill_w + 12.0 * scale,
+            r4y,
+            pill_w + 18.0 * scale,
+            pill_h,
+        );
         (Some(dt), Some(seg), Some(h), Some(s))
     } else {
         (None, None, None, None)
     };
 
-    PopLayout { rect, size_track, space_track, date_toggle, date_seg, h24, seconds }
+    PopLayout {
+        rect,
+        size_track,
+        space_track,
+        date_toggle,
+        date_seg,
+        h24,
+        seconds,
+    }
 }
 
 /// Map a cursor x on a slider's track to its snapped value.
@@ -148,7 +168,14 @@ pub fn slider_value_at(
     }
 }
 
-pub fn hit(id: TileId, controls: &Controls, panel: Rect, scale: f32, px: f32, py: f32) -> Option<Hit> {
+pub fn hit(
+    id: TileId,
+    controls: &Controls,
+    panel: Rect,
+    scale: f32,
+    px: f32,
+    py: f32,
+) -> Option<Hit> {
     let l = layout(id, controls, panel, scale);
     let inside = |r: &Rect| px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
     // Generous vertical pad on the slider tracks so the knob is grabbable.
@@ -166,7 +193,10 @@ pub fn hit(id: TileId, controls: &Controls, panel: Rect, scale: f32, px: f32, py
         }
     }
     if let Some(seg) = l.date_seg {
-        for (r, pos) in seg.iter().zip([DatePos::Below, DatePos::Left, DatePos::Right]) {
+        for (r, pos) in seg
+            .iter()
+            .zip([DatePos::Below, DatePos::Left, DatePos::Right])
+        {
             if inside(r) {
                 return Some(Hit::SetDatePos(pos));
             }
@@ -200,9 +230,25 @@ pub fn draw(
 ) {
     let l = layout(id, controls, panel, scale);
     let r = l.rect;
-    painter.shadow(r, RADIUS * scale, 20.0 * scale, Color::BLACK.with_alpha(0.4 * alpha), 0.0, 5.0 * scale);
-    painter.rect_filled(r, RADIUS * scale, Color::from_rgb8(PLATE_RGB.0, PLATE_RGB.1, PLATE_RGB.2).with_alpha(0.95 * alpha));
-    painter.rect_stroke_sdf(r, RADIUS * scale, 1.0 * scale, Color::rgba(1.0, 1.0, 1.0, 0.12 * alpha));
+    painter.shadow(
+        r,
+        RADIUS * scale,
+        20.0 * scale,
+        Color::BLACK.with_alpha(0.4 * alpha),
+        0.0,
+        5.0 * scale,
+    );
+    painter.rect_filled(
+        r,
+        RADIUS * scale,
+        Color::from_rgb8(PLATE_RGB.0, PLATE_RGB.1, PLATE_RGB.2).with_alpha(0.95 * alpha),
+    );
+    painter.rect_stroke_sdf(
+        r,
+        RADIUS * scale,
+        1.0 * scale,
+        Color::rgba(1.0, 1.0, 1.0, 0.12 * alpha),
+    );
 
     let f = FONT * scale;
     let inner_x = r.x + PAD * scale;
@@ -210,33 +256,90 @@ pub fn draw(
     let dim = Color::rgba(1.0, 1.0, 1.0, 0.6 * alpha);
 
     // Title.
-    text.queue(id.display_name(), f, inner_x, r.y + PAD * scale, white, r.w, surface_w, surface_h);
+    text.queue(
+        id.display_name(),
+        f,
+        inner_x,
+        r.y + PAD * scale,
+        white,
+        r.w,
+        surface_w,
+        surface_h,
+    );
 
     // Size + Space rows (universal).
-    label(text, "Size", inner_x, l.size_track.y, l.size_track.h, f, dim, surface_w, surface_h);
+    label(
+        text,
+        "Size",
+        inner_x,
+        l.size_track.y,
+        l.size_track.h,
+        f,
+        dim,
+        surface_w,
+        surface_h,
+    );
     draw_slider(painter, l.size_track, slider_t(opts.size), scale, alpha);
-    label(text, "Space", inner_x, l.space_track.y, l.space_track.h, f, dim, surface_w, surface_h);
+    label(
+        text,
+        "Space",
+        inner_x,
+        l.space_track.y,
+        l.space_track.h,
+        f,
+        dim,
+        surface_w,
+        surface_h,
+    );
     draw_slider(painter, l.space_track, space_t(opts.space), scale, alpha);
 
     if is_clock(id) {
         let c = &opts.clock;
         if let Some(dt) = l.date_toggle {
-            label(text, "Date", inner_x, dt.y, dt.h, f, dim, surface_w, surface_h);
-            draw_pill(painter, text, dt, if c.show_date { "On" } else { "Off" }, c.show_date, scale, alpha, surface_w, surface_h);
+            label(
+                text, "Date", inner_x, dt.y, dt.h, f, dim, surface_w, surface_h,
+            );
+            draw_pill(
+                painter,
+                text,
+                dt,
+                if c.show_date { "On" } else { "Off" },
+                c.show_date,
+                scale,
+                alpha,
+                surface_w,
+                surface_h,
+            );
         }
         if let Some(seg) = l.date_seg {
-            label(text, "Date at", inner_x, seg[0].y, seg[0].h, f, dim, surface_w, surface_h);
+            label(
+                text, "Date at", inner_x, seg[0].y, seg[0].h, f, dim, surface_w, surface_h,
+            );
             let labels = ["Below", "Left", "Right"];
             let active = [DatePos::Below, DatePos::Left, DatePos::Right];
             for ((rr, lbl), pos) in seg.iter().zip(labels).zip(active) {
-                draw_pill(painter, text, *rr, lbl, c.date_pos == pos, scale, alpha, surface_w, surface_h);
+                draw_pill(
+                    painter,
+                    text,
+                    *rr,
+                    lbl,
+                    c.date_pos == pos,
+                    scale,
+                    alpha,
+                    surface_w,
+                    surface_h,
+                );
             }
         }
         if let Some(h) = l.h24 {
-            draw_pill(painter, text, h, "24h", c.hour24, scale, alpha, surface_w, surface_h);
+            draw_pill(
+                painter, text, h, "24h", c.hour24, scale, alpha, surface_w, surface_h,
+            );
         }
         if let Some(s) = l.seconds {
-            draw_pill(painter, text, s, "Seconds", c.seconds, scale, alpha, surface_w, surface_h);
+            draw_pill(
+                painter, text, s, "Seconds", c.seconds, scale, alpha, surface_w, surface_h,
+            );
         }
     }
 }
@@ -250,7 +353,17 @@ fn space_t(space: f32) -> f32 {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn label(text: &mut TextRenderer, s: &str, x: f32, row_y: f32, row_h: f32, f: f32, col: Color, sw: u32, sh: u32) {
+fn label(
+    text: &mut TextRenderer,
+    s: &str,
+    x: f32,
+    row_y: f32,
+    row_h: f32,
+    f: f32,
+    col: Color,
+    sw: u32,
+    sh: u32,
+) {
     text.queue(s, f, x, row_y + (row_h - f) / 2.0, col, 200.0, sw, sh);
 }
 
@@ -258,9 +371,18 @@ fn draw_slider(painter: &mut Painter, track: Rect, t: f32, scale: f32, alpha: f3
     let r = track.h / 2.0;
     painter.rect_filled(track, r, Color::rgba(1.0, 1.0, 1.0, 0.18 * alpha));
     let fill_w = (track.w * t).max(track.h);
-    painter.rect_filled(Rect::new(track.x, track.y, fill_w, track.h), r, accent(alpha));
+    painter.rect_filled(
+        Rect::new(track.x, track.y, fill_w, track.h),
+        r,
+        accent(alpha),
+    );
     let knob_cx = track.x + track.w * t;
-    painter.circle_filled(knob_cx, track.y + track.h / 2.0, KNOB_R * scale, Color::rgba(1.0, 1.0, 1.0, alpha));
+    painter.circle_filled(
+        knob_cx,
+        track.y + track.h / 2.0,
+        KNOB_R * scale,
+        Color::rgba(1.0, 1.0, 1.0, alpha),
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -280,12 +402,30 @@ fn draw_pill(
         painter.rect_filled(r, radius, accent(alpha));
     } else {
         painter.rect_filled(r, radius, Color::rgba(1.0, 1.0, 1.0, 0.10 * alpha));
-        painter.rect_stroke_sdf(r, radius, 1.0 * scale, Color::rgba(1.0, 1.0, 1.0, 0.18 * alpha));
+        painter.rect_stroke_sdf(
+            r,
+            radius,
+            1.0 * scale,
+            Color::rgba(1.0, 1.0, 1.0, 0.18 * alpha),
+        );
     }
     let f = FONT * scale;
     let tw = text.measure_width(s, f).min(r.w - 6.0 * scale);
-    let col = if on { Color::from_rgb8(20, 16, 6).with_alpha(alpha) } else { Color::rgba(1.0, 1.0, 1.0, 0.9 * alpha) };
-    text.queue(s, f, r.x + (r.w - tw) / 2.0, r.y + (r.h - f) / 2.0, col, r.w, sw, sh);
+    let col = if on {
+        Color::from_rgb8(20, 16, 6).with_alpha(alpha)
+    } else {
+        Color::rgba(1.0, 1.0, 1.0, 0.9 * alpha)
+    };
+    text.queue(
+        s,
+        f,
+        r.x + (r.w - tw) / 2.0,
+        r.y + (r.h - f) / 2.0,
+        col,
+        r.w,
+        sw,
+        sh,
+    );
 }
 
 fn accent(a: f32) -> Color {

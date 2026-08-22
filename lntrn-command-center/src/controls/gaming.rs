@@ -52,8 +52,7 @@ pub fn draw_inline(
         0.85
     };
     let label_color = if enabled {
-        Color::from_rgb8(GOLD_BRIGHT.0, GOLD_BRIGHT.1, GOLD_BRIGHT.2)
-            .with_alpha(alpha * text_alpha)
+        Color::from_rgb8(GOLD_BRIGHT.0, GOLD_BRIGHT.1, GOLD_BRIGHT.2).with_alpha(alpha * text_alpha)
     } else {
         Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(alpha * text_alpha)
     };

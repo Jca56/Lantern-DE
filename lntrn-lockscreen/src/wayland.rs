@@ -4,7 +4,7 @@ use std::ptr::NonNull;
 use std::sync::mpsc::{Receiver, Sender};
 
 use anyhow::{anyhow, Result};
-use lntrn_render::{GpuContext, GpuTexture, Painter, TextRenderer, TexturePass, TextureDraw};
+use lntrn_render::{GpuContext, GpuTexture, Painter, TextRenderer, TextureDraw, TexturePass};
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
     RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle, WindowHandle,
@@ -14,8 +14,7 @@ use wayland_client::protocol::{wl_compositor, wl_output, wl_seat, wl_surface};
 use wayland_client::{Connection, EventQueue, Proxy, QueueHandle};
 use wayland_protocols::ext::session_lock::v1::client::{
     ext_session_lock_manager_v1::ExtSessionLockManagerV1,
-    ext_session_lock_surface_v1::ExtSessionLockSurfaceV1,
-    ext_session_lock_v1::ExtSessionLockV1,
+    ext_session_lock_surface_v1::ExtSessionLockSurfaceV1, ext_session_lock_v1::ExtSessionLockV1,
 };
 
 use crate::keyboard::KeyboardState;
@@ -127,7 +126,9 @@ impl App {
     }
 
     pub fn output_by_lock_surface(&mut self, lsid: &ObjectId) -> Option<&mut OutputCtx> {
-        self.outputs.iter_mut().find(|o| &o.lock_surface.id() == lsid)
+        self.outputs
+            .iter_mut()
+            .find(|o| &o.lock_surface.id() == lsid)
     }
 }
 
@@ -319,7 +320,16 @@ fn render_outputs(
         og.text.clear();
 
         app.ui.caps_lock = app.caps_lock;
-        render::draw(&mut og.painter, &mut og.text, &app.ui, style, w, h, og.buf_w, og.buf_h);
+        render::draw(
+            &mut og.painter,
+            &mut og.text,
+            &app.ui,
+            style,
+            w,
+            h,
+            og.buf_w,
+            og.buf_h,
+        );
 
         // Background image is drawn first (cover-fit), then the painter/text on top.
         let cover = cover_rect(bg.w as f32, bg.h as f32, w, h);
@@ -335,7 +345,8 @@ fn render_outputs(
                 &[TextureDraw::new(&og.bg, cover.0, cover.1, cover.2, cover.3)],
                 None,
             );
-            og.painter.render_pass_overlay(&og.gpu, frame.encoder_mut(), &view);
+            og.painter
+                .render_pass_overlay(&og.gpu, frame.encoder_mut(), &view);
             og.text.render_queued(&og.gpu, frame.encoder_mut(), &view);
             frame.submit(&og.gpu.queue);
         }

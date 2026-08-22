@@ -170,7 +170,10 @@ pub(crate) fn build(
             let mut core_end = end;
             while core_end > start {
                 let cl = glyphs[core_end - 1].cluster as usize;
-                let ws = shaped_src[cl..].chars().next().is_some_and(char::is_whitespace);
+                let ws = shaped_src[cl..]
+                    .chars()
+                    .next()
+                    .is_some_and(char::is_whitespace);
                 if ws {
                     core_end -= 1;
                 } else {

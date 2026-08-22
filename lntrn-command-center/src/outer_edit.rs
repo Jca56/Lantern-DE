@@ -112,9 +112,7 @@ pub fn draw(
 
     // Drop caret + ghost for the active drag.
     if let Some(d) = drag {
-        if let Some((zone, idx)) =
-            outer_zones::resolve_drop(layout, panel, scale, d.id, d.cursor)
-        {
+        if let Some((zone, idx)) = outer_zones::resolve_drop(layout, panel, scale, d.id, d.cursor) {
             let region = outer_zones::zone_rect(zone, panel, scale);
             let others: Vec<Rect> = layout
                 .zone(zone)

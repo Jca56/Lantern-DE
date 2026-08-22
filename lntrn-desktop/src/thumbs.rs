@@ -240,7 +240,10 @@ mod tests {
         assert_eq!(out.len(), (96 * 96 * 4) as usize);
         // Center of the circle is opaque red; the very corner is transparent.
         let c = ((48 * 96 + 48) * 4) as usize;
-        assert!(out[c] > 200 && out[c + 3] > 200, "center should be opaque red");
+        assert!(
+            out[c] > 200 && out[c + 3] > 200,
+            "center should be opaque red"
+        );
         assert_eq!(alpha_at(&out, 96, 0, 0), 0, "corner should be transparent");
         let _ = std::fs::remove_file(&path);
     }
@@ -257,7 +260,10 @@ mod tests {
         assert_eq!(out.len(), (96 * 96 * 4) as usize);
         // Middle row opaque blue, top/bottom margin rows transparent.
         let mid = ((48 * 96 + 48) * 4) as usize;
-        assert!(out[mid + 2] > 200 && out[mid + 3] > 200, "center should be opaque blue");
+        assert!(
+            out[mid + 2] > 200 && out[mid + 3] > 200,
+            "center should be opaque blue"
+        );
         assert_eq!(alpha_at(&out, 96, 48, 0), 0, "top margin transparent");
         assert_eq!(alpha_at(&out, 96, 48, 95), 0, "bottom margin transparent");
         let _ = std::fs::remove_file(&path);

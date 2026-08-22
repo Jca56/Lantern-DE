@@ -122,10 +122,23 @@ pub(crate) fn resolve(text: &str) -> Option<BidiLine> {
             j += 1;
         }
         // sos/eos from the higher of the adjacent levels.
-        let prev_level = (0..i).rev().find(|&k| types[k].1 != BC::BN).map_or(base_level, |k| levels[k]);
-        let next_level = (j..n).find(|&k| types[k].1 != BC::BN).map_or(base_level, |k| levels[k]);
-        let sos = if prev_level.max(level) % 2 == 1 { BC::R } else { BC::L };
-        let eos = if next_level.max(level) % 2 == 1 { BC::R } else { BC::L };
+        let prev_level = (0..i)
+            .rev()
+            .find(|&k| types[k].1 != BC::BN)
+            .map_or(base_level, |k| levels[k]);
+        let next_level = (j..n)
+            .find(|&k| types[k].1 != BC::BN)
+            .map_or(base_level, |k| levels[k]);
+        let sos = if prev_level.max(level) % 2 == 1 {
+            BC::R
+        } else {
+            BC::L
+        };
+        let eos = if next_level.max(level) % 2 == 1 {
+            BC::R
+        } else {
+            BC::L
+        };
         resolve_run(&mut types, &mut levels, &run, level, sos, eos);
         i = j;
     }
@@ -139,7 +152,11 @@ pub(crate) fn resolve(text: &str) -> Option<BidiLine> {
     }
 
     Some(BidiLine {
-        levels: types.iter().zip(&levels).map(|(&(b, _), &l)| (b, l)).collect(),
+        levels: types
+            .iter()
+            .zip(&levels)
+            .map(|(&(b, _), &l)| (b, l))
+            .collect(),
         base_level,
     })
 }
@@ -191,9 +208,14 @@ fn resolve_run(
     // W5: ET runs adjacent to EN → EN.
     for k in 0..len {
         if get(types, k) == BC::ET {
-            let before = (0..k).rev().take_while(|&m| get(types, m) == BC::ET).count();
+            let before = (0..k)
+                .rev()
+                .take_while(|&m| get(types, m) == BC::ET)
+                .count();
             let prev_is_en = k > before && get(types, k - before - 1) == BC::EN;
-            let after = (k + 1..len).take_while(|&m| get(types, m) == BC::ET).count();
+            let after = (k + 1..len)
+                .take_while(|&m| get(types, m) == BC::ET)
+                .count();
             let next_is_en = k + after + 1 < len && get(types, k + after + 1) == BC::EN;
             if prev_is_en || next_is_en {
                 types[run[k]].1 = BC::EN;
@@ -219,7 +241,10 @@ fn resolve_run(
     // N1/N2: neutrals (incl. isolate controls, simplified) take the
     // surrounding direction when it matches, else the embedding direction.
     let is_neutral = |t: BC| {
-        matches!(t, BC::B | BC::S | BC::WS | BC::ON | BC::RLI | BC::LRI | BC::FSI | BC::PDI)
+        matches!(
+            t,
+            BC::B | BC::S | BC::WS | BC::ON | BC::RLI | BC::LRI | BC::FSI | BC::PDI
+        )
     };
     let strength = |t: BC| match t {
         BC::L => Some(BC::L),
@@ -237,8 +262,16 @@ fn resolve_run(
         while end < len && is_neutral(get(types, end)) {
             end += 1;
         }
-        let before = if k == 0 { Some(sos) } else { strength(get(types, k - 1)) };
-        let after = if end == len { Some(eos) } else { strength(get(types, end)) };
+        let before = if k == 0 {
+            Some(sos)
+        } else {
+            strength(get(types, k - 1))
+        };
+        let after = if end == len {
+            Some(eos)
+        } else {
+            strength(get(types, end))
+        };
         let fill = match (before, after) {
             (Some(a), Some(b)) if a == b => a,
             _ => embedding,
@@ -273,7 +306,12 @@ pub(crate) fn reorder(levels: &[u8]) -> Vec<usize> {
     let Some(&max) = levels.iter().max() else {
         return order;
     };
-    let min_odd = levels.iter().copied().filter(|l| l % 2 == 1).min().unwrap_or(max + 1);
+    let min_odd = levels
+        .iter()
+        .copied()
+        .filter(|l| l % 2 == 1)
+        .min()
+        .unwrap_or(max + 1);
     let mut lvl = max;
     while lvl >= min_odd && lvl >= 1 {
         let mut k = 0;

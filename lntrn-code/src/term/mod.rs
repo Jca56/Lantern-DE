@@ -3,9 +3,9 @@
 
 mod charwidth;
 pub mod grid;
+pub mod input;
 mod performer;
 pub mod pty;
-pub mod input;
 pub mod render;
 
 pub use grid::{Cell, Color8, TerminalState, Wide};

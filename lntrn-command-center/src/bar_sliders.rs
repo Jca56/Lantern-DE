@@ -50,11 +50,19 @@ fn row_rect(slot: Rect, scale: f32, idx: usize) -> Rect {
 fn track_rect(slot: Rect, scale: f32, idx: usize) -> Rect {
     let row = row_rect(slot, scale, idx);
     let cy = row.y + row.h / 2.0;
-    Rect::new(row.x, cy - TRACK_H * scale / 2.0, TRACK_W * scale, TRACK_H * scale)
+    Rect::new(
+        row.x,
+        cy - TRACK_H * scale / 2.0,
+        TRACK_W * scale,
+        TRACK_H * scale,
+    )
 }
 
 fn slider_index(s: Slider) -> usize {
-    match s { Slider::Transparency => 0, Slider::Blur => 1 }
+    match s {
+        Slider::Transparency => 0,
+        Slider::Blur => 1,
+    }
 }
 
 /// Snap a 0..1 value to the nearest SNAP_STEP multiple.
@@ -102,8 +110,7 @@ pub fn hit_test(slot: Rect, scale: f32, phys_x: f32, phys_y: f32) -> Option<Slid
             track.w + knob_pad * 2.0,
             track.h + knob_pad * 2.0,
         );
-        if phys_x >= hit.x && phys_x <= hit.x + hit.w
-            && phys_y >= hit.y && phys_y <= hit.y + hit.h
+        if phys_x >= hit.x && phys_x <= hit.x + hit.w && phys_y >= hit.y && phys_y <= hit.y + hit.h
         {
             return Some(*s);
         }
@@ -119,7 +126,9 @@ pub fn value_at_cursor(slot: Rect, scale: f32, slider: Slider, phys_x: f32) -> f
 
 /// Commit a new value to lantern.toml. Compositor will pick it up on
 /// the next frame via its mtime cache.
-pub fn set_value(slider: Slider, v: f32) { write_value(slider, v); }
+pub fn set_value(slider: Slider, v: f32) {
+    write_value(slider, v);
+}
 
 /// Draw both sliders. Alpha typically wired to the bar-mode visibility
 /// so they fade in/out with the rest of the collapsed chrome.
@@ -133,7 +142,9 @@ pub fn draw(
     _surface_w: u32,
     _surface_h: u32,
 ) {
-    if alpha < 0.01 { return; }
+    if alpha < 0.01 {
+        return;
+    }
 
     for (i, slider) in [Slider::Transparency, Slider::Blur].iter().enumerate() {
         let track = track_rect(slot, scale, i);
@@ -146,8 +157,7 @@ pub fn draw(
         painter.rect_filled(
             track,
             track_r,
-            Color::from_rgb8(TRACK_RGB.0, TRACK_RGB.1, TRACK_RGB.2)
-                .with_alpha(0.45 * alpha),
+            Color::from_rgb8(TRACK_RGB.0, TRACK_RGB.1, TRACK_RGB.2).with_alpha(0.45 * alpha),
         );
         // Fill up to the value, gold accent.
         if fill_w > 0.0 {
@@ -163,7 +173,9 @@ pub fn draw(
         let knob_cy = track.y + track.h / 2.0;
         let knob_r = KNOB_R * scale * if hovered_or_dragging { 1.10 } else { 1.0 };
         painter.circle_filled(
-            knob_cx, knob_cy, knob_r,
+            knob_cx,
+            knob_cy,
+            knob_r,
             Color::from_rgb8(KNOB_RGB.0, KNOB_RGB.1, KNOB_RGB.2).with_alpha(alpha),
         );
     }

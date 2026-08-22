@@ -129,7 +129,8 @@ fn lookup_app_meta(apps: &AppsProvider, app_id: &str) -> (String, Option<String>
     //    this still recovers both the proper name and the icon.
     for i in 0..apps.count() {
         if let Some(e) = apps.get(i) {
-            if e.icon_name.as_deref()
+            if e.icon_name
+                .as_deref()
                 .is_some_and(|n| n.eq_ignore_ascii_case(app_id))
             {
                 return (e.name.clone(), e.icon_name.clone());
@@ -225,8 +226,8 @@ pub fn compute_layout(
         .collect();
 
     // Magnified plate: width grows to fit larger icons.
-    let mag_icons_w: f32 = mags.iter().map(|m| icon * m).sum::<f32>()
-        + (n as f32 - 1.0).max(0.0) * gap;
+    let mag_icons_w: f32 =
+        mags.iter().map(|m| icon * m).sum::<f32>() + (n as f32 - 1.0).max(0.0) * gap;
     let plate_w = mag_icons_w + pad * 2.0;
     let plate_h = icon + pad * 2.0;
     let plate_x = center_x - plate_w / 2.0;
@@ -282,8 +283,7 @@ pub fn draw(
     painter.rect_filled(
         plate,
         radius,
-        Color::from_rgb8(PLATE_RGB.0, PLATE_RGB.1, PLATE_RGB.2)
-            .with_alpha(PLATE_ALPHA * alpha),
+        Color::from_rgb8(PLATE_RGB.0, PLATE_RGB.1, PLATE_RGB.2).with_alpha(PLATE_ALPHA * alpha),
     );
     painter.rect_stroke_sdf(
         plate,
@@ -344,8 +344,7 @@ pub fn draw(
             painter.rect_filled(
                 Rect::new(indicator_x, indicator_y, indicator_w, indicator_h),
                 indicator_h * 0.5,
-                Color::from_rgb8(ACCENT_RGB.0, ACCENT_RGB.1, ACCENT_RGB.2)
-                    .with_alpha(0.95 * alpha),
+                Color::from_rgb8(ACCENT_RGB.0, ACCENT_RGB.1, ACCENT_RGB.2).with_alpha(0.95 * alpha),
             );
         }
     }
@@ -466,14 +465,10 @@ pub fn hit_test_preview(
     let scale = layout.scale;
     for (i, tile) in rects.iter().enumerate() {
         let close = preview_close_button_rect(*tile, scale);
-        if px >= close.x && px <= close.x + close.w
-            && py >= close.y && py <= close.y + close.h
-        {
+        if px >= close.x && px <= close.x + close.w && py >= close.y && py <= close.y + close.h {
             return Some((i, PreviewHit::Close));
         }
-        if px >= tile.x && px <= tile.x + tile.w
-            && py >= tile.y && py <= tile.y + tile.h
-        {
+        if px >= tile.x && px <= tile.x + tile.w && py >= tile.y && py <= tile.y + tile.h {
             return Some((i, PreviewHit::Body));
         }
     }
@@ -525,8 +520,12 @@ pub fn draw_preview(
                 *tile,
                 radius,
                 2.0 * scale,
-                Color::from_rgb8(ACCENT_RGB_PREVIEW.0, ACCENT_RGB_PREVIEW.1, ACCENT_RGB_PREVIEW.2)
-                    .with_alpha(0.70 * alpha),
+                Color::from_rgb8(
+                    ACCENT_RGB_PREVIEW.0,
+                    ACCENT_RGB_PREVIEW.1,
+                    ACCENT_RGB_PREVIEW.2,
+                )
+                .with_alpha(0.70 * alpha),
             );
         }
 

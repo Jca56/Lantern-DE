@@ -86,8 +86,18 @@ impl TermPanel {
         let cols = 80;
         let rows = 24;
         let mut terminal = TerminalState::new(cols, rows);
-        terminal.default_fg = crate::term::Color8 { r: 220, g: 225, b: 240, a: 255 };
-        terminal.default_bg = crate::term::Color8 { r: 0, g: 0, b: 0, a: 0 };
+        terminal.default_fg = crate::term::Color8 {
+            r: 220,
+            g: 225,
+            b: 240,
+            a: 255,
+        };
+        terminal.default_bg = crate::term::Color8 {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 0,
+        };
         terminal.attr_fg = terminal.default_fg;
         terminal.attr_bg = terminal.default_bg;
         pty.resize(cols as u16, rows as u16);
@@ -133,7 +143,13 @@ impl TermPanel {
 
     /// Handle a keyboard event. Returns true if consumed.
     pub fn handle_key(&mut self, key: &Key, mods: ModifiersState) -> bool {
-        crate::term::input::handle_key(key, winit::event::ElementState::Pressed, mods, &mut self.terminal, &self.pty)
+        crate::term::input::handle_key(
+            key,
+            winit::event::ElementState::Pressed,
+            mods,
+            &mut self.terminal,
+            &self.pty,
+        )
     }
 
     /// Compute the panel rect given the full editor area and scale.
@@ -145,7 +161,12 @@ impl TermPanel {
     /// Compute the editor rect (above the panel) given the full area.
     pub fn editor_rect_above(full_area: Rect, scale: f32) -> Rect {
         let panel_h = (full_area.h * PANEL_FRACTION).max(60.0 * scale);
-        Rect::new(full_area.x, full_area.y, full_area.w, (full_area.h - panel_h).max(0.0))
+        Rect::new(
+            full_area.x,
+            full_area.y,
+            full_area.w,
+            (full_area.h - panel_h).max(0.0),
+        )
     }
 
     /// Draw the terminal panel.
@@ -165,7 +186,14 @@ impl TermPanel {
         painter.rect_filled(rect, 0.0, palette.surface);
 
         // Top separator line.
-        painter.line(rect.x, rect.y, rect.x + rect.w, rect.y, 1.0 * s, palette.surface_2);
+        painter.line(
+            rect.x,
+            rect.y,
+            rect.x + rect.w,
+            rect.y,
+            1.0 * s,
+            palette.surface_2,
+        );
 
         let font_px = FONT_SIZE * s;
         let pad_x = PAD_LEFT * s;

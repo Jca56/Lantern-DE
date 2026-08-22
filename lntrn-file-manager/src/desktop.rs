@@ -121,7 +121,9 @@ fn apps_for_mime(mime: &str) -> Vec<DesktopApp> {
     let mut seen = HashMap::new(); // desktop_id → DesktopApp (dedup)
 
     for dir in &dirs {
-        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) != Some("desktop") {
@@ -155,10 +157,13 @@ fn parse_desktop_file(path: &Path, mime: &str) -> Option<DesktopApp> {
             in_desktop_entry = line == "[Desktop Entry]";
             continue;
         }
-        if !in_desktop_entry { continue; }
+        if !in_desktop_entry {
+            continue;
+        }
 
         if let Some(val) = line.strip_prefix("Name=") {
-            if name.is_none() { // first Name= wins (avoid locale overrides)
+            if name.is_none() {
+                // first Name= wins (avoid locale overrides)
                 name = Some(val.to_string());
             }
         } else if let Some(val) = line.strip_prefix("Exec=") {
@@ -172,20 +177,28 @@ fn parse_desktop_file(path: &Path, mime: &str) -> Option<DesktopApp> {
         }
     }
 
-    if no_display || hidden { return None; }
+    if no_display || hidden {
+        return None;
+    }
     let name = name?;
     let exec_raw = exec?;
-    if mime_types.is_empty() { return None; }
+    if mime_types.is_empty() {
+        return None;
+    }
 
     // Check if any of the MIME types match
-    let matches = mime_types.split(';')
+    let matches = mime_types
+        .split(';')
         .any(|m| m.trim().eq_ignore_ascii_case(mime));
-    if !matches { return None; }
+    if !matches {
+        return None;
+    }
 
     // Clean up Exec: strip field codes (%f, %F, %u, %U, etc.)
     let exec_clean = clean_exec(&exec_raw);
 
-    let desktop_id = path.file_stem()
+    let desktop_id = path
+        .file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
 

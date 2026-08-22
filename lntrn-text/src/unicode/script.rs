@@ -33,7 +33,11 @@ pub(crate) fn script_runs(text: &str) -> Vec<ScriptRun> {
                 run.script = s;
                 run.end = end;
             }
-            _ => runs.push(ScriptRun { start: i, end, script: s }),
+            _ => runs.push(ScriptRun {
+                start: i,
+                end,
+                script: s,
+            }),
         }
     }
     runs

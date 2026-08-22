@@ -1,8 +1,7 @@
 use wayland_client::{
     protocol::{
         wl_callback, wl_compositor, wl_data_device, wl_data_device_manager, wl_data_offer,
-        wl_data_source, wl_keyboard, wl_output, wl_pointer, wl_registry, wl_seat,
-        wl_surface,
+        wl_data_source, wl_keyboard, wl_output, wl_pointer, wl_registry, wl_seat, wl_surface,
     },
     Connection, Dispatch, QueueHandle, WEnum,
 };
@@ -25,10 +24,19 @@ const BTN_RIGHT: u32 = 0x111;
 
 impl Dispatch<wl_registry::WlRegistry, ()> for State {
     fn event(
-        state: &mut Self, registry: &wl_registry::WlRegistry,
-        event: wl_registry::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>,
+        state: &mut Self,
+        registry: &wl_registry::WlRegistry,
+        event: wl_registry::Event,
+        _: &(),
+        _: &Connection,
+        qh: &QueueHandle<Self>,
     ) {
-        if let wl_registry::Event::Global { name, interface, version } = event {
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
             match interface.as_str() {
                 "wl_compositor" => {
                     state.compositor = Some(registry.bind(name, version.min(6), qh, ()));
@@ -55,8 +63,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                     state.cursor_shape_mgr = Some(registry.bind(name, version.min(1), qh, ()));
                 }
                 "wp_fractional_scale_manager_v1" => {
-                    state.fractional_scale_mgr =
-                        Some(registry.bind(name, version.min(1), qh, ()));
+                    state.fractional_scale_mgr = Some(registry.bind(name, version.min(1), qh, ()));
                 }
                 _ => {}
             }
@@ -65,24 +72,68 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
 }
 
 impl Dispatch<wl_compositor::WlCompositor, ()> for State {
-    fn event(_: &mut Self, _: &wl_compositor::WlCompositor, _: wl_compositor::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_compositor::WlCompositor,
+        _: wl_compositor::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wl_surface::WlSurface, ()> for State {
-    fn event(_: &mut Self, _: &wl_surface::WlSurface, _: wl_surface::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_surface::WlSurface,
+        _: wl_surface::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wp_viewporter::WpViewporter, ()> for State {
-    fn event(_: &mut Self, _: &wp_viewporter::WpViewporter, _: wp_viewporter::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wp_viewporter::WpViewporter,
+        _: wp_viewporter::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wp_viewport::WpViewport, ()> for State {
-    fn event(_: &mut Self, _: &wp_viewport::WpViewport, _: wp_viewport::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wp_viewport::WpViewport,
+        _: wp_viewport::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1, ()> for State {
-    fn event(_: &mut Self, _: &wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1, _: wp_fractional_scale_manager_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1,
+        _: wp_fractional_scale_manager_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ()> for State {
     fn event(
-        state: &mut Self, _: &wp_fractional_scale_v1::WpFractionalScaleV1,
-        event: wp_fractional_scale_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        _: &wp_fractional_scale_v1::WpFractionalScaleV1,
+        event: wp_fractional_scale_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         if let wp_fractional_scale_v1::Event::PreferredScale { scale } = event {
             if scale > 0 && scale != state.preferred_scale_120 {
@@ -96,8 +147,12 @@ impl Dispatch<wp_fractional_scale_v1::WpFractionalScaleV1, ()> for State {
 
 impl Dispatch<xdg_wm_base::XdgWmBase, ()> for State {
     fn event(
-        _: &mut Self, wm_base: &xdg_wm_base::XdgWmBase,
-        event: xdg_wm_base::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        _: &mut Self,
+        wm_base: &xdg_wm_base::XdgWmBase,
+        event: xdg_wm_base::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         if let xdg_wm_base::Event::Ping { serial } = event {
             wm_base.pong(serial);
@@ -107,8 +162,12 @@ impl Dispatch<xdg_wm_base::XdgWmBase, ()> for State {
 
 impl Dispatch<xdg_surface::XdgSurface, ()> for State {
     fn event(
-        state: &mut Self, xdg_surface: &xdg_surface::XdgSurface,
-        event: xdg_surface::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        xdg_surface: &xdg_surface::XdgSurface,
+        event: xdg_surface::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         if let xdg_surface::Event::Configure { serial } = event {
             xdg_surface.ack_configure(serial);
@@ -120,13 +179,25 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for State {
 
 impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
     fn event(
-        state: &mut Self, _: &xdg_toplevel::XdgToplevel,
-        event: xdg_toplevel::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        _: &xdg_toplevel::XdgToplevel,
+        event: xdg_toplevel::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         match event {
-            xdg_toplevel::Event::Configure { width, height, states } => {
-                if width > 0 { state.width = width as u32; }
-                if height > 0 { state.height = height as u32; }
+            xdg_toplevel::Event::Configure {
+                width,
+                height,
+                states,
+            } => {
+                if width > 0 {
+                    state.width = width as u32;
+                }
+                if height > 0 {
+                    state.height = height as u32;
+                }
                 // Parse states to detect maximized
                 state.maximized = states.chunks_exact(4).any(|chunk| {
                     let val = u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
@@ -144,8 +215,12 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
 
 impl Dispatch<wl_output::WlOutput, ()> for State {
     fn event(
-        state: &mut Self, _: &wl_output::WlOutput,
-        event: wl_output::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        _: &wl_output::WlOutput,
+        event: wl_output::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         // Integer wl_output scale, only used as a fallback when the compositor
         // doesn't offer wp_fractional_scale_v1 (see State::fractional_scale).
@@ -156,17 +231,31 @@ impl Dispatch<wl_output::WlOutput, ()> for State {
 }
 
 impl Dispatch<wl_callback::WlCallback, ()> for State {
-    fn event(state: &mut Self, _: &wl_callback::WlCallback, _: wl_callback::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+    fn event(
+        state: &mut Self,
+        _: &wl_callback::WlCallback,
+        _: wl_callback::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
         state.frame_done = true;
     }
 }
 
 impl Dispatch<wl_seat::WlSeat, ()> for State {
     fn event(
-        state: &mut Self, seat: &wl_seat::WlSeat,
-        event: wl_seat::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>,
+        state: &mut Self,
+        seat: &wl_seat::WlSeat,
+        event: wl_seat::Event,
+        _: &(),
+        _: &Connection,
+        qh: &QueueHandle<Self>,
     ) {
-        if let wl_seat::Event::Capabilities { capabilities: WEnum::Value(cap) } = event {
+        if let wl_seat::Event::Capabilities {
+            capabilities: WEnum::Value(cap),
+        } = event
+        {
             if cap.contains(wl_seat::Capability::Pointer) {
                 let ptr = seat.get_pointer(qh, ());
                 if let Some(mgr) = &state.cursor_shape_mgr {
@@ -183,11 +272,21 @@ impl Dispatch<wl_seat::WlSeat, ()> for State {
 
 impl Dispatch<wl_pointer::WlPointer, ()> for State {
     fn event(
-        state: &mut Self, _: &wl_pointer::WlPointer,
-        event: wl_pointer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        _: &wl_pointer::WlPointer,
+        event: wl_pointer::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         match event {
-            wl_pointer::Event::Enter { serial, surface, surface_x, surface_y, .. } => {
+            wl_pointer::Event::Enter {
+                serial,
+                surface,
+                surface_x,
+                surface_y,
+                ..
+            } => {
                 state.pointer_in_surface = true;
                 state.cursor_x = surface_x;
                 state.cursor_y = surface_y;
@@ -201,18 +300,33 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 state.pointer_surface = None;
                 state.frame_done = true;
             }
-            wl_pointer::Event::Motion { surface_x, surface_y, .. } => {
+            wl_pointer::Event::Motion {
+                surface_x,
+                surface_y,
+                ..
+            } => {
                 state.cursor_x = surface_x;
                 state.cursor_y = surface_y;
                 state.frame_done = true;
             }
-            wl_pointer::Event::Button { button, state: btn_state, serial, .. } => {
+            wl_pointer::Event::Button {
+                button,
+                state: btn_state,
+                serial,
+                ..
+            } => {
                 state.pointer_serial = serial;
                 let pressed = btn_state == WEnum::Value(wl_pointer::ButtonState::Pressed);
                 let released = btn_state == WEnum::Value(wl_pointer::ButtonState::Released);
-                if button == BTN_LEFT && pressed { state.left_pressed = true; }
-                if button == BTN_LEFT && released { state.left_released = true; }
-                if button == BTN_RIGHT && pressed { state.right_clicked = true; }
+                if button == BTN_LEFT && pressed {
+                    state.left_pressed = true;
+                }
+                if button == BTN_LEFT && released {
+                    state.left_released = true;
+                }
+                if button == BTN_RIGHT && pressed {
+                    state.right_clicked = true;
+                }
                 state.frame_done = true;
             }
             wl_pointer::Event::Axis { axis, value, .. } => {
@@ -228,17 +342,25 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
 
 impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
     fn event(
-        state: &mut Self, _: &wl_keyboard::WlKeyboard,
-        event: wl_keyboard::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        _: &wl_keyboard::WlKeyboard,
+        event: wl_keyboard::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         match event {
-            wl_keyboard::Event::Key { key, state: key_state, .. } => {
+            wl_keyboard::Event::Key {
+                key,
+                state: key_state,
+                ..
+            } => {
                 if key_state == WEnum::Value(wl_keyboard::KeyState::Pressed) {
                     state.key_pressed = Some(key);
                     state.held_key = Some(key);
                     state.repeat_started = false;
-                    state.repeat_deadline = std::time::Instant::now()
-                        + std::time::Duration::from_millis(300);
+                    state.repeat_deadline =
+                        std::time::Instant::now() + std::time::Duration::from_millis(300);
                 } else if key_state == WEnum::Value(wl_keyboard::KeyState::Released) {
                     if state.held_key == Some(key) {
                         state.held_key = None;
@@ -259,22 +381,50 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
 // ── Cursor shape Dispatch impls ─────────────────────────────────────────────
 
 impl Dispatch<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1, ()> for State {
-    fn event(_: &mut Self, _: &wp_cursor_shape_manager_v1::WpCursorShapeManagerV1, _: wp_cursor_shape_manager_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wp_cursor_shape_manager_v1::WpCursorShapeManagerV1,
+        _: wp_cursor_shape_manager_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1, ()> for State {
-    fn event(_: &mut Self, _: &wp_cursor_shape_device_v1::WpCursorShapeDeviceV1, _: wp_cursor_shape_device_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wp_cursor_shape_device_v1::WpCursorShapeDeviceV1,
+        _: wp_cursor_shape_device_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 // ── DnD Dispatch impls ──────────────────────────────────────────────────────
 
 impl Dispatch<wl_data_device_manager::WlDataDeviceManager, ()> for State {
-    fn event(_: &mut Self, _: &wl_data_device_manager::WlDataDeviceManager, _: wl_data_device_manager::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_data_device_manager::WlDataDeviceManager,
+        _: wl_data_device_manager::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 impl Dispatch<wl_data_device::WlDataDevice, ()> for State {
     fn event(
-        state: &mut Self, _: &wl_data_device::WlDataDevice,
-        event: wl_data_device::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        _: &wl_data_device::WlDataDevice,
+        event: wl_data_device::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         match event {
             wl_data_device::Event::Enter { surface, x, y, .. } => {
@@ -313,8 +463,12 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for State {
 
 impl Dispatch<wl_data_source::WlDataSource, ()> for State {
     fn event(
-        state: &mut Self, _source: &wl_data_source::WlDataSource,
-        event: wl_data_source::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        _source: &wl_data_source::WlDataSource,
+        event: wl_data_source::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         match event {
             wl_data_source::Event::Send { mime_type, fd } => {
@@ -326,7 +480,9 @@ impl Dispatch<wl_data_source::WlDataSource, ()> for State {
                         let _ = file.write_all(uri.as_bytes());
                     }
                 } else if mime_type == "text/plain" {
-                    let text: Vec<String> = state.dnd_paths.iter()
+                    let text: Vec<String> = state
+                        .dnd_paths
+                        .iter()
                         .map(|p| p.display().to_string())
                         .collect();
                     let _ = file.write_all(text.join("\n").as_bytes());
@@ -344,25 +500,53 @@ impl Dispatch<wl_data_source::WlDataSource, ()> for State {
 }
 
 impl Dispatch<wl_data_offer::WlDataOffer, ()> for State {
-    fn event(_: &mut Self, _: &wl_data_offer::WlDataOffer, _: wl_data_offer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_data_offer::WlDataOffer,
+        _: wl_data_offer::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 // ── Layer shell (desktop widget mode) ──────────────────────────────────────
 
 impl Dispatch<zwlr_layer_shell_v1::ZwlrLayerShellV1, ()> for State {
-    fn event(_: &mut Self, _: &zwlr_layer_shell_v1::ZwlrLayerShellV1, _: zwlr_layer_shell_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &zwlr_layer_shell_v1::ZwlrLayerShellV1,
+        _: zwlr_layer_shell_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for State {
     fn event(
-        state: &mut Self, layer_surface: &zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
-        event: zwlr_layer_surface_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        layer_surface: &zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+        event: zwlr_layer_surface_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         match event {
-            zwlr_layer_surface_v1::Event::Configure { serial, width, height } => {
+            zwlr_layer_surface_v1::Event::Configure {
+                serial,
+                width,
+                height,
+            } => {
                 layer_surface.ack_configure(serial);
-                if width > 0 { state.width = width; }
-                if height > 0 { state.height = height; }
+                if width > 0 {
+                    state.width = width;
+                }
+                if height > 0 {
+                    state.height = height;
+                }
                 state.configured = true;
                 state.frame_done = true;
             }

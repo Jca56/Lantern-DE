@@ -49,7 +49,11 @@ impl Cbdt {
             let index_array = cblc + read_u32_at(d, rec).ok()? as usize;
             let subtable_count = read_u32_at(d, rec + 8).ok()?;
             let ppem = read_u8_at(d, rec + 45).ok()?; // ppemY
-            strikes.push(Strike { index_array, subtable_count, ppem });
+            strikes.push(Strike {
+                index_array,
+                subtable_count,
+                ppem,
+            });
         }
         if strikes.is_empty() {
             return None;
@@ -194,14 +198,23 @@ mod tests {
         let font = Font::parse(data, 0).expect("CBDT font should parse");
         let gid = font.glyph_index('🦊');
         assert_ne!(gid, 0, "fox emoji should map");
-        let glyph = font.color_glyph(gid, 32.0).expect("CBDT strike should decode");
-        assert!(glyph.width >= 24 && glyph.width <= 48, "unexpected size {}", glyph.width);
+        let glyph = font
+            .color_glyph(gid, 32.0)
+            .expect("CBDT strike should decode");
+        assert!(
+            glyph.width >= 24 && glyph.width <= 48,
+            "unexpected size {}",
+            glyph.width
+        );
         // Must be chromatic (the fox is orange) with real alpha coverage.
         let chroma = glyph
             .rgba
             .chunks_exact(4)
             .filter(|px| px[3] > 128 && (px[0] as i32 - px[2] as i32).abs() > 30)
             .count();
-        assert!(chroma > 50, "fox should be orange, got {chroma} chromatic px");
+        assert!(
+            chroma > 50,
+            "fox should be orange, got {chroma} chromatic px"
+        );
     }
 }

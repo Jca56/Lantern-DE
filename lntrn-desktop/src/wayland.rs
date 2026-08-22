@@ -17,9 +17,7 @@ use wayland_protocols::wp::cursor_shape::v1::client::{
     wp_cursor_shape_device_v1, wp_cursor_shape_manager_v1,
 };
 use wayland_protocols::wp::viewporter::client::wp_viewporter;
-use wayland_protocols_wlr::layer_shell::v1::client::{
-    zwlr_layer_shell_v1, zwlr_layer_surface_v1,
-};
+use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
 use crate::assets::IconCache;
 use crate::fs_watch::DesktopWatcher;
@@ -162,7 +160,8 @@ pub fn run() -> Result<()> {
     layer_surface.set_anchor(Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right);
     layer_surface.set_size(0, 0);
     layer_surface.set_exclusive_zone(0);
-    layer_surface.set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::OnDemand);
+    layer_surface
+        .set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::OnDemand);
     surface.commit();
 
     while !state.configured || state.width == 0 || state.height == 0 {
@@ -416,13 +415,7 @@ pub fn run() -> Result<()> {
         }
         if state.right_pressed {
             state.right_pressed = false;
-            input::on_right_press(
-                &mut app,
-                cx,
-                cy,
-                state.width as f32,
-                state.height as f32,
-            );
+            input::on_right_press(&mut app, cx, cy, state.width as f32, state.height as f32);
         }
         if state.right_released {
             state.right_released = false;
@@ -520,7 +513,8 @@ pub fn run() -> Result<()> {
         // Rainbow widget paints under icons so dragging it doesn't hide
         // file labels.
         if app.widgets.rainbow_enabled {
-            let (rx, ry) = input::resolve_rainbow_pos(&app, state.width as f32, state.height as f32);
+            let (rx, ry) =
+                input::resolve_rainbow_pos(&app, state.width as f32, state.height as f32);
             let elapsed = rainbow_start.elapsed().as_secs_f32();
             crate::rainbow::draw(&mut painter, rx, ry, s, elapsed);
         }

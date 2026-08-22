@@ -56,17 +56,27 @@ pub fn modal_regions(panel: Rect, panel_top_y: f32, scale: f32) -> ModalRegions 
     let cancel_btn = Rect::new(box_x + pad, buttons_y, half_w, btn_h);
     let connect_btn = Rect::new(box_x + pad + half_w + btn_gap, buttons_y, half_w, btn_h);
 
-    let backdrop = Rect::new(panel.x, panel_top_y, panel.w, panel.h - (panel_top_y - panel.y));
+    let backdrop = Rect::new(
+        panel.x,
+        panel_top_y,
+        panel.w,
+        panel.h - (panel_top_y - panel.y),
+    );
 
-    ModalRegions { backdrop, box_rect, field: field_rect, connect_btn, cancel_btn }
+    ModalRegions {
+        backdrop,
+        box_rect,
+        field: field_rect,
+        connect_btn,
+        cancel_btn,
+    }
 }
 
 /// Hit-test a click against the modal. Returns which region was hit.
 pub fn hit_test_modal(panel: Rect, panel_top_y: f32, scale: f32, x: f32, y: f32) -> ModalHit {
     let r = modal_regions(panel, panel_top_y, scale);
-    let inside = |rect: Rect| {
-        x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h
-    };
+    let inside =
+        |rect: Rect| x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h;
     if inside(r.connect_btn) {
         ModalHit::Connect
     } else if inside(r.cancel_btn) {
@@ -115,7 +125,11 @@ pub(super) fn draw_modal(
     let muted = white.with_alpha(0.55 * alpha);
 
     // Backdrop dim — covers the network list behind the modal.
-    painter.rect_filled(r.backdrop, 0.0, Color::BLACK.with_alpha(MODAL_BACKDROP_ALPHA * alpha));
+    painter.rect_filled(
+        r.backdrop,
+        0.0,
+        Color::BLACK.with_alpha(MODAL_BACKDROP_ALPHA * alpha),
+    );
 
     // Modal box.
     painter.rect_filled(
@@ -153,8 +167,16 @@ pub(super) fn draw_modal(
     // Masked password.
     let mask_count = prompt.input.query().chars().count();
     let mask = "•".repeat(mask_count);
-    let display: &str = if mask_count == 0 { "Enter password" } else { &mask };
-    let display_color = if mask_count == 0 { muted } else { white.with_alpha(alpha) };
+    let display: &str = if mask_count == 0 {
+        "Enter password"
+    } else {
+        &mask
+    };
+    let display_color = if mask_count == 0 {
+        muted
+    } else {
+        white.with_alpha(alpha)
+    };
     let field_text_x = r.field.x + 12.0 * scale;
     let field_text_y = r.field.y + (r.field.h - field_font) / 2.0;
     text.queue(
@@ -194,11 +216,7 @@ pub(super) fn draw_modal(
     }
 
     // Cancel button (subtle outline).
-    painter.rect_filled(
-        r.cancel_btn,
-        8.0 * scale,
-        white.with_alpha(0.06 * alpha),
-    );
+    painter.rect_filled(r.cancel_btn, 8.0 * scale, white.with_alpha(0.06 * alpha));
     let cancel_label = "Cancel";
     let cancel_w = text.measure_width(cancel_label, btn_font);
     text.queue(
@@ -215,12 +233,12 @@ pub(super) fn draw_modal(
     // Connect button (gold). Dim when connecting or empty.
     let can_submit = !prompt.input.query().is_empty() && !prompt.connecting;
     let conn_alpha = if can_submit { alpha } else { 0.5 * alpha };
-    painter.rect_filled(
-        r.connect_btn,
-        8.0 * scale,
-        gold.with_alpha(conn_alpha),
-    );
-    let connect_label = if prompt.connecting { "Connecting…" } else { "Connect" };
+    painter.rect_filled(r.connect_btn, 8.0 * scale, gold.with_alpha(conn_alpha));
+    let connect_label = if prompt.connecting {
+        "Connecting…"
+    } else {
+        "Connect"
+    };
     let connect_w = text.measure_width(connect_label, btn_font);
     text.queue(
         connect_label,

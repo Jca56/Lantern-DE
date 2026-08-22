@@ -55,7 +55,16 @@ pub fn draw_inline(
     // Top line: "GPU 45%" + temperature (colored by heat).
     let util = format!("GPU {}%", g.util_pct.round() as i32);
     let util_w = text.measure_width(&util, top_font);
-    text.queue(&util, top_font, x, cy, white, util_w + 8.0 * scale, surface_w, surface_h);
+    text.queue(
+        &util,
+        top_font,
+        x,
+        cy,
+        white,
+        util_w + 8.0 * scale,
+        surface_w,
+        surface_h,
+    );
 
     let temp = format!("{}°", g.temp_c.round() as i32);
     let temp_w = text.measure_width(&temp, top_font);

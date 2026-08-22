@@ -12,7 +12,9 @@
 //! layer without affecting the laptop.
 
 use lntrn_render::{Painter, Rect, TextRenderer};
-use lntrn_ui::gpu::{Button, ButtonVariant, FoxPalette, InteractionContext, ScrollArea, Scrollbar, Toggle};
+use lntrn_ui::gpu::{
+    Button, ButtonVariant, FoxPalette, InteractionContext, ScrollArea, Scrollbar, Toggle,
+};
 
 use crate::config::{default_layer_maps, machine_hostname, LanternConfig};
 use crate::panels::{
@@ -62,7 +64,10 @@ const SHORTCUTS: &[(&str, &str)] = &[
     ("Super + Shift + Arrow", "Snap window to edge"),
     ("Super + Ctrl + Arrow", "Swap with neighbour"),
     ("Super + Alt + \u{2191}/\u{2193}", "Maximize / minimize"),
-    ("Super + Alt + \u{2190}/\u{2192}", "Previous / next workspace"),
+    (
+        "Super + Alt + \u{2190}/\u{2192}",
+        "Previous / next workspace",
+    ),
     ("Super + 1-9", "Switch to workspace"),
     ("Super + Shift + 1-9", "Move window to workspace"),
     ("Alt + Tab", "Window switcher"),
@@ -82,7 +87,10 @@ pub struct KeybindsPanelState {
 
 impl KeybindsPanelState {
     pub fn new() -> Self {
-        Self { scroll: 0.0, host: machine_hostname() }
+        Self {
+            scroll: 0.0,
+            host: machine_hostname(),
+        }
     }
 }
 
@@ -134,7 +142,12 @@ pub fn draw_keybinds_panel(
         + CARD_GAP * s * heights.len().saturating_sub(1) as f32;
 
     if scroll_delta != 0.0 {
-        ScrollArea::apply_scroll(&mut state.scroll, scroll_delta * 40.0, content_height, panel_h);
+        ScrollArea::apply_scroll(
+            &mut state.scroll,
+            scroll_delta * 40.0,
+            content_height,
+            panel_h,
+        );
     }
 
     let viewport = Rect::new(x, y, w, panel_h);
@@ -145,8 +158,17 @@ pub fn draw_keybinds_panel(
     // ── Arrow Key Layer (enable) ────────────────────────────────────────
     {
         let mut cy = draw_section_card(
-            painter, text, fox, "Arrow Key Layer",
-            card_x, cy_top, card_w, layer_card_h, s, sw, sh,
+            painter,
+            text,
+            fox,
+            "Arrow Key Layer",
+            card_x,
+            cy_top,
+            card_w,
+            layer_card_h,
+            s,
+            sw,
+            sh,
         );
         // Enable toggle — short and plain.
         {
@@ -156,23 +178,52 @@ pub fn draw_keybinds_panel(
                 .scale(s);
             let track = toggle.track_rect();
             let zone = ix.add_zone(ZONE_LAYER_ENABLED, track);
-            toggle.hovered(zone.is_hovered()).draw(painter, text, fox, sw, sh);
+            toggle
+                .hovered(zone.is_hovered())
+                .draw(painter, text, fox, sw, sh);
             cy += row;
         }
         // One-line note: these settings are local to this machine.
         let note = format!("Settings apply to this computer ({}).", state.host);
-        text.queue(&note, vsz, card_inner_x, cy, fox.text_secondary, card_inner_w, sw, sh);
+        text.queue(
+            &note,
+            vsz,
+            card_inner_x,
+            cy,
+            fox.text_secondary,
+            card_inner_w,
+            sw,
+            sh,
+        );
         cy_top += layer_card_h + CARD_GAP * s;
     }
 
     // ── Trigger Key ─────────────────────────────────────────────────────
     if enabled {
         let cy = draw_section_card(
-            painter, text, fox, "Trigger Key",
-            card_x, cy_top, card_w, trigger_card_h, s, sw, sh,
+            painter,
+            text,
+            fox,
+            "Trigger Key",
+            card_x,
+            cy_top,
+            card_w,
+            trigger_card_h,
+            s,
+            sw,
+            sh,
         );
         let hint = "Hold this key, then tap a mapped key. (fn is firmware-locked, so Menu is the default.)";
-        text.queue(hint, vsz, card_inner_x, cy, fox.text_secondary, card_inner_w, sw, sh);
+        text.queue(
+            hint,
+            vsz,
+            card_inner_x,
+            cy,
+            fox.text_secondary,
+            card_inner_w,
+            sw,
+            sh,
+        );
 
         let btn_w = 130.0 * s;
         let btn_h = 40.0 * s;
@@ -184,7 +235,11 @@ pub fn draw_keybinds_panel(
             let zone = ix.add_zone(ZONE_LAYER_KEY_BASE + i as u32, rect);
             let selected = config.keybinds.layer_key.eq_ignore_ascii_case(name);
             Button::new(rect, label)
-                .variant(if selected { ButtonVariant::Primary } else { ButtonVariant::Ghost })
+                .variant(if selected {
+                    ButtonVariant::Primary
+                } else {
+                    ButtonVariant::Ghost
+                })
                 .hovered(zone.is_hovered())
                 .pressed(zone.is_active())
                 .scale(s)
@@ -196,17 +251,38 @@ pub fn draw_keybinds_panel(
     // ── Key Maps ────────────────────────────────────────────────────────
     if enabled {
         let mut cy = draw_section_card(
-            painter, text, fox, "Key Maps",
-            card_x, cy_top, card_w, maps_card_h, s, sw, sh,
+            painter,
+            text,
+            fox,
+            "Key Maps",
+            card_x,
+            cy_top,
+            card_w,
+            maps_card_h,
+            s,
+            sw,
+            sh,
         );
         // Header hint + Reset to defaults button
         {
-            text.queue("Hold the trigger, tap the source key \u{2192} sends:",
-                vsz, card_inner_x, cy + (row - vsz) / 2.0, fox.text_secondary,
-                card_inner_w - 160.0 * s, sw, sh);
+            text.queue(
+                "Hold the trigger, tap the source key \u{2192} sends:",
+                vsz,
+                card_inner_x,
+                cy + (row - vsz) / 2.0,
+                fox.text_secondary,
+                card_inner_w - 160.0 * s,
+                sw,
+                sh,
+            );
             let btn_w = 150.0 * s;
             let btn_h = 36.0 * s;
-            let rect = Rect::new(card_inner_x + card_inner_w - btn_w, cy + (row - btn_h) / 2.0, btn_w, btn_h);
+            let rect = Rect::new(
+                card_inner_x + card_inner_w - btn_w,
+                cy + (row - btn_h) / 2.0,
+                btn_w,
+                btn_h,
+            );
             let zone = ix.add_zone(ZONE_MAP_RESET, rect);
             Button::new(rect, "Reset Defaults")
                 .variant(ButtonVariant::Ghost)
@@ -221,18 +297,41 @@ pub fn draw_keybinds_panel(
             let (from, to) = pair.split_once('=').unwrap_or((pair.as_str(), ""));
             // Source key label, e.g. "W"
             let src = from.trim().to_ascii_uppercase();
-            text.queue(&src, lsz, card_inner_x, cy + (row - lsz) / 2.0, fox.text, 60.0 * s, sw, sh);
+            text.queue(
+                &src,
+                lsz,
+                card_inner_x,
+                cy + (row - lsz) / 2.0,
+                fox.text,
+                60.0 * s,
+                sw,
+                sh,
+            );
             // Arrow separator
-            text.queue("\u{2192}", lsz, card_inner_x + 64.0 * s, cy + (row - lsz) / 2.0,
-                fox.text_secondary, 30.0 * s, sw, sh);
+            text.queue(
+                "\u{2192}",
+                lsz,
+                card_inner_x + 64.0 * s,
+                cy + (row - lsz) / 2.0,
+                fox.text_secondary,
+                30.0 * s,
+                sw,
+                sh,
+            );
             // Target as a cycle button
-            let to_label = TARGETS.iter()
+            let to_label = TARGETS
+                .iter()
                 .find(|(n, _)| n.eq_ignore_ascii_case(to.trim()))
                 .map(|(_, l)| *l)
                 .unwrap_or(to.trim());
             let btn_w = 170.0 * s;
             let btn_h = 36.0 * s;
-            let rect = Rect::new(card_inner_x + 104.0 * s, cy + (row - btn_h) / 2.0, btn_w, btn_h);
+            let rect = Rect::new(
+                card_inner_x + 104.0 * s,
+                cy + (row - btn_h) / 2.0,
+                btn_w,
+                btn_h,
+            );
             let zone = ix.add_zone(ZONE_MAP_CYCLE_BASE + i as u32, rect);
             Button::new(rect, to_label)
                 .variant(ButtonVariant::Ghost)
@@ -248,15 +347,41 @@ pub fn draw_keybinds_panel(
     // ── Shortcuts (read-only reference) ─────────────────────────────────
     {
         let mut cy = draw_section_card(
-            painter, text, fox, "Shortcuts (reference)",
-            card_x, cy_top, card_w, shortcuts_card_h, s, sw, sh,
+            painter,
+            text,
+            fox,
+            "Shortcuts (reference)",
+            card_x,
+            cy_top,
+            card_w,
+            shortcuts_card_h,
+            s,
+            sw,
+            sh,
         );
         let line_h = row * 0.78;
         let chord_w = 240.0 * s;
         for (chord, desc) in SHORTCUTS {
-            text.queue(chord, vsz, card_inner_x, cy + (line_h - vsz) / 2.0, fox.text, chord_w, sw, sh);
-            text.queue(desc, vsz, card_inner_x + chord_w, cy + (line_h - vsz) / 2.0,
-                fox.text_secondary, card_inner_w - chord_w, sw, sh);
+            text.queue(
+                chord,
+                vsz,
+                card_inner_x,
+                cy + (line_h - vsz) / 2.0,
+                fox.text,
+                chord_w,
+                sw,
+                sh,
+            );
+            text.queue(
+                desc,
+                vsz,
+                card_inner_x + chord_w,
+                cy + (line_h - vsz) / 2.0,
+                fox.text_secondary,
+                card_inner_w - chord_w,
+                sw,
+                sh,
+            );
             cy += line_h;
         }
         let _ = cy;
@@ -293,7 +418,9 @@ pub fn handle_keybinds_click(
             if let Some(pair) = config.keybinds.layer_maps.get_mut(i) {
                 if let Some((from, to)) = pair.clone().split_once('=') {
                     // Advance to the next target in TARGETS, wrapping.
-                    let cur = TARGETS.iter().position(|(n, _)| n.eq_ignore_ascii_case(to.trim()));
+                    let cur = TARGETS
+                        .iter()
+                        .position(|(n, _)| n.eq_ignore_ascii_case(to.trim()));
                     let next = cur.map(|c| (c + 1) % TARGETS.len()).unwrap_or(0);
                     *pair = format!("{}={}", from.trim(), TARGETS[next].0);
                 }

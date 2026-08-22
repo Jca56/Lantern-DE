@@ -27,7 +27,10 @@ impl App {
 
     pub fn rebuild_tree(&mut self) {
         self.tree_entries.clear();
-        let root = self.tree_root.clone().unwrap_or_else(|| self.current_dir.clone());
+        let root = self
+            .tree_root
+            .clone()
+            .unwrap_or_else(|| self.current_dir.clone());
         self.build_tree_recursive(&root, 0);
     }
 
@@ -89,7 +92,9 @@ impl App {
             return;
         }
         // Don't close pinned tabs
-        if self.tabs[index].pinned { return; }
+        if self.tabs[index].pinned {
+            return;
+        }
         self.focus_pane(super::PaneSide::Left);
         self.sync_to_tab();
         self.tabs.remove(index);

@@ -56,7 +56,7 @@ pub const FOX_LIGHT: Palette = Palette {
 // ── Night Sky (deep indigo/purple) ──────────────────────────────────────────
 
 pub const NIGHT_SKY: Palette = Palette {
-    bg: Rgba::rgba(4, 2, 12, 219),           // deep indigo, 86% opacity
+    bg: Rgba::rgba(4, 2, 12, 219), // deep indigo, 86% opacity
     surface: Rgba::rgba(10, 6, 22, 219),
     surface_2: Rgba::rgba(18, 10, 35, 200),
     sidebar: Rgba::rgba(8, 4, 18, 230),
@@ -66,8 +66,8 @@ pub const NIGHT_SKY: Palette = Palette {
     muted: Rgba::rgb(85, 75, 110),
     border: Rgba::rgba(75, 55, 130, 50),
     separator: Rgba::rgba(60, 40, 100, 35),
-    close_hover: Rgba::rgb(140, 15, 15),      // Blood red
-    control_hover: Rgba::rgb(225, 175, 35),   // Bright gold
+    close_hover: Rgba::rgb(140, 15, 15),    // Blood red
+    control_hover: Rgba::rgb(225, 175, 35), // Bright gold
 };
 
 // ── Lantern (warm brown) ─────────────────────────────────────────────────────

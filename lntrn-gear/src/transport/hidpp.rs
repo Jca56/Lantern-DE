@@ -78,7 +78,12 @@ impl HidppDevice {
 
     /// Send a request; return the response payload (bytes after the 4-byte
     /// header). `params` length picks short vs long report.
-    pub fn call(&mut self, feature_index: u8, function: u8, params: &[u8]) -> Result<Vec<u8>, Error> {
+    pub fn call(
+        &mut self,
+        feature_index: u8,
+        function: u8,
+        params: &[u8],
+    ) -> Result<Vec<u8>, Error> {
         let (report_id, len) = if params.len() <= 3 {
             (SHORT_REPORT_ID, SHORT_LEN)
         } else {
@@ -98,8 +103,13 @@ impl HidppDevice {
 
         let end = Instant::now() + TIMEOUT;
         loop {
-            let remaining = end.checked_duration_since(Instant::now()).ok_or(Error::Timeout)?;
-            let resp = self.rx.recv_timeout(remaining).map_err(|_| Error::Timeout)?;
+            let remaining = end
+                .checked_duration_since(Instant::now())
+                .ok_or(Error::Timeout)?;
+            let resp = self
+                .rx
+                .recv_timeout(remaining)
+                .map_err(|_| Error::Timeout)?;
             // HID++ reports only — skip mouse input reports.
             if resp.is_empty() || (resp[0] != SHORT_REPORT_ID && resp[0] != LONG_REPORT_ID) {
                 continue;
@@ -116,10 +126,7 @@ impl HidppDevice {
             {
                 return Err(Error::Protocol(resp[5]));
             }
-            if resp[1] == self.dev_index
-                && resp[2] == feature_index
-                && (resp[3] & 0x0f) == SW_ID
-            {
+            if resp[1] == self.dev_index && resp[2] == feature_index && (resp[3] & 0x0f) == SW_ID {
                 return Ok(resp[4..].to_vec());
             }
             // else: event or foreign response — keep waiting.
@@ -159,7 +166,11 @@ pub fn enumerate(dev: &mut HidppDevice) -> Result<Vec<FeatureRow>, Error> {
     if fs_index == 0 {
         return Ok(Vec::new());
     }
-    let count = dev.call(fs_index, 0x00, &[0, 0, 0])?.first().copied().unwrap_or(0);
+    let count = dev
+        .call(fs_index, 0x00, &[0, 0, 0])?
+        .first()
+        .copied()
+        .unwrap_or(0);
     let mut rows = vec![FeatureRow {
         index: 0,
         id: 0x0000,
@@ -167,8 +178,8 @@ pub fn enumerate(dev: &mut HidppDevice) -> Result<Vec<FeatureRow>, Error> {
     }];
     for i in 1..=count {
         let r = dev.call(fs_index, 0x01, &[i, 0, 0])?;
-        let id = ((r.first().copied().unwrap_or(0) as u16) << 8)
-            | r.get(1).copied().unwrap_or(0) as u16;
+        let id =
+            ((r.first().copied().unwrap_or(0) as u16) << 8) | r.get(1).copied().unwrap_or(0) as u16;
         rows.push(FeatureRow {
             index: i,
             id,

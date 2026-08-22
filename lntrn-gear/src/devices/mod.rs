@@ -20,8 +20,8 @@ pub fn scan() -> Vec<Box<dyn Device>> {
     for node in hidraw_nodes_for_vendor(VENDOR_LOGITECH) {
         match logitech::LogitechDevice::open(&node) {
             Ok(Some(dev)) => out.push(Box::new(dev)),
-            Ok(None) => {}  // node didn't speak HID++ — a different interface
-            Err(_) => {}    // unreadable / no permission — skip quietly
+            Ok(None) => {} // node didn't speak HID++ — a different interface
+            Err(_) => {}   // unreadable / no permission — skip quietly
         }
     }
     out
@@ -41,7 +41,9 @@ pub fn hidraw_nodes_for_vendor(vendor: u16) -> Vec<PathBuf> {
             continue;
         }
         let uevent = entry.path().join("device/uevent");
-        let Ok(content) = std::fs::read_to_string(&uevent) else { continue };
+        let Ok(content) = std::fs::read_to_string(&uevent) else {
+            continue;
+        };
         if uevent_vendor(&content) == Some(vendor) {
             out.push(PathBuf::from(format!("/dev/{name}")));
         }
@@ -53,7 +55,9 @@ pub fn hidraw_nodes_for_vendor(vendor: u16) -> Vec<PathBuf> {
 /// Parse the vendor id out of a uevent's `HID_ID=0003:0000046D:0000C08B`.
 fn uevent_vendor(uevent: &str) -> Option<u16> {
     for line in uevent.lines() {
-        let Some(rest) = line.strip_prefix("HID_ID=") else { continue };
+        let Some(rest) = line.strip_prefix("HID_ID=") else {
+            continue;
+        };
         let parts: Vec<&str> = rest.split(':').collect();
         if parts.len() == 3 {
             if let Ok(v) = u32::from_str_radix(parts[1].trim(), 16) {

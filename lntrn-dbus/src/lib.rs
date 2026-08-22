@@ -42,9 +42,15 @@ pub struct Message {
 }
 
 impl Message {
-    pub fn is_method_call(&self) -> bool { self.msg_type == MSG_METHOD_CALL }
-    pub fn is_signal(&self) -> bool { self.msg_type == MSG_SIGNAL }
-    pub fn is_error(&self) -> bool { self.msg_type == MSG_ERROR }
+    pub fn is_method_call(&self) -> bool {
+        self.msg_type == MSG_METHOD_CALL
+    }
+    pub fn is_signal(&self) -> bool {
+        self.msg_type == MSG_SIGNAL
+    }
+    pub fn is_error(&self) -> bool {
+        self.msg_type == MSG_ERROR
+    }
 }
 
 /// Parsed D-Bus value.
@@ -67,25 +73,46 @@ pub enum Value {
 
 impl Value {
     pub fn as_str(&self) -> Option<&str> {
-        match self { Value::String(s) | Value::ObjectPath(s) => Some(s), _ => None }
+        match self {
+            Value::String(s) | Value::ObjectPath(s) => Some(s),
+            _ => None,
+        }
     }
     pub fn as_i32(&self) -> Option<i32> {
-        match self { Value::Int32(v) => Some(*v), _ => None }
+        match self {
+            Value::Int32(v) => Some(*v),
+            _ => None,
+        }
     }
     pub fn as_i64(&self) -> Option<i64> {
-        match self { Value::Int64(v) => Some(*v), _ => None }
+        match self {
+            Value::Int64(v) => Some(*v),
+            _ => None,
+        }
     }
     pub fn as_f64(&self) -> Option<f64> {
-        match self { Value::Double(v) => Some(*v), _ => None }
+        match self {
+            Value::Double(v) => Some(*v),
+            _ => None,
+        }
     }
     pub fn as_bytes(&self) -> Option<&[u8]> {
-        match self { Value::Bytes(v) => Some(v), _ => None }
+        match self {
+            Value::Bytes(v) => Some(v),
+            _ => None,
+        }
     }
     pub fn as_array(&self) -> Option<&[Value]> {
-        match self { Value::Array(v) => Some(v), _ => None }
+        match self {
+            Value::Array(v) => Some(v),
+            _ => None,
+        }
     }
     pub fn as_u32(&self) -> Option<u32> {
-        match self { Value::Uint32(v) => Some(*v), _ => None }
+        match self {
+            Value::Uint32(v) => Some(*v),
+            _ => None,
+        }
     }
     pub fn as_u64(&self) -> Option<u64> {
         match self {
@@ -95,10 +122,16 @@ impl Value {
         }
     }
     pub fn as_bool(&self) -> Option<bool> {
-        match self { Value::Bool(v) => Some(*v), _ => None }
+        match self {
+            Value::Bool(v) => Some(*v),
+            _ => None,
+        }
     }
     pub fn as_dict(&self) -> Option<&HashMap<String, Value>> {
-        match self { Value::Dict(d) => Some(d), _ => None }
+        match self {
+            Value::Dict(d) => Some(d),
+            _ => None,
+        }
     }
 }
 
@@ -113,20 +146,30 @@ pub struct Connection {
 impl Connection {
     /// Connect to the session bus, authenticate, and complete Hello handshake.
     pub fn connect() -> io::Result<Self> {
-        let addr = std::env::var("DBUS_SESSION_BUS_ADDRESS")
-            .map_err(|_| io::Error::new(io::ErrorKind::NotFound, "DBUS_SESSION_BUS_ADDRESS not set"))?;
+        let addr = std::env::var("DBUS_SESSION_BUS_ADDRESS").map_err(|_| {
+            io::Error::new(io::ErrorKind::NotFound, "DBUS_SESSION_BUS_ADDRESS not set")
+        })?;
 
-        let path = parse_bus_address(&addr)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "can't parse bus address"))?;
+        let path = parse_bus_address(&addr).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "can't parse bus address")
+        })?;
 
         let mut stream = UnixStream::connect(&path)?;
         sasl_auth(&mut stream)?;
 
-        let mut conn = Self { stream, serial: 0, unique_name: String::new() };
+        let mut conn = Self {
+            stream,
+            serial: 0,
+            unique_name: String::new(),
+        };
 
         let serial = conn.method_call(
-            "org.freedesktop.DBus", "/org/freedesktop/DBus",
-            "org.freedesktop.DBus", "Hello", "", &[],
+            "org.freedesktop.DBus",
+            "/org/freedesktop/DBus",
+            "org.freedesktop.DBus",
+            "Hello",
+            "",
+            &[],
         );
         let reply = conn.read_reply(serial)?;
         if let Some(name) = BodyReader::new(&reply.body, &reply.signature).read_value("s") {
@@ -139,15 +182,24 @@ impl Connection {
 
     /// Connect to the system bus, authenticate, and complete Hello handshake.
     pub fn connect_system() -> io::Result<Self> {
-        let path = std::env::var("DBUS_SYSTEM_BUS_ADDRESS").ok()
+        let path = std::env::var("DBUS_SYSTEM_BUS_ADDRESS")
+            .ok()
             .and_then(|a| parse_bus_address(&a))
             .unwrap_or_else(|| "/run/dbus/system_bus_socket".to_string());
         let mut stream = UnixStream::connect(&path)?;
         sasl_auth(&mut stream)?;
-        let mut conn = Self { stream, serial: 0, unique_name: String::new() };
+        let mut conn = Self {
+            stream,
+            serial: 0,
+            unique_name: String::new(),
+        };
         let serial = conn.method_call(
-            "org.freedesktop.DBus", "/org/freedesktop/DBus",
-            "org.freedesktop.DBus", "Hello", "", &[],
+            "org.freedesktop.DBus",
+            "/org/freedesktop/DBus",
+            "org.freedesktop.DBus",
+            "Hello",
+            "",
+            &[],
         );
         let reply = conn.read_reply(serial)?;
         if let Some(name) = BodyReader::new(&reply.body, &reply.signature).read_value("s") {
@@ -157,13 +209,22 @@ impl Connection {
         Ok(conn)
     }
 
-    pub fn unique_name(&self) -> &str { &self.unique_name }
-    pub fn as_raw_fd(&self) -> i32 { self.stream.as_raw_fd() }
+    pub fn unique_name(&self) -> &str {
+        &self.unique_name
+    }
+    pub fn as_raw_fd(&self) -> i32 {
+        self.stream.as_raw_fd()
+    }
 
     /// Send a method call. Returns the serial number.
     pub fn method_call(
-        &mut self, dest: &str, path: &str, iface: &str, member: &str,
-        sig: &str, args: &[u8],
+        &mut self,
+        dest: &str,
+        path: &str,
+        iface: &str,
+        member: &str,
+        sig: &str,
+        args: &[u8],
     ) -> u32 {
         self.serial += 1;
         let serial = self.serial;
@@ -183,8 +244,13 @@ impl Connection {
         self.serial += 1;
         let serial = self.serial;
         let msg = encode_method_call(
-            serial, "org.freedesktop.DBus", "/org/freedesktop/DBus",
-            "org.freedesktop.DBus", "RequestName", "su", &body,
+            serial,
+            "org.freedesktop.DBus",
+            "/org/freedesktop/DBus",
+            "org.freedesktop.DBus",
+            "RequestName",
+            "su",
+            &body,
         );
         if let Err(e) = self.stream.write_all(&msg) {
             self.stream.set_nonblocking(true).ok();
@@ -201,7 +267,9 @@ impl Connection {
                         }
                         let result = if msg.body.len() >= 4 {
                             u32::from_le_bytes([msg.body[0], msg.body[1], msg.body[2], msg.body[3]])
-                        } else { 0 };
+                        } else {
+                            0
+                        };
                         break result == 1;
                     }
                 }
@@ -223,7 +291,13 @@ impl Connection {
     }
 
     /// Send a D-Bus error reply (e.g. to reject an OBEX transfer).
-    pub fn send_error(&mut self, reply_to_serial: u32, dest: &str, error_name: &str, message: &str) {
+    pub fn send_error(
+        &mut self,
+        reply_to_serial: u32,
+        dest: &str,
+        error_name: &str,
+        message: &str,
+    ) {
         self.serial += 1;
         let msg = encode_error(self.serial, reply_to_serial, dest, error_name, message);
         let _ = self.stream.write_all(&msg);
@@ -241,8 +315,12 @@ impl Connection {
         let mut body = Vec::new();
         encode_string(&mut body, rule);
         self.method_call(
-            "org.freedesktop.DBus", "/org/freedesktop/DBus",
-            "org.freedesktop.DBus", "AddMatch", "s", &body,
+            "org.freedesktop.DBus",
+            "/org/freedesktop/DBus",
+            "org.freedesktop.DBus",
+            "AddMatch",
+            "s",
+            &body,
         )
     }
 
@@ -269,8 +347,7 @@ impl Connection {
             match read_message(&mut self.stream) {
                 Ok(msg)
                     if msg.reply_serial == serial
-                        && (msg.msg_type == MSG_METHOD_RETURN
-                            || msg.msg_type == MSG_ERROR) =>
+                        && (msg.msg_type == MSG_METHOD_RETURN || msg.msg_type == MSG_ERROR) =>
                 {
                     break Ok(msg);
                 }
@@ -300,7 +377,10 @@ fn sasl_auth(stream: &mut UnixStream) -> io::Result<()> {
     let n = stream.read(&mut buf)?;
     let resp = std::str::from_utf8(&buf[..n]).unwrap_or("");
     if !resp.starts_with("OK") {
-        return Err(io::Error::new(io::ErrorKind::PermissionDenied, "SASL auth failed"));
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "SASL auth failed",
+        ));
     }
     stream.write_all(b"BEGIN\r\n")?;
     Ok(())
@@ -328,7 +408,9 @@ fn parse_bus_address(addr: &str) -> Option<String> {
 // ── Wire format encoding ────────────────────────────────────────────────────
 
 pub fn align_to(buf: &mut Vec<u8>, n: usize) {
-    while buf.len() % n != 0 { buf.push(0); }
+    while buf.len() % n != 0 {
+        buf.push(0);
+    }
 }
 
 pub fn encode_u32(buf: &mut Vec<u8>, v: u32) {
@@ -385,7 +467,11 @@ pub fn encode_variant_i64(buf: &mut Vec<u8>, v: i64) {
 }
 
 /// Encode a dict entry {string: variant} into the buffer.
-pub fn encode_dict_entry_sv(buf: &mut Vec<u8>, key: &str, encode_variant: impl FnOnce(&mut Vec<u8>)) {
+pub fn encode_dict_entry_sv(
+    buf: &mut Vec<u8>,
+    key: &str,
+    encode_variant: impl FnOnce(&mut Vec<u8>),
+) {
     align_to(buf, 8);
     encode_string(buf, key);
     encode_variant(buf);
@@ -403,8 +489,13 @@ fn encode_header_field(buf: &mut Vec<u8>, code: u8, sig: &str, value: &str) {
 }
 
 fn encode_method_call(
-    serial: u32, dest: &str, path: &str, iface: &str, member: &str,
-    body_sig: &str, body: &[u8],
+    serial: u32,
+    dest: &str,
+    path: &str,
+    iface: &str,
+    member: &str,
+    body_sig: &str,
+    body: &[u8],
 ) -> Vec<u8> {
     let mut fields = Vec::new();
     encode_header_field(&mut fields, FIELD_PATH, "o", path);
@@ -429,9 +520,7 @@ fn encode_method_call(
     msg
 }
 
-fn encode_reply(
-    serial: u32, reply_to: u32, dest: &str, body_sig: &str, body: &[u8],
-) -> Vec<u8> {
+fn encode_reply(serial: u32, reply_to: u32, dest: &str, body_sig: &str, body: &[u8]) -> Vec<u8> {
     let mut fields = Vec::new();
     align_to(&mut fields, 8);
     fields.push(FIELD_REPLY_SERIAL);
@@ -458,7 +547,11 @@ fn encode_reply(
 }
 
 fn encode_error(
-    serial: u32, reply_to: u32, dest: &str, error_name: &str, message: &str,
+    serial: u32,
+    reply_to: u32,
+    dest: &str,
+    error_name: &str,
+    message: &str,
 ) -> Vec<u8> {
     let mut fields = Vec::new();
     align_to(&mut fields, 8);
@@ -474,7 +567,9 @@ fn encode_error(
     encode_header_field(&mut fields, FIELD_DESTINATION, "s", dest);
 
     let mut body = Vec::new();
-    let body_sig = if message.is_empty() { "" } else {
+    let body_sig = if message.is_empty() {
+        ""
+    } else {
         encode_string(&mut body, message);
         "s"
     };
@@ -497,7 +592,12 @@ fn encode_error(
 }
 
 fn encode_signal(
-    serial: u32, path: &str, iface: &str, member: &str, body_sig: &str, body: &[u8],
+    serial: u32,
+    path: &str,
+    iface: &str,
+    member: &str,
+    body_sig: &str,
+    body: &[u8],
 ) -> Vec<u8> {
     let mut fields = Vec::new();
     encode_header_field(&mut fields, FIELD_PATH, "o", path);
@@ -559,7 +659,9 @@ fn read_message(stream: &mut UnixStream) -> io::Result<Message> {
     let mut r = BodyReader::new(&fields_buf, "");
     while r.pos < fields_len {
         r.align(8);
-        if r.pos >= fields_len { break; }
+        if r.pos >= fields_len {
+            break;
+        }
         let code = r.read_byte();
         let vsig_len = r.read_byte() as usize;
         let vsig = r.read_bytes(vsig_len);
@@ -578,9 +680,17 @@ fn read_message(stream: &mut UnixStream) -> io::Result<Message> {
                 r.read_byte();
                 signature = String::from_utf8_lossy(&sbytes).to_string();
             }
-            (_, "s" | "o") => { r.read_string(); }
-            (_, "u") => { r.read_u32(); }
-            (_, "g") => { let n = r.read_byte() as usize; r.read_bytes(n); r.read_byte(); }
+            (_, "s" | "o") => {
+                r.read_string();
+            }
+            (_, "u") => {
+                r.read_u32();
+            }
+            (_, "g") => {
+                let n = r.read_byte() as usize;
+                r.read_bytes(n);
+                r.read_byte();
+            }
             _ => break,
         }
     }
@@ -590,7 +700,18 @@ fn read_message(stream: &mut UnixStream) -> io::Result<Message> {
         read_exact(stream, &mut body)?;
     }
 
-    Ok(Message { msg_type, serial, reply_serial, sender, path, member, interface, signature, destination, body })
+    Ok(Message {
+        msg_type,
+        serial,
+        reply_serial,
+        sender,
+        path,
+        member,
+        interface,
+        signature,
+        destination,
+        body,
+    })
 }
 
 // ── Body reader ─────────────────────────────────────────────────────────────
@@ -606,14 +727,18 @@ impl<'a> BodyReader<'a> {
         Self { data, pos: 0, sig }
     }
 
-    fn remaining(&self) -> usize { self.data.len().saturating_sub(self.pos) }
+    fn remaining(&self) -> usize {
+        self.data.len().saturating_sub(self.pos)
+    }
 
     pub fn align(&mut self, n: usize) {
         self.pos = (self.pos + n - 1) & !(n - 1);
     }
 
     pub fn read_byte(&mut self) -> u8 {
-        if self.pos >= self.data.len() { return 0; }
+        if self.pos >= self.data.len() {
+            return 0;
+        }
         let v = self.data[self.pos];
         self.pos += 1;
         v
@@ -628,10 +753,14 @@ impl<'a> BodyReader<'a> {
 
     pub fn read_u32(&mut self) -> u32 {
         self.align(4);
-        if self.remaining() < 4 { return 0; }
+        if self.remaining() < 4 {
+            return 0;
+        }
         let v = u32::from_le_bytes([
-            self.data[self.pos], self.data[self.pos+1],
-            self.data[self.pos+2], self.data[self.pos+3],
+            self.data[self.pos],
+            self.data[self.pos + 1],
+            self.data[self.pos + 2],
+            self.data[self.pos + 3],
         ]);
         self.pos += 4;
         v
@@ -639,10 +768,14 @@ impl<'a> BodyReader<'a> {
 
     pub fn read_i32(&mut self) -> i32 {
         self.align(4);
-        if self.remaining() < 4 { return 0; }
+        if self.remaining() < 4 {
+            return 0;
+        }
         let v = i32::from_le_bytes([
-            self.data[self.pos], self.data[self.pos+1],
-            self.data[self.pos+2], self.data[self.pos+3],
+            self.data[self.pos],
+            self.data[self.pos + 1],
+            self.data[self.pos + 2],
+            self.data[self.pos + 3],
         ]);
         self.pos += 4;
         v
@@ -650,12 +783,18 @@ impl<'a> BodyReader<'a> {
 
     pub fn read_u64(&mut self) -> u64 {
         self.align(8);
-        if self.remaining() < 8 { return 0; }
+        if self.remaining() < 8 {
+            return 0;
+        }
         let v = u64::from_le_bytes([
-            self.data[self.pos], self.data[self.pos+1],
-            self.data[self.pos+2], self.data[self.pos+3],
-            self.data[self.pos+4], self.data[self.pos+5],
-            self.data[self.pos+6], self.data[self.pos+7],
+            self.data[self.pos],
+            self.data[self.pos + 1],
+            self.data[self.pos + 2],
+            self.data[self.pos + 3],
+            self.data[self.pos + 4],
+            self.data[self.pos + 5],
+            self.data[self.pos + 6],
+            self.data[self.pos + 7],
         ]);
         self.pos += 8;
         v
@@ -708,10 +847,10 @@ impl<'a> BodyReader<'a> {
                 let elem_align = match inner.as_bytes().first().copied() {
                     Some(b'y') | Some(b'g') => 1,
                     Some(b'n') | Some(b'q') => 2,
-                    Some(b'b') | Some(b'i') | Some(b'u')
-                    | Some(b's') | Some(b'o') | Some(b'a') => 4,
-                    Some(b'x') | Some(b't') | Some(b'd')
-                    | Some(b'(') | Some(b'{') => 8,
+                    Some(b'b') | Some(b'i') | Some(b'u') | Some(b's') | Some(b'o') | Some(b'a') => {
+                        4
+                    }
+                    Some(b'x') | Some(b't') | Some(b'd') | Some(b'(') | Some(b'{') => 8,
                     _ => 4,
                 };
                 self.align(elem_align);
@@ -727,13 +866,17 @@ impl<'a> BodyReader<'a> {
                     let mut dict = HashMap::new();
                     while self.pos < array_end {
                         self.align(8);
-                        if self.pos >= array_end { break; }
+                        if self.pos >= array_end {
+                            break;
+                        }
                         // Read key (basic type, always a string in our model).
                         let key = match key_sig.as_str() {
                             "s" | "o" | "g" => self.read_string(),
                             _ => format!("{:?}", self.read_value(&key_sig)),
                         };
-                        if self.pos >= array_end { break; }
+                        if self.pos >= array_end {
+                            break;
+                        }
                         if let Some(val) = self.read_value(&val_sig) {
                             dict.insert(key, val);
                         }
@@ -771,7 +914,9 @@ impl<'a> BodyReader<'a> {
                         let byte_len = self.read_u32() as usize;
                         let bytes = self.read_bytes(byte_len);
                         arr.push(Value::Struct(vec![
-                            Value::Int32(w), Value::Int32(h), Value::Bytes(bytes),
+                            Value::Int32(w),
+                            Value::Int32(h),
+                            Value::Bytes(bytes),
                         ]));
                     }
                     return Some(Value::Array(arr));
@@ -781,7 +926,9 @@ impl<'a> BodyReader<'a> {
                     while self.pos < array_end {
                         if let Some(v) = self.read_value("v") {
                             arr.push(v);
-                        } else { break; }
+                        } else {
+                            break;
+                        }
                     }
                     self.pos = array_end;
                     return Some(Value::Array(arr));
@@ -791,7 +938,9 @@ impl<'a> BodyReader<'a> {
                     while self.pos < array_end {
                         if let Some(v) = self.read_value(inner) {
                             arr.push(v);
-                        } else { break; }
+                        } else {
+                            break;
+                        }
                     }
                     self.pos = array_end;
                     return Some(Value::Array(arr));
@@ -801,7 +950,7 @@ impl<'a> BodyReader<'a> {
             }
             '(' => {
                 self.align(8);
-                let inner = &sig[1..sig.len()-1];
+                let inner = &sig[1..sig.len() - 1];
                 let mut fields = Vec::new();
                 let mut i = 0;
                 while i < inner.len() {
@@ -835,7 +984,9 @@ impl<'a> BodyReader<'a> {
 /// Extract a complete type signature starting at position `i`.
 pub fn subsig_at(sig: &str, i: usize) -> (String, usize) {
     let bytes = sig.as_bytes();
-    if i >= bytes.len() { return (String::new(), 1); }
+    if i >= bytes.len() {
+        return (String::new(), 1);
+    }
     match bytes[i] {
         b'a' => {
             let (inner, inner_len) = subsig_at(sig, i + 1);
@@ -845,8 +996,12 @@ pub fn subsig_at(sig: &str, i: usize) -> (String, usize) {
             let mut depth = 1;
             let mut j = i + 1;
             while j < bytes.len() && depth > 0 {
-                if bytes[j] == b'(' { depth += 1; }
-                if bytes[j] == b')' { depth -= 1; }
+                if bytes[j] == b'(' {
+                    depth += 1;
+                }
+                if bytes[j] == b')' {
+                    depth -= 1;
+                }
                 j += 1;
             }
             (sig[i..j].to_string(), j - i)
@@ -855,8 +1010,12 @@ pub fn subsig_at(sig: &str, i: usize) -> (String, usize) {
             let mut depth = 1;
             let mut j = i + 1;
             while j < bytes.len() && depth > 0 {
-                if bytes[j] == b'{' { depth += 1; }
-                if bytes[j] == b'}' { depth -= 1; }
+                if bytes[j] == b'{' {
+                    depth += 1;
+                }
+                if bytes[j] == b'}' {
+                    depth -= 1;
+                }
                 j += 1;
             }
             (sig[i..j].to_string(), j - i)

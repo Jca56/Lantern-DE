@@ -7,8 +7,8 @@
 mod app;
 mod bar_sliders;
 mod clipboard;
-mod desktop_settings;
 mod controls;
+mod desktop_settings;
 mod emojis;
 mod files;
 mod ipc;
@@ -56,13 +56,15 @@ fn main() {
             .map(|d| d.as_secs())
             .unwrap_or(0);
         let bt = std::backtrace::Backtrace::force_capture();
-        let entry = format!(
-            "\n=== panic @ unix {now} ===\n{info}\n--- backtrace ---\n{bt}\n",
-        );
+        let entry = format!("\n=== panic @ unix {now} ===\n{info}\n--- backtrace ---\n{bt}\n",);
         eprintln!("{entry}");
-        if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
         if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true).append(true).open(&path)
+            .create(true)
+            .append(true)
+            .open(&path)
         {
             use std::io::Write;
             let _ = f.write_all(entry.as_bytes());

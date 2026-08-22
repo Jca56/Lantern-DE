@@ -164,7 +164,9 @@ fn run_capture(inner: &Arc<Inner>) -> anyhow::Result<()> {
             if id != spa::param::ParamType::Format.as_raw() {
                 return;
             }
-            let Ok((mt, ms)) = format_utils::parse_format(param) else { return };
+            let Ok((mt, ms)) = format_utils::parse_format(param) else {
+                return;
+            };
             if mt != MediaType::Audio || ms != MediaSubtype::Raw {
                 return;
             }
@@ -173,14 +175,18 @@ fn run_capture(inner: &Arc<Inner>) -> anyhow::Result<()> {
                 return;
             }
             if info.rate() > 0 {
-                inner_param.sample_rate.store(info.rate(), Ordering::Relaxed);
+                inner_param
+                    .sample_rate
+                    .store(info.rate(), Ordering::Relaxed);
             }
             if info.channels() > 0 {
                 channels_param.store(info.channels(), Ordering::Relaxed);
             }
         })
         .process(move |stream, _user| {
-            let Some(mut buffer) = stream.dequeue_buffer() else { return };
+            let Some(mut buffer) = stream.dequeue_buffer() else {
+                return;
+            };
             let datas = buffer.datas_mut();
             if datas.is_empty() {
                 return;
@@ -241,7 +247,9 @@ fn run_capture(inner: &Arc<Inner>) -> anyhow::Result<()> {
     )?;
 
     while !inner.quit.load(Ordering::Relaxed) {
-        mainloop.loop_().iterate(std::time::Duration::from_millis(50));
+        mainloop
+            .loop_()
+            .iterate(std::time::Duration::from_millis(50));
     }
     Ok(())
 }

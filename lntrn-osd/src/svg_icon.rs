@@ -25,8 +25,8 @@ pub fn load_svg_bytes(
     let offset_y = (h as f32 - rendered_h) / 2.0;
 
     let mut pixmap = resvg::tiny_skia::Pixmap::new(w, h)?;
-    let transform = resvg::tiny_skia::Transform::from_translate(offset_x, offset_y)
-        .post_scale(scale, scale);
+    let transform =
+        resvg::tiny_skia::Transform::from_translate(offset_x, offset_y).post_scale(scale, scale);
     resvg::render(&tree, transform, &mut pixmap.as_mut());
 
     // Premultiplied -> straight alpha
@@ -65,8 +65,8 @@ pub fn load_svg(
     let offset_y = (h as f32 - rendered_h) / 2.0;
 
     let mut pixmap = resvg::tiny_skia::Pixmap::new(w, h)?;
-    let transform = resvg::tiny_skia::Transform::from_translate(offset_x, offset_y)
-        .post_scale(scale, scale);
+    let transform =
+        resvg::tiny_skia::Transform::from_translate(offset_x, offset_y).post_scale(scale, scale);
     resvg::render(&tree, transform, &mut pixmap.as_mut());
 
     // Premultiplied -> straight alpha

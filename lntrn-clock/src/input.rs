@@ -64,7 +64,11 @@ fn read_byte() -> io::Result<u8> {
 /// Peek with a 1ms poll — used after seeing ESC to disambiguate a real
 /// Esc keypress from the start of a CSI sequence like ESC [ A.
 fn peek_byte() -> Option<u8> {
-    let mut pfd = libc::pollfd { fd: 0, events: libc::POLLIN, revents: 0 };
+    let mut pfd = libc::pollfd {
+        fd: 0,
+        events: libc::POLLIN,
+        revents: 0,
+    };
     let r = unsafe { libc::poll(&mut pfd, 1, 1) };
     if r <= 0 {
         return None;

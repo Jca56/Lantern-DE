@@ -154,7 +154,14 @@ pub trait PopupSurface {
     /// Create a popup at (x, y) relative to a parent.
     /// `parent_popup` is `None` for root popups (parented to the window),
     /// or `Some(id)` for submenus (parented to another popup).
-    fn create_popup(&mut self, parent_popup: Option<u32>, x: i32, y: i32, width: u32, height: u32) -> u32;
+    fn create_popup(
+        &mut self,
+        parent_popup: Option<u32>,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+    ) -> u32;
 
     /// Resize an existing popup.
     fn resize_popup(&mut self, id: u32, width: u32, height: u32);
@@ -218,9 +225,12 @@ pub struct WaylandPopupBackend<S> {
 
 impl<S> WaylandPopupBackend<S>
 where
-    S: Dispatch<wl_surface::WlSurface, ()> + Dispatch<xdg_surface::XdgSurface, u32>
-        + Dispatch<xdg_positioner::XdgPositioner, ()> + Dispatch<xdg_popup::XdgPopup, u32>
-        + Dispatch<wp_viewport::WpViewport, ()> + 'static,
+    S: Dispatch<wl_surface::WlSurface, ()>
+        + Dispatch<xdg_surface::XdgSurface, u32>
+        + Dispatch<xdg_positioner::XdgPositioner, ()>
+        + Dispatch<xdg_popup::XdgPopup, u32>
+        + Dispatch<wp_viewport::WpViewport, ()>
+        + 'static,
 {
     pub fn new(
         conn: &Connection,
@@ -232,8 +242,8 @@ where
         scale: f32,
         qh: &QueueHandle<S>,
     ) -> Self {
-        let display_ptr = NonNull::new(conn.backend().display_ptr() as *mut c_void)
-            .expect("null wl_display");
+        let display_ptr =
+            NonNull::new(conn.backend().display_ptr() as *mut c_void).expect("null wl_display");
         Self {
             popups: HashMap::new(),
             next_id: 1,
@@ -252,14 +262,17 @@ where
     }
 
     pub fn find_popup_id_by_wl_surface(&self, surface: &wl_surface::WlSurface) -> Option<u32> {
-        self.popups.iter()
+        self.popups
+            .iter()
             .find(|(_, p)| p.wl_surface == *surface)
             .map(|(&id, _)| id)
     }
 
     pub fn begin_frame_all(&mut self) {
         for entry in self.popups.values_mut() {
-            if !entry.configured { continue; }
+            if !entry.configured {
+                continue;
+            }
             entry.render.interaction.begin_frame();
             entry.render.painter.clear();
         }
@@ -273,15 +286,18 @@ where
     /// The excluded popup can be rendered manually for custom texture passes.
     pub fn render_all_except(&mut self, exclude: Option<u32>) {
         for (&id, entry) in self.popups.iter_mut() {
-            if !entry.configured { continue; }
-            if exclude == Some(id) { continue; }
+            if !entry.configured {
+                continue;
+            }
+            if exclude == Some(id) {
+                continue;
+            }
             let ctx = &mut entry.render;
             let gpu = &ctx.gpu;
             if let Ok(mut frame) = gpu.begin_frame("popup") {
                 let view = frame.view().clone();
-                ctx.painter.render_pass(
-                    gpu, frame.encoder_mut(), &view, ctx.clear_color,
-                );
+                ctx.painter
+                    .render_pass(gpu, frame.encoder_mut(), &view, ctx.clear_color);
                 ctx.text.render_queued(gpu, frame.encoder_mut(), &view);
                 frame.submit(&gpu.queue);
             }
@@ -307,7 +323,9 @@ where
     /// cause false hover detections.
     pub fn route_cursor(&mut self, active_popup: Option<u32>, cx: f32, cy: f32) {
         for (&id, entry) in self.popups.iter_mut() {
-            if !entry.configured { continue; }
+            if !entry.configured {
+                continue;
+            }
             if Some(id) == active_popup {
                 entry.render.interaction.on_cursor_moved(cx, cy);
             } else {
@@ -333,7 +351,9 @@ where
     /// the viewport destination in step — otherwise the compositor squeezes
     /// the new buffer into the old destination size.
     fn apply_popup_size(&mut self, id: u32, width: u32, height: u32) {
-        if width == 0 || height == 0 { return; }
+        if width == 0 || height == 0 {
+            return;
+        }
         if let Some(p) = self.popups.get_mut(&id) {
             let phys_w = (((width as f32) * self.scale).ceil() as u32).max(1);
             let phys_h = (((height as f32) * self.scale).ceil() as u32).max(1);
@@ -350,11 +370,21 @@ where
 
 impl<S> PopupSurface for WaylandPopupBackend<S>
 where
-    S: Dispatch<wl_surface::WlSurface, ()> + Dispatch<xdg_surface::XdgSurface, u32>
-        + Dispatch<xdg_positioner::XdgPositioner, ()> + Dispatch<xdg_popup::XdgPopup, u32>
-        + Dispatch<wp_viewport::WpViewport, ()> + 'static,
+    S: Dispatch<wl_surface::WlSurface, ()>
+        + Dispatch<xdg_surface::XdgSurface, u32>
+        + Dispatch<xdg_positioner::XdgPositioner, ()>
+        + Dispatch<xdg_popup::XdgPopup, u32>
+        + Dispatch<wp_viewport::WpViewport, ()>
+        + 'static,
 {
-    fn create_popup(&mut self, parent_popup: Option<u32>, parent_x: i32, parent_y: i32, width: u32, height: u32) -> u32 {
+    fn create_popup(
+        &mut self,
+        parent_popup: Option<u32>,
+        parent_x: i32,
+        parent_y: i32,
+        width: u32,
+        height: u32,
+    ) -> u32 {
         let id = self.next_id;
         self.next_id += 1;
 
@@ -378,9 +408,7 @@ where
             .and_then(|pid| self.popups.get(&pid).map(|p| p.xdg_surface.clone()))
             .unwrap_or_else(|| self.parent_xdg_surface.clone());
 
-        let xdg_popup = xdg_surface.get_popup(
-            Some(&parent_xdg), &positioner, &self.qh, id,
-        );
+        let xdg_popup = xdg_surface.get_popup(Some(&parent_xdg), &positioner, &self.qh, id);
         positioner.destroy();
 
         // Set up scaling — viewporter for fractional, fallback to buffer_scale
@@ -413,26 +441,30 @@ where
             &wl_handle,
             phys_w.max(1),
             phys_h.max(1),
-        ).expect("popup GPU init failed");
+        )
+        .expect("popup GPU init failed");
 
         let painter = Painter::new(&gpu);
         let text = TextRenderer::new(&gpu);
 
-        self.popups.insert(id, PopupEntry {
-            wl_surface,
-            xdg_surface,
-            xdg_popup,
-            viewport,
-            render: PopupRenderContext {
-                tex_pass: TexturePass::new(&gpu),
-                gpu,
-                painter,
-                text,
-                interaction: InteractionContext::new(),
-                clear_color: Color::TRANSPARENT,
+        self.popups.insert(
+            id,
+            PopupEntry {
+                wl_surface,
+                xdg_surface,
+                xdg_popup,
+                viewport,
+                render: PopupRenderContext {
+                    tex_pass: TexturePass::new(&gpu),
+                    gpu,
+                    painter,
+                    text,
+                    interaction: InteractionContext::new(),
+                    clear_color: Color::TRANSPARENT,
+                },
+                configured: false,
             },
-            configured: false,
-        });
+        );
 
         id
     }
@@ -450,7 +482,8 @@ where
     }
 
     fn popup_render(&mut self, id: u32) -> Option<&mut PopupRenderContext> {
-        self.popups.get_mut(&id)
+        self.popups
+            .get_mut(&id)
             .filter(|p| p.configured)
             .map(|p| &mut p.render)
     }

@@ -35,7 +35,13 @@ pub fn render_frame(
 
     painter.clear();
     input.begin_frame();
-    draw_window_bg(painter, Rect::new(0.0, 0.0, wf, hf), 18.0 * s, palette, bg_opacity);
+    draw_window_bg(
+        painter,
+        Rect::new(0.0, 0.0, wf, hf),
+        18.0 * s,
+        palette,
+        bg_opacity,
+    );
 
     // ── Title bar + connection dot ──────────────────────────────────
     let title_rect = Rect::new(0.0, 0.0, wf, TITLE_BAR_H * s);
@@ -51,10 +57,25 @@ pub fn render_frame(
         .minimize_hovered(mini.is_hovered())
         .draw(painter, palette);
 
-    let mut dc = Dc { p: painter, t: text, pal: palette, s, w, h };
+    let mut dc = Dc {
+        p: painter,
+        t: text,
+        pal: palette,
+        s,
+        w,
+        h,
+    };
     dc.label("Afterglow", PAD * s, 15.0 * s, 22.0, palette.text);
-    let dot = if connected { palette.success } else { palette.danger };
-    dc.p.rect_filled(Rect::new(120.0 * s, 24.0 * s, 9.0 * s, 9.0 * s), 4.5 * s, dot);
+    let dot = if connected {
+        palette.success
+    } else {
+        palette.danger
+    };
+    dc.p.rect_filled(
+        Rect::new(120.0 * s, 24.0 * s, 9.0 * s, 9.0 * s),
+        4.5 * s,
+        dot,
+    );
     dc.label(status, 136.0 * s, 18.0 * s, 14.0, palette.text_secondary);
 
     // ── Tab strip ───────────────────────────────────────────────────
@@ -64,8 +85,21 @@ pub fn render_frame(
     let content = content_rect(wf, hf, s);
     match (info, snap) {
         (Some(info), Some(snap)) => match tab {
-            Tab::Monitor => monitor::draw(&mut dc, info, snap, tuning, content.x, content.y, content.w),
-            Tab::Tune => tune::draw(&mut dc, input, info, tuning, pending, cursor, dragging, tune_status, wf, hf),
+            Tab::Monitor => {
+                monitor::draw(&mut dc, info, snap, tuning, content.x, content.y, content.w)
+            }
+            Tab::Tune => tune::draw(
+                &mut dc,
+                input,
+                info,
+                tuning,
+                pending,
+                cursor,
+                dragging,
+                tune_status,
+                wf,
+                hf,
+            ),
         },
         _ => monitor::draw_offline(&mut dc, status, content.x, content.y, content.w, hf),
     }

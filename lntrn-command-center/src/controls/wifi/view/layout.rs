@@ -8,11 +8,11 @@ use crate::controls::wifi::{Band, Network, Wifi};
 use super::{
     BAND_PILL_GAP, BAND_PILL_H, BAND_PILL_W, BAND_ROW_TOP_GAP, BSSID_CARD_GAP, BSSID_CARD_H,
     BSSID_HEADER_BOTTOM_GAP, BSSID_HEADER_FONT, BSSID_LOCK_PAD, BSSID_LOCK_SIZE, COL_GUTTER,
-    EXPAND_BUTTON_H, EXPAND_BUTTON_TOP_GAP, EXPAND_BUTTON_W, EXPAND_DETAIL_FONT, EXPAND_LABEL_W_FRAC,
-    EXPAND_LINE_GAP, EXPAND_PAD_BOTTOM, EXPAND_PAD_TOP, LEFT_COL_FRAC, MAX_BSSID_CARDS,
-    MAX_NETWORK_ROWS, MAX_PROFILE_CARDS, PROFILE_CARD_GAP, PROFILE_CARD_H, PROFILE_DELETE_PAD,
-    PROFILE_DELETE_SIZE, PROFILE_HEADER_BOTTOM_GAP, PROFILE_HEADER_FONT, PROFILE_SECTION_TOP_GAP,
-    ROW_HEIGHT, VIEW_HEADER_BOTTOM_GAP, VIEW_HEADER_FONT, VIEW_TOP_PAD,
+    EXPAND_BUTTON_H, EXPAND_BUTTON_TOP_GAP, EXPAND_BUTTON_W, EXPAND_DETAIL_FONT,
+    EXPAND_LABEL_W_FRAC, EXPAND_LINE_GAP, EXPAND_PAD_BOTTOM, EXPAND_PAD_TOP, LEFT_COL_FRAC,
+    MAX_BSSID_CARDS, MAX_NETWORK_ROWS, MAX_PROFILE_CARDS, PROFILE_CARD_GAP, PROFILE_CARD_H,
+    PROFILE_DELETE_PAD, PROFILE_DELETE_SIZE, PROFILE_HEADER_BOTTOM_GAP, PROFILE_HEADER_FONT,
+    PROFILE_SECTION_TOP_GAP, ROW_HEIGHT, VIEW_HEADER_BOTTOM_GAP, VIEW_HEADER_FONT, VIEW_TOP_PAD,
 };
 
 /// Y-coordinate (physical px) of the first network row, BEFORE scroll
@@ -29,7 +29,11 @@ pub fn content_height(wifi: &Wifi, scale: f32) -> f32 {
     let mut total = 0.0;
     for net in wifi.networks().iter().take(MAX_NETWORK_ROWS) {
         let is_expanded = wifi.expanded_ssid.as_deref() == Some(net.ssid.as_str());
-        let extra = if is_expanded { expanded_extra_height(net, scale) } else { 0.0 };
+        let extra = if is_expanded {
+            expanded_extra_height(net, scale)
+        } else {
+            0.0
+        };
         total += row_h + extra;
     }
     total
@@ -216,7 +220,12 @@ pub(super) fn bssid_card_rect(
         + BSSID_HEADER_FONT * scale
         + BSSID_HEADER_BOTTOM_GAP * scale;
     let stride = BSSID_CARD_H * scale + BSSID_CARD_GAP * scale;
-    Rect::new(right_x, top + i as f32 * stride, right_w, BSSID_CARD_H * scale)
+    Rect::new(
+        right_x,
+        top + i as f32 * stride,
+        right_w,
+        BSSID_CARD_H * scale,
+    )
 }
 
 /// Rect of the lock toggle inside a BSSID card.
@@ -253,7 +262,12 @@ pub(super) fn profile_card_rect(
     // Account for the profile-section header before the cards.
     y += PROFILE_HEADER_FONT * scale + PROFILE_HEADER_BOTTOM_GAP * scale;
     let stride = PROFILE_CARD_H * scale + PROFILE_CARD_GAP * scale;
-    Rect::new(right_x, y + i as f32 * stride, right_w, PROFILE_CARD_H * scale)
+    Rect::new(
+        right_x,
+        y + i as f32 * stride,
+        right_w,
+        PROFILE_CARD_H * scale,
+    )
 }
 
 /// Rect of the delete-X button on a profile card.
@@ -310,7 +324,13 @@ pub(super) fn band_pill_rect(
 /// starts at `body_top` (just under the row header). The button sits
 /// at the bottom-right of the LEFT column so it doesn't overlap the
 /// BSSID list on the right.
-pub(super) fn connect_button_rect(net: &Network, inner_x: f32, inner_w: f32, body_top: f32, scale: f32) -> Rect {
+pub(super) fn connect_button_rect(
+    net: &Network,
+    inner_x: f32,
+    inner_w: f32,
+    body_top: f32,
+    scale: f32,
+) -> Rect {
     let after_details = band_row_top(net, body_top, scale);
     let after_bands = after_details + band_row_height(net, scale);
     let btn_y = after_bands + EXPAND_BUTTON_TOP_GAP * scale;

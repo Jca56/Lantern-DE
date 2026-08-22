@@ -61,7 +61,11 @@ pub(super) fn row_prompt(bt: &Bluetooth, dev: &Device) -> Option<RowPrompt> {
     if let Some(req) = &bt.incoming_request {
         // Incoming-file requests are keyed by sender name, not MAC, so
         // match on the friendly name we display for the row.
-        let dev_name = if dev.name.is_empty() { dev.mac.as_str() } else { dev.name.as_str() };
+        let dev_name = if dev.name.is_empty() {
+            dev.mac.as_str()
+        } else {
+            dev.name.as_str()
+        };
         if req.from_name == dev_name || req.from_name == dev.alias {
             return Some(RowPrompt::IncomingFile {
                 filename: req.filename.clone(),
@@ -135,7 +139,9 @@ pub(super) fn draw_prompt_strip(
     surface_w: u32,
     surface_h: u32,
 ) -> f32 {
-    let Some(prompt) = row_prompt(bt, dev) else { return 0.0 };
+    let Some(prompt) = row_prompt(bt, dev) else {
+        return 0.0;
+    };
     let white = Color::from_rgb8(0xff, 0xff, 0xff);
     let gold = Color::from_rgb8(0xc8, 0x86, 0x0a);
     let body = body_font(text_size, scale);
@@ -147,7 +153,11 @@ pub(super) fn draw_prompt_strip(
         RowPrompt::IncomingPair(None) => "Wants to pair with this device".into(),
         RowPrompt::IncomingFile { filename, size } => {
             if *size > 0 {
-                format!("Sending {} · {}", truncate_name(filename, 24), format_bytes(*size))
+                format!(
+                    "Sending {} · {}",
+                    truncate_name(filename, 24),
+                    format_bytes(*size)
+                )
             } else {
                 format!("Sending {}", truncate_name(filename, 28))
             }
@@ -157,9 +167,14 @@ pub(super) fn draw_prompt_strip(
     };
     let msg_y = top_y + PROMPT_PAD_TOP * scale;
     text.queue(
-        &msg, body, inner_x + pad_l, msg_y,
+        &msg,
+        body,
+        inner_x + pad_l,
+        msg_y,
         white.with_alpha(0.92 * alpha),
-        inner_w - pad_l * 2.0, surface_w, surface_h,
+        inner_w - pad_l * 2.0,
+        surface_w,
+        surface_h,
     );
 
     // Accept / Reject buttons (+ optional PIN field).
@@ -167,7 +182,9 @@ pub(super) fn draw_prompt_strip(
         prompt_button_rects(bt, dev, inner_x, inner_w, top_y, text_size, scale);
 
     if let Some(field) = field {
-        draw_pin_field(painter, text, field, bt, body, alpha, scale, surface_w, surface_h);
+        draw_pin_field(
+            painter, text, field, bt, body, alpha, scale, surface_w, surface_h,
+        );
     }
 
     // Accept is disabled until a non-empty PIN is typed (Enter flow only).
@@ -179,20 +196,47 @@ pub(super) fn draw_prompt_strip(
             .unwrap_or(false),
         _ => true,
     };
-    let accept_label = if matches!(prompt, RowPrompt::OutgoingEnter) { "Connect" } else { "Accept" };
+    let accept_label = if matches!(prompt, RowPrompt::OutgoingEnter) {
+        "Connect"
+    } else {
+        "Accept"
+    };
     let a_alpha = if accept_ready { alpha } else { 0.5 * alpha };
-    draw_solid_button(painter, text, accept, accept_label, body, gold, a_alpha, surface_w, surface_h);
-    draw_pill_button(painter, text, reject, "Reject", body, white, alpha, scale, surface_w, surface_h);
+    draw_solid_button(
+        painter,
+        text,
+        accept,
+        accept_label,
+        body,
+        gold,
+        a_alpha,
+        surface_w,
+        surface_h,
+    );
+    draw_pill_button(
+        painter, text, reject, "Reject", body, white, alpha, scale, surface_w, surface_h,
+    );
 
     // Per-prompt error (e.g. wrong PIN) for the outgoing pair flow,
     // tucked at the right of the message line so it doesn't grow the row.
-    if let Some(err) = bt.pair_prompt.as_ref().filter(|p| p.mac == dev.mac).and_then(|p| p.error.as_ref()) {
+    if let Some(err) = bt
+        .pair_prompt
+        .as_ref()
+        .filter(|p| p.mac == dev.mac)
+        .and_then(|p| p.error.as_ref())
+    {
         let red = Color::from_rgb8(0xe0, 0x40, 0x40).with_alpha(alpha);
         let efont = body * 0.85;
         let ew = text.measure_width(err, efont).min(inner_w * 0.5);
         text.queue(
-            err, efont, inner_x + inner_w - ew - pad_l, msg_y + (body - efont) / 2.0,
-            red, ew, surface_w, surface_h,
+            err,
+            efont,
+            inner_x + inner_w - ew - pad_l,
+            msg_y + (body - efont) / 2.0,
+            red,
+            ew,
+            surface_w,
+            surface_h,
         );
     }
 
@@ -215,16 +259,40 @@ fn draw_pin_field(
     let white = Color::from_rgb8(0xff, 0xff, 0xff);
     let gold = Color::from_rgb8(0xc8, 0x86, 0x0a);
     let muted = white.with_alpha(0.55 * alpha);
-    painter.rect_filled(field, 8.0 * scale, Color::from_rgb8(0x14, 0x14, 0x14).with_alpha(alpha));
-    painter.rect_stroke_sdf(field, 8.0 * scale, 1.5 * scale, white.with_alpha(0.18 * alpha));
+    painter.rect_filled(
+        field,
+        8.0 * scale,
+        Color::from_rgb8(0x14, 0x14, 0x14).with_alpha(alpha),
+    );
+    painter.rect_stroke_sdf(
+        field,
+        8.0 * scale,
+        1.5 * scale,
+        white.with_alpha(0.18 * alpha),
+    );
 
-    let Some(input) = bt.pair_prompt.as_ref().map(|p| &p.passkey_input) else { return };
+    let Some(input) = bt.pair_prompt.as_ref().map(|p| &p.passkey_input) else {
+        return;
+    };
     let raw = input.query();
     let display = if raw.is_empty() { "passkey" } else { raw };
-    let dc = if raw.is_empty() { muted } else { white.with_alpha(alpha) };
+    let dc = if raw.is_empty() {
+        muted
+    } else {
+        white.with_alpha(alpha)
+    };
     let tx = field.x + 12.0 * scale;
     let ty = field.y + (field.h - font) / 2.0;
-    text.queue(display, font, tx, ty, dc, field.w - 24.0 * scale, surface_w, surface_h);
+    text.queue(
+        display,
+        font,
+        tx,
+        ty,
+        dc,
+        field.w - 24.0 * scale,
+        surface_w,
+        surface_h,
+    );
     if !raw.is_empty() && input.cursor_visible() {
         let prefix_chars = raw
             .char_indices()
@@ -260,9 +328,14 @@ fn draw_solid_button(
     let lx = rect.x + (rect.w - lw) / 2.0;
     let ly = rect.y + (rect.h - font) / 2.0;
     text.queue(
-        label, font, lx, ly,
+        label,
+        font,
+        lx,
+        ly,
         Color::from_rgb8(0x16, 0x12, 0x06).with_alpha(0.95 * alpha),
-        lw, surface_w, surface_h,
+        lw,
+        surface_w,
+        surface_h,
     );
 }
 

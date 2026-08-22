@@ -22,10 +22,10 @@ impl Theme {
     pub fn classic() -> Self {
         Self {
             blob_colors: vec![
-                Color::from_rgb8(220, 40, 40),   // ruby red
-                Color::from_rgb8(240, 120, 20),  // sunset orange
-                Color::from_rgb8(240, 200, 30),  // golden yellow
-                Color::from_rgb8(200, 70, 30),   // warm amber
+                Color::from_rgb8(220, 40, 40),  // ruby red
+                Color::from_rgb8(240, 120, 20), // sunset orange
+                Color::from_rgb8(240, 200, 30), // golden yellow
+                Color::from_rgb8(200, 70, 30),  // warm amber
             ],
             glass_tint: Color::from_rgba8(10, 8, 20, 40),
             glass_border: Color::from_rgba8(255, 255, 255, 25),
@@ -38,10 +38,10 @@ impl Theme {
     pub fn cosmic() -> Self {
         Self {
             blob_colors: vec![
-                Color::from_rgb8(120, 40, 200),  // deep violet
-                Color::from_rgb8(40, 100, 240),  // electric blue
-                Color::from_rgb8(225, 175, 35),  // cosmic gold
-                Color::from_rgb8(30, 180, 170),  // nebula teal
+                Color::from_rgb8(120, 40, 200), // deep violet
+                Color::from_rgb8(40, 100, 240), // electric blue
+                Color::from_rgb8(225, 175, 35), // cosmic gold
+                Color::from_rgb8(30, 180, 170), // nebula teal
             ],
             glass_tint: Color::from_rgba8(12, 6, 30, 80),
             glass_border: Color::from_rgba8(140, 100, 255, 25),
@@ -54,10 +54,10 @@ impl Theme {
     pub fn neon() -> Self {
         Self {
             blob_colors: vec![
-                Color::from_rgb8(255, 20, 147),  // hot pink
-                Color::from_rgb8(0, 255, 65),    // electric green
-                Color::from_rgb8(0, 191, 255),   // cyber blue
-                Color::from_rgb8(255, 255, 0),   // neon yellow
+                Color::from_rgb8(255, 20, 147), // hot pink
+                Color::from_rgb8(0, 255, 65),   // electric green
+                Color::from_rgb8(0, 191, 255),  // cyber blue
+                Color::from_rgb8(255, 255, 0),  // neon yellow
             ],
             glass_tint: Color::from_rgba8(5, 5, 15, 80),
             glass_border: Color::from_rgba8(100, 200, 255, 30),

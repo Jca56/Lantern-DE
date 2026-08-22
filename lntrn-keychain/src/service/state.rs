@@ -113,7 +113,9 @@ pub struct Session {
 pub enum SessionAlgo {
     Plain,
     /// 16-byte AES-128 key shared with the client.
-    DhAesCbc { key: [u8; 16] },
+    DhAesCbc {
+        key: [u8; 16],
+    },
 }
 
 /// A live D-Bus prompt object — created by Service.Unlock / Service.Lock /
@@ -135,5 +137,8 @@ pub enum PromptKind {
     /// Delete a collection. Result variant: `s` empty string (per spec).
     DeleteCollection { collection_id: String },
     /// Delete an item. Result variant: `s` empty string.
-    DeleteItem { collection_id: String, item_id: String },
+    DeleteItem {
+        collection_id: String,
+        item_id: String,
+    },
 }

@@ -162,9 +162,7 @@ impl SnapHandler {
                 .output();
             if let Ok(out) = result {
                 if out.status.success() {
-                    let new_name = String::from_utf8_lossy(&out.stdout)
-                        .trim()
-                        .to_string();
+                    let new_name = String::from_utf8_lossy(&out.stdout).trim().to_string();
                     if !new_name.is_empty() && new_name != old_name {
                         self.status_msg = run_snapshot_cmd(&[
                             "rename", &old_name, &new_name, "--target", &target,
@@ -206,11 +204,9 @@ impl SnapHandler {
     }
 
     fn window_size(&self) -> (f32, f32) {
-        self.gpu
-            .as_ref()
-            .map_or((700.0, 500.0), |g| {
-                (g.ctx.width() as f32, g.ctx.height() as f32)
-            })
+        self.gpu.as_ref().map_or((700.0, 500.0), |g| {
+            (g.ctx.width() as f32, g.ctx.height() as f32)
+        })
     }
 
     fn shutdown(&mut self, event_loop: &ActiveEventLoop) {
@@ -261,12 +257,7 @@ impl ApplicationHandler for SnapHandler {
         self.refresh_list();
     }
 
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _id: WindowId,
-        event: WindowEvent,
-    ) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => self.shutdown(event_loop),
 
@@ -362,12 +353,7 @@ impl ApplicationHandler for SnapHandler {
                 let (wf, hf) = self.window_size();
                 let viewport = render::list_viewport(wf, hf, s);
                 let total_h = render::content_height(self.snapshots.len(), s);
-                ScrollArea::apply_scroll(
-                    &mut self.scroll_offset,
-                    scroll,
-                    total_h,
-                    viewport.h,
-                );
+                ScrollArea::apply_scroll(&mut self.scroll_offset, scroll, total_h, viewport.h);
                 self.needs_redraw = true;
             }
 
@@ -418,8 +404,7 @@ fn find_cli_exe() -> std::path::PathBuf {
     }
     // 2. ~/.lantern/bin (where we deploy)
     if let Ok(home) = std::env::var("HOME") {
-        let candidate = std::path::PathBuf::from(home)
-            .join(".lantern/bin/lntrn-snapshot");
+        let candidate = std::path::PathBuf::from(home).join(".lantern/bin/lntrn-snapshot");
         if candidate.exists() {
             return candidate;
         }

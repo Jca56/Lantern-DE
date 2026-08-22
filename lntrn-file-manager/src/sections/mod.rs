@@ -23,13 +23,21 @@ pub fn selection_tint(_palette: &FoxPalette) -> Color {
 /// When true, the rainbow gradient dividers render as solid accent-colored
 /// lines instead. Persisted via `Settings::solid_dividers`, toggled live from
 /// the View menu (same static-atomic pattern as `layout::CHROME_HIDDEN`).
-pub static SOLID_DIVIDERS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub static SOLID_DIVIDERS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 fn solid_dividers() -> bool {
     SOLID_DIVIDERS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-pub fn draw_gradient_h(painter: &mut Painter, palette: &FoxPalette, x: f32, y: f32, width: f32, s: f32) {
+pub fn draw_gradient_h(
+    painter: &mut Painter,
+    palette: &FoxPalette,
+    x: f32,
+    y: f32,
+    width: f32,
+    s: f32,
+) {
     if solid_dividers() {
         painter.rect_filled(Rect::new(x, y, width, 4.0 * s), 0.0, palette.accent);
         return;
@@ -40,7 +48,14 @@ pub fn draw_gradient_h(painter: &mut Painter, palette: &FoxPalette, x: f32, y: f
     bar.draw(painter);
 }
 
-pub fn draw_gradient_v(painter: &mut Painter, palette: &FoxPalette, x: f32, y: f32, height: f32, s: f32) {
+pub fn draw_gradient_v(
+    painter: &mut Painter,
+    palette: &FoxPalette,
+    x: f32,
+    y: f32,
+    height: f32,
+    s: f32,
+) {
     if solid_dividers() {
         painter.rect_filled(Rect::new(x, y, 4.0 * s, height), 0.0, palette.accent);
         return;
@@ -51,7 +66,11 @@ pub fn draw_gradient_v(painter: &mut Painter, palette: &FoxPalette, x: f32, y: f
     let step = height / segments as f32;
     for i in 0..segments {
         let sy = y + i as f32 * step;
-        let sh = if i + 1 == segments { y + height - sy } else { step };
+        let sh = if i + 1 == segments {
+            y + height - sy
+        } else {
+            step
+        };
         let t = i as f32 / segments as f32;
         let color = sample_gradient_5(&colors, t);
         painter.rect_filled(Rect::new(x, sy, w, sh), 0.0, color);
@@ -104,7 +123,10 @@ pub fn breadcrumb_segments(path: &std::path::Path, _s: f32) -> Vec<(String, std:
             let mut accum = home.clone();
             for comp in rel.components() {
                 accum = accum.join(comp);
-                segments.push((comp.as_os_str().to_string_lossy().to_string(), accum.clone()));
+                segments.push((
+                    comp.as_os_str().to_string_lossy().to_string(),
+                    accum.clone(),
+                ));
             }
         }
     } else {

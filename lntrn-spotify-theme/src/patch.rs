@@ -104,9 +104,9 @@ pub fn apply(spa: &Path, css_inner: &str) -> Result<(), String> {
     let bytes = std::fs::read(spa).map_err(|e| format!("read {}: {e}", spa.display()))?;
     let mut arc = Archive::read(&bytes)?;
 
-    let entry = arc
-        .find_mut(TARGET)
-        .ok_or(format!("xpui.spa has no {TARGET} — unexpected Spotify layout"))?;
+    let entry = arc.find_mut(TARGET).ok_or(format!(
+        "xpui.spa has no {TARGET} — unexpected Spotify layout"
+    ))?;
     let css = String::from_utf8_lossy(&entry.decompressed()?).into_owned();
 
     let already = css.contains(&start_marker());
@@ -125,7 +125,9 @@ pub fn apply(spa: &Path, css_inner: &str) -> Result<(), String> {
     let block = format!("\n{}\n{css_inner}\n{}\n", start_marker(), end_marker());
     let patched = format!("{pristine}{block}");
 
-    arc.find_mut(TARGET).unwrap().set_contents(patched.as_bytes())?;
+    arc.find_mut(TARGET)
+        .unwrap()
+        .set_contents(patched.as_bytes())?;
 
     let out = arc.write();
     write_atomic(spa, &out)?;

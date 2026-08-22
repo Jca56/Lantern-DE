@@ -76,10 +76,9 @@ impl RemoteIndex {
         let mut changed = 0;
         for d in docs {
             self.bump_cursor(&d);
-            let differs = self
-                .docs
-                .get(&d.path)
-                .map_or(true, |old| old.sha256 != d.sha256 || old.deleted != d.deleted);
+            let differs = self.docs.get(&d.path).map_or(true, |old| {
+                old.sha256 != d.sha256 || old.deleted != d.deleted
+            });
             if differs {
                 changed += 1;
             }

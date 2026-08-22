@@ -13,7 +13,9 @@ pub enum WindowMode {
 }
 
 impl Default for WindowMode {
-    fn default() -> Self { Self::Fox }
+    fn default() -> Self {
+        Self::Fox
+    }
 }
 
 // ── Top-level Lantern config ─────────────────────────────────────────────────
@@ -65,11 +67,21 @@ pub struct LockScreenConfig {
     pub scrim_opacity: f32,
 }
 
-fn default_lock_border_thickness() -> f32 { 2.0 }
-fn default_lock_field_color() -> String { "#000000".into() }
-fn default_lock_field_opacity() -> f32 { 0.55 }
-fn default_lock_dot_color() -> String { "#F5F5F5".into() }
-fn default_lock_scrim_opacity() -> f32 { 0.38 }
+fn default_lock_border_thickness() -> f32 {
+    2.0
+}
+fn default_lock_field_color() -> String {
+    "#000000".into()
+}
+fn default_lock_field_opacity() -> f32 {
+    0.55
+}
+fn default_lock_dot_color() -> String {
+    "#F5F5F5".into()
+}
+fn default_lock_scrim_opacity() -> f32 {
+    0.38
+}
 
 impl Default for LockScreenConfig {
     fn default() -> Self {
@@ -169,8 +181,12 @@ pub struct AppearanceConfig {
     pub window_gradient_radius: f32,
 }
 
-fn default_gradient_direction() -> String { "diagonal".into() }
-fn default_gradient_radius() -> f32 { 0.5 }
+fn default_gradient_direction() -> String {
+    "diagonal".into()
+}
+fn default_gradient_radius() -> f32 {
+    0.5
+}
 
 impl Default for AppearanceConfig {
     fn default() -> Self {
@@ -261,11 +277,21 @@ pub struct WindowsConfig {
     pub size_xlarge_pct: u32,
 }
 
-fn default_pct_default() -> u32 { 60 }
-fn default_pct_small() -> u32 { 30 }
-fn default_pct_medium() -> u32 { 60 }
-fn default_pct_large() -> u32 { 85 }
-fn default_pct_xlarge() -> u32 { 100 }
+fn default_pct_default() -> u32 {
+    60
+}
+fn default_pct_small() -> u32 {
+    30
+}
+fn default_pct_medium() -> u32 {
+    60
+}
+fn default_pct_large() -> u32 {
+    85
+}
+fn default_pct_xlarge() -> u32 {
+    100
+}
 
 impl Default for WindowsConfig {
     fn default() -> Self {
@@ -346,17 +372,39 @@ pub struct InputConfig {
     pub click_anim_style: String,
 }
 
-fn default_cursor_body_light() -> String   { "#ffffff".into() }
-fn default_cursor_body_dark() -> String    { "#ababab".into() }
-fn default_cursor_accent_light() -> String { "#fab414".into() }
-fn default_cursor_accent_dark() -> String  { "#9a6300".into() }
-fn default_cursor_outline_color() -> String { "#0a0a0a".into() }
-fn default_cursor_outline_scale() -> f32   { 1.0 }
-fn default_cursor_corner_radius() -> f32   { 0.0 }
-fn default_click_anim_enabled() -> bool { true }
-fn default_click_anim_size() -> f32 { 1.0 }
-fn default_click_anim_color() -> String { String::new() }
-fn default_click_anim_style() -> String { "rings".into() }
+fn default_cursor_body_light() -> String {
+    "#ffffff".into()
+}
+fn default_cursor_body_dark() -> String {
+    "#ababab".into()
+}
+fn default_cursor_accent_light() -> String {
+    "#fab414".into()
+}
+fn default_cursor_accent_dark() -> String {
+    "#9a6300".into()
+}
+fn default_cursor_outline_color() -> String {
+    "#0a0a0a".into()
+}
+fn default_cursor_outline_scale() -> f32 {
+    1.0
+}
+fn default_cursor_corner_radius() -> f32 {
+    0.0
+}
+fn default_click_anim_enabled() -> bool {
+    true
+}
+fn default_click_anim_size() -> f32 {
+    1.0
+}
+fn default_click_anim_color() -> String {
+    String::new()
+}
+fn default_click_anim_style() -> String {
+    "rings".into()
+}
 
 impl Default for InputConfig {
     fn default() -> Self {
@@ -367,10 +415,10 @@ impl Default for InputConfig {
             double_click_to_open: false,
             cursor_size: 24,
             cursor_theme: "default".into(),
-            cursor_body_light:    default_cursor_body_light(),
-            cursor_body_dark:     default_cursor_body_dark(),
-            cursor_accent_light:  default_cursor_accent_light(),
-            cursor_accent_dark:   default_cursor_accent_dark(),
+            cursor_body_light: default_cursor_body_light(),
+            cursor_body_dark: default_cursor_body_dark(),
+            cursor_accent_light: default_cursor_accent_light(),
+            cursor_accent_dark: default_cursor_accent_dark(),
             cursor_outline_color: default_cursor_outline_color(),
             cursor_outline_scale: default_cursor_outline_scale(),
             cursor_corner_radius: default_cursor_corner_radius(),
@@ -394,9 +442,7 @@ pub struct DisplayConfig {
 
 impl Default for DisplayConfig {
     fn default() -> Self {
-        Self {
-            scale: 1.0,
-        }
+        Self { scale: 1.0 }
     }
 }
 
@@ -440,22 +486,27 @@ pub struct MonitorEntry {
     pub enabled: bool,
 }
 
-fn default_monitor_scale() -> f32 { 1.0 }
-fn default_sdr_brightness() -> u32 { 203 }
-fn default_true() -> bool { true }
-
+fn default_monitor_scale() -> f32 {
+    1.0
+}
+fn default_sdr_brightness() -> u32 {
+    203
+}
+fn default_true() -> bool {
+    true
+}
 
 // ── Power ───────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PowerConfig {
-    pub lid_close_action: String,       // "suspend", "hibernate", "lock", "nothing"
-    pub lid_close_on_ac: String,        // same options, when plugged in
-    pub dim_after: u32,                 // seconds before screen dims (0 = never)
-    pub idle_timeout: u32,              // seconds before idle action
-    pub idle_action: String,            // "suspend", "lock", "nothing"
-    pub low_battery_threshold: u32,     // percentage for warning
+    pub lid_close_action: String, // "suspend", "hibernate", "lock", "nothing"
+    pub lid_close_on_ac: String,  // same options, when plugged in
+    pub dim_after: u32,           // seconds before screen dims (0 = never)
+    pub idle_timeout: u32,        // seconds before idle action
+    pub idle_action: String,      // "suspend", "lock", "nothing"
+    pub low_battery_threshold: u32, // percentage for warning
     pub critical_battery_threshold: u32, // percentage for critical action
     pub critical_battery_action: String, // "suspend", "hibernate", "shutdown", "nothing"
 }
@@ -555,10 +606,16 @@ pub struct KeybindsMachine {
 /// WASD→arrows, Q/E→Home/End, R/F→PageUp/PageDown, X→Delete, Z→Backspace.
 pub fn default_layer_maps() -> Vec<String> {
     [
-        "w=Up", "a=Left", "s=Down", "d=Right",
-        "q=Home", "e=End",
-        "r=PageUp", "f=PageDown",
-        "x=Delete", "z=Backspace",
+        "w=Up",
+        "a=Left",
+        "s=Down",
+        "d=Right",
+        "q=Home",
+        "e=End",
+        "r=PageUp",
+        "f=PageDown",
+        "x=Delete",
+        "z=Backspace",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -657,8 +714,7 @@ impl LanternConfig {
         self.input.click_anim_size = self.input.click_anim_size.clamp(0.25, 3.0);
         self.display.scale = self.display.scale.clamp(0.5, 3.0);
         self.animations.speed = self.animations.speed.clamp(0.25, 3.0);
-        if !["cinematic", "snappy", "springy", "linear"]
-            .contains(&self.animations.preset.as_str())
+        if !["cinematic", "snappy", "springy", "linear"].contains(&self.animations.preset.as_str())
         {
             self.animations.preset = "cinematic".into();
         }
@@ -710,7 +766,10 @@ impl KeybindsConfig {
     pub fn set_enabled(&mut self, enabled: bool, scope_machine: Option<&str>) {
         match scope_machine {
             Some(host) => {
-                self.machine.entry(host.to_string()).or_default().layer_enabled = Some(enabled);
+                self.machine
+                    .entry(host.to_string())
+                    .or_default()
+                    .layer_enabled = Some(enabled);
             }
             None => {
                 self.layer_enabled = enabled;
@@ -734,15 +793,26 @@ mod tests {
     fn keybinds_roundtrips_after_monitors() {
         let mut cfg = LanternConfig::default();
         cfg.monitors.push(MonitorEntry {
-            name: "DP-1".into(), x: 0, y: 0,
-            resolution: "2560x1440".into(), refresh_rate: "144000".into(),
-            scale: 1.0, wallpaper: String::new(), primary: true, vrr: false,
-            hdr: false, sdr_brightness: 203, enabled: true,
+            name: "DP-1".into(),
+            x: 0,
+            y: 0,
+            resolution: "2560x1440".into(),
+            refresh_rate: "144000".into(),
+            scale: 1.0,
+            wallpaper: String::new(),
+            primary: true,
+            vrr: false,
+            hdr: false,
+            sdr_brightness: 203,
+            enabled: true,
         });
         cfg.keybinds.set_enabled(true, Some("gentoo-pc"));
         let s = toml::to_string_pretty(&cfg).expect("serialize");
         assert!(s.contains("[keybinds]"), "missing [keybinds]:\n{s}");
-        assert!(s.contains("[keybinds.machine.gentoo-pc]"), "missing per-machine:\n{s}");
+        assert!(
+            s.contains("[keybinds.machine.gentoo-pc]"),
+            "missing per-machine:\n{s}"
+        );
         let back: LanternConfig = toml::from_str(&s).expect("parse");
         assert!(back.keybinds.effective_enabled("gentoo-pc"));
         assert!(!back.keybinds.effective_enabled("laptop"));

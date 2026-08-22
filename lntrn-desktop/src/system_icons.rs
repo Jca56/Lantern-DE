@@ -69,12 +69,16 @@ fn icon_dirs() -> Vec<String> {
         "/var/lib/flatpak/exports/share/icons".to_string(),
         format!("{home}/.local/share/flatpak/exports/share/icons"),
     ] {
-        for size in ["scalable", "512x512", "256x256", "128x128", "64x64", "48x48"] {
+        for size in [
+            "scalable", "512x512", "256x256", "128x128", "64x64", "48x48",
+        ] {
             dirs.push(format!("{base}/hicolor/{size}/apps"));
         }
     }
     // hicolor (freedesktop default), largest raster first so we upscale less.
-    for size in ["scalable", "512x512", "256x256", "128x128", "64x64", "48x48"] {
+    for size in [
+        "scalable", "512x512", "256x256", "128x128", "64x64", "48x48",
+    ] {
         dirs.push(format!("/usr/share/icons/hicolor/{size}/apps"));
     }
     // Common themes + catch-all.

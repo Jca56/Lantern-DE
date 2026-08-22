@@ -19,7 +19,9 @@ impl PortalRequest {
     fn close(&self) {
         eprintln!("[lntrn-portal] Request.Close for {}", self.handle);
         if let Some(pid) = self.pids.lock().unwrap().remove(&self.handle) {
-            unsafe { libc::kill(pid as i32, libc::SIGTERM); }
+            unsafe {
+                libc::kill(pid as i32, libc::SIGTERM);
+            }
         }
     }
 }

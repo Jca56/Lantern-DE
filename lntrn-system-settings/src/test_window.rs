@@ -15,7 +15,7 @@ use wayland_client::protocol::{
     wl_buffer::WlBuffer,
     wl_compositor::WlCompositor,
     wl_registry::{self, WlRegistry},
-    wl_shm::{self, WlShm, Format},
+    wl_shm::{self, Format, WlShm},
     wl_shm_pool::WlShmPool,
     wl_surface::WlSurface,
 };
@@ -67,9 +67,15 @@ pub fn run() -> Result<()> {
     let mut state = State::new();
     queue.roundtrip(&mut state)?;
 
-    let compositor = state.compositor.clone().ok_or_else(|| anyhow!("no wl_compositor"))?;
+    let compositor = state
+        .compositor
+        .clone()
+        .ok_or_else(|| anyhow!("no wl_compositor"))?;
     let shm = state.shm.clone().ok_or_else(|| anyhow!("no wl_shm"))?;
-    let wm_base = state.wm_base.clone().ok_or_else(|| anyhow!("no xdg_wm_base"))?;
+    let wm_base = state
+        .wm_base
+        .clone()
+        .ok_or_else(|| anyhow!("no xdg_wm_base"))?;
 
     let surface = compositor.create_surface(&qh, ());
     let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
@@ -156,19 +162,27 @@ impl Dispatch<WlRegistry, ()> for State {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        if let wl_registry::Event::Global { name, interface, version } = event {
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
             match interface.as_str() {
                 "wl_compositor" => {
-                    state.compositor = Some(registry.bind::<WlCompositor, _, _>(name, version.min(6), qh, ()));
+                    state.compositor =
+                        Some(registry.bind::<WlCompositor, _, _>(name, version.min(6), qh, ()));
                 }
                 "wl_shm" => {
                     state.shm = Some(registry.bind::<WlShm, _, _>(name, version.min(1), qh, ()));
                 }
                 "xdg_wm_base" => {
-                    state.wm_base = Some(registry.bind::<XdgWmBase, _, _>(name, version.min(6), qh, ()));
+                    state.wm_base =
+                        Some(registry.bind::<XdgWmBase, _, _>(name, version.min(6), qh, ()));
                 }
                 "zxdg_decoration_manager_v1" => {
-                    state.decoration_mgr = Some(registry.bind::<ZxdgDecorationManagerV1, _, _>(name, 1, qh, ()));
+                    state.decoration_mgr =
+                        Some(registry.bind::<ZxdgDecorationManagerV1, _, _>(name, 1, qh, ()));
                 }
                 _ => {}
             }
@@ -236,20 +250,68 @@ impl Dispatch<ZxdgToplevelDecorationV1, ()> for State {
 
 // These have no events we care about, but Dispatch must be implemented.
 impl Dispatch<WlCompositor, ()> for State {
-    fn event(_: &mut Self, _: &WlCompositor, _: wayland_client::protocol::wl_compositor::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &WlCompositor,
+        _: wayland_client::protocol::wl_compositor::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<WlShm, ()> for State {
-    fn event(_: &mut Self, _: &WlShm, _: wl_shm::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &WlShm,
+        _: wl_shm::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<WlShmPool, ()> for State {
-    fn event(_: &mut Self, _: &WlShmPool, _: wayland_client::protocol::wl_shm_pool::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &WlShmPool,
+        _: wayland_client::protocol::wl_shm_pool::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<WlBuffer, ()> for State {
-    fn event(_: &mut Self, _: &WlBuffer, _: wayland_client::protocol::wl_buffer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &WlBuffer,
+        _: wayland_client::protocol::wl_buffer::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<WlSurface, ()> for State {
-    fn event(_: &mut Self, _: &WlSurface, _: wayland_client::protocol::wl_surface::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &WlSurface,
+        _: wayland_client::protocol::wl_surface::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<ZxdgDecorationManagerV1, ()> for State {
-    fn event(_: &mut Self, _: &ZxdgDecorationManagerV1, _: wayland_protocols::xdg::decoration::zv1::client::zxdg_decoration_manager_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &ZxdgDecorationManagerV1,
+        _: wayland_protocols::xdg::decoration::zv1::client::zxdg_decoration_manager_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }

@@ -5,10 +5,9 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use lntrn_dbus::{
-    align_to, encode_string, encode_u32, encode_signature,
-    encode_dict_entry_sv, encode_variant_string, encode_variant_bool,
-    encode_variant_double, encode_variant_i64,
-    Connection, BodyReader, Message,
+    align_to, encode_dict_entry_sv, encode_signature, encode_string, encode_u32,
+    encode_variant_bool, encode_variant_double, encode_variant_i64, encode_variant_string,
+    BodyReader, Connection, Message,
 };
 
 const BUS_NAME: &str = "org.mpris.MediaPlayer2.lntrn_media_player";
@@ -87,7 +86,8 @@ pub fn spawn() -> (mpsc::Sender<PlayerState>, mpsc::Receiver<MprisCmd>) {
 fn log(msg: &str) {
     use std::io::Write;
     if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true).append(true)
+        .create(true)
+        .append(true)
         .open("/tmp/lntrn-mpris.log")
     {
         let _ = writeln!(f, "{msg}");
@@ -128,7 +128,9 @@ fn server_thread_with_conn(
 }
 
 fn handle_method(
-    conn: &mut Connection, msg: &Message, state: &PlayerState,
+    conn: &mut Connection,
+    msg: &Message,
+    state: &PlayerState,
     cmd_tx: &mpsc::Sender<MprisCmd>,
 ) {
     match (msg.interface.as_str(), msg.member.as_str()) {
@@ -175,10 +177,14 @@ fn handle_method(
             reader.align(8);
             if reader.pos + 8 <= msg.body.len() {
                 let offset = i64::from_le_bytes([
-                    msg.body[reader.pos], msg.body[reader.pos+1],
-                    msg.body[reader.pos+2], msg.body[reader.pos+3],
-                    msg.body[reader.pos+4], msg.body[reader.pos+5],
-                    msg.body[reader.pos+6], msg.body[reader.pos+7],
+                    msg.body[reader.pos],
+                    msg.body[reader.pos + 1],
+                    msg.body[reader.pos + 2],
+                    msg.body[reader.pos + 3],
+                    msg.body[reader.pos + 4],
+                    msg.body[reader.pos + 5],
+                    msg.body[reader.pos + 6],
+                    msg.body[reader.pos + 7],
                 ]);
                 let _ = cmd_tx.send(MprisCmd::Seek(offset));
             }
@@ -238,13 +244,28 @@ fn encode_all_properties(iface: &str, state: &PlayerState) -> Vec<u8> {
     let mut buf = Vec::new();
     let props: &[&str] = match iface {
         IFACE_ROOT => &[
-            "Identity", "DesktopEntry", "CanQuit", "CanRaise",
-            "HasTrackList", "SupportedUriSchemes", "SupportedMimeTypes",
+            "Identity",
+            "DesktopEntry",
+            "CanQuit",
+            "CanRaise",
+            "HasTrackList",
+            "SupportedUriSchemes",
+            "SupportedMimeTypes",
         ],
         IFACE_PLAYER => &[
-            "PlaybackStatus", "Metadata", "Volume", "Position", "Rate",
-            "MinimumRate", "MaximumRate", "CanGoNext", "CanGoPrevious",
-            "CanPlay", "CanPause", "CanSeek", "CanControl",
+            "PlaybackStatus",
+            "Metadata",
+            "Volume",
+            "Position",
+            "Rate",
+            "MinimumRate",
+            "MaximumRate",
+            "CanGoNext",
+            "CanGoPrevious",
+            "CanPlay",
+            "CanPause",
+            "CanSeek",
+            "CanControl",
         ],
         _ => &[],
     };
@@ -347,8 +368,11 @@ fn emit_properties_changed(conn: &mut Connection, state: &PlayerState) {
     encode_u32(&mut body, 0);
 
     conn.send_signal(
-        OBJECT_PATH, IFACE_PROPS, "PropertiesChanged",
-        "sa{sv}as", &body,
+        OBJECT_PATH,
+        IFACE_PROPS,
+        "PropertiesChanged",
+        "sa{sv}as",
+        &body,
     );
 }
 
@@ -386,5 +410,6 @@ fn introspect_xml() -> String {
     <property name="CanSeek" type="b" access="read"/>
     <property name="CanControl" type="b" access="read"/>
   </interface>
-</node>"#.to_string()
+</node>"#
+        .to_string()
 }

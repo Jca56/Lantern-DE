@@ -106,7 +106,9 @@ pub fn write_windows_f32(key: &str, value: f32) {
     }
     // No [windows] section at all — add one at the end.
     if !wrote {
-        if !out.ends_with('\n') { out.push('\n'); }
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
         out.push_str("\n[windows]\n");
         out.push_str(&new_line);
         out.push('\n');

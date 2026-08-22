@@ -32,7 +32,11 @@ impl Dispatch<wl_registry::WlRegistry, ()> for WlState {
         qh: &QueueHandle<Self>,
     ) {
         match event {
-            wl_registry::Event::Global { name, interface, version } => match interface.as_str() {
+            wl_registry::Event::Global {
+                name,
+                interface,
+                version,
+            } => match interface.as_str() {
                 "wl_compositor" => {
                     state.compositor = Some(registry.bind(name, version.min(6), qh, ()));
                 }
@@ -48,7 +52,10 @@ impl Dispatch<wl_registry::WlRegistry, ()> for WlState {
                     let output: wl_output::WlOutput = registry.bind(name, version.min(4), qh, name);
                     state.outputs.insert(
                         output.id(),
-                        OutputData { registry_name: name, ..Default::default() },
+                        OutputData {
+                            registry_name: name,
+                            ..Default::default()
+                        },
                     );
                 }
                 "wl_seat" => {
@@ -77,7 +84,15 @@ impl Dispatch<wl_registry::WlRegistry, ()> for WlState {
 }
 
 impl Dispatch<wl_compositor::WlCompositor, ()> for WlState {
-    fn event(_: &mut Self, _: &wl_compositor::WlCompositor, _: wl_compositor::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_compositor::WlCompositor,
+        _: wl_compositor::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wl_surface::WlSurface, ()> for WlState {
     fn event(
@@ -96,16 +111,48 @@ impl Dispatch<wl_surface::WlSurface, ()> for WlState {
     }
 }
 impl Dispatch<wl_region::WlRegion, ()> for WlState {
-    fn event(_: &mut Self, _: &wl_region::WlRegion, _: wl_region::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_region::WlRegion,
+        _: wl_region::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wp_viewporter::WpViewporter, ()> for WlState {
-    fn event(_: &mut Self, _: &wp_viewporter::WpViewporter, _: wp_viewporter::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wp_viewporter::WpViewporter,
+        _: wp_viewporter::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wp_viewport::WpViewport, ()> for WlState {
-    fn event(_: &mut Self, _: &wp_viewport::WpViewport, _: wp_viewport::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wp_viewport::WpViewport,
+        _: wp_viewport::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<zwlr_layer_shell_v1::ZwlrLayerShellV1, ()> for WlState {
-    fn event(_: &mut Self, _: &zwlr_layer_shell_v1::ZwlrLayerShellV1, _: zwlr_layer_shell_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &zwlr_layer_shell_v1::ZwlrLayerShellV1,
+        _: zwlr_layer_shell_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 impl Dispatch<wl_output::WlOutput, u32> for WlState {
@@ -117,10 +164,10 @@ impl Dispatch<wl_output::WlOutput, u32> for WlState {
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        let data = state
-            .outputs
-            .entry(output.id())
-            .or_insert(OutputData { registry_name: *registry_name, ..Default::default() });
+        let data = state.outputs.entry(output.id()).or_insert(OutputData {
+            registry_name: *registry_name,
+            ..Default::default()
+        });
         match event {
             wl_output::Event::Name { name } => data.name = name,
             wl_output::Event::Scale { factor } => {
@@ -156,7 +203,11 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for WlState {
         _: &QueueHandle<Self>,
     ) {
         match event {
-            zwlr_layer_surface_v1::Event::Configure { serial, width, height } => {
+            zwlr_layer_surface_v1::Event::Configure {
+                serial,
+                width,
+                height,
+            } => {
                 layer_surface.ack_configure(serial);
                 if width > 0 {
                     state.width = width;
@@ -182,7 +233,10 @@ impl Dispatch<wl_seat::WlSeat, ()> for WlState {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        if let wl_seat::Event::Capabilities { capabilities: caps, .. } = event {
+        if let wl_seat::Event::Capabilities {
+            capabilities: caps, ..
+        } = event
+        {
             if let wayland_client::WEnum::Value(caps) = caps {
                 if caps.contains(wl_seat::Capability::Pointer) {
                     seat.get_pointer(qh, ());
@@ -205,17 +259,29 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WlState {
         _: &QueueHandle<Self>,
     ) {
         match event {
-            wl_pointer::Event::Enter { surface_x, surface_y, .. } => {
+            wl_pointer::Event::Enter {
+                surface_x,
+                surface_y,
+                ..
+            } => {
                 state.pointer_in_surface = true;
                 state.cursor_x = surface_x;
                 state.cursor_y = surface_y;
             }
             wl_pointer::Event::Leave { .. } => state.pointer_in_surface = false,
-            wl_pointer::Event::Motion { surface_x, surface_y, .. } => {
+            wl_pointer::Event::Motion {
+                surface_x,
+                surface_y,
+                ..
+            } => {
                 state.cursor_x = surface_x;
                 state.cursor_y = surface_y;
             }
-            wl_pointer::Event::Button { button, state: btn_state, .. } => {
+            wl_pointer::Event::Button {
+                button,
+                state: btn_state,
+                ..
+            } => {
                 use wayland_client::WEnum;
                 let pressed = WEnum::Value(wl_pointer::ButtonState::Pressed);
                 let released = WEnum::Value(wl_pointer::ButtonState::Released);
@@ -259,7 +325,11 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WlState {
     ) {
         use wayland_client::WEnum;
         match event {
-            wl_keyboard::Event::Key { key, state: key_state, .. } => {
+            wl_keyboard::Event::Key {
+                key,
+                state: key_state,
+                ..
+            } => {
                 let pressed = key_state == WEnum::Value(wl_keyboard::KeyState::Pressed);
                 let released = key_state == WEnum::Value(wl_keyboard::KeyState::Released);
                 if pressed && key == KEY_ESC {
@@ -293,7 +363,11 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WlState {
                     }
                 }
             }
-            wl_keyboard::Event::Modifiers { mods_depressed, mods_locked, .. } => {
+            wl_keyboard::Event::Modifiers {
+                mods_depressed,
+                mods_locked,
+                ..
+            } => {
                 // Shift is bit 0 of the depressed mask; refresh from this
                 // truth in case we missed a key event (e.g., the user held
                 // shift before the panel got focus).

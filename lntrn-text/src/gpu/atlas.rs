@@ -280,7 +280,10 @@ impl GlyphAtlas {
             },
         );
         queue.submit(Some(encoder.finish()));
-        eprintln!("[lntrn-text] glyph atlas grew {0}x{0} → {1}x{1}", self.size, new_size);
+        eprintln!(
+            "[lntrn-text] glyph atlas grew {0}x{0} → {1}x{1}",
+            self.size, new_size
+        );
         self.texture = new_texture;
         self.view = new_view;
         self.size = new_size;

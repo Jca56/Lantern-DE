@@ -34,10 +34,7 @@ fn main() {
     // ranges (unassigned code points in e.g. the Arabic blocks default to
     // AL/R — required for correct paragraph direction detection).
     let bidi_src = read("DerivedBidiClass.txt");
-    let bidi = merge(layer(
-        &parse_missing(&bidi_src),
-        &merge(parse(&bidi_src)),
-    ));
+    let bidi = merge(layer(&parse_missing(&bidi_src), &merge(parse(&bidi_src))));
     let mirror = parse_pairs(&read("BidiMirroring.txt"));
     let joining = merge(parse_arabic_shaping(&read("ArabicShaping.txt")));
 
@@ -180,7 +177,13 @@ fn parse(text: &str) -> Vec<(u32, u32, String)> {
             Some((
                 u32::from_str_radix(a.trim(), 16).ok()?,
                 u32::from_str_radix(b.trim(), 16).ok()?,
-                value.trim().split(';').next().unwrap_or("").trim().to_string(),
+                value
+                    .trim()
+                    .split(';')
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string(),
             ))
         })
         .collect()

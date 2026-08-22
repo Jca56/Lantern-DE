@@ -18,11 +18,7 @@ use crate::app::{AppState, PanelRect};
 ///   volume / brightness from the cursor x.
 /// - For an active notes-editor drag (filter / title / body), extend
 ///   the text selection to the byte under the cursor.
-pub(super) fn handle_drag(
-    wl: &mut WlState,
-    app: &mut AppState,
-    text: &mut TextRenderer,
-) {
+pub(super) fn handle_drag(wl: &mut WlState, app: &mut AppState, text: &mut TextRenderer) {
     // End slider drags once the button is released.
     if !wl.left_held {
         // Settings sliders whose effect is deferred (currently just
@@ -47,7 +43,10 @@ pub(super) fn handle_drag(
         let scale_f = wl.fractional_scale() as f32;
         let phys_w = wl.phys_width().max(1);
         let panel = PanelRect::compute_with_dims(
-            phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical(),
+            phys_w,
+            scale_f,
+            app.desired_panel_w_logical(),
+            app.desired_panel_h_logical(),
         );
         let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
         let phys_cx = wl.cursor_x as f32 * scale_f;
@@ -59,11 +58,17 @@ pub(super) fn handle_drag(
         } else {
             use crate::controls::toolbar_edit as te;
             let drag = app.widget_drag.take().expect("widget_drag present");
-            if let Some(kind) =
-                te::resolve_drop(&app.controls, panel_rect, scale_f, &drag, (phys_cx, phys_cy))
-            {
+            if let Some(kind) = te::resolve_drop(
+                &app.controls,
+                panel_rect,
+                scale_f,
+                &drag,
+                (phys_cx, phys_cy),
+            ) {
                 match kind {
-                    te::DropKind::Zone(zone, idx) => app.controls.toolbar.move_to(drag.id, zone, idx),
+                    te::DropKind::Zone(zone, idx) => {
+                        app.controls.toolbar.move_to(drag.id, zone, idx)
+                    }
                     te::DropKind::Disable => app.controls.toolbar.disable(drag.id),
                 }
                 app.controls.toolbar.save();
@@ -78,7 +83,10 @@ pub(super) fn handle_drag(
         let scale_f = wl.fractional_scale() as f32;
         let phys_w = wl.phys_width().max(1);
         let panel = PanelRect::compute_with_dims(
-            phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical(),
+            phys_w,
+            scale_f,
+            app.desired_panel_w_logical(),
+            app.desired_panel_h_logical(),
         );
         let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
         let phys_cx = wl.cursor_x as f32 * scale_f;
@@ -90,7 +98,11 @@ pub(super) fn handle_drag(
         } else {
             let drag = app.outer_drag.take().expect("outer_drag present");
             if let Some((zone, idx)) = crate::outer_zones::resolve_drop(
-                &app.outer, panel_rect, scale_f, drag.id, (phys_cx, phys_cy),
+                &app.outer,
+                panel_rect,
+                scale_f,
+                drag.id,
+                (phys_cx, phys_cy),
             ) {
                 app.outer.move_to(drag.id, zone, idx);
                 app.outer.save();
@@ -113,10 +125,14 @@ pub(super) fn handle_drag(
                 let r = sticky::rect(&app.notes.notes[idx], scale_f, sw, sh);
                 let n = &mut app.notes.notes[idx];
                 if d.resize {
-                    let w = (phys_cx + d.grab.0 - r.x)
-                        .clamp(sticky::MIN_W * scale_f, (sw - r.x).max(sticky::MIN_W * scale_f));
-                    let h = (phys_cy + d.grab.1 - r.y)
-                        .clamp(sticky::MIN_H * scale_f, (sh - r.y).max(sticky::MIN_H * scale_f));
+                    let w = (phys_cx + d.grab.0 - r.x).clamp(
+                        sticky::MIN_W * scale_f,
+                        (sw - r.x).max(sticky::MIN_W * scale_f),
+                    );
+                    let h = (phys_cy + d.grab.1 - r.y).clamp(
+                        sticky::MIN_H * scale_f,
+                        (sh - r.y).max(sticky::MIN_H * scale_f),
+                    );
                     n.sticky_w = w / scale_f;
                     n.sticky_h = h / scale_f;
                 } else {
@@ -142,7 +158,10 @@ pub(super) fn handle_drag(
         let scale_f = wl.fractional_scale() as f32;
         let phys_w = wl.phys_width().max(1);
         let panel = PanelRect::compute_with_dims(
-            phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical(),
+            phys_w,
+            scale_f,
+            app.desired_panel_w_logical(),
+            app.desired_panel_h_logical(),
         );
         let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
         let phys_cx = wl.cursor_x as f32 * scale_f;
@@ -167,12 +186,17 @@ pub(super) fn handle_drag(
         let scale_f = wl.fractional_scale() as f32;
         let phys_w = wl.phys_width().max(1);
         let panel = PanelRect::compute_with_dims(
-            phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical(),
+            phys_w,
+            scale_f,
+            app.desired_panel_w_logical(),
+            app.desired_panel_h_logical(),
         );
         let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
         let phys_cx = wl.cursor_x as f32 * scale_f;
         let outer_pos = crate::outer_zones::positions(
-            &app.outer, panel_rect, scale_f,
+            &app.outer,
+            panel_rect,
+            scale_f,
             crate::media::render::is_active(&app.media),
         );
         if let Some(slot) =
@@ -190,7 +214,10 @@ pub(super) fn handle_drag(
         let scale_f = wl.fractional_scale() as f32;
         let phys_w = wl.phys_width().max(1);
         let panel = PanelRect::compute_with_dims(
-            phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical(),
+            phys_w,
+            scale_f,
+            app.desired_panel_w_logical(),
+            app.desired_panel_h_logical(),
         );
         let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
         let top_y = crate::controls::content_top_y(panel_rect, scale_f) - app.settings_scroll;
@@ -216,7 +243,12 @@ pub(super) fn handle_drag(
     if let Some(target) = app.dragging {
         let scale_f = wl.fractional_scale() as f32;
         let phys_w = wl.phys_width().max(1);
-        let panel = PanelRect::compute_with_dims(phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical());
+        let panel = PanelRect::compute_with_dims(
+            phys_w,
+            scale_f,
+            app.desired_panel_w_logical(),
+            app.desired_panel_h_logical(),
+        );
         let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
         let view_top_y = crate::controls::content_top_y(panel_rect, scale_f);
         let phys_cx = wl.cursor_x as f32 * scale_f;
@@ -225,10 +257,16 @@ pub(super) fn handle_drag(
         use crate::controls::audio::Direction;
         let track = match target {
             DragTarget::AudioOutputSlider => crate::controls::audio::slider_rect_for(
-                panel_rect, view_top_y, Direction::Output, scale_f,
+                panel_rect,
+                view_top_y,
+                Direction::Output,
+                scale_f,
             ),
             DragTarget::AudioInputSlider => crate::controls::audio::slider_rect_for(
-                panel_rect, view_top_y, Direction::Input, scale_f,
+                panel_rect,
+                view_top_y,
+                Direction::Input,
+                scale_f,
             ),
             DragTarget::AudioInlineSlider => {
                 // The inline tile only exists while the controls row is
@@ -239,18 +277,16 @@ pub(super) fn handle_drag(
                     scale_f,
                     app.panel_view,
                 ) {
-                    Some(layout) => {
-                        crate::controls::audio::inline_bar_rect(&layout, scale_f)
-                    }
+                    Some(layout) => crate::controls::audio::inline_bar_rect(&layout, scale_f),
                     None => {
                         app.dragging = None;
                         return;
                     }
                 }
             }
-            DragTarget::BrightnessSlider => crate::controls::brightness::slider_rect(
-                panel_rect, view_top_y, scale_f,
-            ),
+            DragTarget::BrightnessSlider => {
+                crate::controls::brightness::slider_rect(panel_rect, view_top_y, scale_f)
+            }
         };
         // Expanded audio sliders span 0..1.2 across the track (120 %
         // boost); the inline tile slider stays at 0..1 since boost is a
@@ -276,7 +312,10 @@ pub(super) fn handle_drag(
         let scale_f = wl.fractional_scale() as f32;
         let phys_w = wl.phys_width().max(1);
         let panel = PanelRect::compute_with_dims(
-            phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical(),
+            phys_w,
+            scale_f,
+            app.desired_panel_w_logical(),
+            app.desired_panel_h_logical(),
         );
         let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
         let top_y = crate::controls::content_top_y(panel_rect, scale_f);
@@ -289,9 +328,7 @@ pub(super) fn handle_drag(
                 let pad_left = crate::notes::filter_text_left_pad(bar, scale_f);
                 let font = (app.config.text_size * scale_f).max(14.0);
                 let q = app.notes.filter.query().to_string();
-                let byte = crate::notes::input_byte_at(
-                    bar, pad_left, &q, font, phys_cx, text,
-                );
+                let byte = crate::notes::input_byte_at(bar, pad_left, &q, font, phys_cx, text);
                 app.notes.filter.drag_to(byte);
             }
             Some(crate::notes::DragField::Title) => {
@@ -301,7 +338,12 @@ pub(super) fn handle_drag(
                 let title_font = (app.config.text_size * scale_f).max(15.0);
                 let q = app.notes.title.query().to_string();
                 let byte = crate::notes::input_byte_at(
-                    title_field, title_pad, &q, title_font, phys_cx, text,
+                    title_field,
+                    title_pad,
+                    &q,
+                    title_font,
+                    phys_cx,
+                    text,
                 );
                 app.notes.title.drag_to(byte);
             }
@@ -311,8 +353,14 @@ pub(super) fn handle_drag(
                 let inner = crate::notes::body_inner_rect(body, scale_f);
                 let buf = app.notes.body.raw().to_string();
                 let byte = crate::notes::body_byte_at(
-                    inner, &buf, app.notes.body_scroll,
-                    app.config.text_size, scale_f, phys_cx, phys_cy, text,
+                    inner,
+                    &buf,
+                    app.notes.body_scroll,
+                    app.config.text_size,
+                    scale_f,
+                    phys_cx,
+                    phys_cy,
+                    text,
                 );
                 app.notes.body.drag_to(byte);
             }
@@ -335,7 +383,10 @@ pub(super) fn handle_terminal_selection(wl: &mut WlState, app: &mut AppState) {
     let scale_f = wl.fractional_scale() as f32;
     let phys_w = wl.phys_width().max(1);
     let panel = PanelRect::compute_with_dims(
-        phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical(),
+        phys_w,
+        scale_f,
+        app.desired_panel_w_logical(),
+        app.desired_panel_h_logical(),
     );
     let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
     let top_y = crate::controls::content_top_y(panel_rect, scale_f);
@@ -347,8 +398,14 @@ pub(super) fn handle_terminal_selection(wl: &mut WlState, app: &mut AppState) {
         .map(|g| (g.cols, g.rows))
         .unwrap_or((0, 0));
     let cell = crate::terminal::cell_at(
-        panel_rect, top_y, scale_f, app.config.text_size,
-        g_cols, g_rows, phys_cx, phys_cy,
+        panel_rect,
+        top_y,
+        scale_f,
+        app.config.text_size,
+        g_cols,
+        g_rows,
+        phys_cx,
+        phys_cy,
     );
     if wl.left_clicked {
         if let Some((row, col)) = cell {

@@ -166,7 +166,10 @@ mod tests {
     fn exact_prefix_beats_subsequence() {
         let prefix = score("fire", "firefox").unwrap();
         let subseq = score("fire", "configurer").unwrap();
-        assert!(prefix > subseq, "prefix {prefix} should beat subseq {subseq}");
+        assert!(
+            prefix > subseq,
+            "prefix {prefix} should beat subseq {subseq}"
+        );
     }
 
     #[test]

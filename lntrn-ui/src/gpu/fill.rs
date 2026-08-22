@@ -5,11 +5,21 @@ use lntrn_render::{Color, Painter, Rect};
 /// How a shape is filled.
 pub enum Fill {
     Solid(Color),
-    LinearGradient { angle: f32, start: Color, end: Color },
-    RadialGradient { center: Color, edge: Color },
+    LinearGradient {
+        angle: f32,
+        start: Color,
+        end: Color,
+    },
+    RadialGradient {
+        center: Color,
+        edge: Color,
+    },
     /// 3 or 4 stop linear gradient, evenly spaced. Rendered in a single draw
     /// call via `SHAPE_GRADIENT_MULTI` — no layering, no seams.
-    MultiStopGradient { angle: f32, colors: Vec<Color> },
+    MultiStopGradient {
+        angle: f32,
+        colors: Vec<Color>,
+    },
 }
 
 impl Fill {
@@ -144,7 +154,12 @@ impl GradientBorder {
     }
 
     pub fn colors(mut self, colors: [Color; 4]) -> Self {
-        [self.top_left, self.top_right, self.bottom_right, self.bottom_left] = colors;
+        [
+            self.top_left,
+            self.top_right,
+            self.bottom_right,
+            self.bottom_left,
+        ] = colors;
         self
     }
 
@@ -156,7 +171,12 @@ impl GradientBorder {
             .min(self.rect.h * 0.5);
 
         let top = Rect::new(self.rect.x, self.rect.y, self.rect.w, border);
-        let bottom = Rect::new(self.rect.x, self.rect.y + self.rect.h - border, self.rect.w, border);
+        let bottom = Rect::new(
+            self.rect.x,
+            self.rect.y + self.rect.h - border,
+            self.rect.w,
+            border,
+        );
         let side_height = (self.rect.h - border * 2.0).max(0.0);
         let left = Rect::new(self.rect.x, self.rect.y + border, border, side_height);
         let right = Rect::new(
@@ -192,19 +212,38 @@ impl GradientBorder {
             );
         }
 
-        painter.rect_filled(Rect::new(self.rect.x, self.rect.y, border, border), border * 0.5, self.top_left);
         painter.rect_filled(
-            Rect::new(self.rect.x + self.rect.w - border, self.rect.y, border, border),
+            Rect::new(self.rect.x, self.rect.y, border, border),
+            border * 0.5,
+            self.top_left,
+        );
+        painter.rect_filled(
+            Rect::new(
+                self.rect.x + self.rect.w - border,
+                self.rect.y,
+                border,
+                border,
+            ),
             border * 0.5,
             self.top_right,
         );
         painter.rect_filled(
-            Rect::new(self.rect.x + self.rect.w - border, self.rect.y + self.rect.h - border, border, border),
+            Rect::new(
+                self.rect.x + self.rect.w - border,
+                self.rect.y + self.rect.h - border,
+                border,
+                border,
+            ),
             border * 0.5,
             self.bottom_right,
         );
         painter.rect_filled(
-            Rect::new(self.rect.x, self.rect.y + self.rect.h - border, border, border),
+            Rect::new(
+                self.rect.x,
+                self.rect.y + self.rect.h - border,
+                border,
+                border,
+            ),
             border * 0.5,
             self.bottom_left,
         );
@@ -216,7 +255,12 @@ impl GradientBorder {
             (self.rect.h - border * 2.0).max(0.0),
         );
         if inner.w > 0.0 && inner.h > 0.0 {
-            draw_fill(painter, inner, (self.corner_radius - border).max(0.0), &self.fill);
+            draw_fill(
+                painter,
+                inner,
+                (self.corner_radius - border).max(0.0),
+                &self.fill,
+            );
         }
     }
 }

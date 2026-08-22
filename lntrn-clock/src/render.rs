@@ -6,10 +6,10 @@ use crate::glyphs::{glyph, GLYPH_H};
 // Rainbow palette (digits cycle through these in ColorMode::Rainbow).
 const RAINBOW: &[(u8, u8, u8)] = &[
     (255, 105, 180), // pink
-    (255, 176,  46), // amber
-    (240, 220,  80), // yellow
+    (255, 176, 46),  // amber
+    (240, 220, 80),  // yellow
     (120, 220, 130), // green
-    ( 80, 200, 240), // cyan
+    (80, 200, 240),  // cyan
     (170, 110, 230), // violet
 ];
 
@@ -24,8 +24,8 @@ pub fn render(
     show_panel: bool,
     panel: &PanelState,
 ) {
-    buf.extend_from_slice(b"\x1b[H");   // cursor to 0,0
-    buf.extend_from_slice(b"\x1b[2J");  // clear
+    buf.extend_from_slice(b"\x1b[H"); // cursor to 0,0
+    buf.extend_from_slice(b"\x1b[2J"); // clear
     paint_clock(buf, cfg, cols, rows, time_str);
     if show_panel {
         paint_panel(buf, cols, rows, cfg, panel);
@@ -39,7 +39,10 @@ pub fn format_time(cfg: &Config, h: u32, m: u32, s: u32) -> String {
         Format::H24 => (h, ""),
         Format::H12 => {
             let am = h < 12;
-            let twelve = match h % 12 { 0 => 12, n => n };
+            let twelve = match h % 12 {
+                0 => 12,
+                n => n,
+            };
             (twelve, if am { " AM" } else { " PM" })
         }
     };
@@ -57,7 +60,11 @@ fn paint_clock(buf: &mut Vec<u8>, cfg: &Config, cols: u16, rows: u16, text: &str
     let gap = cfg.scale_x as usize; // gap between chars scales with width
     let total_w: usize = text
         .chars()
-        .map(|c| glyph(c).map(|g| g.width * cfg.scale_x as usize).unwrap_or(0))
+        .map(|c| {
+            glyph(c)
+                .map(|g| g.width * cfg.scale_x as usize)
+                .unwrap_or(0)
+        })
         .sum::<usize>()
         + gap * text.chars().count().saturating_sub(1);
 
@@ -72,14 +79,19 @@ fn paint_clock(buf: &mut Vec<u8>, cfg: &Config, cols: u16, rows: u16, text: &str
     // Walk each char, lay out at x_cursor, paint scaled cells.
     let mut x_cursor = x0;
     for (idx, ch) in text.chars().enumerate() {
-        let g = match glyph(ch) { Some(g) => g, None => continue };
+        let g = match glyph(ch) {
+            Some(g) => g,
+            None => continue,
+        };
         let color = pick_color(cfg, idx, ch);
         if let Some((r, g_, b)) = color {
             write_fg_rgb(buf, r, g_, b);
         }
         for (row_i, row) in g.rows.iter().enumerate() {
             for (col_i, &on) in row.iter().enumerate() {
-                if !on { continue; }
+                if !on {
+                    continue;
+                }
                 for sy in 0..cfg.scale_y as usize {
                     let y = y0 + row_i * cfg.scale_y as usize + sy;
                     let x = x_cursor + col_i * cfg.scale_x as usize;
@@ -111,7 +123,9 @@ pub struct PanelState {
 }
 
 impl PanelState {
-    pub fn new() -> Self { Self { cursor: 0 } }
+    pub fn new() -> Self {
+        Self { cursor: 0 }
+    }
 }
 
 /// Setting rows shown in the panel. Order matches the index returned by
@@ -129,10 +143,23 @@ pub const PANEL_ROW_COUNT: usize = PANEL_ROWS.len();
 
 fn current_value(cfg: &Config, row: usize) -> String {
     match row {
-        0 => match cfg.format { Format::H24 => "24-hour".into(), Format::H12 => "12-hour".into() },
-        1 => if cfg.show_seconds { "on".into() } else { "off".into() },
+        0 => match cfg.format {
+            Format::H24 => "24-hour".into(),
+            Format::H12 => "12-hour".into(),
+        },
+        1 => {
+            if cfg.show_seconds {
+                "on".into()
+            } else {
+                "off".into()
+            }
+        }
         2 => cfg.color.clone(),
-        3 => match cfg.style { Style::Solid => "solid", Style::Shaded => "shaded" }.into(),
+        3 => match cfg.style {
+            Style::Solid => "solid",
+            Style::Shaded => "shaded",
+        }
+        .into(),
         4 => cfg.scale_x.to_string(),
         5 => cfg.scale_y.to_string(),
         _ => String::new(),
@@ -149,12 +176,18 @@ fn paint_panel(buf: &mut Vec<u8>, cols: u16, rows: u16, cfg: &Config, panel: &Pa
     for r in 0..ph {
         move_cursor(buf, px, py + r);
         buf.extend_from_slice(b"\x1b[48;5;236m\x1b[38;5;250m");
-        for _ in 0..pw { buf.push(b' '); }
+        for _ in 0..pw {
+            buf.push(b' ');
+        }
     }
 
     // Title
     let title = " lclock — configure ";
-    move_cursor(buf, px + (pw.saturating_sub(title.len() as u16)) / 2, py + 1);
+    move_cursor(
+        buf,
+        px + (pw.saturating_sub(title.len() as u16)) / 2,
+        py + 1,
+    );
     buf.extend_from_slice(b"\x1b[1m\x1b[38;5;222m");
     buf.extend_from_slice(title.as_bytes());
     buf.extend_from_slice(b"\x1b[22m\x1b[38;5;250m");
@@ -172,7 +205,9 @@ fn paint_panel(buf: &mut Vec<u8>, cols: u16, rows: u16, cfg: &Config, panel: &Pa
         let value = current_value(cfg, i);
         let label_w = label.len() + 2;
         let pad = (pw as usize).saturating_sub(label_w + value.len() + 5);
-        for _ in 0..pad { buf.push(b' '); }
+        for _ in 0..pad {
+            buf.push(b' ');
+        }
         // Swatch next to the color row so the choice is visible.
         if i == 2 {
             if let Some((r, g, b)) = cfg.resolve_color() {
@@ -187,7 +222,11 @@ fn paint_panel(buf: &mut Vec<u8>, cols: u16, rows: u16, cfg: &Config, panel: &Pa
 
     // Footer
     let footer = "↑/↓ select  ←/→ change  q/Esc close";
-    move_cursor(buf, px + (pw.saturating_sub(footer.chars().count() as u16)) / 2, py + ph - 2);
+    move_cursor(
+        buf,
+        px + (pw.saturating_sub(footer.chars().count() as u16)) / 2,
+        py + ph - 2,
+    );
     buf.extend_from_slice(b"\x1b[2m");
     buf.extend_from_slice(footer.as_bytes());
     buf.extend_from_slice(b"\x1b[22m");
@@ -198,13 +237,19 @@ fn paint_panel(buf: &mut Vec<u8>, cols: u16, rows: u16, cfg: &Config, panel: &Pa
 pub fn panel_adjust(cfg: &mut Config, row: usize, dir: i32) -> bool {
     match row {
         0 => {
-            cfg.format = match cfg.format { Format::H24 => Format::H12, Format::H12 => Format::H24 };
+            cfg.format = match cfg.format {
+                Format::H24 => Format::H12,
+                Format::H12 => Format::H24,
+            };
         }
         1 => {
             cfg.show_seconds = !cfg.show_seconds;
         }
         2 => {
-            let i = COLOR_CHOICES.iter().position(|c| *c == cfg.color).unwrap_or(0);
+            let i = COLOR_CHOICES
+                .iter()
+                .position(|c| *c == cfg.color)
+                .unwrap_or(0);
             let n = COLOR_CHOICES.len() as i32;
             let next = (((i as i32) + dir).rem_euclid(n)) as usize;
             cfg.color = COLOR_CHOICES[next].into();

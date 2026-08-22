@@ -50,11 +50,17 @@ impl MenuBar {
     }
 
     /// Current label font size (before scale).
-    pub fn font_size(&self) -> f32 { self.font_size }
+    pub fn font_size(&self) -> f32 {
+        self.font_size
+    }
 
-    pub fn is_open(&self) -> bool { self.open_index.is_some() }
+    pub fn is_open(&self) -> bool {
+        self.open_index.is_some()
+    }
 
-    pub fn open_index(&self) -> Option<usize> { self.open_index }
+    pub fn open_index(&self) -> Option<usize> {
+        self.open_index
+    }
 
     /// Call each frame before draw. Handles click-to-open, hover-to-switch,
     /// and click-outside-to-close.
@@ -169,11 +175,12 @@ impl MenuBar {
             // We don't have the label text here, so we derive x from rect
             let text_x = lr.x + pad_h;
             let text_y = lr.y + (lr.h - font) * 0.5;
-            let color = if is_open { palette.accent } else { palette.text };
-            text.queue(
-                "", font, text_x, text_y, color,
-                lr.w, sw, sh,
-            );
+            let color = if is_open {
+                palette.accent
+            } else {
+                palette.text
+            };
+            text.queue("", font, text_x, text_y, color, lr.w, sw, sh);
         }
     }
 
@@ -202,7 +209,11 @@ impl MenuBar {
             let label = labels.get(i).copied().unwrap_or("");
             let text_x = lr.x + pad_h;
             let text_y = lr.y + (lr.h - font) * 0.5;
-            let color = if is_open { palette.accent } else { palette.text };
+            let color = if is_open {
+                palette.accent
+            } else {
+                palette.text
+            };
             text.queue(label, font, text_x, text_y, color, lr.w, sw, sh);
         }
     }

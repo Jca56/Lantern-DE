@@ -1,4 +1,4 @@
-use nix::sys::signal::{self, Signal, SigHandler, SigAction, SaFlags, SigSet};
+use nix::sys::signal::{self, SaFlags, SigAction, SigHandler, SigSet, Signal};
 use nix::sys::wait::{self, WaitStatus};
 use nix::unistd::Pid;
 use std::path::PathBuf;
@@ -9,7 +9,10 @@ static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
 fn log_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-    PathBuf::from(home).join(".lantern").join("log").join("session.log")
+    PathBuf::from(home)
+        .join(".lantern")
+        .join("log")
+        .join("session.log")
 }
 
 extern "C" fn handle_signal(_: i32) {
@@ -128,9 +131,19 @@ fn parse_autostart_entry(path: &std::path::Path, current_desktop: &str) -> Optio
         } else if let Some(val) = line.strip_prefix("Hidden=") {
             hidden = val.trim().eq_ignore_ascii_case("true");
         } else if let Some(val) = line.strip_prefix("OnlyShowIn=") {
-            only_show_in = Some(val.split(';').map(|s| s.trim()).filter(|s| !s.is_empty()).collect());
+            only_show_in = Some(
+                val.split(';')
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .collect(),
+            );
         } else if let Some(val) = line.strip_prefix("NotShowIn=") {
-            not_show_in = Some(val.split(';').map(|s| s.trim()).filter(|s| !s.is_empty()).collect());
+            not_show_in = Some(
+                val.split(';')
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .collect(),
+            );
         } else if let Some(val) = line.strip_prefix("TryExec=") {
             try_exec = Some(val.trim().to_string());
         }
@@ -152,7 +165,8 @@ fn parse_autostart_entry(path: &std::path::Path, current_desktop: &str) -> Optio
     }
 
     if let Some(ref te) = try_exec {
-        let found = Command::new("which").arg(te)
+        let found = Command::new("which")
+            .arg(te)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
@@ -187,8 +201,8 @@ fn main() {
     // $DISPLAY" and falls back to a per-app autolaunched bus.
     if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none() {
         use std::os::unix::process::CommandExt;
-        let self_path = std::env::current_exe()
-            .unwrap_or_else(|_| PathBuf::from("lntrn-session-manager"));
+        let self_path =
+            std::env::current_exe().unwrap_or_else(|_| PathBuf::from("lntrn-session-manager"));
         let err = Command::new("dbus-run-session")
             .arg("--")
             .arg(&self_path)
@@ -219,7 +233,11 @@ fn main() {
     log("🏮 Lantern Session starting...");
 
     // Install signal handlers for graceful shutdown
-    let sa = SigAction::new(SigHandler::Handler(handle_signal), SaFlags::empty(), SigSet::empty());
+    let sa = SigAction::new(
+        SigHandler::Handler(handle_signal),
+        SaFlags::empty(),
+        SigSet::empty(),
+    );
     unsafe {
         let _ = signal::sigaction(Signal::SIGTERM, &sa);
         let _ = signal::sigaction(Signal::SIGINT, &sa);
@@ -259,7 +277,6 @@ fn main() {
         }
     }
 
-
     // Ensure ~/.lantern/bin is in PATH
     if let Ok(path) = std::env::var("PATH") {
         let home = std::env::var("HOME").unwrap_or_default();
@@ -273,14 +290,23 @@ fn main() {
     // services (xdg-desktop-portal etc.) see XDG_CURRENT_DESKTOP=Lantern.
     // No-ops on non-systemd hosts (Gentoo/OpenRC, Artix, Void, Alpine).
     let _ = Command::new("systemctl")
-        .args(["--user", "import-environment",
-               "XDG_CURRENT_DESKTOP", "DESKTOP_SESSION", "XDG_SESSION_TYPE", "PATH"])
+        .args([
+            "--user",
+            "import-environment",
+            "XDG_CURRENT_DESKTOP",
+            "DESKTOP_SESSION",
+            "XDG_SESSION_TYPE",
+            "PATH",
+        ])
         .status();
     // D-Bus activation env — no `--systemd` flag so this works on both
     // systemd hosts and plain dbus-daemon / dbus-broker setups.
     let _ = Command::new("dbus-update-activation-environment")
-        .args(["XDG_CURRENT_DESKTOP=Lantern", "DESKTOP_SESSION=lantern",
-               "XDG_SESSION_TYPE=wayland"])
+        .args([
+            "XDG_CURRENT_DESKTOP=Lantern",
+            "DESKTOP_SESSION=lantern",
+            "XDG_SESSION_TYPE=wayland",
+        ])
         .status();
     // Kick xdg-desktop-portal so it re-reads the activation env. pkill is
     // portable; D-Bus re-spawns the portal on next request via its .service
@@ -293,13 +319,21 @@ fn main() {
     log("🏮 Starting lntrn-compositor...");
     let compositor_log = std::fs::File::create(lantern_log_dir.join("compositor.log"))
         .expect("Failed to create compositor log file");
-    let compositor_err = compositor_log.try_clone().expect("Failed to clone log file handle");
+    let compositor_err = compositor_log
+        .try_clone()
+        .expect("Failed to clone log file handle");
 
     let compositor_path = {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-        PathBuf::from(home).join(".lantern").join("bin").join("lntrn-compositor")
+        PathBuf::from(home)
+            .join(".lantern")
+            .join("bin")
+            .join("lntrn-compositor")
     };
-    log(&format!("🏮 Compositor binary: {}", compositor_path.display()));
+    log(&format!(
+        "🏮 Compositor binary: {}",
+        compositor_path.display()
+    ));
     let mut compositor = match Command::new(&compositor_path)
         .arg("--udev")
         .env("RUST_BACKTRACE", "1")
@@ -311,7 +345,10 @@ fn main() {
     {
         Ok(child) => {
             log(&format!("🏮 Started lntrn-compositor (pid {})", child.id()));
-            ManagedProcess { name: "lntrn-compositor", child }
+            ManagedProcess {
+                name: "lntrn-compositor",
+                child,
+            }
         }
         Err(e) => {
             log(&format!("FATAL: Failed to start compositor: {e}"));
@@ -321,8 +358,8 @@ fn main() {
 
     // Wait for the compositor to create the Wayland socket.
     let wayland_socket = {
-        let xdg_runtime = std::env::var("XDG_RUNTIME_DIR")
-            .unwrap_or_else(|_| "/run/user/1000".to_string());
+        let xdg_runtime =
+            std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/run/user/1000".to_string());
         let mut found = None;
         for _ in 0..40 {
             std::thread::sleep(std::time::Duration::from_millis(100));
@@ -335,7 +372,9 @@ fn main() {
                     }
                 }
             }
-            if found.is_some() { break; }
+            if found.is_some() {
+                break;
+            }
         }
         match found {
             Some(s) => {

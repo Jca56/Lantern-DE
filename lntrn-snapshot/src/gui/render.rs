@@ -1,7 +1,7 @@
 use lntrn_render::{Color, Rect};
 use lntrn_ui::gpu::{
-    draw_window_bg, Button, ButtonVariant, FontSize, FoxPalette, GradientStrip,
-    InteractionContext, ScrollArea, Scrollbar, TextLabel, TitleBar,
+    draw_window_bg, Button, ButtonVariant, FontSize, FoxPalette, GradientStrip, InteractionContext,
+    ScrollArea, Scrollbar, TextLabel, TitleBar,
 };
 
 use super::{
@@ -292,11 +292,7 @@ pub fn render_frame(
     if !status_msg.is_empty() {
         let status_h = 28.0 * s;
         let status_y = hf - status_h;
-        painter.rect_filled(
-            Rect::new(0.0, status_y, wf, status_h),
-            0.0,
-            pal.surface_2,
-        );
+        painter.rect_filled(Rect::new(0.0, status_y, wf, status_h), 0.0, pal.surface_2);
         TextLabel::new(status_msg, PAD * s, status_y + 4.0 * s)
             .size(FontSize::Custom(16.0 * s))
             .color(pal.text_secondary)

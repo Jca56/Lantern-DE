@@ -41,7 +41,10 @@ pub(super) fn handle_scroll(
         let per_row = crate::emojis::cells_per_row(grid, scale_f);
         let max = crate::emojis::max_scroll(visible.len(), per_row, grid.h, scale_f) / scale_f;
         app.emojis.scroll = (app.emojis.scroll + dy).clamp(0.0, max);
-    } else if matches!(app.mode, crate::app::PanelMode::Control(crate::controls::TileId::Wifi)) {
+    } else if matches!(
+        app.mode,
+        crate::app::PanelMode::Control(crate::controls::TileId::Wifi)
+    ) {
         let view_top_y = crate::controls::content_top_y(panel_rect, scale_f);
         let list_top = crate::controls::wifi::row_list_top_y(view_top_y, scale_f);
         let viewport_h = (panel_rect.y + panel_rect.h - list_top).max(0.0);
@@ -60,19 +63,18 @@ pub(super) fn handle_scroll(
         let body = crate::notes::body_rect(editor, scale_f);
         let phys_cx = wl.cursor_x as f32 * scale_f;
         let phys_cy = wl.cursor_y as f32 * scale_f;
-        let over_body = phys_cx >= body.x && phys_cx <= body.x + body.w
-            && phys_cy >= body.y && phys_cy <= body.y + body.h;
+        let over_body = phys_cx >= body.x
+            && phys_cx <= body.x + body.w
+            && phys_cy >= body.y
+            && phys_cy <= body.y + body.h;
         if over_body {
             let inner = crate::notes::body_inner_rect(body, scale_f);
             let font = crate::notes::wrap::body_font(app.config.text_size, scale_f);
-            let vlines =
-                crate::notes::wrap::layout(app.notes.body.raw(), font, inner.w, text);
-            let max = crate::notes::body_max_scroll(
-                vlines.len(), body, scale_f, app.config.text_size,
-            );
+            let vlines = crate::notes::wrap::layout(app.notes.body.raw(), font, inner.w, text);
+            let max =
+                crate::notes::body_max_scroll(vlines.len(), body, scale_f, app.config.text_size);
             // dy arrives in logical px; body_scroll is physical.
-            app.notes.body_scroll =
-                (app.notes.body_scroll + dy * scale_f).clamp(0.0, max);
+            app.notes.body_scroll = (app.notes.body_scroll + dy * scale_f).clamp(0.0, max);
         } else {
             let list = crate::notes::list_rect(panel_rect, top_y, scale_f, panel_bottom);
             let visible = app.notes.visible_indices();
@@ -89,9 +91,8 @@ pub(super) fn handle_scroll(
         }
     } else if app.panel_view == crate::app::PanelView::Files {
         let top_y = crate::controls::content_top_y(panel_rect, scale_f);
-        let max = crate::files::max_scroll(
-            &app.files, panel_rect, top_y, scale_f, app.config.text_size,
-        );
+        let max =
+            crate::files::max_scroll(&app.files, panel_rect, top_y, scale_f, app.config.text_size);
         app.files.scroll = (app.files.scroll + dy * scale_f).clamp(0.0, max);
     } else if matches!(app.mode, crate::app::PanelMode::Launcher)
         && (!app.search.input.is_empty() || app.search.all_apps_mode)
@@ -111,7 +112,9 @@ pub(super) fn apply_key_autorepeat(wl: &mut WlState) {
     if wl.pending_key.is_some() {
         return;
     }
-    let Some((held, pressed_at)) = wl.held_key else { return };
+    let Some((held, pressed_at)) = wl.held_key else {
+        return;
+    };
     const REPEAT_DELAY: std::time::Duration = std::time::Duration::from_millis(420);
     const REPEAT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(32);
     let now = std::time::Instant::now();
@@ -127,7 +130,6 @@ pub(super) fn apply_key_autorepeat(wl: &mut WlState) {
         wl.last_repeat = Some(now);
     }
 }
-
 
 /// Dispatch the next pending keypress from `wl.pending_key`. Routing
 /// priority (most-specific first):
@@ -148,7 +150,9 @@ pub(super) fn handle_keypress(
     thumbs: &mut crate::thumbs::CcThumbsClient,
     text: &mut lntrn_render::TextRenderer,
 ) {
-    let Some(key) = wl.pending_key.take() else { return };
+    let Some(key) = wl.pending_key.take() else {
+        return;
+    };
     use crate::controls::bluetooth::PairPromptKind;
     use crate::search::input::*;
 
@@ -200,7 +204,9 @@ pub(super) fn handle_keypress(
             }
             (other, PairPromptKind::Enter) => {
                 if let Some(prompt) = app.controls.bluetooth.pair_prompt.as_mut() {
-                    let _ = prompt.passkey_input.on_key(other, wl.shift_held, wl.caps_lock);
+                    let _ = prompt
+                        .passkey_input
+                        .on_key(other, wl.shift_held, wl.caps_lock);
                 }
             }
             _ => {
@@ -323,7 +329,10 @@ pub(super) fn handle_keypress(
             let scale_f = wl.fractional_scale() as f32;
             let phys_w = wl.phys_width().max(1);
             let panel = PanelRect::compute_with_dims(
-                phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical(),
+                phys_w,
+                scale_f,
+                app.desired_panel_w_logical(),
+                app.desired_panel_h_logical(),
             );
             let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
             let top_y = crate::controls::content_top_y(panel_rect, scale_f);
@@ -331,7 +340,11 @@ pub(super) fn handle_keypress(
             let editor = crate::notes::editor_rect(panel_rect, top_y, scale_f, panel_bottom);
             let body = crate::notes::body_rect(editor, scale_f);
             app.notes.body_scroll = crate::notes::body_scroll_for_caret(
-                &app.notes, body, scale_f, app.config.text_size, text,
+                &app.notes,
+                body,
+                scale_f,
+                app.config.text_size,
+                text,
             );
         }
     } else if app.clipboard.open {
@@ -349,14 +362,16 @@ pub(super) fn handle_keypress(
                         if let Some(entry) = app.clipboard.entries.get(eidx) {
                             let id = entry.id;
                             if crate::clipboard::ipc::copy(id) {
-                                app.clipboard.recent_copy =
-                                    Some((id, std::time::Instant::now()));
+                                app.clipboard.recent_copy = Some((id, std::time::Instant::now()));
                             }
                         }
                     }
                 }
                 other => {
-                    let _ = app.clipboard.filter.on_key(other, wl.shift_held, wl.caps_lock);
+                    let _ = app
+                        .clipboard
+                        .filter
+                        .on_key(other, wl.shift_held, wl.caps_lock);
                     app.clipboard.reset_scroll();
                 }
             }
@@ -408,11 +423,21 @@ pub(super) fn handle_keypress(
         // Sysmon process filter: typed chars edit the buffer. Esc
         // (handled above via esc_pressed) clears it; Enter and arrows
         // are inert here.
-        if !matches!(key, KEY_ENTER | KEY_KP_ENTER | KEY_UP | KEY_DOWN | KEY_LEFT | KEY_RIGHT) {
-            let _ = app.controls.sysmon.filter.on_key(key, wl.shift_held, wl.caps_lock);
+        if !matches!(
+            key,
+            KEY_ENTER | KEY_KP_ENTER | KEY_UP | KEY_DOWN | KEY_LEFT | KEY_RIGHT
+        ) {
+            let _ = app
+                .controls
+                .sysmon
+                .filter
+                .on_key(key, wl.shift_held, wl.caps_lock);
         }
     } else if app.controls.clock.add_event_input.is_some()
-        && matches!(app.mode, crate::app::PanelMode::Control(crate::controls::TileId::Clock))
+        && matches!(
+            app.mode,
+            crate::app::PanelMode::Control(crate::controls::TileId::Clock)
+        )
     {
         // Calendar add-event input has focus.
         match key {
@@ -510,7 +535,10 @@ fn move_body_caret_visual(
     let scale_f = wl.fractional_scale() as f32;
     let phys_w = wl.phys_width().max(1);
     let panel = PanelRect::compute_with_dims(
-        phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical(),
+        phys_w,
+        scale_f,
+        app.desired_panel_w_logical(),
+        app.desired_panel_h_logical(),
     );
     let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
     let top_y = crate::controls::content_top_y(panel_rect, scale_f);
@@ -532,7 +560,7 @@ fn move_body_caret_visual(
     let Some(target) = target else { return };
     let x = text.measure_width(&buf[vlines[cur].start..cursor], font);
     let t = vlines[target];
-    let byte = t.start
-        + crate::notes::editor::byte_at_x_in_line(&buf[t.start..t.end], x, font, text);
+    let byte =
+        t.start + crate::notes::editor::byte_at_x_in_line(&buf[t.start..t.end], x, font, text);
     app.notes.body.place_cursor(byte);
 }

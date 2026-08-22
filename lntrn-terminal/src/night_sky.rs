@@ -92,7 +92,13 @@ impl ControlPalette {
 }
 
 /// Draw window control buttons (close, maximize, minimize).
-pub fn draw_controls(p: &mut Painter, cursor: Option<(f32, f32)>, w: f32, pal: &ControlPalette, scale: f32) {
+pub fn draw_controls(
+    p: &mut Painter,
+    cursor: Option<(f32, f32)>,
+    w: f32,
+    pal: &ControlPalette,
+    scale: f32,
+) {
     let (close_x, max_x, min_x, btn_y) = btn_positions(w, scale);
     let (cx, cy) = cursor.unwrap_or((-1.0, -1.0));
     let radius = BTN_RADIUS * scale;
@@ -105,8 +111,22 @@ pub fn draw_controls(p: &mut Painter, cursor: Option<(f32, f32)>, w: f32, pal: &
         p.circle_filled(close_x, btn_y, radius, pal.close_bg);
     }
     let ic = if hov { pal.close_icon } else { pal.icon };
-    p.line(close_x - icon, btn_y - icon, close_x + icon, btn_y + icon, thick, ic);
-    p.line(close_x - icon, btn_y + icon, close_x + icon, btn_y - icon, thick, ic);
+    p.line(
+        close_x - icon,
+        btn_y - icon,
+        close_x + icon,
+        btn_y + icon,
+        thick,
+        ic,
+    );
+    p.line(
+        close_x - icon,
+        btn_y + icon,
+        close_x + icon,
+        btn_y - icon,
+        thick,
+        ic,
+    );
 
     // Maximize — square
     let hov = dist(cx, cy, max_x, btn_y) < radius;
@@ -116,7 +136,9 @@ pub fn draw_controls(p: &mut Painter, cursor: Option<(f32, f32)>, w: f32, pal: &
     let ic = if hov { pal.icon_hover } else { pal.icon };
     p.rect_stroke_sdf(
         Rect::new(max_x - icon, btn_y - icon, icon * 2.0, icon * 2.0),
-        1.5 * scale, thick, ic,
+        1.5 * scale,
+        thick,
+        ic,
     );
 
     // Minimize — line
@@ -143,4 +165,3 @@ pub fn hit_test_controls(cursor: (f32, f32), w: f32, scale: f32) -> Option<u32> 
         None
     }
 }
-

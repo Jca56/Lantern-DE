@@ -136,14 +136,20 @@ fn gpu_name() -> String {
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
             // Match "card0", "card1", etc. (not "card0-DP-1")
-            if !name_str.starts_with("card") || name_str.contains('-') { continue; }
+            if !name_str.starts_with("card") || name_str.contains('-') {
+                continue;
+            }
             let dev = entry.path().join("device");
             if let Ok(uevent) = fs::read_to_string(dev.join("uevent")) {
                 let mut driver = "";
                 let mut pci_id = "";
                 for line in uevent.lines() {
-                    if let Some(d) = line.strip_prefix("DRIVER=") { driver = d.trim(); }
-                    if let Some(p) = line.strip_prefix("PCI_ID=") { pci_id = p.trim(); }
+                    if let Some(d) = line.strip_prefix("DRIVER=") {
+                        driver = d.trim();
+                    }
+                    if let Some(p) = line.strip_prefix("PCI_ID=") {
+                        pci_id = p.trim();
+                    }
                 }
                 if !driver.is_empty() {
                     let vendor = match pci_id.split(':').next().unwrap_or("") {
@@ -187,7 +193,9 @@ fn swap() -> String {
             free_kb = parse_meminfo_kb(line);
         }
     }
-    if total_kb == 0 { return "None".into(); }
+    if total_kb == 0 {
+        return "None".into();
+    }
     let used_mb = (total_kb - free_kb) / 1024;
     let total_mb = total_kb / 1024;
     format!("{} MiB / {} MiB", used_mb, total_mb)
@@ -226,7 +234,9 @@ fn disk_usage() -> String {
 
 fn battery() -> String {
     let bat = Path::new("/sys/class/power_supply/BAT0");
-    if !bat.exists() { return "N/A".into(); }
+    if !bat.exists() {
+        return "N/A".into();
+    }
     let cap = read_line(&bat.join("capacity").to_string_lossy());
     let status = read_line(&bat.join("status").to_string_lossy());
     format!("{}% ({})", cap, status)
@@ -245,8 +255,12 @@ fn packages() -> String {
 fn motherboard() -> String {
     let name = read_line("/sys/devices/virtual/dmi/id/board_name");
     let vendor = read_line("/sys/devices/virtual/dmi/id/board_vendor");
-    if name.is_empty() { return "unknown".into(); }
-    if vendor.is_empty() { return name; }
+    if name.is_empty() {
+        return "unknown".into();
+    }
+    if vendor.is_empty() {
+        return name;
+    }
     // Trim verbose corporate suffixes so the value fits the info card column.
     let v = vendor.trim();
     let short = v

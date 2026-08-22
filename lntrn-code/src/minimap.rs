@@ -35,7 +35,14 @@ pub fn draw_minimap(
     painter.rect_filled(rect, 0.0, palette.surface);
 
     // Faint left edge separator.
-    painter.line(rect.x, rect.y, rect.x, rect.y + rect.h, 1.0 * scale, palette.surface_2);
+    painter.line(
+        rect.x,
+        rect.y,
+        rect.x,
+        rect.y + rect.h,
+        1.0 * scale,
+        palette.surface_2,
+    );
 
     let s = scale;
     let mini_line_h = LINE_H * s;
@@ -69,8 +76,22 @@ pub fn draw_minimap(
             Color::from_rgba8(255, 255, 255, 25),
         );
         // Top/bottom edges of the indicator.
-        painter.line(rect.x, ind_top, rect.x + rect.w, ind_top, 1.0 * s, palette.accent.with_alpha(0.3));
-        painter.line(rect.x, ind_bot, rect.x + rect.w, ind_bot, 1.0 * s, palette.accent.with_alpha(0.3));
+        painter.line(
+            rect.x,
+            ind_top,
+            rect.x + rect.w,
+            ind_top,
+            1.0 * s,
+            palette.accent.with_alpha(0.3),
+        );
+        painter.line(
+            rect.x,
+            ind_bot,
+            rect.x + rect.w,
+            ind_bot,
+            1.0 * s,
+            palette.accent.with_alpha(0.3),
+        );
     }
 
     // ── Per-line colored blocks ──────────────────────────────────────
@@ -104,7 +125,19 @@ pub fn draw_minimap(
             );
         } else {
             // Draw each token as a colored block.
-            draw_token_blocks(painter, &tokens, line, rect.x + pad, y, mini_line_h - 0.5 * s, char_w, max_chars, theme, palette, s);
+            draw_token_blocks(
+                painter,
+                &tokens,
+                line,
+                rect.x + pad,
+                y,
+                mini_line_h - 0.5 * s,
+                char_w,
+                max_chars,
+                theme,
+                palette,
+                s,
+            );
         }
     }
 
@@ -180,12 +213,7 @@ fn char_offset(line: &str, byte_pos: usize) -> usize {
 
 /// Convert a click y-position on the minimap to the editor scroll offset that
 /// centers that line in the viewport.
-pub fn click_to_scroll(
-    click_y: f32,
-    rect: Rect,
-    editor: &Editor,
-    scale: f32,
-) -> f32 {
+pub fn click_to_scroll(click_y: f32, rect: Rect, editor: &Editor, scale: f32) -> f32 {
     let s = scale;
     let mini_line_h = LINE_H * s;
     let editor_line_h = editor::FONT_SIZE * editor::LINE_HEIGHT * s;

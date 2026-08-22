@@ -106,7 +106,10 @@ impl Client {
                     .try_clone()
                     .map_err(|e| format!("socket clone: {e}"))?,
             );
-            self.conn = Some(Conn { reader, writer: stream });
+            self.conn = Some(Conn {
+                reader,
+                writer: stream,
+            });
         }
         Ok(self.conn.as_mut().unwrap())
     }

@@ -31,9 +31,13 @@ impl Term {
             return Err(io::Error::last_os_error());
         }
 
-        let mut t = Self { original, fd, stdout: io::stdout() };
+        let mut t = Self {
+            original,
+            fd,
+            stdout: io::stdout(),
+        };
         t.write_all(b"\x1b[?1049h"); // alt screen
-        t.write_all(b"\x1b[?25l");   // hide cursor
+        t.write_all(b"\x1b[?25l"); // hide cursor
         t.flush();
         Ok(t)
     }

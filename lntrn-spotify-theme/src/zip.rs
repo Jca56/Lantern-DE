@@ -59,9 +59,9 @@ impl Entry {
 
     /// Replace this entry's payload, re-deflating and refreshing crc/sizes.
     pub fn set_contents(&mut self, raw: &[u8]) -> ZResult<()> {
-        let mut enc =
-            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::best());
-        enc.write_all(raw).map_err(|e| format!("deflate write: {e}"))?;
+        let mut enc = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::best());
+        enc.write_all(raw)
+            .map_err(|e| format!("deflate write: {e}"))?;
         let comp = enc.finish().map_err(|e| format!("deflate finish: {e}"))?;
 
         let mut crc = flate2::Crc::new();
@@ -117,11 +117,9 @@ impl Archive {
             let name_start = p + 46;
             let name = String::from_utf8_lossy(slice(buf, name_start, name_len)?).into_owned();
             let central_extra = slice(buf, name_start + name_len, extra_len)?.to_vec();
-            let comment =
-                slice(buf, name_start + name_len + extra_len, comment_len)?.to_vec();
+            let comment = slice(buf, name_start + name_len + extra_len, comment_len)?.to_vec();
 
-            let (local_extra, data) =
-                read_local(buf, local_offset, comp_size as usize)?;
+            let (local_extra, data) = read_local(buf, local_offset, comp_size as usize)?;
 
             entries.push(Entry {
                 name,
@@ -252,7 +250,8 @@ fn u32(b: &[u8], o: usize) -> ZResult<u32> {
 }
 
 fn slice(b: &[u8], o: usize, len: usize) -> ZResult<&[u8]> {
-    b.get(o..o + len).ok_or_else(|| "unexpected EOF reading slice".into())
+    b.get(o..o + len)
+        .ok_or_else(|| "unexpected EOF reading slice".into())
 }
 
 fn push_u16(out: &mut Vec<u8>, v: u16) {

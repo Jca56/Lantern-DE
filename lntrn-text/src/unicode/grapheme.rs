@@ -37,7 +37,7 @@ pub fn next_grapheme_boundary(text: &str, start: usize) -> usize {
             (GB::Prepend, _) => false,                          // GB9b
             (GB::ZWJ, _) if emoji_pending && is_extended_pictographic(c) => false, // GB11
             (GB::RegionalIndicator, GB::RegionalIndicator) if ri_count % 2 == 1 => false, // GB12/13
-            _ => true, // GB999
+            _ => true,                                          // GB999
         };
         if boundary {
             return start + i;
@@ -47,7 +47,11 @@ pub fn next_grapheme_boundary(text: &str, start: usize) -> usize {
         } else {
             emoji_pending && matches!(cur, GB::Extend | GB::ZWJ)
         };
-        ri_count = if cur == GB::RegionalIndicator { ri_count + 1 } else { 0 };
+        ri_count = if cur == GB::RegionalIndicator {
+            ri_count + 1
+        } else {
+            0
+        };
         prev = cur;
     }
     text.len()
@@ -104,7 +108,10 @@ mod tests {
     #[test]
     fn hangul_jamo_compose() {
         // L + V + T jamo sequence forms one syllable cluster.
-        assert_eq!(clusters("\u{1100}\u{1161}\u{11A8}"), vec!["\u{1100}\u{1161}\u{11A8}"]);
+        assert_eq!(
+            clusters("\u{1100}\u{1161}\u{11A8}"),
+            vec!["\u{1100}\u{1161}\u{11A8}"]
+        );
     }
 
     #[test]
@@ -113,7 +120,10 @@ mod tests {
         let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
         assert_eq!(clusters(family), vec![family]);
         // Skin-tone modifier (Extend) stays attached.
-        assert_eq!(clusters("\u{1F44B}\u{1F3FD}!"), vec!["\u{1F44B}\u{1F3FD}", "!"]);
+        assert_eq!(
+            clusters("\u{1F44B}\u{1F3FD}!"),
+            vec!["\u{1F44B}\u{1F3FD}", "!"]
+        );
     }
 
     #[test]

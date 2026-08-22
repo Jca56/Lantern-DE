@@ -327,8 +327,11 @@ fn iup(
                             0.0
                         }
                     } else {
-                        let (lo_c, lo_d, hi_c, hi_d) =
-                            if c1 < c2 { (c1, d1, c2, d2) } else { (c2, d2, c1, d1) };
+                        let (lo_c, lo_d, hi_c, hi_d) = if c1 < c2 {
+                            (c1, d1, c2, d2)
+                        } else {
+                            (c2, d2, c1, d1)
+                        };
                         if c <= lo_c {
                             lo_d
                         } else if c >= hi_c {

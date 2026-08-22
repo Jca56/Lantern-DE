@@ -102,7 +102,12 @@ impl AppsProvider {
     /// Rank all entries against `query`. Returns matches sorted by
     /// descending score. Filters out `NoDisplay=true` and user-hidden entries.
     /// `limit` caps the result count.
-    pub fn rank(&self, query: &str, limit: usize, hidden: &crate::launcher::hidden::Hidden) -> Vec<RankedEntry> {
+    pub fn rank(
+        &self,
+        query: &str,
+        limit: usize,
+        hidden: &crate::launcher::hidden::Hidden,
+    ) -> Vec<RankedEntry> {
         if query.is_empty() {
             return Vec::new();
         }
@@ -134,13 +139,24 @@ impl AppsProvider {
                 // both matched, `name` already wins via max(). We just
                 // ensure that an "id-only" match (e.g. app_id contains
                 // the query but name doesn't) is dampened a touch.
-                let score = if s_name.is_none() { score * 0.85 } else { score };
+                let score = if s_name.is_none() {
+                    score * 0.85
+                } else {
+                    score
+                };
 
-                Some(RankedEntry { entry_idx: ix.entry_idx, score })
+                Some(RankedEntry {
+                    entry_idx: ix.entry_idx,
+                    score,
+                })
             })
             .collect();
 
-        hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        hits.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         hits.truncate(limit);
         hits
     }
@@ -172,8 +188,8 @@ fn standard_dirs() -> Vec<PathBuf> {
     }
 
     // System dirs from XDG_DATA_DIRS, falling back to the spec defaults.
-    let data_dirs = std::env::var("XDG_DATA_DIRS")
-        .unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
+    let data_dirs =
+        std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
     for d in data_dirs.split(':') {
         if d.is_empty() {
             continue;
@@ -309,7 +325,12 @@ fn strip_field_codes(exec: &str) -> String {
                     out.push('%');
                     chars.next();
                 }
-                Some(&c) if matches!(c, 'f' | 'F' | 'u' | 'U' | 'i' | 'c' | 'k' | 'd' | 'D' | 'n' | 'N' | 'v' | 'm') => {
+                Some(&c)
+                    if matches!(
+                        c,
+                        'f' | 'F' | 'u' | 'U' | 'i' | 'c' | 'k' | 'd' | 'D' | 'n' | 'N' | 'v' | 'm'
+                    ) =>
+                {
                     chars.next();
                 }
                 _ => out.push(ch),
@@ -332,7 +353,10 @@ mod tests {
     #[test]
     fn strip_simple() {
         assert_eq!(strip_field_codes("firefox %u"), "firefox");
-        assert_eq!(strip_field_codes("env DISPLAY=:0 mpv %F"), "env DISPLAY=:0 mpv");
+        assert_eq!(
+            strip_field_codes("env DISPLAY=:0 mpv %F"),
+            "env DISPLAY=:0 mpv"
+        );
         assert_eq!(strip_field_codes("foo %% bar"), "foo % bar");
     }
 

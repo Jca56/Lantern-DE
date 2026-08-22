@@ -26,7 +26,9 @@ use state::ServiceState;
 
 /// Handle a single incoming D-Bus message.
 pub fn handle(conn: &mut Connection, msg: &Message, state: &mut ServiceState) {
-    if !msg.is_method_call() { return; }
+    if !msg.is_method_call() {
+        return;
+    }
 
     // Standard interfaces dispatch regardless of object kind.
     if msg.interface == IFACE_INTROSPECT && msg.member == "Introspect" {
@@ -34,7 +36,9 @@ pub fn handle(conn: &mut Connection, msg: &Message, state: &mut ServiceState) {
         return;
     }
     if msg.interface == IFACE_PROPS {
-        if props::dispatch(conn, msg, state) { return; }
+        if props::dispatch(conn, msg, state) {
+            return;
+        }
     }
 
     let handled = match paths::classify(&msg.path) {
@@ -66,7 +70,8 @@ pub fn handle(conn: &mut Connection, msg: &Message, state: &mut ServiceState) {
             msg.path, msg.interface, msg.member,
         ));
         conn.send_error(
-            msg.serial, &msg.sender,
+            msg.serial,
+            &msg.sender,
             "org.freedesktop.DBus.Error.UnknownMethod",
             &format!("No such method {}.{}", msg.interface, msg.member),
         );
@@ -85,14 +90,17 @@ pub fn init(state: &mut ServiceState) {
             match crate::storage::create("login", "Login Keyring", &pass) {
                 Ok(key) => {
                     let now = crate::storage::unix_now();
-                    state.collections.insert("login".into(), state::Collection {
-                        id: "login".into(),
-                        label: "Login Keyring".into(),
-                        created: now,
-                        modified: now,
-                        items: Default::default(),
-                        master_key: Some(key),
-                    });
+                    state.collections.insert(
+                        "login".into(),
+                        state::Collection {
+                            id: "login".into(),
+                            label: "Login Keyring".into(),
+                            created: now,
+                            modified: now,
+                            items: Default::default(),
+                            master_key: Some(key),
+                        },
+                    );
                     log::info("bootstrap: created Login Keyring");
                 }
                 Err(e) => log::error(&format!("bootstrap: could not create login: {e}")),

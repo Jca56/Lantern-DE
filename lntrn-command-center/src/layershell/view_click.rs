@@ -14,7 +14,9 @@ pub(super) fn handle_control_view_click(
     phys_x: f32,
     phys_y: f32,
 ) -> bool {
-    let crate::app::PanelMode::Control(tile_id) = app.mode else { return false };
+    let crate::app::PanelMode::Control(tile_id) = app.mode else {
+        return false;
+    };
     // The control view starts immediately beneath the controls-row underline.
     let view_top_y = crate::controls::content_top_y(panel, scale);
 
@@ -101,8 +103,7 @@ pub(super) fn handle_control_view_click(
             // sets the volume immediately and starts a drag so motion
             // events keep updating until the button is released.
             for dir in [Direction::Output, Direction::Input] {
-                let track =
-                    crate::controls::audio::slider_rect_for(panel, view_top_y, dir, scale);
+                let track = crate::controls::audio::slider_rect_for(panel, view_top_y, dir, scale);
                 let row_top = track.y - track.h * 2.0;
                 let row_bot = track.y + track.h * 3.0;
                 if phys_x >= track.x
@@ -129,9 +130,9 @@ pub(super) fn handle_control_view_click(
             }
 
             // Speaker / mic icon click → toggle that direction's mute.
-            if let Some(dir) = crate::controls::audio::hit_test_icon(
-                panel, view_top_y, scale, phys_x, phys_y,
-            ) {
+            if let Some(dir) =
+                crate::controls::audio::hit_test_icon(panel, view_top_y, scale, phys_x, phys_y)
+            {
                 match dir {
                     Direction::Output => app.controls.audio.toggle_mute(),
                     Direction::Input => app.controls.audio.toggle_input_mute(),
@@ -157,8 +158,7 @@ pub(super) fn handle_control_view_click(
             false
         }
         crate::controls::TileId::Brightness => {
-            let track =
-                crate::controls::brightness::slider_rect(panel, view_top_y, scale);
+            let track = crate::controls::brightness::slider_rect(panel, view_top_y, scale);
             let row_top = track.y - track.h * 2.0;
             let row_bot = track.y + track.h * 3.0;
             if phys_x >= track.x
@@ -192,8 +192,7 @@ pub(super) fn handle_control_view_click(
                     BtClick::ScanToggle => bt.toggle_scan(),
                     BtClick::DeviceRow(mac) => bt.toggle_expanded(&mac),
                     BtClick::ConnectButton(mac) => {
-                        let is_paired =
-                            bt.devices().iter().any(|d| d.mac == mac && d.paired);
+                        let is_paired = bt.devices().iter().any(|d| d.mac == mac && d.paired);
                         if is_paired {
                             bt.toggle_connection(&mac);
                         } else {
@@ -217,9 +216,8 @@ pub(super) fn handle_control_view_click(
             // view goes to the modal first.
             if app.controls.wifi.prompt.is_some() {
                 use crate::controls::wifi::ModalHit;
-                let hit = crate::controls::wifi::hit_test_modal(
-                    panel, view_top_y, scale, phys_x, phys_y,
-                );
+                let hit =
+                    crate::controls::wifi::hit_test_modal(panel, view_top_y, scale, phys_x, phys_y);
                 match hit {
                     ModalHit::Connect => {
                         app.controls.wifi.submit_prompt();
@@ -269,7 +267,10 @@ pub(super) fn handle_control_view_click(
                         app.controls.wifi.toggle_vpn();
                     }
                     crate::controls::wifi::NetworkHit::ConnectButton(ssid) => {
-                        let net = app.controls.wifi.networks()
+                        let net = app
+                            .controls
+                            .wifi
+                            .networks()
                             .iter()
                             .find(|n| n.ssid == ssid)
                             .cloned();
@@ -349,15 +350,16 @@ pub(super) fn handle_control_view_click(
 /// Route an inline request-strip Accept/Reject for `mac` to the matching
 /// backend reply. Priority mirrors `bluetooth::prompt::row_prompt`:
 /// outgoing pair we own → incoming pair → incoming file.
-fn dispatch_prompt(
-    bt: &mut crate::controls::bluetooth::Bluetooth,
-    mac: &str,
-    accept: bool,
-) {
+fn dispatch_prompt(bt: &mut crate::controls::bluetooth::Bluetooth, mac: &str, accept: bool) {
     use crate::controls::bluetooth::PairPromptKind;
 
     // Outgoing pair flow we initiated (Confirm passkey / authorize / PIN).
-    if let Some(kind) = bt.pair_prompt.as_ref().filter(|p| p.mac == mac).map(|p| p.kind.clone()) {
+    if let Some(kind) = bt
+        .pair_prompt
+        .as_ref()
+        .filter(|p| p.mac == mac)
+        .map(|p| p.kind.clone())
+    {
         match (accept, kind) {
             (true, PairPromptKind::Enter) => bt.pair_submit_passkey(),
             (true, _) => bt.pair_confirm_yes(),

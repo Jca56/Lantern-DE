@@ -26,10 +26,14 @@ fn main() {
             "--help" | "-h" => {
                 println!("lntrn-lava-lamp [OPTIONS]");
                 println!("  -b, --blobs N     Number of blobs (default: 7)");
-                println!("  -t, --theme NAME  Theme: classic, cosmic, neon, lofi (default: classic)");
+                println!(
+                    "  -t, --theme NAME  Theme: classic, cosmic, neon, lofi (default: classic)"
+                );
                 std::process::exit(0);
             }
-            _ => { i += 1; }
+            _ => {
+                i += 1;
+            }
         }
     }
 

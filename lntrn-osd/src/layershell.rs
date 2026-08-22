@@ -22,7 +22,10 @@ fn peer_uid(stream: &UnixStream) -> Option<u32> {
 }
 
 use anyhow::{anyhow, Result};
-use lntrn_render::{Color, GpuContext, GpuTexture, Painter, Rect, SurfaceError, TextRenderer, TexturePass, TextureDraw};
+use lntrn_render::{
+    Color, GpuContext, GpuTexture, Painter, Rect, SurfaceError, TextRenderer, TextureDraw,
+    TexturePass,
+};
 use lntrn_ui::gpu::FoxPalette;
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
@@ -37,7 +40,6 @@ use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_l
 
 use crate::svg_icon;
 use crate::{OsdMode, VOLUME_MAX};
-
 
 const OSD_W: u32 = 340;
 const OSD_H: u32 = 64;
@@ -78,33 +80,53 @@ struct State {
 impl State {
     fn new() -> Self {
         Self {
-            running: true, configured: false, frame_done: true,
-            width: OSD_W, height: OSD_H,
-            scale: 1, output_phys_width: 0,
-            compositor: None, layer_shell: None, viewporter: None,
+            running: true,
+            configured: false,
+            frame_done: true,
+            width: OSD_W,
+            height: OSD_H,
+            scale: 1,
+            output_phys_width: 0,
+            compositor: None,
+            layer_shell: None,
+            viewporter: None,
         }
     }
 
     fn fractional_scale(&self) -> f64 {
         if self.output_phys_width > 0 && self.width > 0 {
-            self.output_phys_width as f64 / (self.output_phys_width as f64 / self.scale.max(1) as f64)
+            self.output_phys_width as f64
+                / (self.output_phys_width as f64 / self.scale.max(1) as f64)
         } else {
             self.scale.max(1) as f64
         }
     }
 
-    fn phys_w(&self) -> u32 { (self.width as f64 * self.fractional_scale()).round() as u32 }
-    fn phys_h(&self) -> u32 { (self.height as f64 * self.fractional_scale()).round() as u32 }
+    fn phys_w(&self) -> u32 {
+        (self.width as f64 * self.fractional_scale()).round() as u32
+    }
+    fn phys_h(&self) -> u32 {
+        (self.height as f64 * self.fractional_scale()).round() as u32
+    }
 }
 
 // ── Dispatch impls ──────────────────────────────────────────────────────────
 
 impl Dispatch<wl_registry::WlRegistry, ()> for State {
     fn event(
-        state: &mut Self, registry: &wl_registry::WlRegistry,
-        event: wl_registry::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>,
+        state: &mut Self,
+        registry: &wl_registry::WlRegistry,
+        event: wl_registry::Event,
+        _: &(),
+        _: &Connection,
+        qh: &QueueHandle<Self>,
     ) {
-        if let wl_registry::Event::Global { name, interface, version } = event {
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
             match interface.as_str() {
                 "wl_compositor" => {
                     state.compositor = Some(registry.bind(name, version.min(6), qh, ()));
@@ -125,28 +147,80 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
 }
 
 impl Dispatch<wl_compositor::WlCompositor, ()> for State {
-    fn event(_: &mut Self, _: &wl_compositor::WlCompositor, _: wl_compositor::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_compositor::WlCompositor,
+        _: wl_compositor::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wl_surface::WlSurface, ()> for State {
-    fn event(_: &mut Self, _: &wl_surface::WlSurface, _: wl_surface::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_surface::WlSurface,
+        _: wl_surface::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wl_region::WlRegion, ()> for State {
-    fn event(_: &mut Self, _: &wl_region::WlRegion, _: wl_region::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_region::WlRegion,
+        _: wl_region::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wp_viewporter::WpViewporter, ()> for State {
-    fn event(_: &mut Self, _: &wp_viewporter::WpViewporter, _: wp_viewporter::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wp_viewporter::WpViewporter,
+        _: wp_viewporter::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wp_viewport::WpViewport, ()> for State {
-    fn event(_: &mut Self, _: &wp_viewport::WpViewport, _: wp_viewport::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wp_viewport::WpViewport,
+        _: wp_viewport::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<zwlr_layer_shell_v1::ZwlrLayerShellV1, ()> for State {
-    fn event(_: &mut Self, _: &zwlr_layer_shell_v1::ZwlrLayerShellV1, _: zwlr_layer_shell_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &zwlr_layer_shell_v1::ZwlrLayerShellV1,
+        _: zwlr_layer_shell_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 impl Dispatch<wl_output::WlOutput, ()> for State {
     fn event(
-        state: &mut Self, _: &wl_output::WlOutput, event: wl_output::Event,
-        _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        _: &wl_output::WlOutput,
+        event: wl_output::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         match event {
             wl_output::Event::Scale { factor } => state.scale = factor,
@@ -157,21 +231,40 @@ impl Dispatch<wl_output::WlOutput, ()> for State {
 }
 
 impl Dispatch<wl_callback::WlCallback, ()> for State {
-    fn event(state: &mut Self, _: &wl_callback::WlCallback, _: wl_callback::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+    fn event(
+        state: &mut Self,
+        _: &wl_callback::WlCallback,
+        _: wl_callback::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
         state.frame_done = true;
     }
 }
 
 impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for State {
     fn event(
-        state: &mut Self, layer_surface: &zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
-        event: zwlr_layer_surface_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        layer_surface: &zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+        event: zwlr_layer_surface_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         match event {
-            zwlr_layer_surface_v1::Event::Configure { serial, width, height } => {
+            zwlr_layer_surface_v1::Event::Configure {
+                serial,
+                width,
+                height,
+            } => {
                 layer_surface.ack_configure(serial);
-                if width > 0 { state.width = width; }
-                if height > 0 { state.height = height; }
+                if width > 0 {
+                    state.width = width;
+                }
+                if height > 0 {
+                    state.height = height;
+                }
                 state.configured = true;
                 state.frame_done = true;
             }
@@ -184,24 +277,32 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for State {
 // ── Icon helpers ────────────────────────────────────────────────────────────
 
 fn volume_icon_key(volume: u32, muted: bool) -> &'static str {
-    if muted || volume == 0 { "snd-muted" }
-    else if volume <= 33 { "snd-low" }
-    else if volume <= 89 { "snd-medium" }
-    else { "snd-high" }
+    if muted || volume == 0 {
+        "snd-muted"
+    } else if volume <= 33 {
+        "snd-low"
+    } else if volume <= 89 {
+        "snd-medium"
+    } else {
+        "snd-high"
+    }
 }
 
 fn brightness_icon_key(level: u32) -> &'static str {
-    if level <= 40 { "bright-low" }
-    else { "bright-high" }
+    if level <= 40 {
+        "bright-low"
+    } else {
+        "bright-high"
+    }
 }
 
 const ICON_FILES: &[(&str, &str)] = &[
-    ("snd-muted",    "spark-sound-muted.svg"),
-    ("snd-low",      "spark-sound-low.svg"),
-    ("snd-medium",   "spark-sound-medium.svg"),
-    ("snd-high",     "spark-sound-high.svg"),
-    ("bright-low",   "spark-brightness-low.svg"),
-    ("bright-high",  "spark-brightness-high.svg"),
+    ("snd-muted", "spark-sound-muted.svg"),
+    ("snd-low", "spark-sound-low.svg"),
+    ("snd-medium", "spark-sound-medium.svg"),
+    ("snd-high", "spark-sound-high.svg"),
+    ("bright-low", "spark-brightness-low.svg"),
+    ("bright-high", "spark-brightness-high.svg"),
 ];
 
 // ── Shared rendering ────────────────────────────────────────────────────────
@@ -222,7 +323,9 @@ fn draw_osd<'a>(
 
     // Background pill
     let bg = Color::rgba(
-        palette.surface.r, palette.surface.g, palette.surface.b,
+        palette.surface.r,
+        palette.surface.g,
+        palette.surface.b,
         0.92 * alpha,
     );
     let radius = CORNER_RADIUS * scale_f;
@@ -233,9 +336,17 @@ fn draw_osd<'a>(
     // tick position 100/VOLUME_MAX, and the over-100 region is reachable.
     let (level, label, icon_key, tick_frac) = match mode {
         OsdMode::Volume { level, muted } => {
-            let label = if muted { "MUTE".to_string() } else { format!("{}%", level) };
+            let label = if muted {
+                "MUTE".to_string()
+            } else {
+                format!("{}%", level)
+            };
             let key = volume_icon_key(level, muted);
-            let effective = if muted { 0.0 } else { level as f32 / VOLUME_MAX as f32 };
+            let effective = if muted {
+                0.0
+            } else {
+                level as f32 / VOLUME_MAX as f32
+            };
             let tick = 100.0 / VOLUME_MAX as f32;
             (effective, label, key, Some(tick))
         }
@@ -276,7 +387,10 @@ fn draw_osd<'a>(
         let fill_end = Color::from_rgb8(250, 204, 21).with_alpha(alpha);
         painter.rect_gradient_linear(
             Rect::new(bar_x, bar_y, fill_w, track_h),
-            track_r, 0.0, fill_start, fill_end,
+            track_r,
+            0.0,
+            fill_start,
+            fill_end,
         );
     }
 
@@ -302,14 +416,22 @@ fn draw_osd<'a>(
     let thumb_glow = Color::from_rgb8(250, 204, 21).with_alpha(0.22 * alpha);
     painter.circle_filled(thumb_x, thumb_cy, thumb_r, Color::WHITE.with_alpha(alpha));
     painter.circle_stroke(thumb_x, thumb_cy, thumb_r + 3.0 * scale_f, 2.0, thumb_glow);
-    painter.circle_stroke(thumb_x, thumb_cy, thumb_r, 1.0, Color::BLACK.with_alpha(0.12 * alpha));
+    painter.circle_stroke(
+        thumb_x,
+        thumb_cy,
+        thumb_r,
+        1.0,
+        Color::BLACK.with_alpha(0.12 * alpha),
+    );
 
     // Percentage text
     let font_size = 22.0 * scale_f;
     let text_x = bar_x + bar_w + gap;
     let text_y = (ph - font_size) / 2.0;
     let text_color = Color::rgba(palette.text.r, palette.text.g, palette.text.b, alpha);
-    text.queue(&label, font_size, text_x, text_y, text_color, pw, pw as u32, ph as u32);
+    text.queue(
+        &label, font_size, text_x, text_y, text_color, pw, pw as u32, ph as u32,
+    );
 
     // Icon texture
     let mut tex_draws = Vec::new();
@@ -332,26 +454,30 @@ pub fn run(mut mode: OsdMode, sock: UnixListener) -> Result<()> {
     display.get_registry(&qh, ());
     event_queue.roundtrip(&mut state)?;
 
-    let compositor = state.compositor.as_ref()
+    let compositor = state
+        .compositor
+        .as_ref()
         .ok_or_else(|| anyhow!("wl_compositor not available"))?;
-    let layer_shell = state.layer_shell.as_ref()
+    let layer_shell = state
+        .layer_shell
+        .as_ref()
         .ok_or_else(|| anyhow!("zwlr_layer_shell_v1 not available"))?;
 
     let surface = compositor.create_surface(&qh, ());
 
     let layer_surface = layer_shell.get_layer_surface(
-        &surface, None,
+        &surface,
+        None,
         zwlr_layer_shell_v1::Layer::Overlay,
         "lntrn-osd".to_string(),
-        &qh, (),
+        &qh,
+        (),
     );
 
     layer_surface.set_size(OSD_W, OSD_H);
     layer_surface.set_anchor(zwlr_layer_surface_v1::Anchor::empty());
     layer_surface.set_exclusive_zone(-1);
-    layer_surface.set_keyboard_interactivity(
-        zwlr_layer_surface_v1::KeyboardInteractivity::None,
-    );
+    layer_surface.set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::None);
 
     let empty_region = compositor.create_region(&qh, ());
     surface.set_input_region(Some(&empty_region));
@@ -404,7 +530,9 @@ pub fn run(mut mode: OsdMode, sock: UnixListener) -> Result<()> {
 
     while state.running {
         event_queue.blocking_dispatch(&mut state)?;
-        if !state.frame_done { continue; }
+        if !state.frame_done {
+            continue;
+        }
         state.frame_done = false;
 
         // Poll listener for new commands (non-blocking accept loop).
@@ -414,7 +542,9 @@ pub fn run(mut mode: OsdMode, sock: UnixListener) -> Result<()> {
                     match peer_uid(&stream) {
                         Some(uid) if uid == our_uid => {}
                         other => {
-                            eprintln!("[lntrn-osd] rejecting connection from foreign uid: {other:?}");
+                            eprintln!(
+                                "[lntrn-osd] rejecting connection from foreign uid: {other:?}"
+                            );
                             continue;
                         }
                     }
@@ -458,8 +588,16 @@ pub fn run(mut mode: OsdMode, sock: UnixListener) -> Result<()> {
         let ph = state.phys_h() as f32;
 
         let tex_draws = draw_osd(
-            &mut painter, &mut text, &icons, &palette,
-            mode, alpha, pw, ph, scale_f, icon_sz as f32,
+            &mut painter,
+            &mut text,
+            &icons,
+            &palette,
+            mode,
+            alpha,
+            pw,
+            ph,
+            scale_f,
+            icon_sz as f32,
         );
 
         // Render

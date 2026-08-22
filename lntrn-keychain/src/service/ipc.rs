@@ -65,8 +65,12 @@ fn try_cc(label: &str) -> Option<PromptResult> {
             Err(_) => return None,
         };
         buf.extend_from_slice(&tmp[..n]);
-        if buf.contains(&b'\n') { break; }
-        if buf.len() > 64 * 1024 { return None; }
+        if buf.contains(&b'\n') {
+            break;
+        }
+        if buf.len() > 64 * 1024 {
+            return None;
+        }
     }
 
     let line = std::str::from_utf8(&buf).ok()?;

@@ -72,8 +72,8 @@ impl MediaPipeline {
                     let sample = sink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
                     let buffer = sample.buffer().ok_or(gst::FlowError::Error)?;
                     let caps = sample.caps().ok_or(gst::FlowError::Error)?;
-                    let info = gst_video::VideoInfo::from_caps(caps)
-                        .map_err(|_| gst::FlowError::Error)?;
+                    let info =
+                        gst_video::VideoInfo::from_caps(caps).map_err(|_| gst::FlowError::Error)?;
 
                     let map = buffer.map_readable().map_err(|_| gst::FlowError::Error)?;
                     let width = info.width();
@@ -96,7 +96,11 @@ impl MediaPipeline {
                     };
 
                     if let Ok(mut lock) = frame_ref.lock() {
-                        *lock = Some(VideoFrame { rgba, width, height });
+                        *lock = Some(VideoFrame {
+                            rgba,
+                            width,
+                            height,
+                        });
                     }
                     Ok(gst::FlowSuccess::Ok)
                 })
@@ -138,8 +142,7 @@ impl MediaPipeline {
             .drop(true)
             .build();
 
-        let spectrum_shared: Arc<Mutex<Vec<f32>>> =
-            Arc::new(Mutex::new(vec![0.0; SPECTRUM_BANDS]));
+        let spectrum_shared: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(vec![0.0; SPECTRUM_BANDS]));
         let spectrum_dirty = Arc::new(AtomicBool::new(false));
         let analyzer = Arc::new(Mutex::new(SpectrumAnalyzer::new(
             FFT_SIZE,
@@ -248,7 +251,9 @@ impl MediaPipeline {
         n_video == 0
     }
 
-    pub fn is_eos(&self) -> bool { self.eos }
+    pub fn is_eos(&self) -> bool {
+        self.eos
+    }
 
     pub fn spectrum(&self) -> &[f32] {
         &self.spectrum

@@ -47,9 +47,7 @@ fn toggles_row_y(panel_top_y: f32, scale: f32) -> f32 {
 }
 
 fn list_top_y(panel_top_y: f32, scale: f32) -> f32 {
-    toggles_row_y(panel_top_y, scale)
-        + TOGGLES_ROW_HEIGHT * scale
-        + TOGGLES_ROW_BOTTOM_GAP * scale
+    toggles_row_y(panel_top_y, scale) + TOGGLES_ROW_HEIGHT * scale + TOGGLES_ROW_BOTTOM_GAP * scale
 }
 
 /// Power-toggle pill rect at the top right of the view.
@@ -178,13 +176,24 @@ fn walk_devices(
 
     let mut cy = list_top_y(panel_top_y, scale);
 
-    let walk_section = |cy: &mut f32, devs: &[&Device], max: usize, visit: &mut dyn FnMut(&Device, RowGeom) -> bool| -> bool {
+    let walk_section = |cy: &mut f32,
+                        devs: &[&Device],
+                        max: usize,
+                        visit: &mut dyn FnMut(&Device, RowGeom) -> bool|
+     -> bool {
         for dev in devs.iter().take(max) {
             let header = header_row_rect(inner_x, inner_w, *cy, scale);
             let strip_top = *cy + row_h;
             let prompt_h = prompt_extra_height(bt, dev, text_size, scale);
             let expanded_top = strip_top + prompt_h;
-            if visit(dev, RowGeom { header, strip_top, expanded_top }) {
+            if visit(
+                dev,
+                RowGeom {
+                    header,
+                    strip_top,
+                    expanded_top,
+                },
+            ) {
                 return true;
             }
             *cy += row_h + row_extra_height(bt, dev, text_size, scale);
@@ -219,9 +228,7 @@ pub fn hit_test(
     x: f32,
     y: f32,
 ) -> Option<BtClick> {
-    let inside = |r: Rect| {
-        x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h
-    };
+    let inside = |r: Rect| x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
 
     let power = toggle_rect(panel, panel_top_y, scale);
     if inside(power) {
@@ -265,12 +272,26 @@ pub fn hit_test(
             return true;
         }
         if bt.expanded_mac.as_deref() == Some(dev.mac.as_str()) {
-            let connect = detail::connect_button_rect(inner_x, inner_w, geom.expanded_top, dev, text_size, scale);
+            let connect = detail::connect_button_rect(
+                inner_x,
+                inner_w,
+                geom.expanded_top,
+                dev,
+                text_size,
+                scale,
+            );
             if inside(connect) {
                 hit = Some(BtClick::ConnectButton(dev.mac.clone()));
                 return true;
             }
-            if let Some(send) = detail::send_button_rect_expanded(inner_x, inner_w, geom.expanded_top, dev, text_size, scale) {
+            if let Some(send) = detail::send_button_rect_expanded(
+                inner_x,
+                inner_w,
+                geom.expanded_top,
+                dev,
+                text_size,
+                scale,
+            ) {
                 if inside(send) {
                     hit = Some(BtClick::SendButton(dev.mac.clone()));
                     return true;
@@ -338,7 +359,17 @@ pub fn draw_view(
     }
 
     // ── Toggles row (Discoverable / Scan) ──
-    draw_toggles_row(painter, text, bt, panel, panel_top_y, scale, alpha, surface_w, surface_h);
+    draw_toggles_row(
+        painter,
+        text,
+        bt,
+        panel,
+        panel_top_y,
+        scale,
+        alpha,
+        surface_w,
+        surface_h,
+    );
 
     // ── Device sections ──
     let mut cy = list_top_y(panel_top_y, scale);
@@ -347,23 +378,54 @@ pub fn draw_view(
 
     if !paired.is_empty() {
         cy = draw_section(
-            painter, text, bt, "Paired", &paired, MAX_PAIRED_ROWS,
-            inner_x, inner_w, cy, scale, alpha, text_size, surface_w, surface_h,
+            painter,
+            text,
+            bt,
+            "Paired",
+            &paired,
+            MAX_PAIRED_ROWS,
+            inner_x,
+            inner_w,
+            cy,
+            scale,
+            alpha,
+            text_size,
+            surface_w,
+            surface_h,
         );
         cy += SECTION_GAP * scale;
     }
 
     if !unpaired.is_empty() {
-        let header = if bt.is_scanning() { "Available" } else { "Recently seen" };
+        let header = if bt.is_scanning() {
+            "Available"
+        } else {
+            "Recently seen"
+        };
         cy = draw_section(
-            painter, text, bt, header, &unpaired, MAX_UNPAIRED_ROWS,
-            inner_x, inner_w, cy, scale, alpha, text_size, surface_w, surface_h,
+            painter,
+            text,
+            bt,
+            header,
+            &unpaired,
+            MAX_UNPAIRED_ROWS,
+            inner_x,
+            inner_w,
+            cy,
+            scale,
+            alpha,
+            text_size,
+            surface_w,
+            surface_h,
         );
         // Note how many discovered-but-unnamed devices we hid, so a device
         // whose name BlueZ hasn't resolved yet isn't a silent mystery.
         let hidden = bt.hidden_unpaired_count();
         if hidden > 0 {
-            let msg = format!("+{hidden} unnamed device{} hidden", if hidden == 1 { "" } else { "s" });
+            let msg = format!(
+                "+{hidden} unnamed device{} hidden",
+                if hidden == 1 { "" } else { "s" }
+            );
             text.queue(
                 &msg,
                 row_font * 0.8,
@@ -466,7 +528,13 @@ fn draw_toggles_row(
         surface_w,
         surface_h,
     );
-    super::toggle::draw_toggle(painter, layout.discoverable_toggle, bt.is_discoverable(), alpha, scale);
+    super::toggle::draw_toggle(
+        painter,
+        layout.discoverable_toggle,
+        bt.is_discoverable(),
+        alpha,
+        scale,
+    );
 
     text.queue(
         "Scan",
@@ -507,14 +575,21 @@ fn row_badge(bt: &Bluetooth, dev: &Device, alpha: f32) -> (String, Color) {
                 } else {
                     0
                 };
-                let name = if s.filename.is_empty() { "file".to_string() }
-                    else { truncate_name(&s.filename, 20) };
-                (format!("Sending {} · {}%", name, pct), white.with_alpha(alpha))
+                let name = if s.filename.is_empty() {
+                    "file".to_string()
+                } else {
+                    truncate_name(&s.filename, 20)
+                };
+                (
+                    format!("Sending {} · {}%", name, pct),
+                    white.with_alpha(alpha),
+                )
             }
             SendStatus::Done => ("Sent ✓".into(), gold.with_alpha(alpha)),
-            SendStatus::Failed(msg) => {
-                (format!("Send failed: {}", truncate_name(msg, 30)), red.with_alpha(alpha))
-            }
+            SendStatus::Failed(msg) => (
+                format!("Send failed: {}", truncate_name(msg, 30)),
+                red.with_alpha(alpha),
+            ),
         };
     }
 
@@ -610,8 +685,16 @@ fn draw_section(
 
         // ── Header row: device name + status badge ──
         let name_y = cy + (row_h - row_font) / 2.0;
-        let name_color = if dev.connected { white.with_alpha(alpha) } else { white.with_alpha(0.88 * alpha) };
-        let display_name = if dev.name.is_empty() { dev.mac.as_str() } else { dev.name.as_str() };
+        let name_color = if dev.connected {
+            white.with_alpha(alpha)
+        } else {
+            white.with_alpha(0.88 * alpha)
+        };
+        let display_name = if dev.name.is_empty() {
+            dev.mac.as_str()
+        } else {
+            dev.name.as_str()
+        };
         text.queue(
             display_name,
             row_font,
@@ -643,15 +726,15 @@ fn draw_section(
 
         if has_prompt {
             cy += prompt::draw_prompt_strip(
-                painter, text, dev, bt, inner_x, inner_w, cy, scale, alpha,
-                text_size, surface_w, surface_h,
+                painter, text, dev, bt, inner_x, inner_w, cy, scale, alpha, text_size, surface_w,
+                surface_h,
             );
         }
 
         if is_expanded {
             cy += detail::draw_expanded(
-                painter, text, dev, bt, inner_x, inner_w, cy, scale, alpha,
-                text_size, surface_w, surface_h,
+                painter, text, dev, bt, inner_x, inner_w, cy, scale, alpha, text_size, surface_w,
+                surface_h,
             );
         }
     }
@@ -683,8 +766,14 @@ pub(super) fn draw_pill_button(
     // max_width down by up to 0.125px, which wraps the last glyph onto a
     // clipped second line ("Connect" → "Connec").
     text.queue(
-        label, font, lx, ly, accent.with_alpha(0.95 * alpha),
-        rect.w.max(lw), surface_w, surface_h,
+        label,
+        font,
+        lx,
+        ly,
+        accent.with_alpha(0.95 * alpha),
+        rect.w.max(lw),
+        surface_w,
+        surface_h,
     );
 }
 
@@ -698,4 +787,3 @@ pub(super) fn truncate_name(s: &str, max_chars: usize) -> String {
     out.push('…');
     out
 }
-

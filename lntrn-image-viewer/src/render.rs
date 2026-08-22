@@ -3,7 +3,7 @@ use lntrn_ui::gpu::{FontSize, FoxPalette, InteractionContext, TextLabel, TitleBa
 
 use crate::app::App;
 use crate::{
-    Gpu, ZONE_CANVAS, ZONE_CLOSE, ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_NAV_PREV, ZONE_NAV_NEXT,
+    Gpu, ZONE_CANVAS, ZONE_CLOSE, ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_NAV_NEXT, ZONE_NAV_PREV,
     ZONE_SHUFFLE,
 };
 
@@ -14,7 +14,12 @@ pub fn render_frame(
     palette: &FoxPalette,
     scale: f32,
 ) {
-    let Gpu { ctx, painter, text, tex_pass } = gpu;
+    let Gpu {
+        ctx,
+        painter,
+        text,
+        tex_pass,
+    } = gpu;
     let wf = ctx.width() as f32;
     let hf = ctx.height() as f32;
     let s = scale;
@@ -30,9 +35,18 @@ pub fn render_frame(
 
     // ── Title bar ───────────────────────────────────────────────────
     let title_rect = Rect::new(0.0, 0.0, wf, title_h);
-    let close_state = input.add_zone(ZONE_CLOSE, TitleBar::new(title_rect).scale(s).close_button_rect());
-    let max_state = input.add_zone(ZONE_MAXIMIZE, TitleBar::new(title_rect).scale(s).maximize_button_rect());
-    let min_state = input.add_zone(ZONE_MINIMIZE, TitleBar::new(title_rect).scale(s).minimize_button_rect());
+    let close_state = input.add_zone(
+        ZONE_CLOSE,
+        TitleBar::new(title_rect).scale(s).close_button_rect(),
+    );
+    let max_state = input.add_zone(
+        ZONE_MAXIMIZE,
+        TitleBar::new(title_rect).scale(s).maximize_button_rect(),
+    );
+    let min_state = input.add_zone(
+        ZONE_MINIMIZE,
+        TitleBar::new(title_rect).scale(s).minimize_button_rect(),
+    );
 
     TitleBar::new(title_rect)
         .scale(s)
@@ -43,7 +57,12 @@ pub fn render_frame(
 
     // Shuffle toggle — sits just left of the minimize button.
     let min_rect = TitleBar::new(title_rect).scale(s).minimize_button_rect();
-    let shuffle_rect = Rect::new(min_rect.x - min_rect.w, title_rect.y, min_rect.w, title_rect.h);
+    let shuffle_rect = Rect::new(
+        min_rect.x - min_rect.w,
+        title_rect.y,
+        min_rect.w,
+        title_rect.h,
+    );
     let shuffle_state = input.add_zone(ZONE_SHUFFLE, shuffle_rect);
     let shuffle_hovered = shuffle_state.is_hovered();
     if app.shuffle {
@@ -217,7 +236,9 @@ fn middle_ellipsize(text: &mut TextRenderer, s: &str, fpx: f32, max_w: f32) -> S
             best = candidate;
             lo = keep + 1;
         } else {
-            if keep == 0 { break; }
+            if keep == 0 {
+                break;
+            }
             hi = keep - 1;
         }
     }

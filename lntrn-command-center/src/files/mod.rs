@@ -31,10 +31,18 @@ pub(crate) const ROW_PAD_X: f32 = 14.0;
 /// Row / tile heights scale with the user's text-size setting so the
 /// list grows with the font instead of clipping. Values picked so the
 /// default (18 pt) reproduces the original 56 / 48 logical px heights.
-pub fn row_height(text_size: f32) -> f32 { text_size * 2.20 + 16.0 }
-pub fn row_icon_size(text_size: f32) -> f32 { text_size * 2.00 }
-pub fn sidebar_tile_height(text_size: f32) -> f32 { text_size * 1.95 + 12.0 }
-pub fn sidebar_icon_size(text_size: f32) -> f32 { text_size * 1.55 }
+pub fn row_height(text_size: f32) -> f32 {
+    text_size * 2.20 + 16.0
+}
+pub fn row_icon_size(text_size: f32) -> f32 {
+    text_size * 2.00
+}
+pub fn sidebar_tile_height(text_size: f32) -> f32 {
+    text_size * 1.95 + 12.0
+}
+pub fn sidebar_icon_size(text_size: f32) -> f32 {
+    text_size * 1.55
+}
 
 /// Toolbar button dimensions inside the controls row (Back / Home / Eye / Magnifier).
 pub(crate) const TOOLBAR_BTN_SIZE: f32 = 40.0;
@@ -104,16 +112,18 @@ pub enum FileKind {
 }
 
 pub fn file_kind(entry: &FileEntry) -> FileKind {
-    if entry.is_dir { return FileKind::Generic; }
+    if entry.is_dir {
+        return FileKind::Generic;
+    }
     let ext = match entry.path.extension() {
         Some(e) => e.to_string_lossy().to_ascii_lowercase(),
         None => return FileKind::Generic,
     };
     match ext.as_str() {
-        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tif" | "tiff"
-        | "svg" | "ico" | "heic" | "heif" | "avif" => FileKind::Image,
-        "mp4" | "mkv" | "mov" | "avi" | "webm" | "wmv" | "flv" | "mpg"
-        | "mpeg" | "m4v" | "3gp" | "ogv" => FileKind::Video,
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tif" | "tiff" | "svg" | "ico"
+        | "heic" | "heif" | "avif" => FileKind::Image,
+        "mp4" | "mkv" | "mov" | "avi" | "webm" | "wmv" | "flv" | "mpg" | "mpeg" | "m4v" | "3gp"
+        | "ogv" => FileKind::Video,
         _ => FileKind::Generic,
     }
 }
@@ -338,8 +348,18 @@ impl FilesState {
             let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
             let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
             let modified = meta.as_ref().and_then(|m| m.modified().ok());
-            let entry = FileEntry { name, path, is_dir, size, modified };
-            if is_dir { dirs.push(entry); } else { files.push(entry); }
+            let entry = FileEntry {
+                name,
+                path,
+                is_dir,
+                size,
+                modified,
+            };
+            if is_dir {
+                dirs.push(entry);
+            } else {
+                files.push(entry);
+            }
         }
         sort_entries(&mut dirs, self.sort_by, self.sort_dir);
         sort_entries(&mut files, self.sort_by, self.sort_dir);
@@ -384,7 +404,9 @@ impl FilesState {
     }
 
     pub fn entry_for_visible(&self, visible_idx: usize) -> Option<&FileEntry> {
-        self.visible.get(visible_idx).and_then(|i| self.entries.get(*i))
+        self.visible
+            .get(visible_idx)
+            .and_then(|i| self.entries.get(*i))
     }
 
     pub fn crumb_path(&self, idx: usize) -> Option<PathBuf> {
@@ -395,7 +417,11 @@ impl FilesState {
         }
         let home = home_dir();
         let starts_at_home = self.cwd.strip_prefix(&home).ok().is_some();
-        let mut p = if starts_at_home { home } else { PathBuf::from("/") };
+        let mut p = if starts_at_home {
+            home
+        } else {
+            PathBuf::from("/")
+        };
         for seg in &segs[1..take] {
             p.push(seg);
         }
@@ -411,15 +437,27 @@ fn sort_entries(v: &mut [FileEntry], by: SortBy, dir: SortDir) {
             SortBy::Size => a.size.cmp(&b.size),
             SortBy::Modified => a.modified.cmp(&b.modified),
             SortBy::Type => {
-                let ea = a.path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
-                let eb = b.path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+                let ea = a
+                    .path
+                    .extension()
+                    .map(|e| e.to_string_lossy().to_ascii_lowercase())
+                    .unwrap_or_default();
+                let eb = b
+                    .path
+                    .extension()
+                    .map(|e| e.to_string_lossy().to_ascii_lowercase())
+                    .unwrap_or_default();
                 match ea.cmp(&eb) {
                     Ordering::Equal => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
                     o => o,
                 }
             }
         };
-        if dir == SortDir::Desc { ord.reverse() } else { ord }
+        if dir == SortDir::Desc {
+            ord.reverse()
+        } else {
+            ord
+        }
     });
 }
 
@@ -441,7 +479,9 @@ pub fn crumb_segments(p: &Path) -> Vec<String> {
     let mut segs = vec![String::from("/")];
     for part in p.components() {
         let s = part.as_os_str().to_string_lossy();
-        if s == "/" { continue; }
+        if s == "/" {
+            continue;
+        }
         segs.push(s.into_owned());
     }
     segs
@@ -477,7 +517,13 @@ pub fn strip_layout(strip: Rect, scale: f32) -> StripLayout {
     let path_w = (mag.x - group - path_x).max(0.0);
     let pathbar = Rect::new(path_x, strip.y + 4.0 * scale, path_w, strip.h - 8.0 * scale);
 
-    StripLayout { back, pathbar, magnifier: mag, sort, eye }
+    StripLayout {
+        back,
+        pathbar,
+        magnifier: mag,
+        sort,
+        eye,
+    }
 }
 
 // ── Body layout ────────────────────────────────────────────────────────────
@@ -518,18 +564,20 @@ pub fn max_scroll(state: &FilesState, panel: Rect, top_y: f32, scale: f32, text_
 
 /// Hit-test the Files controls-row strip. Pass the strip rect computed
 /// the same way `render::draw_controls_strip` consumes it.
-pub fn hit_strip(
-    state: &FilesState,
-    strip: Rect,
-    scale: f32,
-    px: f32,
-    py: f32,
-) -> FilesHit {
+pub fn hit_strip(state: &FilesState, strip: Rect, scale: f32, px: f32, py: f32) -> FilesHit {
     let layout = strip_layout(strip, scale);
-    if contains(layout.back, px, py) { return FilesHit::Nav(NavButton::Back); }
-    if contains(layout.eye, px, py) { return FilesHit::Nav(NavButton::ToggleHidden); }
-    if contains(layout.sort, px, py) { return FilesHit::Nav(NavButton::Sort); }
-    if contains(layout.magnifier, px, py) { return FilesHit::Nav(NavButton::Magnifier); }
+    if contains(layout.back, px, py) {
+        return FilesHit::Nav(NavButton::Back);
+    }
+    if contains(layout.eye, px, py) {
+        return FilesHit::Nav(NavButton::ToggleHidden);
+    }
+    if contains(layout.sort, px, py) {
+        return FilesHit::Nav(NavButton::Sort);
+    }
+    if contains(layout.magnifier, px, py) {
+        return FilesHit::Nav(NavButton::Magnifier);
+    }
     if contains(layout.pathbar, px, py) {
         if state.filter_active {
             return FilesHit::Pathbar;
@@ -606,7 +654,11 @@ pub fn format_meta(entry: &FileEntry) -> String {
 }
 
 pub fn format_size_or_count(entry: &FileEntry) -> String {
-    if entry.is_dir { String::new() } else { format_size(entry.size) }
+    if entry.is_dir {
+        String::new()
+    } else {
+        format_size(entry.size)
+    }
 }
 
 pub fn format_size(bytes: u64) -> String {
@@ -633,11 +685,21 @@ fn format_age(unix_secs: u64) -> String {
         return String::from("just now");
     }
     let delta = now - unix_secs;
-    if delta < 60 { return String::from("just now"); }
-    if delta < 3600 { return format!("{}m ago", delta / 60); }
-    if delta < 86_400 { return format!("{}h ago", delta / 3600); }
+    if delta < 60 {
+        return String::from("just now");
+    }
+    if delta < 3600 {
+        return format!("{}m ago", delta / 60);
+    }
+    if delta < 86_400 {
+        return format!("{}h ago", delta / 3600);
+    }
     let days = delta / 86_400;
-    if days < 30 { return format!("{}d ago", days); }
-    if days < 365 { return format!("{}mo ago", days / 30); }
+    if days < 30 {
+        return format!("{}d ago", days);
+    }
+    if days < 365 {
+        return format!("{}mo ago", days / 30);
+    }
     format!("{}y ago", days / 365)
 }

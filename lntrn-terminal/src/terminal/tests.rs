@@ -18,10 +18,7 @@ fn select(t: &mut TerminalState, start: (usize, usize), end: (usize, usize)) -> 
 fn soft_wrapped_rows_join_without_newline() {
     // 22 chars across 10 cols → 3 rows, all one logical line
     let mut t = term(10, 5, b"this is a long command");
-    assert_eq!(
-        select(&mut t, (0, 0), (2, 9)),
-        "this is a long command"
-    );
+    assert_eq!(select(&mut t, (0, 0), (2, 9)), "this is a long command");
 }
 
 #[test]

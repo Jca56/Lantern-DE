@@ -1,7 +1,7 @@
-use std::path::PathBuf;
-use std::time::Instant;
 use crate::fs::{self, FileEntry, SortBy, SortDir};
 use crate::{PickConfig, PickResult};
+use std::path::PathBuf;
+use std::time::Instant;
 
 mod edit;
 mod nav;
@@ -136,7 +136,8 @@ impl DirectoryTab {
 
     /// Display name for the tab label.
     pub fn label(&self) -> String {
-        self.path.file_name()
+        self.path
+            .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "/".into())
     }
@@ -332,7 +333,7 @@ pub struct App {
     pub search_buf: String,
     pub search_cursor: usize,
     pub search_results: Vec<FileEntry>,
-    pub search_tx: Option<std::sync::mpsc::Sender<()>>,  // cancel signal
+    pub search_tx: Option<std::sync::mpsc::Sender<()>>, // cancel signal
     pub search_rx: Option<std::sync::mpsc::Receiver<FileEntry>>,
 }
 
@@ -343,15 +344,42 @@ impl App {
         let cloud_path = crate::cloud::cloud_root();
         let _ = crate::cloud::ensure_cloud_dir();
         let places = vec![
-            Place { name: "Home".into(), path: home.clone() },
-            Place { name: "Desktop".into(), path: home.join("Desktop") },
-            Place { name: "Documents".into(), path: home.join("Documents") },
-            Place { name: "Downloads".into(), path: home.join("Downloads") },
-            Place { name: "Music".into(), path: home.join("Music") },
-            Place { name: "Pictures".into(), path: home.join("Pictures") },
-            Place { name: "Videos".into(), path: home.join("Videos") },
-            Place { name: "Cloud".into(), path: cloud_path },
-            Place { name: "Trash".into(), path: trash_path },
+            Place {
+                name: "Home".into(),
+                path: home.clone(),
+            },
+            Place {
+                name: "Desktop".into(),
+                path: home.join("Desktop"),
+            },
+            Place {
+                name: "Documents".into(),
+                path: home.join("Documents"),
+            },
+            Place {
+                name: "Downloads".into(),
+                path: home.join("Downloads"),
+            },
+            Place {
+                name: "Music".into(),
+                path: home.join("Music"),
+            },
+            Place {
+                name: "Pictures".into(),
+                path: home.join("Pictures"),
+            },
+            Place {
+                name: "Videos".into(),
+                path: home.join("Videos"),
+            },
+            Place {
+                name: "Cloud".into(),
+                path: cloud_path,
+            },
+            Place {
+                name: "Trash".into(),
+                path: trash_path,
+            },
         ];
 
         let tab = DirectoryTab::new(home.clone());
@@ -463,7 +491,9 @@ pub(super) fn search_recursive(
 
     for entry in entries {
         // Check cancellation
-        if cancel.try_recv().is_ok() { return; }
+        if cancel.try_recv().is_ok() {
+            return;
+        }
 
         let entry = match entry {
             Ok(e) => e,
@@ -474,7 +504,9 @@ pub(super) fn search_recursive(
         let name = entry.file_name().to_string_lossy().to_string();
 
         // Skip hidden files
-        if name.starts_with('.') { continue; }
+        if name.starts_with('.') {
+            continue;
+        }
 
         let meta = match entry.metadata() {
             Ok(m) => m,
@@ -490,7 +522,9 @@ pub(super) fn search_recursive(
                 modified: meta.modified().ok(),
                 selected: false,
             };
-            if tx.send(file_entry).is_err() { return; }
+            if tx.send(file_entry).is_err() {
+                return;
+            }
         }
 
         // Recurse into subdirectories
@@ -510,9 +544,14 @@ pub fn dirs_home() -> PathBuf {
 /// patterns (e.g. ["*.jpg", "*.jpeg"] → "jpg"). Returns None for
 /// wildcard-only filters where no specific extension applies.
 pub(super) fn first_filter_ext_of(pick: &PickConfig) -> Option<String> {
-    let filter = pick.filters.get(pick.active_filter).or_else(|| pick.filters.first())?;
+    let filter = pick
+        .filters
+        .get(pick.active_filter)
+        .or_else(|| pick.filters.first())?;
     for pat in &filter.patterns {
-        if pat == "*" || pat == "*.*" { continue; }
+        if pat == "*" || pat == "*.*" {
+            continue;
+        }
         if let Some(ext) = pat.strip_prefix("*.") {
             if !ext.is_empty() && !ext.contains('*') {
                 return Some(ext.to_string());
@@ -524,9 +563,14 @@ pub(super) fn first_filter_ext_of(pick: &PickConfig) -> Option<String> {
 
 pub(super) fn matches_filter(name: &str, patterns: &[String]) -> bool {
     for pat in patterns {
-        if pat == "*" || pat == "*.*" { return true; }
+        if pat == "*" || pat == "*.*" {
+            return true;
+        }
         if let Some(ext) = pat.strip_prefix("*.") {
-            if name.to_lowercase().ends_with(&format!(".{}", ext.to_lowercase())) {
+            if name
+                .to_lowercase()
+                .ends_with(&format!(".{}", ext.to_lowercase()))
+            {
                 return true;
             }
         }

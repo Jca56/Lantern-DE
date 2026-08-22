@@ -185,8 +185,7 @@ impl NotesState {
                 if needle.is_empty() {
                     return true;
                 }
-                n.title.to_lowercase().contains(needle)
-                    || n.body.to_lowercase().contains(needle)
+                n.title.to_lowercase().contains(needle) || n.body.to_lowercase().contains(needle)
             })
             .map(|(i, _)| i)
             .collect()
@@ -308,10 +307,7 @@ impl NotesState {
                 }
             })
             .ok();
-        self.flash_text = Some((
-            "Pick a destination…".to_string(),
-            std::time::Instant::now(),
-        ));
+        self.flash_text = Some(("Pick a destination…".to_string(), std::time::Instant::now()));
     }
 
     /// Drain the export result slot into `flash_text`. Cheap; safe to
@@ -327,10 +323,7 @@ impl NotesState {
                     format!("Exported to {}", path.display()),
                     std::time::Instant::now(),
                 ),
-                Err(e) => (
-                    format!("Export: {}", e),
-                    std::time::Instant::now(),
-                ),
+                Err(e) => (format!("Export: {}", e), std::time::Instant::now()),
             });
         }
     }
@@ -503,8 +496,7 @@ pub fn list_max_scroll(visible_count: usize, list_h: f32, scale: f32) -> f32 {
     }
     let row_h = ROW_H * scale;
     let gap = ROW_GAP * scale;
-    let total =
-        visible_count as f32 * row_h + (visible_count.saturating_sub(1)) as f32 * gap;
+    let total = visible_count as f32 * row_h + (visible_count.saturating_sub(1)) as f32 * gap;
     (total - list_h).max(0.0)
 }
 

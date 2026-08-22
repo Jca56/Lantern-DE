@@ -112,7 +112,9 @@ impl SmoothScroll {
 
     /// Advance the ease toward the target. Returns true while still moving.
     pub fn tick(&mut self, dt: f32) -> bool {
-        let Some(target) = self.target else { return false };
+        let Some(target) = self.target else {
+            return false;
+        };
         let k = 1.0 - (-dt * 12.0).exp();
         self.offset += (target - self.offset) * k;
         if (target - self.offset).abs() < 0.5 {
@@ -173,12 +175,18 @@ impl Scrollbar {
     }
 
     /// Map a drag Y position on the track to a scroll offset.
-    pub fn offset_for_thumb_y(&self, thumb_center_y: f32, content_height: f32, viewport_h: f32) -> f32 {
+    pub fn offset_for_thumb_y(
+        &self,
+        thumb_center_y: f32,
+        content_height: f32,
+        viewport_h: f32,
+    ) -> f32 {
         let thumb_travel = self.track.h - self.thumb.h;
         if thumb_travel <= 0.0 {
             return 0.0;
         }
-        let fraction = ((thumb_center_y - self.thumb.h * 0.5 - self.track.y) / thumb_travel).clamp(0.0, 1.0);
+        let fraction =
+            ((thumb_center_y - self.thumb.h * 0.5 - self.track.y) / thumb_travel).clamp(0.0, 1.0);
         let max_offset = (content_height - viewport_h).max(0.0);
         fraction * max_offset
     }
@@ -196,12 +204,7 @@ impl Scrollbar {
 
     /// Draw the scrollbar track and thumb.
     /// Hidden when Idle — only appears on hover or drag.
-    pub fn draw(
-        &self,
-        painter: &mut Painter,
-        state: InteractionState,
-        palette: &FoxPalette,
-    ) {
+    pub fn draw(&self, painter: &mut Painter, state: InteractionState, palette: &FoxPalette) {
         if self.visible_ratio >= 1.0 {
             return; // No scrollbar needed
         }

@@ -46,7 +46,9 @@ struct Entry {
 
 impl ToplevelTracker {
     pub fn new() -> Self {
-        Self { entries: Vec::new() }
+        Self {
+            entries: Vec::new(),
+        }
     }
 
     /// Snapshot of all tracked toplevels. Order matches creation order.

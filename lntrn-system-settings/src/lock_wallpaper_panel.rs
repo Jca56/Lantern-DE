@@ -5,14 +5,13 @@
 //! Mirrors the wallpaper portion of `display_panel.rs` but without the monitor
 //! arrangement canvas — just an "Open Folder" button and the thumbnail grid.
 
-use lntrn_render::{Painter, Rect, TextureDraw, TexturePass, TextRenderer};
+use lntrn_render::{Painter, Rect, TextRenderer, TextureDraw, TexturePass};
 use lntrn_ui::gpu::{Button, ButtonVariant, FoxPalette, InteractionContext, ScrollArea, Scrollbar};
 
 use crate::config::LanternConfig;
 use crate::panels::{
-    draw_section_card,
-    CARD_HEADER_H, CARD_INNER_PAD_H, CARD_INNER_PAD_V,
-    CARD_OUTER_PAD_H, CARD_OUTER_PAD_V,
+    draw_section_card, CARD_HEADER_H, CARD_INNER_PAD_H, CARD_INNER_PAD_V, CARD_OUTER_PAD_H,
+    CARD_OUTER_PAD_V,
 };
 use crate::wallpaper_picker::WallpaperPicker;
 
@@ -102,7 +101,8 @@ pub fn draw_lock_wallpaper_panel(
 
     if lws.needs_reload {
         lws.needs_reload = false;
-        lws.picker.load_directory(&lockscreen_wallpaper_dir(), tex_pass, gpu, true);
+        lws.picker
+            .load_directory(&lockscreen_wallpaper_dir(), tex_pass, gpu, true);
     }
 
     // ── Card geometry ──────────────────────────────────────────────
@@ -120,7 +120,11 @@ pub fn draw_lock_wallpaper_panel(
     let gap = THUMB_GAP * s;
     let cols = grid_cols(card_inner_w, thumb_w, gap);
     let entry_count = lws.picker.entries.len();
-    let rows = if entry_count > 0 { (entry_count + cols - 1) / cols } else { 0 };
+    let rows = if entry_count > 0 {
+        (entry_count + cols - 1) / cols
+    } else {
+        0
+    };
     let grid_content_h = if entry_count > 0 {
         rows as f32 * (thumb_h + gap)
     } else {
@@ -132,7 +136,12 @@ pub fn draw_lock_wallpaper_panel(
     content_height += card_h;
 
     if scroll_delta != 0.0 {
-        ScrollArea::apply_scroll(&mut lws.scroll_offset, scroll_delta * 20.0, content_height, h);
+        ScrollArea::apply_scroll(
+            &mut lws.scroll_offset,
+            scroll_delta * 20.0,
+            content_height,
+            h,
+        );
     }
 
     let viewport = Rect::new(x, y, w, h);
@@ -142,8 +151,17 @@ pub fn draw_lock_wallpaper_panel(
     let cy_top = scroll_area.content_y() + CARD_OUTER_PAD_V * s;
 
     let inner_y = draw_section_card(
-        painter, text, fox, "Wallpaper",
-        card_x, cy_top, card_w, card_h, s, sw, sh,
+        painter,
+        text,
+        fox,
+        "Wallpaper",
+        card_x,
+        cy_top,
+        card_w,
+        card_h,
+        s,
+        sw,
+        sh,
     );
     let mut cy = inner_y;
 
@@ -154,7 +172,16 @@ pub fn draw_lock_wallpaper_panel(
         let row_h = CURRENT_ROW_H * s;
         let label_w = 160.0 * s;
         let label_y = cy + (row_h - label_sz) / 2.0;
-        text.queue("Current", label_sz, card_inner_x, label_y, fox.text, label_w, sw, sh);
+        text.queue(
+            "Current",
+            label_sz,
+            card_inner_x,
+            label_y,
+            fox.text,
+            label_w,
+            sw,
+            sh,
+        );
         let val = if config.lockscreen.background.is_empty() {
             "(default)"
         } else {
@@ -165,8 +192,16 @@ pub fn draw_lock_wallpaper_panel(
         };
         let val_x = card_inner_x + label_w;
         let val_y = cy + (row_h - value_sz) / 2.0;
-        text.queue(val, value_sz, val_x, val_y, fox.text_secondary,
-            card_inner_w - label_w, sw, sh);
+        text.queue(
+            val,
+            value_sz,
+            val_x,
+            val_y,
+            fox.text_secondary,
+            card_inner_w - label_w,
+            sw,
+            sh,
+        );
         cy += row_h;
     }
 
@@ -193,27 +228,43 @@ pub fn draw_lock_wallpaper_panel(
         } else {
             "No images found"
         };
-        text.queue(msg, lsz, card_inner_x, cy + 40.0 * s, fox.text_secondary,
-            card_inner_w, sw, sh);
+        text.queue(
+            msg,
+            lsz,
+            card_inner_x,
+            cy + 40.0 * s,
+            fox.text_secondary,
+            card_inner_w,
+            sw,
+            sh,
+        );
     } else {
         let name_sz = NAME_FONT * s;
         let name_pad = 4.0 * s;
 
         for (i, entry) in lws.picker.entries.iter().enumerate() {
-            if i as u32 >= MAX_THUMBS { break; }
+            if i as u32 >= MAX_THUMBS {
+                break;
+            }
             let col = i % cols;
             let row = i / cols;
             let tx = card_inner_x + col as f32 * (thumb_w + gap);
             let ty = cy + row as f32 * (thumb_h + gap);
 
-            if ty + thumb_h < y || ty > y + h { continue; }
+            if ty + thumb_h < y || ty > y + h {
+                continue;
+            }
 
             let zone_id = ZONE_THUMB_BASE + i as u32;
             let rect = Rect::new(tx, ty, thumb_w, thumb_h);
             let zone = ix.add_zone(zone_id, rect);
 
             let is_selected = !config.lockscreen.background.is_empty()
-                && entry.path.to_str().map(|p| p == config.lockscreen.background).unwrap_or(false);
+                && entry
+                    .path
+                    .to_str()
+                    .map(|p| p == config.lockscreen.background)
+                    .unwrap_or(false);
 
             let corner = 6.0 * s;
 
@@ -230,8 +281,21 @@ pub fn draw_lock_wallpaper_panel(
             if let Some(name) = entry.path.file_stem().and_then(|n| n.to_str()) {
                 let scrim_h = name_sz + name_pad * 2.0;
                 let scrim_rect = Rect::new(tx, ty, thumb_w, scrim_h);
-                painter.rect_4corner(scrim_rect, [corner, corner, 0.0, 0.0], fox.bg.with_alpha(0.6));
-                text.queue(name, name_sz, tx + name_pad, ty + name_pad, fox.text, thumb_w - name_pad * 2.0, sw, sh);
+                painter.rect_4corner(
+                    scrim_rect,
+                    [corner, corner, 0.0, 0.0],
+                    fox.bg.with_alpha(0.6),
+                );
+                text.queue(
+                    name,
+                    name_sz,
+                    tx + name_pad,
+                    ty + name_pad,
+                    fox.text,
+                    thumb_w - name_pad * 2.0,
+                    sw,
+                    sh,
+                );
             }
         }
     }
@@ -247,7 +311,8 @@ pub fn draw_lock_wallpaper_panel(
     lws.grid_w = card_inner_w;
     lws.grid_content_y_offset = CARD_OUTER_PAD_V * s
         + (CARD_HEADER_H * s + CARD_INNER_PAD_V * s)
-        + header_row_h + input_row_h;
+        + header_row_h
+        + input_row_h;
 
     if scroll_area.is_scrollable() {
         let sb = Scrollbar::new(&viewport, content_height, lws.scroll_offset);
@@ -256,27 +321,33 @@ pub fn draw_lock_wallpaper_panel(
 }
 
 /// Collect texture draws for thumbnail images. Call after draw_lock_wallpaper_panel.
-pub fn collect_thumb_draws<'a>(
-    lws: &'a LockWallpaperState,
-    s: f32,
-) -> Vec<TextureDraw<'a>> {
+pub fn collect_thumb_draws<'a>(lws: &'a LockWallpaperState, s: f32) -> Vec<TextureDraw<'a>> {
     let thumb_w = THUMB_W * s;
     let thumb_h = THUMB_H * s;
     let gap = THUMB_GAP * s;
     let cols = grid_cols(lws.grid_w, thumb_w, gap);
 
     let base_y = lws.viewport_y - lws.scroll_offset + lws.grid_content_y_offset;
-    let clip = [lws.viewport_x, lws.viewport_y, lws.viewport_w, lws.viewport_h];
+    let clip = [
+        lws.viewport_x,
+        lws.viewport_y,
+        lws.viewport_w,
+        lws.viewport_h,
+    ];
 
     let mut draws = Vec::new();
     for (i, entry) in lws.picker.entries.iter().enumerate() {
-        if i as u32 >= MAX_THUMBS { break; }
+        if i as u32 >= MAX_THUMBS {
+            break;
+        }
         let col = i % cols;
         let row = i / cols;
         let tx = lws.grid_x + col as f32 * (thumb_w + gap);
         let ty = base_y + row as f32 * (thumb_h + gap);
 
-        if ty + thumb_h < lws.viewport_y || ty > lws.viewport_y + lws.viewport_h { continue; }
+        if ty + thumb_h < lws.viewport_y || ty > lws.viewport_y + lws.viewport_h {
+            continue;
+        }
 
         let mut draw = TextureDraw::new(&entry.texture, tx, ty, thumb_w, thumb_h);
         draw.clip = Some(clip);
@@ -294,9 +365,7 @@ pub fn handle_lock_wallpaper_click(
 ) {
     if zone_id == ZONE_OPEN_FOLDER {
         let dir = lockscreen_wallpaper_dir();
-        let _ = std::process::Command::new("xdg-open")
-            .arg(&dir)
-            .spawn();
+        let _ = std::process::Command::new("xdg-open").arg(&dir).spawn();
         return;
     }
 

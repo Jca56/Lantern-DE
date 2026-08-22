@@ -143,12 +143,16 @@ impl LanternConfig {
     pub fn path() -> PathBuf {
         if let Some(h) = lntrn_theme::lantern_home() {
             let new = h.join("config/terminal.toml");
-            if new.exists() { return new; }
+            if new.exists() {
+                return new;
+            }
         }
         // Old path fallback for migration
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
         let old = PathBuf::from(&home).join(".config/lantern/config.toml");
-        if old.exists() { return old; }
+        if old.exists() {
+            return old;
+        }
         // Canonical new path for first-time creation
         PathBuf::from(home).join(".lantern/config/terminal.toml")
     }

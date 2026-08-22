@@ -142,7 +142,11 @@ pub fn handle_right_click(
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "/".to_string());
-        Some(RightClickTarget { name, is_root: true, is_dir: true })
+        Some(RightClickTarget {
+            name,
+            is_root: true,
+            is_dir: true,
+        })
     }
 }
 

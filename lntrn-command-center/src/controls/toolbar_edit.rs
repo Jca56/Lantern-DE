@@ -8,10 +8,10 @@
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
-use crate::app::PanelView;
+use super::tile::TILE_GAP;
 use super::tile::{TileLayout, Zone};
 use super::{Controls, TileId, ROW_HEIGHT, ROW_HORIZONTAL_PAD, ROW_TOP_MARGIN};
-use super::tile::TILE_GAP;
+use crate::app::PanelView;
 
 // ── tunables (logical px) ─────────────────────────────────────────────────────
 const TRAY_W: f32 = 780.0;
@@ -179,7 +179,12 @@ fn tray_chips(controls: &Controls, panel: Rect, scale: f32) -> Vec<(TileId, Rect
 
 fn close_badge_rect(layout: TileLayout, scale: f32) -> Rect {
     let s = BADGE * scale;
-    Rect::new(layout.x + layout.w - s - 2.0 * scale, layout.y + 2.0 * scale, s, s)
+    Rect::new(
+        layout.x + layout.w - s - 2.0 * scale,
+        layout.y + 2.0 * scale,
+        s,
+        s,
+    )
 }
 
 // ── hit tests (called from click handler) ─────────────────────────────────────
@@ -188,7 +193,13 @@ pub fn hit_done(panel: Rect, scale: f32, px: f32, py: f32) -> bool {
     hit(done_rect(panel, scale), px, py)
 }
 
-pub fn hit_close_badge(controls: &Controls, panel: Rect, scale: f32, px: f32, py: f32) -> Option<TileId> {
+pub fn hit_close_badge(
+    controls: &Controls,
+    panel: Rect,
+    scale: f32,
+    px: f32,
+    py: f32,
+) -> Option<TileId> {
     for (id, layout) in controls.widget_layouts(panel, scale, PanelView::Default) {
         if id == TileId::Collapse {
             continue;
@@ -200,14 +211,26 @@ pub fn hit_close_badge(controls: &Controls, panel: Rect, scale: f32, px: f32, py
     None
 }
 
-pub fn hit_tray_chip(controls: &Controls, panel: Rect, scale: f32, px: f32, py: f32) -> Option<TileId> {
+pub fn hit_tray_chip(
+    controls: &Controls,
+    panel: Rect,
+    scale: f32,
+    px: f32,
+    py: f32,
+) -> Option<TileId> {
     tray_chips(controls, panel, scale)
         .into_iter()
         .find(|(_, r)| hit(*r, px, py))
         .map(|(id, _)| id)
 }
 
-pub fn hit_widget(controls: &Controls, panel: Rect, scale: f32, px: f32, py: f32) -> Option<TileId> {
+pub fn hit_widget(
+    controls: &Controls,
+    panel: Rect,
+    scale: f32,
+    px: f32,
+    py: f32,
+) -> Option<TileId> {
     for (id, layout) in controls.widget_layouts(panel, scale, PanelView::Default) {
         if id == TileId::Collapse {
             continue;
@@ -230,7 +253,11 @@ pub fn resolve_drop(
     let (cx, cy) = cursor;
     // Tray = disable target.
     if hit(tray_rect(panel, scale), cx, cy) {
-        return if drag.from_tray { None } else { Some(DropKind::Disable) };
+        return if drag.from_tray {
+            None
+        } else {
+            Some(DropKind::Disable)
+        };
     }
     // Row band → a zone + insertion index.
     let (top, bot) = row_band(panel, scale);
@@ -269,10 +296,22 @@ pub fn draw(
     let div = Color::rgba(1.0, 1.0, 1.0, 0.14 * alpha);
     for k in 1..3 {
         let x = cl + third * k as f32;
-        painter.rect_filled(Rect::new(x - 0.5 * scale, top, 1.0 * scale, bot - top), 0.0, div);
+        painter.rect_filled(
+            Rect::new(x - 0.5 * scale, top, 1.0 * scale, bot - top),
+            0.0,
+            div,
+        );
     }
-    for (i, zone) in [Zone::Left, Zone::Middle, Zone::Right].into_iter().enumerate() {
-        if controls.toolbar.zone(zone).iter().any(|&id| controls.widget_present(id)) {
+    for (i, zone) in [Zone::Left, Zone::Middle, Zone::Right]
+        .into_iter()
+        .enumerate()
+    {
+        if controls
+            .toolbar
+            .zone(zone)
+            .iter()
+            .any(|&id| controls.widget_present(id))
+        {
             continue; // only label empty zones
         }
         let region = Rect::new(cl + third * i as f32, top, third, bot - top);
@@ -301,10 +340,24 @@ pub fn draw(
         if *id == TileId::Collapse {
             continue;
         }
-        let is_dragged = dragged == Some(*id) && drag.as_ref().map(|d| !d.from_tray).unwrap_or(false);
+        let is_dragged =
+            dragged == Some(*id) && drag.as_ref().map(|d| !d.from_tray).unwrap_or(false);
         let a = if is_dragged { alpha * 0.25 } else { alpha };
-        painter.rect_stroke_sdf(rect_of(*layout), 6.0 * scale, 1.5 * scale, Color::rgba(1.0, 1.0, 1.0, 0.45 * a));
-        draw_gear_badge(painter, text, gear_badge_rect(*layout, scale), a, scale, surface_w, surface_h);
+        painter.rect_stroke_sdf(
+            rect_of(*layout),
+            6.0 * scale,
+            1.5 * scale,
+            Color::rgba(1.0, 1.0, 1.0, 0.45 * a),
+        );
+        draw_gear_badge(
+            painter,
+            text,
+            gear_badge_rect(*layout, scale),
+            a,
+            scale,
+            surface_w,
+            surface_h,
+        );
         draw_close_badge(painter, close_badge_rect(*layout, scale), a, scale);
     }
 
@@ -314,7 +367,16 @@ pub fn draw(
             match kind {
                 DropKind::Zone(zone, idx) => {
                     let region = zone_region(cl, cr, zone, panel, scale);
-                    painter.rect_filled(region, 6.0 * scale, Color::rgba(ACCENT_RGB.0 as f32 / 255.0, ACCENT_RGB.1 as f32 / 255.0, ACCENT_RGB.2 as f32 / 255.0, 0.12 * alpha));
+                    painter.rect_filled(
+                        region,
+                        6.0 * scale,
+                        Color::rgba(
+                            ACCENT_RGB.0 as f32 / 255.0,
+                            ACCENT_RGB.1 as f32 / 255.0,
+                            ACCENT_RGB.2 as f32 / 255.0,
+                            0.12 * alpha,
+                        ),
+                    );
                     let zw = zone_widgets(controls, &layouts, zone, d.id);
                     let cx = caret_x(&zw, idx, region, scale);
                     painter.rect_filled(
@@ -325,7 +387,12 @@ pub fn draw(
                 }
                 DropKind::Disable => {
                     let tray = tray_rect(panel, scale);
-                    painter.rect_stroke_sdf(tray, TRAY_RADIUS * scale, 2.0 * scale, accent(0.9 * alpha));
+                    painter.rect_stroke_sdf(
+                        tray,
+                        TRAY_RADIUS * scale,
+                        2.0 * scale,
+                        accent(0.9 * alpha),
+                    );
                 }
             }
         }
@@ -335,9 +402,13 @@ pub fn draw(
     // disabled tray. The popover takes over the below-bar space.
     if let Some(id) = settings_open {
         let opts = controls.toolbar.opts(id);
-        super::widget_settings::draw(painter, text, id, &opts, controls, panel, scale, alpha, surface_w, surface_h);
+        super::widget_settings::draw(
+            painter, text, id, &opts, controls, panel, scale, alpha, surface_w, surface_h,
+        );
     } else {
-        draw_tray(painter, text, controls, drag, panel, scale, alpha, surface_w, surface_h);
+        draw_tray(
+            painter, text, controls, drag, panel, scale, alpha, surface_w, surface_h,
+        );
     }
 
     // Ghost following the cursor.
@@ -353,7 +424,13 @@ fn gear_badge_rect(layout: TileLayout, scale: f32) -> Rect {
 }
 
 /// The widget whose ⚙ badge is under the cursor, if any.
-pub fn hit_gear_badge(controls: &Controls, panel: Rect, scale: f32, px: f32, py: f32) -> Option<TileId> {
+pub fn hit_gear_badge(
+    controls: &Controls,
+    panel: Rect,
+    scale: f32,
+    px: f32,
+    py: f32,
+) -> Option<TileId> {
     for (id, layout) in controls.widget_layouts(panel, scale, PanelView::Default) {
         if id == TileId::Collapse {
             continue;
@@ -374,7 +451,12 @@ fn draw_gear_badge(
     surface_w: u32,
     surface_h: u32,
 ) {
-    painter.circle_filled(r.x + r.w / 2.0, r.y + r.h / 2.0, r.w / 2.0, accent(0.92 * alpha));
+    painter.circle_filled(
+        r.x + r.w / 2.0,
+        r.y + r.h / 2.0,
+        r.w / 2.0,
+        accent(0.92 * alpha),
+    );
     let glyph = "⚙";
     let f = r.h * 0.78;
     let w = text.measure_width(glyph, f);
@@ -404,9 +486,25 @@ fn draw_tray(
     surface_h: u32,
 ) {
     let tray = tray_rect(panel, scale);
-    painter.shadow(tray, TRAY_RADIUS * scale, 18.0 * scale, Color::BLACK.with_alpha(0.35 * alpha), 0.0, 4.0 * scale);
-    painter.rect_filled(tray, TRAY_RADIUS * scale, Color::from_rgb8(PLATE_RGB.0, PLATE_RGB.1, PLATE_RGB.2).with_alpha(0.85 * alpha));
-    painter.rect_stroke_sdf(tray, TRAY_RADIUS * scale, 1.0 * scale, Color::rgba(1.0, 1.0, 1.0, 0.10 * alpha));
+    painter.shadow(
+        tray,
+        TRAY_RADIUS * scale,
+        18.0 * scale,
+        Color::BLACK.with_alpha(0.35 * alpha),
+        0.0,
+        4.0 * scale,
+    );
+    painter.rect_filled(
+        tray,
+        TRAY_RADIUS * scale,
+        Color::from_rgb8(PLATE_RGB.0, PLATE_RGB.1, PLATE_RGB.2).with_alpha(0.85 * alpha),
+    );
+    painter.rect_stroke_sdf(
+        tray,
+        TRAY_RADIUS * scale,
+        1.0 * scale,
+        Color::rgba(1.0, 1.0, 1.0, 0.10 * alpha),
+    );
 
     let pad = TRAY_PAD * scale;
     let f = FONT * scale;
@@ -429,8 +527,21 @@ fn draw_tray(
 
     let dragged_tray = drag.as_ref().filter(|d| d.from_tray).map(|d| d.id);
     for (id, r) in &chips {
-        let a = if dragged_tray == Some(*id) { alpha * 0.25 } else { alpha };
-        draw_chip(painter, text, id.display_name(), *r, scale, a, surface_w, surface_h);
+        let a = if dragged_tray == Some(*id) {
+            alpha * 0.25
+        } else {
+            alpha
+        };
+        draw_chip(
+            painter,
+            text,
+            id.display_name(),
+            *r,
+            scale,
+            a,
+            surface_w,
+            surface_h,
+        );
     }
 
     // Done pill (gold).
@@ -461,7 +572,12 @@ fn draw_chip(
     surface_h: u32,
 ) {
     painter.rect_filled(r, r.h * 0.3, Color::rgba(1.0, 1.0, 1.0, 0.10 * alpha));
-    painter.rect_stroke_sdf(r, r.h * 0.3, 1.0 * scale, Color::rgba(1.0, 1.0, 1.0, 0.18 * alpha));
+    painter.rect_stroke_sdf(
+        r,
+        r.h * 0.3,
+        1.0 * scale,
+        Color::rgba(1.0, 1.0, 1.0, 0.18 * alpha),
+    );
     let f = FONT * scale;
     let w = text.measure_width(name, f).min(r.w - 12.0 * scale);
     text.queue(
@@ -488,7 +604,11 @@ fn draw_ghost(
     let w = GHOST_W * scale;
     let h = GHOST_H * scale;
     let r = Rect::new(drag.cursor.0 - w / 2.0, drag.cursor.1 - h / 2.0, w, h);
-    painter.rect_filled(r, h * 0.3, Color::from_rgb8(PLATE_RGB.0, PLATE_RGB.1, PLATE_RGB.2).with_alpha(0.92 * alpha));
+    painter.rect_filled(
+        r,
+        h * 0.3,
+        Color::from_rgb8(PLATE_RGB.0, PLATE_RGB.1, PLATE_RGB.2).with_alpha(0.92 * alpha),
+    );
     painter.rect_stroke_sdf(r, h * 0.3, 1.5 * scale, accent(alpha));
     let name = drag.id.display_name();
     let f = FONT * scale;
@@ -506,7 +626,12 @@ fn draw_ghost(
 }
 
 fn draw_close_badge(painter: &mut Painter, r: Rect, alpha: f32, scale: f32) {
-    painter.circle_filled(r.x + r.w / 2.0, r.y + r.h / 2.0, r.w / 2.0, Color::rgba(0.85, 0.18, 0.18, 0.9 * alpha));
+    painter.circle_filled(
+        r.x + r.w / 2.0,
+        r.y + r.h / 2.0,
+        r.w / 2.0,
+        Color::rgba(0.85, 0.18, 0.18, 0.9 * alpha),
+    );
     // × glyph (two strokes).
     let cx = r.x + r.w / 2.0;
     let cy = r.y + r.h / 2.0;

@@ -6,17 +6,17 @@ use winit::event_loop::ActiveEventLoop;
 
 use lntrn_render::Rect;
 
+use crate::fonts;
+use crate::format::Alignment;
 use crate::render;
 use crate::scrollbar;
 use crate::tab_strip::{self, ZONE_NEW_TAB, ZONE_TAB_BASE, ZONE_TAB_CLOSE_BASE};
-use crate::fonts;
-use crate::format::Alignment;
 use crate::toolbar::{
     FONT_SIZES, SIZE_MAX, SIZE_MIN, ZONE_FMT_ALIGN_CENTER, ZONE_FMT_ALIGN_LEFT,
     ZONE_FMT_ALIGN_RIGHT, ZONE_FMT_BOLD, ZONE_FMT_BULLET, ZONE_FMT_FONT_BTN,
     ZONE_FMT_FONT_OPT_BASE, ZONE_FMT_ITALIC, ZONE_FMT_SIZE_BOX, ZONE_FMT_SIZE_CARET,
-    ZONE_FMT_SIZE_MINUS, ZONE_FMT_SIZE_OPT_BASE, ZONE_FMT_SIZE_PLUS,
-    ZONE_FMT_STRIKE, ZONE_FMT_UNDERLINE,
+    ZONE_FMT_SIZE_MINUS, ZONE_FMT_SIZE_OPT_BASE, ZONE_FMT_SIZE_PLUS, ZONE_FMT_STRIKE,
+    ZONE_FMT_UNDERLINE,
 };
 use crate::{
     TextHandler, ZONE_CLOSE, ZONE_EDITOR, ZONE_EDITOR_SCROLL_THUMB, ZONE_EDITOR_SCROLL_TRACK,
@@ -144,7 +144,10 @@ fn handle_left_press(handler: &mut TextHandler, event_loop: &ActiveEventLoop) ->
             }
             // Editable size box + steppers + preset caret
             ZONE_FMT_SIZE_BOX => {
-                let cur = handler.editor().selection_format_state().font_size
+                let cur = handler
+                    .editor()
+                    .selection_format_state()
+                    .font_size
                     .unwrap_or(crate::editor::FONT_SIZE);
                 handler.fmt_toolbar.size_dropdown_open = false;
                 handler.fmt_toolbar.font_dropdown_open = false;
@@ -440,7 +443,8 @@ impl TextHandler {
             crate::body::row_x_offset(l, &para, row_idx, content_max_w, s)
         });
         if let Some(x_off) = x_off {
-            editor.cursor_col = editor.col_at_x(cx - content_x - x_off, doc_line, row_start, row_end);
+            editor.cursor_col =
+                editor.col_at_x(cx - content_x - x_off, doc_line, row_start, row_end);
         }
 
         // A click that lands where the cursor already is keeps any pending

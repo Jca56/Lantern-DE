@@ -7,6 +7,7 @@ use winit::event_loop::ActiveEventLoop;
 use lntrn_render::Rect;
 
 use crate::editor::Editor;
+use crate::minimap;
 use crate::render::{self, STATUS_BAR_H};
 use crate::scrollbar;
 use crate::sidebar::{SIDEBAR_W, ZONE_SIDEBAR_BASE};
@@ -14,10 +15,9 @@ use crate::tab_strip::{
     self, TabDragState, TAB_STRIP_H, ZONE_NEW_TAB, ZONE_TAB_BASE, ZONE_TAB_CLOSE_BASE,
 };
 use crate::title_bar::TITLE_BAR_H;
-use crate::minimap;
 use crate::{
     TextHandler, ZONE_CLOSE, ZONE_EDITOR, ZONE_EDITOR_SCROLL_THUMB, ZONE_EDITOR_SCROLL_TRACK,
-    ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_MINIMAP, ZONE_RUN_BTN, ZONE_SIDEBAR_SCROLL_THUMB,
+    ZONE_MAXIMIZE, ZONE_MINIMAP, ZONE_MINIMIZE, ZONE_RUN_BTN, ZONE_SIDEBAR_SCROLL_THUMB,
     ZONE_SIDEBAR_SCROLL_TRACK, ZONE_TERM,
 };
 
@@ -135,7 +135,8 @@ fn handle_left_press(handler: &mut TextHandler, event_loop: &ActiveEventLoop) ->
             ZONE_MINIMAP => {
                 if let Some((_, cy)) = handler.input.cursor() {
                     let minimap_rect = minimap_rect(handler);
-                    let scroll = minimap::click_to_scroll(cy, minimap_rect, handler.editor(), handler.scale);
+                    let scroll =
+                        minimap::click_to_scroll(cy, minimap_rect, handler.editor(), handler.scale);
                     let editor = handler.editor_mut();
                     editor.scroll_offset = scroll;
                     editor.scroll_target = scroll;
@@ -181,7 +182,11 @@ fn handle_left_release(handler: &mut TextHandler) -> MouseAction {
 fn minimap_rect(handler: &TextHandler) -> Rect {
     let s = handler.scale;
     let (wf, hf) = handler.window_size_pub();
-    let sidebar_w = if handler.sidebar.visible { SIDEBAR_W * s } else { 0.0 };
+    let sidebar_w = if handler.sidebar.visible {
+        SIDEBAR_W * s
+    } else {
+        0.0
+    };
     let er = render::editor_rect(wf, hf, s, handler.find_bar.height(s), sidebar_w);
     let mw = minimap::MINIMAP_W * s;
     Rect::new(er.x + er.w - mw, er.y, mw, er.h)

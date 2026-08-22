@@ -27,7 +27,12 @@ impl CanvasTexCache {
         Self::default()
     }
 
-    pub fn get_or_load(&mut self, path: &str, gpu: &GpuContext, tex_pass: &TexturePass) -> &TexEntry {
+    pub fn get_or_load(
+        &mut self,
+        path: &str,
+        gpu: &GpuContext,
+        tex_pass: &TexturePass,
+    ) -> &TexEntry {
         self.map.entry(path.to_string()).or_insert_with(|| {
             match load_capped(Path::new(path), gpu, tex_pass) {
                 Some(tex) => TexEntry::Loaded(tex),
@@ -64,7 +69,10 @@ fn load_capped(path: &Path, gpu: &GpuContext, tex_pass: &TexturePass) -> Option<
     let (rgba, w, h) = if is_svg {
         rasterize_svg_capped(path)?
     } else {
-        let mut reader = image::ImageReader::open(path).ok()?.with_guessed_format().ok()?;
+        let mut reader = image::ImageReader::open(path)
+            .ok()?
+            .with_guessed_format()
+            .ok()?;
         let mut limits = image::Limits::default();
         limits.max_image_width = Some(16_384);
         limits.max_image_height = Some(16_384);
@@ -91,7 +99,10 @@ fn rasterize_svg_capped(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
     let tree = resvg::usvg::Tree::from_str(&data, &opt).ok()?;
     let size = tree.size();
     let (nw, nh) = (size.width().max(1.0), size.height().max(1.0));
-    let scale = (IMPORT_MAX_DIM as f32 / nw).min(IMPORT_MAX_DIM as f32 / nh).min(1.0).max(0.01);
+    let scale = (IMPORT_MAX_DIM as f32 / nw)
+        .min(IMPORT_MAX_DIM as f32 / nh)
+        .min(1.0)
+        .max(0.01);
     // Render at native size when it fits, else capped — items scale on canvas.
     let w = ((nw * scale).ceil() as u32).max(1);
     let h = ((nh * scale).ceil() as u32).max(1);

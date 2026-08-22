@@ -42,9 +42,23 @@ pub fn body_metrics(
     let (cw, ch) = cell_size_logical(text_size);
     let cell_w = cw * scale;
     let cell_h = ch * scale;
-    let cols = if cell_w > 0.0 { (body_w / cell_w).floor() as usize } else { 0 };
-    let rows = if cell_h > 0.0 { (body_h / cell_h).floor() as usize } else { 0 };
-    (Rect::new(body_x, body_y, body_w, body_h), cell_w, cell_h, cols.max(1), rows.max(1))
+    let cols = if cell_w > 0.0 {
+        (body_w / cell_w).floor() as usize
+    } else {
+        0
+    };
+    let rows = if cell_h > 0.0 {
+        (body_h / cell_h).floor() as usize
+    } else {
+        0
+    };
+    (
+        Rect::new(body_x, body_y, body_w, body_h),
+        cell_w,
+        cell_h,
+        cols.max(1),
+        rows.max(1),
+    )
 }
 
 const STATUS_RGB: (u8, u8, u8) = (0xff, 0xff, 0xff);
@@ -122,10 +136,7 @@ impl TerminalState {
 
     /// True when a non-empty selection exists.
     pub fn has_selection(&self) -> bool {
-        self.grid
-            .as_ref()
-            .and_then(|g| g.selected_text())
-            .is_some()
+        self.grid.as_ref().and_then(|g| g.selected_text()).is_some()
     }
 
     /// Copy the currently-selected text onto the Wayland clipboard.
@@ -134,7 +145,9 @@ impl TerminalState {
         let Some(text) = self.grid.as_ref().and_then(|g| g.selected_text()) else {
             return false;
         };
-        let Some(clip) = self.ensure_clipboard() else { return false };
+        let Some(clip) = self.ensure_clipboard() else {
+            return false;
+        };
         clip.set_text(&text);
         true
     }
@@ -143,8 +156,12 @@ impl TerminalState {
     /// Strips bracketed-paste-unfriendly characters? — we just pass
     /// through as-is for now; the shell handles bracketed paste itself.
     pub fn paste_from_clipboard(&mut self) -> bool {
-        let Some(clip) = self.ensure_clipboard() else { return false };
-        let Some(text) = clip.get_text() else { return false };
+        let Some(clip) = self.ensure_clipboard() else {
+            return false;
+        };
+        let Some(text) = clip.get_text() else {
+            return false;
+        };
         if text.is_empty() {
             return false;
         }
@@ -200,7 +217,9 @@ impl TerminalState {
     /// Drain bytes from the PTY into the VTE grid. Returns whether any
     /// new bytes were processed.
     pub fn pump(&mut self) -> bool {
-        let Some(pty) = self.pty.as_mut() else { return false };
+        let Some(pty) = self.pty.as_mut() else {
+            return false;
+        };
         let mut any = false;
         // Burn through what's available, capped per frame to avoid
         // starving the panel render loop on a flood (e.g. `cat` of a
@@ -239,7 +258,9 @@ impl TerminalState {
     /// back toward the live shell at the bottom. Clamped to the grid's
     /// scrollback buffer.
     pub fn scroll_by(&mut self, lines: i32) {
-        let Some(grid) = self.grid.as_mut() else { return };
+        let Some(grid) = self.grid.as_mut() else {
+            return;
+        };
         if lines > 0 {
             grid.scroll_offset = (grid.scroll_offset + lines as usize).min(grid.scrollback.len());
         } else {
@@ -261,9 +282,13 @@ impl TerminalState {
     }
 
     #[allow(dead_code)]
-    pub fn cols(&self) -> usize { self.cols }
+    pub fn cols(&self) -> usize {
+        self.cols
+    }
     #[allow(dead_code)]
-    pub fn rows(&self) -> usize { self.rows }
+    pub fn rows(&self) -> usize {
+        self.rows
+    }
 
     pub fn grid(&self) -> Option<&Grid> {
         self.grid.as_ref()
@@ -346,7 +371,9 @@ pub fn draw_input_strip(
     };
 
     let cursor_row_idx = grid.cursor_row.min(grid.rows.saturating_sub(1));
-    let Some(row) = grid.grid.get(cursor_row_idx) else { return };
+    let Some(row) = grid.grid.get(cursor_row_idx) else {
+        return;
+    };
 
     // Determine cell metrics from the strip height. Leave a little
     // breathing room top/bottom so the cursor box doesn't bleed past
@@ -385,7 +412,13 @@ pub fn draw_input_strip(
                 x,
                 strip_inner_y + (cell_h - font) * 0.5,
                 color8_to_color(cell.fg, alpha),
-                cell_w * if matches!(cell.wide, Wide::Head) { 2.0 } else { 1.0 } + 2.0 * scale,
+                cell_w
+                    * if matches!(cell.wide, Wide::Head) {
+                        2.0
+                    } else {
+                        1.0
+                    }
+                    + 2.0 * scale,
                 surface_w,
                 surface_h,
             );
@@ -418,11 +451,7 @@ pub fn cell_at(
     phys_y: f32,
 ) -> Option<(usize, usize)> {
     let (body, cell_w, cell_h, _, _) = body_metrics(panel, top_y, scale, cell_font_logical);
-    if phys_x < body.x
-        || phys_y < body.y
-        || phys_x > body.x + body.w
-        || phys_y > body.y + body.h
-    {
+    if phys_x < body.x || phys_y < body.y || phys_x > body.x + body.w || phys_y > body.y + body.h {
         return None;
     }
     if cell_w <= 0.0 || cell_h <= 0.0 {
@@ -454,8 +483,7 @@ pub fn draw(
     surface_h: u32,
     cell_font_logical: f32,
 ) {
-    let (body, cell_w, cell_h, _cols, _rows) =
-        body_metrics(panel, top_y, scale, cell_font_logical);
+    let (body, cell_w, cell_h, _cols, _rows) = body_metrics(panel, top_y, scale, cell_font_logical);
     let body_x = body.x;
     let body_y = body.y;
     let body_w = body.w;
@@ -473,8 +501,7 @@ pub fn draw(
             font,
             body_x,
             body_y,
-            Color::from_rgb8(STATUS_RGB.0, STATUS_RGB.1, STATUS_RGB.2)
-                .with_alpha(0.75 * alpha),
+            Color::from_rgb8(STATUS_RGB.0, STATUS_RGB.1, STATUS_RGB.2).with_alpha(0.75 * alpha),
             body_w,
             surface_w,
             surface_h,
@@ -490,8 +517,7 @@ pub fn draw(
             font,
             body_x,
             body_y,
-            Color::from_rgb8(STATUS_RGB.0, STATUS_RGB.1, STATUS_RGB.2)
-                .with_alpha(0.45 * alpha),
+            Color::from_rgb8(STATUS_RGB.0, STATUS_RGB.1, STATUS_RGB.2).with_alpha(0.45 * alpha),
             body_w,
             surface_w,
             surface_h,
@@ -530,7 +556,9 @@ pub fn draw(
     // shows the live cursor row from the unscrolled grid).
     let skip_cursor_row = grid.scroll_offset == 0;
     for row in 0..grid.rows {
-        if skip_cursor_row && row == grid.cursor_row { continue; }
+        if skip_cursor_row && row == grid.cursor_row {
+            continue;
+        }
         let y = body_y + row as f32 * cell_h;
         if y >= body_y + body_h {
             break;
@@ -546,11 +574,7 @@ pub fn draw(
                     );
                 }
                 if grid.is_selected(row, col) {
-                    painter.rect_filled(
-                        Rect::new(x, y, cell_w, cell_h),
-                        0.0,
-                        selection_color,
-                    );
+                    painter.rect_filled(Rect::new(x, y, cell_w, cell_h), 0.0, selection_color);
                 }
             }
         }
@@ -560,7 +584,9 @@ pub fn draw(
     // simple; a future pass can batch contiguous same-color runs).
     let mut tmp = [0u8; 4];
     for row in 0..grid.rows {
-        if skip_cursor_row && row == grid.cursor_row { continue; }
+        if skip_cursor_row && row == grid.cursor_row {
+            continue;
+        }
         let y = body_y + row as f32 * cell_h;
         if y >= body_y + body_h {
             break;
@@ -582,7 +608,13 @@ pub fn draw(
                     x,
                     y + (cell_h - font) * 0.5,
                     color8_to_color(cell.fg, alpha),
-                    cell_w * if matches!(cell.wide, Wide::Head) { 2.0 } else { 1.0 } + 2.0 * scale,
+                    cell_w
+                        * if matches!(cell.wide, Wide::Head) {
+                            2.0
+                        } else {
+                            1.0
+                        }
+                        + 2.0 * scale,
                     surface_w,
                     surface_h,
                 );

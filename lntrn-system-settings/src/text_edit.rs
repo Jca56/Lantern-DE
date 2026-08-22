@@ -10,14 +10,18 @@ pub struct KeyboardState {
 impl KeyboardState {
     pub fn new() -> Self {
         let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-        Self { context, keymap: None, state: None }
+        Self {
+            context,
+            keymap: None,
+            state: None,
+        }
     }
 
     /// Called when wl_keyboard sends a keymap event.
     /// `format` should be XkbV1, `fd` is the file descriptor, `size` is the map size.
     pub fn update_keymap(&mut self, fd: std::os::fd::RawFd, size: u32) {
-        use std::os::fd::FromRawFd;
         use std::io::Read;
+        use std::os::fd::FromRawFd;
         // SAFETY: We take ownership of the fd (it was mem::forget'd to avoid double-close).
         let map_str = unsafe {
             let file = std::fs::File::from_raw_fd(fd);
@@ -25,7 +29,9 @@ impl KeyboardState {
             let mut reader = std::io::BufReader::new(&file);
             let _ = reader.read_to_end(&mut buf);
             // Truncate trailing nulls from the keymap
-            while buf.last() == Some(&0) { buf.pop(); }
+            while buf.last() == Some(&0) {
+                buf.pop();
+            }
             String::from_utf8_lossy(&buf).into_owned()
         };
 
@@ -80,7 +86,10 @@ pub struct TextBuffer {
 impl TextBuffer {
     pub fn new(initial: &str) -> Self {
         let cursor = initial.chars().count();
-        Self { text: initial.to_string(), cursor }
+        Self {
+            text: initial.to_string(),
+            cursor,
+        }
     }
 
     pub fn set(&mut self, text: &str) {
@@ -148,7 +157,8 @@ impl TextBuffer {
 
     /// Get byte position from char cursor.
     fn byte_pos(&self) -> usize {
-        self.text.char_indices()
+        self.text
+            .char_indices()
             .nth(self.cursor)
             .map(|(i, _)| i)
             .unwrap_or(self.text.len())
@@ -160,25 +170,71 @@ pub fn keycode_to_char(key: u32, shift: bool) -> Option<char> {
     let ch = match key {
         2..=11 => {
             let base = b"1234567890"[(key - 2) as usize];
-            if shift { b"!@#$%^&*()"[(key - 2) as usize] } else { base }
+            if shift {
+                b"!@#$%^&*()"[(key - 2) as usize]
+            } else {
+                base
+            }
         }
-        12 => if shift { b'_' } else { b'-' },
-        13 => if shift { b'+' } else { b'=' },
+        12 => {
+            if shift {
+                b'_'
+            } else {
+                b'-'
+            }
+        }
+        13 => {
+            if shift {
+                b'+'
+            } else {
+                b'='
+            }
+        }
         16..=25 => {
             let base = b"qwertyuiop"[(key - 16) as usize];
-            if shift { base.to_ascii_uppercase() } else { base }
+            if shift {
+                base.to_ascii_uppercase()
+            } else {
+                base
+            }
         }
         30..=38 => {
             let base = b"asdfghjkl"[(key - 30) as usize];
-            if shift { base.to_ascii_uppercase() } else { base }
+            if shift {
+                base.to_ascii_uppercase()
+            } else {
+                base
+            }
         }
         44..=50 => {
             let base = b"zxcvbnm"[(key - 44) as usize];
-            if shift { base.to_ascii_uppercase() } else { base }
+            if shift {
+                base.to_ascii_uppercase()
+            } else {
+                base
+            }
         }
-        51 => if shift { b'<' } else { b',' },
-        52 => if shift { b'>' } else { b'.' },
-        53 => if shift { b'?' } else { b'/' },
+        51 => {
+            if shift {
+                b'<'
+            } else {
+                b','
+            }
+        }
+        52 => {
+            if shift {
+                b'>'
+            } else {
+                b'.'
+            }
+        }
+        53 => {
+            if shift {
+                b'?'
+            } else {
+                b'/'
+            }
+        }
         57 => b' ',
         _ => return None,
     };

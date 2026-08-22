@@ -189,7 +189,9 @@ impl Pty {
     /// Get the current working directory of the child process via /proc.
     pub fn cwd(&self) -> Option<String> {
         let path = format!("/proc/{}/cwd", self.child_pid);
-        std::fs::read_link(path).ok().map(|p| p.to_string_lossy().into_owned())
+        std::fs::read_link(path)
+            .ok()
+            .map(|p| p.to_string_lossy().into_owned())
     }
 
     pub fn resize(&self, cols: u16, rows: u16) {

@@ -309,8 +309,7 @@ fn try_rule_set(
             input_off = p + 4;
             subst_info = (p + 4 + 2 * (input_count.saturating_sub(1)), subst_count);
         }
-        if input_count == 0
-            || !match_forward(d, glyphs, i + 1, input_off, input_count - 1, input_m)
+        if input_count == 0 || !match_forward(d, glyphs, i + 1, input_off, input_count - 1, input_m)
         {
             continue 'rules;
         }
@@ -356,7 +355,18 @@ fn context(
                 return None;
             }
             let m = Matcher::Class(cd);
-            try_rule_set(d, plan, glyphs, i, sub + set_rel as usize, false, &m, &m, &m, depth)
+            try_rule_set(
+                d,
+                plan,
+                glyphs,
+                i,
+                sub + set_rel as usize,
+                false,
+                &m,
+                &m,
+                &m,
+                depth,
+            )
         }
         3 => {
             let count = read_u16_at(d, sub + 2).ok()? as usize;

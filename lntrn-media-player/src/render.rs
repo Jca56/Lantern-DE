@@ -26,7 +26,12 @@ pub fn render_frame(
     window_h_phys: f32,
     fullscreen: bool,
 ) -> ControlRects {
-    let Gpu { ctx, painter, text, tex_pass } = gpu;
+    let Gpu {
+        ctx,
+        painter,
+        text,
+        tex_pass,
+    } = gpu;
     let wf = ctx.width() as f32;
     let win_h = window_h_phys;
     let s = scale;
@@ -85,7 +90,17 @@ pub fn render_frame(
             painter.set_layer(1);
         }
         draw_title_bar(
-            painter, text, ctx, input, palette, app, wf, bar_h, s, title_fade, reserve_title,
+            painter,
+            text,
+            ctx,
+            input,
+            palette,
+            app,
+            wf,
+            bar_h,
+            s,
+            title_fade,
+            reserve_title,
         );
         if !reserve_title {
             painter.set_layer(0);
@@ -114,7 +129,13 @@ pub fn render_frame(
     match frame {
         Ok(mut frame) => {
             let view = frame.view().clone();
-            painter.render_layer(0, ctx, frame.encoder_mut(), &view, Some(Color::rgba(0.0, 0.0, 0.0, 0.0)));
+            painter.render_layer(
+                0,
+                ctx,
+                frame.encoder_mut(),
+                &view,
+                Some(Color::rgba(0.0, 0.0, 0.0, 0.0)),
+            );
             if !tex_draws.is_empty() {
                 tex_pass.render_pass(ctx, frame.encoder_mut(), &view, &tex_draws, None);
             }
@@ -194,9 +215,13 @@ fn draw_controls_overlay(
     let text_y = seek_cy - time_font.px() * 0.5;
 
     TextLabel::new(&cur_time, band.x + pad_x, text_y)
-        .size(time_font).color(time_color).draw(text, ctx.width(), ctx.height());
+        .size(time_font)
+        .color(time_color)
+        .draw(text, ctx.width(), ctx.height());
     TextLabel::new(&dur_str, band.x + band.w - pad_x - dw, text_y)
-        .size(time_font).color(time_color).draw(text, ctx.width(), ctx.height());
+        .size(time_font)
+        .color(time_color)
+        .draw(text, ctx.width(), ctx.height());
 
     let seek_gap = 16.0 * us;
     let seek_left = band.x + pad_x + ctw + seek_gap;
@@ -204,11 +229,31 @@ fn draw_controls_overlay(
     let seek_w = (seek_right - seek_left).max(0.0);
     let seek_y = seek_cy - seek_h * 0.5;
     let hit_pad = 14.0 * us;
-    let seek_hit = Rect::new(seek_left - hit_pad, seek_y - hit_pad, seek_w + hit_pad * 2.0, seek_h + hit_pad * 2.0);
+    let seek_hit = Rect::new(
+        seek_left - hit_pad,
+        seek_y - hit_pad,
+        seek_w + hit_pad * 2.0,
+        seek_h + hit_pad * 2.0,
+    );
     let seek_state = input.add_zone(ZONE_SEEK_BAR, seek_hit);
     let active = seek_state.is_hovered() || seek_state.is_active() || app.seeking;
-    let seek_val = if app.seeking { app.seek_value } else { app.progress_fraction() };
-    draw_seek_bar(painter, us, seek_left, seek_y, seek_w, seek_h, seek_val, active, lantern_gold, muted);
+    let seek_val = if app.seeking {
+        app.seek_value
+    } else {
+        app.progress_fraction()
+    };
+    draw_seek_bar(
+        painter,
+        us,
+        seek_left,
+        seek_y,
+        seek_w,
+        seek_h,
+        seek_val,
+        active,
+        lantern_gold,
+        muted,
+    );
 
     // ── Button row (below the seek row) ──────────────────────────────
     let btn_size = (60.0 * us).clamp(48.0, 84.0);
@@ -221,7 +266,12 @@ fn draw_controls_overlay(
     let cluster_x = band.x + (band.w - cluster_w) * 0.5;
 
     let prev_rect = Rect::new(cluster_x, btn_cy - btn_size * 0.5, btn_size, btn_size);
-    let pp_rect = Rect::new(prev_rect.x + btn_size + gap, prev_rect.y, btn_size, btn_size);
+    let pp_rect = Rect::new(
+        prev_rect.x + btn_size + gap,
+        prev_rect.y,
+        btn_size,
+        btn_size,
+    );
     let next_rect = Rect::new(pp_rect.x + btn_size + gap, pp_rect.y, btn_size, btn_size);
 
     let prev_state = input.add_zone(ZONE_PREV, prev_rect);
@@ -252,7 +302,12 @@ fn draw_controls_overlay(
     draw_loop_icon(painter, loop_rect, loop_color, app.loop_mode);
 
     // Fullscreen toggle, right-aligned.
-    let fs_rect = Rect::new(band.x + band.w - pad_x - btn_size, btn_cy - btn_size * 0.5, btn_size, btn_size);
+    let fs_rect = Rect::new(
+        band.x + band.w - pad_x - btn_size,
+        btn_cy - btn_size * 0.5,
+        btn_size,
+        btn_size,
+    );
     let fs_state = input.add_zone(ZONE_FULLSCREEN, fs_rect);
     draw_fullscreen_icon(painter, fs_rect, hover(fs_state.is_hovered()), fullscreen);
 
@@ -279,7 +334,11 @@ fn draw_pause_icon(painter: &mut lntrn_render::Painter, rect: Rect, color: Color
     let y = rect.y + pad;
     let h = rect.h - pad * 2.0;
     let cx = rect.x + rect.w * 0.5;
-    painter.rect_filled(Rect::new(cx - inner_gap * 0.5 - bar_w, y, bar_w, h), 1.5, color);
+    painter.rect_filled(
+        Rect::new(cx - inner_gap * 0.5 - bar_w, y, bar_w, h),
+        1.5,
+        color,
+    );
     painter.rect_filled(Rect::new(cx + inner_gap * 0.5, y, bar_w, h), 1.5, color);
 }
 
@@ -295,11 +354,35 @@ fn draw_skip_icon(painter: &mut lntrn_render::Painter, rect: Rect, color: Color,
 
     if forward {
         // Triangle on the left, bar on the right
-        painter.triangle(inner_left, y_top, inner_left, y_bot, inner_right - bar_w - 2.0, y_mid, color);
-        painter.rect_filled(Rect::new(inner_right - bar_w, y_top, bar_w, y_bot - y_top), 1.0, color);
+        painter.triangle(
+            inner_left,
+            y_top,
+            inner_left,
+            y_bot,
+            inner_right - bar_w - 2.0,
+            y_mid,
+            color,
+        );
+        painter.rect_filled(
+            Rect::new(inner_right - bar_w, y_top, bar_w, y_bot - y_top),
+            1.0,
+            color,
+        );
     } else {
-        painter.rect_filled(Rect::new(inner_left, y_top, bar_w, y_bot - y_top), 1.0, color);
-        painter.triangle(inner_right, y_top, inner_right, y_bot, inner_left + bar_w + 2.0, y_mid, color);
+        painter.rect_filled(
+            Rect::new(inner_left, y_top, bar_w, y_bot - y_top),
+            1.0,
+            color,
+        );
+        painter.triangle(
+            inner_right,
+            y_top,
+            inner_right,
+            y_bot,
+            inner_left + bar_w + 2.0,
+            y_mid,
+            color,
+        );
     }
 }
 
@@ -314,12 +397,29 @@ fn draw_loop_icon(painter: &mut lntrn_render::Painter, rect: Rect, color: Color,
     match mode {
         LoopMode::RepeatOne | LoopMode::Continue => {
             // Open repeat ring (gap at the top-right) with an arrowhead.
-            painter.arc(cx, cy, r + t, 0.55, std::f32::consts::TAU - 1.1, t, r, color);
+            painter.arc(
+                cx,
+                cy,
+                r + t,
+                0.55,
+                std::f32::consts::TAU - 1.1,
+                t,
+                r,
+                color,
+            );
             // Arrowhead at the ring's leading end (top), pointing clockwise.
             let ah = r * 0.55;
             let tipx = cx + r * 0.85;
             let tipy = cy - r * 0.55;
-            painter.triangle(tipx, tipy - ah * 0.5, tipx, tipy + ah * 0.5, tipx + ah, tipy, color);
+            painter.triangle(
+                tipx,
+                tipy - ah * 0.5,
+                tipx,
+                tipy + ah * 0.5,
+                tipx + ah,
+                tipy,
+                color,
+            );
             if matches!(mode, LoopMode::RepeatOne) {
                 // Center dot = "this one track".
                 painter.circle_filled(cx, cy, t * 1.1, color);
@@ -332,16 +432,33 @@ fn draw_loop_icon(painter: &mut lntrn_render::Painter, rect: Rect, color: Color,
             painter.rect_filled(Rect::new(bar_x, bar_top, t, r * 2.0), 0.0, color);
             // Shaft + arrowhead pointing at the bar.
             let shaft_x0 = rect.x + rect.w * 0.26;
-            painter.rect_filled(Rect::new(shaft_x0, cy - t * 0.5, bar_x - shaft_x0 - r * 0.4, t), 0.0, color);
+            painter.rect_filled(
+                Rect::new(shaft_x0, cy - t * 0.5, bar_x - shaft_x0 - r * 0.4, t),
+                0.0,
+                color,
+            );
             let ah = r * 0.6;
             let tipx = bar_x - r * 0.1;
-            painter.triangle(tipx - ah, cy - ah * 0.7, tipx - ah, cy + ah * 0.7, tipx, cy, color);
+            painter.triangle(
+                tipx - ah,
+                cy - ah * 0.7,
+                tipx - ah,
+                cy + ah * 0.7,
+                tipx,
+                cy,
+                color,
+            );
         }
     }
 }
 
 /// Fullscreen toggle: four corner brackets (enter) or inward arrows (exit).
-fn draw_fullscreen_icon(painter: &mut lntrn_render::Painter, rect: Rect, color: Color, fullscreen: bool) {
+fn draw_fullscreen_icon(
+    painter: &mut lntrn_render::Painter,
+    rect: Rect,
+    color: Color,
+    fullscreen: bool,
+) {
     let pad = rect.w * 0.28;
     let x0 = rect.x + pad;
     let y0 = rect.y + pad;
@@ -381,9 +498,14 @@ fn draw_fullscreen_icon(painter: &mut lntrn_render::Painter, rect: Rect, color: 
 fn draw_seek_bar(
     painter: &mut lntrn_render::Painter,
     s: f32,
-    x: f32, y: f32, w: f32, h: f32,
-    value: f32, active: bool,
-    accent: Color, track: Color,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    value: f32,
+    active: bool,
+    accent: Color,
+    track: Color,
 ) {
     let track_h = if active { h + 2.0 * s } else { h };
     let track_y = y + (h - track_h) * 0.5;
@@ -396,7 +518,13 @@ fn draw_seek_bar(
         let thumb_r = if active { 14.0 * s } else { 10.0 * s };
         painter.circle_filled(x + fill_w, y + h * 0.5, thumb_r, accent);
         // Tiny white outline so the thumb pops on any background.
-        painter.circle_stroke(x + fill_w, y + h * 0.5, thumb_r, 2.0 * s, Color::rgba(1.0, 1.0, 1.0, accent.a * 0.4));
+        painter.circle_stroke(
+            x + fill_w,
+            y + h * 0.5,
+            thumb_r,
+            2.0 * s,
+            Color::rgba(1.0, 1.0, 1.0, accent.a * 0.4),
+        );
     }
 }
 
@@ -413,8 +541,11 @@ fn draw_title_bar(
     input: &mut InteractionContext,
     palette: &FoxPalette,
     app: &App,
-    wf: f32, title_h: f32, s: f32,
-    fade: f32, reserve: bool,
+    wf: f32,
+    title_h: f32,
+    s: f32,
+    fade: f32,
+    reserve: bool,
 ) {
     let title_font = FontSize::Custom((26.0 * s).clamp(20.0, 34.0));
 
@@ -455,23 +586,54 @@ fn draw_title_bar(
 
     let _ = cursor;
     // Minimize — line
-    if min_state.is_hovered() { painter.circle_filled(min_x, by, btn_r, hover_bg); }
-    let ic = if min_state.is_hovered() { icon_hover } else { idle };
+    if min_state.is_hovered() {
+        painter.circle_filled(min_x, by, btn_r, hover_bg);
+    }
+    let ic = if min_state.is_hovered() {
+        icon_hover
+    } else {
+        idle
+    };
     painter.line(min_x - icon, by, min_x + icon, by, thick, ic);
 
     // Maximize — square outline
-    if max_state.is_hovered() { painter.circle_filled(max_x, by, btn_r, hover_bg); }
-    let ic = if max_state.is_hovered() { icon_hover } else { idle };
+    if max_state.is_hovered() {
+        painter.circle_filled(max_x, by, btn_r, hover_bg);
+    }
+    let ic = if max_state.is_hovered() {
+        icon_hover
+    } else {
+        idle
+    };
     painter.rect_stroke_sdf(
-        Rect::new(max_x - icon, by - icon, icon * 2.0, icon * 2.0), 1.5 * s, thick, ic,
+        Rect::new(max_x - icon, by - icon, icon * 2.0, icon * 2.0),
+        1.5 * s,
+        thick,
+        ic,
     );
 
     // Close — X (red on hover)
     let chov = close_state.is_hovered();
-    if chov { painter.circle_filled(close_x, by, btn_r, close_bg); }
+    if chov {
+        painter.circle_filled(close_x, by, btn_r, close_bg);
+    }
     let ic = if chov { close_icon } else { idle };
-    painter.line(close_x - icon, by - icon, close_x + icon, by + icon, thick, ic);
-    painter.line(close_x - icon, by + icon, close_x + icon, by - icon, thick, ic);
+    painter.line(
+        close_x - icon,
+        by - icon,
+        close_x + icon,
+        by + icon,
+        thick,
+        ic,
+    );
+    painter.line(
+        close_x - icon,
+        by + icon,
+        close_x + icon,
+        by - icon,
+        thick,
+        ic,
+    );
 
     // ── "View" menu button (left of the window controls) ──────────────
     let menu_font = FontSize::Custom((22.0 * s).clamp(16.0, 28.0));
@@ -485,9 +647,19 @@ fn draw_title_bar(
     if view_state.is_hovered() || app.view_menu_open {
         painter.rect_filled(view_rect, 6.0 * s, hover_bg);
     }
-    let view_color = if app.view_menu_open || view_state.is_hovered() { icon_hover } else { palette.text.with_alpha(fade) };
-    TextLabel::new(view_label, view_x + view_pad, (title_h - menu_font.px()) * 0.5)
-        .size(menu_font).color(view_color).draw(text, ctx.width(), ctx.height());
+    let view_color = if app.view_menu_open || view_state.is_hovered() {
+        icon_hover
+    } else {
+        palette.text.with_alpha(fade)
+    };
+    TextLabel::new(
+        view_label,
+        view_x + view_pad,
+        (title_h - menu_font.px()) * 0.5,
+    )
+    .size(menu_font)
+    .color(view_color)
+    .draw(text, ctx.width(), ctx.height());
 
     // ── Drag region + title text (everything left of the View button) ──
     let drag_rect = Rect::new(0.0, 0.0, view_x.max(0.0), title_h);
@@ -509,7 +681,9 @@ fn draw_title_bar(
         shown.push('\u{2026}');
     }
     TextLabel::new(&shown, 16.0 * s, (title_h - title_px) * 0.5)
-        .size(title_font).color(palette.text.with_alpha(fade)).draw(text, ctx.width(), ctx.height());
+        .size(title_font)
+        .color(palette.text.with_alpha(fade))
+        .draw(text, ctx.width(), ctx.height());
 
     // ── View dropdown (color swatches) ────────────────────────────────
     if app.view_menu_open {
@@ -524,7 +698,10 @@ fn draw_view_menu(
     ctx: &lntrn_render::GpuContext,
     input: &mut InteractionContext,
     app: &App,
-    anchor_x: f32, title_h: f32, anchor_w: f32, s: f32,
+    anchor_x: f32,
+    title_h: f32,
+    anchor_w: f32,
+    s: f32,
 ) {
     let font = FontSize::Custom((20.0 * s).clamp(15.0, 26.0));
     let row_h = 40.0 * s;
@@ -536,8 +713,17 @@ fn draw_view_menu(
     let menu_y = title_h + 4.0 * s;
 
     // Panel background + border.
-    painter.rect_filled(Rect::new(menu_x, menu_y, menu_w, menu_h), 10.0 * s, Color::from_rgba8(24, 22, 28, 250));
-    painter.rect_stroke(Rect::new(menu_x, menu_y, menu_w, menu_h), 10.0 * s, 1.5 * s, Color::from_rgba8(250, 200, 0, 90));
+    painter.rect_filled(
+        Rect::new(menu_x, menu_y, menu_w, menu_h),
+        10.0 * s,
+        Color::from_rgba8(24, 22, 28, 250),
+    );
+    painter.rect_stroke(
+        Rect::new(menu_x, menu_y, menu_w, menu_h),
+        10.0 * s,
+        1.5 * s,
+        Color::from_rgba8(250, 200, 0, 90),
+    );
 
     let sw_size = 22.0 * s;
     for i in 0..count {
@@ -547,7 +733,11 @@ fn draw_view_menu(
         let st = input.add_zone(crate::ZONE_VIEW_SWATCH_BASE + i as u32, row);
         let selected = i == app.vis_theme_index;
         if st.is_hovered() || selected {
-            painter.rect_filled(row, 6.0 * s, Color::from_rgba8(250, 200, 0, if selected { 55 } else { 30 }));
+            painter.rect_filled(
+                row,
+                6.0 * s,
+                Color::from_rgba8(250, 200, 0, if selected { 55 } else { 30 }),
+            );
         }
         // Swatch: a row of the 5 gradient stops.
         let sw_x = row.x + 8.0 * s;
@@ -556,15 +746,27 @@ fn draw_view_menu(
         for (k, &(r, g, b)) in theme.stops.iter().enumerate() {
             painter.rect_filled(
                 Rect::new(sw_x + k as f32 * stub, sw_y, stub + 0.5, sw_size),
-                0.0, Color::from_rgb8(r, g, b),
+                0.0,
+                Color::from_rgb8(r, g, b),
             );
         }
-        painter.rect_stroke(Rect::new(sw_x, sw_y, sw_size, sw_size), 3.0 * s, 1.0 * s, Color::rgba(1.0, 1.0, 1.0, 0.25));
+        painter.rect_stroke(
+            Rect::new(sw_x, sw_y, sw_size, sw_size),
+            3.0 * s,
+            1.0 * s,
+            Color::rgba(1.0, 1.0, 1.0, 0.25),
+        );
         // Label.
         let label_x = sw_x + sw_size + 12.0 * s;
-        let label_color = if selected { Color::from_rgb8(250, 200, 0) } else { Color::from_rgb8(232, 220, 200) };
+        let label_color = if selected {
+            Color::from_rgb8(250, 200, 0)
+        } else {
+            Color::from_rgb8(232, 220, 200)
+        };
         TextLabel::new(theme.name, label_x, row_y + (row_h - font.px()) * 0.5)
-            .size(font).color(label_color).draw(text, ctx.width(), ctx.height());
+            .size(font)
+            .color(label_color)
+            .draw(text, ctx.width(), ctx.height());
     }
 }
 
@@ -621,8 +823,14 @@ fn draw_classic_bars(
         let color = bar_color(stops, t, magnitude);
 
         painter.rect_filled(
-            Rect::new(x - border, y - border, bar_w + border * 2.0, bar_h + border * 2.0),
-            0.0, Color::BLACK,
+            Rect::new(
+                x - border,
+                y - border,
+                bar_w + border * 2.0,
+                bar_h + border * 2.0,
+            ),
+            0.0,
+            Color::BLACK,
         );
         painter.rect_filled(Rect::new(x, y, bar_w, bar_h), 0.0, color);
 
@@ -630,12 +838,17 @@ fn draw_classic_bars(
             let glow_a = (magnitude - 0.5) * 0.3;
             painter.rect_filled(
                 Rect::new(x - 2.0 * s, y - 2.0 * s, bar_w + 4.0 * s, bar_h + 4.0 * s),
-                0.0, color.with_alpha(glow_a),
+                0.0,
+                color.with_alpha(glow_a),
             );
         }
 
         let cap_h = 3.0 * s;
-        painter.rect_filled(Rect::new(x, y, bar_w, cap_h), 0.0, color.lighten(0.3).with_alpha(0.9));
+        painter.rect_filled(
+            Rect::new(x, y, bar_w, cap_h),
+            0.0,
+            color.lighten(0.3).with_alpha(0.9),
+        );
     }
     let _ = VIS_BARS;
 }

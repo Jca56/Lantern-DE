@@ -30,9 +30,7 @@ pub enum GitCmd {
 }
 
 /// Spawn the worker thread. `wake` is called after every event to prod the UI.
-pub fn spawn(
-    wake: impl Fn() + Send + 'static,
-) -> (mpsc::Sender<GitCmd>, mpsc::Receiver<GitEvent>) {
+pub fn spawn(wake: impl Fn() + Send + 'static) -> (mpsc::Sender<GitCmd>, mpsc::Receiver<GitEvent>) {
     let (cmd_tx, cmd_rx) = mpsc::channel();
     let (event_tx, event_rx) = mpsc::channel();
 

@@ -132,9 +132,9 @@ pub struct AltSavedState {
 #[derive(Clone, Copy, PartialEq)]
 enum ApcState {
     Normal,
-    Esc,     // Just saw ESC
-    Apc,     // Inside APC payload
-    ApcEsc,  // Saw ESC inside APC (waiting for \ to end)
+    Esc,    // Just saw ESC
+    Apc,    // Inside APC payload
+    ApcEsc, // Saw ESC inside APC (waiting for \ to end)
 }
 
 // ── Terminal grid state ─────────────────────────────────────────────────────

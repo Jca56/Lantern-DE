@@ -16,10 +16,21 @@ fn valid_dest(dest: &std::path::Path, sources: &[std::path::PathBuf]) -> bool {
     !sources.iter().any(|src| dest.starts_with(src))
 }
 
-pub(crate) fn handle_drop(app: &mut App, input: &InteractionContext, wf: f32, hf: f32, s: f32, sources: Vec<std::path::PathBuf>) {
+pub(crate) fn handle_drop(
+    app: &mut App,
+    input: &InteractionContext,
+    wf: f32,
+    hf: f32,
+    s: f32,
+    sources: Vec<std::path::PathBuf>,
+) {
     use crate::app::PendingDrop;
-    let Some((cx, cy)) = input.cursor() else { return };
-    if sources.is_empty() { return; }
+    let Some((cx, cy)) = input.cursor() else {
+        return;
+    };
+    if sources.is_empty() {
+        return;
+    }
 
     // Check if dropped on a zone (tab, sidebar, or file item)
     if let Some(zone_id) = input.zone_at(cx, cy) {
@@ -30,7 +41,9 @@ pub(crate) fn handle_drop(app: &mut App, input: &InteractionContext, wf: f32, hf
                 let dest_dir = app.tabs[tab_idx].path.clone();
                 if valid_dest(&dest_dir, &sources) {
                     app.pending_drop = Some(PendingDrop {
-                        sources, dest_dir, reload_tab: Some(tab_idx),
+                        sources,
+                        dest_dir,
+                        reload_tab: Some(tab_idx),
                     });
                 }
             }
@@ -52,7 +65,9 @@ pub(crate) fn handle_drop(app: &mut App, input: &InteractionContext, wf: f32, hf
                 let dest_dir = fav.path.clone();
                 if valid_dest(&dest_dir, &sources) {
                     app.pending_drop = Some(PendingDrop {
-                        sources, dest_dir, reload_tab: None,
+                        sources,
+                        dest_dir,
+                        reload_tab: None,
                     });
                 }
             }
@@ -66,7 +81,9 @@ pub(crate) fn handle_drop(app: &mut App, input: &InteractionContext, wf: f32, hf
                 let dest_dir = places[place_idx].path.clone();
                 if valid_dest(&dest_dir, &sources) {
                     app.pending_drop = Some(PendingDrop {
-                        sources, dest_dir, reload_tab: None,
+                        sources,
+                        dest_dir,
+                        reload_tab: None,
                     });
                 }
             }
@@ -87,9 +104,13 @@ pub(crate) fn handle_drop(app: &mut App, input: &InteractionContext, wf: f32, hf
                     crate::app::ViewMode::Grid => {
                         let cols = grid_columns(icr.w, s, zoom);
                         (0..tab.entries.len()).find_map(|i| {
-                            if sources.iter().any(|s| s == &tab.entries[i].path) { return None; }
+                            if sources.iter().any(|s| s == &tab.entries[i].path) {
+                                return None;
+                            }
                             let ir = crate::layout::item_hit_rect(
-                                file_item_rect(i, cols, icr.x, base_y, s, zoom), s, zoom,
+                                file_item_rect(i, cols, icr.x, base_y, s, zoom),
+                                s,
+                                zoom,
                             );
                             (ir.contains(cx, cy) && tab.entries[i].is_dir)
                                 .then(|| tab.entries[i].path.clone())
@@ -99,8 +120,11 @@ pub(crate) fn handle_drop(app: &mut App, input: &InteractionContext, wf: f32, hf
                         let hdr_h = 32.0 * crate::layout::list_zoom_multiplier(zoom) * s;
                         let row_h = crate::layout::list_row_h(s, zoom);
                         (0..tab.entries.len()).find_map(|i| {
-                            if sources.iter().any(|s| s == &tab.entries[i].path) { return None; }
-                            let r = Rect::new(icr.x, base_y + hdr_h + i as f32 * row_h, icr.w, row_h);
+                            if sources.iter().any(|s| s == &tab.entries[i].path) {
+                                return None;
+                            }
+                            let r =
+                                Rect::new(icr.x, base_y + hdr_h + i as f32 * row_h, icr.w, row_h);
                             (r.contains(cx, cy) && tab.entries[i].is_dir)
                                 .then(|| tab.entries[i].path.clone())
                         })
@@ -108,10 +132,11 @@ pub(crate) fn handle_drop(app: &mut App, input: &InteractionContext, wf: f32, hf
                     crate::app::ViewMode::Tree => {
                         let row_h = crate::layout::tree_row_h(s, zoom);
                         view.tree_entries.iter().enumerate().find_map(|(ti, te)| {
-                            if sources.iter().any(|s| s == &te.entry.path) { return None; }
+                            if sources.iter().any(|s| s == &te.entry.path) {
+                                return None;
+                            }
                             let r = Rect::new(icr.x, base_y + ti as f32 * row_h, icr.w, row_h);
-                            (r.contains(cx, cy) && te.entry.is_dir)
-                                .then(|| te.entry.path.clone())
+                            (r.contains(cx, cy) && te.entry.is_dir).then(|| te.entry.path.clone())
                         })
                     }
                 };
@@ -125,7 +150,9 @@ pub(crate) fn handle_drop(app: &mut App, input: &InteractionContext, wf: f32, hf
                     .all(|src| src.parent() == Some(dest_dir.as_path()));
                 if !same_dir && valid_dest(&dest_dir, &sources) {
                     app.pending_drop = Some(PendingDrop {
-                        sources, dest_dir, reload_tab: None,
+                        sources,
+                        dest_dir,
+                        reload_tab: None,
                     });
                 }
             }
@@ -145,36 +172,45 @@ pub(crate) fn handle_drop(app: &mut App, input: &InteractionContext, wf: f32, hf
         crate::app::ViewMode::Grid => {
             let cols = grid_columns(cr.w, s, zoom);
             (0..app.entries.len()).find_map(|i| {
-                if sources.iter().any(|s| s == &app.entries[i].path) { return None; }
-                let ir = crate::layout::item_hit_rect(file_item_rect(i, cols, cr.x, base_y, s, zoom), s, zoom);
-                (ir.contains(cx, cy) && app.entries[i].is_dir)
-                    .then(|| app.entries[i].path.clone())
+                if sources.iter().any(|s| s == &app.entries[i].path) {
+                    return None;
+                }
+                let ir = crate::layout::item_hit_rect(
+                    file_item_rect(i, cols, cr.x, base_y, s, zoom),
+                    s,
+                    zoom,
+                );
+                (ir.contains(cx, cy) && app.entries[i].is_dir).then(|| app.entries[i].path.clone())
             })
         }
         crate::app::ViewMode::List => {
             let hdr_h = 32.0 * crate::layout::list_zoom_multiplier(zoom) * s;
             let row_h = crate::layout::list_row_h(s, zoom);
             (0..app.entries.len()).find_map(|i| {
-                if sources.iter().any(|s| s == &app.entries[i].path) { return None; }
+                if sources.iter().any(|s| s == &app.entries[i].path) {
+                    return None;
+                }
                 let r = Rect::new(cr.x, base_y + hdr_h + i as f32 * row_h, cr.w, row_h);
-                (r.contains(cx, cy) && app.entries[i].is_dir)
-                    .then(|| app.entries[i].path.clone())
+                (r.contains(cx, cy) && app.entries[i].is_dir).then(|| app.entries[i].path.clone())
             })
         }
         crate::app::ViewMode::Tree => {
             let row_h = crate::layout::tree_row_h(s, zoom);
             app.tree_entries.iter().enumerate().find_map(|(ti, te)| {
-                if sources.iter().any(|s| s == &te.entry.path) { return None; }
+                if sources.iter().any(|s| s == &te.entry.path) {
+                    return None;
+                }
                 let r = Rect::new(cr.x, base_y + ti as f32 * row_h, cr.w, row_h);
-                (r.contains(cx, cy) && te.entry.is_dir)
-                    .then(|| te.entry.path.clone())
+                (r.contains(cx, cy) && te.entry.is_dir).then(|| te.entry.path.clone())
             })
         }
     };
     if let Some(dest_dir) = dest {
         if valid_dest(&dest_dir, &sources) {
             app.pending_drop = Some(PendingDrop {
-                sources, dest_dir, reload_tab: None,
+                sources,
+                dest_dir,
+                reload_tab: None,
             });
         }
     }

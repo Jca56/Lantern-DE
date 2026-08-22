@@ -43,15 +43,35 @@ pub(super) fn sort_menu_items(
 ) -> Vec<crate::launcher::context_menu::MenuItem> {
     use crate::files::{SortBy, SortDir};
     use crate::launcher::context_menu::{MenuAction, MenuItem};
-    let arrow = if state.sort_dir == SortDir::Asc { "↑" } else { "↓" };
+    let arrow = if state.sort_dir == SortDir::Asc {
+        "↑"
+    } else {
+        "↓"
+    };
     let mark = |by: SortBy, label: &str| -> String {
-        if state.sort_by == by { format!("{}  {}", label, arrow) } else { label.to_string() }
+        if state.sort_by == by {
+            format!("{}  {}", label, arrow)
+        } else {
+            label.to_string()
+        }
     };
     vec![
-        MenuItem { label: mark(SortBy::Name, "Name"), action: MenuAction::FilesSortByName },
-        MenuItem { label: mark(SortBy::Size, "Size"), action: MenuAction::FilesSortBySize },
-        MenuItem { label: mark(SortBy::Modified, "Date Modified"), action: MenuAction::FilesSortByDate },
-        MenuItem { label: mark(SortBy::Type, "Type"), action: MenuAction::FilesSortByType },
+        MenuItem {
+            label: mark(SortBy::Name, "Name"),
+            action: MenuAction::FilesSortByName,
+        },
+        MenuItem {
+            label: mark(SortBy::Size, "Size"),
+            action: MenuAction::FilesSortBySize,
+        },
+        MenuItem {
+            label: mark(SortBy::Modified, "Date Modified"),
+            action: MenuAction::FilesSortByDate,
+        },
+        MenuItem {
+            label: mark(SortBy::Type, "Type"),
+            action: MenuAction::FilesSortByType,
+        },
     ]
 }
 
@@ -67,16 +87,14 @@ pub(super) fn set_active_input(
     active: bool,
 ) {
     if active {
-        layer_surface.set_keyboard_interactivity(
-            zwlr_layer_surface_v1::KeyboardInteractivity::Exclusive,
-        );
+        layer_surface
+            .set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::Exclusive);
         // None = accept input across the whole surface; we hit-test
         // against the panel rect in code for click-outside dismiss.
         surface.set_input_region(None);
     } else {
-        layer_surface.set_keyboard_interactivity(
-            zwlr_layer_surface_v1::KeyboardInteractivity::None,
-        );
+        layer_surface
+            .set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::None);
         surface.set_input_region(Some(empty_region));
     }
     surface.commit();

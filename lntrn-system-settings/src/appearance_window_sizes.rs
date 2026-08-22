@@ -15,9 +15,8 @@ use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea, Scrollbar, Slide
 
 use crate::config::LanternConfig;
 use crate::panels::{
-    draw_section_card, slider_value_from_cursor, PanelState,
-    CARD_GAP, CARD_HEADER_H, CARD_INNER_PAD_H, CARD_INNER_PAD_V,
-    CARD_OUTER_PAD_H, CARD_OUTER_PAD_V, SLIDER_H,
+    draw_section_card, slider_value_from_cursor, PanelState, CARD_GAP, CARD_HEADER_H,
+    CARD_INNER_PAD_H, CARD_INNER_PAD_V, CARD_OUTER_PAD_H, CARD_OUTER_PAD_V, SLIDER_H,
 };
 
 /// One zone id per size slider.
@@ -37,10 +36,10 @@ const DESC_SIZE: f32 = 16.0;
 
 /// (label, one-line description) for each rung, in ladder order.
 const SIZES: [(&str, &str); 5] = [
-    ("Default",     "Size new windows open at"),
-    ("Small",       "Smallest step in the resize ladder"),
-    ("Medium",      "Middle step in the resize ladder"),
-    ("Large",       "Large step in the resize ladder"),
+    ("Default", "Size new windows open at"),
+    ("Small", "Smallest step in the resize ladder"),
+    ("Medium", "Middle step in the resize ladder"),
+    ("Large", "Large step in the resize ladder"),
     ("Extra Large", "Largest step — near fullscreen"),
 ];
 
@@ -79,22 +78,29 @@ pub(crate) fn draw_window_sizes_page(
     text: &mut TextRenderer,
     ix: &mut InteractionContext,
     fox: &FoxPalette,
-    x: f32, y: f32, w: f32, panel_h: f32,
-    s: f32, sw: u32, sh: u32, scroll_delta: f32,
+    x: f32,
+    y: f32,
+    w: f32,
+    panel_h: f32,
+    s: f32,
+    sw: u32,
+    sh: u32,
+    scroll_delta: f32,
 ) {
     let card_x = x + CARD_OUTER_PAD_H * s;
     let card_w = w - CARD_OUTER_PAD_H * 2.0 * s;
     let card_h = card_height(s);
     let n = SIZES.len();
 
-    let content_height = CARD_OUTER_PAD_V * 2.0 * s
-        + card_h * n as f32
-        + CARD_GAP * s * (n - 1) as f32;
+    let content_height =
+        CARD_OUTER_PAD_V * 2.0 * s + card_h * n as f32 + CARD_GAP * s * (n - 1) as f32;
 
     if scroll_delta != 0.0 {
         ScrollArea::apply_scroll(
-            &mut panel_state.scroll_offset, scroll_delta * 40.0,
-            content_height, panel_h,
+            &mut panel_state.scroll_offset,
+            scroll_delta * 40.0,
+            content_height,
+            panel_h,
         );
     }
 
@@ -105,8 +111,8 @@ pub(crate) fn draw_window_sizes_page(
     let mut cy_top = scroll_area.content_y() + CARD_OUTER_PAD_V * s;
     for (i, (label, desc)) in SIZES.iter().enumerate() {
         draw_size_card(
-            config, painter, text, ix, fox, i, label, desc,
-            card_x, cy_top, card_w, card_h, s, sw, sh,
+            config, painter, text, ix, fox, i, label, desc, card_x, cy_top, card_w, card_h, s, sw,
+            sh,
         );
         cy_top += card_h + CARD_GAP * s;
     }
@@ -129,12 +135,16 @@ fn draw_size_card(
     idx: usize,
     label: &str,
     desc: &str,
-    card_x: f32, card_y: f32, card_w: f32, card_h: f32,
-    s: f32, sw: u32, sh: u32,
+    card_x: f32,
+    card_y: f32,
+    card_w: f32,
+    card_h: f32,
+    s: f32,
+    sw: u32,
+    sh: u32,
 ) {
     let body_top = draw_section_card(
-        painter, text, fox, label,
-        card_x, card_y, card_w, card_h, s, sw, sh,
+        painter, text, fox, label, card_x, card_y, card_w, card_h, s, sw, sh,
     );
 
     let card_inner_x = card_x + CARD_INNER_PAD_H * s;
@@ -153,7 +163,16 @@ fn draw_size_card(
 
     // Description sits near the top of the body.
     let desc_sz = DESC_SIZE * s;
-    text.queue(desc, desc_sz, right_x, body_top + 6.0 * s, fox.text_secondary, right_w, sw, sh);
+    text.queue(
+        desc,
+        desc_sz,
+        right_x,
+        body_top + 6.0 * s,
+        fox.text_secondary,
+        right_w,
+        sw,
+        sh,
+    );
 
     // Big percentage value, baseline-aligned with the slider center.
     let val_sz = VALUE_SIZE * s;
@@ -201,7 +220,8 @@ fn draw_preview(painter: &mut Painter, fox: &FoxPalette, area: Rect, pct: u32, s
     let win = Rect::new(
         area.x + (area.w - win_w) / 2.0,
         area.y + (area.h - win_h) / 2.0,
-        win_w, win_h,
+        win_w,
+        win_h,
     );
     painter.rect_filled(win, 5.0 * s, fox.accent.with_alpha(0.28));
     painter.rect_stroke_sdf(win, 5.0 * s, 1.5 * s, fox.accent);

@@ -138,7 +138,10 @@ fn generate(path: &Path) -> Option<(Vec<u8>, u32, u32)> {
 }
 
 fn decode_image_limited(path: &Path) -> Option<image::RgbaImage> {
-    let mut reader = image::ImageReader::open(path).ok()?.with_guessed_format().ok()?;
+    let mut reader = image::ImageReader::open(path)
+        .ok()?
+        .with_guessed_format()
+        .ok()?;
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(MAX_DECODE_DIM);
     limits.max_image_height = Some(MAX_DECODE_DIM);

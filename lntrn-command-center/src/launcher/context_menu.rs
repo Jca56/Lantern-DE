@@ -99,7 +99,11 @@ pub fn menu_rect(menu: &ContextMenu, panel: Rect, scale: f32) -> Rect {
     let min_y = panel.y + 8.0 * scale;
 
     let x = menu.anchor_x.min(max_x).max(min_x);
-    let raw_y = if menu.anchor_above { menu.anchor_y - h } else { menu.anchor_y };
+    let raw_y = if menu.anchor_above {
+        menu.anchor_y - h
+    } else {
+        menu.anchor_y
+    };
     let y = raw_y.min(max_y).max(min_y);
     Rect::new(x, y, w, h)
 }
@@ -113,9 +117,7 @@ pub fn hit_test(
     phys_y: f32,
 ) -> Option<MenuAction> {
     let rect = menu_rect(menu, panel, scale);
-    if phys_x < rect.x || phys_x > rect.x + rect.w
-        || phys_y < rect.y || phys_y > rect.y + rect.h
-    {
+    if phys_x < rect.x || phys_x > rect.x + rect.w || phys_y < rect.y || phys_y > rect.y + rect.h {
         return None;
     }
     let item_h = ITEM_HEIGHT * scale;

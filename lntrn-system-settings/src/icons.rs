@@ -50,7 +50,9 @@ pub fn rasterize_path(
 
         // Fill between pairs (even-odd)
         let out_y = y_ss / ss;
-        if out_y >= buf_h { continue; }
+        if out_y >= buf_h {
+            continue;
+        }
         let mut i = 0;
         while i + 1 < xs.len() {
             let x0 = (xs[i].max(0.0) as u32).min(ss_w);
@@ -133,8 +135,14 @@ fn flatten_path(cmds: &[PathCmd], sx: f32, sy: f32) -> Vec<(f32, f32, f32, f32)>
 
 fn flatten_cubic(
     segs: &mut Vec<(f32, f32, f32, f32)>,
-    x0: f32, y0: f32, x1: f32, y1: f32,
-    x2: f32, y2: f32, x3: f32, y3: f32,
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+    x3: f32,
+    y3: f32,
     depth: u32,
 ) {
     // Flatness test: are control points close to the line from p0 to p3?
@@ -426,10 +434,14 @@ pub fn icon_app_icons() -> Vec<PathCmd> {
     for &(x, y) in &[(2.0, 2.0), (13.0, 2.0), (2.0, 13.0), (13.0, 13.0)] {
         let (w, h) = (9.0, 9.0);
         cmds.extend([
-            Move(x, y + 1.0), Cubic(x, y, x + 1.0, y, x + 1.0, y),
-            Line(x + w - 1.0, y), Cubic(x + w, y, x + w, y + 1.0, x + w, y + 1.0),
-            Line(x + w, y + h - 1.0), Cubic(x + w, y + h, x + w - 1.0, y + h, x + w - 1.0, y + h),
-            Line(x + 1.0, y + h), Cubic(x, y + h, x, y + h - 1.0, x, y + h - 1.0),
+            Move(x, y + 1.0),
+            Cubic(x, y, x + 1.0, y, x + 1.0, y),
+            Line(x + w - 1.0, y),
+            Cubic(x + w, y, x + w, y + 1.0, x + w, y + 1.0),
+            Line(x + w, y + h - 1.0),
+            Cubic(x + w, y + h, x + w - 1.0, y + h, x + w - 1.0, y + h),
+            Line(x + 1.0, y + h),
+            Cubic(x, y + h, x, y + h - 1.0, x, y + h - 1.0),
             Close,
         ]);
     }

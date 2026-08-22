@@ -301,24 +301,45 @@ impl Controls {
         if !matches!(panel_view, crate::app::PanelView::Default) {
             out.push((
                 TileId::Collapse,
-                tile::Slot { zone: tile::Zone::Right, logical_width: collapse::TILE_WIDTH },
+                tile::Slot {
+                    zone: tile::Zone::Right,
+                    logical_width: collapse::TILE_WIDTH,
+                },
             ));
             return out;
         }
 
         for &id in &self.toolbar.left {
             if self.widget_present(id) {
-                out.push((id, tile::Slot { zone: tile::Zone::Left, logical_width: self.widget_width(id) }));
+                out.push((
+                    id,
+                    tile::Slot {
+                        zone: tile::Zone::Left,
+                        logical_width: self.widget_width(id),
+                    },
+                ));
             }
         }
         for &id in &self.toolbar.middle {
             if self.widget_present(id) {
-                out.push((id, tile::Slot { zone: tile::Zone::Middle, logical_width: self.widget_width(id) }));
+                out.push((
+                    id,
+                    tile::Slot {
+                        zone: tile::Zone::Middle,
+                        logical_width: self.widget_width(id),
+                    },
+                ));
             }
         }
         for &id in &self.toolbar.right {
             if self.widget_present(id) {
-                out.push((id, tile::Slot { zone: tile::Zone::Right, logical_width: self.widget_width(id) }));
+                out.push((
+                    id,
+                    tile::Slot {
+                        zone: tile::Zone::Right,
+                        logical_width: self.widget_width(id),
+                    },
+                ));
             }
         }
 
@@ -326,7 +347,10 @@ impl Controls {
         // right, after the user's right-zone widgets.
         out.push((
             TileId::Collapse,
-            tile::Slot { zone: tile::Zone::Right, logical_width: collapse::TILE_WIDTH },
+            tile::Slot {
+                zone: tile::Zone::Right,
+                logical_width: collapse::TILE_WIDTH,
+            },
         ));
         out
     }
@@ -455,49 +479,148 @@ pub fn draw_row(
 
         match id {
             TileId::Workspace => workspace::draw_inline(
-                painter, text, layout, ws, alpha, surface_w, surface_h, workspace_num,
+                painter,
+                text,
+                layout,
+                ws,
+                alpha,
+                surface_w,
+                surface_h,
+                workspace_num,
             ),
             TileId::Clock => clock::draw_inline(
-                painter, text, &controls.clock, layout, ws, alpha, surface_w, surface_h, lit,
+                painter,
+                text,
+                &controls.clock,
+                layout,
+                ws,
+                alpha,
+                surface_w,
+                surface_h,
+                lit,
                 &wopts.clock,
             ),
             TileId::Audio => audio::draw_inline(
-                painter, text, &controls.audio, layout, ws, alpha, surface_w, surface_h, lit,
+                painter,
+                text,
+                &controls.audio,
+                layout,
+                ws,
+                alpha,
+                surface_w,
+                surface_h,
+                lit,
             ),
             TileId::Brightness => brightness::draw_inline(
-                painter, text, &controls.brightness, layout, ws, alpha, surface_w, surface_h, lit,
+                painter,
+                text,
+                &controls.brightness,
+                layout,
+                ws,
+                alpha,
+                surface_w,
+                surface_h,
+                lit,
             ),
             TileId::Wifi => wifi::draw_inline(
-                painter, text, &controls.wifi, layout, ws, alpha, surface_w, surface_h, lit,
+                painter,
+                text,
+                &controls.wifi,
+                layout,
+                ws,
+                alpha,
+                surface_w,
+                surface_h,
+                lit,
             ),
             TileId::Bluetooth => bluetooth::draw_inline(
-                painter, text, &controls.bluetooth, layout, ws, alpha, surface_w, surface_h, lit,
+                painter,
+                text,
+                &controls.bluetooth,
+                layout,
+                ws,
+                alpha,
+                surface_w,
+                surface_h,
+                lit,
             ),
             TileId::Battery => battery::draw_inline(
-                painter, text, &controls.battery, layout, ws, alpha, surface_w, surface_h,
+                painter,
+                text,
+                &controls.battery,
+                layout,
+                ws,
+                alpha,
+                surface_w,
+                surface_h,
             ),
             TileId::SysMon => sysmon::tile::draw_inline(
-                painter, text, icons, &controls.sysmon, layout, ws, alpha, surface_w, surface_h,
+                painter,
+                text,
+                icons,
+                &controls.sysmon,
+                layout,
+                ws,
+                alpha,
+                surface_w,
+                surface_h,
             ),
             TileId::Temp => temp::draw_inline(
-                painter, text, icons, &controls.sysmon, layout, ws, alpha, surface_w, surface_h,
+                painter,
+                text,
+                icons,
+                &controls.sysmon,
+                layout,
+                ws,
+                alpha,
+                surface_w,
+                surface_h,
             ),
             TileId::Network => network::draw_inline(
-                painter, text, icons, &controls.sysmon, layout, ws, alpha, surface_w, surface_h,
+                painter,
+                text,
+                icons,
+                &controls.sysmon,
+                layout,
+                ws,
+                alpha,
+                surface_w,
+                surface_h,
             ),
             TileId::Gpu => gpu::draw_inline(
-                painter, text, icons, &controls.sysmon, layout, ws, alpha, surface_w, surface_h,
+                painter,
+                text,
+                icons,
+                &controls.sysmon,
+                layout,
+                ws,
+                alpha,
+                surface_w,
+                surface_h,
             ),
             TileId::Disk => disk::draw_inline(
-                painter, text, &controls.disk, layout, ws, alpha, surface_w, surface_h,
+                painter,
+                text,
+                &controls.disk,
+                layout,
+                ws,
+                alpha,
+                surface_w,
+                surface_h,
             ),
             TileId::Gaming => gaming::draw_inline(
-                painter, text, &controls.gaming_ipc, layout, ws, alpha, surface_w, surface_h, lit,
+                painter,
+                text,
+                &controls.gaming_ipc,
+                layout,
+                ws,
+                alpha,
+                surface_w,
+                surface_h,
+                lit,
             ),
             TileId::Collapse => {} // drawn separately so we can pass `collapsed` state
-            TileId::TerminalClear => {
-                terminal_header::draw_inline(painter, text, layout, ws, alpha)
-            }
+            TileId::TerminalClear => terminal_header::draw_inline(painter, text, layout, ws, alpha),
         }
     }
 
@@ -531,31 +654,99 @@ pub fn draw_view(
     let top_y = content_top_y(panel, scale);
     let _bottom = match tile_id {
         TileId::Clock => clock::draw_view(
-            painter, text, &controls.clock, &controls.events, panel, top_y, scale, alpha, surface_w, surface_h,
+            painter,
+            text,
+            &controls.clock,
+            &controls.events,
+            panel,
+            top_y,
+            scale,
+            alpha,
+            surface_w,
+            surface_h,
         ),
         TileId::Audio => audio::draw_view(
-            painter, text, &controls.audio, panel, top_y, scale, alpha, surface_w, surface_h,
+            painter,
+            text,
+            &controls.audio,
+            panel,
+            top_y,
+            scale,
+            alpha,
+            surface_w,
+            surface_h,
         ),
         TileId::Brightness => brightness::draw_view(
-            painter, text, &controls.brightness, panel, top_y, scale, alpha, surface_w, surface_h,
+            painter,
+            text,
+            &controls.brightness,
+            panel,
+            top_y,
+            scale,
+            alpha,
+            surface_w,
+            surface_h,
         ),
         TileId::Wifi => wifi::draw_view(
-            painter, text, &controls.wifi, panel, top_y, scale, alpha, surface_w, surface_h,
+            painter,
+            text,
+            &controls.wifi,
+            panel,
+            top_y,
+            scale,
+            alpha,
+            surface_w,
+            surface_h,
         ),
         TileId::Bluetooth => bluetooth::draw_view(
-            painter, text, &controls.bluetooth, panel, top_y, scale, alpha, text_size, surface_w, surface_h,
+            painter,
+            text,
+            &controls.bluetooth,
+            panel,
+            top_y,
+            scale,
+            alpha,
+            text_size,
+            surface_w,
+            surface_h,
         ),
         TileId::Battery => battery::draw_view(
-            painter, text, &controls.battery, panel, top_y, scale, alpha, surface_w, surface_h,
+            painter,
+            text,
+            &controls.battery,
+            panel,
+            top_y,
+            scale,
+            alpha,
+            surface_w,
+            surface_h,
         ),
         TileId::SysMon => sysmon::view::draw_view(
-            painter, text, &controls.sysmon, panel, top_y, scale, alpha, text_size, surface_w, surface_h,
+            painter,
+            text,
+            &controls.sysmon,
+            panel,
+            top_y,
+            scale,
+            alpha,
+            text_size,
+            surface_w,
+            surface_h,
         ),
         // Temp / Network / GPU / Disk all share the System Monitor
         // expanded view — clicking any of them opens the same panel with
         // CPU / mem / net history + the process list.
         TileId::Temp | TileId::Network | TileId::Gpu | TileId::Disk => sysmon::view::draw_view(
-            painter, text, &controls.sysmon, panel, top_y, scale, alpha, text_size, surface_w, surface_h,
+            painter,
+            text,
+            &controls.sysmon,
+            panel,
+            top_y,
+            scale,
+            alpha,
+            text_size,
+            surface_w,
+            surface_h,
         ),
         // Tiles that don't open an expanded view — their clicks are
         // intercepted in the input handler before reaching here.

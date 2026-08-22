@@ -16,18 +16,19 @@ use wayland_protocols::xdg::shell::client::xdg_toplevel;
 use crate::app::App;
 use crate::desktop::DesktopApp;
 use crate::icons::IconCache;
-use crate::layout::{content_rect, grid_columns, grid_content_height, list_content_height, tree_content_height};
+use crate::layout::{
+    content_rect, grid_columns, grid_content_height, list_content_height, tree_content_height,
+};
 use crate::settings::Settings;
 use crate::wayland::State;
 use crate::wayland_actions::{
-    handle_click, handle_ctx_event, handle_drop, handle_key, handle_right_click,
-    update_rubber_band, edge_resize, resize_edge_to_cursor_shape,
+    edge_resize, handle_click, handle_ctx_event, handle_drop, handle_key, handle_right_click,
+    resize_edge_to_cursor_shape, update_rubber_band,
 };
 use crate::{
     ClickAction, Gpu, CTX_NEW_FOLDER_BLUE, CTX_NEW_FOLDER_GREEN, CTX_NEW_FOLDER_ORANGE,
-    CTX_NEW_FOLDER_PURPLE, CTX_NEW_FOLDER_RED, CTX_NEW_FOLDER_YELLOW,
-    VIEW_SLIDER_ID, VIEW_SHOW_HIDDEN_ID,
-    ZONE_DROP_CANCEL, ZONE_DROP_COPY, ZONE_DROP_MOVE,
+    CTX_NEW_FOLDER_PURPLE, CTX_NEW_FOLDER_RED, CTX_NEW_FOLDER_YELLOW, VIEW_SHOW_HIDDEN_ID,
+    VIEW_SLIDER_ID, ZONE_DROP_CANCEL, ZONE_DROP_COPY, ZONE_DROP_MOVE,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -64,9 +65,9 @@ pub(crate) fn run_loop(
     let mut last_devices_check = Instant::now();
     let mut last_tab_click: Option<(usize, Instant)> = None;
     // Pinned tab drag reorder state
-    let mut tab_drag: Option<usize> = None;          // index of tab being dragged
+    let mut tab_drag: Option<usize> = None; // index of tab being dragged
     let mut tab_drag_press: Option<(usize, f32)> = None; // (tab_idx, press_x) for drag detection
-    // Favorite drag reorder state (mirrors tab_drag/tab_drag_press but axis is Y).
+                                                         // Favorite drag reorder state (mirrors tab_drag/tab_drag_press but axis is Y).
     let mut fav_drag: Option<usize> = None;
     let mut fav_drag_press: Option<(usize, f32)> = None;
     // Scrollbar thumb drag: Some(grab_dy) = pointer offset from the thumb top.
@@ -77,7 +78,10 @@ pub(crate) fn run_loop(
     let mut scroll_anim: Option<f32> = None;
     let mut scroll_anim_last: f32 = 0.0;
 
-    eprintln!("[fox] entering main loop, size={}x{}", state.width, state.height);
+    eprintln!(
+        "[fox] entering main loop, size={}x{}",
+        state.width, state.height
+    );
 
     while state.running {
         // Event dispatch. Animating: short 16ms poll for ~60Hz redraws. Idle:
@@ -95,8 +99,16 @@ pub(crate) fn run_loop(
             // Poll the watcher's eventfd alongside the wayland fd so a file
             // landing in the current directory wakes the loop immediately.
             let mut pfds = [
-                libc::pollfd { fd, events: libc::POLLIN, revents: 0 },
-                libc::pollfd { fd: dir_watcher.fd(), events: libc::POLLIN, revents: 0 },
+                libc::pollfd {
+                    fd,
+                    events: libc::POLLIN,
+                    revents: 0,
+                },
+                libc::pollfd {
+                    fd: dir_watcher.fd(),
+                    events: libc::POLLIN,
+                    revents: 0,
+                },
             ];
             let ret = unsafe { libc::poll(pfds.as_mut_ptr(), 2, timeout_ms) };
             // Any revents (POLLIN, but also POLLHUP/POLLERR on compositor
@@ -146,7 +158,9 @@ pub(crate) fn run_loop(
                 state.frame_done = true; // force a render this iteration
             }
         }
-        if !state.frame_done { continue; }
+        if !state.frame_done {
+            continue;
+        }
         state.frame_done = false;
 
         let scale_f = state.fractional_scale() as f32;
@@ -159,7 +173,8 @@ pub(crate) fn run_loop(
         if state.configured || state.scale_changed {
             state.configured = false;
             state.scale_changed = false;
-            gpu.ctx.resize(state.phys_width().max(1), state.phys_height().max(1));
+            gpu.ctx
+                .resize(state.phys_width().max(1), state.phys_height().max(1));
             surface.set_buffer_scale(1);
             if let Some(vp) = viewport {
                 vp.set_destination(state.width as i32, state.height as i32);
@@ -187,7 +202,10 @@ pub(crate) fn run_loop(
         let cy = (state.cursor_y as f32) * s;
 
         let pointer_on_popup = state.pointer_surface.as_ref().and_then(|ps| {
-            state.popup_backend.as_ref()?.find_popup_id_by_wl_surface(ps)
+            state
+                .popup_backend
+                .as_ref()?
+                .find_popup_id_by_wl_surface(ps)
         });
 
         if pointer_on_popup.is_some() {
@@ -199,7 +217,11 @@ pub(crate) fn run_loop(
         }
 
         if let Some(backend) = &mut state.popup_backend {
-            let active = if state.pointer_in_surface { pointer_on_popup } else { None };
+            let active = if state.pointer_in_surface {
+                pointer_on_popup
+            } else {
+                None
+            };
             backend.route_cursor(active, cx, cy);
         }
 
@@ -210,9 +232,13 @@ pub(crate) fn run_loop(
             let on_preview_handle = app.preview_drag.is_some() || {
                 let view = if app.searching && !app.search_buf.is_empty() {
                     crate::app::ViewMode::List
-                } else { app.view_mode };
-                let supported = matches!(view, crate::app::ViewMode::List | crate::app::ViewMode::Tree)
-                    && app.split.is_none();
+                } else {
+                    app.view_mode
+                };
+                let supported = matches!(
+                    view,
+                    crate::app::ViewMode::List | crate::app::ViewMode::Tree
+                ) && app.split.is_none();
                 if supported && app.preview_open {
                     let full = if app.pick.is_some() {
                         let bottom = hf - crate::pick_bar::PICK_BAR_H * s;
@@ -223,7 +249,9 @@ pub(crate) fn run_loop(
                     let pw = crate::layout::preview_effective_w(full.w, app.preview_width, true, s);
                     let h_rect = crate::layout::preview_handle_rect(full, pw, s);
                     h_rect.contains(cx, cy)
-                } else { false }
+                } else {
+                    false
+                }
             };
             // Split divider gets the same EW treatment.
             let on_split_divider = app.split.as_ref().map_or(false, |sp| {
@@ -265,8 +293,7 @@ pub(crate) fn run_loop(
             context_menu.set_pointer_depth(depth);
 
             let vdepth = pointer_on_popup.and_then(|pid| {
-                (0..view_menu.popup_count())
-                    .find(|&d| view_menu.popup_id_at_depth(d) == Some(pid))
+                (0..view_menu.popup_count()).find(|&d| view_menu.popup_id_at_depth(d) == Some(pid))
             });
             view_menu.set_pointer_depth(vdepth);
         }
@@ -276,11 +303,8 @@ pub(crate) fn run_loop(
             let content = active_content_rect(app, wf, hf, s);
             let total_h = view_content_height(app, content.w, s);
             let bar = Scrollbar::new(&content, total_h, app.scroll_offset);
-            app.scroll_offset = bar.offset_for_thumb_y(
-                cy - grab_dy + bar.thumb.h * 0.5,
-                total_h,
-                content.h,
-            );
+            app.scroll_offset =
+                bar.offset_for_thumb_y(cy - grab_dy + bar.thumb.h * 0.5, total_h, content.h);
         }
 
         // ── Rubber band update + edge auto-scroll ────────────────────────
@@ -305,7 +329,9 @@ pub(crate) fn run_loop(
                         grid_content_height(app.entries.len(), cols, s, zoom)
                     }
                     crate::app::ViewMode::List => list_content_height(app.entries.len(), s, zoom),
-                    crate::app::ViewMode::Tree => tree_content_height(app.tree_entries.len(), s, zoom),
+                    crate::app::ViewMode::Tree => {
+                        tree_content_height(app.tree_entries.len(), s, zoom)
+                    }
                 };
                 ScrollArea::apply_scroll(&mut app.scroll_offset, scroll_delta, total_h, cr.h);
             }
@@ -323,12 +349,18 @@ pub(crate) fn run_loop(
         }
 
         // ── Split divider drag ──────────────────────────────────────────
-        if app.split.as_ref().map_or(false, |sp| sp.divider_drag.is_some()) {
+        if app
+            .split
+            .as_ref()
+            .map_or(false, |sp| sp.divider_drag.is_some())
+        {
             let x0 = crate::layout::sidebar_w(s);
             let avail = wf - x0 - crate::layout::SPLIT_HANDLE_W * s;
             if avail > 0.0 {
-                let ratio = ((cx - x0) / avail)
-                    .clamp(crate::layout::SPLIT_RATIO_MIN, crate::layout::SPLIT_RATIO_MAX);
+                let ratio = ((cx - x0) / avail).clamp(
+                    crate::layout::SPLIT_RATIO_MIN,
+                    crate::layout::SPLIT_RATIO_MAX,
+                );
                 if let Some(sp) = app.split.as_mut() {
                     sp.ratio = ratio;
                 }
@@ -422,7 +454,8 @@ pub(crate) fn run_loop(
 
         // ── Start Wayland DnD when cursor leaves window during drag ────
         if (app.drag_item.is_some() || app.drag_tree_item.is_some())
-            && !state.dnd_active && !state.dnd_paths.is_empty()
+            && !state.dnd_active
+            && !state.dnd_paths.is_empty()
         {
             let raw_cx = state.cursor_x as f32;
             let raw_cy = state.cursor_y as f32;
@@ -439,7 +472,7 @@ pub(crate) fn run_loop(
                     source.offer("text/plain".to_string());
                     source.set_actions(
                         wl_data_device_manager::DndAction::Copy
-                        | wl_data_device_manager::DndAction::Move,
+                            | wl_data_device_manager::DndAction::Move,
                     );
                     dd.start_drag(Some(&source), surf, None, state.dnd_serial);
                     state.dnd_active = true;
@@ -452,7 +485,8 @@ pub(crate) fn run_loop(
         }
 
         // ── Clean up drag state after Wayland DnD ends ──────────────────
-        if !state.dnd_active && state.dnd_paths.is_empty()
+        if !state.dnd_active
+            && state.dnd_paths.is_empty()
             && (app.drag_item.is_some() || app.drag_tree_item.is_some())
             && !state.pointer_in_surface
         {
@@ -477,19 +511,42 @@ pub(crate) fn run_loop(
                     }
                 }
             } else {
-                handle_key(app, settings, context_menu, &mut state.popup_backend, key, state.ctrl, state.shift, &mut state.running);
+                handle_key(
+                    app,
+                    settings,
+                    context_menu,
+                    &mut state.popup_backend,
+                    key,
+                    state.ctrl,
+                    state.shift,
+                    &mut state.running,
+                );
             }
         }
 
         // Key repeat (for text editing modes)
         if let Some(key) = state.held_key {
-            if (app.renaming.is_some() || app.path_editing || app.save_name_editing || app.searching || app.sudo_prompt.is_some() || app.cloud_login.is_some())
+            if (app.renaming.is_some()
+                || app.path_editing
+                || app.save_name_editing
+                || app.searching
+                || app.sudo_prompt.is_some()
+                || app.cloud_login.is_some())
                 && std::time::Instant::now() >= state.repeat_deadline
             {
-                handle_key(app, settings, context_menu, &mut state.popup_backend, key, state.ctrl, state.shift, &mut state.running);
+                handle_key(
+                    app,
+                    settings,
+                    context_menu,
+                    &mut state.popup_backend,
+                    key,
+                    state.ctrl,
+                    state.shift,
+                    &mut state.running,
+                );
                 let interval = if state.repeat_started { 30 } else { 300 };
-                state.repeat_deadline = std::time::Instant::now()
-                    + std::time::Duration::from_millis(interval);
+                state.repeat_deadline =
+                    std::time::Instant::now() + std::time::Duration::from_millis(interval);
                 state.repeat_started = true;
                 state.frame_done = true;
             }
@@ -653,11 +710,20 @@ pub(crate) fn run_loop(
                     let prev_devices_collapsed = app.devices_collapsed;
                     let prev_favorites_len = app.sidebar_favorites().len();
                     let action = handle_click(
-                        input, app, view_menu, context_menu, &mut state.popup_backend,
-                        &mut last_tab_click, &mut tab_drag_press, &mut fav_drag_press,
-                        wf, s,
-                        lntrn_theme::background_opacity(), "",
-                        state.ctrl, state.shift,
+                        input,
+                        app,
+                        view_menu,
+                        context_menu,
+                        &mut state.popup_backend,
+                        &mut last_tab_click,
+                        &mut tab_drag_press,
+                        &mut fav_drag_press,
+                        wf,
+                        s,
+                        lntrn_theme::background_opacity(),
+                        "",
+                        state.ctrl,
+                        state.shift,
                     );
                     let mut settings_dirty = false;
                     if app.preview_open != prev_preview_open {
@@ -686,7 +752,9 @@ pub(crate) fn run_loop(
                         settings.set_view_mode(app.view_mode);
                         settings_dirty = true;
                     }
-                    if settings_dirty { settings.save(); }
+                    if settings_dirty {
+                        settings.save();
+                    }
                     match action {
                         ClickAction::None => {
                             if let Some(toplevel) = toplevel {
@@ -763,7 +831,11 @@ pub(crate) fn run_loop(
                     settings.save();
                 }
                 // Split divider drag release — persist the ratio.
-                if app.split.as_mut().map_or(false, |sp| sp.divider_drag.take().is_some()) {
+                if app
+                    .split
+                    .as_mut()
+                    .map_or(false, |sp| sp.divider_drag.take().is_some())
+                {
                     settings.split_ratio = app.split_ratio;
                     settings.save();
                 }
@@ -782,7 +854,9 @@ pub(crate) fn run_loop(
                     if let Some((_, cy)) = input.cursor() {
                         // Target slot is whichever favorite row the cursor is
                         // currently over. Off-row releases are a no-op.
-                        let target = layout.favorite_items.iter()
+                        let target = layout
+                            .favorite_items
+                            .iter()
                             .position(|r| cy >= r.y && cy < r.y + r.h);
                         if let Some(target_idx) = target {
                             if target_idx != src_idx && src_idx < app.sidebar_favorites().len() {
@@ -805,7 +879,9 @@ pub(crate) fn run_loop(
                         .tab_rects();
                     // Find which tab slot the cursor is over
                     if let Some((cursor_x, _)) = input.cursor() {
-                        let target_idx = rects.iter().position(|r| r.contains(cursor_x, r.y + r.h * 0.5))
+                        let target_idx = rects
+                            .iter()
+                            .position(|r| r.contains(cursor_x, r.y + r.h * 0.5))
                             .unwrap_or(src_idx);
                         // Only reorder among pinned tabs
                         if target_idx != src_idx
@@ -828,24 +904,29 @@ pub(crate) fn run_loop(
                     // Internal drop — sources from whichever drag kind is
                     // live. Grabbing a selected item drags the whole
                     // selection; anything else drags solo.
-                    let sources: Vec<std::path::PathBuf> = if let Some(drag_idx) = app.drag_item.take() {
-                        let selected = app.selected_paths();
-                        if selected.is_empty() || !app.entries[drag_idx].selected {
-                            vec![app.entries[drag_idx].path.clone()]
-                        } else {
-                            selected
-                        }
-                    } else if let Some(ti) = app.drag_tree_item.take() {
-                        if ti < app.tree_entries.len() {
-                            let path = app.tree_entries[ti].entry.path.clone();
+                    let sources: Vec<std::path::PathBuf> =
+                        if let Some(drag_idx) = app.drag_item.take() {
                             let selected = app.selected_paths();
-                            if selected.iter().any(|p| p == &path) { selected } else { vec![path] }
+                            if selected.is_empty() || !app.entries[drag_idx].selected {
+                                vec![app.entries[drag_idx].path.clone()]
+                            } else {
+                                selected
+                            }
+                        } else if let Some(ti) = app.drag_tree_item.take() {
+                            if ti < app.tree_entries.len() {
+                                let path = app.tree_entries[ti].entry.path.clone();
+                                let selected = app.selected_paths();
+                                if selected.iter().any(|p| p == &path) {
+                                    selected
+                                } else {
+                                    vec![path]
+                                }
+                            } else {
+                                Vec::new()
+                            }
                         } else {
                             Vec::new()
-                        }
-                    } else {
-                        Vec::new()
-                    };
+                        };
                     if !sources.is_empty() {
                         let prev_fav_len = app.sidebar_favorites().len();
                         handle_drop(app, input, wf, hf, s, sources);
@@ -867,7 +948,8 @@ pub(crate) fn run_loop(
                         if te.entry.is_dir {
                             app.toggle_tree_expand(path);
                         } else {
-                            let ext = path.extension()
+                            let ext = path
+                                .extension()
                                 .and_then(|e| e.to_str())
                                 .map(|s| s.to_lowercase())
                                 .unwrap_or_default();
@@ -875,7 +957,8 @@ pub(crate) fn run_loop(
                                 crate::desktop::launch_app(&a.exec, &path);
                             } else {
                                 std::thread::spawn(move || {
-                                    let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
+                                    let _ =
+                                        std::process::Command::new("xdg-open").arg(&path).spawn();
                                 });
                             }
                         }
@@ -920,7 +1003,16 @@ pub(crate) fn run_loop(
             // System Settings shows up without restarting the file manager.
             // (handle_right_click re-applies the scale before opening.)
             context_menu.set_style(crate::wayland::context_menu_style(palette));
-            handle_right_click(app, context_menu, &mut state.popup_backend, input, open_with_apps, wf, hf, s);
+            handle_right_click(
+                app,
+                context_menu,
+                &mut state.popup_backend,
+                input,
+                open_with_apps,
+                wf,
+                hf,
+                s,
+            );
         }
 
         // ── Popup closed by compositor ──────────────────────────────────
@@ -956,19 +1048,46 @@ pub(crate) fn run_loop(
         *palette = FoxPalette::current();
         let render_palette = palette.with_bg_opacity(opacity);
         let inline_evt = crate::render::render_frame(
-            gpu, app, input, icon_cache, file_info, &git,
-            &render_palette, s, state.maximized, view_menu, context_menu,
-            tab_drag, fav_drag, opacity, state.desktop_mode,
+            gpu,
+            app,
+            input,
+            icon_cache,
+            file_info,
+            &git,
+            &render_palette,
+            s,
+            state.maximized,
+            view_menu,
+            context_menu,
+            tab_drag,
+            fav_drag,
+            opacity,
+            state.desktop_mode,
         );
         // Handle inline context menu events (desktop mode)
         if let Some(evt) = inline_evt {
             if matches!(evt, MenuEvent::Action(_)) {
                 context_menu.close();
             }
-            if let MenuEvent::SliderChanged { id: crate::CTX_ICON_SIZE, value } = evt {
+            if let MenuEvent::SliderChanged {
+                id: crate::CTX_ICON_SIZE,
+                value,
+            } = evt
+            {
                 apply_icon_zoom(app, value, wf, hf, s);
             } else {
-                handle_ctx_event(app, settings, context_menu, &mut state.popup_backend, open_with_apps, file_info, toplevel, state.maximized, &mut state.running, evt);
+                handle_ctx_event(
+                    app,
+                    settings,
+                    context_menu,
+                    &mut state.popup_backend,
+                    open_with_apps,
+                    file_info,
+                    toplevel,
+                    state.maximized,
+                    &mut state.running,
+                    evt,
+                );
             }
         }
 
@@ -989,10 +1108,8 @@ pub(crate) fn run_loop(
                         // Live toggle + persisted as the open-time default.
                         // (Super+F11 stays a transient toggle, like the
                         // terminal's rice mode.)
-                        crate::layout::CHROME_HIDDEN.store(
-                            !checked,
-                            std::sync::atomic::Ordering::Relaxed,
-                        );
+                        crate::layout::CHROME_HIDDEN
+                            .store(!checked, std::sync::atomic::Ordering::Relaxed);
                         settings.show_titlebar = checked;
                         settings.save();
                         // Hiding the bar removes the View label the menu is
@@ -1001,10 +1118,8 @@ pub(crate) fn run_loop(
                             view_menu.close_popups(backend);
                         }
                     } else if id == crate::VIEW_SOLID_DIVIDERS_ID {
-                        crate::sections::SOLID_DIVIDERS.store(
-                            checked,
-                            std::sync::atomic::Ordering::Relaxed,
-                        );
+                        crate::sections::SOLID_DIVIDERS
+                            .store(checked, std::sync::atomic::Ordering::Relaxed);
                         settings.solid_dividers = checked;
                         settings.save();
                     }
@@ -1017,10 +1132,25 @@ pub(crate) fn run_loop(
                 if matches!(evt, MenuEvent::Action(_)) {
                     context_menu.close_popups(backend);
                 }
-                if let MenuEvent::SliderChanged { id: crate::CTX_ICON_SIZE, value } = evt {
+                if let MenuEvent::SliderChanged {
+                    id: crate::CTX_ICON_SIZE,
+                    value,
+                } = evt
+                {
                     apply_icon_zoom(app, value, wf, hf, s);
                 } else {
-                    handle_ctx_event(app, settings, context_menu, &mut state.popup_backend, open_with_apps, file_info, toplevel, state.maximized, &mut state.running, evt);
+                    handle_ctx_event(
+                        app,
+                        settings,
+                        context_menu,
+                        &mut state.popup_backend,
+                        open_with_apps,
+                        file_info,
+                        toplevel,
+                        state.maximized,
+                        &mut state.running,
+                        evt,
+                    );
                 }
             }
             // Render popup surfaces, injecting folder icon textures for swatch items
@@ -1037,7 +1167,9 @@ pub(crate) fn run_loop(
                                 let view = frame.view().clone();
                                 // Pass 1: shapes
                                 ctx.painter.render_pass(
-                                    &ctx.gpu, frame.encoder_mut(), &view,
+                                    &ctx.gpu,
+                                    frame.encoder_mut(),
+                                    &view,
                                     lntrn_render::Color::TRANSPARENT,
                                 );
                                 // Pre-load all folder color textures into cache
@@ -1052,7 +1184,9 @@ pub(crate) fn run_loop(
                                         _ => "",
                                     };
                                     icon_cache.get_or_load_folder_color(
-                                        color_name, &ctx.gpu, &ctx.tex_pass,
+                                        color_name,
+                                        &ctx.gpu,
+                                        &ctx.tex_pass,
                                     );
                                 }
                                 // Pass 2: folder icon textures (all loaded, only immutable borrows now)
@@ -1068,13 +1202,20 @@ pub(crate) fn run_loop(
                                         _ => "",
                                     };
                                     if let Some(tex) = icon_cache.get_folder_color(color_name) {
-                                        let (dx, dy, dw, dh) = crate::icons::fit_in_box(tex, ix, iy, isz, isz);
-                                        tex_draws.push(lntrn_render::TextureDraw::new(tex, dx, dy, dw, dh));
+                                        let (dx, dy, dw, dh) =
+                                            crate::icons::fit_in_box(tex, ix, iy, isz, isz);
+                                        tex_draws.push(lntrn_render::TextureDraw::new(
+                                            tex, dx, dy, dw, dh,
+                                        ));
                                     }
                                 }
                                 if !tex_draws.is_empty() {
                                     ctx.tex_pass.render_pass(
-                                        &ctx.gpu, frame.encoder_mut(), &view, &tex_draws, None,
+                                        &ctx.gpu,
+                                        frame.encoder_mut(),
+                                        &view,
+                                        &tex_draws,
+                                        None,
                                     );
                                 }
                                 // Pass 3: text
@@ -1131,7 +1272,8 @@ pub(crate) fn run_loop(
             // Keep the mtime tracker in sync so the fallback poll below
             // doesn't schedule a redundant second reload.
             last_dir_mtime = std::fs::metadata(&app.current_dir)
-                .and_then(|m| m.modified()).ok();
+                .and_then(|m| m.modified())
+                .ok();
             git.refresh(&app.current_dir);
         }
 
@@ -1153,7 +1295,8 @@ pub(crate) fn run_loop(
             // Directory changed (navigation) — reset tracker, don't reload
             last_dir_path = app.current_dir.clone();
             last_dir_mtime = std::fs::metadata(&app.current_dir)
-                .and_then(|m| m.modified()).ok();
+                .and_then(|m| m.modified())
+                .ok();
             last_dir_check = Instant::now();
         } else if last_dir_check.elapsed() >= Duration::from_secs(3) {
             last_dir_check = Instant::now();
@@ -1173,10 +1316,12 @@ pub(crate) fn run_loop(
             app.refresh_phones();
         }
 
-        needs_anim = view_menu.is_open() || context_menu.is_open()
+        needs_anim = view_menu.is_open()
+            || context_menu.is_open()
             || scroll_anim.is_some()
             || scrollbar_drag.is_some()
-            || app.drag_item.is_some() || app.drag_tree_item.is_some()
+            || app.drag_item.is_some()
+            || app.drag_tree_item.is_some()
             || app.rubber_band_start.is_some()
             || state.held_key.is_some()
             || app.search_rx.is_some()
@@ -1218,8 +1363,14 @@ fn apply_icon_zoom(app: &mut App, value: f32, wf: f32, hf: f32, s: f32) {
     app.icon_zoom = value;
     let content = content_rect(wf, hf, s);
     ScrollArea::apply_scroll(
-        &mut app.scroll_offset, 0.0,
-        grid_content_height(app.entries.len(), grid_columns(content.w, s, value), s, value),
+        &mut app.scroll_offset,
+        0.0,
+        grid_content_height(
+            app.entries.len(),
+            grid_columns(content.w, s, value),
+            s,
+            value,
+        ),
         content.h,
     );
 }
@@ -1234,8 +1385,10 @@ fn active_content_rect(app: &App, wf: f32, hf: f32, s: f32) -> lntrn_render::Rec
     } else {
         app.view_mode
     };
-    let preview_supported = matches!(view, crate::app::ViewMode::List | crate::app::ViewMode::Tree)
-        && app.split.is_none();
+    let preview_supported = matches!(
+        view,
+        crate::app::ViewMode::List | crate::app::ViewMode::Tree
+    ) && app.split.is_none();
     let preview_w = if preview_supported {
         crate::layout::preview_effective_w(full.w, app.preview_width, app.preview_open, s)
     } else {

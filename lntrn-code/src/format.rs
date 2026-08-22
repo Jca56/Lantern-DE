@@ -114,7 +114,11 @@ impl LineFormats {
         // Add the toggled spans
         for (s, e, attrs) in toggled.drain(..) {
             if !attrs.is_default() {
-                kept.push(FormatSpan { start: s, end: e, attrs });
+                kept.push(FormatSpan {
+                    start: s,
+                    end: e,
+                    attrs,
+                });
             }
         }
 

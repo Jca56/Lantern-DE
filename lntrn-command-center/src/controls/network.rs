@@ -51,8 +51,10 @@ pub fn draw_inline(
     let start_x = layout.x + (layout.w - group_w) / 2.0;
     let spark_top = layout.y + layout.h - spark_h;
 
-    let rx_color = Color::from_rgb8(RX_COLOR_RGB.0, RX_COLOR_RGB.1, RX_COLOR_RGB.2).with_alpha(alpha);
-    let tx_color = Color::from_rgb8(TX_COLOR_RGB.0, TX_COLOR_RGB.1, TX_COLOR_RGB.2).with_alpha(alpha);
+    let rx_color =
+        Color::from_rgb8(RX_COLOR_RGB.0, RX_COLOR_RGB.1, RX_COLOR_RGB.2).with_alpha(alpha);
+    let tx_color =
+        Color::from_rgb8(TX_COLOR_RGB.0, TX_COLOR_RGB.1, TX_COLOR_RGB.2).with_alpha(alpha);
 
     draw_sparkline(
         painter,
@@ -151,7 +153,11 @@ fn draw_sparkline(
         (x, y)
     };
 
-    let pts: Vec<(f32, f32)> = samples.iter().enumerate().map(|(i, v)| map_point(i, *v)).collect();
+    let pts: Vec<(f32, f32)> = samples
+        .iter()
+        .enumerate()
+        .map(|(i, v)| map_point(i, *v))
+        .collect();
 
     let mut area = pts.clone();
     area.push((rect.x + rect.w, rect.y + rect.h - pad_y));

@@ -21,11 +21,15 @@ pub struct Pos {
 }
 
 impl Pos {
-    pub fn new(line: usize, col: usize) -> Self { Self { line, col } }
+    pub fn new(line: usize, col: usize) -> Self {
+        Self { line, col }
+    }
 }
 
 impl PartialOrd for Pos {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> { Some(self.cmp(other)) }
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 impl Ord for Pos {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
@@ -99,7 +103,9 @@ impl Editor {
         }
     }
 
-    fn cursor_pos(&self) -> Pos { Pos::new(self.cursor_line, self.cursor_col) }
+    fn cursor_pos(&self) -> Pos {
+        Pos::new(self.cursor_line, self.cursor_col)
+    }
 
     fn set_cursor(&mut self, p: Pos) {
         self.cursor_line = p.line;
@@ -112,8 +118,14 @@ impl Editor {
     pub fn selection_range(&self) -> Option<(Pos, Pos)> {
         let anchor = self.sel_anchor?;
         let cursor = self.cursor_pos();
-        if anchor == cursor { return None; }
-        Some(if anchor < cursor { (anchor, cursor) } else { (cursor, anchor) })
+        if anchor == cursor {
+            return None;
+        }
+        Some(if anchor < cursor {
+            (anchor, cursor)
+        } else {
+            (cursor, anchor)
+        })
     }
 
     pub fn has_selection(&self) -> bool {
@@ -178,12 +190,16 @@ impl Editor {
         }
         self.push_undo();
         if start.line == end.line {
-            self.formats.get_mut(start.line).delete_range(start.col, end.col);
+            self.formats
+                .get_mut(start.line)
+                .delete_range(start.col, end.col);
             self.lines[start.line].replace_range(start.col..end.col, "");
         } else {
             // Delete from start.col to end of start line in formats
             let start_line_len = self.lines[start.line].len();
-            self.formats.get_mut(start.line).delete_range(start.col, start_line_len);
+            self.formats
+                .get_mut(start.line)
+                .delete_range(start.col, start_line_len);
             // Delete from 0 to end.col in end line, then grab remaining formats
             self.formats.get_mut(end.line).delete_range(0, end.col);
             let end_fmts = self.formats.remove_line(end.line);
@@ -193,7 +209,9 @@ impl Editor {
             }
             // Append end line formats to start line
             let start_len_after = start.col; // start line was truncated to start.col
-            self.formats.get_mut(start.line).append(end_fmts, start_len_after);
+            self.formats
+                .get_mut(start.line)
+                .append(end_fmts, start_len_after);
 
             let tail = self.lines[end.line][end.col..].to_string();
             self.lines[start.line].truncate(start.col);
@@ -242,7 +260,10 @@ impl Editor {
         }
         let attrs = self.pending_attrs.unwrap_or_else(|| self.typing_attrs());
         if ch == '\n' {
-            let right_fmts = self.formats.get_mut(self.cursor_line).split_at(self.cursor_col);
+            let right_fmts = self
+                .formats
+                .get_mut(self.cursor_line)
+                .split_at(self.cursor_col);
             let rest = self.lines[self.cursor_line][self.cursor_col..].to_string();
             self.lines[self.cursor_line].truncate(self.cursor_col);
             self.cursor_line += 1;
@@ -251,10 +272,16 @@ impl Editor {
             self.cursor_col = 0;
             // Carry the insertion format onto the new line, where there is
             // no left-hand char to inherit from.
-            self.pending_attrs = if attrs.is_default() { None } else { Some(attrs) };
+            self.pending_attrs = if attrs.is_default() {
+                None
+            } else {
+                Some(attrs)
+            };
         } else {
             let len = ch.len_utf8();
-            self.formats.get_mut(self.cursor_line).insert_formatted(self.cursor_col, len, attrs);
+            self.formats
+                .get_mut(self.cursor_line)
+                .insert_formatted(self.cursor_col, len, attrs);
             self.lines[self.cursor_line].insert(self.cursor_col, ch);
             self.cursor_col += len;
         }
@@ -281,9 +308,11 @@ impl Editor {
         let mut segments = s.split('\n');
         let first = segments.next().unwrap_or("");
         if !first.is_empty() {
-            self.formats
-                .get_mut(self.cursor_line)
-                .insert_formatted(self.cursor_col, first.len(), inherited);
+            self.formats.get_mut(self.cursor_line).insert_formatted(
+                self.cursor_col,
+                first.len(),
+                inherited,
+            );
             self.lines[self.cursor_line].insert_str(self.cursor_col, first);
             self.cursor_col += first.len();
         }
@@ -296,7 +325,10 @@ impl Editor {
         // tail (text + formats) moves to the end of the last pasted segment.
         // Every new line inherits the origin line's paragraph attrs, matching
         // what repeated `insert_char('\n')` calls produced.
-        let right_fmts = self.formats.get_mut(self.cursor_line).split_at(self.cursor_col);
+        let right_fmts = self
+            .formats
+            .get_mut(self.cursor_line)
+            .split_at(self.cursor_col);
         let tail = self.lines[self.cursor_line][self.cursor_col..].to_string();
         self.lines[self.cursor_line].truncate(self.cursor_col);
         let para = self.formats.get(self.cursor_line).para;
@@ -341,7 +373,9 @@ impl Editor {
                 .last()
                 .map(|(i, _)| i)
                 .unwrap_or(0);
-            self.formats.get_mut(self.cursor_line).delete_range(prev, self.cursor_col);
+            self.formats
+                .get_mut(self.cursor_line)
+                .delete_range(prev, self.cursor_col);
             self.lines[self.cursor_line].remove(prev);
             self.cursor_col = prev;
             self.modified = true;
@@ -350,7 +384,9 @@ impl Editor {
             let removed = self.lines.remove(self.cursor_line);
             self.cursor_line -= 1;
             self.cursor_col = self.lines[self.cursor_line].len();
-            self.formats.get_mut(self.cursor_line).append(removed_fmts, self.cursor_col);
+            self.formats
+                .get_mut(self.cursor_line)
+                .append(removed_fmts, self.cursor_col);
             self.lines[self.cursor_line].push_str(&removed);
             self.modified = true;
         }
@@ -365,8 +401,12 @@ impl Editor {
         let line_len = self.lines[self.cursor_line].len();
         if self.cursor_col < line_len {
             let ch_len = self.lines[self.cursor_line][self.cursor_col..]
-                .chars().next().map(|c| c.len_utf8()).unwrap_or(1);
-            self.formats.get_mut(self.cursor_line)
+                .chars()
+                .next()
+                .map(|c| c.len_utf8())
+                .unwrap_or(1);
+            self.formats
+                .get_mut(self.cursor_line)
                 .delete_range(self.cursor_col, self.cursor_col + ch_len);
             self.lines[self.cursor_line].remove(self.cursor_col);
             self.modified = true;
@@ -374,7 +414,9 @@ impl Editor {
             let next_fmts = self.formats.remove_line(self.cursor_line + 1);
             let next = self.lines.remove(self.cursor_line + 1);
             let cur_len = self.lines[self.cursor_line].len();
-            self.formats.get_mut(self.cursor_line).append(next_fmts, cur_len);
+            self.formats
+                .get_mut(self.cursor_line)
+                .append(next_fmts, cur_len);
             self.lines[self.cursor_line].push_str(&next);
             self.modified = true;
         }
@@ -384,7 +426,11 @@ impl Editor {
     // format toggle belongs to the position where it was toggled. ──────────
 
     pub fn move_left(&mut self, selecting: bool) {
-        if selecting { self.begin_selection(); } else { self.clear_selection(); }
+        if selecting {
+            self.begin_selection();
+        } else {
+            self.clear_selection();
+        }
         self.pending_attrs = None;
         if self.cursor_col > 0 {
             let prev = self.lines[self.cursor_line][..self.cursor_col]
@@ -400,7 +446,11 @@ impl Editor {
     }
 
     pub fn move_right(&mut self, selecting: bool) {
-        if selecting { self.begin_selection(); } else { self.clear_selection(); }
+        if selecting {
+            self.begin_selection();
+        } else {
+            self.clear_selection();
+        }
         self.pending_attrs = None;
         let line_len = self.lines[self.cursor_line].len();
         if self.cursor_col < line_len {
@@ -417,7 +467,11 @@ impl Editor {
     }
 
     pub fn move_up(&mut self, selecting: bool) {
-        if selecting { self.begin_selection(); } else { self.clear_selection(); }
+        if selecting {
+            self.begin_selection();
+        } else {
+            self.clear_selection();
+        }
         self.pending_attrs = None;
         if self.cursor_line > 0 {
             self.cursor_line -= 1;
@@ -426,7 +480,11 @@ impl Editor {
     }
 
     pub fn move_down(&mut self, selecting: bool) {
-        if selecting { self.begin_selection(); } else { self.clear_selection(); }
+        if selecting {
+            self.begin_selection();
+        } else {
+            self.clear_selection();
+        }
         self.pending_attrs = None;
         if self.cursor_line + 1 < self.lines.len() {
             self.cursor_line += 1;
@@ -435,13 +493,21 @@ impl Editor {
     }
 
     pub fn home(&mut self, selecting: bool) {
-        if selecting { self.begin_selection(); } else { self.clear_selection(); }
+        if selecting {
+            self.begin_selection();
+        } else {
+            self.clear_selection();
+        }
         self.pending_attrs = None;
         self.cursor_col = 0;
     }
 
     pub fn end(&mut self, selecting: bool) {
-        if selecting { self.begin_selection(); } else { self.clear_selection(); }
+        if selecting {
+            self.begin_selection();
+        } else {
+            self.clear_selection();
+        }
         self.pending_attrs = None;
         self.cursor_col = self.lines[self.cursor_line].len();
     }
@@ -484,9 +550,8 @@ impl Editor {
     pub fn selection_format_state(&self) -> TextAttrs {
         if let Some((start, end)) = self.selection_range() {
             let line_lens: Vec<usize> = self.lines.iter().map(|l| l.len()).collect();
-            self.formats.query_uniform_range(
-                start.line, start.col, end.line, end.col, &line_lens,
-            )
+            self.formats
+                .query_uniform_range(start.line, start.col, end.line, end.col, &line_lens)
         } else if let Some(pending) = self.pending_attrs {
             pending
         } else {

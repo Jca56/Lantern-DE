@@ -52,7 +52,6 @@ pub fn draw_content_grid(
         // Dim the item being dragged but keep it in place (ghost follows cursor)
         let alpha = if is_dragging { 0.3 } else { 1.0 };
 
-
         // Highlight matches the tight hitbox, not the full cell, so the
         // hover/selection pill hugs the icon like the clickable area does.
         let item_rect = crate::layout::item_hit_rect(Rect::new(x, y, isz, isz), s, zoom);
@@ -79,19 +78,72 @@ pub fn draw_content_grid(
                 painter.rect_filled(tab, 2.0 * s, palette.accent.with_alpha(0.3 * alpha));
                 painter.rect_stroke(tab, 2.0 * s, 1.5 * s, palette.accent.with_alpha(alpha));
             } else {
-                let page = Rect::new(icon_x + 4.0 * s, icon_y + 2.0 * s, icsz - 8.0 * s, icsz - 4.0 * s);
-                painter.rect_filled(page, 3.0 * s, Color::from_rgb8(72, 72, 72).with_alpha(alpha));
-                painter.rect_stroke(page, 3.0 * s, 1.5 * s, Color::from_rgb8(102, 102, 102).with_alpha(alpha));
+                let page = Rect::new(
+                    icon_x + 4.0 * s,
+                    icon_y + 2.0 * s,
+                    icsz - 8.0 * s,
+                    icsz - 4.0 * s,
+                );
+                painter.rect_filled(
+                    page,
+                    3.0 * s,
+                    Color::from_rgb8(72, 72, 72).with_alpha(alpha),
+                );
+                painter.rect_stroke(
+                    page,
+                    3.0 * s,
+                    1.5 * s,
+                    Color::from_rgb8(102, 102, 102).with_alpha(alpha),
+                );
                 let fold_x = icon_x + icsz - 16.0 * s;
                 let fold_y = icon_y + 2.0 * s;
-                painter.rect_filled(Rect::new(fold_x, fold_y, 12.0 * s, 12.0 * s), 0.0, palette.surface.with_alpha(alpha));
-                painter.line(fold_x, fold_y, fold_x, fold_y + 12.0 * s, 1.0 * s, Color::from_rgb8(102, 102, 102).with_alpha(alpha));
-                painter.line(fold_x, fold_y + 12.0 * s, fold_x + 12.0 * s, fold_y + 12.0 * s, 1.0 * s, Color::from_rgb8(102, 102, 102).with_alpha(alpha));
+                painter.rect_filled(
+                    Rect::new(fold_x, fold_y, 12.0 * s, 12.0 * s),
+                    0.0,
+                    palette.surface.with_alpha(alpha),
+                );
+                painter.line(
+                    fold_x,
+                    fold_y,
+                    fold_x,
+                    fold_y + 12.0 * s,
+                    1.0 * s,
+                    Color::from_rgb8(102, 102, 102).with_alpha(alpha),
+                );
+                painter.line(
+                    fold_x,
+                    fold_y + 12.0 * s,
+                    fold_x + 12.0 * s,
+                    fold_y + 12.0 * s,
+                    1.0 * s,
+                    Color::from_rgb8(102, 102, 102).with_alpha(alpha),
+                );
                 let lx = icon_x + 10.0 * s;
                 let lw = icsz - 24.0 * s;
-                painter.line(lx, icon_y + 20.0*s, lx + lw, icon_y + 20.0*s, 1.5*s, palette.accent.with_alpha(0.6 * alpha));
-                painter.line(lx, icon_y + 26.0*s, lx + lw*0.8, icon_y + 26.0*s, 1.5*s, Color::from_rgb8(224, 90, 138).with_alpha(0.6 * alpha));
-                painter.line(lx, icon_y + 32.0*s, lx + lw*0.6, icon_y + 32.0*s, 1.5*s, Color::from_rgb8(155, 93, 229).with_alpha(0.6 * alpha));
+                painter.line(
+                    lx,
+                    icon_y + 20.0 * s,
+                    lx + lw,
+                    icon_y + 20.0 * s,
+                    1.5 * s,
+                    palette.accent.with_alpha(0.6 * alpha),
+                );
+                painter.line(
+                    lx,
+                    icon_y + 26.0 * s,
+                    lx + lw * 0.8,
+                    icon_y + 26.0 * s,
+                    1.5 * s,
+                    Color::from_rgb8(224, 90, 138).with_alpha(0.6 * alpha),
+                );
+                painter.line(
+                    lx,
+                    icon_y + 32.0 * s,
+                    lx + lw * 0.6,
+                    icon_y + 32.0 * s,
+                    1.5 * s,
+                    Color::from_rgb8(155, 93, 229).with_alpha(0.6 * alpha),
+                );
             }
         }
 
@@ -106,8 +158,21 @@ pub fn draw_content_grid(
             let r = 6.0 * s;
             let cx = icon_x + icsz - r * 0.6;
             let cy = icon_y + icsz - r * 0.6;
-            painter.rect_filled(Rect::new(cx - r - 1.5 * s, cy - r - 1.5 * s, (r + 1.5 * s) * 2.0, (r + 1.5 * s) * 2.0), r + 1.5 * s, palette.surface.with_alpha(alpha));
-            painter.rect_filled(Rect::new(cx - r, cy - r, r * 2.0, r * 2.0), r, color.with_alpha(alpha));
+            painter.rect_filled(
+                Rect::new(
+                    cx - r - 1.5 * s,
+                    cy - r - 1.5 * s,
+                    (r + 1.5 * s) * 2.0,
+                    (r + 1.5 * s) * 2.0,
+                ),
+                r + 1.5 * s,
+                palette.surface.with_alpha(alpha),
+            );
+            painter.rect_filled(
+                Rect::new(cx - r, cy - r, r * 2.0, r * 2.0),
+                r,
+                color.with_alpha(alpha),
+            );
         }
 
         let label_y = y + top_pad + icsz + 2.0 * s;
@@ -116,7 +181,9 @@ pub fn draw_content_grid(
         let char_w = label_font * 0.52;
 
         // Skip label for item being renamed (TextInput draws instead)
-        if renaming == Some(index) { continue; }
+        if renaming == Some(index) {
+            continue;
+        }
 
         // Only draw text if the label is within the visible content area
         if label_y >= content_top && label_y + label_font <= content_bottom {
@@ -145,7 +212,6 @@ pub fn draw_content_grid(
                     .draw(text, screen.0, screen.1);
             }
         }
-
     }
 
     area.end(painter, text);

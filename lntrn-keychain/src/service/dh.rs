@@ -19,8 +19,7 @@ type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
 type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
 
 /// RFC 2409 §6.2 — 1024-bit MODP group prime, hex.
-const RFC2409_PRIME_HEX: &str =
-    "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E08\
+const RFC2409_PRIME_HEX: &str = "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E08\
      8A67CC74020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B\
      302B0A6DF25F14374FE1356D6D51C245E485B576625E7EC6F44C42E9\
      A637ED6B0BFF5CB6F406B7EDEE386BFB5A899FA5AE9F24117C4B1FE6\
@@ -32,7 +31,10 @@ fn g() -> BigUint {
 }
 
 fn p() -> BigUint {
-    let trimmed: String = RFC2409_PRIME_HEX.chars().filter(|c| !c.is_whitespace()).collect();
+    let trimmed: String = RFC2409_PRIME_HEX
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
     BigUint::from_str_radix(&trimmed, 16).expect("hardcoded prime parses")
 }
 
@@ -147,8 +149,17 @@ mod tests {
     #[test]
     fn rejects_trivial_peer_pub() {
         let server = generate_server_secret();
-        assert!(matches!(derive_shared_key(&server, &[]), Err(Error::BadInput)));
-        assert!(matches!(derive_shared_key(&server, &[0]), Err(Error::BadInput)));
-        assert!(matches!(derive_shared_key(&server, &[1]), Err(Error::BadInput)));
+        assert!(matches!(
+            derive_shared_key(&server, &[]),
+            Err(Error::BadInput)
+        ));
+        assert!(matches!(
+            derive_shared_key(&server, &[0]),
+            Err(Error::BadInput)
+        ));
+        assert!(matches!(
+            derive_shared_key(&server, &[1]),
+            Err(Error::BadInput)
+        ));
     }
 }

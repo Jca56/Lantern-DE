@@ -67,12 +67,11 @@ impl OutputManagerClient {
 
     /// Find available resolutions for a head (deduplicated).
     pub fn resolutions_for_head(&self, head_idx: usize) -> Vec<(i32, i32)> {
-        let Some(head) = self.heads.get(head_idx) else { return Vec::new() };
-        let mut resolutions: Vec<(i32, i32)> = head
-            .modes
-            .iter()
-            .map(|m| (m.width, m.height))
-            .collect();
+        let Some(head) = self.heads.get(head_idx) else {
+            return Vec::new();
+        };
+        let mut resolutions: Vec<(i32, i32)> =
+            head.modes.iter().map(|m| (m.width, m.height)).collect();
         resolutions.sort_by(|a, b| (b.0 * b.1).cmp(&(a.0 * a.1))); // highest first
         resolutions.dedup();
         resolutions
@@ -85,7 +84,9 @@ impl OutputManagerClient {
         width: i32,
         height: i32,
     ) -> Vec<(i32, usize)> {
-        let Some(head) = self.heads.get(head_idx) else { return Vec::new() };
+        let Some(head) = self.heads.get(head_idx) else {
+            return Vec::new();
+        };
         let mut rates: Vec<(i32, usize)> = head
             .modes
             .iter()
@@ -111,15 +112,16 @@ pub struct HeadChange {
     pub enabled: Option<bool>,
 }
 
-pub fn apply_config(
-    state: &State,
-    qh: &QueueHandle<State>,
-    changes: &[HeadChange],
-) {
-    let Some(mgr) = &state.output_mgr.manager else { return };
-    let config: ZwlrOutputConfigurationV1 = mgr.create_configuration(state.output_mgr.serial, qh, ());
+pub fn apply_config(state: &State, qh: &QueueHandle<State>, changes: &[HeadChange]) {
+    let Some(mgr) = &state.output_mgr.manager else {
+        return;
+    };
+    let config: ZwlrOutputConfigurationV1 =
+        mgr.create_configuration(state.output_mgr.serial, qh, ());
     for change in changes {
-        let Some(head) = state.output_mgr.heads.get(change.head_idx) else { continue };
+        let Some(head) = state.output_mgr.heads.get(change.head_idx) else {
+            continue;
+        };
 
         // Switching the monitor off: disable_head and move on — no mode /
         // position / scale applies to a disabled output.
@@ -128,8 +130,7 @@ pub fn apply_config(
             continue;
         }
 
-        let head_config: ZwlrOutputConfigurationHeadV1 =
-            config.enable_head(&head.head_obj, qh, ());
+        let head_config: ZwlrOutputConfigurationHeadV1 = config.enable_head(&head.head_obj, qh, ());
         if let Some(mode_idx) = change.mode_idx {
             if let Some(mode) = head.modes.get(mode_idx) {
                 head_config.set_mode(&mode.mode_obj);
@@ -199,7 +200,6 @@ impl Dispatch<ZwlrOutputHeadV1, ()> for State {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
-
         // Resolve which list this head lives in. Property updates the
         // compositor sends to an already-committed head (e.g. the position/
         // scale events emitted right after a config apply) must be applied to

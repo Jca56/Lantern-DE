@@ -1,5 +1,4 @@
 ///! Raw btrfs ioctls — CoW snapshots without shelling out to btrfs-progs.
-
 use std::ffi::CString;
 use std::io;
 use std::os::fd::AsRawFd;
@@ -62,12 +61,12 @@ fn open_dir(path: &Path) -> io::Result<std::fs::File> {
 }
 
 fn split_parent_name(path: &Path) -> io::Result<(&Path, &std::ffi::OsStr)> {
-    let parent = path.parent().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "path has no parent")
-    })?;
-    let name = path.file_name().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "path has no file name")
-    })?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no parent"))?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?;
     if name.as_bytes().len() > BTRFS_SUBVOL_NAME_MAX {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "name too long"));
     }
@@ -127,7 +126,9 @@ pub fn mount_info_for(mount_point: &Path) -> Option<MountInfo> {
     let want = mount_point.to_str()?;
     for line in content.lines() {
         // <id> <parent> <maj:min> <subvol-root> <mount-point> <opts> ... - <fstype> <device> <super-opts>
-        let Some((pre, post)) = line.split_once(" - ") else { continue };
+        let Some((pre, post)) = line.split_once(" - ") else {
+            continue;
+        };
         let pre_fields: Vec<&str> = pre.split(' ').collect();
         if pre_fields.len() < 5 {
             continue;
@@ -155,14 +156,18 @@ pub fn nearest_mount_point(path: &Path) -> Option<PathBuf> {
     let content = std::fs::read_to_string("/proc/self/mountinfo").ok()?;
     let mut best: Option<PathBuf> = None;
     for line in content.lines() {
-        let Some((pre, _)) = line.split_once(" - ") else { continue };
+        let Some((pre, _)) = line.split_once(" - ") else {
+            continue;
+        };
         let pre_fields: Vec<&str> = pre.split(' ').collect();
         if pre_fields.len() < 5 {
             continue;
         }
         let mp = PathBuf::from(unescape(pre_fields[4]));
         if resolved.starts_with(&mp)
-            && best.as_ref().map_or(true, |b| mp.components().count() > b.components().count())
+            && best
+                .as_ref()
+                .map_or(true, |b| mp.components().count() > b.components().count())
         {
             best = Some(mp);
         }

@@ -39,7 +39,11 @@ pub struct CanvasView {
 
 impl Default for CanvasView {
     fn default() -> Self {
-        Self { zoom: 1.0, pan_x: 0.0, pan_y: 0.0 }
+        Self {
+            zoom: 1.0,
+            pan_x: 0.0,
+            pan_y: 0.0,
+        }
     }
 }
 

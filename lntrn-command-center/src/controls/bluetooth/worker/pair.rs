@@ -23,8 +23,8 @@ pub(super) fn interactive_pair(
 ) {
     use std::io::{BufRead, BufReader, Write};
     use std::process::Stdio;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
 
     let mut child = match Command::new("bluetoothctl")
         .stdin(Stdio::piped())
@@ -76,9 +76,7 @@ pub(super) fn interactive_pair(
                 if done.load(Ordering::Relaxed) {
                     break;
                 }
-                if line.to_lowercase().contains("fail")
-                    || line.to_lowercase().contains("error")
-                {
+                if line.to_lowercase().contains("fail") || line.to_lowercase().contains("error") {
                     let _ = line_tx.send(LineEvent::Failed(line));
                 }
             }
@@ -123,7 +121,9 @@ pub(super) fn interactive_pair(
                     let _ = writeln!(stdin, "trust {}", mac);
                     let _ = writeln!(stdin, "connect {}", mac);
                     let _ = stdin.flush();
-                    let _ = tx.send(BtEvent::PairDone { mac: mac.to_string() });
+                    let _ = tx.send(BtEvent::PairDone {
+                        mac: mac.to_string(),
+                    });
                     break 'session;
                 }
                 LineEvent::Failed(msg) => {
@@ -205,9 +205,7 @@ fn parse_pair_line(line: &str) -> Option<LineEvent> {
             let pk = after.split_whitespace().next().unwrap_or("").to_string();
             return Some(LineEvent::Prompt(PairPromptKind::Confirm(pk)));
         }
-        if rest.starts_with("Enter passkey")
-            || rest.starts_with("Enter PIN code")
-        {
+        if rest.starts_with("Enter passkey") || rest.starts_with("Enter PIN code") {
             return Some(LineEvent::Prompt(PairPromptKind::Enter));
         }
         if let Some(after) = rest.strip_prefix("Authorize service") {

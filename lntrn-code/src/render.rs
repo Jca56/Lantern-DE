@@ -9,16 +9,16 @@ use crate::find_bar::{draw_find_bar, match_color, FindBar};
 use crate::lsp::{self, ui_render as lsp_ui};
 use crate::minimap;
 use crate::scrollbar;
-use crate::term_panel::TermPanel;
 use crate::sidebar::{draw_sidebar, Sidebar, SIDEBAR_W};
 use crate::syntax::{draw_chunk_with_syntax, tokenize_line};
 use crate::tab_strip::{draw_tab_strip, TabDragState, TabLabel, TAB_STRIP_H};
+use crate::term_panel::TermPanel;
 use crate::theme::Theme;
 use crate::title_bar::{draw_window_controls, title_content_rect, TITLE_BAR_H};
 use crate::{
-    Gpu, MENU_NEW, MENU_OPEN, MENU_RUN, MENU_SAVE, MENU_SAVE_AS, MENU_THEME_DARK,
-    MENU_THEME_NIGHT, MENU_THEME_PAPER, MENU_TOGGLE_MINIMAP, MENU_TOGGLE_TERMINAL, MENU_TOGGLE_WRAP,
-    ZONE_EDITOR, ZONE_EDITOR_SCROLL_THUMB, ZONE_MINIMAP, ZONE_SIDEBAR_SCROLL_THUMB, ZONE_TERM,
+    Gpu, MENU_NEW, MENU_OPEN, MENU_RUN, MENU_SAVE, MENU_SAVE_AS, MENU_THEME_DARK, MENU_THEME_NIGHT,
+    MENU_THEME_PAPER, MENU_TOGGLE_MINIMAP, MENU_TOGGLE_TERMINAL, MENU_TOGGLE_WRAP, ZONE_EDITOR,
+    ZONE_EDITOR_SCROLL_THUMB, ZONE_MINIMAP, ZONE_SIDEBAR_SCROLL_THUMB, ZONE_TERM,
 };
 
 pub const STATUS_BAR_H: f32 = 30.0;
@@ -60,9 +60,7 @@ pub fn file_menu_items() -> Vec<(&'static str, Vec<MenuItem>)> {
         ),
         (
             "Run",
-            vec![
-                MenuItem::action_with(MENU_RUN, "Run File", "F5"),
-            ],
+            vec![MenuItem::action_with(MENU_RUN, "Run File", "F5")],
         ),
     ]
 }
@@ -164,8 +162,17 @@ pub fn render_frame(
     } else {
         (full_er, None)
     };
-    let minimap_w = if minimap_visible { minimap::MINIMAP_W * s } else { 0.0 };
-    let er = Rect::new(editor_full.x, editor_full.y, (editor_full.w - minimap_w).max(0.0), editor_full.h);
+    let minimap_w = if minimap_visible {
+        minimap::MINIMAP_W * s
+    } else {
+        0.0
+    };
+    let er = Rect::new(
+        editor_full.x,
+        editor_full.y,
+        (editor_full.w - minimap_w).max(0.0),
+        editor_full.h,
+    );
     let minimap_rect = Rect::new(er.x + er.w, er.y, minimap_w, er.h);
     input.add_zone(ZONE_EDITOR, er);
     if let Some(rect) = term_rect {
@@ -202,7 +209,9 @@ pub fn render_frame(
     let first_doc = if vis_offsets.is_empty() {
         0
     } else {
-        vis_offsets.partition_point(|&o| o <= first_vis_row).saturating_sub(1)
+        vis_offsets
+            .partition_point(|&o| o <= first_vis_row)
+            .saturating_sub(1)
     };
     let last_doc = if vis_offsets.is_empty() {
         0
@@ -242,8 +251,8 @@ pub fn render_frame(
                 let hl_end = sel_finish.min(row_end);
                 if hl_start >= hl_end {
                     if i != sel_end.line && row_idx == wraps.len() - 1 && sel_finish >= row_end {
-                        let x_end =
-                            content_x + measure_range(text, editor, i, row_start, row_end, font_size);
+                        let x_end = content_x
+                            + measure_range(text, editor, i, row_start, row_end, font_size);
                         painter.rect_filled(
                             Rect::new(x_end, y, font_size * 0.4, line_h),
                             0.0,
@@ -253,16 +262,14 @@ pub fn render_frame(
                     continue;
                 }
 
-                let x1 =
-                    content_x + measure_range(text, editor, i, row_start, hl_start, font_size);
-                let x2 =
-                    content_x + measure_range(text, editor, i, row_start, hl_end, font_size);
-                let extra =
-                    if i != sel_end.line && row_idx == wraps.len() - 1 && hl_end == line_len {
-                        font_size * 0.4
-                    } else {
-                        0.0
-                    };
+                let x1 = content_x + measure_range(text, editor, i, row_start, hl_start, font_size);
+                let x2 = content_x + measure_range(text, editor, i, row_start, hl_end, font_size);
+                let extra = if i != sel_end.line && row_idx == wraps.len() - 1 && hl_end == line_len
+                {
+                    font_size * 0.4
+                } else {
+                    0.0
+                };
                 if x2 > x1 || extra > 0.0 {
                     painter.rect_filled(
                         Rect::new(x1, y, (x2 - x1) + extra, line_h),
@@ -296,10 +303,10 @@ pub fn render_frame(
                 }
                 let hl_start = m.start.max(row_start);
                 let hl_end = m.end.min(row_end);
-                let x1 = content_x
-                    + measure_range(text, editor, m.line, row_start, hl_start, font_size);
-                let x2 = content_x
-                    + measure_range(text, editor, m.line, row_start, hl_end, font_size);
+                let x1 =
+                    content_x + measure_range(text, editor, m.line, row_start, hl_start, font_size);
+                let x2 =
+                    content_x + measure_range(text, editor, m.line, row_start, hl_end, font_size);
                 if x2 > x1 {
                     painter.rect_filled(
                         Rect::new(x1, y, x2 - x1, line_h),
@@ -364,7 +371,14 @@ pub fn render_frame(
                     let guide_h = wraps.len() as f32 * line_h;
                     for lvl in 0..indent_levels {
                         let gx = content_x + lvl as f32 * tab_w;
-                        painter.line(gx, y, gx, y + guide_h, 1.0 * s, theme.indent_guide_color(lvl));
+                        painter.line(
+                            gx,
+                            y,
+                            gx,
+                            y + guide_h,
+                            1.0 * s,
+                            theme.indent_guide_color(lvl),
+                        );
                     }
                 }
             }
@@ -427,8 +441,21 @@ pub fn render_frame(
                 for (seg_start, seg_end, is_bracket) in segments {
                     let seg_weight = if is_bracket { FontWeight::Bold } else { weight };
                     let seg_w = draw_chunk_with_syntax(
-                        text, line_str, seg_start, seg_end, &line_tokens, default_color, theme,
-                        fs, x, y, seg_weight, style, content_max_w, w, h,
+                        text,
+                        line_str,
+                        seg_start,
+                        seg_end,
+                        &line_tokens,
+                        default_color,
+                        theme,
+                        fs,
+                        x,
+                        y,
+                        seg_weight,
+                        style,
+                        content_max_w,
+                        w,
+                        h,
                     );
                     x += seg_w;
                 }
@@ -476,7 +503,16 @@ pub fn render_frame(
     // ── Editor scrollbar ──────────────────────────────────────────────
     // Minimap replaces the scrollbar when visible.
     if minimap_visible {
-        minimap::draw_minimap(painter, editor, input, minimap_rect, theme, pal, s, ZONE_MINIMAP);
+        minimap::draw_minimap(
+            painter,
+            editor,
+            input,
+            minimap_rect,
+            theme,
+            pal,
+            s,
+            ZONE_MINIMAP,
+        );
     } else {
         scrollbar::draw_editor_scrollbar(editor, painter, input, er, s, ZONE_EDITOR_SCROLL_THUMB);
     }
@@ -514,7 +550,18 @@ pub fn render_frame(
         .map(|p| lsp_manager.diagnostic_counts(&lsp::path_to_uri(p)))
         .unwrap_or((0, 0, 0, 0));
     crate::status_bar::draw_status_bar(
-        editor, painter, text, input, pal, wf, hf, s, w, h, diag_summary, lsp_status,
+        editor,
+        painter,
+        text,
+        input,
+        pal,
+        wf,
+        hf,
+        s,
+        w,
+        h,
+        diag_summary,
+        lsp_status,
     );
 
     // ── Context menu (dropdown from menu bar) — overlay layer ──────────
@@ -534,7 +581,13 @@ pub fn render_frame(
             let view = frame.view().clone();
 
             // Layer 0: base shapes + text
-            painter.render_layer(0, ctx, frame.encoder_mut(), &view, Some(Color::rgba(0.0, 0.0, 0.0, 0.0)));
+            painter.render_layer(
+                0,
+                ctx,
+                frame.encoder_mut(),
+                &view,
+                Some(Color::rgba(0.0, 0.0, 0.0, 0.0)),
+            );
             text.render_layer(0, ctx, frame.encoder_mut(), &view);
 
             // Flush so glyphon's prepare() for layer 1 doesn't overwrite layer 0 vertices
@@ -582,4 +635,3 @@ pub fn render_frame(
 
     (menu_event, tab_edges)
 }
-

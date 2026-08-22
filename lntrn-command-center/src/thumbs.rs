@@ -80,8 +80,18 @@ impl CcThumbsClient {
             match &s.close {
                 Some(c) => buf.push_str(&format!(
                     "thumb:{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
-                    app_id, title, s.instance, s.x, s.y, s.w, s.h,
-                    c.x, c.y, c.w, c.h, if c.hovered { 1 } else { 0 }
+                    app_id,
+                    title,
+                    s.instance,
+                    s.x,
+                    s.y,
+                    s.w,
+                    s.h,
+                    c.x,
+                    c.y,
+                    c.w,
+                    c.h,
+                    if c.hovered { 1 } else { 0 }
                 )),
                 None => buf.push_str(&format!(
                     "thumb:{}\t{}\t{}\t{}\t{}\t{}\t{}\n",

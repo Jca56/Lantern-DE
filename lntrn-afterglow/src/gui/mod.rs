@@ -22,9 +22,9 @@ use winit::window::{CursorIcon, ResizeDirection, Window, WindowAttributes, Windo
 use lntrn_render::{GpuContext, Painter, TextRenderer};
 use lntrn_ui::gpu::{FoxPalette, InteractionContext};
 
+use lntrn_afterglow::config_path;
 use lntrn_afterglow::ipc::{Client, CpuTuning, Info, Snapshot};
 use lntrn_afterglow::profile::{save as save_profile, Profile};
-use lntrn_afterglow::config_path;
 
 use pending::{
     Knob, Pending, ZONE_APPLY, ZONE_EPP, ZONE_GOV, ZONE_RESET, ZONE_SAVE, ZONE_TAB_MONITOR,
@@ -225,7 +225,9 @@ impl App {
 
     fn drag_slider(&mut self, cx: f32) {
         let Some(knob) = self.dragging else { return };
-        let Some(info) = self.info.clone() else { return };
+        let Some(info) = self.info.clone() else {
+            return;
+        };
         let (wf, hf) = self.window_size_f();
         let lay = tune::layout(&info, wf, hf, self.scale);
         if let Some((_, track)) = lay.sliders.iter().find(|(k, _)| *k == knob) {
@@ -316,8 +318,8 @@ impl ApplicationHandler for App {
         self.scale = window.scale_factor() as f32;
 
         let phys = window.inner_size();
-        let ctx = GpuContext::from_window(&window, phys.width, phys.height)
-            .expect("create GPU context");
+        let ctx =
+            GpuContext::from_window(&window, phys.width, phys.height).expect("create GPU context");
         self.gpu = Some(Gpu {
             painter: Painter::new(&ctx),
             text: TextRenderer::new(&ctx),
@@ -357,7 +359,8 @@ impl ApplicationHandler for App {
             }
 
             WindowEvent::CursorMoved { position, .. } => {
-                self.input.on_cursor_moved(position.x as f32, position.y as f32);
+                self.input
+                    .on_cursor_moved(position.x as f32, position.y as f32);
                 if self.dragging.is_some() {
                     self.drag_slider(position.x as f32);
                 } else if let Some(w) = &self.window {

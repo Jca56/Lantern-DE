@@ -106,7 +106,11 @@ fn tokenize_rust(text: &str) -> Vec<Token> {
         if c == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
             let start = i;
             i = bytes.len();
-            tokens.push(Token { start, end: i, kind: TokenKind::Comment });
+            tokens.push(Token {
+                start,
+                end: i,
+                kind: TokenKind::Comment,
+            });
             continue;
         }
         // Block comment /* ... */ (single-line MVP — eats to */ or EOL)
@@ -125,7 +129,11 @@ fn tokenize_rust(text: &str) -> Vec<Token> {
             } else if i + 1 == bytes.len() {
                 i = bytes.len();
             }
-            tokens.push(Token { start, end: i, kind: TokenKind::Comment });
+            tokens.push(Token {
+                start,
+                end: i,
+                kind: TokenKind::Comment,
+            });
             continue;
         }
 
@@ -144,7 +152,11 @@ fn tokenize_rust(text: &str) -> Vec<Token> {
                 }
                 i += 1;
             }
-            tokens.push(Token { start, end: i, kind: TokenKind::String });
+            tokens.push(Token {
+                start,
+                end: i,
+                kind: TokenKind::String,
+            });
             continue;
         }
 
@@ -174,7 +186,11 @@ fn tokenize_rust(text: &str) -> Vec<Token> {
                     }
                     i += 1;
                 }
-                tokens.push(Token { start, end: i, kind: TokenKind::String });
+                tokens.push(Token {
+                    start,
+                    end: i,
+                    kind: TokenKind::String,
+                });
                 continue;
             }
             // Wasn't actually a raw string — fall through with i reset.
@@ -191,7 +207,11 @@ fn tokenize_rust(text: &str) -> Vec<Token> {
                 j += 2; // escaped char
                 if j < bytes.len() && bytes[j] == b'\'' {
                     j += 1;
-                    tokens.push(Token { start, end: j, kind: TokenKind::String });
+                    tokens.push(Token {
+                        start,
+                        end: j,
+                        kind: TokenKind::String,
+                    });
                     i = j;
                     continue;
                 }
@@ -202,17 +222,24 @@ fn tokenize_rust(text: &str) -> Vec<Token> {
                 if is_ident_start {
                     // Could be lifetime or 'a' (single char).
                     let id_start = j;
-                    while j < bytes.len()
-                        && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_')
+                    while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_')
                     {
                         j += 1;
                     }
                     if j < bytes.len() && bytes[j] == b'\'' && j == id_start + 1 {
                         // 'a' - single char literal
                         j += 1;
-                        tokens.push(Token { start, end: j, kind: TokenKind::String });
+                        tokens.push(Token {
+                            start,
+                            end: j,
+                            kind: TokenKind::String,
+                        });
                     } else {
-                        tokens.push(Token { start, end: j, kind: TokenKind::Lifetime });
+                        tokens.push(Token {
+                            start,
+                            end: j,
+                            kind: TokenKind::Lifetime,
+                        });
                     }
                     i = j;
                     continue;
@@ -222,7 +249,11 @@ fn tokenize_rust(text: &str) -> Vec<Token> {
                 if j < bytes.len() && bytes[j] == b'\'' {
                     j += 1;
                 }
-                tokens.push(Token { start, end: j, kind: TokenKind::String });
+                tokens.push(Token {
+                    start,
+                    end: j,
+                    kind: TokenKind::String,
+                });
                 i = j;
                 continue;
             }
@@ -239,7 +270,11 @@ fn tokenize_rust(text: &str) -> Vec<Token> {
             {
                 i += 1;
             }
-            tokens.push(Token { start, end: i, kind: TokenKind::Number });
+            tokens.push(Token {
+                start,
+                end: i,
+                kind: TokenKind::Number,
+            });
             continue;
         }
 
@@ -253,7 +288,11 @@ fn tokenize_rust(text: &str) -> Vec<Token> {
             // macro_name!(...)
             if i < bytes.len() && bytes[i] == b'!' {
                 let end = i + 1;
-                tokens.push(Token { start, end, kind: TokenKind::Macro });
+                tokens.push(Token {
+                    start,
+                    end,
+                    kind: TokenKind::Macro,
+                });
                 i = end;
                 continue;
             }
@@ -270,13 +309,21 @@ fn tokenize_rust(text: &str) -> Vec<Token> {
             } else {
                 TokenKind::Variable
             };
-            tokens.push(Token { start, end: i, kind });
+            tokens.push(Token {
+                start,
+                end: i,
+                kind,
+            });
             continue;
         }
 
         // Brackets / parens / braces — gold/yellow.
         if matches!(c, b'(' | b')' | b'[' | b']' | b'{' | b'}') {
-            tokens.push(Token { start: i, end: i + 1, kind: TokenKind::Bracket });
+            tokens.push(Token {
+                start: i,
+                end: i + 1,
+                kind: TokenKind::Bracket,
+            });
             i += 1;
             continue;
         }
@@ -303,12 +350,64 @@ const PYTHON_KEYWORDS: &[&str] = &[
 ];
 
 const PYTHON_BUILTINS: &[&str] = &[
-    "abs", "all", "any", "bin", "bool", "bytes", "callable", "chr", "dict", "dir", "enumerate",
-    "eval", "exec", "filter", "float", "format", "frozenset", "getattr", "globals", "hasattr",
-    "hash", "help", "hex", "id", "input", "int", "isinstance", "issubclass", "iter", "len",
-    "list", "map", "max", "min", "next", "object", "oct", "open", "ord", "pow", "print", "range",
-    "repr", "reversed", "round", "set", "setattr", "slice", "sorted", "str", "sum", "super",
-    "tuple", "type", "vars", "zip", "self", "cls",
+    "abs",
+    "all",
+    "any",
+    "bin",
+    "bool",
+    "bytes",
+    "callable",
+    "chr",
+    "dict",
+    "dir",
+    "enumerate",
+    "eval",
+    "exec",
+    "filter",
+    "float",
+    "format",
+    "frozenset",
+    "getattr",
+    "globals",
+    "hasattr",
+    "hash",
+    "help",
+    "hex",
+    "id",
+    "input",
+    "int",
+    "isinstance",
+    "issubclass",
+    "iter",
+    "len",
+    "list",
+    "map",
+    "max",
+    "min",
+    "next",
+    "object",
+    "oct",
+    "open",
+    "ord",
+    "pow",
+    "print",
+    "range",
+    "repr",
+    "reversed",
+    "round",
+    "set",
+    "setattr",
+    "slice",
+    "sorted",
+    "str",
+    "sum",
+    "super",
+    "tuple",
+    "type",
+    "vars",
+    "zip",
+    "self",
+    "cls",
 ];
 
 fn tokenize_python(text: &str) -> Vec<Token> {
@@ -323,7 +422,11 @@ fn tokenize_python(text: &str) -> Vec<Token> {
         if c == b'#' {
             let start = i;
             i = bytes.len();
-            tokens.push(Token { start, end: i, kind: TokenKind::Comment });
+            tokens.push(Token {
+                start,
+                end: i,
+                kind: TokenKind::Comment,
+            });
             continue;
         }
 
@@ -331,15 +434,22 @@ fn tokenize_python(text: &str) -> Vec<Token> {
         if c == b'"' || c == b'\'' {
             let start = i;
             i = consume_python_string(bytes, i);
-            tokens.push(Token { start, end: i, kind: TokenKind::String });
+            tokens.push(Token {
+                start,
+                end: i,
+                kind: TokenKind::String,
+            });
             continue;
         }
         if (c == b'f' || c == b'F' || c == b'r' || c == b'R' || c == b'b' || c == b'B')
             && i + 1 < bytes.len()
         {
-            let after_prefix = if (bytes[i + 1] == b'r' || bytes[i + 1] == b'R'
-                || bytes[i + 1] == b'b' || bytes[i + 1] == b'B'
-                || bytes[i + 1] == b'f' || bytes[i + 1] == b'F')
+            let after_prefix = if (bytes[i + 1] == b'r'
+                || bytes[i + 1] == b'R'
+                || bytes[i + 1] == b'b'
+                || bytes[i + 1] == b'B'
+                || bytes[i + 1] == b'f'
+                || bytes[i + 1] == b'F')
                 && i + 2 < bytes.len()
             {
                 i + 2
@@ -357,7 +467,11 @@ fn tokenize_python(text: &str) -> Vec<Token> {
                 } else {
                     let start = i;
                     i = consume_python_string(bytes, after_prefix);
-                    tokens.push(Token { start, end: i, kind: TokenKind::String });
+                    tokens.push(Token {
+                        start,
+                        end: i,
+                        kind: TokenKind::String,
+                    });
                 }
                 continue;
             }
@@ -367,10 +481,16 @@ fn tokenize_python(text: &str) -> Vec<Token> {
         if c == b'@' {
             let start = i;
             i += 1;
-            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' || bytes[i] == b'.') {
+            while i < bytes.len()
+                && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' || bytes[i] == b'.')
+            {
                 i += 1;
             }
-            tokens.push(Token { start, end: i, kind: TokenKind::Decorator });
+            tokens.push(Token {
+                start,
+                end: i,
+                kind: TokenKind::Decorator,
+            });
             continue;
         }
 
@@ -383,7 +503,11 @@ fn tokenize_python(text: &str) -> Vec<Token> {
             {
                 i += 1;
             }
-            tokens.push(Token { start, end: i, kind: TokenKind::Number });
+            tokens.push(Token {
+                start,
+                end: i,
+                kind: TokenKind::Number,
+            });
             continue;
         }
 
@@ -411,13 +535,21 @@ fn tokenize_python(text: &str) -> Vec<Token> {
             } else {
                 TokenKind::Variable
             };
-            tokens.push(Token { start, end: i, kind });
+            tokens.push(Token {
+                start,
+                end: i,
+                kind,
+            });
             continue;
         }
 
         // Brackets / parens / braces — gold/yellow.
         if matches!(c, b'(' | b')' | b'[' | b']' | b'{' | b'}') {
-            tokens.push(Token { start: i, end: i + 1, kind: TokenKind::Bracket });
+            tokens.push(Token {
+                start: i,
+                end: i + 1,
+                kind: TokenKind::Bracket,
+            });
             i += 1;
             continue;
         }
@@ -441,10 +573,13 @@ fn tokenize_python_fstring(
 ) -> usize {
     let bytes = text.as_bytes();
     let q = bytes[quote_start];
-    let triple = quote_start + 2 < bytes.len()
-        && bytes[quote_start + 1] == q
-        && bytes[quote_start + 2] == q;
-    let body_start = if triple { quote_start + 3 } else { quote_start + 1 };
+    let triple =
+        quote_start + 2 < bytes.len() && bytes[quote_start + 1] == q && bytes[quote_start + 2] == q;
+    let body_start = if triple {
+        quote_start + 3
+    } else {
+        quote_start + 1
+    };
 
     // Each literal "segment" runs from `seg_start` up to the next `{` (or the
     // closing quote). The first segment includes the prefix + opening quote.
@@ -463,7 +598,11 @@ fn tokenize_python_fstring(
                 if i + 2 < bytes.len() && bytes[i + 1] == q && bytes[i + 2] == q {
                     let end = i + 3;
                     if seg_start < end {
-                        tokens.push(Token { start: seg_start, end, kind: TokenKind::String });
+                        tokens.push(Token {
+                            start: seg_start,
+                            end,
+                            kind: TokenKind::String,
+                        });
                     }
                     return end;
                 }
@@ -472,7 +611,11 @@ fn tokenize_python_fstring(
             }
             let end = i + 1;
             if seg_start < end {
-                tokens.push(Token { start: seg_start, end, kind: TokenKind::String });
+                tokens.push(Token {
+                    start: seg_start,
+                    end,
+                    kind: TokenKind::String,
+                });
             }
             return end;
         }
@@ -489,9 +632,17 @@ fn tokenize_python_fstring(
         // then recurse on the expression, then `}`.
         if bytes[i] == b'{' {
             if seg_start < i {
-                tokens.push(Token { start: seg_start, end: i, kind: TokenKind::String });
+                tokens.push(Token {
+                    start: seg_start,
+                    end: i,
+                    kind: TokenKind::String,
+                });
             }
-            tokens.push(Token { start: i, end: i + 1, kind: TokenKind::Interpolation });
+            tokens.push(Token {
+                start: i,
+                end: i + 1,
+                kind: TokenKind::Interpolation,
+            });
             i += 1;
             let expr_start = i;
             // Walk to the matching `}`, tracking brace depth and skipping over
@@ -537,7 +688,11 @@ fn tokenize_python_fstring(
                 }
             }
             if i < bytes.len() && bytes[i] == b'}' {
-                tokens.push(Token { start: i, end: i + 1, kind: TokenKind::Interpolation });
+                tokens.push(Token {
+                    start: i,
+                    end: i + 1,
+                    kind: TokenKind::Interpolation,
+                });
                 i += 1;
             }
             seg_start = i;
@@ -548,7 +703,11 @@ fn tokenize_python_fstring(
 
     // Unterminated f-string — emit whatever we have as a String segment.
     if seg_start < bytes.len() {
-        tokens.push(Token { start: seg_start, end: bytes.len(), kind: TokenKind::String });
+        tokens.push(Token {
+            start: seg_start,
+            end: bytes.len(),
+            kind: TokenKind::String,
+        });
     }
     bytes.len()
 }
@@ -613,7 +772,18 @@ pub fn draw_chunk_with_syntax(
     }
     if tokens.is_empty() {
         let chunk = &line[start..end];
-        text.queue_styled(chunk, fs, start_x, y, default_color, max_w, weight, style, sw, sh);
+        text.queue_styled(
+            chunk,
+            fs,
+            start_x,
+            y,
+            default_color,
+            max_w,
+            weight,
+            style,
+            sw,
+            sh,
+        );
         return text.measure_width_styled(chunk, fs, weight, style);
     }
     let mut x = start_x;

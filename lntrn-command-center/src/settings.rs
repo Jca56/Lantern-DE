@@ -164,7 +164,9 @@ fn parse(text: &str) -> Config {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let Some((key, value)) = line.split_once('=') else { continue };
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
         let key = key.trim();
         let value = value.trim().trim_matches('"');
         match key {
@@ -191,7 +193,10 @@ fn parse(text: &str) -> Config {
             // Dropped settings — silently ignore the old keys.
             // (`open_collapsed` is intentionally ignored rather than
             // inverted: collapsed-open is the new baseline for everyone.)
-            "terminal_output_size" | "files_text_size" | "wifi_backend" | "open_collapsed"
+            "terminal_output_size"
+            | "files_text_size"
+            | "wifi_backend"
+            | "open_collapsed"
             | "show_dock_collapsed" => {}
             "view_anim_duration" => {
                 if let Ok(v) = value.parse::<f32>() {
@@ -418,7 +423,11 @@ pub fn layout(panel: Rect, top_y: f32, scale: f32, text_size: f32) -> Vec<RowLay
                     ControlLayout::Slider(Rect::new(sx, sy, sw, sh), min, max)
                 }
             };
-            out.push(RowLayout { key: row.key, rect, control });
+            out.push(RowLayout {
+                key: row.key,
+                rect,
+                control,
+            });
             y += row_h;
             if i + 1 < section.rows.len() {
                 y += ROW_GAP * scale;
@@ -525,8 +534,12 @@ pub fn apply_value(cfg: &mut Config, key: SettingKey, value: SettingValue) {
         (SettingKey::CollapseBeforeClose, SettingValue::B(v)) => cfg.collapse_before_close = v,
         (SettingKey::SlideAnim, SettingValue::B(v)) => cfg.slide_anim = v,
         (SettingKey::PanelSplit, SettingValue::B(v)) => cfg.panel_split = v,
-        (SettingKey::PanelSplitGap, SettingValue::F(v)) => cfg.panel_split_gap = v.clamp(0.0, 120.0),
-        (SettingKey::ViewAnimDuration, SettingValue::F(v)) => cfg.view_anim_duration = v.clamp(0.10, 3.0),
+        (SettingKey::PanelSplitGap, SettingValue::F(v)) => {
+            cfg.panel_split_gap = v.clamp(0.0, 120.0)
+        }
+        (SettingKey::ViewAnimDuration, SettingValue::F(v)) => {
+            cfg.view_anim_duration = v.clamp(0.10, 3.0)
+        }
         (SettingKey::PanelGrowW, SettingValue::F(v)) => cfg.panel_grow_w = v.clamp(0.0, GROW_W_MAX),
         (SettingKey::BarGrowW, SettingValue::F(v)) => cfg.bar_grow_w = v.clamp(0.0, BAR_GROW_W_MAX),
         _ => {}
@@ -562,7 +575,12 @@ pub fn draw(
     // Clip the whole page to the body area below the controls bar so
     // scrolled-off content disappears cleanly instead of overflowing the
     // panel.
-    let clip = Rect::new(panel.x, top_y, panel.w, (panel.y + panel.h - top_y).max(0.0));
+    let clip = Rect::new(
+        panel.x,
+        top_y,
+        panel.w,
+        (panel.y + panel.h - top_y).max(0.0),
+    );
     painter.push_clip(clip);
     text.push_clip([clip.x, clip.y, clip.w, clip.h]);
 
@@ -605,7 +623,9 @@ pub fn draw(
 
         for (i, row_def) in section.rows.iter().enumerate() {
             let Some(layout) = row_iter.next() else { break };
-            draw_row(painter, text, layout, row_def, cfg, pending, scale, alpha, surface_w, surface_h);
+            draw_row(
+                painter, text, layout, row_def, cfg, pending, scale, alpha, surface_w, surface_h,
+            );
             section_y = layout.rect.y + layout.rect.h;
             if i + 1 < section.rows.len() {
                 section_y += ROW_GAP * scale;
@@ -691,21 +711,27 @@ fn draw_row(
             // takes precedence over the committed config value so the
             // knob tracks the cursor live even when the panel itself
             // hasn't resized yet.
-            let pending_value = pending
-                .filter(|(k, _)| *k == layout.key)
-                .map(|(_, v)| v);
-            let value = pending_value.unwrap_or_else(|| {
-                match current_value(cfg, layout.key) {
-                    SettingValue::F(v) => v,
-                    _ => 0.0,
-                }
+            let pending_value = pending.filter(|(k, _)| *k == layout.key).map(|(_, v)| v);
+            let value = pending_value.unwrap_or_else(|| match current_value(cfg, layout.key) {
+                SettingValue::F(v) => v,
+                _ => 0.0,
             });
             let unit = match row_def.kind {
                 RowKind::Slider(_, _, u) => u,
                 _ => "",
             };
             draw_slider(
-                painter, text, r, scale, alpha, value, min, max, unit, cfg.text_size, surface_w,
+                painter,
+                text,
+                r,
+                scale,
+                alpha,
+                value,
+                min,
+                max,
+                unit,
+                cfg.text_size,
+                surface_w,
                 surface_h,
             );
         }

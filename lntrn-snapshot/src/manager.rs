@@ -1,5 +1,4 @@
 ///! Snapshot manager — btrfs CoW snapshots (instant, near-zero space)
-
 use crate::btrfs;
 use std::fs;
 use std::path::PathBuf;
@@ -97,8 +96,7 @@ impl SnapshotManager {
         if !btrfs::is_btrfs(&self.source) {
             return Err(SnapError::NotBtrfs(self.source.clone()));
         }
-        fs::create_dir_all(&self.snapshot_dir)
-            .map_err(|e| SnapError::Io("create snapshot dir", e))
+        fs::create_dir_all(&self.snapshot_dir).map_err(|e| SnapError::Io("create snapshot dir", e))
     }
 
     /// Generate a snapshot name like "manual-2026-03-11_143022"
@@ -116,7 +114,12 @@ impl SnapshotManager {
             .map_err(|e| SnapError::Io("create snapshot", e))?;
 
         let timestamp = parse_timestamp_from_name(&name);
-        Ok(Snapshot { name, path: dest, timestamp, kind })
+        Ok(Snapshot {
+            name,
+            path: dest,
+            timestamp,
+            kind,
+        })
     }
 
     /// List all snapshots in the snapshot directory
@@ -127,8 +130,8 @@ impl SnapshotManager {
 
         let mut snapshots = Vec::new();
 
-        let entries = fs::read_dir(&self.snapshot_dir)
-            .map_err(|e| SnapError::Io("read snapshot dir", e))?;
+        let entries =
+            fs::read_dir(&self.snapshot_dir).map_err(|e| SnapError::Io("read snapshot dir", e))?;
 
         for entry in entries {
             let entry = entry.map_err(|e| SnapError::Io("read dir entry", e))?;
@@ -170,8 +173,7 @@ impl SnapshotManager {
         if !path.starts_with(&self.snapshot_dir) || !btrfs::is_subvolume(&path) {
             return Err(SnapError::InvalidPath(path));
         }
-        btrfs::delete_subvolume(&path)
-            .map_err(|e| SnapError::Io("delete snapshot", e))
+        btrfs::delete_subvolume(&path).map_err(|e| SnapError::Io("delete snapshot", e))
     }
 
     /// Apply retention policy — delete oldest snapshots beyond the limit
@@ -194,8 +196,7 @@ impl SnapshotManager {
                 SnapshotKind::Weekly => self.retention.weekly,
             };
 
-            let of_kind: Vec<&Snapshot> =
-                all.iter().filter(|s| s.kind == *kind).collect();
+            let of_kind: Vec<&Snapshot> = all.iter().filter(|s| s.kind == *kind).collect();
             if of_kind.len() > limit {
                 for snap in &of_kind[limit..] {
                     self.delete(&snap.name)?;
@@ -220,14 +221,10 @@ impl SnapshotManager {
         if new_path.exists() {
             return Err(SnapError::Io(
                 "rename snapshot",
-                std::io::Error::new(
-                    std::io::ErrorKind::AlreadyExists,
-                    "name already taken",
-                ),
+                std::io::Error::new(std::io::ErrorKind::AlreadyExists, "name already taken"),
             ));
         }
-        fs::rename(&old_path, &new_path)
-            .map_err(|e| SnapError::Io("rename snapshot", e))
+        fs::rename(&old_path, &new_path).map_err(|e| SnapError::Io("rename snapshot", e))
     }
 
     /// Rollback: atomically replace the live subvolume with a snapshot.
@@ -275,8 +272,7 @@ impl SnapshotManager {
         let live = top.subvol_path(&info.subvol);
         let stale = PathBuf::from(format!("{}-stale-{ts}", live.display()));
 
-        fs::rename(&live, &stale)
-            .map_err(|e| SnapError::Io("set live subvolume aside", e))?;
+        fs::rename(&live, &stale).map_err(|e| SnapError::Io("set live subvolume aside", e))?;
 
         if let Err(e) = btrfs::snapshot(&snap_path, &live, false) {
             // Put the live subvolume back so the system still boots.
@@ -316,8 +312,13 @@ impl SnapshotManager {
 // ── Helpers ────────────────────────────────────────────────────────
 
 const KNOWN_PREFIXES: &[&str] = &[
-    "manual-", "boot-", "hourly-", "daily-", "weekly-",
-    "rollback-", "pre-rollback-",
+    "manual-",
+    "boot-",
+    "hourly-",
+    "daily-",
+    "weekly-",
+    "rollback-",
+    "pre-rollback-",
 ];
 
 fn is_our_snapshot(name: &str) -> bool {

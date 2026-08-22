@@ -50,7 +50,9 @@ fn main() -> ExitCode {
             Ok(k) => k,
             Err(_) => break,
         };
-        if !handle_key(key, &mut state, &mut client) { break; }
+        if !handle_key(key, &mut state, &mut client) {
+            break;
+        }
     }
     drop(term);
     ExitCode::SUCCESS
@@ -79,8 +81,14 @@ fn handle_key(key: Key, state: &mut State, client: &mut Client) -> bool {
         Mode::Filtering => {
             match key {
                 Key::Enter | Key::Esc => state.mode = Mode::List,
-                Key::Backspace => { state.filter.pop(); state.cursor = 0; }
-                Key::Char(c) => { state.filter.push(c); state.cursor = 0; }
+                Key::Backspace => {
+                    state.filter.pop();
+                    state.cursor = 0;
+                }
+                Key::Char(c) => {
+                    state.filter.push(c);
+                    state.cursor = 0;
+                }
                 Key::Paste(s) => {
                     for c in s.chars().filter(|c| !c.is_control()) {
                         state.filter.push(c);
@@ -117,7 +125,10 @@ fn handle_key(key: Key, state: &mut State, client: &mut Client) -> bool {
         Key::PageUp => state.move_cursor(-10),
         Key::PageDown => state.move_cursor(10),
         Key::Home => state.cursor = 0,
-        Key::End => { let n = state.visible().len(); state.cursor = n.saturating_sub(1); }
+        Key::End => {
+            let n = state.visible().len();
+            state.cursor = n.saturating_sub(1);
+        }
         Key::Char('r') => refresh_items(state, client),
         _ => {}
     }
@@ -133,10 +144,14 @@ fn handle_add(stage: AddStage, key: Key, state: &mut State, client: &mut Client)
             return true;
         }
         Key::Backspace => match &mut new_stage {
-            AddStage::Name(s) | AddStage::Secret { value: s, .. } => { s.pop(); }
+            AddStage::Name(s) | AddStage::Secret { value: s, .. } => {
+                s.pop();
+            }
         },
         Key::Char(c) => match &mut new_stage {
-            AddStage::Name(s) | AddStage::Secret { value: s, .. } => { s.push(c); }
+            AddStage::Name(s) | AddStage::Secret { value: s, .. } => {
+                s.push(c);
+            }
         },
         Key::Paste(s) => {
             // Strip trailing whitespace (most clipboard managers add a \n).
@@ -175,7 +190,10 @@ fn advance_add(stage: AddStage, state: &mut State, client: &mut Client) -> AddSt
                 state.set_status("Name can't be empty.");
                 return AddStage::Name(name);
             }
-            AddStage::Secret { name, value: String::new() }
+            AddStage::Secret {
+                name,
+                value: String::new(),
+            }
         }
         AddStage::Secret { name, value } => {
             if value.is_empty() {
@@ -184,7 +202,9 @@ fn advance_add(stage: AddStage, state: &mut State, client: &mut Client) -> AddSt
             }
             let ok = actions::finish_add(state, client, name, value);
             state.mode = Mode::List;
-            if ok { refresh_items(state, client); }
+            if ok {
+                refresh_items(state, client);
+            }
             AddStage::Name(String::new())
         }
     }

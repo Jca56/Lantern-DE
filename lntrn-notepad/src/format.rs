@@ -199,7 +199,11 @@ impl LineFormats {
         // Add the toggled spans
         for (s, e, attrs) in toggled.drain(..) {
             if !attrs.is_default() {
-                kept.push(FormatSpan { start: s, end: e, attrs });
+                kept.push(FormatSpan {
+                    start: s,
+                    end: e,
+                    attrs,
+                });
             }
         }
 
@@ -307,7 +311,10 @@ impl LineFormats {
         }
 
         self.spans = left;
-        LineFormats { spans: right, para: self.para }
+        LineFormats {
+            spans: right,
+            para: self.para,
+        }
     }
 
     /// Append another line's formats onto the end of this line.
@@ -566,4 +573,3 @@ impl DocFormats {
         result
     }
 }
-

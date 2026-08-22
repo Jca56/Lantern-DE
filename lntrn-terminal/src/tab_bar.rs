@@ -382,8 +382,8 @@ pub fn draw_tab_bar(
 
         if is_renaming {
             draw_rename_field(
-                painter, text, state, rect, text_x, text_y, max_text_w, screen_w, screen_h,
-                &pal, scale,
+                painter, text, state, rect, text_x, text_y, max_text_w, screen_w, screen_h, &pal,
+                scale,
             );
         } else {
             let text_color = if is_active { pal.text } else { pal.muted };
@@ -406,7 +406,14 @@ pub fn draw_tab_bar(
 
         // Close X button
         if has_close && !is_renaming {
-            draw_close_x(painter, tab_close_rect(rect, scale), cursor_pos, is_active, &pal, scale);
+            draw_close_x(
+                painter,
+                tab_close_rect(rect, scale),
+                cursor_pos,
+                is_active,
+                &pal,
+                scale,
+            );
         }
     }
 
@@ -420,7 +427,11 @@ pub fn draw_tab_bar(
         painter.rect_filled(nb, nb_r, pal.plus_bg);
         painter.rect_stroke_sdf(nb, nb_r, 1.5 * scale, pal.plus_border);
     }
-    let plus_color = if plus_hovered { pal.plus_icon_hover } else { pal.plus_icon };
+    let plus_color = if plus_hovered {
+        pal.plus_icon_hover
+    } else {
+        pal.plus_icon
+    };
     let cx = nb.x + nb.w / 2.0;
     let cy = nb.y + nb.h / 2.0;
     let arm = 6.0 * scale;
@@ -448,11 +459,7 @@ fn draw_rename_field(
     // `font * 0.6` constants would drift from Glyphon's real advance metrics.
     // We need a string slice up to `rename_cursor` chars, so handle multibyte
     // safely by walking chars rather than indexing bytes.
-    let prefix: String = state
-        .rename_buf
-        .chars()
-        .take(state.rename_cursor)
-        .collect();
+    let prefix: String = state.rename_buf.chars().take(state.rename_cursor).collect();
     let cursor_px = if prefix.is_empty() {
         0.0
     } else {
@@ -596,12 +603,7 @@ pub fn draw_tab_context_menu(
         mx
     }
     .max(0.0);
-    let y = if my + h > screen_h as f32 {
-        my - h
-    } else {
-        my
-    }
-    .max(0.0);
+    let y = if my + h > screen_h as f32 { my - h } else { my }.max(0.0);
     let menu = Rect::new(x, y, menu_width, h);
 
     // Shadow + bg
@@ -612,7 +614,12 @@ pub fn draw_tab_context_menu(
     );
     painter.rect_filled(menu, 6.0 * scale, pal.ctx_bg);
     painter.rect_filled(
-        Rect::new(menu.x + 3.0 * scale, menu.y, menu.w - 6.0 * scale, 1.0 * scale),
+        Rect::new(
+            menu.x + 3.0 * scale,
+            menu.y,
+            menu.w - 6.0 * scale,
+            1.0 * scale,
+        ),
         0.0,
         pal.ctx_top_line,
     );
@@ -673,14 +680,20 @@ pub fn handle_click(
         };
         let h = 12.0 * scale + items.len() as f32 * item_height + 12.0 * scale;
         let sw = screen_w as f32;
-        let x = if mx + menu_width > sw { mx - menu_width } else { mx }.max(0.0);
+        let x = if mx + menu_width > sw {
+            mx - menu_width
+        } else {
+            mx
+        }
+        .max(0.0);
         let y = if my + h > sw { my - h } else { my }.max(0.0);
         let menu = Rect::new(x, y, menu_width, h);
 
         if hit(menu, cursor_pos) {
             let mut iy = menu.y + 8.0 * scale;
             for (i, _label) in items.iter().enumerate() {
-                let item_rect = Rect::new(menu.x + 4.0 * scale, iy, menu.w - 8.0 * scale, item_height);
+                let item_rect =
+                    Rect::new(menu.x + 4.0 * scale, iy, menu.w - 8.0 * scale, item_height);
                 if hit(item_rect, cursor_pos) {
                     state.context_menu = None;
                     return match (is_pinned, i) {

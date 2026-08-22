@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 
 use tokio::sync::mpsc;
 use zbus::object_server::SignalEmitter;
@@ -48,9 +48,7 @@ impl NotificationService {
 #[interface(name = "org.freedesktop.Notifications")]
 impl NotificationService {
     fn get_capabilities(&self) -> Vec<String> {
-        vec![
-            "body".to_string(),
-        ]
+        vec!["body".to_string()]
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -20,9 +20,11 @@ pub(super) fn forward_bt_result(
             let line = stderr
                 .lines()
                 .chain(stdout.lines())
-                .find(|l| l.to_lowercase().contains("fail")
-                    || l.to_lowercase().contains("error")
-                    || l.to_lowercase().contains("not available"))
+                .find(|l| {
+                    l.to_lowercase().contains("fail")
+                        || l.to_lowercase().contains("error")
+                        || l.to_lowercase().contains("not available")
+                })
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| "Bluetooth operation failed".to_string());
             let _ = tx.send(BtEvent::Error(line));
@@ -73,8 +75,7 @@ pub(super) fn read_devices() -> Vec<Device> {
     // Paired devices that aren't in `all` (rare, but possible if the
     // controller hasn't seen them since boot) get backfilled from the
     // paired list.
-    let mut by_mac: std::collections::HashMap<String, Device> =
-        std::collections::HashMap::new();
+    let mut by_mac: std::collections::HashMap<String, Device> = std::collections::HashMap::new();
     for (mac, name) in all.into_iter().chain(paired.into_iter()) {
         let entry = by_mac.entry(mac.clone()).or_insert(Device {
             mac: mac.clone(),
@@ -113,7 +114,9 @@ pub(super) fn read_devices() -> Vec<Device> {
 /// silently on any failure so the basic name/connected state we already
 /// have stays usable.
 fn merge_device_info(dev: &mut Device) {
-    let out = Command::new("bluetoothctl").args(["info", &dev.mac]).output();
+    let out = Command::new("bluetoothctl")
+        .args(["info", &dev.mac])
+        .output();
     let Ok(out) = out else { return };
     if !out.status.success() {
         return;
@@ -125,7 +128,10 @@ fn merge_device_info(dev: &mut Device) {
         if let Some(rest) = raw.strip_prefix("Device ") {
             // "Device F0:05:1B:BE:1B:52 (public)"
             if let Some(open) = rest.find('(') {
-                let close = rest[open..].find(')').map(|i| open + i).unwrap_or(rest.len());
+                let close = rest[open..]
+                    .find(')')
+                    .map(|i| open + i)
+                    .unwrap_or(rest.len());
                 dev.address_type = rest[open + 1..close].to_string();
             }
             continue;

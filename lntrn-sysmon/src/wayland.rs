@@ -4,8 +4,7 @@ use std::ptr::NonNull;
 use anyhow::{anyhow, Result};
 use lntrn_render::{Color, GpuContext, Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{
-    FoxPalette, InteractionContext, MenuBar, MenuItem, PopupSurface,
-    WaylandPopupBackend,
+    FoxPalette, InteractionContext, MenuBar, MenuItem, PopupSurface, WaylandPopupBackend,
 };
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
@@ -27,7 +26,7 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 pub const BTN_LEFT: u32 = 0x110;
 pub const BTN_RIGHT: u32 = 0x111;
 const KEY_ESC: u32 = 1;
-use crate::chrome::{TITLE_BAR_H, CORNER_RADIUS};
+use crate::chrome::{CORNER_RADIUS, TITLE_BAR_H};
 
 // ── WaylandHandle for wgpu ──────────────────────────────────────────────────
 
@@ -89,15 +88,34 @@ pub(crate) struct State {
 impl State {
     fn new() -> Self {
         Self {
-            running: true, configured: false, frame_done: true,
-            width: 0, height: 0, scale: 1, output_phys_width: 0, maximized: false,
-            compositor: None, wm_base: None, viewporter: None,
-            surface: None, xdg_surface: None, toplevel: None, seat: None,
-            cursor_x: 0.0, cursor_y: 0.0, pointer_in_surface: false,
-            left_pressed: false, left_released: false, right_pressed: false,
-            scroll_delta: 0.0, pointer_serial: 0, enter_serial: 0,
-            cursor_shape_mgr: None, cursor_shape_device: None,
-            current_cursor_shape: None, pointer: None,
+            running: true,
+            configured: false,
+            frame_done: true,
+            width: 0,
+            height: 0,
+            scale: 1,
+            output_phys_width: 0,
+            maximized: false,
+            compositor: None,
+            wm_base: None,
+            viewporter: None,
+            surface: None,
+            xdg_surface: None,
+            toplevel: None,
+            seat: None,
+            cursor_x: 0.0,
+            cursor_y: 0.0,
+            pointer_in_surface: false,
+            left_pressed: false,
+            left_released: false,
+            right_pressed: false,
+            scroll_delta: 0.0,
+            pointer_serial: 0,
+            enter_serial: 0,
+            cursor_shape_mgr: None,
+            cursor_shape_device: None,
+            current_cursor_shape: None,
+            pointer: None,
             key_pressed: None,
             decoration_mgr: None,
             popup_backend: None,
@@ -114,8 +132,12 @@ impl State {
         }
     }
 
-    fn phys_width(&self) -> u32 { (self.width as f64 * self.fractional_scale()).round() as u32 }
-    fn phys_height(&self) -> u32 { (self.height as f64 * self.fractional_scale()).round() as u32 }
+    fn phys_width(&self) -> u32 {
+        (self.width as f64 * self.fractional_scale()).round() as u32
+    }
+    fn phys_height(&self) -> u32 {
+        (self.height as f64 * self.fractional_scale()).round() as u32
+    }
 }
 
 // ── Edge resize helper ──────────────────────────────────────────────────────
@@ -123,13 +145,22 @@ impl State {
 /// `controls_x` is the left edge of the window controls zone — if the cursor
 /// is in the top-right corner (x > controls_x AND y < border), skip resize so
 /// clicks reach the close/max/min buttons instead.
-fn edge_resize(cx: f32, cy: f32, w: f32, h: f32, border: f32, controls_x: f32) -> Option<xdg_toplevel::ResizeEdge> {
+fn edge_resize(
+    cx: f32,
+    cy: f32,
+    w: f32,
+    h: f32,
+    border: f32,
+    controls_x: f32,
+) -> Option<xdg_toplevel::ResizeEdge> {
     let left = cx < border;
     let right = cx > w - border;
     let top = cy < border;
     let bottom = cy > h - border;
     // Don't resize in the window controls area (top-right)
-    if top && cx > controls_x { return None; }
+    if top && cx > controls_x {
+        return None;
+    }
     match (left, right, top, bottom) {
         (true, _, true, _) => Some(xdg_toplevel::ResizeEdge::TopLeft),
         (_, true, true, _) => Some(xdg_toplevel::ResizeEdge::TopRight),
@@ -170,13 +201,21 @@ pub fn run() -> Result<()> {
     display.get_registry(&qh, ());
     event_queue.roundtrip(&mut state)?;
 
-    let compositor = state.compositor.clone()
+    let compositor = state
+        .compositor
+        .clone()
         .ok_or_else(|| anyhow!("wl_compositor not available"))?;
-    let wm_base = state.wm_base.clone()
+    let wm_base = state
+        .wm_base
+        .clone()
         .ok_or_else(|| anyhow!("xdg_wm_base not available"))?;
 
-    if state.width == 0 { state.width = 1280; }
-    if state.height == 0 { state.height = 860; }
+    if state.width == 0 {
+        state.width = 1280;
+    }
+    if state.height == 0 {
+        state.height = 860;
+    }
 
     let surface = compositor.create_surface(&qh, ());
     let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
@@ -254,7 +293,14 @@ pub fn run() -> Result<()> {
         let vp = state.viewporter.as_ref();
         let scale = state.fractional_scale() as f32;
         state.popup_backend = Some(WaylandPopupBackend::new(
-            &conn, &compositor, &wm_base, &xdg_surf, vp, &gpu, scale, &qh,
+            &conn,
+            &compositor,
+            &wm_base,
+            &xdg_surf,
+            vp,
+            &gpu,
+            scale,
+            &qh,
         ));
     }
 
@@ -269,7 +315,10 @@ pub fn run() -> Result<()> {
                 let (w, h) = (rgba.width(), rgba.height());
                 Some(tex_pass.upload(&gpu, rgba.as_raw(), w, h))
             }
-            Err(e) => { eprintln!("[sysmon] logo load failed: {e}"); None }
+            Err(e) => {
+                eprintln!("[sysmon] logo load failed: {e}");
+                None
+            }
         }
     };
 
@@ -287,31 +336,38 @@ pub fn run() -> Result<()> {
     let mut prev_tab: usize = active_tab;
 
     let menus: Vec<(&str, Vec<MenuItem>)> = vec![
-        ("File", vec![
-            MenuItem::action(1, "New"),
-            MenuItem::action_with(2, "Open", "Ctrl+O"),
-            MenuItem::action_with(3, "Save", "Ctrl+S"),
-            MenuItem::separator(),
-            MenuItem::action_with(4, "Quit", "Ctrl+Q"),
-        ]),
-        ("Edit", vec![
-            MenuItem::action_with(10, "Undo", "Ctrl+Z"),
-            MenuItem::action_with(11, "Redo", "Ctrl+Shift+Z"),
-            MenuItem::separator(),
-            MenuItem::action_with(12, "Cut", "Ctrl+X"),
-            MenuItem::action_with(13, "Copy", "Ctrl+C"),
-            MenuItem::action_with(14, "Paste", "Ctrl+V"),
-        ]),
-        ("View", vec![
-            MenuItem::toggle(20, "Dark Mode", true),
-            MenuItem::toggle(21, "Show Sidebar", true),
-            MenuItem::separator(),
-            MenuItem::action(22, "Zoom In"),
-            MenuItem::action(23, "Zoom Out"),
-        ]),
-        ("Help", vec![
-            MenuItem::action(30, "About"),
-        ]),
+        (
+            "File",
+            vec![
+                MenuItem::action(1, "New"),
+                MenuItem::action_with(2, "Open", "Ctrl+O"),
+                MenuItem::action_with(3, "Save", "Ctrl+S"),
+                MenuItem::separator(),
+                MenuItem::action_with(4, "Quit", "Ctrl+Q"),
+            ],
+        ),
+        (
+            "Edit",
+            vec![
+                MenuItem::action_with(10, "Undo", "Ctrl+Z"),
+                MenuItem::action_with(11, "Redo", "Ctrl+Shift+Z"),
+                MenuItem::separator(),
+                MenuItem::action_with(12, "Cut", "Ctrl+X"),
+                MenuItem::action_with(13, "Copy", "Ctrl+C"),
+                MenuItem::action_with(14, "Paste", "Ctrl+V"),
+            ],
+        ),
+        (
+            "View",
+            vec![
+                MenuItem::toggle(20, "Dark Mode", true),
+                MenuItem::toggle(21, "Show Sidebar", true),
+                MenuItem::separator(),
+                MenuItem::action(22, "Zoom In"),
+                MenuItem::action(23, "Zoom Out"),
+            ],
+        ),
+        ("Help", vec![MenuItem::action(30, "About")]),
     ];
 
     while state.running {
@@ -319,7 +375,9 @@ pub fn run() -> Result<()> {
             eprintln!("[ui-test] dispatch error: {e}");
             break;
         }
-        if !state.frame_done { continue; }
+        if !state.frame_done {
+            continue;
+        }
         state.frame_done = false;
 
         let s = state.fractional_scale() as f32;
@@ -339,7 +397,10 @@ pub fn run() -> Result<()> {
 
         // Determine if pointer is on main surface or popup
         let pointer_on_popup = state.pointer_surface.as_ref().and_then(|ps| {
-            state.popup_backend.as_ref()?.find_popup_id_by_wl_surface(ps)
+            state
+                .popup_backend
+                .as_ref()?
+                .find_popup_id_by_wl_surface(ps)
         });
 
         // Cursor — route to main or popup InteractionContext
@@ -355,7 +416,11 @@ pub fn run() -> Result<()> {
         }
         // Route cursor to the active popup, clear it from all others
         if let Some(backend) = &mut state.popup_backend {
-            let active = if state.pointer_in_surface { pointer_on_popup } else { None };
+            let active = if state.pointer_in_surface {
+                pointer_on_popup
+            } else {
+                None
+            };
             backend.route_cursor(active, cx, cy);
         }
 
@@ -370,7 +435,9 @@ pub fn run() -> Result<()> {
 
         // Keyboard
         if let Some(key) = state.key_pressed.take() {
-            if key == KEY_ESC { state.running = false; }
+            if key == KEY_ESC {
+                state.running = false;
+            }
         }
 
         // Left press
@@ -385,78 +452,90 @@ pub fn run() -> Result<()> {
                     }
                 }
             } else {
-            // Close right-click popup menu on any left click outside
-            if right_click_menu.is_open() {
-                if let Some(backend) = &mut state.popup_backend {
-                    right_click_menu.close_popups(backend);
-                }
-            }
-            let border = 10.0 * s;
-            let controls_x = wf - 120.0 * s;
-            if let Some(edge) = edge_resize(cx, cy, wf, hf, border, controls_x) {
-                if let Some(seat) = &state.seat {
-                    toplevel.resize(seat, state.pointer_serial, edge);
-                }
-            } else if cy < title_h {
-                // CSD title bar — check window control buttons (right side)
-                let hit_r = 20.0 * s; // larger hitbox than visual
-                let btn_y = title_h * 0.5;
-                let close_cx = wf - 28.0 * s;
-                let max_cx = wf - 66.0 * s;
-                let min_cx = wf - 104.0 * s;
-                let dist_close = ((cx - close_cx).powi(2) + (cy - btn_y).powi(2)).sqrt();
-                let dist_max = ((cx - max_cx).powi(2) + (cy - btn_y).powi(2)).sqrt();
-                let dist_min = ((cx - min_cx).powi(2) + (cy - btn_y).powi(2)).sqrt();
-                if dist_close < hit_r {
-                    state.running = false;
-                } else if dist_max < hit_r {
-                    if state.maximized {
-                        toplevel.unset_maximized();
-                    } else {
-                        toplevel.set_maximized();
+                // Close right-click popup menu on any left click outside
+                if right_click_menu.is_open() {
+                    if let Some(backend) = &mut state.popup_backend {
+                        right_click_menu.close_popups(backend);
                     }
-                } else if dist_min < hit_r {
-                    toplevel.set_minimized();
-                } else {
-                    // Drag to move
+                }
+                let border = 10.0 * s;
+                let controls_x = wf - 120.0 * s;
+                if let Some(edge) = edge_resize(cx, cy, wf, hf, border, controls_x) {
                     if let Some(seat) = &state.seat {
-                        toplevel._move(seat, state.pointer_serial);
+                        toplevel.resize(seat, state.pointer_serial, edge);
                     }
+                } else if cy < title_h {
+                    // CSD title bar — check window control buttons (right side)
+                    let hit_r = 20.0 * s; // larger hitbox than visual
+                    let btn_y = title_h * 0.5;
+                    let close_cx = wf - 28.0 * s;
+                    let max_cx = wf - 66.0 * s;
+                    let min_cx = wf - 104.0 * s;
+                    let dist_close = ((cx - close_cx).powi(2) + (cy - btn_y).powi(2)).sqrt();
+                    let dist_max = ((cx - max_cx).powi(2) + (cy - btn_y).powi(2)).sqrt();
+                    let dist_min = ((cx - min_cx).powi(2) + (cy - btn_y).powi(2)).sqrt();
+                    if dist_close < hit_r {
+                        state.running = false;
+                    } else if dist_max < hit_r {
+                        if state.maximized {
+                            toplevel.unset_maximized();
+                        } else {
+                            toplevel.set_maximized();
+                        }
+                    } else if dist_min < hit_r {
+                        toplevel.set_minimized();
+                    } else {
+                        // Drag to move
+                        if let Some(seat) = &state.seat {
+                            toplevel._move(seat, state.pointer_serial);
+                        }
+                    }
+                } else if menu_bar.on_click(&mut ix, &menus, s) {
+                    // Menu bar consumed the click
+                } else if crate::tabs::handle_click(cx, cy, s, title_h + 4.0 * s, &mut active_tab) {
+                    // Tab switch
+                } else if active_tab == 1 {
+                    // Processes click: select a row or fire the kill button.
+                    let tab_h = 44.0 * s;
+                    let content_start = title_h + 4.0 * s + tab_h + 1.0 * s;
+                    let scrolled_start = content_start - scroll_y;
+                    use crate::processes::ProcessAction;
+                    match crate::processes::handle_click(
+                        cx,
+                        cy,
+                        s,
+                        scrolled_start,
+                        wf,
+                        &proc_list,
+                        selected_pid,
+                    ) {
+                        ProcessAction::Select(pid) => {
+                            selected_pid = Some(pid);
+                        }
+                        ProcessAction::Kill(pid) => {
+                            let ok = crate::processes::kill_pid(pid);
+                            eprintln!(
+                                "[sysmon] kill {} -> {}",
+                                pid,
+                                if ok { "ok" } else { "failed" }
+                            );
+                            selected_pid = None;
+                            proc_list = proc_sampler.sample(proc_sort);
+                            proc_frame_counter = 0;
+                        }
+                        ProcessAction::SortBy(key) => {
+                            proc_sort.toggle(key);
+                            // Reorder the existing snapshot immediately; next sample will follow.
+                            crate::processes::resort(&mut proc_list, proc_sort);
+                        }
+                        ProcessAction::None => {
+                            selected_pid = None;
+                            ix.on_left_pressed();
+                        }
+                    }
+                } else {
+                    ix.on_left_pressed();
                 }
-            } else if menu_bar.on_click(&mut ix, &menus, s) {
-                // Menu bar consumed the click
-            } else if crate::tabs::handle_click(cx, cy, s, title_h + 4.0 * s, &mut active_tab) {
-                // Tab switch
-            } else if active_tab == 1 {
-                // Processes click: select a row or fire the kill button.
-                let tab_h = 44.0 * s;
-                let content_start = title_h + 4.0 * s + tab_h + 1.0 * s;
-                let scrolled_start = content_start - scroll_y;
-                use crate::processes::ProcessAction;
-                match crate::processes::handle_click(
-                    cx, cy, s, scrolled_start, wf, &proc_list, selected_pid,
-                ) {
-                    ProcessAction::Select(pid) => { selected_pid = Some(pid); }
-                    ProcessAction::Kill(pid) => {
-                        let ok = crate::processes::kill_pid(pid);
-                        eprintln!("[sysmon] kill {} -> {}", pid, if ok { "ok" } else { "failed" });
-                        selected_pid = None;
-                        proc_list = proc_sampler.sample(proc_sort);
-                        proc_frame_counter = 0;
-                    }
-                    ProcessAction::SortBy(key) => {
-                        proc_sort.toggle(key);
-                        // Reorder the existing snapshot immediately; next sample will follow.
-                        crate::processes::resort(&mut proc_list, proc_sort);
-                    }
-                    ProcessAction::None => {
-                        selected_pid = None;
-                        ix.on_left_pressed();
-                    }
-                }
-            } else {
-                ix.on_left_pressed();
-            }
             } // end else (not on popup)
         }
 
@@ -492,14 +571,18 @@ pub fn run() -> Result<()> {
                 MenuItem::separator(),
                 MenuItem::action(53, "Select All"),
                 MenuItem::separator(),
-                MenuItem::submenu(60, "Transform", vec![
-                    MenuItem::action(61, "Uppercase"),
-                    MenuItem::action(62, "Lowercase"),
-                    MenuItem::action(63, "Title Case"),
-                    MenuItem::separator(),
-                    MenuItem::action(64, "Sort Lines"),
-                    MenuItem::action(65, "Reverse Lines"),
-                ]),
+                MenuItem::submenu(
+                    60,
+                    "Transform",
+                    vec![
+                        MenuItem::action(61, "Uppercase"),
+                        MenuItem::action(62, "Lowercase"),
+                        MenuItem::action(63, "Title Case"),
+                        MenuItem::separator(),
+                        MenuItem::action(64, "Sort Lines"),
+                        MenuItem::action(65, "Reverse Lines"),
+                    ],
+                ),
                 MenuItem::separator(),
                 MenuItem::toggle(54, "Word Wrap", true),
                 MenuItem::checkbox(55, "Show Line Numbers", false),
@@ -557,7 +640,11 @@ pub fn run() -> Result<()> {
 
         let sw = gpu.width();
         let sh = gpu.height();
-        let r = if state.maximized { 0.0 } else { CORNER_RADIUS * s };
+        let r = if state.maximized {
+            0.0
+        } else {
+            CORNER_RADIUS * s
+        };
 
         // ── Window chrome ────────────────────────────────────────────────
         crate::chrome::draw_background(&mut painter, wf, hf, r);
@@ -567,8 +654,16 @@ pub fn run() -> Result<()> {
         // ── Tabs ────────────────────────────────────────────────────────
         let tab_y = title_h + 4.0 * s;
         let content_start = crate::tabs::draw(
-            &mut painter, &mut text, cx, cy, s, tab_y, wf,
-            active_tab, sw, sh,
+            &mut painter,
+            &mut text,
+            cx,
+            cy,
+            s,
+            tab_y,
+            wf,
+            active_tab,
+            sw,
+            sh,
         );
 
         // Refresh perf every ~1s, processes every ~3s (less jumpy when sorting).
@@ -580,7 +675,9 @@ pub fn run() -> Result<()> {
         proc_frame_counter += 1;
         if proc_frame_counter >= 180 {
             proc_frame_counter = 0;
-            if active_tab == 1 { proc_list = proc_sampler.sample(proc_sort); }
+            if active_tab == 1 {
+                proc_list = proc_sampler.sample(proc_sort);
+            }
         }
         // Update perf every frame for smooth graphs
         if active_tab == 2 && frame_counter % 4 == 0 {
@@ -600,115 +697,179 @@ pub fn run() -> Result<()> {
         let mut logo_draws: Vec<lntrn_render::TextureDraw> = Vec::new();
         let mut content_bottom: f32 = content_start; // track total content height
         if active_tab == 0 {
-        // ── System Info ─────────────────────────────────────────────────
-        let content_y = scrolled_start + 8.0 * s;
+            // ── System Info ─────────────────────────────────────────────────
+            let content_y = scrolled_start + 8.0 * s;
 
-        // Logo — centered, bigger
-        let logo_h = 140.0 * s;
-        if let Some(ref tex) = logo_tex {
-            let aspect = tex.width as f32 / tex.height as f32;
-            let logo_w = logo_h * aspect;
-            let logo_x = (wf - logo_w) * 0.5;
-            logo_draws.push(lntrn_render::TextureDraw::new(tex, logo_x, content_y, logo_w, logo_h));
-        }
-
-        // Hostname as big header under logo
-        let header_y = content_y + logo_h + 12.0 * s;
-        let hostname = &sys.entries[0].1;
-        let header_sz = 40.0 * s;
-        let header_w = header_sz * 0.55 * hostname.len() as f32;
-        text.queue(hostname, header_sz, (wf - header_w) * 0.5, header_y,
-            crate::chrome::TEXT_PRIMARY, wf, sw, sh);
-
-        // Accent color labels for specific entries
-        let accent_cyan = Color::from_rgb8(232, 180, 75); // gold
-        let accent_pink = Color::from_rgb8(230, 90, 140);
-        let accent_green = Color::from_rgb8(75, 200, 130);
-
-        fn label_color(label: &str, cyan: Color, pink: Color, green: Color, muted: Color) -> Color {
-            match label {
-                "CPU" | "Cores" | "GPU" => cyan,
-                "Memory" | "Swap" | "Disk" => pink,
-                "Battery" | "Uptime" => green,
-                _ => muted,
+            // Logo — centered, bigger
+            let logo_h = 140.0 * s;
+            if let Some(ref tex) = logo_tex {
+                let aspect = tex.width as f32 / tex.height as f32;
+                let logo_w = logo_h * aspect;
+                let logo_x = (wf - logo_w) * 0.5;
+                logo_draws.push(lntrn_render::TextureDraw::new(
+                    tex, logo_x, content_y, logo_w, logo_h,
+                ));
             }
-        }
 
-        // Info card — two columns, distributed left-to-right
-        let card_pad = 24.0 * s;
-        let col_w = 460.0 * s;
-        let col_gap = 32.0 * s;
-        let info_w = col_w * 2.0 + col_gap;
-        let info_x = (wf - info_w) * 0.5;
-        let row_height = 40.0 * s;
-        let card_y = header_y + header_sz + 16.0 * s;
-        // Skip hostname (index 0) since it's the header
-        let total_rows = sys.entries.len() - 1;
-        let left_rows = (total_rows + 1) / 2;
-        let right_rows = total_rows - left_rows;
-        let rows_per_col = left_rows.max(right_rows);
-        let card_h = rows_per_col as f32 * row_height + card_pad * 2.0;
-
-        content_bottom = card_y + card_h + 24.0 * s;
-        {
-            // Card shadow
-            painter.shadow(
-                Rect::new(info_x - card_pad, card_y, info_w + card_pad * 2.0, card_h),
-                12.0 * s, 16.0 * s, Color::rgba(0.0, 0.0, 0.0, 0.25), 0.0, 4.0 * s,
+            // Hostname as big header under logo
+            let header_y = content_y + logo_h + 12.0 * s;
+            let hostname = &sys.entries[0].1;
+            let header_sz = 40.0 * s;
+            let header_w = header_sz * 0.55 * hostname.len() as f32;
+            text.queue(
+                hostname,
+                header_sz,
+                (wf - header_w) * 0.5,
+                header_y,
+                crate::chrome::TEXT_PRIMARY,
+                wf,
+                sw,
+                sh,
             );
-            // Card bg
-            painter.rect_filled(
-                Rect::new(info_x - card_pad, card_y, info_w + card_pad * 2.0, card_h),
-                12.0 * s, Color::rgba(1.0, 1.0, 1.0, 0.03),
-            );
-            painter.rect_stroke_sdf(
-                Rect::new(info_x - card_pad, card_y, info_w + card_pad * 2.0, card_h),
-                12.0 * s, 1.0 * s, crate::chrome::BORDER_SUBTLE,
-            );
-        }
 
-        let label_col_w = 170.0 * s;
-        let label_sz = 24.0 * s;
-        let value_sz = 24.0 * s;
+            // Accent color labels for specific entries
+            let accent_cyan = Color::from_rgb8(232, 180, 75); // gold
+            let accent_pink = Color::from_rgb8(230, 90, 140);
+            let accent_green = Color::from_rgb8(75, 200, 130);
 
-        for (i, (label, value)) in sys.entries.iter().skip(1).enumerate() {
-            let (col_idx, row_idx) = if i < left_rows { (0, i) } else { (1, i - left_rows) };
-            let col_x = info_x + col_idx as f32 * (col_w + col_gap);
-            let y = card_y + card_pad + row_idx as f32 * row_height;
+            fn label_color(
+                label: &str,
+                cyan: Color,
+                pink: Color,
+                green: Color,
+                muted: Color,
+            ) -> Color {
+                match label {
+                    "CPU" | "Cores" | "GPU" => cyan,
+                    "Memory" | "Swap" | "Disk" => pink,
+                    "Battery" | "Uptime" => green,
+                    _ => muted,
+                }
+            }
 
-            let lc = label_color(label, accent_cyan, accent_pink, accent_green, crate::chrome::TEXT_SECONDARY);
-            text.queue(label, label_sz, col_x, y, lc, wf, sw, sh);
-            text.queue(value, value_sz, col_x + label_col_w, y,
-                crate::chrome::TEXT_PRIMARY, wf, sw, sh);
+            // Info card — two columns, distributed left-to-right
+            let card_pad = 24.0 * s;
+            let col_w = 460.0 * s;
+            let col_gap = 32.0 * s;
+            let info_w = col_w * 2.0 + col_gap;
+            let info_x = (wf - info_w) * 0.5;
+            let row_height = 40.0 * s;
+            let card_y = header_y + header_sz + 16.0 * s;
+            // Skip hostname (index 0) since it's the header
+            let total_rows = sys.entries.len() - 1;
+            let left_rows = (total_rows + 1) / 2;
+            let right_rows = total_rows - left_rows;
+            let rows_per_col = left_rows.max(right_rows);
+            let card_h = rows_per_col as f32 * row_height + card_pad * 2.0;
 
-            // Subtle row separator within column (skip last row in each column)
-            let is_last_in_col = (col_idx == 0 && row_idx == left_rows - 1)
-                || (col_idx == 1 && row_idx == right_rows.saturating_sub(1));
-            if !is_last_in_col {
+            content_bottom = card_y + card_h + 24.0 * s;
+            {
+                // Card shadow
+                painter.shadow(
+                    Rect::new(info_x - card_pad, card_y, info_w + card_pad * 2.0, card_h),
+                    12.0 * s,
+                    16.0 * s,
+                    Color::rgba(0.0, 0.0, 0.0, 0.25),
+                    0.0,
+                    4.0 * s,
+                );
+                // Card bg
                 painter.rect_filled(
-                    Rect::new(col_x, y + row_height - 2.0 * s, col_w, 1.0 * s), 0.0,
-                    Color::rgba(1.0, 1.0, 1.0, 0.04),
+                    Rect::new(info_x - card_pad, card_y, info_w + card_pad * 2.0, card_h),
+                    12.0 * s,
+                    Color::rgba(1.0, 1.0, 1.0, 0.03),
+                );
+                painter.rect_stroke_sdf(
+                    Rect::new(info_x - card_pad, card_y, info_w + card_pad * 2.0, card_h),
+                    12.0 * s,
+                    1.0 * s,
+                    crate::chrome::BORDER_SUBTLE,
                 );
             }
-        }
 
+            let label_col_w = 170.0 * s;
+            let label_sz = 24.0 * s;
+            let value_sz = 24.0 * s;
+
+            for (i, (label, value)) in sys.entries.iter().skip(1).enumerate() {
+                let (col_idx, row_idx) = if i < left_rows {
+                    (0, i)
+                } else {
+                    (1, i - left_rows)
+                };
+                let col_x = info_x + col_idx as f32 * (col_w + col_gap);
+                let y = card_y + card_pad + row_idx as f32 * row_height;
+
+                let lc = label_color(
+                    label,
+                    accent_cyan,
+                    accent_pink,
+                    accent_green,
+                    crate::chrome::TEXT_SECONDARY,
+                );
+                text.queue(label, label_sz, col_x, y, lc, wf, sw, sh);
+                text.queue(
+                    value,
+                    value_sz,
+                    col_x + label_col_w,
+                    y,
+                    crate::chrome::TEXT_PRIMARY,
+                    wf,
+                    sw,
+                    sh,
+                );
+
+                // Subtle row separator within column (skip last row in each column)
+                let is_last_in_col = (col_idx == 0 && row_idx == left_rows - 1)
+                    || (col_idx == 1 && row_idx == right_rows.saturating_sub(1));
+                if !is_last_in_col {
+                    painter.rect_filled(
+                        Rect::new(col_x, y + row_height - 2.0 * s, col_w, 1.0 * s),
+                        0.0,
+                        Color::rgba(1.0, 1.0, 1.0, 0.04),
+                    );
+                }
+            }
         } else if active_tab == 1 {
             // ── Processes ───────────────────────────────────────────────
             crate::processes::draw(
-                &mut painter, &mut text, cx, cy, s, scrolled_start,
-                &proc_list, selected_pid, proc_sort, wf, hf, sw, sh,
+                &mut painter,
+                &mut text,
+                cx,
+                cy,
+                s,
+                scrolled_start,
+                &proc_list,
+                selected_pid,
+                proc_sort,
+                wf,
+                hf,
+                sw,
+                sh,
             );
             // Estimate content height: toolbar + header + rows (match processes::draw)
             let row_h = 40.0 * s;
             let header_h = 42.0 * s;
             let toolbar_h = 50.0 * s;
-            content_bottom = content_start + 10.0 * s + toolbar_h + header_h + 4.0 * s
-                + proc_list.len() as f32 * row_h + 16.0 * s;
+            content_bottom = content_start
+                + 10.0 * s
+                + toolbar_h
+                + header_h
+                + 4.0 * s
+                + proc_list.len() as f32 * row_h
+                + 16.0 * s;
         } else if active_tab == 2 {
             // ── Performance ─────────────────────────────────────────────
             crate::performance::draw(
-                &mut painter, &mut text, s, scrolled_start,
-                &perf_state, wf, hf, sw, sh,
+                &mut painter,
+                &mut text,
+                s,
+                scrolled_start,
+                &perf_state,
+                wf,
+                hf,
+                sw,
+                sh,
             );
             // Estimate: two graphs + info
             let graph_h = 180.0 * s;
@@ -726,13 +887,16 @@ pub fn run() -> Result<()> {
         let max_scroll = (total_content - visible_h).max(0.0);
         scroll_y = scroll_y.clamp(0.0, max_scroll);
 
-        if !state.maximized { crate::chrome::draw_border(&mut painter, wf, hf, r); }
+        if !state.maximized {
+            crate::chrome::draw_border(&mut painter, wf, hf, r);
+        }
 
         // Context menus (drawn into painter on top of other shapes)
         menu_bar.context_menu.update(0.016);
-        if let Some(evt) = menu_bar.context_menu.draw(
-            &mut painter, &mut text, &mut ix, sw, sh,
-        ) {
+        if let Some(evt) = menu_bar
+            .context_menu
+            .draw(&mut painter, &mut text, &mut ix, sw, sh)
+        {
             use lntrn_ui::gpu::MenuEvent;
             if matches!(evt, MenuEvent::Action(_)) {
                 menu_bar.close();

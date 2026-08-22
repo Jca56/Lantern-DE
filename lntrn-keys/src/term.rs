@@ -34,9 +34,13 @@ impl Term {
             return Err(io::Error::last_os_error());
         }
 
-        let mut t = Self { original, fd, stdout: io::stdout() };
+        let mut t = Self {
+            original,
+            fd,
+            stdout: io::stdout(),
+        };
         t.write_all(b"\x1b[?1049h"); // alt screen
-        t.write_all(b"\x1b[?25l");   // hide cursor
+        t.write_all(b"\x1b[?25l"); // hide cursor
         t.write_all(b"\x1b[?2004h"); // bracketed paste mode
         t.flush();
         Ok(t)
@@ -65,7 +69,7 @@ impl Term {
 impl Drop for Term {
     fn drop(&mut self) {
         self.write_all(b"\x1b[?2004l"); // disable bracketed paste
-        self.write_all(b"\x1b[?25h");   // show cursor
+        self.write_all(b"\x1b[?25h"); // show cursor
         self.write_all(b"\x1b[?1049l"); // exit alt screen
         self.flush();
         unsafe { libc::tcsetattr(self.fd, libc::TCSANOW, &self.original) };
@@ -107,7 +111,9 @@ pub fn bg(buf: &mut Vec<u8>, code: u8) {
     buf.extend_from_slice(s.as_bytes());
 }
 
-pub fn bold(buf: &mut Vec<u8>) { buf.extend_from_slice(b"\x1b[1m"); }
+pub fn bold(buf: &mut Vec<u8>) {
+    buf.extend_from_slice(b"\x1b[1m");
+}
 
 /// Read one byte from stdin (blocking).
 ///

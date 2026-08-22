@@ -172,7 +172,12 @@ enum BtEvent {
     /// Pair flow finished (failure). Modal shows the error.
     PairFailed { mac: String, msg: String },
     /// Send-file progress: filename + bytes done / total (or 0 if unknown).
-    SendProgress { mac: String, filename: String, bytes_done: u64, bytes_total: u64 },
+    SendProgress {
+        mac: String,
+        filename: String,
+        bytes_done: u64,
+        bytes_total: u64,
+    },
     /// Send-file finished successfully.
     SendDone { mac: String },
     /// Send-file failed.
@@ -181,14 +186,22 @@ enum BtEvent {
     /// user cancels the file picker — no error, just nothing to show).
     SendCleared { mac: String },
     /// Incoming push request. The device's row shows Accept/Reject inline.
-    IncomingRequest { from_name: String, filename: String, size: u64 },
+    IncomingRequest {
+        from_name: String,
+        filename: String,
+        size: u64,
+    },
     /// Incoming file fully received.
     IncomingDone { filename: String, path: String },
     /// Another device wants to pair *with us* (our agent got a
     /// RequestConfirmation / RequestAuthorization). The requesting
     /// device's row shows Accept/Reject inline. `passkey == None` means
     /// a simple yes/no authorization with no number to confirm.
-    IncomingPairRequest { mac: String, name: String, passkey: Option<u32> },
+    IncomingPairRequest {
+        mac: String,
+        name: String,
+        passkey: Option<u32>,
+    },
     /// The incoming pairing request was cancelled by the remote (or
     /// BlueZ released our agent). Clears the inline prompt.
     IncomingPairCancelled,
@@ -423,10 +436,15 @@ impl Bluetooth {
         if self.pair_request.as_ref().is_some_and(|p| p.mac == mac) {
             return true;
         }
-        if let (Some(req), Some(dev)) =
-            (&self.incoming_request, self.devices.iter().find(|d| d.mac == mac))
-        {
-            let n = if dev.name.is_empty() { dev.mac.as_str() } else { dev.name.as_str() };
+        if let (Some(req), Some(dev)) = (
+            &self.incoming_request,
+            self.devices.iter().find(|d| d.mac == mac),
+        ) {
+            let n = if dev.name.is_empty() {
+                dev.mac.as_str()
+            } else {
+                dev.name.as_str()
+            };
             return req.from_name == n || req.from_name == dev.alias;
         }
         false
@@ -449,9 +467,7 @@ impl Bluetooth {
         let to_remove: Vec<String> = self
             .send_state
             .iter()
-            .filter_map(|(mac, s)| {
-                s.cleared_at.filter(|t| *t <= now).map(|_| mac.clone())
-            })
+            .filter_map(|(mac, s)| s.cleared_at.filter(|t| *t <= now).map(|_| mac.clone()))
             .collect();
         for mac in to_remove {
             self.send_state.remove(&mac);
@@ -495,7 +511,12 @@ impl Bluetooth {
                     self.last_error = Some(msg);
                     self.pending = None;
                 }
-                BtEvent::SendProgress { mac, filename, bytes_done, bytes_total } => {
+                BtEvent::SendProgress {
+                    mac,
+                    filename,
+                    bytes_done,
+                    bytes_total,
+                } => {
                     let entry = self.send_state.entry(mac).or_insert_with(|| SendState {
                         filename: filename.clone(),
                         bytes_done: 0,
@@ -539,7 +560,11 @@ impl Bluetooth {
                 BtEvent::SendCleared { mac } => {
                     self.send_state.remove(&mac);
                 }
-                BtEvent::IncomingRequest { from_name, filename, size } => {
+                BtEvent::IncomingRequest {
+                    from_name,
+                    filename,
+                    size,
+                } => {
                     self.incoming_request = Some(IncomingRequest {
                         from_name,
                         filename,
@@ -612,10 +637,7 @@ impl Bluetooth {
             return;
         }
         self.last_error = None;
-        let connected = self
-            .devices
-            .iter()
-            .any(|d| d.mac == mac && d.connected);
+        let connected = self.devices.iter().any(|d| d.mac == mac && d.connected);
         self.pending = Some(mac.to_string());
         let cmd = if connected {
             BtCmd::Disconnect(mac.to_string())
@@ -673,7 +695,9 @@ impl Bluetooth {
                 cleared_at: None,
             },
         );
-        let _ = self.cmd_tx.send(BtCmd::SendFileToDevice { mac: mac.to_string() });
+        let _ = self.cmd_tx.send(BtCmd::SendFileToDevice {
+            mac: mac.to_string(),
+        });
     }
 
     /// Cancel an in-flight send for the given device.
@@ -682,7 +706,9 @@ impl Bluetooth {
     /// still consistent.
     #[allow(dead_code)]
     pub fn cancel_send(&mut self, mac: &str) {
-        let _ = self.cmd_tx.send(BtCmd::CancelSend { mac: mac.to_string() });
+        let _ = self.cmd_tx.send(BtCmd::CancelSend {
+            mac: mac.to_string(),
+        });
         self.send_state.remove(mac);
     }
 
@@ -715,7 +741,9 @@ impl Bluetooth {
     /// to render on, even if `bluetoothctl devices` hasn't surfaced it
     /// yet. Inserts a minimal unpaired placeholder keyed by MAC.
     fn ensure_pending_pair_device(&mut self) {
-        let Some(req) = &self.pair_request else { return };
+        let Some(req) = &self.pair_request else {
+            return;
+        };
         if self.devices.iter().any(|d| d.mac == req.mac) {
             return;
         }
@@ -731,9 +759,15 @@ impl Bluetooth {
     /// (see `prompt::row_prompt`); if none matches, inject a placeholder
     /// keyed by name so the Accept/Reject strip still has somewhere to go.
     fn ensure_incoming_file_device(&mut self) {
-        let Some(req) = &self.incoming_request else { return };
+        let Some(req) = &self.incoming_request else {
+            return;
+        };
         let matched = self.devices.iter().any(|d| {
-            let n = if d.name.is_empty() { d.mac.as_str() } else { d.name.as_str() };
+            let n = if d.name.is_empty() {
+                d.mac.as_str()
+            } else {
+                d.name.as_str()
+            };
             req.from_name == n || req.from_name == d.alias
         });
         if matched {
@@ -746,4 +780,3 @@ impl Bluetooth {
         });
     }
 }
-

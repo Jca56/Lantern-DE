@@ -50,8 +50,9 @@ impl App {
     pub(crate) fn initial_grid_size(&self) -> (usize, usize) {
         if let Some(ref gpu) = self.gpu {
             let (cell_w, cell_h) = render::measure_cell(self.config.font.size);
-            let cols =
-                ((gpu.width() as f32 - self.sidebar_offset()) / cell_w).floor().max(1.0) as usize;
+            let cols = ((gpu.width() as f32 - self.sidebar_offset()) / cell_w)
+                .floor()
+                .max(1.0) as usize;
             let avail_h = gpu.height() as f32 - self.chrome_height();
             let rows = (avail_h / cell_h).floor().max(1.0) as usize;
             (cols, rows)
@@ -235,10 +236,7 @@ impl App {
     }
 
     pub(crate) fn sort_pinned_tabs(&mut self) {
-        let was_pinned = self
-            .tabs
-            .get(self.active_tab)
-            .map_or(false, |t| t.pinned);
+        let was_pinned = self.tabs.get(self.active_tab).map_or(false, |t| t.pinned);
         let pinned_count_before = if was_pinned {
             self.tabs[..self.active_tab]
                 .iter()
@@ -272,9 +270,7 @@ impl App {
                     .panes
                     .get(t.active_pane)
                     .and_then(|p| p.pty.cwd())
-                    .unwrap_or_else(|| {
-                        std::env::var("HOME").unwrap_or_else(|_| "/".to_string())
-                    });
+                    .unwrap_or_else(|| std::env::var("HOME").unwrap_or_else(|_| "/".to_string()));
                 PinnedTab { name, cwd }
             })
             .collect();

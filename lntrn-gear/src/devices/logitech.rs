@@ -84,7 +84,11 @@ impl Lighting for LogitechDevice {
     fn zone_count(&mut self) -> u8 {
         let Some(idx) = self.led_idx else { return 0 };
         // 0x8070 getInfo (fn 0x00) → zone count at payload[0].
-        self.hid.call(idx, 0x00, &[0, 0, 0]).ok().and_then(|r| r.first().copied()).unwrap_or(0)
+        self.hid
+            .call(idx, 0x00, &[0, 0, 0])
+            .ok()
+            .and_then(|r| r.first().copied())
+            .unwrap_or(0)
     }
 
     fn set_fixed(&mut self, zone: u8, color: Rgb) -> Result<(), Error> {
@@ -100,7 +104,8 @@ impl Lighting for LogitechDevice {
         for e in 0..effect_count.min(16) {
             // getZoneEffectInfo (fn 0x02) → effect id at payload[2..4].
             let r = self.hid.call(idx, 0x02, &[zone, e, 0])?;
-            let id = ((r.get(2).copied().unwrap_or(0) as u16) << 8) | r.get(3).copied().unwrap_or(0) as u16;
+            let id = ((r.get(2).copied().unwrap_or(0) as u16) << 8)
+                | r.get(3).copied().unwrap_or(0) as u16;
             if id == EFFECT_FIXED {
                 fixed = Some(e);
                 break;
@@ -108,7 +113,9 @@ impl Lighting for LogitechDevice {
         }
         let effect = fixed.ok_or(Error::Unsupported)?;
         // setZoneEffect (fn 0x03), long report: [zone, effect, R, G, B, 0…].
-        let params = [zone, effect, color.r, color.g, color.b, 0, 0, 0, 0, 0, 0, 0, 0];
+        let params = [
+            zone, effect, color.r, color.g, color.b, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
         self.hid.call(idx, 0x03, &params)?;
         Ok(())
     }
@@ -126,7 +133,8 @@ impl Dpi for LogitechDevice {
         let idx = self.dpi_idx.ok_or(Error::Unsupported)?;
         let dpi = self.range()?.snap(dpi);
         // setSensorDpi (fn 0x03): [sensor, dpi_hi, dpi_lo].
-        self.hid.call(idx, 0x03, &[0, (dpi >> 8) as u8, dpi as u8])?;
+        self.hid
+            .call(idx, 0x03, &[0, (dpi >> 8) as u8, dpi as u8])?;
         Ok(())
     }
 
@@ -161,7 +169,11 @@ impl Dpi for LogitechDevice {
 
 /// 0x0005 DeviceName: `getCount` (fn 0) then `getDeviceName` (fn 1) chunks.
 fn read_device_name(hid: &mut HidppDevice, idx: u8) -> Result<String, Error> {
-    let len = hid.call(idx, 0x00, &[0, 0, 0])?.first().copied().unwrap_or(0) as usize;
+    let len = hid
+        .call(idx, 0x00, &[0, 0, 0])?
+        .first()
+        .copied()
+        .unwrap_or(0) as usize;
     let mut name = String::new();
     while name.len() < len {
         let start = name.len() as u8;

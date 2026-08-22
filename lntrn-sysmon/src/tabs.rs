@@ -2,10 +2,10 @@ use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
 pub const TAB_NAMES: &[&str] = &["System", "Processes", "Performance"];
 
-const TEXT_MUTED: Color     = Color::rgb(0.55, 0.55, 0.55);
-const ACCENT: Color         = Color::rgb(0.78, 0.45, 0.06); // sRGB ~232,180,75 (gold)
-const SURFACE: Color        = Color::rgba(1.0, 1.0, 1.0, 0.08);
-const BORDER: Color         = Color::rgba(1.0, 1.0, 1.0, 0.08);
+const TEXT_MUTED: Color = Color::rgb(0.55, 0.55, 0.55);
+const ACCENT: Color = Color::rgb(0.78, 0.45, 0.06); // sRGB ~232,180,75 (gold)
+const SURFACE: Color = Color::rgba(1.0, 1.0, 1.0, 0.08);
+const BORDER: Color = Color::rgba(1.0, 1.0, 1.0, 0.08);
 
 fn in_rect(cx: f32, cy: f32, x: f32, y: f32, w: f32, h: f32) -> bool {
     cx >= x && cx <= x + w && cy >= y && cy <= y + h
@@ -27,9 +27,16 @@ pub fn handle_click(cx: f32, cy: f32, s: f32, y: f32, active: &mut usize) -> boo
 }
 
 pub fn draw(
-    p: &mut Painter, t: &mut TextRenderer,
-    cx: f32, cy: f32, s: f32, y: f32, wf: f32,
-    active: usize, sw: u32, sh: u32,
+    p: &mut Painter,
+    t: &mut TextRenderer,
+    cx: f32,
+    cy: f32,
+    s: f32,
+    y: f32,
+    wf: f32,
+    active: usize,
+    sw: u32,
+    sh: u32,
 ) -> f32 {
     let tab_h = 44.0 * s;
     let pad = 32.0 * s;
@@ -43,18 +50,32 @@ pub fn draw(
         if is_active {
             p.rect_filled(Rect::new(tx, y, tw, tab_h), 8.0 * s, SURFACE);
         } else if hov {
-            p.rect_filled(Rect::new(tx, y, tw, tab_h), 8.0 * s,
-                Color::rgba(1.0, 1.0, 1.0, 0.04));
+            p.rect_filled(
+                Rect::new(tx, y, tw, tab_h),
+                8.0 * s,
+                Color::rgba(1.0, 1.0, 1.0, 0.04),
+            );
         }
 
         let tc = if is_active { ACCENT } else { TEXT_MUTED };
-        t.queue(TAB_NAMES[i], 22.0 * s, tx + 16.0 * s, y + 11.0 * s, tc, wf, sw, sh);
+        t.queue(
+            TAB_NAMES[i],
+            22.0 * s,
+            tx + 16.0 * s,
+            y + 11.0 * s,
+            tc,
+            wf,
+            sw,
+            sh,
+        );
         tx += tw + 8.0 * s;
     }
 
     // Bottom line
     p.rect_filled(
-        Rect::new(pad, y + tab_h, wf - pad * 2.0, 1.0 * s), 0.0, BORDER,
+        Rect::new(pad, y + tab_h, wf - pad * 2.0, 1.0 * s),
+        0.0,
+        BORDER,
     );
 
     y + tab_h + 1.0 * s

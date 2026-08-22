@@ -93,7 +93,9 @@ impl TitleBar {
 
     // ── Layout queries ──────────────────────────────────────────────────
 
-    fn btn_w(&self) -> f32 { BTN_W * self.ui_scale }
+    fn btn_w(&self) -> f32 {
+        BTN_W * self.ui_scale
+    }
 
     /// The content area: left portion of the title bar, before the window
     /// control buttons. Draw your menus, tabs, breadcrumbs here.
@@ -116,13 +118,23 @@ impl TitleBar {
     /// Maximize button: second from right. Full height of the title bar.
     pub fn maximize_button_rect(&self) -> Rect {
         let w = self.btn_w();
-        Rect::new(self.rect.x + self.rect.w - w * 2.0, self.rect.y, w, self.rect.h)
+        Rect::new(
+            self.rect.x + self.rect.w - w * 2.0,
+            self.rect.y,
+            w,
+            self.rect.h,
+        )
     }
 
     /// Minimize button: third from right. Full height of the title bar.
     pub fn minimize_button_rect(&self) -> Rect {
         let w = self.btn_w();
-        Rect::new(self.rect.x + self.rect.w - w * 3.0, self.rect.y, w, self.rect.h)
+        Rect::new(
+            self.rect.x + self.rect.w - w * 3.0,
+            self.rect.y,
+            w,
+            self.rect.h,
+        )
     }
 
     // ── Resize edge hit-testing ─────────────────────────────────────────
@@ -162,11 +174,7 @@ impl TitleBar {
 
     // ── Drawing ─────────────────────────────────────────────────────────
 
-    pub fn draw(
-        &self,
-        painter: &mut Painter,
-        palette: &FoxPalette,
-    ) {
+    pub fn draw(&self, painter: &mut Painter, palette: &FoxPalette) {
         let s = self.ui_scale;
         let r = if self.maximized { 0.0 } else { 10.0 * s };
 
@@ -177,11 +185,18 @@ impl TitleBar {
             if r > 0.0 {
                 painter.rect_filled(
                     Rect::new(self.rect.x, self.rect.y + self.rect.h - r, r, r),
-                    0.0, palette.surface,
+                    0.0,
+                    palette.surface,
                 );
                 painter.rect_filled(
-                    Rect::new(self.rect.x + self.rect.w - r, self.rect.y + self.rect.h - r, r, r),
-                    0.0, palette.surface,
+                    Rect::new(
+                        self.rect.x + self.rect.w - r,
+                        self.rect.y + self.rect.h - r,
+                        r,
+                        r,
+                    ),
+                    0.0,
+                    palette.surface,
                 );
             }
         }
@@ -217,23 +232,40 @@ impl TitleBar {
                 // Square off top-left
                 painter.rect_filled(
                     Rect::new(close_r.x, close_r.y, corner_r, corner_r),
-                    0.0, palette.danger,
+                    0.0,
+                    palette.danger,
                 );
                 // Square off bottom-left
                 painter.rect_filled(
-                    Rect::new(close_r.x, close_r.y + close_r.h - corner_r, corner_r, corner_r),
-                    0.0, palette.danger,
+                    Rect::new(
+                        close_r.x,
+                        close_r.y + close_r.h - corner_r,
+                        corner_r,
+                        corner_r,
+                    ),
+                    0.0,
+                    palette.danger,
                 );
                 // Square off bottom-right
                 painter.rect_filled(
-                    Rect::new(close_r.x + close_r.w - corner_r, close_r.y + close_r.h - corner_r, corner_r, corner_r),
-                    0.0, palette.danger,
+                    Rect::new(
+                        close_r.x + close_r.w - corner_r,
+                        close_r.y + close_r.h - corner_r,
+                        corner_r,
+                        corner_r,
+                    ),
+                    0.0,
+                    palette.danger,
                 );
             } else {
                 painter.rect_filled(close_r, 0.0, palette.danger);
             }
         }
-        let close_color = if self.hover.close { Color::WHITE } else { icon_rest };
+        let close_color = if self.hover.close {
+            Color::WHITE
+        } else {
+            icon_rest
+        };
         self.draw_close_icon(painter, close_r, close_color, s);
     }
 
@@ -241,10 +273,7 @@ impl TitleBar {
         let sz = ICON_SZ * s;
         let cx = rect.center_x();
         let cy = rect.center_y();
-        painter.rect_filled(
-            Rect::new(cx - sz * 0.5, cy, sz, 2.0 * s),
-            0.0, color,
-        );
+        painter.rect_filled(Rect::new(cx - sz * 0.5, cy, sz, 2.0 * s), 0.0, color);
     }
 
     fn draw_maximize_icon(&self, painter: &mut Painter, rect: Rect, color: Color, s: f32) {
@@ -255,10 +284,22 @@ impl TitleBar {
             let small = sz * 0.75;
             let offset = sz * 0.25;
             painter.rect_stroke(
-                Rect::new(cx - small * 0.5 + offset, cy - small * 0.5 - offset, small, small),
-                0.0, 2.0 * s, color,
+                Rect::new(
+                    cx - small * 0.5 + offset,
+                    cy - small * 0.5 - offset,
+                    small,
+                    small,
+                ),
+                0.0,
+                2.0 * s,
+                color,
             );
-            let front = Rect::new(cx - small * 0.5 - offset * 0.5, cy - small * 0.5 + offset * 0.5, small, small);
+            let front = Rect::new(
+                cx - small * 0.5 - offset * 0.5,
+                cy - small * 0.5 + offset * 0.5,
+                small,
+                small,
+            );
             painter.rect_filled(front, 0.0, Color::TRANSPARENT);
             painter.rect_stroke(front, 0.0, 2.0 * s, color);
         } else {

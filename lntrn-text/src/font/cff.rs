@@ -35,7 +35,10 @@ impl Index {
     fn parse(d: &[u8], pos: usize) -> Result<Index, FontError> {
         let count = read_u16_at(d, pos)? as u32;
         if count == 0 {
-            return Ok(Index { end: pos + 2, ..Index::default() });
+            return Ok(Index {
+                end: pos + 2,
+                ..Index::default()
+            });
         }
         let off_size = read_u8_at(d, pos + 2)?;
         if !(1..=4).contains(&off_size) {
@@ -94,22 +97,30 @@ fn parse_dict(d: &[u8], start: usize, end: usize) -> Vec<(u16, Vec<f64>)> {
                 pos += 1;
             }
             247..=250 => {
-                let Ok(b1) = read_u8_at(d, pos + 1) else { break };
+                let Ok(b1) = read_u8_at(d, pos + 1) else {
+                    break;
+                };
                 operands.push((b0 as f64 - 247.0) * 256.0 + b1 as f64 + 108.0);
                 pos += 2;
             }
             251..=254 => {
-                let Ok(b1) = read_u8_at(d, pos + 1) else { break };
+                let Ok(b1) = read_u8_at(d, pos + 1) else {
+                    break;
+                };
                 operands.push(-(b0 as f64 - 251.0) * 256.0 - b1 as f64 - 108.0);
                 pos += 2;
             }
             28 => {
-                let Ok(v) = read_u16_at(d, pos + 1) else { break };
+                let Ok(v) = read_u16_at(d, pos + 1) else {
+                    break;
+                };
                 operands.push(v as i16 as f64);
                 pos += 3;
             }
             29 => {
-                let Ok(v) = read_u32_at(d, pos + 1) else { break };
+                let Ok(v) = read_u32_at(d, pos + 1) else {
+                    break;
+                };
                 operands.push(v as i32 as f64);
                 pos += 5;
             }
@@ -134,7 +145,9 @@ fn parse_dict(d: &[u8], start: usize, end: usize) -> Vec<(u16, Vec<f64>)> {
                 operands.push(s.parse().unwrap_or(0.0));
             }
             12 => {
-                let Ok(b1) = read_u8_at(d, pos + 1) else { break };
+                let Ok(b1) = read_u8_at(d, pos + 1) else {
+                    break;
+                };
                 out.push((1200 + b1 as u16, std::mem::take(&mut operands)));
                 pos += 2;
             }
@@ -149,7 +162,9 @@ fn parse_dict(d: &[u8], start: usize, end: usize) -> Vec<(u16, Vec<f64>)> {
 }
 
 fn dict_get(dict: &[(u16, Vec<f64>)], op: u16) -> Option<&[f64]> {
-    dict.iter().find(|(o, _)| *o == op).map(|(_, v)| v.as_slice())
+    dict.iter()
+        .find(|(o, _)| *o == op)
+        .map(|(_, v)| v.as_slice())
 }
 
 // ── Font-level structures ───────────────────────────────────────────────────
@@ -187,7 +202,8 @@ impl Cff {
 
         let cs_off = dict_get(&top, 17)
             .and_then(|v| v.first().copied())
-            .ok_or(FontError::Unsupported("CFF without CharStrings"))? as usize;
+            .ok_or(FontError::Unsupported("CFF without CharStrings"))?
+            as usize;
         let char_strings = Index::parse(d, base + cs_off)?;
 
         let fd = if let (Some(fda), Some(fds)) = (dict_get(&top, 1236), dict_get(&top, 1237)) {
@@ -199,12 +215,19 @@ impl Cff {
                 let fd_dict = parse_dict(d, s, e);
                 fds_vec.push(parse_private(d, base, &fd_dict)?);
             }
-            FdData::Cid { fd_select: base + fds[0] as usize, fds: fds_vec }
+            FdData::Cid {
+                fd_select: base + fds[0] as usize,
+                fds: fds_vec,
+            }
         } else {
             FdData::Single(parse_private(d, base, &top)?)
         };
 
-        Ok(Cff { char_strings, global_subrs, fd })
+        Ok(Cff {
+            char_strings,
+            global_subrs,
+            fd,
+        })
     }
 
     fn private_for(&self, d: &[u8], gid: u16) -> &PrivateData {
@@ -218,7 +241,11 @@ impl Cff {
     }
 }
 
-fn parse_private(d: &[u8], base: usize, dict: &[(u16, Vec<f64>)]) -> Result<PrivateData, FontError> {
+fn parse_private(
+    d: &[u8],
+    base: usize,
+    dict: &[(u16, Vec<f64>)],
+) -> Result<PrivateData, FontError> {
     let mut local_subrs = Index::default();
     if let Some(pv) = dict_get(dict, 18) {
         if pv.len() == 2 {
@@ -403,8 +430,12 @@ impl Interp<'_> {
                     let mut i = 0;
                     while i + 5 < self.stack.len() {
                         self.curve(&[
-                            self.stack[i], self.stack[i + 1], self.stack[i + 2],
-                            self.stack[i + 3], self.stack[i + 4], self.stack[i + 5],
+                            self.stack[i],
+                            self.stack[i + 1],
+                            self.stack[i + 2],
+                            self.stack[i + 3],
+                            self.stack[i + 4],
+                            self.stack[i + 5],
                         ]);
                         i += 6;
                     }
@@ -417,8 +448,12 @@ impl Interp<'_> {
                     let mut i = 0;
                     while n - i >= 8 {
                         self.curve(&[
-                            self.stack[i], self.stack[i + 1], self.stack[i + 2],
-                            self.stack[i + 3], self.stack[i + 4], self.stack[i + 5],
+                            self.stack[i],
+                            self.stack[i + 1],
+                            self.stack[i + 2],
+                            self.stack[i + 3],
+                            self.stack[i + 4],
+                            self.stack[i + 5],
                         ]);
                         i += 6;
                     }
@@ -438,8 +473,12 @@ impl Interp<'_> {
                     }
                     if i + 5 < n {
                         self.curve(&[
-                            self.stack[i], self.stack[i + 1], self.stack[i + 2],
-                            self.stack[i + 3], self.stack[i + 4], self.stack[i + 5],
+                            self.stack[i],
+                            self.stack[i + 1],
+                            self.stack[i + 2],
+                            self.stack[i + 3],
+                            self.stack[i + 4],
+                            self.stack[i + 5],
                         ]);
                     }
                     self.stack.clear();
@@ -455,8 +494,10 @@ impl Interp<'_> {
                     }
                     while i + 3 < self.stack.len() {
                         let (a, b, c, dd) = (
-                            self.stack[i], self.stack[i + 1],
-                            self.stack[i + 2], self.stack[i + 3],
+                            self.stack[i],
+                            self.stack[i + 1],
+                            self.stack[i + 2],
+                            self.stack[i + 3],
                         );
                         if b0 == 26 {
                             self.curve(&[d1, a, b, c, 0.0, dd]);
@@ -477,10 +518,16 @@ impl Interp<'_> {
                     let mut i = 0;
                     while n - i >= 4 {
                         let last = n - i < 8;
-                        let extra = if last && n - i == 5 { self.stack[n - 1] } else { 0.0 };
+                        let extra = if last && n - i == 5 {
+                            self.stack[n - 1]
+                        } else {
+                            0.0
+                        };
                         let (a, b, c, dd) = (
-                            self.stack[i], self.stack[i + 1],
-                            self.stack[i + 2], self.stack[i + 3],
+                            self.stack[i],
+                            self.stack[i + 1],
+                            self.stack[i + 2],
+                            self.stack[i + 3],
                         );
                         if horizontal {
                             self.curve(&[a, 0.0, b, c, extra, dd]);
@@ -550,14 +597,18 @@ impl Interp<'_> {
     fn move_to(&mut self, dx: f64, dy: f64) {
         self.x += dx;
         self.y += dy;
-        self.out.cmds.push(PathCmd::Move([self.x as f32, self.y as f32]));
+        self.out
+            .cmds
+            .push(PathCmd::Move([self.x as f32, self.y as f32]));
         self.open = true;
     }
 
     fn line_to(&mut self, dx: f64, dy: f64) {
         self.x += dx;
         self.y += dy;
-        self.out.cmds.push(PathCmd::Line([self.x as f32, self.y as f32]));
+        self.out
+            .cmds
+            .push(PathCmd::Line([self.x as f32, self.y as f32]));
     }
 
     /// One cubic from six deltas: c1(dx,dy), c2(dx,dy), end(dx,dy).
@@ -640,10 +691,16 @@ mod tests {
         let gid = font.glyph_index('A');
         assert_ne!(gid, 0, "cmap should map 'A'");
         let outline = font.outline(gid).expect("charstring should interpret");
-        assert!(!outline.cmds.is_empty(), "outline should have path commands");
+        assert!(
+            !outline.cmds.is_empty(),
+            "outline should have path commands"
+        );
         let glyph = raster::rasterize(&outline, 24.0 / 1000.0 * 24.0, 0.0)
             .expect("outline should rasterize");
-        assert!(glyph.width > 4 && glyph.height > 4, "A should have real ink");
+        assert!(
+            glyph.width > 4 && glyph.height > 4,
+            "A should have real ink"
+        );
         let ink: u32 = glyph.coverage.iter().map(|&c| c as u32).sum();
         assert!(ink > 1000, "coverage should be substantial, got {ink}");
     }

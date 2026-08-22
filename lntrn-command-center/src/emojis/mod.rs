@@ -7,8 +7,8 @@
 pub mod data;
 pub mod render;
 
-use std::path::PathBuf;
 use lntrn_render::Rect;
+use std::path::PathBuf;
 
 /// Top-level emoji groupings (Unicode CLDR groups).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,7 +59,7 @@ impl Category {
             Category::People => "1f44b",        // 👋
             Category::AnimalsNature => "1f436", // 🐶
             Category::FoodDrink => "1f355",     // 🍕
-            Category::Activities => "26bd",      // ⚽
+            Category::Activities => "26bd",     // ⚽
             Category::TravelPlaces => "1f697",  // 🚗
             Category::Objects => "1f4a1",       // 💡
             Category::Symbols => "1f4af",       // 💯
@@ -80,9 +80,14 @@ pub const SECTION_GAP: f32 = 8.0;
 /// Returns the on-disk path for a given codepoint string (e.g. `"1f600"`
 /// or `"1f1fa 1f1f8"`). Multi-codepoint emoji use dashes in the filename.
 pub fn png_path_for(unicode: &str) -> PathBuf {
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default();
     let name = unicode.replace(' ', "-");
-    home.join(".lantern").join("emojis").join("png").join(format!("{}.png", name))
+    home.join(".lantern")
+        .join("emojis")
+        .join("png")
+        .join(format!("{}.png", name))
 }
 
 /// Hit-test result inside the emoji overlay.

@@ -56,10 +56,19 @@ fn read_amd() -> Option<GpuStats> {
     let dev = amd_card_path()?;
     let util = read_f32(dev.join("gpu_busy_percent"))?;
     let bytes_to_mb = |b: u64| b / (1024 * 1024);
-    let vram_used_mb = read_u64(dev.join("mem_info_vram_used")).map(bytes_to_mb).unwrap_or(0);
-    let vram_total_mb = read_u64(dev.join("mem_info_vram_total")).map(bytes_to_mb).unwrap_or(0);
+    let vram_used_mb = read_u64(dev.join("mem_info_vram_used"))
+        .map(bytes_to_mb)
+        .unwrap_or(0);
+    let vram_total_mb = read_u64(dev.join("mem_info_vram_total"))
+        .map(bytes_to_mb)
+        .unwrap_or(0);
     let temp_c = read_amd_temp(&dev).unwrap_or(0.0);
-    Some(GpuStats { util_pct: util, temp_c, vram_used_mb, vram_total_mb })
+    Some(GpuStats {
+        util_pct: util,
+        temp_c,
+        vram_used_mb,
+        vram_total_mb,
+    })
 }
 
 /// amdgpu exposes temperature under a hwmon subdir as millidegrees.
@@ -96,7 +105,12 @@ fn read_nvidia() -> Option<GpuStats> {
     let temp = f.next()?.parse::<f32>().ok()?;
     let used = f.next()?.parse::<u64>().ok()?; // already MiB (nounits)
     let total = f.next()?.parse::<u64>().ok()?;
-    Some(GpuStats { util_pct: util, temp_c: temp, vram_used_mb: used, vram_total_mb: total })
+    Some(GpuStats {
+        util_pct: util,
+        temp_c: temp,
+        vram_used_mb: used,
+        vram_total_mb: total,
+    })
 }
 
 /// Locate `nvidia-smi` on `$PATH` without spawning a shell.

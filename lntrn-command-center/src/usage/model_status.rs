@@ -215,9 +215,9 @@ fn notify_available() {
             "",   // app_icon
             summary.as_str(),
             "You can use it in Claude Code now.",
-            Vec::<String>::new(),                              // actions
-            HashMap::from([("urgency", Value::from(1u8))]),    // normal
-            8000i32,                                           // 8s
+            Vec::<String>::new(),                           // actions
+            HashMap::from([("urgency", Value::from(1u8))]), // normal
+            8000i32,                                        // 8s
         ),
     );
 }

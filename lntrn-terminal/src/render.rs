@@ -152,11 +152,7 @@ pub fn draw_terminal_ex(
                 let x = (origin.0 + col as f32 * cell_w).floor();
                 let y = (origin.1 + (row + 1) as f32 * cell_h).floor() - 1.5;
                 let nx = (origin.0 + (col + 1) as f32 * cell_w).ceil();
-                painter.rect_filled(
-                    Rect::new(x, y, nx - x, 1.5),
-                    0.0,
-                    link_color,
-                );
+                painter.rect_filled(Rect::new(x, y, nx - x, 1.5), 0.0, link_color);
             }
         }
     }

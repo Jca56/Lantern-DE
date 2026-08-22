@@ -78,7 +78,9 @@ impl PanelState {
     /// Push the current color to the selected device's lighting.
     fn apply(&mut self) {
         let color = self.color();
-        let Some(row) = self.rows.get(self.selected) else { return };
+        let Some(row) = self.rows.get(self.selected) else {
+            return;
+        };
         let name = row.name.clone();
         if !row.has_light {
             self.status = format!("{name} has no lighting");
@@ -120,7 +122,12 @@ fn slider_w(s: f32) -> f32 {
     300.0 * s
 }
 fn slider_rect(i: usize, s: f32, top: f32) -> Rect {
-    Rect::new(panel_x(s), top + 86.0 * s + i as f32 * 58.0 * s, slider_w(s), 8.0 * s)
+    Rect::new(
+        panel_x(s),
+        top + 86.0 * s + i as f32 * 58.0 * s,
+        slider_w(s),
+        8.0 * s,
+    )
 }
 fn preset_size(s: f32) -> f32 {
     42.0 * s
@@ -137,7 +144,15 @@ fn preset_rect(i: usize, s: f32, top: f32) -> Rect {
 
 // ── Input ────────────────────────────────────────────────────────────────────
 
-pub fn handle_click(cx: f32, cy: f32, s: f32, top: f32, _wf: f32, _hf: f32, ps: &mut PanelState) -> bool {
+pub fn handle_click(
+    cx: f32,
+    cy: f32,
+    s: f32,
+    top: f32,
+    _wf: f32,
+    _hf: f32,
+    ps: &mut PanelState,
+) -> bool {
     // Device rows
     for i in 0..ps.rows.len() {
         if in_rect(cx, cy, list_x(s), row_y(i, s, top), list_w(s), row_h(s)) {
@@ -148,7 +163,14 @@ pub fn handle_click(cx: f32, cy: f32, s: f32, top: f32, _wf: f32, _hf: f32, ps: 
     // Sliders (generous vertical hit band)
     for i in 0..3usize {
         let r = slider_rect(i, s, top);
-        if in_rect(cx, cy, r.x - 12.0 * s, r.y - 16.0 * s, r.w + 24.0 * s, 36.0 * s) {
+        if in_rect(
+            cx,
+            cy,
+            r.x - 12.0 * s,
+            r.y - 16.0 * s,
+            r.w + 24.0 * s,
+            36.0 * s,
+        ) {
             ps.drag = Some(i);
             ps.chan[i] = ((cx - r.x) / r.w).clamp(0.0, 1.0);
             return true;
@@ -197,7 +219,16 @@ pub fn draw(
     sh: u32,
 ) {
     // ── Device list ──────────────────────────────────────────────────
-    t.queue("Devices", 16.0 * s, list_x(s), top - 16.0 * s, TEXT_SECONDARY, wf, sw, sh);
+    t.queue(
+        "Devices",
+        16.0 * s,
+        list_x(s),
+        top - 16.0 * s,
+        TEXT_SECONDARY,
+        wf,
+        sw,
+        sh,
+    );
     if ps.rows.is_empty() {
         t.queue(
             "No devices.",
@@ -221,18 +252,45 @@ pub fn draw(
         } else if hov {
             p.rect_stroke_sdf(rect, 8.0 * s, 1.0 * s, BORDER);
         }
-        t.queue(&row.name, 17.0 * s, rect.x + 14.0 * s, y + 9.0 * s, TEXT_PRIMARY, list_w(s) - 28.0 * s, sw, sh);
+        t.queue(
+            &row.name,
+            17.0 * s,
+            rect.x + 14.0 * s,
+            y + 9.0 * s,
+            TEXT_PRIMARY,
+            list_w(s) - 28.0 * s,
+            sw,
+            sh,
+        );
         let sub = if row.has_light {
             format!("{} · lighting", row.kind)
         } else {
             format!("{} · no lighting", row.kind)
         };
-        t.queue(&sub, 13.0 * s, rect.x + 14.0 * s, y + 31.0 * s, TEXT_SECONDARY, list_w(s) - 28.0 * s, sw, sh);
+        t.queue(
+            &sub,
+            13.0 * s,
+            rect.x + 14.0 * s,
+            y + 31.0 * s,
+            TEXT_SECONDARY,
+            list_w(s) - 28.0 * s,
+            sw,
+            sh,
+        );
     }
 
     // ── Color editor (right) ─────────────────────────────────────────
     let px = panel_x(s);
-    t.queue("Color", 16.0 * s, px, top - 16.0 * s, TEXT_SECONDARY, wf, sw, sh);
+    t.queue(
+        "Color",
+        16.0 * s,
+        px,
+        top - 16.0 * s,
+        TEXT_SECONDARY,
+        wf,
+        sw,
+        sh,
+    );
 
     // Live preview swatch (top-right of the sliders)
     let preview = Color::from_rgba8(
@@ -241,7 +299,12 @@ pub fn draw(
         (ps.chan[2] * 255.0) as u8,
         255,
     );
-    let prev_rect = Rect::new(px + slider_w(s) + 24.0 * s, top + 8.0 * s, 64.0 * s, 64.0 * s);
+    let prev_rect = Rect::new(
+        px + slider_w(s) + 24.0 * s,
+        top + 8.0 * s,
+        64.0 * s,
+        64.0 * s,
+    );
     p.rect_filled(prev_rect, 10.0 * s, preview);
     p.rect_stroke_sdf(prev_rect, 10.0 * s, 1.0 * s, BORDER);
 
@@ -254,7 +317,16 @@ pub fn draw(
     ];
     for i in 0..3usize {
         let r = slider_rect(i, s, top);
-        t.queue(labels[i], 16.0 * s, r.x - 24.0 * s, r.y - 7.0 * s, TEXT_SECONDARY, 30.0 * s, sw, sh);
+        t.queue(
+            labels[i],
+            16.0 * s,
+            r.x - 24.0 * s,
+            r.y - 7.0 * s,
+            TEXT_SECONDARY,
+            30.0 * s,
+            sw,
+            sh,
+        );
         p.rect_filled(r, 4.0 * s, WIDGET_BG);
         let fill_w = r.w * ps.chan[i];
         p.rect_filled(Rect::new(r.x, r.y, fill_w, r.h), 4.0 * s, tints[i]);
@@ -263,7 +335,16 @@ pub fn draw(
         p.circle_filled(thumb_x, thumb_y, 10.0 * s, tints[i]);
         p.circle_filled(thumb_x, thumb_y, 5.0 * s, Color::rgb(0.96, 0.94, 0.90));
         let val = format!("{}", (ps.chan[i] * 255.0).round() as u8);
-        t.queue(&val, 14.0 * s, r.x + r.w + 16.0 * s, r.y - 6.0 * s, TEXT_SECONDARY, 60.0 * s, sw, sh);
+        t.queue(
+            &val,
+            14.0 * s,
+            r.x + r.w + 16.0 * s,
+            r.y - 6.0 * s,
+            TEXT_SECONDARY,
+            60.0 * s,
+            sw,
+            sh,
+        );
     }
 
     // Presets

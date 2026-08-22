@@ -46,7 +46,8 @@ pub fn apply_action(app: &mut DesktopState, action: PendingAction, needs_rescan:
                 None => return,
             };
             let trimmed = rn.buffer.trim();
-            if !trimmed.is_empty() && trimmed != old.file_name().unwrap_or_default().to_string_lossy()
+            if !trimmed.is_empty()
+                && trimmed != old.file_name().unwrap_or_default().to_string_lossy()
             {
                 if crate::icons::rename(&old, trimmed) {
                     // Carry over the position to the new name.

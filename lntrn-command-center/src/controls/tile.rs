@@ -55,7 +55,12 @@ pub fn pack(panel: Rect, scale: f32, slots: &[Slot]) -> Vec<TileLayout> {
     let right_edge = panel.x + panel.w - pad;
 
     let mut layouts: Vec<Option<TileLayout>> = vec![None; slots.len()];
-    let make = |x: f32, w: f32| TileLayout { x, y: row_top, w, h: row_h };
+    let make = |x: f32, w: f32| TileLayout {
+        x,
+        y: row_top,
+        w,
+        h: row_h,
+    };
 
     // Left zone: pack left-to-right from the left edge.
     let mut x = left_edge;
@@ -118,7 +123,10 @@ pub fn pack(panel: Rect, scale: f32, slots: &[Slot]) -> Vec<TileLayout> {
         }
     }
 
-    layouts.into_iter().map(|o| o.expect("slot unfilled")).collect()
+    layouts
+        .into_iter()
+        .map(|o| o.expect("slot unfilled"))
+        .collect()
 }
 
 /// Total physical width of a set of slots including inter-tile gaps.

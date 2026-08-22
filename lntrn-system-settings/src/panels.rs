@@ -13,9 +13,7 @@
 //!   - `notifications_panel.rs` — toasts + sound
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
-use lntrn_ui::gpu::{
-    ContextMenu, ContextMenuStyle, FoxPalette, InteractionContext, MenuItem,
-};
+use lntrn_ui::gpu::{ContextMenu, ContextMenuStyle, FoxPalette, InteractionContext, MenuItem};
 
 pub const ZONE_SAVE: u32 = 900;
 pub const ZONE_CANCEL: u32 = 901;
@@ -67,8 +65,8 @@ pub(crate) const CARD_OUTER_PAD_H: f32 = 36.0; // gutter on left/right of cards
 pub(crate) const CARD_OUTER_PAD_V: f32 = 16.0; // top/bottom padding of scroll content
 pub(crate) const CARD_INNER_PAD_H: f32 = 24.0; // horizontal padding inside a card
 pub(crate) const CARD_INNER_PAD_V: f32 = 16.0; // vertical padding inside a card
-pub(crate) const CARD_HEADER_H: f32 = 36.0;    // section header strip height
-pub(crate) const CARD_GAP: f32 = 28.0;         // gap between cards
+pub(crate) const CARD_HEADER_H: f32 = 36.0; // section header strip height
+pub(crate) const CARD_GAP: f32 = 28.0; // gap between cards
 const CARD_RADIUS: f32 = 12.0;
 const SECTION_HEADER_SZ: f32 = 18.0;
 
@@ -100,7 +98,9 @@ impl PanelState {
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 pub(crate) fn slider_value_from_cursor(
-    ix: &InteractionContext, zone_id: u32, rect: &Rect,
+    ix: &InteractionContext,
+    zone_id: u32,
+    rect: &Rect,
 ) -> Option<f32> {
     let state = ix.zone_state(zone_id);
     if state.is_active() {
@@ -154,14 +154,28 @@ pub(crate) fn draw_color_swatch_row(
     sh: u32,
 ) {
     let label_y = *cy + (row - lsz) / 2.0;
-    text.queue(label, lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
+    text.queue(
+        label,
+        lsz,
+        label_x,
+        label_y,
+        fox.text,
+        ctrl_x - label_x,
+        sw,
+        sh,
+    );
 
     let (swatch_size, swatch_gap) = fit_swatches(GLOW_COLORS.len(), ctrl_x, end_x, s);
     let mut sx = ctrl_x;
     for (i, (hex, _name)) in GLOW_COLORS.iter().enumerate() {
         let color = Color::from_hex(hex).unwrap();
         let zone_id = zone_base + i as u32;
-        let swatch_rect = Rect::new(sx, *cy + (row - swatch_size) / 2.0, swatch_size, swatch_size);
+        let swatch_rect = Rect::new(
+            sx,
+            *cy + (row - swatch_size) / 2.0,
+            swatch_size,
+            swatch_size,
+        );
         let zone = ix.add_zone(zone_id, swatch_rect);
 
         let cx = sx + swatch_size / 2.0;
@@ -182,8 +196,16 @@ pub(crate) fn draw_color_swatch_row(
 
 /// Returns true if the rect at (text_x, row_y, text_w, row_h) significantly
 /// overlaps the menu. Margin ignores shadow/padding overlap at the edges.
-pub(crate) fn hidden_by_menu(text_x: f32, row_y: f32, text_w: f32, row_h: f32, menu: &ContextMenu) -> bool {
-    if !menu.is_open() { return false; }
+pub(crate) fn hidden_by_menu(
+    text_x: f32,
+    row_y: f32,
+    text_w: f32,
+    row_h: f32,
+    menu: &ContextMenu,
+) -> bool {
+    if !menu.is_open() {
+        return false;
+    }
     if let Some(b) = menu.bounds() {
         let margin = 8.0;
         let mx = b.x + margin;
@@ -200,13 +222,26 @@ pub(crate) fn hidden_by_menu(text_x: f32, row_y: f32, text_w: f32, row_h: f32, m
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_select_button(
-    label: &str, current: &str,
-    zone_id: u32, is_open: bool,
-    painter: &mut Painter, text: &mut TextRenderer, ix: &mut InteractionContext,
+    label: &str,
+    current: &str,
+    zone_id: u32,
+    is_open: bool,
+    painter: &mut Painter,
+    text: &mut TextRenderer,
+    ix: &mut InteractionContext,
     fox: &FoxPalette,
-    label_x: f32, label_w: f32, btn_x: f32, btn_w: f32, btn_h: f32,
-    row: f32, lsz: f32, s: f32, sw: u32, sh: u32,
-    cy: &mut f32, menu: &ContextMenu,
+    label_x: f32,
+    label_w: f32,
+    btn_x: f32,
+    btn_w: f32,
+    btn_h: f32,
+    row: f32,
+    lsz: f32,
+    s: f32,
+    sw: u32,
+    sh: u32,
+    cy: &mut f32,
+    menu: &ContextMenu,
 ) {
     let label_y = *cy + (row - lsz) / 2.0;
     text.queue(label, lsz, label_x, label_y, fox.text, label_w, sw, sh);
@@ -214,7 +249,11 @@ pub(crate) fn draw_select_button(
     let rect = Rect::new(btn_x, *cy + (row - btn_h) / 2.0, btn_w, btn_h);
     let zone = ix.add_zone(zone_id, rect);
 
-    let bg = if is_open || zone.is_hovered() { fox.surface_2 } else { fox.surface };
+    let bg = if is_open || zone.is_hovered() {
+        fox.surface_2
+    } else {
+        fox.surface
+    };
     let r = 6.0 * s;
     painter.rect_filled(rect, r, bg);
     painter.rect_stroke_sdf(rect, r, 1.0 * s, fox.muted.with_alpha(0.3));
@@ -225,10 +264,22 @@ pub(crate) fn draw_select_button(
     let skip_text = hidden_by_menu(btn_x, *cy, btn_w, row, menu);
     if !skip_text {
         let text_y = rect.y + (rect.h - font) / 2.0;
-        let display: String = current.chars().take(1).flat_map(|c| c.to_uppercase())
-            .chain(current.chars().skip(1)).collect();
-        text.queue(&display, font, rect.x + pad_h, text_y, fox.text,
-            btn_w - pad_h * 2.0 - 12.0 * s, sw, sh);
+        let display: String = current
+            .chars()
+            .take(1)
+            .flat_map(|c| c.to_uppercase())
+            .chain(current.chars().skip(1))
+            .collect();
+        text.queue(
+            &display,
+            font,
+            rect.x + pad_h,
+            text_y,
+            fox.text,
+            btn_w - pad_h * 2.0 - 12.0 * s,
+            sw,
+            sh,
+        );
     }
 
     let chev_s = 8.0 * s;
@@ -236,53 +287,100 @@ pub(crate) fn draw_select_button(
     let chev_cy = rect.y + rect.h * 0.5;
     let chev_c = fox.text_secondary;
     if is_open {
-        painter.line(chev_x, chev_cy + chev_s * 0.35, chev_x + chev_s * 0.5, chev_cy - chev_s * 0.35, 1.5 * s, chev_c);
-        painter.line(chev_x + chev_s * 0.5, chev_cy - chev_s * 0.35, chev_x + chev_s, chev_cy + chev_s * 0.35, 1.5 * s, chev_c);
+        painter.line(
+            chev_x,
+            chev_cy + chev_s * 0.35,
+            chev_x + chev_s * 0.5,
+            chev_cy - chev_s * 0.35,
+            1.5 * s,
+            chev_c,
+        );
+        painter.line(
+            chev_x + chev_s * 0.5,
+            chev_cy - chev_s * 0.35,
+            chev_x + chev_s,
+            chev_cy + chev_s * 0.35,
+            1.5 * s,
+            chev_c,
+        );
     } else {
-        painter.line(chev_x, chev_cy - chev_s * 0.35, chev_x + chev_s * 0.5, chev_cy + chev_s * 0.35, 1.5 * s, chev_c);
-        painter.line(chev_x + chev_s * 0.5, chev_cy + chev_s * 0.35, chev_x + chev_s, chev_cy - chev_s * 0.35, 1.5 * s, chev_c);
+        painter.line(
+            chev_x,
+            chev_cy - chev_s * 0.35,
+            chev_x + chev_s * 0.5,
+            chev_cy + chev_s * 0.35,
+            1.5 * s,
+            chev_c,
+        );
+        painter.line(
+            chev_x + chev_s * 0.5,
+            chev_cy + chev_s * 0.35,
+            chev_x + chev_s,
+            chev_cy - chev_s * 0.35,
+            1.5 * s,
+            chev_c,
+        );
     }
 
     *cy += row;
 }
 
 pub(crate) fn make_menu_items(options: &[&str], base_id: u32, current: &str) -> Vec<MenuItem> {
-    options.iter().enumerate().map(|(i, opt)| {
-        let selected = opt.to_lowercase() == current.to_lowercase();
-        if selected {
-            MenuItem::Action {
-                id: base_id + i as u32,
-                label: format!("• {}", opt),
-                shortcut: None, enabled: true, danger: false,
+    options
+        .iter()
+        .enumerate()
+        .map(|(i, opt)| {
+            let selected = opt.to_lowercase() == current.to_lowercase();
+            if selected {
+                MenuItem::Action {
+                    id: base_id + i as u32,
+                    label: format!("• {}", opt),
+                    shortcut: None,
+                    enabled: true,
+                    danger: false,
+                }
+            } else {
+                MenuItem::action(base_id + i as u32, *opt)
             }
-        } else {
-            MenuItem::action(base_id + i as u32, *opt)
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 /// Draw a section card background + header. Returns the y of the first
 /// content row inside the card.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_section_card(
-    painter: &mut Painter, text: &mut TextRenderer,
+    painter: &mut Painter,
+    text: &mut TextRenderer,
     fox: &FoxPalette,
     label: &str,
-    x: f32, y: f32, w: f32, h: f32,
-    s: f32, sw: u32, sh: u32,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    s: f32,
+    sw: u32,
+    sh: u32,
 ) -> f32 {
     let card_rect = Rect::new(x, y, w, h);
     painter.rect_filled(card_rect, CARD_RADIUS * s, fox.surface.with_alpha(0.45));
     painter.rect_stroke_sdf(
-        card_rect, CARD_RADIUS * s, 1.0 * s,
+        card_rect,
+        CARD_RADIUS * s,
+        1.0 * s,
         fox.muted.with_alpha(0.18),
     );
     let header_sz = SECTION_HEADER_SZ * s;
     let header_y = y + CARD_INNER_PAD_V * s;
     text.queue(
-        label, header_sz,
-        x + CARD_INNER_PAD_H * s, header_y,
-        fox.accent, w - CARD_INNER_PAD_H * 2.0 * s, sw, sh,
+        label,
+        header_sz,
+        x + CARD_INNER_PAD_H * s,
+        header_y,
+        fox.accent,
+        w - CARD_INNER_PAD_H * 2.0 * s,
+        sw,
+        sh,
     );
     let underline_w = label.len() as f32 * header_sz * 0.55;
     painter.rect_filled(
@@ -303,9 +401,16 @@ pub(crate) fn draw_section_card(
 use lntrn_ui::gpu::{Button, ButtonVariant};
 
 pub fn draw_save_cancel_bar(
-    painter: &mut Painter, text: &mut TextRenderer, ix: &mut InteractionContext,
-    fox: &FoxPalette, content_x: f32, w: f32, bottom_y: f32,
-    s: f32, sw: u32, sh: u32,
+    painter: &mut Painter,
+    text: &mut TextRenderer,
+    ix: &mut InteractionContext,
+    fox: &FoxPalette,
+    content_x: f32,
+    w: f32,
+    bottom_y: f32,
+    s: f32,
+    sw: u32,
+    sh: u32,
 ) {
     let bar_h = 56.0 * s;
     let bar_y = bottom_y - bar_h;

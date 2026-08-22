@@ -83,9 +83,16 @@ pub fn current_branch(repo: &Path) -> String {
     match output {
         Ok(o) => {
             let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            eprintln!("[git-ops] branch repo={repo:?} status={} stdout={s:?} stderr={:?}",
-                o.status, String::from_utf8_lossy(&o.stderr));
-            if s.is_empty() { "detached".into() } else { s }
+            eprintln!(
+                "[git-ops] branch repo={repo:?} status={} stdout={s:?} stderr={:?}",
+                o.status,
+                String::from_utf8_lossy(&o.stderr)
+            );
+            if s.is_empty() {
+                "detached".into()
+            } else {
+                s
+            }
         }
         Err(e) => {
             eprintln!("[git-ops] branch repo={repo:?} spawn err: {e}");
@@ -106,10 +113,7 @@ pub fn ahead_behind(repo: &Path) -> (u32, u32) {
     let s = String::from_utf8_lossy(&output.stdout);
     let parts: Vec<&str> = s.trim().split_whitespace().collect();
     if parts.len() == 2 {
-        (
-            parts[0].parse().unwrap_or(0),
-            parts[1].parse().unwrap_or(0),
-        )
+        (parts[0].parse().unwrap_or(0), parts[1].parse().unwrap_or(0))
     } else {
         (0, 0)
     }
@@ -126,8 +130,12 @@ pub fn status(repo: &Path) -> RepoStatus {
 
     let mut files = Vec::new();
     match &output {
-        Ok(o) => eprintln!("[git-ops] status repo={repo:?} status={} stdout_len={} stderr={:?}",
-            o.status, o.stdout.len(), String::from_utf8_lossy(&o.stderr)),
+        Ok(o) => eprintln!(
+            "[git-ops] status repo={repo:?} status={} stdout_len={} stderr={:?}",
+            o.status,
+            o.stdout.len(),
+            String::from_utf8_lossy(&o.stderr)
+        ),
         Err(e) => eprintln!("[git-ops] status repo={repo:?} spawn err: {e}"),
     }
     if let Ok(output) = output {
@@ -341,10 +349,7 @@ pub fn log_structured(repo: &Path, count: usize) -> Vec<GraphCommit> {
             let decorations = if parts[3].is_empty() {
                 Vec::new()
             } else {
-                parts[3]
-                    .split(", ")
-                    .map(|s| s.trim().to_string())
-                    .collect()
+                parts[3].split(", ").map(|s| s.trim().to_string()).collect()
             };
             Some(GraphCommit {
                 short_hash: parts[0].to_string(),

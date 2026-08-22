@@ -117,7 +117,11 @@ pub fn handle_key(
 /// Returns 0 when no modifiers are held (meaning: use the plain sequence).
 fn modifier_param(shift: bool, ctrl: bool, alt: bool) -> u8 {
     let bits = (shift as u8) | ((alt as u8) << 1) | ((ctrl as u8) << 2);
-    if bits == 0 { 0 } else { 1 + bits }
+    if bits == 0 {
+        0
+    } else {
+        1 + bits
+    }
 }
 
 /// Build a CSI sequence with an optional modifier parameter.
@@ -138,7 +142,13 @@ fn csi_modified(num: u8, base: u8, modp: u8) -> Vec<u8> {
     }
 }
 
-fn named_key_to_seq(key: &NamedKey, app_cursor: bool, shift: bool, ctrl: bool, alt: bool) -> Vec<u8> {
+fn named_key_to_seq(
+    key: &NamedKey,
+    app_cursor: bool,
+    shift: bool,
+    ctrl: bool,
+    alt: bool,
+) -> Vec<u8> {
     let modp = modifier_param(shift, ctrl, alt);
     let has_mods = modp != 0;
 
@@ -217,16 +227,32 @@ fn named_key_to_seq(key: &NamedKey, app_cursor: bool, shift: bool, ctrl: bool, a
 
         // Function keys: F1-F4 use SS3 plain, CSI 1;mod P/Q/R/S modified
         NamedKey::F1 => {
-            if has_mods { format!("\x1b[1;{}P", modp).into_bytes() } else { b"\x1bOP".to_vec() }
+            if has_mods {
+                format!("\x1b[1;{}P", modp).into_bytes()
+            } else {
+                b"\x1bOP".to_vec()
+            }
         }
         NamedKey::F2 => {
-            if has_mods { format!("\x1b[1;{}Q", modp).into_bytes() } else { b"\x1bOQ".to_vec() }
+            if has_mods {
+                format!("\x1b[1;{}Q", modp).into_bytes()
+            } else {
+                b"\x1bOQ".to_vec()
+            }
         }
         NamedKey::F3 => {
-            if has_mods { format!("\x1b[1;{}R", modp).into_bytes() } else { b"\x1bOR".to_vec() }
+            if has_mods {
+                format!("\x1b[1;{}R", modp).into_bytes()
+            } else {
+                b"\x1bOR".to_vec()
+            }
         }
         NamedKey::F4 => {
-            if has_mods { format!("\x1b[1;{}S", modp).into_bytes() } else { b"\x1bOS".to_vec() }
+            if has_mods {
+                format!("\x1b[1;{}S", modp).into_bytes()
+            } else {
+                b"\x1bOS".to_vec()
+            }
         }
         NamedKey::F5 => csi_modified(15, b'~', modp),
         NamedKey::F6 => csi_modified(17, b'~', modp),

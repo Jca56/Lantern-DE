@@ -59,11 +59,7 @@ impl InteractionContext {
     /// Register a hit zone. Returns the current `InteractionState` for it.
     pub fn add_zone(&mut self, id: u32, rect: Rect) -> InteractionState {
         let state = self.compute_state(id, &rect);
-        self.zones.push(HitZone {
-            id,
-            rect,
-            state,
-        });
+        self.zones.push(HitZone { id, rect, state });
         state
     }
 
@@ -139,8 +135,7 @@ impl InteractionContext {
 
     /// Check if cursor is inside `rect` right now.
     pub fn is_hovered(&self, rect: &Rect) -> bool {
-        self.cursor
-            .map_or(false, |(x, y)| rect.contains(x, y))
+        self.cursor.map_or(false, |(x, y)| rect.contains(x, y))
     }
 
     /// Compute a linear drag value (0.0–1.0) along a horizontal track.
@@ -158,9 +153,7 @@ impl InteractionContext {
     fn compute_state(&self, id: u32, rect: &Rect) -> InteractionState {
         // If this zone owns capture, it's either Pressed or Dragging.
         if self.active_zone == Some(id) {
-            let inside = self
-                .cursor
-                .map_or(false, |(x, y)| rect.contains(x, y));
+            let inside = self.cursor.map_or(false, |(x, y)| rect.contains(x, y));
             return if inside {
                 InteractionState::Pressed
             } else {
@@ -170,10 +163,7 @@ impl InteractionContext {
 
         // No capture — check hover (only if nothing else is captured).
         if self.active_zone.is_none() {
-            if self
-                .cursor
-                .map_or(false, |(x, y)| rect.contains(x, y))
-            {
+            if self.cursor.map_or(false, |(x, y)| rect.contains(x, y)) {
                 return InteractionState::Hovered;
             }
         }

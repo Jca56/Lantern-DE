@@ -13,7 +13,7 @@ use lntrn_ui::gpu::{
     TextLabel, TitleBar,
 };
 
-use crate::canvas::editor::{CanvasEditor, DialogKind, DragMode, canvas_viewport};
+use crate::canvas::editor::{canvas_viewport, CanvasEditor, DialogKind, DragMode};
 use crate::canvas::sidebar::{self, SidebarState, ROW_H};
 use crate::canvas::tex_cache::{CanvasTexCache, TexEntry};
 use crate::{
@@ -36,7 +36,12 @@ pub fn render_canvas_frame(
     s: f32,
     dt: f32,
 ) {
-    let Gpu { ctx, painter, text, tex_pass } = gpu;
+    let Gpu {
+        ctx,
+        painter,
+        text,
+        tex_pass,
+    } = gpu;
     let wf = ctx.width() as f32;
     let hf = ctx.height() as f32;
     let (sw, sh) = (ctx.width(), ctx.height());
@@ -61,7 +66,11 @@ pub fn render_canvas_frame(
     }
 
     // Visible sidebar rows → request thumbnails + capture row layout.
-    let skip_parent = if sb.current_dir.parent().is_some() { 1 } else { 0 };
+    let skip_parent = if sb.current_dir.parent().is_some() {
+        1
+    } else {
+        0
+    };
     let row_h = ROW_H * s;
     let base_y = rows_vp.y - sb.scroll.offset;
     let mut visible_rows: Vec<usize> = Vec::new();
@@ -79,7 +88,10 @@ pub fn render_canvas_frame(
                 if row < skip_parent {
                     return None;
                 }
-                sb.entries.get(row - skip_parent).filter(|e| !e.is_dir).map(|e| e.path.clone())
+                sb.entries
+                    .get(row - skip_parent)
+                    .filter(|e| !e.is_dir)
+                    .map(|e| e.path.clone())
             })
             .collect();
         for p in &thumb_paths {
@@ -114,7 +126,8 @@ pub fn render_canvas_frame(
     text.push_clip(vp_clip);
     for item in &editor.doc.items {
         let r = editor.item_screen_rect(item, &vp, s);
-        let visible = r.x < vp.x + vp.w && r.x + r.w > vp.x && r.y < vp.y + vp.h && r.y + r.h > vp.y;
+        let visible =
+            r.x < vp.x + vp.w && r.x + r.w > vp.x && r.y < vp.y + vp.h && r.y + r.h > vp.y;
         if !visible || tex_draws.len() >= MAX_ITEM_DRAWS {
             continue;
         }
@@ -144,7 +157,14 @@ pub fn render_canvas_frame(
     // ── Sidebar ─────────────────────────────────────────────────────
     let side = sidebar::sidebar_rect(sb, hf, s);
     painter.rect_filled(side, 0.0, palette.sidebar);
-    painter.line(side.x + side.w, side.y, side.x + side.w, side.y + side.h, 1.0, palette.muted.with_alpha(0.25));
+    painter.line(
+        side.x + side.w,
+        side.y,
+        side.x + side.w,
+        side.y + side.h,
+        1.0,
+        palette.muted.with_alpha(0.25),
+    );
 
     if sb.collapsed {
         let st = input.add_zone(ZONE_SIDEBAR_TOGGLE, side);
@@ -160,16 +180,36 @@ pub fn render_canvas_frame(
             .draw(text, sw, sh);
     } else {
         draw_sidebar_expanded(
-            painter, text, input, sb, &mut tex_draws, palette,
-            &side, &rows_vp, &visible_rows, skip_parent, s, sw, sh,
+            painter,
+            text,
+            input,
+            sb,
+            &mut tex_draws,
+            palette,
+            &side,
+            &rows_vp,
+            &visible_rows,
+            skip_parent,
+            s,
+            sw,
+            sh,
         );
     }
 
     // ── Title bar ───────────────────────────────────────────────────
     let title_rect = Rect::new(0.0, 0.0, wf, title_h);
-    let close_state = input.add_zone(ZONE_CLOSE, TitleBar::new(title_rect).scale(s).close_button_rect());
-    let max_state = input.add_zone(ZONE_MAXIMIZE, TitleBar::new(title_rect).scale(s).maximize_button_rect());
-    let min_state = input.add_zone(ZONE_MINIMIZE, TitleBar::new(title_rect).scale(s).minimize_button_rect());
+    let close_state = input.add_zone(
+        ZONE_CLOSE,
+        TitleBar::new(title_rect).scale(s).close_button_rect(),
+    );
+    let max_state = input.add_zone(
+        ZONE_MAXIMIZE,
+        TitleBar::new(title_rect).scale(s).maximize_button_rect(),
+    );
+    let min_state = input.add_zone(
+        ZONE_MINIMIZE,
+        TitleBar::new(title_rect).scale(s).minimize_button_rect(),
+    );
     TitleBar::new(title_rect)
         .scale(s)
         .close_hovered(close_state.is_hovered())
@@ -196,10 +236,18 @@ pub fn render_canvas_frame(
     let save_label = if editor.dirty { "Save •" } else { "Save" };
     let save_px = FontSize::Label.px() * s;
     let save_tw = text.measure_width(save_label, save_px);
-    TextLabel::new(save_label, save_rect.x + (save_rect.w - save_tw) * 0.5, (title_h - save_px) * 0.5)
-        .size(FontSize::Custom(save_px))
-        .color(if editor.dirty { palette.accent } else { palette.text_secondary })
-        .draw(text, sw, sh);
+    TextLabel::new(
+        save_label,
+        save_rect.x + (save_rect.w - save_tw) * 0.5,
+        (title_h - save_px) * 0.5,
+    )
+    .size(FontSize::Custom(save_px))
+    .color(if editor.dirty {
+        palette.accent
+    } else {
+        palette.text_secondary
+    })
+    .draw(text, sw, sh);
 
     // ── Status bar ──────────────────────────────────────────────────
     let status_rect = Rect::new(0.0, hf - status_h, wf, status_h);
@@ -260,7 +308,13 @@ pub fn render_canvas_frame(
                 if let Some((cx, cy)) = input.cursor() {
                     let half = 60.0 * s;
                     let r = Rect::new(cx - half, cy - half, half * 2.0, half * 2.0);
-                    draw_dashed_rect(painter, &r, 2.0 * s, 8.0 * s, palette.accent.with_alpha(0.8));
+                    draw_dashed_rect(
+                        painter,
+                        &r,
+                        2.0 * s,
+                        8.0 * s,
+                        palette.accent.with_alpha(0.8),
+                    );
                 }
             }
         }
@@ -274,7 +328,13 @@ pub fn render_canvas_frame(
     match ctx.begin_frame("Image Viewer") {
         Ok(mut frame) => {
             let view = frame.view().clone();
-            painter.render_layer(0, ctx, frame.encoder_mut(), &view, Some(palette.bg.with_alpha(0.0)));
+            painter.render_layer(
+                0,
+                ctx,
+                frame.encoder_mut(),
+                &view,
+                Some(palette.bg.with_alpha(0.0)),
+            );
             if !tex_draws.is_empty() {
                 tex_pass.render_pass(ctx, frame.encoder_mut(), &view, &tex_draws, None);
             }
@@ -320,9 +380,27 @@ fn draw_missing_placeholder(
 fn draw_dashed_rect(painter: &mut Painter, r: &Rect, width: f32, dash: f32, color: Color) {
     let gap = dash * 0.7;
     painter.line_dashed(r.x, r.y, r.x + r.w, r.y, width, dash, gap, color);
-    painter.line_dashed(r.x, r.y + r.h, r.x + r.w, r.y + r.h, width, dash, gap, color);
+    painter.line_dashed(
+        r.x,
+        r.y + r.h,
+        r.x + r.w,
+        r.y + r.h,
+        width,
+        dash,
+        gap,
+        color,
+    );
     painter.line_dashed(r.x, r.y, r.x, r.y + r.h, width, dash, gap, color);
-    painter.line_dashed(r.x + r.w, r.y, r.x + r.w, r.y + r.h, width, dash, gap, color);
+    painter.line_dashed(
+        r.x + r.w,
+        r.y,
+        r.x + r.w,
+        r.y + r.h,
+        width,
+        dash,
+        gap,
+        color,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -352,22 +430,30 @@ fn draw_sidebar_expanded<'a>(
     let px = FontSize::Label.px() * s;
     let glyph = "◀";
     let gw = text.measure_width(glyph, px);
-    TextLabel::new(glyph, toggle.x + (toggle.w - gw) * 0.5, header.y + (header.h - px) * 0.5)
-        .size(FontSize::Custom(px))
-        .color(palette.text_secondary)
-        .draw(text, sw, sh);
+    TextLabel::new(
+        glyph,
+        toggle.x + (toggle.w - gw) * 0.5,
+        header.y + (header.h - px) * 0.5,
+    )
+    .size(FontSize::Custom(px))
+    .color(palette.text_secondary)
+    .draw(text, sw, sh);
 
     let dir_name = sb
         .current_dir
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "/".into());
-    TextLabel::new(&dir_name, header.x + 12.0 * s, header.y + (header.h - px) * 0.5)
-        .size(FontSize::Custom(px))
-        .bold()
-        .color(palette.text)
-        .max_width(header.w - 60.0 * s)
-        .draw(text, sw, sh);
+    TextLabel::new(
+        &dir_name,
+        header.x + 12.0 * s,
+        header.y + (header.h - px) * 0.5,
+    )
+    .size(FontSize::Custom(px))
+    .bold()
+    .color(palette.text)
+    .max_width(header.w - 60.0 * s)
+    .draw(text, sw, sh);
 
     // Rows.
     let row_h = ROW_H * s;
@@ -377,14 +463,20 @@ fn draw_sidebar_expanded<'a>(
     text.push_clip(rows_clip);
     for &row in visible_rows {
         let r = Rect::new(rows_vp.x, base_y + row as f32 * row_h, rows_vp.w, row_h);
-        let Some(zone_rect) = r.intersect(rows_vp) else { continue };
+        let Some(zone_rect) = r.intersect(rows_vp) else {
+            continue;
+        };
         let state = input.add_zone(ZONE_SIDEBAR_ITEM_BASE + row as u32, zone_rect);
         if state.is_hovered() {
             painter.rect_filled(r, 0.0, Color::WHITE.with_alpha(0.05));
         }
 
         let is_parent = row < skip_parent;
-        let entry = if is_parent { None } else { sb.entries.get(row - skip_parent) };
+        let entry = if is_parent {
+            None
+        } else {
+            sb.entries.get(row - skip_parent)
+        };
 
         // Leading icon / thumbnail.
         let box_sz = 48.0 * s;
@@ -419,7 +511,11 @@ fn draw_sidebar_expanded<'a>(
             draw.clip = Some(rows_clip);
             tex_draws.push(draw);
         } else {
-            painter.rect_filled(Rect::new(bx, by, box_sz, box_sz), 6.0 * s, palette.surface_2.with_alpha(0.6));
+            painter.rect_filled(
+                Rect::new(bx, by, box_sz, box_sz),
+                6.0 * s,
+                palette.surface_2.with_alpha(0.6),
+            );
         }
 
         // Hover affordance: "+" add-to-canvas hot region on file rows.
@@ -468,7 +564,9 @@ fn draw_selection(
     s: f32,
 ) {
     let Some(idx) = editor.selected else { return };
-    let Some(item) = editor.doc.items.get(idx) else { return };
+    let Some(item) = editor.doc.items.get(idx) else {
+        return;
+    };
     let r = editor.item_screen_rect(item, vp, s);
 
     painter.push_clip(*vp);
@@ -485,7 +583,11 @@ fn draw_selection(
     let badge_r = 14.0 * s;
     let badge_zone = Rect::new(bx - badge_r, by - badge_r, badge_r * 2.0, badge_r * 2.0);
     let st = input.add_zone(ZONE_SEL_DELETE, badge_zone);
-    let bg = if st.is_hovered() { palette.danger } else { palette.danger.with_alpha(0.8) };
+    let bg = if st.is_hovered() {
+        palette.danger
+    } else {
+        palette.danger.with_alpha(0.8)
+    };
     painter.circle_filled(bx, by, badge_r, bg);
     let k = badge_r * 0.42;
     painter.line(bx - k, by - k, bx + k, by + k, 2.0 * s, Color::WHITE);
@@ -509,13 +611,20 @@ fn draw_dialog(
 
     // Backdrop eats every click that isn't a dialog button.
     input.add_zone(ZONE_DIALOG_BACKDROP, Rect::new(0.0, 0.0, wf, hf));
-    painter.rect_filled(Rect::new(0.0, 0.0, wf, hf), 0.0, Color::BLACK.with_alpha(0.55));
+    painter.rect_filled(
+        Rect::new(0.0, 0.0, wf, hf),
+        0.0,
+        Color::BLACK.with_alpha(0.55),
+    );
 
     let (title, body, buttons): (&str, String, Vec<(u32, &str, bool)>) = match dialog {
         DialogKind::SaveName { .. } => (
             "Save canvas",
             "Name this canvas:".into(),
-            vec![(ZONE_DIALOG_BTN0, "Save", true), (ZONE_DIALOG_BTN1, "Cancel", false)],
+            vec![
+                (ZONE_DIALOG_BTN0, "Save", true),
+                (ZONE_DIALOG_BTN1, "Cancel", false),
+            ],
         ),
         DialogKind::ConfirmQuit => (
             "Unsaved changes",
@@ -529,13 +638,12 @@ fn draw_dialog(
         DialogKind::ConfirmNew => (
             "Unsaved changes",
             "Start a new canvas and discard changes?".into(),
-            vec![(ZONE_DIALOG_BTN0, "Discard & New", true), (ZONE_DIALOG_BTN1, "Cancel", false)],
+            vec![
+                (ZONE_DIALOG_BTN0, "Discard & New", true),
+                (ZONE_DIALOG_BTN1, "Cancel", false),
+            ],
         ),
-        DialogKind::Error(msg) => (
-            "Error",
-            msg.clone(),
-            vec![(ZONE_DIALOG_BTN0, "OK", true)],
-        ),
+        DialogKind::Error(msg) => ("Error", msg.clone(), vec![(ZONE_DIALOG_BTN0, "OK", true)]),
     };
     let has_input = matches!(dialog, DialogKind::SaveName { .. });
 
@@ -548,7 +656,11 @@ fn draw_dialog(
     let ph = pad * 2.0 + title_px + 12.0 * s + body_px * 2.0 + input_h + 20.0 * s + btn_h;
     let panel = Rect::new((wf - pw) * 0.5, (hf - ph) * 0.5, pw, ph);
 
-    painter.rect_filled(panel.expand(8.0 * s), 16.0 * s, Color::BLACK.with_alpha(0.3));
+    painter.rect_filled(
+        panel.expand(8.0 * s),
+        16.0 * s,
+        Color::BLACK.with_alpha(0.3),
+    );
     painter.rect_filled(panel, 12.0 * s, palette.surface);
     painter.rect_stroke(panel, 12.0 * s, 1.0, palette.muted.with_alpha(0.25));
 
@@ -585,7 +697,11 @@ fn draw_dialog(
         let rect = Rect::new(bx, by, btn_w, btn_h);
         let st = input.add_zone(*zone, rect);
         Button::new(rect, label)
-            .variant(if *primary { ButtonVariant::Primary } else { ButtonVariant::Default })
+            .variant(if *primary {
+                ButtonVariant::Primary
+            } else {
+                ButtonVariant::Default
+            })
             .hovered(st.is_hovered())
             .pressed(st.is_active())
             .scale(s)

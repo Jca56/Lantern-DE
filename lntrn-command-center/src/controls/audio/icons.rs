@@ -48,11 +48,7 @@ pub(super) fn draw_speaker_colored(
     // Box: 0.0..0.35 horiz, 0.30..0.70 vert.
     let (bx0, by0) = pt(0.0, 0.30);
     let (bx1, by1) = pt(0.35, 0.70);
-    painter.rect_filled(
-        Rect::new(bx0, by0, bx1 - bx0, by1 - by0),
-        0.0,
-        color,
-    );
+    painter.rect_filled(Rect::new(bx0, by0, bx1 - bx0, by1 - by0), 0.0, color);
     // Cone — two triangles forming a pentagon. Top half: top-left of box,
     // top-right of cone, midline-right.
     let cone_top_left = pt(0.35, 0.30);
@@ -61,21 +57,30 @@ pub(super) fn draw_speaker_colored(
     let cone_bot_left = pt(0.35, 0.70);
     let cone_bot_right = pt(0.95, 1.0);
     painter.triangle(
-        cone_top_left.0, cone_top_left.1,
-        cone_top_right.0, cone_top_right.1,
-        cone_mid_right.0, cone_mid_right.1,
+        cone_top_left.0,
+        cone_top_left.1,
+        cone_top_right.0,
+        cone_top_right.1,
+        cone_mid_right.0,
+        cone_mid_right.1,
         color,
     );
     painter.triangle(
-        cone_top_left.0, cone_top_left.1,
-        cone_mid_right.0, cone_mid_right.1,
-        cone_bot_left.0, cone_bot_left.1,
+        cone_top_left.0,
+        cone_top_left.1,
+        cone_mid_right.0,
+        cone_mid_right.1,
+        cone_bot_left.0,
+        cone_bot_left.1,
         color,
     );
     painter.triangle(
-        cone_bot_left.0, cone_bot_left.1,
-        cone_mid_right.0, cone_mid_right.1,
-        cone_bot_right.0, cone_bot_right.1,
+        cone_bot_left.0,
+        cone_bot_left.1,
+        cone_mid_right.0,
+        cone_mid_right.1,
+        cone_bot_right.0,
+        cone_bot_right.1,
         color,
     );
 
@@ -91,7 +96,15 @@ pub(super) fn draw_speaker_colored(
 
 /// Draw a stylised microphone — rounded "head" capsule + thin neck +
 /// wide base. When muted, the same red diagonal slash as the speaker.
-pub(super) fn draw_mic(painter: &mut Painter, x: f32, y: f32, w: f32, h: f32, muted: bool, alpha: f32) {
+pub(super) fn draw_mic(
+    painter: &mut Painter,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    muted: bool,
+    alpha: f32,
+) {
     let pt = |fx: f32, fy: f32| (x + fx * w, y + fy * h);
     let color = Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(alpha);
 
@@ -111,11 +124,7 @@ pub(super) fn draw_mic(painter: &mut Painter, x: f32, y: f32, w: f32, h: f32, mu
     let neck_x = x + (w - neck_w) / 2.0;
     let neck_top = head_top + head_h;
     let neck_h = 0.18 * h;
-    painter.rect_filled(
-        Rect::new(neck_x, neck_top, neck_w, neck_h),
-        0.0,
-        color,
-    );
+    painter.rect_filled(Rect::new(neck_x, neck_top, neck_w, neck_h), 0.0, color);
 
     // Base — wider horizontal strip at the bottom.
     let base_w = w * 0.70;

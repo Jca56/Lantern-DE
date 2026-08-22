@@ -11,7 +11,9 @@ use std::path::{Path, PathBuf};
 use super::Note;
 
 fn notes_dir() -> PathBuf {
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default();
     home.join(".lantern").join("state").join("notes")
 }
 

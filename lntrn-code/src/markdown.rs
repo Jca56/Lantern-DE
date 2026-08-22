@@ -93,10 +93,12 @@ pub fn sync_preview(preview: &mut Editor, source_lines: &[String]) {
             out_lines.push(body.to_string());
             out_formats = grow_formats(out_formats, out_lines.len());
             let size = H_SIZES[(level - 1).min(5) as usize];
-            out_formats.get_mut(line_idx).apply_format(0, body.len(), |a| {
-                a.bold = true;
-                a.font_size = Some(size);
-            });
+            out_formats
+                .get_mut(line_idx)
+                .apply_format(0, body.len(), |a| {
+                    a.bold = true;
+                    a.font_size = Some(size);
+                });
             continue;
         }
 
@@ -109,21 +111,23 @@ pub fn sync_preview(preview: &mut Editor, source_lines: &[String]) {
         // Inline parsing for bold / italic / strike / code.
         let inlines = parse_inline(&display_line, list_offset);
         for span in inlines {
-            out_formats.get_mut(line_idx).apply_format(span.start, span.end, |a| {
-                if span.bold {
-                    a.bold = true;
-                }
-                if span.italic {
-                    a.italic = true;
-                }
-                if span.strike {
-                    a.strikethrough = true;
-                }
-                if span.code {
-                    a.color = Some(CODE_COLOR);
-                    a.bg_color = Some(CODE_BG);
-                }
-            });
+            out_formats
+                .get_mut(line_idx)
+                .apply_format(span.start, span.end, |a| {
+                    if span.bold {
+                        a.bold = true;
+                    }
+                    if span.italic {
+                        a.italic = true;
+                    }
+                    if span.strike {
+                        a.strikethrough = true;
+                    }
+                    if span.code {
+                        a.color = Some(CODE_COLOR);
+                        a.bg_color = Some(CODE_BG);
+                    }
+                });
         }
     }
 

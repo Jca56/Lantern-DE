@@ -34,10 +34,7 @@ const STATUS_INTERVAL: Duration = Duration::from_secs(1);
 const SCAN_INTERVAL: Duration = Duration::from_secs(8);
 
 /// Worker entry point. Spawned from [`crate::controls::wifi::Wifi::new`].
-pub(crate) fn run(
-    tx: mpsc::Sender<WifiEvent>,
-    cmd_rx: mpsc::Receiver<WifiCmd>,
-) {
+pub(crate) fn run(tx: mpsc::Sender<WifiEvent>, cmd_rx: mpsc::Receiver<WifiCmd>) {
     let _ = tx.send(WifiEvent::Status(iwd::poll_status()));
     let _ = tx.send(WifiEvent::VpnStatus(poll_vpn_status()));
     let _ = tx.send(WifiEvent::Networks(iwd::scan_networks()));

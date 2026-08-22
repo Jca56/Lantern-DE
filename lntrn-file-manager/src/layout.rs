@@ -24,7 +24,11 @@ fn title_bar_h_base() -> f32 {
 /// The top gradient strip (between title bar and nav bar) goes away in rice
 /// mode along with the title bar. Desktop mode keeps it.
 fn top_gradient_h_base() -> f32 {
-    if CHROME_HIDDEN.load(Ordering::Relaxed) { 0.0 } else { GRADIENT_H }
+    if CHROME_HIDDEN.load(Ordering::Relaxed) {
+        0.0
+    } else {
+        GRADIENT_H
+    }
 }
 const NAV_BAR_H: f32 = 48.0;
 const GRADIENT_H: f32 = 4.0;
@@ -54,14 +58,26 @@ pub fn list_zoom_multiplier(zoom: f32) -> f32 {
 
 /// Scaled layout helper. All public functions return physical-pixel values.
 #[allow(dead_code)]
-pub fn title_bar_h(s: f32) -> f32 { title_bar_h_base() * s }
+pub fn title_bar_h(s: f32) -> f32 {
+    title_bar_h_base() * s
+}
 #[allow(dead_code)]
-pub fn gradient_h(s: f32) -> f32 { GRADIENT_H * s }
-pub fn sidebar_w(s: f32) -> f32 { SIDEBAR_W * s }
-pub fn item_size(s: f32, zoom: f32) -> f32 { (ITEM_SIZE * zoom_multiplier(zoom)).max(60.0) * s }
-pub fn icon_size(s: f32, zoom: f32) -> f32 { ICON_SIZE * s * zoom_multiplier(zoom) }
+pub fn gradient_h(s: f32) -> f32 {
+    GRADIENT_H * s
+}
+pub fn sidebar_w(s: f32) -> f32 {
+    SIDEBAR_W * s
+}
+pub fn item_size(s: f32, zoom: f32) -> f32 {
+    (ITEM_SIZE * zoom_multiplier(zoom)).max(60.0) * s
+}
+pub fn icon_size(s: f32, zoom: f32) -> f32 {
+    ICON_SIZE * s * zoom_multiplier(zoom)
+}
 #[allow(dead_code)]
-pub fn item_pad(s: f32) -> f32 { ITEM_PAD * s }
+pub fn item_pad(s: f32) -> f32 {
+    ITEM_PAD * s
+}
 
 pub fn title_bar_rect(width: f32, s: f32) -> Rect {
     Rect::new(0.0, 0.0, width, title_bar_h_base() * s)
@@ -114,7 +130,12 @@ pub fn path_rect(width: f32, s: f32) -> Rect {
     let path_x = x + 224.0 * s;
     // Reserve space for split-toggle, preview-toggle, sort, and search buttons.
     let trailing_space = 172.0 * s;
-    Rect::new(path_x, y + 5.0 * s, width - path_x - trailing_space, 38.0 * s)
+    Rect::new(
+        path_x,
+        y + 5.0 * s,
+        width - path_x - trailing_space,
+        38.0 * s,
+    )
 }
 
 /// Split-view toggle button — sits left of the preview toggle.
@@ -175,7 +196,7 @@ pub fn sidebar_rect(height: f32, s: f32) -> Rect {
 // same `SidebarLayout`, so they can't drift.
 
 const SIDEBAR_HEADER_H: f32 = 30.0;
-const SIDEBAR_HEADER_GAP: f32 = 12.0;     // gap above each section header
+const SIDEBAR_HEADER_GAP: f32 = 12.0; // gap above each section header
 const SIDEBAR_PLACE_ITEM_H: f32 = 40.0;
 const SIDEBAR_DRIVE_ITEM_H: f32 = 64.0;
 const SIDEBAR_PHONE_ITEM_H: f32 = 56.0;
@@ -315,7 +336,12 @@ pub fn split_pane_cols(width: f32, ratio: f32, s: f32) -> (f32, f32, f32, f32) {
 pub fn split_divider_rect(width: f32, height: f32, ratio: f32, s: f32) -> Rect {
     let (lx, lw, _, _) = split_pane_cols(width, ratio, s);
     let top = nav_bar_y(s);
-    Rect::new(lx + lw, top, SPLIT_HANDLE_W * s, content_bottom(height, s) - top)
+    Rect::new(
+        lx + lw,
+        top,
+        SPLIT_HANDLE_W * s,
+        content_bottom(height, s) - top,
+    )
 }
 
 /// Per-pane nav bar strip.
@@ -324,19 +350,37 @@ pub fn pane_nav_bar_rect(pane_x: f32, pane_w: f32, s: f32) -> Rect {
 }
 
 fn pane_nav_button(pane_x: f32, offset: f32, s: f32) -> Rect {
-    Rect::new(pane_x + offset * s, nav_bar_y(s) + 6.0 * s, 36.0 * s, 36.0 * s)
+    Rect::new(
+        pane_x + offset * s,
+        nav_bar_y(s) + 6.0 * s,
+        36.0 * s,
+        36.0 * s,
+    )
 }
 
 /// Pane nav buttons, left-aligned. Split mode drops the cloud button — it
 /// stays a sidebar/single-pane affordance — so the row is tighter than the
 /// single-pane layout.
-pub fn pane_view_toggle_rect(pane_x: f32, s: f32) -> Rect { pane_nav_button(pane_x, 6.0, s) }
-pub fn pane_back_rect(pane_x: f32, s: f32) -> Rect { pane_nav_button(pane_x, 48.0, s) }
-pub fn pane_forward_rect(pane_x: f32, s: f32) -> Rect { pane_nav_button(pane_x, 86.0, s) }
-pub fn pane_up_rect(pane_x: f32, s: f32) -> Rect { pane_nav_button(pane_x, 124.0, s) }
+pub fn pane_view_toggle_rect(pane_x: f32, s: f32) -> Rect {
+    pane_nav_button(pane_x, 6.0, s)
+}
+pub fn pane_back_rect(pane_x: f32, s: f32) -> Rect {
+    pane_nav_button(pane_x, 48.0, s)
+}
+pub fn pane_forward_rect(pane_x: f32, s: f32) -> Rect {
+    pane_nav_button(pane_x, 86.0, s)
+}
+pub fn pane_up_rect(pane_x: f32, s: f32) -> Rect {
+    pane_nav_button(pane_x, 124.0, s)
+}
 
 fn pane_nav_button_right(pane_x: f32, pane_w: f32, from_right: f32, s: f32) -> Rect {
-    Rect::new(pane_x + pane_w - from_right * s, nav_bar_y(s) + 6.0 * s, 36.0 * s, 36.0 * s)
+    Rect::new(
+        pane_x + pane_w - from_right * s,
+        nav_bar_y(s) + 6.0 * s,
+        36.0 * s,
+        36.0 * s,
+    )
 }
 
 /// Pane nav buttons, right-aligned.
@@ -357,7 +401,12 @@ pub fn pane_split_toggle_rect(pane_x: f32, pane_w: f32, s: f32) -> Rect {
 pub fn pane_path_rect(pane_x: f32, pane_w: f32, reserve_split_btn: bool, s: f32) -> Rect {
     let px = pane_x + 168.0 * s;
     let trailing = if reserve_split_btn { 134.0 } else { 92.0 } * s;
-    Rect::new(px, nav_bar_y(s) + 5.0 * s, (pane_x + pane_w - trailing - px).max(40.0 * s), 38.0 * s)
+    Rect::new(
+        px,
+        nav_bar_y(s) + 5.0 * s,
+        (pane_x + pane_w - trailing - px).max(40.0 * s),
+        38.0 * s,
+    )
 }
 
 /// Left-pane tab bar (right pane has no tabs).
@@ -367,7 +416,11 @@ pub fn pane_tab_bar_rect(pane_x: f32, pane_w: f32, s: f32) -> Rect {
 
 /// Pane content column. The right pane (no tab bar) starts higher.
 pub fn pane_content_rect(pane_x: f32, pane_w: f32, height: f32, s: f32, has_tab_bar: bool) -> Rect {
-    let top = if has_tab_bar { content_top(s) } else { tab_bar_y(s) };
+    let top = if has_tab_bar {
+        content_top(s)
+    } else {
+        tab_bar_y(s)
+    };
     let bottom = content_bottom(height, s);
     Rect::new(pane_x, top, pane_w, bottom - top)
 }
@@ -382,30 +435,50 @@ pub const PREVIEW_MAX_FRACTION: f32 = 0.6; // never more than 60% of content are
 /// Effective preview width in physical px, clamped to bounds for the current
 /// content area. Returns 0 if the preview is closed or would not fit.
 pub fn preview_effective_w(content_w_px: f32, preview_w_logical: f32, open: bool, s: f32) -> f32 {
-    if !open { return 0.0; }
+    if !open {
+        return 0.0;
+    }
     let min = PREVIEW_MIN_W * s;
     let max = (content_w_px * PREVIEW_MAX_FRACTION).max(min);
     (preview_w_logical * s).clamp(min, max)
 }
 
 pub fn preview_pane_rect(content: Rect, preview_w: f32) -> Rect {
-    Rect::new(content.x + content.w - preview_w, content.y, preview_w, content.h)
+    Rect::new(
+        content.x + content.w - preview_w,
+        content.y,
+        preview_w,
+        content.h,
+    )
 }
 
 pub fn preview_handle_rect(content: Rect, preview_w: f32, s: f32) -> Rect {
     let hw = PREVIEW_HANDLE_W * s;
-    Rect::new(content.x + content.w - preview_w - hw * 0.5, content.y, hw, content.h)
+    Rect::new(
+        content.x + content.w - preview_w - hw * 0.5,
+        content.y,
+        hw,
+        content.h,
+    )
 }
 
 pub fn status_rect(width: f32, height: f32, s: f32) -> Rect {
     Rect::new(0.0, height - STATUS_BAR_H * s, width, STATUS_BAR_H * s)
 }
 
-pub fn list_row_h(s: f32, zoom: f32) -> f32 { LIST_ROW_H * list_zoom_multiplier(zoom) * s }
-pub fn search_list_row_h(s: f32, zoom: f32) -> f32 { 56.0 * list_zoom_multiplier(zoom) * s }
-pub fn tree_row_h(s: f32, zoom: f32) -> f32 { TREE_ROW_H * list_zoom_multiplier(zoom) * s }
+pub fn list_row_h(s: f32, zoom: f32) -> f32 {
+    LIST_ROW_H * list_zoom_multiplier(zoom) * s
+}
+pub fn search_list_row_h(s: f32, zoom: f32) -> f32 {
+    56.0 * list_zoom_multiplier(zoom) * s
+}
+pub fn tree_row_h(s: f32, zoom: f32) -> f32 {
+    TREE_ROW_H * list_zoom_multiplier(zoom) * s
+}
 #[allow(dead_code)]
-pub fn tree_indent(s: f32, zoom: f32) -> f32 { TREE_INDENT * list_zoom_multiplier(zoom) * s }
+pub fn tree_indent(s: f32, zoom: f32) -> f32 {
+    TREE_INDENT * list_zoom_multiplier(zoom) * s
+}
 
 pub fn list_content_height(entry_count: usize, s: f32, zoom: f32) -> f32 {
     entry_count as f32 * list_row_h(s, zoom)
@@ -416,14 +489,29 @@ pub fn tree_content_height(entry_count: usize, s: f32, zoom: f32) -> f32 {
 }
 
 #[allow(dead_code)]
-pub fn list_row_rect(index: usize, content_x: f32, content_w: f32, base_y: f32, s: f32, zoom: f32) -> Rect {
+pub fn list_row_rect(
+    index: usize,
+    content_x: f32,
+    content_w: f32,
+    base_y: f32,
+    s: f32,
+    zoom: f32,
+) -> Rect {
     let rh = list_row_h(s, zoom);
     let y = base_y + index as f32 * rh;
     Rect::new(content_x, y, content_w, rh)
 }
 
 #[allow(dead_code)]
-pub fn tree_row_rect(index: usize, depth: usize, content_x: f32, content_w: f32, base_y: f32, s: f32, zoom: f32) -> Rect {
+pub fn tree_row_rect(
+    index: usize,
+    depth: usize,
+    content_x: f32,
+    content_w: f32,
+    base_y: f32,
+    s: f32,
+    zoom: f32,
+) -> Rect {
     let rh = tree_row_h(s, zoom);
     let indent = depth as f32 * TREE_INDENT * list_zoom_multiplier(zoom) * s;
     let y = base_y + index as f32 * rh;
@@ -443,7 +531,14 @@ pub fn grid_content_height(entry_count: usize, cols: usize, s: f32, zoom: f32) -
     rows as f32 * (item + pad) + pad
 }
 
-pub fn file_item_rect(index: usize, cols: usize, content_x: f32, base_y: f32, s: f32, zoom: f32) -> Rect {
+pub fn file_item_rect(
+    index: usize,
+    cols: usize,
+    content_x: f32,
+    base_y: f32,
+    s: f32,
+    zoom: f32,
+) -> Rect {
     let item = item_size(s, zoom);
     let pad = ITEM_PAD * s;
     let col = index % cols.max(1);
@@ -464,5 +559,10 @@ pub fn item_hit_rect(cell: Rect, s: f32, zoom: f32) -> Rect {
     let margin = 8.0 * s;
     let w = (icsz + margin * 2.0).min(cell.w);
     let h = (content_h + margin * 2.0).min(cell.h);
-    Rect::new(cell.x + (cell.w - w) * 0.5, cell.y + (cell.h - h) * 0.5, w, h)
+    Rect::new(
+        cell.x + (cell.w - w) * 0.5,
+        cell.y + (cell.h - h) * 0.5,
+        w,
+        h,
+    )
 }

@@ -74,12 +74,18 @@ impl App {
         while let Ok(event) = self.event_rx.try_recv() {
             processed = true;
             match event {
-                GitEvent::Repos(repos) => { self.repos = repos; }
+                GitEvent::Repos(repos) => {
+                    self.repos = repos;
+                }
                 GitEvent::RemoteRepos(result) => {
                     self.clone_view.loading = false;
                     match result {
-                        Ok(repos) => { self.clone_view.repos = repos; }
-                        Err(e) => { self.clone_view.error = Some(e); }
+                        Ok(repos) => {
+                            self.clone_view.repos = repos;
+                        }
+                        Err(e) => {
+                            self.clone_view.error = Some(e);
+                        }
                     }
                 }
                 GitEvent::RepoCreated(result) => {
@@ -89,16 +95,21 @@ impl App {
                             let github_error = res.github_error;
                             self.open_repo(res.path);
                             if let Some(e) = github_error {
-                                self.main_view.handle_event(GitEvent::Error(format!("GitHub: {e}")));
+                                self.main_view
+                                    .handle_event(GitEvent::Error(format!("GitHub: {e}")));
                             }
                             self.new_repo_view.reset();
                             // Refresh the picker so the new repo shows up there too.
                             let _ = self.cmd_tx.send(GitCmd::FindRepos);
                         }
-                        Err(e) => { self.new_repo_view.error = Some(e); }
+                        Err(e) => {
+                            self.new_repo_view.error = Some(e);
+                        }
                     }
                 }
-                other => { self.main_view.handle_event(other); }
+                other => {
+                    self.main_view.handle_event(other);
+                }
             }
         }
         processed
@@ -163,8 +174,18 @@ impl App {
                     self.view = View::RepoPicker;
                     self.scroll.set(0.0);
                 }
-                NewRepoAction::Create { name, parent, github, private } => {
-                    let _ = self.cmd_tx.send(GitCmd::CreateRepo { name, parent, github, private });
+                NewRepoAction::Create {
+                    name,
+                    parent,
+                    github,
+                    private,
+                } => {
+                    let _ = self.cmd_tx.send(GitCmd::CreateRepo {
+                        name,
+                        parent,
+                        github,
+                        private,
+                    });
                 }
                 NewRepoAction::None => {}
             }
@@ -172,7 +193,9 @@ impl App {
         }
 
         // Repo picker
-        let Some(zone) = ix.zone_at(phys_cx, phys_cy) else { return };
+        let Some(zone) = ix.zone_at(phys_cx, phys_cy) else {
+            return;
+        };
 
         if zone == ZONE_CLONE_BTN {
             self.view = View::Clone;
@@ -207,10 +230,19 @@ impl App {
             View::Main => self.main_view.on_key(key, shift),
             View::Clone => self.clone_view.on_key(key, shift),
             View::NewRepo => {
-                if let NewRepoAction::Create { name, parent, github, private } =
-                    self.new_repo_view.on_key(key, shift)
+                if let NewRepoAction::Create {
+                    name,
+                    parent,
+                    github,
+                    private,
+                } = self.new_repo_view.on_key(key, shift)
                 {
-                    let _ = self.cmd_tx.send(GitCmd::CreateRepo { name, parent, github, private });
+                    let _ = self.cmd_tx.send(GitCmd::CreateRepo {
+                        name,
+                        parent,
+                        github,
+                        private,
+                    });
                 }
             }
             View::RepoPicker => {}
@@ -223,10 +255,8 @@ impl App {
             View::Clone => self.clone_view.on_scroll(delta),
             View::NewRepo => {}
             View::RepoPicker => {
-                self.scroll.scroll_by(
-                    delta,
-                    self.picker_content_height, self.picker_viewport_h,
-                );
+                self.scroll
+                    .scroll_by(delta, self.picker_content_height, self.picker_viewport_h);
             }
         }
     }
@@ -242,9 +272,15 @@ impl App {
 
     /// Draw into the title bar content area.
     pub fn draw_title_bar(
-        &mut self, text: &mut TextRenderer, ix: &mut InteractionContext, palette: &FoxPalette,
-        tb_content: Rect, painter: &mut Painter,
-        scale: f32, screen_w: u32, screen_h: u32,
+        &mut self,
+        text: &mut TextRenderer,
+        ix: &mut InteractionContext,
+        palette: &FoxPalette,
+        tb_content: Rect,
+        painter: &mut Painter,
+        scale: f32,
+        screen_w: u32,
+        screen_h: u32,
     ) {
         let s = scale;
         let font = 20.0 * s;
@@ -254,14 +290,19 @@ impl App {
         match self.view {
             View::RepoPicker | View::Clone | View::NewRepo => {
                 text.queue(
-                    "Lantern Git", font, tx, ty, palette.text,
-                    tb_content.w, screen_w, screen_h,
+                    "Lantern Git",
+                    font,
+                    tx,
+                    ty,
+                    palette.text,
+                    tb_content.w,
+                    screen_w,
+                    screen_h,
                 );
             }
             View::Main => {
                 self.main_view.draw_title_bar_content(
-                    text, ix, palette, tb_content, painter,
-                    s, screen_w, screen_h,
+                    text, ix, palette, tb_content, painter, s, screen_w, screen_h,
                 );
             }
         }
@@ -269,9 +310,16 @@ impl App {
 
     /// Draw overlays on layer 1 (branch dropdown + merge modal).
     pub fn draw_overlays(
-        &mut self, painter: &mut Painter, text: &mut TextRenderer,
-        ix: &mut InteractionContext, palette: &FoxPalette,
-        scale: f32, wf: f32, hf: f32, screen_w: u32, screen_h: u32,
+        &mut self,
+        painter: &mut Painter,
+        text: &mut TextRenderer,
+        ix: &mut InteractionContext,
+        palette: &FoxPalette,
+        scale: f32,
+        wf: f32,
+        hf: f32,
+        screen_w: u32,
+        screen_h: u32,
     ) {
         if self.view == View::Main {
             self.main_view.draw_overlays(
@@ -281,40 +329,52 @@ impl App {
     }
 
     pub fn draw(
-        &mut self, painter: &mut Painter, text: &mut TextRenderer,
-        ix: &mut InteractionContext, palette: &FoxPalette,
-        content_x: f32, content_y: f32, content_w: f32, content_h: f32,
-        scale: f32, screen_w: u32, screen_h: u32,
+        &mut self,
+        painter: &mut Painter,
+        text: &mut TextRenderer,
+        ix: &mut InteractionContext,
+        palette: &FoxPalette,
+        content_x: f32,
+        content_y: f32,
+        content_w: f32,
+        content_h: f32,
+        scale: f32,
+        screen_w: u32,
+        screen_h: u32,
     ) {
         match self.view {
             View::RepoPicker => self.draw_picker(
-                painter, text, ix, palette,
-                content_x, content_y, content_w, content_h,
-                scale, screen_w, screen_h,
+                painter, text, ix, palette, content_x, content_y, content_w, content_h, scale,
+                screen_w, screen_h,
             ),
             View::Clone => self.clone_view.draw(
-                painter, text, ix, palette,
-                content_x, content_y, content_w, content_h,
-                scale, screen_w, screen_h,
+                painter, text, ix, palette, content_x, content_y, content_w, content_h, scale,
+                screen_w, screen_h,
             ),
             View::NewRepo => self.new_repo_view.draw(
-                painter, text, ix, palette,
-                content_x, content_y, content_w, content_h,
-                scale, screen_w, screen_h,
+                painter, text, ix, palette, content_x, content_y, content_w, content_h, scale,
+                screen_w, screen_h,
             ),
             View::Main => self.main_view.draw(
-                painter, text, ix, palette,
-                content_x, content_y, content_w, content_h,
-                scale, screen_w, screen_h,
+                painter, text, ix, palette, content_x, content_y, content_w, content_h, scale,
+                screen_w, screen_h,
             ),
         }
     }
 
     fn draw_picker(
-        &mut self, painter: &mut Painter, text: &mut TextRenderer,
-        ix: &mut InteractionContext, palette: &FoxPalette,
-        cx: f32, cy: f32, cw: f32, ch: f32,
-        s: f32, sw: u32, sh: u32,
+        &mut self,
+        painter: &mut Painter,
+        text: &mut TextRenderer,
+        ix: &mut InteractionContext,
+        palette: &FoxPalette,
+        cx: f32,
+        cy: f32,
+        cw: f32,
+        ch: f32,
+        s: f32,
+        sw: u32,
+        sh: u32,
     ) {
         let title_font = 28.0 * s;
         let body_font = 24.0 * s;
@@ -329,7 +389,16 @@ impl App {
         painter.rect_filled(action_rect, 0.0, palette.surface.with_alpha(0.4));
 
         let label_y = cy + (action_row_h - title_font) / 2.0;
-        text.queue("Open Repository", title_font, cx + pad, label_y, palette.text, cw, sw, sh);
+        text.queue(
+            "Open Repository",
+            title_font,
+            cx + pad,
+            label_y,
+            palette.text,
+            cw,
+            sw,
+            sh,
+        );
 
         // "New Repository" + "Clone from GitHub" buttons (right-aligned)
         let btn_font = 20.0 * s;
@@ -347,13 +416,23 @@ impl App {
             (ZONE_CLONE_BTN, "Clone from GitHub", clone_rect),
         ] {
             let state = ix.add_zone(zone_id, rect);
-            let color = if state.is_hovered() { palette.accent } else { palette.accent.with_alpha(0.7) };
+            let color = if state.is_hovered() {
+                palette.accent
+            } else {
+                palette.accent.with_alpha(0.7)
+            };
             painter.rect_filled(rect, 8.0 * s, color);
             let ty = rect.y + (btn_h - btn_font) / 2.0;
             let tw = btn_font * 0.5 * label.len() as f32;
             text.queue(
-                label, btn_font, rect.x + (rect.w - tw) / 2.0, ty,
-                palette.text, rect.w, sw, sh,
+                label,
+                btn_font,
+                rect.x + (rect.w - tw) / 2.0,
+                ty,
+                palette.text,
+                rect.w,
+                sw,
+                sh,
             );
         }
 
@@ -362,13 +441,23 @@ impl App {
         let div_y = cy + action_row_h - action_div_h;
         painter.rect_filled(
             Rect::new(cx, div_y, cw, action_div_h),
-            0.0, palette.muted.with_alpha(0.4),
+            0.0,
+            palette.muted.with_alpha(0.4),
         );
 
         let header_y = cy + action_row_h + 8.0 * s;
 
         if self.repos.is_empty() {
-            text.queue("Scanning for repos...", body_font, cx + pad, header_y, palette.muted, cw, sw, sh);
+            text.queue(
+                "Scanning for repos...",
+                body_font,
+                cx + pad,
+                header_y,
+                palette.muted,
+                cw,
+                sw,
+                sh,
+            );
             return;
         }
 
@@ -404,10 +493,25 @@ impl App {
             let path_str = repo.to_string_lossy();
             let text_y = y + (row_h - body_font - small_font) / 2.0;
 
-            text.queue(&name, body_font, cx + pad, text_y, palette.text, cw - pad * 2.0, sw, sh);
             text.queue(
-                &path_str, small_font, cx + pad, text_y + body_font + 10.0 * s,
-                palette.muted, cw - pad * 2.0, sw, sh,
+                &name,
+                body_font,
+                cx + pad,
+                text_y,
+                palette.text,
+                cw - pad * 2.0,
+                sw,
+                sh,
+            );
+            text.queue(
+                &path_str,
+                small_font,
+                cx + pad,
+                text_y + body_font + 10.0 * s,
+                palette.muted,
+                cw - pad * 2.0,
+                sw,
+                sh,
             );
 
             if idx < self.repos.len() - 1 {

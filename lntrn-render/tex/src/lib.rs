@@ -197,13 +197,13 @@ impl TexturePass {
                     ],
                 });
 
-        let pipeline_layout =
-            gpu.device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("Tex Pipeline Layout"),
-                    bind_group_layouts: &[&globals_layout, &bind_group_layout],
-                    immediate_size: 0,
-                });
+        let pipeline_layout = gpu
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Tex Pipeline Layout"),
+                bind_group_layouts: &[&globals_layout, &bind_group_layout],
+                immediate_size: 0,
+            });
 
         let instance_layout = wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<TexInstance>() as u64,
@@ -435,11 +435,8 @@ impl TexturePass {
             })
             .collect();
 
-        gpu.queue.write_buffer(
-            &self.instance_buffer,
-            0,
-            bytemuck::cast_slice(&instances),
-        );
+        gpu.queue
+            .write_buffer(&self.instance_buffer, 0, bytemuck::cast_slice(&instances));
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Texture Pass"),
@@ -463,7 +460,12 @@ impl TexturePass {
         // Resolve effective clip for a draw: per-draw clip intersected with pass-level scissor.
         let effective_clip = |draw: &TextureDraw| -> [u32; 4] {
             let base = if let Some(c) = draw.clip {
-                [c[0] as u32, c[1] as u32, c[2].max(1.0) as u32, c[3].max(1.0) as u32]
+                [
+                    c[0] as u32,
+                    c[1] as u32,
+                    c[2].max(1.0) as u32,
+                    c[3].max(1.0) as u32,
+                ]
             } else if let Some(s) = scissor {
                 s
             } else {
@@ -486,12 +488,22 @@ impl TexturePass {
             // Clamp to render target bounds (x+w <= sw, y+h <= sh)
             let cx = raw[0].min(sw.saturating_sub(1));
             let cy = raw[1].min(sh.saturating_sub(1));
-            [cx, cy, raw[2].min(sw.saturating_sub(cx)), raw[3].min(sh.saturating_sub(cy))]
+            [
+                cx,
+                cy,
+                raw[2].min(sw.saturating_sub(cx)),
+                raw[3].min(sh.saturating_sub(cy)),
+            ]
         };
 
         // Draw with per-draw scissor support — break batches on clip or texture change
         let mut cur_clip = effective_clip(&draws[0]);
-        pass.set_scissor_rect(cur_clip[0], cur_clip[1], cur_clip[2].max(1), cur_clip[3].max(1));
+        pass.set_scissor_rect(
+            cur_clip[0],
+            cur_clip[1],
+            cur_clip[2].max(1),
+            cur_clip[3].max(1),
+        );
 
         let mut batch_start = 0usize;
         for i in 1..=count {
@@ -508,7 +520,12 @@ impl TexturePass {
                     pass.draw(0..4, batch_start as u32..i as u32);
                     batch_start = i;
                     cur_clip = clip;
-                    pass.set_scissor_rect(cur_clip[0], cur_clip[1], cur_clip[2].max(1), cur_clip[3].max(1));
+                    pass.set_scissor_rect(
+                        cur_clip[0],
+                        cur_clip[1],
+                        cur_clip[2].max(1),
+                        cur_clip[3].max(1),
+                    );
                     true // we already flushed
                 } else {
                     same_tex

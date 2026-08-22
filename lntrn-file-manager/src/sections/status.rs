@@ -50,26 +50,30 @@ pub fn draw_status_bar(
     if let Some(status) = cloud_status {
         use crate::cloud::sync::SyncStatus;
         let (label, color) = match status {
-            SyncStatus::Idle    => ("Synced",     palette.text_secondary),
+            SyncStatus::Idle => ("Synced", palette.text_secondary),
             SyncStatus::Syncing => ("Syncing\u{2026}", palette.accent),
-            SyncStatus::Error   => ("Sync error", palette.danger),
-            SyncStatus::Offline => ("Offline",    palette.muted),
+            SyncStatus::Error => ("Sync error", palette.danger),
+            SyncStatus::Offline => ("Offline", palette.muted),
             // Deliberate pause, not a failure — daily quota resets at
             // midnight PT and the loop retries on its own.
             SyncStatus::RateLimited => ("Sync paused (quota)", palette.muted),
         };
         let label_w = label.chars().count() as f32 * cw;
-        let icon_w  = 22.0 * s;
-        let gap     = 6.0 * s;
+        let icon_w = 22.0 * s;
+        let gap = 6.0 * s;
         let right_pad = 14.0 * s;
         let label_x = status_rect.x + status_rect.w - right_pad - label_w;
         let icon_cx = label_x - gap - icon_w * 0.5;
         let icon_cy = status_rect.y + status_rect.h * 0.5;
         let u = s * 0.85;
-        painter.circle_filled(icon_cx - 4.0*u, icon_cy - 1.0*u, 4.0*u, color);
-        painter.circle_filled(icon_cx + 1.0*u, icon_cy - 3.5*u, 5.5*u, color);
-        painter.circle_filled(icon_cx + 5.0*u, icon_cy,         4.0*u, color);
-        painter.rect_filled(Rect::new(icon_cx - 7.0*u, icon_cy - 1.0*u, 14.0*u, 5.0*u), 2.0*u, color);
+        painter.circle_filled(icon_cx - 4.0 * u, icon_cy - 1.0 * u, 4.0 * u, color);
+        painter.circle_filled(icon_cx + 1.0 * u, icon_cy - 3.5 * u, 5.5 * u, color);
+        painter.circle_filled(icon_cx + 5.0 * u, icon_cy, 4.0 * u, color);
+        painter.rect_filled(
+            Rect::new(icon_cx - 7.0 * u, icon_cy - 1.0 * u, 14.0 * u, 5.0 * u),
+            2.0 * u,
+            color,
+        );
         TextLabel::new(label, label_x, y)
             .size(font)
             .color(color)
@@ -217,29 +221,51 @@ fn draw_progress_strip(
     } else if op.current_name.is_empty() {
         format!("{} \u{2022} {} of {}", op.label, op.index, op.total)
     } else {
-        format!("{} \u{2022} {} ({}/{})", op.label, op.current_name, op.index + 1, op.total)
+        format!(
+            "{} \u{2022} {} ({}/{})",
+            op.label,
+            op.current_name,
+            op.index + 1,
+            op.total
+        )
     };
     let font = FontSize::Custom(14.0 * s);
-    TextLabel::new(&label, pill.x + 12.0 * s, pill.y + (pill.h - 14.0 * s) * 0.5)
-        .size(font)
-        .color(palette.text)
-        .max_width(pill.w - 24.0 * s)
-        .draw(text, screen.0, screen.1);
+    TextLabel::new(
+        &label,
+        pill.x + 12.0 * s,
+        pill.y + (pill.h - 14.0 * s) * 0.5,
+    )
+    .size(font)
+    .color(palette.text)
+    .max_width(pill.w - 24.0 * s)
+    .draw(text, screen.0, screen.1);
 
     // Cancel button — small red circle with "×"
     let cx = strip_x + strip_w - cancel_w * 0.5;
     let cy = strip_y + strip_h * 0.5;
     let cancel_rect = Rect::new(cx - cancel_w * 0.5, strip_y, cancel_w, strip_h);
     let cancel_state = input.add_zone(ZONE_PROGRESS_CANCEL, cancel_rect);
-    let bg = if cancel_state.is_hovered() { palette.danger } else { palette.danger.with_alpha(0.7) };
+    let bg = if cancel_state.is_hovered() {
+        palette.danger
+    } else {
+        palette.danger.with_alpha(0.7)
+    };
     painter.circle_filled(cx, cy, strip_h * 0.5 - 1.0 * s, bg);
     // Cross — two thin rects forming an X
     let arm = 8.0 * s;
     let th = 2.0 * s;
     let white = Color::WHITE;
     // diagonal-ish: just draw a horizontal and vertical strike for simplicity
-    painter.rect_filled(Rect::new(cx - arm * 0.5, cy - th * 0.5, arm, th), th * 0.5, white);
-    painter.rect_filled(Rect::new(cx - th * 0.5, cy - arm * 0.5, th, arm), th * 0.5, white);
+    painter.rect_filled(
+        Rect::new(cx - arm * 0.5, cy - th * 0.5, arm, th),
+        th * 0.5,
+        white,
+    );
+    painter.rect_filled(
+        Rect::new(cx - th * 0.5, cy - arm * 0.5, th, arm),
+        th * 0.5,
+        white,
+    );
 }
 
 fn format_bytes(size: u64) -> String {

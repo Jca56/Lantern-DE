@@ -24,9 +24,12 @@ pub fn run_picker_and_export(note: &Note) -> Result<PathBuf, String> {
 
     let output = Command::new("lntrn-file-manager")
         .arg("--pick-save")
-        .arg("--title").arg("Export Note")
-        .arg("--start-dir").arg(&start_dir)
-        .arg("--save-name").arg(&save_name)
+        .arg("--title")
+        .arg("Export Note")
+        .arg("--start-dir")
+        .arg(&start_dir)
+        .arg("--save-name")
+        .arg(&save_name)
         .output()
         .map_err(|e| format!("failed to launch file picker: {}", e))?;
 

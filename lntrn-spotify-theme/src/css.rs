@@ -76,11 +76,31 @@ pub fn generate(inp: &ThemeInputs) -> String {
     // ── Design-token overrides (the bulk of the recolor) ──
     css.push_str(":root,.encore-dark-theme,.encore-light-theme,html{\n");
     line(&mut css, "--background-base", &rgba(bg, base_a));
-    line(&mut css, "--background-highlight", &rgba(surface, (base_a + 0.08).min(1.0)));
-    line(&mut css, "--background-press", &rgba(surface2, (base_a + 0.12).min(1.0)));
-    line(&mut css, "--background-elevated-base", &rgba(surface, surf_a));
-    line(&mut css, "--background-elevated-highlight", &rgba(surface2, surf_a));
-    line(&mut css, "--background-elevated-press", &rgba(surface2, surf_a));
+    line(
+        &mut css,
+        "--background-highlight",
+        &rgba(surface, (base_a + 0.08).min(1.0)),
+    );
+    line(
+        &mut css,
+        "--background-press",
+        &rgba(surface2, (base_a + 0.12).min(1.0)),
+    );
+    line(
+        &mut css,
+        "--background-elevated-base",
+        &rgba(surface, surf_a),
+    );
+    line(
+        &mut css,
+        "--background-elevated-highlight",
+        &rgba(surface2, surf_a),
+    );
+    line(
+        &mut css,
+        "--background-elevated-press",
+        &rgba(surface2, surf_a),
+    );
     line(&mut css, "--background-tinted-base", &rgba(text, 0.07));
     line(&mut css, "--background-tinted-highlight", &rgba(text, 0.10));
     line(&mut css, "--background-tinted-press", &rgba(text, 0.14));

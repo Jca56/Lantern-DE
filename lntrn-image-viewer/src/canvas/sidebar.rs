@@ -42,7 +42,11 @@ impl SidebarState {
     pub fn new() -> Self {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
         let pictures = PathBuf::from(&home).join("Pictures");
-        let start = if pictures.is_dir() { pictures } else { PathBuf::from(home) };
+        let start = if pictures.is_dir() {
+            pictures
+        } else {
+            PathBuf::from(home)
+        };
         Self {
             current_dir: start,
             entries: Vec::new(),
@@ -91,13 +95,20 @@ impl SidebarState {
     }
 
     pub fn phys_width(&self, s: f32) -> f32 {
-        if self.collapsed { COLLAPSED_W * s } else { crate::SIDEBAR_W * s }
+        if self.collapsed {
+            COLLAPSED_W * s
+        } else {
+            crate::SIDEBAR_W * s
+        }
     }
 
     /// Queue thumbnail generation for a visible row (no-op if cached/known).
     pub fn request_thumb(&mut self, path: &Path) {
         let key = path.to_string_lossy().into_owned();
-        if self.thumbs.contains_key(&key) || self.pending.contains(&key) || self.failed.contains(&key) {
+        if self.thumbs.contains_key(&key)
+            || self.pending.contains(&key)
+            || self.failed.contains(&key)
+        {
             return;
         }
         let pool = self.pool.get_or_insert_with(ThumbPool::new);
@@ -138,7 +149,12 @@ impl SidebarState {
 pub fn sidebar_rect(sb: &SidebarState, hf: f32, s: f32) -> Rect {
     let title_h = crate::TITLE_H * s;
     let status_h = crate::STATUS_H * s;
-    Rect::new(0.0, title_h, sb.phys_width(s), (hf - title_h - status_h).max(1.0))
+    Rect::new(
+        0.0,
+        title_h,
+        sb.phys_width(s),
+        (hf - title_h - status_h).max(1.0),
+    )
 }
 
 /// The scrollable file-rows area (sidebar minus its header).
@@ -150,7 +166,11 @@ pub fn rows_viewport(sb: &SidebarState, hf: f32, s: f32) -> Rect {
 
 /// Rows: parent ".." row (when not at /) + entries.
 pub fn row_count(sb: &SidebarState) -> usize {
-    let parent = if sb.current_dir.parent().is_some() { 1 } else { 0 };
+    let parent = if sb.current_dir.parent().is_some() {
+        1
+    } else {
+        0
+    };
     parent + sb.entries.len()
 }
 
@@ -163,7 +183,11 @@ pub fn content_height(sb: &SidebarState, s: f32) -> f32 {
 fn list_dir(dir: &Path) -> Vec<SidebarEntry> {
     let mut dirs: Vec<SidebarEntry> = Vec::new();
     let mut files: Vec<SidebarEntry> = Vec::new();
-    for entry in std::fs::read_dir(dir).into_iter().flatten().filter_map(|e| e.ok()) {
+    for entry in std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+    {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
         if name.starts_with('.') {

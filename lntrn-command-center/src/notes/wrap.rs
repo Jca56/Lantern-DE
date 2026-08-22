@@ -77,7 +77,11 @@ fn wrap_hard_line(
     loop {
         let line = &buf[seg..end];
         if line.is_empty() || text.measure_width(line, font) <= max_w {
-            out.push(VisualLine { start: seg, end, hard_break: true });
+            out.push(VisualLine {
+                start: seg,
+                end,
+                hard_break: true,
+            });
             return;
         }
         let fit = longest_fit(line, font, max_w, text);
@@ -90,10 +94,18 @@ fn wrap_hard_line(
             _ => fit,
         };
         if brk >= line.len() {
-            out.push(VisualLine { start: seg, end, hard_break: true });
+            out.push(VisualLine {
+                start: seg,
+                end,
+                hard_break: true,
+            });
             return;
         }
-        out.push(VisualLine { start: seg, end: seg + brk, hard_break: false });
+        out.push(VisualLine {
+            start: seg,
+            end: seg + brk,
+            hard_break: false,
+        });
         seg += brk;
     }
 }

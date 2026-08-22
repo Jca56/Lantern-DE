@@ -145,8 +145,10 @@ impl ImageManager {
                 // Transmit (and optionally display)
                 if more_chunks {
                     // Multi-chunk: accumulate
-                    let tx = self.transmissions.entry(image_id).or_insert_with(|| {
-                        Transmission {
+                    let tx = self
+                        .transmissions
+                        .entry(image_id)
+                        .or_insert_with(|| Transmission {
                             image_id,
                             format,
                             width,
@@ -157,18 +159,25 @@ impl ImageManager {
                             cols_wide,
                             rows_tall,
                             z_index,
-                        }
-                    });
+                        });
                     tx.data.extend_from_slice(&decoded);
                 } else {
                     // Final or single chunk
                     let full_data = if let Some(mut tx) = self.transmissions.remove(&image_id) {
                         tx.data.extend_from_slice(&decoded);
                         // Use stored metadata from first chunk
-                        if width == 0 { width = tx.width; }
-                        if height == 0 { height = tx.height; }
-                        if cols_wide == 0 { cols_wide = tx.cols_wide; }
-                        if rows_tall == 0 { rows_tall = tx.rows_tall; }
+                        if width == 0 {
+                            width = tx.width;
+                        }
+                        if height == 0 {
+                            height = tx.height;
+                        }
+                        if cols_wide == 0 {
+                            cols_wide = tx.cols_wide;
+                        }
+                        if rows_tall == 0 {
+                            rows_tall = tx.rows_tall;
+                        }
                         format = tx.format;
                         z_index = tx.z_index;
                         tx.data
@@ -188,16 +197,14 @@ impl ImageManager {
                             }
                             rgba
                         }
-                        ImageFormat::Png => {
-                            match decode_png(&full_data) {
-                                Some((w, h, data)) => {
-                                    width = w;
-                                    height = h;
-                                    data
-                                }
-                                None => return,
+                        ImageFormat::Png => match decode_png(&full_data) {
+                            Some((w, h, data)) => {
+                                width = w;
+                                height = h;
+                                data
                             }
-                        }
+                            None => return,
+                        },
                     };
 
                     if width == 0 || height == 0 {
@@ -222,10 +229,7 @@ impl ImageManager {
                     // Replace any existing image with the same ID, otherwise
                     // append. This prevents duplicate images stacking up when
                     // a TUI re-transmits at the same ID (e.g. animated tiles).
-                    if let Some(slot) = self
-                        .images
-                        .iter_mut()
-                        .find(|img| img.image_id == image_id)
+                    if let Some(slot) = self.images.iter_mut().find(|img| img.image_id == image_id)
                     {
                         *slot = new_image;
                     } else {

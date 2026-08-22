@@ -20,7 +20,9 @@ impl App {
     /// round-trip (typically <2s). On success: starts sync, navigates to
     /// ~/Cloud, closes the dialog. On failure: surfaces the error in-dialog.
     pub fn submit_cloud_login(&mut self) {
-        let Some(dlg) = self.cloud_login.as_mut() else { return };
+        let Some(dlg) = self.cloud_login.as_mut() else {
+            return;
+        };
         if !dlg.can_submit() {
             return;
         }
@@ -64,10 +66,8 @@ impl App {
         let Some(state) = crate::cloud::CloudState::try_load() else {
             return; // not signed in yet — UI/CLI will prompt
         };
-        let handle = crate::cloud::sync::SyncHandle::spawn(
-            state.config.clone(),
-            state.session.clone(),
-        );
+        let handle =
+            crate::cloud::sync::SyncHandle::spawn(state.config.clone(), state.session.clone());
         self.cloud = Some(state);
         self.cloud_sync = Some(handle);
         eprintln!("[fox-cloud] sync thread spawned");
@@ -130,18 +130,26 @@ impl App {
         // would otherwise drop the user mid-type ~3 seconds after creating
         // a new folder. Capture the path now, re-resolve to its new index
         // after the listing is rebuilt.
-        let renaming_path = self.renaming
+        let renaming_path = self
+            .renaming
             .and_then(|idx| self.entries.get(idx))
             .map(|e| e.path.clone());
         // Same for selection — fs-event reloads fire whenever anything
         // lands in the dir, and losing your selection to a background
         // download finishing would be infuriating.
-        let selected_paths: Vec<std::path::PathBuf> = self.entries.iter()
+        let selected_paths: Vec<std::path::PathBuf> = self
+            .entries
+            .iter()
             .filter(|e| e.selected)
             .map(|e| e.path.clone())
             .collect();
 
-        self.entries = fs::list_directory(&self.current_dir, self.show_hidden, self.sort_by, self.sort_dir);
+        self.entries = fs::list_directory(
+            &self.current_dir,
+            self.show_hidden,
+            self.sort_by,
+            self.sort_dir,
+        );
         if !selected_paths.is_empty() {
             for e in &mut self.entries {
                 e.selected = selected_paths.contains(&e.path);
@@ -152,13 +160,13 @@ impl App {
             if !pick.filters.is_empty() {
                 let filter = &pick.filters[pick.active_filter];
                 let patterns = filter.patterns.clone();
-                self.entries.retain(|e| e.is_dir || matches_filter(&e.name, &patterns));
+                self.entries
+                    .retain(|e| e.is_dir || matches_filter(&e.name, &patterns));
             }
         }
         let entries = self.entries.clone();
         self.active_nav_tab().entries = entries;
-        self.renaming = renaming_path
-            .and_then(|p| self.entries.iter().position(|e| e.path == p));
+        self.renaming = renaming_path.and_then(|p| self.entries.iter().position(|e| e.path == p));
         if self.view_mode == ViewMode::Tree {
             self.rebuild_tree();
         }
@@ -172,7 +180,8 @@ impl App {
     pub fn reload_tab(&mut self, tab_idx: usize) {
         if tab_idx < self.tabs.len() {
             let tab = &mut self.tabs[tab_idx];
-            tab.entries = fs::list_directory(&tab.path, self.show_hidden, self.sort_by, self.sort_dir);
+            tab.entries =
+                fs::list_directory(&tab.path, self.show_hidden, self.sort_by, self.sort_dir);
         }
     }
 
@@ -239,7 +248,11 @@ impl App {
     pub fn window_title(&self) -> String {
         let suffix = if self.root_mode { " [ROOT]" } else { "" };
         if let Some(name) = self.current_dir.file_name() {
-            format!("{} — Lantern File Manager{}", name.to_string_lossy(), suffix)
+            format!(
+                "{} — Lantern File Manager{}",
+                name.to_string_lossy(),
+                suffix
+            )
         } else {
             format!("Lantern File Manager{}", suffix)
         }

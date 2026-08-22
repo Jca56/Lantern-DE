@@ -56,12 +56,7 @@ pub fn draw(
 
 /// Push an IconRequest for the dock-side lantern: anchored just to
 /// the left of the mini-dock plate, bottom-aligned with the plate.
-pub fn draw_beside_dock(
-    icons: &mut Vec<IconRequest>,
-    plate: Rect,
-    scale: f32,
-    alpha: f32,
-) {
+pub fn draw_beside_dock(icons: &mut Vec<IconRequest>, plate: Rect, scale: f32, alpha: f32) {
     if alpha < 0.005 {
         return;
     }
@@ -77,13 +72,7 @@ pub fn draw_beside_dock(
 /// Shared placement: lantern's right edge lands at `right_x` and the
 /// bottom of the lantern sits at `bottom_y`. The square tile is
 /// re-centered so the visible lantern column lines up correctly.
-fn push_request(
-    icons: &mut Vec<IconRequest>,
-    scale: f32,
-    alpha: f32,
-    right_x: f32,
-    bottom_y: f32,
-) {
+fn push_request(icons: &mut Vec<IconRequest>, scale: f32, alpha: f32, right_x: f32, bottom_y: f32) {
     let tile = HEIGHT * scale;
     let visible_w = tile * ASPECT;
     let tile_x = right_x - (tile + visible_w) / 2.0;

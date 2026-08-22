@@ -42,7 +42,11 @@ pub fn draw_nav_bar(
     // and look opaque under transparency.
 
     // ── View mode toggle icon (changes per mode) ────────────────────────
-    let vt_color = if view_toggle_hovered { palette.text } else { palette.text_secondary };
+    let vt_color = if view_toggle_hovered {
+        palette.text
+    } else {
+        palette.text_secondary
+    };
     if view_toggle_hovered {
         painter.rect_filled(view_toggle_rect, 4.0 * s, palette.surface_2.with_alpha(0.5));
     }
@@ -50,14 +54,23 @@ pub fn draw_nav_bar(
 
     // Vertical divider
     painter.rect_filled(
-        Rect::new(view_toggle_rect.x + view_toggle_rect.w + 2.0 * s, nav_rect.y + 12.0 * s, 1.0, 24.0 * s),
+        Rect::new(
+            view_toggle_rect.x + view_toggle_rect.w + 2.0 * s,
+            nav_rect.y + 12.0 * s,
+            1.0,
+            24.0 * s,
+        ),
         0.0,
         Color::WHITE.with_alpha(0.08),
     );
 
     // ── Cloud quick-link button (hidden in split view: zero-width rect) ──
     if cloud_rect.w > 0.0 {
-        let cloud_color = if cloud_hovered { palette.text } else { palette.text_secondary };
+        let cloud_color = if cloud_hovered {
+            palette.text
+        } else {
+            palette.text_secondary
+        };
         if cloud_hovered {
             painter.rect_filled(cloud_rect, 5.0 * s, palette.surface_2.with_alpha(0.5));
         }
@@ -66,14 +79,23 @@ pub fn draw_nav_bar(
         let cx = cloud_rect.center_x();
         let cy = cloud_rect.center_y();
         let u = s * 1.4; // unit scale for icon strokes
-        painter.circle_filled(cx - 4.0*u, cy - 1.0*u, 4.0*u, cloud_color);
-        painter.circle_filled(cx + 1.0*u, cy - 3.5*u, 5.5*u, cloud_color);
-        painter.circle_filled(cx + 5.0*u, cy,         4.0*u, cloud_color);
-        painter.rect_filled(Rect::new(cx - 7.0*u, cy - 1.0*u, 14.0*u, 5.0*u), 2.0*u, cloud_color);
+        painter.circle_filled(cx - 4.0 * u, cy - 1.0 * u, 4.0 * u, cloud_color);
+        painter.circle_filled(cx + 1.0 * u, cy - 3.5 * u, 5.5 * u, cloud_color);
+        painter.circle_filled(cx + 5.0 * u, cy, 4.0 * u, cloud_color);
+        painter.rect_filled(
+            Rect::new(cx - 7.0 * u, cy - 1.0 * u, 14.0 * u, 5.0 * u),
+            2.0 * u,
+            cloud_color,
+        );
 
         // Vertical divider between cloud and back
         painter.rect_filled(
-            Rect::new(cloud_rect.x + cloud_rect.w + 4.0 * s, nav_rect.y + 12.0 * s, 1.0, 24.0 * s),
+            Rect::new(
+                cloud_rect.x + cloud_rect.w + 4.0 * s,
+                nav_rect.y + 12.0 * s,
+                1.0,
+                24.0 * s,
+            ),
             0.0,
             Color::WHITE.with_alpha(0.08),
         );
@@ -81,59 +103,94 @@ pub fn draw_nav_bar(
 
     // ── Back button ────────────────────────────────────────────────────────
     let back_color = if app.can_go_back() {
-        if back_hovered { palette.text } else { palette.text_secondary }
+        if back_hovered {
+            palette.text
+        } else {
+            palette.text_secondary
+        }
     } else {
         palette.muted.with_alpha(0.4)
     };
     let bm = 0.22; // margin ratio within button
     painter.line(
-        back_rect.x + back_rect.w * (1.0 - bm), back_rect.y + back_rect.h * bm,
-        back_rect.x + back_rect.w * bm, back_rect.center_y(),
-        2.0 * s, back_color,
+        back_rect.x + back_rect.w * (1.0 - bm),
+        back_rect.y + back_rect.h * bm,
+        back_rect.x + back_rect.w * bm,
+        back_rect.center_y(),
+        2.0 * s,
+        back_color,
     );
     painter.line(
-        back_rect.x + back_rect.w * bm, back_rect.center_y(),
-        back_rect.x + back_rect.w * (1.0 - bm), back_rect.y + back_rect.h * (1.0 - bm),
-        2.0 * s, back_color,
+        back_rect.x + back_rect.w * bm,
+        back_rect.center_y(),
+        back_rect.x + back_rect.w * (1.0 - bm),
+        back_rect.y + back_rect.h * (1.0 - bm),
+        2.0 * s,
+        back_color,
     );
 
     // ── Forward button ─────────────────────────────────────────────────────
     let forward_color = if app.can_go_forward() {
-        if forward_hovered { palette.text } else { palette.text_secondary }
+        if forward_hovered {
+            palette.text
+        } else {
+            palette.text_secondary
+        }
     } else {
         palette.muted.with_alpha(0.4)
     };
     painter.line(
-        forward_rect.x + forward_rect.w * bm, forward_rect.y + forward_rect.h * bm,
-        forward_rect.x + forward_rect.w * (1.0 - bm), forward_rect.center_y(),
-        2.0 * s, forward_color,
+        forward_rect.x + forward_rect.w * bm,
+        forward_rect.y + forward_rect.h * bm,
+        forward_rect.x + forward_rect.w * (1.0 - bm),
+        forward_rect.center_y(),
+        2.0 * s,
+        forward_color,
     );
     painter.line(
-        forward_rect.x + forward_rect.w * (1.0 - bm), forward_rect.center_y(),
-        forward_rect.x + forward_rect.w * bm, forward_rect.y + forward_rect.h * (1.0 - bm),
-        2.0 * s, forward_color,
+        forward_rect.x + forward_rect.w * (1.0 - bm),
+        forward_rect.center_y(),
+        forward_rect.x + forward_rect.w * bm,
+        forward_rect.y + forward_rect.h * (1.0 - bm),
+        2.0 * s,
+        forward_color,
     );
 
     // ── Up button ──────────────────────────────────────────────────────────
     let up_color = if app.can_go_up() {
-        if up_hovered { palette.text } else { palette.text_secondary }
+        if up_hovered {
+            palette.text
+        } else {
+            palette.text_secondary
+        }
     } else {
         palette.muted.with_alpha(0.4)
     };
     painter.line(
-        up_rect.x + up_rect.w * bm, up_rect.center_y(),
-        up_rect.center_x(), up_rect.y + up_rect.h * bm,
-        2.0 * s, up_color,
+        up_rect.x + up_rect.w * bm,
+        up_rect.center_y(),
+        up_rect.center_x(),
+        up_rect.y + up_rect.h * bm,
+        2.0 * s,
+        up_color,
     );
     painter.line(
-        up_rect.center_x(), up_rect.y + up_rect.h * bm,
-        up_rect.x + up_rect.w * (1.0 - bm), up_rect.center_y(),
-        2.0 * s, up_color,
+        up_rect.center_x(),
+        up_rect.y + up_rect.h * bm,
+        up_rect.x + up_rect.w * (1.0 - bm),
+        up_rect.center_y(),
+        2.0 * s,
+        up_color,
     );
 
     // Vertical divider before path
     painter.rect_filled(
-        Rect::new(up_rect.x + up_rect.w + 4.0 * s, nav_rect.y + 12.0 * s, 1.0, 24.0 * s),
+        Rect::new(
+            up_rect.x + up_rect.w + 4.0 * s,
+            nav_rect.y + 12.0 * s,
+            1.0,
+            24.0 * s,
+        ),
         0.0,
         Color::WHITE.with_alpha(0.08),
     );
@@ -166,17 +223,35 @@ pub fn draw_nav_bar(
         let text_y = path_rect.y + (path_rect.h - font) * 0.5;
 
         // Compute overflow skip (must match render.rs exactly)
-        let total_w: f32 = segments.iter().enumerate().map(|(i, (name, _))| {
-            if i > 0 { seg_width(name) + sep_w } else { seg_width(name) }
-        }).sum();
+        let total_w: f32 = segments
+            .iter()
+            .enumerate()
+            .map(|(i, (name, _))| {
+                if i > 0 {
+                    seg_width(name) + sep_w
+                } else {
+                    seg_width(name)
+                }
+            })
+            .sum();
         let mut skip = 0;
         if total_w > path_rect.w {
             let ellipsis_w = seg_width("...") + sep_w;
             for (i, _) in segments.iter().enumerate() {
-                let remaining: f32 = segments[i..].iter().enumerate().map(|(j, (n, _))| {
-                    if j > 0 { seg_width(n) + sep_w } else { seg_width(n) }
-                }).sum();
-                if ellipsis_w + remaining <= path_rect.w { break; }
+                let remaining: f32 = segments[i..]
+                    .iter()
+                    .enumerate()
+                    .map(|(j, (n, _))| {
+                        if j > 0 {
+                            seg_width(n) + sep_w
+                        } else {
+                            seg_width(n)
+                        }
+                    })
+                    .sum();
+                if ellipsis_w + remaining <= path_rect.w {
+                    break;
+                }
                 skip = i + 1;
             }
         }
@@ -198,7 +273,9 @@ pub fn draw_nav_bar(
         }
 
         for (i, (name, _)) in segments.iter().enumerate() {
-            if i < skip { continue; }
+            if i < skip {
+                continue;
+            }
             if i > skip {
                 let sep_x = cx + (sep_w - char_w) * 0.5;
                 TextLabel::new("/", sep_x, text_y)
@@ -221,7 +298,11 @@ pub fn draw_nav_bar(
                 );
             }
 
-            let color = if is_last { palette.text } else { palette.text_secondary };
+            let color = if is_last {
+                palette.text
+            } else {
+                palette.text_secondary
+            };
             TextLabel::new(name, cx + pad_x, text_y)
                 .size(FontSize::Custom(font))
                 .color(color)
@@ -236,11 +317,19 @@ pub fn draw_nav_bar(
         // fall through to sort/search below
     } else if preview_supported {
         let pv_active = app.preview_open;
-        let pv_color = if pv_active { palette.accent }
-            else if preview_hovered { palette.text }
-            else { palette.text_secondary };
+        let pv_color = if pv_active {
+            palette.accent
+        } else if preview_hovered {
+            palette.text
+        } else {
+            palette.text_secondary
+        };
         if preview_hovered || pv_active {
-            let bg = if pv_active { palette.accent.with_alpha(0.15) } else { palette.surface_2.with_alpha(0.5) };
+            let bg = if pv_active {
+                palette.accent.with_alpha(0.15)
+            } else {
+                palette.surface_2.with_alpha(0.5)
+            };
             painter.rect_filled(preview_rect, 4.0 * s, bg);
         }
         draw_preview_pane_icon(painter, preview_rect, pv_color, s);
@@ -251,7 +340,11 @@ pub fn draw_nav_bar(
     }
 
     // ── Sort button ────────────────────────────────────────────────────────
-    let sort_color = if sort_hovered { palette.text } else { palette.text_secondary };
+    let sort_color = if sort_hovered {
+        palette.text
+    } else {
+        palette.text_secondary
+    };
     if sort_hovered {
         painter.rect_filled(sort_rect, 4.0 * s, palette.surface_2.with_alpha(0.5));
     }
@@ -259,13 +352,30 @@ pub fn draw_nav_bar(
 
     // ── Search button ──────────────────────────────────────────────────────
     let search_active = app.searching;
-    let search_color = if search_active { palette.accent } else if search_hovered { palette.text } else { palette.text_secondary };
+    let search_color = if search_active {
+        palette.accent
+    } else if search_hovered {
+        palette.text
+    } else {
+        palette.text_secondary
+    };
     if search_hovered || search_active {
-        let bg = if search_active { palette.accent.with_alpha(0.15) } else { palette.surface_2.with_alpha(0.5) };
+        let bg = if search_active {
+            palette.accent.with_alpha(0.15)
+        } else {
+            palette.surface_2.with_alpha(0.5)
+        };
         painter.rect_filled(search_rect, 4.0 * s, bg);
     }
     let sx = search_rect.center_x() - 2.0 * s;
     let sy = search_rect.center_y() - 2.0 * s;
     painter.circle_stroke(sx, sy, 6.0 * s, 1.5 * s, search_color);
-    painter.line(sx + 4.5 * s, sy + 4.5 * s, sx + 9.0 * s, sy + 9.0 * s, 2.0 * s, search_color);
+    painter.line(
+        sx + 4.5 * s,
+        sy + 4.5 * s,
+        sx + 9.0 * s,
+        sy + 9.0 * s,
+        2.0 * s,
+        search_color,
+    );
 }

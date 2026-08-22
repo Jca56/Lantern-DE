@@ -13,22 +13,22 @@ pub struct AnsiPalette;
 
 impl AnsiPalette {
     pub const COLORS: [Color; 16] = [
-        Color::rgb(0.0, 0.0, 0.0),                                  // 0  Black
-        Color::rgba(0.586, 0.023, 0.023, 1.0),                      // 1  Red
-        Color::rgba(0.005, 0.476, 0.100, 1.0),                      // 2  Green
-        Color::rgba(0.737, 0.737, 0.009, 1.0),                      // 3  Yellow
-        Color::rgba(0.052, 0.287, 0.265, 1.0),                      // 4  Blue
-        Color::rgba(0.476, 0.031, 0.476, 1.0),                      // 5  Magenta
-        Color::rgba(0.010, 0.185, 0.293, 1.0),                      // 6  Cyan
-        Color::rgba(0.737, 0.737, 0.737, 1.0),                      // 7  White
-        Color::rgba(0.082, 0.082, 0.082, 1.0),                      // 8  Bright Black
-        Color::rgba(0.810, 0.044, 0.044, 1.0),                      // 9  Bright Red
-        Color::rgba(0.013, 0.620, 0.128, 1.0),                      // 10 Bright Green
-        Color::rgba(0.850, 0.850, 0.034, 1.0),                      // 11 Bright Yellow
-        Color::rgba(0.098, 0.711, 0.647, 1.0),                      // 12 Bright Blue
-        Color::rgba(0.642, 0.091, 0.642, 1.0),                      // 13 Bright Magenta
-        Color::rgba(0.015, 0.231, 0.340, 1.0),                      // 14 Bright Cyan
-        Color::rgba(0.737, 0.737, 0.737, 1.0),                      // 15 Bright White
+        Color::rgb(0.0, 0.0, 0.0),             // 0  Black
+        Color::rgba(0.586, 0.023, 0.023, 1.0), // 1  Red
+        Color::rgba(0.005, 0.476, 0.100, 1.0), // 2  Green
+        Color::rgba(0.737, 0.737, 0.009, 1.0), // 3  Yellow
+        Color::rgba(0.052, 0.287, 0.265, 1.0), // 4  Blue
+        Color::rgba(0.476, 0.031, 0.476, 1.0), // 5  Magenta
+        Color::rgba(0.010, 0.185, 0.293, 1.0), // 6  Cyan
+        Color::rgba(0.737, 0.737, 0.737, 1.0), // 7  White
+        Color::rgba(0.082, 0.082, 0.082, 1.0), // 8  Bright Black
+        Color::rgba(0.810, 0.044, 0.044, 1.0), // 9  Bright Red
+        Color::rgba(0.013, 0.620, 0.128, 1.0), // 10 Bright Green
+        Color::rgba(0.850, 0.850, 0.034, 1.0), // 11 Bright Yellow
+        Color::rgba(0.098, 0.711, 0.647, 1.0), // 12 Bright Blue
+        Color::rgba(0.642, 0.091, 0.642, 1.0), // 13 Bright Magenta
+        Color::rgba(0.015, 0.231, 0.340, 1.0), // 14 Bright Cyan
+        Color::rgba(0.737, 0.737, 0.737, 1.0), // 15 Bright White
     ];
 
     pub fn color(index: u8) -> Color {
@@ -111,7 +111,11 @@ impl SelectionRange {
     pub fn contains(&self, row: usize, col: usize) -> bool {
         let start = (self.start_row, self.start_col);
         let end = (self.end_row, self.end_col);
-        let (s, e) = if start <= end { (start, end) } else { (end, start) };
+        let (s, e) = if start <= end {
+            (start, end)
+        } else {
+            (end, start)
+        };
         (row, col) >= s && (row, col) <= e
     }
 }
@@ -213,7 +217,9 @@ impl TerminalGridRenderer {
 
                 // Block drawing characters — render as pixel-perfect rects
                 if let Some(drawn) = self.draw_block_char(painter, cell.c, rect, cell.fg, cell.bg) {
-                    if drawn { continue; }
+                    if drawn {
+                        continue;
+                    }
                 }
 
                 let x = (origin.0 + col as f32 * self.metrics.cell_w).floor();
@@ -329,20 +335,14 @@ impl TerminalGridRenderer {
             '\u{2581}'..='\u{2587}' => {
                 let eighths = (c as u32 - 0x2580) as f32;
                 let block_h = (h * eighths / 8.0).ceil();
-                painter.rect_filled(
-                    Rect::new(rect.x, rect.y + h - block_h, w, block_h),
-                    0.0, fg,
-                );
+                painter.rect_filled(Rect::new(rect.x, rect.y + h - block_h, w, block_h), 0.0, fg);
                 Some(true)
             }
             // ▉ through ▏ — left N/8 blocks
             '\u{2589}'..='\u{258F}' => {
                 let eighths = (8 - (c as u32 - 0x2588)) as f32;
                 let block_w = (w * eighths / 8.0).ceil();
-                painter.rect_filled(
-                    Rect::new(rect.x, rect.y, block_w, h),
-                    0.0, fg,
-                );
+                painter.rect_filled(Rect::new(rect.x, rect.y, block_w, h), 0.0, fg);
                 Some(true)
             }
             _ => None,
@@ -350,12 +350,7 @@ impl TerminalGridRenderer {
     }
 
     /// Draw the cursor in its current shape (block, beam, or underline).
-    pub fn draw_cursor(
-        &self,
-        painter: &mut Painter,
-        origin: (f32, f32),
-        cursor: &CursorState,
-    ) {
+    pub fn draw_cursor(&self, painter: &mut Painter, origin: (f32, f32), cursor: &CursorState) {
         if !cursor.visible {
             return;
         }
@@ -366,11 +361,7 @@ impl TerminalGridRenderer {
             }
             CursorShape::Beam => {
                 let beam_w = 2.0;
-                painter.rect_filled(
-                    Rect::new(cell.x, cell.y, beam_w, cell.h),
-                    0.0,
-                    cursor.color,
-                );
+                painter.rect_filled(Rect::new(cell.x, cell.y, beam_w, cell.h), 0.0, cursor.color);
             }
             CursorShape::Underline => {
                 let underline_h = 3.0;
@@ -427,5 +418,4 @@ impl TerminalGridRenderer {
         let ny = (origin.1 + (row + 1) as f32 * self.metrics.cell_h).ceil();
         Rect::new(x, y, nx - x, ny - y)
     }
-
 }

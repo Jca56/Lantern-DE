@@ -50,7 +50,8 @@ pub fn layout(info: &Info, wf: f32, hf: f32, s: f32) -> TuneLayout {
 
     // ── Left column: GPU ──
     let mut ly = content.y + COL_HEADER * s;
-    let (mut fan_toggle, mut lock_toggle) = (Rect::new(0.0, 0.0, 0.0, 0.0), Rect::new(0.0, 0.0, 0.0, 0.0));
+    let (mut fan_toggle, mut lock_toggle) =
+        (Rect::new(0.0, 0.0, 0.0, 0.0), Rect::new(0.0, 0.0, 0.0, 0.0));
     if info.gpu {
         sliders.push((Knob::CoreOffset, track(left_x, ly)));
         ly += SLIDER_ROW * s;
@@ -91,7 +92,17 @@ pub fn layout(info: &Info, wf: f32, hf: f32, s: f32) -> TuneLayout {
     let apply = Rect::new(save.x - (BTN_W + 10.0) * s, by, BTN_W * s, BTN_H * s);
     let _ = gap;
 
-    TuneLayout { sliders, fan_toggle, lock_toggle, turbo_toggle, gov_box, epp_box, apply, save, reset }
+    TuneLayout {
+        sliders,
+        fan_toggle,
+        lock_toggle,
+        turbo_toggle,
+        gov_box,
+        epp_box,
+        apply,
+        save,
+        reset,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -116,41 +127,127 @@ pub fn draw(
     let right_x = content.x + col_w + PAD * s;
     let hy = content.y;
     dc.label("GPU", content.x, hy, 23.0, dc.pal.accent);
-    dc.label_w(&short_gpu(&info.gpu_name), content.x + 62.0 * s, hy + 4.0 * s, 15.0, dc.pal.text_secondary, col_w - 64.0 * s);
+    dc.label_w(
+        &short_gpu(&info.gpu_name),
+        content.x + 62.0 * s,
+        hy + 4.0 * s,
+        15.0,
+        dc.pal.text_secondary,
+        col_w - 64.0 * s,
+    );
     dc.label("CPU", right_x, hy, 23.0, dc.pal.accent);
-    dc.label_w(&short_cpu(&info.cpu_model), right_x + 58.0 * s, hy + 4.0 * s, 15.0, dc.pal.text_secondary, col_w - 60.0 * s);
+    dc.label_w(
+        &short_cpu(&info.cpu_model),
+        right_x + 58.0 * s,
+        hy + 4.0 * s,
+        15.0,
+        dc.pal.text_secondary,
+        col_w - 60.0 * s,
+    );
     // underline each header
-    dc.p.rect_filled(Rect::new(content.x, hy + 30.0 * s, col_w, 2.0 * s), 1.0, dc.pal.accent.with_alpha(0.5));
-    dc.p.rect_filled(Rect::new(right_x, hy + 30.0 * s, col_w, 2.0 * s), 1.0, dc.pal.accent.with_alpha(0.5));
+    dc.p.rect_filled(
+        Rect::new(content.x, hy + 30.0 * s, col_w, 2.0 * s),
+        1.0,
+        dc.pal.accent.with_alpha(0.5),
+    );
+    dc.p.rect_filled(
+        Rect::new(right_x, hy + 30.0 * s, col_w, 2.0 * s),
+        1.0,
+        dc.pal.accent.with_alpha(0.5),
+    );
     // faint vertical divider between the columns
     let mid = content.x + col_w + PAD * s * 0.5;
-    dc.p.rect_filled(Rect::new(mid - 0.5 * s, hy, 1.0 * s, content.h - BTN_H * s - 16.0 * s), 0.0, dc.pal.muted.with_alpha(0.12));
+    dc.p.rect_filled(
+        Rect::new(mid - 0.5 * s, hy, 1.0 * s, content.h - BTN_H * s - 16.0 * s),
+        0.0,
+        dc.pal.muted.with_alpha(0.12),
+    );
 
     // Sliders (geometry-hit, not zones)
     for &(knob, track) in &lay.sliders {
         let enabled = super::pending::slider_editable(knob, pending);
-        let hovered = dragging.is_none()
-            && cursor.map_or(false, |(cx, cy)| contains(track, cx, cy));
-        draw_slider_row(dc, knob, track, pending, info, hovered, dragging == Some(knob), enabled);
+        let hovered =
+            dragging.is_none() && cursor.map_or(false, |(cx, cy)| contains(track, cx, cy));
+        draw_slider_row(
+            dc,
+            knob,
+            track,
+            pending,
+            info,
+            hovered,
+            dragging == Some(knob),
+            enabled,
+        );
     }
 
     // GPU toggles
     if info.gpu {
-        draw_toggle(dc, input, ZONE_TGL_FAN, lay.fan_toggle, pending.fan_manual, "Manual fan");
-        draw_toggle(dc, input, ZONE_TGL_LOCK, lay.lock_toggle, pending.lock_enabled, "Lock core clock (undervolt)");
+        draw_toggle(
+            dc,
+            input,
+            ZONE_TGL_FAN,
+            lay.fan_toggle,
+            pending.fan_manual,
+            "Manual fan",
+        );
+        draw_toggle(
+            dc,
+            input,
+            ZONE_TGL_LOCK,
+            lay.lock_toggle,
+            pending.lock_enabled,
+            "Lock core clock (undervolt)",
+        );
     }
 
     // CPU cycle-boxes + turbo
     let govs = tuning.map(|t| t.governors.len()).unwrap_or(0);
     let epps = tuning.map(|t| t.epps.len()).unwrap_or(0);
-    draw_cycle_box(dc, input, ZONE_GOV, lay.gov_box, "GOVERNOR", value_or(&pending.governor), govs > 1);
-    draw_cycle_box(dc, input, ZONE_EPP, lay.epp_box, "ENERGY PREF (EPP)", value_or(&pending.epp), epps > 1);
-    draw_toggle(dc, input, ZONE_TGL_TURBO, lay.turbo_toggle, pending.turbo, "Intel Turbo Boost");
+    draw_cycle_box(
+        dc,
+        input,
+        ZONE_GOV,
+        lay.gov_box,
+        "GOVERNOR",
+        value_or(&pending.governor),
+        govs > 1,
+    );
+    draw_cycle_box(
+        dc,
+        input,
+        ZONE_EPP,
+        lay.epp_box,
+        "ENERGY PREF (EPP)",
+        value_or(&pending.epp),
+        epps > 1,
+    );
+    draw_toggle(
+        dc,
+        input,
+        ZONE_TGL_TURBO,
+        lay.turbo_toggle,
+        pending.turbo,
+        "Intel Turbo Boost",
+    );
 
     // Action bar
-    draw_button(dc, input, ZONE_APPLY, lay.apply, "Apply", ButtonVariant::Primary);
+    draw_button(
+        dc,
+        input,
+        ZONE_APPLY,
+        lay.apply,
+        "Apply",
+        ButtonVariant::Primary,
+    );
     draw_button(dc, input, ZONE_SAVE, lay.save, "Save", ButtonVariant::Ghost);
-    draw_button(dc, input, ZONE_RESET, lay.reset, "Reset", ButtonVariant::Default);
+    draw_button(
+        dc,
+        input,
+        ZONE_RESET,
+        lay.reset,
+        "Reset",
+        ButtonVariant::Default,
+    );
 
     if !status.is_empty() {
         let col = if status.starts_with("err") || status.contains("error") {
@@ -190,7 +287,16 @@ fn contains(r: Rect, x: f32, y: f32) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_slider_row(dc: &mut Dc, knob: Knob, track: Rect, pending: &Pending, info: &Info, hovered: bool, active: bool, enabled: bool) {
+fn draw_slider_row(
+    dc: &mut Dc,
+    knob: Knob,
+    track: Rect,
+    pending: &Pending,
+    info: &Info,
+    hovered: bool,
+    active: bool,
+    enabled: bool,
+) {
     let s = dc.s;
     let title = Pending::knob_title(knob);
     let value = pending.knob_value_str(knob);
@@ -198,10 +304,19 @@ fn draw_slider_row(dc: &mut Dc, knob: Knob, track: Rect, pending: &Pending, info
     let val_col = if enabled { dc.pal.accent } else { dc.pal.muted };
     dc.label(title, track.x, track.y - 26.0 * s, 17.0, title_col);
     let vw = value.chars().count() as f32 * 17.0 * s * 0.54;
-    dc.label(&value, track.x + track.w - vw, track.y - 26.0 * s, 17.0, val_col);
+    dc.label(
+        &value,
+        track.x + track.w - vw,
+        track.y - 26.0 * s,
+        17.0,
+        val_col,
+    );
 
     let frac = pending.slider_frac(knob, info);
-    let mut sl = Slider::new(track).value(frac).hovered(hovered).active(active);
+    let mut sl = Slider::new(track)
+        .value(frac)
+        .hovered(hovered)
+        .active(active);
     if !enabled {
         sl.fill_start = dc.pal.surface_2;
         sl.fill_end = dc.pal.muted;
@@ -210,7 +325,14 @@ fn draw_slider_row(dc: &mut Dc, knob: Knob, track: Rect, pending: &Pending, info
     sl.draw(dc.p, dc.pal);
 }
 
-fn draw_toggle(dc: &mut Dc, input: &mut InteractionContext, zone: u32, rect: Rect, on: bool, label: &str) {
+fn draw_toggle(
+    dc: &mut Dc,
+    input: &mut InteractionContext,
+    zone: u32,
+    rect: Rect,
+    on: bool,
+    label: &str,
+) {
     let st = input.add_zone(zone, rect);
     Toggle::new(rect, on)
         .label(label)
@@ -219,9 +341,23 @@ fn draw_toggle(dc: &mut Dc, input: &mut InteractionContext, zone: u32, rect: Rec
         .draw(dc.p, dc.t, dc.pal, dc.w, dc.h);
 }
 
-fn draw_cycle_box(dc: &mut Dc, input: &mut InteractionContext, zone: u32, rect: Rect, caption: &str, value: &str, enabled: bool) {
+fn draw_cycle_box(
+    dc: &mut Dc,
+    input: &mut InteractionContext,
+    zone: u32,
+    rect: Rect,
+    caption: &str,
+    value: &str,
+    enabled: bool,
+) {
     let s = dc.s;
-    dc.label(caption, rect.x, rect.y - 20.0 * s, 15.0, dc.pal.text_secondary);
+    dc.label(
+        caption,
+        rect.x,
+        rect.y - 20.0 * s,
+        15.0,
+        dc.pal.text_secondary,
+    );
     let st = input.add_zone(zone, rect);
     let bg = if enabled && st.is_hovered() {
         dc.pal.surface
@@ -229,13 +365,32 @@ fn draw_cycle_box(dc: &mut Dc, input: &mut InteractionContext, zone: u32, rect: 
         dc.pal.surface_2
     };
     dc.p.rect_filled(rect, 8.0 * s, bg);
-    dc.label(value, rect.x + 12.0 * s, rect.y + 7.0 * s, 18.0, dc.pal.text);
+    dc.label(
+        value,
+        rect.x + 12.0 * s,
+        rect.y + 7.0 * s,
+        18.0,
+        dc.pal.text,
+    );
     if enabled {
-        dc.label("⟳", rect.x + rect.w - 26.0 * s, rect.y + 7.0 * s, 17.0, dc.pal.accent);
+        dc.label(
+            "⟳",
+            rect.x + rect.w - 26.0 * s,
+            rect.y + 7.0 * s,
+            17.0,
+            dc.pal.accent,
+        );
     }
 }
 
-fn draw_button(dc: &mut Dc, input: &mut InteractionContext, zone: u32, rect: Rect, label: &str, variant: ButtonVariant) {
+fn draw_button(
+    dc: &mut Dc,
+    input: &mut InteractionContext,
+    zone: u32,
+    rect: Rect,
+    label: &str,
+    variant: ButtonVariant,
+) {
     let st = input.add_zone(zone, rect);
     Button::new(rect, label)
         .variant(variant)

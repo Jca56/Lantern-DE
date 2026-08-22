@@ -36,12 +36,7 @@ pub fn now_strings() -> (String, String, String) {
     };
     let time = format!("{}:{:02}", hour12, local.minute);
     let dow = day_of_week_name(local.year, local.month, local.day).to_string();
-    let date = format!(
-        "{} {}, {}",
-        month_name(local.month),
-        local.day,
-        local.year,
-    );
+    let date = format!("{} {}, {}", month_name(local.month), local.day, local.year,);
     (time, dow, date)
 }
 
@@ -118,7 +113,16 @@ fn queue_with_shadow(
 ) {
     let off = (font_size * 0.04).max(1.5);
     // Drop shadow — render first so the main glyph paints on top.
-    text.queue(s, font_size, x + off, y + off, SHADOW, max_w, surface_w, surface_h);
+    text.queue(
+        s,
+        font_size,
+        x + off,
+        y + off,
+        SHADOW,
+        max_w,
+        surface_w,
+        surface_h,
+    );
     text.queue(s, font_size, x, y, TEXT, max_w, surface_w, surface_h);
 }
 

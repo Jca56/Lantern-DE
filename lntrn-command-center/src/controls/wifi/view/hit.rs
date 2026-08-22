@@ -94,7 +94,11 @@ pub fn hit_test_network(
     let mut row_y = list_top - scroll_px;
     for net in wifi.networks().iter().take(MAX_NETWORK_ROWS) {
         let is_expanded = wifi.expanded_ssid.as_deref() == Some(net.ssid.as_str());
-        let extra = if is_expanded { expanded_extra_height(net, scale) } else { 0.0 };
+        let extra = if is_expanded {
+            expanded_extra_height(net, scale)
+        } else {
+            0.0
+        };
 
         // Header area first.
         if y >= row_y && y <= row_y + header_h {
@@ -112,11 +116,7 @@ pub fn hit_test_network(
                 for i in 0..card_n {
                     let card = bssid_card_rect(inner_x, inner_w, body_top, scale, i);
                     let lock = bssid_lock_rect(card, scale);
-                    if x >= lock.x
-                        && x <= lock.x + lock.w
-                        && y >= lock.y
-                        && y <= lock.y + lock.h
-                    {
+                    if x >= lock.x && x <= lock.x + lock.w && y >= lock.y && y <= lock.y + lock.h {
                         let mac = net.aps[i].bssid.clone();
                         return Some(NetworkHit::LockBssid(net.ssid.clone(), mac));
                     }
@@ -124,31 +124,15 @@ pub fn hit_test_network(
                 // Profile cards (delete X first; otherwise activate).
                 let profile_n = visible_profile_card_count(net);
                 for i in 0..profile_n {
-                    let card = profile_card_rect(
-                        inner_x, inner_w, body_top, scale, card_n, i,
-                    );
+                    let card = profile_card_rect(inner_x, inner_w, body_top, scale, card_n, i);
                     let del = profile_delete_rect(card, scale);
-                    if x >= del.x
-                        && x <= del.x + del.w
-                        && y >= del.y
-                        && y <= del.y + del.h
-                    {
+                    if x >= del.x && x <= del.x + del.w && y >= del.y && y <= del.y + del.h {
                         let uuid = net.profiles[i].uuid.clone();
-                        return Some(NetworkHit::ProfileDelete(
-                            net.ssid.clone(),
-                            uuid,
-                        ));
+                        return Some(NetworkHit::ProfileDelete(net.ssid.clone(), uuid));
                     }
-                    if x >= card.x
-                        && x <= card.x + card.w
-                        && y >= card.y
-                        && y <= card.y + card.h
-                    {
+                    if x >= card.x && x <= card.x + card.w && y >= card.y && y <= card.y + card.h {
                         let name = net.profiles[i].name.clone();
-                        return Some(NetworkHit::ProfileActivate(
-                            net.ssid.clone(),
-                            name,
-                        ));
+                        return Some(NetworkHit::ProfileActivate(net.ssid.clone(), name));
                     }
                 }
                 if has_band_selector(net) {
@@ -161,10 +145,7 @@ pub fn hit_test_network(
                                 && y >= pill.y
                                 && y <= pill.y + pill.h
                             {
-                                return Some(NetworkHit::BandPill(
-                                    net.ssid.clone(),
-                                    entry.band,
-                                ));
+                                return Some(NetworkHit::BandPill(net.ssid.clone(), entry.band));
                             }
                         }
                     }

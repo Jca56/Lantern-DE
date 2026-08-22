@@ -48,7 +48,11 @@ impl IconCache {
     /// for the old directory are dropped so the new one renders first.
     pub fn ensure_dir(&mut self, dir: &Path) {
         if self.cached_dir != dir {
-            let thumb_count = self.cache.keys().filter(|k| k.starts_with("thumb:")).count();
+            let thumb_count = self
+                .cache
+                .keys()
+                .filter(|k| k.starts_with("thumb:"))
+                .count();
             if thumb_count > THUMB_RAM_CAP {
                 self.cache.retain(|k, _| !k.starts_with("thumb:"));
             }
@@ -143,12 +147,7 @@ impl IconCache {
     /// Eagerly load an SVG icon (no-op if cached). Used by the Properties
     /// icon picker's two-pass render: load everything mutably, then borrow
     /// each texture immutably to build draw calls without borrow conflicts.
-    pub fn ensure_svg_path(
-        &mut self,
-        svg_path: &Path,
-        gpu: &GpuContext,
-        tex: &TexturePass,
-    ) {
+    pub fn ensure_svg_path(&mut self, svg_path: &Path, gpu: &GpuContext, tex: &TexturePass) {
         let key = format!("svg:{}", svg_path.display());
         if !self.cache.contains_key(&key) {
             if let Some(t) = rasterize_svg(svg_path, gpu, tex) {
@@ -182,8 +181,10 @@ impl IconCache {
                 rasterize_svg_bytes(data, gpu, tex)
             } else {
                 let base = icon_dir();
-                let svg_path = base.join("Colors").join(format!("lntrn-folder-{}.svg",
-                    if color.is_empty() { "yellow" } else { color }));
+                let svg_path = base.join("Colors").join(format!(
+                    "lntrn-folder-{}.svg",
+                    if color.is_empty() { "yellow" } else { color }
+                ));
                 rasterize_svg(&svg_path, gpu, tex)
             };
             if let Some(t) = texture {
@@ -207,7 +208,8 @@ fn cache_key(entry: &FileEntry) -> String {
         // listing — no syscall here) so a file that changed on disk gets a
         // fresh texture and a mid-download decode failure retries once the
         // file finishes instead of sticking in the failed set.
-        let stamp = entry.modified
+        let stamp = entry
+            .modified
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_nanos())
             .unwrap_or(0);
@@ -352,8 +354,12 @@ fn read_xattr(path: &Path, attr: &str) -> Option<String> {
 
 fn write_xattr(path: &Path, attr: &str, value: &str) {
     use std::ffi::CString;
-    let Some(c_path) = CString::new(path.as_os_str().as_encoded_bytes()).ok() else { return };
-    let Some(c_name) = CString::new(attr).ok() else { return };
+    let Some(c_path) = CString::new(path.as_os_str().as_encoded_bytes()).ok() else {
+        return;
+    };
+    let Some(c_name) = CString::new(attr).ok() else {
+        return;
+    };
     unsafe {
         libc::setxattr(
             c_path.as_ptr(),
@@ -367,9 +373,15 @@ fn write_xattr(path: &Path, attr: &str, value: &str) {
 
 fn remove_xattr(path: &Path, attr: &str) {
     use std::ffi::CString;
-    let Some(c_path) = CString::new(path.as_os_str().as_encoded_bytes()).ok() else { return };
-    let Some(c_name) = CString::new(attr).ok() else { return };
-    unsafe { libc::removexattr(c_path.as_ptr(), c_name.as_ptr()); }
+    let Some(c_path) = CString::new(path.as_os_str().as_encoded_bytes()).ok() else {
+        return;
+    };
+    let Some(c_name) = CString::new(attr).ok() else {
+        return;
+    };
+    unsafe {
+        libc::removexattr(c_path.as_ptr(), c_name.as_ptr());
+    }
 }
 
 // ── SVG rasterization ────────────────────────────────────────────────────────

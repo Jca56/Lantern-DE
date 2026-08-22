@@ -12,8 +12,8 @@ use serde_json::Value;
 
 use super::client::PendingKind;
 use super::protocol::{
-    CompletionItem as ProtoCompletionItem, HoverParams, DefinitionParams, CompletionParams,
-    CompletionContext, Position, TextDocumentIdentifier, TextDocumentPositionParams,
+    CompletionContext, CompletionItem as ProtoCompletionItem, CompletionParams, DefinitionParams,
+    HoverParams, Position, TextDocumentIdentifier, TextDocumentPositionParams,
 };
 use super::{CompletionItem, ServerId, ServerMessage};
 use crate::editor::Editor;
@@ -33,8 +33,12 @@ pub fn tick_ctrl_hover(handler: &mut TextHandler, now: Instant) {
     {
         return;
     }
-    let Some((cx, cy)) = handler.input.cursor() else { return };
-    let Some((line, col)) = handler.doc_pos_at(cx, cy) else { return };
+    let Some((cx, cy)) = handler.input.cursor() else {
+        return;
+    };
+    let Some((line, col)) = handler.doc_pos_at(cx, cy) else {
+        return;
+    };
     request_hover_at(handler, line, col, cx, cy + 20.0 * handler.scale);
     // Park last_cursor_move far in the future so we don't refire until the
     // user moves again (which resets it from main.rs).
@@ -49,7 +53,9 @@ pub fn flush_document_state(handler: &mut TextHandler) {
         if handler.tabs[i].is_preview() {
             continue;
         }
-        let Some(path) = handler.tabs[i].file_path.clone() else { continue };
+        let Some(path) = handler.tabs[i].file_path.clone() else {
+            continue;
+        };
 
         if handler.tabs[i].lsp_just_opened {
             let lang = handler.tabs[i].language;
@@ -88,9 +94,7 @@ fn handle_one(handler: &mut TextHandler, server_id: ServerId, msg: ServerMessage
             //     sent rootUri (we now also send workspaceFolders, but old
             //     servers/edge cases can still surface this).
             // The open file still gets full type-checking either way.
-            if text.contains("No source files found")
-                || text.contains("<default workspace root>")
-            {
+            if text.contains("No source files found") || text.contains("<default workspace root>") {
                 return;
             }
             handler.lsp_status = format!("{}: {}", server_id.label(), text);
@@ -140,7 +144,13 @@ fn handle_response(
             }
             handler.needs_redraw = true;
         }
-        PendingKind::Completion { uri: _, line, col, prefix, tab_id } => {
+        PendingKind::Completion {
+            uri: _,
+            line,
+            col,
+            prefix,
+            tab_id,
+        } => {
             handler.completion.in_flight = None;
             // If the user already tabbed away or dismissed, drop this response.
             if handler.tabs[handler.active_tab].tab_id != tab_id {
@@ -160,7 +170,11 @@ fn handle_response(
             handler.completion.tab_id = tab_id;
             handler.needs_redraw = true;
         }
-        PendingKind::Definition { uri: _, tab_id, new_tab } => {
+        PendingKind::Definition {
+            uri: _,
+            tab_id,
+            new_tab,
+        } => {
             let Some(loc) = result.as_ref().and_then(extract_definition) else {
                 return;
             };
@@ -168,7 +182,14 @@ fn handle_response(
             let Some(target_path) = super::client::uri_to_path(&target_uri) else {
                 return;
             };
-            open_or_focus(handler, target_path, pos.line as usize, pos.character as usize, new_tab, tab_id);
+            open_or_focus(
+                handler,
+                target_path,
+                pos.line as usize,
+                pos.character as usize,
+                new_tab,
+                tab_id,
+            );
             handler.needs_redraw = true;
         }
     }
@@ -243,7 +264,9 @@ fn extract_completion_items(v: Option<&Value>) -> Vec<CompletionItem> {
     } else {
         v.get("items").and_then(|i| i.as_array())
     };
-    let Some(arr) = items_arr else { return Vec::new() };
+    let Some(arr) = items_arr else {
+        return Vec::new();
+    };
     let mut out = Vec::with_capacity(arr.len().min(64));
     for raw in arr.iter().take(256) {
         if let Ok(p) = serde_json::from_value::<ProtoCompletionItem>(raw.clone()) {
@@ -261,10 +284,7 @@ fn extract_definition(v: &Value) -> Option<(String, Position)> {
         v
     };
     // Location { uri, range }
-    if let (Some(uri), Some(range)) = (
-        one.get("uri").and_then(|u| u.as_str()),
-        one.get("range"),
-    ) {
+    if let (Some(uri), Some(range)) = (one.get("uri").and_then(|u| u.as_str()), one.get("range")) {
         let pos = range.get("start")?;
         let line = pos.get("line")?.as_u64()? as u32;
         let character = pos.get("character")?.as_u64()? as u32;
@@ -272,7 +292,8 @@ fn extract_definition(v: &Value) -> Option<(String, Position)> {
     }
     // LocationLink { targetUri, targetSelectionRange | targetRange }
     if let Some(uri) = one.get("targetUri").and_then(|u| u.as_str()) {
-        let range = one.get("targetSelectionRange")
+        let range = one
+            .get("targetSelectionRange")
             .or_else(|| one.get("targetRange"))?;
         let pos = range.get("start")?;
         let line = pos.get("line")?.as_u64()? as u32;
@@ -311,17 +332,24 @@ pub fn request_hover_at(
     anchor_y: f32,
 ) {
     let editor = &handler.tabs[handler.active_tab];
-    let Some(path) = editor.file_path.clone() else { return };
+    let Some(path) = editor.file_path.clone() else {
+        return;
+    };
     let Some(server_id) = super::server_for_language(editor.language, &editor.filename) else {
         return;
     };
     let line_str = editor.lines.get(line).map(|s| s.as_str()).unwrap_or("");
     let character = utf16_column(line_str, col);
     let uri = super::client::path_to_uri(&path);
-    let Some(client) = handler.lsp.client_mut(server_id) else { return };
+    let Some(client) = handler.lsp.client_mut(server_id) else {
+        return;
+    };
     let params: HoverParams = TextDocumentPositionParams {
         text_document: TextDocumentIdentifier { uri: uri.clone() },
-        position: Position { line: line as u32, character },
+        position: Position {
+            line: line as u32,
+            character,
+        },
     };
     let Ok(id) = client.send_request("textDocument/hover", &params) else {
         return;
@@ -335,7 +363,9 @@ pub fn request_hover_at(
 pub fn request_completion(handler: &mut TextHandler, anchor_x: f32, anchor_y: f32) {
     let tab_idx = handler.active_tab;
     let editor = &handler.tabs[tab_idx];
-    let Some(path) = editor.file_path.clone() else { return };
+    let Some(path) = editor.file_path.clone() else {
+        return;
+    };
     let Some(server_id) = super::server_for_language(editor.language, &editor.filename) else {
         return;
     };
@@ -350,7 +380,9 @@ pub fn request_completion(handler: &mut TextHandler, anchor_x: f32, anchor_y: f3
     };
     let tab_id = editor.tab_id;
 
-    let Some(client) = handler.lsp.client_mut(server_id) else { return };
+    let Some(client) = handler.lsp.client_mut(server_id) else {
+        return;
+    };
     let params = CompletionParams {
         text_document: TextDocumentIdentifier { uri: uri.clone() },
         position: pos,
@@ -400,14 +432,18 @@ fn prefix_before_cursor(line: &str, byte_col: usize) -> (usize, String) {
 pub fn request_definition(handler: &mut TextHandler, new_tab: bool) {
     let tab_idx = handler.active_tab;
     let editor = &handler.tabs[tab_idx];
-    let Some(path) = editor.file_path.clone() else { return };
+    let Some(path) = editor.file_path.clone() else {
+        return;
+    };
     let Some(server_id) = super::server_for_language(editor.language, &editor.filename) else {
         return;
     };
     let uri = super::client::path_to_uri(&path);
     let pos = lsp_position(editor);
     let tab_id = editor.tab_id;
-    let Some(client) = handler.lsp.client_mut(server_id) else { return };
+    let Some(client) = handler.lsp.client_mut(server_id) else {
+        return;
+    };
     let params: DefinitionParams = TextDocumentPositionParams {
         text_document: TextDocumentIdentifier { uri: uri.clone() },
         position: pos,
@@ -415,20 +451,31 @@ pub fn request_definition(handler: &mut TextHandler, new_tab: bool) {
     let Ok(id) = client.send_request("textDocument/definition", &params) else {
         return;
     };
-    client.pending.insert(id, PendingKind::Definition { uri, tab_id, new_tab });
+    client.pending.insert(
+        id,
+        PendingKind::Definition {
+            uri,
+            tab_id,
+            new_tab,
+        },
+    );
 }
 
 /// Called from save_file_dialog after we've written to disk.
 pub fn notify_did_save(handler: &mut TextHandler) {
     let editor = &handler.tabs[handler.active_tab];
-    let Some(path) = editor.file_path.clone() else { return };
+    let Some(path) = editor.file_path.clone() else {
+        return;
+    };
     let text = editor.full_text();
     handler.lsp.did_save(&path, &text);
 }
 
 /// Called when a tab is closed (or replaced) so the server stops indexing it.
 pub fn notify_did_close(handler: &mut TextHandler, tab_idx: usize) {
-    let Some(path) = handler.tabs[tab_idx].file_path.clone() else { return };
+    let Some(path) = handler.tabs[tab_idx].file_path.clone() else {
+        return;
+    };
     handler.lsp.did_close(&path);
 }
 
@@ -447,4 +494,3 @@ pub fn accept_completion(handler: &mut TextHandler, item: &CompletionItem) {
     ed.insert_str(item.insert());
     handler.completion.clear();
 }
-

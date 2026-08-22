@@ -4,8 +4,8 @@
 
 use lntrn_render::{Color, Painter, TextRenderer};
 
-use crate::controls::tile::TileLayout;
 use super::Bluetooth;
+use crate::controls::tile::TileLayout;
 
 const ICON_SIZE: f32 = 28.0;
 const ICON_LEFT_PAD: f32 = 16.0;
@@ -64,13 +64,34 @@ fn draw_bt_glyph_colored(painter: &mut Painter, x: f32, y: f32, w: f32, h: f32, 
     painter.line_round(top.0, top.1, bot.0, bot.1, stroke, color);
     // Top diamond: top → upper-right → center.
     painter.line_round(top.0, top.1, upper_right.0, upper_right.1, stroke, color);
-    painter.line_round(upper_right.0, upper_right.1, center.0, center.1, stroke, color);
+    painter.line_round(
+        upper_right.0,
+        upper_right.1,
+        center.0,
+        center.1,
+        stroke,
+        color,
+    );
     // Bottom diamond: center → lower-right → bottom.
-    painter.line_round(center.0, center.1, lower_right.0, lower_right.1, stroke, color);
+    painter.line_round(
+        center.0,
+        center.1,
+        lower_right.0,
+        lower_right.1,
+        stroke,
+        color,
+    );
     painter.line_round(lower_right.0, lower_right.1, bot.0, bot.1, stroke, color);
     // The two left-side cross strokes that complete the bowtie.
     painter.line_round(top.0, top.1, mid_left.0, mid_left.1, stroke, color);
     painter.line_round(mid_left.0, mid_left.1, center.0, center.1, stroke, color);
-    painter.line_round(center.0, center.1, mid_left_b.0, mid_left_b.1, stroke, color);
+    painter.line_round(
+        center.0,
+        center.1,
+        mid_left_b.0,
+        mid_left_b.1,
+        stroke,
+        color,
+    );
     painter.line_round(mid_left_b.0, mid_left_b.1, bot.0, bot.1, stroke, color);
 }

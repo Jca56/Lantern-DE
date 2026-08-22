@@ -82,8 +82,7 @@ pub fn draw_view(
         // visual mid-line (header_y is the text top edge).
         let lbl_y = header_y + (header_font - vpn_font) / 2.0;
         text.queue(
-            vpn_label, vpn_font, lbl_x, lbl_y, vpn_color, lbl_w,
-            surface_w, surface_h,
+            vpn_label, vpn_font, lbl_x, lbl_y, vpn_color, lbl_w, surface_w, surface_h,
         );
     }
 
@@ -122,7 +121,11 @@ pub fn draw_view(
     let mut row_y = list_top - scroll_px;
     for (i, net) in wifi.networks().iter().take(MAX_NETWORK_ROWS).enumerate() {
         let is_expanded = wifi.expanded_ssid.as_deref() == Some(net.ssid.as_str());
-        let extra_h = if is_expanded { expanded_extra_height(net, scale) } else { 0.0 };
+        let extra_h = if is_expanded {
+            expanded_extra_height(net, scale)
+        } else {
+            0.0
+        };
         let total_h = row_h + extra_h;
         // The full container (header + expanded body) — used for
         // bg fill so the expanded body and header share a plate.
@@ -143,18 +146,10 @@ pub fn draw_view(
                 Color::rgba(0.0, 0.0, 0.0, 0.35 * alpha),
             );
         } else if i % 2 == 0 {
-            painter.rect_filled(
-                row_rect,
-                8.0 * scale,
-                white.with_alpha(0.04 * alpha),
-            );
+            painter.rect_filled(row_rect, 8.0 * scale, white.with_alpha(0.04 * alpha));
         }
         if net.in_use {
-            painter.rect_filled(
-                row_rect,
-                8.0 * scale,
-                gold.with_alpha(0.18 * alpha),
-            );
+            painter.rect_filled(row_rect, 8.0 * scale, gold.with_alpha(0.18 * alpha));
         }
         // Hover highlight sits on top of the stripe so it reads
         // consistently across odd/even rows. Skipped for the in-use
@@ -162,11 +157,7 @@ pub fn draw_view(
         // and skipped while expanded since the container plate
         // already differentiates the row.
         if is_hovered && !net.in_use && !is_expanded {
-            painter.rect_filled(
-                row_rect,
-                8.0 * scale,
-                white.with_alpha(0.10 * alpha),
-            );
+            painter.rect_filled(row_rect, 8.0 * scale, white.with_alpha(0.10 * alpha));
         }
 
         // Signal % to the left of the bars icon. Sized smaller than
@@ -196,7 +187,15 @@ pub fn draw_view(
         let icon_x = pct_x + pct_box + signal_gap * 0.6;
         let icon_y = row_y + (row_h - signal_size) / 2.0;
         let bars = signal_to_bars(net.signal);
-        draw_signal_icon(painter, icon_x, icon_y, signal_size, signal_size, bars, alpha);
+        draw_signal_icon(
+            painter,
+            icon_x,
+            icon_y,
+            signal_size,
+            signal_size,
+            bars,
+            alpha,
+        );
 
         // SSID label. The connected network gets a larger, gold label
         // so it stands out at a glance even before reading the badge.
@@ -316,8 +315,7 @@ pub fn draw_view(
 
             // ── Right column: top BSSIDs ──
             draw_right_column(
-                painter, text, net, inner_x, inner_w, body_top, scale, alpha,
-                surface_w, surface_h,
+                painter, text, net, inner_x, inner_w, body_top, scale, alpha, surface_w, surface_h,
             );
 
             // Band-selector pills (only when 2+ bands available).
@@ -339,7 +337,8 @@ pub fn draw_view(
                     surface_h,
                 );
                 for entry in &net.bands {
-                    let Some(pill) = band_pill_rect(net, entry.band, inner_x, inner_w, body_top, scale)
+                    let Some(pill) =
+                        band_pill_rect(net, entry.band, inner_x, inner_w, body_top, scale)
                     else {
                         continue;
                     };
@@ -434,11 +433,9 @@ pub fn draw_view(
             track_w / 2.0,
             white.with_alpha(0.06 * alpha),
         );
-        let thumb_h = (viewport_h * viewport_h / (viewport_h + max * scale))
-            .max(24.0 * scale);
-        let thumb_y = list_top
-            + (viewport_h - thumb_h)
-                * (scroll_px / (max * scale)).clamp(0.0, 1.0);
+        let thumb_h = (viewport_h * viewport_h / (viewport_h + max * scale)).max(24.0 * scale);
+        let thumb_y =
+            list_top + (viewport_h - thumb_h) * (scroll_px / (max * scale)).clamp(0.0, 1.0);
         painter.rect_filled(
             Rect::new(track_x, thumb_y, track_w, thumb_h),
             track_w / 2.0,
@@ -478,11 +475,7 @@ pub(super) fn draw_lock(painter: &mut Painter, x: f32, y: f32, w: f32, h: f32, a
     // Body: bottom 60 % of the box, full width.
     let body_y = y + h * 0.40;
     let body_h = h * 0.60;
-    painter.rect_filled(
-        Rect::new(x, body_y, w, body_h),
-        w * 0.16,
-        color,
-    );
+    painter.rect_filled(Rect::new(x, body_y, w, body_h), w * 0.16, color);
     // Shackle: U-shape on top, drawn as a stroked rounded rect with the
     // bottom hidden behind the body. We approximate by drawing a rect
     // outline above the body.

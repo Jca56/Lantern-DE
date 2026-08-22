@@ -3,7 +3,7 @@
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
 use super::{
-    cell_rect_at, cells_per_row, category_strip_rect, category_tab_rect, data, filter_bar_rect,
+    category_strip_rect, category_tab_rect, cell_rect_at, cells_per_row, data, filter_bar_rect,
     grid_rect, png_path_for, Category, EmojisState, CELL_SIZE, GRID_PAD,
 };
 use crate::render::IconRequest;
@@ -68,12 +68,7 @@ fn draw_filter_bar(
         Color::from_rgb8(TEXT_RGB.0, TEXT_RGB.1, TEXT_RGB.2).with_alpha(0.06 * alpha),
     );
     if state.filtered() {
-        painter.rect_stroke_sdf(
-            bar,
-            radius,
-            1.4 * scale,
-            accent(0.55 * alpha),
-        );
+        painter.rect_stroke_sdf(bar, radius, 1.4 * scale, accent(0.55 * alpha));
     }
 
     // Magnifier glyph on the left.
@@ -114,7 +109,9 @@ fn draw_filter_bar(
     };
     let text_x = bar.x + pad_left;
     let text_max_w = (bar.w - pad_left - 14.0 * scale).max(0.0);
-    text.queue(&display, font, text_x, text_top, color, text_max_w, surface_w, surface_h);
+    text.queue(
+        &display, font, text_x, text_top, color, text_max_w, surface_w, surface_h,
+    );
 
     // Count badge (filtered total) on the right.
     let visible_n = state.visible_indices().len();
@@ -124,7 +121,16 @@ fn draw_filter_bar(
     let cx_pad = 16.0 * scale;
     let cx_x = bar.x + bar.w - cx_pad - cw;
     let cy = bar.y + (bar.h - cf) / 2.0;
-    text.queue(&count, cf, cx_x, cy, white(0.55 * alpha), cw + 4.0 * scale, surface_w, surface_h);
+    text.queue(
+        &count,
+        cf,
+        cx_x,
+        cy,
+        white(0.55 * alpha),
+        cw + 4.0 * scale,
+        surface_w,
+        surface_h,
+    );
 
     // Caret blink for the input. Only blink when there's actual text or
     // we're considered "focused" — the overlay is always the active
@@ -162,7 +168,11 @@ fn draw_category_strip(
 ) {
     let _strip = category_strip_rect(panel, top_y, scale);
     // Dim out when a filter is active — categories don't apply.
-    let strip_alpha = if state.filtered() { 0.35 * alpha } else { alpha };
+    let strip_alpha = if state.filtered() {
+        0.35 * alpha
+    } else {
+        alpha
+    };
 
     for (i, cat) in Category::ALL.iter().enumerate() {
         let r = category_tab_rect(panel, top_y, scale, i);
@@ -234,8 +244,7 @@ fn draw_grid(
     let row_stride = cell + super::CELL_GAP * scale;
     let total_rows = ((visible.len() + per_row - 1) / per_row.max(1)) as i32;
     let first_visible_row = (scroll_px / row_stride).floor().max(0.0) as i32;
-    let last_visible_row =
-        (((scroll_px + grid.h) / row_stride).ceil() as i32 + 1).min(total_rows);
+    let last_visible_row = (((scroll_px + grid.h) / row_stride).ceil() as i32 + 1).min(total_rows);
 
     for row in first_visible_row..last_visible_row {
         for col in 0..per_row {

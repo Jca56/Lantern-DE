@@ -66,7 +66,8 @@ impl CloneView {
     }
 
     pub fn on_scroll(&mut self, delta: f32) {
-        self.scroll.scroll_by(delta, self.content_height, self.viewport_h);
+        self.scroll
+            .scroll_by(delta, self.content_height, self.viewport_h);
     }
 
     pub fn tick_scroll(&mut self, dt: f32) -> bool {
@@ -78,7 +79,9 @@ impl CloneView {
     }
 
     pub fn on_click(&mut self, ix: &InteractionContext, px: f32, py: f32) -> CloneAction {
-        let Some(zone) = ix.zone_at(px, py) else { return CloneAction::None };
+        let Some(zone) = ix.zone_at(px, py) else {
+            return CloneAction::None;
+        };
 
         if zone == ZONE_BACK_BTN {
             if self.phase == Phase::PathEntry {
@@ -148,9 +151,13 @@ impl CloneView {
     }
 
     pub fn on_key(&mut self, key: u32, shift: bool) {
-        if !self.path_focused { return; }
+        if !self.path_focused {
+            return;
+        }
         match key {
-            keys::KEY_ESC => { self.path_focused = false; }
+            keys::KEY_ESC => {
+                self.path_focused = false;
+            }
             keys::KEY_BACKSPACE => {
                 if self.cursor_pos > 0 {
                     self.cursor_pos -= 1;
@@ -171,10 +178,18 @@ impl CloneView {
     }
 
     pub fn draw(
-        &mut self, painter: &mut Painter, text: &mut TextRenderer,
-        ix: &mut InteractionContext, palette: &FoxPalette,
-        cx: f32, cy: f32, cw: f32, ch: f32,
-        s: f32, sw: u32, sh: u32,
+        &mut self,
+        painter: &mut Painter,
+        text: &mut TextRenderer,
+        ix: &mut InteractionContext,
+        palette: &FoxPalette,
+        cx: f32,
+        cy: f32,
+        cw: f32,
+        ch: f32,
+        s: f32,
+        sw: u32,
+        sh: u32,
     ) {
         let title_font = 28.0 * s;
         let body_font = 22.0 * s;
@@ -193,7 +208,16 @@ impl CloneView {
         if back_state.is_hovered() {
             painter.rect_filled(back_rect, 6.0 * s, palette.muted.with_alpha(0.2));
         }
-        text.queue("←", title_font, cx + pad + 6.0 * s, header_y, palette.accent, back_w, sw, sh);
+        text.queue(
+            "←",
+            title_font,
+            cx + pad + 6.0 * s,
+            header_y,
+            palette.accent,
+            back_w,
+            sw,
+            sh,
+        );
 
         // Title
         let title = if self.phase == Phase::PathEntry {
@@ -201,50 +225,129 @@ impl CloneView {
         } else {
             "GitHub Repos"
         };
-        text.queue(title, title_font, cx + pad + back_w + 8.0 * s, header_y,
-            palette.text, cw, sw, sh);
+        text.queue(
+            title,
+            title_font,
+            cx + pad + back_w + 8.0 * s,
+            header_y,
+            palette.text,
+            cw,
+            sw,
+            sh,
+        );
         header_y += title_font + 16.0 * s;
 
         // Error / message
         if let Some(ref err) = self.error {
-            text.queue(err, small_font, cx + pad, header_y, palette.danger, cw - pad * 2.0, sw, sh);
+            text.queue(
+                err,
+                small_font,
+                cx + pad,
+                header_y,
+                palette.danger,
+                cw - pad * 2.0,
+                sw,
+                sh,
+            );
             header_y += small_font + 8.0 * s;
         }
         if let Some(ref msg) = self.message {
-            text.queue(msg, small_font, cx + pad, header_y, palette.accent, cw - pad * 2.0, sw, sh);
+            text.queue(
+                msg,
+                small_font,
+                cx + pad,
+                header_y,
+                palette.accent,
+                cw - pad * 2.0,
+                sw,
+                sh,
+            );
             header_y += small_font + 8.0 * s;
         }
 
         match self.phase {
             Phase::Browse => self.draw_browse(
-                painter, text, ix, palette,
-                cx, header_y, cw, ch - (header_y - cy),
-                s, sw, sh, row_h, divider_h, body_font, small_font, pad,
+                painter,
+                text,
+                ix,
+                palette,
+                cx,
+                header_y,
+                cw,
+                ch - (header_y - cy),
+                s,
+                sw,
+                sh,
+                row_h,
+                divider_h,
+                body_font,
+                small_font,
+                pad,
             ),
             Phase::PathEntry => self.draw_path_entry(
-                painter, text, ix, palette,
-                cx, header_y, cw, ch - (header_y - cy),
-                s, sw, sh, body_font, small_font, pad, btn_h,
+                painter,
+                text,
+                ix,
+                palette,
+                cx,
+                header_y,
+                cw,
+                ch - (header_y - cy),
+                s,
+                sw,
+                sh,
+                body_font,
+                small_font,
+                pad,
+                btn_h,
             ),
         }
     }
 
     fn draw_browse(
-        &mut self, painter: &mut Painter, text: &mut TextRenderer,
-        ix: &mut InteractionContext, palette: &FoxPalette,
-        cx: f32, top_y: f32, cw: f32, available_h: f32,
-        s: f32, sw: u32, sh: u32,
-        row_h: f32, divider_h: f32, body_font: f32, small_font: f32, pad: f32,
+        &mut self,
+        painter: &mut Painter,
+        text: &mut TextRenderer,
+        ix: &mut InteractionContext,
+        palette: &FoxPalette,
+        cx: f32,
+        top_y: f32,
+        cw: f32,
+        available_h: f32,
+        s: f32,
+        sw: u32,
+        sh: u32,
+        row_h: f32,
+        divider_h: f32,
+        body_font: f32,
+        small_font: f32,
+        pad: f32,
     ) {
         if self.loading && self.repos.is_empty() {
-            text.queue("Fetching repos from GitHub…", body_font, cx + pad, top_y,
-                palette.muted, cw, sw, sh);
+            text.queue(
+                "Fetching repos from GitHub…",
+                body_font,
+                cx + pad,
+                top_y,
+                palette.muted,
+                cw,
+                sw,
+                sh,
+            );
             return;
         }
 
         if self.repos.is_empty() {
-            text.queue("No repos found", body_font, cx + pad, top_y,
-                palette.muted, cw, sw, sh);
+            text.queue(
+                "No repos found",
+                body_font,
+                cx + pad,
+                top_y,
+                palette.muted,
+                cw,
+                sw,
+                sh,
+            );
             return;
         }
 
@@ -280,7 +383,16 @@ impl CloneView {
             let vis = if repo.is_private { " 🔒" } else { "" };
             let fork = if repo.is_fork { " (fork)" } else { "" };
             let label = format!("{}{}{}", repo.name, vis, fork);
-            text.queue(&label, body_font, cx + pad, text_y, palette.text, cw - pad * 2.0, sw, sh);
+            text.queue(
+                &label,
+                body_font,
+                cx + pad,
+                text_y,
+                palette.text,
+                cw - pad * 2.0,
+                sw,
+                sh,
+            );
 
             // Description
             let desc = if repo.description.is_empty() {
@@ -288,15 +400,24 @@ impl CloneView {
             } else {
                 repo.description.clone()
             };
-            text.queue(&desc, small_font, cx + pad, text_y + body_font + 2.0 * s,
-                palette.muted, cw - pad * 2.0, sw, sh);
+            text.queue(
+                &desc,
+                small_font,
+                cx + pad,
+                text_y + body_font + 2.0 * s,
+                palette.muted,
+                cw - pad * 2.0,
+                sw,
+                sh,
+            );
 
             // Divider
             if idx < self.repos.len() - 1 {
                 let div_y = y + row_h - divider_h;
                 painter.rect_filled(
                     Rect::new(cx + pad, div_y, cw - pad * 2.0, divider_h),
-                    0.0, palette.muted.with_alpha(0.15),
+                    0.0,
+                    palette.muted.with_alpha(0.15),
                 );
             }
         }
@@ -309,35 +430,81 @@ impl CloneView {
     }
 
     fn draw_path_entry(
-        &self, painter: &mut Painter, text: &mut TextRenderer,
-        ix: &mut InteractionContext, palette: &FoxPalette,
-        cx: f32, top_y: f32, cw: f32, _available_h: f32,
-        s: f32, sw: u32, sh: u32,
-        body_font: f32, small_font: f32, pad: f32, btn_h: f32,
+        &self,
+        painter: &mut Painter,
+        text: &mut TextRenderer,
+        ix: &mut InteractionContext,
+        palette: &FoxPalette,
+        cx: f32,
+        top_y: f32,
+        cw: f32,
+        _available_h: f32,
+        s: f32,
+        sw: u32,
+        sh: u32,
+        body_font: f32,
+        small_font: f32,
+        pad: f32,
+        btn_h: f32,
     ) {
         let Some(idx) = self.selected_idx else { return };
-        let Some(repo) = self.repos.get(idx) else { return };
+        let Some(repo) = self.repos.get(idx) else {
+            return;
+        };
 
         let mut y = top_y;
 
         // Selected repo info
         let vis = if repo.is_private { " 🔒" } else { "" };
-        text.queue(&format!("{}{}", repo.full_name, vis), body_font,
-            cx + pad, y, palette.text, cw - pad * 2.0, sw, sh);
+        text.queue(
+            &format!("{}{}", repo.full_name, vis),
+            body_font,
+            cx + pad,
+            y,
+            palette.text,
+            cw - pad * 2.0,
+            sw,
+            sh,
+        );
         y += body_font + 4.0 * s;
 
         if !repo.description.is_empty() {
-            text.queue(&repo.description, small_font, cx + pad, y,
-                palette.muted, cw - pad * 2.0, sw, sh);
+            text.queue(
+                &repo.description,
+                small_font,
+                cx + pad,
+                y,
+                palette.muted,
+                cw - pad * 2.0,
+                sw,
+                sh,
+            );
             y += small_font + 4.0 * s;
         }
 
-        text.queue(&repo.clone_url, small_font, cx + pad, y,
-            palette.text_secondary, cw - pad * 2.0, sw, sh);
+        text.queue(
+            &repo.clone_url,
+            small_font,
+            cx + pad,
+            y,
+            palette.text_secondary,
+            cw - pad * 2.0,
+            sw,
+            sh,
+        );
         y += small_font + 20.0 * s;
 
         // Clone path label
-        text.queue("Clone to:", body_font, cx + pad, y, palette.text, cw, sw, sh);
+        text.queue(
+            "Clone to:",
+            body_font,
+            cx + pad,
+            y,
+            palette.text,
+            cw,
+            sw,
+            sh,
+        );
         y += body_font + 8.0 * s;
 
         // Path input
@@ -357,8 +524,10 @@ impl CloneView {
         // Clone button
         let btn_w = 100.0 * s;
         let clone_rect = Rect::new(
-            cx + cw - pad - btn_w, y + (input_h - btn_h) / 2.0,
-            btn_w, btn_h,
+            cx + cw - pad - btn_w,
+            y + (input_h - btn_h) / 2.0,
+            btn_w,
+            btn_h,
         );
         let clone_state = ix.add_zone(ZONE_CLONE_BTN, clone_rect);
         let btn_color = if self.loading {
@@ -372,8 +541,16 @@ impl CloneView {
         let ct_y = clone_rect.y + (btn_h - body_font) / 2.0;
         let label = if self.loading { "Cloning…" } else { "Clone" };
         let tw = body_font * 0.5 * label.len() as f32;
-        text.queue(label, body_font, clone_rect.x + (btn_w - tw) / 2.0, ct_y,
-            palette.text, btn_w, sw, sh);
+        text.queue(
+            label,
+            body_font,
+            clone_rect.x + (btn_w - tw) / 2.0,
+            ct_y,
+            palette.text,
+            btn_w,
+            sw,
+            sh,
+        );
     }
 }
 
@@ -381,4 +558,3 @@ fn default_clone_path() -> String {
     let home = std::env::var("HOME").unwrap_or_default();
     format!("{home}/Projects")
 }
-

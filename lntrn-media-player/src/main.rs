@@ -50,9 +50,7 @@ fn main() {
     // Some distros ship pipewiresink at rank=none, so autoaudiosink falls
     // back to alsasink even when PipeWire is running. Promote it above the
     // primary tier so autodetect picks it whenever the plugin is present.
-    if let Some(feature) =
-        gstreamer::Registry::get().lookup_feature("pipewiresink")
-    {
+    if let Some(feature) = gstreamer::Registry::get().lookup_feature("pipewiresink") {
         use gstreamer::prelude::*;
         feature.set_rank(gstreamer::Rank::PRIMARY + 10);
     }

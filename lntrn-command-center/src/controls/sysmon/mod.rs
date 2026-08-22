@@ -93,7 +93,10 @@ pub struct History {
 
 impl History {
     pub fn new(cap: usize) -> Self {
-        Self { samples: Vec::with_capacity(cap), cap }
+        Self {
+            samples: Vec::with_capacity(cap),
+            cap,
+        }
     }
 
     pub fn push(&mut self, v: f32) {

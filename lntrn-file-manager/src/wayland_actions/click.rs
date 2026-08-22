@@ -55,20 +55,32 @@ pub(crate) fn handle_click(
                     }
                 }
                 crate::ZONE_CONFLICT_REPLACE => {
-                    if is_rename { app.resolve_rename_conflict(ConflictAction::Replace); }
-                    else { app.resolve_conflict(ConflictAction::Replace); }
+                    if is_rename {
+                        app.resolve_rename_conflict(ConflictAction::Replace);
+                    } else {
+                        app.resolve_conflict(ConflictAction::Replace);
+                    }
                 }
                 crate::ZONE_CONFLICT_KEEP_BOTH => {
-                    if is_rename { app.resolve_rename_conflict(ConflictAction::KeepBoth); }
-                    else { app.resolve_conflict(ConflictAction::KeepBoth); }
+                    if is_rename {
+                        app.resolve_rename_conflict(ConflictAction::KeepBoth);
+                    } else {
+                        app.resolve_conflict(ConflictAction::KeepBoth);
+                    }
                 }
                 crate::ZONE_CONFLICT_SKIP => {
-                    if is_rename { app.resolve_rename_conflict(ConflictAction::Skip); }
-                    else { app.resolve_conflict(ConflictAction::Skip); }
+                    if is_rename {
+                        app.resolve_rename_conflict(ConflictAction::Skip);
+                    } else {
+                        app.resolve_conflict(ConflictAction::Skip);
+                    }
                 }
                 crate::ZONE_CONFLICT_CANCEL | crate::ZONE_CONFLICT_SCRIM => {
-                    if is_rename { app.cancel_rename_conflict(); }
-                    else { app.cancel_paste(); }
+                    if is_rename {
+                        app.cancel_rename_conflict();
+                    } else {
+                        app.cancel_paste();
+                    }
                 }
                 _ => {}
             }
@@ -156,10 +168,15 @@ pub(crate) fn handle_click(
                     view_menu.set_scale(s);
                     if let Some(backend) = popup_backend {
                         view_menu.open_popup(
-                            label_x as f32, label_y,
+                            label_x as f32,
+                            label_y,
                             vec![
                                 MenuItem::slider(VIEW_SLIDER_ID, "Scale", app.icon_zoom),
-                                MenuItem::checkbox(VIEW_SHOW_HIDDEN_ID, "Show Hidden Files", app.show_hidden),
+                                MenuItem::checkbox(
+                                    VIEW_SHOW_HIDDEN_ID,
+                                    "Show Hidden Files",
+                                    app.show_hidden,
+                                ),
                                 MenuItem::checkbox(
                                     crate::VIEW_SHOW_TITLEBAR_ID,
                                     "Show Title Bar",
@@ -230,8 +247,12 @@ pub(crate) fn handle_click(
                         Some(sp) => {
                             let (lx, lw, rx, rw) = crate::layout::split_pane_cols(wf, sp.ratio, s);
                             match sp.focused {
-                                crate::app::PaneSide::Left => crate::layout::pane_sort_rect(lx, lw, s),
-                                crate::app::PaneSide::Right => crate::layout::pane_sort_rect(rx, rw, s),
+                                crate::app::PaneSide::Left => {
+                                    crate::layout::pane_sort_rect(lx, lw, s)
+                                }
+                                crate::app::PaneSide::Right => {
+                                    crate::layout::pane_sort_rect(rx, rw, s)
+                                }
                             }
                         }
                         None => crate::layout::sort_button_rect(wf, s),
@@ -347,8 +368,11 @@ pub(crate) fn handle_click(
                             // Pick mode single-click: select this row.
                             // Track via pick_tree_selection so nested rows work.
                             let now = std::time::Instant::now();
-                            let is_double = app.last_click_path.as_ref().map_or(false, |p| p == &path)
-                                && app.last_click_time.map_or(false, |t| now.duration_since(t).as_millis() < 400);
+                            let is_double =
+                                app.last_click_path.as_ref().map_or(false, |p| p == &path)
+                                    && app
+                                        .last_click_time
+                                        .map_or(false, |t| now.duration_since(t).as_millis() < 400);
                             app.last_click_time = Some(now);
                             app.last_click_path = Some(path.clone());
 
@@ -386,7 +410,8 @@ pub(crate) fn handle_click(
                             app.navigate_to(entry.path);
                         } else {
                             let path = entry.path.clone();
-                            let ext = path.extension()
+                            let ext = path
+                                .extension()
                                 .and_then(|e| e.to_str())
                                 .map(|s| s.to_lowercase())
                                 .unwrap_or_default();
@@ -394,8 +419,8 @@ pub(crate) fn handle_click(
                                 desktop::launch_app(&app.exec, &path);
                             } else {
                                 std::thread::spawn(move || {
-                                    let _ = std::process::Command::new("xdg-open")
-                                        .arg(&path).spawn();
+                                    let _ =
+                                        std::process::Command::new("xdg-open").arg(&path).spawn();
                                 });
                             }
                         }
@@ -508,7 +533,9 @@ fn translate_split_zone(app: &mut App, zone_id: u32) -> u32 {
         ZONE_P2_PATH, ZONE_P2_SCROLLBAR, ZONE_P2_SEARCH, ZONE_P2_SORT, ZONE_P2_TREE_BASE,
         ZONE_P2_UP, ZONE_P2_VIEW_TOGGLE, ZONE_SCROLLBAR,
     };
-    let Some(split) = app.split.as_ref() else { return zone_id };
+    let Some(split) = app.split.as_ref() else {
+        return zone_id;
+    };
     let other = match split.focused {
         crate::app::PaneSide::Left => crate::app::PaneSide::Right,
         crate::app::PaneSide::Right => crate::app::PaneSide::Left,

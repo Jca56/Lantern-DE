@@ -13,10 +13,9 @@ use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea, Scrollbar, Slide
 
 use crate::config::LanternConfig;
 use crate::panels::{
-    draw_section_card, fit_swatches, slider_value_from_cursor,
-    CARD_HEADER_H, CARD_INNER_PAD_H, CARD_INNER_PAD_V, CARD_GAP,
-    CARD_OUTER_PAD_H, CARD_OUTER_PAD_V,
-    LABEL_SIZE, LABEL_W, ROW_H, SLIDER_H, SLIDER_W, VALUE_SIZE, VALUE_W,
+    draw_section_card, fit_swatches, slider_value_from_cursor, CARD_GAP, CARD_HEADER_H,
+    CARD_INNER_PAD_H, CARD_INNER_PAD_V, CARD_OUTER_PAD_H, CARD_OUTER_PAD_V, LABEL_SIZE, LABEL_W,
+    ROW_H, SLIDER_H, SLIDER_W, VALUE_SIZE, VALUE_W,
 };
 
 // ── Zone IDs (750+ block — distinct from wallpaper 700/710, sidebar 200+) ────
@@ -39,7 +38,7 @@ const BORDER_THICKNESS_MAX: f32 = 8.0;
 // the empty string.
 
 const BORDER_SWATCHES: &[(&str, &str)] = &[
-    ("",        "Accent"),
+    ("", "Accent"),
     ("#FFFFFF", "White"),
     ("#000000", "Black"),
     ("#2563EB", "Blue"),
@@ -60,7 +59,7 @@ const FIELD_SWATCHES: &[(&str, &str)] = &[
 const DOT_SWATCHES: &[(&str, &str)] = &[
     ("#F5F5F5", "White"),
     ("#000000", "Black"),
-    ("",        "Accent"),
+    ("", "Accent"),
     ("#2563EB", "Blue"),
     ("#15803D", "Green"),
     ("#DC2626", "Red"),
@@ -106,7 +105,16 @@ fn draw_swatch_row(
     sh: u32,
 ) {
     let label_y = *cy + (row - lsz) / 2.0;
-    text.queue(label, lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
+    text.queue(
+        label,
+        lsz,
+        label_x,
+        label_y,
+        fox.text,
+        ctrl_x - label_x,
+        sw,
+        sh,
+    );
 
     let (swatch_size, swatch_gap) = fit_swatches(palette.len(), ctrl_x, end_x, s);
     let mut sx = ctrl_x;
@@ -118,7 +126,12 @@ fn draw_swatch_row(
             Color::from_hex(hex).unwrap_or(fox.text)
         };
         let zone_id = zone_base + i as u32;
-        let swatch_rect = Rect::new(sx, *cy + (row - swatch_size) / 2.0, swatch_size, swatch_size);
+        let swatch_rect = Rect::new(
+            sx,
+            *cy + (row - swatch_size) / 2.0,
+            swatch_size,
+            swatch_size,
+        );
         let zone = ix.add_zone(zone_id, swatch_rect);
 
         let cx = sx + swatch_size / 2.0;
@@ -168,7 +181,16 @@ fn draw_slider_row(
     sh: u32,
 ) -> Option<f32> {
     let label_y = *cy + (row - lsz) / 2.0;
-    text.queue(label, lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
+    text.queue(
+        label,
+        lsz,
+        label_x,
+        label_y,
+        fox.text,
+        ctrl_x - label_x,
+        sw,
+        sh,
+    );
 
     let rect = Rect::new(ctrl_x, *cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
     let zone = ix.add_zone(zone_id, rect);
@@ -179,7 +201,16 @@ fn draw_slider_row(
         .hovered(zone.is_hovered())
         .active(zone.is_active())
         .draw(painter, fox);
-    text.queue(value_str, vsz, value_x, label_y, fox.text_secondary, VALUE_W * s, sw, sh);
+    text.queue(
+        value_str,
+        vsz,
+        value_x,
+        label_y,
+        fox.text_secondary,
+        VALUE_W * s,
+        sw,
+        sh,
+    );
 
     *cy += row;
     dragged
@@ -235,7 +266,12 @@ pub fn draw_lock_style_panel(
     content_height += border_card_h + gap + field_card_h + gap + dots_card_h + gap + scrim_card_h;
 
     if scroll_delta != 0.0 {
-        ScrollArea::apply_scroll(&mut lss.scroll_offset, scroll_delta * 20.0, content_height, h);
+        ScrollArea::apply_scroll(
+            &mut lss.scroll_offset,
+            scroll_delta * 20.0,
+            content_height,
+            h,
+        );
     }
 
     let viewport = Rect::new(x, y, w, h);
@@ -247,18 +283,60 @@ pub fn draw_lock_style_panel(
     // ── Border card ────────────────────────────────────────────────
     {
         let mut cy = draw_section_card(
-            painter, text, fox, "Border",
-            card_x, card_y, card_w, border_card_h, s, sw, sh,
+            painter,
+            text,
+            fox,
+            "Border",
+            card_x,
+            card_y,
+            card_w,
+            border_card_h,
+            s,
+            sw,
+            sh,
         );
         draw_swatch_row(
-            painter, text, ix, fox, "Color", BORDER_SWATCHES, ZONE_BORDER_SWATCH_BASE,
-            &config.lockscreen.border_color, label_x, ctrl_x, end_x, &mut cy, row, lsz, s, sw, sh,
+            painter,
+            text,
+            ix,
+            fox,
+            "Color",
+            BORDER_SWATCHES,
+            ZONE_BORDER_SWATCH_BASE,
+            &config.lockscreen.border_color,
+            label_x,
+            ctrl_x,
+            end_x,
+            &mut cy,
+            row,
+            lsz,
+            s,
+            sw,
+            sh,
         );
         let frac = (config.lockscreen.border_thickness / BORDER_THICKNESS_MAX).clamp(0.0, 1.0);
         let val = format!("{} px", config.lockscreen.border_thickness.round() as i32);
         if let Some(f) = draw_slider_row(
-            painter, text, ix, fox, "Thickness", ZONE_BORDER_THICKNESS, frac, &val,
-            label_x, ctrl_x, ctrl_w, value_x, &mut cy, row, lsz, vsz, slider_h, s, sw, sh,
+            painter,
+            text,
+            ix,
+            fox,
+            "Thickness",
+            ZONE_BORDER_THICKNESS,
+            frac,
+            &val,
+            label_x,
+            ctrl_x,
+            ctrl_w,
+            value_x,
+            &mut cy,
+            row,
+            lsz,
+            vsz,
+            slider_h,
+            s,
+            sw,
+            sh,
         ) {
             config.lockscreen.border_thickness = (f * BORDER_THICKNESS_MAX).round();
         }
@@ -268,18 +346,60 @@ pub fn draw_lock_style_panel(
     // ── Field card ─────────────────────────────────────────────────
     {
         let mut cy = draw_section_card(
-            painter, text, fox, "Field",
-            card_x, card_y, card_w, field_card_h, s, sw, sh,
+            painter,
+            text,
+            fox,
+            "Field",
+            card_x,
+            card_y,
+            card_w,
+            field_card_h,
+            s,
+            sw,
+            sh,
         );
         draw_swatch_row(
-            painter, text, ix, fox, "Color", FIELD_SWATCHES, ZONE_FIELD_SWATCH_BASE,
-            &config.lockscreen.field_color, label_x, ctrl_x, end_x, &mut cy, row, lsz, s, sw, sh,
+            painter,
+            text,
+            ix,
+            fox,
+            "Color",
+            FIELD_SWATCHES,
+            ZONE_FIELD_SWATCH_BASE,
+            &config.lockscreen.field_color,
+            label_x,
+            ctrl_x,
+            end_x,
+            &mut cy,
+            row,
+            lsz,
+            s,
+            sw,
+            sh,
         );
         let frac = config.lockscreen.field_opacity.clamp(0.0, 1.0);
         let val = format!("{}%", (frac * 100.0).round() as i32);
         if let Some(f) = draw_slider_row(
-            painter, text, ix, fox, "Opacity", ZONE_FIELD_OPACITY, frac, &val,
-            label_x, ctrl_x, ctrl_w, value_x, &mut cy, row, lsz, vsz, slider_h, s, sw, sh,
+            painter,
+            text,
+            ix,
+            fox,
+            "Opacity",
+            ZONE_FIELD_OPACITY,
+            frac,
+            &val,
+            label_x,
+            ctrl_x,
+            ctrl_w,
+            value_x,
+            &mut cy,
+            row,
+            lsz,
+            vsz,
+            slider_h,
+            s,
+            sw,
+            sh,
         ) {
             config.lockscreen.field_opacity = (f * 100.0).round() / 100.0;
         }
@@ -289,12 +409,36 @@ pub fn draw_lock_style_panel(
     // ── Dots card ──────────────────────────────────────────────────
     {
         let mut cy = draw_section_card(
-            painter, text, fox, "Dots",
-            card_x, card_y, card_w, dots_card_h, s, sw, sh,
+            painter,
+            text,
+            fox,
+            "Dots",
+            card_x,
+            card_y,
+            card_w,
+            dots_card_h,
+            s,
+            sw,
+            sh,
         );
         draw_swatch_row(
-            painter, text, ix, fox, "Color", DOT_SWATCHES, ZONE_DOT_SWATCH_BASE,
-            &config.lockscreen.dot_color, label_x, ctrl_x, end_x, &mut cy, row, lsz, s, sw, sh,
+            painter,
+            text,
+            ix,
+            fox,
+            "Color",
+            DOT_SWATCHES,
+            ZONE_DOT_SWATCH_BASE,
+            &config.lockscreen.dot_color,
+            label_x,
+            ctrl_x,
+            end_x,
+            &mut cy,
+            row,
+            lsz,
+            s,
+            sw,
+            sh,
         );
         card_y += dots_card_h + gap;
     }
@@ -302,21 +446,54 @@ pub fn draw_lock_style_panel(
     // ── Scrim card ─────────────────────────────────────────────────
     {
         let mut cy = draw_section_card(
-            painter, text, fox, "Scrim",
-            card_x, card_y, card_w, scrim_card_h, s, sw, sh,
+            painter,
+            text,
+            fox,
+            "Scrim",
+            card_x,
+            card_y,
+            card_w,
+            scrim_card_h,
+            s,
+            sw,
+            sh,
         );
         let frac = config.lockscreen.scrim_opacity.clamp(0.0, 1.0);
         let val = format!("{}%", (frac * 100.0).round() as i32);
         if let Some(f) = draw_slider_row(
-            painter, text, ix, fox, "Opacity", ZONE_SCRIM_OPACITY, frac, &val,
-            label_x, ctrl_x, ctrl_w, value_x, &mut cy, row, lsz, vsz, slider_h, s, sw, sh,
+            painter,
+            text,
+            ix,
+            fox,
+            "Opacity",
+            ZONE_SCRIM_OPACITY,
+            frac,
+            &val,
+            label_x,
+            ctrl_x,
+            ctrl_w,
+            value_x,
+            &mut cy,
+            row,
+            lsz,
+            vsz,
+            slider_h,
+            s,
+            sw,
+            sh,
         ) {
             config.lockscreen.scrim_opacity = (f * 100.0).round() / 100.0;
         }
         let help_y = cy + (row * 0.7 - lsz) / 2.0;
         text.queue(
-            "Darkening over the wallpaper", lsz * 0.85, label_x, help_y,
-            fox.text_secondary, card_inner_w, sw, sh,
+            "Darkening over the wallpaper",
+            lsz * 0.85,
+            label_x,
+            help_y,
+            fox.text_secondary,
+            card_inner_w,
+            sw,
+            sh,
         );
     }
 
@@ -330,10 +507,7 @@ pub fn draw_lock_style_panel(
 
 // ── Click handling (swatch selection; sliders drag live during draw) ──────────
 
-pub fn handle_lock_style_click(
-    config: &mut LanternConfig,
-    zone_id: u32,
-) {
+pub fn handle_lock_style_click(config: &mut LanternConfig, zone_id: u32) {
     let n_border = BORDER_SWATCHES.len() as u32;
     let n_field = FIELD_SWATCHES.len() as u32;
     let n_dot = DOT_SWATCHES.len() as u32;

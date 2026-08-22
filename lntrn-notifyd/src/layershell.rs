@@ -20,7 +20,7 @@ use wayland_client::{
 use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
-use crate::notifications::{NotifyEvent, Notification, Urgency};
+use crate::notifications::{Notification, NotifyEvent, Urgency};
 use crate::render::{Toast, ToastStack};
 
 const SLIDE_IN_SECS: f32 = 0.5;
@@ -33,24 +33,36 @@ fn notification_sound_path() -> Option<std::path::PathBuf> {
     // legacy mp3 so machines that only have the old asset still chime.
     for name in ["notification.wav", "notification.mp3"] {
         let path = sounds.join(name);
-        if path.exists() { return Some(path); }
+        if path.exists() {
+            return Some(path);
+        }
     }
     None
 }
 
 fn play_notification_sound(volume: f32) {
-    if volume <= 0.0 { return; }
+    if volume <= 0.0 {
+        return;
+    }
     if let Some(path) = notification_sound_path() {
         let vol = volume.clamp(0.0, 1.0);
         // One-shot jingle on its own rodio stream (same backend as the music
         // player). `OutputStream` isn't `Send`, so build it inside the thread
         // and hold it alive until playback finishes via `sleep_until_end`.
         std::thread::spawn(move || {
-            let Ok((_stream, handle)) = rodio::OutputStream::try_default() else { return };
-            let Ok(sink) = rodio::Sink::try_new(&handle) else { return };
+            let Ok((_stream, handle)) = rodio::OutputStream::try_default() else {
+                return;
+            };
+            let Ok(sink) = rodio::Sink::try_new(&handle) else {
+                return;
+            };
             sink.set_volume(vol);
-            let Ok(file) = std::fs::File::open(&path) else { return };
-            let Ok(source) = rodio::Decoder::new(std::io::BufReader::new(file)) else { return };
+            let Ok(file) = std::fs::File::open(&path) else {
+                return;
+            };
+            let Ok(source) = rodio::Decoder::new(std::io::BufReader::new(file)) else {
+                return;
+            };
             sink.append(source);
             sink.sleep_until_end();
         });
@@ -75,8 +87,11 @@ fn read_notif_settings() -> NotifSettings {
         play_sound: lntrn_theme::read_config_bool("notifications", "play_sound", true),
         volume: lntrn_theme::read_config_f32("notifications", "volume", 0.8),
         default_duration_secs: lntrn_theme::read_config_f32(
-            "notifications", "default_duration_secs", 5.0,
-        ).clamp(1.0, 30.0),
+            "notifications",
+            "default_duration_secs",
+            5.0,
+        )
+        .clamp(1.0, 30.0),
         position: crate::render::ToastPosition::from_str(&pos_str),
     }
 }
@@ -118,34 +133,56 @@ struct State {
 impl State {
     fn new() -> Self {
         Self {
-            running: true, configured: false, frame_done: true,
-            width: 0, height: 0,
-            scale: 1, output_phys_width: 0,
-            compositor: None, layer_shell: None, viewporter: None,
-            pointer_x: 0.0, pointer_y: 0.0, pending_click: None,
+            running: true,
+            configured: false,
+            frame_done: true,
+            width: 0,
+            height: 0,
+            scale: 1,
+            output_phys_width: 0,
+            compositor: None,
+            layer_shell: None,
+            viewporter: None,
+            pointer_x: 0.0,
+            pointer_y: 0.0,
+            pending_click: None,
         }
     }
 
     fn fractional_scale(&self) -> f64 {
         if self.output_phys_width > 0 && self.width > 0 {
-            self.output_phys_width as f64 / (self.output_phys_width as f64 / self.scale.max(1) as f64)
+            self.output_phys_width as f64
+                / (self.output_phys_width as f64 / self.scale.max(1) as f64)
         } else {
             self.scale.max(1) as f64
         }
     }
 
-    fn phys_w(&self) -> u32 { (self.width as f64 * self.fractional_scale()).round() as u32 }
-    fn phys_h(&self) -> u32 { (self.height as f64 * self.fractional_scale()).round() as u32 }
+    fn phys_w(&self) -> u32 {
+        (self.width as f64 * self.fractional_scale()).round() as u32
+    }
+    fn phys_h(&self) -> u32 {
+        (self.height as f64 * self.fractional_scale()).round() as u32
+    }
 }
 
 // ── Dispatch impls ──────────────────────────────────────────────────────────
 
 impl Dispatch<wl_registry::WlRegistry, ()> for State {
     fn event(
-        state: &mut Self, registry: &wl_registry::WlRegistry,
-        event: wl_registry::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>,
+        state: &mut Self,
+        registry: &wl_registry::WlRegistry,
+        event: wl_registry::Event,
+        _: &(),
+        _: &Connection,
+        qh: &QueueHandle<Self>,
     ) {
-        if let wl_registry::Event::Global { name, interface, version } = event {
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
             match interface.as_str() {
                 "wl_compositor" => {
                     state.compositor = Some(registry.bind(name, version.min(6), qh, ()));
@@ -169,32 +206,87 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
 }
 
 impl Dispatch<wl_compositor::WlCompositor, ()> for State {
-    fn event(_: &mut Self, _: &wl_compositor::WlCompositor, _: wl_compositor::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_compositor::WlCompositor,
+        _: wl_compositor::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wl_surface::WlSurface, ()> for State {
-    fn event(_: &mut Self, _: &wl_surface::WlSurface, _: wl_surface::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_surface::WlSurface,
+        _: wl_surface::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wl_region::WlRegion, ()> for State {
-    fn event(_: &mut Self, _: &wl_region::WlRegion, _: wl_region::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_region::WlRegion,
+        _: wl_region::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wp_viewporter::WpViewporter, ()> for State {
-    fn event(_: &mut Self, _: &wp_viewporter::WpViewporter, _: wp_viewporter::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wp_viewporter::WpViewporter,
+        _: wp_viewporter::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wp_viewport::WpViewport, ()> for State {
-    fn event(_: &mut Self, _: &wp_viewport::WpViewport, _: wp_viewport::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wp_viewport::WpViewport,
+        _: wp_viewport::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<zwlr_layer_shell_v1::ZwlrLayerShellV1, ()> for State {
-    fn event(_: &mut Self, _: &zwlr_layer_shell_v1::ZwlrLayerShellV1, _: zwlr_layer_shell_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &zwlr_layer_shell_v1::ZwlrLayerShellV1,
+        _: zwlr_layer_shell_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 const BTN_LEFT: u32 = 0x110;
 
 impl Dispatch<wl_seat::WlSeat, ()> for State {
     fn event(
-        _: &mut Self, seat: &wl_seat::WlSeat, event: wl_seat::Event,
-        _: &(), _: &Connection, qh: &QueueHandle<Self>,
+        _: &mut Self,
+        seat: &wl_seat::WlSeat,
+        event: wl_seat::Event,
+        _: &(),
+        _: &Connection,
+        qh: &QueueHandle<Self>,
     ) {
-        if let wl_seat::Event::Capabilities { capabilities: WEnum::Value(caps) } = event {
+        if let wl_seat::Event::Capabilities {
+            capabilities: WEnum::Value(caps),
+        } = event
+        {
             if caps.contains(wl_seat::Capability::Pointer) {
                 seat.get_pointer(qh, ());
             }
@@ -204,18 +296,33 @@ impl Dispatch<wl_seat::WlSeat, ()> for State {
 
 impl Dispatch<wl_pointer::WlPointer, ()> for State {
     fn event(
-        state: &mut Self, _: &wl_pointer::WlPointer, event: wl_pointer::Event,
-        _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        _: &wl_pointer::WlPointer,
+        event: wl_pointer::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         match event {
-            wl_pointer::Event::Enter { surface_x, surface_y, .. }
-            | wl_pointer::Event::Motion { surface_x, surface_y, .. } => {
+            wl_pointer::Event::Enter {
+                surface_x,
+                surface_y,
+                ..
+            }
+            | wl_pointer::Event::Motion {
+                surface_x,
+                surface_y,
+                ..
+            } => {
                 state.pointer_x = surface_x;
                 state.pointer_y = surface_y;
             }
-            wl_pointer::Event::Button { button, state: btn_state, .. } => {
-                if button == BTN_LEFT
-                    && btn_state == WEnum::Value(wl_pointer::ButtonState::Pressed)
+            wl_pointer::Event::Button {
+                button,
+                state: btn_state,
+                ..
+            } => {
+                if button == BTN_LEFT && btn_state == WEnum::Value(wl_pointer::ButtonState::Pressed)
                 {
                     state.pending_click = Some((state.pointer_x, state.pointer_y));
                 }
@@ -227,8 +334,12 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
 
 impl Dispatch<wl_output::WlOutput, ()> for State {
     fn event(
-        state: &mut Self, _: &wl_output::WlOutput, event: wl_output::Event,
-        _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        _: &wl_output::WlOutput,
+        event: wl_output::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         match event {
             wl_output::Event::Scale { factor } => state.scale = factor,
@@ -239,21 +350,40 @@ impl Dispatch<wl_output::WlOutput, ()> for State {
 }
 
 impl Dispatch<wl_callback::WlCallback, ()> for State {
-    fn event(state: &mut Self, _: &wl_callback::WlCallback, _: wl_callback::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+    fn event(
+        state: &mut Self,
+        _: &wl_callback::WlCallback,
+        _: wl_callback::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
         state.frame_done = true;
     }
 }
 
 impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for State {
     fn event(
-        state: &mut Self, layer_surface: &zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
-        event: zwlr_layer_surface_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        layer_surface: &zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+        event: zwlr_layer_surface_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         match event {
-            zwlr_layer_surface_v1::Event::Configure { serial, width, height } => {
+            zwlr_layer_surface_v1::Event::Configure {
+                serial,
+                width,
+                height,
+            } => {
                 layer_surface.ack_configure(serial);
-                if width > 0 { state.width = width; }
-                if height > 0 { state.height = height; }
+                if width > 0 {
+                    state.width = width;
+                }
+                if height > 0 {
+                    state.height = height;
+                }
                 state.configured = true;
                 state.frame_done = true;
             }
@@ -337,8 +467,7 @@ impl ActiveNotification {
     /// its slide-out animation.
     fn dismiss(&mut self) {
         if self.elapsed() < self.display_secs {
-            self.spawned = Instant::now()
-                - std::time::Duration::from_secs_f32(self.display_secs);
+            self.spawned = Instant::now() - std::time::Duration::from_secs_f32(self.display_secs);
         }
     }
 }
@@ -355,18 +484,24 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>) -> Result<()> {
     display.get_registry(&qh, ());
     event_queue.roundtrip(&mut state)?;
 
-    let compositor = state.compositor.as_ref()
+    let compositor = state
+        .compositor
+        .as_ref()
         .ok_or_else(|| anyhow!("wl_compositor not available"))?;
-    let layer_shell = state.layer_shell.as_ref()
+    let layer_shell = state
+        .layer_shell
+        .as_ref()
         .ok_or_else(|| anyhow!("zwlr_layer_shell_v1 not available"))?;
 
     let surface = compositor.create_surface(&qh, ());
 
     let layer_surface = layer_shell.get_layer_surface(
-        &surface, None,
+        &surface,
+        None,
         zwlr_layer_shell_v1::Layer::Overlay,
         "lntrn-notifyd".to_string(),
-        &qh, (),
+        &qh,
+        (),
     );
 
     // Full-screen transparent overlay — 0 means fill
@@ -378,9 +513,7 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>) -> Result<()> {
             | zwlr_layer_surface_v1::Anchor::Right,
     );
     layer_surface.set_exclusive_zone(-1);
-    layer_surface.set_keyboard_interactivity(
-        zwlr_layer_surface_v1::KeyboardInteractivity::None,
-    );
+    layer_surface.set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::None);
 
     // Pass-through input
     let empty_region = compositor.create_region(&qh, ());
@@ -451,11 +584,13 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>) -> Result<()> {
                     if settings.show_toasts {
                         if let Some(existing) = active.iter_mut().find(|a| a.id == notif.id) {
                             *existing = ActiveNotification::from_notification(
-                                &notif, settings.default_duration_secs,
+                                &notif,
+                                settings.default_duration_secs,
                             );
                         } else {
                             active.push(ActiveNotification::from_notification(
-                                &notif, settings.default_duration_secs,
+                                &notif,
+                                settings.default_duration_secs,
                             ));
                         }
                     }
@@ -555,7 +690,12 @@ pub fn run(mut rx: mpsc::UnboundedReceiver<NotifyEvent>) -> Result<()> {
         match gpu.begin_frame("Notifications") {
             Ok(mut frame) => {
                 let view = frame.view().clone();
-                painter.render_pass(&gpu, frame.encoder_mut(), &view, Color::rgba(0.0, 0.0, 0.0, 0.0));
+                painter.render_pass(
+                    &gpu,
+                    frame.encoder_mut(),
+                    &view,
+                    Color::rgba(0.0, 0.0, 0.0, 0.0),
+                );
                 text.render_queued(&gpu, frame.encoder_mut(), &view);
                 frame.submit(&gpu.queue);
             }

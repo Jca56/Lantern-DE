@@ -50,7 +50,9 @@ pub struct FrameCtx {
 }
 
 impl FrameCtx {
-    pub fn window_rect(&self) -> Rect { Rect::new(0.0, 0.0, self.wf, self.hf) }
+    pub fn window_rect(&self) -> Rect {
+        Rect::new(0.0, 0.0, self.wf, self.hf)
+    }
 }
 
 // ── WaylandHandle for wgpu ──────────────────────────────────────────────────
@@ -104,13 +106,28 @@ pub(crate) struct State {
 impl State {
     fn new() -> Self {
         Self {
-            running: true, configured: false, frame_done: true,
-            width: 0, height: 0, scale: 1, output_phys_width: 0, maximized: false,
-            compositor: None, wm_base: None, viewporter: None, seat: None,
-            cursor_x: 0.0, cursor_y: 0.0, pointer_in_surface: false,
-            left_pressed: false, pointer_serial: 0, enter_serial: 0,
-            cursor_shape_mgr: None, cursor_shape_device: None,
-            current_cursor_shape: None, pointer: None,
+            running: true,
+            configured: false,
+            frame_done: true,
+            width: 0,
+            height: 0,
+            scale: 1,
+            output_phys_width: 0,
+            maximized: false,
+            compositor: None,
+            wm_base: None,
+            viewporter: None,
+            seat: None,
+            cursor_x: 0.0,
+            cursor_y: 0.0,
+            pointer_in_surface: false,
+            left_pressed: false,
+            pointer_serial: 0,
+            enter_serial: 0,
+            cursor_shape_mgr: None,
+            cursor_shape_device: None,
+            current_cursor_shape: None,
+            pointer: None,
             key_pressed: None,
             decoration_mgr: None,
         }
@@ -124,8 +141,12 @@ impl State {
         }
     }
 
-    fn phys_width(&self) -> u32 { (self.width as f64 * self.fractional_scale()).round() as u32 }
-    fn phys_height(&self) -> u32 { (self.height as f64 * self.fractional_scale()).round() as u32 }
+    fn phys_width(&self) -> u32 {
+        (self.width as f64 * self.fractional_scale()).round() as u32
+    }
+    fn phys_height(&self) -> u32 {
+        (self.height as f64 * self.fractional_scale()).round() as u32
+    }
 }
 
 // ── Edge resize ─────────────────────────────────────────────────────────────
@@ -184,13 +205,21 @@ pub fn run(mut scenes: Vec<Box<dyn Scene>>) -> Result<()> {
     display.get_registry(&qh, ());
     event_queue.roundtrip(&mut state)?;
 
-    let compositor = state.compositor.clone()
+    let compositor = state
+        .compositor
+        .clone()
         .ok_or_else(|| anyhow!("wl_compositor not available"))?;
-    let wm_base = state.wm_base.clone()
+    let wm_base = state
+        .wm_base
+        .clone()
         .ok_or_else(|| anyhow!("xdg_wm_base not available"))?;
 
-    if state.width == 0 { state.width = INITIAL_W.max(120); }
-    if state.height == 0 { state.height = INITIAL_H.max(80); }
+    if state.width == 0 {
+        state.width = INITIAL_W.max(120);
+    }
+    if state.height == 0 {
+        state.height = INITIAL_H.max(80);
+    }
 
     let surface = compositor.create_surface(&qh, ());
     let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
@@ -238,7 +267,9 @@ pub fn run(mut scenes: Vec<Box<dyn Scene>>) -> Result<()> {
             eprintln!("[{}] dispatch error: {e}", APP_ID);
             break;
         }
-        if !state.frame_done { continue; }
+        if !state.frame_done {
+            continue;
+        }
         state.frame_done = false;
 
         let s = state.fractional_scale() as f32;
@@ -297,12 +328,19 @@ pub fn run(mut scenes: Vec<Box<dyn Scene>>) -> Result<()> {
         }
 
         let ctx = FrameCtx {
-            wf, hf, scale: s,
+            wf,
+            hf,
+            scale: s,
             elapsed_secs: start.elapsed().as_secs_f32(),
-            cursor_x: cx, cursor_y: cy,
+            cursor_x: cx,
+            cursor_y: cy,
             pointer_in_surface: state.pointer_in_surface,
             maximized: state.maximized,
-            corner_radius: if state.maximized { 0.0 } else { settings_corner_radius() * s },
+            corner_radius: if state.maximized {
+                0.0
+            } else {
+                settings_corner_radius() * s
+            },
         };
 
         painter.clear();

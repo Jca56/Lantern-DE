@@ -77,10 +77,16 @@ pub fn layout(sysmon: &SysMon, rect: Rect, scale: f32, text_size: f32) -> Proces
 
     let header_y = rect.y + strip_h + strip_gap;
     let cpu_header_rect = Rect::new(
-        cpu_x, header_y - 2.0 * scale, cpu_col_w, header_font + 4.0 * scale,
+        cpu_x,
+        header_y - 2.0 * scale,
+        cpu_col_w,
+        header_font + 4.0 * scale,
     );
     let mem_header_rect = Rect::new(
-        mem_x, header_y - 2.0 * scale, mem_col_w, header_font + 4.0 * scale,
+        mem_x,
+        header_y - 2.0 * scale,
+        mem_col_w,
+        header_font + 4.0 * scale,
     );
 
     let rows_top = header_y + header_font + 8.0 * scale;
@@ -149,14 +155,27 @@ pub fn draw(
 
     // ── Filter strip ──────────────────────────────────────────────────
     draw_filter_strip(
-        painter, text, sysmon, lay.filter_rect, scale, alpha, surface_w, surface_h,
+        painter,
+        text,
+        sysmon,
+        lay.filter_rect,
+        scale,
+        alpha,
+        surface_w,
+        surface_h,
     );
 
     // ── Headers ───────────────────────────────────────────────────────
     let header_y = lay.cpu_header_rect.y + 2.0 * scale;
     queue_left(
-        text, "PROCESS", header_font, rect.x + 8.0 * scale, header_y, header_color,
-        surface_w, surface_h,
+        text,
+        "PROCESS",
+        header_font,
+        rect.x + 8.0 * scale,
+        header_y,
+        header_color,
+        surface_w,
+        surface_h,
     );
     let arrow = if sysmon.sort.is_desc() { "▼" } else { "▲" };
     let cpu_label = if sysmon.sort.is_cpu() {
@@ -169,15 +188,35 @@ pub fn draw(
     } else {
         "MEM".to_string()
     };
-    let cpu_color = if sysmon.sort.is_cpu() { ACCENT.with_alpha(alpha) } else { header_color };
-    let mem_color = if sysmon.sort.is_mem() { ACCENT.with_alpha(alpha) } else { header_color };
+    let cpu_color = if sysmon.sort.is_cpu() {
+        ACCENT.with_alpha(alpha)
+    } else {
+        header_color
+    };
+    let mem_color = if sysmon.sort.is_mem() {
+        ACCENT.with_alpha(alpha)
+    } else {
+        header_color
+    };
     queue_right(
-        text, &cpu_label, header_font, cpu_x + cpu_col_w, header_y, cpu_color,
-        surface_w, surface_h,
+        text,
+        &cpu_label,
+        header_font,
+        cpu_x + cpu_col_w,
+        header_y,
+        cpu_color,
+        surface_w,
+        surface_h,
     );
     queue_right(
-        text, &mem_label, header_font, mem_x + mem_col_w, header_y, mem_color,
-        surface_w, surface_h,
+        text,
+        &mem_label,
+        header_font,
+        mem_x + mem_col_w,
+        header_y,
+        mem_color,
+        surface_w,
+        surface_h,
     );
 
     // ── Rows ──────────────────────────────────────────────────────────
@@ -205,10 +244,25 @@ pub fn draw(
             painter.rect_filled(Rect::new(rect.x, y, rect.w, row_h), 4.0 * scale, band);
         }
         draw_row(
-            painter, text, p, row_font, row_color, alpha, scale,
-            rect.x + 8.0 * scale, y, row_h,
-            cpu_x, cpu_col_w, mem_x, mem_col_w, kill_x, kill_w, selected,
-            surface_w, surface_h,
+            painter,
+            text,
+            p,
+            row_font,
+            row_color,
+            alpha,
+            scale,
+            rect.x + 8.0 * scale,
+            y,
+            row_h,
+            cpu_x,
+            cpu_col_w,
+            mem_x,
+            mem_col_w,
+            kill_x,
+            kill_w,
+            selected,
+            surface_w,
+            surface_h,
         );
     }
 
@@ -219,10 +273,14 @@ pub fn draw(
         let muted = Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(alpha * 0.45);
         let w = text.measure_width(&hint, row_font);
         text.queue(
-            &hint, row_font,
+            &hint,
+            row_font,
             rect.x + (rect.w - w) / 2.0,
             rows_top + 16.0 * scale,
-            muted, w, surface_w, surface_h,
+            muted,
+            w,
+            surface_w,
+            surface_h,
         );
     }
 
@@ -321,15 +379,27 @@ fn draw_filter_strip(
         let color = Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(alpha * 0.40);
         let w = text.measure_width(placeholder, font);
         text.queue(
-            placeholder, font, text_x, rect.y + (rect.h - font) / 2.0,
-            color, w, surface_w, surface_h,
+            placeholder,
+            font,
+            text_x,
+            rect.y + (rect.h - font) / 2.0,
+            color,
+            w,
+            surface_w,
+            surface_h,
         );
     } else {
         let color = Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(alpha * 0.95);
         let w = text.measure_width(q, font);
         text.queue(
-            q, font, text_x, rect.y + (rect.h - font) / 2.0,
-            color, w, surface_w, surface_h,
+            q,
+            font,
+            text_x,
+            rect.y + (rect.h - font) / 2.0,
+            color,
+            w,
+            surface_w,
+            surface_h,
         );
 
         // Trailing × clear button.
@@ -342,14 +412,20 @@ fn draw_filter_strip(
         let line = Color::rgba(1.0, 1.0, 1.0, 0.85 * alpha);
         let lw = (btn_w * 0.10).max(1.4 * scale);
         painter.line(
-            bx + pad_in, by + pad_in,
-            bx + btn_w - pad_in, by + btn_w - pad_in,
-            lw, line,
+            bx + pad_in,
+            by + pad_in,
+            bx + btn_w - pad_in,
+            by + btn_w - pad_in,
+            lw,
+            line,
         );
         painter.line(
-            bx + btn_w - pad_in, by + pad_in,
-            bx + pad_in, by + btn_w - pad_in,
-            lw, line,
+            bx + btn_w - pad_in,
+            by + pad_in,
+            bx + pad_in,
+            by + btn_w - pad_in,
+            lw,
+            line,
         );
     }
 }
@@ -386,14 +462,41 @@ fn draw_row(
     let name_clip = Rect::new(x, y, name_clip_w, h);
     text.push_clip([name_clip.x, name_clip.y, name_clip.w, name_clip.h]);
     let full_w = text.measure_width(&p.comm, font);
-    text.queue(&p.comm, font, x, baseline, row_color, full_w + 8.0 * scale, surface_w, surface_h);
+    text.queue(
+        &p.comm,
+        font,
+        x,
+        baseline,
+        row_color,
+        full_w + 8.0 * scale,
+        surface_w,
+        surface_h,
+    );
     text.pop_clip();
 
     let cpu_str = format!("{:.1}%", p.cpu_load * 100.0);
-    queue_right(text, &cpu_str, font, cpu_x + cpu_w, baseline, row_color, surface_w, surface_h);
+    queue_right(
+        text,
+        &cpu_str,
+        font,
+        cpu_x + cpu_w,
+        baseline,
+        row_color,
+        surface_w,
+        surface_h,
+    );
 
     let mem_str = super::proc::format_bytes(p.rss_bytes);
-    queue_right(text, &mem_str, font, mem_x + mem_w, baseline, row_color, surface_w, surface_h);
+    queue_right(
+        text,
+        &mem_str,
+        font,
+        mem_x + mem_w,
+        baseline,
+        row_color,
+        surface_w,
+        surface_h,
+    );
 
     // Kill button only appears on the highlighted (selected) row so
     // the list reads clean while idle.
@@ -408,14 +511,20 @@ fn draw_row(
         let line_w = (kill_w * 0.14).max(1.8 * scale);
         let white = Color::rgba(1.0, 1.0, 1.0, alpha);
         painter.line(
-            kill_x + icon_pad, btn_y + icon_pad,
-            kill_x + kill_w - icon_pad, btn_y + kill_w - icon_pad,
-            line_w, white,
+            kill_x + icon_pad,
+            btn_y + icon_pad,
+            kill_x + kill_w - icon_pad,
+            btn_y + kill_w - icon_pad,
+            line_w,
+            white,
         );
         painter.line(
-            kill_x + kill_w - icon_pad, btn_y + icon_pad,
-            kill_x + icon_pad, btn_y + kill_w - icon_pad,
-            line_w, white,
+            kill_x + kill_w - icon_pad,
+            btn_y + icon_pad,
+            kill_x + icon_pad,
+            btn_y + kill_w - icon_pad,
+            line_w,
+            white,
         );
     }
 }

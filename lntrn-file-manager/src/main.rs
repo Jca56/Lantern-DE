@@ -6,13 +6,12 @@ mod conflict;
 mod desktop;
 mod dialogs;
 mod dir_watch;
-mod git_status;
-mod lantern_config;
-pub mod undo;
 mod file_info;
 mod file_ops;
 mod fs;
+mod git_status;
 mod icons;
+mod lantern_config;
 mod layout;
 mod ops;
 mod pick_bar;
@@ -25,14 +24,15 @@ mod sections;
 mod settings;
 mod sudo;
 mod thumbs;
+pub mod undo;
 mod views;
 mod wayland;
 mod wayland_actions;
 mod wayland_dispatch;
 mod wayland_loop;
 
-use std::path::PathBuf;
 use lntrn_render::{GpuContext, Painter, TextRenderer, TexturePass};
+use std::path::PathBuf;
 
 // ── Hit zone IDs ────────────────────────────────────────────────────────────
 
@@ -181,10 +181,10 @@ pub const ZONE_PROGRESS_CANCEL: u32 = 76;
 
 // Properties icon picker (clickable icon at top of Properties dialog).
 pub const ZONE_PROPS_ICON: u32 = 77;
-pub const ZONE_PROPS_PICKER_TAB_BASE: u32 = 78;  // 78..82
+pub const ZONE_PROPS_PICKER_TAB_BASE: u32 = 78; // 78..82
 pub const ZONE_PROPS_PICKER_RESET: u32 = 83;
 pub const ZONE_PROPS_PICKER_BACK: u32 = 84;
-pub const ZONE_PROPS_ICON_BASE: u32 = 2000;  // 2000+, one per shown icon
+pub const ZONE_PROPS_ICON_BASE: u32 = 2000; // 2000+, one per shown icon
 
 // Quick Look overlay — full-screen backdrop, click closes.
 pub const ZONE_QUICK_LOOK: u32 = 905;
@@ -276,14 +276,19 @@ fn parse_filter_arg(s: &str) -> Vec<FileFilter> {
         .filter_map(|group| {
             let (name, pats) = group.split_once(':')?;
             let patterns: Vec<String> = pats.split(',').map(|p| p.trim().to_string()).collect();
-            Some(FileFilter { name: name.trim().to_string(), patterns })
+            Some(FileFilter {
+                name: name.trim().to_string(),
+                patterns,
+            })
         })
         .collect()
 }
 
 fn parse_args() -> Option<PickConfig> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.is_empty() { return None; }
+    if args.is_empty() {
+        return None;
+    }
 
     let mut mode = None;
     let mut multiple = false;
@@ -300,10 +305,24 @@ fn parse_args() -> Option<PickConfig> {
             "--pick-directory" => mode = Some(PickType::Directory),
             "--pick-any" => mode = Some(PickType::Mixed),
             "--pick-multiple" => multiple = true,
-            "--title" => { i += 1; title = args.get(i).cloned(); }
-            "--start-dir" => { i += 1; start_dir = args.get(i).map(PathBuf::from); }
-            "--filters" => { i += 1; if let Some(s) = args.get(i) { filters = parse_filter_arg(s); } }
-            "--save-name" => { i += 1; save_name = args.get(i).cloned(); }
+            "--title" => {
+                i += 1;
+                title = args.get(i).cloned();
+            }
+            "--start-dir" => {
+                i += 1;
+                start_dir = args.get(i).map(PathBuf::from);
+            }
+            "--filters" => {
+                i += 1;
+                if let Some(s) = args.get(i) {
+                    filters = parse_filter_arg(s);
+                }
+            }
+            "--save-name" => {
+                i += 1;
+                save_name = args.get(i).cloned();
+            }
             _ => {}
         }
         i += 1;
@@ -340,9 +359,15 @@ fn main() {
     // pick mode. Lets `lntrn-file-manager ~/Documents` open Fox there.
     let start_dir = if pick.is_none() {
         std::env::args().skip(1).find_map(|a| {
-            if a.starts_with('-') { return None; }
+            if a.starts_with('-') {
+                return None;
+            }
             let p = PathBuf::from(&a);
-            if p.is_dir() { Some(p) } else { None }
+            if p.is_dir() {
+                Some(p)
+            } else {
+                None
+            }
         })
     } else {
         None
@@ -352,8 +377,12 @@ fn main() {
     if desktop {
         unsafe {
             let pid = libc::fork();
-            if pid < 0 { std::process::exit(1); }
-            if pid > 0 { std::process::exit(0); } // parent exits
+            if pid < 0 {
+                std::process::exit(1);
+            }
+            if pid > 0 {
+                std::process::exit(0);
+            } // parent exits
             libc::setsid(); // new session leader
         }
     }
@@ -373,8 +402,14 @@ fn run_cloud_login(args: &[String]) -> i32 {
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
-            "--email" => { i += 1; email = args.get(i).cloned(); }
-            "--password" => { i += 1; password = args.get(i).cloned(); }
+            "--email" => {
+                i += 1;
+                email = args.get(i).cloned();
+            }
+            "--password" => {
+                i += 1;
+                password = args.get(i).cloned();
+            }
             _ => {}
         }
         i += 1;
@@ -398,7 +433,9 @@ fn run_cloud_login(args: &[String]) -> i32 {
                 eprintln!("[fox-cloud] failed to read password from stdin");
                 return 2;
             }
-            buf.trim_end_matches('\n').trim_end_matches('\r').to_string()
+            buf.trim_end_matches('\n')
+                .trim_end_matches('\r')
+                .to_string()
         }
     };
 

@@ -21,11 +21,7 @@ pub enum KeyAction {
 }
 
 /// Handle a single pressed key event.
-pub fn handle_key(
-    handler: &mut TextHandler,
-    key: &Key,
-    mods: ModifiersState,
-) -> KeyAction {
+pub fn handle_key(handler: &mut TextHandler, key: &Key, mods: ModifiersState) -> KeyAction {
     // ── Editable font-size box owns input while focused ───────────────
     if handler.fmt_toolbar.size_editing {
         if let Some(action) = handle_size_edit_key(handler, key) {

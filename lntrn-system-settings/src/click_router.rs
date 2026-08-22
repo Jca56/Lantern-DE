@@ -43,7 +43,12 @@ pub(crate) fn route_zone_click(
     // the modal needs to eat clicks even over sidebar zones). ─────────────
     if *active_panel == Panel::Themes
         && crate::appearance_themes::handle_themes_click(
-            themes_state, config, panel_state, zone_id, cx, cy,
+            themes_state,
+            config,
+            panel_state,
+            zone_id,
+            cx,
+            cy,
         )
     {
         return;
@@ -81,8 +86,18 @@ pub(crate) fn route_zone_click(
 
     // ── Per-subpanel click handlers ─────────────────────────────────────
     route_panel_click(
-        *active_panel, zone_id, config, panel_state,
-        display_state, lock_wp_state, icon_panel_state, input_state, keybinds_state, state, cx, cy,
+        *active_panel,
+        zone_id,
+        config,
+        panel_state,
+        display_state,
+        lock_wp_state,
+        icon_panel_state,
+        input_state,
+        keybinds_state,
+        state,
+        cx,
+        cy,
     );
 }
 
@@ -95,7 +110,12 @@ fn apply_save(
 ) {
     if display_state.monitor_settings.dirty {
         if let Some(selected_name) = display_state.monitor_arrange.selected_output_name() {
-            if let Some(hi) = state.output_mgr.heads.iter().position(|h| h.name == selected_name) {
+            if let Some(hi) = state
+                .output_mgr
+                .heads
+                .iter()
+                .position(|h| h.name == selected_name)
+            {
                 let changes = vec![HeadChange {
                     head_idx: hi,
                     mode_idx: display_state.monitor_settings.selected_mode_idx,
@@ -141,9 +161,7 @@ fn route_panel_click(
 ) {
     match active_panel {
         Panel::Themes | Panel::Animations => {
-            crate::appearance_panel::handle_appearance_click(
-                config, panel_state, zone_id, cx, cy,
-            );
+            crate::appearance_panel::handle_appearance_click(config, panel_state, zone_id, cx, cy);
         }
         // Window Sizes sliders are dragged live during draw — nothing to route.
         Panel::WindowSizes => {}
@@ -152,7 +170,12 @@ fn route_panel_click(
         }
         Panel::Monitors => {
             display_panel::handle_display_click(
-                config, display_state, zone_id, cx, cy, &state.output_mgr,
+                config,
+                display_state,
+                zone_id,
+                cx,
+                cy,
+                &state.output_mgr,
             );
         }
         Panel::Mouse => {

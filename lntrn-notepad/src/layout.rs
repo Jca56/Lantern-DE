@@ -149,7 +149,11 @@ pub fn compute(
     scale: f32,
     default_font_size: f32,
 ) {
-    let key = (max_width.to_bits(), scale.to_bits(), default_font_size.to_bits());
+    let key = (
+        max_width.to_bits(),
+        scale.to_bits(),
+        default_font_size.to_bits(),
+    );
     let n = editor.lines.len();
     if editor.layout_key != Some(key) {
         // Width, scale or base size moved: every line's geometry is invalid.
@@ -169,7 +173,15 @@ pub fn compute(
         if editor.layout[i].sig == Some(sig) {
             continue;
         }
-        let mut built = build_line(text, editor, i, max_width, scale, default_font_size, &mut buf);
+        let mut built = build_line(
+            text,
+            editor,
+            i,
+            max_width,
+            scale,
+            default_font_size,
+            &mut buf,
+        );
         built.sig = Some(sig);
         editor.layout[i] = built;
         dirty = true;
@@ -283,7 +295,9 @@ fn build_line(
             .map_or_else(|_| adv.last().map_or(0.0, |&(_, x)| x), |i| adv[i].1);
         row_w.push(x1 - x0);
         // A row is as tall as its largest span, so big text never overlaps.
-        let fs = lf.max_font_size_in(start, end).map_or(FONT_SIZE, |f| f.max(FONT_SIZE));
+        let fs = lf
+            .max_font_size_in(start, end)
+            .map_or(FONT_SIZE, |f| f.max(FONT_SIZE));
         row_h.push(fs * para.line_spacing * scale);
     }
 
@@ -331,7 +345,10 @@ fn line_signature(editor: &Editor, line: usize) -> u64 {
     for span in lf.spans() {
         fnv_u64(&mut h, span.start as u64);
         fnv_u64(&mut h, span.end as u64);
-        fnv_u64(&mut h, span.attrs.font_size.map_or(0, |f| f.to_bits() as u64 + 1));
+        fnv_u64(
+            &mut h,
+            span.attrs.font_size.map_or(0, |f| f.to_bits() as u64 + 1),
+        );
         fnv_u64(
             &mut h,
             (span.attrs.bold as u64)

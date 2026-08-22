@@ -12,7 +12,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use lntrn_render::{Color, GpuContext, GpuTexture, Painter, Rect, TextRenderer, TexturePass, TextureDraw};
+use lntrn_render::{
+    Color, GpuContext, GpuTexture, Painter, Rect, TextRenderer, TextureDraw, TexturePass,
+};
 use lntrn_ui::gpu::{FontSize, FoxPalette, InteractionContext, TextLabel};
 
 /// Cap uploaded textures — no zoom yet, so pixels beyond ~4K are wasted VRAM.
@@ -26,7 +28,13 @@ const TEXT_MAX_LINES: usize = 500;
 
 enum Loaded {
     /// `src_w/src_h` are the pre-downscale source dimensions for the meta line.
-    Image { rgba: Vec<u8>, w: u32, h: u32, src_w: u32, src_h: u32 },
+    Image {
+        rgba: Vec<u8>,
+        w: u32,
+        h: u32,
+        src_w: u32,
+        src_h: u32,
+    },
     Text(Vec<String>),
     Failed(String),
 }
@@ -77,9 +85,17 @@ impl QuickLook {
         if !self.loading() {
             return;
         }
-        let Some(loaded) = self.pending.lock().unwrap().take() else { return };
+        let Some(loaded) = self.pending.lock().unwrap().take() else {
+            return;
+        };
         match loaded {
-            Loaded::Image { rgba, w, h, src_w, src_h } => {
+            Loaded::Image {
+                rgba,
+                w,
+                h,
+                src_w,
+                src_h,
+            } => {
                 self.texture = Some(tex.upload(gpu, &rgba, w, h));
                 self.source_dims = Some((src_w, src_h));
             }
@@ -100,7 +116,10 @@ fn load(path: &Path) -> Loaded {
     if ext == "svg" {
         return load_svg(path);
     }
-    if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "ico" | "tiff" | "tif") {
+    if matches!(
+        ext.as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "ico" | "tiff" | "tif"
+    ) {
         return load_image(path);
     }
     load_text(path)
@@ -127,7 +146,13 @@ fn load_image(path: &Path) -> Loaded {
             };
             let rgba = img.to_rgba8();
             let (w, h) = rgba.dimensions();
-            Loaded::Image { rgba: rgba.into_raw(), w, h, src_w, src_h }
+            Loaded::Image {
+                rgba: rgba.into_raw(),
+                w,
+                h,
+                src_w,
+                src_h,
+            }
         }
         Err(_) => Loaded::Failed("Could not decode image (corrupt or too large)".into()),
     }
@@ -150,7 +175,13 @@ fn load_svg(path: &Path) -> Loaded {
     };
     let transform = resvg::tiny_skia::Transform::from_scale(scale, scale);
     resvg::render(&tree, transform, &mut pixmap.as_mut());
-    Loaded::Image { rgba: pixmap.take(), w, h, src_w: w, src_h: h }
+    Loaded::Image {
+        rgba: pixmap.take(),
+        w,
+        h,
+        src_w: w,
+        src_h: h,
+    }
 }
 
 /// Full-resolution single frame via ffmpeg — placeholder until real playback.
@@ -159,7 +190,17 @@ fn load_video_still(path: &Path) -> Loaded {
     let output = Command::new("ffmpeg")
         .args(["-ss", "1", "-i"])
         .arg(path)
-        .args(["-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "-loglevel", "error", "pipe:1"])
+        .args([
+            "-frames:v",
+            "1",
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "png",
+            "-loglevel",
+            "error",
+            "pipe:1",
+        ])
         .output();
     let Ok(output) = output else {
         return Loaded::Failed("ffmpeg not available".into());
@@ -177,7 +218,13 @@ fn load_video_still(path: &Path) -> Loaded {
             };
             let rgba = img.to_rgba8();
             let (w, h) = rgba.dimensions();
-            Loaded::Image { rgba: rgba.into_raw(), w, h, src_w, src_h }
+            Loaded::Image {
+                rgba: rgba.into_raw(),
+                w,
+                h,
+                src_w,
+                src_h,
+            }
         }
         Err(_) => Loaded::Failed("Could not decode video frame".into()),
     }
@@ -265,11 +312,15 @@ pub fn draw_quick_look<'a>(
         meta = format!("Video (still frame)  •  {meta}");
     }
     let est_w = meta.chars().count() as f32 * meta_font * 0.52;
-    TextLabel::new(&meta, (screen_w - est_w) * 0.5, name_y + name_font + 8.0 * s)
-        .size(FontSize::Custom(meta_font))
-        .color(palette.text_secondary)
-        .max_width(screen_w * 0.9)
-        .draw(text, sw, sh);
+    TextLabel::new(
+        &meta,
+        (screen_w - est_w) * 0.5,
+        name_y + name_font + 8.0 * s,
+    )
+    .size(FontSize::Custom(meta_font))
+    .color(palette.text_secondary)
+    .max_width(screen_w * 0.9)
+    .draw(text, sw, sh);
 
     // Content area above the info bar.
     let margin = 40.0 * s;
@@ -281,14 +332,20 @@ pub fn draw_quick_look<'a>(
     );
 
     if let Some(tex) = &ql.texture {
-        let (x, y, w, h) = crate::icons::fit_in_box(tex, content.x, content.y, content.w, content.h);
+        let (x, y, w, h) =
+            crate::icons::fit_in_box(tex, content.x, content.y, content.w, content.h);
         return Some(TextureDraw::new(tex, x, y, w, h));
     }
 
     if let Some(lines) = &ql.text_lines {
         // Text panel — centered card, monaco-ish density, clipped to fit.
         let panel_w = (900.0 * s).min(content.w);
-        let panel = Rect::new(content.x + (content.w - panel_w) * 0.5, content.y, panel_w, content.h);
+        let panel = Rect::new(
+            content.x + (content.w - panel_w) * 0.5,
+            content.y,
+            panel_w,
+            content.h,
+        );
         painter.rect_filled(panel, 10.0 * s, palette.surface);
         painter.rect_stroke(panel, 10.0 * s, 1.0 * s, palette.muted.with_alpha(0.25));
         let pad = 18.0 * s;
@@ -322,7 +379,11 @@ pub fn draw_quick_look<'a>(
     let est_w = msg.chars().count() as f32 * msg_font * 0.52;
     TextLabel::new(msg, (screen_w - est_w) * 0.5, screen_h * 0.5 - msg_font)
         .size(FontSize::Custom(msg_font))
-        .color(if ql.error.is_some() { palette.text_secondary } else { palette.muted })
+        .color(if ql.error.is_some() {
+            palette.text_secondary
+        } else {
+            palette.muted
+        })
         .draw(text, sw, sh);
     None
 }
@@ -332,8 +393,13 @@ fn format_bytes(size: u64) -> String {
     const MB: f64 = KB * 1024.0;
     const GB: f64 = MB * 1024.0;
     let f = size as f64;
-    if f >= GB { format!("{:.2} GB", f / GB) }
-    else if f >= MB { format!("{:.1} MB", f / MB) }
-    else if f >= KB { format!("{:.0} KB", f / KB) }
-    else { format!("{size} B") }
+    if f >= GB {
+        format!("{:.2} GB", f / GB)
+    } else if f >= MB {
+        format!("{:.1} MB", f / MB)
+    } else if f >= KB {
+        format!("{:.0} KB", f / KB)
+    } else {
+        format!("{size} B")
+    }
 }

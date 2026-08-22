@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use crate::layout::{cell_origin, pixel_to_cell, rect_hits, CELL_W, ICON_PX, CELL_H};
+use crate::layout::{cell_origin, pixel_to_cell, rect_hits, CELL_H, CELL_W, ICON_PX};
 use crate::radial_menu::{self, RadialAction, RadialMenuState};
 use crate::render;
 use crate::state::{DesktopState, DragState, MenuAction, PendingAction, RubberBand, WidgetDrag};
@@ -83,7 +83,8 @@ pub fn on_left_press(
     let now = Instant::now();
     let is_double_click = match (state.last_click_at, state.last_click_idx) {
         (Some(t), Some(idx))
-            if now.duration_since(t) < Duration::from_millis(DOUBLE_CLICK_MS) && Some(idx) == hit =>
+            if now.duration_since(t) < Duration::from_millis(DOUBLE_CLICK_MS)
+                && Some(idx) == hit =>
         {
             true
         }
@@ -338,8 +339,8 @@ pub fn on_right_release(state: &mut DesktopState, cx: f32, cy: f32) {
     };
     let hovered = radial_menu::hit(r, &state.radial_items, cx, cy);
     let elapsed_ms = r.opened_at.elapsed().as_millis();
-    let moved =
-        ((cx - r.press_x).powi(2) + (cy - r.press_y).powi(2)).sqrt() > radial_menu::TAP_MOVE_THRESHOLD;
+    let moved = ((cx - r.press_x).powi(2) + (cy - r.press_y).powi(2)).sqrt()
+        > radial_menu::TAP_MOVE_THRESHOLD;
     let already_latched = r.latched;
 
     match hovered {
@@ -411,7 +412,11 @@ pub fn dispatch_menu_action(
 }
 
 /// Handle a keyboard keysym while a rename is active. Returns true if handled.
-pub fn handle_rename_key(state: &mut DesktopState, ch: Option<char>, key_action: KeyAction) -> bool {
+pub fn handle_rename_key(
+    state: &mut DesktopState,
+    ch: Option<char>,
+    key_action: KeyAction,
+) -> bool {
     let Some(rn) = &mut state.renaming else {
         return false;
     };

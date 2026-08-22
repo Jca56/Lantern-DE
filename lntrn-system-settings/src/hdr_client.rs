@@ -97,10 +97,16 @@ impl HdrClient {
             loop {
                 line.clear();
                 match reader.read_line(&mut line) {
-                    Ok(0) => { disconnected = true; break; }
+                    Ok(0) => {
+                        disconnected = true;
+                        break;
+                    }
                     Ok(_) => lines.push(line.trim().to_string()),
                     Err(e) if e.kind() == ErrorKind::WouldBlock => break,
-                    Err(_) => { disconnected = true; break; }
+                    Err(_) => {
+                        disconnected = true;
+                        break;
+                    }
                 }
             }
         }
@@ -161,13 +167,23 @@ impl HdrClient {
 
     /// Whether the named output is HDR-capable.
     pub fn is_capable(&self, output: &str) -> bool {
-        self.caps.get(output).map(|c| c.hdr_capable).unwrap_or(false)
+        self.caps
+            .get(output)
+            .map(|c| c.hdr_capable)
+            .unwrap_or(false)
     }
 
     /// Send a live HDR enable/disable request to the compositor.
     pub fn set_hdr(&mut self, output: &str, enable: bool, sdr_nits: u32) {
-        let Some(stream) = self.stream.as_mut() else { return };
-        let line = format!("set:{}:{}:{}\n", output, if enable { 1 } else { 0 }, sdr_nits);
+        let Some(stream) = self.stream.as_mut() else {
+            return;
+        };
+        let line = format!(
+            "set:{}:{}:{}\n",
+            output,
+            if enable { 1 } else { 0 },
+            sdr_nits
+        );
         if stream.write_all(line.as_bytes()).is_err() {
             self.stream = None;
             self.reader = None;

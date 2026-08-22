@@ -13,11 +13,11 @@ use std::path::PathBuf;
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
+use self::hidden::Hidden;
+use self::pins::Pins;
 use crate::render::IconRequest;
 use crate::search::apps::{AppsProvider, DesktopEntry};
 use crate::search::input;
-use self::hidden::Hidden;
-use self::pins::Pins;
 
 pub struct Launcher {
     pins: Pins,
@@ -139,7 +139,10 @@ impl Launcher {
         };
         self.pins.reorder(items_from, items_to);
         tracing::info!(
-            visible_from, visible_to, items_from, items_to,
+            visible_from,
+            visible_to,
+            items_from,
+            items_to,
             "pins reordered"
         );
     }
@@ -184,10 +187,10 @@ pub fn path_icon(path: &std::path::Path, is_dir: bool) -> (String, String) {
         .map(|s| s.to_string_lossy().to_ascii_lowercase())
         .unwrap_or_default();
     match ext.as_str() {
-        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tif" | "tiff" | "svg"
-        | "ico" | "heic" | "heif" | "avif" => ("__pin_image".into(), "image-x-generic".into()),
-        "mp4" | "mkv" | "mov" | "avi" | "webm" | "wmv" | "flv" | "mpg" | "mpeg"
-        | "m4v" | "3gp" | "ogv" => ("__pin_video".into(), "video-x-generic".into()),
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tif" | "tiff" | "svg" | "ico"
+        | "heic" | "heif" | "avif" => ("__pin_image".into(), "image-x-generic".into()),
+        "mp4" | "mkv" | "mov" | "avi" | "webm" | "wmv" | "flv" | "mpg" | "mpeg" | "m4v" | "3gp"
+        | "ogv" => ("__pin_video".into(), "video-x-generic".into()),
         _ => ("__pin_file".into(), "text-x-generic".into()),
     }
 }
@@ -220,12 +223,7 @@ pub fn pins_row_top_y(top_y: f32, scale: f32) -> f32 {
 
 /// Logical-pixel rect for the i-th pin tile. Layout mirrors `draw`.
 #[allow(dead_code)] // kept for future hit-test consumers (drag-snap, hover)
-pub fn pin_tile_rect(
-    panel: Rect,
-    scale: f32,
-    row_top: f32,
-    idx: usize,
-) -> Rect {
+pub fn pin_tile_rect(panel: Rect, scale: f32, row_top: f32, idx: usize) -> Rect {
     let pad = input::SEARCH_HORIZONTAL_PAD * scale;
     let tile_size = PIN_TILE_SIZE * scale;
     let tile_gap = PIN_TILE_GAP * scale;
@@ -269,13 +267,24 @@ pub fn draw_pin_drag_overlay(
 
     // Drop indicator: a vertical accent-gold pill between two tiles
     // (or at the row's edge for first/last positions).
-    let to = pin_drop_slot(panel, scale, row_top, pinned.len(), drag.current_x, drag.current_y);
+    let to = pin_drop_slot(
+        panel,
+        scale,
+        row_top,
+        pinned.len(),
+        drag.current_x,
+        drag.current_y,
+    );
     let pad = input::SEARCH_HORIZONTAL_PAD * scale;
     let tile_size = PIN_TILE_SIZE * scale;
     let tile_gap = PIN_TILE_GAP * scale;
     let avail_w = panel.w - pad * 2.0;
     let cols = (((avail_w + tile_gap) / (tile_size + tile_gap)).floor() as usize).max(1);
-    let indicator_row = if to == pinned.len() { (to.saturating_sub(1)) / cols } else { to / cols };
+    let indicator_row = if to == pinned.len() {
+        (to.saturating_sub(1)) / cols
+    } else {
+        to / cols
+    };
     let indicator_col = if to == pinned.len() {
         (pinned.len() - indicator_row * cols).min(cols)
     } else {
@@ -287,13 +296,9 @@ pub fn draw_pin_drag_overlay(
     let cell_h = tile_size + label_gap + label_font;
     let row_y = row_top + indicator_row as f32 * (cell_h + row_gap);
     let col_with_gap = tile_size + tile_gap;
-    let indicator_x = panel.x + pad + indicator_col as f32 * col_with_gap - tile_gap * 0.5 - 1.5 * scale;
-    let indicator = Rect::new(
-        indicator_x,
-        row_y,
-        3.0 * scale,
-        tile_size,
-    );
+    let indicator_x =
+        panel.x + pad + indicator_col as f32 * col_with_gap - tile_gap * 0.5 - 1.5 * scale;
+    let indicator = Rect::new(indicator_x, row_y, 3.0 * scale, tile_size);
     painter.rect_filled(indicator, 1.5 * scale, accent_color(0.85 * alpha));
 
     // Ghost icon following the cursor — slightly smaller + translucent.

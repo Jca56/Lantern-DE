@@ -103,7 +103,11 @@ pub fn draw_content_list(
 ) {
     let searching = search_root.is_some();
     let m = crate::layout::list_zoom_multiplier(zoom);
-    let row_h = if searching { 56.0 * m * s } else { 40.0 * m * s };
+    let row_h = if searching {
+        56.0 * m * s
+    } else {
+        40.0 * m * s
+    };
     let font = FontSize::Custom(24.0 * m * s);
     let small_font = FontSize::Custom(20.0 * m * s);
     let path_font = FontSize::Custom(16.0 * m * s);
@@ -118,25 +122,30 @@ pub fn draw_content_list(
     // below still delimit the row from the file list.
     painter.rect_filled(
         Rect::new(content_rect.x, hdr_y + hdr_h - 1.0, content_rect.w, 1.0),
-        0.0, palette.muted.with_alpha(0.2),
+        0.0,
+        palette.muted.with_alpha(0.2),
     );
     let (name_x, size_x, date_x) = list_columns(content_rect, m, s);
     let size_w = 110.0 * m * s;
     let date_w = 180.0 * m * s;
     let hdr_font = FontSize::Custom(20.0 * m * s);
     TextLabel::new("Name", name_x, hdr_y + 5.0 * m * s)
-        .size(hdr_font).color(palette.text_secondary)
+        .size(hdr_font)
+        .color(palette.text_secondary)
         .draw(text, screen.0, screen.1);
     if searching {
         TextLabel::new("Location", size_x, hdr_y + 5.0 * m * s)
-            .size(hdr_font).color(palette.text_secondary)
+            .size(hdr_font)
+            .color(palette.text_secondary)
             .draw(text, screen.0, screen.1);
     } else {
         TextLabel::new("Size", size_x, hdr_y + 5.0 * m * s)
-            .size(hdr_font).color(palette.text_secondary)
+            .size(hdr_font)
+            .color(palette.text_secondary)
             .draw(text, screen.0, screen.1);
         TextLabel::new("Modified", date_x, hdr_y + 5.0 * m * s)
-            .size(hdr_font).color(palette.text_secondary)
+            .size(hdr_font)
+            .color(palette.text_secondary)
             .draw(text, screen.0, screen.1);
     }
 
@@ -147,7 +156,9 @@ pub fn draw_content_list(
 
     for (index, entry) in entries.iter().enumerate() {
         let y = base_y + hdr_h + index as f32 * row_h;
-        if y + row_h < content_top || y > content_bottom { continue; }
+        if y + row_h < content_top || y > content_bottom {
+            continue;
+        }
 
         let row_rect = Rect::new(content_rect.x, y, content_rect.w, row_h);
         let is_dragging = drag_item == Some(index);
@@ -159,7 +170,10 @@ pub fn draw_content_list(
         let (hl, radius) = if searching {
             (row_rect, 0.0)
         } else {
-            (list_row_hit_rect(text, entry, content_rect, y, row_h, s, zoom), 6.0 * s)
+            (
+                list_row_hit_rect(text, entry, content_rect, y, row_h, s, zoom),
+                6.0 * s,
+            )
         };
         if entry.selected {
             let tint = selection_tint(palette);
@@ -176,7 +190,9 @@ pub fn draw_content_list(
             painter.rect_filled(row_rect, 0.0, Color::WHITE.with_alpha(0.02));
         }
 
-        if renaming == Some(index) { continue; }
+        if renaming == Some(index) {
+            continue;
+        }
 
         // Mini icon (fallback when no texture icon loaded)
         if !has_icon.get(index).copied().unwrap_or(false) {
@@ -184,10 +200,22 @@ pub fn draw_content_list(
             let icon_sz = 24.0 * m * s;
             let icon_y = y + (row_h - icon_sz) * 0.5;
             if entry.is_dir {
-                painter.rect_filled(Rect::new(icon_x, icon_y + 4.0*m*s, icon_sz, icon_sz - 6.0*m*s), 2.0*s, palette.accent.with_alpha(0.5 * alpha));
-                painter.rect_filled(Rect::new(icon_x, icon_y + 2.0*m*s, icon_sz * 0.45, 4.0*m*s), 1.0*s, palette.accent.with_alpha(0.5 * alpha));
+                painter.rect_filled(
+                    Rect::new(icon_x, icon_y + 4.0 * m * s, icon_sz, icon_sz - 6.0 * m * s),
+                    2.0 * s,
+                    palette.accent.with_alpha(0.5 * alpha),
+                );
+                painter.rect_filled(
+                    Rect::new(icon_x, icon_y + 2.0 * m * s, icon_sz * 0.45, 4.0 * m * s),
+                    1.0 * s,
+                    palette.accent.with_alpha(0.5 * alpha),
+                );
             } else {
-                painter.rect_filled(Rect::new(icon_x + 2.0*m*s, icon_y, icon_sz - 4.0*m*s, icon_sz), 2.0*s, Color::from_rgb8(72, 72, 72).with_alpha(alpha));
+                painter.rect_filled(
+                    Rect::new(icon_x + 2.0 * m * s, icon_y, icon_sz - 4.0 * m * s, icon_sz),
+                    2.0 * s,
+                    Color::from_rgb8(72, 72, 72).with_alpha(alpha),
+                );
             }
         }
 
@@ -204,8 +232,21 @@ pub fn draw_content_list(
                 let r = 4.0 * m * s;
                 let cx = icon_x + icon_sz - r * 0.5;
                 let cy = icon_y + icon_sz - r * 0.5;
-                painter.rect_filled(Rect::new(cx - r - 1.0 * s, cy - r - 1.0 * s, (r + 1.0 * s) * 2.0, (r + 1.0 * s) * 2.0), r + 1.0 * s, palette.surface.with_alpha(alpha));
-                painter.rect_filled(Rect::new(cx - r, cy - r, r * 2.0, r * 2.0), r, color.with_alpha(alpha));
+                painter.rect_filled(
+                    Rect::new(
+                        cx - r - 1.0 * s,
+                        cy - r - 1.0 * s,
+                        (r + 1.0 * s) * 2.0,
+                        (r + 1.0 * s) * 2.0,
+                    ),
+                    r + 1.0 * s,
+                    palette.surface.with_alpha(alpha),
+                );
+                painter.rect_filled(
+                    Rect::new(cx - r, cy - r, r * 2.0, r * 2.0),
+                    r,
+                    color.with_alpha(alpha),
+                );
             }
         }
 
@@ -222,24 +263,32 @@ pub fn draw_content_list(
                 truncate_to_width(text, &entry.name, max_name_w, 24.0 * m * s)
             };
             TextLabel::new(&display, name_x, name_y)
-                .size(font).color(name_color).max_width(if entry.selected { 9999.0 } else { max_name_w })
+                .size(font)
+                .color(name_color)
+                .max_width(if entry.selected { 9999.0 } else { max_name_w })
                 .draw(text, screen.0, screen.1);
 
             // Parent path (relative to search root)
             let parent = entry.path.parent().unwrap_or(&entry.path);
             let rel_path = if let Some(root) = search_root {
-                parent.strip_prefix(root)
+                parent
+                    .strip_prefix(root)
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_else(|_| parent.to_string_lossy().to_string())
             } else {
                 parent.to_string_lossy().to_string()
             };
-            let path_display = if rel_path.is_empty() { "./".to_string() } else { format!("./{rel_path}") };
+            let path_display = if rel_path.is_empty() {
+                "./".to_string()
+            } else {
+                format!("./{rel_path}")
+            };
             let path_y = name_y + 26.0 * m * s;
             let max_path_w = content_rect.w - 50.0 * m * s;
             let path_display = truncate_to_width(text, &path_display, max_path_w, 16.0 * m * s);
             TextLabel::new(&path_display, name_x, path_y)
-                .size(path_font).color(palette.muted.with_alpha(alpha * 0.7))
+                .size(path_font)
+                .color(palette.muted.with_alpha(alpha * 0.7))
                 .max_width(max_path_w)
                 .draw(text, screen.0, screen.1);
         } else {
@@ -255,28 +304,42 @@ pub fn draw_content_list(
                 truncate_to_width(text, &entry.name, max_name_w, 24.0 * m * s)
             };
             TextLabel::new(&display, name_x, text_y)
-                .size(font).color(name_color).max_width(if entry.selected { 9999.0 } else { max_name_w })
+                .size(font)
+                .color(name_color)
+                .max_width(if entry.selected { 9999.0 } else { max_name_w })
                 .draw(text, screen.0, screen.1);
 
             // Size
-            let size_str = if entry.is_dir { "--".to_string() } else { format_bytes(entry.size) };
+            let size_str = if entry.is_dir {
+                "--".to_string()
+            } else {
+                format_bytes(entry.size)
+            };
             TextLabel::new(&size_str, size_x, text_y)
-                .size(small_font).color(palette.muted.with_alpha(alpha))
+                .size(small_font)
+                .color(palette.muted.with_alpha(alpha))
                 .max_width(size_w - 8.0 * m * s)
                 .draw(text, screen.0, screen.1);
 
             // Modified date
             let date_str = format_date(entry.modified);
             TextLabel::new(&date_str, date_x, text_y)
-                .size(small_font).color(palette.muted.with_alpha(alpha))
+                .size(small_font)
+                .color(palette.muted.with_alpha(alpha))
                 .max_width(date_w)
                 .draw(text, screen.0, screen.1);
         }
 
         // Divider
         painter.rect_filled(
-            Rect::new(content_rect.x + 8.0*m*s, y + row_h - 0.5*s, content_rect.w - 16.0*m*s, 0.5*s),
-            0.0, Color::WHITE.with_alpha(0.05),
+            Rect::new(
+                content_rect.x + 8.0 * m * s,
+                y + row_h - 0.5 * s,
+                content_rect.w - 16.0 * m * s,
+                0.5 * s,
+            ),
+            0.0,
+            Color::WHITE.with_alpha(0.05),
         );
     }
     area.end(painter, text);
@@ -314,7 +377,9 @@ pub fn draw_content_tree(
 
     for (index, te) in tree_entries.iter().enumerate() {
         let y = base_y + index as f32 * row_h;
-        if y + row_h < content_top || y > content_bottom { continue; }
+        if y + row_h < content_top || y > content_bottom {
+            continue;
+        }
 
         let x_offset = te.depth as f32 * indent;
         let row_x = content_rect.x + 8.0 * m * s + x_offset;
@@ -334,9 +399,24 @@ pub fn draw_content_tree(
 
         // Draw tree guide lines
         if te.depth > 0 {
-            let guide_x = content_rect.x + 8.0 * m * s + (te.depth as f32 - 1.0) * indent + 8.0 * m * s;
-            painter.line(guide_x, y, guide_x, y + row_h * 0.5, 1.0 * s, palette.muted.with_alpha(0.2));
-            painter.line(guide_x, y + row_h * 0.5, guide_x + indent * 0.6, y + row_h * 0.5, 1.0 * s, palette.muted.with_alpha(0.2));
+            let guide_x =
+                content_rect.x + 8.0 * m * s + (te.depth as f32 - 1.0) * indent + 8.0 * m * s;
+            painter.line(
+                guide_x,
+                y,
+                guide_x,
+                y + row_h * 0.5,
+                1.0 * s,
+                palette.muted.with_alpha(0.2),
+            );
+            painter.line(
+                guide_x,
+                y + row_h * 0.5,
+                guide_x + indent * 0.6,
+                y + row_h * 0.5,
+                1.0 * s,
+                palette.muted.with_alpha(0.2),
+            );
         }
 
         // Expand/collapse arrow for directories
@@ -347,12 +427,40 @@ pub fn draw_content_tree(
             let arrow_color = palette.text_secondary.with_alpha(alpha);
             if te.is_expanded {
                 // Down arrow (▼)
-                painter.line(arrow_x - ar, arrow_y - ar * 0.5, arrow_x, arrow_y + ar * 0.5, 1.5*s, arrow_color);
-                painter.line(arrow_x, arrow_y + ar * 0.5, arrow_x + ar, arrow_y - ar * 0.5, 1.5*s, arrow_color);
+                painter.line(
+                    arrow_x - ar,
+                    arrow_y - ar * 0.5,
+                    arrow_x,
+                    arrow_y + ar * 0.5,
+                    1.5 * s,
+                    arrow_color,
+                );
+                painter.line(
+                    arrow_x,
+                    arrow_y + ar * 0.5,
+                    arrow_x + ar,
+                    arrow_y - ar * 0.5,
+                    1.5 * s,
+                    arrow_color,
+                );
             } else {
                 // Right arrow (▶)
-                painter.line(arrow_x - ar * 0.5, arrow_y - ar, arrow_x + ar * 0.5, arrow_y, 1.5*s, arrow_color);
-                painter.line(arrow_x + ar * 0.5, arrow_y, arrow_x - ar * 0.5, arrow_y + ar, 1.5*s, arrow_color);
+                painter.line(
+                    arrow_x - ar * 0.5,
+                    arrow_y - ar,
+                    arrow_x + ar * 0.5,
+                    arrow_y,
+                    1.5 * s,
+                    arrow_color,
+                );
+                painter.line(
+                    arrow_x + ar * 0.5,
+                    arrow_y,
+                    arrow_x - ar * 0.5,
+                    arrow_y + ar,
+                    1.5 * s,
+                    arrow_color,
+                );
             }
         }
 
@@ -362,10 +470,22 @@ pub fn draw_content_tree(
         let icon_y = y + (row_h - icon_sz) * 0.5;
         if !has_icon.get(index).copied().unwrap_or(false) {
             if te.entry.is_dir {
-                painter.rect_filled(Rect::new(icon_x, icon_y + 3.0*m*s, icon_sz, icon_sz - 5.0*m*s), 2.0*s, palette.accent.with_alpha(0.5 * alpha));
-                painter.rect_filled(Rect::new(icon_x, icon_y + 1.0*m*s, icon_sz * 0.4, 3.0*m*s), 1.0*s, palette.accent.with_alpha(0.5 * alpha));
+                painter.rect_filled(
+                    Rect::new(icon_x, icon_y + 3.0 * m * s, icon_sz, icon_sz - 5.0 * m * s),
+                    2.0 * s,
+                    palette.accent.with_alpha(0.5 * alpha),
+                );
+                painter.rect_filled(
+                    Rect::new(icon_x, icon_y + 1.0 * m * s, icon_sz * 0.4, 3.0 * m * s),
+                    1.0 * s,
+                    palette.accent.with_alpha(0.5 * alpha),
+                );
             } else {
-                painter.rect_filled(Rect::new(icon_x + 1.0*m*s, icon_y, icon_sz - 2.0*m*s, icon_sz), 2.0*s, Color::from_rgb8(72, 72, 72).with_alpha(alpha));
+                painter.rect_filled(
+                    Rect::new(icon_x + 1.0 * m * s, icon_y, icon_sz - 2.0 * m * s, icon_sz),
+                    2.0 * s,
+                    Color::from_rgb8(72, 72, 72).with_alpha(alpha),
+                );
             }
         }
 
@@ -383,7 +503,9 @@ pub fn draw_content_tree(
         // *estimate* undertrims wide glyphs and still wraps, so measure exactly.
         let display = truncate_to_width(text, &te.entry.name, max_w, 24.0 * m * s);
         TextLabel::new(&display, name_x, text_y)
-            .size(font).color(name_color).max_width(max_w)
+            .size(font)
+            .color(name_color)
+            .max_width(max_w)
             .draw(text, screen.0, screen.1);
     }
     area.end(painter, text);
@@ -408,8 +530,12 @@ fn format_bytes(size: u64) -> String {
 }
 
 fn format_date(modified: Option<SystemTime>) -> String {
-    let Some(time) = modified else { return "--".into() };
-    let Ok(dur) = time.duration_since(SystemTime::UNIX_EPOCH) else { return "--".into() };
+    let Some(time) = modified else {
+        return "--".into();
+    };
+    let Ok(dur) = time.duration_since(SystemTime::UNIX_EPOCH) else {
+        return "--".into();
+    };
     let secs = dur.as_secs();
     let days = secs / 86400;
     let mut y = 1970u64;
@@ -417,13 +543,30 @@ fn format_date(modified: Option<SystemTime>) -> String {
     loop {
         let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
         let year_days = if leap { 366 } else { 365 };
-        if remaining < year_days { break; }
+        if remaining < year_days {
+            break;
+        }
         remaining -= year_days;
         y += 1;
     }
     let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-    let month_days = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    let month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let month_days = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
+    let month_names = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
     let mut m = 0usize;
     while m < 12 && remaining >= month_days[m] {
         remaining -= month_days[m];

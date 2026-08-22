@@ -97,15 +97,34 @@ pub(crate) struct State {
 impl State {
     fn new() -> Self {
         Self {
-            running: true, configured: false, frame_done: true,
-            width: 0, height: 0, scale: 1, output_phys_width: 0, maximized: false,
-            compositor: None, wm_base: None, viewporter: None,
-            surface: None, xdg_surface: None, toplevel: None, seat: None,
-            cursor_x: 0.0, cursor_y: 0.0, pointer_in_surface: false,
-            left_pressed: false, left_released: false, right_pressed: false,
-            scroll_delta: 0.0, pointer_serial: 0, enter_serial: 0,
-            cursor_shape_mgr: None, cursor_shape_device: None,
-            current_cursor_shape: None, pointer: None,
+            running: true,
+            configured: false,
+            frame_done: true,
+            width: 0,
+            height: 0,
+            scale: 1,
+            output_phys_width: 0,
+            maximized: false,
+            compositor: None,
+            wm_base: None,
+            viewporter: None,
+            surface: None,
+            xdg_surface: None,
+            toplevel: None,
+            seat: None,
+            cursor_x: 0.0,
+            cursor_y: 0.0,
+            pointer_in_surface: false,
+            left_pressed: false,
+            left_released: false,
+            right_pressed: false,
+            scroll_delta: 0.0,
+            pointer_serial: 0,
+            enter_serial: 0,
+            cursor_shape_mgr: None,
+            cursor_shape_device: None,
+            current_cursor_shape: None,
+            pointer: None,
             key_pressed: None,
             popup_backend: None,
             popup_closed: false,
@@ -121,24 +140,47 @@ impl State {
         }
     }
 
-    fn phys_width(&self) -> u32 { (self.width as f64 * self.fractional_scale()).round() as u32 }
-    fn phys_height(&self) -> u32 { (self.height as f64 * self.fractional_scale()).round() as u32 }
+    fn phys_width(&self) -> u32 {
+        (self.width as f64 * self.fractional_scale()).round() as u32
+    }
+    fn phys_height(&self) -> u32 {
+        (self.height as f64 * self.fractional_scale()).round() as u32
+    }
 }
 
 // ── Dispatch impls ──────────────────────────────────────────────────────────
 
 impl Dispatch<wl_registry::WlRegistry, ()> for State {
     fn event(
-        state: &mut Self, registry: &wl_registry::WlRegistry,
-        event: wl_registry::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>,
+        state: &mut Self,
+        registry: &wl_registry::WlRegistry,
+        event: wl_registry::Event,
+        _: &(),
+        _: &Connection,
+        qh: &QueueHandle<Self>,
     ) {
-        if let wl_registry::Event::Global { name, interface, version } = event {
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
             match interface.as_str() {
-                "wl_compositor" => { state.compositor = Some(registry.bind(name, version.min(6), qh, ())); }
-                "xdg_wm_base" => { state.wm_base = Some(registry.bind(name, version.min(5), qh, ())); }
-                "wp_viewporter" => { state.viewporter = Some(registry.bind(name, version.min(1), qh, ())); }
-                "wl_output" => { let _: wl_output::WlOutput = registry.bind(name, version.min(4), qh, ()); }
-                "wl_seat" => { state.seat = Some(registry.bind(name, version.min(9), qh, ())); }
+                "wl_compositor" => {
+                    state.compositor = Some(registry.bind(name, version.min(6), qh, ()));
+                }
+                "xdg_wm_base" => {
+                    state.wm_base = Some(registry.bind(name, version.min(5), qh, ()));
+                }
+                "wp_viewporter" => {
+                    state.viewporter = Some(registry.bind(name, version.min(1), qh, ()));
+                }
+                "wl_output" => {
+                    let _: wl_output::WlOutput = registry.bind(name, version.min(4), qh, ());
+                }
+                "wl_seat" => {
+                    state.seat = Some(registry.bind(name, version.min(9), qh, ()));
+                }
                 "wp_cursor_shape_manager_v1" => {
                     state.cursor_shape_mgr = Some(registry.bind(name, version.min(1), qh, ()));
                 }
@@ -149,31 +191,73 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
 }
 
 impl Dispatch<wl_compositor::WlCompositor, ()> for State {
-    fn event(_: &mut Self, _: &wl_compositor::WlCompositor, _: wl_compositor::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_compositor::WlCompositor,
+        _: wl_compositor::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wl_surface::WlSurface, ()> for State {
-    fn event(_: &mut Self, _: &wl_surface::WlSurface, _: wl_surface::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_surface::WlSurface,
+        _: wl_surface::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wp_viewporter::WpViewporter, ()> for State {
-    fn event(_: &mut Self, _: &wp_viewporter::WpViewporter, _: wp_viewporter::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wp_viewporter::WpViewporter,
+        _: wp_viewporter::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wp_viewport::WpViewport, ()> for State {
-    fn event(_: &mut Self, _: &wp_viewport::WpViewport, _: wp_viewport::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wp_viewport::WpViewport,
+        _: wp_viewport::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 impl Dispatch<xdg_wm_base::XdgWmBase, ()> for State {
     fn event(
-        _: &mut Self, wm_base: &xdg_wm_base::XdgWmBase,
-        event: xdg_wm_base::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        _: &mut Self,
+        wm_base: &xdg_wm_base::XdgWmBase,
+        event: xdg_wm_base::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
-        if let xdg_wm_base::Event::Ping { serial } = event { wm_base.pong(serial); }
+        if let xdg_wm_base::Event::Ping { serial } = event {
+            wm_base.pong(serial);
+        }
     }
 }
 
 impl Dispatch<xdg_surface::XdgSurface, ()> for State {
     fn event(
-        state: &mut Self, xdg_surface: &xdg_surface::XdgSurface,
-        event: xdg_surface::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        xdg_surface: &xdg_surface::XdgSurface,
+        event: xdg_surface::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         if let xdg_surface::Event::Configure { serial } = event {
             xdg_surface.ack_configure(serial);
@@ -185,19 +269,33 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for State {
 
 impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
     fn event(
-        state: &mut Self, _: &xdg_toplevel::XdgToplevel,
-        event: xdg_toplevel::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        _: &xdg_toplevel::XdgToplevel,
+        event: xdg_toplevel::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         match event {
-            xdg_toplevel::Event::Configure { width, height, states } => {
-                if width > 0 { state.width = width as u32; }
-                if height > 0 { state.height = height as u32; }
+            xdg_toplevel::Event::Configure {
+                width,
+                height,
+                states,
+            } => {
+                if width > 0 {
+                    state.width = width as u32;
+                }
+                if height > 0 {
+                    state.height = height as u32;
+                }
                 state.maximized = states.chunks_exact(4).any(|chunk| {
                     let val = u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
                     val == xdg_toplevel::State::Maximized as u32
                 });
             }
-            xdg_toplevel::Event::Close => { state.running = false; }
+            xdg_toplevel::Event::Close => {
+                state.running = false;
+            }
             _ => {}
         }
     }
@@ -205,29 +303,51 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
 
 impl Dispatch<wl_output::WlOutput, ()> for State {
     fn event(
-        state: &mut Self, _: &wl_output::WlOutput,
-        event: wl_output::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        _: &wl_output::WlOutput,
+        event: wl_output::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         match event {
-            wl_output::Event::Scale { factor } => { state.scale = factor; }
-            wl_output::Event::Mode { width, .. } => { state.output_phys_width = width as u32; }
+            wl_output::Event::Scale { factor } => {
+                state.scale = factor;
+            }
+            wl_output::Event::Mode { width, .. } => {
+                state.output_phys_width = width as u32;
+            }
             _ => {}
         }
     }
 }
 
 impl Dispatch<wl_callback::WlCallback, ()> for State {
-    fn event(state: &mut Self, _: &wl_callback::WlCallback, _: wl_callback::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+    fn event(
+        state: &mut Self,
+        _: &wl_callback::WlCallback,
+        _: wl_callback::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
         state.frame_done = true;
     }
 }
 
 impl Dispatch<wl_seat::WlSeat, ()> for State {
     fn event(
-        state: &mut Self, seat: &wl_seat::WlSeat,
-        event: wl_seat::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>,
+        state: &mut Self,
+        seat: &wl_seat::WlSeat,
+        event: wl_seat::Event,
+        _: &(),
+        _: &Connection,
+        qh: &QueueHandle<Self>,
     ) {
-        if let wl_seat::Event::Capabilities { capabilities: WEnum::Value(cap) } = event {
+        if let wl_seat::Event::Capabilities {
+            capabilities: WEnum::Value(cap),
+        } = event
+        {
             if cap.contains(wl_seat::Capability::Pointer) {
                 let ptr = seat.get_pointer(qh, ());
                 // Create cursor shape device if manager is available
@@ -236,18 +356,30 @@ impl Dispatch<wl_seat::WlSeat, ()> for State {
                 }
                 state.pointer = Some(ptr);
             }
-            if cap.contains(wl_seat::Capability::Keyboard) { seat.get_keyboard(qh, ()); }
+            if cap.contains(wl_seat::Capability::Keyboard) {
+                seat.get_keyboard(qh, ());
+            }
         }
     }
 }
 
 impl Dispatch<wl_pointer::WlPointer, ()> for State {
     fn event(
-        state: &mut Self, _: &wl_pointer::WlPointer,
-        event: wl_pointer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        _: &wl_pointer::WlPointer,
+        event: wl_pointer::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         match event {
-            wl_pointer::Event::Enter { serial, surface, surface_x, surface_y, .. } => {
+            wl_pointer::Event::Enter {
+                serial,
+                surface,
+                surface_x,
+                surface_y,
+                ..
+            } => {
                 state.pointer_in_surface = true;
                 state.cursor_x = surface_x;
                 state.cursor_y = surface_y;
@@ -261,18 +393,33 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 state.pointer_surface = None;
                 state.frame_done = true;
             }
-            wl_pointer::Event::Motion { surface_x, surface_y, .. } => {
+            wl_pointer::Event::Motion {
+                surface_x,
+                surface_y,
+                ..
+            } => {
                 state.cursor_x = surface_x;
                 state.cursor_y = surface_y;
                 state.frame_done = true;
             }
-            wl_pointer::Event::Button { button, state: btn_state, serial, .. } => {
+            wl_pointer::Event::Button {
+                button,
+                state: btn_state,
+                serial,
+                ..
+            } => {
                 state.pointer_serial = serial;
                 let pressed = btn_state == WEnum::Value(wl_pointer::ButtonState::Pressed);
                 let released = btn_state == WEnum::Value(wl_pointer::ButtonState::Released);
-                if button == BTN_LEFT && pressed { state.left_pressed = true; }
-                if button == BTN_LEFT && released { state.left_released = true; }
-                if button == BTN_RIGHT && pressed { state.right_pressed = true; }
+                if button == BTN_LEFT && pressed {
+                    state.left_pressed = true;
+                }
+                if button == BTN_LEFT && released {
+                    state.left_released = true;
+                }
+                if button == BTN_RIGHT && pressed {
+                    state.right_pressed = true;
+                }
                 state.frame_done = true;
             }
             wl_pointer::Event::Axis { axis, value, .. } => {
@@ -288,11 +435,19 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
 
 impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
     fn event(
-        state: &mut Self, _: &wl_keyboard::WlKeyboard,
-        event: wl_keyboard::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        _: &wl_keyboard::WlKeyboard,
+        event: wl_keyboard::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         match event {
-            wl_keyboard::Event::Key { key, state: key_state, .. } => {
+            wl_keyboard::Event::Key {
+                key,
+                state: key_state,
+                ..
+            } => {
                 if key_state == WEnum::Value(wl_keyboard::KeyState::Pressed) {
                     state.key_pressed = Some(key);
                 }
@@ -304,10 +459,26 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
 }
 
 impl Dispatch<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1, ()> for State {
-    fn event(_: &mut Self, _: &wp_cursor_shape_manager_v1::WpCursorShapeManagerV1, _: wp_cursor_shape_manager_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wp_cursor_shape_manager_v1::WpCursorShapeManagerV1,
+        _: wp_cursor_shape_manager_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1, ()> for State {
-    fn event(_: &mut Self, _: &wp_cursor_shape_device_v1::WpCursorShapeDeviceV1, _: wp_cursor_shape_device_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wp_cursor_shape_device_v1::WpCursorShapeDeviceV1,
+        _: wp_cursor_shape_device_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 // ── Edge resize helper ──────────────────────────────────────────────────────
@@ -357,13 +528,21 @@ pub fn run() -> Result<()> {
     display.get_registry(&qh, ());
     event_queue.roundtrip(&mut state)?;
 
-    let compositor = state.compositor.clone()
+    let compositor = state
+        .compositor
+        .clone()
         .ok_or_else(|| anyhow!("wl_compositor not available"))?;
-    let wm_base = state.wm_base.clone()
+    let wm_base = state
+        .wm_base
+        .clone()
         .ok_or_else(|| anyhow!("xdg_wm_base not available"))?;
 
-    if state.width == 0 { state.width = 960; }
-    if state.height == 0 { state.height = 640; }
+    if state.width == 0 {
+        state.width = 960;
+    }
+    if state.height == 0 {
+        state.height = 640;
+    }
 
     let surface = compositor.create_surface(&qh, ());
     let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
@@ -407,9 +586,8 @@ pub fn run() -> Result<()> {
     let mut ix = InteractionContext::new();
     let fox = FoxPalette::dark();
     let mut menu_bar = MenuBar::new(&fox);
-    let mut right_click_menu = lntrn_ui::gpu::ContextMenu::new(
-        lntrn_ui::gpu::ContextMenuStyle::from_palette(&fox),
-    );
+    let mut right_click_menu =
+        lntrn_ui::gpu::ContextMenu::new(lntrn_ui::gpu::ContextMenuStyle::from_palette(&fox));
 
     // Initialize popup backend (clone xdg_surface to avoid borrow conflict)
     {
@@ -417,36 +595,50 @@ pub fn run() -> Result<()> {
         let vp = state.viewporter.as_ref();
         let scale = state.fractional_scale() as f32;
         state.popup_backend = Some(WaylandPopupBackend::new(
-            &conn, &compositor, &wm_base, &xdg_surf, vp, &gpu, scale, &qh,
+            &conn,
+            &compositor,
+            &wm_base,
+            &xdg_surf,
+            vp,
+            &gpu,
+            scale,
+            &qh,
         ));
     }
 
     let menus: Vec<(&str, Vec<MenuItem>)> = vec![
-        ("File", vec![
-            MenuItem::action(1, "New"),
-            MenuItem::action_with(2, "Open", "Ctrl+O"),
-            MenuItem::action_with(3, "Save", "Ctrl+S"),
-            MenuItem::separator(),
-            MenuItem::action_with(4, "Quit", "Ctrl+Q"),
-        ]),
-        ("Edit", vec![
-            MenuItem::action_with(10, "Undo", "Ctrl+Z"),
-            MenuItem::action_with(11, "Redo", "Ctrl+Shift+Z"),
-            MenuItem::separator(),
-            MenuItem::action_with(12, "Cut", "Ctrl+X"),
-            MenuItem::action_with(13, "Copy", "Ctrl+C"),
-            MenuItem::action_with(14, "Paste", "Ctrl+V"),
-        ]),
-        ("View", vec![
-            MenuItem::toggle(20, "Dark Mode", true),
-            MenuItem::toggle(21, "Show Sidebar", true),
-            MenuItem::separator(),
-            MenuItem::action(22, "Zoom In"),
-            MenuItem::action(23, "Zoom Out"),
-        ]),
-        ("Help", vec![
-            MenuItem::action(30, "About"),
-        ]),
+        (
+            "File",
+            vec![
+                MenuItem::action(1, "New"),
+                MenuItem::action_with(2, "Open", "Ctrl+O"),
+                MenuItem::action_with(3, "Save", "Ctrl+S"),
+                MenuItem::separator(),
+                MenuItem::action_with(4, "Quit", "Ctrl+Q"),
+            ],
+        ),
+        (
+            "Edit",
+            vec![
+                MenuItem::action_with(10, "Undo", "Ctrl+Z"),
+                MenuItem::action_with(11, "Redo", "Ctrl+Shift+Z"),
+                MenuItem::separator(),
+                MenuItem::action_with(12, "Cut", "Ctrl+X"),
+                MenuItem::action_with(13, "Copy", "Ctrl+C"),
+                MenuItem::action_with(14, "Paste", "Ctrl+V"),
+            ],
+        ),
+        (
+            "View",
+            vec![
+                MenuItem::toggle(20, "Dark Mode", true),
+                MenuItem::toggle(21, "Show Sidebar", true),
+                MenuItem::separator(),
+                MenuItem::action(22, "Zoom In"),
+                MenuItem::action(23, "Zoom Out"),
+            ],
+        ),
+        ("Help", vec![MenuItem::action(30, "About")]),
     ];
 
     while state.running {
@@ -454,7 +646,9 @@ pub fn run() -> Result<()> {
             eprintln!("[ui-test] dispatch error: {e}");
             break;
         }
-        if !state.frame_done { continue; }
+        if !state.frame_done {
+            continue;
+        }
         state.frame_done = false;
 
         let s = state.fractional_scale() as f32;
@@ -474,7 +668,10 @@ pub fn run() -> Result<()> {
 
         // Determine if pointer is on main surface or popup
         let pointer_on_popup = state.pointer_surface.as_ref().and_then(|ps| {
-            state.popup_backend.as_ref()?.find_popup_id_by_wl_surface(ps)
+            state
+                .popup_backend
+                .as_ref()?
+                .find_popup_id_by_wl_surface(ps)
         });
 
         // Cursor — route to main or popup InteractionContext
@@ -490,7 +687,11 @@ pub fn run() -> Result<()> {
         }
         // Route cursor to the active popup, clear it from all others
         if let Some(backend) = &mut state.popup_backend {
-            let active = if state.pointer_in_surface { pointer_on_popup } else { None };
+            let active = if state.pointer_in_surface {
+                pointer_on_popup
+            } else {
+                None
+            };
             backend.route_cursor(active, cx, cy);
         }
 
@@ -505,7 +706,9 @@ pub fn run() -> Result<()> {
 
         // Keyboard
         if let Some(key) = state.key_pressed.take() {
-            if key == KEY_ESC { state.running = false; }
+            if key == KEY_ESC {
+                state.running = false;
+            }
         }
 
         // Left press
@@ -519,38 +722,45 @@ pub fn run() -> Result<()> {
                     }
                 }
             } else {
-            // Close right-click popup menu on any left click outside
-            if right_click_menu.is_open() {
-                if let Some(backend) = &mut state.popup_backend {
-                    right_click_menu.close_popups(backend);
-                }
-            }
-            let border = 10.0 * s;
-            if let Some(edge) = edge_resize(cx, cy, wf, hf, border) {
-                if let Some(seat) = &state.seat {
-                    toplevel.resize(seat, state.pointer_serial, edge);
-                }
-            } else if menu_bar.on_click(&mut ix, &menus, s) {
-                // Menu bar consumed the click
-            } else if let Some(zone_id) = ix.on_left_pressed() {
-                match zone_id {
-                    ZONE_CLOSE => { state.running = false; }
-                    ZONE_MINIMIZE => { toplevel.set_minimized(); }
-                    ZONE_MAXIMIZE => {
-                        if state.maximized { toplevel.unset_maximized(); }
-                        else { toplevel.set_maximized(); }
+                // Close right-click popup menu on any left click outside
+                if right_click_menu.is_open() {
+                    if let Some(backend) = &mut state.popup_backend {
+                        right_click_menu.close_popups(backend);
                     }
-                    _ => {}
                 }
-            } else {
-                // Title bar drag (only if menu bar isn't open)
-                let title_h = TITLE_BAR_H * s;
-                if cy < title_h && !menu_bar.is_open() {
+                let border = 10.0 * s;
+                if let Some(edge) = edge_resize(cx, cy, wf, hf, border) {
                     if let Some(seat) = &state.seat {
-                        toplevel._move(seat, state.pointer_serial);
+                        toplevel.resize(seat, state.pointer_serial, edge);
+                    }
+                } else if menu_bar.on_click(&mut ix, &menus, s) {
+                    // Menu bar consumed the click
+                } else if let Some(zone_id) = ix.on_left_pressed() {
+                    match zone_id {
+                        ZONE_CLOSE => {
+                            state.running = false;
+                        }
+                        ZONE_MINIMIZE => {
+                            toplevel.set_minimized();
+                        }
+                        ZONE_MAXIMIZE => {
+                            if state.maximized {
+                                toplevel.unset_maximized();
+                            } else {
+                                toplevel.set_maximized();
+                            }
+                        }
+                        _ => {}
+                    }
+                } else {
+                    // Title bar drag (only if menu bar isn't open)
+                    let title_h = TITLE_BAR_H * s;
+                    if cy < title_h && !menu_bar.is_open() {
+                        if let Some(seat) = &state.seat {
+                            toplevel._move(seat, state.pointer_serial);
+                        }
                     }
                 }
-            }
             } // end else (not on popup)
         }
 
@@ -586,14 +796,18 @@ pub fn run() -> Result<()> {
                 MenuItem::separator(),
                 MenuItem::action(53, "Select All"),
                 MenuItem::separator(),
-                MenuItem::submenu(60, "Transform", vec![
-                    MenuItem::action(61, "Uppercase"),
-                    MenuItem::action(62, "Lowercase"),
-                    MenuItem::action(63, "Title Case"),
-                    MenuItem::separator(),
-                    MenuItem::action(64, "Sort Lines"),
-                    MenuItem::action(65, "Reverse Lines"),
-                ]),
+                MenuItem::submenu(
+                    60,
+                    "Transform",
+                    vec![
+                        MenuItem::action(61, "Uppercase"),
+                        MenuItem::action(62, "Lowercase"),
+                        MenuItem::action(63, "Title Case"),
+                        MenuItem::separator(),
+                        MenuItem::action(64, "Sort Lines"),
+                        MenuItem::action(65, "Reverse Lines"),
+                    ],
+                ),
                 MenuItem::separator(),
                 MenuItem::toggle(54, "Word Wrap", true),
                 MenuItem::checkbox(55, "Show Line Numbers", false),
@@ -675,9 +889,10 @@ pub fn run() -> Result<()> {
 
         // Context menus (drawn into painter on top of other shapes)
         menu_bar.context_menu.update(0.016);
-        if let Some(evt) = menu_bar.context_menu.draw(
-            &mut painter, &mut text, &mut ix, sw, sh,
-        ) {
+        if let Some(evt) = menu_bar
+            .context_menu
+            .draw(&mut painter, &mut text, &mut ix, sw, sh)
+        {
             use lntrn_ui::gpu::MenuEvent;
             if matches!(evt, MenuEvent::Action(_)) {
                 menu_bar.close();

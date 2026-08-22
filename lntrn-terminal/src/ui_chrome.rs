@@ -1,7 +1,6 @@
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 use lntrn_ui::gpu::{
-    ContextMenu, ContextMenuStyle, FoxPalette, InteractionContext, MenuBar,
-    MenuEvent, MenuItem,
+    ContextMenu, ContextMenuStyle, FoxPalette, InteractionContext, MenuBar, MenuEvent, MenuItem,
 };
 
 use crate::config::{CursorStylePref, WindowMode};
@@ -113,7 +112,8 @@ impl ChromeState {
     /// without restarting the terminal.
     pub fn refresh_theme(&mut self) {
         self.palette = FoxPalette::current();
-        self.context_menu.set_style(context_menu_style(&self.palette));
+        self.context_menu
+            .set_style(context_menu_style(&self.palette));
     }
 
     pub fn has_overlay(&self) -> bool {
@@ -192,28 +192,48 @@ pub fn build_menus(
     let underline_sel = matches!(cursor_style, CursorStylePref::Underline);
     let beam_sel = matches!(cursor_style, CursorStylePref::Beam);
     vec![
-        ("Files", vec![
-            MenuItem::action(MENU_TOGGLE_SIDEBAR, "Toggle Sidebar"),
-        ]),
-        ("View", vec![
-            MenuItem::slider(MENU_FONT_SLIDER, "Text Size", ((font_size - 6.0) / 24.0).clamp(0.0, 1.0)),
-            MenuItem::separator(),
-            MenuItem::header("Cursor Style"),
-            MenuItem::radio(MENU_CURSOR_BLOCK, CURSOR_STYLE_GROUP, "Block", block_sel),
-            MenuItem::radio(MENU_CURSOR_UNDERLINE, CURSOR_STYLE_GROUP, "Underline", underline_sel),
-            MenuItem::radio(MENU_CURSOR_BEAM, CURSOR_STYLE_GROUP, "Beam", beam_sel),
-            MenuItem::separator(),
-            MenuItem::toggle(MENU_OPEN_BAR_HIDDEN, "Open with Bar Hidden", open_bar_hidden),
-        ]),
-        ("Split", vec![
-            MenuItem::action_with(MENU_SPLIT_RIGHT, "Split Right", "Ctrl+Shift+D"),
-            MenuItem::action_with(MENU_SPLIT_DOWN, "Split Down", "Ctrl+Shift+E"),
-            MenuItem::separator(),
-            MenuItem::action_with(MENU_CLOSE_PANE, "Close Pane", "Ctrl+Shift+W"),
-            MenuItem::separator(),
-            MenuItem::action_with(MENU_PREV_PANE, "Prev Pane", "Ctrl+Shift+["),
-            MenuItem::action_with(MENU_NEXT_PANE, "Next Pane", "Ctrl+Shift+]"),
-        ]),
+        (
+            "Files",
+            vec![MenuItem::action(MENU_TOGGLE_SIDEBAR, "Toggle Sidebar")],
+        ),
+        (
+            "View",
+            vec![
+                MenuItem::slider(
+                    MENU_FONT_SLIDER,
+                    "Text Size",
+                    ((font_size - 6.0) / 24.0).clamp(0.0, 1.0),
+                ),
+                MenuItem::separator(),
+                MenuItem::header("Cursor Style"),
+                MenuItem::radio(MENU_CURSOR_BLOCK, CURSOR_STYLE_GROUP, "Block", block_sel),
+                MenuItem::radio(
+                    MENU_CURSOR_UNDERLINE,
+                    CURSOR_STYLE_GROUP,
+                    "Underline",
+                    underline_sel,
+                ),
+                MenuItem::radio(MENU_CURSOR_BEAM, CURSOR_STYLE_GROUP, "Beam", beam_sel),
+                MenuItem::separator(),
+                MenuItem::toggle(
+                    MENU_OPEN_BAR_HIDDEN,
+                    "Open with Bar Hidden",
+                    open_bar_hidden,
+                ),
+            ],
+        ),
+        (
+            "Split",
+            vec![
+                MenuItem::action_with(MENU_SPLIT_RIGHT, "Split Right", "Ctrl+Shift+D"),
+                MenuItem::action_with(MENU_SPLIT_DOWN, "Split Down", "Ctrl+Shift+E"),
+                MenuItem::separator(),
+                MenuItem::action_with(MENU_CLOSE_PANE, "Close Pane", "Ctrl+Shift+W"),
+                MenuItem::separator(),
+                MenuItem::action_with(MENU_PREV_PANE, "Prev Pane", "Ctrl+Shift+["),
+                MenuItem::action_with(MENU_NEXT_PANE, "Next Pane", "Ctrl+Shift+]"),
+            ],
+        ),
     ]
 }
 
@@ -240,11 +260,19 @@ pub fn build_context_menu(
             .controls_nav(CTX_PREV_TAB, CTX_NEXT_TAB)
             .controls_tabs(CTX_TAB_DOT_BASE, tab_count, active_tab);
     }
-    let sidebar_label = if sidebar_visible { "Close Sidebar" } else { "Open Sidebar" };
+    let sidebar_label = if sidebar_visible {
+        "Close Sidebar"
+    } else {
+        "Open Sidebar"
+    };
     vec![
         controls,
         MenuItem::separator(),
-        MenuItem::slider(MENU_FONT_SLIDER, "Text Size", ((font_size - 6.0) / 24.0).clamp(0.0, 1.0)),
+        MenuItem::slider(
+            MENU_FONT_SLIDER,
+            "Text Size",
+            ((font_size - 6.0) / 24.0).clamp(0.0, 1.0),
+        ),
         MenuItem::action(CTX_OPEN_SIDEBAR, sidebar_label),
         MenuItem::separator(),
         copy,
@@ -256,7 +284,8 @@ pub fn build_context_menu(
         MenuItem::separator(),
         MenuItem::action_with(MENU_SPLIT_RIGHT, "Split Right", "Ctrl+Shift+D"),
         MenuItem::action_with(MENU_SPLIT_DOWN, "Split Down", "Ctrl+Shift+E"),
-        MenuItem::action_with(MENU_CLOSE_PANE, "Close Pane", "Ctrl+Shift+W").enabled(pane_count > 1),
+        MenuItem::action_with(MENU_CLOSE_PANE, "Close Pane", "Ctrl+Shift+W")
+            .enabled(pane_count > 1),
     ]
 }
 
@@ -340,7 +369,11 @@ fn menu_bar_right_edge(menus: &[(&'static str, Vec<MenuItem>)], rect_x: f32, sca
     }
     // The loop adds a trailing gap after the last label — strip it so we get
     // the actual right edge of the last menu label.
-    if menus.is_empty() { x } else { x - gap }
+    if menus.is_empty() {
+        x
+    } else {
+        x - gap
+    }
 }
 
 /// Convenience: compute just the tabs region as a Rect for hit testing.
@@ -351,7 +384,12 @@ pub fn tabs_bounds(
     mode: &WindowMode,
 ) -> Rect {
     let l = compute_layout(menus, screen_w, scale, mode);
-    Rect::new(l.tabs_left, 0.0, (l.tabs_right - l.tabs_left).max(0.0), l.bar_h)
+    Rect::new(
+        l.tabs_left,
+        0.0,
+        (l.tabs_right - l.tabs_left).max(0.0),
+        l.bar_h,
+    )
 }
 
 // ── Drawing ─────────────────────────────────────────────────────────────────
@@ -382,7 +420,13 @@ pub fn draw_chrome(
     let pal = &state.palette;
     let wf = screen_w as f32;
 
-    let menus = build_menus(font_size, sidebar_visible, cursor_style, open_bar_hidden, mode);
+    let menus = build_menus(
+        font_size,
+        sidebar_visible,
+        cursor_style,
+        open_bar_hidden,
+        mode,
+    );
     let layout = compute_layout(&menus, wf, s, mode);
 
     // ── Window controls — same circular style, mode-specific palette ────
@@ -393,10 +437,17 @@ pub fn draw_chrome(
     night_sky::draw_controls(painter, cursor_pos, wf, &ctrl_pal, s);
 
     // ── Menu bar in the menu region ─────────────────────────────────────
-    let menu_area = Rect::new(layout.menu_left, 0.0, layout.menu_right - layout.menu_left, layout.bar_h);
+    let menu_area = Rect::new(
+        layout.menu_left,
+        0.0,
+        layout.menu_right - layout.menu_left,
+        layout.bar_h,
+    );
     state.menu_bar.update(input, &menus, menu_area, s);
     let labels: Vec<&str> = menus.iter().map(|(l, _)| *l).collect();
-    state.menu_bar.draw_with_labels(painter, text, pal, &labels, screen_w, screen_h, s);
+    state
+        .menu_bar
+        .draw_with_labels(painter, text, pal, &labels, screen_w, screen_h, s);
 
     // ── Divider between menus and tabs ──────────────────────────────────
     draw_divider(painter, layout.divider_x, layout.bar_h, s, mode);
@@ -412,11 +463,7 @@ fn draw_divider(painter: &mut Painter, x: f32, bar_h: f32, scale: f32, mode: &Wi
     };
     let inset = bar_h * 0.20;
     let h = bar_h - inset * 2.0;
-    painter.rect_filled(
-        Rect::new(x, inset, DIVIDER_W * scale, h),
-        0.0,
-        color,
-    );
+    painter.rect_filled(Rect::new(x, inset, DIVIDER_W * scale, h), 0.0, color);
 }
 
 /// Draw menu overlays (second render pass).
@@ -432,13 +479,20 @@ pub fn draw_overlay(
 
     // Menu bar dropdown
     state.menu_bar.context_menu.update(0.016);
-    if let Some(e) = state.menu_bar.context_menu.draw(painter, text, input, screen_w, screen_h) {
+    if let Some(e) = state
+        .menu_bar
+        .context_menu
+        .draw(painter, text, input, screen_w, screen_h)
+    {
         event = Some(e);
     }
 
     // Right-click context menu
     state.context_menu.update(0.016);
-    if let Some(e) = state.context_menu.draw(painter, text, input, screen_w, screen_h) {
+    if let Some(e) = state
+        .context_menu
+        .draw(painter, text, input, screen_w, screen_h)
+    {
         event = Some(e);
     }
 
@@ -581,4 +635,3 @@ pub fn font_size_from_slider(value: f32) -> f32 {
     let raw = 6.0 + value * 24.0;
     (raw * 2.0).round() / 2.0
 }
-

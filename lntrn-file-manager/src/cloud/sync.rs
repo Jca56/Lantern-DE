@@ -64,7 +64,10 @@ impl SyncHandle {
             .spawn(move || run_loop(authed, status_thr, stop_thr))
             .expect("spawn fox-cloud-sync thread");
 
-        Self { status, _stop: stop }
+        Self {
+            status,
+            _stop: stop,
+        }
     }
 }
 

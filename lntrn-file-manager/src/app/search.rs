@@ -33,7 +33,9 @@ impl App {
         self.search_results.clear();
 
         let query = self.search_buf.to_lowercase();
-        if query.is_empty() { return; }
+        if query.is_empty() {
+            return;
+        }
 
         let root = self.current_dir.clone();
         let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<()>();

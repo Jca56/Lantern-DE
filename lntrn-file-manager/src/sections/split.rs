@@ -4,9 +4,9 @@
 //! only the unfocused side goes through here, reading parked state and
 //! registering the `ZONE_P2_*` zone family (clicks there focus the pane).
 
-use lntrn_render::{Color, Painter, Rect, TextRenderer, GpuContext};
-use lntrn_ui::gpu::{FontSize, FoxPalette, InteractionContext, ScrollArea, Scrollbar, TextLabel};
 use lntrn_render::TexturePass;
+use lntrn_render::{Color, GpuContext, Painter, Rect, TextRenderer};
+use lntrn_ui::gpu::{FontSize, FoxPalette, InteractionContext, ScrollArea, Scrollbar, TextLabel};
 
 use crate::app::{DirectoryTab, PaneView, ViewMode};
 use crate::icons::IconCache;
@@ -49,7 +49,11 @@ pub fn draw_split_divider(painter: &mut Painter, r: Rect, hovered: bool, pal: &F
     };
     painter.rect_filled(line, line_w * 0.5, color);
     // Grip dots at the vertical center
-    let dot_color = if hovered { pal.accent } else { pal.text_secondary.with_alpha(0.5) };
+    let dot_color = if hovered {
+        pal.accent
+    } else {
+        pal.text_secondary.with_alpha(0.5)
+    };
     let cx = r.x + r.w * 0.5;
     let cy = r.y + r.h * 0.5;
     for i in -1..=1 {
@@ -59,7 +63,11 @@ pub fn draw_split_divider(painter: &mut Painter, r: Rect, hovered: bool, pal: &F
 
 fn nav_arrow_color(enabled: bool, hovered: bool, pal: &FoxPalette) -> Color {
     if enabled {
-        if hovered { pal.text } else { pal.text_secondary }
+        if hovered {
+            pal.text
+        } else {
+            pal.text_secondary
+        }
     } else {
         pal.muted.with_alpha(0.4)
     }
@@ -67,20 +75,62 @@ fn nav_arrow_color(enabled: bool, hovered: bool, pal: &FoxPalette) -> Color {
 
 fn draw_back_arrow(painter: &mut Painter, r: Rect, color: Color, s: f32) {
     let bm = 0.22;
-    painter.line(r.x + r.w * (1.0 - bm), r.y + r.h * bm, r.x + r.w * bm, r.center_y(), 2.0 * s, color);
-    painter.line(r.x + r.w * bm, r.center_y(), r.x + r.w * (1.0 - bm), r.y + r.h * (1.0 - bm), 2.0 * s, color);
+    painter.line(
+        r.x + r.w * (1.0 - bm),
+        r.y + r.h * bm,
+        r.x + r.w * bm,
+        r.center_y(),
+        2.0 * s,
+        color,
+    );
+    painter.line(
+        r.x + r.w * bm,
+        r.center_y(),
+        r.x + r.w * (1.0 - bm),
+        r.y + r.h * (1.0 - bm),
+        2.0 * s,
+        color,
+    );
 }
 
 fn draw_forward_arrow(painter: &mut Painter, r: Rect, color: Color, s: f32) {
     let bm = 0.22;
-    painter.line(r.x + r.w * bm, r.y + r.h * bm, r.x + r.w * (1.0 - bm), r.center_y(), 2.0 * s, color);
-    painter.line(r.x + r.w * (1.0 - bm), r.center_y(), r.x + r.w * bm, r.y + r.h * (1.0 - bm), 2.0 * s, color);
+    painter.line(
+        r.x + r.w * bm,
+        r.y + r.h * bm,
+        r.x + r.w * (1.0 - bm),
+        r.center_y(),
+        2.0 * s,
+        color,
+    );
+    painter.line(
+        r.x + r.w * (1.0 - bm),
+        r.center_y(),
+        r.x + r.w * bm,
+        r.y + r.h * (1.0 - bm),
+        2.0 * s,
+        color,
+    );
 }
 
 fn draw_up_arrow(painter: &mut Painter, r: Rect, color: Color, s: f32) {
     let bm = 0.22;
-    painter.line(r.x + r.w * bm, r.center_y(), r.center_x(), r.y + r.h * bm, 2.0 * s, color);
-    painter.line(r.center_x(), r.y + r.h * bm, r.x + r.w * (1.0 - bm), r.center_y(), 2.0 * s, color);
+    painter.line(
+        r.x + r.w * bm,
+        r.center_y(),
+        r.center_x(),
+        r.y + r.h * bm,
+        2.0 * s,
+        color,
+    );
+    painter.line(
+        r.center_x(),
+        r.y + r.h * bm,
+        r.x + r.w * (1.0 - bm),
+        r.center_y(),
+        2.0 * s,
+        color,
+    );
 }
 
 /// Everything the unfocused pane needs from the caller.
@@ -145,16 +195,22 @@ pub fn render_inactive_pane(
     draw_view_mode_icon(painter, view.view_mode, vt_rect, vt_color, s);
 
     draw_back_arrow(
-        painter, back_rect,
-        nav_arrow_color(!p.tab.history_back.is_empty(), back_hov, pal), s,
+        painter,
+        back_rect,
+        nav_arrow_color(!p.tab.history_back.is_empty(), back_hov, pal),
+        s,
     );
     draw_forward_arrow(
-        painter, fwd_rect,
-        nav_arrow_color(!p.tab.history_forward.is_empty(), fwd_hov, pal), s,
+        painter,
+        fwd_rect,
+        nav_arrow_color(!p.tab.history_forward.is_empty(), fwd_hov, pal),
+        s,
     );
     draw_up_arrow(
-        painter, up_rect,
-        nav_arrow_color(p.tab.path.parent().is_some(), up_hov, pal), s,
+        painter,
+        up_rect,
+        nav_arrow_color(p.tab.path.parent().is_some(), up_hov, pal),
+        s,
     );
 
     // Static breadcrumb path — muted; interaction comes after a focusing click.
@@ -168,26 +224,45 @@ pub fn render_inactive_pane(
             .collect::<Vec<_>>()
             .join(" / ");
         let shown = truncate_with_ellipsis(&full, path_r.w - 8.0 * s, char_w);
-        TextLabel::new(&shown, path_r.x + 4.0 * s, path_r.y + (path_r.h - font) * 0.5)
-            .size(FontSize::Custom(font))
-            .color(pal.text_secondary)
-            .draw(text, w, h);
+        TextLabel::new(
+            &shown,
+            path_r.x + 4.0 * s,
+            path_r.y + (path_r.h - font) * 0.5,
+        )
+        .size(FontSize::Custom(font))
+        .color(pal.text_secondary)
+        .draw(text, w, h);
     }
 
-    let sort_color = if sort_hov { pal.text } else { pal.text_secondary };
+    let sort_color = if sort_hov {
+        pal.text
+    } else {
+        pal.text_secondary
+    };
     if sort_hov {
         painter.rect_filled(sort_rect, 4.0 * s, pal.surface_2.with_alpha(0.5));
     }
     draw_sort_icon(painter, sort_rect, sort_color, view.sort_dir, s);
 
-    let srch_color = if srch_hov { pal.text } else { pal.text_secondary };
+    let srch_color = if srch_hov {
+        pal.text
+    } else {
+        pal.text_secondary
+    };
     if srch_hov {
         painter.rect_filled(srch_rect, 4.0 * s, pal.surface_2.with_alpha(0.5));
     }
     let sx = srch_rect.center_x() - 2.0 * s;
     let sy = srch_rect.center_y() - 2.0 * s;
     painter.circle_stroke(sx, sy, 6.0 * s, 1.5 * s, srch_color);
-    painter.line(sx + 4.5 * s, sy + 4.5 * s, sx + 9.0 * s, sy + 9.0 * s, 2.0 * s, srch_color);
+    painter.line(
+        sx + 4.5 * s,
+        sy + 4.5 * s,
+        sx + 9.0 * s,
+        sy + 9.0 * s,
+        2.0 * s,
+        srch_color,
+    );
 
     if p.is_right {
         let split_rect = pane_split_toggle_rect(p.pane_x, p.pane_w, s);
@@ -196,7 +271,8 @@ pub fn render_inactive_pane(
             painter.rect_filled(split_rect, 4.0 * s, pal.surface_2.with_alpha(0.5));
         }
         draw_split_toggle_icon(
-            painter, split_rect,
+            painter,
+            split_rect,
             if split_hov { pal.text } else { pal.accent },
             s,
         );
@@ -251,8 +327,21 @@ pub fn render_inactive_pane(
                 hovered.push(hov);
             }
             super::draw_content_grid(
-                painter, text, pal, content, entries, cols,
-                &scroll_area, &hovered, &has_icon, None, None, git, screen, s, zoom,
+                painter,
+                text,
+                pal,
+                content,
+                entries,
+                cols,
+                &scroll_area,
+                &hovered,
+                &has_icon,
+                None,
+                None,
+                git,
+                screen,
+                s,
+                zoom,
             );
         }
         ViewMode::List => {
@@ -278,8 +367,21 @@ pub fn render_inactive_pane(
                 hovered.push(hov);
             }
             crate::views::draw_content_list(
-                painter, text, pal, content, entries,
-                &scroll_area, &hovered, &has_icon, None, None, None, git, screen, s, zoom,
+                painter,
+                text,
+                pal,
+                content,
+                entries,
+                &scroll_area,
+                &hovered,
+                &has_icon,
+                None,
+                None,
+                None,
+                git,
+                screen,
+                s,
+                zoom,
             );
         }
         ViewMode::Tree => {
@@ -298,8 +400,15 @@ pub fn render_inactive_pane(
                     hovered.push(false);
                     continue;
                 }
-                let row_rect =
-                    crate::views::tree_row_hit_rect(text, &tree_entries[i], content, y, row_h, s, zoom);
+                let row_rect = crate::views::tree_row_hit_rect(
+                    text,
+                    &tree_entries[i],
+                    content,
+                    y,
+                    row_h,
+                    s,
+                    zoom,
+                );
                 let hov = match row_rect.intersect(&content) {
                     Some(clipped) => {
                         let state = input.add_zone(ZONE_P2_TREE_BASE + i as u32, clipped);
@@ -311,8 +420,20 @@ pub fn render_inactive_pane(
             }
             let selected = vec![false; tree_entries.len()];
             crate::views::draw_content_tree(
-                painter, text, pal, content, tree_entries,
-                &scroll_area, &hovered, &has_icon, &selected, None, None, screen, s, zoom,
+                painter,
+                text,
+                pal,
+                content,
+                tree_entries,
+                &scroll_area,
+                &hovered,
+                &has_icon,
+                &selected,
+                None,
+                None,
+                screen,
+                s,
+                zoom,
             );
         }
     }

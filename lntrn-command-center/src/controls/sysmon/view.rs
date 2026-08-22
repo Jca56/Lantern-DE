@@ -138,7 +138,10 @@ pub fn hit_test_view(
     let inner_x = panel.x + pad;
     let inner_w = panel.w - pad * 2.0;
     let proc_rect = Rect::new(
-        inner_x, y_proc_top, inner_w, panel.y + panel.h - y_proc_top - pad,
+        inner_x,
+        y_proc_top,
+        inner_w,
+        panel.y + panel.h - y_proc_top - pad,
     );
     let lay = process_list::layout(sysmon, proc_rect, scale, text_size);
     let hit = process_list::hit_test(sysmon, &lay, phys_x, phys_y)?;
@@ -150,7 +153,6 @@ pub fn hit_test_view(
         ProcessHit::ClearFilter => SysMonHit::ClearFilter,
     })
 }
-
 
 /// Send `SIGTERM` to a pid. Logs at info on success, warn on failure.
 /// Returns `true` if the kernel accepted the signal.
@@ -223,7 +225,14 @@ fn draw_metric_block(
         rect.w - pad_in * 2.0,
         rect.y + rect.h - spark_top - pad_in * 0.6,
     );
-    draw_sparkline(painter, spark_rect, history, scale_max, color.with_alpha(alpha), scale);
+    draw_sparkline(
+        painter,
+        spark_rect,
+        history,
+        scale_max,
+        color.with_alpha(alpha),
+        scale,
+    );
 }
 
 fn draw_network_block(
@@ -404,4 +413,3 @@ pub(super) fn queue_right(
     let w = text.measure_width(s, font);
     text.queue(s, font, right_x - w, y, color, w, surface_w, surface_h);
 }
-

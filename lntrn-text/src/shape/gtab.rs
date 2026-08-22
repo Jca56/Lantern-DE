@@ -42,7 +42,10 @@ impl GposPlan {
                 let kern = sets.pop().unwrap_or_default();
                 GposPlan { kern, mark }
             }
-            None => GposPlan { kern: Vec::new(), mark: Vec::new() },
+            None => GposPlan {
+                kern: Vec::new(),
+                mark: Vec::new(),
+            },
         }
     }
 }

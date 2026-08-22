@@ -65,9 +65,7 @@ pub(super) fn worker(tx: mpsc::Sender<BtEvent>, cmd_rx: mpsc::Receiver<BtCmd>) {
             match cmd {
                 BtCmd::SetPowered(on) => {
                     let arg = if on { "on" } else { "off" };
-                    let _ = Command::new("bluetoothctl")
-                        .args(["power", arg])
-                        .output();
+                    let _ = Command::new("bluetoothctl").args(["power", arg]).output();
                     thread::sleep(Duration::from_millis(300));
                     let _ = tx.send(BtEvent::Powered(read_powered()));
                     let _ = tx.send(BtEvent::Discoverable(read_discoverable()));
@@ -92,9 +90,8 @@ pub(super) fn worker(tx: mpsc::Sender<BtEvent>, cmd_rx: mpsc::Receiver<BtCmd>) {
                                     scan_poll = Instant::now();
                                 }
                                 Err(e) => {
-                                    let _ = tx.send(BtEvent::Error(format!(
-                                        "Failed to start scan: {e}"
-                                    )));
+                                    let _ = tx
+                                        .send(BtEvent::Error(format!("Failed to start scan: {e}")));
                                 }
                             }
                         }
@@ -153,9 +150,7 @@ pub(super) fn worker(tx: mpsc::Sender<BtEvent>, cmd_rx: mpsc::Receiver<BtCmd>) {
                             // Cancelled — that's not a failure, just
                             // clear the inline "Picking…" badge so the
                             // row goes back to normal Connect/Connected.
-                            let _ = tx.send(BtEvent::SendCleared {
-                                mac: mac.clone(),
-                            });
+                            let _ = tx.send(BtEvent::SendCleared { mac: mac.clone() });
                             String::new()
                         }
                         Err(e) => {
@@ -195,15 +190,12 @@ pub(super) fn worker(tx: mpsc::Sender<BtEvent>, cmd_rx: mpsc::Receiver<BtCmd>) {
                     let _ = obex_tx.send(cmd);
                 }
                 BtCmd::IncomingPairReply { accept } => {
-                    let accepted_mac =
-                        pair_agent.as_mut().and_then(|a| a.reply(accept));
+                    let accepted_mac = pair_agent.as_mut().and_then(|a| a.reply(accept));
                     if let Some(mac) = accepted_mac {
                         // BlueZ proceeds with bonding once we ack; trust
                         // so the device auto-reconnects later, then
                         // refresh the list so the new device appears.
-                        let _ = Command::new("bluetoothctl")
-                            .args(["trust", &mac])
-                            .output();
+                        let _ = Command::new("bluetoothctl").args(["trust", &mac]).output();
                         let _ = tx.send(BtEvent::Devices(read_devices()));
                         last_poll = Instant::now();
                     }

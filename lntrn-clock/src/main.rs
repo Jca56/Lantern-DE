@@ -56,13 +56,18 @@ fn main() -> ExitCode {
                     cfg.save();
                 }
                 Key::Up => {
-                    if panel.cursor == 0 { panel.cursor = PANEL_ROW_COUNT - 1; }
-                    else { panel.cursor -= 1; }
+                    if panel.cursor == 0 {
+                        panel.cursor = PANEL_ROW_COUNT - 1;
+                    } else {
+                        panel.cursor -= 1;
+                    }
                 }
                 Key::Down => {
                     panel.cursor = (panel.cursor + 1) % PANEL_ROW_COUNT;
                 }
-                Key::Left => { panel_adjust(&mut cfg, panel.cursor, -1); }
+                Key::Left => {
+                    panel_adjust(&mut cfg, panel.cursor, -1);
+                }
                 Key::Right | Key::Enter | Key::Char(' ') => {
                     panel_adjust(&mut cfg, panel.cursor, 1);
                 }

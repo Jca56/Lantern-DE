@@ -11,7 +11,9 @@ use std::collections::HashMap;
 use std::f32::consts::{FRAC_PI_2, TAU};
 use std::time::Instant;
 
-use lntrn_render::{Color, GpuContext, GpuTexture, Painter, Rect, TextRenderer, TextureDraw, TexturePass};
+use lntrn_render::{
+    Color, GpuContext, GpuTexture, Painter, Rect, TextRenderer, TextureDraw, TexturePass,
+};
 
 // ── Geometry (logical px) ─────────────────────────────────────────────────────
 
@@ -231,7 +233,11 @@ fn clamp01(t: f32) -> f32 {
     t.clamp(0.0, 1.0)
 }
 fn progress(elapsed: f32, dur: f32) -> f32 {
-    if dur <= 0.0 { 1.0 } else { (elapsed / dur).clamp(0.0, 1.0) }
+    if dur <= 0.0 {
+        1.0
+    } else {
+        (elapsed / dur).clamp(0.0, 1.0)
+    }
 }
 fn ease_out(t: f32) -> f32 {
     let inv = 1.0 - clamp01(t);
@@ -292,7 +298,13 @@ pub fn draw_radial_menu<'a>(
 
     // Center hub marking the cursor origin.
     painter.circle_filled(cx, cy, hub, cols.surface.with_alpha(0.95 * fade));
-    painter.circle_stroke(cx, cy, hub, 2.0 * scale, cols.accent.with_alpha(0.85 * fade));
+    painter.circle_stroke(
+        cx,
+        cy,
+        hub,
+        2.0 * scale,
+        cols.accent.with_alpha(0.85 * fade),
+    );
 
     // Pass 1: make sure every icon texture is rasterized (mutable borrow).
     for it in items {
@@ -341,7 +353,11 @@ pub fn draw_radial_menu<'a>(
         } else {
             (cols.bg.with_alpha(0.62 * fade), cols.text)
         };
-        painter.rect_filled(Rect::new(pill_x, ly, pill_w, pill_h), pill_h * 0.5, pill_col);
+        painter.rect_filled(
+            Rect::new(pill_x, ly, pill_w, pill_h),
+            pill_h * 0.5,
+            pill_col,
+        );
         text.queue(
             &it.label,
             fsz,

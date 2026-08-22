@@ -37,26 +37,45 @@ impl ResizeHandle {
     pub fn is_corner(self) -> bool {
         matches!(
             self,
-            ResizeHandle::TopLeft | ResizeHandle::TopRight
-                | ResizeHandle::BottomLeft | ResizeHandle::BottomRight
+            ResizeHandle::TopLeft
+                | ResizeHandle::TopRight
+                | ResizeHandle::BottomLeft
+                | ResizeHandle::BottomRight
         )
     }
 }
 
 pub enum DragMode {
     Idle,
-    PanningCanvas { last_x: f32, last_y: f32 },
+    PanningCanvas {
+        last_x: f32,
+        last_y: f32,
+    },
     /// `grab_dx/dy`: cursor offset from item origin in canvas units at press.
-    MovingItem { idx: usize, grab_dx: f32, grab_dy: f32 },
-    ResizingItem { idx: usize, handle: ResizeHandle, orig: CanvasItem, grab_cx: f32, grab_cy: f32 },
+    MovingItem {
+        idx: usize,
+        grab_dx: f32,
+        grab_dy: f32,
+    },
+    ResizingItem {
+        idx: usize,
+        handle: ResizeHandle,
+        orig: CanvasItem,
+        grab_cx: f32,
+        grab_cy: f32,
+    },
     /// Dragging a file out of the sidebar; ghost follows the cursor.
-    SidebarDrag { path: PathBuf },
+    SidebarDrag {
+        path: PathBuf,
+    },
 }
 
 pub enum DialogKind {
     /// Name prompt shown on first save. `quit_after`: save was triggered from
     /// the unsaved-changes flow, so quit once it lands.
-    SaveName { quit_after: bool },
+    SaveName {
+        quit_after: bool,
+    },
     ConfirmQuit,
     ConfirmNew,
     Error(String),
@@ -92,7 +111,11 @@ impl CanvasEditor {
     }
 
     pub fn window_title(&self) -> String {
-        let name = if self.doc.name.is_empty() { "Untitled" } else { &self.doc.name };
+        let name = if self.doc.name.is_empty() {
+            "Untitled"
+        } else {
+            &self.doc.name
+        };
         let dot = if self.dirty { " •" } else { "" };
         format!("{name}{dot} — Lantern Canvas")
     }
@@ -110,7 +133,10 @@ impl CanvasEditor {
     pub fn to_canvas(&self, sx: f32, sy: f32, vp: &Rect, s: f32) -> (f32, f32) {
         let v = &self.doc.view;
         let zs = (v.zoom * s).max(1e-6);
-        ((sx - vp.center_x()) / zs - v.pan_x, (sy - vp.center_y()) / zs - v.pan_y)
+        (
+            (sx - vp.center_x()) / zs - v.pan_x,
+            (sy - vp.center_y()) / zs - v.pan_y,
+        )
     }
 
     pub fn item_screen_rect(&self, item: &CanvasItem, vp: &Rect, s: f32) -> Rect {
@@ -230,9 +256,20 @@ impl CanvasEditor {
 
     /// Apply a resize drag: cursor at canvas (ccx, ccy), against the original
     /// item geometry captured at press time.
-    pub fn apply_resize(&mut self, idx: usize, handle: ResizeHandle, orig: &CanvasItem, ccx: f32, ccy: f32, grab_cx: f32, grab_cy: f32) {
+    pub fn apply_resize(
+        &mut self,
+        idx: usize,
+        handle: ResizeHandle,
+        orig: &CanvasItem,
+        ccx: f32,
+        ccy: f32,
+        grab_cx: f32,
+        grab_cy: f32,
+    ) {
         use ResizeHandle::*;
-        let Some(item) = self.doc.items.get_mut(idx) else { return };
+        let Some(item) = self.doc.items.get_mut(idx) else {
+            return;
+        };
         let dx = ccx - grab_cx;
         let dy = ccy - grab_cy;
 
@@ -246,7 +283,11 @@ impl CanvasEditor {
                 BottomLeft | BottomRight => (orig.h + dy) / orig.h,
                 _ => (orig.h - dy) / orig.h,
             };
-            let mut k = if (sx - 1.0).abs() >= (sy - 1.0).abs() { sx } else { sy };
+            let mut k = if (sx - 1.0).abs() >= (sy - 1.0).abs() {
+                sx
+            } else {
+                sy
+            };
             k = k.max(MIN_ITEM / orig.w.min(orig.h));
             item.w = orig.w * k;
             item.h = orig.h * k;

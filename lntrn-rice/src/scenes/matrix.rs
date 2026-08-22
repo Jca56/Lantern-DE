@@ -2,8 +2,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use lntrn_render::{Color, Painter, TextRenderer};
 
-use crate::app::FrameCtx;
 use super::{draw_theme_background, Scene};
+use crate::app::FrameCtx;
 
 // ── Tunables ─────────────────────────────────────────────────────────────────
 const FONT_PX: f32 = 26.0; // glyph size, logical px (scaled at runtime)
@@ -15,9 +15,9 @@ const SPEED_MIN: f32 = 6.0; // fall speed (rows / second)
 const SPEED_MAX: f32 = 20.0;
 const FLICKER_HZ: f32 = 7.0; // avg glyph mutations per column per second
 const TRAIL_LEVELS: usize = 6; // fade steps; keep CHARSET chars × (this+1) < 512 cache cap
-// Hybrid, most film-accurate: half-width katakana (U+FF66–FF9D) + digits + a few
-// Latin. Katakana needs a kana font (UDEV Gothic); cosmic-text resolves per-glyph.
-// 70 chars × 7 colors = 490 cached layouts — under the 512 cap.
+                               // Hybrid, most film-accurate: half-width katakana (U+FF66–FF9D) + digits + a few
+                               // Latin. Katakana needs a kana font (UDEV Gothic); cosmic-text resolves per-glyph.
+                               // 70 chars × 7 colors = 490 cached layouts — under the 512 cap.
 const CHARSET: &str = "ｦｧｨｩｪｫｬｭｮｯｰｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789ZKXA";
 
 /// One vertical stream of glyphs falling down a single column.
@@ -25,8 +25,8 @@ struct Column {
     head: f32, // head position in rows (fractional); starts above the top
     speed: f32,
     len: i32,
-    last_row: i32,        // last integer row the head occupied
-    glyphs: Vec<u8>,      // glyph index (into CHARSET) per grid row
+    last_row: i32,   // last integer row the head occupied
+    glyphs: Vec<u8>, // glyph index (into CHARSET) per grid row
 }
 
 /// "Matrix" digital rain — columns of glyphs cascade down with a bright leading
@@ -44,7 +44,9 @@ pub struct Matrix {
 }
 
 impl Default for Matrix {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Matrix {
@@ -94,7 +96,9 @@ impl Matrix {
                     speed: 0.0,
                     len: 0,
                     last_row: 0,
-                    glyphs: (0..rows.max(1)).map(|_| rng_range(&mut rng, charset) as u8).collect(),
+                    glyphs: (0..rows.max(1))
+                        .map(|_| rng_range(&mut rng, charset) as u8)
+                        .collect(),
                 };
                 Self::respawn(&mut col, rows, &mut rng);
                 col
@@ -175,7 +179,17 @@ impl Scene for Matrix {
                 };
                 let s = &self.glyph_strs[col.glyphs[r as usize] as usize];
                 let y = r as f32 * row_h;
-                text.queue_family(s, font, x, y, color, max_w, lntrn_theme::FAMILY_MONOSPACE, sw, sh);
+                text.queue_family(
+                    s,
+                    font,
+                    x,
+                    y,
+                    color,
+                    max_w,
+                    lntrn_theme::FAMILY_MONOSPACE,
+                    sw,
+                    sh,
+                );
             }
         }
     }

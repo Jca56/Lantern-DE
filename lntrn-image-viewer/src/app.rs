@@ -41,9 +41,12 @@ pub fn peek_image_dimensions(path: &Path) -> Option<(u32, u32)> {
         let s = tree.size();
         Some((s.width().ceil() as u32, s.height().ceil() as u32))
     } else {
-        image::ImageReader::open(path).ok()?
-            .with_guessed_format().ok()?
-            .into_dimensions().ok()
+        image::ImageReader::open(path)
+            .ok()?
+            .with_guessed_format()
+            .ok()?
+            .into_dimensions()
+            .ok()
     }
 }
 
@@ -114,7 +117,9 @@ impl GifAnimation {
 
 // ── Tiny PRNG (xorshift64) ──────────────────────────────────────────────────
 
-struct XorShift64 { state: u64 }
+struct XorShift64 {
+    state: u64,
+}
 
 impl XorShift64 {
     fn from_time() -> Self {
@@ -122,7 +127,13 @@ impl XorShift64 {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
             .unwrap_or(0xa5a5_5a5a_a5a5_5a5a);
-        Self { state: if nanos == 0 { 0xdead_beef_cafe_babe } else { nanos } }
+        Self {
+            state: if nanos == 0 {
+                0xdead_beef_cafe_babe
+            } else {
+                nanos
+            },
+        }
     }
 
     fn next_u64(&mut self) -> u64 {
@@ -200,7 +211,9 @@ impl App {
         // Scan directory for sibling images (only on first load or dir change)
         if let Some(parent) = abs.parent() {
             let should_rescan = self.dir_files.is_empty()
-                || self.dir_files.first()
+                || self
+                    .dir_files
+                    .first()
                     .and_then(|f| f.parent())
                     .map(|p| p != parent)
                     .unwrap_or(true);
@@ -215,7 +228,8 @@ impl App {
             if self.shuffle {
                 if should_rescan || self.shuffle_order.len() != self.dir_files.len() {
                     self.regenerate_shuffle();
-                } else if let Some(p) = self.shuffle_order.iter().position(|&i| i == self.dir_index) {
+                } else if let Some(p) = self.shuffle_order.iter().position(|&i| i == self.dir_index)
+                {
                     self.shuffle_pos = p;
                 }
             }
@@ -251,14 +265,20 @@ impl App {
     }
 
     fn set_loaded(&mut self, abs: PathBuf, tex: GpuTexture, w: u32, h: u32, svg: Option<SvgImage>) {
-        self.file_name = abs.file_name()
+        self.file_name = abs
+            .file_name()
             .map(|n| n.to_string_lossy().into())
             .unwrap_or_default();
         self.status_text = abs.to_string_lossy().into();
         // For SVG, report native (intrinsic) size rather than the rasterized size.
         match &svg {
-            Some(s) => self.dimensions_text =
-                format!("{} × {}", s.native_w.ceil() as u32, s.native_h.ceil() as u32),
+            Some(s) => {
+                self.dimensions_text = format!(
+                    "{} × {}",
+                    s.native_w.ceil() as u32,
+                    s.native_h.ceil() as u32
+                )
+            }
             None => self.dimensions_text = format!("{w} × {h}"),
         }
         self.zoom = 1.0;
@@ -288,8 +308,12 @@ impl App {
         let Some(svg) = &img.svg else { return };
 
         // Target raster size: cover the displayed size, capped, never below native.
-        let want_w = (disp_w.ceil() as u32).clamp(svg.native_w.ceil() as u32, 8192).max(1);
-        let want_h = (disp_h.ceil() as u32).clamp(svg.native_h.ceil() as u32, 8192).max(1);
+        let want_w = (disp_w.ceil() as u32)
+            .clamp(svg.native_w.ceil() as u32, 8192)
+            .max(1);
+        let want_h = (disp_h.ceil() as u32)
+            .clamp(svg.native_h.ceil() as u32, 8192)
+            .max(1);
 
         // Re-render only on a ≥25% jump in either axis (up or down) to avoid
         // per-frame churn while still tracking large zoom changes.
@@ -301,9 +325,15 @@ impl App {
             return;
         }
 
-        if let Some((tex, rw, rh)) =
-            rasterize_svg(gpu, tex_pass, &svg.source, svg.native_w, svg.native_h, want_w, want_h)
-        {
+        if let Some((tex, rw, rh)) = rasterize_svg(
+            gpu,
+            tex_pass,
+            &svg.source,
+            svg.native_w,
+            svg.native_h,
+            want_w,
+            want_h,
+        ) {
             if let Some(img) = &mut self.image {
                 img.texture = tex;
                 img.width = rw;
@@ -330,7 +360,9 @@ impl App {
     }
 
     pub fn next_image(&mut self, gpu: &GpuContext, tex_pass: &TexturePass) {
-        if self.dir_files.is_empty() { return; }
+        if self.dir_files.is_empty() {
+            return;
+        }
         if self.shuffle && !self.shuffle_order.is_empty() {
             self.shuffle_pos += 1;
             if self.shuffle_pos >= self.shuffle_order.len() {
@@ -347,7 +379,9 @@ impl App {
     }
 
     pub fn prev_image(&mut self, gpu: &GpuContext, tex_pass: &TexturePass) {
-        if self.dir_files.is_empty() { return; }
+        if self.dir_files.is_empty() {
+            return;
+        }
         if self.shuffle && !self.shuffle_order.is_empty() {
             self.shuffle_pos = if self.shuffle_pos == 0 {
                 self.shuffle_order.len() - 1
@@ -381,7 +415,8 @@ impl App {
             let j = self.rng.below(i + 1);
             self.shuffle_order.swap(i, j);
         }
-        self.shuffle_pos = self.shuffle_order
+        self.shuffle_pos = self
+            .shuffle_order
             .iter()
             .position(|&idx| idx == self.dir_index)
             .unwrap_or(0);

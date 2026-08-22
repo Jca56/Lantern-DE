@@ -68,10 +68,8 @@ fn find_adapter(conn: &Connection) -> Option<OwnedObjectPath> {
             &(),
         )
         .ok()?;
-    let map: HashMap<
-        OwnedObjectPath,
-        HashMap<String, HashMap<String, OwnedValue>>,
-    > = reply.body().deserialize().ok()?;
+    let map: HashMap<OwnedObjectPath, HashMap<String, HashMap<String, OwnedValue>>> =
+        reply.body().deserialize().ok()?;
     for (path, ifaces) in map {
         if ifaces.contains_key(IFACE_ADAPTER) {
             return Some(path);

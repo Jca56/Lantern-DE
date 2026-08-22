@@ -1,4 +1,4 @@
-use crate::colors::{BRAND_GOLD, Rgba};
+use crate::colors::{Rgba, BRAND_GOLD};
 use crate::palette::{self, Palette};
 
 /// Which theme variant is active.
@@ -26,7 +26,7 @@ impl ThemeVariant {
         match self {
             Self::FoxDark | Self::FoxLight => BRAND_GOLD,
             Self::Lantern => Rgba::rgb(212, 160, 32),
-            Self::NightSky => Rgba::rgb(225, 175, 35),   // Bright gold
+            Self::NightSky => Rgba::rgb(225, 175, 35), // Bright gold
         }
     }
 

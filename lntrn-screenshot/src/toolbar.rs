@@ -77,7 +77,11 @@ impl ToolbarLayout {
             });
         }
 
-        Self { panel, buttons, scale: s }
+        Self {
+            panel,
+            buttons,
+            scale: s,
+        }
     }
 
     /// True if the point is anywhere on the toolbar pill (so a press there is
@@ -135,7 +139,11 @@ impl ToolbarLayout {
                 );
             }
 
-            let fg = if is_active { accent_orange() } else { text_tan() };
+            let fg = if is_active {
+                accent_orange()
+            } else {
+                text_tan()
+            };
 
             // Centre [icon | gap | label] as a group inside the button.
             let font = LABEL_FONT * s;
@@ -168,7 +176,14 @@ impl ToolbarLayout {
 }
 
 /// "Expand to full screen" — four corner brackets.
-fn draw_fullscreen_icon(painter: &mut Painter, x: f32, y: f32, size: f32, color: Color, scale: f32) {
+fn draw_fullscreen_icon(
+    painter: &mut Painter,
+    x: f32,
+    y: f32,
+    size: f32,
+    color: Color,
+    scale: f32,
+) {
     let w = 2.5 * scale;
     let inset = size * 0.12;
     let arm = size * 0.34;

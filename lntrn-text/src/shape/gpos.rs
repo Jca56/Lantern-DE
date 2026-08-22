@@ -162,7 +162,10 @@ fn apply_pair(d: &[u8], sub: usize, glyphs: &mut [GlyphPos], i: usize, j: usize)
                     std::cmp::Ordering::Less => lo = mid + 1,
                     std::cmp::Ordering::Greater => hi = mid,
                     std::cmp::Ordering::Equal => {
-                        hit = Some((read_value(d, rec + 2, vf1), read_value(d, rec + 2 + s1, vf2)));
+                        hit = Some((
+                            read_value(d, rec + 2, vf1),
+                            read_value(d, rec + 2 + s1, vf2),
+                        ));
                         break;
                     }
                 }

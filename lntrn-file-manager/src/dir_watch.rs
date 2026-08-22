@@ -50,7 +50,13 @@ impl DirWatcher {
             }
         })
         .ok();
-        Self { watcher, watched: None, dirty, eventfd, pending_since: None }
+        Self {
+            watcher,
+            watched: None,
+            dirty,
+            eventfd,
+            pending_since: None,
+        }
     }
 
     /// Move the (non-recursive) watch to `dir`. No-op when already watching

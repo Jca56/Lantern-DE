@@ -56,8 +56,12 @@ pub fn parse_prompt(path: &str) -> Option<u64> {
 /// path (or is an item inside a collection).
 pub fn parse_collection(path: &str) -> Option<&str> {
     let rest = path.strip_prefix(COLLECTION_PREFIX)?;
-    if rest.contains('/') { return None; }
-    if rest.is_empty() { return None; }
+    if rest.contains('/') {
+        return None;
+    }
+    if rest.is_empty() {
+        return None;
+    }
     Some(rest)
 }
 
@@ -65,15 +69,21 @@ pub fn parse_collection(path: &str) -> Option<&str> {
 pub fn parse_item(path: &str) -> Option<(&str, &str)> {
     let rest = path.strip_prefix(COLLECTION_PREFIX)?;
     let (coll, item) = rest.split_once('/')?;
-    if coll.is_empty() || item.is_empty() { return None; }
-    if item.contains('/') { return None; }
+    if coll.is_empty() || item.is_empty() {
+        return None;
+    }
+    if item.contains('/') {
+        return None;
+    }
     Some((coll, item))
 }
 
 /// Parse an alias path → alias name.
 pub fn parse_alias(path: &str) -> Option<&str> {
     let rest = path.strip_prefix(ALIAS_PREFIX)?;
-    if rest.is_empty() || rest.contains('/') { return None; }
+    if rest.is_empty() || rest.contains('/') {
+        return None;
+    }
     Some(rest)
 }
 
@@ -90,12 +100,24 @@ pub enum ObjectKind<'a> {
 }
 
 pub fn classify(path: &str) -> ObjectKind<'_> {
-    if path == SERVICE_PATH { return ObjectKind::Service; }
-    if let Some(id) = parse_session(path) { return ObjectKind::Session(id); }
-    if let Some(id) = parse_prompt(path) { return ObjectKind::Prompt(id); }
-    if let Some((c, i)) = parse_item(path) { return ObjectKind::Item(c, i); }
-    if let Some(c) = parse_collection(path) { return ObjectKind::Collection(c); }
-    if let Some(a) = parse_alias(path) { return ObjectKind::Alias(a); }
+    if path == SERVICE_PATH {
+        return ObjectKind::Service;
+    }
+    if let Some(id) = parse_session(path) {
+        return ObjectKind::Session(id);
+    }
+    if let Some(id) = parse_prompt(path) {
+        return ObjectKind::Prompt(id);
+    }
+    if let Some((c, i)) = parse_item(path) {
+        return ObjectKind::Item(c, i);
+    }
+    if let Some(c) = parse_collection(path) {
+        return ObjectKind::Collection(c);
+    }
+    if let Some(a) = parse_alias(path) {
+        return ObjectKind::Alias(a);
+    }
     ObjectKind::Unknown
 }
 
@@ -106,11 +128,26 @@ mod tests {
     #[test]
     fn classify_paths() {
         assert_eq!(classify("/org/freedesktop/secrets"), ObjectKind::Service);
-        assert_eq!(classify("/org/freedesktop/secrets/session/s3"), ObjectKind::Session(3));
-        assert_eq!(classify("/org/freedesktop/secrets/collection/login"), ObjectKind::Collection("login"));
-        assert_eq!(classify("/org/freedesktop/secrets/collection/login/abc"), ObjectKind::Item("login", "abc"));
-        assert_eq!(classify("/org/freedesktop/secrets/aliases/default"), ObjectKind::Alias("default"));
-        assert_eq!(classify("/org/freedesktop/secrets/prompt/p7"), ObjectKind::Prompt(7));
+        assert_eq!(
+            classify("/org/freedesktop/secrets/session/s3"),
+            ObjectKind::Session(3)
+        );
+        assert_eq!(
+            classify("/org/freedesktop/secrets/collection/login"),
+            ObjectKind::Collection("login")
+        );
+        assert_eq!(
+            classify("/org/freedesktop/secrets/collection/login/abc"),
+            ObjectKind::Item("login", "abc")
+        );
+        assert_eq!(
+            classify("/org/freedesktop/secrets/aliases/default"),
+            ObjectKind::Alias("default")
+        );
+        assert_eq!(
+            classify("/org/freedesktop/secrets/prompt/p7"),
+            ObjectKind::Prompt(7)
+        );
         assert_eq!(classify("/unknown"), ObjectKind::Unknown);
     }
 }

@@ -32,8 +32,8 @@
 
 use std::path::Path;
 
-use crate::format::{Alignment, DocFormats, ParagraphAttrs, TextAttrs};
 use crate::fonts;
+use crate::format::{Alignment, DocFormats, ParagraphAttrs, TextAttrs};
 
 /// True when this path should round-trip the rich `.lnote` format.
 pub fn is_lnote(path: &Path) -> bool {
@@ -301,7 +301,9 @@ fn apply_span_record<'a>(
         }
     }
     if !attrs.is_default() {
-        formats.get_mut(idx).apply_format(start, end, |a| *a = attrs);
+        formats
+            .get_mut(idx)
+            .apply_format(start, end, |a| *a = attrs);
     }
 }
 
@@ -356,7 +358,10 @@ mod tests {
         assert_eq!(styled.font, Some(16));
         assert_eq!(styled.color, Some(0xcc3a34));
         assert_eq!(styled.bg_color, Some(0xfff0c0));
-        assert!(formats2.get(2).attrs_at(2).is_default(), "unstyled stays plain");
+        assert!(
+            formats2.get(2).attrs_at(2).is_default(),
+            "unstyled stays plain"
+        );
         assert!(formats2.get(3).para.bullet);
         assert!(!formats2.get(1).para.bullet);
     }
@@ -416,7 +421,10 @@ mod tests {
         assert!(formats.get(1).para.bullet);
         assert!(!formats.get(2).para.bullet, "lone dash is plain text");
         assert!(formats.get(3).para.bullet);
-        assert_eq!(serialize(&path, &lines, &formats), "title\n- first\n-\n- second");
+        assert_eq!(
+            serialize(&path, &lines, &formats),
+            "title\n- first\n-\n- second"
+        );
     }
 
     /// End-to-end through the editor's real file I/O.

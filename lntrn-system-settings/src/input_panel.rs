@@ -5,10 +5,8 @@ use lntrn_ui::gpu::{FoxPalette, InteractionContext, ScrollArea, Scrollbar, Slide
 
 use crate::config::LanternConfig;
 use crate::panels::{
-    draw_color_swatch_row, draw_section_card,
-    slider_value_from_cursor, GLOW_COLORS,
-    CARD_GAP, CARD_HEADER_H, CARD_INNER_PAD_H, CARD_INNER_PAD_V,
-    CARD_OUTER_PAD_H, CARD_OUTER_PAD_V,
+    draw_color_swatch_row, draw_section_card, slider_value_from_cursor, CARD_GAP, CARD_HEADER_H,
+    CARD_INNER_PAD_H, CARD_INNER_PAD_V, CARD_OUTER_PAD_H, CARD_OUTER_PAD_V, GLOW_COLORS,
 };
 
 const ZONE_MOUSE_SPEED: u32 = 800;
@@ -25,11 +23,11 @@ const ZONE_CURSOR_BASE: u32 = 810;
 // Swatch-row ranges. Each row reserves GLOW_COLORS.len() (8 today) zone
 // IDs; chosen with generous gaps so adding palette colors won't collide.
 // IDs 900–901 are owned by the global Save / Cancel chrome buttons.
-const ZONE_CURSOR_BODY_LIGHT_BASE:   u32 = 820;
-const ZONE_CURSOR_BODY_DARK_BASE:    u32 = 840;
+const ZONE_CURSOR_BODY_LIGHT_BASE: u32 = 820;
+const ZONE_CURSOR_BODY_DARK_BASE: u32 = 840;
 const ZONE_CURSOR_ACCENT_LIGHT_BASE: u32 = 860;
-const ZONE_CURSOR_ACCENT_DARK_BASE:  u32 = 880;
-const ZONE_CURSOR_OUTLINE_BASE:      u32 = 940;
+const ZONE_CURSOR_ACCENT_DARK_BASE: u32 = 880;
+const ZONE_CURSOR_OUTLINE_BASE: u32 = 940;
 const ZONE_CURSOR_DEFAULT_TILE: u32 = 960;
 const ZONE_CLICK_ANIM_COLOR_BASE: u32 = 970; // +0..GLOW_COLORS.len()
 const DEFAULT_PREVIEW_PX: f32 = 88.0;
@@ -78,8 +76,10 @@ pub struct InputPanelState {
 impl InputPanelState {
     pub fn new() -> Self {
         Self {
-            cursors: Vec::new(), scanned: false,
-            cursor_textures: Vec::new(), textures_loaded: false,
+            cursors: Vec::new(),
+            scanned: false,
+            cursor_textures: Vec::new(),
+            textures_loaded: false,
             scroll_offset: 0.0,
             default_preview_tex: None,
             default_preview_palette: String::new(),
@@ -90,7 +90,9 @@ impl InputPanelState {
     }
 
     fn scan(&mut self) {
-        if self.scanned { return; }
+        if self.scanned {
+            return;
+        }
         self.scanned = true;
 
         let cursor_dir = lntrn_theme::lantern_home()
@@ -100,18 +102,23 @@ impl InputPanelState {
                 std::path::PathBuf::from(home).join(".lantern/config/cursors")
             });
 
-        let Ok(entries) = std::fs::read_dir(&cursor_dir) else { return };
+        let Ok(entries) = std::fs::read_dir(&cursor_dir) else {
+            return;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            if ext != "svg" && ext != "png" { continue; }
+            if ext != "svg" && ext != "png" {
+                continue;
+            }
 
             let stem = match path.file_stem().and_then(|s| s.to_str()) {
                 Some(s) => s.to_string(),
                 None => continue,
             };
 
-            let display_name = stem.replace(['-', '_'], " ")
+            let display_name = stem
+                .replace(['-', '_'], " ")
                 .split_whitespace()
                 .map(|w| {
                     let mut c = w.chars();
@@ -126,20 +133,31 @@ impl InputPanelState {
                 .collect::<Vec<_>>()
                 .join(" ");
 
-            self.cursors.push(CursorEntry { id: stem, display_name, path });
+            self.cursors.push(CursorEntry {
+                id: stem,
+                display_name,
+                path,
+            });
         }
 
-        self.cursors.sort_by(|a, b| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()));
+        self.cursors.sort_by(|a, b| {
+            a.display_name
+                .to_lowercase()
+                .cmp(&b.display_name.to_lowercase())
+        });
         self.textures_loaded = false;
     }
 
     fn load_textures(&mut self, tex_pass: &TexturePass, gpu: &GpuContext, scale: f32) {
-        if self.textures_loaded { return; }
+        if self.textures_loaded {
+            return;
+        }
         self.textures_loaded = true;
         let sz = (CURSOR_ICON_SZ * scale) as u32;
         self.cursor_textures.clear();
         for cursor in &self.cursors {
-            self.cursor_textures.push(load_cursor_texture(tex_pass, gpu, &cursor.path, sz));
+            self.cursor_textures
+                .push(load_cursor_texture(tex_pass, gpu, &cursor.path, sz));
         }
     }
 
@@ -159,7 +177,7 @@ impl InputPanelState {
         let palette_key = palette.cache_key();
         let stale = self.default_preview_tex.is_none()
             || self.default_preview_palette != palette_key
-            || (self.default_preview_scale  - outline_scale).abs() > 0.001
+            || (self.default_preview_scale - outline_scale).abs() > 0.001
             || (self.default_preview_radius - corner_radius).abs() > 0.001
             || self.default_preview_px != target_px;
         if !stale {
@@ -178,7 +196,9 @@ impl InputPanelState {
         let src: &[u8] = match runtime.as_deref() {
             Some(bytes) => bytes,
             None => {
-                let Some(bundled) = lntrn_icons::get("lntrn-cursor.svg") else { return };
+                let Some(bundled) = lntrn_icons::get("lntrn-cursor.svg") else {
+                    return;
+                };
                 bundled
             }
         };
@@ -195,18 +215,19 @@ impl InputPanelState {
 /// `recolor_cursor_svg`. Used by the preview rasterizer so the swatch
 /// row matches what the cursor actually looks like on screen.
 pub struct CursorPalette<'a> {
-    pub body_light:   &'a str,
-    pub body_dark:    &'a str,
+    pub body_light: &'a str,
+    pub body_dark: &'a str,
     pub accent_light: &'a str,
-    pub accent_dark:  &'a str,
-    pub outline:      &'a str,
+    pub accent_dark: &'a str,
+    pub outline: &'a str,
 }
 
 impl<'a> CursorPalette<'a> {
     fn cache_key(&self) -> String {
-        format!("{}|{}|{}|{}|{}",
-            self.body_light, self.body_dark,
-            self.accent_light, self.accent_dark, self.outline)
+        format!(
+            "{}|{}|{}|{}|{}",
+            self.body_light, self.body_dark, self.accent_light, self.accent_dark, self.outline
+        )
     }
 }
 
@@ -219,7 +240,9 @@ fn customize_cursor_svg(
     outline_scale: f32,
     radius: f32,
 ) -> Vec<u8> {
-    let Ok(s) = std::str::from_utf8(svg) else { return svg.to_vec() };
+    let Ok(s) = std::str::from_utf8(svg) else {
+        return svg.to_vec();
+    };
     let mut out = s.to_string();
     out = replace_hex_case_insensitive(&out, "#ffffff", palette.body_light);
     out = replace_hex_case_insensitive(&out, "#ababab", palette.body_dark);
@@ -259,7 +282,10 @@ fn scale_stroke_widths(svg: &str, scale: f32) -> String {
                 out.push_str(&format!("{:.2}", (parsed * scale).max(0.0)));
                 rest = &after[end..];
             }
-            None => { out.push_str(after); return out; }
+            None => {
+                out.push_str(after);
+                return out;
+            }
         }
     }
     out.push_str(rest);
@@ -282,7 +308,9 @@ fn scale_stroke_widths(svg: &str, scale: f32) -> String {
         let num = &value[..unit_start];
         let unit = &value[unit_start..];
         let parsed = num.trim().parse::<f32>().unwrap_or(0.0);
-        for _ in 0..leading_space { final_out.push(' '); }
+        for _ in 0..leading_space {
+            final_out.push(' ');
+        }
         final_out.push_str(&format!("{:.2}{}", (parsed * scale).max(0.0), unit));
         rest = &trimmed[term_at..];
     }
@@ -292,11 +320,17 @@ fn scale_stroke_widths(svg: &str, scale: f32) -> String {
 
 fn round_first_polygon_path(svg: &str, r: f32) -> String {
     let attr = "d=\"";
-    let Some(start) = svg.find(attr) else { return svg.to_string() };
+    let Some(start) = svg.find(attr) else {
+        return svg.to_string();
+    };
     let body_start = start + attr.len();
-    let Some(end_off) = svg[body_start..].find('"') else { return svg.to_string() };
+    let Some(end_off) = svg[body_start..].find('"') else {
+        return svg.to_string();
+    };
     let d = &svg[body_start..body_start + end_off];
-    let Some(pts) = parse_polygon_d(d) else { return svg.to_string() };
+    let Some(pts) = parse_polygon_d(d) else {
+        return svg.to_string();
+    };
     let new_d = round_polygon_path(&pts, r);
     let mut out = String::with_capacity(svg.len() + 64);
     out.push_str(&svg[..body_start]);
@@ -307,7 +341,9 @@ fn round_first_polygon_path(svg: &str, r: f32) -> String {
 
 fn parse_polygon_d(d: &str) -> Option<Vec<(f32, f32)>> {
     let mut pts: Vec<(f32, f32)> = Vec::new();
-    let mut tokens = d.split(|c: char| c.is_whitespace() || c == ',').filter(|t| !t.is_empty());
+    let mut tokens = d
+        .split(|c: char| c.is_whitespace() || c == ',')
+        .filter(|t| !t.is_empty());
     while let Some(tok) = tokens.next() {
         match tok {
             "M" | "L" | "m" | "l" => {
@@ -326,7 +362,9 @@ fn parse_polygon_d(d: &str) -> Option<Vec<(f32, f32)>> {
             pts.pop();
         }
     }
-    if pts.len() < 3 { return None; }
+    if pts.len() < 3 {
+        return None;
+    }
     Some(pts)
 }
 
@@ -356,14 +394,20 @@ fn round_polygon_path(pts: &[(f32, f32)], r: f32) -> String {
         let p_out = (cur.0 + dx2 / l2 * r_eff, cur.1 + dy2 / l2 * r_eff);
         let cmd = if i == 0 { "M" } else { "L" };
         s.push_str(&format!("{} {:.3} {:.3} ", cmd, p_in.0, p_in.1));
-        s.push_str(&format!("Q {:.3} {:.3} {:.3} {:.3} ", cur.0, cur.1, p_out.0, p_out.1));
+        s.push_str(&format!(
+            "Q {:.3} {:.3} {:.3} {:.3} ",
+            cur.0, cur.1, p_out.0, p_out.1
+        ));
     }
     s.push('Z');
     s
 }
 
 fn rasterize_svg_to_texture(
-    data: &[u8], sz: u32, tex_pass: &TexturePass, gpu: &GpuContext,
+    data: &[u8],
+    sz: u32,
+    tex_pass: &TexturePass,
+    gpu: &GpuContext,
 ) -> Option<GpuTexture> {
     let tree = resvg::usvg::Tree::from_data(data, &Default::default()).ok()?;
     let mut pixmap = resvg::tiny_skia::Pixmap::new(sz, sz)?;
@@ -378,7 +422,10 @@ fn rasterize_svg_to_texture(
 }
 
 fn load_cursor_texture(
-    tex_pass: &TexturePass, gpu: &GpuContext, path: &std::path::Path, sz: u32,
+    tex_pass: &TexturePass,
+    gpu: &GpuContext,
+    path: &std::path::Path,
+    sz: u32,
 ) -> Option<GpuTexture> {
     let ext = path.extension()?.to_str()?;
     if ext == "svg" {
@@ -394,7 +441,8 @@ fn load_cursor_texture(
         resvg::render(&tree, xf, &mut pixmap.as_mut());
         Some(tex_pass.upload(gpu, pixmap.data(), sz, sz))
     } else {
-        let img = image::open(path).ok()?
+        let img = image::open(path)
+            .ok()?
             .resize_exact(sz, sz, image::imageops::FilterType::Triangle)
             .to_rgba8();
         Some(tex_pass.upload(gpu, &img, sz, sz))
@@ -407,30 +455,41 @@ pub fn draw_input_panel<'a>(
     subpanel: crate::wayland::Panel,
     config: &mut LanternConfig,
     state: &'a mut InputPanelState,
-    painter: &mut Painter, text: &mut TextRenderer, ix: &mut InteractionContext,
-    tex_pass: &TexturePass, fox: &FoxPalette, gpu: &GpuContext,
-    x: f32, y: f32, w: f32, panel_h: f32, s: f32, sw: u32, sh: u32,
+    painter: &mut Painter,
+    text: &mut TextRenderer,
+    ix: &mut InteractionContext,
+    tex_pass: &TexturePass,
+    fox: &FoxPalette,
+    gpu: &GpuContext,
+    x: f32,
+    y: f32,
+    w: f32,
+    panel_h: f32,
+    s: f32,
+    sw: u32,
+    sh: u32,
     scroll_delta: f32,
     tex_draws: &mut Vec<TextureDraw<'a>>,
 ) {
     // Mouse panel now shows every card stacked — Scrolling / Clicking / Cursor
     // are no longer separate sidebar entries.
     let _ = subpanel;
-    let show_pointer   = true;
+    let show_pointer = true;
     let show_scrolling = true;
-    let show_clicking  = true;
-    let show_cursor    = true;
+    let show_clicking = true;
+    let show_cursor = true;
     state.scan();
     state.load_textures(tex_pass, gpu, s);
     let palette = CursorPalette {
-        body_light:   &config.input.cursor_body_light,
-        body_dark:    &config.input.cursor_body_dark,
+        body_light: &config.input.cursor_body_light,
+        body_dark: &config.input.cursor_body_dark,
         accent_light: &config.input.cursor_accent_light,
-        accent_dark:  &config.input.cursor_accent_dark,
-        outline:      &config.input.cursor_outline_color,
+        accent_dark: &config.input.cursor_accent_dark,
+        outline: &config.input.cursor_outline_color,
     };
     state.ensure_default_preview(
-        tex_pass, gpu,
+        tex_pass,
+        gpu,
         &palette,
         config.input.cursor_outline_scale,
         config.input.cursor_corner_radius,
@@ -469,42 +528,50 @@ pub fn draw_input_panel<'a>(
     // Clicking card: double-click toggle, click-animation toggle, size
     // slider, and (when enabled) a color row that defaults to "inherit
     // outline" plus a swatch picker.
-    let click_anim_extra_rows = if config.input.click_anim_enabled { 3.0 } else { 1.0 };
+    let click_anim_extra_rows = if config.input.click_anim_enabled {
+        3.0
+    } else {
+        1.0
+    };
     let clicking_card_h = card_chrome_h + (1.0 + click_anim_extra_rows) * row;
 
     // Cursor Theme card: Cursor Size slider + cursor grid.
     let cursor_card_size = 100.0 * s;
     let cursor_card_gap = 16.0 * s;
-    let cursor_cols = ((card_inner_w + cursor_card_gap)
-        / (cursor_card_size + cursor_card_gap))
-        .floor().max(1.0) as usize;
+    let cursor_cols = ((card_inner_w + cursor_card_gap) / (cursor_card_size + cursor_card_gap))
+        .floor()
+        .max(1.0) as usize;
     let cursor_grid_rows = if state.cursors.is_empty() {
         1
     } else {
         (state.cursors.len() + cursor_cols - 1) / cursor_cols
     };
-    let cursor_grid_h = cursor_grid_rows as f32 * (cursor_card_size + cursor_card_gap)
-        - cursor_card_gap; // last row has no trailing gap
-    // Cursor card rows: Size + Outline Scale + Corner Roundness sliders
-    // (3), then 5 swatch rows (Body Light/Dark, Accent Light/Dark,
-    // Outline), then the theme grid below.
-    let cursor_card_h = card_chrome_h + row * 8.0 + 8.0 * s
-        + cursor_grid_h.max(cursor_card_size);
+    let cursor_grid_h =
+        cursor_grid_rows as f32 * (cursor_card_size + cursor_card_gap) - cursor_card_gap; // last row has no trailing gap
+                                                                                          // Cursor card rows: Size + Outline Scale + Corner Roundness sliders
+                                                                                          // (3), then 5 swatch rows (Body Light/Dark, Accent Light/Dark,
+                                                                                          // Outline), then the theme grid below.
+    let cursor_card_h = card_chrome_h + row * 8.0 + 8.0 * s + cursor_grid_h.max(cursor_card_size);
 
     let visible_heights: Vec<f32> = [
-        (show_pointer,   pointer_card_h),
+        (show_pointer, pointer_card_h),
         (show_scrolling, scrolling_card_h),
-        (show_clicking,  clicking_card_h),
-        (show_cursor,    cursor_card_h),
-    ].iter().filter_map(|(b, h)| if *b { Some(*h) } else { None }).collect();
+        (show_clicking, clicking_card_h),
+        (show_cursor, cursor_card_h),
+    ]
+    .iter()
+    .filter_map(|(b, h)| if *b { Some(*h) } else { None })
+    .collect();
     let content_height = CARD_OUTER_PAD_V * 2.0 * s
         + visible_heights.iter().sum::<f32>()
         + CARD_GAP * s * visible_heights.len().saturating_sub(1) as f32;
 
     if scroll_delta != 0.0 {
         ScrollArea::apply_scroll(
-            &mut state.scroll_offset, scroll_delta * 40.0,
-            content_height, panel_h,
+            &mut state.scroll_offset,
+            scroll_delta * 40.0,
+            content_height,
+            panel_h,
         );
     }
 
@@ -519,14 +586,32 @@ pub fn draw_input_panel<'a>(
     // ─────────────────────────────────────────────────────────────────
     if show_pointer {
         let mut cy = draw_section_card(
-            painter, text, fox, "Pointer",
-            card_x, cy_top, card_w, pointer_card_h, s, sw, sh,
+            painter,
+            text,
+            fox,
+            "Pointer",
+            card_x,
+            cy_top,
+            card_w,
+            pointer_card_h,
+            s,
+            sw,
+            sh,
         );
 
         // Speed slider (-1.0 to 1.0, displayed as percentage)
         {
             let label_y = cy + (row - lsz) / 2.0;
-            text.queue("Speed", lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
+            text.queue(
+                "Speed",
+                lsz,
+                label_x,
+                label_y,
+                fox.text,
+                ctrl_x - label_x,
+                sw,
+                sh,
+            );
 
             let frac = (config.input.mouse_speed + 1.0) / 2.0;
             let rect = Rect::new(ctrl_x, cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
@@ -536,7 +621,10 @@ pub fn draw_input_panel<'a>(
                 config.input.mouse_speed = (raw / 0.05).round() * 0.05;
                 config.input.mouse_speed = config.input.mouse_speed.clamp(-1.0, 1.0);
             }
-            Slider::new(rect).value(frac).hovered(zone.is_hovered()).active(zone.is_active())
+            Slider::new(rect)
+                .value(frac)
+                .hovered(zone.is_hovered())
+                .active(zone.is_active())
                 .draw(painter, fox);
 
             let pct = (config.input.mouse_speed * 100.0).round() as i32;
@@ -547,7 +635,16 @@ pub fn draw_input_panel<'a>(
             } else {
                 format!("{}%", pct)
             };
-            text.queue(&val, vsz, value_x, label_y, fox.text_secondary, value_w, sw, sh);
+            text.queue(
+                &val,
+                vsz,
+                value_x,
+                label_y,
+                fox.text_secondary,
+                value_w,
+                sw,
+                sh,
+            );
             cy += row;
         }
 
@@ -555,10 +652,13 @@ pub fn draw_input_panel<'a>(
         {
             let rect = Rect::new(card_inner_x, cy, card_inner_w, TOGGLE_H * s);
             let toggle = Toggle::new(rect, config.input.pointer_acceleration)
-                .label("Pointer Acceleration").scale(s);
+                .label("Pointer Acceleration")
+                .scale(s);
             let track = toggle.track_rect();
             let zone = ix.add_zone(ZONE_POINTER_ACCEL, track);
-            toggle.hovered(zone.is_hovered()).draw(painter, text, fox, sw, sh);
+            toggle
+                .hovered(zone.is_hovered())
+                .draw(painter, text, fox, sw, sh);
             cy += row;
         }
 
@@ -567,10 +667,13 @@ pub fn draw_input_panel<'a>(
         {
             let rect = Rect::new(card_inner_x, cy, card_inner_w, TOGGLE_H * s);
             let toggle = Toggle::new(rect, config.window_manager.focus_follows_mouse)
-                .label("Focus Follows Mouse").scale(s);
+                .label("Focus Follows Mouse")
+                .scale(s);
             let track = toggle.track_rect();
             let zone = ix.add_zone(crate::appearance_panel::ZONE_FOCUS, track);
-            toggle.hovered(zone.is_hovered()).draw(painter, text, fox, sw, sh);
+            toggle
+                .hovered(zone.is_hovered())
+                .draw(painter, text, fox, sw, sh);
         }
         cy_top += pointer_card_h + CARD_GAP * s;
     }
@@ -580,13 +683,31 @@ pub fn draw_input_panel<'a>(
     // ─────────────────────────────────────────────────────────────────
     if show_scrolling {
         let cy = draw_section_card(
-            painter, text, fox, "Scrolling",
-            card_x, cy_top, card_w, scrolling_card_h, s, sw, sh,
+            painter,
+            text,
+            fox,
+            "Scrolling",
+            card_x,
+            cy_top,
+            card_w,
+            scrolling_card_h,
+            s,
+            sw,
+            sh,
         );
 
         // Scroll Speed slider (0.25x to 3.0x)
         let label_y = cy + (row - lsz) / 2.0;
-        text.queue("Speed", lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
+        text.queue(
+            "Speed",
+            lsz,
+            label_x,
+            label_y,
+            fox.text,
+            ctrl_x - label_x,
+            sw,
+            sh,
+        );
 
         let frac = ((config.input.scroll_speed - 0.25) / 2.75).clamp(0.0, 1.0);
         let rect = Rect::new(ctrl_x, cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
@@ -597,10 +718,22 @@ pub fn draw_input_panel<'a>(
             config.input.scroll_speed = (raw / 0.05).round() * 0.05;
             config.input.scroll_speed = config.input.scroll_speed.clamp(0.25, 3.0);
         }
-        Slider::new(rect).value(frac).hovered(zone.is_hovered()).active(zone.is_active())
+        Slider::new(rect)
+            .value(frac)
+            .hovered(zone.is_hovered())
+            .active(zone.is_active())
             .draw(painter, fox);
         let val = format!("{:.2}x", config.input.scroll_speed);
-        text.queue(&val, vsz, value_x, label_y, fox.text_secondary, value_w, sw, sh);
+        text.queue(
+            &val,
+            vsz,
+            value_x,
+            label_y,
+            fox.text_secondary,
+            value_w,
+            sw,
+            sh,
+        );
         cy_top += scrolling_card_h + CARD_GAP * s;
     }
 
@@ -609,18 +742,30 @@ pub fn draw_input_panel<'a>(
     // ─────────────────────────────────────────────────────────────────
     if show_clicking {
         let mut cy = draw_section_card(
-            painter, text, fox, "Clicking",
-            card_x, cy_top, card_w, clicking_card_h, s, sw, sh,
+            painter,
+            text,
+            fox,
+            "Clicking",
+            card_x,
+            cy_top,
+            card_w,
+            clicking_card_h,
+            s,
+            sw,
+            sh,
         );
 
         // Double-click toggle (true = double-click required, false = single-click)
         {
             let rect = Rect::new(card_inner_x, cy, card_inner_w, TOGGLE_H * s);
             let toggle = Toggle::new(rect, config.input.double_click_to_open)
-                .label("Double-click to open").scale(s);
+                .label("Double-click to open")
+                .scale(s);
             let track = toggle.track_rect();
             let zone = ix.add_zone(ZONE_DOUBLE_CLICK, track);
-            toggle.hovered(zone.is_hovered()).draw(painter, text, fox, sw, sh);
+            toggle
+                .hovered(zone.is_hovered())
+                .draw(painter, text, fox, sw, sh);
             cy += row;
         }
 
@@ -629,10 +774,13 @@ pub fn draw_input_panel<'a>(
         {
             let rect = Rect::new(card_inner_x, cy, card_inner_w, TOGGLE_H * s);
             let toggle = Toggle::new(rect, config.input.click_anim_enabled)
-                .label("Click ripple animation").scale(s);
+                .label("Click ripple animation")
+                .scale(s);
             let track = toggle.track_rect();
             let zone = ix.add_zone(ZONE_CLICK_ANIM_ENABLED, track);
-            toggle.hovered(zone.is_hovered()).draw(painter, text, fox, sw, sh);
+            toggle
+                .hovered(zone.is_hovered())
+                .draw(painter, text, fox, sw, sh);
             cy += row;
         }
 
@@ -642,8 +790,16 @@ pub fn draw_input_panel<'a>(
             // Size slider: 0.25x..3.0x of the baseline ripple diameter.
             {
                 let label_y = cy + (row - lsz) / 2.0;
-                text.queue("Ripple Size", lsz, label_x, label_y, fox.text,
-                    ctrl_x - label_x, sw, sh);
+                text.queue(
+                    "Ripple Size",
+                    lsz,
+                    label_x,
+                    label_y,
+                    fox.text,
+                    ctrl_x - label_x,
+                    sw,
+                    sh,
+                );
                 let frac = ((config.input.click_anim_size - 0.25) / 2.75).clamp(0.0, 1.0);
                 let rect = Rect::new(ctrl_x, cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
                 let zone = ix.add_zone(ZONE_CLICK_ANIM_SIZE, rect);
@@ -652,11 +808,22 @@ pub fn draw_input_panel<'a>(
                     config.input.click_anim_size = (raw / 0.05).round() * 0.05;
                     config.input.click_anim_size = config.input.click_anim_size.clamp(0.25, 3.0);
                 }
-                Slider::new(rect).value(frac).hovered(zone.is_hovered()).active(zone.is_active())
+                Slider::new(rect)
+                    .value(frac)
+                    .hovered(zone.is_hovered())
+                    .active(zone.is_active())
                     .draw(painter, fox);
                 let val = format!("{:.2}x", config.input.click_anim_size);
-                text.queue(&val, vsz, value_x, label_y, fox.text_secondary,
-                    value_w, sw, sh);
+                text.queue(
+                    &val,
+                    vsz,
+                    value_x,
+                    label_y,
+                    fox.text_secondary,
+                    value_w,
+                    sw,
+                    sh,
+                );
                 cy += row;
             }
 
@@ -664,8 +831,16 @@ pub fn draw_input_panel<'a>(
             // cursor_outline) then the standard GLOW_COLORS swatches.
             {
                 let label_y = cy + (row - lsz) / 2.0;
-                text.queue("Ripple Color", lsz, label_x, label_y, fox.text,
-                    ctrl_x - label_x, sw, sh);
+                text.queue(
+                    "Ripple Color",
+                    lsz,
+                    label_x,
+                    label_y,
+                    fox.text,
+                    ctrl_x - label_x,
+                    sw,
+                    sh,
+                );
 
                 let swatch_size = 28.0 * s;
                 let swatch_gap = 8.0 * s;
@@ -681,9 +856,13 @@ pub fn draw_input_panel<'a>(
                 let outline_color = lntrn_render::Color::from_hex(&config.input.cursor_body_light)
                     .unwrap_or(fox.text);
                 painter.rect_filled(inherit_rect, inherit_r, fox.surface);
-                let border_w = if inherit_active { 2.5 * s } else if inherit_zone.is_hovered() {
+                let border_w = if inherit_active {
+                    2.5 * s
+                } else if inherit_zone.is_hovered() {
                     1.5 * s
-                } else { 1.0 * s };
+                } else {
+                    1.0 * s
+                };
                 let border_color = if inherit_active {
                     fox.accent
                 } else if inherit_zone.is_hovered() {
@@ -696,7 +875,8 @@ pub fn draw_input_panel<'a>(
                 let dot_rect = Rect::new(
                     inherit_rect.x + swatch_size / 2.0 - dot_r,
                     inherit_rect.y + swatch_size / 2.0 - dot_r,
-                    dot_r * 2.0, dot_r * 2.0,
+                    dot_r * 2.0,
+                    dot_r * 2.0,
                 );
                 painter.rect_filled(dot_rect, dot_r, outline_color);
 
@@ -710,12 +890,20 @@ pub fn draw_input_panel<'a>(
                     let is_selected = config.input.click_anim_color.eq_ignore_ascii_case(hex);
                     let r = swatch_size * 0.5;
                     painter.rect_filled(rect, r, color);
-                    let bw = if is_selected { 2.5 * s }
-                        else if zone.is_hovered() { 1.5 * s }
-                        else { 1.0 * s };
-                    let bc = if is_selected { fox.accent }
-                        else if zone.is_hovered() { fox.text_secondary }
-                        else { fox.muted };
+                    let bw = if is_selected {
+                        2.5 * s
+                    } else if zone.is_hovered() {
+                        1.5 * s
+                    } else {
+                        1.0 * s
+                    };
+                    let bc = if is_selected {
+                        fox.accent
+                    } else if zone.is_hovered() {
+                        fox.text_secondary
+                    } else {
+                        fox.muted
+                    };
                     painter.rect_border(rect, r, bw, bc);
                 }
                 cy += row;
@@ -730,8 +918,17 @@ pub fn draw_input_panel<'a>(
     // ─────────────────────────────────────────────────────────────────
     if show_cursor {
         let mut cy = draw_section_card(
-            painter, text, fox, "Cursor Theme",
-            card_x, cy_top, card_w, cursor_card_h, s, sw, sh,
+            painter,
+            text,
+            fox,
+            "Cursor Theme",
+            card_x,
+            cy_top,
+            card_w,
+            cursor_card_h,
+            s,
+            sw,
+            sh,
         );
 
         // Snapshot where the full 5-row control block begins so the preview
@@ -741,17 +938,38 @@ pub fn draw_input_panel<'a>(
         // Cursor Size slider (16 – 64 px)
         {
             let label_y = cy + (row - lsz) / 2.0;
-            text.queue("Size", lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
+            text.queue(
+                "Size",
+                lsz,
+                label_x,
+                label_y,
+                fox.text,
+                ctrl_x - label_x,
+                sw,
+                sh,
+            );
             let frac = ((config.input.cursor_size as f32 - 16.0) / 112.0).clamp(0.0, 1.0);
             let rect = Rect::new(ctrl_x, cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
             let zone = ix.add_zone(ZONE_CURSOR_SIZE, rect);
             if let Some(f) = slider_value_from_cursor(ix, ZONE_CURSOR_SIZE, &rect) {
                 config.input.cursor_size = (16.0 + f * 112.0).round() as u32;
             }
-            Slider::new(rect).value(frac).hovered(zone.is_hovered()).active(zone.is_active())
+            Slider::new(rect)
+                .value(frac)
+                .hovered(zone.is_hovered())
+                .active(zone.is_active())
                 .draw(painter, fox);
             let val = format!("{}px", config.input.cursor_size);
-            text.queue(&val, vsz, value_x, label_y, fox.text_secondary, value_w, sw, sh);
+            text.queue(
+                &val,
+                vsz,
+                value_x,
+                label_y,
+                fox.text_secondary,
+                value_w,
+                sw,
+                sh,
+            );
             cy += row;
         }
 
@@ -759,18 +977,40 @@ pub fn draw_input_panel<'a>(
         // `stroke-width` in the bundled cursor SVGs.
         {
             let label_y = cy + (row - lsz) / 2.0;
-            text.queue("Outline", lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
+            text.queue(
+                "Outline",
+                lsz,
+                label_x,
+                label_y,
+                fox.text,
+                ctrl_x - label_x,
+                sw,
+                sh,
+            );
             let frac = (config.input.cursor_outline_scale / 3.0).clamp(0.0, 1.0);
             let rect = Rect::new(ctrl_x, cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
             let zone = ix.add_zone(ZONE_CURSOR_OUTLINE_SCALE, rect);
             if let Some(f) = slider_value_from_cursor(ix, ZONE_CURSOR_OUTLINE_SCALE, &rect) {
                 let raw = f * 3.0;
-                config.input.cursor_outline_scale = (raw * 20.0).round() / 20.0; // snap 0.05
+                config.input.cursor_outline_scale = (raw * 20.0).round() / 20.0;
+                // snap 0.05
             }
-            Slider::new(rect).value(frac).hovered(zone.is_hovered()).active(zone.is_active())
+            Slider::new(rect)
+                .value(frac)
+                .hovered(zone.is_hovered())
+                .active(zone.is_active())
                 .draw(painter, fox);
             let val = format!("{:.2}x", config.input.cursor_outline_scale);
-            text.queue(&val, vsz, value_x, label_y, fox.text_secondary, value_w, sw, sh);
+            text.queue(
+                &val,
+                vsz,
+                value_x,
+                label_y,
+                fox.text_secondary,
+                value_w,
+                sw,
+                sh,
+            );
             cy += row;
         }
 
@@ -778,17 +1018,41 @@ pub fn draw_input_panel<'a>(
         // path with smooth bezier corners.
         {
             let label_y = cy + (row - lsz) / 2.0;
-            text.queue("Roundness", lsz, label_x, label_y, fox.text, ctrl_x - label_x, sw, sh);
+            text.queue(
+                "Roundness",
+                lsz,
+                label_x,
+                label_y,
+                fox.text,
+                ctrl_x - label_x,
+                sw,
+                sh,
+            );
             let frac = config.input.cursor_corner_radius.clamp(0.0, 1.0);
             let rect = Rect::new(ctrl_x, cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
             let zone = ix.add_zone(ZONE_CURSOR_CORNER_RADIUS, rect);
             if let Some(f) = slider_value_from_cursor(ix, ZONE_CURSOR_CORNER_RADIUS, &rect) {
                 config.input.cursor_corner_radius = (f * 20.0).round() / 20.0; // snap 5%
             }
-            Slider::new(rect).value(frac).hovered(zone.is_hovered()).active(zone.is_active())
+            Slider::new(rect)
+                .value(frac)
+                .hovered(zone.is_hovered())
+                .active(zone.is_active())
                 .draw(painter, fox);
-            let val = format!("{}%", (config.input.cursor_corner_radius * 100.0).round() as i32);
-            text.queue(&val, vsz, value_x, label_y, fox.text_secondary, value_w, sw, sh);
+            let val = format!(
+                "{}%",
+                (config.input.cursor_corner_radius * 100.0).round() as i32
+            );
+            text.queue(
+                &val,
+                vsz,
+                value_x,
+                label_y,
+                fox.text_secondary,
+                value_w,
+                sw,
+                sh,
+            );
             cy += row;
         }
 
@@ -796,34 +1060,94 @@ pub fn draw_input_panel<'a>(
         // user's picked palette. All use the same GLOW_COLORS palette so
         // the picker reads as one consistent set of accent options.
         draw_color_swatch_row(
-            painter, text, ix, fox,
-            "Body Light", ZONE_CURSOR_BODY_LIGHT_BASE,
+            painter,
+            text,
+            ix,
+            fox,
+            "Body Light",
+            ZONE_CURSOR_BODY_LIGHT_BASE,
             &config.input.cursor_body_light,
-            label_x, ctrl_x, card_inner_x + card_inner_w, &mut cy, row, lsz, s, sw, sh,
+            label_x,
+            ctrl_x,
+            card_inner_x + card_inner_w,
+            &mut cy,
+            row,
+            lsz,
+            s,
+            sw,
+            sh,
         );
         draw_color_swatch_row(
-            painter, text, ix, fox,
-            "Body Dark", ZONE_CURSOR_BODY_DARK_BASE,
+            painter,
+            text,
+            ix,
+            fox,
+            "Body Dark",
+            ZONE_CURSOR_BODY_DARK_BASE,
             &config.input.cursor_body_dark,
-            label_x, ctrl_x, card_inner_x + card_inner_w, &mut cy, row, lsz, s, sw, sh,
+            label_x,
+            ctrl_x,
+            card_inner_x + card_inner_w,
+            &mut cy,
+            row,
+            lsz,
+            s,
+            sw,
+            sh,
         );
         draw_color_swatch_row(
-            painter, text, ix, fox,
-            "Accent Light", ZONE_CURSOR_ACCENT_LIGHT_BASE,
+            painter,
+            text,
+            ix,
+            fox,
+            "Accent Light",
+            ZONE_CURSOR_ACCENT_LIGHT_BASE,
             &config.input.cursor_accent_light,
-            label_x, ctrl_x, card_inner_x + card_inner_w, &mut cy, row, lsz, s, sw, sh,
+            label_x,
+            ctrl_x,
+            card_inner_x + card_inner_w,
+            &mut cy,
+            row,
+            lsz,
+            s,
+            sw,
+            sh,
         );
         draw_color_swatch_row(
-            painter, text, ix, fox,
-            "Accent Dark", ZONE_CURSOR_ACCENT_DARK_BASE,
+            painter,
+            text,
+            ix,
+            fox,
+            "Accent Dark",
+            ZONE_CURSOR_ACCENT_DARK_BASE,
             &config.input.cursor_accent_dark,
-            label_x, ctrl_x, card_inner_x + card_inner_w, &mut cy, row, lsz, s, sw, sh,
+            label_x,
+            ctrl_x,
+            card_inner_x + card_inner_w,
+            &mut cy,
+            row,
+            lsz,
+            s,
+            sw,
+            sh,
         );
         draw_color_swatch_row(
-            painter, text, ix, fox,
-            "Outline", ZONE_CURSOR_OUTLINE_BASE,
+            painter,
+            text,
+            ix,
+            fox,
+            "Outline",
+            ZONE_CURSOR_OUTLINE_BASE,
             &config.input.cursor_outline_color,
-            label_x, ctrl_x, card_inner_x + card_inner_w, &mut cy, row, lsz, s, sw, sh,
+            label_x,
+            ctrl_x,
+            card_inner_x + card_inner_w,
+            &mut cy,
+            row,
+            lsz,
+            s,
+            sw,
+            sh,
         );
 
         // Live preview tile of the bundled default cursor with all current
@@ -854,9 +1178,13 @@ pub fn draw_input_panel<'a>(
             if let Some(tex) = state.default_preview_tex.as_ref() {
                 let pad = 10.0 * s;
                 let inner = tile_px - pad * 2.0;
-                tex_draws.push(
-                    TextureDraw::new(tex, tile_x + pad, tile_y + pad, inner, inner),
-                );
+                tex_draws.push(TextureDraw::new(
+                    tex,
+                    tile_x + pad,
+                    tile_y + pad,
+                    inner,
+                    inner,
+                ));
             }
         }
 
@@ -918,8 +1246,16 @@ pub fn draw_input_panel<'a>(
             } else {
                 cursor.display_name.clone()
             };
-            text.queue(&display, label_font, cx_card + 4.0 * s, label_y, label_color,
-                cursor_card_size - 8.0 * s, sw, sh);
+            text.queue(
+                &display,
+                label_font,
+                cx_card + 4.0 * s,
+                label_y,
+                label_color,
+                cursor_card_size - 8.0 * s,
+                sw,
+                sh,
+            );
         }
     }
 
@@ -932,7 +1268,13 @@ pub fn draw_input_panel<'a>(
 }
 
 /// Draw a simple cursor arrow preview shape.
-fn draw_cursor_preview(painter: &mut Painter, x: f32, y: f32, size: f32, color: lntrn_render::Color) {
+fn draw_cursor_preview(
+    painter: &mut Painter,
+    x: f32,
+    y: f32,
+    size: f32,
+    color: lntrn_render::Color,
+) {
     let tip_x = x + size * 0.3;
     let tip_y = y;
     let bottom_y = y + size * 0.85;
@@ -942,9 +1284,30 @@ fn draw_cursor_preview(painter: &mut Painter, x: f32, y: f32, size: f32, color: 
 
     painter.line(tip_x, tip_y, tip_x, bottom_y, lw, color);
     painter.line(tip_x, bottom_y, tip_x + size * 0.15, mid_y, lw, color);
-    painter.line(tip_x + size * 0.15, mid_y, right_x, y + size * 0.85, lw, color);
-    painter.line(right_x, y + size * 0.85, right_x - size * 0.1, mid_y + size * 0.05, lw, color);
-    painter.line(right_x - size * 0.1, mid_y + size * 0.05, tip_x + size * 0.25, mid_y, lw, color);
+    painter.line(
+        tip_x + size * 0.15,
+        mid_y,
+        right_x,
+        y + size * 0.85,
+        lw,
+        color,
+    );
+    painter.line(
+        right_x,
+        y + size * 0.85,
+        right_x - size * 0.1,
+        mid_y + size * 0.05,
+        lw,
+        color,
+    );
+    painter.line(
+        right_x - size * 0.1,
+        mid_y + size * 0.05,
+        tip_x + size * 0.25,
+        mid_y,
+        lw,
+        color,
+    );
     painter.line(tip_x + size * 0.25, mid_y, tip_x, tip_y, lw, color);
 }
 
@@ -955,11 +1318,26 @@ pub fn handle_input_click(config: &mut LanternConfig, state: &InputPanelState, z
     // open-ended `id >= ZONE_CURSOR_BASE` arm or those zones get swallowed
     // by the cursor-theme grid (and lookup-misses silently no-op).
     let palette_targets: [(u32, &mut String); 5] = [
-        (ZONE_CURSOR_BODY_LIGHT_BASE,   &mut config.input.cursor_body_light),
-        (ZONE_CURSOR_BODY_DARK_BASE,    &mut config.input.cursor_body_dark),
-        (ZONE_CURSOR_ACCENT_LIGHT_BASE, &mut config.input.cursor_accent_light),
-        (ZONE_CURSOR_ACCENT_DARK_BASE,  &mut config.input.cursor_accent_dark),
-        (ZONE_CURSOR_OUTLINE_BASE,      &mut config.input.cursor_outline_color),
+        (
+            ZONE_CURSOR_BODY_LIGHT_BASE,
+            &mut config.input.cursor_body_light,
+        ),
+        (
+            ZONE_CURSOR_BODY_DARK_BASE,
+            &mut config.input.cursor_body_dark,
+        ),
+        (
+            ZONE_CURSOR_ACCENT_LIGHT_BASE,
+            &mut config.input.cursor_accent_light,
+        ),
+        (
+            ZONE_CURSOR_ACCENT_DARK_BASE,
+            &mut config.input.cursor_accent_dark,
+        ),
+        (
+            ZONE_CURSOR_OUTLINE_BASE,
+            &mut config.input.cursor_outline_color,
+        ),
     ];
     for (base, target) in palette_targets {
         if zone_id >= base && zone_id < base + GLOW_COLORS.len() as u32 {
@@ -986,8 +1364,7 @@ pub fn handle_input_click(config: &mut LanternConfig, state: &InputPanelState, z
         }
         // Focus Follows Mouse moved here from the Appearance/Focus card.
         id if id == crate::appearance_panel::ZONE_FOCUS => {
-            config.window_manager.focus_follows_mouse =
-                !config.window_manager.focus_follows_mouse;
+            config.window_manager.focus_follows_mouse = !config.window_manager.focus_follows_mouse;
         }
         ZONE_DOUBLE_CLICK => {
             config.input.double_click_to_open = !config.input.double_click_to_open;
@@ -1004,9 +1381,7 @@ pub fn handle_input_click(config: &mut LanternConfig, state: &InputPanelState, z
             // fill / outline live via the compositor's tick_colors path.
             config.input.cursor_theme = "default".into();
         }
-        id if id >= ZONE_CURSOR_BASE
-            && id < ZONE_CURSOR_BODY_LIGHT_BASE =>
-        {
+        id if id >= ZONE_CURSOR_BASE && id < ZONE_CURSOR_BODY_LIGHT_BASE => {
             let idx = (id - ZONE_CURSOR_BASE) as usize;
             if let Some(cursor) = state.cursors.get(idx) {
                 config.input.cursor_theme = cursor.id.clone();

@@ -20,8 +20,8 @@ mod view;
 mod worker;
 
 pub use view::{
-    draw_inline, draw_view, hit_test_device_dir, hit_test_icon, hit_test_inline,
-    inline_bar_rect, slider_rect_for, InlineHit, TILE_WIDTH,
+    draw_inline, draw_view, hit_test_device_dir, hit_test_icon, hit_test_inline, inline_bar_rect,
+    slider_rect_for, InlineHit, TILE_WIDTH,
 };
 
 /// One PipeWire sink as exposed by `wpctl status`.

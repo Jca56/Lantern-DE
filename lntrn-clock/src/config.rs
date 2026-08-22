@@ -23,28 +23,19 @@ pub enum Style {
 /// Cycled in order by the config panel; whatever the user picks is what
 /// renders, no hidden second field.
 pub const COLOR_CHOICES: &[&str] = &[
-    "accent",
-    "rainbow",
-    "default",
-    "gold",
-    "amber",
-    "crimson",
-    "mint",
-    "cyan",
-    "violet",
-    "pink",
+    "accent", "rainbow", "default", "gold", "amber", "crimson", "mint", "cyan", "violet", "pink",
     "white",
 ];
 
 const PALETTE: &[(&str, (u8, u8, u8))] = &[
-    ("gold",    (212, 160,  32)),
-    ("amber",   (255, 176,  46)),
-    ("crimson", (220,  40,  60)),
-    ("mint",    ( 70, 220, 150)),
-    ("cyan",    ( 80, 200, 220)),
-    ("violet",  (170, 110, 230)),
-    ("pink",    (255, 105, 180)),
-    ("white",   (235, 235, 235)),
+    ("gold", (212, 160, 32)),
+    ("amber", (255, 176, 46)),
+    ("crimson", (220, 40, 60)),
+    ("mint", (70, 220, 150)),
+    ("cyan", (80, 200, 220)),
+    ("violet", (170, 110, 230)),
+    ("pink", (255, 105, 180)),
+    ("white", (235, 235, 235)),
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

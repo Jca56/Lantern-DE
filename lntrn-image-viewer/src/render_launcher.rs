@@ -3,7 +3,7 @@
 
 use lntrn_render::{Rect, TextPass};
 use lntrn_ui::gpu::{
-    Button, ButtonVariant, FontSize, FoxPalette, InteractionContext, Scrollbar, ScrollArea,
+    Button, ButtonVariant, FontSize, FoxPalette, InteractionContext, ScrollArea, Scrollbar,
     TextLabel, TitleBar,
 };
 
@@ -20,7 +20,11 @@ pub struct LauncherState {
 
 impl LauncherState {
     pub fn new() -> Self {
-        Self { canvases: persist::list_canvases(), scroll: 0.0, error: None }
+        Self {
+            canvases: persist::list_canvases(),
+            scroll: 0.0,
+            error: None,
+        }
     }
 }
 
@@ -48,7 +52,12 @@ pub fn render_launcher_frame(
     palette: &FoxPalette,
     s: f32,
 ) {
-    let Gpu { ctx, painter, text, tex_pass: _ } = gpu;
+    let Gpu {
+        ctx,
+        painter,
+        text,
+        tex_pass: _,
+    } = gpu;
     let wf = ctx.width() as f32;
     let hf = ctx.height() as f32;
 
@@ -62,9 +71,18 @@ pub fn render_launcher_frame(
 
     // ── Title bar ───────────────────────────────────────────────────
     let title_rect = Rect::new(0.0, 0.0, wf, title_h);
-    let close_state = input.add_zone(ZONE_CLOSE, TitleBar::new(title_rect).scale(s).close_button_rect());
-    let max_state = input.add_zone(ZONE_MAXIMIZE, TitleBar::new(title_rect).scale(s).maximize_button_rect());
-    let min_state = input.add_zone(ZONE_MINIMIZE, TitleBar::new(title_rect).scale(s).minimize_button_rect());
+    let close_state = input.add_zone(
+        ZONE_CLOSE,
+        TitleBar::new(title_rect).scale(s).close_button_rect(),
+    );
+    let max_state = input.add_zone(
+        ZONE_MAXIMIZE,
+        TitleBar::new(title_rect).scale(s).maximize_button_rect(),
+    );
+    let min_state = input.add_zone(
+        ZONE_MINIMIZE,
+        TitleBar::new(title_rect).scale(s).minimize_button_rect(),
+    );
     TitleBar::new(title_rect)
         .scale(s)
         .close_hovered(close_state.is_hovered())
@@ -85,10 +103,14 @@ pub fn render_launcher_frame(
     let sub = "Build a collage on a big pannable canvas";
     let sub_px = FontSize::Small.px() * s;
     let sub_w = text.measure_width(sub, sub_px);
-    TextLabel::new(sub, (wf - sub_w) * 0.5, hf * 0.5 - 110.0 * s + heading_px + 8.0 * s)
-        .size(FontSize::Custom(sub_px))
-        .color(palette.text_secondary)
-        .draw(text, ctx.width(), ctx.height());
+    TextLabel::new(
+        sub,
+        (wf - sub_w) * 0.5,
+        hf * 0.5 - 110.0 * s + heading_px + 8.0 * s,
+    )
+    .size(FontSize::Custom(sub_px))
+    .color(palette.text_secondary)
+    .draw(text, ctx.width(), ctx.height());
 
     let btn_w = 340.0 * s;
     let btn_h = 60.0 * s;
@@ -131,30 +153,49 @@ pub fn render_launcher_frame(
                 continue;
             }
             let state = input.add_zone(ZONE_LAUNCHER_ITEM_BASE + i as u32, row);
-            let bg = if state.is_hovered() { palette.surface_2 } else { palette.surface };
+            let bg = if state.is_hovered() {
+                palette.surface_2
+            } else {
+                palette.surface
+            };
             painter.rect_filled(row, 10.0 * s, bg);
 
             let name_px = FontSize::Body.px() * s;
-            TextLabel::new(&entry.name, row.x + 18.0 * s, row.y + (row.h - name_px) * 0.5)
-                .size(FontSize::Custom(name_px))
-                .color(palette.text)
-                .max_width(row.w * 0.6)
-                .draw(text, ctx.width(), ctx.height());
+            TextLabel::new(
+                &entry.name,
+                row.x + 18.0 * s,
+                row.y + (row.h - name_px) * 0.5,
+            )
+            .size(FontSize::Custom(name_px))
+            .color(palette.text)
+            .max_width(row.w * 0.6)
+            .draw(text, ctx.width(), ctx.height());
 
             if let Some(modified) = entry.modified {
                 let date = persist::format_date(modified);
                 let date_px = FontSize::Caption.px() * s;
                 let date_w = text.measure_width(&date, date_px);
-                TextLabel::new(&date, row.x + row.w - date_w - 18.0 * s, row.y + (row.h - date_px) * 0.5)
-                    .size(FontSize::Custom(date_px))
-                    .color(palette.muted)
-                    .draw(text, ctx.width(), ctx.height());
+                TextLabel::new(
+                    &date,
+                    row.x + row.w - date_w - 18.0 * s,
+                    row.y + (row.h - date_px) * 0.5,
+                )
+                .size(FontSize::Custom(date_px))
+                .color(palette.muted)
+                .draw(text, ctx.width(), ctx.height());
             }
         }
         area.end(painter, text);
 
         let bar = Scrollbar::new(&vp, content_h, launcher.scroll);
-        bar.draw(painter, input.is_hovered(&bar.hover_zone()).then_some(lntrn_ui::gpu::InteractionState::Hovered).unwrap_or(lntrn_ui::gpu::InteractionState::Idle), palette);
+        bar.draw(
+            painter,
+            input
+                .is_hovered(&bar.hover_zone())
+                .then_some(lntrn_ui::gpu::InteractionState::Hovered)
+                .unwrap_or(lntrn_ui::gpu::InteractionState::Idle),
+            palette,
+        );
     } else {
         let hint = "Saved canvases will show up here";
         let hint_px = FontSize::Small.px() * s;

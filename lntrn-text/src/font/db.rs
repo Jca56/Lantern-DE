@@ -167,7 +167,8 @@ impl FontDb {
             if !meta.var_coords.is_empty() {
                 font.set_instance(&meta.var_coords);
             }
-            self.records.push(FaceRecord::from_meta(meta, FaceSource::Embedded));
+            self.records
+                .push(FaceRecord::from_meta(meta, FaceSource::Embedded));
             self.fonts.push(Some(font));
             self.dead.push(false);
         }
@@ -216,11 +217,19 @@ impl FontDb {
                 return Some(id);
             }
         }
-        let configured = if monospace { &self.mono_family } else { &self.sans_family };
+        let configured = if monospace {
+            &self.mono_family
+        } else {
+            &self.sans_family
+        };
         if let Some(id) = self.best_in_family(configured, w, italic) {
             return Some(id);
         }
-        let chain = if monospace { MONO_DEFAULTS } else { SANS_DEFAULTS };
+        let chain = if monospace {
+            MONO_DEFAULTS
+        } else {
+            SANS_DEFAULTS
+        };
         for f in chain {
             if let Some(id) = self.best_in_family(f, w, italic) {
                 return Some(id);
@@ -235,7 +244,12 @@ impl FontDb {
         self.best_where(|r| r.families.iter().any(|f| f == fam_lower), w, italic)
     }
 
-    fn best_where(&self, pred: impl Fn(&FaceRecord) -> bool, w: u16, italic: bool) -> Option<usize> {
+    fn best_where(
+        &self,
+        pred: impl Fn(&FaceRecord) -> bool,
+        w: u16,
+        italic: bool,
+    ) -> Option<usize> {
         self.records
             .iter()
             .enumerate()
@@ -246,7 +260,12 @@ impl FontDb {
 
     /// Lower ranks first: style match, then closest weight, normal width,
     /// embedded faces winning ties, stable by id.
-    fn style_rank(r: &FaceRecord, w: u16, italic: bool, id: usize) -> (bool, u16, u16, bool, usize) {
+    fn style_rank(
+        r: &FaceRecord,
+        w: u16,
+        italic: bool,
+        id: usize,
+    ) -> (bool, u16, u16, bool, usize) {
         (
             r.italic != italic,
             r.weight.abs_diff(w),

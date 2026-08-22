@@ -73,11 +73,21 @@ struct BtnDef {
 }
 
 const fn btn(label: &'static str, kind: BtnKind) -> BtnDef {
-    BtnDef { label, kind, col_span: 1, accent: false }
+    BtnDef {
+        label,
+        kind,
+        col_span: 1,
+        accent: false,
+    }
 }
 
 const fn btn_accent(label: &'static str, kind: BtnKind) -> BtnDef {
-    BtnDef { label, kind, col_span: 1, accent: true }
+    BtnDef {
+        label,
+        kind,
+        col_span: 1,
+        accent: true,
+    }
 }
 
 const BUTTONS: [BtnDef; 20] = [
@@ -239,16 +249,28 @@ impl CalcApp {
             icon_size,
             icon_size,
         );
-        let bksp_hovered = self.cursor.map_or(false, |(cx, cy)| self.backspace_rect.contains(cx, cy));
-        let bksp_bg = if bksp_hovered { GLASS_BTN_HOVER } else { Color::rgba(0.0, 0.0, 0.0, 0.0) };
+        let bksp_hovered = self
+            .cursor
+            .map_or(false, |(cx, cy)| self.backspace_rect.contains(cx, cy));
+        let bksp_bg = if bksp_hovered {
+            GLASS_BTN_HOVER
+        } else {
+            Color::rgba(0.0, 0.0, 0.0, 0.0)
+        };
         painter.rect_filled(self.backspace_rect, 6.0 * s, bksp_bg);
         let icon_font = 20.0 * s;
         let bksp_label = "\u{232b}";
         let bksp_lw = text.measure_width(bksp_label, icon_font);
         let bksp_lx = self.backspace_rect.x + (self.backspace_rect.w - bksp_lw) / 2.0;
         let bksp_ly = self.backspace_rect.y + (self.backspace_rect.h - icon_font) / 2.0;
-        let bksp_color = if bksp_hovered { TEXT_PRIMARY } else { TEXT_SECONDARY };
-        text.queue(bksp_label, icon_font, bksp_lx, bksp_ly, bksp_color, icon_size, sw, 0);
+        let bksp_color = if bksp_hovered {
+            TEXT_PRIMARY
+        } else {
+            TEXT_SECONDARY
+        };
+        text.queue(
+            bksp_label, icon_font, bksp_lx, bksp_ly, bksp_color, icon_size, sw, 0,
+        );
 
         // ── Close button (top-right of display) ─────────────────────────
         self.close_rect = Rect::new(
@@ -257,8 +279,14 @@ impl CalcApp {
             icon_size,
             icon_size,
         );
-        let close_hovered = self.cursor.map_or(false, |(cx, cy)| self.close_rect.contains(cx, cy));
-        let close_bg = if close_hovered { CLOSE_BTN_HOVER } else { CLOSE_BTN };
+        let close_hovered = self
+            .cursor
+            .map_or(false, |(cx, cy)| self.close_rect.contains(cx, cy));
+        let close_bg = if close_hovered {
+            CLOSE_BTN_HOVER
+        } else {
+            CLOSE_BTN
+        };
         painter.rect_filled(self.close_rect, 6.0 * s, close_bg);
         let cx = self.close_rect.x + icon_size / 2.0;
         let cy = self.close_rect.y + icon_size / 2.0;
@@ -288,8 +316,14 @@ impl CalcApp {
             let expr_x = display_rect.x + display_rect.w - expr_w - 12.0 * s;
             let expr_y = display_rect.y + icon_size + icon_pad + 4.0 * s;
             text.queue(
-                &formula, expr_font, expr_x, expr_y,
-                TEXT_SECONDARY, display_rect.w, sw, 0,
+                &formula,
+                expr_font,
+                expr_x,
+                expr_y,
+                TEXT_SECONDARY,
+                display_rect.w,
+                sw,
+                0,
             );
         }
 
@@ -306,8 +340,14 @@ impl CalcApp {
         let disp_x = display_rect.x + display_rect.w - disp_w - 12.0 * s;
         let disp_y = display_rect.y + display_rect.h - display_size - 16.0 * s;
         text.queue(
-            display_str, display_size, disp_x, disp_y,
-            ACCENT, display_rect.w, sw, 0,
+            display_str,
+            display_size,
+            disp_x,
+            disp_y,
+            ACCENT,
+            display_rect.w,
+            sw,
+            0,
         );
 
         // ── Buttons grid ─────────────────────────────────────────────────
@@ -355,8 +395,10 @@ impl CalcApp {
                     GLASS_BTN
                 };
                 // Function buttons get accent-colored text
-                let tc = if matches!(def.kind, BtnKind::Clear | BtnKind::Negate | BtnKind::Percent
-                    | BtnKind::Paren) {
+                let tc = if matches!(
+                    def.kind,
+                    BtnKind::Clear | BtnKind::Negate | BtnKind::Percent | BtnKind::Paren
+                ) {
                     OP_TEXT
                 } else {
                     TEXT_PRIMARY
@@ -370,10 +412,7 @@ impl CalcApp {
             let label_w = text.measure_width(def.label, FONT_BTN * s);
             let lx = rect.x + (rect.w - label_w) / 2.0;
             let ly = rect.y + (rect.h - FONT_BTN * s) / 2.0;
-            text.queue(
-                def.label, FONT_BTN * s, lx, ly,
-                text_color, rect.w, sw, 0,
-            );
+            text.queue(def.label, FONT_BTN * s, lx, ly, text_color, rect.w, sw, 0);
 
             // Advance grid position
             col += def.col_span as usize;
@@ -389,7 +428,10 @@ impl CalcApp {
             Ok(mut frame) => {
                 let view = frame.view().clone();
                 painter.render_layer(
-                    0, ctx, frame.encoder_mut(), &view,
+                    0,
+                    ctx,
+                    frame.encoder_mut(),
+                    &view,
                     Some(Color::rgba(0.0, 0.0, 0.0, 0.0)),
                 );
                 text.render_queued(ctx, frame.encoder_mut(), &view);
@@ -433,12 +475,7 @@ impl ApplicationHandler for CalcApp {
         self.window = Some(window);
     }
 
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _id: WindowId,
-        event: WindowEvent,
-    ) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => {
                 self.gpu = None;
@@ -500,7 +537,11 @@ impl ApplicationHandler for CalcApp {
                         ElementState::Released => {
                             if let Some(idx) = self.pressed_btn.take() {
                                 if let Some((cx, cy)) = self.cursor {
-                                    if self.btn_rects.get(idx).map_or(false, |r| r.contains(cx, cy)) {
+                                    if self
+                                        .btn_rects
+                                        .get(idx)
+                                        .map_or(false, |r| r.contains(cx, cy))
+                                    {
                                         self.activate_btn(idx);
                                     }
                                 }

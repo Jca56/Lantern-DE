@@ -4,8 +4,7 @@ use std::ptr::NonNull;
 use anyhow::{anyhow, Result};
 use lntrn_render::{GpuContext, Painter, TextRenderer, TexturePass};
 use lntrn_ui::gpu::{
-    ContextMenu, ContextMenuStyle, FoxPalette, InteractionContext,
-    WaylandPopupBackend,
+    ContextMenu, ContextMenuStyle, FoxPalette, InteractionContext, WaylandPopupBackend,
 };
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
@@ -13,8 +12,7 @@ use raw_window_handle::{
 };
 use wayland_client::{
     protocol::{
-        wl_compositor, wl_data_device, wl_data_device_manager, wl_pointer,
-        wl_seat, wl_surface,
+        wl_compositor, wl_data_device, wl_data_device_manager, wl_pointer, wl_seat, wl_surface,
     },
     Connection, EventQueue, Proxy,
 };
@@ -31,8 +29,8 @@ use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_l
 use crate::app::App;
 use crate::desktop::DesktopApp;
 use crate::icons::IconCache;
-use crate::{Gpu, PickConfig, PickResult};
 use crate::settings::Settings;
+use crate::{Gpu, PickConfig, PickResult};
 
 // ── WaylandHandle for wgpu ──────────────────────────────────────────────────
 
@@ -127,27 +125,59 @@ pub(crate) struct State {
 impl State {
     fn new() -> Self {
         Self {
-            running: true, configured: false, frame_done: true,
-            width: 0, height: 0, scale: 1, preferred_scale_120: 0, scale_changed: false,
+            running: true,
+            configured: false,
+            frame_done: true,
+            width: 0,
+            height: 0,
+            scale: 1,
+            preferred_scale_120: 0,
+            scale_changed: false,
             maximized: false,
             desktop_mode: false,
-            compositor: None, wm_base: None, viewporter: None,
-            fractional_scale_mgr: None, fractional_scale_obj: None,
-            surface: None, xdg_surface: None, toplevel: None, seat: None,
-            layer_shell: None, layer_surface: None,
-            cursor_x: 0.0, cursor_y: 0.0, pointer_in_surface: false,
-            left_pressed: false, left_released: false, right_clicked: false,
-            scroll_delta: 0.0, pointer_serial: 0, pointer_enter_serial: 0,
-            pointer: None, pointer_surface: None,
-            cursor_shape_mgr: None, cursor_shape_device: None,
+            compositor: None,
+            wm_base: None,
+            viewporter: None,
+            fractional_scale_mgr: None,
+            fractional_scale_obj: None,
+            surface: None,
+            xdg_surface: None,
+            toplevel: None,
+            seat: None,
+            layer_shell: None,
+            layer_surface: None,
+            cursor_x: 0.0,
+            cursor_y: 0.0,
+            pointer_in_surface: false,
+            left_pressed: false,
+            left_released: false,
+            right_clicked: false,
+            scroll_delta: 0.0,
+            pointer_serial: 0,
+            pointer_enter_serial: 0,
+            pointer: None,
+            pointer_surface: None,
+            cursor_shape_mgr: None,
+            cursor_shape_device: None,
             current_cursor_shape: None,
-            ctrl: false, shift: false, logo: false, key_pressed: None,
-            held_key: None, repeat_deadline: std::time::Instant::now(), repeat_started: false,
-            popup_backend: None, popup_closed: false,
-            data_device_manager: None, data_device: None,
-            dnd_active: false, dnd_paths: Vec::new(), dnd_serial: 0,
-            dnd_over_self: false, dnd_drop_on_self: false,
-            dnd_cursor_x: 0.0, dnd_cursor_y: 0.0,
+            ctrl: false,
+            shift: false,
+            logo: false,
+            key_pressed: None,
+            held_key: None,
+            repeat_deadline: std::time::Instant::now(),
+            repeat_started: false,
+            popup_backend: None,
+            popup_closed: false,
+            data_device_manager: None,
+            data_device: None,
+            dnd_active: false,
+            dnd_paths: Vec::new(),
+            dnd_serial: 0,
+            dnd_over_self: false,
+            dnd_drop_on_self: false,
+            dnd_cursor_x: 0.0,
+            dnd_cursor_y: 0.0,
         }
     }
 
@@ -159,17 +189,26 @@ impl State {
         }
     }
 
-    pub(crate) fn phys_width(&self) -> u32 { (self.width as f64 * self.fractional_scale()).round() as u32 }
-    pub(crate) fn phys_height(&self) -> u32 { (self.height as f64 * self.fractional_scale()).round() as u32 }
+    pub(crate) fn phys_width(&self) -> u32 {
+        (self.width as f64 * self.fractional_scale()).round() as u32
+    }
+    pub(crate) fn phys_height(&self) -> u32 {
+        (self.height as f64 * self.fractional_scale()).round() as u32
+    }
 }
 
 /// Extract a usable extension from the first pattern of the first filter
 /// (e.g. "Images:*.png,*.jpg" → "png"). Returns None when nothing concrete
 /// is available — e.g. for "*" / "*.*" wildcards, or when no filters are set.
 fn first_filter_ext(pick: &PickConfig) -> Option<String> {
-    let filter = pick.filters.get(pick.active_filter).or_else(|| pick.filters.first())?;
+    let filter = pick
+        .filters
+        .get(pick.active_filter)
+        .or_else(|| pick.filters.first())?;
     for pat in &filter.patterns {
-        if pat == "*" || pat == "*.*" { continue; }
+        if pat == "*" || pat == "*.*" {
+            continue;
+        }
         if let Some(ext) = pat.strip_prefix("*.") {
             if !ext.is_empty() && !ext.contains('*') {
                 return Some(ext.to_string());
@@ -197,7 +236,11 @@ pub(crate) fn context_menu_style(palette: &FoxPalette) -> ContextMenuStyle {
 
 // ── Entry point ─────────────────────────────────────────────────────────────
 
-pub fn run(pick: Option<PickConfig>, desktop: bool, start_dir: Option<std::path::PathBuf>) -> Result<()> {
+pub fn run(
+    pick: Option<PickConfig>,
+    desktop: bool,
+    start_dir: Option<std::path::PathBuf>,
+) -> Result<()> {
     if desktop {
         crate::layout::DESKTOP_MODE.store(true, std::sync::atomic::Ordering::Relaxed);
     }
@@ -211,7 +254,9 @@ pub fn run(pick: Option<PickConfig>, desktop: bool, start_dir: Option<std::path:
     display.get_registry(&qh, ());
     event_queue.roundtrip(&mut state)?;
 
-    let compositor = state.compositor.clone()
+    let compositor = state
+        .compositor
+        .clone()
         .ok_or_else(|| anyhow!("wl_compositor not available"))?;
 
     // Create data device for DnD (if available)
@@ -246,42 +291,52 @@ pub fn run(pick: Option<PickConfig>, desktop: bool, start_dir: Option<std::path:
 
     if desktop {
         // ── Layer shell desktop widget mode ─────────────────────────
-        let layer_shell = state.layer_shell.clone()
+        let layer_shell = state
+            .layer_shell
+            .clone()
             .ok_or_else(|| anyhow!("zwlr_layer_shell_v1 not available"))?;
 
         let layer_surface = layer_shell.get_layer_surface(
-            &surface, None,
+            &surface,
+            None,
             zwlr_layer_shell_v1::Layer::Bottom,
             "lntrn-file-manager-desktop".to_string(),
-            &qh, (),
+            &qh,
+            (),
         );
         // Anchor all edges + size 0 = fill available space (bar's exclusive zone respected)
         layer_surface.set_anchor(
             zwlr_layer_surface_v1::Anchor::Top
-            | zwlr_layer_surface_v1::Anchor::Bottom
-            | zwlr_layer_surface_v1::Anchor::Left
-            | zwlr_layer_surface_v1::Anchor::Right,
+                | zwlr_layer_surface_v1::Anchor::Bottom
+                | zwlr_layer_surface_v1::Anchor::Left
+                | zwlr_layer_surface_v1::Anchor::Right,
         );
         layer_surface.set_size(0, 0);
         layer_surface.set_exclusive_zone(0);
-        layer_surface.set_keyboard_interactivity(
-            zwlr_layer_surface_v1::KeyboardInteractivity::OnDemand,
-        );
+        layer_surface
+            .set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::OnDemand);
         surface.commit();
 
         state.surface = Some(surface.clone());
         state.layer_surface = Some(layer_surface);
     } else {
         // ── Normal xdg_toplevel window mode ─────────────────────────
-        let wm_base = state.wm_base.clone()
+        let wm_base = state
+            .wm_base
+            .clone()
             .ok_or_else(|| anyhow!("xdg_wm_base not available"))?;
 
-        if state.width == 0 { state.width = settings.window_width as u32; }
-        if state.height == 0 { state.height = settings.window_height as u32; }
+        if state.width == 0 {
+            state.width = settings.window_width as u32;
+        }
+        if state.height == 0 {
+            state.height = settings.window_height as u32;
+        }
 
         let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
         let toplevel = xdg_surface.get_toplevel(&qh, ());
-        let title = pick.as_ref()
+        let title = pick
+            .as_ref()
             .and_then(|p| p.title.as_deref())
             .or(pick.as_ref().map(|p| p.default_title()))
             .unwrap_or("Lantern File Manager");
@@ -345,7 +400,14 @@ pub fn run(pick: Option<PickConfig>, desktop: bool, start_dir: Option<std::path:
         let wm_base = state.wm_base.as_ref().unwrap();
         let vp = state.viewporter.as_ref();
         state.popup_backend = Some(WaylandPopupBackend::new(
-            &conn, &compositor, wm_base, &xdg_surf, vp, &gpu.ctx, scale_f, &qh,
+            &conn,
+            &compositor,
+            wm_base,
+            &xdg_surf,
+            vp,
+            &gpu.ctx,
+            scale_f,
+            &qh,
         ));
     }
 
@@ -414,7 +476,8 @@ pub fn run(pick: Option<PickConfig>, desktop: bool, start_dir: Option<std::path:
                 let mut tab = crate::app::DirectoryTab::new(path.clone());
                 tab.pinned = true;
                 tab.pinned_path = Some(path.clone());
-                tab.entries = crate::fs::list_directory(&path, app.show_hidden, app.sort_by, app.sort_dir);
+                tab.entries =
+                    crate::fs::list_directory(&path, app.show_hidden, app.sort_by, app.sort_dir);
                 pinned.push(tab);
             }
         }
@@ -447,11 +510,23 @@ pub fn run(pick: Option<PickConfig>, desktop: bool, start_dir: Option<std::path:
     let mut settings = settings;
 
     crate::wayland_loop::run_loop(
-        &conn, &mut event_queue, &mut state, &qh,
-        &surface, &toplevel_holder, &viewport,
-        &mut gpu, &mut palette, &mut view_menu, &mut context_menu,
-        &mut open_with_apps, &mut app, &mut input, &mut icon_cache,
-        &mut file_info, &mut settings,
+        &conn,
+        &mut event_queue,
+        &mut state,
+        &qh,
+        &surface,
+        &toplevel_holder,
+        &viewport,
+        &mut gpu,
+        &mut palette,
+        &mut view_menu,
+        &mut context_menu,
+        &mut open_with_apps,
+        &mut app,
+        &mut input,
+        &mut icon_cache,
+        &mut file_info,
+        &mut settings,
     )?;
 
     eprintln!("[fox] exited main loop");
@@ -498,11 +573,16 @@ pub fn run(pick: Option<PickConfig>, desktop: bool, start_dir: Option<std::path:
     let defaults = Settings::default();
     settings.window_width = defaults.window_width;
     settings.window_height = defaults.window_height;
-    settings.pinned_tabs = app.tabs.iter()
+    settings.pinned_tabs = app
+        .tabs
+        .iter()
         .filter(|t| t.pinned)
         .map(|t| {
-            t.pinned_path.as_ref().unwrap_or(&t.path)
-                .to_string_lossy().to_string()
+            t.pinned_path
+                .as_ref()
+                .unwrap_or(&t.path)
+                .to_string_lossy()
+                .to_string()
         })
         .collect();
     settings.save();

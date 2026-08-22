@@ -19,7 +19,11 @@ pub(crate) struct StyleClass {
 
 impl Default for StyleClass {
     fn default() -> Self {
-        Self { weight: 400, width: 5, italic: false }
+        Self {
+            weight: 400,
+            width: 5,
+            italic: false,
+        }
     }
 }
 

@@ -10,8 +10,12 @@ use std::path::Path;
 /// compositor polls the file's mtime and live-reloads within ~500ms —
 /// no IPC or restart needed.
 pub fn set_wallpaper(image: &Path) -> bool {
-    let Some(cfg_path) = lntrn_theme::lantern_config_path() else { return false };
-    let Ok(content) = std::fs::read_to_string(&cfg_path) else { return false };
+    let Some(cfg_path) = lntrn_theme::lantern_config_path() else {
+        return false;
+    };
+    let Ok(content) = std::fs::read_to_string(&cfg_path) else {
+        return false;
+    };
     let patched = patch_wallpaper_toml(&content, image);
     std::fs::write(&cfg_path, patched).is_ok()
 }
@@ -38,7 +42,8 @@ fn patch_wallpaper_toml(content: &str, image: &Path) -> String {
             out.push(line.to_string());
             continue;
         }
-        let is_wallpaper_key = trimmed.strip_prefix("wallpaper")
+        let is_wallpaper_key = trimmed
+            .strip_prefix("wallpaper")
             .is_some_and(|rest| rest.trim_start().starts_with('='));
         if is_wallpaper_key {
             match section.as_str() {

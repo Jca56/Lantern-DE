@@ -290,8 +290,7 @@ pub fn draw_inline(
     painter.rect_filled(
         Rect::new(pill_x, pill_y, pill_w, pill_h),
         radius,
-        Color::from_rgb8(PILL_TRACK_RGB.0, PILL_TRACK_RGB.1, PILL_TRACK_RGB.2)
-            .with_alpha(alpha),
+        Color::from_rgb8(PILL_TRACK_RGB.0, PILL_TRACK_RGB.1, PILL_TRACK_RGB.2).with_alpha(alpha),
     );
 
     // Fill (proportional, left-to-right).
@@ -389,16 +388,22 @@ fn draw_bolt(painter: &mut Painter, x: f32, y: f32, w: f32, h: f32, alpha: f32) 
 
     // Upper half: apex (top-right) → left elbow → notch.
     painter.triangle(
-        apex.0, apex.1,
-        left_elbow.0, left_elbow.1,
-        mid_notch.0, mid_notch.1,
+        apex.0,
+        apex.1,
+        left_elbow.0,
+        left_elbow.1,
+        mid_notch.0,
+        mid_notch.1,
         bolt_color,
     );
     // Lower half: notch → bottom tip → right elbow.
     painter.triangle(
-        mid_notch.0, mid_notch.1,
-        bottom_tip.0, bottom_tip.1,
-        right_elbow.0, right_elbow.1,
+        mid_notch.0,
+        mid_notch.1,
+        bottom_tip.0,
+        bottom_tip.1,
+        right_elbow.0,
+        right_elbow.1,
         bolt_color,
     );
 }

@@ -36,31 +36,109 @@ fn keycode_to_char(key: u32, shift: bool) -> Option<char> {
                 base
             }
         }
-        12 => if shift { b'_' } else { b'-' },
-        13 => if shift { b'+' } else { b'=' },
+        12 => {
+            if shift {
+                b'_'
+            } else {
+                b'-'
+            }
+        }
+        13 => {
+            if shift {
+                b'+'
+            } else {
+                b'='
+            }
+        }
         // Letters (a=30..z)
         16..=25 => {
             let base = b"qwertyuiop"[(key - 16) as usize];
-            if shift { base.to_ascii_uppercase() } else { base }
+            if shift {
+                base.to_ascii_uppercase()
+            } else {
+                base
+            }
         }
         30..=38 => {
             let base = b"asdfghjkl"[(key - 30) as usize];
-            if shift { base.to_ascii_uppercase() } else { base }
+            if shift {
+                base.to_ascii_uppercase()
+            } else {
+                base
+            }
         }
         44..=50 => {
             let base = b"zxcvbnm"[(key - 44) as usize];
-            if shift { base.to_ascii_uppercase() } else { base }
+            if shift {
+                base.to_ascii_uppercase()
+            } else {
+                base
+            }
         }
         // Punctuation
-        26 => if shift { b'{' } else { b'[' },
-        27 => if shift { b'}' } else { b']' },
-        39 => if shift { b':' } else { b';' },
-        40 => if shift { b'"' } else { b'\'' },
-        41 => if shift { b'~' } else { b'`' },
-        43 => if shift { b'|' } else { b'\\' },
-        51 => if shift { b'<' } else { b',' },
-        52 => if shift { b'>' } else { b'.' },
-        53 => if shift { b'?' } else { b'/' },
+        26 => {
+            if shift {
+                b'{'
+            } else {
+                b'['
+            }
+        }
+        27 => {
+            if shift {
+                b'}'
+            } else {
+                b']'
+            }
+        }
+        39 => {
+            if shift {
+                b':'
+            } else {
+                b';'
+            }
+        }
+        40 => {
+            if shift {
+                b'"'
+            } else {
+                b'\''
+            }
+        }
+        41 => {
+            if shift {
+                b'~'
+            } else {
+                b'`'
+            }
+        }
+        43 => {
+            if shift {
+                b'|'
+            } else {
+                b'\\'
+            }
+        }
+        51 => {
+            if shift {
+                b'<'
+            } else {
+                b','
+            }
+        }
+        52 => {
+            if shift {
+                b'>'
+            } else {
+                b'.'
+            }
+        }
+        53 => {
+            if shift {
+                b'?'
+            } else {
+                b'/'
+            }
+        }
         57 => b' ', // space
         _ => return None,
     };
@@ -68,10 +146,13 @@ fn keycode_to_char(key: u32, shift: bool) -> Option<char> {
 }
 
 pub(crate) fn handle_key(
-    app: &mut App, _settings: &mut Settings,
+    app: &mut App,
+    _settings: &mut Settings,
     context_menu: &mut ContextMenu,
     popup_backend: &mut Option<WaylandPopupBackend<State>>,
-    key: u32, ctrl: bool, shift: bool,
+    key: u32,
+    ctrl: bool,
+    shift: bool,
     running: &mut bool,
 ) {
     // Conflict dialog — ESC = cancel, Enter = Replace. Dispatches to the
@@ -82,12 +163,18 @@ pub(crate) fn handle_key(
         let is_rename = app.pending_rename.is_some();
         match key {
             KEY_ESC => {
-                if is_rename { app.cancel_rename_conflict(); }
-                else { app.cancel_paste(); }
+                if is_rename {
+                    app.cancel_rename_conflict();
+                } else {
+                    app.cancel_paste();
+                }
             }
             KEY_ENTER => {
-                if is_rename { app.resolve_rename_conflict(crate::conflict::ConflictAction::Replace); }
-                else { app.resolve_conflict(crate::conflict::ConflictAction::Replace); }
+                if is_rename {
+                    app.resolve_rename_conflict(crate::conflict::ConflictAction::Replace);
+                } else {
+                    app.resolve_conflict(crate::conflict::ConflictAction::Replace);
+                }
             }
             _ => {}
         }
@@ -103,7 +190,12 @@ pub(crate) fn handle_key(
             KEY_BACKSPACE => {
                 if let Some(p) = app.sudo_prompt.as_mut() {
                     if p.cursor > 0 {
-                        let byte_pos = p.password.char_indices().nth(p.cursor - 1).map(|(i, _)| i).unwrap_or(0);
+                        let byte_pos = p
+                            .password
+                            .char_indices()
+                            .nth(p.cursor - 1)
+                            .map(|(i, _)| i)
+                            .unwrap_or(0);
                         p.password.remove(byte_pos);
                         p.cursor -= 1;
                     }
@@ -113,31 +205,49 @@ pub(crate) fn handle_key(
                 if let Some(p) = app.sudo_prompt.as_mut() {
                     let char_len = p.password.chars().count();
                     if p.cursor < char_len {
-                        let byte_pos = p.password.char_indices().nth(p.cursor).map(|(i, _)| i).unwrap_or(p.password.len());
+                        let byte_pos = p
+                            .password
+                            .char_indices()
+                            .nth(p.cursor)
+                            .map(|(i, _)| i)
+                            .unwrap_or(p.password.len());
                         p.password.remove(byte_pos);
                     }
                 }
             }
             KEY_LEFT => {
                 if let Some(p) = app.sudo_prompt.as_mut() {
-                    if p.cursor > 0 { p.cursor -= 1; }
+                    if p.cursor > 0 {
+                        p.cursor -= 1;
+                    }
                 }
             }
             KEY_RIGHT => {
                 if let Some(p) = app.sudo_prompt.as_mut() {
-                    if p.cursor < p.password.chars().count() { p.cursor += 1; }
+                    if p.cursor < p.password.chars().count() {
+                        p.cursor += 1;
+                    }
                 }
             }
             KEY_HOME => {
-                if let Some(p) = app.sudo_prompt.as_mut() { p.cursor = 0; }
+                if let Some(p) = app.sudo_prompt.as_mut() {
+                    p.cursor = 0;
+                }
             }
             KEY_END => {
-                if let Some(p) = app.sudo_prompt.as_mut() { p.cursor = p.password.chars().count(); }
+                if let Some(p) = app.sudo_prompt.as_mut() {
+                    p.cursor = p.password.chars().count();
+                }
             }
             _ => {
                 if let Some(ch) = keycode_to_char(key, shift) {
                     if let Some(p) = app.sudo_prompt.as_mut() {
-                        let byte_pos = p.password.char_indices().nth(p.cursor).map(|(i, _)| i).unwrap_or(p.password.len());
+                        let byte_pos = p
+                            .password
+                            .char_indices()
+                            .nth(p.cursor)
+                            .map(|(i, _)| i)
+                            .unwrap_or(p.password.len());
                         p.password.insert(byte_pos, ch);
                         p.cursor += 1;
                     }
@@ -164,7 +274,11 @@ pub(crate) fn handle_key(
                 if let Some(d) = app.cloud_login.as_mut() {
                     let (buf, cur) = d.focused_buf_mut();
                     if *cur > 0 {
-                        let byte_pos = buf.char_indices().nth(*cur - 1).map(|(i, _)| i).unwrap_or(0);
+                        let byte_pos = buf
+                            .char_indices()
+                            .nth(*cur - 1)
+                            .map(|(i, _)| i)
+                            .unwrap_or(0);
                         buf.remove(byte_pos);
                         *cur -= 1;
                     }
@@ -175,7 +289,11 @@ pub(crate) fn handle_key(
                     let (buf, cur) = d.focused_buf_mut();
                     let char_len = buf.chars().count();
                     if *cur < char_len {
-                        let byte_pos = buf.char_indices().nth(*cur).map(|(i, _)| i).unwrap_or(buf.len());
+                        let byte_pos = buf
+                            .char_indices()
+                            .nth(*cur)
+                            .map(|(i, _)| i)
+                            .unwrap_or(buf.len());
                         buf.remove(byte_pos);
                     }
                 }
@@ -183,13 +301,17 @@ pub(crate) fn handle_key(
             KEY_LEFT => {
                 if let Some(d) = app.cloud_login.as_mut() {
                     let (_buf, cur) = d.focused_buf_mut();
-                    if *cur > 0 { *cur -= 1; }
+                    if *cur > 0 {
+                        *cur -= 1;
+                    }
                 }
             }
             KEY_RIGHT => {
                 if let Some(d) = app.cloud_login.as_mut() {
                     let (buf, cur) = d.focused_buf_mut();
-                    if *cur < buf.chars().count() { *cur += 1; }
+                    if *cur < buf.chars().count() {
+                        *cur += 1;
+                    }
                 }
             }
             KEY_HOME => {
@@ -208,7 +330,11 @@ pub(crate) fn handle_key(
                 if let Some(ch) = keycode_to_char(key, shift) {
                     if let Some(d) = app.cloud_login.as_mut() {
                         let (buf, cur) = d.focused_buf_mut();
-                        let byte_pos = buf.char_indices().nth(*cur).map(|(i, _)| i).unwrap_or(buf.len());
+                        let byte_pos = buf
+                            .char_indices()
+                            .nth(*cur)
+                            .map(|(i, _)| i)
+                            .unwrap_or(buf.len());
                         buf.insert(byte_pos, ch);
                         *cur += 1;
                     }
@@ -223,7 +349,10 @@ pub(crate) fn handle_key(
         match key {
             KEY_ESC => app.dismiss_drive_dialog(),
             KEY_ENTER => {
-                if matches!(app.drive_dialog, Some(crate::dialogs::DriveDialog::ConfirmFormat { .. })) {
+                if matches!(
+                    app.drive_dialog,
+                    Some(crate::dialogs::DriveDialog::ConfirmFormat { .. })
+                ) {
                     app.confirm_drive_format();
                 } else {
                     app.dismiss_drive_dialog();
@@ -263,10 +392,14 @@ pub(crate) fn handle_key(
                 }
             }
             KEY_LEFT => {
-                if app.search_cursor > 0 { app.search_cursor -= 1; }
+                if app.search_cursor > 0 {
+                    app.search_cursor -= 1;
+                }
             }
             KEY_RIGHT => {
-                if app.search_cursor < app.search_buf.len() { app.search_cursor += 1; }
+                if app.search_cursor < app.search_buf.len() {
+                    app.search_cursor += 1;
+                }
             }
             KEY_HOME => app.search_cursor = 0,
             KEY_END => app.search_cursor = app.search_buf.len(),
@@ -307,8 +440,18 @@ pub(crate) fn handle_key(
                 let s = a.min(b);
                 let e = a.max(b);
                 if s != e {
-                    let byte_start = app.path_buf.char_indices().nth(s).map(|(i,_)| i).unwrap_or(app.path_buf.len());
-                    let byte_end = app.path_buf.char_indices().nth(e).map(|(i,_)| i).unwrap_or(app.path_buf.len());
+                    let byte_start = app
+                        .path_buf
+                        .char_indices()
+                        .nth(s)
+                        .map(|(i, _)| i)
+                        .unwrap_or(app.path_buf.len());
+                    let byte_end = app
+                        .path_buf
+                        .char_indices()
+                        .nth(e)
+                        .map(|(i, _)| i)
+                        .unwrap_or(app.path_buf.len());
                     app.path_buf.replace_range(byte_start..byte_end, "");
                     app.path_cursor = s;
                     return true;
@@ -321,7 +464,12 @@ pub(crate) fn handle_key(
             KEY_ESC => app.cancel_path_edit(),
             KEY_BACKSPACE => {
                 if !delete_selection(app) && app.path_cursor > 0 {
-                    let byte_pos = app.path_buf.char_indices().nth(app.path_cursor - 1).map(|(i,_)| i).unwrap_or(0);
+                    let byte_pos = app
+                        .path_buf
+                        .char_indices()
+                        .nth(app.path_cursor - 1)
+                        .map(|(i, _)| i)
+                        .unwrap_or(0);
                     app.path_buf.remove(byte_pos);
                     app.path_cursor -= 1;
                 }
@@ -331,27 +479,47 @@ pub(crate) fn handle_key(
                 if !delete_selection(app) {
                     let char_len = app.path_buf.chars().count();
                     if app.path_cursor < char_len {
-                        let byte_pos = app.path_buf.char_indices().nth(app.path_cursor).map(|(i,_)| i).unwrap_or(app.path_buf.len());
+                        let byte_pos = app
+                            .path_buf
+                            .char_indices()
+                            .nth(app.path_cursor)
+                            .map(|(i, _)| i)
+                            .unwrap_or(app.path_buf.len());
                         app.path_buf.remove(byte_pos);
                     }
                 }
                 app.path_selection = None;
             }
             KEY_LEFT => {
-                if app.path_cursor > 0 { app.path_cursor -= 1; }
+                if app.path_cursor > 0 {
+                    app.path_cursor -= 1;
+                }
                 app.path_selection = None;
             }
             KEY_RIGHT => {
                 let char_len = app.path_buf.chars().count();
-                if app.path_cursor < char_len { app.path_cursor += 1; }
+                if app.path_cursor < char_len {
+                    app.path_cursor += 1;
+                }
                 app.path_selection = None;
             }
-            KEY_HOME => { app.path_cursor = 0; app.path_selection = None; }
-            KEY_END => { app.path_cursor = app.path_buf.chars().count(); app.path_selection = None; }
+            KEY_HOME => {
+                app.path_cursor = 0;
+                app.path_selection = None;
+            }
+            KEY_END => {
+                app.path_cursor = app.path_buf.chars().count();
+                app.path_selection = None;
+            }
             _ => {
                 if let Some(ch) = keycode_to_char(key, shift) {
                     delete_selection(app);
-                    let byte_pos = app.path_buf.char_indices().nth(app.path_cursor).map(|(i,_)| i).unwrap_or(app.path_buf.len());
+                    let byte_pos = app
+                        .path_buf
+                        .char_indices()
+                        .nth(app.path_cursor)
+                        .map(|(i, _)| i)
+                        .unwrap_or(app.path_buf.len());
                     app.path_buf.insert(byte_pos, ch);
                     app.path_cursor += 1;
                     app.path_selection = None;
@@ -404,8 +572,14 @@ pub(crate) fn handle_key(
                     app.rename_cursor += 1;
                 }
             }
-            KEY_HOME => { app.rename_cursor = 0; app.rename_selection = None; }
-            KEY_END => { app.rename_cursor = app.rename_buf.len(); app.rename_selection = None; }
+            KEY_HOME => {
+                app.rename_cursor = 0;
+                app.rename_selection = None;
+            }
+            KEY_END => {
+                app.rename_cursor = app.rename_buf.len();
+                app.rename_selection = None;
+            }
             _ => {
                 if let Some(ch) = keycode_to_char(key, shift) {
                     app.rename_delete_selection();
@@ -446,7 +620,9 @@ pub(crate) fn handle_key(
                 app.save_name_selection = None;
             }
             KEY_DELETE => {
-                if !app.save_name_delete_selection() && app.save_name_cursor < app.save_name_buf.len() {
+                if !app.save_name_delete_selection()
+                    && app.save_name_cursor < app.save_name_buf.len()
+                {
                     app.save_name_buf.remove(app.save_name_cursor);
                 }
                 app.save_name_selection = None;
@@ -465,8 +641,14 @@ pub(crate) fn handle_key(
                     app.save_name_cursor += 1;
                 }
             }
-            KEY_HOME => { app.save_name_cursor = 0; app.save_name_selection = None; }
-            KEY_END => { app.save_name_cursor = app.save_name_buf.len(); app.save_name_selection = None; }
+            KEY_HOME => {
+                app.save_name_cursor = 0;
+                app.save_name_selection = None;
+            }
+            KEY_END => {
+                app.save_name_cursor = app.save_name_buf.len();
+                app.save_name_selection = None;
+            }
             _ => {
                 if let Some(ch) = keycode_to_char(key, shift) {
                     app.save_name_delete_selection();
@@ -486,14 +668,17 @@ pub(crate) fn handle_key(
             KEY_ESC | KEY_SPACE => app.quick_look = None,
             KEY_LEFT | KEY_RIGHT => {
                 let step: isize = if key == KEY_LEFT { -1 } else { 1 };
-                let cur = app.quick_look.as_ref().and_then(|ql| {
-                    app.entries.iter().position(|e| e.path == ql.path)
-                });
+                let cur = app
+                    .quick_look
+                    .as_ref()
+                    .and_then(|ql| app.entries.iter().position(|e| e.path == ql.path));
                 if let Some(cur) = cur {
                     let mut i = cur as isize + step;
                     while i >= 0 && (i as usize) < app.entries.len() {
                         if !app.entries[i as usize].is_dir {
-                            for e in app.entries.iter_mut() { e.selected = false; }
+                            for e in app.entries.iter_mut() {
+                                e.selected = false;
+                            }
                             app.entries[i as usize].selected = true;
                             app.quick_look = Some(crate::quick_look::QuickLook::open(
                                 &app.entries[i as usize].path,

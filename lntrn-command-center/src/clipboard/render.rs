@@ -34,11 +34,30 @@ pub fn draw(
     surface_h: u32,
 ) {
     let panel_bottom = panel.y + panel.h;
-    draw_filter_bar(painter, text, state, panel, top_y, scale, text_size, alpha, surface_w, surface_h);
-    draw_clear_btn(painter, text, state, panel, top_y, scale, text_size, alpha, surface_w, surface_h);
-    draw_list(painter, text, icons, state, panel, top_y, scale, text_size, alpha, panel_bottom, surface_w, surface_h);
+    draw_filter_bar(
+        painter, text, state, panel, top_y, scale, text_size, alpha, surface_w, surface_h,
+    );
+    draw_clear_btn(
+        painter, text, state, panel, top_y, scale, text_size, alpha, surface_w, surface_h,
+    );
+    draw_list(
+        painter,
+        text,
+        icons,
+        state,
+        panel,
+        top_y,
+        scale,
+        text_size,
+        alpha,
+        panel_bottom,
+        surface_w,
+        surface_h,
+    );
     if state.confirm_clear {
-        draw_confirm_clear(painter, text, panel, scale, text_size, alpha, surface_w, surface_h);
+        draw_confirm_clear(
+            painter, text, panel, scale, text_size, alpha, surface_w, surface_h,
+        );
     }
 }
 
@@ -95,13 +114,23 @@ fn draw_filter_bar(
     } else {
         (q.to_string(), false)
     };
-    let color = if is_placeholder { white(0.40 * alpha) } else { white(0.95 * alpha) };
+    let color = if is_placeholder {
+        white(0.40 * alpha)
+    } else {
+        white(0.95 * alpha)
+    };
     let text_x = bar.x + pad_left;
     let text_max_w = (bar.w - pad_left - 14.0 * scale).max(0.0);
-    text.queue(&display, font, text_x, text_top, color, text_max_w, surface_w, surface_h);
+    text.queue(
+        &display, font, text_x, text_top, color, text_max_w, surface_w, surface_h,
+    );
 
     if state.filter.cursor_visible() {
-        let caret_x = if is_placeholder { text_x } else { text_x + text.measure_width(q, font) + 2.0 * scale };
+        let caret_x = if is_placeholder {
+            text_x
+        } else {
+            text_x + text.measure_width(q, font) + 2.0 * scale
+        };
         let caret_y = bar.y + bar.h * 0.20;
         let caret_h = bar.h * 0.60;
         let a = if is_placeholder { 0.55 } else { 1.0 };
@@ -139,7 +168,11 @@ fn draw_clear_btn(
     let lw = text.measure_width(label, font);
     let tx = r.x + (r.w - lw) / 2.0;
     let ty = r.y + (r.h - font) / 2.0;
-    let lc = if enabled { white(0.85 * alpha) } else { white(0.35 * alpha) };
+    let lc = if enabled {
+        white(0.85 * alpha)
+    } else {
+        white(0.35 * alpha)
+    };
     text.queue(label, font, tx, ty, lc, r.w, surface_w, surface_h);
 }
 
@@ -174,7 +207,16 @@ fn draw_list(
         };
         let font = (text_size * scale * 0.92).max(15.0);
         let baseline = list.y + 40.0 * scale + font;
-        text.queue(msg, font, list.x + PAD * scale, baseline, white(0.55 * alpha), list.w - PAD * 2.0 * scale, surface_w, surface_h);
+        text.queue(
+            msg,
+            font,
+            list.x + PAD * scale,
+            baseline,
+            white(0.55 * alpha),
+            list.w - PAD * 2.0 * scale,
+            surface_w,
+            surface_h,
+        );
     }
 
     let scroll_px = state.scroll * scale;
@@ -190,13 +232,13 @@ fn draw_list(
         let flash = flash_factor(state.recent_copy, entry.id);
         if entry.is_image() {
             draw_image_row(
-                painter, text, icons, entry, row, scale, text_size, alpha,
-                hovered, flash, surface_w, surface_h,
+                painter, text, icons, entry, row, scale, text_size, alpha, hovered, flash,
+                surface_w, surface_h,
             );
         } else {
             draw_text_row(
-                painter, text, entry, row, scale, text_size, alpha,
-                hovered, flash, surface_w, surface_h,
+                painter, text, entry, row, scale, text_size, alpha, hovered, flash, surface_w,
+                surface_h,
             );
         }
     }
@@ -287,13 +329,35 @@ fn draw_text_row(
     let font_preview = (text_size * scale * 0.95).max(15.0);
     let font_meta = (text_size * scale * 0.72).max(12.0);
 
-    let preview_text = entry.preview.as_deref().map(one_line).unwrap_or_else(|| "(no preview)".to_string());
+    let preview_text = entry
+        .preview
+        .as_deref()
+        .map(one_line)
+        .unwrap_or_else(|| "(no preview)".to_string());
     let preview_y = row.y + row.h * 0.36;
-    text.queue(&preview_text, font_preview, preview_x, preview_y, white(0.95 * alpha), preview_w, surface_w, surface_h);
+    text.queue(
+        &preview_text,
+        font_preview,
+        preview_x,
+        preview_y,
+        white(0.95 * alpha),
+        preview_w,
+        surface_w,
+        surface_h,
+    );
 
     let meta = format!("#{}  ·  {}", entry.id, ago(entry.timestamp_ms));
     let meta_y = row.y + row.h * 0.72;
-    text.queue(&meta, font_meta, preview_x, meta_y, white(0.50 * alpha), preview_w, surface_w, surface_h);
+    text.queue(
+        &meta,
+        font_meta,
+        preview_x,
+        meta_y,
+        white(0.50 * alpha),
+        preview_w,
+        surface_w,
+        surface_h,
+    );
 
     draw_star(painter, pin_rect, scale, alpha, entry.pinned, hovered);
     if hovered {
@@ -396,7 +460,14 @@ fn draw_image_row(
     );
 }
 
-fn draw_star(painter: &mut Painter, r: Rect, scale: f32, alpha: f32, active: bool, row_hovered: bool) {
+fn draw_star(
+    painter: &mut Painter,
+    r: Rect,
+    scale: f32,
+    alpha: f32,
+    active: bool,
+    row_hovered: bool,
+) {
     let cx = r.x + r.w / 2.0;
     let cy = r.y + r.h / 2.0;
     let radius = r.w * 0.42;
@@ -493,13 +564,21 @@ fn draw_confirm_clear(
     surface_h: u32,
 ) {
     // Scrim over the page body.
-    painter.rect_filled(panel, 0.0, Color::from_rgb8(0, 0, 0).with_alpha(0.45 * alpha));
+    painter.rect_filled(
+        panel,
+        0.0,
+        Color::from_rgb8(0, 0, 0).with_alpha(0.45 * alpha),
+    );
     let w = 360.0 * scale;
     let h = 170.0 * scale;
     let x = panel.x + (panel.w - w) / 2.0;
     let y = panel.y + (panel.h - h) / 2.0;
     let r = Rect::new(x, y, w, h);
-    painter.rect_filled(r, 16.0 * scale, Color::from_rgb8(40, 40, 44).with_alpha(0.97 * alpha));
+    painter.rect_filled(
+        r,
+        16.0 * scale,
+        Color::from_rgb8(40, 40, 44).with_alpha(0.97 * alpha),
+    );
     painter.rect_stroke_sdf(r, 16.0 * scale, 1.2 * scale, white(0.18 * alpha));
 
     let font_title = (text_size * scale).max(16.0);
@@ -508,8 +587,26 @@ fn draw_confirm_clear(
     let body = "This removes every clipboard entry. Pinned items are kept.";
     let pad = 18.0 * scale;
     let title_y = y + pad;
-    text.queue(title, font_title, x + pad, title_y, white(0.95 * alpha), w - pad * 2.0, surface_w, surface_h);
-    text.queue(body, font_body, x + pad, title_y + font_title * 1.5, white(0.65 * alpha), w - pad * 2.0, surface_w, surface_h);
+    text.queue(
+        title,
+        font_title,
+        x + pad,
+        title_y,
+        white(0.95 * alpha),
+        w - pad * 2.0,
+        surface_w,
+        surface_h,
+    );
+    text.queue(
+        body,
+        font_body,
+        x + pad,
+        title_y + font_title * 1.5,
+        white(0.65 * alpha),
+        w - pad * 2.0,
+        surface_w,
+        surface_h,
+    );
 
     // Buttons (rendered without their own hit-tests for v1 — Esc cancels, Enter confirms).
     let btn_h = 36.0 * scale;
@@ -525,6 +622,24 @@ fn draw_confirm_clear(
     let cl_w = text.measure_width(cl_text, fb);
     let yes_w = text.measure_width(yes_text, fb);
     let btn_text_y = by + (btn_h - fb) / 2.0;
-    text.queue(cl_text, fb, cancel.x + (cancel.w - cl_w) / 2.0, btn_text_y, white(0.85 * alpha), btn_w, surface_w, surface_h);
-    text.queue(yes_text, fb, confirm.x + (confirm.w - yes_w) / 2.0, btn_text_y, Color::from_rgb8(0, 0, 0).with_alpha(0.85 * alpha), btn_w, surface_w, surface_h);
+    text.queue(
+        cl_text,
+        fb,
+        cancel.x + (cancel.w - cl_w) / 2.0,
+        btn_text_y,
+        white(0.85 * alpha),
+        btn_w,
+        surface_w,
+        surface_h,
+    );
+    text.queue(
+        yes_text,
+        fb,
+        confirm.x + (confirm.w - yes_w) / 2.0,
+        btn_text_y,
+        Color::from_rgb8(0, 0, 0).with_alpha(0.85 * alpha),
+        btn_w,
+        surface_w,
+        surface_h,
+    );
 }

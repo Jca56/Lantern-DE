@@ -122,7 +122,12 @@ pub(super) fn send_button_rect_expanded(
     let connect = connect_button_rect(inner_x, inner_w, expanded_top, dev, text_size, scale);
     let btn_w = EXPAND_BUTTON_W * scale;
     let gap = EXPAND_BUTTON_GAP * scale;
-    Some(Rect::new(connect.x + connect.w + gap, connect.y, btn_w, connect.h))
+    Some(Rect::new(
+        connect.x + connect.w + gap,
+        connect.y,
+        btn_w,
+        connect.h,
+    ))
 }
 
 /// Draw the expanded detail block for `dev` at `top_y`. Returns its
@@ -155,14 +160,25 @@ pub(super) fn draw_expanded(
     let mut cy = top_y + pad_t;
     for (label, value) in detail_lines(dev) {
         text.queue(
-            label, lbl_font, inner_x + pad_l, cy + (body - lbl_font) / 2.0,
-            muted, label_w - pad_l, surface_w, surface_h,
+            label,
+            lbl_font,
+            inner_x + pad_l,
+            cy + (body - lbl_font) / 2.0,
+            muted,
+            label_w - pad_l,
+            surface_w,
+            surface_h,
         );
         let value_x = inner_x + pad_l + label_w;
         text.queue(
-            &value, body, value_x, cy, white.with_alpha(0.92 * alpha),
+            &value,
+            body,
+            value_x,
+            cy,
+            white.with_alpha(0.92 * alpha),
             inner_w - (label_w + pad_l + ROW_RIGHT_GAP * scale),
-            surface_w, surface_h,
+            surface_w,
+            surface_h,
         );
         cy += body + gap;
     }
@@ -177,15 +193,30 @@ pub(super) fn draw_expanded(
     } else {
         "Connect"
     };
-    draw_pill_button(painter, text, connect, connect_label, body, gold, alpha, scale, surface_w, surface_h);
+    draw_pill_button(
+        painter,
+        text,
+        connect,
+        connect_label,
+        body,
+        gold,
+        alpha,
+        scale,
+        surface_w,
+        surface_h,
+    );
 
-    if let Some(send) = send_button_rect_expanded(inner_x, inner_w, expanded_top, dev, text_size, scale) {
+    if let Some(send) =
+        send_button_rect_expanded(inner_x, inner_w, expanded_top, dev, text_size, scale)
+    {
         let label = if bt.send_state.contains_key(&dev.mac) {
             "Sending…"
         } else {
             "Send file"
         };
-        draw_pill_button(painter, text, send, label, body, gold, alpha, scale, surface_w, surface_h);
+        draw_pill_button(
+            painter, text, send, label, body, gold, alpha, scale, surface_w, surface_h,
+        );
     }
 
     expanded_extra_height(dev, text_size, scale)

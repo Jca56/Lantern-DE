@@ -35,7 +35,10 @@ impl AppState {
         phys_x: f32,
         phys_y: f32,
     ) -> Option<HitTarget> {
-        use crate::launcher::{PIN_LABEL_FONT, PIN_LABEL_GAP, PIN_ROW_GAP, PIN_ROW_TOP_MARGIN, PIN_TILE_GAP, PIN_TILE_SIZE};
+        use crate::launcher::{
+            PIN_LABEL_FONT, PIN_LABEL_GAP, PIN_ROW_GAP, PIN_ROW_TOP_MARGIN, PIN_TILE_GAP,
+            PIN_TILE_SIZE,
+        };
         use crate::search::input::{SEARCH_HORIZONTAL_PAD, SEARCH_ROW_HEIGHT};
 
         let pad = SEARCH_HORIZONTAL_PAD * scale;
@@ -54,8 +57,7 @@ impl AppState {
         let row_top = crate::controls::content_top_y(
             lntrn_render::Rect::new(panel_rect.x, panel_rect.y, panel_rect.w, panel_rect.h),
             scale,
-        )
-            + (SEARCH_HORIZONTAL_PAD * 0.5 + SEARCH_ROW_HEIGHT) * scale
+        ) + (SEARCH_HORIZONTAL_PAD * 0.5 + SEARCH_ROW_HEIGHT) * scale
             + PIN_ROW_TOP_MARGIN * scale
             + section_label_font
             + label_gap;
@@ -76,9 +78,7 @@ impl AppState {
             let row = i / cols;
             let x = panel_rect.x + pad + col as f32 * (tile_size + tile_gap);
             let y = row_top + row as f32 * (cell_h + row_gap);
-            if phys_x >= x && phys_x <= x + tile_size
-                && phys_y >= y && phys_y <= y + tile_size
-            {
+            if phys_x >= x && phys_x <= x + tile_size && phys_y >= y && phys_y <= y + tile_size {
                 return Some(HitTarget::Pin(i));
             }
         }
@@ -111,15 +111,17 @@ impl AppState {
         let list_y_start = crate::controls::content_top_y(
             lntrn_render::Rect::new(panel_rect.x, panel_rect.y, panel_rect.w, panel_rect.h),
             scale,
-        )
-            + (SEARCH_HORIZONTAL_PAD * 0.5 + SEARCH_ROW_HEIGHT) * scale
+        ) + (SEARCH_HORIZONTAL_PAD * 0.5 + SEARCH_ROW_HEIGHT) * scale
             + RESULT_TOP_MARGIN * scale;
 
         let results = self.search.results();
         let scroll = self.search.scroll_offset;
 
         if self.search.all_apps_mode {
-            use crate::search::{GRID_COLS, GRID_LABEL_FONT, GRID_LABEL_GAP, GRID_ROW_GAP, GRID_TILE_GAP, GRID_TILE_SIZE};
+            use crate::search::{
+                GRID_COLS, GRID_LABEL_FONT, GRID_LABEL_GAP, GRID_ROW_GAP, GRID_TILE_GAP,
+                GRID_TILE_SIZE,
+            };
             let tile = GRID_TILE_SIZE * scale;
             let tile_gap = GRID_TILE_GAP * scale;
             let row_gap = GRID_ROW_GAP * scale;
@@ -133,8 +135,10 @@ impl AppState {
                 let row = i / GRID_COLS;
                 let cell_x = grid_x0 + col as f32 * (tile + tile_gap);
                 let cell_y = list_y_start + row as f32 * (cell_h + row_gap) - scroll;
-                if phys_x >= cell_x && phys_x <= cell_x + tile
-                    && phys_y >= cell_y && phys_y <= cell_y + tile
+                if phys_x >= cell_x
+                    && phys_x <= cell_x + tile
+                    && phys_y >= cell_y
+                    && phys_y <= cell_y + tile
                 {
                     return Some(HitTarget::Result(i));
                 }
@@ -167,11 +171,19 @@ impl AppState {
                 action: MenuAction::Launch,
             },
             MenuItem {
-                label: if pinned { "Unpin".into() } else { "Pin to launcher".into() },
+                label: if pinned {
+                    "Unpin".into()
+                } else {
+                    "Pin to launcher".into()
+                },
                 action: MenuAction::TogglePin,
             },
             MenuItem {
-                label: if hidden { "Unhide".into() } else { "Hide from grid".into() },
+                label: if hidden {
+                    "Unhide".into()
+                } else {
+                    "Hide from grid".into()
+                },
                 action: MenuAction::ToggleHidden,
             },
         ]
@@ -189,8 +201,11 @@ impl AppState {
     ) {
         // Pick the window the "Close" item targets: prefer the
         // currently-activated window, fall back to the first.
-        let windows: Vec<&crate::toplevel::ToplevelInfo> =
-            self.toplevels.iter().filter(|t| t.app_id == app_id).collect();
+        let windows: Vec<&crate::toplevel::ToplevelInfo> = self
+            .toplevels
+            .iter()
+            .filter(|t| t.app_id == app_id)
+            .collect();
         let close_title = windows
             .iter()
             .find(|w| w.activated)
@@ -215,7 +230,11 @@ impl AppState {
             });
         }
         items.push(MenuItem {
-            label: if dock_pinned { "Unpin".into() } else { "Pin".into() },
+            label: if dock_pinned {
+                "Unpin".into()
+            } else {
+                "Pin".into()
+            },
             action: MenuAction::TogglePin,
         });
 
@@ -261,19 +280,42 @@ impl AppState {
                 None => None,
             },
         };
-        let Some((app_id, flavor)) = resolved else { return };
+        let Some((app_id, flavor)) = resolved else {
+            return;
+        };
         let items = match flavor {
             Flavor::App => self.menu_items_for(&app_id),
             Flavor::PinnedPath => vec![
-                MenuItem { label: "Open".into(), action: MenuAction::FilesOpen },
-                MenuItem { label: "Unpin from main page".into(), action: MenuAction::FilesTogglePin },
-                MenuItem { label: "Copy path".into(), action: MenuAction::FilesCopyPath },
+                MenuItem {
+                    label: "Open".into(),
+                    action: MenuAction::FilesOpen,
+                },
+                MenuItem {
+                    label: "Unpin from main page".into(),
+                    action: MenuAction::FilesTogglePin,
+                },
+                MenuItem {
+                    label: "Copy path".into(),
+                    action: MenuAction::FilesCopyPath,
+                },
             ],
             Flavor::ResultFile => vec![
-                MenuItem { label: "Open".into(), action: MenuAction::FilesOpen },
-                MenuItem { label: "Reveal in Files".into(), action: MenuAction::FilesRevealInFM },
-                MenuItem { label: "Pin to main page".into(), action: MenuAction::FilesTogglePin },
-                MenuItem { label: "Copy path".into(), action: MenuAction::FilesCopyPath },
+                MenuItem {
+                    label: "Open".into(),
+                    action: MenuAction::FilesOpen,
+                },
+                MenuItem {
+                    label: "Reveal in Files".into(),
+                    action: MenuAction::FilesRevealInFM,
+                },
+                MenuItem {
+                    label: "Pin to main page".into(),
+                    action: MenuAction::FilesTogglePin,
+                },
+                MenuItem {
+                    label: "Copy path".into(),
+                    action: MenuAction::FilesCopyPath,
+                },
             ],
         };
         self.context_menu = Some(ContextMenu {
@@ -290,7 +332,9 @@ impl AppState {
     /// close the menu. Called by the layershell when a click lands on
     /// an item.
     pub fn run_menu_action(&mut self, action: MenuAction) {
-        let Some(menu) = self.context_menu.take() else { return };
+        let Some(menu) = self.context_menu.take() else {
+            return;
+        };
         match action {
             MenuAction::TogglePin => {
                 self.launcher.toggle_pin(&menu.app_id);
@@ -301,9 +345,11 @@ impl AppState {
                 // app immediately disappears (or reappears) without
                 // needing to reopen the panel.
                 if self.search.all_apps_mode {
-                    self.search.show_all_apps(&self.apps, self.launcher.hidden());
+                    self.search
+                        .show_all_apps(&self.apps, self.launcher.hidden());
                 } else if !self.search.input.is_empty() {
-                    self.search.refresh_results(&self.apps, self.launcher.hidden());
+                    self.search
+                        .refresh_results(&self.apps, self.launcher.hidden());
                 }
             }
             MenuAction::WindowClose => {
@@ -342,10 +388,7 @@ impl AppState {
                 if path.is_dir() {
                     self.files.navigate_to(&path);
                 } else if path.exists() {
-                    let exec = format!(
-                        "xdg-open '{}'",
-                        menu.app_id.replace('\'', "'\\''"),
-                    );
+                    let exec = format!("xdg-open '{}'", menu.app_id.replace('\'', "'\\''"),);
                     spawn_detached(&exec);
                     self.close();
                 }
@@ -355,7 +398,9 @@ impl AppState {
                 let dir = if path.is_dir() {
                     path
                 } else {
-                    path.parent().unwrap_or(std::path::Path::new("/")).to_path_buf()
+                    path.parent()
+                        .unwrap_or(std::path::Path::new("/"))
+                        .to_path_buf()
                 };
                 let s = dir.to_string_lossy().replace('\'', "'\\''");
                 self.pending_terminal_input = Some(format!("cd '{}'\n", s));

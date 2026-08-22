@@ -135,7 +135,9 @@ pub fn load_theme_index() -> usize {
 /// Persist the chosen visualizer theme index.
 pub fn save_theme_index(index: usize) {
     if let Some(p) = settings_path() {
-        let s = VisSettings { theme_index: index.min(VIS_THEMES.len() - 1) };
+        let s = VisSettings {
+            theme_index: index.min(VIS_THEMES.len() - 1),
+        };
         if let Ok(d) = serde_json::to_string_pretty(&s) {
             let _ = fs::write(&p, d);
         }

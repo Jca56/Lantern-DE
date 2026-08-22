@@ -1,5 +1,5 @@
-use lntrn_render::{Color, FontWeight, FontStyle, TextRenderer};
-use lntrn_theme::{FONT_HEADING, FONT_SUBHEADING, FONT_BODY, FONT_SMALL, FONT_CAPTION, FONT_LABEL};
+use lntrn_render::{Color, FontStyle, FontWeight, TextRenderer};
+use lntrn_theme::{FONT_BODY, FONT_CAPTION, FONT_HEADING, FONT_LABEL, FONT_SMALL, FONT_SUBHEADING};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum FontSize {
@@ -69,12 +69,7 @@ impl<'a> TextLabel<'a> {
         self
     }
 
-    pub fn draw(
-        &self,
-        text_renderer: &mut TextRenderer,
-        screen_w: u32,
-        screen_h: u32,
-    ) {
+    pub fn draw(&self, text_renderer: &mut TextRenderer, screen_w: u32, screen_h: u32) {
         if self.bold {
             text_renderer.queue_styled(
                 self.text,

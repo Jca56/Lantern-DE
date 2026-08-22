@@ -11,7 +11,9 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use lntrn_render::{Color, GpuContext, GpuTexture, Painter, Rect, TextRenderer, TexturePass, TextureDraw};
+use lntrn_render::{
+    Color, GpuContext, GpuTexture, Painter, Rect, TextRenderer, TextureDraw, TexturePass,
+};
 use lntrn_ui::gpu::{Button, ButtonVariant, FoxPalette, InteractionContext};
 
 // Cached tile geometry from the most recent draw, used by
@@ -28,11 +30,11 @@ use crate::text_edit::TextBuffer;
 use crate::themes::{self, MoveDir, ThemePreset};
 
 // ── Context menu action IDs (600 range) ─────────────────────────────────────
-pub(crate) const ACT_THEME_RENAME:      u32 = 600;
-pub(crate) const ACT_THEME_UPDATE:      u32 = 601;
-pub(crate) const ACT_THEME_MOVE_LEFT:   u32 = 602;
-pub(crate) const ACT_THEME_MOVE_RIGHT:  u32 = 603;
-pub(crate) const ACT_THEME_DELETE:      u32 = 604;
+pub(crate) const ACT_THEME_RENAME: u32 = 600;
+pub(crate) const ACT_THEME_UPDATE: u32 = 601;
+pub(crate) const ACT_THEME_MOVE_LEFT: u32 = 602;
+pub(crate) const ACT_THEME_MOVE_RIGHT: u32 = 603;
+pub(crate) const ACT_THEME_DELETE: u32 = 604;
 
 // ── Zone IDs (400 range — keep clear of other panels) ──────────────────────
 
@@ -103,7 +105,9 @@ impl ThemesPanelState {
         self.needs_reload = false;
     }
 
-    pub fn modal_open(&self) -> bool { !matches!(self.modal, ModalState::Closed) }
+    pub fn modal_open(&self) -> bool {
+        !matches!(self.modal, ModalState::Closed)
+    }
 
     /// Handle a keypress while the modal is open. Returns `(consumed,
     /// action)` — caller acts on `action` if Some.
@@ -113,19 +117,43 @@ impl ThemesPanelState {
         utf8: Option<String>,
         config: &mut LanternConfig,
     ) -> bool {
-        if matches!(self.modal, ModalState::Closed) { return false; }
+        if matches!(self.modal, ModalState::Closed) {
+            return false;
+        }
         match sym.raw() {
-            0xff0d | 0xff8d => { // Enter — confirm
+            0xff0d | 0xff8d => {
+                // Enter — confirm
                 self.confirm_modal(config);
                 true
             }
-            0xff1b => { self.modal = ModalState::Closed; true } // Escape
-            0xff08 => { self.with_buffer(|b| b.backspace()); true }
-            0xffff => { self.with_buffer(|b| b.delete()); true }
-            0xff51 => { self.with_buffer(|b| b.left()); true }
-            0xff53 => { self.with_buffer(|b| b.right()); true }
-            0xff50 => { self.with_buffer(|b| b.home()); true }
-            0xff57 => { self.with_buffer(|b| b.end()); true }
+            0xff1b => {
+                self.modal = ModalState::Closed;
+                true
+            } // Escape
+            0xff08 => {
+                self.with_buffer(|b| b.backspace());
+                true
+            }
+            0xffff => {
+                self.with_buffer(|b| b.delete());
+                true
+            }
+            0xff51 => {
+                self.with_buffer(|b| b.left());
+                true
+            }
+            0xff53 => {
+                self.with_buffer(|b| b.right());
+                true
+            }
+            0xff50 => {
+                self.with_buffer(|b| b.home());
+                true
+            }
+            0xff57 => {
+                self.with_buffer(|b| b.end());
+                true
+            }
             _ => {
                 if let Some(ch) = utf8 {
                     // Filter control chars
@@ -133,7 +161,9 @@ impl ThemesPanelState {
                         self.with_buffer(|b| b.insert(&ch));
                     }
                     true
-                } else { false }
+                } else {
+                    false
+                }
             }
         }
     }
@@ -202,10 +232,17 @@ pub(crate) fn draw_themes_card(
     gpu: &GpuContext,
     fox: &FoxPalette,
     _tex_draws: &mut Vec<TextureDraw>,
-    card_x: f32, card_y: f32, card_w: f32, card_h: f32,
-    s: f32, sw: u32, sh: u32,
+    card_x: f32,
+    card_y: f32,
+    card_w: f32,
+    card_h: f32,
+    s: f32,
+    sw: u32,
+    sh: u32,
 ) {
-    if state.needs_reload { state.reload(); }
+    if state.needs_reload {
+        state.reload();
+    }
     ensure_thumbnails(state, tex_pass, gpu);
     state.tile_layouts.clear();
 
@@ -213,8 +250,7 @@ pub(crate) fn draw_themes_card(
     let card_inner_w = card_w - CARD_INNER_PAD_H * 2.0 * s;
 
     let inner_y = draw_section_card(
-        painter, text, fox, "Themes",
-        card_x, card_y, card_w, card_h, s, sw, sh,
+        painter, text, fox, "Themes", card_x, card_y, card_w, card_h, s, sw, sh,
     );
 
     let tile_w = TILE_W * s;
@@ -226,7 +262,9 @@ pub(crate) fn draw_themes_card(
     // Lay out theme tiles in a wrap grid; the trailing "+" tile follows in
     // the next free slot.
     for (idx, preset) in state.themes.iter().enumerate() {
-        if idx as u32 >= MAX_THEMES { break; }
+        if idx as u32 >= MAX_THEMES {
+            break;
+        }
         let col = idx % cols;
         let row = idx / cols;
         let tx = card_inner_x + col as f32 * (tile_w + gap);
@@ -237,8 +275,11 @@ pub(crate) fn draw_themes_card(
         let tile_rect = Rect::new(tx, ty, tile_w, tile_h);
         let zone = ix.add_zone(zone_id, tile_rect);
         let is_active = preset.slug == config.appearance.active_theme;
-        let thumb_present = state.thumbnails.get(&preset.slug)
-            .map(|t| t.is_some()).unwrap_or(false);
+        let thumb_present = state
+            .thumbnails
+            .get(&preset.slug)
+            .map(|t| t.is_some())
+            .unwrap_or(false);
         let accent = Color::from_hex(preset.accent_hex()).unwrap_or(fox.accent);
 
         // 1) Outer ring (painter draws this BEHIND the texture; the visible
@@ -260,10 +301,16 @@ pub(crate) fn draw_themes_card(
             tile_rect.h - ring_pad * 2.0,
         );
         if !thumb_present {
-            painter.rect_filled(inner, (TILE_RADIUS - 2.0).max(2.0) * s,
-                accent.with_alpha(0.45));
+            painter.rect_filled(
+                inner,
+                (TILE_RADIUS - 2.0).max(2.0) * s,
+                accent.with_alpha(0.45),
+            );
         }
-        state.tile_layouts.push(TileLayout { slug: preset.slug.clone(), inner });
+        state.tile_layouts.push(TileLayout {
+            slug: preset.slug.clone(),
+            inner,
+        });
 
         // 3) Menu "..." button — registered AFTER tile_zone so it wins for
         //    overlapping clicks. Painter shapes go BENEATH the thumbnail so
@@ -273,7 +320,8 @@ pub(crate) fn draw_themes_card(
         let menu_rect = Rect::new(
             tile_rect.x + tile_rect.w - menu_size - 8.0 * s,
             tile_rect.y + 8.0 * s,
-            menu_size, menu_size,
+            menu_size,
+            menu_size,
         );
         let mzone = ix.add_zone(menu_zone, menu_rect);
 
@@ -282,17 +330,39 @@ pub(crate) fn draw_themes_card(
         let dots_sz = 28.0 * s;
         let dots_x = menu_rect.x + (menu_rect.w - dots_sz * 0.7) / 2.0;
         let dots_y = menu_rect.y + (menu_rect.h - dots_sz) / 2.0 - dots_sz * 0.2;
-        let bg_alpha = if mzone.is_hovered() { 0.55 } else if zone.is_hovered() { 0.3 } else { 0.0 };
+        let bg_alpha = if mzone.is_hovered() {
+            0.55
+        } else if zone.is_hovered() {
+            0.3
+        } else {
+            0.0
+        };
         if bg_alpha > 0.0 {
             // Subtle pill behind the dots when hovered for affordance.
             // Drawn before texture so it's mostly hidden unless the texture
             // is transparent (which it isn't). Skipped — kept for shape ref.
             let _ = bg_alpha;
         }
-        text.queue("⋯", dots_sz, dots_x + 1.0 * s, dots_y + 1.0 * s,
-            Color::rgba(0.0, 0.0, 0.0, 0.85), dots_sz * 2.0, sw, sh);
-        text.queue("⋯", dots_sz, dots_x, dots_y,
-            Color::rgba(1.0, 1.0, 1.0, 1.0), dots_sz * 2.0, sw, sh);
+        text.queue(
+            "⋯",
+            dots_sz,
+            dots_x + 1.0 * s,
+            dots_y + 1.0 * s,
+            Color::rgba(0.0, 0.0, 0.0, 0.85),
+            dots_sz * 2.0,
+            sw,
+            sh,
+        );
+        text.queue(
+            "⋯",
+            dots_sz,
+            dots_x,
+            dots_y,
+            Color::rgba(1.0, 1.0, 1.0, 1.0),
+            dots_sz * 2.0,
+            sw,
+            sh,
+        );
 
         // 4) Name with shadow (text > textures so it's always visible)
         let name = preset.name();
@@ -300,17 +370,40 @@ pub(crate) fn draw_themes_card(
         let name_x = tile_rect.x + 14.0 * s;
         let name_y = tile_rect.y + tile_rect.h - name_sz - 14.0 * s;
         let name_w = tile_rect.w - 28.0 * s;
-        text.queue(name, name_sz, name_x + 1.0 * s, name_y + 1.0 * s,
-            Color::rgba(0.0, 0.0, 0.0, 0.85), name_w, sw, sh);
-        text.queue(name, name_sz, name_x, name_y,
-            Color::rgba(1.0, 1.0, 1.0, 1.0), name_w, sw, sh);
+        text.queue(
+            name,
+            name_sz,
+            name_x + 1.0 * s,
+            name_y + 1.0 * s,
+            Color::rgba(0.0, 0.0, 0.0, 0.85),
+            name_w,
+            sw,
+            sh,
+        );
+        text.queue(
+            name,
+            name_sz,
+            name_x,
+            name_y,
+            Color::rgba(1.0, 1.0, 1.0, 1.0),
+            name_w,
+            sw,
+            sh,
+        );
 
         // 5) Accent dot in the corner — also text so it sits above the
         //    thumbnail.
         let dot_sz = 16.0 * s;
-        text.queue("●", dot_sz,
-            tile_rect.x + 12.0 * s, tile_rect.y + 12.0 * s,
-            accent, dot_sz * 2.0, sw, sh);
+        text.queue(
+            "●",
+            dot_sz,
+            tile_rect.x + 12.0 * s,
+            tile_rect.y + 12.0 * s,
+            accent,
+            dot_sz * 2.0,
+            sw,
+            sh,
+        );
     }
 
     // Trailing "+" tile — slots into the next grid cell, wrapping if needed.
@@ -353,12 +446,18 @@ fn draw_add_tile(
     fox: &FoxPalette,
     rect: Rect,
     hovered: bool,
-    s: f32, sw: u32, sh: u32,
+    s: f32,
+    sw: u32,
+    sh: u32,
 ) {
     let radius = TILE_RADIUS * s;
     let bg = if hovered { fox.surface_2 } else { fox.surface };
     painter.rect_filled(rect, radius, bg.with_alpha(0.4));
-    let ring_color = if hovered { fox.accent.with_alpha(0.7) } else { fox.muted.with_alpha(0.3) };
+    let ring_color = if hovered {
+        fox.accent.with_alpha(0.7)
+    } else {
+        fox.muted.with_alpha(0.3)
+    };
     painter.rect_stroke_sdf(rect, radius, 1.5 * s, ring_color);
 
     // Big plus
@@ -368,21 +467,27 @@ fn draw_add_tile(
     let stroke = 3.0 * s;
     painter.rect_filled(
         Rect::new(cx - arm, cy - stroke / 2.0, arm * 2.0, stroke),
-        stroke / 2.0, fox.text.with_alpha(0.85),
+        stroke / 2.0,
+        fox.text.with_alpha(0.85),
     );
     painter.rect_filled(
         Rect::new(cx - stroke / 2.0, cy - arm, stroke, arm * 2.0),
-        stroke / 2.0, fox.text.with_alpha(0.85),
+        stroke / 2.0,
+        fox.text.with_alpha(0.85),
     );
 
     let label = "Save current as theme";
     let label_sz = 14.0 * s;
     let tw = label_sz * 0.55 * label.len() as f32;
     text.queue(
-        label, label_sz,
+        label,
+        label_sz,
         rect.x + (rect.w - tw) / 2.0,
         cy + arm + 16.0 * s,
-        fox.text_secondary, rect.w, sw, sh,
+        fox.text_secondary,
+        rect.w,
+        sw,
+        sh,
     );
 }
 
@@ -395,10 +500,15 @@ pub(crate) fn draw_themes_modal(
     text: &mut TextRenderer,
     ix: &mut InteractionContext,
     fox: &FoxPalette,
-    win_w: f32, win_h: f32,
-    s: f32, sw: u32, sh: u32,
+    win_w: f32,
+    win_h: f32,
+    s: f32,
+    sw: u32,
+    sh: u32,
 ) {
-    if matches!(state.modal, ModalState::Closed) { return; }
+    if matches!(state.modal, ModalState::Closed) {
+        return;
+    }
 
     let (title, value_text, cursor) = match &state.modal {
         ModalState::Save(b) => ("Save Theme", b.text.clone(), b.cursor),
@@ -423,9 +533,14 @@ pub(crate) fn draw_themes_modal(
     // Title
     let title_sz = 20.0 * s;
     text.queue(
-        title, title_sz,
-        modal_x + 24.0 * s, modal_y + 24.0 * s,
-        fox.text, modal_w - 48.0 * s, sw, sh,
+        title,
+        title_sz,
+        modal_x + 24.0 * s,
+        modal_y + 24.0 * s,
+        fox.text,
+        modal_w - 48.0 * s,
+        sw,
+        sh,
     );
 
     // Input box
@@ -443,10 +558,14 @@ pub(crate) fn draw_themes_modal(
     let text_sz = 18.0 * s;
     let display: &str = &value_text;
     text.queue(
-        display, text_sz,
+        display,
+        text_sz,
         input_x + 14.0 * s,
         input_y + (input_h - text_sz) / 2.0,
-        fox.text, input_w - 28.0 * s, sw, sh,
+        fox.text,
+        input_w - 28.0 * s,
+        sw,
+        sh,
     );
 
     // Cursor caret
@@ -454,7 +573,8 @@ pub(crate) fn draw_themes_modal(
     let caret_x = input_x + 14.0 * s + text_sz * 0.55 * prefix.chars().count() as f32;
     painter.rect_filled(
         Rect::new(caret_x, input_y + 10.0 * s, 2.0 * s, input_h - 20.0 * s),
-        1.0 * s, fox.text,
+        1.0 * s,
+        fox.text,
     );
 
     // Buttons
@@ -551,21 +671,34 @@ fn build_context_menu_items(idx: usize, total: usize) -> Vec<lntrn_ui::gpu::Menu
         MenuItem::action(ACT_THEME_UPDATE, "Update from current"),
         MenuItem::Separator,
         if at_first {
-            MenuItem::Action { id: ACT_THEME_MOVE_LEFT, label: "Move Left".into(),
-                shortcut: None, enabled: false, danger: false }
+            MenuItem::Action {
+                id: ACT_THEME_MOVE_LEFT,
+                label: "Move Left".into(),
+                shortcut: None,
+                enabled: false,
+                danger: false,
+            }
         } else {
             MenuItem::action(ACT_THEME_MOVE_LEFT, "Move Left")
         },
         if at_last {
-            MenuItem::Action { id: ACT_THEME_MOVE_RIGHT, label: "Move Right".into(),
-                shortcut: None, enabled: false, danger: false }
+            MenuItem::Action {
+                id: ACT_THEME_MOVE_RIGHT,
+                label: "Move Right".into(),
+                shortcut: None,
+                enabled: false,
+                danger: false,
+            }
         } else {
             MenuItem::action(ACT_THEME_MOVE_RIGHT, "Move Right")
         },
         MenuItem::Separator,
         MenuItem::Action {
-            id: ACT_THEME_DELETE, label: "Delete".into(),
-            shortcut: None, enabled: true, danger: true,
+            id: ACT_THEME_DELETE,
+            label: "Delete".into(),
+            shortcut: None,
+            enabled: true,
+            danger: true,
         },
     ]
 }
@@ -580,7 +713,9 @@ pub fn dispatch_theme_menu_action(
     if action_id < ACT_THEME_RENAME || action_id > ACT_THEME_DELETE {
         return false;
     }
-    let Some(slug) = state.context_target.clone() else { return true; };
+    let Some(slug) = state.context_target.clone() else {
+        return true;
+    };
     let preset = state.themes.iter().find(|t| t.slug == slug).cloned();
 
     match action_id {
@@ -622,17 +757,17 @@ pub fn dispatch_theme_menu_action(
 
 // ── Thumbnail loading ─────────────────────────────────────────────────────
 
-fn ensure_thumbnails(
-    state: &mut ThemesPanelState,
-    tex_pass: &TexturePass,
-    gpu: &GpuContext,
-) {
+fn ensure_thumbnails(state: &mut ThemesPanelState, tex_pass: &TexturePass, gpu: &GpuContext) {
     for preset in &state.themes {
-        if state.thumbnails.contains_key(&preset.slug) { continue; }
+        if state.thumbnails.contains_key(&preset.slug) {
+            continue;
+        }
 
         let tex = preset.wallpaper().and_then(|wp| {
             let path = PathBuf::from(wp);
-            if !path.exists() { return None; }
+            if !path.exists() {
+                return None;
+            }
             decode_thumbnail(&path).map(|rgba| tex_pass.upload(gpu, &rgba, THUMB_W, THUMB_H))
         });
         state.thumbnails.insert(preset.slug.clone(), tex);

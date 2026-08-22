@@ -33,7 +33,9 @@ pub struct Manifest {
 
 impl Manifest {
     pub fn path() -> PathBuf {
-        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp"));
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/tmp"));
         home.join(".lantern/cloud/manifest.json")
     }
 

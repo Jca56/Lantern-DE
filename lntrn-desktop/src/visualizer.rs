@@ -114,7 +114,12 @@ impl Visualizer {
         }
 
         // FFT of size N/2 on packed data.
-        fft_radix2(&mut self.re, &mut self.im, &self.twiddle_re, &self.twiddle_im);
+        fft_radix2(
+            &mut self.re,
+            &mut self.im,
+            &self.twiddle_re,
+            &self.twiddle_im,
+        );
 
         // Unpack: derive |X[k]|² for k in 1..HALF from the N/2-point FFT
         // of the packed sequence. See real-input FFT identities.

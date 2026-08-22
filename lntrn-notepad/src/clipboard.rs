@@ -13,8 +13,8 @@ use nix::poll::{PollFd, PollFlags, PollTimeout};
 use nix::unistd::pipe;
 use wayland_client::protocol::{wl_registry, wl_seat};
 use wayland_client::{
-    delegate_noop, event_created_child, globals, Connection, Dispatch, EventQueue,
-    Proxy, QueueHandle,
+    delegate_noop, event_created_child, globals, Connection, Dispatch, EventQueue, Proxy,
+    QueueHandle,
 };
 use wayland_protocols_wlr::data_control::v1::client::{
     zwlr_data_control_device_v1, zwlr_data_control_manager_v1, zwlr_data_control_offer_v1,
@@ -124,8 +124,12 @@ fn clipboard_thread(rx: mpsc::Receiver<Cmd>) -> Result<(), Box<dyn std::error::E
         if let Some(guard) = queue.prepare_read() {
             let poll_fd = PollFd::new(fd, PollFlags::POLLIN);
             match nix::poll::poll(&mut [poll_fd], PollTimeout::from(50u16)) {
-                Ok(n) if n > 0 => { guard.read().ok(); }
-                _ => { drop(guard); }
+                Ok(n) if n > 0 => {
+                    guard.read().ok();
+                }
+                _ => {
+                    drop(guard);
+                }
             }
         }
         queue.dispatch_pending(&mut state)?;
@@ -149,7 +153,10 @@ fn do_copy(state: &mut ClipState, text: &str) {
 fn do_paste(state: &mut ClipState, queue: &mut EventQueue<ClipState>) -> Option<String> {
     queue.roundtrip(state).ok()?;
     let offer = state.selection_offer.clone()?;
-    let has_text = state.selection_mimes.iter().any(|m| m.contains("text/plain"));
+    let has_text = state
+        .selection_mimes
+        .iter()
+        .any(|m| m.contains("text/plain"));
     if !has_text {
         return None;
     }
@@ -189,17 +196,29 @@ fn do_paste(state: &mut ClipState, queue: &mut EventQueue<ClipState>) -> Option<
 // -- Dispatch impls -----------------------------------------------------------
 
 impl Dispatch<wl_registry::WlRegistry, globals::GlobalListContents> for ClipState {
-    fn event(_: &mut Self, _: &wl_registry::WlRegistry, _: wl_registry::Event,
-             _: &globals::GlobalListContents, _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_registry::WlRegistry,
+        _: wl_registry::Event,
+        _: &globals::GlobalListContents,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 delegate_noop!(ClipState: ignore wl_seat::WlSeat);
 delegate_noop!(ClipState: ignore zwlr_data_control_manager_v1::ZwlrDataControlManagerV1);
 
 impl Dispatch<zwlr_data_control_device_v1::ZwlrDataControlDeviceV1, ()> for ClipState {
-    fn event(state: &mut Self, _: &zwlr_data_control_device_v1::ZwlrDataControlDeviceV1,
-             event: zwlr_data_control_device_v1::Event, _: &(), _: &Connection,
-             _: &QueueHandle<Self>) {
+    fn event(
+        state: &mut Self,
+        _: &zwlr_data_control_device_v1::ZwlrDataControlDeviceV1,
+        event: zwlr_data_control_device_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
         match event {
             zwlr_data_control_device_v1::Event::DataOffer { id } => {
                 // A new announcement replaces any pending offer that never
@@ -244,9 +263,14 @@ impl Dispatch<zwlr_data_control_device_v1::ZwlrDataControlDeviceV1, ()> for Clip
 }
 
 impl Dispatch<zwlr_data_control_offer_v1::ZwlrDataControlOfferV1, ()> for ClipState {
-    fn event(state: &mut Self, _: &zwlr_data_control_offer_v1::ZwlrDataControlOfferV1,
-             event: zwlr_data_control_offer_v1::Event, _: &(), _: &Connection,
-             _: &QueueHandle<Self>) {
+    fn event(
+        state: &mut Self,
+        _: &zwlr_data_control_offer_v1::ZwlrDataControlOfferV1,
+        event: zwlr_data_control_offer_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
         if let zwlr_data_control_offer_v1::Event::Offer { mime_type } = event {
             state.pending_mimes.push(mime_type);
         }
@@ -254,9 +278,14 @@ impl Dispatch<zwlr_data_control_offer_v1::ZwlrDataControlOfferV1, ()> for ClipSt
 }
 
 impl Dispatch<zwlr_data_control_source_v1::ZwlrDataControlSourceV1, ()> for ClipState {
-    fn event(state: &mut Self, source: &zwlr_data_control_source_v1::ZwlrDataControlSourceV1,
-             event: zwlr_data_control_source_v1::Event, _: &(), _: &Connection,
-             _: &QueueHandle<Self>) {
+    fn event(
+        state: &mut Self,
+        source: &zwlr_data_control_source_v1::ZwlrDataControlSourceV1,
+        event: zwlr_data_control_source_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
         match event {
             zwlr_data_control_source_v1::Event::Send { mime_type, fd } => {
                 if mime_type.contains("text/plain") {

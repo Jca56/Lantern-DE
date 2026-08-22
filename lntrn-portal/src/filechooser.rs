@@ -36,8 +36,9 @@ fn percent_encode_path(path: &str) -> String {
     let mut out = String::with_capacity(path.len() + 16);
     for b in path.bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9'
-            | b'-' | b'.' | b'_' | b'~' | b'/' => out.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                out.push(b as char)
+            }
             _ => {
                 out.push('%');
                 out.push(char::from(HEX[(b >> 4) as usize]));
@@ -132,7 +133,8 @@ impl FileChooserService {
             args.push("--title".into());
             args.push(title.into());
         }
-        self.run_picker(&hdr, &handle, app_id, "OpenFile", args).await
+        self.run_picker(&hdr, &handle, app_id, "OpenFile", args)
+            .await
     }
 
     async fn save_file(
@@ -151,7 +153,8 @@ impl FileChooserService {
             args.push("--title".into());
             args.push(title.into());
         }
-        self.run_picker(&hdr, &handle, app_id, "SaveFile", args).await
+        self.run_picker(&hdr, &handle, app_id, "SaveFile", args)
+            .await
     }
 
     async fn save_files(
@@ -170,7 +173,8 @@ impl FileChooserService {
             args.push("--title".into());
             args.push(title.into());
         }
-        self.run_picker(&hdr, &handle, app_id, "SaveFiles", args).await
+        self.run_picker(&hdr, &handle, app_id, "SaveFiles", args)
+            .await
     }
 }
 
@@ -230,7 +234,10 @@ impl FileChooserService {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("[lntrn-portal] spawn failed: {e}");
-                let _ = conn().object_server().remove::<PortalRequest, _>(handle.clone()).await;
+                let _ = conn()
+                    .object_server()
+                    .remove::<PortalRequest, _>(handle.clone())
+                    .await;
                 return (2, HashMap::new());
             }
         };
@@ -245,7 +252,10 @@ impl FileChooserService {
 
         // Clean up
         self.pids.lock().unwrap().remove(&handle_str);
-        let _ = conn().object_server().remove::<PortalRequest, _>(handle.clone()).await;
+        let _ = conn()
+            .object_server()
+            .remove::<PortalRequest, _>(handle.clone())
+            .await;
 
         match output {
             Ok(out) if out.status.success() => {
@@ -269,7 +279,10 @@ impl FileChooserService {
                 (0, results)
             }
             Ok(out) => {
-                eprintln!("[lntrn-portal] picker cancelled (exit {})", out.status.code().unwrap_or(-1));
+                eprintln!(
+                    "[lntrn-portal] picker cancelled (exit {})",
+                    out.status.code().unwrap_or(-1)
+                );
                 (1, HashMap::new())
             }
             Err(e) => {
@@ -336,23 +349,37 @@ fn bytes_to_path(val: &Value<'_>) -> Option<String> {
 
 /// Parse filters option: a(sa(us)) -> "Name1:*.ext1,*.ext2|Name2:*.ext3"
 fn parse_filters(options: &HashMap<String, Value<'_>>) -> Option<String> {
-    let Value::Array(filters) = options.get("filters")? else { return None };
+    let Value::Array(filters) = options.get("filters")? else {
+        return None;
+    };
 
     let mut parts = Vec::new();
     for filter in filters.iter() {
-        let Value::Structure(fields) = filter else { continue };
+        let Value::Structure(fields) = filter else {
+            continue;
+        };
         let fields = fields.fields();
-        if fields.len() < 2 { continue; }
+        if fields.len() < 2 {
+            continue;
+        }
 
-        let Value::Str(name) = &fields[0] else { continue };
-        let Value::Array(patterns) = &fields[1] else { continue };
+        let Value::Str(name) = &fields[0] else {
+            continue;
+        };
+        let Value::Array(patterns) = &fields[1] else {
+            continue;
+        };
 
         let mut globs = Vec::new();
         for pat in patterns.iter() {
             let Value::Structure(pf) = pat else { continue };
             let pf = pf.fields();
-            if pf.len() < 2 { continue; }
-            let Value::Str(pattern) = &pf[1] else { continue };
+            if pf.len() < 2 {
+                continue;
+            }
+            let Value::Str(pattern) = &pf[1] else {
+                continue;
+            };
             globs.push(pattern.to_string());
         }
 
@@ -361,5 +388,9 @@ fn parse_filters(options: &HashMap<String, Value<'_>>) -> Option<String> {
         }
     }
 
-    if parts.is_empty() { None } else { Some(parts.join("|")) }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("|"))
+    }
 }

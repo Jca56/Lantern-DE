@@ -8,16 +8,13 @@
 //!    Hidden entirely on a desktop with no system battery.
 
 use lntrn_render::{Painter, Rect, TextRenderer};
-use lntrn_ui::gpu::{
-    FoxPalette, InteractionContext, MenuEvent, ScrollArea, Scrollbar, Slider,
-};
+use lntrn_ui::gpu::{FoxPalette, InteractionContext, MenuEvent, ScrollArea, Scrollbar, Slider};
 
 use crate::config::LanternConfig;
 use crate::panels::{
     draw_section_card, draw_select_button, hidden_by_menu, make_menu_items,
-    slider_value_from_cursor, PanelState,
-    CARD_GAP, CARD_HEADER_H, CARD_INNER_PAD_H, CARD_INNER_PAD_V,
-    CARD_OUTER_PAD_H, CARD_OUTER_PAD_V,
+    slider_value_from_cursor, PanelState, CARD_GAP, CARD_HEADER_H, CARD_INNER_PAD_H,
+    CARD_INNER_PAD_V, CARD_OUTER_PAD_H, CARD_OUTER_PAD_V,
 };
 
 // ── Zone IDs ────────────────────────────────────────────────────────────────
@@ -58,16 +55,25 @@ pub fn draw_power_panel(
     subpanel: crate::wayland::Panel,
     config: &mut LanternConfig,
     panel_state: &mut PanelState,
-    painter: &mut Painter, text: &mut TextRenderer, ix: &mut InteractionContext,
-    fox: &FoxPalette, x: f32, y: f32, w: f32, panel_h: f32,
-    s: f32, sw: u32, sh: u32, scroll_delta: f32,
+    painter: &mut Painter,
+    text: &mut TextRenderer,
+    ix: &mut InteractionContext,
+    fox: &FoxPalette,
+    x: f32,
+    y: f32,
+    w: f32,
+    panel_h: f32,
+    s: f32,
+    sw: u32,
+    sh: u32,
+    scroll_delta: f32,
 ) {
     use crate::wayland::Panel;
     // Hardware adaptation: lid rows and the battery card only make sense on a
     // laptop. A lid-less/battery-less desktop hides them (see `crate::machine`).
     let has_lid = crate::machine::has_lid();
     let has_battery = crate::machine::has_battery();
-    let show_lid     = matches!(subpanel, Panel::LidIdle);
+    let show_lid = matches!(subpanel, Panel::LidIdle);
     let show_battery = matches!(subpanel, Panel::Battery) && has_battery;
     let row = ROW_H * s;
     let lsz = LABEL_SIZE * s;
@@ -96,24 +102,26 @@ pub fn draw_power_panel(
 
     // Card row counts. The two lid rows drop out on a lid-less desktop.
     let lid_idle_rows: f32 = if has_lid { 5.0 } else { 3.0 }; // [Lid Bat, Lid AC,] Dim, Idle Timeout, Idle Action
-    let battery_rows: f32 = 3.0;  // Low, Critical %, Critical Action
+    let battery_rows: f32 = 3.0; // Low, Critical %, Critical Action
 
     let card_chrome_h = CARD_HEADER_H * s + CARD_INNER_PAD_V * 2.0 * s;
     let lid_idle_card_h = card_chrome_h + lid_idle_rows * row;
     let battery_card_h = card_chrome_h + battery_rows * row;
 
-    let visible_heights: Vec<f32> = [
-        (show_lid,     lid_idle_card_h),
-        (show_battery, battery_card_h),
-    ].iter().filter_map(|(b, h)| if *b { Some(*h) } else { None }).collect();
+    let visible_heights: Vec<f32> = [(show_lid, lid_idle_card_h), (show_battery, battery_card_h)]
+        .iter()
+        .filter_map(|(b, h)| if *b { Some(*h) } else { None })
+        .collect();
     let content_height = CARD_OUTER_PAD_V * 2.0 * s
         + visible_heights.iter().sum::<f32>()
         + CARD_GAP * s * visible_heights.len().saturating_sub(1) as f32;
 
     if scroll_delta != 0.0 {
         ScrollArea::apply_scroll(
-            &mut panel_state.scroll_offset, scroll_delta * 40.0,
-            content_height, panel_h,
+            &mut panel_state.scroll_offset,
+            scroll_delta * 40.0,
+            content_height,
+            panel_h,
         );
     }
 
@@ -129,9 +137,8 @@ pub fn draw_power_panel(
     // Helper: should we skip this slider's value text? (Only when it overlaps
     // an open dropdown menu — painter shapes are fine since the menu draws
     // last and covers them.)
-    let text_hidden = |tx: f32, ty: f32, tw: f32, th: f32| -> bool {
-        hidden_by_menu(tx, ty, tw, th, menu)
-    };
+    let text_hidden =
+        |tx: f32, ty: f32, tw: f32, th: f32| -> bool { hidden_by_menu(tx, ty, tw, th, menu) };
 
     // ─────────────────────────────────────────────────────────────────
     // Card 1: Lid & Idle
@@ -140,28 +147,82 @@ pub fn draw_power_panel(
         // No lid → this card is just the idle settings.
         let card_title = if has_lid { "Lid & Idle" } else { "Idle" };
         let mut cy = draw_section_card(
-            painter, text, fox, card_title,
-            card_x, cy_top, card_w, lid_idle_card_h, s, sw, sh,
+            painter,
+            text,
+            fox,
+            card_title,
+            card_x,
+            cy_top,
+            card_w,
+            lid_idle_card_h,
+            s,
+            sw,
+            sh,
         );
 
         if has_lid {
             // Row: Lid Close (Battery)
-            draw_select_button("Lid Close (Battery)", &config.power.lid_close_action,
-                ZONE_PWR_LID_BTN, active == Some(ZONE_PWR_LID_BTN),
-                painter, text, ix, fox,
-                label_x, label_w, btn_x, btn_w, btn_h, row, lsz, s, sw, sh, &mut cy, menu);
+            draw_select_button(
+                "Lid Close (Battery)",
+                &config.power.lid_close_action,
+                ZONE_PWR_LID_BTN,
+                active == Some(ZONE_PWR_LID_BTN),
+                painter,
+                text,
+                ix,
+                fox,
+                label_x,
+                label_w,
+                btn_x,
+                btn_w,
+                btn_h,
+                row,
+                lsz,
+                s,
+                sw,
+                sh,
+                &mut cy,
+                menu,
+            );
 
             // Row: Lid Close (AC)
-            draw_select_button("Lid Close (AC)", &config.power.lid_close_on_ac,
-                ZONE_PWR_LID_AC_BTN, active == Some(ZONE_PWR_LID_AC_BTN),
-                painter, text, ix, fox,
-                label_x, label_w, btn_x, btn_w, btn_h, row, lsz, s, sw, sh, &mut cy, menu);
+            draw_select_button(
+                "Lid Close (AC)",
+                &config.power.lid_close_on_ac,
+                ZONE_PWR_LID_AC_BTN,
+                active == Some(ZONE_PWR_LID_AC_BTN),
+                painter,
+                text,
+                ix,
+                fox,
+                label_x,
+                label_w,
+                btn_x,
+                btn_w,
+                btn_h,
+                row,
+                lsz,
+                s,
+                sw,
+                sh,
+                &mut cy,
+                menu,
+            );
         }
 
         // Row: Dim Screen After (0–600s, snapped to 30s)
         {
             let label_y = cy + (row - lsz) / 2.0;
-            text.queue("Dim Screen After", lsz, label_x, label_y, fox.text, label_w, sw, sh);
+            text.queue(
+                "Dim Screen After",
+                lsz,
+                label_x,
+                label_y,
+                fox.text,
+                label_w,
+                sw,
+                sh,
+            );
 
             let frac = config.power.dim_after as f32 / 600.0;
             let rect = Rect::new(ctrl_x, cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
@@ -169,7 +230,10 @@ pub fn draw_power_panel(
             if let Some(f) = slider_value_from_cursor(ix, ZONE_PWR_DIM_SLIDER, &rect) {
                 config.power.dim_after = (f * 600.0).round() as u32;
             }
-            Slider::new(rect).value(frac).hovered(zone.is_hovered()).active(zone.is_active())
+            Slider::new(rect)
+                .value(frac)
+                .hovered(zone.is_hovered())
+                .active(zone.is_active())
                 .draw(painter, fox);
             // Snap to nearest 30s
             config.power.dim_after = ((config.power.dim_after + 14) / 30) * 30;
@@ -179,11 +243,24 @@ pub fn draw_power_panel(
                 } else {
                     let mins = config.power.dim_after / 60;
                     let secs = config.power.dim_after % 60;
-                    if mins > 0 && secs > 0 { format!("{}m {}s", mins, secs) }
-                    else if mins > 0 { format!("{}m", mins) }
-                    else { format!("{}s", secs) }
+                    if mins > 0 && secs > 0 {
+                        format!("{}m {}s", mins, secs)
+                    } else if mins > 0 {
+                        format!("{}m", mins)
+                    } else {
+                        format!("{}s", secs)
+                    }
                 };
-                text.queue(&val, vsz, value_x, label_y, fox.text_secondary, value_w, sw, sh);
+                text.queue(
+                    &val,
+                    vsz,
+                    value_x,
+                    label_y,
+                    fox.text_secondary,
+                    value_w,
+                    sw,
+                    sh,
+                );
             }
             cy += row;
         }
@@ -191,7 +268,16 @@ pub fn draw_power_panel(
         // Row: Idle Timeout (60–1800s, snapped to 60s)
         {
             let label_y = cy + (row - lsz) / 2.0;
-            text.queue("Idle Timeout", lsz, label_x, label_y, fox.text, label_w, sw, sh);
+            text.queue(
+                "Idle Timeout",
+                lsz,
+                label_x,
+                label_y,
+                fox.text,
+                label_w,
+                sw,
+                sh,
+            );
 
             let frac = (config.power.idle_timeout as f32 - 60.0) / (1800.0 - 60.0);
             let rect = Rect::new(ctrl_x, cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
@@ -199,21 +285,51 @@ pub fn draw_power_panel(
             if let Some(f) = slider_value_from_cursor(ix, ZONE_PWR_IDLE_SLIDER, &rect) {
                 config.power.idle_timeout = (60.0 + f * (1800.0 - 60.0)).round() as u32;
             }
-            Slider::new(rect).value(frac).hovered(zone.is_hovered()).active(zone.is_active())
+            Slider::new(rect)
+                .value(frac)
+                .hovered(zone.is_hovered())
+                .active(zone.is_active())
                 .draw(painter, fox);
             config.power.idle_timeout = ((config.power.idle_timeout + 29) / 60) * 60;
             if !text_hidden(value_x, label_y, value_w, lsz) {
                 let val = format!("{}m", config.power.idle_timeout / 60);
-                text.queue(&val, vsz, value_x, label_y, fox.text_secondary, value_w, sw, sh);
+                text.queue(
+                    &val,
+                    vsz,
+                    value_x,
+                    label_y,
+                    fox.text_secondary,
+                    value_w,
+                    sw,
+                    sh,
+                );
             }
             cy += row;
         }
 
         // Row: Idle Action
-        draw_select_button("Idle Action", &config.power.idle_action,
-            ZONE_PWR_IDLE_ACT_BTN, active == Some(ZONE_PWR_IDLE_ACT_BTN),
-            painter, text, ix, fox,
-            label_x, label_w, btn_x, btn_w, btn_h, row, lsz, s, sw, sh, &mut cy, menu);
+        draw_select_button(
+            "Idle Action",
+            &config.power.idle_action,
+            ZONE_PWR_IDLE_ACT_BTN,
+            active == Some(ZONE_PWR_IDLE_ACT_BTN),
+            painter,
+            text,
+            ix,
+            fox,
+            label_x,
+            label_w,
+            btn_x,
+            btn_w,
+            btn_h,
+            row,
+            lsz,
+            s,
+            sw,
+            sh,
+            &mut cy,
+            menu,
+        );
         cy_top += lid_idle_card_h + CARD_GAP * s;
     }
 
@@ -222,14 +338,32 @@ pub fn draw_power_panel(
     // ─────────────────────────────────────────────────────────────────
     if show_battery {
         let mut cy = draw_section_card(
-            painter, text, fox, "Battery",
-            card_x, cy_top, card_w, battery_card_h, s, sw, sh,
+            painter,
+            text,
+            fox,
+            "Battery",
+            card_x,
+            cy_top,
+            card_w,
+            battery_card_h,
+            s,
+            sw,
+            sh,
         );
 
         // Row: Low Battery Warning %
         {
             let label_y = cy + (row - lsz) / 2.0;
-            text.queue("Low Battery Warning", lsz, label_x, label_y, fox.text, label_w, sw, sh);
+            text.queue(
+                "Low Battery Warning",
+                lsz,
+                label_x,
+                label_y,
+                fox.text,
+                label_w,
+                sw,
+                sh,
+            );
 
             let frac = (config.power.low_battery_threshold as f32 - 5.0) / 25.0;
             let rect = Rect::new(ctrl_x, cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
@@ -237,11 +371,23 @@ pub fn draw_power_panel(
             if let Some(f) = slider_value_from_cursor(ix, ZONE_PWR_LOW_BAT_SLIDER, &rect) {
                 config.power.low_battery_threshold = (5.0 + f * 25.0).round() as u32;
             }
-            Slider::new(rect).value(frac).hovered(zone.is_hovered()).active(zone.is_active())
+            Slider::new(rect)
+                .value(frac)
+                .hovered(zone.is_hovered())
+                .active(zone.is_active())
                 .draw(painter, fox);
             if !text_hidden(value_x, label_y, value_w, lsz) {
                 let val = format!("{}%", config.power.low_battery_threshold);
-                text.queue(&val, vsz, value_x, label_y, fox.text_secondary, value_w, sw, sh);
+                text.queue(
+                    &val,
+                    vsz,
+                    value_x,
+                    label_y,
+                    fox.text_secondary,
+                    value_w,
+                    sw,
+                    sh,
+                );
             }
             cy += row;
         }
@@ -249,7 +395,16 @@ pub fn draw_power_panel(
         // Row: Critical Battery %
         {
             let label_y = cy + (row - lsz) / 2.0;
-            text.queue("Critical Battery", lsz, label_x, label_y, fox.text, label_w, sw, sh);
+            text.queue(
+                "Critical Battery",
+                lsz,
+                label_x,
+                label_y,
+                fox.text,
+                label_w,
+                sw,
+                sh,
+            );
 
             let frac = (config.power.critical_battery_threshold as f32 - 2.0) / 13.0;
             let rect = Rect::new(ctrl_x, cy + (row - slider_h) / 2.0, ctrl_w, slider_h);
@@ -257,20 +412,50 @@ pub fn draw_power_panel(
             if let Some(f) = slider_value_from_cursor(ix, ZONE_PWR_CRIT_BAT_SLIDER, &rect) {
                 config.power.critical_battery_threshold = (2.0 + f * 13.0).round() as u32;
             }
-            Slider::new(rect).value(frac).hovered(zone.is_hovered()).active(zone.is_active())
+            Slider::new(rect)
+                .value(frac)
+                .hovered(zone.is_hovered())
+                .active(zone.is_active())
                 .draw(painter, fox);
             if !text_hidden(value_x, label_y, value_w, lsz) {
                 let val = format!("{}%", config.power.critical_battery_threshold);
-                text.queue(&val, vsz, value_x, label_y, fox.text_secondary, value_w, sw, sh);
+                text.queue(
+                    &val,
+                    vsz,
+                    value_x,
+                    label_y,
+                    fox.text_secondary,
+                    value_w,
+                    sw,
+                    sh,
+                );
             }
             cy += row;
         }
 
         // Row: Critical Battery Action
-        draw_select_button("Critical Action", &config.power.critical_battery_action,
-            ZONE_PWR_CRIT_BTN, active == Some(ZONE_PWR_CRIT_BTN),
-            painter, text, ix, fox,
-            label_x, label_w, btn_x, btn_w, btn_h, row, lsz, s, sw, sh, &mut cy, menu);
+        draw_select_button(
+            "Critical Action",
+            &config.power.critical_battery_action,
+            ZONE_PWR_CRIT_BTN,
+            active == Some(ZONE_PWR_CRIT_BTN),
+            painter,
+            text,
+            ix,
+            fox,
+            label_x,
+            label_w,
+            btn_x,
+            btn_w,
+            btn_h,
+            row,
+            lsz,
+            s,
+            sw,
+            sh,
+            &mut cy,
+            menu,
+        );
         cy_top += battery_card_h + CARD_GAP * s;
     }
     let _ = cy_top; // last card consumed; silence unused-assignment
@@ -289,16 +474,20 @@ pub fn draw_power_panel(
         if let MenuEvent::Action(id) = evt {
             match id {
                 id if id >= ACT_LID && id < ACT_LID + LID_OPTIONS.len() as u32 => {
-                    config.power.lid_close_action = LID_OPTIONS[(id - ACT_LID) as usize].to_lowercase();
+                    config.power.lid_close_action =
+                        LID_OPTIONS[(id - ACT_LID) as usize].to_lowercase();
                 }
                 id if id >= ACT_LID_AC && id < ACT_LID_AC + LID_OPTIONS.len() as u32 => {
-                    config.power.lid_close_on_ac = LID_OPTIONS[(id - ACT_LID_AC) as usize].to_lowercase();
+                    config.power.lid_close_on_ac =
+                        LID_OPTIONS[(id - ACT_LID_AC) as usize].to_lowercase();
                 }
                 id if id >= ACT_IDLE && id < ACT_IDLE + IDLE_ACTION_OPTIONS.len() as u32 => {
-                    config.power.idle_action = IDLE_ACTION_OPTIONS[(id - ACT_IDLE) as usize].to_lowercase();
+                    config.power.idle_action =
+                        IDLE_ACTION_OPTIONS[(id - ACT_IDLE) as usize].to_lowercase();
                 }
                 id if id >= ACT_CRIT && id < ACT_CRIT + CRIT_OPTIONS.len() as u32 => {
-                    config.power.critical_battery_action = CRIT_OPTIONS[(id - ACT_CRIT) as usize].to_lowercase();
+                    config.power.critical_battery_action =
+                        CRIT_OPTIONS[(id - ACT_CRIT) as usize].to_lowercase();
                 }
                 _ => {}
             }
@@ -317,10 +506,30 @@ pub fn handle_power_click(
     cursor_y: f32,
 ) {
     let dropdown_defs: &[(u32, &[&str], &str, u32)] = &[
-        (ZONE_PWR_LID_BTN,         LID_OPTIONS,         &config.power.lid_close_action,        ACT_LID),
-        (ZONE_PWR_LID_AC_BTN,      LID_OPTIONS,         &config.power.lid_close_on_ac,         ACT_LID_AC),
-        (ZONE_PWR_IDLE_ACT_BTN,    IDLE_ACTION_OPTIONS, &config.power.idle_action,             ACT_IDLE),
-        (ZONE_PWR_CRIT_BTN,        CRIT_OPTIONS,        &config.power.critical_battery_action, ACT_CRIT),
+        (
+            ZONE_PWR_LID_BTN,
+            LID_OPTIONS,
+            &config.power.lid_close_action,
+            ACT_LID,
+        ),
+        (
+            ZONE_PWR_LID_AC_BTN,
+            LID_OPTIONS,
+            &config.power.lid_close_on_ac,
+            ACT_LID_AC,
+        ),
+        (
+            ZONE_PWR_IDLE_ACT_BTN,
+            IDLE_ACTION_OPTIONS,
+            &config.power.idle_action,
+            ACT_IDLE,
+        ),
+        (
+            ZONE_PWR_CRIT_BTN,
+            CRIT_OPTIONS,
+            &config.power.critical_battery_action,
+            ACT_CRIT,
+        ),
     ];
 
     for (btn_zone, options, current, base_id) in dropdown_defs {
@@ -331,7 +540,9 @@ pub fn handle_power_click(
                 // Open the menu directly under the cursor — works regardless of
                 // which card the dropdown lives in.
                 let items = make_menu_items(options, *base_id, current);
-                panel_state.dropdown_menu.open(cursor_x, cursor_y + 16.0, items);
+                panel_state
+                    .dropdown_menu
+                    .open(cursor_x, cursor_y + 16.0, items);
                 panel_state.active_dropdown = Some(*btn_zone);
             }
             return;

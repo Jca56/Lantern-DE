@@ -30,7 +30,9 @@ pub fn copy_selected(state: &mut State, client: &mut Client) {
 }
 
 pub fn reveal_selected(state: &mut State, client: &mut Client) {
-    let Some(item) = state.selected() else { return; };
+    let Some(item) = state.selected() else {
+        return;
+    };
     let path = item.path.clone();
     match client.get_secret(&path) {
         Ok(bytes) => {
@@ -70,15 +72,14 @@ pub fn start_add(state: &mut State) {
 ///
 /// The "name" is stored as both the FDO `Label` (display) and a `name`
 /// attribute (so `secret-tool lookup name "GitHub PAT"` works from scripts).
-pub fn finish_add(
-    state: &mut State, client: &mut Client,
-    name: String, secret: String,
-) -> bool {
+pub fn finish_add(state: &mut State, client: &mut Client, name: String, secret: String) -> bool {
     let mut attrs: HashMap<String, String> = HashMap::new();
     attrs.insert("name".into(), name.clone());
     match client.create_item(&name, &attrs, secret.as_bytes(), true) {
         Ok(_) => {
-            state.set_status(format!("✓ Stored \"{name}\". Look it up with: secret-tool lookup name \"{name}\""));
+            state.set_status(format!(
+                "✓ Stored \"{name}\". Look it up with: secret-tool lookup name \"{name}\""
+            ));
             true
         }
         Err(e) => {

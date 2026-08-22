@@ -285,7 +285,10 @@ mod tests {
 
     #[test]
     fn cjk_breaks_between_ideographs() {
-        assert_eq!(units("日本語テキスト"), vec!["日", "本", "語", "テ", "キ", "ス", "ト"]);
+        assert_eq!(
+            units("日本語テキスト"),
+            vec!["日", "本", "語", "テ", "キ", "ス", "ト"]
+        );
         // ... but not before the prolonged-sound mark or small kana.
         assert_eq!(units("カーテン"), vec!["カー", "テ", "ン"]);
         assert_eq!(units("ちょっと"), vec!["ちょっ", "と"]);

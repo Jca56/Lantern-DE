@@ -45,8 +45,12 @@ fn expand_instances(base: FaceMeta, fvar: Option<&[u8]>) -> Vec<FaceMeta> {
         return vec![base];
     }
     let axis_pos = |tag: &[u8; 4]| axes.iter().position(|a| a.tag == *tag);
-    let (wght, wdth, ital, slnt) =
-        (axis_pos(b"wght"), axis_pos(b"wdth"), axis_pos(b"ital"), axis_pos(b"slnt"));
+    let (wght, wdth, ital, slnt) = (
+        axis_pos(b"wght"),
+        axis_pos(b"wdth"),
+        axis_pos(b"ital"),
+        axis_pos(b"slnt"),
+    );
 
     let mut out: Vec<FaceMeta> = Vec::new();
     let push = |coords: &[f32], out: &mut Vec<FaceMeta>| {
@@ -119,8 +123,7 @@ const MAX_TTC_FACES: u32 = 64;
 /// but keeping `~/.lantern/fonts` in the walk means bundled DE fonts are
 /// always present even when nothing is installed system-wide.
 pub(crate) fn font_dirs() -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> =
-        vec!["/usr/share/fonts".into(), "/usr/local/share/fonts".into()];
+    let mut dirs: Vec<PathBuf> = vec!["/usr/share/fonts".into(), "/usr/local/share/fonts".into()];
     if let Some(data_dirs) = std::env::var_os("XDG_DATA_DIRS") {
         for d in std::env::split_paths(&data_dirs) {
             dirs.push(d.join("fonts"));
@@ -173,14 +176,12 @@ fn walk(dir: &Path, depth: u8, out: &mut Vec<PathBuf>) {
 }
 
 fn is_font_file(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| {
-            e.eq_ignore_ascii_case("ttf")
-                || e.eq_ignore_ascii_case("ttc")
-                || e.eq_ignore_ascii_case("otf")
-                || e.eq_ignore_ascii_case("otc")
-        })
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+        e.eq_ignore_ascii_case("ttf")
+            || e.eq_ignore_ascii_case("ttc")
+            || e.eq_ignore_ascii_case("otf")
+            || e.eq_ignore_ascii_case("otc")
+    })
 }
 
 /// Extract metadata for every usable face in `path`. Empty when the file is
@@ -222,7 +223,10 @@ fn scan_face(
     face_index: u32,
 ) -> Option<Vec<FaceMeta>> {
     let hdr = read_at(file, dir_off, 12, file_len)?;
-    if !matches!(be_u32(&hdr, 0), Some(SFNT_TRUETYPE) | Some(SFNT_TRUE) | Some(SFNT_OTTO)) {
+    if !matches!(
+        be_u32(&hdr, 0),
+        Some(SFNT_TRUETYPE) | Some(SFNT_TRUE) | Some(SFNT_OTTO)
+    ) {
         return None;
     }
     let num_tables = (be_u16(&hdr, 4)? as usize).min(512);
@@ -230,8 +234,12 @@ fn scan_face(
     let find = |tag: &[u8; 4]| -> Option<(u64, usize)> {
         (0..num_tables).find_map(|i| {
             let rec = &records[i * 16..i * 16 + 16];
-            (&rec[0..4] == tag)
-                .then(|| (be_u32(rec, 8).unwrap_or(0) as u64, be_u32(rec, 12).unwrap_or(0) as usize))
+            (&rec[0..4] == tag).then(|| {
+                (
+                    be_u32(rec, 8).unwrap_or(0) as u64,
+                    be_u32(rec, 12).unwrap_or(0) as usize,
+                )
+            })
         })
     };
 
@@ -305,10 +313,7 @@ fn base_meta_from_slice(data: &[u8], face_index: u32) -> Option<FaceMeta> {
     let dir = sfnt::parse(data, face_index).ok()?;
     let table = |range: (usize, usize)| data.get(range.0..range.0 + range.1);
 
-    if dir.find(b"glyf").is_none()
-        && dir.find(b"CFF ").is_none()
-        && dir.find(b"CBDT").is_none()
-    {
+    if dir.find(b"glyf").is_none() && dir.find(b"CFF ").is_none() && dir.find(b"CBDT").is_none() {
         return None;
     }
     let head = dir.find(b"head").and_then(table)?;
@@ -316,7 +321,10 @@ fn base_meta_from_slice(data: &[u8], face_index: u32) -> Option<FaceMeta> {
         Some(t) => os2::parse_os2(t),
         None => os2::style_from_mac(head),
     };
-    let monospace = dir.find(b"post").and_then(table).is_some_and(os2::is_fixed_pitch);
+    let monospace = dir
+        .find(b"post")
+        .and_then(table)
+        .is_some_and(os2::is_fixed_pitch);
     let families = dir
         .find(b"name")
         .and_then(table)
@@ -350,7 +358,8 @@ fn read_at(file: &mut File, off: u64, len: usize, file_len: u64) -> Option<Vec<u
 }
 
 fn be_u16(d: &[u8], off: usize) -> Option<u16> {
-    d.get(off..off + 2).map(|b| u16::from_be_bytes([b[0], b[1]]))
+    d.get(off..off + 2)
+        .map(|b| u16::from_be_bytes([b[0], b[1]]))
 }
 
 fn be_u32(d: &[u8], off: usize) -> Option<u32> {

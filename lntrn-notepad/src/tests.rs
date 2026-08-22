@@ -86,7 +86,11 @@ fn large_paste_is_fast_enough() {
     let mut e = Editor::new();
     let t = std::time::Instant::now();
     e.insert_str(&blob);
-    assert!(t.elapsed() < std::time::Duration::from_secs(2), "paste too slow: {:?}", t.elapsed());
+    assert!(
+        t.elapsed() < std::time::Duration::from_secs(2),
+        "paste too slow: {:?}",
+        t.elapsed()
+    );
     assert_eq!(e.lines[0].len(), 2_000_000);
 }
 
@@ -203,7 +207,11 @@ fn font_applies_to_range() {
     // "hello world", apply font index 3 to "world" (cols 6..11).
     lf.apply_format(6, 11, |a| a.font = Some(3));
     assert_eq!(lf.attrs_at(0).font, None, "plain text keeps default font");
-    assert_eq!(lf.attrs_at(7).font, Some(3), "selected range carries the font");
+    assert_eq!(
+        lf.attrs_at(7).font,
+        Some(3),
+        "selected range carries the font"
+    );
     // Query uniform over the range should report the font.
     assert_eq!(lf.query_uniform(6, 11).font, Some(3));
 }

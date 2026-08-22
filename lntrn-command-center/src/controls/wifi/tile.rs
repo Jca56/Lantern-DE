@@ -42,7 +42,9 @@ pub fn draw_inline(
     } else {
         Color::from_rgb8(0xff, 0xff, 0xff)
     };
-    draw_signal_icon_colored(painter, icon_x, icon_y, icon_size, icon_size, bars, alpha, on_color);
+    draw_signal_icon_colored(
+        painter, icon_x, icon_y, icon_size, icon_size, bars, alpha, on_color,
+    );
 }
 
 /// Convert a 0-100 signal value into a 0-3 bar count. 0 means "no
@@ -67,7 +69,16 @@ pub(super) fn draw_signal_icon(
     bars: u32,
     alpha: f32,
 ) {
-    draw_signal_icon_colored(painter, x, y, w, h, bars, alpha, Color::from_rgb8(0xff, 0xff, 0xff));
+    draw_signal_icon_colored(
+        painter,
+        x,
+        y,
+        w,
+        h,
+        bars,
+        alpha,
+        Color::from_rgb8(0xff, 0xff, 0xff),
+    );
 }
 
 /// Same as `draw_signal_icon` but with an explicit "on" color so the
@@ -83,7 +94,12 @@ fn draw_signal_icon_colored(
     alpha: f32,
     on_rgb: Color,
 ) {
-    let on = Color { r: on_rgb.r, g: on_rgb.g, b: on_rgb.b, a: alpha };
+    let on = Color {
+        r: on_rgb.r,
+        g: on_rgb.g,
+        b: on_rgb.b,
+        a: alpha,
+    };
     let off = Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(0.20 * alpha);
 
     // Three vertical bars, increasing height left → right.

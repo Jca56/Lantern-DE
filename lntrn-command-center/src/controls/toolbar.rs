@@ -60,7 +60,12 @@ fn yes() -> bool {
 
 impl Default for ClockOpts {
     fn default() -> Self {
-        Self { show_date: true, date_pos: DatePos::Below, hour24: false, seconds: false }
+        Self {
+            show_date: true,
+            date_pos: DatePos::Below,
+            hour24: false,
+            seconds: false,
+        }
     }
 }
 
@@ -83,7 +88,11 @@ fn one() -> f32 {
 
 impl Default for WidgetOpts {
     fn default() -> Self {
-        Self { size: 1.0, space: 0.0, clock: ClockOpts::default() }
+        Self {
+            size: 1.0,
+            space: 0.0,
+            clock: ClockOpts::default(),
+        }
     }
 }
 
@@ -174,7 +183,13 @@ impl ToolbarLayout {
             }
         }
 
-        Self { left, middle, right, disabled, options: f.options }
+        Self {
+            left,
+            middle,
+            right,
+            disabled,
+            options: f.options,
+        }
     }
 
     pub fn save(&self) {
@@ -202,7 +217,10 @@ impl ToolbarLayout {
 
     /// This widget's options (a copy; defaults if none saved).
     pub fn opts(&self, id: TileId) -> WidgetOpts {
-        self.options.get(id.config_key()).copied().unwrap_or_default()
+        self.options
+            .get(id.config_key())
+            .copied()
+            .unwrap_or_default()
     }
 
     /// Mutable handle to this widget's options, inserting defaults first.

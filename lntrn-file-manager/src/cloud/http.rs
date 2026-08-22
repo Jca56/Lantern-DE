@@ -28,7 +28,10 @@ impl Authed {
 
     pub fn get(&self, url: &str) -> anyhow::Result<ureq::Response> {
         let tok = self.token()?;
-        match ureq::get(url).set("Authorization", &format!("Bearer {tok}")).call() {
+        match ureq::get(url)
+            .set("Authorization", &format!("Bearer {tok}"))
+            .call()
+        {
             Ok(r) => Ok(r),
             Err(ureq::Error::Status(401, _)) => {
                 // Force a refresh and retry once.

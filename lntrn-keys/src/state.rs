@@ -49,11 +49,19 @@ impl State {
             (0..self.all.len()).collect()
         } else {
             let needle = self.filter.to_lowercase();
-            self.all.iter().enumerate()
+            self.all
+                .iter()
+                .enumerate()
                 .filter(|(_, it)| {
                     it.label.to_lowercase().contains(&needle)
-                        || it.attributes.values().any(|v| v.to_lowercase().contains(&needle))
-                        || it.attributes.keys().any(|k| k.to_lowercase().contains(&needle))
+                        || it
+                            .attributes
+                            .values()
+                            .any(|v| v.to_lowercase().contains(&needle))
+                        || it
+                            .attributes
+                            .keys()
+                            .any(|k| k.to_lowercase().contains(&needle))
                 })
                 .map(|(i, _)| i)
                 .collect()
@@ -67,7 +75,10 @@ impl State {
 
     pub fn move_cursor(&mut self, delta: isize) {
         let n = self.visible().len();
-        if n == 0 { self.cursor = 0; return; }
+        if n == 0 {
+            self.cursor = 0;
+            return;
+        }
         let max = n - 1;
         let new = (self.cursor as isize + delta).max(0).min(max as isize) as usize;
         self.cursor = new;

@@ -46,8 +46,8 @@ pub fn install() -> Result<PathBuf, String> {
     let (file_name, contents) = match system_desktop() {
         Some(sys) => {
             let name = sys.file_name().unwrap().to_string_lossy().into_owned();
-            let body =
-                std::fs::read_to_string(&sys).map_err(|e| format!("read {}: {e}", sys.display()))?;
+            let body = std::fs::read_to_string(&sys)
+                .map_err(|e| format!("read {}: {e}", sys.display()))?;
             (name, rewrite_exec(&body))
         }
         None => ("spotify.desktop".to_string(), fresh_desktop()),

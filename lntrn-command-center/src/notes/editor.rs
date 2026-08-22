@@ -319,10 +319,7 @@ impl Editor {
         }
         // Previous line ends at line_start - 1 ('\n'). Find its start.
         let prev_end = line_start - 1;
-        let prev_start = self.buf[..prev_end]
-            .rfind('\n')
-            .map(|i| i + 1)
-            .unwrap_or(0);
+        let prev_start = self.buf[..prev_end].rfind('\n').map(|i| i + 1).unwrap_or(0);
         // Walk `col` chars into the previous line, clamped to its length.
         let prev_line = &self.buf[prev_start..prev_end];
         let take = col.min(prev_line.chars().count());
@@ -397,8 +394,7 @@ pub fn body_byte_at(
     let line_h = super::body_line_height(text_size, scale);
     let vlines = super::wrap::layout(buf, font, body_rect_inner.w, text);
     let rel_y = py - body_rect_inner.y + body_scroll;
-    let idx = ((rel_y / line_h).floor() as i64)
-        .clamp(0, (vlines.len() as i64) - 1) as usize;
+    let idx = ((rel_y / line_h).floor() as i64).clamp(0, (vlines.len() as i64) - 1) as usize;
     let vl = vlines[idx];
     let line = &buf[vl.start..vl.end];
     let target_x = (px - body_rect_inner.x).max(0.0);

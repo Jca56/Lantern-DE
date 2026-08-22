@@ -21,7 +21,13 @@ use crate::storage;
 /// per-sender access control checks once we wire SO_PEERCRED.
 pub fn create(state: &mut ServiceState, _peer: String, kind: PromptKind) -> String {
     let id = state.allocate_prompt_id();
-    state.prompts.insert(id, Prompt { kind, completed: false });
+    state.prompts.insert(
+        id,
+        Prompt {
+            kind,
+            completed: false,
+        },
+    );
     paths::prompt_path(id)
 }
 
@@ -32,7 +38,9 @@ pub fn dispatch(
     state: &mut ServiceState,
     prompt_id: u64,
 ) -> bool {
-    if msg.interface != IFACE_PROMPT { return false; }
+    if msg.interface != IFACE_PROMPT {
+        return false;
+    }
     match msg.member.as_str() {
         "Prompt" => {
             // Body is `s` (window_id) but we ignore it.
@@ -102,7 +110,10 @@ fn execute(conn: &mut Connection, state: &mut ServiceState, prompt_id: u64) {
                 false => emit_dismissed(conn, &path),
             }
         }
-        PromptKind::DeleteItem { collection_id, item_id } => {
+        PromptKind::DeleteItem {
+            collection_id,
+            item_id,
+        } => {
             let item_path = paths::item_path(&collection_id, &item_id);
             match delete_item(state, &collection_id, &item_id) {
                 true => {
@@ -123,9 +134,14 @@ fn execute(conn: &mut Connection, state: &mut ServiceState, prompt_id: u64) {
 fn unlock_collections(state: &mut ServiceState, ids: &[String]) -> Vec<String> {
     let mut unlocked = Vec::new();
     for id in ids {
-        let label = state.collections.get(id).map(|c| c.label.clone())
+        let label = state
+            .collections
+            .get(id)
+            .map(|c| c.label.clone())
             .unwrap_or_else(|| id.clone());
-        let already_unlocked = state.collections.get(id)
+        let already_unlocked = state
+            .collections
+            .get(id)
             .map(|c| !c.is_locked())
             .unwrap_or(false);
         if already_unlocked {
@@ -133,26 +149,24 @@ fn unlock_collections(state: &mut ServiceState, ids: &[String]) -> Vec<String> {
             continue;
         }
         match ipc::request_passphrase(&format!("Unlock keyring: {label}")) {
-            PromptResult::Passphrase(pass) => {
-                match storage::unlock(id, &pass) {
-                    Ok((coll, key)) => {
-                        if let Some(slot) = state.collections.get_mut(id) {
-                            slot.label = coll.meta.label;
-                            slot.modified = coll.meta.modified;
-                            slot.items.clear();
-                            for it in coll.items {
-                                slot.items.insert(it.id.clone(), it.into());
-                            }
-                            slot.master_key = Some(key);
-                            unlocked.push(paths::collection_path(id));
+            PromptResult::Passphrase(pass) => match storage::unlock(id, &pass) {
+                Ok((coll, key)) => {
+                    if let Some(slot) = state.collections.get_mut(id) {
+                        slot.label = coll.meta.label;
+                        slot.modified = coll.meta.modified;
+                        slot.items.clear();
+                        for it in coll.items {
+                            slot.items.insert(it.id.clone(), it.into());
                         }
+                        slot.master_key = Some(key);
+                        unlocked.push(paths::collection_path(id));
                     }
-                    Err(storage::Error::BadPassphrase) => {
-                        log::info(&format!("unlock: bad passphrase for {id}"));
-                    }
-                    Err(e) => log::error(&format!("unlock: storage error for {id}: {e}")),
                 }
-            }
+                Err(storage::Error::BadPassphrase) => {
+                    log::info(&format!("unlock: bad passphrase for {id}"));
+                }
+                Err(e) => log::error(&format!("unlock: storage error for {id}: {e}")),
+            },
             PromptResult::Dismissed => {
                 log::info(&format!("unlock: user dismissed prompt for {id}"));
             }
@@ -176,14 +190,17 @@ fn create_collection(
     };
     let key = storage::create(id, label, &pass).ok()?;
     let now = storage::unix_now();
-    state.collections.insert(id.to_string(), super::state::Collection {
-        id: id.to_string(),
-        label: label.to_string(),
-        created: now,
-        modified: now,
-        items: Default::default(),
-        master_key: Some(key),
-    });
+    state.collections.insert(
+        id.to_string(),
+        super::state::Collection {
+            id: id.to_string(),
+            label: label.to_string(),
+            created: now,
+            modified: now,
+            items: Default::default(),
+            master_key: Some(key),
+        },
+    );
     if let Some(a) = alias {
         state.aliases.insert(a.to_string(), id.to_string());
     }
@@ -193,7 +210,9 @@ fn create_collection(
 fn delete_collection(state: &mut ServiceState, id: &str) -> bool {
     let path = storage::collection_path(id);
     if path.exists() {
-        if std::fs::remove_file(&path).is_err() { return false; }
+        if std::fs::remove_file(&path).is_err() {
+            return false;
+        }
     }
     state.collections.remove(id);
     state.aliases.retain(|_, v| v != id);
@@ -201,7 +220,11 @@ fn delete_collection(state: &mut ServiceState, id: &str) -> bool {
 }
 
 fn delete_item(state: &mut ServiceState, coll_id: &str, item_id: &str) -> bool {
-    let key = match state.collections.get(coll_id).and_then(|c| c.master_key.as_ref()) {
+    let key = match state
+        .collections
+        .get(coll_id)
+        .and_then(|c| c.master_key.as_ref())
+    {
         Some(k) => clone_master_key(k),
         None => return false,
     };

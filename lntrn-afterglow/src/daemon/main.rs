@@ -55,7 +55,9 @@ fn main() {
                 }
                 arm_crash_seatbelt(cfg.clone());
             }
-            Some(_) => eprintln!("afterglowd: profile present but not marked stable — booting stock"),
+            Some(_) => {
+                eprintln!("afterglowd: profile present but not marked stable — booting stock")
+            }
             None => eprintln!("afterglowd: no profile yet"),
         }
     }
@@ -157,7 +159,9 @@ fn arm_crash_seatbelt(cfg: PathBuf) {
         if let Some(mut p) = profile::load(&cfg) {
             p.stable = true;
             match profile::save(&cfg, &p) {
-                Ok(()) => eprintln!("afterglowd: re-armed profile stable after {SETTLE_SECS}s uptime"),
+                Ok(()) => {
+                    eprintln!("afterglowd: re-armed profile stable after {SETTLE_SECS}s uptime")
+                }
                 Err(e) => eprintln!("afterglowd: seatbelt re-arm failed: {e}"),
             }
         }
@@ -208,10 +212,7 @@ fn print_probe(hw: &mut server::Hw) {
     }
     println!("CPU: {}", hw.cpu.model);
     let t = hw.cpu.tuning();
-    println!(
-        "  governor: {} (available: {:?})",
-        t.governor, t.governors
-    );
+    println!("  governor: {} (available: {:?})", t.governor, t.governors);
     println!("  EPP: {:?} (available: {:?})", t.epp, t.epps);
     println!(
         "  turbo: {:?}, max_freq: {}%",

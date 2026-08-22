@@ -8,9 +8,7 @@ use std::collections::HashMap;
 use std::io;
 use std::time::{Duration, Instant};
 
-use lntrn_dbus::{
-    align_to, encode_string, encode_u32, BodyReader, Connection, Value,
-};
+use lntrn_dbus::{align_to, encode_string, encode_u32, BodyReader, Connection, Value};
 
 const BUS_NAME: &str = "org.freedesktop.secrets";
 const SERVICE_PATH: &str = "/org/freedesktop/secrets";
@@ -40,21 +38,30 @@ impl Client {
         let mut body = Vec::new();
         encode_string(&mut body, "plain");
         // variant<s> ""
-        body.push(1); body.push(b's'); body.push(0);
+        body.push(1);
+        body.push(b's');
+        body.push(0);
         encode_string(&mut body, "");
         let serial = conn.method_call(
-            BUS_NAME, SERVICE_PATH, IFACE_SERVICE, "OpenSession",
-            "sv", &body,
+            BUS_NAME,
+            SERVICE_PATH,
+            IFACE_SERVICE,
+            "OpenSession",
+            "sv",
+            &body,
         );
         let reply = conn.read_reply(serial)?;
         if reply.is_error() {
-            return Err(io::Error::new(io::ErrorKind::Other, "OpenSession returned error"));
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "OpenSession returned error",
+            ));
         }
         let mut r = BodyReader::new(&reply.body, &reply.signature);
         let _output = r.read_value("v"); // unused for plain
-        let session_val = r.read_value("o").ok_or_else(|| io::Error::new(
-            io::ErrorKind::Other, "OpenSession: missing session path",
-        ))?;
+        let session_val = r.read_value("o").ok_or_else(|| {
+            io::Error::new(io::ErrorKind::Other, "OpenSession: missing session path")
+        })?;
         let session = session_val.as_str().unwrap_or("").to_string();
         Ok(Self { conn, session })
     }
@@ -68,12 +75,19 @@ impl Client {
         encode_u32(&mut body, 0);
         align_to(&mut body, 8);
         let serial = self.conn.method_call(
-            BUS_NAME, DEFAULT_COLLECTION, IFACE_COLLECTION, "SearchItems",
-            "a{ss}", &body,
+            BUS_NAME,
+            DEFAULT_COLLECTION,
+            IFACE_COLLECTION,
+            "SearchItems",
+            "a{ss}",
+            &body,
         );
         let reply = self.conn.read_reply(serial)?;
         if reply.is_error() {
-            return Err(io::Error::new(io::ErrorKind::Other, "SearchItems returned error"));
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "SearchItems returned error",
+            ));
         }
         let mut r = BodyReader::new(&reply.body, &reply.signature);
         let paths = read_ao(&mut r);
@@ -92,9 +106,9 @@ impl Client {
         // Properties.GetAll("org.freedesktop.Secret.Item") → a{sv}
         let mut body = Vec::new();
         encode_string(&mut body, IFACE_ITEM);
-        let serial = self.conn.method_call(
-            BUS_NAME, path, IFACE_PROPS, "GetAll", "s", &body,
-        );
+        let serial = self
+            .conn
+            .method_call(BUS_NAME, path, IFACE_PROPS, "GetAll", "s", &body);
         let reply = self.conn.read_reply(serial)?;
         if reply.is_error() {
             return Ok(None);
@@ -104,26 +118,38 @@ impl Client {
             Some(Value::Dict(d)) => d,
             _ => return Ok(None),
         };
-        let label = props.get("Label").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let label = props
+            .get("Label")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let attributes = match props.get("Attributes") {
-            Some(Value::Dict(d)) => d.iter()
+            Some(Value::Dict(d)) => d
+                .iter()
                 .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
                 .collect(),
             _ => HashMap::new(),
         };
-        Ok(Some(Item { path: path.to_string(), label, attributes }))
+        Ok(Some(Item {
+            path: path.to_string(),
+            label,
+            attributes,
+        }))
     }
 
     /// Get the secret bytes for one item.
     pub fn get_secret(&mut self, path: &str) -> io::Result<Vec<u8>> {
         let mut body = Vec::new();
         encode_string(&mut body, &self.session);
-        let serial = self.conn.method_call(
-            BUS_NAME, path, IFACE_ITEM, "GetSecret", "o", &body,
-        );
+        let serial = self
+            .conn
+            .method_call(BUS_NAME, path, IFACE_ITEM, "GetSecret", "o", &body);
         let reply = self.conn.read_reply(serial)?;
         if reply.is_error() {
-            return Err(io::Error::new(io::ErrorKind::Other, "GetSecret returned error"));
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "GetSecret returned error",
+            ));
         }
         let mut r = BodyReader::new(&reply.body, &reply.signature);
         // (oayays) — session, parameters, value, content_type
@@ -146,10 +172,19 @@ impl Client {
     ) -> io::Result<String> {
         let mut body = Vec::new();
         // a{sv} properties
-        encode_dict_sv(&mut body, &[
-            ("org.freedesktop.Secret.Item.Label", PropVal::Str(label.into())),
-            ("org.freedesktop.Secret.Item.Attributes", PropVal::DictSS(attributes.clone())),
-        ]);
+        encode_dict_sv(
+            &mut body,
+            &[
+                (
+                    "org.freedesktop.Secret.Item.Label",
+                    PropVal::Str(label.into()),
+                ),
+                (
+                    "org.freedesktop.Secret.Item.Attributes",
+                    PropVal::DictSS(attributes.clone()),
+                ),
+            ],
+        );
         // (oayays) — session, parameters=[], value=secret, ct="text/plain"
         encode_secret(&mut body, &self.session, &[], secret, "text/plain");
         // b — replace
@@ -157,12 +192,19 @@ impl Client {
         encode_u32(&mut body, replace as u32);
 
         let serial = self.conn.method_call(
-            BUS_NAME, DEFAULT_COLLECTION, IFACE_COLLECTION, "CreateItem",
-            "a{sv}(oayays)b", &body,
+            BUS_NAME,
+            DEFAULT_COLLECTION,
+            IFACE_COLLECTION,
+            "CreateItem",
+            "a{sv}(oayays)b",
+            &body,
         );
         let reply = self.conn.read_reply(serial)?;
         if reply.is_error() {
-            return Err(io::Error::new(io::ErrorKind::Other, "CreateItem returned error"));
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "CreateItem returned error",
+            ));
         }
         let mut r = BodyReader::new(&reply.body, &reply.signature);
         let item_path = r.read_string();
@@ -173,12 +215,15 @@ impl Client {
     /// Delete an item. Walks through the prompt protocol (our daemon
     /// completes prompts synchronously, so this returns quickly).
     pub fn delete_item(&mut self, path: &str) -> io::Result<()> {
-        let serial = self.conn.method_call(
-            BUS_NAME, path, IFACE_ITEM, "Delete", "", &[],
-        );
+        let serial = self
+            .conn
+            .method_call(BUS_NAME, path, IFACE_ITEM, "Delete", "", &[]);
         let reply = self.conn.read_reply(serial)?;
         if reply.is_error() {
-            return Err(io::Error::new(io::ErrorKind::Other, "Delete returned error"));
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Delete returned error",
+            ));
         }
         let mut r = BodyReader::new(&reply.body, &reply.signature);
         let prompt_path = r.read_string();
@@ -188,9 +233,9 @@ impl Client {
         // Prompt.Prompt("") → empty reply, then wait for Completed signal
         let mut body = Vec::new();
         encode_string(&mut body, "");
-        let _ = self.conn.method_call(
-            BUS_NAME, &prompt_path, IFACE_PROMPT, "Prompt", "s", &body,
-        );
+        let _ = self
+            .conn
+            .method_call(BUS_NAME, &prompt_path, IFACE_PROMPT, "Prompt", "s", &body);
         // Wait for Completed signal on our prompt path (up to 2s).
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
@@ -227,7 +272,9 @@ fn encode_dict_sv(out: &mut Vec<u8>, entries: &[(&str, PropVal)]) {
         encode_string(out, k);
         match v {
             PropVal::Str(s) => {
-                out.push(1); out.push(b's'); out.push(0);
+                out.push(1);
+                out.push(b's');
+                out.push(0);
                 encode_string(out, s);
             }
             PropVal::DictSS(m) => {

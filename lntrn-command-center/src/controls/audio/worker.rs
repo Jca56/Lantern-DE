@@ -82,7 +82,13 @@ pub(super) fn worker(tx: mpsc::Sender<AudioEvent>, cmd_rx: mpsc::Receiver<AudioC
         if let Some(v) = latest_source_volume {
             let arg = format!("{:.2}", v);
             let _ = Command::new("wpctl")
-                .args(["set-volume", "@DEFAULT_AUDIO_SOURCE@", &arg, "--limit", "1.5"])
+                .args([
+                    "set-volume",
+                    "@DEFAULT_AUDIO_SOURCE@",
+                    &arg,
+                    "--limit",
+                    "1.5",
+                ])
                 .status();
             force_volume_repoll = true;
         }
@@ -226,7 +232,9 @@ fn parse_devices(status: &str, section_header: &str) -> Vec<Sink> {
         let stripped = stripped.trim_start_matches('*').trim();
 
         // Now we expect "ID. Name [vol: X.YZ]".
-        let Some(dot_idx) = stripped.find('.') else { continue };
+        let Some(dot_idx) = stripped.find('.') else {
+            continue;
+        };
         let id_str = &stripped[..dot_idx];
         let id: u32 = match id_str.trim().parse() {
             Ok(n) => n,
@@ -242,11 +250,17 @@ fn parse_devices(status: &str, section_header: &str) -> Vec<Sink> {
         // Filter HDMI / DisplayPort sinks (output only — sources stay
         // unfiltered since extra mics are usually intentional).
         if section_header == "Sinks:"
-            && HIDDEN_SINK_SUBSTRINGS.iter().any(|needle| name.contains(needle))
+            && HIDDEN_SINK_SUBSTRINGS
+                .iter()
+                .any(|needle| name.contains(needle))
         {
             continue;
         }
-        out.push(Sink { id, name, is_default });
+        out.push(Sink {
+            id,
+            name,
+            is_default,
+        });
     }
     out
 }

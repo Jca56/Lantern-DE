@@ -38,7 +38,12 @@ pub struct NewRepoView {
 pub enum NewRepoAction {
     None,
     GoBack,
-    Create { name: String, parent: PathBuf, github: bool, private: bool },
+    Create {
+        name: String,
+        parent: PathBuf,
+        github: bool,
+        private: bool,
+    },
 }
 
 impl NewRepoView {
@@ -126,7 +131,11 @@ impl NewRepoView {
                 self.focused = Field::None;
             }
             keys::KEY_TAB => {
-                self.focused = if self.focused == Field::Name { Field::Path } else { Field::Name };
+                self.focused = if self.focused == Field::Name {
+                    Field::Path
+                } else {
+                    Field::Name
+                };
                 self.name_cursor = self.name.len();
                 self.path_cursor = self.parent_path.len();
             }
@@ -138,10 +147,14 @@ impl NewRepoView {
                 }
             }
             keys::KEY_LEFT => {
-                if *cursor > 0 { *cursor -= 1; }
+                if *cursor > 0 {
+                    *cursor -= 1;
+                }
             }
             keys::KEY_RIGHT => {
-                if *cursor < buf.len() { *cursor += 1; }
+                if *cursor < buf.len() {
+                    *cursor += 1;
+                }
             }
             _ => {
                 if let Some(ch) = keys::keycode_to_char(key, shift) {
@@ -158,10 +171,18 @@ impl NewRepoView {
     }
 
     pub fn draw(
-        &mut self, painter: &mut Painter, text: &mut TextRenderer,
-        ix: &mut InteractionContext, palette: &FoxPalette,
-        cx: f32, cy: f32, cw: f32, _ch: f32,
-        s: f32, sw: u32, sh: u32,
+        &mut self,
+        painter: &mut Painter,
+        text: &mut TextRenderer,
+        ix: &mut InteractionContext,
+        palette: &FoxPalette,
+        cx: f32,
+        cy: f32,
+        cw: f32,
+        _ch: f32,
+        s: f32,
+        sw: u32,
+        sh: u32,
     ) {
         let title_font = 28.0 * s;
         let body_font = 22.0 * s;
@@ -179,16 +200,42 @@ impl NewRepoView {
         if back_state.is_hovered() {
             painter.rect_filled(back_rect, 6.0 * s, palette.muted.with_alpha(0.2));
         }
-        text.queue("←", title_font, cx + pad + 6.0 * s, y, palette.accent, back_w, sw, sh);
+        text.queue(
+            "←",
+            title_font,
+            cx + pad + 6.0 * s,
+            y,
+            palette.accent,
+            back_w,
+            sw,
+            sh,
+        );
 
         // Title
-        text.queue("New Repository", title_font, cx + pad + back_w + 8.0 * s, y,
-            palette.text, cw, sw, sh);
+        text.queue(
+            "New Repository",
+            title_font,
+            cx + pad + back_w + 8.0 * s,
+            y,
+            palette.text,
+            cw,
+            sw,
+            sh,
+        );
         y += title_font + 16.0 * s;
 
         // Error
         if let Some(ref err) = self.error {
-            text.queue(err, small_font, cx + pad, y, palette.danger, cw - pad * 2.0, sw, sh);
+            text.queue(
+                err,
+                small_font,
+                cx + pad,
+                y,
+                palette.danger,
+                cw - pad * 2.0,
+                sw,
+                sh,
+            );
             y += small_font + 8.0 * s;
         }
 
@@ -209,7 +256,16 @@ impl NewRepoView {
         y += input_h + 16.0 * s;
 
         // Parent directory
-        text.queue("Create in:", body_font, cx + pad, y, palette.text, cw, sw, sh);
+        text.queue(
+            "Create in:",
+            body_font,
+            cx + pad,
+            y,
+            palette.text,
+            cw,
+            sw,
+            sh,
+        );
         y += body_font + 8.0 * s;
         let path_rect = Rect::new(cx + pad, y, input_w, input_h);
         ix.add_zone(ZONE_PATH_INPUT, path_rect);
@@ -224,8 +280,21 @@ impl NewRepoView {
 
         // Full path preview
         if !self.name.trim().is_empty() {
-            let preview = format!("Will create: {}/{}", self.parent_path.trim_end_matches('/'), self.name.trim());
-            text.queue(&preview, small_font, cx + pad, y, palette.muted, cw - pad * 2.0, sw, sh);
+            let preview = format!(
+                "Will create: {}/{}",
+                self.parent_path.trim_end_matches('/'),
+                self.name.trim()
+            );
+            text.queue(
+                &preview,
+                small_font,
+                cx + pad,
+                y,
+                palette.muted,
+                cw - pad * 2.0,
+                sw,
+                sh,
+            );
         }
         y += small_font + 20.0 * s;
 
@@ -266,10 +335,22 @@ impl NewRepoView {
             palette.accent.with_alpha(0.8)
         };
         painter.rect_filled(create_rect, 8.0 * s, btn_color);
-        let label = if self.creating { "Creating…" } else { "Create" };
+        let label = if self.creating {
+            "Creating…"
+        } else {
+            "Create"
+        };
         let tw = text.measure_width(label, body_font);
-        text.queue(label, body_font, create_rect.x + (btn_w - tw) / 2.0,
-            create_rect.y + (btn_h - body_font) / 2.0, palette.text, btn_w, sw, sh);
+        text.queue(
+            label,
+            body_font,
+            create_rect.x + (btn_w - tw) / 2.0,
+            create_rect.y + (btn_h - body_font) / 2.0,
+            palette.text,
+            btn_w,
+            sw,
+            sh,
+        );
     }
 }
 

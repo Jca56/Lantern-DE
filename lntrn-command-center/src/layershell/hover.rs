@@ -13,16 +13,29 @@ pub(super) fn track_hovers(wl: &mut super::WlState, app: &mut crate::app::AppSta
     // Update WiFi row hover so the highlight tracks the cursor.
     // Cheap (a few rect tests) and only does work when the WiFi
     // view is open.
-    if matches!(app.mode, crate::app::PanelMode::Control(crate::controls::TileId::Wifi)) {
+    if matches!(
+        app.mode,
+        crate::app::PanelMode::Control(crate::controls::TileId::Wifi)
+    ) {
         let scale_f = wl.fractional_scale() as f32;
         let phys_w = wl.phys_width().max(1);
-        let panel = PanelRect::compute_with_dims(phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical());
+        let panel = PanelRect::compute_with_dims(
+            phys_w,
+            scale_f,
+            app.desired_panel_w_logical(),
+            app.desired_panel_h_logical(),
+        );
         let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
         let view_top_y = crate::controls::content_top_y(panel_rect, scale_f);
         let phys_cx = wl.cursor_x as f32 * scale_f;
         let phys_cy = wl.cursor_y as f32 * scale_f;
         let new_hover = match crate::controls::wifi::hit_test_network(
-            &app.controls.wifi, panel_rect, view_top_y, scale_f, phys_cx, phys_cy,
+            &app.controls.wifi,
+            panel_rect,
+            view_top_y,
+            scale_f,
+            phys_cx,
+            phys_cy,
         ) {
             Some(crate::controls::wifi::NetworkHit::Row(s))
             | Some(crate::controls::wifi::NetworkHit::ConnectButton(s))
@@ -47,7 +60,12 @@ pub(super) fn track_hovers(wl: &mut super::WlState, app: &mut crate::app::AppSta
     } else {
         let scale_f = wl.fractional_scale() as f32;
         let phys_w = wl.phys_width().max(1);
-        let panel = PanelRect::compute_with_dims(phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical());
+        let panel = PanelRect::compute_with_dims(
+            phys_w,
+            scale_f,
+            app.desired_panel_w_logical(),
+            app.desired_panel_h_logical(),
+        );
         let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
         let phys_cx = wl.cursor_x as f32 * scale_f;
         let phys_cy = wl.cursor_y as f32 * scale_f;
@@ -59,7 +77,12 @@ pub(super) fn track_hovers(wl: &mut super::WlState, app: &mut crate::app::AppSta
     {
         let scale_f = wl.fractional_scale() as f32;
         let phys_w = wl.phys_width().max(1);
-        let panel = PanelRect::compute_with_dims(phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical());
+        let panel = PanelRect::compute_with_dims(
+            phys_w,
+            scale_f,
+            app.desired_panel_w_logical(),
+            app.desired_panel_h_logical(),
+        );
         let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
         let phys_cx = wl.cursor_x as f32 * scale_f;
         let phys_cy = wl.cursor_y as f32 * scale_f;
@@ -67,7 +90,9 @@ pub(super) fn track_hovers(wl: &mut super::WlState, app: &mut crate::app::AppSta
         app.view_arrow_hover = crate::view_arrows::hit_test(panel_rect, scale_f, phys_cx, phys_cy);
         // Outer-chrome widgets hit-test against their zone-layout slots.
         let outer_pos = crate::outer_zones::positions(
-            &app.outer, panel_rect, scale_f,
+            &app.outer,
+            panel_rect,
+            scale_f,
             crate::media::render::is_active(&app.media),
         );
         app.desktop_button_hover = hit_id(&outer_pos, OuterId::Desktop, phys_cx, phys_cy);
@@ -104,7 +129,13 @@ pub(super) fn track_hovers(wl: &mut super::WlState, app: &mut crate::app::AppSta
             let top_y = crate::controls::content_top_y(panel_rect, scale_f);
             let panel_bottom = panel_rect.y + panel_rect.h;
             let hit = crate::emojis::hit_test(
-                &app.emojis, panel_rect, top_y, scale_f, panel_bottom, phys_cx, phys_cy,
+                &app.emojis,
+                panel_rect,
+                top_y,
+                scale_f,
+                panel_bottom,
+                phys_cx,
+                phys_cy,
             );
             app.emojis.hover_entry = None;
             app.emojis.hover_category = None;
@@ -122,7 +153,13 @@ pub(super) fn track_hovers(wl: &mut super::WlState, app: &mut crate::app::AppSta
             let top_y = crate::controls::content_top_y(panel_rect, scale_f);
             let panel_bottom = panel_rect.y + panel_rect.h;
             let hit = crate::notes::hit_test(
-                &app.notes, panel_rect, top_y, scale_f, panel_bottom, phys_cx, phys_cy,
+                &app.notes,
+                panel_rect,
+                top_y,
+                scale_f,
+                panel_bottom,
+                phys_cx,
+                phys_cy,
             );
             app.notes.hover_idx = match hit {
                 crate::notes::Hit::ListRow(i) => Some(i),
@@ -136,7 +173,13 @@ pub(super) fn track_hovers(wl: &mut super::WlState, app: &mut crate::app::AppSta
             let top_y = crate::controls::content_top_y(panel_rect, scale_f);
             let panel_bottom = panel_rect.y + panel_rect.h;
             let hit = crate::clipboard::hit_test(
-                &app.clipboard, panel_rect, top_y, scale_f, panel_bottom, phys_cx, phys_cy,
+                &app.clipboard,
+                panel_rect,
+                top_y,
+                scale_f,
+                panel_bottom,
+                phys_cx,
+                phys_cy,
             );
             app.clipboard.hover_idx = match hit {
                 crate::clipboard::Hit::Row(i)
@@ -147,9 +190,9 @@ pub(super) fn track_hovers(wl: &mut super::WlState, app: &mut crate::app::AppSta
         } else {
             app.clipboard.hover_idx = None;
         }
-        app.hovered_control_tile = app.controls.hit_test(
-            panel_rect, scale_f, phys_cx, phys_cy, app.panel_view,
-        );
+        app.hovered_control_tile =
+            app.controls
+                .hit_test(panel_rect, scale_f, phys_cx, phys_cy, app.panel_view);
         // Waffle "all apps" button hover (search row).
         let waffle = crate::search::input::waffle_rect(panel_rect, scale_f);
         app.waffle_hover = phys_cx >= waffle.x
@@ -165,16 +208,20 @@ pub(super) fn track_hovers(wl: &mut super::WlState, app: &mut crate::app::AppSta
         app.files.hover_location = None;
         if app.panel_view == crate::app::PanelView::Files {
             let top_y = crate::controls::content_top_y(panel_rect, scale_f);
-            let strip_hit = files_strip_rect(&app, panel_rect, scale_f).map(|strip| {
-                crate::files::hit_strip(&app.files, strip, scale_f, phys_cx, phys_cy)
-            });
+            let strip_hit = files_strip_rect(&app, panel_rect, scale_f)
+                .map(|strip| crate::files::hit_strip(&app.files, strip, scale_f, phys_cx, phys_cy));
             match strip_hit {
                 Some(crate::files::FilesHit::Nav(b)) => app.files.hover_nav = Some(b),
                 Some(crate::files::FilesHit::Crumb(i)) => app.files.hover_crumb = Some(i),
                 _ => {
                     match crate::files::hit_body(
-                        &app.files, panel_rect, top_y, scale_f,
-                        app.config.text_size, phys_cx, phys_cy,
+                        &app.files,
+                        panel_rect,
+                        top_y,
+                        scale_f,
+                        app.config.text_size,
+                        phys_cx,
+                        phys_cy,
                     ) {
                         crate::files::FilesHit::Sidebar(l) => app.files.hover_location = Some(l),
                         crate::files::FilesHit::Entry(i) => app.files.hover_entry = Some(i),
@@ -196,13 +243,23 @@ pub(super) fn track_hovers(wl: &mut super::WlState, app: &mut crate::app::AppSta
         let scale_f = wl.fractional_scale() as f32;
         let phys_w = wl.phys_width().max(1);
         let phys_h_f = wl.phys_height().max(1) as f32;
-        let panel = PanelRect::compute_with_dims(phys_w, scale_f, app.desired_panel_w_logical(), app.desired_panel_h_logical());
+        let panel = PanelRect::compute_with_dims(
+            phys_w,
+            scale_f,
+            app.desired_panel_w_logical(),
+            app.desired_panel_h_logical(),
+        );
         let panel_rect = lntrn_render::Rect::new(panel.x, panel.y, panel.w, panel.h);
         let phys_cx = wl.cursor_x as f32 * scale_f;
         let phys_cy = wl.cursor_y as f32 * scale_f;
         let pinned = app.launcher.pinned_entries(&app.apps);
         let layout = crate::mini_dock::compute_layout(
-            panel_rect, phys_h_f, scale_f, &pinned, &app.toplevels, &app.apps,
+            panel_rect,
+            phys_h_f,
+            scale_f,
+            &pinned,
+            &app.toplevels,
+            &app.apps,
             Some((phys_cx, phys_cy)),
         );
         if let Some(layout) = layout {
@@ -216,9 +273,7 @@ pub(super) fn track_hovers(wl: &mut super::WlState, app: &mut crate::app::AppSta
                 let nwin = layout
                     .entries
                     .get(prev)
-                    .map(|e| {
-                        crate::mini_dock::windows_for_app(&app.toplevels, &e.app_id).len()
-                    })
+                    .map(|e| crate::mini_dock::windows_for_app(&app.toplevels, &e.app_id).len())
                     .unwrap_or(0)
                     .max(1);
                 let still_in_zone = crate::mini_dock::hit_test_preview_zone(

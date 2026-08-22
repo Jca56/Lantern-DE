@@ -23,7 +23,10 @@ const IGNORE_PREFIXES: &[&str] = &[".git/", ".syncthing/"];
 const IGNORE_FILENAMES: &[&str] = &[".DS_Store"];
 
 fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 // ── Local scan ─────────────────────────────────────────────────────────────
@@ -43,7 +46,9 @@ fn scan_local(root: &Path, manifest: &Manifest) -> HashMap<String, LocalFile> {
 }
 
 fn walk(root: &Path, dir: &Path, manifest: &Manifest, out: &mut HashMap<String, LocalFile>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in rd.flatten() {
         let abs = entry.path();
         let Ok(ft) = entry.file_type() else { continue };
@@ -57,7 +62,9 @@ fn walk(root: &Path, dir: &Path, manifest: &Manifest, out: &mut HashMap<String, 
         if !ft.is_file() {
             continue;
         }
-        let Ok(rel_pb) = abs.strip_prefix(root) else { continue };
+        let Ok(rel_pb) = abs.strip_prefix(root) else {
+            continue;
+        };
         let rel = rel_pb.to_string_lossy().replace('\\', "/");
         if should_ignore(&rel) {
             continue;
@@ -84,7 +91,13 @@ fn walk(root: &Path, dir: &Path, manifest: &Manifest, out: &mut HashMap<String, 
         };
         out.insert(
             rel.clone(),
-            LocalFile { rel, abs, size, mtime, sha },
+            LocalFile {
+                rel,
+                abs,
+                size,
+                mtime,
+                sha,
+            },
         );
     }
 }
@@ -176,11 +189,7 @@ fn upload_local(
     Ok(())
 }
 
-fn download_remote(
-    authed: &Authed,
-    manifest: &mut Manifest,
-    doc: &FileDoc,
-) -> anyhow::Result<()> {
+fn download_remote(authed: &Authed, manifest: &mut Manifest, doc: &FileDoc) -> anyhow::Result<()> {
     let bytes = storage::download_blob(authed, &doc.sha256)?;
     let abs = abs_for(&doc.path);
     if let Some(parent) = abs.parent() {
@@ -276,10 +285,7 @@ fn resolve_conflict(
 /// Three-way merge of the local tree against a REMOTE SNAPSHOT (the cached
 /// remote index — see cloud/remote_index.rs). Does no Firestore listing of
 /// its own; per-path uploads/downloads/tombstones are the only network here.
-pub fn reconcile_with(
-    authed: &Authed,
-    remotes: &HashMap<String, FileDoc>,
-) -> anyhow::Result<()> {
+pub fn reconcile_with(authed: &Authed, remotes: &HashMap<String, FileDoc>) -> anyhow::Result<()> {
     let root = cloud_root();
     std::fs::create_dir_all(&root)?;
     let device = device_name();

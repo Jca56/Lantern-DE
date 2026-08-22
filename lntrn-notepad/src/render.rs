@@ -9,9 +9,7 @@ use crate::ribbon;
 use crate::scrollbar;
 use crate::tab_strip::{draw_tab_strip, TabLabel, TAB_STRIP_H};
 use crate::theme::Theme;
-use crate::title_bar::{
-    draw_window_controls, file_menu_items, title_content_rect, TITLE_BAR_H,
-};
+use crate::title_bar::{draw_window_controls, file_menu_items, title_content_rect, TITLE_BAR_H};
 use crate::tokens;
 use crate::toolbar::{self, FormatToolbar};
 use crate::{Gpu, ZONE_EDITOR, ZONE_EDITOR_SCROLL_THUMB};
@@ -22,17 +20,27 @@ pub const STATUS_BAR_H: f32 = 30.0;
 /// `top_inset` is the find-bar height (or 0 when hidden). The gap below the
 /// ribbon lives inside this rect's top edge so clicks/scroll stay consistent.
 pub fn editor_rect(wf: f32, hf: f32, s: f32, top_inset: f32) -> Rect {
-    let top =
-        (TITLE_BAR_H + TAB_STRIP_H + TOOLBAR_H + tokens::RIBBON_PAGE_GAP) * s + top_inset;
+    let top = (TITLE_BAR_H + TAB_STRIP_H + TOOLBAR_H + tokens::RIBBON_PAGE_GAP) * s + top_inset;
     let bottom = STATUS_BAR_H * s;
     Rect::new(0.0, top, wf, (hf - top - bottom).max(0.0))
 }
 
 /// Convert a FormatSpan's attrs into (font_size, FontWeight, FontStyle).
-pub(crate) fn span_rendering(span: &FormatSpan, default_font_size: f32) -> (f32, FontWeight, FontStyle) {
+pub(crate) fn span_rendering(
+    span: &FormatSpan,
+    default_font_size: f32,
+) -> (f32, FontWeight, FontStyle) {
     let fs = span.attrs.font_size.unwrap_or(default_font_size);
-    let weight = if span.attrs.bold { FontWeight::Bold } else { FontWeight::Normal };
-    let style = if span.attrs.italic { FontStyle::Italic } else { FontStyle::Normal };
+    let weight = if span.attrs.bold {
+        FontWeight::Bold
+    } else {
+        FontWeight::Normal
+    };
+    let style = if span.attrs.italic {
+        FontStyle::Italic
+    } else {
+        FontStyle::Normal
+    };
     (fs, weight, style)
 }
 
@@ -81,7 +89,11 @@ pub fn render_frame(
     input.begin_frame();
 
     // ── Window background (the desk colour fills the whole window) ───
-    painter.rect_filled(Rect::new(0.0, 0.0, wf, hf), tokens::RADIUS_WINDOW * s, pal.bg);
+    painter.rect_filled(
+        Rect::new(0.0, 0.0, wf, hf),
+        tokens::RADIUS_WINDOW * s,
+        pal.bg,
+    );
 
     // ── Ribbon panel (title + tabs + toolbar cohesion) ───────────────
     // One top-lit gradient with a tight drop shadow + 1px sheen, painted
@@ -116,7 +128,19 @@ pub fn render_frame(
     // ── Formatting toolbar ────────────────────────────────────────────
     let fmt_state = editor.selection_format_state();
     let para_state = editor.current_para();
-    toolbar::draw_toolbar(fmt_toolbar, &fmt_state, &para_state, painter, text, input, pal, wf, s, w, h);
+    toolbar::draw_toolbar(
+        fmt_toolbar,
+        &fmt_state,
+        &para_state,
+        painter,
+        text,
+        input,
+        pal,
+        wf,
+        s,
+        w,
+        h,
+    );
 
     // ── Find bar overlay (shrinks the editor area when visible) ──────
     let find_bar_top = (TITLE_BAR_H + TAB_STRIP_H + TOOLBAR_H) * s;
@@ -176,7 +200,14 @@ pub fn render_frame(
 
     // Crisp hairline around the sheet, then a faint inner top sheen for paper feel.
     painter.rect_border(page_rect, r, 1.0 * s, tokens::page_edge(theme));
-    painter.inner_shadow(page_rect, r, 6.0 * s, tokens::page_sheen(theme), 0.0, -3.0 * s);
+    painter.inner_shadow(
+        page_rect,
+        r,
+        6.0 * s,
+        tokens::page_sheen(theme),
+        0.0,
+        -3.0 * s,
+    );
 
     // Draggable margin handles, registered after ZONE_EDITOR so they win the
     // hit-test where they overlap the editor body.
@@ -202,7 +233,9 @@ pub fn render_frame(
     if editor.follow_caret {
         editor.follow_caret = false;
         let (row_idx, _, _) = editor.caret_row();
-        let c_line = editor.cursor_line.min(editor.laid_out_lines().saturating_sub(1));
+        let c_line = editor
+            .cursor_line
+            .min(editor.laid_out_lines().saturating_sub(1));
         let caret_row = editor.line_layout(c_line).and_then(|l| {
             let h = *l.row_h.get(row_idx)?;
             Some((text_y_start + l.top + l.row_offset_y(row_idx), h))
@@ -267,7 +300,16 @@ pub fn render_frame(
 
     // Toolbar dropdown panels (font size, line spacing)
     toolbar::draw_toolbar_overlays(
-        fmt_toolbar, &fmt_state, &para_state, painter, text, pal, wf, s, w, h,
+        fmt_toolbar,
+        &fmt_state,
+        &para_state,
+        painter,
+        text,
+        pal,
+        wf,
+        s,
+        w,
+        h,
     );
 
     menu_bar.context_menu.update(0.016);
@@ -287,7 +329,13 @@ pub fn render_frame(
             let view = frame.view().clone();
 
             // Layer 0: base shapes + text
-            painter.render_layer(0, ctx, frame.encoder_mut(), &view, Some(Color::rgba(0.0, 0.0, 0.0, 0.0)));
+            painter.render_layer(
+                0,
+                ctx,
+                frame.encoder_mut(),
+                &view,
+                Some(Color::rgba(0.0, 0.0, 0.0, 0.0)),
+            );
             text.render_layer(0, ctx, frame.encoder_mut(), &view);
 
             // Flush so glyphon's prepare() for layer 1 doesn't overwrite layer 0 vertices
@@ -313,4 +361,3 @@ pub fn render_frame(
 
     (menu_event, ctx_event)
 }
-

@@ -53,7 +53,13 @@ pub fn style() -> Style {
     let scrim_opacity =
         lntrn_theme::read_config_f32("lockscreen", "scrim_opacity", 0.38).clamp(0.0, 1.0);
 
-    Style { border_color, border_thickness, field_color, dot_color, scrim_opacity }
+    Style {
+        border_color,
+        border_thickness,
+        field_color,
+        dot_color,
+        scrim_opacity,
+    }
 }
 
 /// Directory where installed lockscreen backgrounds live.
@@ -75,7 +81,11 @@ pub fn background_path() -> Option<PathBuf> {
     }
 
     // Otherwise treat as a color name, normalized to a known one.
-    let color = if COLORS.contains(&value.as_str()) { value } else { "blue".to_string() };
+    let color = if COLORS.contains(&value.as_str()) {
+        value
+    } else {
+        "blue".to_string()
+    };
     let dir = share_dir()?;
     let path = dir.join(format!("lockscreen-{color}.png"));
     if path.exists() {

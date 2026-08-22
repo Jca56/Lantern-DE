@@ -1,5 +1,5 @@
 use lntrn_render::{Color, Painter, Rect};
-use lntrn_theme::{self, Rgba, palette::Palette};
+use lntrn_theme::{self, palette::Palette, Rgba};
 
 use crate::gpu::fill::Fill;
 
@@ -35,16 +35,18 @@ fn to_color(c: Rgba) -> Color {
 /// alpha 0.0 = no gradient at that band (see the bg color through); 1.0 =
 /// fully opaque gradient color. The `opacity` argument is multiplied in too
 /// so the gradient fades with the window's overall translucency.
-pub fn draw_window_gradient_overlay(
-    p: &mut Painter, rect: Rect, corner_r: f32, opacity: f32,
-) {
+pub fn draw_window_gradient_overlay(p: &mut Painter, rect: Rect, corner_r: f32, opacity: f32) {
     let corners = lntrn_theme::active_window_gradient_corners();
-    if corners.iter().all(|c| c.is_none()) { return; }
+    if corners.iter().all(|c| c.is_none()) {
+        return;
+    }
 
     // Cube-curve the intensity so the bottom half of the slider lives in
     // the "barely visible" range — linear was unusable.
     let intensity = lntrn_theme::active_window_gradient_intensity().powi(3);
-    if intensity <= 0.0 { return; }
+    if intensity <= 0.0 {
+        return;
+    }
 
     // Radius is stored normalized (0..1) as a fraction of the window's
     // half-diagonal so every window gets a proportionally sized glow.
@@ -53,7 +55,9 @@ pub fn draw_window_gradient_overlay(
     let glow_radius_px = (radius_norm * half_diag).max(1.0);
 
     for (i, slot) in corners.iter().enumerate() {
-        let Some(rgba) = *slot else { continue; };
+        let Some(rgba) = *slot else {
+            continue;
+        };
         let corner = lntrn_theme::GradientCorner::ALL[i];
         let color = to_color(rgba).with_alpha(opacity * intensity);
         p.rect_radial_glow(rect, corner_r, corner.anchor(), glow_radius_px, color);
@@ -64,7 +68,11 @@ pub fn draw_window_gradient_overlay(
 /// `opacity` first, then the configured gradient overlay (if any) on top.
 /// Most apps should call this from their chrome's `draw_background`.
 pub fn draw_window_bg(
-    p: &mut Painter, rect: Rect, corner_r: f32, palette: &FoxPalette, opacity: f32,
+    p: &mut Painter,
+    rect: Rect,
+    corner_r: f32,
+    palette: &FoxPalette,
+    opacity: f32,
 ) {
     p.rect_filled(rect, corner_r, palette.bg.with_alpha(opacity));
     draw_window_gradient_overlay(p, rect, corner_r, opacity);
@@ -125,12 +133,23 @@ impl FoxPalette {
 
     pub fn gradient_border_colors(&self) -> [Color; 4] {
         let gb = lntrn_theme::GRADIENT_BORDER;
-        [to_color(gb[0]), to_color(gb[1]), to_color(gb[2]), to_color(gb[3])]
+        [
+            to_color(gb[0]),
+            to_color(gb[1]),
+            to_color(gb[2]),
+            to_color(gb[3]),
+        ]
     }
 
     pub fn file_manager_gradient_stops(&self) -> [Color; 5] {
         let gs = lntrn_theme::GRADIENT_STRIP;
-        [to_color(gs[0]), to_color(gs[1]), to_color(gs[2]), to_color(gs[3]), to_color(gs[4])]
+        [
+            to_color(gs[0]),
+            to_color(gs[1]),
+            to_color(gs[2]),
+            to_color(gs[3]),
+            to_color(gs[4]),
+        ]
     }
 
     /// Solid base fill for the main window background — `self.bg` at

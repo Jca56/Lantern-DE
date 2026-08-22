@@ -12,7 +12,14 @@ pub struct Price {
 }
 
 impl Price {
-    pub fn cost(&self, input: u64, output: u64, cache_5m: u64, cache_1h: u64, cache_read: u64) -> f64 {
+    pub fn cost(
+        &self,
+        input: u64,
+        output: u64,
+        cache_5m: u64,
+        cache_1h: u64,
+        cache_read: u64,
+    ) -> f64 {
         let m = 1_000_000.0;
         (input as f64 * self.input
             + output as f64 * self.output

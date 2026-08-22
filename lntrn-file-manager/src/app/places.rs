@@ -18,11 +18,13 @@ impl App {
     /// Load favorites from persisted string paths. Drops any that no longer
     /// exist so the sidebar doesn't accumulate dead links.
     pub fn load_favorites_from(&mut self, paths: &[String]) {
-        self.favorites = paths.iter()
+        self.favorites = paths
+            .iter()
             .map(PathBuf::from)
             .filter(|p| p.exists())
             .map(|p| {
-                let name = p.file_name()
+                let name = p
+                    .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| p.to_string_lossy().to_string());
                 Place { name, path: p }
@@ -31,7 +33,8 @@ impl App {
     }
 
     pub fn favorites_paths(&self) -> Vec<String> {
-        self.favorites.iter()
+        self.favorites
+            .iter()
             .map(|p| p.path.to_string_lossy().to_string())
             .collect()
     }
@@ -42,8 +45,11 @@ impl App {
 
     /// Pin a path. No-op if it's already a favorite or not a directory.
     pub fn add_favorite(&mut self, path: PathBuf) -> bool {
-        if !path.is_dir() || self.is_favorite(&path) { return false; }
-        let name = path.file_name()
+        if !path.is_dir() || self.is_favorite(&path) {
+            return false;
+        }
+        let name = path
+            .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| path.to_string_lossy().to_string());
         self.favorites.push(Place { name, path });
@@ -59,7 +65,9 @@ impl App {
     /// Move the favorite at `src` to position `dst`. Removes from src first,
     /// then inserts at dst clamped to the (now-shorter) vector.
     pub fn reorder_favorite(&mut self, src: usize, dst: usize) {
-        if src >= self.favorites.len() || src == dst { return; }
+        if src >= self.favorites.len() || src == dst {
+            return;
+        }
         let item = self.favorites.remove(src);
         let dst = dst.min(self.favorites.len());
         self.favorites.insert(dst, item);
@@ -80,7 +88,9 @@ impl App {
     }
 
     pub fn is_active_favorite(&self, index: usize) -> bool {
-        self.favorites.get(index).map_or(false, |p| p.path == self.current_dir)
+        self.favorites
+            .get(index)
+            .map_or(false, |p| p.path == self.current_dir)
     }
 
     pub fn refresh_drives(&mut self) {
@@ -91,7 +101,9 @@ impl App {
         // Sidebar navigation always drives the LEFT pane in split view.
         self.focus_pane(super::PaneSide::Left);
 
-        let Some(drive) = self.drives.get(index).cloned() else { return; };
+        let Some(drive) = self.drives.get(index).cloned() else {
+            return;
+        };
         if drive.mounted {
             self.navigate_to(drive.mount_point);
             return;
@@ -119,7 +131,9 @@ impl App {
     }
 
     pub fn eject_drive(&mut self, index: usize) {
-        let Some(drive) = self.drives.get(index).cloned() else { return; };
+        let Some(drive) = self.drives.get(index).cloned() else {
+            return;
+        };
         if let Err(msg) = fs::unmount_drive(&drive) {
             self.show_message(format!("Couldn\u{2019}t eject {}", drive.name), msg);
             return;
@@ -134,16 +148,19 @@ impl App {
     }
 
     pub fn open_drive_format_dialog(&mut self, index: usize) {
-        let Some(drive) = self.drives.get(index).cloned() else { return; };
-        if !drive.removable { return; }
-        self.drive_dialog = Some(crate::dialogs::DriveDialog::ConfirmFormat {
-            drive,
-            error: None,
-        });
+        let Some(drive) = self.drives.get(index).cloned() else {
+            return;
+        };
+        if !drive.removable {
+            return;
+        }
+        self.drive_dialog = Some(crate::dialogs::DriveDialog::ConfirmFormat { drive, error: None });
     }
 
     pub fn open_drive_properties(&mut self, index: usize) {
-        let Some(drive) = self.drives.get(index).cloned() else { return; };
+        let Some(drive) = self.drives.get(index).cloned() else {
+            return;
+        };
         self.drive_dialog = Some(crate::dialogs::DriveDialog::Properties { drive });
     }
 
@@ -154,14 +171,20 @@ impl App {
     /// Confirm the active Format dialog. Runs the format and either dismisses
     /// the dialog on success, or stores the error message into the dialog.
     pub fn confirm_drive_format(&mut self) {
-        let Some(crate::dialogs::DriveDialog::ConfirmFormat { drive, .. }) = self.drive_dialog.clone() else { return; };
+        let Some(crate::dialogs::DriveDialog::ConfirmFormat { drive, .. }) =
+            self.drive_dialog.clone()
+        else {
+            return;
+        };
         match fs::format_drive_ext4(&drive, "") {
             Ok(()) => {
                 self.drive_dialog = None;
                 self.refresh_drives();
             }
             Err(msg) => {
-                if let Some(crate::dialogs::DriveDialog::ConfirmFormat { error, .. }) = self.drive_dialog.as_mut() {
+                if let Some(crate::dialogs::DriveDialog::ConfirmFormat { error, .. }) =
+                    self.drive_dialog.as_mut()
+                {
                     *error = Some(msg);
                 }
             }
@@ -172,7 +195,9 @@ impl App {
         // Sidebar navigation always drives the LEFT pane in split view.
         self.focus_pane(super::PaneSide::Left);
 
-        let Some(phone) = self.phones.get(index).cloned() else { return; };
+        let Some(phone) = self.phones.get(index).cloned() else {
+            return;
+        };
         match fs::mount_phone(&phone) {
             Ok(()) => self.navigate_to(phone.mount_point),
             Err(msg) => self.show_message(format!("Couldn\u{2019}t open {}", phone.name), msg),
@@ -180,7 +205,9 @@ impl App {
     }
 
     pub fn is_active_place(&self, index: usize) -> bool {
-        self.places.get(index).map_or(false, |p| p.path == self.current_dir)
+        self.places
+            .get(index)
+            .map_or(false, |p| p.path == self.current_dir)
     }
 
     pub fn on_sidebar_click(&mut self, index: usize) {

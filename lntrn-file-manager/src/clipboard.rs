@@ -11,8 +11,7 @@ use std::thread;
 
 use wayland_client::protocol::{wl_registry, wl_seat};
 use wayland_client::{
-    delegate_noop, event_created_child, globals, Connection, Dispatch, EventQueue,
-    QueueHandle,
+    delegate_noop, event_created_child, globals, Connection, Dispatch, EventQueue, QueueHandle,
 };
 use wayland_protocols_wlr::data_control::v1::client::{
     zwlr_data_control_device_v1, zwlr_data_control_manager_v1, zwlr_data_control_offer_v1,
@@ -41,8 +40,11 @@ impl Clipboard {
     }
 
     pub fn set_text(&self, text: &str) {
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true)
-            .open("/tmp/fox-clipboard-debug.log") {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/fox-clipboard-debug.log")
+        {
             use std::io::Write;
             let _ = writeln!(f, "set_text called: {text}");
         }
@@ -64,8 +66,11 @@ struct ClipState {
 fn clipboard_thread(rx: mpsc::Receiver<String>) -> Result<(), Box<dyn std::error::Error>> {
     fn dbg(msg: &str) {
         use std::io::Write;
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true)
-            .open("/tmp/fox-clipboard-debug.log") {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/fox-clipboard-debug.log")
+        {
             let _ = writeln!(f, "{msg}");
         }
     }
@@ -138,9 +143,14 @@ fn clipboard_thread(rx: mpsc::Receiver<String>) -> Result<(), Box<dyn std::error
 
 impl Dispatch<wl_registry::WlRegistry, globals::GlobalListContents> for ClipState {
     fn event(
-        _: &mut Self, _: &wl_registry::WlRegistry, _: wl_registry::Event,
-        _: &globals::GlobalListContents, _: &Connection, _: &QueueHandle<Self>,
-    ) {}
+        _: &mut Self,
+        _: &wl_registry::WlRegistry,
+        _: wl_registry::Event,
+        _: &globals::GlobalListContents,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 delegate_noop!(ClipState: ignore wl_seat::WlSeat);
@@ -151,8 +161,11 @@ impl Dispatch<zwlr_data_control_device_v1::ZwlrDataControlDeviceV1, ()> for Clip
         _: &mut Self,
         _: &zwlr_data_control_device_v1::ZwlrDataControlDeviceV1,
         _: zwlr_data_control_device_v1::Event,
-        _: &(), _: &Connection, _: &QueueHandle<Self>,
-    ) {}
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 
     event_created_child!(ClipState, zwlr_data_control_device_v1::ZwlrDataControlDeviceV1, [
         0 => (zwlr_data_control_offer_v1::ZwlrDataControlOfferV1, ()),
@@ -161,9 +174,14 @@ impl Dispatch<zwlr_data_control_device_v1::ZwlrDataControlDeviceV1, ()> for Clip
 
 impl Dispatch<zwlr_data_control_offer_v1::ZwlrDataControlOfferV1, ()> for ClipState {
     fn event(
-        _: &mut Self, _: &zwlr_data_control_offer_v1::ZwlrDataControlOfferV1,
-        _: zwlr_data_control_offer_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
-    ) {}
+        _: &mut Self,
+        _: &zwlr_data_control_offer_v1::ZwlrDataControlOfferV1,
+        _: zwlr_data_control_offer_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 impl Dispatch<zwlr_data_control_source_v1::ZwlrDataControlSourceV1, ()> for ClipState {
@@ -171,7 +189,9 @@ impl Dispatch<zwlr_data_control_source_v1::ZwlrDataControlSourceV1, ()> for Clip
         state: &mut Self,
         _: &zwlr_data_control_source_v1::ZwlrDataControlSourceV1,
         event: zwlr_data_control_source_v1::Event,
-        _: &(), _: &Connection, _: &QueueHandle<Self>,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         if let zwlr_data_control_source_v1::Event::Send { fd, .. } = event {
             if let Some(ref text) = state.copied_text {

@@ -98,17 +98,17 @@ impl Theme {
 /// - `sidebar`   → PLATE  (footer status plate + find-bar plate)
 pub fn paper_palette() -> FoxPalette {
     FoxPalette {
-        bg: Color::from_rgb8(252, 251, 249),            // PAGE — crisp near-white
-        surface: Color::from_rgb8(241, 239, 234),       // RIBBON — warm off-white panel
-        surface_2: Color::from_rgb8(228, 224, 216),     // DESK — warm light gray-beige
-        sidebar: Color::from_rgb8(236, 233, 226),       // PLATE — between ribbon & desk
-        text: Color::from_rgb8(28, 27, 24),             // warm near-black body
+        bg: Color::from_rgb8(252, 251, 249), // PAGE — crisp near-white
+        surface: Color::from_rgb8(241, 239, 234), // RIBBON — warm off-white panel
+        surface_2: Color::from_rgb8(228, 224, 216), // DESK — warm light gray-beige
+        sidebar: Color::from_rgb8(236, 233, 226), // PLATE — between ribbon & desk
+        text: Color::from_rgb8(28, 27, 24),  // warm near-black body
         text_secondary: Color::from_rgb8(112, 108, 100),
         muted: Color::from_rgb8(166, 160, 150),
-        accent: Color::from_rgb8(250, 200, 0),          // LANTERN GOLD #FAC800
+        accent: Color::from_rgb8(250, 200, 0), // LANTERN GOLD #FAC800
         danger: Color::from_rgb8(204, 58, 52),
         success: Color::from_rgb8(74, 156, 84),
-        warning: Color::from_rgb8(228, 158, 44),        // oranger, distinct from gold
+        warning: Color::from_rgb8(228, 158, 44), // oranger, distinct from gold
         info: Color::from_rgb8(64, 124, 198),
     }
 }
@@ -119,14 +119,14 @@ pub fn paper_palette() -> FoxPalette {
 /// the renderer stays theme-agnostic.
 pub fn dark_palette() -> FoxPalette {
     FoxPalette {
-        bg: Color::from_rgb8(30, 30, 32),               // PAGE — soft charcoal
-        surface: Color::from_rgb8(40, 40, 44),          // RIBBON — lifted intermediate
-        surface_2: Color::from_rgb8(22, 22, 24),        // DESK — darkest chrome
-        sidebar: Color::from_rgb8(26, 26, 28),          // PLATE — footer/find plate
-        text: Color::from_rgb8(232, 220, 200),          // LANTERN TAN #E8DCC8
+        bg: Color::from_rgb8(30, 30, 32),        // PAGE — soft charcoal
+        surface: Color::from_rgb8(40, 40, 44),   // RIBBON — lifted intermediate
+        surface_2: Color::from_rgb8(22, 22, 24), // DESK — darkest chrome
+        sidebar: Color::from_rgb8(26, 26, 28),   // PLATE — footer/find plate
+        text: Color::from_rgb8(232, 220, 200),   // LANTERN TAN #E8DCC8
         text_secondary: Color::from_rgb8(158, 150, 138),
         muted: Color::from_rgb8(108, 104, 96),
-        accent: Color::from_rgb8(250, 200, 0),          // LANTERN GOLD (same both themes)
+        accent: Color::from_rgb8(250, 200, 0), // LANTERN GOLD (same both themes)
         danger: Color::from_rgb8(224, 96, 92),
         success: Color::from_rgb8(110, 196, 130),
         warning: Color::from_rgb8(232, 176, 76),

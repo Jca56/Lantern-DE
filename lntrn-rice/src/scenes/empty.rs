@@ -1,7 +1,7 @@
 use lntrn_render::{Painter, TextRenderer};
 
-use crate::app::FrameCtx;
 use super::{draw_theme_background, Scene};
+use crate::app::FrameCtx;
 
 pub struct Empty;
 

@@ -47,7 +47,9 @@ pub struct PersistedState {
 }
 
 impl Default for PanelViewKind {
-    fn default() -> Self { Self::Default }
+    fn default() -> Self {
+        Self::Default
+    }
 }
 
 impl Default for PersistedState {
@@ -67,8 +69,12 @@ fn state_path() -> Option<PathBuf> {
 }
 
 pub fn load() -> PersistedState {
-    let Some(path) = state_path() else { return PersistedState::default() };
-    let Ok(text) = fs::read_to_string(&path) else { return PersistedState::default() };
+    let Some(path) = state_path() else {
+        return PersistedState::default();
+    };
+    let Ok(text) = fs::read_to_string(&path) else {
+        return PersistedState::default();
+    };
     serde_json::from_str(&text).unwrap_or_default()
 }
 
@@ -77,7 +83,9 @@ pub fn save(state: &PersistedState) {
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    let Ok(body) = serde_json::to_vec_pretty(state) else { return };
+    let Ok(body) = serde_json::to_vec_pretty(state) else {
+        return;
+    };
     let tmp = path.with_extension("json.tmp");
     if fs::write(&tmp, &body).is_ok() {
         let _ = fs::rename(&tmp, &path);

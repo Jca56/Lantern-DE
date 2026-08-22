@@ -100,8 +100,10 @@ pub enum IconPickerTab {
 impl IconPickerTab {
     pub fn all() -> &'static [IconPickerTab] {
         &[
-            IconPickerTab::Standard, IconPickerTab::Colors,
-            IconPickerTab::Awesome, IconPickerTab::Custom,
+            IconPickerTab::Standard,
+            IconPickerTab::Colors,
+            IconPickerTab::Awesome,
+            IconPickerTab::Custom,
         ]
     }
     pub fn label(self) -> &'static str {
@@ -124,7 +126,9 @@ impl IconPickerTab {
 
 /// List the SVG files in a given picker category directory.
 pub fn list_picker_icons(tab: IconPickerTab) -> Vec<PathBuf> {
-    let Some(sub) = tab.dir_name() else { return Vec::new(); };
+    let Some(sub) = tab.dir_name() else {
+        return Vec::new();
+    };
     let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
     let dir = PathBuf::from(home).join(".lantern/icons/folders").join(sub);
     let mut out: Vec<PathBuf> = std::fs::read_dir(&dir)
@@ -143,7 +147,9 @@ impl FileProperties {
         let sym_meta = std::fs::symlink_metadata(path).ok()?;
         let is_symlink = sym_meta.file_type().is_symlink();
         let symlink_target = if is_symlink {
-            std::fs::read_link(path).ok().map(|t| t.to_string_lossy().to_string())
+            std::fs::read_link(path)
+                .ok()
+                .map(|t| t.to_string_lossy().to_string())
         } else {
             None
         };
@@ -152,7 +158,8 @@ impl FileProperties {
         let name = path.file_name()?.to_string_lossy().to_string();
         let is_dir = meta.is_dir();
 
-        let ext = path.extension()
+        let ext = path
+            .extension()
             .map(|e| e.to_string_lossy().to_lowercase())
             .unwrap_or_default();
 
@@ -164,7 +171,11 @@ impl FileProperties {
             format!("{} File", ext.to_uppercase())
         };
 
-        let mime_type = if is_dir { "inode/directory".into() } else { mime_from_ext(&ext) };
+        let mime_type = if is_dir {
+            "inode/directory".into()
+        } else {
+            mime_from_ext(&ext)
+        };
 
         let size_bytes = if is_dir { 0 } else { meta.len() };
         let size = if is_dir {
@@ -174,13 +185,26 @@ impl FileProperties {
             format_size_with_bytes(size_bytes)
         };
 
-        let location = path.parent()
+        let location = path
+            .parent()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
 
-        let modified = meta.modified().ok().map(format_time).unwrap_or_else(|| "Unknown".into());
-        let created = meta.created().ok().map(format_time).unwrap_or_else(|| "Unknown".into());
-        let accessed = meta.accessed().ok().map(format_time).unwrap_or_else(|| "Unknown".into());
+        let modified = meta
+            .modified()
+            .ok()
+            .map(format_time)
+            .unwrap_or_else(|| "Unknown".into());
+        let created = meta
+            .created()
+            .ok()
+            .map(format_time)
+            .unwrap_or_else(|| "Unknown".into());
+        let accessed = meta
+            .accessed()
+            .ok()
+            .map(format_time)
+            .unwrap_or_else(|| "Unknown".into());
 
         let mode = meta.mode();
         let permissions = format_permissions(mode, is_dir);
@@ -190,19 +214,42 @@ impl FileProperties {
         let (disk_total, disk_free, disk_used_fraction) = disk_usage(path);
 
         Some(Self {
-            path: path.to_path_buf(), name, file_type, mime_type,
-            size, size_bytes, location, modified, created, accessed,
-            permissions, permissions_mode: mode, owner, group,
-            is_dir, is_symlink, symlink_target,
-            inode: meta.ino(), device_id: meta.dev(),
-            hard_links: meta.nlink(), block_size: meta.blksize(),
+            path: path.to_path_buf(),
+            name,
+            file_type,
+            mime_type,
+            size,
+            size_bytes,
+            location,
+            modified,
+            created,
+            accessed,
+            permissions,
+            permissions_mode: mode,
+            owner,
+            group,
+            is_dir,
+            is_symlink,
+            symlink_target,
+            inode: meta.ino(),
+            device_id: meta.dev(),
+            hard_links: meta.nlink(),
+            block_size: meta.blksize(),
             blocks: meta.blocks(),
-            disk_total, disk_free, disk_used_fraction,
-            image_dimensions: None, media_duration: None,
+            disk_total,
+            disk_free,
+            disk_used_fraction,
+            image_dimensions: None,
+            media_duration: None,
             // Checksum starts closed — hashing only begins when the user
             // opens the section (could be a 50GB ISO).
-            section_open: { let mut so = [true; 7]; so[SEC_CHECKSUM] = false; so },
-            scroll_offset: 0.0, icon_rect: None,
+            section_open: {
+                let mut so = [true; 7];
+                so[SEC_CHECKSUM] = false;
+                so
+            },
+            scroll_offset: 0.0,
+            icon_rect: None,
             checksum_job: None,
             picker_open: false,
             picker_tab: IconPickerTab::Standard,
@@ -229,18 +276,26 @@ impl FileProperties {
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 fn format_size(bytes: u64) -> String {
-    if bytes < 1024 { return format!("{} B", bytes); }
+    if bytes < 1024 {
+        return format!("{} B", bytes);
+    }
     let kb = bytes as f64 / 1024.0;
-    if kb < 1024.0 { return format!("{:.1} KB", kb); }
+    if kb < 1024.0 {
+        return format!("{:.1} KB", kb);
+    }
     let mb = kb / 1024.0;
-    if mb < 1024.0 { return format!("{:.1} MB", mb); }
+    if mb < 1024.0 {
+        return format!("{:.1} MB", mb);
+    }
     let gb = mb / 1024.0;
     format!("{:.2} GB", gb)
 }
 
 fn format_size_with_bytes(bytes: u64) -> String {
     let human = format_size(bytes);
-    if bytes < 1024 { return human; }
+    if bytes < 1024 {
+        return human;
+    }
     // Add comma-separated byte count
     let mut s = bytes.to_string();
     let mut i = s.len() as isize - 3;
@@ -252,17 +307,31 @@ fn format_size_with_bytes(bytes: u64) -> String {
 }
 
 fn format_time(time: SystemTime) -> String {
-    let secs = time.duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let secs = time
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     let days = secs / 86400;
     let time_of_day = secs % 86400;
     let hours = time_of_day / 3600;
     let minutes = (time_of_day % 3600) / 60;
     let (year, month, day) = days_to_date(days);
-    let months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    let months = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
     let month_str = months.get(month as usize).unwrap_or(&"???");
-    let h12 = if hours == 0 { 12 } else if hours > 12 { hours - 12 } else { hours };
+    let h12 = if hours == 0 {
+        12
+    } else if hours > 12 {
+        hours - 12
+    } else {
+        hours
+    };
     let ampm = if hours < 12 { "AM" } else { "PM" };
-    format!("{} {} {}, {:02}:{:02} {}", month_str, day, year, h12, minutes, ampm)
+    format!(
+        "{} {} {}, {:02}:{:02} {}",
+        month_str, day, year, h12, minutes, ampm
+    )
 }
 
 fn days_to_date(days: u64) -> (u64, u64, u64) {
@@ -270,18 +339,23 @@ fn days_to_date(days: u64) -> (u64, u64, u64) {
     let mut remaining = days;
     loop {
         let days_in_year = if is_leap(y) { 366 } else { 365 };
-        if remaining < days_in_year { break; }
+        if remaining < days_in_year {
+            break;
+        }
         remaining -= days_in_year;
         y += 1;
     }
     let dim: [u64; 12] = if is_leap(y) {
-        [31,29,31,30,31,30,31,31,30,31,30,31]
+        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
     } else {
-        [31,28,31,30,31,30,31,31,30,31,30,31]
+        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
     };
     let mut m = 0;
     for (i, &d) in dim.iter().enumerate() {
-        if remaining < d { m = i as u64; break; }
+        if remaining < d {
+            m = i as u64;
+            break;
+        }
         remaining -= d;
     }
     (y, m, remaining + 1)
@@ -296,31 +370,46 @@ fn format_permissions(mode: u32, is_dir: bool) -> String {
     let r = |bit: u32| if mode & bit != 0 { "r" } else { "-" };
     let w = |bit: u32| if mode & bit != 0 { "w" } else { "-" };
     let x = |bit: u32| if mode & bit != 0 { "x" } else { "-" };
-    format!("{}{}{}{}{}{}{}{}{}{} ({:o})",
+    format!(
+        "{}{}{}{}{}{}{}{}{}{} ({:o})",
         d,
-        r(0o400), w(0o200), x(0o100),
-        r(0o040), w(0o020), x(0o010),
-        r(0o004), w(0o002), x(0o001),
+        r(0o400),
+        w(0o200),
+        x(0o100),
+        r(0o040),
+        w(0o020),
+        x(0o010),
+        r(0o004),
+        w(0o002),
+        x(0o001),
         mode & 0o7777,
     )
 }
 
 fn get_username(uid: u32) -> Option<String> {
     let pw = unsafe { libc::getpwuid(uid) };
-    if pw.is_null() { return None; }
+    if pw.is_null() {
+        return None;
+    }
     let name = unsafe { std::ffi::CStr::from_ptr((*pw).pw_name) };
     Some(name.to_string_lossy().to_string())
 }
 
 fn get_groupname(gid: u32) -> Option<String> {
     let gr = unsafe { libc::getgrgid(gid) };
-    if gr.is_null() { return None; }
+    if gr.is_null() {
+        return None;
+    }
     let name = unsafe { std::ffi::CStr::from_ptr((*gr).gr_name) };
     Some(name.to_string_lossy().to_string())
 }
 
 fn disk_usage(path: &Path) -> (u64, u64, f32) {
-    let dir = if path.is_dir() { path } else { path.parent().unwrap_or(path) };
+    let dir = if path.is_dir() {
+        path
+    } else {
+        path.parent().unwrap_or(path)
+    };
     let c_path = match std::ffi::CString::new(dir.to_string_lossy().as_bytes()) {
         Ok(c) => c,
         Err(_) => return (0, 0, 0.0),
@@ -332,33 +421,59 @@ fn disk_usage(path: &Path) -> (u64, u64, f32) {
         }
         let total = stat.f_blocks as u64 * stat.f_frsize as u64;
         let free = stat.f_bavail as u64 * stat.f_frsize as u64;
-        let used_frac = if total > 0 { 1.0 - (free as f32 / total as f32) } else { 0.0 };
+        let used_frac = if total > 0 {
+            1.0 - (free as f32 / total as f32)
+        } else {
+            0.0
+        };
         (total, free, used_frac)
     }
 }
 
 fn mime_from_ext(ext: &str) -> String {
     match ext {
-        "png" => "image/png", "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif", "bmp" => "image/bmp", "webp" => "image/webp",
-        "svg" => "image/svg+xml", "ico" => "image/x-icon",
-        "mp4" => "video/mp4", "mkv" => "video/x-matroska",
-        "avi" => "video/x-msvideo", "webm" => "video/webm", "mov" => "video/quicktime",
-        "mp3" => "audio/mpeg", "flac" => "audio/flac", "ogg" => "audio/ogg",
-        "wav" => "audio/wav", "m4a" => "audio/mp4",
-        "pdf" => "application/pdf", "zip" => "application/zip",
-        "gz" | "tgz" => "application/gzip", "tar" => "application/x-tar",
-        "rs" => "text/x-rust", "py" => "text/x-python", "js" => "text/javascript",
-        "ts" => "text/typescript", "html" | "htm" => "text/html",
-        "css" => "text/css", "json" => "application/json",
-        "toml" => "application/toml", "yaml" | "yml" => "application/yaml",
-        "xml" => "application/xml", "md" => "text/markdown",
-        "txt" | "log" => "text/plain", "sh" | "bash" => "text/x-shellscript",
-        "c" => "text/x-c", "cpp" | "cc" => "text/x-c++",
-        "h" => "text/x-c-header", "java" => "text/x-java",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "bmp" => "image/bmp",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "ico" => "image/x-icon",
+        "mp4" => "video/mp4",
+        "mkv" => "video/x-matroska",
+        "avi" => "video/x-msvideo",
+        "webm" => "video/webm",
+        "mov" => "video/quicktime",
+        "mp3" => "audio/mpeg",
+        "flac" => "audio/flac",
+        "ogg" => "audio/ogg",
+        "wav" => "audio/wav",
+        "m4a" => "audio/mp4",
+        "pdf" => "application/pdf",
+        "zip" => "application/zip",
+        "gz" | "tgz" => "application/gzip",
+        "tar" => "application/x-tar",
+        "rs" => "text/x-rust",
+        "py" => "text/x-python",
+        "js" => "text/javascript",
+        "ts" => "text/typescript",
+        "html" | "htm" => "text/html",
+        "css" => "text/css",
+        "json" => "application/json",
+        "toml" => "application/toml",
+        "yaml" | "yml" => "application/yaml",
+        "xml" => "application/xml",
+        "md" => "text/markdown",
+        "txt" | "log" => "text/plain",
+        "sh" | "bash" => "text/x-shellscript",
+        "c" => "text/x-c",
+        "cpp" | "cc" => "text/x-c++",
+        "h" => "text/x-c-header",
+        "java" => "text/x-java",
         "go" => "text/x-go",
         _ => "application/octet-stream",
-    }.to_string()
+    }
+    .to_string()
 }
 
 // ── Drawing ────────────────────────────────────────────────────────────────
@@ -370,8 +485,11 @@ pub fn draw_properties_dialog(
     text: &mut TextRenderer,
     ix: &mut InteractionContext,
     fox: &FoxPalette,
-    screen_w: f32, screen_h: f32,
-    s: f32, sw: u32, sh: u32,
+    screen_w: f32,
+    screen_h: f32,
+    s: f32,
+    sw: u32,
+    sh: u32,
 ) -> Option<PropertiesEvent> {
     let dialog_w = DIALOG_W * s;
     let pad = PADDING * s;
@@ -385,44 +503,61 @@ pub fn draw_properties_dialog(
     let bar_h = BAR_H * s;
 
     // Calculate content height
-    let header_h = pad + icon_sz + 8.0 * s + TITLE_FONT * s + 4.0 * s + SUBTITLE_FONT * s + pad * 0.5;
+    let header_h =
+        pad + icon_sz + 8.0 * s + TITLE_FONT * s + 4.0 * s + SUBTITLE_FONT * s + pad * 0.5;
     let mut content_h = header_h + 1.0 * s; // separator
 
     // General section
     content_h += section_h;
-    if props.section_open[SEC_GENERAL] { content_h += 6.0 * row_h; }
+    if props.section_open[SEC_GENERAL] {
+        content_h += 6.0 * row_h;
+    }
 
     // Media section (conditional)
     if props.has_media_section() {
         content_h += section_h;
         if props.section_open[SEC_MEDIA] {
-            if props.image_dimensions.is_some() { content_h += row_h; }
-            if props.media_duration.is_some() { content_h += row_h; }
+            if props.image_dimensions.is_some() {
+                content_h += row_h;
+            }
+            if props.media_duration.is_some() {
+                content_h += row_h;
+            }
         }
     }
 
     // Disk section
     content_h += section_h;
-    if props.section_open[SEC_DISK] { content_h += bar_h + 8.0 * s + row_h; }
+    if props.section_open[SEC_DISK] {
+        content_h += bar_h + 8.0 * s + row_h;
+    }
 
     // System section
     content_h += section_h;
-    if props.section_open[SEC_SYSTEM] { content_h += 5.0 * row_h; }
+    if props.section_open[SEC_SYSTEM] {
+        content_h += 5.0 * row_h;
+    }
 
     // Permissions section
     content_h += section_h;
-    if props.section_open[SEC_PERMS] { content_h += 4.0 * row_h; }
+    if props.section_open[SEC_PERMS] {
+        content_h += 4.0 * row_h;
+    }
 
     // Symlink section (conditional)
     if props.has_symlink_section() {
         content_h += section_h;
-        if props.section_open[SEC_SYMLINK] { content_h += row_h; }
+        if props.section_open[SEC_SYMLINK] {
+            content_h += row_h;
+        }
     }
 
     // Checksum section (files only)
     if !props.is_dir {
         content_h += section_h;
-        if props.section_open[SEC_CHECKSUM] { content_h += row_h; }
+        if props.section_open[SEC_CHECKSUM] {
+            content_h += row_h;
+        }
     }
 
     content_h += pad; // bottom padding
@@ -444,7 +579,12 @@ pub fn draw_properties_dialog(
 
     // Shadow + panel
     let panel = Rect::new(dialog_x, dialog_y, dialog_w, dialog_h);
-    let shadow = Rect::new(panel.x - 8.0 * s, panel.y - 4.0 * s, panel.w + 16.0 * s, panel.h + 16.0 * s);
+    let shadow = Rect::new(
+        panel.x - 8.0 * s,
+        panel.y - 4.0 * s,
+        panel.w + 16.0 * s,
+        panel.h + 16.0 * s,
+    );
     painter.rect_filled(shadow, corner_r + 4.0 * s, Color::rgba(0.0, 0.0, 0.0, 0.3));
     painter.rect_filled(panel, corner_r, fox.surface);
     painter.rect_stroke_sdf(panel, corner_r, 1.0 * s, fox.muted.with_alpha(0.2));
@@ -459,13 +599,31 @@ pub fn draw_properties_dialog(
     // Close button (X) — top right
     let close_rect = Rect::new(dialog_x + dialog_w - pad - close_sz, cy, close_sz, close_sz);
     let close_zone = ix.add_zone(ZONE_PROPS_CLOSE, close_rect);
-    let close_bg = if close_zone.is_hovered() { fox.danger.with_alpha(0.2) } else { Color::rgba(0.0, 0.0, 0.0, 0.0) };
+    let close_bg = if close_zone.is_hovered() {
+        fox.danger.with_alpha(0.2)
+    } else {
+        Color::rgba(0.0, 0.0, 0.0, 0.0)
+    };
     painter.rect_filled(close_rect, 4.0 * s, close_bg);
     let bx = close_rect.x + close_sz / 2.0;
     let by = close_rect.y + close_sz / 2.0;
     let cr = 7.0 * s;
-    painter.line(bx - cr, by - cr, bx + cr, by + cr, 2.0 * s, fox.text_secondary);
-    painter.line(bx + cr, by - cr, bx - cr, by + cr, 2.0 * s, fox.text_secondary);
+    painter.line(
+        bx - cr,
+        by - cr,
+        bx + cr,
+        by + cr,
+        2.0 * s,
+        fox.text_secondary,
+    );
+    painter.line(
+        bx + cr,
+        by - cr,
+        bx - cr,
+        by + cr,
+        2.0 * s,
+        fox.text_secondary,
+    );
 
     // ── Header: icon + name + subtitle ──────────────────────────────────
     let icon_x = dialog_x + (dialog_w - icon_sz) / 2.0;
@@ -492,8 +650,16 @@ pub fn draw_properties_dialog(
     let title_font_s = TITLE_FONT * s;
     let name_w = text.measure_width(&props.name, title_font_s);
     let name_x = dialog_x + (dialog_w - name_w) / 2.0;
-    text.queue(&props.name, title_font_s, name_x.max(inner_x), cy, fox.text,
-        inner_w, sw, sh);
+    text.queue(
+        &props.name,
+        title_font_s,
+        name_x.max(inner_x),
+        cy,
+        fox.text,
+        inner_w,
+        sw,
+        sh,
+    );
     cy += title_font_s + 4.0 * s;
 
     // Subtitle: "PNG Image · 2.4 MB"
@@ -505,8 +671,16 @@ pub fn draw_properties_dialog(
     };
     let sub_w = text.measure_width(&subtitle, subtitle_font_s);
     let sub_x = dialog_x + (dialog_w - sub_w) / 2.0;
-    text.queue(&subtitle, subtitle_font_s, sub_x.max(inner_x), cy,
-        fox.text_secondary, inner_w, sw, sh);
+    text.queue(
+        &subtitle,
+        subtitle_font_s,
+        sub_x.max(inner_x),
+        cy,
+        fox.text_secondary,
+        inner_w,
+        sw,
+        sh,
+    );
     cy += subtitle_font_s + pad * 0.5;
 
     // Gradient strip as the divider between the icon header and whatever
@@ -521,9 +695,18 @@ pub fn draw_properties_dialog(
     // If the picker is open, replace the rest of the body with it.
     if props.picker_open && props.is_dir {
         if let Some(evt) = draw_icon_picker_body(
-            props, painter, text, ix, fox,
-            inner_x, cy, inner_w, dialog_y + dialog_h - cy - pad,
-            s, sw, sh,
+            props,
+            painter,
+            text,
+            ix,
+            fox,
+            inner_x,
+            cy,
+            inner_w,
+            dialog_y + dialog_h - cy - pad,
+            s,
+            sw,
+            sh,
         ) {
             return Some(evt);
         }
@@ -535,45 +718,138 @@ pub fn draw_properties_dialog(
 
     // ── General section ─────────────────────────────────────────────────
     cy = draw_section_header(
-        "General", SEC_GENERAL, props, painter, text, ix, fox,
-        inner_x, cy, inner_w, section_h, s, sw, sh,
+        "General",
+        SEC_GENERAL,
+        props,
+        painter,
+        text,
+        ix,
+        fox,
+        inner_x,
+        cy,
+        inner_w,
+        section_h,
+        s,
+        sw,
+        sh,
     );
     if props.section_open[SEC_GENERAL] {
-        cy = draw_row(painter, text, fox, "Kind", &props.file_type, inner_x, cy, inner_w, label_w, label_font, row_h, sw, sh);
+        cy = draw_row(
+            painter,
+            text,
+            fox,
+            "Kind",
+            &props.file_type,
+            inner_x,
+            cy,
+            inner_w,
+            label_w,
+            label_font,
+            row_h,
+            sw,
+            sh,
+        );
         let size_display = props.size.clone();
-        cy = draw_row(painter, text, fox, "Size", &size_display, inner_x, cy, inner_w, label_w, label_font, row_h, sw, sh);
+        cy = draw_row(
+            painter,
+            text,
+            fox,
+            "Size",
+            &size_display,
+            inner_x,
+            cy,
+            inner_w,
+            label_w,
+            label_font,
+            row_h,
+            sw,
+            sh,
+        );
         let location = props.location.clone();
-        cy = draw_row(painter, text, fox, "Where", &location, inner_x, cy, inner_w, label_w, label_font, row_h, sw, sh);
+        cy = draw_row(
+            painter, text, fox, "Where", &location, inner_x, cy, inner_w, label_w, label_font,
+            row_h, sw, sh,
+        );
         let created = props.created.clone();
-        cy = draw_row(painter, text, fox, "Created", &created, inner_x, cy, inner_w, label_w, label_font, row_h, sw, sh);
+        cy = draw_row(
+            painter, text, fox, "Created", &created, inner_x, cy, inner_w, label_w, label_font,
+            row_h, sw, sh,
+        );
         let modified = props.modified.clone();
-        cy = draw_row(painter, text, fox, "Modified", &modified, inner_x, cy, inner_w, label_w, label_font, row_h, sw, sh);
+        cy = draw_row(
+            painter, text, fox, "Modified", &modified, inner_x, cy, inner_w, label_w, label_font,
+            row_h, sw, sh,
+        );
         let accessed = props.accessed.clone();
-        cy = draw_row(painter, text, fox, "Accessed", &accessed, inner_x, cy, inner_w, label_w, label_font, row_h, sw, sh);
+        cy = draw_row(
+            painter, text, fox, "Accessed", &accessed, inner_x, cy, inner_w, label_w, label_font,
+            row_h, sw, sh,
+        );
     }
 
     // ── Image/Media section (conditional) ───────────────────────────────
     if props.has_media_section() {
         cy = draw_section_header(
-            "Media Details", SEC_MEDIA, props, painter, text, ix, fox,
-            inner_x, cy, inner_w, section_h, s, sw, sh,
+            "Media Details",
+            SEC_MEDIA,
+            props,
+            painter,
+            text,
+            ix,
+            fox,
+            inner_x,
+            cy,
+            inner_w,
+            section_h,
+            s,
+            sw,
+            sh,
         );
         if props.section_open[SEC_MEDIA] {
             if let Some((w, h)) = props.image_dimensions {
                 let dim = format!("{} × {}", w, h);
-                cy = draw_row(painter, text, fox, "Dimensions", &dim, inner_x, cy, inner_w, label_w, label_font, row_h, sw, sh);
+                cy = draw_row(
+                    painter,
+                    text,
+                    fox,
+                    "Dimensions",
+                    &dim,
+                    inner_x,
+                    cy,
+                    inner_w,
+                    label_w,
+                    label_font,
+                    row_h,
+                    sw,
+                    sh,
+                );
             }
             if let Some(ref dur) = props.media_duration {
                 let dur = dur.clone();
-                cy = draw_row(painter, text, fox, "Duration", &dur, inner_x, cy, inner_w, label_w, label_font, row_h, sw, sh);
+                cy = draw_row(
+                    painter, text, fox, "Duration", &dur, inner_x, cy, inner_w, label_w,
+                    label_font, row_h, sw, sh,
+                );
             }
         }
     }
 
     // ── Disk Usage section ──────────────────────────────────────────────
     cy = draw_section_header(
-        "Disk Usage", SEC_DISK, props, painter, text, ix, fox,
-        inner_x, cy, inner_w, section_h, s, sw, sh,
+        "Disk Usage",
+        SEC_DISK,
+        props,
+        painter,
+        text,
+        ix,
+        fox,
+        inner_x,
+        cy,
+        inner_w,
+        section_h,
+        s,
+        sw,
+        sh,
     );
     if props.section_open[SEC_DISK] && props.disk_total > 0 {
         // Progress bar
@@ -582,64 +858,196 @@ pub fn draw_properties_dialog(
         painter.rect_filled(track, bar_h / 2.0, fox.surface_2);
         let fill_w = bar_w * props.disk_used_fraction;
         let fill = Rect::new(inner_x, cy, fill_w, bar_h);
-        let fill_color = if props.disk_used_fraction > 0.9 { fox.danger }
-            else if props.disk_used_fraction > 0.75 { fox.warning }
-            else { fox.accent };
+        let fill_color = if props.disk_used_fraction > 0.9 {
+            fox.danger
+        } else if props.disk_used_fraction > 0.75 {
+            fox.warning
+        } else {
+            fox.accent
+        };
         painter.rect_filled(fill, bar_h / 2.0, fill_color);
         cy += bar_h + 8.0 * s;
 
         let pct = format!("{:.0}% used", props.disk_used_fraction * 100.0);
-        let disk_text = format!("{} free of {}", format_size(props.disk_free), format_size(props.disk_total));
+        let disk_text = format!(
+            "{} free of {}",
+            format_size(props.disk_free),
+            format_size(props.disk_total)
+        );
         let full_text = format!("{} — {}", pct, disk_text);
-        cy = draw_row(painter, text, fox, "", &full_text, inner_x, cy, inner_w, 0.0, label_font, row_h, sw, sh);
+        cy = draw_row(
+            painter, text, fox, "", &full_text, inner_x, cy, inner_w, 0.0, label_font, row_h, sw,
+            sh,
+        );
     } else if props.section_open[SEC_DISK] {
-        cy = draw_row(painter, text, fox, "", "Unavailable", inner_x, cy, inner_w, 0.0, label_font, row_h, sw, sh);
+        cy = draw_row(
+            painter,
+            text,
+            fox,
+            "",
+            "Unavailable",
+            inner_x,
+            cy,
+            inner_w,
+            0.0,
+            label_font,
+            row_h,
+            sw,
+            sh,
+        );
     }
 
     // ── System section ──────────────────────────────────────────────────
     cy = draw_section_header(
-        "System", SEC_SYSTEM, props, painter, text, ix, fox,
-        inner_x, cy, inner_w, section_h, s, sw, sh,
+        "System", SEC_SYSTEM, props, painter, text, ix, fox, inner_x, cy, inner_w, section_h, s,
+        sw, sh,
     );
     if props.section_open[SEC_SYSTEM] {
         let inode = format!("{}", props.inode);
-        cy = draw_row(painter, text, fox, "Inode", &inode, inner_x, cy, inner_w, label_w, label_font, row_h, sw, sh);
+        cy = draw_row(
+            painter, text, fox, "Inode", &inode, inner_x, cy, inner_w, label_w, label_font, row_h,
+            sw, sh,
+        );
         let dev_major = (props.device_id >> 8) & 0xFF;
         let dev_minor = props.device_id & 0xFF;
         let device = format!("{}:{}", dev_major, dev_minor);
-        cy = draw_row(painter, text, fox, "Device", &device, inner_x, cy, inner_w, label_w, label_font, row_h, sw, sh);
+        cy = draw_row(
+            painter, text, fox, "Device", &device, inner_x, cy, inner_w, label_w, label_font,
+            row_h, sw, sh,
+        );
         let links = format!("{}", props.hard_links);
-        cy = draw_row(painter, text, fox, "Hard Links", &links, inner_x, cy, inner_w, label_w, label_font, row_h, sw, sh);
+        cy = draw_row(
+            painter,
+            text,
+            fox,
+            "Hard Links",
+            &links,
+            inner_x,
+            cy,
+            inner_w,
+            label_w,
+            label_font,
+            row_h,
+            sw,
+            sh,
+        );
         let blk_sz = format_size(props.block_size);
-        cy = draw_row(painter, text, fox, "Block Size", &blk_sz, inner_x, cy, inner_w, label_w, label_font, row_h, sw, sh);
+        cy = draw_row(
+            painter,
+            text,
+            fox,
+            "Block Size",
+            &blk_sz,
+            inner_x,
+            cy,
+            inner_w,
+            label_w,
+            label_font,
+            row_h,
+            sw,
+            sh,
+        );
         let blocks = format!("{}", props.blocks);
-        cy = draw_row(painter, text, fox, "Blocks", &blocks, inner_x, cy, inner_w, label_w, label_font, row_h, sw, sh);
+        cy = draw_row(
+            painter, text, fox, "Blocks", &blocks, inner_x, cy, inner_w, label_w, label_font,
+            row_h, sw, sh,
+        );
     }
 
     // ── Permissions section ─────────────────────────────────────────────
     cy = draw_section_header(
-        "Permissions", SEC_PERMS, props, painter, text, ix, fox,
-        inner_x, cy, inner_w, section_h, s, sw, sh,
+        "Permissions",
+        SEC_PERMS,
+        props,
+        painter,
+        text,
+        ix,
+        fox,
+        inner_x,
+        cy,
+        inner_w,
+        section_h,
+        s,
+        sw,
+        sh,
     );
     if props.section_open[SEC_PERMS] {
         let mode = props.permissions_mode;
-        cy = draw_perm_row(painter, text, fox, "Owner", &props.owner.clone(), mode, 6, inner_x, cy, inner_w, label_w, label_font, row_h, s, sw, sh);
-        cy = draw_perm_row(painter, text, fox, "Group", &props.group.clone(), mode, 3, inner_x, cy, inner_w, label_w, label_font, row_h, s, sw, sh);
-        cy = draw_perm_row(painter, text, fox, "Other", "", mode, 0, inner_x, cy, inner_w, label_w, label_font, row_h, s, sw, sh);
+        cy = draw_perm_row(
+            painter,
+            text,
+            fox,
+            "Owner",
+            &props.owner.clone(),
+            mode,
+            6,
+            inner_x,
+            cy,
+            inner_w,
+            label_w,
+            label_font,
+            row_h,
+            s,
+            sw,
+            sh,
+        );
+        cy = draw_perm_row(
+            painter,
+            text,
+            fox,
+            "Group",
+            &props.group.clone(),
+            mode,
+            3,
+            inner_x,
+            cy,
+            inner_w,
+            label_w,
+            label_font,
+            row_h,
+            s,
+            sw,
+            sh,
+        );
+        cy = draw_perm_row(
+            painter, text, fox, "Other", "", mode, 0, inner_x, cy, inner_w, label_w, label_font,
+            row_h, s, sw, sh,
+        );
         let octal = format!("{:04o}", mode & 0o7777);
-        cy = draw_row(painter, text, fox, "Mode", &octal, inner_x, cy, inner_w, label_w, label_font, row_h, sw, sh);
+        cy = draw_row(
+            painter, text, fox, "Mode", &octal, inner_x, cy, inner_w, label_w, label_font, row_h,
+            sw, sh,
+        );
     }
 
     // ── Symlink section (conditional) ───────────────────────────────────
     if props.has_symlink_section() {
         cy = draw_section_header(
-            "Symlink", SEC_SYMLINK, props, painter, text, ix, fox,
-            inner_x, cy, inner_w, section_h, s, sw, sh,
+            "Symlink",
+            SEC_SYMLINK,
+            props,
+            painter,
+            text,
+            ix,
+            fox,
+            inner_x,
+            cy,
+            inner_w,
+            section_h,
+            s,
+            sw,
+            sh,
         );
         if props.section_open[SEC_SYMLINK] {
             cy = {
-                let target = props.symlink_target.clone().unwrap_or_else(|| "Unknown".into());
-                draw_row(painter, text, fox, "Target", &target, inner_x, cy, inner_w, label_w, label_font, row_h, sw, sh)
+                let target = props
+                    .symlink_target
+                    .clone()
+                    .unwrap_or_else(|| "Unknown".into());
+                draw_row(
+                    painter, text, fox, "Target", &target, inner_x, cy, inner_w, label_w,
+                    label_font, row_h, sw, sh,
+                )
             };
         }
     }
@@ -648,8 +1056,20 @@ pub fn draw_properties_dialog(
     let mut checksum_copy: Option<String> = None;
     if !props.is_dir {
         cy = draw_section_header(
-            "Checksum", SEC_CHECKSUM, props, painter, text, ix, fox,
-            inner_x, cy, inner_w, section_h, s, sw, sh,
+            "Checksum",
+            SEC_CHECKSUM,
+            props,
+            painter,
+            text,
+            ix,
+            fox,
+            inner_x,
+            cy,
+            inner_w,
+            section_h,
+            s,
+            sw,
+            sh,
         );
         if props.section_open[SEC_CHECKSUM] {
             if props.checksum_job.is_none() {
@@ -665,13 +1085,30 @@ pub fn draw_properties_dialog(
                     // 64 hex chars overflow the value column — show a prefix,
                     // copy the full hash on click.
                     let display = format!("{}…  (click to copy)", &hash[..20.min(hash.len())]);
-                    let _ = draw_row(painter, text, fox, "SHA-256", &display, inner_x, cy, inner_w, label_w, label_font, row_h, sw, sh);
+                    let _ = draw_row(
+                        painter, text, fox, "SHA-256", &display, inner_x, cy, inner_w, label_w,
+                        label_font, row_h, sw, sh,
+                    );
                     if zone.is_active() {
                         checksum_copy = Some(hash);
                     }
                 }
                 None => {
-                    let _ = draw_row(painter, text, fox, "SHA-256", "Computing…", inner_x, cy, inner_w, label_w, label_font, row_h, sw, sh);
+                    let _ = draw_row(
+                        painter,
+                        text,
+                        fox,
+                        "SHA-256",
+                        "Computing…",
+                        inner_x,
+                        cy,
+                        inner_w,
+                        label_w,
+                        label_font,
+                        row_h,
+                        sw,
+                        sh,
+                    );
                 }
             }
         }
@@ -698,18 +1135,20 @@ fn draw_section_header(
     text: &mut TextRenderer,
     ix: &mut InteractionContext,
     fox: &FoxPalette,
-    x: f32, y: f32, w: f32, h: f32,
-    s: f32, sw: u32, sh: u32,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    s: f32,
+    sw: u32,
+    sh: u32,
 ) -> f32 {
     let zone_id = ZONE_SECTION_BASE + section_idx as u32;
     let rect = Rect::new(x, y, w, h);
     let zone = ix.add_zone(zone_id, rect);
 
     // Subtle separator line above
-    painter.rect_filled(
-        Rect::new(x, y, w, 1.0 * s), 0.0,
-        fox.muted.with_alpha(0.12),
-    );
+    painter.rect_filled(Rect::new(x, y, w, 1.0 * s), 0.0, fox.muted.with_alpha(0.12));
 
     // Hover highlight
     if zone.is_hovered() {
@@ -724,25 +1163,39 @@ fn draw_section_header(
     if open {
         // Down-pointing triangle
         painter.triangle(
-            tri_x, tri_cy - tri_sz * 0.3,
-            tri_x + tri_sz, tri_cy - tri_sz * 0.3,
-            tri_x + tri_sz * 0.5, tri_cy + tri_sz * 0.4,
+            tri_x,
+            tri_cy - tri_sz * 0.3,
+            tri_x + tri_sz,
+            tri_cy - tri_sz * 0.3,
+            tri_x + tri_sz * 0.5,
+            tri_cy + tri_sz * 0.4,
             fox.text_secondary,
         );
     } else {
         // Right-pointing triangle
         painter.triangle(
-            tri_x + 2.0 * s, tri_cy - tri_sz * 0.5,
-            tri_x + tri_sz, tri_cy,
-            tri_x + 2.0 * s, tri_cy + tri_sz * 0.5,
+            tri_x + 2.0 * s,
+            tri_cy - tri_sz * 0.5,
+            tri_x + tri_sz,
+            tri_cy,
+            tri_x + 2.0 * s,
+            tri_cy + tri_sz * 0.5,
             fox.text_secondary,
         );
     }
 
     // Section label
     let font_sz = 15.0 * s;
-    text.queue(label, font_sz, x + tri_sz + 8.0 * s, y + (h - font_sz) / 2.0,
-        fox.text, w - tri_sz - 8.0 * s, sw, sh);
+    text.queue(
+        label,
+        font_sz,
+        x + tri_sz + 8.0 * s,
+        y + (h - font_sz) / 2.0,
+        fox.text,
+        w - tri_sz - 8.0 * s,
+        sw,
+        sh,
+    );
 
     y + h
 }
@@ -754,10 +1207,16 @@ fn draw_row(
     _painter: &mut Painter,
     text: &mut TextRenderer,
     fox: &FoxPalette,
-    label: &str, value: &str,
-    x: f32, y: f32, w: f32, label_w: f32,
-    font: f32, row_h: f32,
-    sw: u32, sh: u32,
+    label: &str,
+    value: &str,
+    x: f32,
+    y: f32,
+    w: f32,
+    label_w: f32,
+    font: f32,
+    row_h: f32,
+    sw: u32,
+    sh: u32,
 ) -> f32 {
     let ty = y + (row_h - font) / 2.0;
     if !label.is_empty() {
@@ -773,18 +1232,35 @@ fn draw_perm_row(
     painter: &mut Painter,
     text: &mut TextRenderer,
     fox: &FoxPalette,
-    role: &str, name: &str,
-    mode: u32, shift: u32,
-    x: f32, y: f32, _w: f32, label_w: f32,
-    font: f32, row_h: f32,
-    s: f32, sw: u32, sh: u32,
+    role: &str,
+    name: &str,
+    mode: u32,
+    shift: u32,
+    x: f32,
+    y: f32,
+    _w: f32,
+    label_w: f32,
+    font: f32,
+    row_h: f32,
+    s: f32,
+    sw: u32,
+    sh: u32,
 ) -> f32 {
     let ty = y + (row_h - font) / 2.0;
     // Role label
     text.queue(role, font, x, ty, fox.text_secondary, label_w * 0.5, sw, sh);
     // Name (owner/group)
     if !name.is_empty() {
-        text.queue(name, font, x + label_w * 0.5, ty, fox.text, label_w * 0.6, sw, sh);
+        text.queue(
+            name,
+            font,
+            x + label_w * 0.5,
+            ty,
+            fox.text,
+            label_w * 0.6,
+            sw,
+            sh,
+        );
     }
 
     // rwx boxes
@@ -798,12 +1274,28 @@ fn draw_perm_row(
         let bx = box_x + i as f32 * (box_sz + box_gap);
         let active = mode & (1 << (shift + bit_offset)) != 0;
         let rect = Rect::new(bx, box_y, box_sz, box_sz);
-        let bg = if active { fox.accent.with_alpha(0.2) } else { fox.muted.with_alpha(0.08) };
-        let fg = if active { fox.accent } else { fox.muted.with_alpha(0.3) };
+        let bg = if active {
+            fox.accent.with_alpha(0.2)
+        } else {
+            fox.muted.with_alpha(0.08)
+        };
+        let fg = if active {
+            fox.accent
+        } else {
+            fox.muted.with_alpha(0.3)
+        };
         painter.rect_filled(rect, 4.0 * s, bg);
         let char_w = text.measure_width(ch, font);
-        text.queue(ch, font, bx + (box_sz - char_w) / 2.0, box_y + (box_sz - font) / 2.0,
-            fg, box_sz, sw, sh);
+        text.queue(
+            ch,
+            font,
+            bx + (box_sz - char_w) / 2.0,
+            box_y + (box_sz - font) / 2.0,
+            fg,
+            box_sz,
+            sw,
+            sh,
+        );
     }
 
     y + row_h
@@ -835,8 +1327,13 @@ fn draw_icon_picker_body(
     text: &mut TextRenderer,
     ix: &mut InteractionContext,
     fox: &FoxPalette,
-    x: f32, y_start: f32, w: f32, h: f32,
-    s: f32, sw: u32, sh: u32,
+    x: f32,
+    y_start: f32,
+    w: f32,
+    h: f32,
+    s: f32,
+    sw: u32,
+    sh: u32,
 ) -> Option<PropertiesEvent> {
     let pad = 12.0 * s;
     let tab_h = 36.0 * s;
@@ -870,9 +1367,16 @@ fn draw_icon_picker_body(
         let lw = text.measure_width(t.label(), label_font);
         let lx = tr.x + (tr.w - lw) * 0.5;
         let ly = tr.y + (tr.h - label_font) * 0.5;
-        text.queue(t.label(), label_font, lx, ly,
+        text.queue(
+            t.label(),
+            label_font,
+            lx,
+            ly,
             if active { fox.text } else { fox.text_secondary },
-            tr.w, sw, sh);
+            tr.w,
+            sw,
+            sh,
+        );
         if state.is_active() {
             props.picker_tab = *t;
         }
@@ -886,14 +1390,25 @@ fn draw_icon_picker_body(
         // Custom tab: just a "Choose Custom Image..." button.
         let btn = Rect::new(x + w * 0.25, y + grid_h * 0.4, w * 0.5, 48.0 * s);
         let state = ix.add_zone(crate::ZONE_PROPS_PICKER_BACK, btn);
-        let bg = if state.is_hovered() { fox.accent } else { fox.accent.with_alpha(0.85) };
+        let bg = if state.is_hovered() {
+            fox.accent
+        } else {
+            fox.accent.with_alpha(0.85)
+        };
         painter.rect_filled(btn, 8.0 * s, bg);
         let label = "Choose Custom Image\u{2026}";
         let label_font = 16.0 * s;
         let lw = text.measure_width(label, label_font);
-        text.queue(label, label_font, btn.x + (btn.w - lw) * 0.5,
+        text.queue(
+            label,
+            label_font,
+            btn.x + (btn.w - lw) * 0.5,
             btn.y + (btn.h - label_font) * 0.5,
-            Color::WHITE, btn.w, sw, sh);
+            Color::WHITE,
+            btn.w,
+            sw,
+            sh,
+        );
         if state.is_active() {
             // Spawn the existing file-picker flow inline. Reuses CTX_CHANGE_ICON's
             // logic via a thread that re-applies the chosen icon on success.
@@ -902,8 +1417,10 @@ fn draw_icon_picker_body(
                 let output = std::process::Command::new("lntrn-file-manager")
                     .args([
                         "--pick",
-                        "--title", "Choose Folder Icon",
-                        "--filters", "Images:*.png,*.svg,*.jpg,*.jpeg,*.webp,*.ico",
+                        "--title",
+                        "Choose Folder Icon",
+                        "--filters",
+                        "Images:*.png,*.svg,*.jpg,*.jpeg,*.webp,*.ico",
                     ])
                     .output();
                 if let Ok(out) = output {
@@ -928,7 +1445,9 @@ fn draw_icon_picker_body(
             let row = i / cols;
             let cx = x + col as f32 * (cell + cell_gap);
             let cy = y + row as f32 * (cell + cell_gap);
-            if cy + cell > y + grid_h { break; } // overflow — needs scrolling, future polish
+            if cy + cell > y + grid_h {
+                break;
+            } // overflow — needs scrolling, future polish
             let r = Rect::new(cx, cy, cell, cell);
             let zone_id = crate::ZONE_PROPS_ICON_BASE + i as u32;
             let state = ix.add_zone(zone_id, r);
@@ -944,8 +1463,10 @@ fn draw_icon_picker_body(
             let inset = 8.0 * s;
             props.picker_cell_rects.push((
                 path.clone(),
-                r.x + inset, r.y + inset,
-                r.w - inset * 2.0, r.h - inset * 2.0,
+                r.x + inset,
+                r.y + inset,
+                r.w - inset * 2.0,
+                r.h - inset * 2.0,
             ));
             if state.is_active() {
                 return Some(PropertiesEvent::IconChosen(path.clone()));
@@ -956,8 +1477,16 @@ fn draw_icon_picker_body(
             let msg = "No icons found in this category.";
             let font = 16.0 * s;
             let mw = text.measure_width(msg, font);
-            text.queue(msg, font, x + (w - mw) * 0.5, y + grid_h * 0.4,
-                fox.muted, w, sw, sh);
+            text.queue(
+                msg,
+                font,
+                x + (w - mw) * 0.5,
+                y + grid_h * 0.4,
+                fox.muted,
+                w,
+                sw,
+                sh,
+            );
         }
     }
 
@@ -978,9 +1507,16 @@ fn draw_icon_picker_body(
     let lbl = "Reset to Default";
     let lf = 15.0 * s;
     let lw = text.measure_width(lbl, lf);
-    text.queue(lbl, lf, reset_rect.x + (reset_rect.w - lw) * 0.5,
+    text.queue(
+        lbl,
+        lf,
+        reset_rect.x + (reset_rect.w - lw) * 0.5,
         reset_rect.y + (reset_rect.h - lf) * 0.5,
-        Color::WHITE, reset_rect.w, sw, sh);
+        Color::WHITE,
+        reset_rect.w,
+        sw,
+        sh,
+    );
     if reset_state.is_active() {
         return Some(PropertiesEvent::IconReset);
     }
@@ -995,9 +1531,16 @@ fn draw_icon_picker_body(
     painter.rect_filled(back_rect, 8.0 * s, back_bg);
     let lbl = "Back";
     let lw = text.measure_width(lbl, lf);
-    text.queue(lbl, lf, back_rect.x + (back_rect.w - lw) * 0.5,
+    text.queue(
+        lbl,
+        lf,
+        back_rect.x + (back_rect.w - lw) * 0.5,
         back_rect.y + (back_rect.h - lf) * 0.5,
-        fox.text, back_rect.w, sw, sh);
+        fox.text,
+        back_rect.w,
+        sw,
+        sh,
+    );
     if back_state.is_active() {
         props.picker_open = false;
     }

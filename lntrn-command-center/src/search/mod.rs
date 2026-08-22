@@ -13,10 +13,10 @@ use std::path::PathBuf;
 
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
-use crate::render::IconRequest;
 use self::apps::AppsProvider;
 use self::files::FileIndex;
 use self::input::Input;
+use crate::render::IconRequest;
 
 /// Hard cap on ranked results. Set well above what fits in the visible
 /// viewport — anything past the bottom of the panel is reachable via
@@ -99,7 +99,11 @@ impl Search {
     /// Re-rank results against the current input. Merges installed-app
     /// matches with live filesystem matches into one score-sorted list.
     /// Called when the input buffer changes.
-    pub fn refresh_results(&mut self, apps: &AppsProvider, hidden: &crate::launcher::hidden::Hidden) {
+    pub fn refresh_results(
+        &mut self,
+        apps: &AppsProvider,
+        hidden: &crate::launcher::hidden::Hidden,
+    ) {
         // Any keystroke exits all-apps browse mode — typing implies the
         // user wants to filter, not browse the full list.
         self.all_apps_mode = false;
@@ -284,8 +288,17 @@ pub fn draw_results(
 
     if search.all_apps_mode {
         draw_results_grid(
-            painter, text, icons, search, apps, selected_result,
-            panel, scale, alpha, surface_w, surface_h,
+            painter,
+            text,
+            icons,
+            search,
+            apps,
+            selected_result,
+            panel,
+            scale,
+            alpha,
+            surface_w,
+            surface_h,
         );
         return;
     }
@@ -329,7 +342,9 @@ pub fn draw_results(
         // generic-mime icon (folder / image / video / document).
         let (icon_key, icon_name, primary_text, secondary_text) = match &r.kind {
             ResultKind::App(idx) => {
-                let Some(entry) = apps.get(*idx) else { continue };
+                let Some(entry) = apps.get(*idx) else {
+                    continue;
+                };
                 (
                     entry.app_id.clone(),
                     entry.icon_name.clone(),
@@ -343,10 +358,7 @@ pub fn draw_results(
                     .file_name()
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_else(|| path.to_string_lossy().into_owned());
-                let parent = path
-                    .parent()
-                    .map(files::display_path)
-                    .unwrap_or_default();
+                let parent = path.parent().map(files::display_path).unwrap_or_default();
                 (key, Some(icon), name, parent)
             }
         };
@@ -363,7 +375,12 @@ pub fn draw_results(
         if is_selected {
             // Accent gold tinted row + thin accent stroke.
             painter.rect_filled(row_rect, 6.0 * scale, accent_color(0.18 * alpha));
-            painter.rect_stroke_sdf(row_rect, 6.0 * scale, 1.5 * scale, accent_color(0.55 * alpha));
+            painter.rect_stroke_sdf(
+                row_rect,
+                6.0 * scale,
+                1.5 * scale,
+                accent_color(0.55 * alpha),
+            );
         } else if i % 2 == 0 {
             painter.rect_filled(
                 row_rect,

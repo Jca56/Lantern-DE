@@ -11,16 +11,14 @@ use crate::settings::Settings;
 use crate::wayland::State;
 use crate::{
     CTX_ADD_FAVORITE, CTX_CHANGE_ICON, CTX_CLOSE_WINDOW, CTX_COMPRESS, CTX_COPY, CTX_COPY_NAME,
-    CTX_COPY_PATH, CTX_CUT, CTX_DRIVE_EJECT, CTX_DRIVE_FORMAT, CTX_DRIVE_PROPERTIES,
-    CTX_DUPLICATE, CTX_EMPTY_TRASH, CTX_EXTRACT, CTX_LNTRN, CTX_MAXIMIZE, CTX_MINIMIZE,
-    CTX_NEW_FILE, CTX_NEW_FOLDER, CTX_NEW_FOLDER_BLUE,
-    CTX_NEW_FOLDER_GREEN, CTX_NEW_FOLDER_ORANGE, CTX_NEW_FOLDER_PLAIN, CTX_NEW_FOLDER_PURPLE,
-    CTX_NEW_FOLDER_RED, CTX_NEW_FOLDER_YELLOW, CTX_NEXT_TAB, CTX_OPEN, CTX_OPEN_AS_ROOT,
-    CTX_OPEN_LOCATION,
-    CTX_OPEN_TERMINAL, CTX_OPEN_WITH, CTX_OPEN_WITH_BASE, CTX_PASTE, CTX_PREV_TAB,
-    CTX_PROPERTIES,
-    CTX_REMOVE_FAVORITE, CTX_RENAME, CTX_SELECT_ALL, CTX_SHOW_HIDDEN, CTX_SORT_BY, CTX_SORT_DATE,
-    CTX_SORT_NAME, CTX_SORT_SIZE, CTX_SORT_TYPE, CTX_TRASH,
+    CTX_COPY_PATH, CTX_CUT, CTX_DRIVE_EJECT, CTX_DRIVE_FORMAT, CTX_DRIVE_PROPERTIES, CTX_DUPLICATE,
+    CTX_EMPTY_TRASH, CTX_EXTRACT, CTX_LNTRN, CTX_MAXIMIZE, CTX_MINIMIZE, CTX_NEW_FILE,
+    CTX_NEW_FOLDER, CTX_NEW_FOLDER_BLUE, CTX_NEW_FOLDER_GREEN, CTX_NEW_FOLDER_ORANGE,
+    CTX_NEW_FOLDER_PLAIN, CTX_NEW_FOLDER_PURPLE, CTX_NEW_FOLDER_RED, CTX_NEW_FOLDER_YELLOW,
+    CTX_NEXT_TAB, CTX_OPEN, CTX_OPEN_AS_ROOT, CTX_OPEN_LOCATION, CTX_OPEN_TERMINAL, CTX_OPEN_WITH,
+    CTX_OPEN_WITH_BASE, CTX_PASTE, CTX_PREV_TAB, CTX_PROPERTIES, CTX_REMOVE_FAVORITE, CTX_RENAME,
+    CTX_SELECT_ALL, CTX_SHOW_HIDDEN, CTX_SORT_BY, CTX_SORT_DATE, CTX_SORT_NAME, CTX_SORT_SIZE,
+    CTX_SORT_TYPE, CTX_TRASH,
 };
 
 use super::{apply_sort_selection, sort_menu_items};
@@ -40,7 +38,9 @@ fn build_item_menu(
 ) -> Vec<MenuItem> {
     let mut v = vec![MenuItem::action(CTX_OPEN, "Open")];
     if !is_dir && !open_with_apps.is_empty() {
-        let children: Vec<MenuItem> = open_with_apps.iter().enumerate()
+        let children: Vec<MenuItem> = open_with_apps
+            .iter()
+            .enumerate()
             .map(|(i, a)| MenuItem::action(CTX_OPEN_WITH_BASE + i as u32, &a.name))
             .collect();
         v.push(MenuItem::submenu(CTX_OPEN_WITH, "Open With", children));
@@ -62,7 +62,10 @@ fn build_item_menu(
     }
     v.push(MenuItem::action(CTX_COMPRESS, "Compress"));
     if is_image {
-        v.push(MenuItem::action(crate::CTX_SET_WALLPAPER, "Set as Wallpaper"));
+        v.push(MenuItem::action(
+            crate::CTX_SET_WALLPAPER,
+            "Set as Wallpaper",
+        ));
     }
     v.push(MenuItem::separator());
     if allow_rename {
@@ -77,8 +80,13 @@ fn build_item_menu(
     v.push(MenuItem::separator());
     if is_dir {
         match fav_state {
-            FavoriteState::NotFavorite => v.push(MenuItem::action(CTX_ADD_FAVORITE, "Add to Favorites")),
-            FavoriteState::Favorite => v.push(MenuItem::action(CTX_REMOVE_FAVORITE, "Remove from Favorites")),
+            FavoriteState::NotFavorite => {
+                v.push(MenuItem::action(CTX_ADD_FAVORITE, "Add to Favorites"))
+            }
+            FavoriteState::Favorite => v.push(MenuItem::action(
+                CTX_REMOVE_FAVORITE,
+                "Remove from Favorites",
+            )),
             FavoriteState::NotApplicable => {}
         }
         // Change-icon now lives inside Properties — click the icon at the top
@@ -116,9 +124,13 @@ pub(crate) fn handle_right_click(
     popup_backend: &mut Option<WaylandPopupBackend<State>>,
     input: &InteractionContext,
     open_with_apps: &mut Vec<DesktopApp>,
-    wf: f32, hf: f32, s: f32,
+    wf: f32,
+    hf: f32,
+    s: f32,
 ) {
-    let Some((cx, cy)) = input.cursor() else { return };
+    let Some((cx, cy)) = input.cursor() else {
+        return;
+    };
 
     // Rebuild the sidebar layout so hit-tests match what's currently on
     // screen (collapsed sections, favorites count, etc.).
@@ -138,11 +150,13 @@ pub(crate) fn handle_right_click(
     // could grow their own actions later.
     for (i, r) in sb.place_items.iter().enumerate() {
         if r.contains(cx, cy) {
-            let Some(place) = app.sidebar_places().get(i) else { return; };
-            if place.name != "Trash" { return; }
-            let items = vec![
-                MenuItem::action_danger(CTX_EMPTY_TRASH, "Empty Trash"),
-            ];
+            let Some(place) = app.sidebar_places().get(i) else {
+                return;
+            };
+            if place.name != "Trash" {
+                return;
+            }
+            let items = vec![MenuItem::action_danger(CTX_EMPTY_TRASH, "Empty Trash")];
             context_menu.set_scale(s);
             if let Some(backend) = popup_backend {
                 let lx = (cx / s) as f32;
@@ -228,7 +242,9 @@ pub(crate) fn handle_right_click(
     }
 
     let cr = app.active_content_rect(wf, hf, s);
-    if !cr.contains(cx, cy) { return; }
+    if !cr.contains(cx, cy) {
+        return;
+    }
 
     // Search mode: use list-based hit detection against search_results
     if app.searching && !app.search_buf.is_empty() {
@@ -250,12 +266,16 @@ pub(crate) fn handle_right_click(
                 MenuItem::action(CTX_COPY_NAME, "Copy Name"),
             ];
             if !entry.is_dir {
-                let ext = entry.path.extension()
+                let ext = entry
+                    .path
+                    .extension()
                     .map(|e| e.to_string_lossy().to_string())
                     .unwrap_or_default();
                 *open_with_apps = desktop::apps_for_extension(&ext);
                 if !open_with_apps.is_empty() {
-                    let children: Vec<MenuItem> = open_with_apps.iter().enumerate()
+                    let children: Vec<MenuItem> = open_with_apps
+                        .iter()
+                        .enumerate()
                         .map(|(i, a)| MenuItem::action(CTX_OPEN_WITH_BASE + i as u32, &a.name))
                         .collect();
                     items.insert(1, MenuItem::submenu(CTX_OPEN_WITH, "Open With", children));
@@ -287,7 +307,7 @@ pub(crate) fn handle_right_click(
     // their rows are taller than a grid cell.
     enum ClickedRow {
         Item(usize),
-        NestedPath(PathBuf, bool),  // (path, is_dir) for tree rows not in entries
+        NestedPath(PathBuf, bool), // (path, is_dir) for tree rows not in entries
         None,
     }
     let clicked_row = match input.zone_at(cx, cy) {
@@ -309,7 +329,11 @@ pub(crate) fn handle_right_click(
         }
         Some(zone) if zone >= crate::ZONE_P2_FILE_BASE => {
             let fi = (zone - crate::ZONE_P2_FILE_BASE) as usize;
-            if fi < app.entries.len() { ClickedRow::Item(fi) } else { ClickedRow::None }
+            if fi < app.entries.len() {
+                ClickedRow::Item(fi)
+            } else {
+                ClickedRow::None
+            }
         }
         Some(zone) if zone >= crate::ZONE_TREE_ITEM_BASE => {
             let ti = (zone - crate::ZONE_TREE_ITEM_BASE) as usize;
@@ -327,7 +351,11 @@ pub(crate) fn handle_right_click(
         }
         Some(zone) if zone >= crate::ZONE_FILE_ITEM_BASE && zone < crate::ZONE_TREE_ITEM_BASE => {
             let fi = (zone - crate::ZONE_FILE_ITEM_BASE) as usize;
-            if fi < app.entries.len() { ClickedRow::Item(fi) } else { ClickedRow::None }
+            if fi < app.entries.len() {
+                ClickedRow::Item(fi)
+            } else {
+                ClickedRow::None
+            }
         }
         _ => ClickedRow::None,
     };
@@ -339,7 +367,11 @@ pub(crate) fn handle_right_click(
             app.context_target = Some(ContextTarget::Item(idx));
             let is_dir = app.entries[idx].is_dir;
             let is_archive = !is_dir && crate::file_ops::is_archive(&app.entries[idx].path);
-            let ext = if !is_dir { app.entries[idx].extension() } else { String::new() };
+            let ext = if !is_dir {
+                app.entries[idx].extension()
+            } else {
+                String::new()
+            };
             if !is_dir {
                 *open_with_apps = desktop::apps_for_extension(&ext);
             }
@@ -349,9 +381,20 @@ pub(crate) fn handle_right_click(
                 } else {
                     FavoriteState::NotFavorite
                 }
-            } else { FavoriteState::NotApplicable };
+            } else {
+                FavoriteState::NotApplicable
+            };
             let is_image = !is_dir && crate::icons::is_raster_image_file(&app.entries[idx].name);
-            build_item_menu(is_dir, is_archive, is_image, true, app.in_trash(), has_clipboard, open_with_apps, fav_state)
+            build_item_menu(
+                is_dir,
+                is_archive,
+                is_image,
+                true,
+                app.in_trash(),
+                has_clipboard,
+                open_with_apps,
+                fav_state,
+            )
         }
         ClickedRow::NestedPath(path, is_dir) => {
             // Nested tree row — clear any entries-based selection so the
@@ -365,7 +408,9 @@ pub(crate) fn handle_right_click(
                     .and_then(|e| e.to_str())
                     .map(|s| s.to_lowercase())
                     .unwrap_or_default()
-            } else { String::new() };
+            } else {
+                String::new()
+            };
             if !is_dir {
                 *open_with_apps = desktop::apps_for_extension(&ext);
             }
@@ -375,37 +420,65 @@ pub(crate) fn handle_right_click(
                 } else {
                     FavoriteState::NotFavorite
                 }
-            } else { FavoriteState::NotApplicable };
+            } else {
+                FavoriteState::NotApplicable
+            };
             // `allow_rename = false` — rename UI keys off an entries index and
             // doesn't have a path-based variant yet, so we hide it for nested rows.
-            let is_image = !is_dir && path.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(crate::icons::is_raster_image_file);
-            build_item_menu(is_dir, is_archive, is_image, false, app.in_trash(), has_clipboard, open_with_apps, fav_state)
+            let is_image = !is_dir
+                && path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(crate::icons::is_raster_image_file);
+            build_item_menu(
+                is_dir,
+                is_archive,
+                is_image,
+                false,
+                app.in_trash(),
+                has_clipboard,
+                open_with_apps,
+                fav_state,
+            )
         }
         ClickedRow::None => {
             app.clear_selection();
             app.context_target = Some(ContextTarget::Empty);
             let mut v = Vec::new();
-            v.push(MenuItem::checkbox(CTX_SHOW_HIDDEN, "Show Hidden Files", app.show_hidden));
-            v.push(MenuItem::slider(crate::CTX_ICON_SIZE, "Icon Size", app.icon_zoom));
+            v.push(MenuItem::checkbox(
+                CTX_SHOW_HIDDEN,
+                "Show Hidden Files",
+                app.show_hidden,
+            ));
+            v.push(MenuItem::slider(
+                crate::CTX_ICON_SIZE,
+                "Icon Size",
+                app.icon_zoom,
+            ));
             v.push(MenuItem::separator());
             if has_clipboard {
                 v.push(MenuItem::action_with(CTX_PASTE, "Paste", "Ctrl+V"));
                 v.push(MenuItem::separator());
             }
             v.push(MenuItem::action(CTX_NEW_FILE, "New File"));
-            v.push(MenuItem::color_swatches("New Folder", vec![
-                (CTX_NEW_FOLDER_PLAIN,  Color::from_rgb8(140, 140, 140)),
-                (CTX_NEW_FOLDER_RED,    Color::from_rgb8(220, 60, 60)),
-                (CTX_NEW_FOLDER_ORANGE, Color::from_rgb8(230, 150, 40)),
-                (CTX_NEW_FOLDER_YELLOW, Color::from_rgb8(220, 200, 50)),
-                (CTX_NEW_FOLDER_GREEN,  Color::from_rgb8(70, 180, 80)),
-                (CTX_NEW_FOLDER_BLUE,   Color::from_rgb8(60, 130, 220)),
-                (CTX_NEW_FOLDER_PURPLE, Color::from_rgb8(160, 80, 210)),
-            ]));
+            v.push(MenuItem::color_swatches(
+                "New Folder",
+                vec![
+                    (CTX_NEW_FOLDER_PLAIN, Color::from_rgb8(140, 140, 140)),
+                    (CTX_NEW_FOLDER_RED, Color::from_rgb8(220, 60, 60)),
+                    (CTX_NEW_FOLDER_ORANGE, Color::from_rgb8(230, 150, 40)),
+                    (CTX_NEW_FOLDER_YELLOW, Color::from_rgb8(220, 200, 50)),
+                    (CTX_NEW_FOLDER_GREEN, Color::from_rgb8(70, 180, 80)),
+                    (CTX_NEW_FOLDER_BLUE, Color::from_rgb8(60, 130, 220)),
+                    (CTX_NEW_FOLDER_PURPLE, Color::from_rgb8(160, 80, 210)),
+                ],
+            ));
             v.push(MenuItem::separator());
-            v.push(MenuItem::submenu(CTX_SORT_BY, "Sort By", sort_menu_items(app)));
+            v.push(MenuItem::submenu(
+                CTX_SORT_BY,
+                "Sort By",
+                sort_menu_items(app),
+            ));
             v.push(MenuItem::separator());
             v.push(MenuItem::action(CTX_SELECT_ALL, "Select All"));
             v.push(MenuItem::action(CTX_OPEN_TERMINAL, "Open Terminal Here"));
@@ -430,7 +503,8 @@ pub(crate) fn handle_right_click(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn handle_ctx_event(
-    app: &mut App, settings: &mut Settings,
+    app: &mut App,
+    settings: &mut Settings,
     context_menu: &mut ContextMenu,
     popup_backend: &mut Option<WaylandPopupBackend<State>>,
     open_with_apps: &[DesktopApp],
@@ -445,11 +519,17 @@ pub(crate) fn handle_ctx_event(
             match id {
                 // Mini title bar (window controls row)
                 CTX_MINIMIZE => {
-                    if let Some(t) = toplevel { t.set_minimized(); }
+                    if let Some(t) = toplevel {
+                        t.set_minimized();
+                    }
                 }
                 CTX_MAXIMIZE => {
                     if let Some(t) = toplevel {
-                        if maximized { t.unset_maximized(); } else { t.set_maximized(); }
+                        if maximized {
+                            t.unset_maximized();
+                        } else {
+                            t.set_maximized();
+                        }
                     }
                 }
                 CTX_CLOSE_WINDOW => *running = false,
@@ -457,7 +537,11 @@ pub(crate) fn handle_ctx_event(
                 CTX_PREV_TAB => {
                     let n = app.tabs.len();
                     if n > 1 {
-                        let i = if app.current_tab == 0 { n - 1 } else { app.current_tab - 1 };
+                        let i = if app.current_tab == 0 {
+                            n - 1
+                        } else {
+                            app.current_tab - 1
+                        };
                         app.switch_tab(i);
                     }
                 }
@@ -480,8 +564,8 @@ pub(crate) fn handle_ctx_event(
                                 app.navigate_to(path);
                             } else {
                                 std::thread::spawn(move || {
-                                    let _ = std::process::Command::new("xdg-open")
-                                        .arg(&path).spawn();
+                                    let _ =
+                                        std::process::Command::new("xdg-open").arg(&path).spawn();
                                 });
                             }
                         }
@@ -491,8 +575,7 @@ pub(crate) fn handle_ctx_event(
                             app.navigate_to(path);
                         } else {
                             std::thread::spawn(move || {
-                                let _ = std::process::Command::new("xdg-open")
-                                    .arg(&path).spawn();
+                                let _ = std::process::Command::new("xdg-open").arg(&path).spawn();
                             });
                         }
                     } else {
@@ -528,12 +611,14 @@ pub(crate) fn handle_ctx_event(
                 crate::CTX_RESTORE => app.restore_selected(),
                 CTX_COPY_PATH => {
                     let text = match &app.context_target {
-                        Some(ContextTarget::Item(idx)) =>
-                            app.entries.get(*idx).map(|e| e.path.display().to_string()),
-                        Some(ContextTarget::SearchItem(idx)) =>
-                            app.search_results.get(*idx).map(|e| e.path.display().to_string()),
-                        Some(ContextTarget::Path(path)) =>
-                            Some(path.display().to_string()),
+                        Some(ContextTarget::Item(idx)) => {
+                            app.entries.get(*idx).map(|e| e.path.display().to_string())
+                        }
+                        Some(ContextTarget::SearchItem(idx)) => app
+                            .search_results
+                            .get(*idx)
+                            .map(|e| e.path.display().to_string()),
+                        Some(ContextTarget::Path(path)) => Some(path.display().to_string()),
                         _ => None,
                     };
                     if let Some(text) = text {
@@ -544,12 +629,15 @@ pub(crate) fn handle_ctx_event(
                 }
                 CTX_COPY_NAME => {
                     let text = match &app.context_target {
-                        Some(ContextTarget::Item(idx)) =>
-                            app.entries.get(*idx).map(|e| e.name.clone()),
-                        Some(ContextTarget::SearchItem(idx)) =>
-                            app.search_results.get(*idx).map(|e| e.name.clone()),
-                        Some(ContextTarget::Path(path)) =>
-                            path.file_name().map(|n| n.to_string_lossy().to_string()),
+                        Some(ContextTarget::Item(idx)) => {
+                            app.entries.get(*idx).map(|e| e.name.clone())
+                        }
+                        Some(ContextTarget::SearchItem(idx)) => {
+                            app.search_results.get(*idx).map(|e| e.name.clone())
+                        }
+                        Some(ContextTarget::Path(path)) => {
+                            path.file_name().map(|n| n.to_string_lossy().to_string())
+                        }
                         _ => None,
                     };
                     if let Some(text) = text {
@@ -560,10 +648,12 @@ pub(crate) fn handle_ctx_event(
                 }
                 crate::CTX_SET_WALLPAPER => {
                     let path = match &app.context_target {
-                        Some(ContextTarget::Item(idx)) =>
-                            app.entries.get(*idx).map(|e| e.path.clone()),
-                        Some(ContextTarget::SearchItem(idx)) =>
-                            app.search_results.get(*idx).map(|e| e.path.clone()),
+                        Some(ContextTarget::Item(idx)) => {
+                            app.entries.get(*idx).map(|e| e.path.clone())
+                        }
+                        Some(ContextTarget::SearchItem(idx)) => {
+                            app.search_results.get(*idx).map(|e| e.path.clone())
+                        }
                         Some(ContextTarget::Path(path)) => Some(path.clone()),
                         _ => None,
                     };
@@ -580,9 +670,10 @@ pub(crate) fn handle_ctx_event(
                     let folder_path = match app.context_target.clone() {
                         Some(crate::app::ContextTarget::Item(idx))
                             if idx < app.entries.len() && app.entries[idx].is_dir =>
-                                Some(app.entries[idx].path.clone()),
-                        Some(crate::app::ContextTarget::Path(path)) if path.is_dir() =>
-                                Some(path),
+                        {
+                            Some(app.entries[idx].path.clone())
+                        }
+                        Some(crate::app::ContextTarget::Path(path)) if path.is_dir() => Some(path),
                         _ => None,
                     };
                     if let Some(folder_path) = folder_path {
@@ -590,14 +681,16 @@ pub(crate) fn handle_ctx_event(
                             let output = std::process::Command::new("lntrn-file-manager")
                                 .args([
                                     "--pick",
-                                    "--title", "Choose Folder Icon",
-                                    "--filters", "Images:*.png,*.svg,*.jpg,*.jpeg,*.webp,*.ico",
+                                    "--title",
+                                    "Choose Folder Icon",
+                                    "--filters",
+                                    "Images:*.png,*.svg,*.jpg,*.jpeg,*.webp,*.ico",
                                 ])
                                 .output();
                             if let Ok(out) = output {
                                 if out.status.success() {
-                                    let chosen = String::from_utf8_lossy(&out.stdout)
-                                        .trim().to_string();
+                                    let chosen =
+                                        String::from_utf8_lossy(&out.stdout).trim().to_string();
                                     if !chosen.is_empty() {
                                         crate::icons::set_folder_icon(&folder_path, &chosen);
                                     }
@@ -616,25 +709,27 @@ pub(crate) fn handle_ctx_event(
                                 crate::app::ContextTarget::Item(idx) => {
                                     if *idx < app.entries.len() {
                                         Some(app.entries[*idx].path.clone())
-                                    } else { None }
+                                    } else {
+                                        None
+                                    }
                                 }
                                 crate::app::ContextTarget::SearchItem(idx) => {
                                     app.search_results.get(*idx).map(|e| e.path.clone())
                                 }
-                                crate::app::ContextTarget::Path(path) => {
-                                    Some(path.clone())
-                                }
-                                crate::app::ContextTarget::Empty => {
-                                    Some(app.current_dir.clone())
-                                }
+                                crate::app::ContextTarget::Path(path) => Some(path.clone()),
+                                crate::app::ContextTarget::Empty => Some(app.current_dir.clone()),
                                 crate::app::ContextTarget::Drive(_) => None,
                                 crate::app::ContextTarget::Favorite(idx) => {
                                     app.sidebar_favorites().get(*idx).map(|p| p.path.clone())
                                 }
                             }
-                        } else { None };
+                        } else {
+                            None
+                        };
                         if let Some(path) = path {
-                            if let Some(mut props) = crate::properties::FileProperties::from_path(&path) {
+                            if let Some(mut props) =
+                                crate::properties::FileProperties::from_path(&path)
+                            {
                                 props.populate_media_info(file_info);
                                 app.properties = Some(props);
                             }
@@ -660,8 +755,12 @@ pub(crate) fn handle_ctx_event(
                     let target = app.current_dir.join("New Folder");
                     new_folder_or_prompt(app, target, None);
                 }
-                CTX_NEW_FOLDER_PLAIN | CTX_NEW_FOLDER_RED | CTX_NEW_FOLDER_ORANGE
-                | CTX_NEW_FOLDER_YELLOW | CTX_NEW_FOLDER_GREEN | CTX_NEW_FOLDER_BLUE
+                CTX_NEW_FOLDER_PLAIN
+                | CTX_NEW_FOLDER_RED
+                | CTX_NEW_FOLDER_ORANGE
+                | CTX_NEW_FOLDER_YELLOW
+                | CTX_NEW_FOLDER_GREEN
+                | CTX_NEW_FOLDER_BLUE
                 | CTX_NEW_FOLDER_PURPLE => {
                     let target = app.current_dir.join("New Folder");
                     let color: Option<&'static str> = match id {
@@ -757,7 +856,10 @@ pub(crate) fn handle_ctx_event(
 /// so we skip undo/rename (no path-of-clean-creation to track).
 fn new_folder_or_prompt(app: &mut App, target: PathBuf, color: Option<&'static str>) {
     if app.root_mode {
-        app.priv_run(crate::sudo::PendingPrivOp::NewFolder { path: target, color });
+        app.priv_run(crate::sudo::PendingPrivOp::NewFolder {
+            path: target,
+            color,
+        });
         return;
     }
     match std::fs::create_dir(&target) {
@@ -765,7 +867,8 @@ fn new_folder_or_prompt(app: &mut App, target: PathBuf, color: Option<&'static s
             if let Some(c) = color {
                 crate::icons::set_folder_color(&target, c);
             }
-            app.undo_stack.push(crate::undo::UndoAction::Create(vec![target.clone()]));
+            app.undo_stack
+                .push(crate::undo::UndoAction::Create(vec![target.clone()]));
             app.reload();
             if let Some(idx) = app.entries.iter().position(|e| e.path == target) {
                 app.select_item(idx);
@@ -773,7 +876,10 @@ fn new_folder_or_prompt(app: &mut App, target: PathBuf, color: Option<&'static s
             }
         }
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-            app.priv_run(crate::sudo::PendingPrivOp::NewFolder { path: target, color });
+            app.priv_run(crate::sudo::PendingPrivOp::NewFolder {
+                path: target,
+                color,
+            });
         }
         Err(_) => {}
     }
@@ -786,7 +892,8 @@ fn new_file_or_prompt(app: &mut App, target: PathBuf) {
     }
     match std::fs::write(&target, "") {
         Ok(()) => {
-            app.undo_stack.push(crate::undo::UndoAction::Create(vec![target]));
+            app.undo_stack
+                .push(crate::undo::UndoAction::Create(vec![target]));
             app.reload();
         }
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {

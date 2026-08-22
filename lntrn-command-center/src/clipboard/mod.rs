@@ -148,12 +148,7 @@ pub fn list_rect(panel: Rect, top_y: f32, scale: f32, panel_bottom: f32) -> Rect
 /// Y of the visible_idx-th row's top edge (before scroll offset).
 /// Walks the visible list summing per-entry heights since rows are no
 /// longer uniform.
-pub fn row_rect_at(
-    list: Rect,
-    state: &ClipboardState,
-    scale: f32,
-    visible_idx: usize,
-) -> Rect {
+pub fn row_rect_at(list: Rect, state: &ClipboardState, scale: f32, visible_idx: usize) -> Rect {
     let visible = state.visible_indices();
     let gap = ROW_GAP * scale;
     let mut y = list.y;

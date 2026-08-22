@@ -346,7 +346,12 @@ impl Dispatch<wl_registry::WlRegistry, ()> for WlState {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        if let wl_registry::Event::Global { name, interface, version } = event {
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
             match interface.as_str() {
                 "wl_compositor" => {
                     state.compositor = Some(registry.bind(name, version.min(6), qh, ()));
@@ -377,7 +382,15 @@ impl Dispatch<wl_registry::WlRegistry, ()> for WlState {
 }
 
 impl Dispatch<wl_compositor::WlCompositor, ()> for WlState {
-    fn event(_: &mut Self, _: &wl_compositor::WlCompositor, _: wl_compositor::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_compositor::WlCompositor,
+        _: wl_compositor::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wl_surface::WlSurface, ()> for WlState {
     fn event(
@@ -394,16 +407,48 @@ impl Dispatch<wl_surface::WlSurface, ()> for WlState {
     }
 }
 impl Dispatch<wl_region::WlRegion, ()> for WlState {
-    fn event(_: &mut Self, _: &wl_region::WlRegion, _: wl_region::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_region::WlRegion,
+        _: wl_region::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wp_viewporter::WpViewporter, ()> for WlState {
-    fn event(_: &mut Self, _: &wp_viewporter::WpViewporter, _: wp_viewporter::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wp_viewporter::WpViewporter,
+        _: wp_viewporter::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wp_viewport::WpViewport, ()> for WlState {
-    fn event(_: &mut Self, _: &wp_viewport::WpViewport, _: wp_viewport::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wp_viewport::WpViewport,
+        _: wp_viewport::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<zwlr_layer_shell_v1::ZwlrLayerShellV1, ()> for WlState {
-    fn event(_: &mut Self, _: &zwlr_layer_shell_v1::ZwlrLayerShellV1, _: zwlr_layer_shell_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &zwlr_layer_shell_v1::ZwlrLayerShellV1,
+        _: zwlr_layer_shell_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 impl Dispatch<wl_output::WlOutput, ()> for WlState {
@@ -454,7 +499,11 @@ impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for WlState {
         _: &QueueHandle<Self>,
     ) {
         match event {
-            zwlr_layer_surface_v1::Event::Configure { serial, width, height } => {
+            zwlr_layer_surface_v1::Event::Configure {
+                serial,
+                width,
+                height,
+            } => {
                 layer_surface.ack_configure(serial);
                 if width > 0 {
                     state.width = width;
@@ -480,7 +529,10 @@ impl Dispatch<wl_seat::WlSeat, ()> for WlState {
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
-        if let wl_seat::Event::Capabilities { capabilities: caps, .. } = event {
+        if let wl_seat::Event::Capabilities {
+            capabilities: caps, ..
+        } = event
+        {
             if let WEnum::Value(caps) = caps {
                 if caps.contains(wl_seat::Capability::Pointer) {
                     seat.get_pointer(qh, ());
@@ -503,17 +555,29 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WlState {
         _: &QueueHandle<Self>,
     ) {
         match event {
-            wl_pointer::Event::Enter { surface_x, surface_y, .. } => {
+            wl_pointer::Event::Enter {
+                surface_x,
+                surface_y,
+                ..
+            } => {
                 state.cursor_x = surface_x;
                 state.cursor_y = surface_y;
                 state.cursor_dirty = true;
             }
-            wl_pointer::Event::Motion { surface_x, surface_y, .. } => {
+            wl_pointer::Event::Motion {
+                surface_x,
+                surface_y,
+                ..
+            } => {
                 state.cursor_x = surface_x;
                 state.cursor_y = surface_y;
                 state.cursor_dirty = true;
             }
-            wl_pointer::Event::Button { button, state: btn_state, .. } => {
+            wl_pointer::Event::Button {
+                button,
+                state: btn_state,
+                ..
+            } => {
                 if button == BTN_LEFT {
                     let pressed = btn_state == WEnum::Value(wl_pointer::ButtonState::Pressed);
                     let released = btn_state == WEnum::Value(wl_pointer::ButtonState::Released);
@@ -540,12 +604,19 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WlState {
         _: &QueueHandle<Self>,
     ) {
         match event {
-            wl_keyboard::Event::Key { key, state: key_state, .. } => {
+            wl_keyboard::Event::Key {
+                key,
+                state: key_state,
+                ..
+            } => {
                 let pressed = key_state == WEnum::Value(wl_keyboard::KeyState::Pressed);
                 let released = key_state == WEnum::Value(wl_keyboard::KeyState::Released);
                 if key == KEY_LEFTCTRL || key == KEY_RIGHTCTRL {
-                    if pressed { state.ctrl_held = true; }
-                    else if released { state.ctrl_held = false; }
+                    if pressed {
+                        state.ctrl_held = true;
+                    } else if released {
+                        state.ctrl_held = false;
+                    }
                 } else if pressed {
                     match key {
                         KEY_ESC => state.esc_pressed = true,

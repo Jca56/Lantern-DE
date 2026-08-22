@@ -3,9 +3,9 @@
 use lntrn_render::{Color, Painter, Rect, TextRenderer};
 
 use super::{
-    action_buttons, body_line_height, body_max_scroll, body_rect,
-    editor_rect, filter_rect, list_max_scroll, list_rect, list_row_rect, new_btn_rect,
-    title_field_rect, NoteFocus, NotesState,
+    action_buttons, body_line_height, body_max_scroll, body_rect, editor_rect, filter_rect,
+    list_max_scroll, list_rect, list_row_rect, new_btn_rect, title_field_rect, NoteFocus,
+    NotesState,
 };
 
 const ACCENT_RGB: (u8, u8, u8) = (0xc8, 0x86, 0x0a);
@@ -33,12 +33,42 @@ pub fn draw(
     surface_h: u32,
 ) {
     let panel_bottom = panel.y + panel.h;
-    draw_toolbar(painter, text, state, panel, top_y, scale, text_size, alpha, surface_w, surface_h);
-    draw_action_row(painter, text, state, panel, top_y, scale, text_size, alpha, surface_w, surface_h);
-    draw_list(painter, text, state, panel, top_y, scale, text_size, alpha, panel_bottom, surface_w, surface_h);
-    draw_editor(painter, text, state, panel, top_y, scale, text_size, alpha, panel_bottom, surface_w, surface_h);
+    draw_toolbar(
+        painter, text, state, panel, top_y, scale, text_size, alpha, surface_w, surface_h,
+    );
+    draw_action_row(
+        painter, text, state, panel, top_y, scale, text_size, alpha, surface_w, surface_h,
+    );
+    draw_list(
+        painter,
+        text,
+        state,
+        panel,
+        top_y,
+        scale,
+        text_size,
+        alpha,
+        panel_bottom,
+        surface_w,
+        surface_h,
+    );
+    draw_editor(
+        painter,
+        text,
+        state,
+        panel,
+        top_y,
+        scale,
+        text_size,
+        alpha,
+        panel_bottom,
+        surface_w,
+        surface_h,
+    );
     if state.confirm_delete {
-        draw_confirm_delete(painter, text, state, panel, scale, text_size, alpha, surface_w, surface_h);
+        draw_confirm_delete(
+            painter, text, state, panel, scale, text_size, alpha, surface_w, surface_h,
+        );
     }
 }
 
@@ -95,7 +125,11 @@ fn draw_toolbar(
     } else {
         (q.to_string(), false)
     };
-    let color = if is_placeholder { white(0.40 * alpha) } else { white(0.95 * alpha) };
+    let color = if is_placeholder {
+        white(0.40 * alpha)
+    } else {
+        white(0.95 * alpha)
+    };
     let text_x = bar.x + pad_left;
     let text_max_w = (bar.w - pad_left - 14.0 * scale).max(0.0);
     // Selection highlight under the filter text.
@@ -111,9 +145,15 @@ fn draw_toolbar(
             accent(0.30 * alpha),
         );
     }
-    text.queue(&display, font, text_x, text_top, color, text_max_w, surface_w, surface_h);
+    text.queue(
+        &display, font, text_x, text_top, color, text_max_w, surface_w, surface_h,
+    );
     if focused_filter && state.filter.cursor_visible() {
-        let caret_x = if is_placeholder { text_x } else { text_x + text.measure_width(q, font) + 2.0 * scale };
+        let caret_x = if is_placeholder {
+            text_x
+        } else {
+            text_x + text.measure_width(q, font) + 2.0 * scale
+        };
         let caret_y = bar.y + bar.h * 0.20;
         let caret_h = bar.h * 0.60;
         painter.rect_filled(
@@ -166,22 +206,55 @@ fn draw_action_row(
         .map(|i| state.notes[i].sticky)
         .unwrap_or(false);
     draw_action_btn(
-        painter, text, pin, scale, text_size, alpha,
+        painter,
+        text,
+        pin,
+        scale,
+        text_size,
+        alpha,
         if is_pinned { "Unpin" } else { "Pin" },
-        is_pinned, has_selection, surface_w, surface_h,
+        is_pinned,
+        has_selection,
+        surface_w,
+        surface_h,
     );
     draw_action_btn(
-        painter, text, stick, scale, text_size, alpha,
+        painter,
+        text,
+        stick,
+        scale,
+        text_size,
+        alpha,
         if is_sticky { "Unstick" } else { "Stick" },
-        is_sticky, has_selection, surface_w, surface_h,
+        is_sticky,
+        has_selection,
+        surface_w,
+        surface_h,
     );
     draw_action_btn(
-        painter, text, export, scale, text_size, alpha,
-        "Export", false, has_selection, surface_w, surface_h,
+        painter,
+        text,
+        export,
+        scale,
+        text_size,
+        alpha,
+        "Export",
+        false,
+        has_selection,
+        surface_w,
+        surface_h,
     );
     draw_action_btn_destructive(
-        painter, text, delete, scale, text_size, alpha,
-        "Delete", has_selection, surface_w, surface_h,
+        painter,
+        text,
+        delete,
+        scale,
+        text_size,
+        alpha,
+        "Delete",
+        has_selection,
+        surface_w,
+        surface_h,
     );
 }
 
@@ -215,7 +288,16 @@ fn draw_list(
         };
         let font = (text_size * scale * 0.92).max(14.0);
         let ty = list.y + 36.0 * scale;
-        text.queue(msg, font, list.x + 12.0 * scale, ty, white(0.55 * alpha), list.w - 24.0 * scale, surface_w, surface_h);
+        text.queue(
+            msg,
+            font,
+            list.x + 12.0 * scale,
+            ty,
+            white(0.55 * alpha),
+            list.w - 24.0 * scale,
+            surface_w,
+            surface_h,
+        );
     }
 
     let scroll_px = state.list_scroll * scale;
@@ -271,7 +353,16 @@ fn draw_list(
         let title_font = (text_size * scale * 0.95).max(15.0);
         let title_y = row.y + row.h * 0.18;
         let title_max_w = (row.x + row.w - pad - text_x).max(0.0);
-        text.queue(&title_text, title_font, text_x, title_y, title_color, title_max_w, surface_w, surface_h);
+        text.queue(
+            &title_text,
+            title_font,
+            text_x,
+            title_y,
+            title_color,
+            title_max_w,
+            surface_w,
+            surface_h,
+        );
 
         let preview = first_line(&note.body);
         let preview_font = (text_size * scale * 0.72).max(12.0);
@@ -293,7 +384,16 @@ fn draw_list(
         let aw = text.measure_width(&ago_text, af);
         let ax = row.x + row.w - pad - aw;
         let ay = row.y + row.h * 0.18;
-        text.queue(&ago_text, af, ax, ay, white(0.45 * alpha), aw + 4.0 * scale, surface_w, surface_h);
+        text.queue(
+            &ago_text,
+            af,
+            ax,
+            ay,
+            white(0.45 * alpha),
+            aw + 4.0 * scale,
+            surface_w,
+            surface_h,
+        );
     }
 
     painter.pop_clip();
@@ -306,10 +406,18 @@ fn draw_list(
         let track_x = list.x + list.w - track_w - 2.0 * scale;
         let track_y = list.y;
         let track_h = list.h;
-        painter.rect_filled(Rect::new(track_x, track_y, track_w, track_h), track_w / 2.0, white(0.06 * alpha));
+        painter.rect_filled(
+            Rect::new(track_x, track_y, track_w, track_h),
+            track_w / 2.0,
+            white(0.06 * alpha),
+        );
         let thumb_h = (track_h * track_h / (track_h + max * scale)).max(20.0 * scale);
         let thumb_y = track_y + (track_h - thumb_h) * (scroll_px / (max * scale)).clamp(0.0, 1.0);
-        painter.rect_filled(Rect::new(track_x, thumb_y, track_w, thumb_h), track_w / 2.0, white(0.30 * alpha));
+        painter.rect_filled(
+            Rect::new(track_x, thumb_y, track_w, thumb_h),
+            track_w / 2.0,
+            white(0.30 * alpha),
+        );
     }
 }
 
@@ -337,7 +445,16 @@ fn draw_editor(
         let msg = "Select a note on the left, or create one with “+ New”.";
         let font = (text_size * scale * 0.95).max(15.0);
         let ty = editor.y + editor.h / 2.0 - font / 2.0;
-        text.queue(msg, font, editor.x + 12.0 * scale, ty, white(0.55 * alpha), editor.w - 24.0 * scale, surface_w, surface_h);
+        text.queue(
+            msg,
+            font,
+            editor.x + 12.0 * scale,
+            ty,
+            white(0.55 * alpha),
+            editor.w - 24.0 * scale,
+            surface_w,
+            surface_h,
+        );
         return;
     }
 
@@ -358,7 +475,11 @@ fn draw_editor(
     } else {
         (title_q.to_string(), false)
     };
-    let title_color = if title_placeholder { white(0.40 * alpha) } else { white(0.95 * alpha) };
+    let title_color = if title_placeholder {
+        white(0.40 * alpha)
+    } else {
+        white(0.95 * alpha)
+    };
     // Selection highlight under the title text.
     if let Some((sel_s, sel_e)) = state.title.selection_range() {
         let q = state.title.query();
@@ -405,7 +526,18 @@ fn draw_editor(
     if body_focused {
         painter.rect_stroke_sdf(body, body_radius, 1.4 * scale, accent(0.55 * alpha));
     }
-    draw_body_text(painter, text, state, body, scale, text_size, alpha, body_focused, surface_w, surface_h);
+    draw_body_text(
+        painter,
+        text,
+        state,
+        body,
+        scale,
+        text_size,
+        alpha,
+        body_focused,
+        surface_w,
+        surface_h,
+    );
 
     // Flash toast (e.g. export confirmation) — drawn over the body area.
     if let Some((msg, t)) = &state.flash_text {
@@ -491,10 +623,8 @@ fn draw_body_text(
                 let s = sel_s.max(vl.start);
                 let e = sel_e.min(vl.end);
                 if s < e {
-                    let x0 = inner.x
-                        + text.measure_width(&buf[vl.start..s], font);
-                    let x1 = inner.x
-                        + text.measure_width(&buf[vl.start..e], font);
+                    let x0 = inner.x + text.measure_width(&buf[vl.start..s], font);
+                    let x1 = inner.x + text.measure_width(&buf[vl.start..e], font);
                     let y = inner.y + li as f32 * line_h - scroll_px;
                     painter.rect_filled(
                         Rect::new(x0, y, (x1 - x0).max(2.0 * scale), line_h),
@@ -505,8 +635,7 @@ fn draw_body_text(
                     // Selection wraps past end-of-line — paint a thin
                     // trailing chunk so the user sees the newline is
                     // selected too.
-                    let x0 = inner.x
-                        + text.measure_width(&buf[vl.start..vl.end], font);
+                    let x0 = inner.x + text.measure_width(&buf[vl.start..vl.end], font);
                     let y = inner.y + li as f32 * line_h - scroll_px;
                     painter.rect_filled(
                         Rect::new(x0, y, 6.0 * scale, line_h),
@@ -600,7 +729,11 @@ fn draw_action_btn(
     let eff_alpha = if enabled { alpha } else { 0.45 * alpha };
     let radius = 10.0 * scale;
     let plate_a = if active { 0.18 } else { 0.08 };
-    let plate_color = if active { accent(plate_a * eff_alpha) } else { white(plate_a * eff_alpha) };
+    let plate_color = if active {
+        accent(plate_a * eff_alpha)
+    } else {
+        white(plate_a * eff_alpha)
+    };
     painter.rect_filled(r, radius, plate_color);
     if active {
         painter.rect_stroke_sdf(r, radius, 1.0 * scale, accent(0.55 * eff_alpha));
@@ -609,9 +742,22 @@ fn draw_action_btn(
     }
     let font = (text_size * scale * 0.78).max(13.0);
     let lw = text.measure_width(label, font);
-    let lc = if active { accent(0.95 * eff_alpha) } else { white(0.85 * eff_alpha) };
+    let lc = if active {
+        accent(0.95 * eff_alpha)
+    } else {
+        white(0.85 * eff_alpha)
+    };
     let ty = r.y + (r.h - font) / 2.0;
-    text.queue(label, font, r.x + (r.w - lw) / 2.0, ty, lc, r.w, surface_w, surface_h);
+    text.queue(
+        label,
+        font,
+        r.x + (r.w - lw) / 2.0,
+        ty,
+        lc,
+        r.w,
+        surface_w,
+        surface_h,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -647,9 +793,21 @@ fn draw_action_btn_destructive(
     );
 }
 
-fn draw_star(painter: &mut Painter, cx: f32, cy: f32, radius: f32, scale: f32, alpha: f32, active: bool) {
+fn draw_star(
+    painter: &mut Painter,
+    cx: f32,
+    cy: f32,
+    radius: f32,
+    scale: f32,
+    alpha: f32,
+    active: bool,
+) {
     let stroke = 1.4 * scale;
-    let color = if active { accent(0.95 * alpha) } else { white(0.40 * alpha) };
+    let color = if active {
+        accent(0.95 * alpha)
+    } else {
+        white(0.40 * alpha)
+    };
     let mut pts: [(f32, f32); 10] = [(0.0, 0.0); 10];
     for i in 0..10 {
         let theta = -std::f32::consts::FRAC_PI_2 + i as f32 * std::f32::consts::PI / 5.0;
@@ -741,10 +899,18 @@ fn draw_confirm_delete(
     surface_w: u32,
     surface_h: u32,
 ) {
-    painter.rect_filled(panel, 0.0, Color::from_rgb8(0, 0, 0).with_alpha(0.45 * alpha));
+    painter.rect_filled(
+        panel,
+        0.0,
+        Color::from_rgb8(0, 0, 0).with_alpha(0.45 * alpha),
+    );
     let (r, cancel, confirm) = super::confirm_delete_rects(panel, scale);
     let (x, y, w) = (r.x, r.y, r.w);
-    painter.rect_filled(r, 16.0 * scale, Color::from_rgb8(40, 40, 44).with_alpha(0.97 * alpha));
+    painter.rect_filled(
+        r,
+        16.0 * scale,
+        Color::from_rgb8(40, 40, 44).with_alpha(0.97 * alpha),
+    );
     painter.rect_stroke_sdf(r, 16.0 * scale, 1.2 * scale, white(0.18 * alpha));
 
     let font_title = (text_size * scale).max(16.0);
@@ -767,8 +933,26 @@ fn draw_confirm_delete(
         .unwrap_or_else(|| "Delete this note?".to_string());
     let body = "This permanently removes the note file from disk.";
     let title_y = y + pad;
-    text.queue(&title, font_title, x + pad, title_y, white(0.95 * alpha), w - pad * 2.0, surface_w, surface_h);
-    text.queue(body, font_body, x + pad, title_y + font_title * 1.5, white(0.65 * alpha), w - pad * 2.0, surface_w, surface_h);
+    text.queue(
+        &title,
+        font_title,
+        x + pad,
+        title_y,
+        white(0.95 * alpha),
+        w - pad * 2.0,
+        surface_w,
+        surface_h,
+    );
+    text.queue(
+        body,
+        font_body,
+        x + pad,
+        title_y + font_title * 1.5,
+        white(0.65 * alpha),
+        w - pad * 2.0,
+        surface_w,
+        surface_h,
+    );
 
     painter.rect_filled(cancel, 10.0 * scale, white(0.10 * alpha));
     painter.rect_stroke_sdf(cancel, 10.0 * scale, 1.0 * scale, white(0.18 * alpha));
@@ -780,6 +964,24 @@ fn draw_confirm_delete(
     let cl_w = text.measure_width(cl_text, fb);
     let yes_w = text.measure_width(yes_text, fb);
     let btn_text_y = cancel.y + (cancel.h - fb) / 2.0;
-    text.queue(cl_text, fb, cancel.x + (cancel.w - cl_w) / 2.0, btn_text_y, white(0.85 * alpha), cancel.w, surface_w, surface_h);
-    text.queue(yes_text, fb, confirm.x + (confirm.w - yes_w) / 2.0, btn_text_y, white(0.95 * alpha), confirm.w, surface_w, surface_h);
+    text.queue(
+        cl_text,
+        fb,
+        cancel.x + (cancel.w - cl_w) / 2.0,
+        btn_text_y,
+        white(0.85 * alpha),
+        cancel.w,
+        surface_w,
+        surface_h,
+    );
+    text.queue(
+        yes_text,
+        fb,
+        confirm.x + (confirm.w - yes_w) / 2.0,
+        btn_text_y,
+        white(0.95 * alpha),
+        confirm.w,
+        surface_w,
+        surface_h,
+    );
 }

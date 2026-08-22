@@ -1,26 +1,26 @@
 use lntrn_render::{Color, Rect, TextureDraw};
 use lntrn_ui::gpu::{
-    draw_window_bg, ContextMenu, FontSize, FoxPalette, InteractionContext,
-    MenuEvent, ScrollArea, Scrollbar, TabBar, TextInput, TextLabel, TitleBar,
+    draw_window_bg, ContextMenu, FontSize, FoxPalette, InteractionContext, MenuEvent, ScrollArea,
+    Scrollbar, TabBar, TextInput, TextLabel, TitleBar,
 };
 
 use crate::app::{App, ViewMode};
 use crate::icons::{self, IconCache};
 use crate::layout::*;
+use crate::sections::SidebarHovered;
 use crate::sections::*;
 use crate::views::{draw_content_list, draw_content_tree};
+use crate::{
+    Gpu, ZONE_BREADCRUMB_BASE, ZONE_CLOSE, ZONE_CONTENT, ZONE_DRIVE_ITEM_BASE, ZONE_DROP_CANCEL,
+    ZONE_DROP_COPY, ZONE_DROP_MOVE, ZONE_FAVORITE_ITEM_BASE, ZONE_FILE_ITEM_BASE, ZONE_MAXIMIZE,
+    ZONE_MENU_VIEW, ZONE_MINIMIZE, ZONE_NAV_BACK, ZONE_NAV_FORWARD, ZONE_NAV_PREVIEW_TOGGLE,
+    ZONE_NAV_SEARCH, ZONE_NAV_SORT, ZONE_NAV_UP, ZONE_NAV_VIEW_TOGGLE, ZONE_PATH_INPUT,
+    ZONE_PREVIEW_RESIZE, ZONE_RENAME_INPUT, ZONE_SCROLLBAR, ZONE_SIDEBAR_DEVICES_HEADER,
+    ZONE_SIDEBAR_FAVORITES_HEADER, ZONE_SIDEBAR_FAVORITES_PLUS, ZONE_SIDEBAR_ITEM_BASE,
+    ZONE_SIDEBAR_PLACES_HEADER, ZONE_TAB_BASE, ZONE_TAB_CLOSE_BASE, ZONE_TAB_NEW,
+    ZONE_TREE_ITEM_BASE,
+};
 use lntrn_ui::gpu::controls::{Button, ButtonVariant};
-use crate::{Gpu, ZONE_CLOSE, ZONE_MAXIMIZE, ZONE_MINIMIZE, ZONE_MENU_VIEW,
-    ZONE_NAV_VIEW_TOGGLE, ZONE_NAV_BACK, ZONE_NAV_FORWARD, ZONE_NAV_UP, ZONE_NAV_SEARCH, ZONE_NAV_SORT,
-    ZONE_NAV_PREVIEW_TOGGLE, ZONE_PREVIEW_RESIZE,
-    ZONE_SIDEBAR_ITEM_BASE, ZONE_FAVORITE_ITEM_BASE, ZONE_FILE_ITEM_BASE,
-    ZONE_CONTENT, ZONE_SCROLLBAR,
-    ZONE_TAB_BASE, ZONE_TAB_CLOSE_BASE, ZONE_TAB_NEW, ZONE_RENAME_INPUT, ZONE_PATH_INPUT,
-    ZONE_DRIVE_ITEM_BASE, ZONE_TREE_ITEM_BASE, ZONE_BREADCRUMB_BASE,
-    ZONE_DROP_MOVE, ZONE_DROP_COPY, ZONE_DROP_CANCEL,
-    ZONE_SIDEBAR_PLACES_HEADER, ZONE_SIDEBAR_FAVORITES_HEADER,
-    ZONE_SIDEBAR_DEVICES_HEADER, ZONE_SIDEBAR_FAVORITES_PLUS};
-use crate::sections::SidebarHovered;
 
 /// Render a full frame.
 pub fn render_frame(
@@ -40,7 +40,12 @@ pub fn render_frame(
     bg_opacity: f32,
     desktop_mode: bool,
 ) -> Option<MenuEvent> {
-    let Gpu { ctx, painter, text, tex_pass } = gpu;
+    let Gpu {
+        ctx,
+        painter,
+        text,
+        tex_pass,
+    } = gpu;
 
     let w = ctx.width();
     let h = ctx.height();
@@ -61,9 +66,10 @@ pub fn render_frame(
         ql.poll_upload(ctx, tex_pass);
     }
     // Split view geometry: (left_x, left_w, right_x, right_w) + focused side.
-    let split_geom = app.split.as_ref().map(|sp| {
-        (split_pane_cols(wf, sp.ratio, s), sp.focused)
-    });
+    let split_geom = app
+        .split
+        .as_ref()
+        .map(|sp| (split_pane_cols(wf, sp.ratio, s), sp.focused));
     // The focused pane's content column (single-pane: the whole content area).
     let full_content = app.active_content_rect(wf, hf, s);
     let zoom = app.icon_zoom;
@@ -74,7 +80,11 @@ pub fn render_frame(
     } else {
         &app.entries
     };
-    let view_mode = if is_searching { ViewMode::List } else { app.view_mode };
+    let view_mode = if is_searching {
+        ViewMode::List
+    } else {
+        app.view_mode
+    };
     // Preview pane: only shown in List/Tree (and during search, which renders
     // as List). Split view claims the width — preview stays off until then.
     let preview_supported =
@@ -90,7 +100,12 @@ pub fn render_frame(
         app.preview_width = (preview_w_px / s).max(PREVIEW_MIN_W);
     }
     let content = if preview_w_px > 0.0 {
-        Rect::new(full_content.x, full_content.y, full_content.w - preview_w_px, full_content.h)
+        Rect::new(
+            full_content.x,
+            full_content.y,
+            full_content.w - preview_w_px,
+            full_content.h,
+        )
     } else {
         full_content
     };
@@ -100,7 +115,11 @@ pub fn render_frame(
     let total_content_h = match view_mode {
         ViewMode::Grid => grid_content_height(entries.len(), cols, s, zoom),
         ViewMode::List => {
-            let rh = if is_searching { search_list_row_h(s, zoom) } else { list_row_h(s, zoom) };
+            let rh = if is_searching {
+                search_list_row_h(s, zoom)
+            } else {
+                list_row_h(s, zoom)
+            };
             entries.len() as f32 * rh + 32.0 * list_zoom_multiplier(zoom) * s // +header
         }
         ViewMode::Tree => tree_content_height(app.tree_entries.len(), s, zoom),
@@ -126,7 +145,11 @@ pub fn render_frame(
                 .collect()
         }
         ViewMode::List => {
-            let row_h = if is_searching { search_list_row_h(s, zoom) } else { list_row_h(s, zoom) };
+            let row_h = if is_searching {
+                search_list_row_h(s, zoom)
+            } else {
+                list_row_h(s, zoom)
+            };
             let hdr_h = 32.0 * list_zoom_multiplier(zoom) * s;
             for i in 0..entries.len() {
                 let y = base_y + hdr_h + i as f32 * row_h;
@@ -137,7 +160,9 @@ pub fn render_frame(
             (0..entries.len())
                 .map(|i| {
                     let y = base_y + hdr_h + i as f32 * row_h;
-                    y + row_h >= content.y && y <= content.y + content.h && icon_cache.has_icon(&entries[i])
+                    y + row_h >= content.y
+                        && y <= content.y + content.h
+                        && icon_cache.has_icon(&entries[i])
                 })
                 .collect()
         }
@@ -153,7 +178,9 @@ pub fn render_frame(
             (0..tree_entries.len())
                 .map(|i| {
                     let y = base_y + i as f32 * row_h;
-                    y + row_h >= content.y && y <= content.y + content.h && icon_cache.has_icon(&tree_entries[i].entry)
+                    y + row_h >= content.y
+                        && y <= content.y + content.h
+                        && icon_cache.has_icon(&tree_entries[i].entry)
                 })
                 .collect()
         }
@@ -203,7 +230,11 @@ pub fn render_frame(
             let r = 6.0 * s;
 
             if is_open || view_state.is_hovered() {
-                painter.rect_filled(label_rect, r, pal.accent.with_alpha(if is_open { 0.15 } else { 0.10 }));
+                painter.rect_filled(
+                    label_rect,
+                    r,
+                    pal.accent.with_alpha(if is_open { 0.15 } else { 0.10 }),
+                );
             }
             let color = if is_open { pal.accent } else { pal.text };
             TextLabel::new("View", label_x + pad_h, label_y + (label_h - font) * 0.5)
@@ -211,7 +242,6 @@ pub fn render_frame(
                 .color(color)
                 .draw(text, w, h);
         }
-
     }
 
     // ── Top gradient strip (hidden in rice mode along with the bar) ──
@@ -224,11 +254,9 @@ pub fn render_frame(
     // In split mode the focused pane's nav bar shrinks to its column (cloud
     // and preview buttons drop out — a zero-width rect skips both zone and
     // draw), but keeps the standard zone IDs so click handling is unchanged.
-    let active_col = split_geom.map(|((lx, lw, rx, rw), focused)| {
-        match focused {
-            crate::app::PaneSide::Left => (lx, lw),
-            crate::app::PaneSide::Right => (rx, rw),
-        }
+    let active_col = split_geom.map(|((lx, lw, rx, rw), focused)| match focused {
+        crate::app::PaneSide::Left => (lx, lw),
+        crate::app::PaneSide::Right => (rx, rw),
     });
     let (nav_rect, vt_rect, back_rect, fwd_rect, up_rect, cloud_rect, p_rect) =
         if let Some((px, pw)) = active_col {
@@ -274,17 +302,35 @@ pub fn render_frame(
         let seg_width = |name: &str| -> f32 { name.len() as f32 * char_w + pad_x * 2.0 };
 
         // Compute overflow skip
-        let total_w: f32 = segments.iter().enumerate().map(|(i, (name, _))| {
-            if i > 0 { seg_width(name) + sep_w } else { seg_width(name) }
-        }).sum();
+        let total_w: f32 = segments
+            .iter()
+            .enumerate()
+            .map(|(i, (name, _))| {
+                if i > 0 {
+                    seg_width(name) + sep_w
+                } else {
+                    seg_width(name)
+                }
+            })
+            .sum();
         let mut skip = 0;
         if total_w > p_rect.w {
             let ellipsis_w = seg_width("...") + sep_w;
             for (i, _) in segments.iter().enumerate() {
-                let remaining: f32 = segments[i..].iter().enumerate().map(|(j, (n, _))| {
-                    if j > 0 { seg_width(n) + sep_w } else { seg_width(n) }
-                }).sum();
-                if ellipsis_w + remaining <= p_rect.w { break; }
+                let remaining: f32 = segments[i..]
+                    .iter()
+                    .enumerate()
+                    .map(|(j, (n, _))| {
+                        if j > 0 {
+                            seg_width(n) + sep_w
+                        } else {
+                            seg_width(n)
+                        }
+                    })
+                    .sum();
+                if ellipsis_w + remaining <= p_rect.w {
+                    break;
+                }
                 skip = i + 1;
             }
         }
@@ -296,8 +342,12 @@ pub fn render_frame(
             cx += seg_width("...") + sep_w;
         }
         for (i, (name, _)) in segments.iter().enumerate() {
-            if i < skip { continue; }
-            if i > skip { cx += sep_w; }
+            if i < skip {
+                continue;
+            }
+            if i > skip {
+                cx += sep_w;
+            }
             let sw = seg_width(name);
             let seg_rect = Rect::new(cx, p_rect.y + 2.0 * s, sw, p_rect.h - 4.0 * s);
             let zone_id = ZONE_BREADCRUMB_BASE + (i - skip) as u32;
@@ -347,7 +397,9 @@ pub fn render_frame(
         Some((_, crate::app::PaneSide::Left)) => None,
     };
     if let Some(sb_rect) = split_btn_rect {
-        let sb_hov = input.add_zone(crate::ZONE_SPLIT_TOGGLE, sb_rect).is_hovered();
+        let sb_hov = input
+            .add_zone(crate::ZONE_SPLIT_TOGGLE, sb_rect)
+            .is_hovered();
         let active = app.split.is_some();
         let color = if active {
             pal.accent
@@ -367,24 +419,45 @@ pub fn render_frame(
         crate::sections::draw_split_toggle_icon(painter, sb_rect, color, s);
     }
     draw_nav_bar(
-        painter, text, pal, app,
-        nav_rect, vt_rect, vt_state.is_hovered(),
-        back_rect, back_state.is_hovered(),
-        fwd_rect, fwd_state.is_hovered(),
-        up_rect, up_state.is_hovered(),
-        cloud_rect, cloud_state.is_hovered(),
-        p_rect, path_hovered, &breadcrumb_hovered,
-        preview_btn_rect, preview_btn_state.is_hovered(), preview_supported,
-        sort_rect, sort_state.is_hovered(),
-        srch_rect, srch_state.is_hovered(),
-        (w, h), s,
+        painter,
+        text,
+        pal,
+        app,
+        nav_rect,
+        vt_rect,
+        vt_state.is_hovered(),
+        back_rect,
+        back_state.is_hovered(),
+        fwd_rect,
+        fwd_state.is_hovered(),
+        up_rect,
+        up_state.is_hovered(),
+        cloud_rect,
+        cloud_state.is_hovered(),
+        p_rect,
+        path_hovered,
+        &breadcrumb_hovered,
+        preview_btn_rect,
+        preview_btn_state.is_hovered(),
+        preview_supported,
+        sort_rect,
+        sort_state.is_hovered(),
+        srch_rect,
+        srch_state.is_hovered(),
+        (w, h),
+        s,
     );
 
     // Focused-pane indicator: accent underline beneath the focused pane's
     // nav bar so it's obvious which pane keyboard/actions apply to.
     if active_col.is_some() {
         painter.rect_filled(
-            Rect::new(nav_rect.x + 6.0 * s, nav_rect.y + nav_rect.h - 2.0 * s, nav_rect.w - 12.0 * s, 2.0 * s),
+            Rect::new(
+                nav_rect.x + 6.0 * s,
+                nav_rect.y + nav_rect.h - 2.0 * s,
+                nav_rect.w - 12.0 * s,
+                2.0 * s,
+            ),
             1.0 * s,
             pal.accent.with_alpha(0.7),
         );
@@ -478,14 +551,18 @@ pub fn render_frame(
         }
         // Show insertion indicator at cursor position
         if let Some((cursor_x, _)) = input.cursor() {
-            if let Some(target) = tab_rects.iter().position(|r| r.contains(cursor_x, r.y + r.h * 0.5)) {
+            if let Some(target) = tab_rects
+                .iter()
+                .position(|r| r.contains(cursor_x, r.y + r.h * 0.5))
+            {
                 if target != src_idx && target < app.tabs.len() && app.tabs[target].pinned {
                     let ind_x = tab_rects[target].x;
                     let ind_y = tab_rects[target].y + 4.0 * s;
                     let ind_h = tab_rects[target].h - 8.0 * s;
                     painter.rect_filled(
                         Rect::new(ind_x - 1.5 * s, ind_y, 3.0 * s, ind_h),
-                        1.5 * s, pal.accent,
+                        1.5 * s,
+                        pal.accent,
                     );
                 }
             }
@@ -508,18 +585,32 @@ pub fn render_frame(
     let favorites = app.sidebar_favorites();
     let sb_layout = build_sidebar_layout(
         s,
-        places.len(), favorites.len(),
-        app.drives.len(), app.phones.len(),
-        app.places_collapsed, app.favorites_collapsed, app.devices_collapsed,
+        places.len(),
+        favorites.len(),
+        app.drives.len(),
+        app.phones.len(),
+        app.places_collapsed,
+        app.favorites_collapsed,
+        app.devices_collapsed,
     );
 
     // Section header zones (toggle collapse on click).
-    let places_header_hov = input.add_zone(ZONE_SIDEBAR_PLACES_HEADER, sb_layout.places_header).is_hovered();
-    let favorites_header_hov = input.add_zone(ZONE_SIDEBAR_FAVORITES_HEADER, sb_layout.favorites_header).is_hovered();
-    let favorites_plus_hov = input.add_zone(ZONE_SIDEBAR_FAVORITES_PLUS, sb_layout.favorites_plus).is_hovered();
+    let places_header_hov = input
+        .add_zone(ZONE_SIDEBAR_PLACES_HEADER, sb_layout.places_header)
+        .is_hovered();
+    let favorites_header_hov = input
+        .add_zone(ZONE_SIDEBAR_FAVORITES_HEADER, sb_layout.favorites_header)
+        .is_hovered();
+    let favorites_plus_hov = input
+        .add_zone(ZONE_SIDEBAR_FAVORITES_PLUS, sb_layout.favorites_plus)
+        .is_hovered();
     let devices_header_hov = if sb_layout.has_devices {
-        input.add_zone(ZONE_SIDEBAR_DEVICES_HEADER, sb_layout.devices_header).is_hovered()
-    } else { false };
+        input
+            .add_zone(ZONE_SIDEBAR_DEVICES_HEADER, sb_layout.devices_header)
+            .is_hovered()
+    } else {
+        false
+    };
 
     let mut sidebar_hovered = Vec::with_capacity(places.len());
     for (i, item_rect) in sb_layout.place_items.iter().enumerate() {
@@ -552,7 +643,19 @@ pub fn render_frame(
         devices_header: devices_header_hov,
         favorites_plus: favorites_plus_hov,
     };
-    draw_sidebar(painter, text, pal, app, sidebar, &sb_layout, &hov, dragging, fav_drag, (w, h), s);
+    draw_sidebar(
+        painter,
+        text,
+        pal,
+        app,
+        sidebar,
+        &sb_layout,
+        &hov,
+        dragging,
+        fav_drag,
+        (w, h),
+        s,
+    );
 
     // ── Content area ───────────────────────────────────────────────────
     input.add_zone(ZONE_CONTENT, content);
@@ -574,8 +677,21 @@ pub fn render_frame(
                 item_hovered.push(hovered);
             }
             draw_content_grid(
-                painter, text, pal, content, entries, cols,
-                &scroll_area, &item_hovered, &has_icon, app.drag_item, app.renaming, git, (w, h), s, zoom,
+                painter,
+                text,
+                pal,
+                content,
+                entries,
+                cols,
+                &scroll_area,
+                &item_hovered,
+                &has_icon,
+                app.drag_item,
+                app.renaming,
+                git,
+                (w, h),
+                s,
+                zoom,
             );
 
             // Inline rename input (grid mode)
@@ -603,7 +719,11 @@ pub fn render_frame(
             }
         }
         ViewMode::List => {
-            let row_h = if is_searching { search_list_row_h(s, zoom) } else { list_row_h(s, zoom) };
+            let row_h = if is_searching {
+                search_list_row_h(s, zoom)
+            } else {
+                list_row_h(s, zoom)
+            };
             let hdr_h = 32.0 * list_zoom_multiplier(zoom) * s;
             let mut item_hovered = Vec::with_capacity(entries.len());
             for i in 0..entries.len() {
@@ -631,11 +751,27 @@ pub fn render_frame(
                 };
                 item_hovered.push(hovered);
             }
-            let search_root = if is_searching { Some(app.current_dir.as_path()) } else { None };
+            let search_root = if is_searching {
+                Some(app.current_dir.as_path())
+            } else {
+                None
+            };
             draw_content_list(
-                painter, text, pal, content, entries,
-                &scroll_area, &item_hovered, &has_icon, app.drag_item, app.renaming,
-                search_root, git, (w, h), s, zoom,
+                painter,
+                text,
+                pal,
+                content,
+                entries,
+                &scroll_area,
+                &item_hovered,
+                &has_icon,
+                app.drag_item,
+                app.renaming,
+                search_root,
+                git,
+                (w, h),
+                s,
+                zoom,
             );
 
             // Inline rename input (list mode)
@@ -671,7 +807,15 @@ pub fn render_frame(
                 }
                 // Tight zone: arrow + icon + name only, so the space right of
                 // a name is empty (right-click → folder menu), matching grid.
-                let row_rect = crate::views::tree_row_hit_rect(text, &tree_entries[i], content, y, row_h, s, zoom);
+                let row_rect = crate::views::tree_row_hit_rect(
+                    text,
+                    &tree_entries[i],
+                    content,
+                    y,
+                    row_h,
+                    s,
+                    zoom,
+                );
                 let zone_id = ZONE_TREE_ITEM_BASE + i as u32;
                 let hovered = if let Some(clipped) = row_rect.intersect(&content) {
                     input.add_zone(zone_id, clipped).is_hovered()
@@ -683,33 +827,55 @@ pub fn render_frame(
             // Determine which tree row (if any) corresponds to the currently
             // renamed file by matching the path. Tree indices don't line up
             // with `app.entries` indices because of expand state.
-            let renaming_path = app.renaming.and_then(|i| app.entries.get(i)).map(|e| e.path.clone());
+            let renaming_path = app
+                .renaming
+                .and_then(|i| app.entries.get(i))
+                .map(|e| e.path.clone());
             // Build per-tree-row selected flags by looking up each tree
             // entry's path in both `app.entries` (top-level rows) and
             // `app.pick_tree_selection` (pick-mode nested rows).
-            let mut selected_paths: std::collections::HashSet<&std::path::Path> = app.entries.iter()
+            let mut selected_paths: std::collections::HashSet<&std::path::Path> = app
+                .entries
+                .iter()
                 .filter(|e| e.selected)
                 .map(|e| e.path.as_path())
                 .collect();
             for p in &app.pick_tree_selection {
                 selected_paths.insert(p.as_path());
             }
-            let tree_selected: Vec<bool> = tree_entries.iter()
+            let tree_selected: Vec<bool> = tree_entries
+                .iter()
                 .map(|te| selected_paths.contains(te.entry.path.as_path()))
                 .collect();
             draw_content_tree(
-                painter, text, pal, content, tree_entries,
-                &scroll_area, &item_hovered, &has_icon, &tree_selected,
-                app.drag_tree_item, renaming_path.as_deref(), (w, h), s, zoom,
+                painter,
+                text,
+                pal,
+                content,
+                tree_entries,
+                &scroll_area,
+                &item_hovered,
+                &has_icon,
+                &tree_selected,
+                app.drag_tree_item,
+                renaming_path.as_deref(),
+                (w, h),
+                s,
+                zoom,
             );
 
             // Inline rename input (tree mode)
             if let Some(ref path) = renaming_path {
-                if let Some((ti, te)) = tree_entries.iter().enumerate().find(|(_, t)| t.entry.path == *path) {
+                if let Some((ti, te)) = tree_entries
+                    .iter()
+                    .enumerate()
+                    .find(|(_, t)| t.entry.path == *path)
+                {
                     let m = list_zoom_multiplier(zoom);
                     let indent = 28.0 * m * s;
                     let icon_sz = 24.0 * m * s;
-                    let row_left = content.x + 8.0 * m * s + te.depth as f32 * indent + 16.0 * m * s;
+                    let row_left =
+                        content.x + 8.0 * m * s + te.depth as f32 * indent + 16.0 * m * s;
                     let input_x = row_left + icon_sz + 8.0 * m * s;
                     let y = base_y + ti as f32 * row_h;
                     let input_w = (content.x + content.w - input_x - 12.0 * m * s).max(120.0 * s);
@@ -751,11 +917,17 @@ pub fn render_frame(
             icon_cache.get_or_load(e, ctx, tex_pass);
         }
         preview_thumb_rect = crate::preview::draw_preview_pane(
-            painter, text, pal, file_info,
-            pane, entry, handle,
+            painter,
+            text,
+            pal,
+            file_info,
+            pane,
+            entry,
+            handle,
             handle_state.is_hovered(),
             app.preview_drag.is_some(),
-            (w, h), s,
+            (w, h),
+            s,
         );
         preview_thumb_entry = entry.cloned();
     }
@@ -774,7 +946,20 @@ pub fn render_frame(
         } else {
             None
         };
-        draw_status_bar(painter, text, pal, status, &app.entries, file_info, cloud_status, app.op_progress.as_ref(), git.branch(), input, (w, h), s);
+        draw_status_bar(
+            painter,
+            text,
+            pal,
+            status,
+            &app.entries,
+            file_info,
+            cloud_status,
+            app.op_progress.as_ref(),
+            git.branch(),
+            input,
+            (w, h),
+            s,
+        );
     }
 
     // ── Inactive split pane + divider ─────────────────────────────────
@@ -787,7 +972,14 @@ pub fn render_frame(
             let (px, pw) = if is_right { (rx, rw) } else { (lx, lw) };
             let dragging = app.drag_item.is_some() || app.drag_tree_item.is_some();
             p2_scroll_new = Some(crate::sections::render_inactive_pane(
-                painter, text, ctx, tex_pass, input, icon_cache, git, pal,
+                painter,
+                text,
+                ctx,
+                tex_pass,
+                input,
+                icon_cache,
+                git,
+                pal,
                 crate::sections::InactivePane {
                     tab,
                     view,
@@ -798,16 +990,25 @@ pub fn render_frame(
                     zoom,
                     dragging,
                 },
-                hf, (w, h), s,
+                hf,
+                (w, h),
+                s,
             ));
         }
         // Divider handle between the panes.
         let split_ratio = app.split.as_ref().map(|sp| sp.ratio).unwrap_or(0.5);
         let divider = split_divider_rect(wf, hf, split_ratio, s);
         let div_state = input.add_zone(crate::ZONE_SPLIT_DIVIDER, divider);
-        let div_active = app.split.as_ref().map_or(false, |sp| sp.divider_drag.is_some());
+        let div_active = app
+            .split
+            .as_ref()
+            .map_or(false, |sp| sp.divider_drag.is_some());
         crate::sections::draw_split_divider(
-            painter, divider, div_state.is_hovered() || div_active, pal, s,
+            painter,
+            divider,
+            div_state.is_hovered() || div_active,
+            pal,
+            s,
         );
     }
 
@@ -824,13 +1025,20 @@ pub fn render_frame(
         // Tree multi-drag only when the grabbed row is part of the
         // selection (selection lives in `entries`, keyed by path).
         match app.tree_entries.get(ti) {
-            Some(te) if app.entries.iter().any(|e| e.selected && e.path == te.entry.path) => {
+            Some(te)
+                if app
+                    .entries
+                    .iter()
+                    .any(|e| e.selected && e.path == te.entry.path) =>
+            {
                 app.entries.iter().filter(|e| e.selected).count().max(1)
             }
             Some(_) => 1,
             None => 0,
         }
-    } else { 0 };
+    } else {
+        0
+    };
 
     // Count badge for multi-drag
     if drag_count > 1 {
@@ -858,28 +1066,34 @@ pub fn render_frame(
     // ── Collect texture draws for icons ────────────────────────────────
     let content_clip = [content.x, content.y, content.w, content.h];
     let mut tex_draws: Vec<TextureDraw> = match view_mode {
-        ViewMode::Grid => {
-            (0..entries.len())
-                .filter(|&i| has_icon[i])
-                .filter_map(|i| {
-                    let ir = file_item_rect(i, cols, content.x, base_y, s, zoom);
-                    let icon_x = ir.x + (ir.w - icsz) * 0.5;
-                    let label_font = 16.0 * s;
-                    let content_h = icsz + 2.0 * s + label_font;
-                    let top_pad = (ir.h - content_h) * 0.5;
-                    let icon_y = ir.y + top_pad;
-                    let tex = icon_cache.get(&entries[i])?;
-                    let (dx, dy, dw, dh) = icons::fit_in_box(tex, icon_x, icon_y, icsz, icsz);
-                    let alpha = if app.drag_item.is_some() && entries[i].selected { 0.3 } else { 1.0 };
-                    let mut draw = TextureDraw::new(tex, dx, dy, dw, dh).opacity(alpha);
-                    draw.clip = Some(content_clip);
-                    Some(draw)
-                })
-                .collect()
-        }
+        ViewMode::Grid => (0..entries.len())
+            .filter(|&i| has_icon[i])
+            .filter_map(|i| {
+                let ir = file_item_rect(i, cols, content.x, base_y, s, zoom);
+                let icon_x = ir.x + (ir.w - icsz) * 0.5;
+                let label_font = 16.0 * s;
+                let content_h = icsz + 2.0 * s + label_font;
+                let top_pad = (ir.h - content_h) * 0.5;
+                let icon_y = ir.y + top_pad;
+                let tex = icon_cache.get(&entries[i])?;
+                let (dx, dy, dw, dh) = icons::fit_in_box(tex, icon_x, icon_y, icsz, icsz);
+                let alpha = if app.drag_item.is_some() && entries[i].selected {
+                    0.3
+                } else {
+                    1.0
+                };
+                let mut draw = TextureDraw::new(tex, dx, dy, dw, dh).opacity(alpha);
+                draw.clip = Some(content_clip);
+                Some(draw)
+            })
+            .collect(),
         ViewMode::List => {
             let m = list_zoom_multiplier(zoom);
-            let row_h = if is_searching { search_list_row_h(s, zoom) } else { list_row_h(s, zoom) };
+            let row_h = if is_searching {
+                search_list_row_h(s, zoom)
+            } else {
+                list_row_h(s, zoom)
+            };
             let hdr_h = 32.0 * m * s;
             let list_icon_sz = 28.0 * m * s;
             (0..entries.len())
@@ -889,7 +1103,8 @@ pub fn render_frame(
                     let icon_x = content.x + 8.0 * m * s;
                     let icon_y = y + (row_h - list_icon_sz) * 0.5;
                     let tex = icon_cache.get(&entries[i])?;
-                    let (dx, dy, dw, dh) = icons::fit_in_box(tex, icon_x, icon_y, list_icon_sz, list_icon_sz);
+                    let (dx, dy, dw, dh) =
+                        icons::fit_in_box(tex, icon_x, icon_y, list_icon_sz, list_icon_sz);
                     let alpha = if app.drag_item == Some(i) { 0.3 } else { 1.0 };
                     let mut draw = TextureDraw::new(tex, dx, dy, dw, dh).opacity(alpha);
                     draw.clip = Some(content_clip);
@@ -912,7 +1127,8 @@ pub fn render_frame(
                     let icon_x = content.x + 8.0 * m * s + x_offset + 16.0 * m * s;
                     let icon_y = y + (row_h - tree_icon_sz) * 0.5;
                     let tex = icon_cache.get(&te.entry)?;
-                    let (dx, dy, dw, dh) = icons::fit_in_box(tex, icon_x, icon_y, tree_icon_sz, tree_icon_sz);
+                    let (dx, dy, dw, dh) =
+                        icons::fit_in_box(tex, icon_x, icon_y, tree_icon_sz, tree_icon_sz);
                     let mut draw = TextureDraw::new(tex, dx, dy, dw, dh);
                     draw.clip = Some(content_clip);
                     Some(draw)
@@ -926,17 +1142,15 @@ pub fn render_frame(
     // its icon TEXTURES render here — all icons must go through the single
     // tex_draws pass (a second render_pass would clobber the shared
     // instance buffer). Geometry mirrors render_inactive_pane exactly.
-    if let (Some(icr), Some((tab, view, _))) = (
-        app.inactive_content_rect(wf, hf, s),
-        app.inactive_pane(),
-    ) {
+    if let (Some(icr), Some((tab, view, _))) =
+        (app.inactive_content_rect(wf, hf, s), app.inactive_pane())
+    {
         let p2_clip = [icr.x, icr.y, icr.w, icr.h];
         let p2_entries = &tab.entries;
         // Mirror ScrollArea's clamp so icons can't drift from the rows for
         // a frame when the stored offset exceeds the new max.
-        let clamp_scroll = |total_h: f32| -> f32 {
-            tab.scroll_offset.min((total_h - icr.h).max(0.0)).max(0.0)
-        };
+        let clamp_scroll =
+            |total_h: f32| -> f32 { tab.scroll_offset.min((total_h - icr.h).max(0.0)).max(0.0) };
         match view.view_mode {
             ViewMode::Grid => {
                 let p2_cols = grid_columns(icr.w, s, zoom);
@@ -1026,7 +1240,11 @@ pub fn render_frame(
             .collect(),
         ViewMode::List => {
             let m = list_zoom_multiplier(zoom);
-            let row_h = if is_searching { search_list_row_h(s, zoom) } else { list_row_h(s, zoom) };
+            let row_h = if is_searching {
+                search_list_row_h(s, zoom)
+            } else {
+                list_row_h(s, zoom)
+            };
             let hdr_h = 32.0 * m * s;
             let list_icon_sz = 28.0 * m * s;
             (0..entries.len())
@@ -1036,7 +1254,13 @@ pub fn render_frame(
                     let icon_x = content.x + 8.0 * m * s;
                     let icon_y = y + (row_h - list_icon_sz) * 0.5;
                     let tex = icon_cache.get(&entries[i])?;
-                    Some(icons::fit_in_box(tex, icon_x, icon_y, list_icon_sz, list_icon_sz))
+                    Some(icons::fit_in_box(
+                        tex,
+                        icon_x,
+                        icon_y,
+                        list_icon_sz,
+                        list_icon_sz,
+                    ))
                 })
                 .collect()
         }
@@ -1055,7 +1279,13 @@ pub fn render_frame(
                     let icon_x = content.x + 8.0 * m * s + x_offset + 16.0 * m * s;
                     let icon_y = y + (row_h - tree_icon_sz) * 0.5;
                     let tex = icon_cache.get(&te.entry)?;
-                    Some(icons::fit_in_box(tex, icon_x, icon_y, tree_icon_sz, tree_icon_sz))
+                    Some(icons::fit_in_box(
+                        tex,
+                        icon_x,
+                        icon_y,
+                        tree_icon_sz,
+                        tree_icon_sz,
+                    ))
                 })
                 .collect()
         }
@@ -1112,9 +1342,12 @@ pub fn render_frame(
         let t = r * 0.5;
         let off = r * 0.12; // nudge right so it looks optically centered
         painter.triangle(
-            cx - t * 0.7 + off, cy - t,
-            cx - t * 0.7 + off, cy + t,
-            cx + t + off,       cy,
+            cx - t * 0.7 + off,
+            cy - t,
+            cx - t * 0.7 + off,
+            cy + t,
+            cx + t + off,
+            cy,
             Color::rgba(1.0, 1.0, 1.0, 0.95),
         );
     }
@@ -1129,8 +1362,7 @@ pub fn render_frame(
     let mut props_icon_rect_data: Option<(crate::fs::FileEntry, (f32, f32, f32, f32))> = None;
     if let Some(ref mut props) = app.properties {
         let evt = crate::properties::draw_properties_dialog(
-            props, painter, text, input, pal,
-            wf, hf, s, w, h,
+            props, painter, text, input, pal, wf, hf, s, w, h,
         );
         match evt {
             Some(crate::properties::PropertiesEvent::Close) => {
@@ -1178,11 +1410,14 @@ pub fn render_frame(
         }
     }
 
-    if props_close { app.properties = None; }
+    if props_close {
+        app.properties = None;
+    }
     if let Some((folder, icon_path)) = props_icon_chosen {
         // Defer xattr + invalidation to the next frame — icon_cache is
         // still borrowed by tex_draws at this point in the frame.
-        app.pending_icon_apply.push((folder, Some(icon_path.to_string_lossy().to_string())));
+        app.pending_icon_apply
+            .push((folder, Some(icon_path.to_string_lossy().to_string())));
     }
     if let Some(folder) = props_icon_reset {
         app.pending_icon_apply.push((folder, None));
@@ -1216,9 +1451,9 @@ pub fn render_frame(
 
     // ── Quick Look overlay (topmost modal) ─────────────────────────
     if let Some(ref ql) = app.quick_look {
-        if let Some(draw) = crate::quick_look::draw_quick_look(
-            ql, painter, text, pal, input, wf, hf, s, w, h,
-        ) {
+        if let Some(draw) =
+            crate::quick_look::draw_quick_look(ql, painter, text, pal, input, wf, hf, s, w, h)
+        {
             props_tex_draws.push(draw);
         }
     }
@@ -1238,7 +1473,13 @@ pub fn render_frame(
             let view = frame.view().clone();
 
             // Layer 0: base shapes + textures + text
-            painter.render_layer(0, ctx, frame.encoder_mut(), &view, Some(Color::rgba(0.0, 0.0, 0.0, 0.0)));
+            painter.render_layer(
+                0,
+                ctx,
+                frame.encoder_mut(),
+                &view,
+                Some(Color::rgba(0.0, 0.0, 0.0, 0.0)),
+            );
             if !tex_draws.is_empty() {
                 tex_pass.render_pass(ctx, frame.encoder_mut(), &view, &tex_draws, None);
             }
@@ -1268,8 +1509,11 @@ fn draw_drop_modal(
     text: &mut lntrn_render::TextRenderer,
     input: &mut InteractionContext,
     pal: &FoxPalette,
-    screen_w: f32, screen_h: f32,
-    s: f32, sw: u32, sh: u32,
+    screen_w: f32,
+    screen_h: f32,
+    s: f32,
+    sw: u32,
+    sh: u32,
 ) {
     let dialog_w = 380.0 * s;
     let pad = 20.0 * s;
@@ -1281,13 +1525,16 @@ fn draw_drop_modal(
 
     // File name for display
     let file_name = if drop.sources.len() == 1 {
-        drop.sources[0].file_name()
+        drop.sources[0]
+            .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "item".into())
     } else {
         format!("{} items", drop.sources.len())
     };
-    let dest_dir = drop.dest_dir.file_name()
+    let dest_dir = drop
+        .dest_dir
+        .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "/".into());
 
@@ -1301,13 +1548,19 @@ fn draw_drop_modal(
 
     // Backdrop
     painter.rect_filled(
-        Rect::new(0.0, 0.0, screen_w, screen_h), 0.0,
+        Rect::new(0.0, 0.0, screen_w, screen_h),
+        0.0,
         Color::rgba(0.0, 0.0, 0.0, 0.55),
     );
 
     // Shadow + panel
     let panel = Rect::new(dx, dy, dialog_w, dialog_h);
-    let shadow = Rect::new(dx - 8.0 * s, dy - 4.0 * s, dialog_w + 16.0 * s, dialog_h + 16.0 * s);
+    let shadow = Rect::new(
+        dx - 8.0 * s,
+        dy - 4.0 * s,
+        dialog_w + 16.0 * s,
+        dialog_h + 16.0 * s,
+    );
     painter.rect_filled(shadow, cr + 4.0 * s, Color::rgba(0.0, 0.0, 0.0, 0.3));
     painter.rect_filled(panel, cr, pal.surface);
     painter.rect_stroke_sdf(panel, cr, 1.0 * s, pal.muted.with_alpha(0.2));
@@ -1315,15 +1568,42 @@ fn draw_drop_modal(
     let mut cy = dy + pad;
 
     // Title
-    text.queue("Move or Copy?", title_font, dx + pad, cy, pal.text, dialog_w - pad * 2.0, sw, sh);
+    text.queue(
+        "Move or Copy?",
+        title_font,
+        dx + pad,
+        cy,
+        pal.text,
+        dialog_w - pad * 2.0,
+        sw,
+        sh,
+    );
     cy += title_font + pad * 0.5;
 
     // Body text
     let line1 = format!("\"{file_name}\"");
     let line2 = format!("→ {dest_dir}/");
-    text.queue(&line1, body_font, dx + pad, cy, pal.text, dialog_w - pad * 2.0, sw, sh);
+    text.queue(
+        &line1,
+        body_font,
+        dx + pad,
+        cy,
+        pal.text,
+        dialog_w - pad * 2.0,
+        sw,
+        sh,
+    );
     cy += body_font + 4.0 * s;
-    text.queue(&line2, body_font, dx + pad, cy, pal.text_secondary, dialog_w - pad * 2.0, sw, sh);
+    text.queue(
+        &line2,
+        body_font,
+        dx + pad,
+        cy,
+        pal.text_secondary,
+        dialog_w - pad * 2.0,
+        sw,
+        sh,
+    );
     cy += body_font + pad;
 
     // Buttons: [Move] [Copy] [Cancel] — right-aligned

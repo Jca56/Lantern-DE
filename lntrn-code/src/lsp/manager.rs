@@ -37,7 +37,10 @@ const SERVERS: &[ServerConfig] = &[
 ];
 
 fn config_for(id: ServerId) -> &'static ServerConfig {
-    SERVERS.iter().find(|c| c.id == id).expect("ServerId configured")
+    SERVERS
+        .iter()
+        .find(|c| c.id == id)
+        .expect("ServerId configured")
 }
 
 /// Anything the manager tracks about a single open document, indexed by URI.
@@ -102,7 +105,8 @@ impl LspManager {
             Err(e) => {
                 eprintln!(
                     "[lntrn-code] lsp: failed to spawn {} ({}): {e}",
-                    cfg.command, server_id.label()
+                    cfg.command,
+                    server_id.label()
                 );
                 self.failed.insert(server_id, e.to_string());
                 None
@@ -188,7 +192,9 @@ impl LspManager {
     }
 
     pub fn take_pending(&mut self, server_id: ServerId, id: u64) -> Option<PendingKind> {
-        self.clients.get_mut(&server_id).and_then(|c| c.pending.remove(&id))
+        self.clients
+            .get_mut(&server_id)
+            .and_then(|c| c.pending.remove(&id))
     }
 }
 
@@ -213,5 +219,7 @@ fn workspace_root(path: &Path) -> std::path::PathBuf {
         }
         cur = dir.parent().map(|p| p.to_path_buf());
     }
-    path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| std::path::PathBuf::from("."))
+    path.parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
 }

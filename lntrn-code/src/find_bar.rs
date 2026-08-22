@@ -203,12 +203,7 @@ impl FindBar {
     }
 
     /// Returns true if the key was consumed.
-    pub fn handle_key(
-        &mut self,
-        key: &Key,
-        mods: ModifiersState,
-        editor: &mut Editor,
-    ) -> bool {
+    pub fn handle_key(&mut self, key: &Key, mods: ModifiersState, editor: &mut Editor) -> bool {
         let ctrl = mods.contains(ModifiersState::CONTROL);
         let shift = mods.contains(ModifiersState::SHIFT);
 

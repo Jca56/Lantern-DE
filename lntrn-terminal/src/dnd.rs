@@ -164,8 +164,11 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for DndState {
                 if let Some(offer) = id {
                     // Accept text/uri-list if it's on offer; this lets
                     // the compositor know we want the drop.
-                    let accepted_mime =
-                        state.pending_mimes.iter().find(|m| m.as_str() == MIME_URI_LIST).cloned();
+                    let accepted_mime = state
+                        .pending_mimes
+                        .iter()
+                        .find(|m| m.as_str() == MIME_URI_LIST)
+                        .cloned();
                     if let Some(ref mime) = accepted_mime {
                         offer.accept(serial, Some(mime.clone()));
                         // Tell the compositor we'd prefer Copy; needed

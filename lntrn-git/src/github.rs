@@ -19,8 +19,12 @@ pub struct RemoteRepo {
 pub fn fetch_github_repos() -> Result<Vec<RemoteRepo>, String> {
     let output = Command::new("gh")
         .args([
-            "repo", "list", "--limit", "200",
-            "--json", "name,nameWithOwner,description,url,isPrivate,isFork",
+            "repo",
+            "list",
+            "--limit",
+            "200",
+            "--json",
+            "name,nameWithOwner,description,url,isPrivate,isFork",
         ])
         .output()
         .map_err(|e| format!("gh not found: {e}"))?;
@@ -39,13 +43,19 @@ pub fn fetch_github_repos() -> Result<Vec<RemoteRepo>, String> {
 pub fn create_github_repo(repo: &Path, name: &str, private: bool) -> Result<String, String> {
     let vis = if private { "--private" } else { "--public" };
     let output = Command::new("gh")
-        .args(["repo", "create", name, vis, "--source", ".", "--remote", "origin"])
+        .args([
+            "repo", "create", name, vis, "--source", ".", "--remote", "origin",
+        ])
         .current_dir(repo)
         .output()
         .map_err(|e| format!("gh not found: {e}"))?;
     if output.status.success() {
         let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        Ok(if url.is_empty() { "Created on GitHub".into() } else { format!("Created {url}") })
+        Ok(if url.is_empty() {
+            "Created on GitHub".into()
+        } else {
+            format!("Created {url}")
+        })
     } else {
         Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
     }
@@ -73,7 +83,14 @@ fn parse_gh_repo_list(json: &str) -> Result<Vec<RemoteRepo>, String> {
         let clone_url = extract_json_str(&chunk, "url").unwrap_or_default();
         let is_private = extract_json_bool(&chunk, "isPrivate");
         let is_fork = extract_json_bool(&chunk, "isFork");
-        repos.push(RemoteRepo { name, full_name, description, clone_url, is_private, is_fork });
+        repos.push(RemoteRepo {
+            name,
+            full_name,
+            description,
+            clone_url,
+            is_private,
+            is_fork,
+        });
     }
 
     Ok(repos)
@@ -86,7 +103,9 @@ fn split_json_objects(s: &str) -> Vec<String> {
     for (i, c) in s.char_indices() {
         match c {
             '{' => {
-                if depth == 0 { start = i; }
+                if depth == 0 {
+                    start = i;
+                }
                 depth += 1;
             }
             '}' => {
@@ -108,7 +127,9 @@ fn extract_json_str(obj: &str, key: &str) -> Option<String> {
     if rest.starts_with("null") {
         return Some(String::new());
     }
-    if !rest.starts_with('"') { return None; }
+    if !rest.starts_with('"') {
+        return None;
+    }
     let inner = &rest[1..];
     let mut result = String::new();
     let mut chars = inner.chars();
@@ -120,7 +141,10 @@ fn extract_json_str(obj: &str, key: &str) -> Option<String> {
                         '"' => result.push('"'),
                         '\\' => result.push('\\'),
                         'n' => result.push(' '),
-                        _ => { result.push('\\'); result.push(escaped); }
+                        _ => {
+                            result.push('\\');
+                            result.push(escaped);
+                        }
                     }
                 }
             }
@@ -133,7 +157,9 @@ fn extract_json_str(obj: &str, key: &str) -> Option<String> {
 
 fn extract_json_bool(obj: &str, key: &str) -> bool {
     let needle = format!("\"{}\":", key);
-    let Some(pos) = obj.find(&needle) else { return false };
+    let Some(pos) = obj.find(&needle) else {
+        return false;
+    };
     let rest = &obj[pos + needle.len()..].trim_start();
     rest.starts_with("true")
 }

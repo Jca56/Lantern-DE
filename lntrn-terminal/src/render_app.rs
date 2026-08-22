@@ -72,7 +72,11 @@ impl App {
         // every glyph cell, then layer the optional System Settings window
         // gradient on top with per-stop alphas (transparent stops reveal
         // the solid bg, not the wallpaper).
-        let win_r = if maximized { 0.0 } else { render::CORNER_RADIUS };
+        let win_r = if maximized {
+            0.0
+        } else {
+            render::CORNER_RADIUS
+        };
         let win_rect = lntrn_render::Rect::new(0.0, 0.0, screen_w as f32, screen_h as f32);
         render::draw_window_bg(
             painter,
@@ -121,8 +125,7 @@ impl App {
             if i >= rects.len() {
                 break;
             }
-            let (gx, gy, gw, gh) =
-                Self::pane_grid_bounds(pane, rects[i], font_size);
+            let (gx, gy, gw, gh) = Self::pane_grid_bounds(pane, rects[i], font_size);
             let is_focused = i == tab.active_pane;
             let is_active_pane = i == tab.active_pane;
 
@@ -248,8 +251,7 @@ impl App {
         // mode (which only hides the title/tab bar); the menu-bar/tab-bar
         // overlays belong to chrome that isn't drawn there.
         let has_overlay = self.chrome.context_menu.is_open()
-            || (!self.chrome_hidden
-                && (self.chrome.has_overlay() || self.tab_bar.has_overlay()));
+            || (!self.chrome_hidden && (self.chrome.has_overlay() || self.tab_bar.has_overlay()));
 
         if has_overlay {
             // Two-pass rendering: menus must appear ABOVE terminal text.
@@ -322,9 +324,7 @@ impl App {
                             ui_chrome::MENU_CURSOR_UNDERLINE => {
                                 crate::config::CursorStylePref::Underline
                             }
-                            ui_chrome::MENU_CURSOR_BEAM => {
-                                crate::config::CursorStylePref::Beam
-                            }
+                            ui_chrome::MENU_CURSOR_BEAM => crate::config::CursorStylePref::Beam,
                             _ => crate::config::CursorStylePref::Block,
                         };
                         if self.config.general.cursor_style != new_style {
@@ -361,10 +361,14 @@ impl App {
                 // Pass 1.5: inline images
                 if !image_placements.is_empty() {
                     if let Some(ref tex_pass) = self.texture_pass {
-                        let draws: Vec<TextureDraw> = image_placements.iter().filter_map(|p| {
-                            let (_, _, gpu_tex) = self.image_textures.iter().find(|(id, _, _)| *id == p.0)?;
-                            Some(TextureDraw::new(gpu_tex, p.1, p.2, p.3, p.4))
-                        }).collect();
+                        let draws: Vec<TextureDraw> = image_placements
+                            .iter()
+                            .filter_map(|p| {
+                                let (_, _, gpu_tex) =
+                                    self.image_textures.iter().find(|(id, _, _)| *id == p.0)?;
+                                Some(TextureDraw::new(gpu_tex, p.1, p.2, p.3, p.4))
+                            })
+                            .collect();
                         if !draws.is_empty() {
                             tex_pass.render_pass(gpu, frame.encoder_mut(), &view, &draws, None);
                         }
@@ -393,10 +397,14 @@ impl App {
                 // Inline images
                 if !image_placements.is_empty() {
                     if let Some(ref tex_pass) = self.texture_pass {
-                        let draws: Vec<TextureDraw> = image_placements.iter().filter_map(|p| {
-                            let (_, _, gpu_tex) = self.image_textures.iter().find(|(id, _, _)| *id == p.0)?;
-                            Some(TextureDraw::new(gpu_tex, p.1, p.2, p.3, p.4))
-                        }).collect();
+                        let draws: Vec<TextureDraw> = image_placements
+                            .iter()
+                            .filter_map(|p| {
+                                let (_, _, gpu_tex) =
+                                    self.image_textures.iter().find(|(id, _, _)| *id == p.0)?;
+                                Some(TextureDraw::new(gpu_tex, p.1, p.2, p.3, p.4))
+                            })
+                            .collect();
                         if !draws.is_empty() {
                             tex_pass.render_pass(gpu, frame.encoder_mut(), &view, &draws, None);
                         }
@@ -520,10 +528,7 @@ impl App {
         placements
     }
 
-    pub(crate) fn handle_render_error(
-        e: lntrn_render::SurfaceError,
-        gpu: &mut Option<GpuContext>,
-    ) {
+    pub(crate) fn handle_render_error(e: lntrn_render::SurfaceError, gpu: &mut Option<GpuContext>) {
         match e {
             lntrn_render::SurfaceError::Lost | lntrn_render::SurfaceError::Outdated => {
                 if let Some(ref mut g) = gpu {
@@ -576,15 +581,7 @@ fn draw_pane_dividers(painter: &mut Painter, rects: &[(f32, f32, f32, f32)], tab
     let accent = accent_color(80);
     let b = 2.0;
     painter.rect_filled(lntrn_render::Rect::new(ax, ay, aw, b), 0.0, accent);
-    painter.rect_filled(
-        lntrn_render::Rect::new(ax, ay + ah - b, aw, b),
-        0.0,
-        accent,
-    );
+    painter.rect_filled(lntrn_render::Rect::new(ax, ay + ah - b, aw, b), 0.0, accent);
     painter.rect_filled(lntrn_render::Rect::new(ax, ay, b, ah), 0.0, accent);
-    painter.rect_filled(
-        lntrn_render::Rect::new(ax + aw - b, ay, b, ah),
-        0.0,
-        accent,
-    );
+    painter.rect_filled(lntrn_render::Rect::new(ax + aw - b, ay, b, ah), 0.0, accent);
 }

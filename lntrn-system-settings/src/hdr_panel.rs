@@ -59,7 +59,16 @@ pub fn draw_hdr_row(
     let mut dragged_sdr_nits = None;
 
     // ── HDR toggle row ─────────────────────────────────────────────
-    text.queue("HDR", lsz, label_x, cy + (row_h - lsz) / 2.0, fox.text, LABEL_W * s, sw, sh);
+    text.queue(
+        "HDR",
+        lsz,
+        label_x,
+        cy + (row_h - lsz) / 2.0,
+        fox.text,
+        LABEL_W * s,
+        sw,
+        sh,
+    );
 
     // Pill toggle: rounded track + sliding knob.
     let track_w = 56.0 * s;
@@ -97,11 +106,23 @@ pub fn draw_hdr_row(
     // ── SDR brightness slider (only when HDR is on) ────────────────
     if hdr_on {
         let cap = if max_nits > 0 {
-            format!("SDR brightness  ({} nits, display peak {})", sdr_nits, max_nits)
+            format!(
+                "SDR brightness  ({} nits, display peak {})",
+                sdr_nits, max_nits
+            )
         } else {
             format!("SDR brightness  ({} nits)", sdr_nits)
         };
-        text.queue(&cap, lsz * 0.85, label_x, cy + 4.0 * s, fox.text_secondary, 420.0 * s, sw, sh);
+        text.queue(
+            &cap,
+            lsz * 0.85,
+            label_x,
+            cy + 4.0 * s,
+            fox.text_secondary,
+            420.0 * s,
+            sw,
+            sh,
+        );
 
         let slider_y = cy + row_h * 0.6;
         let track_x = label_x;
@@ -133,8 +154,16 @@ pub fn draw_hdr_row(
         };
 
         // Track + filled portion up to the knob.
-        painter.line(track_x, slider_y, track_x + track_w2, slider_y, 3.0 * s, fox.surface_2);
-        let t = ((display_nits.clamp(SDR_MIN, SDR_MAX) - SDR_MIN) as f32) / ((SDR_MAX - SDR_MIN) as f32);
+        painter.line(
+            track_x,
+            slider_y,
+            track_x + track_w2,
+            slider_y,
+            3.0 * s,
+            fox.surface_2,
+        );
+        let t = ((display_nits.clamp(SDR_MIN, SDR_MAX) - SDR_MIN) as f32)
+            / ((SDR_MAX - SDR_MIN) as f32);
         let knob_x = track_x + t * track_w2;
         painter.line(track_x, slider_y, knob_x, slider_y, 3.0 * s, fox.accent);
         painter.circle_filled(knob_x, slider_y, knob_r2, fox.accent);
@@ -172,7 +201,11 @@ pub fn draw_hdr_row(
             btn_h,
         );
         let keep_zone = ix.add_zone(ZONE_HDR_KEEP, btn);
-        let btn_bg = if keep_zone.is_hovered() { fox.success } else { fox.accent };
+        let btn_bg = if keep_zone.is_hovered() {
+            fox.success
+        } else {
+            fox.accent
+        };
         painter.rect_filled(btn, 6.0 * s, btn_bg);
         let klsz = lsz * 0.95;
         text.queue(

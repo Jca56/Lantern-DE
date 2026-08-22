@@ -45,7 +45,9 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for State {
                 state.dnd_offer = Some(id);
                 state.dnd_mimes.clear();
             }
-            Event::Enter { serial, x, y, id, .. } => {
+            Event::Enter {
+                serial, x, y, id, ..
+            } => {
                 state.dnd_x = x;
                 state.dnd_y = y;
                 if let Some(offer) = id {
@@ -139,7 +141,9 @@ fn read_offer(offer: wl_data_offer::WlDataOffer) -> Vec<PathBuf> {
 /// Parse `text/uri-list` (RFC 2483): `#` lines are comments, only `file://`
 /// URIs become local paths.
 fn parse_uri_list(buf: &[u8]) -> Vec<PathBuf> {
-    let Ok(text) = std::str::from_utf8(buf) else { return Vec::new() };
+    let Ok(text) = std::str::from_utf8(buf) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
     for raw in text.lines() {
         let line = raw.trim();

@@ -114,9 +114,13 @@ pub fn read_dict_ss(r: &mut BodyReader<'_>) -> HashMap<String, String> {
     let mut out = HashMap::new();
     while r.pos < end {
         r.align(8);
-        if r.pos >= end { break; }
+        if r.pos >= end {
+            break;
+        }
         let k = r.read_string();
-        if r.pos >= end { break; }
+        if r.pos >= end {
+            break;
+        }
         let v = r.read_string();
         out.insert(k, v);
     }
@@ -165,9 +169,13 @@ pub fn read_dict_sv(r: &mut BodyReader<'_>) -> HashMap<String, Value> {
     let mut out = HashMap::new();
     while r.pos < end {
         r.align(8);
-        if r.pos >= end { break; }
+        if r.pos >= end {
+            break;
+        }
         let k = r.read_string();
-        if r.pos >= end { break; }
+        if r.pos >= end {
+            break;
+        }
         if let Some(v) = r.read_value("v") {
             out.insert(k, v);
         }
@@ -204,7 +212,13 @@ mod tests {
     #[test]
     fn secret_struct_roundtrip() {
         let mut buf = Vec::new();
-        encode_secret_struct(&mut buf, "/session/s1", &[1, 2, 3], &[4, 5, 6], "text/plain");
+        encode_secret_struct(
+            &mut buf,
+            "/session/s1",
+            &[1, 2, 3],
+            &[4, 5, 6],
+            "text/plain",
+        );
         let mut r = BodyReader::new(&buf, "");
         let (sess, params, val, ct) = read_secret_struct(&mut r);
         assert_eq!(sess, "/session/s1");
@@ -213,4 +227,3 @@ mod tests {
         assert_eq!(ct, "text/plain");
     }
 }
-

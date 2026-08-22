@@ -81,12 +81,14 @@ impl Color {
 
     /// Make the color lighter by `amount` (0.0–1.0). Blends toward white.
     pub fn lighten(self, amount: f32) -> Self {
-        self.lerp(Self::rgb(1.0, 1.0, 1.0), amount).with_alpha(self.a)
+        self.lerp(Self::rgb(1.0, 1.0, 1.0), amount)
+            .with_alpha(self.a)
     }
 
     /// Make the color darker by `amount` (0.0–1.0). Blends toward black.
     pub fn darken(self, amount: f32) -> Self {
-        self.lerp(Self::rgb(0.0, 0.0, 0.0), amount).with_alpha(self.a)
+        self.lerp(Self::rgb(0.0, 0.0, 0.0), amount)
+            .with_alpha(self.a)
     }
 
     /// Adjust saturation. `factor` < 1.0 desaturates, > 1.0 saturates.

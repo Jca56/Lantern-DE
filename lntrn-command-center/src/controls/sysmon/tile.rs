@@ -48,8 +48,8 @@ pub fn draw_inline(
     let spark_top = layout.y + layout.h - spark_h;
 
     // CPU spark (left)
-    let cpu_color = Color::from_rgb8(CPU_COLOR_RGB.0, CPU_COLOR_RGB.1, CPU_COLOR_RGB.2)
-        .with_alpha(alpha);
+    let cpu_color =
+        Color::from_rgb8(CPU_COLOR_RGB.0, CPU_COLOR_RGB.1, CPU_COLOR_RGB.2).with_alpha(alpha);
     draw_sparkline(
         painter,
         Rect::new(start_x, spark_top, spark_w, spark_h),
@@ -61,8 +61,8 @@ pub fn draw_inline(
     );
 
     // RAM spark (right)
-    let mem_color = Color::from_rgb8(MEM_COLOR_RGB.0, MEM_COLOR_RGB.1, MEM_COLOR_RGB.2)
-        .with_alpha(alpha);
+    let mem_color =
+        Color::from_rgb8(MEM_COLOR_RGB.0, MEM_COLOR_RGB.1, MEM_COLOR_RGB.2).with_alpha(alpha);
     let mem_x = start_x + spark_w + gap;
     draw_sparkline(
         painter,
@@ -77,7 +77,10 @@ pub fn draw_inline(
     // Labels above each sparkline. Tight, glanceable. We round to int %
     // because half-percent precision is noise at this size.
     let cpu_label = format!("CPU {}%", sysmon.last_cpu_pct.round() as i32);
-    let mem_label = format!("RAM {}%", (sysmon.mem.used_fraction() * 100.0).round() as i32);
+    let mem_label = format!(
+        "RAM {}%",
+        (sysmon.mem.used_fraction() * 100.0).round() as i32
+    );
     let label_y = spark_top - label_font - label_gap;
     let white = Color::from_rgb8(0xff, 0xff, 0xff).with_alpha(alpha * 0.85);
 

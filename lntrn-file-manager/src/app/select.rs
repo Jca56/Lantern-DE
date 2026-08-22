@@ -9,10 +9,14 @@ use super::{first_filter_ext_of, App, PickResult};
 
 impl App {
     pub fn on_item_click(&mut self, index: usize) {
-        if index >= self.entries.len() { return; }
+        if index >= self.entries.len() {
+            return;
+        }
         let now = Instant::now();
         let is_double = self.last_click_idx == Some(index)
-            && self.last_click_time.map_or(false, |t| now.duration_since(t).as_millis() < 400);
+            && self
+                .last_click_time
+                .map_or(false, |t| now.duration_since(t).as_millis() < 400);
         self.last_click_time = Some(now);
         self.last_click_idx = Some(index);
 
@@ -28,15 +32,18 @@ impl App {
         // a single click is enough. Modifier-held clicks are always selection
         // operations, regardless of the setting.
         let mod_select = self.press_shift || self.press_ctrl;
-        let wants_activate = !mod_select
-            && (is_double || !self.double_click_to_open);
+        let wants_activate = !mod_select && (is_double || !self.double_click_to_open);
 
         // Directory branch
         if is_dir {
             // Dir-pick modes use clicks for selection, double-click to confirm.
             // Don't navigate in those modes unless a real double-click happened.
             if allow_dir_select && !is_double {
-                if !multi { for e in &mut self.entries { e.selected = false; } }
+                if !multi {
+                    for e in &mut self.entries {
+                        e.selected = false;
+                    }
+                }
                 self.entries[index].selected = !self.entries[index].selected;
                 return;
             }
@@ -46,22 +53,34 @@ impl App {
                 return;
             }
             // Single-click on a dir in double-click mode (non-pick) → select.
-            if !multi { for e in &mut self.entries { e.selected = false; } }
+            if !multi {
+                for e in &mut self.entries {
+                    e.selected = false;
+                }
+            }
             self.entries[index].selected = !self.entries[index].selected;
             return;
         }
 
         // File branch — pick mode confirms on double-click only.
         if is_double && is_pick {
-            for e in &mut self.entries { e.selected = false; }
+            for e in &mut self.entries {
+                e.selected = false;
+            }
             self.entries[index].selected = true;
             self.confirm_pick();
         } else if wants_activate && !is_pick {
-            for e in &mut self.entries { e.selected = false; }
+            for e in &mut self.entries {
+                e.selected = false;
+            }
             self.entries[index].selected = true;
             self.open_selected();
         } else {
-            if !multi { for e in &mut self.entries { e.selected = false; } }
+            if !multi {
+                for e in &mut self.entries {
+                    e.selected = false;
+                }
+            }
             self.entries[index].selected = !self.entries[index].selected;
         }
     }
@@ -74,8 +93,12 @@ impl App {
         // and pick_tree_selection (nested Tree rows). Dedup by path.
         let mut paths: Vec<PathBuf> = Vec::new();
         let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
-        let push = |p: PathBuf, paths: &mut Vec<PathBuf>, seen: &mut std::collections::HashSet<PathBuf>| {
-            if seen.insert(p.clone()) { paths.push(p); }
+        let push = |p: PathBuf,
+                    paths: &mut Vec<PathBuf>,
+                    seen: &mut std::collections::HashSet<PathBuf>| {
+            if seen.insert(p.clone()) {
+                paths.push(p);
+            }
         };
         match pick.mode {
             PickType::Save => {
@@ -91,7 +114,9 @@ impl App {
                     push(e.path.clone(), &mut paths, &mut seen);
                 }
                 for p in &self.pick_tree_selection {
-                    if p.is_dir() { push(p.clone(), &mut paths, &mut seen); }
+                    if p.is_dir() {
+                        push(p.clone(), &mut paths, &mut seen);
+                    }
                 }
                 if paths.is_empty() {
                     // No dir selected — use current directory
@@ -105,7 +130,9 @@ impl App {
                     push(e.path.clone(), &mut paths, &mut seen);
                 }
                 for p in &self.pick_tree_selection {
-                    if !p.is_dir() { push(p.clone(), &mut paths, &mut seen); }
+                    if !p.is_dir() {
+                        push(p.clone(), &mut paths, &mut seen);
+                    }
                 }
                 if !paths.is_empty() {
                     self.pick_result = Some(PickResult::Selected(paths));
@@ -132,8 +159,12 @@ impl App {
     }
 
     pub fn cycle_filter(&mut self) {
-        let Some(ref mut pick) = self.pick else { return };
-        if pick.filters.is_empty() { return; }
+        let Some(ref mut pick) = self.pick else {
+            return;
+        };
+        if pick.filters.is_empty() {
+            return;
+        }
         pick.active_filter = (pick.active_filter + 1) % pick.filters.len();
 
         // In save mode, swap the filename's extension to match the new
@@ -161,15 +192,21 @@ impl App {
     }
 
     pub fn select_item(&mut self, index: usize) {
-        if index >= self.entries.len() { return; }
+        if index >= self.entries.len() {
+            return;
+        }
         if !self.entries[index].selected {
-            for e in &mut self.entries { e.selected = false; }
+            for e in &mut self.entries {
+                e.selected = false;
+            }
             self.entries[index].selected = true;
         }
     }
 
     pub fn select_all(&mut self) {
-        for e in &mut self.entries { e.selected = true; }
+        for e in &mut self.entries {
+            e.selected = true;
+        }
     }
 
     /// Mark every entry in the inclusive range [start..=end] as selected.
@@ -185,7 +222,9 @@ impl App {
     }
 
     pub fn clear_selection(&mut self) {
-        for e in &mut self.entries { e.selected = false; }
+        for e in &mut self.entries {
+            e.selected = false;
+        }
     }
 
     pub fn selected_paths(&self) -> Vec<PathBuf> {

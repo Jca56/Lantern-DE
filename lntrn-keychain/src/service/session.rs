@@ -11,18 +11,14 @@ use lntrn_dbus::{encode_string, BodyReader, Connection, Message, Value};
 
 use super::dh;
 use super::paths::{self, IFACE_SESSION};
-use super::state::{Session, SessionAlgo, ServiceState};
+use super::state::{ServiceState, Session, SessionAlgo};
 use super::wire::encode_byte_array;
 
 pub const ALGO_PLAIN: &str = "plain";
 pub const ALGO_DH: &str = "dh-ietf1024-sha256-aes128-cbc-pkcs7";
 
 /// Handle `Service.OpenSession(algorithm: String, input: Variant) -> (output: Variant, path: Object)`.
-pub fn open_session(
-    conn: &mut Connection,
-    msg: &Message,
-    state: &mut ServiceState,
-) {
+pub fn open_session(conn: &mut Connection, msg: &Message, state: &mut ServiceState) {
     let mut r = BodyReader::new(&msg.body, &msg.signature);
     let algorithm = r.read_string();
     let input = r.read_value("v");
@@ -48,7 +44,10 @@ pub fn open_session(
                     return;
                 }
             };
-            (SessionAlgo::DhAesCbc { key }, OutputVariant::Bytes(server.public))
+            (
+                SessionAlgo::DhAesCbc { key },
+                OutputVariant::Bytes(server.public),
+            )
         }
         _ => {
             // org.freedesktop.DBus.Error.NotSupported
@@ -119,7 +118,9 @@ pub fn dispatch(
     state: &mut ServiceState,
     session_id: u64,
 ) -> bool {
-    if msg.interface != IFACE_SESSION { return false; }
+    if msg.interface != IFACE_SESSION {
+        return false;
+    }
     match msg.member.as_str() {
         "Close" => {
             state.sessions.remove(&session_id);
@@ -160,11 +161,12 @@ pub fn decrypt_for_session(
     match &sess.algorithm {
         SessionAlgo::Plain => Some(value.to_vec()),
         SessionAlgo::DhAesCbc { key } => {
-            if parameters.len() != 16 { return None; }
+            if parameters.len() != 16 {
+                return None;
+            }
             let mut iv = [0u8; 16];
             iv.copy_from_slice(parameters);
             dh::decrypt(key, &iv, value).ok()
         }
     }
 }
-

@@ -91,12 +91,7 @@ pub struct ScrollbarLayout {
 
 /// Compute the track and thumb rects for a scrollable region. Returns `None`
 /// when the content fits entirely (no scrollbar needed).
-pub fn layout(
-    viewport: Rect,
-    content_h: f32,
-    scroll: f32,
-    scale: f32,
-) -> Option<ScrollbarLayout> {
+pub fn layout(viewport: Rect, content_h: f32, scroll: f32, scale: f32) -> Option<ScrollbarLayout> {
     if content_h <= viewport.h + 0.5 {
         return None;
     }

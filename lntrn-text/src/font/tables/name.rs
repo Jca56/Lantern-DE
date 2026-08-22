@@ -63,7 +63,12 @@ fn decode(platform: u16, encoding: u16, bytes: &[u8]) -> Option<String> {
                 .collect();
             Some(String::from_utf16_lossy(&units))
         }
-        (1, 0) => Some(bytes.iter().map(|&b| if b < 0x80 { b as char } else { '?' }).collect()),
+        (1, 0) => Some(
+            bytes
+                .iter()
+                .map(|&b| if b < 0x80 { b as char } else { '?' })
+                .collect(),
+        ),
         _ => None,
     }
 }

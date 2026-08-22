@@ -18,8 +18,8 @@
 //! D-Bus reference: <https://git.kernel.org/pub/scm/network/wireless/iwd.git/tree/doc>
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use zbus::blocking::Connection;
@@ -108,10 +108,7 @@ pub(super) fn scan_networks() -> Vec<Network> {
 
         let mut profiles: Vec<Profile> = Vec::new();
         if let Some(kp) = &known_path {
-            if let Some(kn) = objects
-                .get(kp)
-                .and_then(|ifaces| ifaces.get(IFACE_KNOWN))
-            {
+            if let Some(kn) = objects.get(kp).and_then(|ifaces| ifaces.get(IFACE_KNOWN)) {
                 profiles.push(Profile {
                     name: name.clone(),
                     // For iwd we use the KnownNetwork object path in
@@ -236,7 +233,10 @@ fn connect_by_ssid(ssid: &str, password: Option<&str>, tx: &mpsc::Sender<WifiEve
         return;
     };
     let Some(network_path) = find_network_path_by_name(&objects, ssid) else {
-        let _ = tx.send(WifiEvent::ConnectFail(format!("network '{}' not in range", ssid)));
+        let _ = tx.send(WifiEvent::ConnectFail(format!(
+            "network '{}' not in range",
+            ssid
+        )));
         return;
     };
 
@@ -247,7 +247,10 @@ fn connect_by_ssid(ssid: &str, password: Option<&str>, tx: &mpsc::Sender<WifiEve
         Some(pw) if !pw.is_empty() => match register_agent(&conn, pw.to_string()) {
             Ok(h) => Some(h),
             Err(e) => {
-                let _ = tx.send(WifiEvent::ConnectFail(format!("agent register failed: {}", e)));
+                let _ = tx.send(WifiEvent::ConnectFail(format!(
+                    "agent register failed: {}",
+                    e
+                )));
                 return;
             }
         },
@@ -401,11 +404,19 @@ fn fetch_diagnostics(conn: &Connection, station: &OwnedObjectPath) -> Option<Dia
     let dict: HashMap<String, OwnedValue> = reply.body().deserialize().ok()?;
     Some(DiagSnapshot {
         bssid: string_prop(&dict, "ConnectedBss"),
-        frequency_mhz: dict.get("Frequency").and_then(|v| u32::try_from(v.clone()).ok()),
-        channel: dict.get("Channel").and_then(|v| u16::try_from(v.clone()).ok()),
+        frequency_mhz: dict
+            .get("Frequency")
+            .and_then(|v| u32::try_from(v.clone()).ok()),
+        channel: dict
+            .get("Channel")
+            .and_then(|v| u16::try_from(v.clone()).ok()),
         rssi_dbm: dict.get("RSSI").and_then(|v| i16::try_from(v.clone()).ok()),
-        rx_bitrate_100kbps: dict.get("RxBitrate").and_then(|v| u32::try_from(v.clone()).ok()),
-        tx_bitrate_100kbps: dict.get("TxBitrate").and_then(|v| u32::try_from(v.clone()).ok()),
+        rx_bitrate_100kbps: dict
+            .get("RxBitrate")
+            .and_then(|v| u32::try_from(v.clone()).ok()),
+        tx_bitrate_100kbps: dict
+            .get("TxBitrate")
+            .and_then(|v| u32::try_from(v.clone()).ok()),
         security: string_prop(&dict, "Security"),
         pairwise_cipher: string_prop(&dict, "PairwiseCipher"),
         rx_mode: string_prop(&dict, "RxMode"),
@@ -440,11 +451,7 @@ fn apply_diagnostics(net: &mut Network, diag: DiagSnapshot) {
     }
     if let (Some(sec), Some(cipher)) = (&diag.security, &diag.pairwise_cipher) {
         // Short label on the row ("WPA3"); detailed summary below.
-        net.security = sec
-            .split('-')
-            .next()
-            .unwrap_or(sec.as_str())
-            .to_string();
+        net.security = sec.split('-').next().unwrap_or(sec.as_str()).to_string();
         // Compose a Network Manager-style detail line that the existing
         // expanded panel knows how to render.
         let mut parts = vec![sec.clone(), cipher.clone()];
@@ -565,4 +572,3 @@ fn short_error(e: &zbus::Error) -> String {
     let s = e.to_string();
     s.lines().next().unwrap_or("connect failed").to_string()
 }
-

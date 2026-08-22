@@ -166,9 +166,10 @@ pub fn capture_screen(target_name: Option<&str>) -> Result<ScreenCapture> {
 fn bind_all_outputs(globals: &GlobalList, qh: &QueueHandle<State>, state: &mut State) {
     for global in globals.contents().clone_list() {
         if global.interface == "wl_output" {
-            let proxy: wl_output::WlOutput = globals
-                .registry()
-                .bind(global.name, global.version.min(4), qh, ());
+            let proxy: wl_output::WlOutput =
+                globals
+                    .registry()
+                    .bind(global.name, global.version.min(4), qh, ());
             state.outputs.push((proxy, None));
         }
     }
@@ -227,15 +228,39 @@ impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for State {
 }
 
 impl Dispatch<wl_shm::WlShm, ()> for State {
-    fn event(_: &mut Self, _: &wl_shm::WlShm, _: wl_shm::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_shm::WlShm,
+        _: wl_shm::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 impl Dispatch<wl_shm_pool::WlShmPool, ()> for State {
-    fn event(_: &mut Self, _: &wl_shm_pool::WlShmPool, _: wl_shm_pool::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_shm_pool::WlShmPool,
+        _: wl_shm_pool::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 impl Dispatch<wl_buffer::WlBuffer, ()> for State {
-    fn event(_: &mut Self, _: &wl_buffer::WlBuffer, _: wl_buffer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_buffer::WlBuffer,
+        _: wl_buffer::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 impl Dispatch<wl_output::WlOutput, ()> for State {

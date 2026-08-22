@@ -101,15 +101,34 @@ pub(crate) struct State {
 impl State {
     fn new() -> Self {
         Self {
-            running: true, configured: false, frame_done: true,
-            width: 0, height: 0, scale: 1, output_phys_width: 0, maximized: false,
-            compositor: None, wm_base: None, viewporter: None,
-            surface: None, xdg_surface: None, toplevel: None, seat: None,
-            cursor_x: 0.0, cursor_y: 0.0, pointer_in_surface: false,
-            left_pressed: false, left_released: false, right_pressed: false,
-            scroll_delta: 0.0, pointer_serial: 0, enter_serial: 0,
-            cursor_shape_mgr: None, cursor_shape_device: None,
-            current_cursor_shape: None, pointer: None,
+            running: true,
+            configured: false,
+            frame_done: true,
+            width: 0,
+            height: 0,
+            scale: 1,
+            output_phys_width: 0,
+            maximized: false,
+            compositor: None,
+            wm_base: None,
+            viewporter: None,
+            surface: None,
+            xdg_surface: None,
+            toplevel: None,
+            seat: None,
+            cursor_x: 0.0,
+            cursor_y: 0.0,
+            pointer_in_surface: false,
+            left_pressed: false,
+            left_released: false,
+            right_pressed: false,
+            scroll_delta: 0.0,
+            pointer_serial: 0,
+            enter_serial: 0,
+            cursor_shape_mgr: None,
+            cursor_shape_device: None,
+            current_cursor_shape: None,
+            pointer: None,
             key_pressed: None,
             held_key: None,
             repeat_deadline: std::time::Instant::now(),
@@ -130,24 +149,47 @@ impl State {
         }
     }
 
-    fn phys_width(&self) -> u32 { (self.width as f64 * self.fractional_scale()).round() as u32 }
-    fn phys_height(&self) -> u32 { (self.height as f64 * self.fractional_scale()).round() as u32 }
+    fn phys_width(&self) -> u32 {
+        (self.width as f64 * self.fractional_scale()).round() as u32
+    }
+    fn phys_height(&self) -> u32 {
+        (self.height as f64 * self.fractional_scale()).round() as u32
+    }
 }
 
 // ── Dispatch impls ──────────────────────────────────────────────────────────
 
 impl Dispatch<wl_registry::WlRegistry, ()> for State {
     fn event(
-        state: &mut Self, registry: &wl_registry::WlRegistry,
-        event: wl_registry::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>,
+        state: &mut Self,
+        registry: &wl_registry::WlRegistry,
+        event: wl_registry::Event,
+        _: &(),
+        _: &Connection,
+        qh: &QueueHandle<Self>,
     ) {
-        if let wl_registry::Event::Global { name, interface, version } = event {
+        if let wl_registry::Event::Global {
+            name,
+            interface,
+            version,
+        } = event
+        {
             match interface.as_str() {
-                "wl_compositor" => { state.compositor = Some(registry.bind(name, version.min(6), qh, ())); }
-                "xdg_wm_base" => { state.wm_base = Some(registry.bind(name, version.min(5), qh, ())); }
-                "wp_viewporter" => { state.viewporter = Some(registry.bind(name, version.min(1), qh, ())); }
-                "wl_output" => { let _: wl_output::WlOutput = registry.bind(name, version.min(4), qh, ()); }
-                "wl_seat" => { state.seat = Some(registry.bind(name, version.min(9), qh, ())); }
+                "wl_compositor" => {
+                    state.compositor = Some(registry.bind(name, version.min(6), qh, ()));
+                }
+                "xdg_wm_base" => {
+                    state.wm_base = Some(registry.bind(name, version.min(5), qh, ()));
+                }
+                "wp_viewporter" => {
+                    state.viewporter = Some(registry.bind(name, version.min(1), qh, ()));
+                }
+                "wl_output" => {
+                    let _: wl_output::WlOutput = registry.bind(name, version.min(4), qh, ());
+                }
+                "wl_seat" => {
+                    state.seat = Some(registry.bind(name, version.min(9), qh, ()));
+                }
                 "wp_cursor_shape_manager_v1" => {
                     state.cursor_shape_mgr = Some(registry.bind(name, version.min(1), qh, ()));
                 }
@@ -158,31 +200,73 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
 }
 
 impl Dispatch<wl_compositor::WlCompositor, ()> for State {
-    fn event(_: &mut Self, _: &wl_compositor::WlCompositor, _: wl_compositor::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_compositor::WlCompositor,
+        _: wl_compositor::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wl_surface::WlSurface, ()> for State {
-    fn event(_: &mut Self, _: &wl_surface::WlSurface, _: wl_surface::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_surface::WlSurface,
+        _: wl_surface::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wp_viewporter::WpViewporter, ()> for State {
-    fn event(_: &mut Self, _: &wp_viewporter::WpViewporter, _: wp_viewporter::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wp_viewporter::WpViewporter,
+        _: wp_viewporter::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wp_viewport::WpViewport, ()> for State {
-    fn event(_: &mut Self, _: &wp_viewport::WpViewport, _: wp_viewport::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wp_viewport::WpViewport,
+        _: wp_viewport::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 impl Dispatch<xdg_wm_base::XdgWmBase, ()> for State {
     fn event(
-        _: &mut Self, wm_base: &xdg_wm_base::XdgWmBase,
-        event: xdg_wm_base::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        _: &mut Self,
+        wm_base: &xdg_wm_base::XdgWmBase,
+        event: xdg_wm_base::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
-        if let xdg_wm_base::Event::Ping { serial } = event { wm_base.pong(serial); }
+        if let xdg_wm_base::Event::Ping { serial } = event {
+            wm_base.pong(serial);
+        }
     }
 }
 
 impl Dispatch<xdg_surface::XdgSurface, ()> for State {
     fn event(
-        state: &mut Self, xdg_surface: &xdg_surface::XdgSurface,
-        event: xdg_surface::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        xdg_surface: &xdg_surface::XdgSurface,
+        event: xdg_surface::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         if let xdg_surface::Event::Configure { serial } = event {
             xdg_surface.ack_configure(serial);
@@ -194,19 +278,33 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for State {
 
 impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
     fn event(
-        state: &mut Self, _: &xdg_toplevel::XdgToplevel,
-        event: xdg_toplevel::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        _: &xdg_toplevel::XdgToplevel,
+        event: xdg_toplevel::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         match event {
-            xdg_toplevel::Event::Configure { width, height, states } => {
-                if width > 0 { state.width = width as u32; }
-                if height > 0 { state.height = height as u32; }
+            xdg_toplevel::Event::Configure {
+                width,
+                height,
+                states,
+            } => {
+                if width > 0 {
+                    state.width = width as u32;
+                }
+                if height > 0 {
+                    state.height = height as u32;
+                }
                 state.maximized = states.chunks_exact(4).any(|chunk| {
                     let val = u32::from_ne_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
                     val == xdg_toplevel::State::Maximized as u32
                 });
             }
-            xdg_toplevel::Event::Close => { state.running = false; }
+            xdg_toplevel::Event::Close => {
+                state.running = false;
+            }
             _ => {}
         }
     }
@@ -214,29 +312,51 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for State {
 
 impl Dispatch<wl_output::WlOutput, ()> for State {
     fn event(
-        state: &mut Self, _: &wl_output::WlOutput,
-        event: wl_output::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        _: &wl_output::WlOutput,
+        event: wl_output::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         match event {
-            wl_output::Event::Scale { factor } => { state.scale = factor; }
-            wl_output::Event::Mode { width, .. } => { state.output_phys_width = width as u32; }
+            wl_output::Event::Scale { factor } => {
+                state.scale = factor;
+            }
+            wl_output::Event::Mode { width, .. } => {
+                state.output_phys_width = width as u32;
+            }
             _ => {}
         }
     }
 }
 
 impl Dispatch<wl_callback::WlCallback, ()> for State {
-    fn event(state: &mut Self, _: &wl_callback::WlCallback, _: wl_callback::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+    fn event(
+        state: &mut Self,
+        _: &wl_callback::WlCallback,
+        _: wl_callback::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
         state.frame_done = true;
     }
 }
 
 impl Dispatch<wl_seat::WlSeat, ()> for State {
     fn event(
-        state: &mut Self, seat: &wl_seat::WlSeat,
-        event: wl_seat::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>,
+        state: &mut Self,
+        seat: &wl_seat::WlSeat,
+        event: wl_seat::Event,
+        _: &(),
+        _: &Connection,
+        qh: &QueueHandle<Self>,
     ) {
-        if let wl_seat::Event::Capabilities { capabilities: WEnum::Value(cap) } = event {
+        if let wl_seat::Event::Capabilities {
+            capabilities: WEnum::Value(cap),
+        } = event
+        {
             if cap.contains(wl_seat::Capability::Pointer) {
                 let ptr = seat.get_pointer(qh, ());
                 if let Some(mgr) = &state.cursor_shape_mgr {
@@ -244,18 +364,30 @@ impl Dispatch<wl_seat::WlSeat, ()> for State {
                 }
                 state.pointer = Some(ptr);
             }
-            if cap.contains(wl_seat::Capability::Keyboard) { seat.get_keyboard(qh, ()); }
+            if cap.contains(wl_seat::Capability::Keyboard) {
+                seat.get_keyboard(qh, ());
+            }
         }
     }
 }
 
 impl Dispatch<wl_pointer::WlPointer, ()> for State {
     fn event(
-        state: &mut Self, _: &wl_pointer::WlPointer,
-        event: wl_pointer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        _: &wl_pointer::WlPointer,
+        event: wl_pointer::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         match event {
-            wl_pointer::Event::Enter { serial, surface, surface_x, surface_y, .. } => {
+            wl_pointer::Event::Enter {
+                serial,
+                surface,
+                surface_x,
+                surface_y,
+                ..
+            } => {
                 state.pointer_in_surface = true;
                 state.cursor_x = surface_x;
                 state.cursor_y = surface_y;
@@ -269,18 +401,33 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                 state.pointer_surface = None;
                 state.frame_done = true;
             }
-            wl_pointer::Event::Motion { surface_x, surface_y, .. } => {
+            wl_pointer::Event::Motion {
+                surface_x,
+                surface_y,
+                ..
+            } => {
                 state.cursor_x = surface_x;
                 state.cursor_y = surface_y;
                 state.frame_done = true;
             }
-            wl_pointer::Event::Button { button, state: btn_state, serial, .. } => {
+            wl_pointer::Event::Button {
+                button,
+                state: btn_state,
+                serial,
+                ..
+            } => {
                 state.pointer_serial = serial;
                 let pressed = btn_state == WEnum::Value(wl_pointer::ButtonState::Pressed);
                 let released = btn_state == WEnum::Value(wl_pointer::ButtonState::Released);
-                if button == BTN_LEFT && pressed { state.left_pressed = true; }
-                if button == BTN_LEFT && released { state.left_released = true; }
-                if button == BTN_RIGHT && pressed { state.right_pressed = true; }
+                if button == BTN_LEFT && pressed {
+                    state.left_pressed = true;
+                }
+                if button == BTN_LEFT && released {
+                    state.left_released = true;
+                }
+                if button == BTN_RIGHT && pressed {
+                    state.right_pressed = true;
+                }
                 state.frame_done = true;
             }
             wl_pointer::Event::Axis { axis, value, .. } => {
@@ -296,19 +443,29 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
 
 impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
     fn event(
-        state: &mut Self, _: &wl_keyboard::WlKeyboard,
-        event: wl_keyboard::Event, _: &(), _: &Connection, _: &QueueHandle<Self>,
+        state: &mut Self,
+        _: &wl_keyboard::WlKeyboard,
+        event: wl_keyboard::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
     ) {
         match event {
-            wl_keyboard::Event::Key { key, state: key_state, .. } => {
+            wl_keyboard::Event::Key {
+                key,
+                state: key_state,
+                ..
+            } => {
                 if key_state == WEnum::Value(wl_keyboard::KeyState::Pressed) {
                     state.key_pressed = Some(key);
                     state.held_key = Some(key);
                     state.repeat_started = false;
-                    state.repeat_deadline = std::time::Instant::now()
-                        + std::time::Duration::from_millis(300);
+                    state.repeat_deadline =
+                        std::time::Instant::now() + std::time::Duration::from_millis(300);
                 } else if key_state == WEnum::Value(wl_keyboard::KeyState::Released) {
-                    if state.held_key == Some(key) { state.held_key = None; }
+                    if state.held_key == Some(key) {
+                        state.held_key = None;
+                    }
                 }
                 state.frame_done = true;
             }
@@ -322,10 +479,26 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for State {
 }
 
 impl Dispatch<wp_cursor_shape_manager_v1::WpCursorShapeManagerV1, ()> for State {
-    fn event(_: &mut Self, _: &wp_cursor_shape_manager_v1::WpCursorShapeManagerV1, _: wp_cursor_shape_manager_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wp_cursor_shape_manager_v1::WpCursorShapeManagerV1,
+        _: wp_cursor_shape_manager_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<wp_cursor_shape_device_v1::WpCursorShapeDeviceV1, ()> for State {
-    fn event(_: &mut Self, _: &wp_cursor_shape_device_v1::WpCursorShapeDeviceV1, _: wp_cursor_shape_device_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wp_cursor_shape_device_v1::WpCursorShapeDeviceV1,
+        _: wp_cursor_shape_device_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 // ── Edge resize helper ──────────────────────────────────────────────────────
@@ -375,13 +548,21 @@ pub fn run() -> Result<()> {
     display.get_registry(&qh, ());
     event_queue.roundtrip(&mut state)?;
 
-    let compositor = state.compositor.clone()
+    let compositor = state
+        .compositor
+        .clone()
         .ok_or_else(|| anyhow!("wl_compositor not available"))?;
-    let wm_base = state.wm_base.clone()
+    let wm_base = state
+        .wm_base
+        .clone()
         .ok_or_else(|| anyhow!("xdg_wm_base not available"))?;
 
-    if state.width == 0 { state.width = 1024; }
-    if state.height == 0 { state.height = 720; }
+    if state.width == 0 {
+        state.width = 1024;
+    }
+    if state.height == 0 {
+        state.height = 720;
+    }
 
     let surface = compositor.create_surface(&qh, ());
     let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
@@ -436,7 +617,14 @@ pub fn run() -> Result<()> {
         let vp = state.viewporter.as_ref();
         let scale = state.fractional_scale() as f32;
         state.popup_backend = Some(WaylandPopupBackend::new(
-            &conn, &compositor, &wm_base, &xdg_surf, vp, &gpu, scale, &qh,
+            &conn,
+            &compositor,
+            &wm_base,
+            &xdg_surf,
+            vp,
+            &gpu,
+            scale,
+            &qh,
         ));
     }
 
@@ -451,21 +639,39 @@ pub fn run() -> Result<()> {
         // up to 500ms (50ms while a git op is in flight) so worker events and
         // the theme live-reload still get serviced. poll() on the wayland fd
         // instead of sleeping so input events wake the loop immediately.
-        let timeout_ms: i32 = if needs_anim { 16 } else if app.busy() { 50 } else { 500 };
+        let timeout_ms: i32 = if needs_anim {
+            16
+        } else if app.busy() {
+            50
+        } else {
+            500
+        };
         event_queue.flush()?;
         if let Some(guard) = event_queue.prepare_read() {
             let fd = guard.connection_fd().as_raw_fd();
-            let mut pfd = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+            let mut pfd = libc::pollfd {
+                fd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
             let ret = unsafe { libc::poll(&mut pfd, 1, timeout_ms) };
-            if ret > 0 { let _ = guard.read(); } else { drop(guard); }
+            if ret > 0 {
+                let _ = guard.read();
+            } else {
+                drop(guard);
+            }
         }
         event_queue.dispatch_pending(&mut state)?;
 
         // Drain background git events — a finished op needs a redraw.
-        if app.tick() { state.frame_done = true; }
+        if app.tick() {
+            state.frame_done = true;
+        }
 
         // Animations (smooth scroll, text cursor) keep frames flowing.
-        if needs_anim { state.frame_done = true; }
+        if needs_anim {
+            state.frame_done = true;
+        }
 
         // Theme live-reload: the palette is re-resolved every frame, but a
         // variant flip in System Settings needs a redraw kick while idle.
@@ -478,7 +684,9 @@ pub fn run() -> Result<()> {
             }
         }
 
-        if !state.frame_done { continue; }
+        if !state.frame_done {
+            continue;
+        }
         state.frame_done = false;
 
         // Cap rendering at ~60Hz so high-rate pointer motion coalesces.
@@ -507,7 +715,10 @@ pub fn run() -> Result<()> {
         let sh = gpu.height();
 
         let pointer_on_popup = state.pointer_surface.as_ref().and_then(|ps| {
-            state.popup_backend.as_ref()?.find_popup_id_by_wl_surface(ps)
+            state
+                .popup_backend
+                .as_ref()?
+                .find_popup_id_by_wl_surface(ps)
         });
 
         let cx = (state.cursor_x as f32) * s;
@@ -520,7 +731,11 @@ pub fn run() -> Result<()> {
             ix.on_cursor_left();
         }
         if let Some(backend) = &mut state.popup_backend {
-            let active = if state.pointer_in_surface { pointer_on_popup } else { None };
+            let active = if state.pointer_in_surface {
+                pointer_on_popup
+            } else {
+                None
+            };
             backend.route_cursor(active, cx, cy);
         }
 
@@ -537,8 +752,8 @@ pub fn run() -> Result<()> {
             if app.wants_keyboard() && state.repeat_deadline <= std::time::Instant::now() {
                 app.on_key(held, state.shift);
                 let interval = if state.repeat_started { 30 } else { 300 };
-                state.repeat_deadline = std::time::Instant::now()
-                    + std::time::Duration::from_millis(interval);
+                state.repeat_deadline =
+                    std::time::Instant::now() + std::time::Duration::from_millis(interval);
                 state.repeat_started = true;
                 state.frame_done = true;
             }
@@ -557,11 +772,18 @@ pub fn run() -> Result<()> {
                     }
                 } else if let Some(zone_id) = ix.on_left_pressed() {
                     match zone_id {
-                        ZONE_CLOSE => { state.running = false; }
-                        ZONE_MINIMIZE => { toplevel.set_minimized(); }
+                        ZONE_CLOSE => {
+                            state.running = false;
+                        }
+                        ZONE_MINIMIZE => {
+                            toplevel.set_minimized();
+                        }
                         ZONE_MAXIMIZE => {
-                            if state.maximized { toplevel.unset_maximized(); }
-                            else { toplevel.set_maximized(); }
+                            if state.maximized {
+                                toplevel.unset_maximized();
+                            } else {
+                                toplevel.set_maximized();
+                            }
                         }
                         _ => {
                             app.on_click(&ix, cx, cy);
@@ -626,7 +848,13 @@ pub fn run() -> Result<()> {
         painter.clear();
 
         let win_r = if state.maximized { 0.0 } else { 10.0 * s };
-        draw_window_bg(&mut painter, Rect::new(0.0, 0.0, wf, hf), win_r, &fox, bg_opacity);
+        draw_window_bg(
+            &mut painter,
+            Rect::new(0.0, 0.0, wf, hf),
+            win_r,
+            &fox,
+            bg_opacity,
+        );
 
         // Title bar
         let tb_rect = Rect::new(0.0, 0.0, wf, TITLE_BAR_H * s);
@@ -647,7 +875,16 @@ pub fn run() -> Result<()> {
             .draw(&mut painter, &fox);
 
         // App title bar content (back button, repo name, branch)
-        app.draw_title_bar(&mut text, &mut ix, &fox, tb_content, &mut painter, s, sw, sh);
+        app.draw_title_bar(
+            &mut text,
+            &mut ix,
+            &fox,
+            tb_content,
+            &mut painter,
+            s,
+            sw,
+            sh,
+        );
 
         // Accent line under the title bar
         let strip_y = TITLE_BAR_H * s;
@@ -658,9 +895,17 @@ pub fn run() -> Result<()> {
         let content_y = strip_y + strip_h;
         let content_h = hf - content_y;
         app.draw(
-            &mut painter, &mut text, &mut ix, &fox,
-            0.0, content_y, wf, content_h,
-            s, sw, sh,
+            &mut painter,
+            &mut text,
+            &mut ix,
+            &fox,
+            0.0,
+            content_y,
+            wf,
+            content_h,
+            s,
+            sw,
+            sh,
         );
 
         // Overlays (branch dropdown, merge modal) drawn on top of content
@@ -671,7 +916,13 @@ pub fn run() -> Result<()> {
         // Render (layered)
         if let Ok(mut frame) = gpu.begin_frame("lntrn-git") {
             let view = frame.view().clone();
-            painter.render_layer(0, &gpu, frame.encoder_mut(), &view, Some(Color::TRANSPARENT));
+            painter.render_layer(
+                0,
+                &gpu,
+                frame.encoder_mut(),
+                &view,
+                Some(Color::TRANSPARENT),
+            );
             text.render_layer(0, &gpu, frame.encoder_mut(), &view);
             frame.flush(&gpu);
             painter.render_layer(1, &gpu, frame.encoder_mut(), &view, None);

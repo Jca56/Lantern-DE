@@ -2,7 +2,6 @@ mod actions;
 mod assets;
 mod audio;
 mod clock;
-mod visualizer;
 mod context_menu;
 mod dispatch;
 mod fs_watch;
@@ -17,6 +16,7 @@ mod render;
 mod state;
 mod system_icons;
 mod thumbs;
+mod visualizer;
 mod wayland;
 mod widgets_config;
 
