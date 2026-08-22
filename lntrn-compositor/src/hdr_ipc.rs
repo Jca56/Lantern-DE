@@ -105,7 +105,11 @@ impl HdrIpc {
                 None
             }
         };
-        Self { listener, clients: Vec::new(), caps: Vec::new() }
+        Self {
+            listener,
+            clients: Vec::new(),
+            caps: Vec::new(),
+        }
     }
 
     /// Update (or insert) the cached capability for an output and push it to any
@@ -136,7 +140,10 @@ impl HdrIpc {
                         match peer_uid(&stream) {
                             Some(uid) if uid == our_uid() => {}
                             other => {
-                                tracing::warn!(?other, "rejecting HDR IPC connection from foreign uid");
+                                tracing::warn!(
+                                    ?other,
+                                    "rejecting HDR IPC connection from foreign uid"
+                                );
                                 continue;
                             }
                         }
@@ -184,14 +191,20 @@ impl HdrIpc {
             loop {
                 line.clear();
                 match client.reader.read_line(&mut line) {
-                    Ok(0) => { drop_indexes.push(i); break; }
+                    Ok(0) => {
+                        drop_indexes.push(i);
+                        break;
+                    }
                     Ok(_) => {
                         if let Some(cmd) = parse_set_command(line.trim()) {
                             commands.push(cmd);
                         }
                     }
                     Err(e) if e.kind() == ErrorKind::WouldBlock => break,
-                    Err(_) => { drop_indexes.push(i); break; }
+                    Err(_) => {
+                        drop_indexes.push(i);
+                        break;
+                    }
                 }
             }
         }
@@ -219,7 +232,11 @@ impl HdrIpc {
     }
 
     fn broadcast(&mut self, line: &str) {
-        let payload = if line.ends_with('\n') { line.to_string() } else { format!("{}\n", line) };
+        let payload = if line.ends_with('\n') {
+            line.to_string()
+        } else {
+            format!("{}\n", line)
+        };
         let mut drop_indexes = Vec::new();
         for (i, client) in self.clients.iter_mut().enumerate() {
             // Don't write to clients that haven't had their initial snapshot yet

@@ -6,7 +6,6 @@
 /// `SnapZone` / `snap_zone_geometry*` / `SnappedWindow` remain only because the
 /// renderer, SSD and fullscreen paths still reference them; nothing populates
 /// `snapped_windows` anymore, so those readers operate on an empty list.
-
 use smithay::{
     output::Output,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
@@ -18,9 +17,15 @@ use crate::state::Lantern;
 /// Zone a window can be snapped to — forms a 3×3 grid (halves + quarters + full).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapZone {
-    TopLeft,    TopHalf,    TopRight,
-    Left,       Full,       Right,
-    BottomLeft, BottomHalf, BottomRight,
+    TopLeft,
+    TopHalf,
+    TopRight,
+    Left,
+    Full,
+    Right,
+    BottomLeft,
+    BottomHalf,
+    BottomRight,
 }
 
 /// Saved state for a snapped window. Legacy: retained for the renderer/SSD
@@ -39,19 +44,13 @@ pub struct SnappedWindow {
 impl Lantern {
     /// Detect which snap zone the pointer is in, if any. 8px threshold —
     /// used for non-drag pointer queries.
-    pub fn detect_snap_zone(
-        &self,
-        pos: Point<f64, Logical>,
-    ) -> Option<SnapZone> {
+    pub fn detect_snap_zone(&self, pos: Point<f64, Logical>) -> Option<SnapZone> {
         self.detect_snap_zone_with_threshold(pos, 8.0)
     }
 
     /// Wider snap-zone detection for active drags so the user doesn't have
     /// to slam the cursor into the very edge of the screen.
-    pub fn detect_snap_zone_drag(
-        &self,
-        pos: Point<f64, Logical>,
-    ) -> Option<SnapZone> {
+    pub fn detect_snap_zone_drag(&self, pos: Point<f64, Logical>) -> Option<SnapZone> {
         self.detect_snap_zone_with_threshold(pos, 30.0)
     }
 
@@ -82,10 +81,13 @@ impl Lantern {
 
     /// Compute the target rectangle for a snap zone, respecting exclusive zones.
     pub fn snap_zone_geometry(&self, zone: SnapZone) -> Option<Rectangle<i32, Logical>> {
-        let pointer_pos = self.seat.get_pointer()
+        let pointer_pos = self
+            .seat
+            .get_pointer()
             .map(|p| p.current_location())
             .unwrap_or_default();
-        let output = self.output_at_point(pointer_pos)
+        let output = self
+            .output_at_point(pointer_pos)
             .or_else(|| self.workspaces.outputs_iter().next().cloned())?;
         self.snap_zone_geometry_on_output(&output, zone)
     }
@@ -100,7 +102,8 @@ impl Lantern {
     ) -> Option<Rectangle<i32, Logical>> {
         let geo = self.workspaces.output_geometry(output)?;
 
-        let (top_excl, bottom_excl, left_excl, right_excl) = self.exclusive_zone_offsets_for_output(output);
+        let (top_excl, bottom_excl, left_excl, right_excl) =
+            self.exclusive_zone_offsets_for_output(output);
         let outer = self.workspaces.outer_gap;
         let inner = crate::default_gap();
         let half_inner = inner / 2;
@@ -112,23 +115,25 @@ impl Lantern {
 
         let half_w = w / 2;
         let half_h = h / 2;
-        let left_w   = (half_w - half_inner).max(1);
-        let right_x  = x + half_w + half_inner;
-        let right_w  = (w - half_w - half_inner).max(1);
-        let top_h    = (half_h - half_inner).max(1);
+        let left_w = (half_w - half_inner).max(1);
+        let right_x = x + half_w + half_inner;
+        let right_w = (w - half_w - half_inner).max(1);
+        let top_h = (half_h - half_inner).max(1);
         let bottom_y = y + half_h + half_inner;
         let bottom_h = (h - half_h - half_inner).max(1);
 
         let rect = match zone {
-            SnapZone::Full        => Rectangle::new((x, y).into(), (w, h).into()),
-            SnapZone::Left        => Rectangle::new((x, y).into(), (left_w, h).into()),
-            SnapZone::Right       => Rectangle::new((right_x, y).into(), (right_w, h).into()),
-            SnapZone::TopHalf     => Rectangle::new((x, y).into(), (w, top_h).into()),
-            SnapZone::BottomHalf  => Rectangle::new((x, bottom_y).into(), (w, bottom_h).into()),
-            SnapZone::TopLeft     => Rectangle::new((x, y).into(), (left_w, top_h).into()),
-            SnapZone::TopRight    => Rectangle::new((right_x, y).into(), (right_w, top_h).into()),
-            SnapZone::BottomLeft  => Rectangle::new((x, bottom_y).into(), (left_w, bottom_h).into()),
-            SnapZone::BottomRight => Rectangle::new((right_x, bottom_y).into(), (right_w, bottom_h).into()),
+            SnapZone::Full => Rectangle::new((x, y).into(), (w, h).into()),
+            SnapZone::Left => Rectangle::new((x, y).into(), (left_w, h).into()),
+            SnapZone::Right => Rectangle::new((right_x, y).into(), (right_w, h).into()),
+            SnapZone::TopHalf => Rectangle::new((x, y).into(), (w, top_h).into()),
+            SnapZone::BottomHalf => Rectangle::new((x, bottom_y).into(), (w, bottom_h).into()),
+            SnapZone::TopLeft => Rectangle::new((x, y).into(), (left_w, top_h).into()),
+            SnapZone::TopRight => Rectangle::new((right_x, y).into(), (right_w, top_h).into()),
+            SnapZone::BottomLeft => Rectangle::new((x, bottom_y).into(), (left_w, bottom_h).into()),
+            SnapZone::BottomRight => {
+                Rectangle::new((right_x, bottom_y).into(), (right_w, bottom_h).into())
+            }
         };
         Some(rect)
     }
@@ -145,7 +150,11 @@ impl Lantern {
     /// or four quarters — tile with a uniform 40px channel between and around
     /// them, and the result lands a window edge-pinned (Super+arrow axis-resize
     /// then works on it).
-    fn floating_snap_rect(&self, output: &Output, zone: SnapZone) -> Option<Rectangle<i32, Logical>> {
+    fn floating_snap_rect(
+        &self,
+        output: &Output,
+        zone: SnapZone,
+    ) -> Option<Rectangle<i32, Logical>> {
         let region = self.snap_region(output)?;
         let gap = crate::SINGLE_WINDOW_OUTER_GAP;
         let full_w = (region.size.w - 2 * gap).max(1);
@@ -158,15 +167,15 @@ impl Lantern {
         let bottom_y = region.loc.y + region.size.h - gap - half_h;
         use SnapZone::*;
         let (x, y, w, h) = match zone {
-            Left        => (left_x,  top_y,    half_w, full_h),
-            Right       => (right_x, top_y,    half_w, full_h),
-            TopLeft     => (left_x,  top_y,    half_w, half_h),
-            TopRight    => (right_x, top_y,    half_w, half_h),
-            BottomLeft  => (left_x,  bottom_y, half_w, half_h),
+            Left => (left_x, top_y, half_w, full_h),
+            Right => (right_x, top_y, half_w, full_h),
+            TopLeft => (left_x, top_y, half_w, half_h),
+            TopRight => (right_x, top_y, half_w, half_h),
+            BottomLeft => (left_x, bottom_y, half_w, half_h),
             BottomRight => (right_x, bottom_y, half_w, half_h),
-            TopHalf     => (left_x,  top_y,    full_w, half_h),
-            BottomHalf  => (left_x,  bottom_y, full_w, half_h),
-            Full        => (left_x,  top_y,    full_w, full_h),
+            TopHalf => (left_x, top_y, full_w, half_h),
+            BottomHalf => (left_x, bottom_y, full_w, half_h),
+            Full => (left_x, top_y, full_w, full_h),
         };
         Some(Rectangle::new(Point::from((x, y)), Size::from((w, h))))
     }
@@ -176,11 +185,16 @@ impl Lantern {
     /// nothing — it stays an ordinary free-floating window. Replaces the legacy
     /// locked `apply_snap_with_eviction` on drag-release.
     pub fn apply_floating_snap(&mut self, surface: &WlSurface, zone: SnapZone) -> bool {
-        let Some(window) = self.find_mapped_window(surface) else { return false };
-        let output = self.output_for_window(&window)
+        let Some(window) = self.find_mapped_window(surface) else {
+            return false;
+        };
+        let output = self
+            .output_for_window(&window)
             .or_else(|| self.workspaces.outputs_iter().next().cloned());
         let Some(output) = output else { return false };
-        let Some(target) = self.floating_snap_rect(&output, zone) else { return false };
+        let Some(target) = self.floating_snap_rect(&output, zone) else {
+            return false;
+        };
 
         // Shed any leftover locked/posed/maximized state so this is clean float.
         if self.is_maximized(surface) {
@@ -191,9 +205,15 @@ impl Lantern {
         self.snapped_windows.retain(|e| e.surface != *surface);
         self.posed_windows.remove(surface);
 
-        let live_loc = self.workspaces.element_location(&window).unwrap_or(target.loc);
+        let live_loc = self
+            .workspaces
+            .element_location(&window)
+            .unwrap_or(target.loc);
         let current_rect = Rectangle::new(live_loc, window.geometry().size);
-        let anim_start = self.window_state_anim.current_rect(surface).unwrap_or(current_rect);
+        let anim_start = self
+            .window_state_anim
+            .current_rect(surface)
+            .unwrap_or(current_rect);
         self.animate_resize(surface, &window, anim_start, target);
         self.schedule_client_render();
         tracing::info!(?zone, "Drag-snapped (floating) to zone");
@@ -202,10 +222,7 @@ impl Lantern {
 
     /// Check if pointer is at the top edge (for maximize-on-drag).
     /// Returns Some(()) if near the top edge but NOT near a corner.
-    pub fn detect_top_edge(
-        &self,
-        pos: Point<f64, Logical>,
-    ) -> Option<()> {
+    pub fn detect_top_edge(&self, pos: Point<f64, Logical>) -> Option<()> {
         const EDGE_THRESHOLD: f64 = 8.0;
 
         let output = self.output_at_point(pos)?;

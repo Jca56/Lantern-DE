@@ -2,11 +2,10 @@ use crate::Lantern;
 use smithay::{
     desktop::Window,
     input::pointer::{
-        AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent,
-        GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent,
-        GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent,
-        GrabStartData as PointerGrabStartData, MotionEvent, PointerGrab,
-        PointerInnerHandle, RelativeMotionEvent,
+        AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
+        GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent,
+        GestureSwipeEndEvent, GestureSwipeUpdateEvent, GrabStartData as PointerGrabStartData,
+        MotionEvent, PointerGrab, PointerInnerHandle, RelativeMotionEvent,
     },
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Point, Rectangle, Serial},
@@ -56,15 +55,15 @@ impl PointerGrab<Lantern> for MoveSurfaceGrab {
                 return;
             }
             self.restored_this_drag = true;
-            let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(&self.window) else { return };
+            let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(&self.window) else {
+                return;
+            };
             if let Some(restore) = data.maximized_restore(&surface) {
                 let max_loc = self.initial_window_location;
                 let max_size = self.window.geometry().size;
-                let frac_x = ((event.location.x - max_loc.x as f64)
-                    / max_size.w.max(1) as f64)
+                let frac_x = ((event.location.x - max_loc.x as f64) / max_size.w.max(1) as f64)
                     .clamp(0.0, 1.0);
-                let frac_y = ((event.location.y - max_loc.y as f64)
-                    / max_size.h.max(1) as f64)
+                let frac_y = ((event.location.y - max_loc.y as f64) / max_size.h.max(1) as f64)
                     .clamp(0.0, 1.0);
                 let new_loc = Point::from((
                     (event.location.x - restore.size.w as f64 * frac_x).round() as i32,
@@ -112,7 +111,9 @@ impl PointerGrab<Lantern> for MoveSurfaceGrab {
         handle.button(data, event);
         const BTN_LEFT: u32 = 0x110;
         if !handle.current_pressed().contains(&BTN_LEFT) {
-            let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(&self.window) else { return };
+            let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(&self.window) else {
+                return;
+            };
 
             {
                 // Check for snap zone before releasing the grab. Use the

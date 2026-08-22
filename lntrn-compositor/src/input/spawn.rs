@@ -46,7 +46,9 @@ pub fn read_input_setting(key: &str, default: &str) -> String {
 /// Read a float setting from the [input] section.
 pub fn read_input_setting_f64(key: &str, default: f64) -> f64 {
     let s = read_input_setting(key, "");
-    if s.is_empty() { return default; }
+    if s.is_empty() {
+        return default;
+    }
     s.parse::<f64>().unwrap_or(default)
 }
 
@@ -58,7 +60,9 @@ fn resolve_lantern_bin(cmd: &str) -> std::path::PathBuf {
         return std::path::PathBuf::from(cmd);
     }
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-    let candidate = std::path::PathBuf::from(&home).join(".lantern/bin").join(cmd);
+    let candidate = std::path::PathBuf::from(&home)
+        .join(".lantern/bin")
+        .join(cmd);
     if candidate.exists() {
         return candidate;
     }
@@ -139,15 +143,15 @@ pub(crate) fn spawn_detached_args_logged(
         .create(true)
         .append(true)
         .open(&log_path);
-    let stderr = stdout
-        .as_ref()
-        .ok()
-        .and_then(|f| f.try_clone().ok());
+    let stderr = stdout.as_ref().ok().and_then(|f| f.try_clone().ok());
 
     let (stdout_io, stderr_io) = match (stdout, stderr) {
         (Ok(out), Some(err)) => (Stdio::from(out), Stdio::from(err)),
         _ => {
-            tracing::warn!("could not open {} — falling back to /dev/null", log_path.display());
+            tracing::warn!(
+                "could not open {} — falling back to /dev/null",
+                log_path.display()
+            );
             (Stdio::null(), Stdio::null())
         }
     };

@@ -150,7 +150,7 @@ fn build_dot_buffer(size: u32, color: (u8, u8, u8)) -> MemoryRenderBuffer {
             }
             let idx = ((y * size + x) * 4) as usize;
             // Premultiplied BGRA — matches Argb8888 fourcc with le order.
-            rgba[idx]     = (color.2 as f32 * a) as u8;
+            rgba[idx] = (color.2 as f32 * a) as u8;
             rgba[idx + 1] = (color.1 as f32 * a) as u8;
             rgba[idx + 2] = (color.0 as f32 * a) as u8;
             rgba[idx + 3] = (a * 255.0) as u8;

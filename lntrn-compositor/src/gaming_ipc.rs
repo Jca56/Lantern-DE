@@ -80,7 +80,11 @@ impl GamingIpc {
                 None
             }
         };
-        Self { listener, clients: Vec::new(), state: false }
+        Self {
+            listener,
+            clients: Vec::new(),
+            state: false,
+        }
     }
 
     /// Record the new state and push it to all connected clients.

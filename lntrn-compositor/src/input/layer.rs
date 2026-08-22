@@ -68,7 +68,11 @@ pub struct LanternLayer {
 
 impl Default for LanternLayer {
     fn default() -> Self {
-        Self { enabled: false, trigger_sym: xkb::KEY_Menu, maps: Vec::new() }
+        Self {
+            enabled: false,
+            trigger_sym: xkb::KEY_Menu,
+            maps: Vec::new(),
+        }
     }
 }
 
@@ -96,7 +100,11 @@ impl LanternLayer {
             raw.iter().filter_map(|pair| parse_map(pair)).collect()
         };
 
-        Self { enabled, trigger_sym, maps }
+        Self {
+            enabled,
+            trigger_sym,
+            maps,
+        }
     }
 
     /// Resolve a source keysym + currently-held modifiers to a target keycode.
@@ -115,10 +123,18 @@ impl LanternLayer {
 /// Build the held-modifier bitset from Smithay's modifier state.
 pub fn held_mods(m: &smithay::input::keyboard::ModifiersState) -> u8 {
     let mut bits = 0u8;
-    if m.shift { bits |= modbits::SHIFT; }
-    if m.ctrl  { bits |= modbits::CTRL; }
-    if m.alt   { bits |= modbits::ALT; }
-    if m.logo  { bits |= modbits::SUPER; }
+    if m.shift {
+        bits |= modbits::SHIFT;
+    }
+    if m.ctrl {
+        bits |= modbits::CTRL;
+    }
+    if m.alt {
+        bits |= modbits::ALT;
+    }
+    if m.logo {
+        bits |= modbits::SUPER;
+    }
     bits
 }
 
@@ -156,7 +172,11 @@ fn parse_map(pair: &str) -> Option<LayerMap> {
     let (lhs, to) = pair.split_once('=')?;
     // Split the LHS on '+': all but the last token are modifiers, the last is
     // the source key. Guard the lone "+" key case by checking emptiness.
-    let mut parts: Vec<&str> = lhs.split('+').map(|p| p.trim()).filter(|p| !p.is_empty()).collect();
+    let mut parts: Vec<&str> = lhs
+        .split('+')
+        .map(|p| p.trim())
+        .filter(|p| !p.is_empty())
+        .collect();
     let key_tok = parts.pop()?;
     let mut mods = 0u8;
     for m in parts {
@@ -173,7 +193,11 @@ fn parse_map(pair: &str) -> Option<LayerMap> {
     }
     let from_sym = char_to_keysym(key_tok.chars().next()?)?;
     let to_keycode = target_keycode_from_name(to.trim())? + EVDEV_OFFSET;
-    Some(LayerMap { from_sym, to_keycode, mods })
+    Some(LayerMap {
+        from_sym,
+        to_keycode,
+        mods,
+    })
 }
 
 /// Map a single source character to its (lowercase) keysym. We match on the

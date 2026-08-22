@@ -107,7 +107,11 @@ fn export_inner() -> std::io::Result<()> {
     } else {
         arrow_data.clone()
     };
-    write_cursor_file(&cursors.join("default"), &arrow_recolored, ARROW_HOTSPOT_FROM_CURSOR_RS())?;
+    write_cursor_file(
+        &cursors.join("default"),
+        &arrow_recolored,
+        ARROW_HOTSPOT_FROM_CURSOR_RS(),
+    )?;
 
     for (key, raw) in &resize_data {
         if raw.is_empty() {
@@ -187,7 +191,8 @@ fn write_cursor_file(
     hotspot_viewbox: (f32, f32),
 ) -> std::io::Result<()> {
     let sanitized = strip_preserve_aspect_none(svg_data);
-    let Some(tree) = resvg::usvg::Tree::from_data(&sanitized, &resvg::usvg::Options::default()).ok()
+    let Some(tree) =
+        resvg::usvg::Tree::from_data(&sanitized, &resvg::usvg::Options::default()).ok()
     else {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -335,11 +340,7 @@ fn write_u32<W: Write>(w: &mut W, v: u32) -> std::io::Result<()> {
     w.write_all(&v.to_le_bytes())
 }
 
-fn compute_fingerprint(
-    arrow_path: &str,
-    arrow_data: &[u8],
-    resize: &[(&str, Vec<u8>)],
-) -> String {
+fn compute_fingerprint(arrow_path: &str, arrow_data: &[u8], resize: &[(&str, Vec<u8>)]) -> String {
     let mut h = DefaultHasher::new();
     arrow_path.hash(&mut h);
     arrow_data.hash(&mut h);

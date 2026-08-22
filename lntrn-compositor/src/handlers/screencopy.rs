@@ -168,12 +168,7 @@ fn handle_capture(
 
     // Tell the client which buffer format/size to use (ARGB8888, physical size)
     let stride = width * 4;
-    frame_obj.buffer(
-        wl_shm::Format::Argb8888,
-        width,
-        height,
-        stride,
-    );
+    frame_obj.buffer(wl_shm::Format::Argb8888, width, height, stride);
 
     // Version 3: signal that all buffer types have been sent
     if frame_obj.version() >= 3 {
@@ -212,9 +207,7 @@ impl Dispatch<ZwlrScreencopyFrameV1, Option<ScreencopyFrameState>, Lantern> for 
         _data: &Option<ScreencopyFrameState>,
     ) {
         // Remove any pending capture for this frame
-        state
-            .pending_screencopy
-            .retain(|p| p.frame != *resource);
+        state.pending_screencopy.retain(|p| p.frame != *resource);
     }
 }
 

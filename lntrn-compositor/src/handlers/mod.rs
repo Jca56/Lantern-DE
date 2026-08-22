@@ -50,7 +50,9 @@ use smithay::{
     delegate_xdg_decoration,
 };
 
-fn lantern_output_scale() -> f64 { crate::output_scale() }
+fn lantern_output_scale() -> f64 {
+    crate::output_scale()
+}
 
 impl SeatHandler for Lantern {
     type KeyboardFocus = crate::keyboard_focus::KeyboardFocusTarget;
@@ -61,7 +63,11 @@ impl SeatHandler for Lantern {
         &mut self.seat_state
     }
 
-    fn cursor_image(&mut self, _seat: &Seat<Self>, image: smithay::input::pointer::CursorImageStatus) {
+    fn cursor_image(
+        &mut self,
+        _seat: &Seat<Self>,
+        image: smithay::input::pointer::CursorImageStatus,
+    ) {
         self.cursor.set_status(image);
         self.schedule_render();
     }
@@ -74,9 +80,7 @@ impl SeatHandler for Lantern {
         use smithay::wayland::seat::WaylandFocus;
         let dh = &self.display_handle;
         let wl_surface = focused.and_then(|f| f.wl_surface().map(|c| c.into_owned()));
-        let client = wl_surface
-            .as_ref()
-            .and_then(|s| dh.get_client(s.id()).ok());
+        let client = wl_surface.as_ref().and_then(|s| dh.get_client(s.id()).ok());
         set_data_device_focus(dh, seat, client);
         // Setting focus runs smithay's internal liveness purge; if the
         // selection just got cleared because its source died, take over.
@@ -148,7 +152,10 @@ delegate_output!(Lantern);
 
 impl FractionalScaleHandler for Lantern {
     fn new_fractional_scale(&mut self, surface: WlSurface) {
-        let scale = self.workspaces.outputs_iter().next()
+        let scale = self
+            .workspaces
+            .outputs_iter()
+            .next()
             .map(|o| o.current_scale().fractional_scale())
             .unwrap_or(lantern_output_scale());
         with_states(&surface, |states| {
@@ -169,7 +176,10 @@ delegate_fractional_scale!(Lantern);
 /// call on everything.
 pub fn refresh_fractional_scales(state: &Lantern) {
     use crate::window_ext::WindowExt;
-    let fallback = state.workspaces.outputs_iter().next()
+    let fallback = state
+        .workspaces
+        .outputs_iter()
+        .next()
         .map(|o| o.current_scale().fractional_scale())
         .unwrap_or(lantern_output_scale());
     // The global Space holds every mapped window (all workspaces, active or
@@ -177,8 +187,11 @@ pub fn refresh_fractional_scales(state: &Lantern) {
     // nowhere, so sweep them separately.
     let minimized = state.minimized_windows.iter().map(|e| &e.window);
     for window in state.space.elements().chain(minimized) {
-        let Some(surface) = window.get_wl_surface() else { continue };
-        let scale = state.output_for_window(window)
+        let Some(surface) = window.get_wl_surface() else {
+            continue;
+        };
+        let scale = state
+            .output_for_window(window)
             .map(|o| o.current_scale().fractional_scale())
             .unwrap_or(fallback);
         with_states(&surface, |states| {
@@ -276,9 +289,7 @@ impl XdgActivationHandler for Lantern {
         let target = self
             .space
             .elements()
-            .find(|w| {
-                crate::window_ext::WindowExt::get_wl_surface(*w).as_ref() == Some(&surface)
-            })
+            .find(|w| crate::window_ext::WindowExt::get_wl_surface(*w).as_ref() == Some(&surface))
             .cloned();
         if let Some(window) = target {
             let serial = smithay::utils::SERIAL_COUNTER.next_serial();

@@ -141,7 +141,13 @@ impl AltTabSwitcher {
         );
         let mut c = color;
         c[3] *= alpha;
-        SolidColorRenderElement::new(id.clone(), geo, CommitCounter::default(), c, Kind::Unspecified)
+        SolidColorRenderElement::new(
+            id.clone(),
+            geo,
+            CommitCounter::default(),
+            c,
+            Kind::Unspecified,
+        )
     }
 
     /// Begin cycling in silent mode (no overlay yet).
@@ -256,7 +262,11 @@ impl AltTabSwitcher {
         let mut idx = start;
         for _ in 0..n {
             idx = if backward {
-                if idx == 0 { n - 1 } else { idx - 1 }
+                if idx == 0 {
+                    n - 1
+                } else {
+                    idx - 1
+                }
             } else {
                 (idx + 1) % n
             };
@@ -581,7 +591,11 @@ impl AltTabSwitcher {
             };
             let minimized = self.minimized_surfaces.contains(surface);
             // Selected card with a live (non-minimized) window: no dim.
-            let dim = if minimized { 0.55_f32.max(c.dim) } else { c.dim };
+            let dim = if minimized {
+                0.55_f32.max(c.dim)
+            } else {
+                c.dim
+            };
             if dim <= 0.0 {
                 continue;
             }
@@ -602,7 +616,10 @@ impl AltTabSwitcher {
             return None;
         }
         let alpha = self.fade_alpha();
-        let card = self.card_layouts(output_size).into_iter().find(|c| c.selected)?;
+        let card = self
+            .card_layouts(output_size)
+            .into_iter()
+            .find(|c| c.selected)?;
         let (loc, sz) = card.close_rect();
         Some(self.solid(
             &self.close_id,

@@ -86,10 +86,20 @@ impl Lantern {
         for kc in keycodes {
             let code = Keycode::new(kc);
             keyboard.input_forward(
-                self, code, KeyState::Pressed, SERIAL_COUNTER.next_serial(), time, false,
+                self,
+                code,
+                KeyState::Pressed,
+                SERIAL_COUNTER.next_serial(),
+                time,
+                false,
             );
             keyboard.input_forward(
-                self, code, KeyState::Released, SERIAL_COUNTER.next_serial(), time, false,
+                self,
+                code,
+                KeyState::Released,
+                SERIAL_COUNTER.next_serial(),
+                time,
+                false,
             );
         }
 

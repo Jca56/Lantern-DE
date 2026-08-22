@@ -24,16 +24,21 @@ impl Lantern {
     /// area. Shared by the global `default_size_pct` default and per-app
     /// `[[window_rules]] size_pct` overrides (e.g. Firefox at 95%).
     pub(crate) fn initial_size_for_pct(&self, pct: f32) -> Option<(i32, i32)> {
-        let pointer_pos = self.seat.get_pointer()
+        let pointer_pos = self
+            .seat
+            .get_pointer()
             .map(|p| p.current_location())
             .unwrap_or_default();
-        let output = self.output_at_point(pointer_pos)
+        let output = self
+            .output_at_point(pointer_pos)
             .or_else(|| self.workspaces.outputs_iter().next().cloned())?;
         let geo = self.workspaces.output_geometry(&output)?;
         let (top, bot, left, right) = self.exclusive_zone_offsets_for_output(&output);
         let work_w = geo.size.w - left - right;
         let work_h = geo.size.h - top - bot;
-        if work_w <= 0 || work_h <= 0 { return None; }
+        if work_w <= 0 || work_h <= 0 {
+            return None;
+        }
         let w = (((work_w as f32) * pct).round() as i32).max(1);
         let h = (((work_h as f32) * pct).round() as i32).max(1);
         Some((w, h))
@@ -53,7 +58,9 @@ impl Lantern {
     }
 
     pub fn track_window(&mut self, window: &Window) {
-        let Some(surface) = window.get_wl_surface() else { return };
+        let Some(surface) = window.get_wl_surface() else {
+            return;
+        };
         if !self.window_spawn_order.contains(&surface) {
             self.window_spawn_order.push(surface.clone());
         }
@@ -76,15 +83,15 @@ impl Lantern {
         let output = if window.x11_surface().is_some() {
             self.workspaces.outputs_iter().next().cloned()
         } else {
-            let pointer_pos = self.seat.get_pointer()
+            let pointer_pos = self
+                .seat
+                .get_pointer()
                 .map(|p| p.current_location())
                 .unwrap_or_default();
             self.output_at_point(pointer_pos)
                 .or_else(|| self.workspaces.outputs_iter().next().cloned())
         };
-        let Some(output_geo) = output
-            .and_then(|o| self.workspaces.output_geometry(&o))
-        else {
+        let Some(output_geo) = output.and_then(|o| self.workspaces.output_geometry(&o)) else {
             return (0, 0).into();
         };
 
@@ -102,7 +109,9 @@ impl Lantern {
         if !self.pending_center.contains(surface) {
             return;
         }
-        let Some(window) = self.space.elements()
+        let Some(window) = self
+            .space
+            .elements()
             .find(|w| w.get_wl_surface().as_ref() == Some(surface))
             .cloned()
         else {
@@ -123,7 +132,10 @@ impl Lantern {
             || self.is_maximized(surface)
             || self.is_snapped(surface)
             || self.posed_windows.contains_key(surface)
-            || self.solo_tiled_windows.iter().any(|e| e.surface == *surface)
+            || self
+                .solo_tiled_windows
+                .iter()
+                .any(|e| e.surface == *surface)
             || self.workspaces.contains(surface)
             || self.window_state_anim.current_rect(surface).is_some()
         {
@@ -141,7 +153,10 @@ impl Lantern {
         // Using the top-left keeps us anchored to the intended output, and
         // the centering math below + clamp will pull the window onto that
         // output's usable area.
-        let placed_loc = self.workspaces.element_location(&window).unwrap_or_default();
+        let placed_loc = self
+            .workspaces
+            .element_location(&window)
+            .unwrap_or_default();
         let output = self
             .output_at_point(Point::<f64, smithay::utils::Logical>::from((
                 placed_loc.x as f64,
@@ -150,7 +165,9 @@ impl Lantern {
             .or_else(|| self.output_for_window(&window))
             .or_else(|| self.workspaces.outputs_iter().next().cloned());
         let Some(ref out) = output else { return };
-        let Some(output_geo) = self.workspaces.output_geometry(out) else { return };
+        let Some(output_geo) = self.workspaces.output_geometry(out) else {
+            return;
+        };
 
         // Account for panels/bars so we center in the usable area
         let (top_excl, bottom_excl, left_excl, right_excl) =
@@ -164,10 +181,22 @@ impl Lantern {
         let y = usable_y + (usable_h - win_geo.size.h) / 2;
 
         // Clamp to stay within usable area
-        let x = x.clamp(usable_x, (usable_x + usable_w - win_geo.size.w).max(usable_x));
-        let y = y.clamp(usable_y, (usable_y + usable_h - win_geo.size.h).max(usable_y));
+        let x = x.clamp(
+            usable_x,
+            (usable_x + usable_w - win_geo.size.w).max(usable_x),
+        );
+        let y = y.clamp(
+            usable_y,
+            (usable_y + usable_h - win_geo.size.h).max(usable_y),
+        );
 
-        tracing::info!(x, y, w = win_geo.size.w, h = win_geo.size.h, "Centering new window");
+        tracing::info!(
+            x,
+            y,
+            w = win_geo.size.w,
+            h = win_geo.size.h,
+            "Centering new window"
+        );
         self.remap_tracked_window(window, Point::from((x, y)), false);
     }
 
@@ -180,16 +209,25 @@ impl Lantern {
     /// commit handler does that lookup once and shares it with every
     /// per-commit helper instead of each one re-scanning the space.
     pub fn apply_initial_window_size(&mut self, window: &Window, surface: &WlSurface) {
+        use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
         use smithay::wayland::compositor::with_states;
         use smithay::wayland::shell::xdg::{SurfaceCachedState, XdgToplevelSurfaceData};
-        use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 
-        if self.scratchpad_surface.as_ref() == Some(surface) { return; }
+        if self.scratchpad_surface.as_ref() == Some(surface) {
+            return;
+        }
 
-        let Some(toplevel) = window.toplevel().cloned() else { return };
+        let Some(toplevel) = window.toplevel().cloned() else {
+            return;
+        };
 
         let (already_sent, app_id, client_min, client_exact) = with_states(surface, |states| {
-            let data = states.data_map.get::<XdgToplevelSurfaceData>().unwrap().lock().unwrap();
+            let data = states
+                .data_map
+                .get::<XdgToplevelSurfaceData>()
+                .unwrap()
+                .lock()
+                .unwrap();
             let already_sent = data.initial_configure_sent;
             let app_id = data.app_id.clone().unwrap_or_default();
             drop(data);
@@ -208,21 +246,27 @@ impl Lantern {
             let exact = min_opt.filter(|_| max == min);
             (already_sent, app_id, min_opt, exact)
         });
-        if already_sent { return; }
+        if already_sent {
+            return;
+        }
 
         let skip = toplevel.with_pending_state(|state| {
             state.states.contains(xdg_toplevel::State::Maximized)
                 || state.states.contains(xdg_toplevel::State::Fullscreen)
                 || state.size.is_some()
         });
-        if skip { return; }
+        if skip {
+            return;
+        }
 
         // Priority: explicit [[window_rules]] entry → client-declared exact
         // size (min == max, lntrn-image-viewer's content-fit request) →
         // legacy `[windows] default_width/_height` → percentage of the
         // anchor output's work area (`default_size_pct`, the UI knob).
         // The client's bare min_size only clamps the suggestion upward.
-        let rule_size = self.window_rules.iter()
+        let rule_size = self
+            .window_rules
+            .iter()
             .find(|r| r.app_id == app_id)
             .cloned()
             .and_then(|r| self.resolve_rule_size(&r));
@@ -231,7 +275,9 @@ impl Lantern {
             .or(client_exact)
             .or(self.default_window_size)
             .or(pct_size)
-        else { return };
+        else {
+            return;
+        };
         if let Some((min_w, min_h)) = client_min {
             w = w.max(min_w);
             h = h.max(min_h);
@@ -253,7 +299,9 @@ impl Lantern {
     /// (fullscreen/maximize/snap/pose/tile/anim) or an interactive resize
     /// is in flight — there a mismatch is just ack lag, not a choice.
     pub(crate) fn adopt_client_size(&mut self, window: &Window, surface: &WlSurface) {
-        let Some(toplevel) = window.toplevel() else { return };
+        let Some(toplevel) = window.toplevel() else {
+            return;
+        };
         let committed = window.geometry().size;
         if committed.w <= 0 || committed.h <= 0 {
             return;
@@ -262,7 +310,10 @@ impl Lantern {
             || self.is_maximized(surface)
             || self.is_snapped(surface)
             || self.posed_windows.contains_key(surface)
-            || self.solo_tiled_windows.iter().any(|e| e.surface == *surface)
+            || self
+                .solo_tiled_windows
+                .iter()
+                .any(|e| e.surface == *surface)
             || self.window_state_anim.current_rect(surface).is_some()
             || crate::grabs::resize_grab::is_resizing(surface)
         {
@@ -280,7 +331,9 @@ impl Lantern {
 
     pub fn map_new_window(&mut self, window: Window) {
         let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-        let Some(surface) = window.get_wl_surface() else { return };
+        let Some(surface) = window.get_wl_surface() else {
+            return;
+        };
 
         // Check if this window should be claimed as the scratchpad
         let is_scratchpad = self.scratchpad_pending;
@@ -357,7 +410,8 @@ impl Lantern {
         // Announce to foreign-toplevel clients
         let title = window.get_title();
         let app_id = window.get_app_id();
-        self.foreign_toplevel_state.new_toplevel(&surface, &title, &app_id);
+        self.foreign_toplevel_state
+            .new_toplevel(&surface, &title, &app_id);
 
         self.focus_window(&window, serial);
         self.broadcast_workspace_state();
@@ -369,18 +423,27 @@ impl Lantern {
         }
         self.window_spawn_order.retain(|entry| entry != surface);
         self.window_mru.retain(|entry| entry != surface);
-        self.minimized_windows.retain(|entry| entry.surface != *surface);
-        self.solo_tiled_windows.retain(|entry| entry.surface != *surface);
-        self.maximized_windows.retain(|entry| entry.surface != *surface);
-        let was_fullscreen = self.fullscreen_windows.iter().any(|e| e.surface == *surface);
-        self.fullscreen_windows.retain(|entry| entry.surface != *surface);
+        self.minimized_windows
+            .retain(|entry| entry.surface != *surface);
+        self.solo_tiled_windows
+            .retain(|entry| entry.surface != *surface);
+        self.maximized_windows
+            .retain(|entry| entry.surface != *surface);
+        let was_fullscreen = self
+            .fullscreen_windows
+            .iter()
+            .any(|e| e.surface == *surface);
+        self.fullscreen_windows
+            .retain(|entry| entry.surface != *surface);
         if was_fullscreen {
             // A fullscreen game closing should drop VRR back off this output.
             self.refresh_vrr();
         }
-        self.snapped_windows.retain(|entry| entry.surface != *surface);
+        self.snapped_windows
+            .retain(|entry| entry.surface != *surface);
         self.posed_windows.remove(surface);
-        self.pending_workspace_moves.retain(|m| m.surface != *surface);
+        self.pending_workspace_moves
+            .retain(|m| m.surface != *surface);
         self.pending_center.remove(surface);
         self.window_snapshots.remove(surface);
         self.animations.remove(surface);
@@ -403,7 +466,10 @@ impl Lantern {
     /// for grow-from-center (currently Springy), seeds the slide with a small
     /// rect at the output center → the window's actual rect. Other presets
     /// get a pure alpha fade.
-    pub fn start_open_anim(&mut self, surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface) {
+    pub fn start_open_anim(
+        &mut self,
+        surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+    ) {
         use smithay::utils::{Rectangle, Size};
         if !crate::animations::open_uses_grow() {
             self.animations.start_open(surface);
@@ -435,11 +501,18 @@ impl Lantern {
     /// Computes source rect from the window's current position and target rect
     /// from `minimize_target_for` so close + minimize share the same shrink/
     /// slide trajectory. Returns true if the animation was started.
-    pub fn start_close_anim(&mut self, surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface) -> bool {
-        let Some(window) = self.find_mapped_window(surface) else { return false };
+    pub fn start_close_anim(
+        &mut self,
+        surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+    ) -> bool {
+        let Some(window) = self.find_mapped_window(surface) else {
+            return false;
+        };
         let target = self.minimize_target_for(&window);
         let started = self.animations.start_close(surface, target);
-        if started { self.schedule_render(); }
+        if started {
+            self.schedule_render();
+        }
         started
     }
 
@@ -450,7 +523,9 @@ impl Lantern {
         let Some(window) = self.focused_window() else {
             return false;
         };
-        let Some(surface) = window.get_wl_surface() else { return false };
+        let Some(surface) = window.get_wl_surface() else {
+            return false;
+        };
         if self.start_close_anim(&surface) {
             tracing::info!("Close animation started for focused window");
             true
@@ -510,8 +585,7 @@ impl Lantern {
         } else {
             crate::ssd::corner_radius()
         };
-        let content_rounded =
-            !fullscreen && !is_maximized && !is_snapped && !had_ssd && !is_tiled;
+        let content_rounded = !fullscreen && !is_maximized && !is_snapped && !had_ssd && !is_tiled;
         Some(crate::animation::ClosingWindow {
             surface,
             location,

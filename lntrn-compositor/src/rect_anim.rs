@@ -122,7 +122,12 @@ impl RectAnim {
     /// Redirect this animation to a new target, starting from the current
     /// interpolated rect. Use when the user retriggers a state change mid-flight
     /// (e.g. maximize → unmaximize before the first finishes).
-    pub fn redirect(&mut self, new_target: Rectangle<i32, Logical>, duration: Duration, curve: Curve) {
+    pub fn redirect(
+        &mut self,
+        new_target: Rectangle<i32, Logical>,
+        duration: Duration,
+        curve: Curve,
+    ) {
         let from = self.current();
         self.start = from;
         self.target = new_target;

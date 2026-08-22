@@ -1,9 +1,6 @@
 //! Alt-Tab switcher + round-robin window cycling.
 
-use smithay::{
-    reexports::wayland_server::protocol::wl_surface::WlSurface,
-    utils::Serial,
-};
+use smithay::{reexports::wayland_server::protocol::wl_surface::WlSurface, utils::Serial};
 
 use crate::state::Lantern;
 use crate::window_ext::WindowExt;
@@ -12,7 +9,9 @@ impl Lantern {
     /// Round-robin window cycling including minimized windows.
     pub fn cycle_next_window(&mut self, serial: Serial) {
         // Build combined list: mapped windows + minimized windows (by surface)
-        let mut all_surfaces: Vec<WlSurface> = self.space.elements()
+        let mut all_surfaces: Vec<WlSurface> = self
+            .space
+            .elements()
             .filter_map(|w| w.get_wl_surface())
             .collect();
         for entry in &self.minimized_windows {
@@ -25,9 +24,10 @@ impl Lantern {
             return;
         }
 
-        let focused_idx = self.focused_surface.as_ref().and_then(|focused| {
-            all_surfaces.iter().position(|s| s == focused)
-        });
+        let focused_idx = self
+            .focused_surface
+            .as_ref()
+            .and_then(|focused| all_surfaces.iter().position(|s| s == focused));
 
         let next_idx = match focused_idx {
             Some(idx) => (idx + 1) % all_surfaces.len(),
@@ -56,13 +56,15 @@ impl Lantern {
         }
 
         let original = self.focused_surface.clone();
-        let minimized: std::collections::HashSet<_> = self.minimized_windows
+        let minimized: std::collections::HashSet<_> = self
+            .minimized_windows
             .iter()
             .map(|m| m.surface.clone())
             .collect();
 
         let app_ids = self.switcher_app_ids(&all_surfaces);
-        self.alt_tab_switcher.start_visible(all_surfaces, app_ids, original, minimized);
+        self.alt_tab_switcher
+            .start_visible(all_surfaces, app_ids, original, minimized);
         self.schedule_render();
     }
 
@@ -127,13 +129,15 @@ impl Lantern {
             }
         } else {
             let original = self.focused_surface.clone();
-            let minimized: std::collections::HashSet<_> = self.minimized_windows
+            let minimized: std::collections::HashSet<_> = self
+                .minimized_windows
                 .iter()
                 .map(|m| m.surface.clone())
                 .collect();
             let app_ids = self.switcher_app_ids(&all_surfaces);
             let started =
-                self.alt_tab_switcher.start_silent(all_surfaces, app_ids, original, minimized);
+                self.alt_tab_switcher
+                    .start_silent(all_surfaces, app_ids, original, minimized);
             // A fresh start lands on focused+1. For a backward first press we
             // want focused-1, so step back twice from there.
             if backward && started.is_some() {
@@ -166,7 +170,9 @@ impl Lantern {
     /// Removes it from the switcher and sends close to the toplevel.
     /// Close all windows matching an app_id (used by hover preview close button).
     pub fn close_windows_by_app_id(&mut self, app_id: &str) {
-        let surfaces: Vec<_> = self.foreign_toplevel_state.surface_app_ids()
+        let surfaces: Vec<_> = self
+            .foreign_toplevel_state
+            .surface_app_ids()
             .into_iter()
             .filter(|(_, id)| id == app_id)
             .map(|(s, _)| s)

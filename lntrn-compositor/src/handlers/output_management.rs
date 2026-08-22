@@ -149,7 +149,9 @@ impl OutputManagementState {
         let head_idx = self.heads.len() - 1;
         let mgrs: Vec<_> = self.managers.clone();
         for mgr in &mgrs {
-            let Ok(client) = self.dh.get_client(mgr.id()) else { continue };
+            let Ok(client) = self.dh.get_client(mgr.id()) else {
+                continue;
+            };
             self.send_head_to_client(&client, mgr, head_idx);
         }
     }
@@ -243,12 +245,7 @@ impl OutputManagementState {
     }
 
     /// Send a single head (with its modes) to a specific client's manager.
-    fn send_head_to_client(
-        &mut self,
-        client: &Client,
-        mgr: &ZwlrOutputManagerV1,
-        head_idx: usize,
-    ) {
+    fn send_head_to_client(&mut self, client: &Client, mgr: &ZwlrOutputManagerV1, head_idx: usize) {
         let dh = self.dh.clone();
         let head = &self.heads[head_idx];
         let Ok(head_obj) = client.create_resource::<ZwlrOutputHeadV1, _, Lantern>(
@@ -304,9 +301,7 @@ impl OutputManagementState {
             head_obj.scale(scale);
         }
 
-        self.heads[head_idx]
-            .instances
-            .push(head_obj.downgrade());
+        self.heads[head_idx].instances.push(head_obj.downgrade());
     }
 
     /// Resolve a pending config into OutputChanges. Returns None if serial mismatch.
@@ -316,7 +311,10 @@ impl OutputManagementState {
         }
         let mut changes = Vec::new();
         for hc in &config.heads {
-            let head = self.heads.iter().find(|h| h.output_name == hc.output_name)?;
+            let head = self
+                .heads
+                .iter()
+                .find(|h| h.output_name == hc.output_name)?;
             let drm_idx = hc.mode_idx.map(|mi| head.modes[mi].drm_mode_index);
             changes.push(OutputChange {
                 output_name: hc.output_name.clone(),
@@ -411,12 +409,7 @@ impl Dispatch<ZwlrOutputHeadV1, u32, Lantern> for Lantern {
         // Only request is release (v3+), handled by destruction
     }
 
-    fn destroyed(
-        state: &mut Lantern,
-        _client: ClientId,
-        resource: &ZwlrOutputHeadV1,
-        data: &u32,
-    ) {
+    fn destroyed(state: &mut Lantern, _client: ClientId, resource: &ZwlrOutputHeadV1, data: &u32) {
         let idx = *data as usize;
         if let Some(head) = state.output_management_state.heads.get_mut(idx) {
             head.instances
@@ -585,9 +578,13 @@ impl Dispatch<ZwlrOutputConfigurationHeadV1, ConfigHeadData, Lantern> for Lanter
         _data_init: &mut DataInit<'_, Lantern>,
     ) {
         let config_data = data.config.data::<Mutex<PendingConfig>>();
-        let Some(config_data) = config_data else { return };
+        let Some(config_data) = config_data else {
+            return;
+        };
         let mut pending = config_data.lock().unwrap();
-        let Some(hc) = pending.heads.get_mut(data.head_index) else { return };
+        let Some(hc) = pending.heads.get_mut(data.head_index) else {
+            return;
+        };
 
         match request {
             zwlr_output_configuration_head_v1::Request::SetMode { mode } => {

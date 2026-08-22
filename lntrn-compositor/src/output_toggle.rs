@@ -83,10 +83,9 @@ pub fn disable_output(state: &mut Lantern, name: &str) -> bool {
     state.workspaces.unregister_output(&output);
     state.hdr_ipc.remove_output(name);
 
-    state.disabled_outputs.insert(
-        name.to_string(),
-        DisabledOutput { output, loc },
-    );
+    state
+        .disabled_outputs
+        .insert(name.to_string(), DisabledOutput { output, loc });
 
     // Advertise the head disabled so Settings shows the off state and can flip
     // it back.

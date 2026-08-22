@@ -1,6 +1,5 @@
 /// Layer surface positioning: computes where a layer-shell surface should
 /// be placed based on its anchor edges, margins, and the output geometry.
-
 use smithay::utils::{Logical, Physical, Point, Rectangle, Size};
 use smithay::wayland::shell::wlr_layer::{Anchor, LayerSurfaceCachedState};
 
@@ -76,5 +75,6 @@ pub fn layer_surface_position(
     (
         (local_x as f64 * scale).round() as i32,
         (local_y as f64 * scale).round() as i32,
-    ).into()
+    )
+        .into()
 }

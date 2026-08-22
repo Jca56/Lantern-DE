@@ -9,9 +9,8 @@ use std::collections::HashMap;
 
 use rand::Rng;
 use smithay::reexports::wayland_server::{
-    backend::ClientId,
-    protocol::wl_surface::WlSurface,
-    Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New,
+    backend::ClientId, protocol::wl_surface::WlSurface, Client, DataInit, Dispatch, DisplayHandle,
+    GlobalDispatch, New,
 };
 use wayland_protocols::xdg::foreign::zv2::server::{
     zxdg_exported_v2::{self, ZxdgExportedV2},
@@ -115,7 +114,12 @@ impl Dispatch<ZxdgExporterV2, (), Lantern> for Lantern {
                     .insert(token.clone(), surface);
 
                 // Create the exported object and send the handle
-                let exported = data_init.init(id, ExportedData { token: token.clone() });
+                let exported = data_init.init(
+                    id,
+                    ExportedData {
+                        token: token.clone(),
+                    },
+                );
                 exported.handle(token);
 
                 tracing::info!("xdg-foreign: surface exported");
@@ -143,16 +147,9 @@ impl Dispatch<ZxdgExportedV2, ExportedData, Lantern> for Lantern {
                 // Revoke the export
                 state.xdg_foreign_state.exports.remove(&data.token);
                 // Invalidate any imports that used this token
-                let parent = state
-                    .xdg_foreign_state
-                    .exports
-                    .get(&data.token)
-                    .cloned();
+                let parent = state.xdg_foreign_state.exports.get(&data.token).cloned();
                 if let Some(parent) = parent {
-                    state
-                        .xdg_foreign_state
-                        .imports
-                        .retain(|_, p| p != &parent);
+                    state.xdg_foreign_state.imports.retain(|_, p| p != &parent);
                 }
                 tracing::info!("xdg-foreign: export revoked");
             }
@@ -197,8 +194,12 @@ impl Dispatch<ZxdgImporterV2, (), Lantern> for Lantern {
     ) {
         match request {
             zxdg_importer_v2::Request::ImportToplevel { id, handle } => {
-                let imported =
-                    data_init.init(id, ImportedData { token: handle.clone() });
+                let imported = data_init.init(
+                    id,
+                    ImportedData {
+                        token: handle.clone(),
+                    },
+                );
 
                 if state.xdg_foreign_state.exports.contains_key(&handle) {
                     tracing::info!("xdg-foreign: surface imported via handle");
@@ -230,10 +231,7 @@ impl Dispatch<ZxdgImportedV2, ImportedData, Lantern> for Lantern {
             zxdg_imported_v2::Request::SetParentOf { surface } => {
                 if let Some(parent) = state.xdg_foreign_state.exports.get(&data.token) {
                     let parent = parent.clone();
-                    state
-                        .xdg_foreign_state
-                        .imports
-                        .insert(surface, parent);
+                    state.xdg_foreign_state.imports.insert(surface, parent);
                     tracing::info!("xdg-foreign: parent-child relationship established");
                 } else {
                     tracing::warn!("xdg-foreign: set_parent_of failed, export no longer valid");
@@ -244,10 +242,7 @@ impl Dispatch<ZxdgImportedV2, ImportedData, Lantern> for Lantern {
                 // Remove any imports that used this token.
                 if let Some(parent) = state.xdg_foreign_state.exports.get(&data.token) {
                     let parent = parent.clone();
-                    state
-                        .xdg_foreign_state
-                        .imports
-                        .retain(|_, p| p != &parent);
+                    state.xdg_foreign_state.imports.retain(|_, p| p != &parent);
                 }
             }
             _ => {}
@@ -263,10 +258,7 @@ impl Dispatch<ZxdgImportedV2, ImportedData, Lantern> for Lantern {
         // Clean up import relationships tied to this token
         if let Some(parent) = state.xdg_foreign_state.exports.get(&data.token) {
             let parent = parent.clone();
-            state
-                .xdg_foreign_state
-                .imports
-                .retain(|_, p| p != &parent);
+            state.xdg_foreign_state.imports.retain(|_, p| p != &parent);
         }
     }
 }

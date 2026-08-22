@@ -66,12 +66,9 @@ impl CursorState {
         // default arrow. Non-default shapes (pointer, text, resize) fall
         // through to xcursor and need a *real installed* theme like "default"
         // or whatever XCURSOR_THEME points to. Don't mix the two.
-        let theme_name = std::env::var("XCURSOR_THEME")
-            .unwrap_or_else(|_| "default".to_string());
+        let theme_name = std::env::var("XCURSOR_THEME").unwrap_or_else(|_| "default".to_string());
         let mut state = Self {
-            status: CursorImageStatus::Named(
-                smithay::input::pointer::CursorIcon::Default,
-            ),
+            status: CursorImageStatus::Named(smithay::input::pointer::CursorIcon::Default),
             buffer: MemoryRenderBuffer::new(Fourcc::Argb8888, (1, 1), 1, Transform::Normal, None),
             hotspot: (0, 0),
             size: (0, 0),
@@ -81,13 +78,27 @@ impl CursorState {
             loaded_icon_key: None,
             custom_theme: "default".into(),
             custom_loaded: false,
-            last_recolor_body_light:   crate::input::read_input_setting("cursor_body_light",   "#ffffff"),
-            last_recolor_body_dark:    crate::input::read_input_setting("cursor_body_dark",    "#ababab"),
-            last_recolor_accent_light: crate::input::read_input_setting("cursor_accent_light", "#fab414"),
-            last_recolor_accent_dark:  crate::input::read_input_setting("cursor_accent_dark",  "#9a6300"),
-            last_recolor_outline:      crate::input::read_input_setting("cursor_outline_color", "#0a0a0a"),
-            last_recolor_scale:        crate::input::read_input_setting_f64("cursor_outline_scale", 1.0) as f32,
-            last_recolor_radius:       crate::input::read_input_setting_f64("cursor_corner_radius", 0.0) as f32,
+            last_recolor_body_light: crate::input::read_input_setting(
+                "cursor_body_light",
+                "#ffffff",
+            ),
+            last_recolor_body_dark: crate::input::read_input_setting("cursor_body_dark", "#ababab"),
+            last_recolor_accent_light: crate::input::read_input_setting(
+                "cursor_accent_light",
+                "#fab414",
+            ),
+            last_recolor_accent_dark: crate::input::read_input_setting(
+                "cursor_accent_dark",
+                "#9a6300",
+            ),
+            last_recolor_outline: crate::input::read_input_setting(
+                "cursor_outline_color",
+                "#0a0a0a",
+            ),
+            last_recolor_scale: crate::input::read_input_setting_f64("cursor_outline_scale", 1.0)
+                as f32,
+            last_recolor_radius: crate::input::read_input_setting_f64("cursor_corner_radius", 0.0)
+                as f32,
             spin_history: VecDeque::with_capacity(32),
             spin_scale: 1.0,
             spin_last_active: Instant::now(),
@@ -122,9 +133,10 @@ impl CursorState {
             // whatever the fallback gives us) so Progress reads as
             // "arrow + spinner" and Wait reads as "the cursor is busy".
             let want_spinner = matches!(icon, CursorIcon::Wait | CursorIcon::Progress);
-            let color = parse_hex_color(
-                &crate::input::read_input_setting("cursor_body_light", "#ffffff"),
-            );
+            let color = parse_hex_color(&crate::input::read_input_setting(
+                "cursor_body_light",
+                "#ffffff",
+            ));
             self.loading_anim.set_active(want_spinner, color);
 
             let icon_key = cursor_icon_key(icon);
@@ -144,10 +156,16 @@ impl CursorState {
             //   4. xcursor — only if every Lantern path fails.
             let hot = hotspot_for_icon(icon_key);
             if self.custom_loaded && icon_key == "default" {
-                if self.load_custom_theme_svg(icon_key, hot) { return; }
+                if self.load_custom_theme_svg(icon_key, hot) {
+                    return;
+                }
             }
-            if self.load_lantern_svg(icon_key) { return; }
-            if self.custom_loaded && self.load_custom_theme_svg(icon_key, hot) { return; }
+            if self.load_lantern_svg(icon_key) {
+                return;
+            }
+            if self.custom_loaded && self.load_custom_theme_svg(icon_key, hot) {
+                return;
+            }
             if self.load_lantern_svg("default") {
                 self.loaded_icon_key = Some(icon_key);
                 return;
@@ -170,7 +188,9 @@ impl CursorState {
         let svg_path = crate::lantern_home()
             .join("config/cursors")
             .join(format!("{}.svg", self.custom_theme));
-        let Ok(data) = std::fs::read(&svg_path) else { return false };
+        let Ok(data) = std::fs::read(&svg_path) else {
+            return false;
+        };
         if self.rasterize_svg(&data, hotspot_viewbox).is_some() {
             self.loaded_icon_key = Some(icon_key);
             true
@@ -203,9 +223,7 @@ impl CursorState {
         // Runtime override: ~/.lantern/icons/cursors/<file>. Recolour is
         // applied to the bundled-default SVGs only — custom themes loaded
         // via `set_custom_theme` keep their authored palette.
-        let runtime_path = crate::lantern_home()
-            .join("icons/cursors")
-            .join(svg_file);
+        let runtime_path = crate::lantern_home().join("icons/cursors").join(svg_file);
         if let Ok(data) = std::fs::read(&runtime_path) {
             let recolored = recolor_cursor_svg(&data, icon_key);
             if self.rasterize_svg(&recolored, hot).is_some() {
@@ -213,11 +231,16 @@ impl CursorState {
                 tracing::info!("Loaded Lantern cursor: {}", runtime_path.display());
                 return true;
             }
-            tracing::warn!("Failed to rasterize Lantern cursor: {}", runtime_path.display());
+            tracing::warn!(
+                "Failed to rasterize Lantern cursor: {}",
+                runtime_path.display()
+            );
         }
 
         // Embedded fallback.
-        let Some(data) = lntrn_icons::get(svg_file) else { return false };
+        let Some(data) = lntrn_icons::get(svg_file) else {
+            return false;
+        };
         let recolored = recolor_cursor_svg(data, icon_key);
         if self.rasterize_svg(&recolored, hot).is_some() {
             self.loaded_icon_key = Some(icon_key);
@@ -256,7 +279,10 @@ impl CursorState {
 
         match std::fs::read(&svg_path) {
             Ok(data) => {
-                if self.rasterize_svg(&data, hotspot_for_icon("default")).is_some() {
+                if self
+                    .rasterize_svg(&data, hotspot_for_icon("default"))
+                    .is_some()
+                {
                     tracing::info!("Loaded custom SVG cursor: {}", svg_path.display());
                     self.custom_loaded = true;
                 } else {
@@ -283,30 +309,30 @@ impl CursorState {
     /// the new palette / geometry. Lets users tweak the Mouse panel and
     /// see the cursor update without a session restart.
     pub fn tick_colors(&mut self) {
-        let body_light   = crate::input::read_input_setting("cursor_body_light",   "#ffffff");
-        let body_dark    = crate::input::read_input_setting("cursor_body_dark",    "#ababab");
+        let body_light = crate::input::read_input_setting("cursor_body_light", "#ffffff");
+        let body_dark = crate::input::read_input_setting("cursor_body_dark", "#ababab");
         let accent_light = crate::input::read_input_setting("cursor_accent_light", "#fab414");
-        let accent_dark  = crate::input::read_input_setting("cursor_accent_dark",  "#9a6300");
-        let outline      = crate::input::read_input_setting("cursor_outline_color", "#0a0a0a");
-        let scale  = crate::input::read_input_setting_f64("cursor_outline_scale", 1.0) as f32;
+        let accent_dark = crate::input::read_input_setting("cursor_accent_dark", "#9a6300");
+        let outline = crate::input::read_input_setting("cursor_outline_color", "#0a0a0a");
+        let scale = crate::input::read_input_setting_f64("cursor_outline_scale", 1.0) as f32;
         let radius = crate::input::read_input_setting_f64("cursor_corner_radius", 0.0) as f32;
-        if body_light   == self.last_recolor_body_light
-            && body_dark    == self.last_recolor_body_dark
+        if body_light == self.last_recolor_body_light
+            && body_dark == self.last_recolor_body_dark
             && accent_light == self.last_recolor_accent_light
-            && accent_dark  == self.last_recolor_accent_dark
-            && outline      == self.last_recolor_outline
-            && (scale  - self.last_recolor_scale).abs()  < 0.001
+            && accent_dark == self.last_recolor_accent_dark
+            && outline == self.last_recolor_outline
+            && (scale - self.last_recolor_scale).abs() < 0.001
             && (radius - self.last_recolor_radius).abs() < 0.001
         {
             return;
         }
-        self.last_recolor_body_light   = body_light;
-        self.last_recolor_body_dark    = body_dark;
+        self.last_recolor_body_light = body_light;
+        self.last_recolor_body_dark = body_dark;
         self.last_recolor_accent_light = accent_light;
-        self.last_recolor_accent_dark  = accent_dark;
-        self.last_recolor_outline      = outline;
-        self.last_recolor_scale        = scale;
-        self.last_recolor_radius       = radius;
+        self.last_recolor_accent_dark = accent_dark;
+        self.last_recolor_outline = outline;
+        self.last_recolor_scale = scale;
+        self.last_recolor_radius = radius;
         // Force the next set_status to rebuild the buffer. We snapshot status
         // first so a `Named(Default)` cursor immediately re-rasterizes.
         let cur = self.status.clone();
@@ -339,18 +365,15 @@ impl CursorState {
     /// Returns Some(()) on success. The caller is responsible for any
     /// recoloring; this just renders the bytes it's given so custom (non-
     /// Lantern) cursor SVGs keep their authored palette.
-    fn rasterize_svg(
-        &mut self,
-        svg_data: &[u8],
-        hotspot_viewbox: (f32, f32),
-    ) -> Option<()> {
+    fn rasterize_svg(&mut self, svg_data: &[u8], hotspot_viewbox: (f32, f32)) -> Option<()> {
         // Boxy SVG (and a few other editors) export with
         // `preserveAspectRatio="none"`, which stretches the path
         // non-uniformly when the viewBox aspect doesn't match the
         // width/height aspect — producing a skewed cursor even though
         // our downstream scale math is uniform. Strip it before parsing.
         let sanitized = strip_preserve_aspect_none(svg_data);
-        let tree = resvg::usvg::Tree::from_data(&sanitized, &resvg::usvg::Options::default()).ok()?;
+        let tree =
+            resvg::usvg::Tree::from_data(&sanitized, &resvg::usvg::Options::default()).ok()?;
         let size = self.cursor_size.max(32);
 
         let tree_size = tree.size();
@@ -450,7 +473,10 @@ impl CursorState {
 
         tracing::info!(
             "Loaded cursor: {}x{} hotspot ({}, {})",
-            image.width, image.height, image.xhot, image.yhot
+            image.width,
+            image.height,
+            image.xhot,
+            image.yhot
         );
 
         self.hotspot = (image.xhot as i32, image.yhot as i32);
@@ -477,7 +503,10 @@ impl CursorState {
             let row_width = (y * 2 / 3).min(s - 1);
             for x in 0..=row_width {
                 let idx = ((y * s + x) * 4) as usize;
-                let is_border = x == 0 || x == row_width || y == 0 || y == s - 1
+                let is_border = x == 0
+                    || x == row_width
+                    || y == 0
+                    || y == s - 1
                     || (y > s * 2 / 3 && x < y - s * 2 / 3 + 2);
                 if is_border {
                     // Black border: ARGB
@@ -544,7 +573,11 @@ impl CursorState {
             total_angle += cross.atan2(dot);
         }
 
-        let time_span = self.spin_history.back().unwrap().1
+        let time_span = self
+            .spin_history
+            .back()
+            .unwrap()
+            .1
             .duration_since(self.spin_history.front().unwrap().1)
             .as_secs_f64();
 
@@ -643,7 +676,7 @@ fn hotspot_for_icon(icon_key: &str) -> (f32, f32) {
             let effective_stroke = 6.0 * scale.max(0.0);
             let inset = (effective_stroke * 0.5) / std::f32::consts::SQRT_2;
             let tip_x = (6.236 - inset).max(0.0);
-            let tip_y = (3.14  - inset).max(0.0);
+            let tip_y = (3.14 - inset).max(0.0);
             (tip_x, tip_y)
         }
     }
@@ -665,8 +698,14 @@ fn cursor_icon_key(icon: CursorIcon) -> &'static str {
         CursorIcon::Move => "move",
         CursorIcon::Grab => "grab",
         CursorIcon::Grabbing => "grabbing",
-        CursorIcon::EResize | CursorIcon::WResize | CursorIcon::EwResize | CursorIcon::ColResize => "ew-resize",
-        CursorIcon::NResize | CursorIcon::SResize | CursorIcon::NsResize | CursorIcon::RowResize => "ns-resize",
+        CursorIcon::EResize
+        | CursorIcon::WResize
+        | CursorIcon::EwResize
+        | CursorIcon::ColResize => "ew-resize",
+        CursorIcon::NResize
+        | CursorIcon::SResize
+        | CursorIcon::NsResize
+        | CursorIcon::RowResize => "ns-resize",
         CursorIcon::NeResize | CursorIcon::SwResize | CursorIcon::NeswResize => "nesw-resize",
         CursorIcon::NwResize | CursorIcon::SeResize | CursorIcon::NwseResize => "nwse-resize",
         CursorIcon::Text | CursorIcon::VerticalText => "text",
@@ -682,21 +721,43 @@ fn cursor_icon_names(icon: CursorIcon) -> &'static [&'static str] {
         CursorIcon::Move => &["move", "fleur", "size_all"],
         CursorIcon::Grab => &["grab", "openhand", "hand1"],
         CursorIcon::Grabbing => &["grabbing", "closedhand", "hand2"],
-        CursorIcon::EResize | CursorIcon::WResize | CursorIcon::EwResize | CursorIcon::ColResize => {
-            &["ew-resize", "sb_h_double_arrow", "size_hor", "left_side", "right_side"]
-        }
-        CursorIcon::NResize | CursorIcon::SResize | CursorIcon::NsResize | CursorIcon::RowResize => {
-            &["ns-resize", "sb_v_double_arrow", "size_ver", "top_side", "bottom_side"]
-        }
-        CursorIcon::NeResize | CursorIcon::SwResize | CursorIcon::NeswResize => {
-            &["nesw-resize", "size_bdiag", "top_right_corner", "bottom_left_corner"]
-        }
-        CursorIcon::NwResize | CursorIcon::SeResize | CursorIcon::NwseResize => {
-            &["nwse-resize", "size_fdiag", "top_left_corner", "bottom_right_corner"]
-        }
+        CursorIcon::EResize
+        | CursorIcon::WResize
+        | CursorIcon::EwResize
+        | CursorIcon::ColResize => &[
+            "ew-resize",
+            "sb_h_double_arrow",
+            "size_hor",
+            "left_side",
+            "right_side",
+        ],
+        CursorIcon::NResize
+        | CursorIcon::SResize
+        | CursorIcon::NsResize
+        | CursorIcon::RowResize => &[
+            "ns-resize",
+            "sb_v_double_arrow",
+            "size_ver",
+            "top_side",
+            "bottom_side",
+        ],
+        CursorIcon::NeResize | CursorIcon::SwResize | CursorIcon::NeswResize => &[
+            "nesw-resize",
+            "size_bdiag",
+            "top_right_corner",
+            "bottom_left_corner",
+        ],
+        CursorIcon::NwResize | CursorIcon::SeResize | CursorIcon::NwseResize => &[
+            "nwse-resize",
+            "size_fdiag",
+            "top_left_corner",
+            "bottom_right_corner",
+        ],
         CursorIcon::Text | CursorIcon::VerticalText => &["text", "xterm", "ibeam"],
         CursorIcon::Pointer => &["pointer", "hand2", "hand1"],
-        CursorIcon::NotAllowed | CursorIcon::NoDrop => &["not-allowed", "crossed_circle", "forbidden"],
+        CursorIcon::NotAllowed | CursorIcon::NoDrop => {
+            &["not-allowed", "crossed_circle", "forbidden"]
+        }
         CursorIcon::AllResize | CursorIcon::AllScroll => &["all-scroll", "fleur", "size_all"],
         _ => &["left_ptr", "default", "arrow"],
     }
@@ -741,21 +802,21 @@ pub(crate) fn recolor_cursor_svg(svg_data: &[u8], icon_key: &str) -> Vec<u8> {
     let outline_scale = crate::input::read_input_setting_f64("cursor_outline_scale", 1.0) as f32;
     let radius = crate::input::read_input_setting_f64("cursor_corner_radius", 0.0) as f32;
 
-    let body_light_default   = body_light.eq_ignore_ascii_case("#ffffff");
-    let body_dark_default    = body_dark.eq_ignore_ascii_case("#ababab");
+    let body_light_default = body_light.eq_ignore_ascii_case("#ffffff");
+    let body_dark_default = body_dark.eq_ignore_ascii_case("#ababab");
     let accent_light_default = accent_light.eq_ignore_ascii_case("#fab414");
-    let accent_dark_default  = accent_dark.eq_ignore_ascii_case("#9a6300");
-    let outline_default      = outline_color.eq_ignore_ascii_case("#0a0a0a");
-    let scale_default        = (outline_scale - 1.0).abs() < 0.001;
-    let radius_default       = radius.abs() < 0.001;
+    let accent_dark_default = accent_dark.eq_ignore_ascii_case("#9a6300");
+    let outline_default = outline_color.eq_ignore_ascii_case("#0a0a0a");
+    let scale_default = (outline_scale - 1.0).abs() < 0.001;
+    let radius_default = radius.abs() < 0.001;
 
     // Outline + scale + radius apply to every Lantern cursor universally.
     // The body/accent palette only applies to the default arrow — for the
     // resize cursors we keep the canonical white→gray gradient so they
     // stay readable no matter how aggressively the user has retinted
     // the arrow.
-    let body_skipped = is_resize || (body_light_default && body_dark_default
-        && accent_light_default && accent_dark_default);
+    let body_skipped = is_resize
+        || (body_light_default && body_dark_default && accent_light_default && accent_dark_default);
 
     if body_skipped && outline_default && scale_default && radius_default {
         return svg_data.to_vec();
@@ -767,14 +828,28 @@ pub(crate) fn recolor_cursor_svg(svg_data: &[u8], icon_key: &str) -> Vec<u8> {
     let mut out = s.to_string();
 
     if !is_resize {
-        if !body_light_default   { out = replace_hex_case_insensitive(&out, "#ffffff", &body_light); }
-        if !body_dark_default    { out = replace_hex_case_insensitive(&out, "#ababab", &body_dark); }
-        if !accent_light_default { out = replace_hex_case_insensitive(&out, "#fab414", &accent_light); }
-        if !accent_dark_default  { out = replace_hex_case_insensitive(&out, "#9a6300", &accent_dark); }
+        if !body_light_default {
+            out = replace_hex_case_insensitive(&out, "#ffffff", &body_light);
+        }
+        if !body_dark_default {
+            out = replace_hex_case_insensitive(&out, "#ababab", &body_dark);
+        }
+        if !accent_light_default {
+            out = replace_hex_case_insensitive(&out, "#fab414", &accent_light);
+        }
+        if !accent_dark_default {
+            out = replace_hex_case_insensitive(&out, "#9a6300", &accent_dark);
+        }
     }
-    if !outline_default { out = replace_hex_case_insensitive(&out, "#0a0a0a", &outline_color); }
-    if !scale_default   { out = scale_stroke_widths(&out, outline_scale.max(0.0)); }
-    if !radius_default  { out = round_first_polygon_path(&out, radius); }
+    if !outline_default {
+        out = replace_hex_case_insensitive(&out, "#0a0a0a", &outline_color);
+    }
+    if !scale_default {
+        out = scale_stroke_widths(&out, outline_scale.max(0.0));
+    }
+    if !radius_default {
+        out = round_first_polygon_path(&out, radius);
+    }
 
     out.into_bytes()
 }
@@ -841,7 +916,9 @@ fn scale_stroke_widths(svg: &str, scale: f32) -> String {
         let num = &value[..unit_start];
         let unit = &value[unit_start..];
         let parsed = num.trim().parse::<f32>().unwrap_or(0.0);
-        for _ in 0..leading_space { final_out.push(' '); }
+        for _ in 0..leading_space {
+            final_out.push(' ');
+        }
         final_out.push_str(&format!("{:.2}{}", scale_value(parsed), unit));
         rest = &trimmed[term_at..];
     }
@@ -856,11 +933,17 @@ fn scale_stroke_widths(svg: &str, scale: f32) -> String {
 /// arcs) are left alone.
 fn round_first_polygon_path(svg: &str, r: f32) -> String {
     let attr = "d=\"";
-    let Some(start) = svg.find(attr) else { return svg.to_string() };
+    let Some(start) = svg.find(attr) else {
+        return svg.to_string();
+    };
     let body_start = start + attr.len();
-    let Some(end_off) = svg[body_start..].find('"') else { return svg.to_string() };
+    let Some(end_off) = svg[body_start..].find('"') else {
+        return svg.to_string();
+    };
     let d = &svg[body_start..body_start + end_off];
-    let Some(pts) = parse_polygon_d(d) else { return svg.to_string() };
+    let Some(pts) = parse_polygon_d(d) else {
+        return svg.to_string();
+    };
     let new_d = round_polygon_path(&pts, r);
     let mut out = String::with_capacity(svg.len() + 64);
     out.push_str(&svg[..body_start]);
@@ -873,7 +956,9 @@ fn round_first_polygon_path(svg: &str, r: f32) -> String {
 /// `None` for paths containing curves or arcs so we don't mangle them.
 fn parse_polygon_d(d: &str) -> Option<Vec<(f32, f32)>> {
     let mut pts: Vec<(f32, f32)> = Vec::new();
-    let mut tokens = d.split(|c: char| c.is_whitespace() || c == ',').filter(|t| !t.is_empty());
+    let mut tokens = d
+        .split(|c: char| c.is_whitespace() || c == ',')
+        .filter(|t| !t.is_empty());
     while let Some(tok) = tokens.next() {
         match tok {
             "M" | "L" | "m" | "l" => {
@@ -893,7 +978,9 @@ fn parse_polygon_d(d: &str) -> Option<Vec<(f32, f32)>> {
             pts.pop();
         }
     }
-    if pts.len() < 3 { return None; }
+    if pts.len() < 3 {
+        return None;
+    }
     Some(pts)
 }
 
@@ -925,7 +1012,10 @@ fn round_polygon_path(pts: &[(f32, f32)], r: f32) -> String {
         let p_out = (cur.0 + dx2 / l2 * r_eff, cur.1 + dy2 / l2 * r_eff);
         let cmd = if i == 0 { "M" } else { "L" };
         s.push_str(&format!("{} {:.3} {:.3} ", cmd, p_in.0, p_in.1));
-        s.push_str(&format!("Q {:.3} {:.3} {:.3} {:.3} ", cur.0, cur.1, p_out.0, p_out.1));
+        s.push_str(&format!(
+            "Q {:.3} {:.3} {:.3} {:.3} ",
+            cur.0, cur.1, p_out.0, p_out.1
+        ));
     }
     s.push('Z');
     s
@@ -993,4 +1083,3 @@ pub(crate) fn strip_preserve_aspect_none(svg_data: &[u8]) -> Vec<u8> {
     out.push_str(rest);
     out.into_bytes()
 }
-

@@ -1,6 +1,8 @@
 /// Hot corners, scratchpad toggle, and show desktop.
-
-use smithay::reexports::calloop::{timer::{Timer, TimeoutAction}, RegistrationToken};
+use smithay::reexports::calloop::{
+    timer::{TimeoutAction, Timer},
+    RegistrationToken,
+};
 use smithay::utils::{Logical, Point, Rectangle};
 
 use crate::state::Lantern;
@@ -62,10 +64,7 @@ impl HotCornerState {
 impl Lantern {
     /// Detect which screen corner the pointer is in, if any.
     /// Uses a 2x2 pixel detection zone at each corner.
-    pub fn detect_hot_corner(
-        &self,
-        pos: Point<f64, Logical>,
-    ) -> Option<ScreenCorner> {
+    pub fn detect_hot_corner(&self, pos: Point<f64, Logical>) -> Option<ScreenCorner> {
         if !HOT_CORNERS_ENABLED {
             return None;
         }
@@ -93,9 +92,7 @@ impl Lantern {
                     let dy = pos.y - (geo.loc.y as f64);
                     let center_x = geo.loc.x as f64 + (geo.size.w as f64) * 0.5;
                     let dx = (pos.x - center_x).abs();
-                    if dy >= 0.0
-                        && dy < TOP_CENTER_ZONE_HEIGHT
-                        && dx <= TOP_CENTER_ZONE_WIDTH * 0.5
+                    if dy >= 0.0 && dy < TOP_CENTER_ZONE_HEIGHT && dx <= TOP_CENTER_ZONE_WIDTH * 0.5
                     {
                         Some(ScreenCorner::TopCenter)
                     } else {
@@ -111,12 +108,11 @@ impl Lantern {
     /// Update hot corner state based on current pointer position.
     /// Starts a calloop timer when the pointer enters a corner zone.
     /// The timer fires the action after DWELL ms if still in the same corner.
-    pub fn update_hot_corner(
-        &mut self,
-        pos: Point<f64, Logical>,
-    ) {
+    pub fn update_hot_corner(&mut self, pos: Point<f64, Logical>) {
         // Suppress hot corners when the focused window is fullscreen
-        let focused_is_fullscreen = self.focused_surface.as_ref()
+        let focused_is_fullscreen = self
+            .focused_surface
+            .as_ref()
             .is_some_and(|s| self.fullscreen_windows.iter().any(|e| e.surface == *s));
         let corner = if focused_is_fullscreen || self.modal_overlay_active() {
             None
@@ -175,11 +171,15 @@ impl Lantern {
         };
 
         self.layer_surfaces.iter().any(|ls| {
-            ls.alive() && with_states(ls.wl_surface(), |states| {
-                let cached = *states.cached_state.get::<LayerSurfaceCachedState>().current();
-                cached.layer == Layer::Overlay
-                    && cached.keyboard_interactivity == KeyboardInteractivity::Exclusive
-            })
+            ls.alive()
+                && with_states(ls.wl_surface(), |states| {
+                    let cached = *states
+                        .cached_state
+                        .get::<LayerSurfaceCachedState>()
+                        .current();
+                    cached.layer == Layer::Overlay
+                        && cached.keyboard_interactivity == KeyboardInteractivity::Exclusive
+                })
         })
     }
 
@@ -236,14 +236,18 @@ impl Lantern {
     /// Compute the target geometry for the scratchpad window:
     /// full width, 40% height, positioned at top of usable area.
     pub fn scratchpad_geometry(&self) -> Option<Rectangle<i32, Logical>> {
-        let pointer_pos = self.seat.get_pointer()
+        let pointer_pos = self
+            .seat
+            .get_pointer()
             .map(|p| p.current_location())
             .unwrap_or_default();
-        let output = self.output_at_point(pointer_pos)
+        let output = self
+            .output_at_point(pointer_pos)
             .or_else(|| self.workspaces.outputs_iter().next().cloned())?;
         let geo = self.workspaces.output_geometry(&output)?;
 
-        let (top_excl, _bottom_excl, left_excl, right_excl) = self.exclusive_zone_offsets_for_output(&output);
+        let (top_excl, _bottom_excl, left_excl, right_excl) =
+            self.exclusive_zone_offsets_for_output(&output);
         let x = geo.loc.x + left_excl;
         let y = geo.loc.y + top_excl;
         let w = geo.size.w - left_excl - right_excl;
@@ -285,8 +289,8 @@ impl Lantern {
 
     /// Check if the scratchpad is currently visible (mapped, not minimized).
     pub fn is_scratchpad_visible(&self) -> bool {
-        self.scratchpad_surface.as_ref().is_some_and(|surface| {
-            self.find_mapped_window(surface).is_some()
-        })
+        self.scratchpad_surface
+            .as_ref()
+            .is_some_and(|surface| self.find_mapped_window(surface).is_some())
     }
 }

@@ -6,12 +6,14 @@ use smithay::{
 };
 
 use crate::state::Lantern;
-use crate::window_state::FullscreenWindow;
 use crate::window_ext::WindowExt;
+use crate::window_state::FullscreenWindow;
 
 impl Lantern {
     pub fn is_fullscreen(&self, surface: &WlSurface) -> bool {
-        self.fullscreen_windows.iter().any(|e| e.surface == *surface)
+        self.fullscreen_windows
+            .iter()
+            .any(|e| e.surface == *surface)
     }
 
     pub fn fullscreen_surface(&mut self, surface: &WlSurface, serial: Serial) -> bool {
@@ -20,11 +22,14 @@ impl Lantern {
         }
 
         let Some(window) = self.find_mapped_window(surface) else {
-            return false;
+            // Not on screen — maybe iconified. Record the state so the
+            // window comes back fullscreen instead of dropping the request.
+            return self.fullscreen_minimized(surface);
         };
 
         // Get the raw output geometry (no exclusive zone subtraction)
-        let Some(output_geo) = self.output_for_window(&window)
+        let Some(output_geo) = self
+            .output_for_window(&window)
             .or_else(|| self.workspaces.outputs_iter().next().cloned())
             .and_then(|o| self.workspaces.output_geometry(&o))
         else {
@@ -32,7 +37,10 @@ impl Lantern {
         };
 
         // Save restore geometry
-        let location = self.workspaces.element_location(&window).unwrap_or_default();
+        let location = self
+            .workspaces
+            .element_location(&window)
+            .unwrap_or_default();
         let restore = Rectangle::new(location, window.geometry().size);
 
         // If maximized, use the maximized restore instead
@@ -43,7 +51,11 @@ impl Lantern {
         };
 
         // If snapped, use the snapped restore instead
-        let restore = if let Some(idx) = self.snapped_windows.iter().position(|e| e.surface == *surface) {
+        let restore = if let Some(idx) = self
+            .snapped_windows
+            .iter()
+            .position(|e| e.surface == *surface)
+        {
             self.snapped_windows.remove(idx).restore
         } else {
             restore
@@ -94,18 +106,48 @@ impl Lantern {
     }
 
     pub fn unfullscreen_surface(&mut self, surface: &WlSurface, serial: Serial) -> bool {
-        let Some(idx) = self.fullscreen_windows.iter().position(|e| e.surface == *surface) else {
+        let Some(idx) = self
+            .fullscreen_windows
+            .iter()
+            .position(|e| e.surface == *surface)
+        else {
             return false;
         };
         let restore = self.fullscreen_windows.remove(idx).restore;
+
+        // Iconified window leaving fullscreen: DXGI/SDL drop exclusive
+        // fullscreen when they minimize. Nothing is on screen to animate or
+        // focus, but the X11 state MUST still be acknowledged — Wine won't
+        // sync the Win32 window again while a `_NET_WM_STATE` request is
+        // unanswered, which leaves the game black after restore.
+        if let Some(entry) = self
+            .minimized_windows
+            .iter_mut()
+            .find(|e| e.surface == *surface)
+        {
+            entry.location = restore.loc;
+            let window = entry.window.clone();
+            window.set_fullscreen(false);
+            window.configure_rect(restore);
+            self.update_foreign_toplevel_states(surface);
+            self.refresh_vrr();
+            tracing::info!("Window left fullscreen (while minimized)");
+            return true;
+        }
 
         let Some(window) = self.find_mapped_window(surface) else {
             return false;
         };
 
-        let current_loc = self.workspaces.element_location(&window).unwrap_or(restore.loc);
+        let current_loc = self
+            .workspaces
+            .element_location(&window)
+            .unwrap_or(restore.loc);
         let current_rect = Rectangle::new(current_loc, window.geometry().size);
-        let anim_start = self.window_state_anim.current_rect(surface).unwrap_or(current_rect);
+        let anim_start = self
+            .window_state_anim
+            .current_rect(surface)
+            .unwrap_or(current_rect);
 
         window.set_fullscreen(false);
         self.animate_resize(surface, &window, anim_start, restore);
@@ -120,11 +162,55 @@ impl Lantern {
         true
     }
 
+    /// Fullscreen bookkeeping for a window that is currently minimized: the
+    /// client re-entered fullscreen while parked (typically right after we
+    /// deiconified it and it restored its Win32/SDL state, before our map
+    /// landed). Records the target so the restore maps it fullscreen, acks
+    /// the X11 state, and deliberately does NOT animate or steal focus.
+    fn fullscreen_minimized(&mut self, surface: &WlSurface) -> bool {
+        let Some(idx) = self
+            .minimized_windows
+            .iter()
+            .position(|e| e.surface == *surface)
+        else {
+            return false;
+        };
+        let (window, location) = {
+            let entry = &self.minimized_windows[idx];
+            (entry.window.clone(), entry.location)
+        };
+        let Some(output_geo) = self
+            .output_at_point(Point::from((location.x as f64, location.y as f64)))
+            .or_else(|| self.workspaces.outputs_iter().next().cloned())
+            .and_then(|o| self.workspaces.output_geometry(&o))
+        else {
+            return false;
+        };
+
+        let restore = self
+            .take_maximized_restore(surface)
+            .unwrap_or_else(|| Rectangle::new(location, window.geometry().size));
+        self.fullscreen_windows.push(FullscreenWindow {
+            surface: surface.clone(),
+            restore,
+            target: output_geo,
+        });
+        self.minimized_windows[idx].location = output_geo.loc;
+
+        window.set_fullscreen(true);
+        window.configure_rect(output_geo);
+        self.update_foreign_toplevel_states(surface);
+        tracing::info!("Window entered fullscreen (while minimized)");
+        true
+    }
+
     pub fn toggle_fullscreen_focused(&mut self, serial: Serial) -> bool {
         let Some(window) = self.focused_window() else {
             return false;
         };
-        let Some(surface) = window.get_wl_surface() else { return false };
+        let Some(surface) = window.get_wl_surface() else {
+            return false;
+        };
         if self.is_fullscreen(&surface) {
             self.unfullscreen_surface(&surface, serial)
         } else {
@@ -165,18 +251,21 @@ impl Lantern {
         // known offset. Wine Win10 titlebar is ~19 logical pixels.
         let titlebar_h = 19;
 
-        let Some(window) = self.find_mapped_window(surface) else { return };
-        let Some(output_geo) = self.output_for_window(&window)
+        let Some(window) = self.find_mapped_window(surface) else {
+            return;
+        };
+        let Some(output_geo) = self
+            .output_for_window(&window)
             .or_else(|| self.workspaces.outputs_iter().next().cloned())
             .and_then(|o| self.workspaces.output_geometry(&o))
-        else { return };
+        else {
+            return;
+        };
 
         // Map shifted up so titlebar goes off-screen
         let adjusted_loc = Point::from((output_geo.loc.x, output_geo.loc.y - titlebar_h));
-        let padded_size = smithay::utils::Size::from((
-            output_geo.size.w,
-            output_geo.size.h + titlebar_h,
-        ));
+        let padded_size =
+            smithay::utils::Size::from((output_geo.size.w, output_geo.size.h + titlebar_h));
         window.configure_rect(Rectangle::new(adjusted_loc, padded_size));
         self.remap_tracked_window(window, adjusted_loc, true);
 

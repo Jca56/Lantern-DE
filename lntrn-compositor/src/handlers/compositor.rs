@@ -75,7 +75,9 @@ impl CompositorHandler for Lantern {
                     if let Some(client) = surface.client() {
                         let res = state.loop_handle.insert_source(source, move |_, _, state| {
                             let dh = state.display_handle.clone();
-                            state.client_compositor_state(&client).blocker_cleared(state, &dh);
+                            state
+                                .client_compositor_state(&client)
+                                .blocker_cleared(state, &dh);
                             Ok(())
                         });
                         if res.is_ok() {
@@ -92,7 +94,9 @@ impl CompositorHandler for Lantern {
                 if let Some(client) = surface.client() {
                     let res = state.loop_handle.insert_source(source, move |_, _, state| {
                         let dh = state.display_handle.clone();
-                        state.client_compositor_state(&client).blocker_cleared(state, &dh);
+                        state
+                            .client_compositor_state(&client)
+                            .blocker_cleared(state, &dh);
                         Ok(())
                     });
                     if res.is_ok() {
@@ -107,7 +111,9 @@ impl CompositorHandler for Lantern {
         let commit_start = if self.debug_counters.enabled {
             self.debug_counters.commits += 1;
             Some(std::time::Instant::now())
-        } else { None };
+        } else {
+            None
+        };
         on_commit_buffer_handler::<Self>(surface);
         // One mapped-window lookup for the whole handler. This used to be
         // five separate linear space scans per commit — a 240fps client
@@ -204,7 +210,9 @@ impl CompositorHandler for Lantern {
                     let is_neutral = matches!(cached.exclusive_zone, ExclusiveZone::Neutral);
                     if is_neutral {
                         for other in &self.layer_surfaces {
-                            if other.wl_surface() == surface { continue; }
+                            if other.wl_surface() == surface {
+                                continue;
+                            }
                             let oc = with_states(other.wl_surface(), |s| {
                                 *s.cached_state.get::<LayerSurfaceCachedState>().current()
                             });
@@ -225,10 +233,18 @@ impl CompositorHandler for Lantern {
                     }
 
                     if cached.anchor.anchored_horizontally() && width == 0 {
-                        width = geo.size.w - cached.margin.left - cached.margin.right - excl_left - excl_right;
+                        width = geo.size.w
+                            - cached.margin.left
+                            - cached.margin.right
+                            - excl_left
+                            - excl_right;
                     }
                     if cached.anchor.anchored_vertically() && height == 0 {
-                        height = geo.size.h - cached.margin.top - cached.margin.bottom - excl_top - excl_bottom;
+                        height = geo.size.h
+                            - cached.margin.top
+                            - cached.margin.bottom
+                            - excl_top
+                            - excl_bottom;
                     }
 
                     tracing::trace!(
@@ -245,7 +261,11 @@ impl CompositorHandler for Lantern {
 
                 // Check keyboard interactivity (acted on after the borrow ends)
                 let kb_state = with_states(surface, |states| {
-                    states.cached_state.get::<LayerSurfaceCachedState>().current().keyboard_interactivity
+                    states
+                        .cached_state
+                        .get::<LayerSurfaceCachedState>()
+                        .current()
+                        .keyboard_interactivity
                 });
                 layer_kb_action = Some((ls.wl_surface().clone(), kb_state));
 
@@ -258,14 +278,17 @@ impl CompositorHandler for Lantern {
         // Skip entirely while locked — the lock surface must keep keyboard focus,
         // or a layer surface (e.g. Command Center) re-grabs it and the password
         // field never receives keystrokes.
-        if let Some((wl_surface, kb_interactivity)) = layer_kb_action.filter(|_| !self.is_locked()) {
+        if let Some((wl_surface, kb_interactivity)) = layer_kb_action.filter(|_| !self.is_locked())
+        {
             use smithay::wayland::shell::wlr_layer::KeyboardInteractivity;
             if kb_interactivity == KeyboardInteractivity::Exclusive {
                 let serial = smithay::utils::SERIAL_COUNTER.next_serial();
                 let keyboard = self.seat.get_keyboard().unwrap();
                 keyboard.set_focus(
                     self,
-                    Some(crate::keyboard_focus::KeyboardFocusTarget::Wayland(wl_surface)),
+                    Some(crate::keyboard_focus::KeyboardFocusTarget::Wayland(
+                        wl_surface,
+                    )),
                     serial,
                 );
             } else if kb_interactivity == KeyboardInteractivity::None {

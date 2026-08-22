@@ -1,6 +1,5 @@
 /// DRM device hot-plug handling: adding, changing, and removing DRM
 /// devices and their connectors / CRTCs.
-
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -31,9 +30,7 @@ use crate::shaders::{
     CORNER_SHADER_SRC, HOT_CORNER_GLOW_SHADER_SRC, ROUNDED_TEX_SHADER_SRC, SHADOW_SHADER_SRC,
     TOP_CENTER_GLOW_SHADER_SRC,
 };
-use crate::udev::{
-    GpuBackend, OutputSurface, UdevOutputId, SUPPORTED_FORMATS,
-};
+use crate::udev::{GpuBackend, OutputSurface, UdevOutputId, SUPPORTED_FORMATS};
 use crate::window_ext::WindowExt;
 use crate::Lantern;
 
@@ -47,19 +44,21 @@ pub fn device_added(
     let fd = {
         let udev = state.udev.as_mut().ok_or("No udev data")?;
         udev.session
-            .open(path, OFlags::RDWR | OFlags::CLOEXEC | OFlags::NONBLOCK | OFlags::NOCTTY)
+            .open(
+                path,
+                OFlags::RDWR | OFlags::CLOEXEC | OFlags::NONBLOCK | OFlags::NOCTTY,
+            )
             .map_err(|e| format!("Failed to open device {:?}: {}", path, e))?
     };
     info!("Opened DRM device fd");
 
     let fd = DrmDeviceFd::new(DeviceFd::from(fd));
 
-    let (drm, drm_notifier) = DrmDevice::new(fd.clone(), true)
-        .map_err(|e| format!("DrmDevice::new failed: {}", e))?;
+    let (drm, drm_notifier) =
+        DrmDevice::new(fd.clone(), true).map_err(|e| format!("DrmDevice::new failed: {}", e))?;
     info!("DRM device created");
 
-    let gbm = GbmDevice::new(fd.clone())
-        .map_err(|e| format!("GbmDevice::new failed: {}", e))?;
+    let gbm = GbmDevice::new(fd.clone()).map_err(|e| format!("GbmDevice::new failed: {}", e))?;
     info!("GBM device created");
 
     let allocator = GbmAllocator::new(
@@ -97,23 +96,24 @@ pub fn device_added(
     );
     info!("DRM output manager created");
 
-    let drm_registration = state
-        .loop_handle
-        .insert_source(drm_notifier, move |event, metadata, state| {
-            if state.debug_counters.enabled {
-                state.debug_counters.drm_fires += 1;
-            }
-            match event {
-                DrmEvent::VBlank(crtc) => {
-                    // Hand the real scanout timestamp + vblank sequence to the
-                    // pacing path — pre-refactor this metadata was discarded.
-                    crate::udev::frame_finish(state, node, crtc, metadata.take());
+    let drm_registration =
+        state
+            .loop_handle
+            .insert_source(drm_notifier, move |event, metadata, state| {
+                if state.debug_counters.enabled {
+                    state.debug_counters.drm_fires += 1;
                 }
-                DrmEvent::Error(err) => {
-                    error!("DRM error: {:?}", err);
+                match event {
+                    DrmEvent::VBlank(crtc) => {
+                        // Hand the real scanout timestamp + vblank sequence to the
+                        // pacing path — pre-refactor this metadata was discarded.
+                        crate::udev::frame_finish(state, node, crtc, metadata.take());
+                    }
+                    DrmEvent::Error(err) => {
+                        error!("DRM error: {:?}", err);
+                    }
                 }
-            }
-        })?;
+            })?;
 
     let udev = state.udev.as_mut().ok_or("No udev data")?;
     // Store the renderer (replaces any previous one for multi-GPU, MVP uses one)
@@ -367,7 +367,11 @@ pub(crate) fn connector_connected(
         connector.interface().as_str(),
         connector.interface_id()
     );
-    info!("Connector connected: {} (modes: {})", output_name, connector.modes().len());
+    info!(
+        "Connector connected: {} (modes: {})",
+        output_name,
+        connector.modes().len()
+    );
 
     // Find preferred resolution, then pick highest refresh rate at that resolution
     let preferred_idx = connector
@@ -418,15 +422,15 @@ pub(crate) fn connector_connected(
     // Check monitor config for explicit position, otherwise auto-layout horizontally
     let monitor_configs = crate::read_monitor_configs();
     let (x, y) = if let Some(cfg) = monitor_configs.iter().find(|c| c.name == output_name) {
-        info!("Using configured position for {}: ({}, {})", output_name, cfg.x, cfg.y);
+        info!(
+            "Using configured position for {}: ({}, {})",
+            output_name, cfg.x, cfg.y
+        );
         (cfg.x, cfg.y)
     } else {
-        let auto_x = state
-            .space
-            .outputs()
-            .fold(0, |acc, o| {
-                acc + state.workspaces.output_geometry(o).unwrap().size.w
-            });
+        let auto_x = state.space.outputs().fold(0, |acc, o| {
+            acc + state.workspaces.output_geometry(o).unwrap().size.w
+        });
         (auto_x, 0)
     };
 
@@ -438,14 +442,14 @@ pub(crate) fn connector_connected(
         Some((x, y).into()),
     );
     state.space.map_output(&output, (x, y));
-    state.workspaces.register_output(output.clone(), (x, y).into());
+    state
+        .workspaces
+        .register_output(output.clone(), (x, y).into());
 
-    output
-        .user_data()
-        .insert_if_missing(|| UdevOutputId {
-            crtc,
-            device_id: node,
-        });
+    output.user_data().insert_if_missing(|| UdevOutputId {
+        crtc,
+        device_id: node,
+    });
     output
         .user_data()
         .insert_if_missing(|| crate::udev::UdevOutputModes {
@@ -464,7 +468,11 @@ pub(crate) fn connector_connected(
     if let Some(caps) = &hdr_caps {
         info!(
             "Output {} HDR-capable: pq={} hlg={} max_lum={:.0}nits min_lum={:.4}nits",
-            output_name, caps.pq_supported, caps.hlg_supported, caps.max_luminance, caps.min_luminance
+            output_name,
+            caps.pq_supported,
+            caps.hlg_supported,
+            caps.max_luminance,
+            caps.min_luminance
         );
         output.user_data().insert_if_missing(|| caps.clone());
     } else {
@@ -548,8 +556,7 @@ pub fn connector_disconnected(state: &mut Lantern, node: DrmNode, crtc: crtc::Ha
     };
 
     if let Some(surface) = backend.surfaces.remove(&crtc) {
-        udev.display_handle
-            .remove_global::<Lantern>(surface.global);
+        udev.display_handle.remove_global::<Lantern>(surface.global);
     }
 
     let output = state
@@ -584,8 +591,7 @@ pub fn device_removed(state: &mut Lantern, node: DrmNode) {
     };
 
     for (_, surface) in backend.surfaces {
-        udev.display_handle
-            .remove_global::<Lantern>(surface.global);
+        udev.display_handle.remove_global::<Lantern>(surface.global);
     }
 
     let outputs: Vec<_> = state
@@ -628,7 +634,12 @@ pub fn apply_output_config(
             _ => {}
         }
 
-        let output = match state.workspaces.outputs_iter().find(|o| o.name() == change.output_name).cloned() {
+        let output = match state
+            .workspaces
+            .outputs_iter()
+            .find(|o| o.name() == change.output_name)
+            .cloned()
+        {
             Some(o) => o,
             None => return false,
         };
@@ -644,7 +655,9 @@ pub fn apply_output_config(
                 Some(m) => m,
                 None => return false,
             };
-            if drm_idx >= modes.drm_modes.len() { return false; }
+            if drm_idx >= modes.drm_modes.len() {
+                return false;
+            }
             let drm_mode = modes.drm_modes[drm_idx];
             let wl_mode = WlMode::from(drm_mode);
 
@@ -661,18 +674,23 @@ pub fn apply_output_config(
                 Some(r) => r,
                 None => return false,
             };
-            if let Err(e) = backend.drm_output_manager.use_mode::<_, CustomRenderElements>(
-                &oid.crtc,
-                drm_mode,
-                renderer,
-                &DrmOutputRenderElements::default(),
-            ) {
+            if let Err(e) = backend
+                .drm_output_manager
+                .use_mode::<_, CustomRenderElements>(
+                    &oid.crtc,
+                    drm_mode,
+                    renderer,
+                    &DrmOutputRenderElements::default(),
+                )
+            {
                 tracing::warn!("Failed to switch DRM mode: {:?}", e);
                 return false;
             }
 
             output.set_preferred(wl_mode);
-            let cur_scale = change.scale.unwrap_or_else(|| crate::monitor_scale(&change.output_name));
+            let cur_scale = change
+                .scale
+                .unwrap_or_else(|| crate::monitor_scale(&change.output_name));
             output.change_current_state(
                 Some(wl_mode),
                 None,
@@ -684,25 +702,17 @@ pub fn apply_output_config(
         // Apply scale change (if no mode change already applied it)
         if change.drm_mode_index.is_none() {
             if let Some(new_scale) = change.scale {
-                output.change_current_state(
-                    None,
-                    None,
-                    Some(Scale::Fractional(new_scale)),
-                    None,
-                );
+                output.change_current_state(None, None, Some(Scale::Fractional(new_scale)), None);
             }
         }
 
         // Apply position change
         if let Some((x, y)) = change.position {
-            output.change_current_state(
-                None,
-                None,
-                None,
-                Some((x, y).into()),
-            );
+            output.change_current_state(None, None, None, Some((x, y).into()));
             state.space.map_output(&output, (x, y));
-            state.workspaces.register_output(output.clone(), (x, y).into());
+            state
+                .workspaces
+                .register_output(output.clone(), (x, y).into());
         }
     }
 
@@ -720,8 +730,11 @@ pub fn apply_output_config(
     }
 
     // Reconfigure maximized windows for new output geometry
-    let maximized_surfaces: Vec<_> = state.maximized_windows
-        .iter().map(|e| e.surface.clone()).collect();
+    let maximized_surfaces: Vec<_> = state
+        .maximized_windows
+        .iter()
+        .map(|e| e.surface.clone())
+        .collect();
     for surface in &maximized_surfaces {
         if let Some(window) = state.find_mapped_window(surface) {
             if let Some(geo) = state.window_output_geometry(&window) {
@@ -732,11 +745,15 @@ pub fn apply_output_config(
     }
 
     // Reconfigure fullscreen windows for new raw output geometry
-    let fullscreen_surfaces: Vec<_> = state.fullscreen_windows
-        .iter().map(|e| e.surface.clone()).collect();
+    let fullscreen_surfaces: Vec<_> = state
+        .fullscreen_windows
+        .iter()
+        .map(|e| e.surface.clone())
+        .collect();
     for surface in &fullscreen_surfaces {
         if let Some(window) = state.find_mapped_window(surface) {
-            if let Some(output_geo) = state.output_for_window(&window)
+            if let Some(output_geo) = state
+                .output_for_window(&window)
                 .or_else(|| state.workspaces.outputs_iter().next().cloned())
                 .and_then(|o| state.workspaces.output_geometry(&o))
             {
@@ -747,8 +764,11 @@ pub fn apply_output_config(
     }
 
     // Reconfigure snapped windows
-    let snapped: Vec<_> = state.snapped_windows
-        .iter().map(|e| (e.surface.clone(), e.zone)).collect();
+    let snapped: Vec<_> = state
+        .snapped_windows
+        .iter()
+        .map(|e| (e.surface.clone(), e.zone))
+        .collect();
     for (surface, zone) in &snapped {
         if let Some(target) = state.snap_zone_geometry(*zone) {
             if let Some(window) = state.find_mapped_window(&surface) {
@@ -781,7 +801,10 @@ pub fn apply_output_config(
     let render_targets: Vec<(DrmNode, crtc::Handle)> = changes
         .iter()
         .filter_map(|change| {
-            let output = state.workspaces.outputs_iter().find(|o| o.name() == change.output_name)?;
+            let output = state
+                .workspaces
+                .outputs_iter()
+                .find(|o| o.name() == change.output_name)?;
             let oid = output.user_data().get::<UdevOutputId>()?;
             Some((oid.device_id, oid.crtc))
         })
@@ -831,15 +854,15 @@ pub fn reload_monitor_positions(state: &mut Lantern) {
         if let Some(cfg) = configs.iter().find(|c| c.name == name) {
             let current_geo = state.workspaces.output_geometry(output).unwrap_or_default();
             if current_geo.loc.x != cfg.x || current_geo.loc.y != cfg.y {
-                output.change_current_state(
-                    None,
-                    None,
-                    None,
-                    Some((cfg.x, cfg.y).into()),
-                );
+                output.change_current_state(None, None, None, Some((cfg.x, cfg.y).into()));
                 state.space.map_output(output, (cfg.x, cfg.y));
-                state.workspaces.register_output(output.clone(), (cfg.x, cfg.y).into());
-                info!("Live-reloaded position for {}: ({}, {})", name, cfg.x, cfg.y);
+                state
+                    .workspaces
+                    .register_output(output.clone(), (cfg.x, cfg.y).into());
+                info!(
+                    "Live-reloaded position for {}: ({}, {})",
+                    name, cfg.x, cfg.y
+                );
                 changed = true;
             }
         }

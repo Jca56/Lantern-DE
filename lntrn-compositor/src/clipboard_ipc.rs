@@ -96,7 +96,9 @@ impl ClipboardIpc {
         let listener = match UnixListener::bind(&path) {
             Ok(l) => {
                 l.set_nonblocking(true).ok();
-                if let Err(e) = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)) {
+                if let Err(e) =
+                    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+                {
                     tracing::warn!(?e, "failed to chmod 0600 on clipboard IPC socket");
                 }
                 tracing::info!(?path, "clipboard IPC socket listening");
@@ -107,7 +109,10 @@ impl ClipboardIpc {
                 None
             }
         };
-        Self { listener, clients: Vec::new() }
+        Self {
+            listener,
+            clients: Vec::new(),
+        }
     }
 }
 
@@ -216,12 +221,10 @@ fn handle_request(state: &mut Lantern, req: Request) -> String {
             state.clipboard_manager.clear();
             serde_json::json!({"ok": true}).to_string()
         }
-        Request::Pin { id, value } => {
-            match state.clipboard_manager.set_pinned(id, value) {
-                Some(_) => serde_json::json!({"ok": true}).to_string(),
-                None => serde_json::json!({"error": "not_found"}).to_string(),
-            }
-        }
+        Request::Pin { id, value } => match state.clipboard_manager.set_pinned(id, value) {
+            Some(_) => serde_json::json!({"ok": true}).to_string(),
+            None => serde_json::json!({"error": "not_found"}).to_string(),
+        },
     }
 }
 

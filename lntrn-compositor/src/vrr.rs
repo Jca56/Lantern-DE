@@ -80,9 +80,15 @@ impl Lantern {
         let name = output.name();
         let mut toggled = false;
         {
-            let Some(udev) = self.udev.as_mut() else { return };
-            let Some(backend) = udev.backends.get_mut(&oid.device_id) else { return };
-            let Some(surface) = backend.surfaces.get_mut(&oid.crtc) else { return };
+            let Some(udev) = self.udev.as_mut() else {
+                return;
+            };
+            let Some(backend) = udev.backends.get_mut(&oid.device_id) else {
+                return;
+            };
+            let Some(surface) = backend.surfaces.get_mut(&oid.crtc) else {
+                return;
+            };
             surface.drm_output.with_compositor(|comp| {
                 if comp.vrr_enabled() == enable {
                     return;

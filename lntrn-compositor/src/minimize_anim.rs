@@ -13,8 +13,12 @@ use smithay::{
     utils::{Logical, Point, Rectangle},
 };
 
-pub fn min_duration() -> Duration { crate::animations::minimize_duration() }
-pub fn unmin_duration() -> Duration { crate::animations::unminimize_duration() }
+pub fn min_duration() -> Duration {
+    crate::animations::minimize_duration()
+}
+pub fn unmin_duration() -> Duration {
+    crate::animations::unminimize_duration()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MinimizeKind {
@@ -84,8 +88,16 @@ impl MinimizeAnim {
         let th = self.target_rect.size.h as f64;
 
         // Anisotropic scale: 1.0 at source, target/source ratio at target.
-        let scale_x = if sw > 0.0 { 1.0 + (tw / sw - 1.0) * prog } else { 1.0 };
-        let scale_y = if sh > 0.0 { 1.0 + (th / sh - 1.0) * prog } else { 1.0 };
+        let scale_x = if sw > 0.0 {
+            1.0 + (tw / sw - 1.0) * prog
+        } else {
+            1.0
+        };
+        let scale_y = if sh > 0.0 {
+            1.0 + (th / sh - 1.0) * prog
+        } else {
+            1.0
+        };
 
         // Visible-rect center lerps from source-center to target-center.
         // The render wrapper computes the visible top-left as

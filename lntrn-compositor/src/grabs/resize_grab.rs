@@ -2,11 +2,10 @@ use crate::{window_ext::WindowExt, Lantern};
 use smithay::{
     desktop::{Space, Window},
     input::pointer::{
-        AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent,
-        GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent,
-        GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent,
-        GrabStartData as PointerGrabStartData, MotionEvent, PointerGrab,
-        PointerInnerHandle, RelativeMotionEvent,
+        AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
+        GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent,
+        GestureSwipeEndEvent, GestureSwipeUpdateEvent, GrabStartData as PointerGrabStartData,
+        MotionEvent, PointerGrab, PointerInnerHandle, RelativeMotionEvent,
     },
     reexports::{
         wayland_protocols::xdg::shell::server::xdg_toplevel,
@@ -110,9 +109,8 @@ impl PointerGrab<Lantern> for ResizeSurfaceGrab {
 
         // Keep resize cursor active during the grab
         let icon = Self::cursor_icon_for_edges(self.edges);
-        data.cursor.set_status(
-            smithay::input::pointer::CursorImageStatus::Named(icon),
-        );
+        data.cursor
+            .set_status(smithay::input::pointer::CursorImageStatus::Named(icon));
 
         let mut delta: Point<f64, Logical> = event.location - self.start_data.location;
 
@@ -149,8 +147,16 @@ impl PointerGrab<Lantern> for ResizeSurfaceGrab {
 
         let min_width = min_size.w.max(1);
         let min_height = min_size.h.max(1);
-        let max_width = if max_size.w == 0 { i32::MAX } else { max_size.w };
-        let max_height = if max_size.h == 0 { i32::MAX } else { max_size.h };
+        let max_width = if max_size.w == 0 {
+            i32::MAX
+        } else {
+            max_size.w
+        };
+        let max_height = if max_size.h == 0 {
+            i32::MAX
+        } else {
+            max_size.h
+        };
 
         self.last_window_size = Size::from((
             new_window_width.max(min_width).min(max_width),
@@ -190,11 +196,10 @@ impl PointerGrab<Lantern> for ResizeSurfaceGrab {
             handle.unset_grab(self, data, event.serial, event.time, true);
 
             // Restore default cursor
-            data.cursor.set_status(
-                smithay::input::pointer::CursorImageStatus::Named(
+            data.cursor
+                .set_status(smithay::input::pointer::CursorImageStatus::Named(
                     smithay::input::pointer::CursorIcon::Default,
-                ),
-            );
+                ));
 
             if let Some(xdg) = self.window.toplevel() {
                 xdg.with_pending_state(|state| {
@@ -383,24 +388,23 @@ pub fn handle_commit(state: &mut crate::Lantern, surface: &WlSurface) -> Option<
     let mut window_loc = state.space.element_location(&window)?;
     let geometry = window.geometry();
 
-    let new_loc: Point<Option<i32>, Logical> =
-        ResizeSurfaceState::with(surface, |st| {
-            st.commit()
-                .and_then(|(edges, initial_rect)| {
-                    edges.intersects(ResizeEdge::TOP_LEFT).then(|| {
-                        let new_x = edges
-                            .intersects(ResizeEdge::LEFT)
-                            .then_some(initial_rect.loc.x + (initial_rect.size.w - geometry.size.w));
+    let new_loc: Point<Option<i32>, Logical> = ResizeSurfaceState::with(surface, |st| {
+        st.commit()
+            .and_then(|(edges, initial_rect)| {
+                edges.intersects(ResizeEdge::TOP_LEFT).then(|| {
+                    let new_x = edges
+                        .intersects(ResizeEdge::LEFT)
+                        .then_some(initial_rect.loc.x + (initial_rect.size.w - geometry.size.w));
 
-                        let new_y = edges
-                            .intersects(ResizeEdge::TOP)
-                            .then_some(initial_rect.loc.y + (initial_rect.size.h - geometry.size.h));
+                    let new_y = edges
+                        .intersects(ResizeEdge::TOP)
+                        .then_some(initial_rect.loc.y + (initial_rect.size.h - geometry.size.h));
 
-                        (new_x, new_y).into()
-                    })
+                    (new_x, new_y).into()
                 })
-                .unwrap_or_default()
-        });
+            })
+            .unwrap_or_default()
+    });
 
     if let Some(new_x) = new_loc.x {
         window_loc.x = new_x;

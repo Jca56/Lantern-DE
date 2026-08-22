@@ -104,12 +104,24 @@ pub fn detect(info: &Info) -> Option<HdrCaps> {
     let cp = info.default_color_primaries();
     let (primaries, white_point) = if cp.has_primaries {
         let p = [
-            Chromaticity { x: cp.primary[0].x, y: cp.primary[0].y },
-            Chromaticity { x: cp.primary[1].x, y: cp.primary[1].y },
-            Chromaticity { x: cp.primary[2].x, y: cp.primary[2].y },
+            Chromaticity {
+                x: cp.primary[0].x,
+                y: cp.primary[0].y,
+            },
+            Chromaticity {
+                x: cp.primary[1].x,
+                y: cp.primary[1].y,
+            },
+            Chromaticity {
+                x: cp.primary[2].x,
+                y: cp.primary[2].y,
+            },
         ];
         let w = if cp.has_default_white_point {
-            Chromaticity { x: cp.default_white.x, y: cp.default_white.y }
+            Chromaticity {
+                x: cp.default_white.x,
+                y: cp.default_white.y,
+            }
         } else {
             D65_WHITE
         };

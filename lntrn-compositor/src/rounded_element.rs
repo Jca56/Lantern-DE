@@ -1,12 +1,10 @@
 /// Wrapper element that renders a WaylandSurfaceRenderElement with a
 /// rounded-corner texture shader, clipping corners via SDF in the fragment shader.
-
 use smithay::{
     backend::renderer::{
         element::{
-            surface::WaylandSurfaceRenderElement,
-            texture::TextureRenderElement,
-            Element, Id, Kind, RenderElement,
+            surface::WaylandSurfaceRenderElement, texture::TextureRenderElement, Element, Id, Kind,
+            RenderElement,
         },
         gles::{GlesError, GlesFrame, GlesRenderer, GlesTexProgram, GlesTexture, Uniform},
         utils::{CommitCounter, DamageSet},
@@ -32,18 +30,37 @@ impl RoundedSurfaceElement {
         tex_size: [f32; 2],
         corner_radius: f32,
     ) -> Self {
-        Self { inner, shader, tex_size, corner_radius }
+        Self {
+            inner,
+            shader,
+            tex_size,
+            corner_radius,
+        }
     }
 }
 
 impl Element for RoundedSurfaceElement {
-    fn id(&self) -> &Id { self.inner.id() }
-    fn current_commit(&self) -> CommitCounter { self.inner.current_commit() }
-    fn src(&self) -> Rectangle<f64, BufferCoords> { self.inner.src() }
-    fn transform(&self) -> Transform { self.inner.transform() }
-    fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> { self.inner.geometry(scale) }
-    fn alpha(&self) -> f32 { self.inner.alpha() }
-    fn kind(&self) -> Kind { self.inner.kind() }
+    fn id(&self) -> &Id {
+        self.inner.id()
+    }
+    fn current_commit(&self) -> CommitCounter {
+        self.inner.current_commit()
+    }
+    fn src(&self) -> Rectangle<f64, BufferCoords> {
+        self.inner.src()
+    }
+    fn transform(&self) -> Transform {
+        self.inner.transform()
+    }
+    fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
+        self.inner.geometry(scale)
+    }
+    fn alpha(&self) -> f32 {
+        self.inner.alpha()
+    }
+    fn kind(&self) -> Kind {
+        self.inner.kind()
+    }
 }
 
 impl RenderElement<GlesRenderer> for RoundedSurfaceElement {
@@ -86,21 +103,45 @@ impl RoundedBackdropElement {
         corner_radius: f32,
         full_tex_size: [f32; 2],
     ) -> Self {
-        Self { inner, shader, tex_size, corner_radius, full_tex_size }
+        Self {
+            inner,
+            shader,
+            tex_size,
+            corner_radius,
+            full_tex_size,
+        }
     }
 }
 
 impl Element for RoundedBackdropElement {
-    fn id(&self) -> &Id { self.inner.id() }
-    fn current_commit(&self) -> CommitCounter { self.inner.current_commit() }
-    fn src(&self) -> Rectangle<f64, BufferCoords> { self.inner.src() }
-    fn transform(&self) -> Transform { self.inner.transform() }
-    fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> { self.inner.geometry(scale) }
-    fn damage_since(&self, scale: Scale<f64>, commit: Option<CommitCounter>) -> DamageSet<i32, Physical> {
+    fn id(&self) -> &Id {
+        self.inner.id()
+    }
+    fn current_commit(&self) -> CommitCounter {
+        self.inner.current_commit()
+    }
+    fn src(&self) -> Rectangle<f64, BufferCoords> {
+        self.inner.src()
+    }
+    fn transform(&self) -> Transform {
+        self.inner.transform()
+    }
+    fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
+        self.inner.geometry(scale)
+    }
+    fn damage_since(
+        &self,
+        scale: Scale<f64>,
+        commit: Option<CommitCounter>,
+    ) -> DamageSet<i32, Physical> {
         self.inner.damage_since(scale, commit)
     }
-    fn alpha(&self) -> f32 { self.inner.alpha() }
-    fn kind(&self) -> Kind { self.inner.kind() }
+    fn alpha(&self) -> f32 {
+        self.inner.alpha()
+    }
+    fn kind(&self) -> Kind {
+        self.inner.kind()
+    }
 }
 
 impl RenderElement<GlesRenderer> for RoundedBackdropElement {
@@ -130,7 +171,14 @@ impl RenderElement<GlesRenderer> for RoundedBackdropElement {
                 Uniform::new("src_rect", src_rect),
             ],
         );
-        let result = RenderElement::<GlesRenderer>::draw(&self.inner, frame, src, dst, damage, opaque_regions);
+        let result = RenderElement::<GlesRenderer>::draw(
+            &self.inner,
+            frame,
+            src,
+            dst,
+            damage,
+            opaque_regions,
+        );
         frame.clear_tex_program_override();
         result
     }

@@ -41,18 +41,20 @@ impl Lantern {
         self.foreign_toplevel_state.set_states(surface, states);
     }
 
-    pub(crate) fn window_output_geometry(&self, window: &Window) -> Option<Rectangle<i32, Logical>> {
-        let output = self.output_for_window(window)
+    pub(crate) fn window_output_geometry(
+        &self,
+        window: &Window,
+    ) -> Option<Rectangle<i32, Logical>> {
+        let output = self
+            .output_for_window(window)
             .or_else(|| self.workspaces.outputs_iter().next().cloned())?;
         let geo = self.workspaces.output_geometry(&output)?;
 
-        let mut result = Rectangle::new(
-            geo.loc.into(),
-            geo.size,
-        );
+        let mut result = Rectangle::new(geo.loc.into(), geo.size);
 
         // Subtract exclusive zones only from layer surfaces on this output
-        let (top_excl, bottom_excl, left_excl, right_excl) = self.exclusive_zone_offsets_for_output(&output);
+        let (top_excl, bottom_excl, left_excl, right_excl) =
+            self.exclusive_zone_offsets_for_output(&output);
         result.loc.x += left_excl;
         result.loc.y += top_excl;
         result.size.w -= left_excl + right_excl;
@@ -69,7 +71,8 @@ impl Lantern {
         self.last_exclusive_offsets = offsets;
 
         // Reconfigure all maximized windows with new geometry
-        let maximized_surfaces: Vec<_> = self.maximized_windows
+        let maximized_surfaces: Vec<_> = self
+            .maximized_windows
             .iter()
             .map(|e| e.surface.clone())
             .collect();
@@ -83,7 +86,8 @@ impl Lantern {
         }
 
         // Reconfigure snapped windows too
-        let snapped: Vec<_> = self.snapped_windows
+        let snapped: Vec<_> = self
+            .snapped_windows
             .iter()
             .map(|e| (e.surface.clone(), e.zone))
             .collect();
@@ -103,7 +107,10 @@ impl Lantern {
 
     /// Update SSD hover state based on logical pointer position.
     /// Returns true if any hover state changed (needs re-render).
-    pub fn ssd_update_hover(&mut self, pointer_pos: smithay::utils::Point<f64, smithay::utils::Logical>) -> bool {
+    pub fn ssd_update_hover(
+        &mut self,
+        pointer_pos: smithay::utils::Point<f64, smithay::utils::Logical>,
+    ) -> bool {
         // This runs per motion event (up to 1000Hz) — bail before any
         // allocation when no window has server-side decorations (the common
         // case: CSD apps and fullscreen games).
@@ -127,7 +134,10 @@ impl Lantern {
             if self.is_fullscreen(surface) {
                 continue;
             }
-            let win_loc = self.workspaces.element_location(&window).unwrap_or_default();
+            let win_loc = self
+                .workspaces
+                .element_location(&window)
+                .unwrap_or_default();
             let win_size = window.geometry().size;
 
             let new_hover = match crate::ssd::hit_test(pointer_pos, win_loc, win_size) {
@@ -158,7 +168,9 @@ impl Lantern {
 
         // Check front-to-back (space elements are front-first)
         for window in self.space.elements().cloned().collect::<Vec<_>>() {
-            let Some(surface) = window.get_wl_surface() else { continue };
+            let Some(surface) = window.get_wl_surface() else {
+                continue;
+            };
             if !ssd_surfaces.contains(&surface) {
                 continue;
             }
@@ -171,7 +183,10 @@ impl Lantern {
                     continue;
                 }
             }
-            let win_loc = self.workspaces.element_location(&window).unwrap_or_default();
+            let win_loc = self
+                .workspaces
+                .element_location(&window)
+                .unwrap_or_default();
             let win_size = window.geometry().size;
 
             match crate::ssd::hit_test(pointer_pos, win_loc, win_size) {

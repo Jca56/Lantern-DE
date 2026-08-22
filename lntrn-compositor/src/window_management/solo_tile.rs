@@ -5,13 +5,13 @@
 
 use smithay::{
     reexports::wayland_server::protocol::wl_surface::WlSurface,
-    utils::{Logical, Point, Rectangle, Size, Serial},
+    utils::{Logical, Point, Rectangle, Serial, Size},
 };
 
 use crate::state::Lantern;
-use crate::window_state::SoloTiledWindow;
 use crate::window_ext::WindowExt;
 use crate::window_management::PoseSlot;
+use crate::window_state::SoloTiledWindow;
 
 impl Lantern {
     /// True if the window is currently in solo-tile state. The entry
@@ -37,7 +37,9 @@ impl Lantern {
         let work_y = geo.loc.y + top;
         let work_w = geo.size.w - left - right;
         let work_h = geo.size.h - top - bot;
-        if work_w <= 0 || work_h <= 0 { return None; }
+        if work_w <= 0 || work_h <= 0 {
+            return None;
+        }
 
         // Large rung — `size_large_pct` of the work area, centered. At 95%
         // (default) this leaves a small visible margin around the window;
@@ -65,14 +67,18 @@ impl Lantern {
         let Some(window) = self.find_mapped_window(surface) else {
             return false;
         };
-        let output = self.output_for_window(&window)
+        let output = self
+            .output_for_window(&window)
             .or_else(|| self.workspaces.outputs_iter().next().cloned());
         let Some(output) = output else { return false };
         let Some(target) = self.solo_tile_target(&output) else {
             return false;
         };
 
-        let cur_loc = self.workspaces.element_location(&window).unwrap_or(target.loc);
+        let cur_loc = self
+            .workspaces
+            .element_location(&window)
+            .unwrap_or(target.loc);
         // If the window is currently in a pose slot (Left/Middle/Right half),
         // the Normal rung of the ladder is the Middle 1500×1000 rect, not
         // the tall half rect — see `half_pose.rs`. Otherwise prefer the
@@ -161,8 +167,9 @@ impl Lantern {
         if self.try_corner_shrink_up() {
             return true;
         }
-        let Some(surface) = self.focused_window().and_then(|w| w.get_wl_surface())
-            else { return false };
+        let Some(surface) = self.focused_window().and_then(|w| w.get_wl_surface()) else {
+            return false;
+        };
         if self.is_maximized(&surface) || self.is_solo_tiled(&surface) {
             // Already at the top of the size ladder — no-op.
             false
@@ -179,10 +186,7 @@ impl Lantern {
     ///   3. Any corner (TL/TR/BL/BR) → regrow back to its half-pose.
     ///   4. Otherwise (Normal / Middle / unposed) → shrink to Tiny.
     pub fn ladder_size_down(&mut self) -> bool {
-        let Some(surface) = self
-            .focused_window()
-            .and_then(|w| w.get_wl_surface())
-        else {
+        let Some(surface) = self.focused_window().and_then(|w| w.get_wl_surface()) else {
             return false;
         };
         if self.is_solo_tiled(&surface) {

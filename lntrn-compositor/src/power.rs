@@ -125,7 +125,9 @@ impl PowerState {
         }
         self.last_battery_poll = Instant::now();
 
-        let Some(capacity) = battery_capacity() else { return };
+        let Some(capacity) = battery_capacity() else {
+            return;
+        };
         let discharging = battery_status()
             .map(|s| s.eq_ignore_ascii_case("discharging"))
             .unwrap_or(false);
@@ -142,10 +144,17 @@ impl PowerState {
 
         if capacity <= self.critical_threshold && !self.critical_fired {
             self.critical_fired = true;
-            tracing::info!("Battery critical at {}% — running '{}'", capacity, self.critical_action);
+            tracing::info!(
+                "Battery critical at {}% — running '{}'",
+                capacity,
+                self.critical_action
+            );
             notify(
                 "Battery critical",
-                &format!("Battery at {}% — running {}", capacity, self.critical_action),
+                &format!(
+                    "Battery at {}% — running {}",
+                    capacity, self.critical_action
+                ),
                 "critical",
             );
             run_power_action(&self.critical_action);
@@ -187,7 +196,10 @@ fn find_backlight() -> Option<BacklightDevice> {
         let brightness_path = dir.join("brightness");
         if let Ok(s) = std::fs::read_to_string(&max_path) {
             if let Ok(max) = s.trim().parse::<u32>() {
-                return Some(BacklightDevice { brightness_path, max });
+                return Some(BacklightDevice {
+                    brightness_path,
+                    max,
+                });
             }
         }
     }
@@ -300,12 +312,24 @@ fn power_bin(action: &str) -> Option<(&'static str, &'static str)> {
     match action {
         "lock" => Some(("loginctl", "lock-session")),
         "suspend" | "hibernate" => Some((
-            if systemd_booted() { "systemctl" } else { "loginctl" },
+            if systemd_booted() {
+                "systemctl"
+            } else {
+                "loginctl"
+            },
             // verb is identical on both
-            if action == "suspend" { "suspend" } else { "hibernate" },
+            if action == "suspend" {
+                "suspend"
+            } else {
+                "hibernate"
+            },
         )),
         "shutdown" => Some((
-            if systemd_booted() { "systemctl" } else { "loginctl" },
+            if systemd_booted() {
+                "systemctl"
+            } else {
+                "loginctl"
+            },
             "poweroff",
         )),
         _ => None,
@@ -346,8 +370,10 @@ pub fn run_power_action(action: &str) {
 
 fn notify(summary: &str, body: &str, urgency: &str) {
     let _ = std::process::Command::new("notify-send")
-        .arg("--urgency").arg(urgency)
-        .arg("--app-name").arg("Lantern Power")
+        .arg("--urgency")
+        .arg(urgency)
+        .arg("--app-name")
+        .arg("Lantern Power")
         .arg(summary)
         .arg(body)
         .spawn();

@@ -3,10 +3,9 @@
 /// Smithay's `Window` wraps either a `ToplevelSurface` or an `X11Surface`.
 /// Most compositor code used `.toplevel().unwrap()` which panics for X11.
 /// This trait provides safe accessors that dispatch on the underlying type.
-
 use smithay::desktop::Window;
-use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
+use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Logical, Rectangle, Size};
 use smithay::wayland::seat::WaylandFocus;
 

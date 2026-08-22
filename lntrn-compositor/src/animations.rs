@@ -35,7 +35,9 @@ pub fn preset() -> String {
 /// Per-category toggle. Keys live alongside `enabled`/`speed`/`preset` in
 /// `[animations]`. AND'd with the master toggle.
 fn category_enabled(key: &str) -> bool {
-    if !enabled() { return false; }
+    if !enabled() {
+        return false;
+    }
     crate::read_config("animations", key, "true") == "true"
 }
 
@@ -68,12 +70,24 @@ const BASE_MINIMIZE: Duration = Duration::from_millis(1000);
 const BASE_UNMINIMIZE: Duration = Duration::from_millis(1000);
 const BASE_WORKSPACE_SLIDE: Duration = Duration::from_millis(1000);
 
-pub fn open_duration() -> Duration { scaled_cat(BASE_OPEN, "open_close") }
-pub fn close_duration() -> Duration { scaled_cat(BASE_CLOSE, "open_close") }
-pub fn state_duration() -> Duration { scaled_cat(BASE_STATE, "state") }
-pub fn minimize_duration() -> Duration { scaled_cat(BASE_MINIMIZE, "minimize") }
-pub fn unminimize_duration() -> Duration { scaled_cat(BASE_UNMINIMIZE, "minimize") }
-pub fn workspace_slide_duration() -> Duration { scaled_cat(BASE_WORKSPACE_SLIDE, "workspace") }
+pub fn open_duration() -> Duration {
+    scaled_cat(BASE_OPEN, "open_close")
+}
+pub fn close_duration() -> Duration {
+    scaled_cat(BASE_CLOSE, "open_close")
+}
+pub fn state_duration() -> Duration {
+    scaled_cat(BASE_STATE, "state")
+}
+pub fn minimize_duration() -> Duration {
+    scaled_cat(BASE_MINIMIZE, "minimize")
+}
+pub fn unminimize_duration() -> Duration {
+    scaled_cat(BASE_UNMINIMIZE, "minimize")
+}
+pub fn workspace_slide_duration() -> Duration {
+    scaled_cat(BASE_WORKSPACE_SLIDE, "workspace")
+}
 
 // ── Preset → curve lookup ─────────────────────────────────────────────────
 

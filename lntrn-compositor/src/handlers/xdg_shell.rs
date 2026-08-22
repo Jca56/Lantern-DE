@@ -1,6 +1,8 @@
 use smithay::{
     delegate_xdg_shell,
-    desktop::{find_popup_root_surface, get_popup_toplevel_coords, PopupKind, PopupManager, Window},
+    desktop::{
+        find_popup_root_surface, get_popup_toplevel_coords, PopupKind, PopupManager, Window,
+    },
     input::{
         pointer::{Focus, GrabStartData as PointerGrabStartData},
         Seat,
@@ -152,7 +154,8 @@ impl XdgShellHandler for Lantern {
 
             pointer.set_grab(self, grab, serial, Focus::Clear);
             let icon = ResizeSurfaceGrab::cursor_icon_for_edges(our_edges);
-            self.cursor.set_status(smithay::input::pointer::CursorImageStatus::Named(icon));
+            self.cursor
+                .set_status(smithay::input::pointer::CursorImageStatus::Named(icon));
         }
     }
 
@@ -178,7 +181,11 @@ impl XdgShellHandler for Lantern {
         tracing::info!("Minimize result: {}", result);
     }
 
-    fn fullscreen_request(&mut self, surface: ToplevelSurface, _output: Option<smithay::reexports::wayland_server::protocol::wl_output::WlOutput>) {
+    fn fullscreen_request(
+        &mut self,
+        surface: ToplevelSurface,
+        _output: Option<smithay::reexports::wayland_server::protocol::wl_output::WlOutput>,
+    ) {
         tracing::info!("Client requested fullscreen");
         self.fullscreen_request_surface(surface.wl_surface());
     }
@@ -268,7 +275,8 @@ impl Lantern {
             return;
         };
 
-        let output = self.output_for_window(window)
+        let output = self
+            .output_for_window(window)
             .or_else(|| self.workspaces.outputs_iter().next().cloned())
             .unwrap();
         let output_geo = self.workspaces.output_geometry(&output).unwrap();

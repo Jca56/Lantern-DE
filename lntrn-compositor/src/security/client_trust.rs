@@ -49,7 +49,9 @@ fn extra_allowlist() -> &'static HashSet<PathBuf> {
 
 fn load_extra_allowlist() -> HashSet<PathBuf> {
     let mut set = HashSet::new();
-    let Some(home) = std::env::var_os("HOME") else { return set; };
+    let Some(home) = std::env::var_os("HOME") else {
+        return set;
+    };
     let toml_path = PathBuf::from(home).join(".lantern/config/trusted-clients.toml");
     let Ok(contents) = std::fs::read_to_string(&toml_path) else {
         // No file = empty allowlist. Not an error.
@@ -150,7 +152,10 @@ pub fn compute_trust_at_connect(stream: &UnixStream) -> bool {
         return false;
     };
     let Some(exe) = exe_for_pid(pid) else {
-        tracing::warn!(pid, "could not resolve /proc/<pid>/exe; treating as untrusted");
+        tracing::warn!(
+            pid,
+            "could not resolve /proc/<pid>/exe; treating as untrusted"
+        );
         return false;
     };
 
@@ -189,7 +194,9 @@ pub fn is_trusted_client(client: &Client) -> bool {
 /// Surface-level wrapper: resolves the surface's client and returns true
 /// iff that client passed the trust check at connect time. Untrusted (or
 /// no-client) surfaces return false.
-pub fn is_trusted_surface(surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface) -> bool {
+pub fn is_trusted_surface(
+    surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+) -> bool {
     use smithay::reexports::wayland_server::Resource;
     surface.client().map_or(false, |c| is_trusted_client(&c))
 }

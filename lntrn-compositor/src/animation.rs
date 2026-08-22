@@ -92,10 +92,7 @@ impl WindowAnimation {
         }
     }
 
-    fn new_close_zombie(
-        source: Rectangle<i32, Logical>,
-        target: Rectangle<i32, Logical>,
-    ) -> Self {
+    fn new_close_zombie(source: Rectangle<i32, Logical>, target: Rectangle<i32, Logical>) -> Self {
         Self {
             kind: AnimationKind::Close,
             start_time: Instant::now(),
@@ -160,7 +157,11 @@ impl WindowAnimation {
             _ => None,
         };
 
-        AnimParams { alpha, scale: 1.0, slide }
+        AnimParams {
+            alpha,
+            scale: 1.0,
+            slide,
+        }
     }
 }
 
@@ -208,7 +209,10 @@ fn compute_slide(
     let cur_cx = src_cx + (tgt_cx - src_cx) * p;
     let cur_cy = src_cy + (tgt_cy - src_cy) * p;
 
-    (Point::from((cur_cx - ww / 2.0, cur_cy - wh / 2.0)), (scale_x, scale_y))
+    (
+        Point::from((cur_cx - ww / 2.0, cur_cy - wh / 2.0)),
+        (scale_x, scale_y),
+    )
 }
 
 /// A window that died (client-initiated close) but still has a close animation playing.
@@ -263,11 +267,7 @@ impl AnimationState {
     /// If the window is mid-open, interrupts and reverses from current state.
     /// `target` is the shrink-target (bottom-middle icon-sized rect, same as
     /// minimize). The source rect is read live each frame from the renderer.
-    pub fn start_close(
-        &mut self,
-        surface: &WlSurface,
-        target: Rectangle<i32, Logical>,
-    ) -> bool {
+    pub fn start_close(&mut self, surface: &WlSurface, target: Rectangle<i32, Logical>) -> bool {
         if let Some(anim) = self.animations.get(surface) {
             if anim.kind == AnimationKind::Close {
                 return false;

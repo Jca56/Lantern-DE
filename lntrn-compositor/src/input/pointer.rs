@@ -32,8 +32,14 @@ impl Lantern {
         // Clamp to combined output bounds
         let bounds = self.total_output_bounds();
         if bounds.size.w > 0 {
-            pos.x = pos.x.clamp(bounds.loc.x as f64, (bounds.loc.x + bounds.size.w) as f64 - 1.0);
-            pos.y = pos.y.clamp(bounds.loc.y as f64, (bounds.loc.y + bounds.size.h) as f64 - 1.0);
+            pos.x = pos.x.clamp(
+                bounds.loc.x as f64,
+                (bounds.loc.x + bounds.size.w) as f64 - 1.0,
+            );
+            pos.y = pos.y.clamp(
+                bounds.loc.y as f64,
+                (bounds.loc.y + bounds.size.h) as f64 - 1.0,
+            );
         }
 
         // Pointer constraints (FPS/TPS mouse-look). A game that grabs the
@@ -121,12 +127,14 @@ impl Lantern {
 
         // When switcher overlay is visible, hover to highlight thumbnails
         if self.alt_tab_switcher.is_visible() {
-            let output_size = self.output_at_point(pos)
+            let output_size = self
+                .output_at_point(pos)
                 .and_then(|o| self.workspaces.output_geometry(&o))
                 .map(|g| g.size)
                 .unwrap_or_default();
             let logical_point = smithay::utils::Point::from((pos.x, pos.y));
-            self.alt_tab_switcher.hover_select(logical_point, output_size);
+            self.alt_tab_switcher
+                .hover_select(logical_point, output_size);
             // The pointer moved but we computed no fresh hit — the cached
             // hit no longer matches the pointer position.
             self.last_pointer_under = None;
@@ -188,14 +196,21 @@ impl Lantern {
         }
     }
 
-    pub(super) fn handle_pointer_motion_absolute<I: InputBackend>(&mut self, event: I::PointerMotionAbsoluteEvent) {
-        let output = self.output_at_point(
-            self.seat.get_pointer().map(|p| p.current_location()).unwrap_or_default()
-        ).or_else(|| self.workspaces.outputs_iter().next().cloned());
+    pub(super) fn handle_pointer_motion_absolute<I: InputBackend>(
+        &mut self,
+        event: I::PointerMotionAbsoluteEvent,
+    ) {
+        let output = self
+            .output_at_point(
+                self.seat
+                    .get_pointer()
+                    .map(|p| p.current_location())
+                    .unwrap_or_default(),
+            )
+            .or_else(|| self.workspaces.outputs_iter().next().cloned());
         let Some(output) = output else { return };
         let output_geo = self.workspaces.output_geometry(&output).unwrap();
-        let pos =
-            event.position_transformed(output_geo.size) + output_geo.loc.to_f64();
+        let pos = event.position_transformed(output_geo.size) + output_geo.loc.to_f64();
 
         let serial = SERIAL_COUNTER.next_serial();
         let pointer = self.seat.get_pointer().unwrap();
@@ -203,7 +218,8 @@ impl Lantern {
         // Switcher hover (absolute motion variant)
         if self.alt_tab_switcher.is_visible() {
             let logical_point = smithay::utils::Point::from((pos.x, pos.y));
-            self.alt_tab_switcher.hover_select(logical_point, output_geo.size);
+            self.alt_tab_switcher
+                .hover_select(logical_point, output_geo.size);
             pointer.motion(
                 self,
                 None,
@@ -263,14 +279,18 @@ impl Lantern {
             && button_state == ButtonState::Pressed
         {
             let pos = pointer.current_location();
-            let output_size = self.output_at_point(pos)
+            let output_size = self
+                .output_at_point(pos)
                 .and_then(|o| self.workspaces.output_geometry(&o))
                 .map(|g| g.size)
                 .unwrap_or_default();
             let logical_point = smithay::utils::Point::from((pos.x, pos.y));
 
             // Close button takes priority
-            if let Some(idx) = self.alt_tab_switcher.hit_test_close(logical_point, output_size) {
+            if let Some(idx) = self
+                .alt_tab_switcher
+                .hit_test_close(logical_point, output_size)
+            {
                 self.close_switcher_window(idx);
                 pointer.frame(self);
                 return;
@@ -291,11 +311,15 @@ impl Lantern {
             && button_state == ButtonState::Pressed
         {
             let pos = pointer.current_location();
-            let output_size = self.output_at_point(pos)
+            let output_size = self
+                .output_at_point(pos)
                 .and_then(|o| self.workspaces.output_geometry(&o))
                 .map(|g| g.size)
                 .unwrap_or_default();
-            if self.hover_preview.hit_close_button(pos.x, pos.y, output_size) {
+            if self
+                .hover_preview
+                .hit_close_button(pos.x, pos.y, output_size)
+            {
                 if let Some(app_id) = self.hover_preview.hovered_app_id().map(|s| s.to_string()) {
                     self.close_windows_by_app_id(&app_id);
                 }
@@ -335,36 +359,51 @@ impl Lantern {
                 self.focus_window(&window, serial);
 
                 let start_data = smithay::input::pointer::GrabStartData {
-                    focus: self.surface_under(pos).map(|(s, loc)| (s, loc.to_i32_round())),
+                    focus: self
+                        .surface_under(pos)
+                        .map(|(s, loc)| (s, loc.to_i32_round())),
                     button,
                     location: pos,
                 };
 
                 if button == BTN_LEFT {
-                    if let Some(wl_surface) = crate::window_ext::WindowExt::get_wl_surface(&window) {
-                    let initial_window_location = self.workspaces.element_location(&window).unwrap_or_default();
-                    let was_maximized = self.is_maximized(&wl_surface);
-                    let grab = crate::grabs::MoveSurfaceGrab {
-                        start_data,
-                        window,
-                        initial_window_location,
-                        was_maximized,
-                        restored_this_drag: false,
-                        has_moved: false,
-                    };
-                    pointer.set_grab(self, grab, serial, smithay::input::pointer::Focus::Clear);
+                    if let Some(wl_surface) = crate::window_ext::WindowExt::get_wl_surface(&window)
+                    {
+                        let initial_window_location = self
+                            .workspaces
+                            .element_location(&window)
+                            .unwrap_or_default();
+                        let was_maximized = self.is_maximized(&wl_surface);
+                        let grab = crate::grabs::MoveSurfaceGrab {
+                            start_data,
+                            window,
+                            initial_window_location,
+                            was_maximized,
+                            restored_this_drag: false,
+                            has_moved: false,
+                        };
+                        pointer.set_grab(self, grab, serial, smithay::input::pointer::Focus::Clear);
                     }
                 } else {
-                    let win_loc = self.workspaces.element_location(&window).unwrap_or_default();
+                    let win_loc = self
+                        .workspaces
+                        .element_location(&window)
+                        .unwrap_or_default();
                     let win_geo = window.geometry();
                     let center_x = win_loc.x as f64 + win_geo.size.w as f64 / 2.0;
                     let center_y = win_loc.y as f64 + win_geo.size.h as f64 / 2.0;
 
                     let mut edges = crate::grabs::resize_grab::ResizeEdge::empty();
-                    if pos.x < center_x { edges |= crate::grabs::resize_grab::ResizeEdge::LEFT; }
-                    else { edges |= crate::grabs::resize_grab::ResizeEdge::RIGHT; }
-                    if pos.y < center_y { edges |= crate::grabs::resize_grab::ResizeEdge::TOP; }
-                    else { edges |= crate::grabs::resize_grab::ResizeEdge::BOTTOM; }
+                    if pos.x < center_x {
+                        edges |= crate::grabs::resize_grab::ResizeEdge::LEFT;
+                    } else {
+                        edges |= crate::grabs::resize_grab::ResizeEdge::RIGHT;
+                    }
+                    if pos.y < center_y {
+                        edges |= crate::grabs::resize_grab::ResizeEdge::TOP;
+                    } else {
+                        edges |= crate::grabs::resize_grab::ResizeEdge::BOTTOM;
+                    }
 
                     let initial_rect = smithay::utils::Rectangle::new(win_loc, win_geo.size);
                     let grab = crate::grabs::ResizeSurfaceGrab::start(
@@ -375,7 +414,8 @@ impl Lantern {
                     );
                     pointer.set_grab(self, grab, serial, smithay::input::pointer::Focus::Clear);
                     let icon = crate::grabs::ResizeSurfaceGrab::cursor_icon_for_edges(edges);
-                    self.cursor.set_status(smithay::input::pointer::CursorImageStatus::Named(icon));
+                    self.cursor
+                        .set_status(smithay::input::pointer::CursorImageStatus::Named(icon));
                 }
 
                 pointer.frame(self);
@@ -412,23 +452,35 @@ impl Lantern {
                         self.minimize_request_surface(&surface);
                     }
                     SsdClickAction::Move(window) => {
-                        if let Some(wl_surface) = crate::window_ext::WindowExt::get_wl_surface(&window) {
-                        let start_data = smithay::input::pointer::GrabStartData {
-                            focus: self.surface_under(pos).map(|(s, loc)| (s, loc.to_i32_round())),
-                            button,
-                            location: pos,
-                        };
-                        let initial_window_location = self.workspaces.element_location(&window).unwrap_or_default();
-                        let was_maximized = self.is_maximized(&wl_surface);
-                        let grab = crate::grabs::MoveSurfaceGrab {
-                            start_data,
-                            window,
-                            initial_window_location,
-                            was_maximized,
-                            restored_this_drag: false,
-                            has_moved: false,
-                        };
-                        pointer.set_grab(self, grab, serial, smithay::input::pointer::Focus::Clear);
+                        if let Some(wl_surface) =
+                            crate::window_ext::WindowExt::get_wl_surface(&window)
+                        {
+                            let start_data = smithay::input::pointer::GrabStartData {
+                                focus: self
+                                    .surface_under(pos)
+                                    .map(|(s, loc)| (s, loc.to_i32_round())),
+                                button,
+                                location: pos,
+                            };
+                            let initial_window_location = self
+                                .workspaces
+                                .element_location(&window)
+                                .unwrap_or_default();
+                            let was_maximized = self.is_maximized(&wl_surface);
+                            let grab = crate::grabs::MoveSurfaceGrab {
+                                start_data,
+                                window,
+                                initial_window_location,
+                                was_maximized,
+                                restored_this_drag: false,
+                                has_moved: false,
+                            };
+                            pointer.set_grab(
+                                self,
+                                grab,
+                                serial,
+                                smithay::input::pointer::Focus::Clear,
+                            );
                         }
                     }
                 }
@@ -451,23 +503,29 @@ impl Lantern {
             if self.visible_element_under(pos).is_none() {
                 const OUTER_BORDER: f64 = 8.0;
                 let mut found = None;
-                let visible_windows: Vec<_> = self.space.elements()
+                let visible_windows: Vec<_> = self
+                    .space
+                    .elements()
                     .filter(|w| self.window_is_visible(w))
                     .cloned()
                     .collect();
                 for window in visible_windows {
-                    let loc = self.workspaces.element_location(&window).unwrap_or_default();
+                    let loc = self
+                        .workspaces
+                        .element_location(&window)
+                        .unwrap_or_default();
                     let geo = window.geometry();
-                    let expanded: smithay::utils::Rectangle<i32, smithay::utils::Logical> = smithay::utils::Rectangle::new(
-                        smithay::utils::Point::from((
-                            loc.x - OUTER_BORDER as i32,
-                            loc.y - OUTER_BORDER as i32,
-                        )),
-                        smithay::utils::Size::from((
-                            geo.size.w + OUTER_BORDER as i32 * 2,
-                            geo.size.h + OUTER_BORDER as i32 * 2,
-                        )),
-                    );
+                    let expanded: smithay::utils::Rectangle<i32, smithay::utils::Logical> =
+                        smithay::utils::Rectangle::new(
+                            smithay::utils::Point::from((
+                                loc.x - OUTER_BORDER as i32,
+                                loc.y - OUTER_BORDER as i32,
+                            )),
+                            smithay::utils::Size::from((
+                                geo.size.w + OUTER_BORDER as i32 * 2,
+                                geo.size.h + OUTER_BORDER as i32 * 2,
+                            )),
+                        );
                     let cp_i = smithay::utils::Point::from((pos.x as i32, pos.y as i32));
                     if expanded.contains(cp_i) {
                         found = Some((window, loc, geo));
@@ -478,10 +536,16 @@ impl Lantern {
                     let center_x = win_loc.x as f64 + win_geo.size.w as f64 / 2.0;
                     let center_y = win_loc.y as f64 + win_geo.size.h as f64 / 2.0;
                     let mut edges = crate::grabs::resize_grab::ResizeEdge::empty();
-                    if pos.x < center_x { edges |= crate::grabs::resize_grab::ResizeEdge::LEFT; }
-                    else { edges |= crate::grabs::resize_grab::ResizeEdge::RIGHT; }
-                    if pos.y < center_y { edges |= crate::grabs::resize_grab::ResizeEdge::TOP; }
-                    else { edges |= crate::grabs::resize_grab::ResizeEdge::BOTTOM; }
+                    if pos.x < center_x {
+                        edges |= crate::grabs::resize_grab::ResizeEdge::LEFT;
+                    } else {
+                        edges |= crate::grabs::resize_grab::ResizeEdge::RIGHT;
+                    }
+                    if pos.y < center_y {
+                        edges |= crate::grabs::resize_grab::ResizeEdge::TOP;
+                    } else {
+                        edges |= crate::grabs::resize_grab::ResizeEdge::BOTTOM;
+                    }
 
                     let start_data = smithay::input::pointer::GrabStartData {
                         focus: None,
@@ -491,11 +555,15 @@ impl Lantern {
 
                     let initial_rect = smithay::utils::Rectangle::new(win_loc, win_geo.size);
                     let grab = crate::grabs::ResizeSurfaceGrab::start(
-                        start_data, window, edges, initial_rect,
+                        start_data,
+                        window,
+                        edges,
+                        initial_rect,
                     );
                     pointer.set_grab(self, grab, serial, smithay::input::pointer::Focus::Clear);
                     let icon = crate::grabs::ResizeSurfaceGrab::cursor_icon_for_edges(edges);
-                    self.cursor.set_status(smithay::input::pointer::CursorImageStatus::Named(icon));
+                    self.cursor
+                        .set_status(smithay::input::pointer::CursorImageStatus::Named(icon));
                     pointer.frame(self);
                     self.schedule_render();
                     return;
@@ -564,25 +632,18 @@ impl Lantern {
         let horizontal_amount = event
             .amount(Axis::Horizontal)
             .filter(|v| *v != 0.0)
-            .or_else(|| {
-                event.amount_v120(Axis::Horizontal).map(|v| v * 15.0 / 120.)
-            })
+            .or_else(|| event.amount_v120(Axis::Horizontal).map(|v| v * 15.0 / 120.))
             .unwrap_or(0.0)
             * scroll_mult;
         let vertical_amount = event
             .amount(Axis::Vertical)
             .filter(|v| *v != 0.0)
-            .or_else(|| {
-                event.amount_v120(Axis::Vertical).map(|v| v * 15.0 / 120.)
-            })
+            .or_else(|| event.amount_v120(Axis::Vertical).map(|v| v * 15.0 / 120.))
             .unwrap_or(0.0)
             * scroll_mult;
-        let horizontal_amount_discrete = event
-            .amount_v120(Axis::Horizontal)
-            .map(|v| v * scroll_mult);
-        let vertical_amount_discrete = event
-            .amount_v120(Axis::Vertical)
-            .map(|v| v * scroll_mult);
+        let horizontal_amount_discrete =
+            event.amount_v120(Axis::Horizontal).map(|v| v * scroll_mult);
+        let vertical_amount_discrete = event.amount_v120(Axis::Vertical).map(|v| v * scroll_mult);
 
         let mut frame = AxisFrame::new(event.time_msec()).source(source);
         if horizontal_amount != 0.0 {

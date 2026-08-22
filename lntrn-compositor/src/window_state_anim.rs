@@ -17,8 +17,12 @@ use crate::rect_anim::{Curve, RectAnim};
 
 /// Duration + curve for window-state transitions. Both pull from the user's
 /// `[animations]` settings (speed scale + active preset).
-pub fn state_duration() -> Duration { crate::animations::state_duration() }
-pub fn state_curve() -> Curve { crate::animations::state_curve() }
+pub fn state_duration() -> Duration {
+    crate::animations::state_duration()
+}
+pub fn state_curve() -> Curve {
+    crate::animations::state_curve()
+}
 
 /// Per-surface state for the "smooth resize" (trusted-client) path.
 ///
@@ -167,7 +171,8 @@ impl WindowStateAnimState {
         target: Rectangle<i32, Logical>,
     ) {
         self.animate(surface, start, target, state_duration(), state_curve());
-        self.smooth_holds.insert(surface.clone(), SmoothHold { target });
+        self.smooth_holds
+            .insert(surface.clone(), SmoothHold { target });
     }
 
     /// Drain the next batch of per-frame configures to send. For each
@@ -180,9 +185,7 @@ impl WindowStateAnimState {
     ///
     /// Returned as a Vec so the caller can release its borrow on
     /// `window_state_anim` before touching the window list.
-    pub fn drain_per_frame_configures(
-        &mut self,
-    ) -> Vec<(WlSurface, Rectangle<i32, Logical>)> {
+    pub fn drain_per_frame_configures(&mut self) -> Vec<(WlSurface, Rectangle<i32, Logical>)> {
         let mut configures = Vec::new();
         for (surface, hold) in self.smooth_holds.iter() {
             let rect = match self.animations.get(surface) {
@@ -204,7 +207,9 @@ impl WindowStateAnimState {
         surface: &WlSurface,
         committed_size: smithay::utils::Size<i32, Logical>,
     ) {
-        let drop = self.smooth_holds.get(surface)
+        let drop = self
+            .smooth_holds
+            .get(surface)
             .map_or(false, |h| h.target.size == committed_size)
             && !self.animations.contains_key(surface);
         if drop {
@@ -215,10 +220,7 @@ impl WindowStateAnimState {
     /// Returns the smooth-hold's target rect — used by the renderer to
     /// pin `effective_size` to the final rect during the brief window
     /// between "rect anim finished" and "client committed at new size".
-    pub fn held_target_rect(
-        &self,
-        surface: &WlSurface,
-    ) -> Option<Rectangle<i32, Logical>> {
+    pub fn held_target_rect(&self, surface: &WlSurface) -> Option<Rectangle<i32, Logical>> {
         Some(self.smooth_holds.get(surface)?.target)
     }
 

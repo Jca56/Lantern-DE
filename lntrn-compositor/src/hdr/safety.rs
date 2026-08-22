@@ -32,7 +32,13 @@ fn marker_path(output: &str) -> PathBuf {
     // but guard anyway.
     let safe: String = output
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     run_dir().join(format!("hdr-pending-{safe}"))
 }
@@ -61,7 +67,9 @@ pub fn clear_marker(output: &str) {
 pub fn pending_outputs() -> Vec<String> {
     let dir = run_dir();
     let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir(&dir) else { return out };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return out;
+    };
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name = name.to_string_lossy();
@@ -96,7 +104,9 @@ pub fn recover_from_crash() {
 /// hand-rolled TOML the rest of the compositor reads).
 fn force_hdr_off_in_config(output: &str) {
     let path = crate::lantern_config_path();
-    let Ok(contents) = std::fs::read_to_string(&path) else { return };
+    let Ok(contents) = std::fs::read_to_string(&path) else {
+        return;
+    };
     let out = rewrite_config_force_sdr(&contents, output);
     if let Err(e) = std::fs::write(&path, out) {
         warn!(?e, "HDR: could not rewrite config to force SDR");

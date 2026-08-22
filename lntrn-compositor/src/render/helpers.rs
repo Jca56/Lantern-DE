@@ -3,13 +3,13 @@
 //! `render_surface` body stays focused on the pipeline.
 
 use smithay::desktop::utils::OutputPresentationFeedback;
+use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::{
     backend::{
         allocator::Fourcc,
         renderer::{
             element::{
-                surface::WaylandSurfaceRenderElement,
-                AsRenderElements, Element, RenderElement,
+                surface::WaylandSurfaceRenderElement, AsRenderElements, Element, RenderElement,
             },
             gles::{GlesRenderer, GlesTexture},
             Bind, Color32F, Frame, Offscreen, Renderer,
@@ -17,7 +17,6 @@ use smithay::{
     },
     utils::{Buffer as BufferCoords, Logical, Physical, Point, Rectangle, Scale, Size, Transform},
 };
-use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 
 /// Collect (move out) the pending presentation-time feedback for every surface
 /// in `space` + each live layer surface into an [`OutputPresentationFeedback`].
@@ -78,7 +77,9 @@ pub(super) fn capture_window_snapshot(
     // Tiny surfaces (< 16px) are usually transient bootstrap buffers from
     // Proton/Wine that resize themselves a frame later. Capturing them
     // racing against the client's realloc triggers GL_INVALID_VALUE.
-    if snap_w < 16 || snap_h < 16 { return None; }
+    if snap_w < 16 || snap_h < 16 {
+        return None;
+    }
 
     let snap_size = Size::<i32, Physical>::from((snap_w, snap_h));
     let buf_size: Size<i32, BufferCoords> = Size::from((snap_w, snap_h));
@@ -95,13 +96,23 @@ pub(super) fn capture_window_snapshot(
     ));
     let elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
         window.render_elements(renderer, origin, Scale::from(output_scale), 1.0);
-    if elements.is_empty() { return None; }
+    if elements.is_empty() {
+        return None;
+    }
 
-    let mut tex = Offscreen::<GlesTexture>::create_buffer(renderer, Fourcc::Abgr8888, buf_size).ok()?;
+    let mut tex =
+        Offscreen::<GlesTexture>::create_buffer(renderer, Fourcc::Abgr8888, buf_size).ok()?;
     {
         let mut target = renderer.bind(&mut tex).ok()?;
-        let mut frame = renderer.render(&mut target, snap_size, Transform::Normal).ok()?;
-        frame.clear(Color32F::from([0.0, 0.0, 0.0, 0.0]), &[Rectangle::from_size(snap_size)]).ok()?;
+        let mut frame = renderer
+            .render(&mut target, snap_size, Transform::Normal)
+            .ok()?;
+        frame
+            .clear(
+                Color32F::from([0.0, 0.0, 0.0, 0.0]),
+                &[Rectangle::from_size(snap_size)],
+            )
+            .ok()?;
 
         let scale = Scale::from(output_scale);
         for elem in &elements {

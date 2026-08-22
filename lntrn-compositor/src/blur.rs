@@ -2,15 +2,12 @@
 ///
 /// Renders background elements to half-res offscreen texture, applies
 /// dual-kawase downsample/upsample blur, creates backdrop elements.
-
 use smithay::{
     backend::{
         allocator::Fourcc,
         renderer::{
             element::{texture::TextureRenderElement, Element, Id, Kind, RenderElement},
-            gles::{
-                GlesError, GlesRenderer, GlesTexProgram, GlesTexture, Uniform,
-            },
+            gles::{GlesError, GlesRenderer, GlesTexProgram, GlesTexture, Uniform},
             Bind, Color32F, Frame, Offscreen, Renderer,
         },
     },
@@ -64,7 +61,9 @@ pub fn ensure_textures<K: std::hash::Hash + Eq + Copy>(
     let result_h = (phys_size.h / 2).max(1);
     let alloc_result = |renderer: &mut GlesRenderer| {
         Offscreen::<GlesTexture>::create_buffer(
-            renderer, Fourcc::Abgr8888, Size::from((result_w, result_h)),
+            renderer,
+            Fourcc::Abgr8888,
+            Size::from((result_w, result_h)),
         )
     };
 
@@ -107,7 +106,9 @@ pub fn ensure_textures<K: std::hash::Hash + Eq + Copy>(
 
     // Full-res scene capture texture
     let scene = match Offscreen::<GlesTexture>::create_buffer(
-        renderer, Fourcc::Abgr8888, Size::from((phys_size.w, phys_size.h)),
+        renderer,
+        Fourcc::Abgr8888,
+        Size::from((phys_size.w, phys_size.h)),
     ) {
         Ok(t) => t,
         Err(e) => {
@@ -129,11 +130,18 @@ pub fn ensure_textures<K: std::hash::Hash + Eq + Copy>(
         }
     }
 
-    states.insert(key, BlurState {
-        scene, textures, results, full_size: phys_size, passes,
-        last_blur: None,
-        last_blur_fingerprint: None,
-    });
+    states.insert(
+        key,
+        BlurState {
+            scene,
+            textures,
+            results,
+            full_size: phys_size,
+            passes,
+            last_blur: None,
+            last_blur_fingerprint: None,
+        },
+    );
     true
 }
 
@@ -156,7 +164,9 @@ pub fn render_and_blur(
     darken: f32,
     result_idx: usize,
 ) -> Result<(), GlesError> {
-    if state.textures.is_empty() || result_idx >= state.results.len() { return Ok(()); }
+    if state.textures.is_empty() || result_idx >= state.results.len() {
+        return Ok(());
+    }
 
     let half_w = (output_phys.w / 2).max(1);
     let half_h = (output_phys.h / 2).max(1);
@@ -198,8 +208,13 @@ pub fn render_and_blur(
         let mut frame = renderer.render(&mut target, half_size, Transform::Normal)?;
         frame.clear(Color32F::from([0.0, 0.0, 0.0, 0.0]), &[dst_rect])?;
         frame.render_texture_from_to(
-            &scene_tex, src_rect, dst_rect,
-            &[dst_rect], &[], Transform::Normal, 1.0,
+            &scene_tex,
+            src_rect,
+            dst_rect,
+            &[dst_rect],
+            &[],
+            Transform::Normal,
+            1.0,
             Some(down_shader),
             &[Uniform::new("halfpixel", halfpixel)],
         )?;
@@ -226,8 +241,13 @@ pub fn render_and_blur(
         let mut frame = renderer.render(&mut target, dst_size, Transform::Normal)?;
         frame.clear(Color32F::from([0.0, 0.0, 0.0, 0.0]), &[dst_rect])?;
         frame.render_texture_from_to(
-            &src_tex, src_rect, dst_rect,
-            &[dst_rect], &[], Transform::Normal, 1.0,
+            &src_tex,
+            src_rect,
+            dst_rect,
+            &[dst_rect],
+            &[],
+            Transform::Normal,
+            1.0,
             Some(down_shader),
             &[Uniform::new("halfpixel", halfpixel)],
         )?;
@@ -259,13 +279,22 @@ pub fn render_and_blur(
         let pass_tint = if is_final { tint_color } else { no_tint };
         let pass_darken = if is_final { darken } else { 0.0 };
 
-        let target_tex = if is_final { &mut state.results[result_idx] } else { &mut state.textures[i] };
+        let target_tex = if is_final {
+            &mut state.results[result_idx]
+        } else {
+            &mut state.textures[i]
+        };
         let mut target = renderer.bind(target_tex)?;
         let mut frame = renderer.render(&mut target, dst_size, Transform::Normal)?;
         frame.clear(Color32F::from([0.0, 0.0, 0.0, 0.0]), &[dst_rect])?;
         frame.render_texture_from_to(
-            &src_tex, src_rect, dst_rect,
-            &[dst_rect], &[], Transform::Normal, 1.0,
+            &src_tex,
+            src_rect,
+            dst_rect,
+            &[dst_rect],
+            &[],
+            Transform::Normal,
+            1.0,
             Some(up_shader),
             &[
                 Uniform::new("halfpixel", halfpixel),

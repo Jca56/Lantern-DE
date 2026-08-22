@@ -26,14 +26,16 @@ use smithay::{
     input::{Seat, SeatState},
     output::Output,
     reexports::{
-        calloop::{generic::Generic, EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction},
+        calloop::{
+            generic::Generic, EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction,
+        },
         wayland_server::{
             backend::{ClientData, ClientId, DisconnectReason},
             protocol::wl_surface::WlSurface,
             Display, DisplayHandle,
         },
     },
-        utils::{Logical, Physical, Point, Rectangle, Size},
+    utils::{Logical, Physical, Point, Rectangle, Size},
     wayland::{
         compositor::{CompositorClientState, CompositorState},
         cursor_shape::CursorShapeManagerState,
@@ -45,13 +47,15 @@ use smithay::{
         pointer_gestures::PointerGesturesState,
         presentation::PresentationState,
         relative_pointer::RelativePointerManagerState,
-        session_lock::SessionLockManagerState,
         selection::data_device::DataDeviceState,
         selection::ext_data_control::DataControlState as ExtDataControlState,
         selection::wlr_data_control::DataControlState as WlrDataControlState,
+        session_lock::SessionLockManagerState,
         shell::{
-            wlr_layer::{WlrLayerShellState, LayerSurface, LayerSurfaceCachedState, Anchor, ExclusiveZone},
-            xdg::{XdgShellState, decoration::XdgDecorationState},
+            wlr_layer::{
+                Anchor, ExclusiveZone, LayerSurface, LayerSurfaceCachedState, WlrLayerShellState,
+            },
+            xdg::{decoration::XdgDecorationState, XdgShellState},
         },
         shm::ShmState,
         socket::ListeningSocketSource,
@@ -61,27 +65,27 @@ use smithay::{
     },
 };
 
-use smithay::backend::renderer::gles::GlesTexture;
 use crate::animation::{AnimationState, ClosingWindow};
-use crate::input::AudioRepeat;
 use crate::cursor::CursorState;
 use crate::gestures::GestureState;
-use crate::ssd::SsdManager;
 use crate::handlers::foreign_toplevel::ForeignToplevelManagerState;
 use crate::handlers::output_management::OutputManagementState;
 use crate::handlers::screencopy::{PendingScreencopy, ScreencopyManagerState};
 use crate::handlers::xdg_foreign::XdgForeignState;
 use crate::hot_corners::HotCornerState;
-use crate::snap::SnappedWindow;
-use crate::switcher::AltTabSwitcher;
-use crate::workspace_anim::WorkspaceAnimState;
-use crate::workspace_ipc::WorkspaceIpc;
-use crate::workspaces::PerOutputWorkspaces;
+use crate::input::AudioRepeat;
 use crate::minimize_anim::MinimizeAnimState;
+use crate::snap::SnappedWindow;
+use crate::ssd::SsdManager;
+use crate::switcher::AltTabSwitcher;
 use crate::udev::UdevData;
 use crate::wallpaper::WallpaperState;
 use crate::window_state::{FullscreenWindow, MaximizedWindow, MinimizedWindow, SoloTiledWindow};
 use crate::window_state_anim::WindowStateAnimState;
+use crate::workspace_anim::WorkspaceAnimState;
+use crate::workspace_ipc::WorkspaceIpc;
+use crate::workspaces::PerOutputWorkspaces;
+use smithay::backend::renderer::gles::GlesTexture;
 
 const COUNTER_REPORT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 
@@ -434,7 +438,10 @@ pub struct Lantern {
     /// (we can't re-enter the keyboard handle from inside the filter). Each is
     /// (target_keycode, key_state). Usually one entry, but releasing the
     /// trigger while source keys are still held emits several releases at once.
-    pub layer_inject: Vec<(smithay::input::keyboard::Keycode, smithay::backend::input::KeyState)>,
+    pub layer_inject: Vec<(
+        smithay::input::keyboard::Keycode,
+        smithay::backend::input::KeyState,
+    )>,
     /// Source-keycode → injected target-keycode for keys currently held down
     /// under the layer. Lets us emit the matching *release* even if the trigger
     /// was let go first — otherwise the client never sees key-up and autorepeats
@@ -498,23 +505,18 @@ impl Lantern {
         let popups = PopupManager::default();
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
         let data_device_state = DataDeviceState::new::<Self>(&dh);
-        let data_control_state = WlrDataControlState::new::<Self, _>(
-            &dh,
-            None,
-            |client| crate::security::is_trusted_client(client),
-        );
-        let ext_data_control_state = ExtDataControlState::new::<Self, _>(
-            &dh,
-            None,
-            |client| crate::security::is_trusted_client(client),
-        );
+        let data_control_state = WlrDataControlState::new::<Self, _>(&dh, None, |client| {
+            crate::security::is_trusted_client(client)
+        });
+        let ext_data_control_state = ExtDataControlState::new::<Self, _>(&dh, None, |client| {
+            crate::security::is_trusted_client(client)
+        });
         let clipboard_manager = crate::clipboard_manager::ClipboardManager::new();
         let clipboard_ipc = crate::clipboard_ipc::ClipboardIpc::new();
         let cursor_shape_manager_state = CursorShapeManagerState::new::<Self>(&dh);
-        let layer_shell_state = WlrLayerShellState::new_with_filter::<Self, _>(
-            &dh,
-            |client| crate::security::is_trusted_client(client),
-        );
+        let layer_shell_state = WlrLayerShellState::new_with_filter::<Self, _>(&dh, |client| {
+            crate::security::is_trusted_client(client)
+        });
         let xdg_decoration_state = XdgDecorationState::new::<Self>(&dh);
         let xdg_activation_state = XdgActivationState::new::<Self>(&dh);
         let idle_inhibit_manager_state = IdleInhibitManagerState::new::<Self>(&dh);
@@ -531,11 +533,11 @@ impl Lantern {
         let presentation_state = PresentationState::new::<Self>(&dh, libc::CLOCK_MONOTONIC as u32);
         // Only the trusted lockscreen binary (~/.lantern/bin/lntrn-lockscreen)
         // may bind the session-lock manager — same allowlist as layer-shell.
-        let session_lock_state = SessionLockManagerState::new::<Self, _>(
-            &dh,
-            |client| crate::security::is_trusted_client(client),
-        );
-        let xwayland_shell_state = smithay::wayland::xwayland_shell::XWaylandShellState::new::<Self>(&dh);
+        let session_lock_state = SessionLockManagerState::new::<Self, _>(&dh, |client| {
+            crate::security::is_trusted_client(client)
+        });
+        let xwayland_shell_state =
+            smithay::wayland::xwayland_shell::XWaylandShellState::new::<Self>(&dh);
 
         let mut seat_state = SeatState::new();
         let mut seat: Seat<Self> = seat_state.new_wl_seat(&dh, "lantern");
@@ -632,12 +634,34 @@ impl Lantern {
             window_rules: crate::read_window_rules(),
             window_zoom: HashMap::new(),
             focus_glow: crate::read_config("window_manager", "focus_glow", "true") == "true",
-            focus_glow_color: crate::parse_glow_color(&crate::read_config("window_manager", "focus_glow_color", "#4A9EFF")),
-            border_color: crate::parse_glow_color(&crate::read_config("window_manager", "border_color", "#4A9EFF")),
-            blur_tint_color: crate::parse_glow_color(&crate::read_config("windows", "blur_tint_color", "#4A9EFF")),
-            focus_glow_intensity: crate::read_config("window_manager", "focus_glow_intensity", "0.2")
-                .parse::<f32>().unwrap_or(0.2).clamp(0.0, 0.6),
-            focus_follows_mouse: crate::read_config("window_manager", "focus_follows_mouse", "false") == "true",
+            focus_glow_color: crate::parse_glow_color(&crate::read_config(
+                "window_manager",
+                "focus_glow_color",
+                "#4A9EFF",
+            )),
+            border_color: crate::parse_glow_color(&crate::read_config(
+                "window_manager",
+                "border_color",
+                "#4A9EFF",
+            )),
+            blur_tint_color: crate::parse_glow_color(&crate::read_config(
+                "windows",
+                "blur_tint_color",
+                "#4A9EFF",
+            )),
+            focus_glow_intensity: crate::read_config(
+                "window_manager",
+                "focus_glow_intensity",
+                "0.2",
+            )
+            .parse::<f32>()
+            .unwrap_or(0.2)
+            .clamp(0.0, 0.6),
+            focus_follows_mouse: crate::read_config(
+                "window_manager",
+                "focus_follows_mouse",
+                "false",
+            ) == "true",
             gaming_mode: false,
             super_pressed: false,
             super_clean_tap: false,
@@ -674,13 +698,16 @@ impl Lantern {
             ssd: SsdManager::new(),
             mouse_speed: crate::input::read_input_setting_f64("mouse_speed", 0.0),
             scroll_speed: crate::input::read_input_setting_f64("scroll_speed", 1.0),
-            pointer_acceleration: crate::input::read_input_setting("pointer_acceleration", "true") == "true",
+            pointer_acceleration: crate::input::read_input_setting("pointer_acceleration", "true")
+                == "true",
             cursor_theme_name: crate::input::read_input_setting("cursor_theme", "default"),
             input_config_counter: 0,
             libinput_devices: Vec::new(),
             power: crate::power::PowerState::new(),
             border_width: crate::read_config("window_manager", "border_width", "0")
-                .parse::<u32>().unwrap_or(0).clamp(0, 10),
+                .parse::<u32>()
+                .unwrap_or(0)
+                .clamp(0, 10),
             hover_preview: crate::hover_preview::HoverPreview::new(),
             cc_thumbs: crate::cc_thumbs::CcThumbnails::new(),
             xwayland_state: crate::xwayland::XWaylandState::new(),
@@ -757,7 +784,9 @@ impl Lantern {
                     }
                     let dispatch_start = if state.debug_counters.enabled {
                         Some(std::time::Instant::now())
-                    } else { None };
+                    } else {
+                        None
+                    };
                     loop {
                         let n = match unsafe { display.get_mut().dispatch_clients(state) } {
                             Ok(n) => n,
@@ -797,9 +826,11 @@ impl Lantern {
     /// hittable. Windows on an inactive workspace stay mapped in the global
     /// Space but must NOT be hit (they're not on screen).
     pub fn window_is_visible(&self, window: &Window) -> bool {
-        match crate::window_ext::WindowExt::get_wl_surface(window)
-            .and_then(|s| self.workspaces.window_workspace_ref(&s).map(|(o, w)| (o, w)))
-        {
+        match crate::window_ext::WindowExt::get_wl_surface(window).and_then(|s| {
+            self.workspaces
+                .window_workspace_ref(&s)
+                .map(|(o, w)| (o, w))
+        }) {
             Some((out, ws)) => ws == self.workspaces.active_id(out),
             None => true,
         }
@@ -828,7 +859,9 @@ impl Lantern {
             // on the same layer eating the click. Same-layer stacking order
             // is implementation-defined per the layer-shell spec.
             for ls in self.layer_surfaces.iter().rev() {
-                if output_has_fullscreen { break; }
+                if output_has_fullscreen {
+                    break;
+                }
                 if !ls.alive() {
                     continue;
                 }
@@ -836,7 +869,10 @@ impl Lantern {
                     continue;
                 }
                 let cached = with_states(ls.wl_surface(), |states| {
-                    *states.cached_state.get::<LayerSurfaceCachedState>().current()
+                    *states
+                        .cached_state
+                        .get::<LayerSurfaceCachedState>()
+                        .current()
                 });
                 // Only intercept pointer for Top/Overlay layers (above windows)
                 if cached.layer != Layer::Top && cached.layer != Layer::Overlay {
@@ -849,12 +885,14 @@ impl Lantern {
                 if rect.contains(pos_i) {
                     let relative = pos - ls_loc.to_f64();
                     // Check the actual surface tree for subsurfaces
-                    if let Some((sub_surface, sub_loc)) = smithay::desktop::utils::under_from_surface_tree(
-                        ls.wl_surface(),
-                        relative,
-                        (0, 0),
-                        WindowSurfaceType::ALL,
-                    ) {
+                    if let Some((sub_surface, sub_loc)) =
+                        smithay::desktop::utils::under_from_surface_tree(
+                            ls.wl_surface(),
+                            relative,
+                            (0, 0),
+                            WindowSurfaceType::ALL,
+                        )
+                    {
                         return Some((sub_surface, (sub_loc.to_f64() + ls_loc.to_f64())));
                     }
                 }
@@ -877,7 +915,8 @@ impl Lantern {
         // through the viewport dst, so we pass the raw logical position and do
         // NO manual stretch — an extra inverse-transform here would double-scale
         // and desync the game's cursor.
-        let window_hit = self.space
+        let window_hit = self
+            .space
             .elements()
             .rev()
             .filter(|w| self.window_is_visible(w))
@@ -902,28 +941,48 @@ impl Lantern {
         if let Some(output) = self.output_at_point(pos) {
             let output_geo = self.workspaces.output_geometry(&output).unwrap_or_default();
             for ls in &self.layer_surfaces {
-                if !ls.alive() { continue; }
-                if !self.layer_surface_on_output(ls, &output) { continue; }
+                if !ls.alive() {
+                    continue;
+                }
+                if !self.layer_surface_on_output(ls, &output) {
+                    continue;
+                }
                 let cached = with_states(ls.wl_surface(), |states| {
-                    *states.cached_state.get::<LayerSurfaceCachedState>().current()
+                    *states
+                        .cached_state
+                        .get::<LayerSurfaceCachedState>()
+                        .current()
                 });
-                if cached.layer != Layer::Bottom { continue; }
+                if cached.layer != Layer::Bottom {
+                    continue;
+                }
                 let ls_loc = crate::render::layer_surface_position_logical(&cached, output_geo);
                 // cached.size is (0,0) when client requests auto-fill — use output size
                 let size: smithay::utils::Size<i32, Logical> = (
-                    if cached.size.w > 0 { cached.size.w } else { output_geo.size.w },
-                    if cached.size.h > 0 { cached.size.h } else { output_geo.size.h },
-                ).into();
+                    if cached.size.w > 0 {
+                        cached.size.w
+                    } else {
+                        output_geo.size.w
+                    },
+                    if cached.size.h > 0 {
+                        cached.size.h
+                    } else {
+                        output_geo.size.h
+                    },
+                )
+                    .into();
                 let rect = Rectangle::new(ls_loc, size);
                 let pos_i = Point::from((pos.x as i32, pos.y as i32));
                 if rect.contains(pos_i) {
                     let relative = pos - ls_loc.to_f64();
-                    if let Some((sub_surface, sub_loc)) = smithay::desktop::utils::under_from_surface_tree(
-                        ls.wl_surface(),
-                        relative,
-                        (0, 0),
-                        WindowSurfaceType::ALL,
-                    ) {
+                    if let Some((sub_surface, sub_loc)) =
+                        smithay::desktop::utils::under_from_surface_tree(
+                            ls.wl_surface(),
+                            relative,
+                            (0, 0),
+                            WindowSurfaceType::ALL,
+                        )
+                    {
                         return Some((sub_surface, (sub_loc.to_f64() + ls_loc.to_f64())));
                     }
                     // wgpu surfaces may not register in Smithay's surface tree —
@@ -949,7 +1008,9 @@ impl Lantern {
         use smithay::wayland::compositor::with_states;
         use smithay::wayland::shell::wlr_layer::Layer;
 
-        let Some(output) = self.output_at_point(pos) else { return false; };
+        let Some(output) = self.output_at_point(pos) else {
+            return false;
+        };
         // A fullscreen window suppresses layer input on its output (mirrors
         // surface_under), so don't block window grabs behind it.
         let output_has_fullscreen = self.fullscreen_windows.iter().any(|fw| {
@@ -969,7 +1030,10 @@ impl Lantern {
                 continue;
             }
             let cached = with_states(ls.wl_surface(), |states| {
-                *states.cached_state.get::<LayerSurfaceCachedState>().current()
+                *states
+                    .cached_state
+                    .get::<LayerSurfaceCachedState>()
+                    .current()
             });
             if cached.layer != Layer::Top && cached.layer != Layer::Overlay {
                 continue;
@@ -1097,7 +1161,10 @@ impl Lantern {
         let path = crate::lantern_home().join("config/desktop-panel");
         let current = std::fs::read_to_string(&path).unwrap_or_default();
         let panels = ["home", "terminal", "files"];
-        let idx = panels.iter().position(|p| current.trim() == *p).unwrap_or(0);
+        let idx = panels
+            .iter()
+            .position(|p| current.trim() == *p)
+            .unwrap_or(0);
         let next = (idx + 1) % panels.len();
         let _ = std::fs::write(&path, panels[next]);
         tracing::info!("Desktop panel: {} → {}", panels[idx], panels[next]);
@@ -1187,10 +1254,7 @@ impl Lantern {
         if min_x == i32::MAX {
             return Rectangle::default();
         }
-        Rectangle::new(
-            (min_x, min_y).into(),
-            (max_x - min_x, max_y - min_y).into(),
-        )
+        Rectangle::new((min_x, min_y).into(), (max_x - min_x, max_y - min_y).into())
     }
 
     /// Whether the given layer surface should render / receive input on
@@ -1232,7 +1296,10 @@ impl Lantern {
                 }
             }
             let cached = with_states(ls.wl_surface(), |states| {
-                *states.cached_state.get::<LayerSurfaceCachedState>().current()
+                *states
+                    .cached_state
+                    .get::<LayerSurfaceCachedState>()
+                    .current()
             });
             let zone = match cached.exclusive_zone {
                 ExclusiveZone::Exclusive(v) => v as i32,
@@ -1266,7 +1333,10 @@ impl Lantern {
                 continue;
             }
             let cached = with_states(ls.wl_surface(), |states| {
-                *states.cached_state.get::<LayerSurfaceCachedState>().current()
+                *states
+                    .cached_state
+                    .get::<LayerSurfaceCachedState>()
+                    .current()
             });
             let zone = match cached.exclusive_zone {
                 ExclusiveZone::Exclusive(v) => v as i32,
@@ -1324,12 +1394,9 @@ impl ClientData for ClientState {
                 message = %e.message,
                 "client disconnected: protocol error"
             ),
-            DisconnectReason::ConnectionClosed => tracing::info!(
-                ?client_id,
-                pid = self.pid,
-                exe,
-                "client disconnected"
-            ),
+            DisconnectReason::ConnectionClosed => {
+                tracing::info!(?client_id, pid = self.pid, exe, "client disconnected")
+            }
         }
         // Wake the main loop so the clipboard manager can recheck whether
         // the disconnecting client owned the active selection.

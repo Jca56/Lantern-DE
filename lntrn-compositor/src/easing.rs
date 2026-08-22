@@ -55,8 +55,12 @@ pub fn ease_in_out_quint(t: f64) -> f64 {
 /// Use for the showiest transitions; can feel sluggish at long durations.
 pub fn ease_in_out_expo(t: f64) -> f64 {
     let t = t.clamp(0.0, 1.0);
-    if t == 0.0 { return 0.0; }
-    if t >= 1.0 { return 1.0; }
+    if t == 0.0 {
+        return 0.0;
+    }
+    if t >= 1.0 {
+        return 1.0;
+    }
     if t < 0.5 {
         2f64.powf(20.0 * t - 10.0) / 2.0
     } else {
@@ -126,8 +130,10 @@ mod tests {
     fn spring_bounces() {
         // With low damping, spring should overshoot 1.0
         let mid = spring(0.3, 0.4, 6.0);
-        assert!(mid > 1.0 || mid < 0.0 || (mid - 1.0).abs() > 0.01,
-            "spring should oscillate: got {mid}");
+        assert!(
+            mid > 1.0 || mid < 0.0 || (mid - 1.0).abs() > 0.01,
+            "spring should oscillate: got {mid}"
+        );
     }
 
     #[test]

@@ -69,7 +69,9 @@ impl WorkspaceIpc {
         let listener = match UnixListener::bind(&path) {
             Ok(l) => {
                 l.set_nonblocking(true).ok();
-                if let Err(e) = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)) {
+                if let Err(e) =
+                    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+                {
                     tracing::warn!(?e, "failed to chmod 0600 on workspaces IPC socket");
                 }
                 tracing::info!(?path, "workspaces IPC socket listening");
@@ -80,7 +82,10 @@ impl WorkspaceIpc {
                 None
             }
         };
-        Self { listener, clients: Vec::new() }
+        Self {
+            listener,
+            clients: Vec::new(),
+        }
     }
 
     /// Accept new connections and read pending messages. Returns decoded commands.
@@ -137,14 +142,20 @@ impl WorkspaceIpc {
             loop {
                 line.clear();
                 match client.reader.read_line(&mut line) {
-                    Ok(0) => { drop_indexes.push(i); break; }
+                    Ok(0) => {
+                        drop_indexes.push(i);
+                        break;
+                    }
                     Ok(_) => {
                         if let Some(cmd) = parse_command(line.trim()) {
                             commands.push(cmd);
                         }
                     }
                     Err(e) if e.kind() == ErrorKind::WouldBlock => break,
-                    Err(_) => { drop_indexes.push(i); break; }
+                    Err(_) => {
+                        drop_indexes.push(i);
+                        break;
+                    }
                 }
             }
         }
@@ -155,7 +166,9 @@ impl WorkspaceIpc {
         (commands, new_client_pending)
     }
 
-    pub fn has_clients(&self) -> bool { !self.clients.is_empty() }
+    pub fn has_clients(&self) -> bool {
+        !self.clients.is_empty()
+    }
 
     pub fn has_pending_initial(&self) -> bool {
         self.clients.iter().any(|c| c.needs_initial)
@@ -163,7 +176,11 @@ impl WorkspaceIpc {
 
     /// Send a pre-formatted state line to all connected clients.
     pub fn broadcast_line(&mut self, line: &str) {
-        let payload = if line.ends_with('\n') { line.to_string() } else { format!("{}\n", line) };
+        let payload = if line.ends_with('\n') {
+            line.to_string()
+        } else {
+            format!("{}\n", line)
+        };
         let mut drop_indexes = Vec::new();
         for (i, client) in self.clients.iter_mut().enumerate() {
             if client.writer.write_all(payload.as_bytes()).is_err() {
@@ -188,19 +205,30 @@ impl WorkspaceIpc {
 
 fn parse_command(msg: &str) -> Option<IpcCommand> {
     let parts: Vec<&str> = msg.splitn(3, ':').collect();
-    if parts.len() != 3 { return None; }
+    if parts.len() != 3 {
+        return None;
+    }
     match parts[0] {
         "switch" => {
             let target: u32 = parts[2].parse().ok()?;
-            Some(IpcCommand::Switch { output: parts[1].to_string(), target })
+            Some(IpcCommand::Switch {
+                output: parts[1].to_string(),
+                target,
+            })
         }
         "move" => {
             let target: u32 = parts[2].parse().ok()?;
-            Some(IpcCommand::Move { output: parts[1].to_string(), target })
+            Some(IpcCommand::Move {
+                output: parts[1].to_string(),
+                target,
+            })
         }
         "cycle" => {
             let direction: i32 = parts[2].parse().ok()?;
-            Some(IpcCommand::Cycle { output: parts[1].to_string(), direction })
+            Some(IpcCommand::Cycle {
+                output: parts[1].to_string(),
+                direction,
+            })
         }
         _ => None,
     }
@@ -215,7 +243,9 @@ pub fn format_state_line(output: &str, active: u32, ids: &[u32]) -> String {
     line.push_str(&active.to_string());
     line.push(':');
     for (i, id) in ids.iter().enumerate() {
-        if i > 0 { line.push(','); }
+        if i > 0 {
+            line.push(',');
+        }
         line.push_str(&id.to_string());
     }
     line

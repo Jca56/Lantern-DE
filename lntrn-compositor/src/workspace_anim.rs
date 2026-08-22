@@ -10,7 +10,9 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-fn slide_duration() -> Duration { crate::animations::workspace_slide_duration() }
+fn slide_duration() -> Duration {
+    crate::animations::workspace_slide_duration()
+}
 
 pub struct WorkspaceTransition {
     pub from_ws: u32,
@@ -65,11 +67,15 @@ pub struct WorkspaceAnimState {
 
 impl WorkspaceAnimState {
     pub fn new() -> Self {
-        Self { transitions: HashMap::new() }
+        Self {
+            transitions: HashMap::new(),
+        }
     }
 
     pub fn start(&mut self, output_name: &str, from_ws: u32, to_ws: u32) {
-        if from_ws == to_ws { return; }
+        if from_ws == to_ws {
+            return;
+        }
         let direction = if to_ws > from_ws { 1 } else { -1 };
         self.transitions.insert(
             output_name.to_string(),

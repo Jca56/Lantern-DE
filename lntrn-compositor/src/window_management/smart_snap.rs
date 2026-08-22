@@ -56,8 +56,12 @@ impl Lantern {
         if self.focused_edge_pin().is_some() {
             return self.axis_resize_height(grow);
         }
-        let Some(window) = self.focused_window() else { return false };
-        let Some(surface) = window.get_wl_surface() else { return false };
+        let Some(window) = self.focused_window() else {
+            return false;
+        };
+        let Some(surface) = window.get_wl_surface() else {
+            return false;
+        };
         let was_maximized = self.is_maximized(&surface);
         // Maximized is the top of the ladder — growing from it is a no-op.
         // Bail BEFORE touching the maximize tracking; the old flow dropped
@@ -65,7 +69,9 @@ impl Lantern {
         if was_maximized && grow {
             return false;
         }
-        let Some(wa) = self.shape_op_work_area(&window) else { return false };
+        let Some(wa) = self.shape_op_work_area(&window) else {
+            return false;
+        };
 
         let (_, size) = self.op_start_rect(&window, &surface, wa.loc);
         let stages = size_stages();
@@ -100,9 +106,15 @@ impl Lantern {
         if let Some(pin) = self.focused_edge_pin() {
             return self.axis_resize_width(wider, pin);
         }
-        let Some(window) = self.focused_window() else { return false };
-        let Some(surface) = window.get_wl_surface() else { return false };
-        let Some(wa) = self.shape_op_work_area(&window) else { return false };
+        let Some(window) = self.focused_window() else {
+            return false;
+        };
+        let Some(surface) = window.get_wl_surface() else {
+            return false;
+        };
+        let Some(wa) = self.shape_op_work_area(&window) else {
+            return false;
+        };
 
         let (_, size) = self.op_start_rect(&window, &surface, wa.loc);
         let cur = current_aspect_idx(size.w, size.h);
@@ -134,14 +146,20 @@ impl Lantern {
     /// so a corner is two presses (e.g. Left then Up). Size stays owned by
     /// Super+Up/Down (resize) and Super+Left/Right (aspect).
     pub fn snap_focused_dir(&mut self, arrow: ArrowDir) -> bool {
-        let Some(window) = self.focused_window() else { return false };
-        let Some(surface) = window.get_wl_surface() else { return false };
+        let Some(window) = self.focused_window() else {
+            return false;
+        };
+        let Some(surface) = window.get_wl_surface() else {
+            return false;
+        };
 
         let output = self
             .output_for_window(&window)
             .or_else(|| self.workspaces.outputs_iter().next().cloned());
         let Some(output) = output else { return false };
-        let Some(region) = self.snap_region(&output) else { return false };
+        let Some(region) = self.snap_region(&output) else {
+            return false;
+        };
 
         let (loc, size) = self.op_start_rect(&window, &surface, region.loc);
         let gap = crate::SINGLE_WINDOW_OUTER_GAP;
@@ -223,7 +241,10 @@ impl Lantern {
         window: &Window,
         target: Rectangle<i32, Logical>,
     ) {
-        let live_loc = self.workspaces.element_location(window).unwrap_or(target.loc);
+        let live_loc = self
+            .workspaces
+            .element_location(window)
+            .unwrap_or(target.loc);
         let current_rect = Rectangle::new(live_loc, window.geometry().size);
         let anim_start = self
             .window_state_anim
@@ -348,12 +369,24 @@ mod parked {
         /// re-snapping each axis to the equivalent region on the destination.
         /// No-op if no monitor lies that way.
         pub fn move_focused_to_output(&mut self, arrow: ArrowDir) -> bool {
-            let Some(window) = self.focused_window() else { return false };
-            let Some(surface) = window.get_wl_surface() else { return false };
-            let Some(src_out) = self.output_for_window(&window) else { return false };
-            let Some(dst_out) = self.output_in_dir(&src_out, arrow) else { return false };
-            let Some(src_wa) = self.work_area(&src_out) else { return false };
-            let Some(dst_wa) = self.work_area(&dst_out) else { return false };
+            let Some(window) = self.focused_window() else {
+                return false;
+            };
+            let Some(surface) = window.get_wl_surface() else {
+                return false;
+            };
+            let Some(src_out) = self.output_for_window(&window) else {
+                return false;
+            };
+            let Some(dst_out) = self.output_in_dir(&src_out, arrow) else {
+                return false;
+            };
+            let Some(src_wa) = self.work_area(&src_out) else {
+                return false;
+            };
+            let Some(dst_wa) = self.work_area(&dst_out) else {
+                return false;
+            };
 
             self.clear_maximize_for_op(&window, &surface);
 
@@ -381,7 +414,9 @@ mod parked {
                 if o == current {
                     continue;
                 }
-                let Some(g) = self.workspaces.output_geometry(o) else { continue };
+                let Some(g) = self.workspaces.output_geometry(o) else {
+                    continue;
+                };
                 let (ox, oy) = (g.loc.x + g.size.w / 2, g.loc.y + g.size.h / 2);
                 let in_dir = match arrow {
                     ArrowDir::Left => ox < ccx,

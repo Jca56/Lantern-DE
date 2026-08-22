@@ -12,7 +12,9 @@ use crate::window_ext::WindowExt;
 
 impl Lantern {
     pub fn focus_window(&mut self, window: &Window, serial: Serial) {
-        let Some(surface) = window.get_wl_surface() else { return };
+        let Some(surface) = window.get_wl_surface() else {
+            return;
+        };
         // Raise in BOTH the global self.space AND the window's per-workspace
         // Space so all Z-order consumers agree. Why both:
         //   - Rendering iterates the per-workspace Space's elements in
@@ -59,7 +61,9 @@ impl Lantern {
     /// it, so without this nudge they stay unclickable until you wiggle the mouse
     /// or alt-tab. Mirrors the OR-window motion synthesis in handlers/xwayland.rs.
     pub fn refocus_pointer_at_cursor(&mut self) {
-        let Some(pointer) = self.seat.get_pointer() else { return };
+        let Some(pointer) = self.seat.get_pointer() else {
+            return;
+        };
         let pos = pointer.current_location();
         let under = self.surface_under(pos);
         pointer.motion(
@@ -83,7 +87,9 @@ impl Lantern {
     /// first, then `refocus_pointer_at_cursor()` delivers wl_pointer.enter
     /// to the game at the new position.
     pub fn warp_pointer_to(&mut self, target: Point<f64, Logical>) {
-        let Some(pointer) = self.seat.get_pointer() else { return };
+        let Some(pointer) = self.seat.get_pointer() else {
+            return;
+        };
         pointer.set_location(target);
         // Position changed out of band — the cached hit no longer matches.
         self.last_pointer_under = None;
@@ -96,9 +102,13 @@ impl Lantern {
     /// lock during the fullscreen dance BEFORE focus lands, so without this
     /// re-check the lock never engages and mouse-look stays dead.
     pub fn maybe_activate_pointer_constraint(&mut self) {
-        let Some(pointer) = self.seat.get_pointer() else { return };
+        let Some(pointer) = self.seat.get_pointer() else {
+            return;
+        };
         let pos = pointer.current_location();
-        let Some((surface, surface_loc)) = self.surface_under(pos) else { return };
+        let Some((surface, surface_loc)) = self.surface_under(pos) else {
+            return;
+        };
         with_pointer_constraint(&surface, &pointer, |constraint| {
             let Some(constraint) = constraint else { return };
             if constraint.is_active() {
@@ -134,13 +144,15 @@ impl Lantern {
 
         let windows: Vec<_> = self.space.elements().cloned().collect();
         for candidate in &windows {
-            let Some(candidate_surface) = candidate.get_wl_surface() else { continue };
-            let is_focused = surface.as_ref().is_some_and(|focused| {
-                &candidate_surface == focused
-            });
-            let was_focused = previous_focus.as_ref().is_some_and(|focused| {
-                &candidate_surface == focused
-            });
+            let Some(candidate_surface) = candidate.get_wl_surface() else {
+                continue;
+            };
+            let is_focused = surface
+                .as_ref()
+                .is_some_and(|focused| &candidate_surface == focused);
+            let was_focused = previous_focus
+                .as_ref()
+                .is_some_and(|focused| &candidate_surface == focused);
 
             if is_focused != was_focused {
                 candidate.set_activated(is_focused);

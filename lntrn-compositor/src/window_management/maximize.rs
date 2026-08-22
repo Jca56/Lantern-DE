@@ -7,8 +7,8 @@ use smithay::{
 };
 
 use crate::state::Lantern;
-use crate::window_state::MaximizedWindow;
 use crate::window_ext::WindowExt;
+use crate::window_state::MaximizedWindow;
 
 /// Minimum width/height (logical px) below which a captured restore
 /// rect is treated as bogus and replaced with a sensible default.
@@ -22,7 +22,9 @@ impl Lantern {
             return false;
         };
 
-        let Some(surface) = window.get_wl_surface() else { return false };
+        let Some(surface) = window.get_wl_surface() else {
+            return false;
+        };
         if self.is_maximized(&surface) {
             self.unmaximize_surface(&surface, serial)
         } else {
@@ -85,9 +87,12 @@ impl Lantern {
         let raw_restore = if let Some(rect) = restore_override {
             rect
         } else if self.posed_windows.contains_key(surface) {
-            let output = self.output_for_window(&window)
+            let output = self
+                .output_for_window(&window)
                 .or_else(|| self.workspaces.outputs_iter().next().cloned());
-            output.as_ref().and_then(|o| self.middle_pose_rect(o))
+            output
+                .as_ref()
+                .and_then(|o| self.middle_pose_rect(o))
                 .unwrap_or_else(|| Rectangle::new(location, window.geometry().size))
         } else {
             self.window_state_anim
@@ -109,7 +114,10 @@ impl Lantern {
         let geo = window.geometry();
         tracing::info!(
             "maximize_surface: location={:?} geometry={:?} restore={:?} target={:?}",
-            location, geo, restore, output_geo
+            location,
+            geo,
+            restore,
+            output_geo
         );
 
         self.maximized_windows.push(MaximizedWindow {
@@ -123,7 +131,11 @@ impl Lantern {
         // interpolated rect instead.
         let existing_anim = self.window_state_anim.current_rect(surface);
         let anim_start = existing_anim.unwrap_or(restore);
-        tracing::info!("maximize_surface: existing_anim={:?} anim_start={:?}", existing_anim, anim_start);
+        tracing::info!(
+            "maximize_surface: existing_anim={:?} anim_start={:?}",
+            existing_anim,
+            anim_start
+        );
 
         // set_maximized only modifies pending state; the size + the
         // maximized bit are flushed together by the next configure that
@@ -164,7 +176,10 @@ impl Lantern {
         }
 
         // Animation start = current visible rect (handles redirect mid-maximize).
-        let current_loc = self.workspaces.element_location(&window).unwrap_or(restore.loc);
+        let current_loc = self
+            .workspaces
+            .element_location(&window)
+            .unwrap_or(restore.loc);
         let geo = window.geometry();
         let current_rect = Rectangle::new(current_loc, geo.size);
         let existing_anim = self.window_state_anim.current_rect(surface);
@@ -198,7 +213,10 @@ impl Lantern {
             .map(|entry| entry.restore)
     }
 
-    pub(crate) fn take_maximized_restore(&mut self, surface: &WlSurface) -> Option<Rectangle<i32, Logical>> {
+    pub(crate) fn take_maximized_restore(
+        &mut self,
+        surface: &WlSurface,
+    ) -> Option<Rectangle<i32, Logical>> {
         let index = self
             .maximized_windows
             .iter()

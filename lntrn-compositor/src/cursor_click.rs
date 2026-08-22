@@ -69,8 +69,8 @@ struct Settings {
 
 fn read_settings() -> Settings {
     let enabled = crate::input::read_input_setting("click_anim_enabled", "true") != "false";
-    let size = (crate::input::read_input_setting_f64("click_anim_size", 1.0) as f32)
-        .clamp(0.0, 3.0);
+    let size =
+        (crate::input::read_input_setting_f64("click_anim_size", 1.0) as f32).clamp(0.0, 3.0);
     let raw_color = crate::input::read_input_setting("click_anim_color", "");
     let color_str = if raw_color.is_empty() {
         // "Inherit" mode samples the cursor's body-light stop so the
@@ -114,7 +114,10 @@ impl ClickAnimState {
         }
         self.sync_color(s.color);
         self.clicks.clear();
-        self.clicks.push(Click { start: Instant::now(), origin });
+        self.clicks.push(Click {
+            start: Instant::now(),
+            origin,
+        });
     }
 
     pub fn tick(&mut self) -> bool {
@@ -163,10 +166,10 @@ impl ClickAnimState {
                 (click.origin.y - output_origin.y) * output_scale,
             );
             let t = elapsed_ms / RING_DURATION_MS as f32;
-            let t_eased = 1.0 - (1.0 - t).powi(3);              // ease-out cubic
-            // Smooth fade-in over RING_FADE_IN_MS, then ease-in fade-out
-            // through the rest of the animation. Cosine fade-in is
-            // smooth at both ends so the rings don't pop on.
+            let t_eased = 1.0 - (1.0 - t).powi(3); // ease-out cubic
+                                                   // Smooth fade-in over RING_FADE_IN_MS, then ease-in fade-out
+                                                   // through the rest of the animation. Cosine fade-in is
+                                                   // smooth at both ends so the rings don't pop on.
             let fade_in = (elapsed_ms / RING_FADE_IN_MS as f32).clamp(0.0, 1.0);
             let fade_in = 0.5 - 0.5 * (fade_in * std::f32::consts::PI).cos();
             let fade_out = ((1.0 - t).max(0.0)).powi(2);
@@ -180,16 +183,16 @@ impl ClickAnimState {
                 // stays crisp on HiDPI outputs.
                 let diameter_phys = ((diameter_logical as f64) * output_scale)
                     .round()
-                    .clamp(4.0, RING_DIAMETER_CAP as f64) as u32;
+                    .clamp(4.0, RING_DIAMETER_CAP as f64)
+                    as u32;
                 let color = self.color;
-                let buffer = self.buffers
+                let buffer = self
+                    .buffers
                     .entry(diameter_phys)
                     .or_insert_with(|| build_ring_buffer(diameter_phys, color, RING_STROKE_PX));
                 let half_phys = diameter_phys as f64 * 0.5;
-                let loc: Point<f64, Physical> = Point::from((
-                    phys_origin.0 - half_phys,
-                    phys_origin.1 - half_phys,
-                ));
+                let loc: Point<f64, Physical> =
+                    Point::from((phys_origin.0 - half_phys, phys_origin.1 - half_phys));
                 if let Ok(elem) = MemoryRenderBufferRenderElement::from_buffer(
                     renderer,
                     loc,
@@ -236,10 +239,10 @@ fn build_ring_buffer(diameter: u32, color: (u8, u8, u8), stroke: f32) -> MemoryR
                 continue;
             }
             let idx = ((y * size + x) * 4) as usize;
-            rgba[idx]     = (color.2 as f32 * a) as u8; // B
+            rgba[idx] = (color.2 as f32 * a) as u8; // B
             rgba[idx + 1] = (color.1 as f32 * a) as u8; // G
             rgba[idx + 2] = (color.0 as f32 * a) as u8; // R
-            rgba[idx + 3] = (a * 255.0) as u8;          // A
+            rgba[idx + 3] = (a * 255.0) as u8; // A
         }
     }
     // half_stroke is referenced for clarity above; suppress unused warning

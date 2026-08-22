@@ -195,18 +195,13 @@ impl Lantern {
             output_name.to_string()
         };
 
-        let geom_scale = self
-            .workspaces
-            .output_by_name(&name)
-            .and_then(|output| {
-                self.workspaces
-                    .output_geometry(output)
-                    .map(|geo| (geo, output.current_scale().fractional_scale()))
-            });
+        let geom_scale = self.workspaces.output_by_name(&name).and_then(|output| {
+            self.workspaces
+                .output_geometry(output)
+                .map(|geo| (geo, output.current_scale().fractional_scale()))
+        });
 
-        if let (Some((out_geo, scale)), Some(space)) =
-            (geom_scale, self.active_space_on(&name))
-        {
+        if let (Some((out_geo, scale)), Some(space)) = (geom_scale, self.active_space_on(&name)) {
             for window in space.elements() {
                 let Some(geo) = space.element_geometry(window) else {
                     continue;
@@ -221,9 +216,7 @@ impl Lantern {
                 }
                 let app_id = sanitize(&window.get_app_id());
                 let title = sanitize(&window.get_title());
-                body.push_str(&format!(
-                    "win:{px}\t{py}\t{pw}\t{ph}\t{app_id}\t{title}\n"
-                ));
+                body.push_str(&format!("win:{px}\t{py}\t{pw}\t{ph}\t{app_id}\t{title}\n"));
             }
         }
 

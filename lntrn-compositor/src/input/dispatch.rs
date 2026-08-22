@@ -13,7 +13,9 @@ use super::spawn::{fire_audio_osd, AUDIO_REPEAT_DELAY_MS, AUDIO_REPEAT_INTERVAL_
 impl Lantern {
     /// Tick audio key repeat — call from the main loop.
     pub fn tick_audio_repeat(&mut self) {
-        let Some(repeat) = &mut self.audio_repeat else { return };
+        let Some(repeat) = &mut self.audio_repeat else {
+            return;
+        };
         let elapsed = repeat.last_fire.elapsed().as_millis();
         let threshold = if repeat.initial_delay_done {
             AUDIO_REPEAT_INTERVAL_MS
@@ -95,7 +97,11 @@ impl Lantern {
                             } else {
                                 self.power.lid_close_action.clone()
                             };
-                            tracing::info!("Lid closed (on_ac={}) action: {}", crate::power::is_on_ac(), action);
+                            tracing::info!(
+                                "Lid closed (on_ac={}) action: {}",
+                                crate::power::is_on_ac(),
+                                action
+                            );
                             crate::power::run_power_action(&action);
                         }
                         SwitchState::Off => {

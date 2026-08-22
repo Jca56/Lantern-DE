@@ -12,11 +12,8 @@
 
 use smithay::backend::renderer::{
     element::{
-        memory::MemoryRenderBufferRenderElement,
-        render_elements,
-        solid::SolidColorRenderElement,
-        surface::WaylandSurfaceRenderElement,
-        texture::TextureRenderElement,
+        memory::MemoryRenderBufferRenderElement, render_elements, solid::SolidColorRenderElement,
+        surface::WaylandSurfaceRenderElement, texture::TextureRenderElement,
         utils::RescaleRenderElement,
     },
     gles::{
@@ -29,8 +26,8 @@ use smithay::desktop::space::SpaceRenderElements;
 mod helpers;
 pub(crate) mod surface;
 
-pub use surface::render_surface;
 pub use crate::layer_position::layer_surface_position_logical;
+pub use surface::render_surface;
 
 // Combined render element enum: space windows + cursor overlay
 render_elements! {

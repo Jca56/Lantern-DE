@@ -115,7 +115,9 @@ impl HoverPreview {
         let listener = match UnixListener::bind(&path) {
             Ok(l) => {
                 l.set_nonblocking(true).ok();
-                if let Err(e) = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)) {
+                if let Err(e) =
+                    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+                {
                     tracing::warn!(?e, "failed to chmod 0600 on hover socket");
                 }
                 tracing::info!(?path, "hover preview socket listening");
@@ -251,8 +253,12 @@ impl HoverPreview {
     /// `pointer_pos` is the current pointer position in logical coords.
     /// `output_size` is the output dimensions.
     pub fn tick(&mut self, pointer_x: f64, pointer_y: f64, output_size: Size<i32, Logical>) {
-        let Some(_grace) = self.grace_start else { return };
-        if !self.is_active() { return; }
+        let Some(_grace) = self.grace_start else {
+            return;
+        };
+        if !self.is_active() {
+            return;
+        }
 
         // If pointer is over the card, keep showing but keep resetting the
         // grace timer so it starts counting the moment the cursor leaves.
@@ -265,8 +271,7 @@ impl HoverPreview {
         }
 
         // If grace period expired and pointer is NOT on the card, dismiss
-        if self.grace_start.unwrap().elapsed()
-            >= std::time::Duration::from_millis(UNHOVER_GRACE_MS)
+        if self.grace_start.unwrap().elapsed() >= std::time::Duration::from_millis(UNHOVER_GRACE_MS)
         {
             self.hovered_app_id = None;
             self.fade_start = None;
@@ -281,7 +286,9 @@ impl HoverPreview {
 
     /// Find ALL WlSurfaces for the hovered app by matching app_id.
     pub fn find_surfaces(&self, toplevels: &[(WlSurface, String)]) -> Vec<WlSurface> {
-        let Some(app_id) = self.hovered_app_id.as_ref() else { return Vec::new() };
+        let Some(app_id) = self.hovered_app_id.as_ref() else {
+            return Vec::new();
+        };
         toplevels
             .iter()
             .filter(|(_, id)| id == app_id)
@@ -298,14 +305,18 @@ impl HoverPreview {
         let n = surfaces.len().max(1) as i32;
         let (card_x, card_y, _, _) = self.card_rect_for_n(n, output_size);
 
-        surfaces.iter().enumerate().map(|(i, surf)| {
-            let thumb_x = card_x + CARD_PAD + i as i32 * (THUMB_W + CARD_PAD);
-            PreviewSlot {
-                surface: surf.clone(),
-                position: Point::from((thumb_x, card_y + CARD_PAD)),
-                size: Size::from((THUMB_W, THUMB_H)),
-            }
-        }).collect()
+        surfaces
+            .iter()
+            .enumerate()
+            .map(|(i, surf)| {
+                let thumb_x = card_x + CARD_PAD + i as i32 * (THUMB_W + CARD_PAD);
+                PreviewSlot {
+                    surface: surf.clone(),
+                    position: Point::from((thumb_x, card_y + CARD_PAD)),
+                    size: Size::from((THUMB_W, THUMB_H)),
+                }
+            })
+            .collect()
     }
 
     /// Render the card background + close button.
@@ -406,7 +417,9 @@ impl HoverPreview {
 
     /// Check if a logical point hits the close button. Returns true if so.
     pub fn hit_close_button(&self, x: f64, y: f64, output_size: Size<i32, Logical>) -> bool {
-        if !self.is_active() { return false; }
+        if !self.is_active() {
+            return false;
+        }
         let (card_x, card_y, card_w, _) = self.card_rect(output_size);
         let btn_x = card_x + card_w - CLOSE_BTN_SIZE - CLOSE_BTN_MARGIN;
         let btn_y = card_y + CLOSE_BTN_MARGIN;

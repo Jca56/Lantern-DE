@@ -21,15 +21,25 @@ use crate::window_management::ArrowDir;
 impl Lantern {
     /// Swap the focused window with the nearest neighbour in `arrow`.
     pub fn swap_focused(&mut self, arrow: ArrowDir) -> bool {
-        let Some(focused) = self.focused_window() else { return false };
-        let Some(fsurf) = focused.get_wl_surface() else { return false };
-        let Some(output) = self.output_for_window(&focused) else { return false };
+        let Some(focused) = self.focused_window() else {
+            return false;
+        };
+        let Some(fsurf) = focused.get_wl_surface() else {
+            return false;
+        };
+        let Some(output) = self.output_for_window(&focused) else {
+            return false;
+        };
 
         // Pick the swap target inside an immutable borrow of the active
         // Space, capturing owned copies so the borrow ends before we mutate.
         let (floc, fsize, target) = {
-            let Some(space) = self.active_space_on(&output.name()) else { return false };
-            let Some(floc) = space.element_location(&focused) else { return false };
+            let Some(space) = self.active_space_on(&output.name()) else {
+                return false;
+            };
+            let Some(floc) = space.element_location(&focused) else {
+                return false;
+            };
             let fsize = focused.geometry().size;
             let (fcx, fcy) = (floc.x + fsize.w / 2, floc.y + fsize.h / 2);
 
@@ -38,7 +48,9 @@ impl Lantern {
                 if w.get_wl_surface().as_ref() == Some(&fsurf) {
                     continue;
                 }
-                let Some(wl) = space.element_location(w) else { continue };
+                let Some(wl) = space.element_location(w) else {
+                    continue;
+                };
                 let ws = w.geometry().size;
                 let (cx, cy) = (wl.x + ws.w / 2, wl.y + ws.h / 2);
                 let (primary, secondary, in_dir) = match arrow {
@@ -62,7 +74,9 @@ impl Lantern {
             }
         };
         let (other, oloc, osize) = target;
-        let Some(osurf) = other.get_wl_surface() else { return false };
+        let Some(osurf) = other.get_wl_surface() else {
+            return false;
+        };
 
         // Drop maximize on either window so the swapped rects stick.
         if self.take_maximized_restore(&fsurf).is_some() {

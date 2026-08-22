@@ -5,9 +5,8 @@
 
 use smithay::{
     backend::input::{
-        Event, GestureBeginEvent, GestureEndEvent,
-        GesturePinchUpdateEvent as _, GestureSwipeUpdateEvent as _,
-        InputBackend,
+        Event, GestureBeginEvent, GestureEndEvent, GesturePinchUpdateEvent as _,
+        GestureSwipeUpdateEvent as _, InputBackend,
     },
     input::pointer::{
         GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent,
@@ -38,7 +37,11 @@ impl Lantern {
         let pointer = self.seat.get_pointer().unwrap();
         pointer.gesture_swipe_begin(
             self,
-            &GestureSwipeBeginEvent { serial, time, fingers },
+            &GestureSwipeBeginEvent {
+                serial,
+                time,
+                fingers,
+            },
         );
     }
 
@@ -46,10 +49,7 @@ impl Lantern {
         let time = event.time_msec();
         let delta = event.delta();
         let pointer = self.seat.get_pointer().unwrap();
-        pointer.gesture_swipe_update(
-            self,
-            &GestureSwipeUpdateEvent { time, delta },
-        );
+        pointer.gesture_swipe_update(self, &GestureSwipeUpdateEvent { time, delta });
     }
 
     pub fn gesture_swipe_end<I: InputBackend>(&mut self, event: &I::GestureSwipeEndEvent) {
@@ -60,7 +60,11 @@ impl Lantern {
         let pointer = self.seat.get_pointer().unwrap();
         pointer.gesture_swipe_end(
             self,
-            &GestureSwipeEndEvent { serial, time, cancelled },
+            &GestureSwipeEndEvent {
+                serial,
+                time,
+                cancelled,
+            },
         );
     }
 
@@ -71,7 +75,11 @@ impl Lantern {
         let pointer = self.seat.get_pointer().unwrap();
         pointer.gesture_pinch_begin(
             self,
-            &GesturePinchBeginEvent { serial, time, fingers },
+            &GesturePinchBeginEvent {
+                serial,
+                time,
+                fingers,
+            },
         );
     }
 
@@ -83,7 +91,12 @@ impl Lantern {
         let pointer = self.seat.get_pointer().unwrap();
         pointer.gesture_pinch_update(
             self,
-            &GesturePinchUpdateEvent { time, delta, scale, rotation },
+            &GesturePinchUpdateEvent {
+                time,
+                delta,
+                scale,
+                rotation,
+            },
         );
     }
 
@@ -94,7 +107,11 @@ impl Lantern {
         let pointer = self.seat.get_pointer().unwrap();
         pointer.gesture_pinch_end(
             self,
-            &GesturePinchEndEvent { serial, time, cancelled },
+            &GesturePinchEndEvent {
+                serial,
+                time,
+                cancelled,
+            },
         );
     }
 }

@@ -1,18 +1,17 @@
+use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 /// XWayland handler: X11 window lifecycle, clipboard sync, override-redirect.
-
 use smithay::{
     delegate_xwayland_shell,
     desktop::Window,
     input::pointer::{Focus, GrabStartData as PointerGrabStartData},
     utils::{Logical, Rectangle, SERIAL_COUNTER},
-    wayland::xwayland_shell::XWaylandShellHandler,
     wayland::selection::SelectionTarget,
+    wayland::xwayland_shell::XWaylandShellHandler,
     xwayland::{
         xwm::{Reorder, ResizeEdge as X11ResizeEdge, XwmHandler, XwmId},
         X11Surface, X11Wm,
     },
 };
-use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use std::os::fd::OwnedFd;
 
 use crate::{
@@ -23,7 +22,10 @@ use crate::{
 
 impl XwmHandler for Lantern {
     fn xwm_state(&mut self, _xwm: XwmId) -> &mut X11Wm {
-        self.xwayland_state.wm.as_mut().expect("X11Wm not initialized")
+        self.xwayland_state
+            .wm
+            .as_mut()
+            .expect("X11Wm not initialized")
     }
 
     fn new_window(&mut self, _xwm: XwmId, window: X11Surface) {
@@ -36,10 +38,7 @@ impl XwmHandler for Lantern {
     }
 
     fn new_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
-        tracing::info!(
-            class = window.class(),
-            "New X11 override-redirect window"
-        );
+        tracing::info!(class = window.class(), "New X11 override-redirect window");
         // Nothing to do — wait for mapped_override_redirect_window
     }
 
@@ -48,7 +47,10 @@ impl XwmHandler for Lantern {
         // map ↔ destroy during startup, and reparenting a dead window spams
         // X11 ReparentWindow errors that propagate into the game's Xlib.
         if !window.alive() {
-            tracing::debug!(class = window.class(), "Ignoring X11 map request for dead window");
+            tracing::debug!(
+                class = window.class(),
+                "Ignoring X11 map request for dead window"
+            );
             return;
         }
 
@@ -117,9 +119,10 @@ impl XwmHandler for Lantern {
         if let Some(pointer) = self.seat.get_pointer() {
             let pos = pointer.current_location();
             let cursor_rect = smithay::utils::Rectangle::new(
-                smithay::utils::Point::<i32, smithay::utils::Logical>::from(
-                    (pos.x as i32, pos.y as i32),
-                ),
+                smithay::utils::Point::<i32, smithay::utils::Logical>::from((
+                    pos.x as i32,
+                    pos.y as i32,
+                )),
                 smithay::utils::Size::from((1i32, 1i32)),
             );
             let or_rect = smithay::utils::Rectangle::new(geo.loc, geo.size);
@@ -145,14 +148,15 @@ impl XwmHandler for Lantern {
         tracing::info!(class = window.class(), "X11 window unmapped");
 
         // Remove from pending list if it never got mapped
-        self.pending_x11_windows.retain(|w| {
-            w.x11_surface().map(|x| x != &window).unwrap_or(true)
-        });
+        self.pending_x11_windows
+            .retain(|w| w.x11_surface().map(|x| x != &window).unwrap_or(true));
 
         // Check override-redirect list first
-        if let Some(idx) = self.override_redirect_windows.iter().position(|w| {
-            w.x11_surface().map(|x| x == &window).unwrap_or(false)
-        }) {
+        if let Some(idx) = self
+            .override_redirect_windows
+            .iter()
+            .position(|w| w.x11_surface().map(|x| x == &window).unwrap_or(false))
+        {
             let win = self.override_redirect_windows.remove(idx);
             self.space.unmap_elem(&win);
             self.schedule_render();
@@ -185,14 +189,15 @@ impl XwmHandler for Lantern {
         tracing::info!(class = window.class(), "X11 window destroyed");
 
         // Remove from pending list if it never got mapped
-        self.pending_x11_windows.retain(|w| {
-            w.x11_surface().map(|x| x != &window).unwrap_or(true)
-        });
+        self.pending_x11_windows
+            .retain(|w| w.x11_surface().map(|x| x != &window).unwrap_or(true));
 
         // Clean up override-redirect
-        if let Some(idx) = self.override_redirect_windows.iter().position(|w| {
-            w.x11_surface().map(|x| x == &window).unwrap_or(false)
-        }) {
+        if let Some(idx) = self
+            .override_redirect_windows
+            .iter()
+            .position(|w| w.x11_surface().map(|x| x == &window).unwrap_or(false))
+        {
             let win = self.override_redirect_windows.remove(idx);
             self.space.unmap_elem(&win);
         }
@@ -264,8 +269,10 @@ impl XwmHandler for Lantern {
         }
         tracing::debug!(
             class = window.class(),
-            x = geo.loc.x, y = geo.loc.y,
-            w = geo.size.w, h = geo.size.h,
+            x = geo.loc.x,
+            y = geo.loc.y,
+            w = geo.size.w,
+            h = geo.size.h,
             "X11 configure request"
         );
         let _ = window.configure(geo);
@@ -280,9 +287,11 @@ impl XwmHandler for Lantern {
     ) {
         // Update override-redirect window positions in the space
         if window.is_override_redirect() {
-            if let Some(win) = self.override_redirect_windows.iter().find(|w| {
-                w.x11_surface().map(|x| x == &window).unwrap_or(false)
-            }) {
+            if let Some(win) = self
+                .override_redirect_windows
+                .iter()
+                .find(|w| w.x11_surface().map(|x| x == &window).unwrap_or(false))
+            {
                 self.space.map_element(win.clone(), geometry.loc, false);
                 self.schedule_render();
             }
@@ -312,8 +321,10 @@ impl XwmHandler for Lantern {
         tracing::info!(
             class = window.class(),
             title = window.title(),
-            x = geo.loc.x, y = geo.loc.y,
-            w = geo.size.w, h = geo.size.h,
+            x = geo.loc.x,
+            y = geo.loc.y,
+            w = geo.size.w,
+            h = geo.size.h,
             decorated = window.is_decorated(),
             "X11 fullscreen request"
         );
@@ -338,8 +349,10 @@ impl XwmHandler for Lantern {
         tracing::info!(
             class = window.class(),
             title = window.title(),
-            x = geo.loc.x, y = geo.loc.y,
-            w = geo.size.w, h = geo.size.h,
+            x = geo.loc.x,
+            y = geo.loc.y,
+            w = geo.size.w,
+            h = geo.size.h,
             decorated = window.is_decorated(),
             "X11 unfullscreen request"
         );
@@ -355,6 +368,20 @@ impl XwmHandler for Lantern {
         }
     }
 
+    /// `WM_CHANGE_STATE` → NormalState: the client wants out of the iconic
+    /// state we put it in (see `finish_minimize_animation`). Deiconify through
+    /// the normal restore path so WM_STATE/_NET_WM_STATE_HIDDEN get cleared.
+    fn unminimize_request(&mut self, _xwm: XwmId, window: X11Surface) {
+        tracing::info!(class = window.class(), "X11 unminimize request");
+        let Some(wl_surface) = window.wl_surface() else {
+            return;
+        };
+        if let Some(win) = self.restore_minimized_surface(&wl_surface) {
+            let serial = SERIAL_COUNTER.next_serial();
+            self.focus_window(&win, serial);
+        }
+    }
+
     fn resize_request(
         &mut self,
         _xwm: XwmId,
@@ -362,8 +389,12 @@ impl XwmHandler for Lantern {
         button: u32,
         resize_edge: X11ResizeEdge,
     ) {
-        let Some(wl_surface) = window.wl_surface() else { return };
-        let Some(win) = self.find_mapped_window(&wl_surface) else { return };
+        let Some(wl_surface) = window.wl_surface() else {
+            return;
+        };
+        let Some(win) = self.find_mapped_window(&wl_surface) else {
+            return;
+        };
 
         let seat = self.seat.clone();
         let pointer = match seat.get_pointer() {
@@ -372,7 +403,8 @@ impl XwmHandler for Lantern {
         };
 
         let start_data = PointerGrabStartData {
-            focus: self.surface_under(pointer.current_location())
+            focus: self
+                .surface_under(pointer.current_location())
                 .map(|(s, loc)| (s, loc.to_i32_round())),
             button,
             location: pointer.current_location(),
@@ -395,8 +427,12 @@ impl XwmHandler for Lantern {
     }
 
     fn move_request(&mut self, _xwm: XwmId, window: X11Surface, button: u32) {
-        let Some(wl_surface) = window.wl_surface() else { return };
-        let Some(win) = self.find_mapped_window(&wl_surface) else { return };
+        let Some(wl_surface) = window.wl_surface() else {
+            return;
+        };
+        let Some(win) = self.find_mapped_window(&wl_surface) else {
+            return;
+        };
 
         let seat = self.seat.clone();
         let pointer = match seat.get_pointer() {
@@ -405,7 +441,8 @@ impl XwmHandler for Lantern {
         };
 
         let start_data = PointerGrabStartData {
-            focus: self.surface_under(pointer.current_location())
+            focus: self
+                .surface_under(pointer.current_location())
                 .map(|(s, loc)| (s, loc.to_i32_round())),
             button,
             location: pointer.current_location(),
@@ -462,16 +499,13 @@ impl XwmHandler for Lantern {
 }
 
 impl XWaylandShellHandler for Lantern {
-    fn xwayland_shell_state(&mut self) -> &mut smithay::wayland::xwayland_shell::XWaylandShellState {
+    fn xwayland_shell_state(
+        &mut self,
+    ) -> &mut smithay::wayland::xwayland_shell::XWaylandShellState {
         &mut self.xwayland_shell_state
     }
 
-    fn surface_associated(
-        &mut self,
-        _xwm_id: XwmId,
-        wl_surface: WlSurface,
-        surface: X11Surface,
-    ) {
+    fn surface_associated(&mut self, _xwm_id: XwmId, wl_surface: WlSurface, surface: X11Surface) {
         tracing::info!(
             class = surface.class(),
             "X11 surface associated with Wayland surface"
@@ -487,14 +521,13 @@ impl XWaylandShellHandler for Lantern {
         }
 
         // Check if this window was waiting for its surface association
-        if let Some(idx) = self.pending_x11_windows.iter().position(|w| {
-            w.x11_surface().map(|x| x == &surface).unwrap_or(false)
-        }) {
+        if let Some(idx) = self
+            .pending_x11_windows
+            .iter()
+            .position(|w| w.x11_surface().map(|x| x == &surface).unwrap_or(false))
+        {
             let win = self.pending_x11_windows.remove(idx);
-            tracing::info!(
-                class = surface.class(),
-                "Mapping deferred X11 window"
-            );
+            tracing::info!(class = surface.class(), "Mapping deferred X11 window");
             if should_add_ssd(&surface) {
                 self.ssd.add(wl_surface);
             }

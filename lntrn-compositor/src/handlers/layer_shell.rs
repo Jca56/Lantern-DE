@@ -1,10 +1,7 @@
 use smithay::{
     output::Output,
     reexports::wayland_server::protocol::wl_output::WlOutput,
-    wayland::shell::wlr_layer::{
-        Layer, LayerSurface,
-        WlrLayerShellHandler, WlrLayerShellState,
-    },
+    wayland::shell::wlr_layer::{Layer, LayerSurface, WlrLayerShellHandler, WlrLayerShellState},
 };
 
 use crate::Lantern;
@@ -39,13 +36,21 @@ impl WlrLayerShellHandler for Lantern {
         let output = wl_output
             .and_then(|wl| Output::from_resource(&wl))
             .or_else(|| {
-                if !prefers_primary { return None; }
+                if !prefers_primary {
+                    return None;
+                }
                 let primary = crate::primary_output_name()?;
-                self.workspaces.outputs_iter().find(|o| o.name() == primary).cloned()
+                self.workspaces
+                    .outputs_iter()
+                    .find(|o| o.name() == primary)
+                    .cloned()
             })
             .or_else(|| {
                 let name = self.focused_output_name()?;
-                self.workspaces.outputs_iter().find(|o| o.name() == name).cloned()
+                self.workspaces
+                    .outputs_iter()
+                    .find(|o| o.name() == name)
+                    .cloned()
             })
             .or_else(|| self.workspaces.outputs_iter().next().cloned());
         if let Some(out) = output {
@@ -56,7 +61,8 @@ impl WlrLayerShellHandler for Lantern {
             // clients fall back to whichever output was enumerated first
             // from the registry, which may be a different monitor.
             out.enter(surface.wl_surface());
-            self.layer_surface_outputs.insert(surface.wl_surface().clone(), out);
+            self.layer_surface_outputs
+                .insert(surface.wl_surface().clone(), out);
         } else {
             tracing::warn!(namespace = %namespace, "Layer surface created but no output resolved");
         }

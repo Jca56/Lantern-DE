@@ -2,8 +2,8 @@
 //! cycle, alt-tab, SSD interactions. Each domain lives in its own
 //! file as an extra `impl Lantern` block.
 
-use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::desktop::Window;
+use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 
 mod alt_tab;
 mod axis_resize;

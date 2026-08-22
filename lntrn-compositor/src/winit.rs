@@ -5,8 +5,10 @@ use smithay::{
         renderer::{
             damage::OutputDamageTracker,
             element::solid::SolidColorRenderElement,
-            element::{memory::MemoryRenderBufferRenderElement, render_elements, AsRenderElements, Kind},
             element::surface::{render_elements_from_surface_tree, WaylandSurfaceRenderElement},
+            element::{
+                memory::MemoryRenderBufferRenderElement, render_elements, AsRenderElements, Kind,
+            },
             gles::GlesRenderer,
         },
         winit::{self, WinitEvent},
@@ -31,10 +33,15 @@ render_elements! {
 
 // Fox Dark background: #181818 → normalized RGBA
 const BG_COLOR: [f32; 4] = [0.094, 0.094, 0.094, 1.0];
-fn lantern_output_scale() -> f64 { crate::output_scale() }
+fn lantern_output_scale() -> f64 {
+    crate::output_scale()
+}
 
 fn frame_callback_interval(output: &Output) -> Duration {
-    let refresh = output.current_mode().map(|mode| mode.refresh).unwrap_or(60_000);
+    let refresh = output
+        .current_mode()
+        .map(|mode| mode.refresh)
+        .unwrap_or(60_000);
     let refresh = u64::try_from(refresh.max(1)).unwrap_or(60_000);
     Duration::from_nanos(1_000_000_000u64 / refresh)
 }
@@ -70,7 +77,9 @@ pub fn init_winit(
     );
     output.set_preferred(mode);
     state.space.map_output(&output, (0, 0));
-    state.workspaces.register_output(output.clone(), (0, 0).into());
+    state
+        .workspaces
+        .register_output(output.clone(), (0, 0).into());
 
     let mut damage_tracker = OutputDamageTracker::from_output(&output);
     let redraw_interval = frame_callback_interval(&output);
@@ -137,14 +146,15 @@ pub fn init_winit(
                             })
                             .unwrap_or_default();
 
-                        if let Some(cursor) = state.cursor.render_element(
-                            renderer,
-                            cursor_phys_pos,
-                        ) {
+                        if let Some(cursor) = state.cursor.render_element(renderer, cursor_phys_pos)
+                        {
                             elements.push(WinitRenderElements::Wallpaper(cursor));
-                        } else if let smithay::input::pointer::CursorImageStatus::Surface(ref surface) = state.cursor.status {
-                            use smithay::wayland::compositor::with_states;
+                        } else if let smithay::input::pointer::CursorImageStatus::Surface(
+                            ref surface,
+                        ) = state.cursor.status
+                        {
                             use smithay::input::pointer::CursorImageSurfaceData;
+                            use smithay::wayland::compositor::with_states;
                             // See render.rs for why CursorImageSurfaceData
                             // (= Mutex<CursorImageAttributes>) is the right
                             // data_map key — the bare attrs type silently
@@ -160,34 +170,39 @@ pub fn init_winit(
                             let surface_pos: Point<i32, Physical> = (
                                 (cursor_phys_pos.x - hotspot.x as f64 * scale) as i32,
                                 (cursor_phys_pos.y - hotspot.y as f64 * scale) as i32,
-                            ).into();
-                            let cursor_surface_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
-                                render_elements_from_surface_tree(
-                                    renderer,
-                                    surface,
-                                    surface_pos,
-                                    scale,
-                                    1.0,
-                                    Kind::Cursor,
-                                );
-                            elements.extend(cursor_surface_elements.into_iter().map(WinitRenderElements::Surface));
+                            )
+                                .into();
+                            let cursor_surface_elements: Vec<
+                                WaylandSurfaceRenderElement<GlesRenderer>,
+                            > = render_elements_from_surface_tree(
+                                renderer,
+                                surface,
+                                surface_pos,
+                                scale,
+                                1.0,
+                                Kind::Cursor,
+                            );
+                            elements.extend(
+                                cursor_surface_elements
+                                    .into_iter()
+                                    .map(WinitRenderElements::Surface),
+                            );
                         }
 
                         // Click ripple — pushed below the cursor. Winit has
                         // a single virtual output positioned at global origin.
                         if click_anim_active {
                             let cursor_size_px = state.cursor.cursor_size();
-                            let ring_elements = state
-                                .cursor
-                                .click_anim
-                                .render_elements(
-                                    renderer,
-                                    cursor_size_px,
-                                    smithay::utils::Point::from((0.0, 0.0)),
-                                    scale,
-                                );
+                            let ring_elements = state.cursor.click_anim.render_elements(
+                                renderer,
+                                cursor_size_px,
+                                smithay::utils::Point::from((0.0, 0.0)),
+                                scale,
+                            );
                             elements.extend(
-                                ring_elements.into_iter().map(WinitRenderElements::Wallpaper),
+                                ring_elements
+                                    .into_iter()
+                                    .map(WinitRenderElements::Wallpaper),
                             );
                         }
 
@@ -196,17 +211,16 @@ pub fn init_winit(
                         // click ripple: under the cursor, above content.
                         if state.cursor.loading_anim.is_active() {
                             let cursor_size_px = state.cursor.cursor_size();
-                            let spinner_elements = state
-                                .cursor
-                                .loading_anim
-                                .render_elements(
-                                    renderer,
-                                    cursor_phys_pos,
-                                    cursor_size_px,
-                                    scale,
-                                );
+                            let spinner_elements = state.cursor.loading_anim.render_elements(
+                                renderer,
+                                cursor_phys_pos,
+                                cursor_size_px,
+                                scale,
+                            );
                             elements.extend(
-                                spinner_elements.into_iter().map(WinitRenderElements::Wallpaper),
+                                spinner_elements
+                                    .into_iter()
+                                    .map(WinitRenderElements::Wallpaper),
                             );
                         }
 
@@ -223,14 +237,13 @@ pub fn init_winit(
                             let slots = state.alt_tab_switcher.thumbnail_slots(output_geo.size);
 
                             // Top layer (drawn first = highest Z): close + dims.
-                            if let Some(close) =
-                                state.alt_tab_switcher.close_button_element(output_geo.size, scale)
+                            if let Some(close) = state
+                                .alt_tab_switcher
+                                .close_button_element(output_geo.size, scale)
                             {
                                 elements.push(WinitRenderElements::Overlay(close));
                             }
-                            for dim in
-                                state.alt_tab_switcher.dim_elements(output_geo.size, scale)
-                            {
+                            for dim in state.alt_tab_switcher.dim_elements(output_geo.size, scale) {
                                 elements.push(WinitRenderElements::Overlay(dim));
                             }
                             // Backdrop dim added after previews below.
@@ -250,21 +263,35 @@ pub fn init_winit(
                                     let scale_x = slot.size.w as f64 / win_geo.size.w as f64;
                                     let scale_y = slot.size.h as f64 / win_geo.size.h as f64;
                                     let thumb_scale = scale_x.min(scale_y);
-                                    let rendered_w = (win_geo.size.w as f64 * thumb_scale).round() as i32;
-                                    let rendered_h = (win_geo.size.h as f64 * thumb_scale).round() as i32;
+                                    let rendered_w =
+                                        (win_geo.size.w as f64 * thumb_scale).round() as i32;
+                                    let rendered_h =
+                                        (win_geo.size.h as f64 * thumb_scale).round() as i32;
                                     let offset_x = (slot.size.w - rendered_w) / 2;
                                     let offset_y = (slot.size.h - rendered_h) / 2;
 
                                     let thumb_phys_loc: Point<i32, Physical> = (
-                                        ((slot.position.x + offset_x) as f64 * scale).round() as i32,
-                                        ((slot.position.y + offset_y) as f64 * scale).round() as i32,
-                                    ).into();
-                                    let thumb_render_scale = smithay::utils::Scale::from(scale * thumb_scale);
+                                        ((slot.position.x + offset_x) as f64 * scale).round()
+                                            as i32,
+                                        ((slot.position.y + offset_y) as f64 * scale).round()
+                                            as i32,
+                                    )
+                                        .into();
+                                    let thumb_render_scale =
+                                        smithay::utils::Scale::from(scale * thumb_scale);
 
-                                    let thumb_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
-                                        window.render_elements(renderer, thumb_phys_loc, thumb_render_scale, 1.0);
+                                    let thumb_elements: Vec<
+                                        WaylandSurfaceRenderElement<GlesRenderer>,
+                                    > = window.render_elements(
+                                        renderer,
+                                        thumb_phys_loc,
+                                        thumb_render_scale,
+                                        1.0,
+                                    );
                                     elements.extend(
-                                        thumb_elements.into_iter().map(WinitRenderElements::Surface),
+                                        thumb_elements
+                                            .into_iter()
+                                            .map(WinitRenderElements::Surface),
                                     );
                                 }
                             }
@@ -274,7 +301,10 @@ pub fn init_winit(
                         // Render windows manually with per-window alpha
                         let windows: Vec<_> = state.space.elements().cloned().collect();
                         for window in windows.iter().rev() {
-                            let loc = state.workspaces.element_location(&window).unwrap_or_default();
+                            let loc = state
+                                .workspaces
+                                .element_location(&window)
+                                .unwrap_or_default();
                             let mut win_bbox = window.bbox();
                             win_bbox.loc += loc - window.geometry().loc;
                             if !output_geo.overlaps(win_bbox) {
@@ -282,10 +312,17 @@ pub fn init_winit(
                             }
                             let render_location = loc - window.geometry().loc;
                             let phys_loc: Point<i32, Physical> = (
-                                ((render_location.x - output_geo.loc.x) as f64 * scale).round() as i32,
-                                ((render_location.y - output_geo.loc.y) as f64 * scale).round() as i32,
-                            ).into();
-                            let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(window) else { continue };
+                                ((render_location.x - output_geo.loc.x) as f64 * scale).round()
+                                    as i32,
+                                ((render_location.y - output_geo.loc.y) as f64 * scale).round()
+                                    as i32,
+                            )
+                                .into();
+                            let Some(surface) =
+                                crate::window_ext::WindowExt::get_wl_surface(window)
+                            else {
+                                continue;
+                            };
                             let alpha = if switcher_visible { 0.3 } else { 1.0 };
                             let _ = surface;
                             let win_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
@@ -295,11 +332,8 @@ pub fn init_winit(
                                     smithay::utils::Scale::from(scale),
                                     alpha,
                                 );
-                            elements.extend(
-                                win_elements
-                                    .into_iter()
-                                    .map(WinitRenderElements::Surface),
-                            );
+                            elements
+                                .extend(win_elements.into_iter().map(WinitRenderElements::Surface));
                         }
 
                         state.wallpaper_frame_counter += 1;
@@ -307,19 +341,17 @@ pub fn init_winit(
                             state.wallpaper_frame_counter = 0;
                             state.wallpaper.reload_if_changed();
                         }
-                        if let Some(wallpaper) = state.wallpaper.render_element(renderer, output_geo.size, scale) {
+                        if let Some(wallpaper) =
+                            state
+                                .wallpaper
+                                .render_element(renderer, output_geo.size, scale)
+                        {
                             elements.push(WinitRenderElements::Wallpaper(wallpaper));
                         }
 
                         damage_tracker
-                            .render_output(
-                            renderer,
-                            &mut framebuffer,
-                            0,
-                            &elements,
-                            BG_COLOR,
-                        )
-                        .unwrap();
+                            .render_output(renderer, &mut framebuffer, 0, &elements, BG_COLOR)
+                            .unwrap();
                     }
                     backend.submit(Some(&[damage])).unwrap();
 

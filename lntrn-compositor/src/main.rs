@@ -24,9 +24,9 @@ mod keyboard_focus;
 mod layer_position;
 mod minimize_anim;
 mod output_toggle;
+mod power;
 mod rect_anim;
 mod render;
-mod window_state_anim;
 mod rounded_element;
 mod screencopy_render;
 mod security;
@@ -36,20 +36,21 @@ pub mod ssd;
 mod state;
 mod switcher;
 mod text_inject;
-mod workspace_anim;
-mod workspace_ipc;
-mod workspaces;
-mod vrr;
 pub mod udev;
 mod udev_device;
-mod power;
+mod vrr;
 mod wallpaper;
 mod window_ext;
 mod window_management;
 mod window_query_ipc;
 mod window_state;
+mod window_state_anim;
 mod winit;
+mod workspace_anim;
+mod workspace_ipc;
+mod workspaces;
 mod x11_resources;
+mod x11_wm_state;
 mod xcursor_export;
 mod xwayland;
 
@@ -65,10 +66,14 @@ pub(crate) fn lantern_home() -> std::path::PathBuf {
 /// Returns the path to the shared DE config, with old-path fallback.
 pub(crate) fn lantern_config_path() -> std::path::PathBuf {
     let new_path = lantern_home().join("config/lantern.toml");
-    if new_path.exists() { return new_path; }
+    if new_path.exists() {
+        return new_path;
+    }
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     let old_path = std::path::PathBuf::from(home).join(".config/lantern/lantern.toml");
-    if old_path.exists() { return old_path; }
+    if old_path.exists() {
+        return old_path;
+    }
     new_path
 }
 
@@ -89,7 +94,11 @@ pub(crate) fn cached_lantern_toml() -> std::sync::Arc<String> {
     }
     static CACHE: OnceLock<Mutex<TomlCache>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| {
-        Mutex::new(TomlCache { last_check: None, mtime: None, contents: Arc::new(String::new()) })
+        Mutex::new(TomlCache {
+            last_check: None,
+            mtime: None,
+            contents: Arc::new(String::new()),
+        })
     });
 
     let mut guard = cache.lock().unwrap();
@@ -103,10 +112,15 @@ pub(crate) fn cached_lantern_toml() -> std::sync::Arc<String> {
     guard.last_check = Some(now);
 
     let path = lantern_config_path();
-    let mtime = std::fs::metadata(&path).ok().and_then(|m| m.modified().ok());
+    let mtime = std::fs::metadata(&path)
+        .ok()
+        .and_then(|m| m.modified().ok());
     if guard.mtime != mtime {
         match std::fs::read_to_string(&path) {
-            Ok(c) => { guard.mtime = mtime; guard.contents = Arc::new(c); }
+            Ok(c) => {
+                guard.mtime = mtime;
+                guard.contents = Arc::new(c);
+            }
             Err(_) => { /* keep previous cache on read error */ }
         }
     }
@@ -116,7 +130,9 @@ pub(crate) fn cached_lantern_toml() -> std::sync::Arc<String> {
 /// Read a string setting from a given [section] in lantern.toml.
 pub(crate) fn read_config(section: &str, key: &str, default: &str) -> String {
     let contents = cached_lantern_toml();
-    if contents.is_empty() { return default.to_string(); }
+    if contents.is_empty() {
+        return default.to_string();
+    }
     let section_header = format!("[{}]", section);
     let mut in_section = false;
     for line in contents.lines() {
@@ -180,7 +196,9 @@ pub(crate) fn read_keybind(key: &str, default: &str) -> String {
 /// Read a float setting from a given [section] in lantern.toml.
 pub(crate) fn read_config_f32(key: &str, default: f32) -> f32 {
     let s = read_config("windows", key, "");
-    if s.is_empty() { return default; }
+    if s.is_empty() {
+        return default;
+    }
     s.parse::<f32>().unwrap_or(default)
 }
 
@@ -211,10 +229,13 @@ pub(crate) fn monitor_scale(name: &str) -> f64 {
 /// Expects TOML array syntax: `key = ["a", "b", "c"]`
 pub(crate) fn read_config_list(section: &str, key: &str) -> Vec<String> {
     let raw = read_config(section, key, "");
-    if raw.is_empty() { return Vec::new(); }
+    if raw.is_empty() {
+        return Vec::new();
+    }
     // Strip surrounding brackets and split on commas
     let inner = raw.trim().trim_start_matches('[').trim_end_matches(']');
-    inner.split(',')
+    inner
+        .split(',')
         .map(|s| s.trim().trim_matches('"').trim_matches('\'').to_string())
         .filter(|s| !s.is_empty())
         .collect()
@@ -283,7 +304,9 @@ pub(crate) struct WindowRule {
 pub(crate) fn default_window_size() -> Option<(i32, i32)> {
     let w = read_config("windows", "default_width", "");
     let h = read_config("windows", "default_height", "");
-    if w.is_empty() || h.is_empty() { return None; }
+    if w.is_empty() || h.is_empty() {
+        return None;
+    }
     Some((w.parse().ok()?, h.parse().ok()?))
 }
 
@@ -297,11 +320,21 @@ fn window_size_pct(key: &str, default: u32) -> f32 {
     parsed.clamp(5, 100) as f32 / 100.0
 }
 
-pub(crate) fn default_size_pct() -> f32 { window_size_pct("default_size_pct", 60) }
-pub(crate) fn size_small_pct()    -> f32 { window_size_pct("size_small_pct",   30) }
-pub(crate) fn size_medium_pct()   -> f32 { window_size_pct("size_medium_pct",  60) }
-pub(crate) fn size_large_pct()    -> f32 { window_size_pct("size_large_pct",   85) }
-pub(crate) fn size_xlarge_pct()   -> f32 { window_size_pct("size_xlarge_pct", 100) }
+pub(crate) fn default_size_pct() -> f32 {
+    window_size_pct("default_size_pct", 60)
+}
+pub(crate) fn size_small_pct() -> f32 {
+    window_size_pct("size_small_pct", 30)
+}
+pub(crate) fn size_medium_pct() -> f32 {
+    window_size_pct("size_medium_pct", 60)
+}
+pub(crate) fn size_large_pct() -> f32 {
+    window_size_pct("size_large_pct", 85)
+}
+pub(crate) fn size_xlarge_pct() -> f32 {
+    window_size_pct("size_xlarge_pct", 100)
+}
 
 /// Inner gap (formerly the tiling gap) — read from `[window_manager].gap`,
 /// default 8, clamped to 0..=32. Still used by snap zones, zone-move, and
@@ -326,7 +359,9 @@ pub(crate) const SINGLE_WINDOW_OUTER_GAP: i32 = 40;
 /// Read all `[[window_rules]]` entries from lantern.toml.
 pub(crate) fn read_window_rules() -> Vec<WindowRule> {
     let contents = cached_lantern_toml();
-    if contents.is_empty() { return Vec::new(); }
+    if contents.is_empty() {
+        return Vec::new();
+    }
 
     let mut rules = Vec::new();
     let mut in_rule = false;
@@ -341,22 +376,44 @@ pub(crate) fn read_window_rules() -> Vec<WindowRule> {
                  height: &mut Option<i32>,
                  size_pct: &mut Option<f32>,
                  rules: &mut Vec<WindowRule>| {
-        let (id, w, h, pct) = (std::mem::take(app_id), width.take(), height.take(), size_pct.take());
+        let (id, w, h, pct) = (
+            std::mem::take(app_id),
+            width.take(),
+            height.take(),
+            size_pct.take(),
+        );
         if !id.is_empty() && (pct.is_some() || (w.is_some() && h.is_some())) {
-            rules.push(WindowRule { app_id: id, width: w, height: h, size_pct: pct });
+            rules.push(WindowRule {
+                app_id: id,
+                width: w,
+                height: h,
+                size_pct: pct,
+            });
         }
     };
 
     for line in contents.lines() {
         let trimmed = line.trim();
         if trimmed == "[[window_rules]]" {
-            flush(&mut app_id, &mut width, &mut height, &mut size_pct, &mut rules);
+            flush(
+                &mut app_id,
+                &mut width,
+                &mut height,
+                &mut size_pct,
+                &mut rules,
+            );
             in_rule = true;
             continue;
         }
         if trimmed.starts_with('[') {
             if in_rule {
-                flush(&mut app_id, &mut width, &mut height, &mut size_pct, &mut rules);
+                flush(
+                    &mut app_id,
+                    &mut width,
+                    &mut height,
+                    &mut size_pct,
+                    &mut rules,
+                );
             }
             in_rule = false;
             continue;
@@ -371,7 +428,10 @@ pub(crate) fn read_window_rules() -> Vec<WindowRule> {
                     "height" => height = v.parse().ok(),
                     // Accept an integer percent (e.g. 95), clamped to 5..=100.
                     "size_pct" => {
-                        size_pct = v.parse::<u32>().ok().map(|p| p.clamp(5, 100) as f32 / 100.0)
+                        size_pct = v
+                            .parse::<u32>()
+                            .ok()
+                            .map(|p| p.clamp(5, 100) as f32 / 100.0)
                     }
                     _ => {}
                 }
@@ -379,7 +439,13 @@ pub(crate) fn read_window_rules() -> Vec<WindowRule> {
         }
     }
     if in_rule {
-        flush(&mut app_id, &mut width, &mut height, &mut size_pct, &mut rules);
+        flush(
+            &mut app_id,
+            &mut width,
+            &mut height,
+            &mut size_pct,
+            &mut rules,
+        );
     }
 
     rules
@@ -407,11 +473,17 @@ pub(crate) fn read_monitor_configs() -> Vec<MonitorConfig> {
     let mut sdr_brightness: Option<u32> = None;
     let mut enabled = true;
 
-    let mut flush = |name: &mut String, x: &mut Option<i32>, y: &mut Option<i32>,
-                     resolution: &mut Option<String>, refresh_rate: &mut Option<u32>,
-                     scale: &mut Option<f64>, wallpaper: &mut Option<String>,
-                     primary: &mut bool, vrr: &mut bool,
-                     hdr: &mut bool, sdr_brightness: &mut Option<u32>,
+    let mut flush = |name: &mut String,
+                     x: &mut Option<i32>,
+                     y: &mut Option<i32>,
+                     resolution: &mut Option<String>,
+                     refresh_rate: &mut Option<u32>,
+                     scale: &mut Option<f64>,
+                     wallpaper: &mut Option<String>,
+                     primary: &mut bool,
+                     vrr: &mut bool,
+                     hdr: &mut bool,
+                     sdr_brightness: &mut Option<u32>,
                      enabled: &mut bool,
                      monitors: &mut Vec<MonitorConfig>| {
         if !name.is_empty() {
@@ -430,7 +502,11 @@ pub(crate) fn read_monitor_configs() -> Vec<MonitorConfig> {
                 // Reset to the default (true) for the next section — bare
                 // `mem::take` would leave it false and silently disable any
                 // following monitor that omits the key.
-                enabled: { let e = *enabled; *enabled = true; e },
+                enabled: {
+                    let e = *enabled;
+                    *enabled = true;
+                    e
+                },
             });
         }
     };
@@ -438,13 +514,41 @@ pub(crate) fn read_monitor_configs() -> Vec<MonitorConfig> {
     for line in contents.lines() {
         let trimmed = line.trim();
         if trimmed == "[[monitors]]" {
-            flush(&mut name, &mut x, &mut y, &mut resolution, &mut refresh_rate, &mut scale, &mut wallpaper, &mut primary, &mut vrr, &mut hdr, &mut sdr_brightness, &mut enabled, &mut monitors);
+            flush(
+                &mut name,
+                &mut x,
+                &mut y,
+                &mut resolution,
+                &mut refresh_rate,
+                &mut scale,
+                &mut wallpaper,
+                &mut primary,
+                &mut vrr,
+                &mut hdr,
+                &mut sdr_brightness,
+                &mut enabled,
+                &mut monitors,
+            );
             in_monitors = true;
             continue;
         }
         if trimmed.starts_with('[') {
             if in_monitors {
-                flush(&mut name, &mut x, &mut y, &mut resolution, &mut refresh_rate, &mut scale, &mut wallpaper, &mut primary, &mut vrr, &mut hdr, &mut sdr_brightness, &mut enabled, &mut monitors);
+                flush(
+                    &mut name,
+                    &mut x,
+                    &mut y,
+                    &mut resolution,
+                    &mut refresh_rate,
+                    &mut scale,
+                    &mut wallpaper,
+                    &mut primary,
+                    &mut vrr,
+                    &mut hdr,
+                    &mut sdr_brightness,
+                    &mut enabled,
+                    &mut monitors,
+                );
             }
             in_monitors = false;
             continue;
@@ -473,7 +577,21 @@ pub(crate) fn read_monitor_configs() -> Vec<MonitorConfig> {
     }
     // Flush last entry
     if in_monitors {
-        flush(&mut name, &mut x, &mut y, &mut resolution, &mut refresh_rate, &mut scale, &mut wallpaper, &mut primary, &mut vrr, &mut hdr, &mut sdr_brightness, &mut enabled, &mut monitors);
+        flush(
+            &mut name,
+            &mut x,
+            &mut y,
+            &mut resolution,
+            &mut refresh_rate,
+            &mut scale,
+            &mut wallpaper,
+            &mut primary,
+            &mut vrr,
+            &mut hdr,
+            &mut sdr_brightness,
+            &mut enabled,
+            &mut monitors,
+        );
     }
 
     monitors
@@ -627,9 +745,7 @@ fn init_logging(log_file: Option<std::fs::File>) {
             .with_ansi(false)
             .init();
     } else {
-        tracing_subscriber::fmt()
-            .with_env_filter(env_filter)
-            .init();
+        tracing_subscriber::fmt().with_env_filter(env_filter).init();
     }
 }
 
@@ -658,7 +774,9 @@ fn ensure_lantern_bin_on_path() {
         format!("{}:{}", bin_str, current)
     };
     // Safe: single-threaded at startup, before any spawn or thread creation.
-    unsafe { std::env::set_var("PATH", new_path); }
+    unsafe {
+        std::env::set_var("PATH", new_path);
+    }
 }
 
 /// Actively reap any zombie children. Call this periodically since SA_NOCLDWAIT
@@ -682,4 +800,3 @@ fn setup_panic_hook() {
         default_hook(info);
     }));
 }
-

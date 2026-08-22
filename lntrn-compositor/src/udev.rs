@@ -1,11 +1,17 @@
-use std::{collections::HashMap, time::{Duration, Instant}};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
+use smithay::backend::drm::{DrmEventMetadata, DrmEventTime};
+use smithay::backend::input::InputEvent;
+use smithay::desktop::utils::{send_frames_surface_tree, OutputPresentationFeedback};
+use smithay::reexports::wayland_protocols::wp::presentation_time::server::wp_presentation_feedback;
+use smithay::utils::{Monotonic, Time};
+use smithay::wayland::presentation::Refresh;
 use smithay::{
     backend::{
-        allocator::{
-            gbm::GbmAllocator,
-            Fourcc,
-        },
+        allocator::{gbm::GbmAllocator, Fourcc},
         drm::{
             exporter::gbm::GbmFramebufferExporter,
             output::{DrmOutput, DrmOutputManager},
@@ -16,10 +22,7 @@ use smithay::{
             gles::{GlesPixelProgram, GlesRenderer, GlesTexProgram},
             ImportMemWl,
         },
-        session::{
-            libseat::LibSeatSession,
-            Event as SessionEvent, Session,
-        },
+        session::{libseat::LibSeatSession, Event as SessionEvent, Session},
         udev::{all_gpus, primary_gpu, UdevBackend, UdevEvent},
     },
     reexports::{
@@ -32,12 +35,6 @@ use smithay::{
         wayland_server::DisplayHandle,
     },
 };
-use smithay::backend::input::InputEvent;
-use smithay::backend::drm::{DrmEventMetadata, DrmEventTime};
-use smithay::desktop::utils::{send_frames_surface_tree, OutputPresentationFeedback};
-use smithay::utils::{Monotonic, Time};
-use smithay::wayland::presentation::Refresh;
-use smithay::reexports::wayland_protocols::wp::presentation_time::server::wp_presentation_feedback;
 use smithay_drm_extras::drm_scanner::DrmScanner;
 use tracing::{error, info, trace, warn};
 
@@ -50,12 +47,17 @@ pub(crate) const SUPPORTED_FORMATS: &[Fourcc] = &[Fourcc::Argb8888, Fourcc::Abgr
 /// Fallback render interval when no output info is available (60Hz).
 pub const RENDER_INTERVAL: Duration = Duration::from_millis(16);
 /// Compositor output scale (reads [display] scale from lantern.toml, defaults 1.0).
-pub(crate) fn lantern_output_scale() -> f64 { crate::output_scale() }
+pub(crate) fn lantern_output_scale() -> f64 {
+    crate::output_scale()
+}
 
 pub fn frame_callback_interval(output: &smithay::output::Output) -> Duration {
     // smithay reports `mode.refresh` in millihertz (60Hz → 60_000). Period
     // in nanoseconds is 1e12 / mHz, not 1e9 / mHz — the latter gives µs.
-    let refresh = output.current_mode().map(|mode| mode.refresh).unwrap_or(60_000);
+    let refresh = output
+        .current_mode()
+        .map(|mode| mode.refresh)
+        .unwrap_or(60_000);
     let refresh = u64::try_from(refresh.max(1)).unwrap_or(60_000);
     Duration::from_nanos(1_000_000_000_000u64 / refresh)
 }
@@ -75,12 +77,8 @@ pub(crate) struct OutputSurface {
     #[allow(dead_code)] // stored for future multi-GPU identification
     pub device_id: DrmNode,
     pub global: smithay::reexports::wayland_server::backend::GlobalId,
-    pub drm_output: DrmOutput<
-        GbmAllocator<DrmDeviceFd>,
-        GbmFramebufferExporter<DrmDeviceFd>,
-        (),
-        DrmDeviceFd,
-    >,
+    pub drm_output:
+        DrmOutput<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, (), DrmDeviceFd>,
     pub frame_pending: bool,
     /// When `frame_pending` was set. If a vblank doesn't arrive within
     /// VBLANK_TIMEOUT, we assume the page-flip was dropped (e.g. DRM master
@@ -174,8 +172,8 @@ pub fn init_udev(
     event_loop: &mut EventLoop<'static, Lantern>,
     state: &mut Lantern,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let (session, notifier) = LibSeatSession::new()
-        .map_err(|e| format!("Failed to initialize session: {}", e))?;
+    let (session, notifier) =
+        LibSeatSession::new().map_err(|e| format!("Failed to initialize session: {}", e))?;
 
     let seat_name = session.seat();
     info!("Session on seat: {}", seat_name);
@@ -186,9 +184,7 @@ pub fn init_udev(
     let primary_gpu = DrmNode::from_path(&primary_gpu_path)?
         .node_with_type(NodeType::Render)
         .and_then(|r| r.ok())
-        .unwrap_or_else(|| {
-            DrmNode::from_path(&primary_gpu_path).expect("Failed to get DRM node")
-        });
+        .unwrap_or_else(|| DrmNode::from_path(&primary_gpu_path).expect("Failed to get DRM node"));
     info!("Using {} as primary GPU", primary_gpu);
 
     let udev_data = UdevData {
@@ -239,20 +235,19 @@ pub fn init_udev(
             use smithay::backend::renderer::ImportDma;
             use smithay::wayland::dmabuf::DmabufFeedbackBuilder;
 
-            let render_node = udev.primary_gpu
+            let render_node = udev
+                .primary_gpu
                 .node_with_type(NodeType::Render)
                 .and_then(|r| r.ok())
                 .unwrap_or(udev.primary_gpu);
 
             let dmabuf_formats = renderer.dmabuf_formats();
-            let default_feedback = DmabufFeedbackBuilder::new(
-                render_node.dev_id(),
-                dmabuf_formats,
-            )
-            .build()
-            .expect("Failed to build dmabuf feedback");
+            let default_feedback = DmabufFeedbackBuilder::new(render_node.dev_id(), dmabuf_formats)
+                .build()
+                .expect("Failed to build dmabuf feedback");
 
-            let dmabuf_global = state.dmabuf_state
+            let dmabuf_global = state
+                .dmabuf_state
                 .create_global_with_default_feedback::<Lantern>(
                     &state.display_handle,
                     &default_feedback,
@@ -296,14 +291,14 @@ pub fn init_udev(
         .unwrap_or(false);
     if !has_outputs {
         error!("No DRM outputs could be initialized! Cannot continue.");
-        return Err("No DRM outputs initialized. Check GPU permissions and DRM device access.".into());
+        return Err(
+            "No DRM outputs initialized. Check GPU permissions and DRM device access.".into(),
+        );
     }
     info!("DRM outputs initialized successfully");
 
     let mut libinput_context =
-        Libinput::new_with_udev::<LibinputSessionInterface<LibSeatSession>>(
-            session.clone().into(),
-        );
+        Libinput::new_with_udev::<LibinputSessionInterface<LibSeatSession>>(session.clone().into());
     libinput_context.udev_assign_seat(&seat_name).unwrap();
     let libinput_backend = LibinputInputBackend::new(libinput_context.clone());
 
@@ -349,33 +344,33 @@ pub fn init_udev(
                 state.debug_counters.session_fires += 1;
             }
             match event {
-            SessionEvent::PauseSession => {
-                info!("Session paused");
-                libinput_context.suspend();
-                if let Some(udev) = state.udev.as_mut() {
-                    for backend in udev.backends.values_mut() {
-                        backend.drm_output_manager.pause();
+                SessionEvent::PauseSession => {
+                    info!("Session paused");
+                    libinput_context.suspend();
+                    if let Some(udev) = state.udev.as_mut() {
+                        for backend in udev.backends.values_mut() {
+                            backend.drm_output_manager.pause();
+                        }
                     }
                 }
-            }
-            SessionEvent::ActivateSession => {
-                info!("Session resumed");
-                if let Err(e) = libinput_context.resume() {
-                    error!("Failed to resume libinput: {:?}", e);
-                }
-                if let Some(udev) = state.udev.as_mut() {
-                    for (_node, backend) in udev.backends.iter_mut() {
-                        backend
-                            .drm_output_manager
-                            .activate(false)
-                            .expect("Failed to activate DRM backend");
+                SessionEvent::ActivateSession => {
+                    info!("Session resumed");
+                    if let Err(e) = libinput_context.resume() {
+                        error!("Failed to resume libinput: {:?}", e);
                     }
-                    let nodes: Vec<_> = udev.backends.keys().copied().collect();
-                    for node in nodes {
-                        render_device(state, node, None);
+                    if let Some(udev) = state.udev.as_mut() {
+                        for (_node, backend) in udev.backends.iter_mut() {
+                            backend
+                                .drm_output_manager
+                                .activate(false)
+                                .expect("Failed to activate DRM backend");
+                        }
+                        let nodes: Vec<_> = udev.backends.keys().copied().collect();
+                        for node in nodes {
+                            render_device(state, node, None);
+                        }
                     }
                 }
-            }
             }
         })?;
 
@@ -386,23 +381,23 @@ pub fn init_udev(
                 state.debug_counters.udev_fires += 1;
             }
             match event {
-            UdevEvent::Added { device_id, path } => {
-                if let Ok(node) = DrmNode::from_dev_id(device_id) {
-                    if let Err(e) = device_added(state, node, &path) {
-                        error!("Failed to add device {}: {}", node, e);
+                UdevEvent::Added { device_id, path } => {
+                    if let Ok(node) = DrmNode::from_dev_id(device_id) {
+                        if let Err(e) = device_added(state, node, &path) {
+                            error!("Failed to add device {}: {}", node, e);
+                        }
                     }
                 }
-            }
-            UdevEvent::Changed { device_id } => {
-                if let Ok(node) = DrmNode::from_dev_id(device_id) {
-                    device_changed(state, node);
+                UdevEvent::Changed { device_id } => {
+                    if let Ok(node) = DrmNode::from_dev_id(device_id) {
+                        device_changed(state, node);
+                    }
                 }
-            }
-            UdevEvent::Removed { device_id } => {
-                if let Ok(node) = DrmNode::from_dev_id(device_id) {
-                    device_removed(state, node);
+                UdevEvent::Removed { device_id } => {
+                    if let Ok(node) = DrmNode::from_dev_id(device_id) {
+                        device_removed(state, node);
+                    }
                 }
-            }
             }
         })?;
 
@@ -410,7 +405,9 @@ pub fn init_udev(
         let loop_start = if state.debug_counters.enabled {
             state.debug_counters.loop_iters += 1;
             Some(std::time::Instant::now())
-        } else { None };
+        } else {
+            None
+        };
         // Reap dead windows: animate client-initiated closes, clean up the
         // rest. xdg toplevels are handled deterministically in
         // toplevel_destroyed; this poll catches X11 windows and abrupt
@@ -429,7 +426,9 @@ pub fn init_udev(
         crate::reap_zombies();
         let flush_start = if state.debug_counters.enabled {
             Some(std::time::Instant::now())
-        } else { None };
+        } else {
+            None
+        };
         let _ = state.display_handle.flush_clients();
         if let Some(t) = flush_start {
             state.debug_counters.flush_micros += t.elapsed().as_micros() as u64;
@@ -594,16 +593,15 @@ fn arm_render_timer(state: &mut Lantern) {
     if already {
         return;
     }
-    let token = state.loop_handle.insert_source(
-        Timer::immediate(),
-        |_, _, state| {
+    let token = state
+        .loop_handle
+        .insert_source(Timer::immediate(), |_, _, state| {
             if let Some(udev) = state.udev.as_mut() {
                 udev.render_timer = None;
             }
             flush_pending_renders(state, false);
             TimeoutAction::Drop
-        },
-    );
+        });
     if let Ok(token) = token {
         if let Some(udev) = state.udev.as_mut() {
             udev.render_timer = Some(token);
@@ -665,9 +663,9 @@ pub fn arm_vblank_watchdog(state: &mut Lantern) {
         return; // a watchdog is already armed
     }
     let delay = timeout + Duration::from_millis(20);
-    let token = state.loop_handle.insert_source(
-        Timer::from_duration(delay),
-        |_, _, state| {
+    let token = state
+        .loop_handle
+        .insert_source(Timer::from_duration(delay), |_, _, state| {
             if state.debug_counters.enabled {
                 state.debug_counters.timer_fires += 1;
             }
@@ -676,8 +674,7 @@ pub fn arm_vblank_watchdog(state: &mut Lantern) {
             }
             flush_pending_renders(state, false);
             TimeoutAction::Drop
-        },
-    );
+        });
     if let Ok(token) = token {
         if let Some(udev) = state.udev.as_mut() {
             udev.watchdog_timer = Some(token);
@@ -787,9 +784,16 @@ pub fn apply_pointer_accel(device: &LibinputDevice, adaptive: bool) {
     if device.config_accel_profiles().is_empty() {
         return;
     }
-    let profile = if adaptive { AccelProfile::Adaptive } else { AccelProfile::Flat };
+    let profile = if adaptive {
+        AccelProfile::Adaptive
+    } else {
+        AccelProfile::Flat
+    };
     if let Err(e) = device.config_accel_set_profile(profile) {
-        warn!("Failed to set accel profile on {}: {:?}", device.sysname(), e);
+        warn!(
+            "Failed to set accel profile on {}: {:?}",
+            device.sysname(),
+            e
+        );
     }
 }
-

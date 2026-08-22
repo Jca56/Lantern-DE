@@ -8,8 +8,8 @@ use smithay::{
 
 use crate::minimize_anim::MinimizeKind;
 use crate::state::Lantern;
-use crate::window_state::MinimizedWindow;
 use crate::window_ext::WindowExt;
+use crate::window_state::MinimizedWindow;
 
 impl Lantern {
     pub fn minimize_focused(&mut self, serial: Serial) -> bool {
@@ -17,7 +17,9 @@ impl Lantern {
             return false;
         };
 
-        let Some(surface) = window.get_wl_surface() else { return false };
+        let Some(surface) = window.get_wl_surface() else {
+            return false;
+        };
         self.minimize_surface(&surface, serial)
     }
 
@@ -64,7 +66,11 @@ impl Lantern {
             .outputs_iter()
             .find_map(|o| {
                 self.workspaces.output_geometry(o).and_then(|g| {
-                    if g.contains(point) { Some(g) } else { None }
+                    if g.contains(point) {
+                        Some(g)
+                    } else {
+                        None
+                    }
                 })
             })
             .or_else(|| {
@@ -78,7 +84,11 @@ impl Lantern {
     }
 
     pub(crate) fn minimize_surface(&mut self, surface: &WlSurface, serial: Serial) -> bool {
-        if self.minimized_windows.iter().any(|entry| entry.surface == *surface) {
+        if self
+            .minimized_windows
+            .iter()
+            .any(|entry| entry.surface == *surface)
+        {
             return false;
         }
         // If a Minimize anim is already in flight, leave it alone.
@@ -95,14 +105,18 @@ impl Lantern {
             return false;
         };
 
-        let location = self.workspaces.element_location(&window).unwrap_or_default();
+        let location = self
+            .workspaces
+            .element_location(&window)
+            .unwrap_or_default();
         let source_rect = Rectangle::new(location, window.geometry().size);
         let target_rect = self.minimize_target_for(&window);
 
         // Start the animation; the window stays mapped and renders during
         // the anim. `finish_minimize_animation` does the actual unmap when
         // the anim's tick reports it as finished.
-        self.minimize_anim.start_minimize(surface, source_rect, target_rect);
+        self.minimize_anim
+            .start_minimize(surface, source_rect, target_rect);
 
         // Clear focus immediately so the window doesn't look "active" while
         // it shrinks toward the tray icon.
@@ -124,7 +138,10 @@ impl Lantern {
         let Some(window) = self.find_mapped_window(surface) else {
             return;
         };
-        let location = self.workspaces.element_location(&window).unwrap_or_default();
+        let location = self
+            .workspaces
+            .element_location(&window)
+            .unwrap_or_default();
         self.minimized_windows.push(MinimizedWindow {
             surface: surface.clone(),
             window: window.clone(),
@@ -134,6 +151,22 @@ impl Lantern {
         self.unmap_window_everywhere(&window);
 
         self.workspaces.remove(surface);
+
+        // X11: perform a REAL iconify as far as the client can tell, without
+        // unmapping the frame (which would make XWayland destroy the
+        // wl_surface — see x11_wm_state.rs). Two signals, two audiences:
+        //   - `_NET_WM_STATE_HIDDEN` → SDL2-style clients (they treat it as
+        //     HIDDEN/MINIMIZED and drop exclusive fullscreen accordingly).
+        //   - `WM_STATE = IconicState` → Wine/Proton, which arms a serial on
+        //     XIconifyWindow and will NOT sync the Win32 window again until
+        //     the WM acknowledges the iconify. Unanswered, the game stays
+        //     Win32-minimized (DXVK stops presenting) and comes back black.
+        if let Some(x11) = window.x11_surface().cloned() {
+            if let Err(e) = x11.set_suspended(true) {
+                tracing::warn!(class = x11.class(), "minimize: set_suspended(true) failed: {e}");
+            }
+            self.x11_set_iconic(&x11, true);
+        }
 
         self.update_foreign_toplevel_states(surface);
         self.schedule_client_render();
@@ -195,17 +228,24 @@ impl Lantern {
             true,
         );
 
-        // For X11 (XWayland) windows, set WM_STATE back to Normal and ensure
-        // the WM frame is mapped. Wine/Proton games park their swapchain when
-        // minimized and watch the X11 map/WM_STATE to know when to resume —
-        // re-mapping only in the compositor Space leaves the X11 client unaware
-        // it's visible again (permanent black). This maps just the WM *frame*,
-        // which fires smithay's `map_window_notify` (a no-op for us), NOT
-        // `map_window_request`, so it cannot spawn a duplicate Window.
+        // For X11 (XWayland) windows, undo the iconify from
+        // `finish_minimize_animation`: clear `_NET_WM_STATE_HIDDEN` and set
+        // `WM_STATE` back to Normal. Wine sees Iconic→Normal, syncs the Win32
+        // window (SC_RESTORE) and the game re-enters exclusive fullscreen on
+        // its own; SDL2 sees HIDDEN drop and fires RESTORED. `set_mapped(true)`
+        // writes WM_STATE=Normal and maps the WM *frame* — which is still
+        // mapped (we never unmapped it), so this cannot spawn a new surface or
+        // a duplicate Window.
         if let Some(x11) = entry.window.x11_surface() {
+            if let Err(e) = x11.set_suspended(false) {
+                tracing::warn!(class = x11.class(), "restore: set_suspended(false) failed: {e}");
+            }
             match x11.set_mapped(true) {
                 Ok(()) => tracing::info!(class = x11.class(), "restore: X11 set_mapped(true)"),
-                Err(e) => tracing::warn!(class = x11.class(), "restore: X11 set_mapped(true) failed: {e}"),
+                Err(e) => tracing::warn!(
+                    class = x11.class(),
+                    "restore: X11 set_mapped(true) failed: {e}"
+                ),
             }
         }
 

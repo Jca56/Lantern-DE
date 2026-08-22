@@ -77,8 +77,9 @@ impl PoseSlot {
 
 impl Lantern {
     pub fn pose_half_left(&mut self) -> bool {
-        let Some(surface) = self.focused_window().and_then(|w| w.get_wl_surface())
-            else { return false };
+        let Some(surface) = self.focused_window().and_then(|w| w.get_wl_surface()) else {
+            return false;
+        };
         // At the far Left already → try to hop to the next monitor on the
         // left, landing on its Right half. If there's no monitor that way,
         // no-op (preserves the prior "stuck at edge" feel on single-monitor
@@ -100,8 +101,9 @@ impl Lantern {
     }
 
     pub fn pose_half_right(&mut self) -> bool {
-        let Some(surface) = self.focused_window().and_then(|w| w.get_wl_surface())
-            else { return false };
+        let Some(surface) = self.focused_window().and_then(|w| w.get_wl_surface()) else {
+            return false;
+        };
         if self.posed_windows.get(&surface) == Some(&PoseSlot::Right) {
             return self.try_hop_monitor_half(&surface, CornerDir::Right);
         }
@@ -120,8 +122,9 @@ impl Lantern {
     /// (Left or Right), shrink it into the bottom corner of that side and
     /// return true. Otherwise no-op.
     pub fn try_corner_shrink_down(&mut self) -> bool {
-        let Some(surface) = self.focused_window().and_then(|w| w.get_wl_surface())
-            else { return false };
+        let Some(surface) = self.focused_window().and_then(|w| w.get_wl_surface()) else {
+            return false;
+        };
         let target = match self.posed_windows.get(&surface) {
             Some(PoseSlot::Left) => PoseSlot::BottomLeft,
             Some(PoseSlot::Right) => PoseSlot::BottomRight,
@@ -134,8 +137,9 @@ impl Lantern {
     /// (Left or Right), shrink it into the top corner of that side and
     /// return true. Otherwise no-op.
     pub fn try_corner_shrink_up(&mut self) -> bool {
-        let Some(surface) = self.focused_window().and_then(|w| w.get_wl_surface())
-            else { return false };
+        let Some(surface) = self.focused_window().and_then(|w| w.get_wl_surface()) else {
+            return false;
+        };
         let target = match self.posed_windows.get(&surface) {
             Some(PoseSlot::Left) => PoseSlot::TopLeft,
             Some(PoseSlot::Right) => PoseSlot::TopRight,
@@ -148,8 +152,9 @@ impl Lantern {
     /// step back out to the half-pose for that column (TL/BL → Left,
     /// TR/BR → Right) and return true. Otherwise no-op.
     pub fn try_uncorner_to_half(&mut self) -> bool {
-        let Some(surface) = self.focused_window().and_then(|w| w.get_wl_surface())
-            else { return false };
+        let Some(surface) = self.focused_window().and_then(|w| w.get_wl_surface()) else {
+            return false;
+        };
         let target = match self.posed_windows.get(&surface) {
             Some(PoseSlot::TopLeft) | Some(PoseSlot::BottomLeft) => PoseSlot::Left,
             Some(PoseSlot::TopRight) | Some(PoseSlot::BottomRight) => PoseSlot::Right,
@@ -161,9 +166,14 @@ impl Lantern {
     /// Used by `ladder_size_up`: if currently a Tiny variant (center or any
     /// of the four edge-pinned positions), step back up to Middle.
     pub fn try_untiny_to_middle(&mut self) -> bool {
-        let Some(surface) = self.focused_window().and_then(|w| w.get_wl_surface())
-            else { return false };
-        if self.posed_windows.get(&surface).map_or(false, |s| s.is_tiny_variant()) {
+        let Some(surface) = self.focused_window().and_then(|w| w.get_wl_surface()) else {
+            return false;
+        };
+        if self
+            .posed_windows
+            .get(&surface)
+            .map_or(false, |s| s.is_tiny_variant())
+        {
             return self.apply_pose(&surface, PoseSlot::Middle);
         }
         false
@@ -173,15 +183,17 @@ impl Lantern {
     /// centered slot. Always succeeds if a focused window exists and an
     /// output can be resolved.
     pub fn pose_tiny(&mut self) -> bool {
-        let Some(surface) = self.focused_window().and_then(|w| w.get_wl_surface())
-            else { return false };
+        let Some(surface) = self.focused_window().and_then(|w| w.get_wl_surface()) else {
+            return false;
+        };
         self.apply_pose(&surface, PoseSlot::Tiny)
     }
 
     /// Returns true if the focused window is currently corner-posed.
     pub fn focused_is_corner_posed(&self) -> bool {
-        let Some(surface) = self.focused_window().and_then(|w| w.get_wl_surface())
-            else { return false };
+        let Some(surface) = self.focused_window().and_then(|w| w.get_wl_surface()) else {
+            return false;
+        };
         self.posed_windows
             .get(&surface)
             .map(|s| s.is_corner())
@@ -195,13 +207,13 @@ impl Lantern {
     /// No-op if the window isn't half-posed, or if there's no monitor that
     /// way to hop to.
     pub fn try_swap_half_side(&mut self, dir: CornerDir) -> bool {
-        let Some(surface) = self.focused_window().and_then(|w| w.get_wl_surface())
-            else { return false };
+        let Some(surface) = self.focused_window().and_then(|w| w.get_wl_surface()) else {
+            return false;
+        };
         let target = match (self.posed_windows.get(&surface).copied(), dir) {
             (Some(PoseSlot::Left), CornerDir::Right) => PoseSlot::Right,
             (Some(PoseSlot::Right), CornerDir::Left) => PoseSlot::Left,
-            (Some(PoseSlot::Right), CornerDir::Right)
-            | (Some(PoseSlot::Left), CornerDir::Left) => {
+            (Some(PoseSlot::Right), CornerDir::Right) | (Some(PoseSlot::Left), CornerDir::Left) => {
                 return self.try_hop_monitor_half(&surface, dir);
             }
             _ => return false,
@@ -215,8 +227,9 @@ impl Lantern {
     /// that direction, landing on the opposite TinyEdge there. Returns false
     /// if the focused window isn't a Tiny variant or the hop has no target.
     pub fn try_move_tiny_focused(&mut self, dir: CornerDir) -> bool {
-        let Some(surface) = self.focused_window().and_then(|w| w.get_wl_surface())
-            else { return false };
+        let Some(surface) = self.focused_window().and_then(|w| w.get_wl_surface()) else {
+            return false;
+        };
         let cur = match self.posed_windows.get(&surface).copied() {
             Some(s) if s.is_tiny_variant() => s,
             _ => return false,
@@ -226,34 +239,34 @@ impl Lantern {
         // off an edge triggers a monitor hop (handled below).
         let target = match (cur, dir) {
             // From center → corresponding edge.
-            (PoseSlot::Tiny, CornerDir::Up)    => PoseSlot::TinyTop,
-            (PoseSlot::Tiny, CornerDir::Down)  => PoseSlot::TinyBottom,
-            (PoseSlot::Tiny, CornerDir::Left)  => PoseSlot::TinyLeft,
+            (PoseSlot::Tiny, CornerDir::Up) => PoseSlot::TinyTop,
+            (PoseSlot::Tiny, CornerDir::Down) => PoseSlot::TinyBottom,
+            (PoseSlot::Tiny, CornerDir::Left) => PoseSlot::TinyLeft,
             (PoseSlot::Tiny, CornerDir::Right) => PoseSlot::TinyRight,
             // From TinyTop.
-            (PoseSlot::TinyTop, CornerDir::Down)  => PoseSlot::Tiny,
-            (PoseSlot::TinyTop, CornerDir::Left)  => PoseSlot::TinyLeft,
+            (PoseSlot::TinyTop, CornerDir::Down) => PoseSlot::Tiny,
+            (PoseSlot::TinyTop, CornerDir::Left) => PoseSlot::TinyLeft,
             (PoseSlot::TinyTop, CornerDir::Right) => PoseSlot::TinyRight,
-            (PoseSlot::TinyTop, CornerDir::Up)    => {
+            (PoseSlot::TinyTop, CornerDir::Up) => {
                 return self.try_hop_monitor_tiny(&surface, CornerDir::Up);
             }
             // From TinyBottom.
-            (PoseSlot::TinyBottom, CornerDir::Up)    => PoseSlot::Tiny,
-            (PoseSlot::TinyBottom, CornerDir::Left)  => PoseSlot::TinyLeft,
+            (PoseSlot::TinyBottom, CornerDir::Up) => PoseSlot::Tiny,
+            (PoseSlot::TinyBottom, CornerDir::Left) => PoseSlot::TinyLeft,
             (PoseSlot::TinyBottom, CornerDir::Right) => PoseSlot::TinyRight,
-            (PoseSlot::TinyBottom, CornerDir::Down)  => {
+            (PoseSlot::TinyBottom, CornerDir::Down) => {
                 return self.try_hop_monitor_tiny(&surface, CornerDir::Down);
             }
             // From TinyLeft.
             (PoseSlot::TinyLeft, CornerDir::Right) => PoseSlot::Tiny,
-            (PoseSlot::TinyLeft, CornerDir::Up)    => PoseSlot::TinyTop,
-            (PoseSlot::TinyLeft, CornerDir::Down)  => PoseSlot::TinyBottom,
-            (PoseSlot::TinyLeft, CornerDir::Left)  => {
+            (PoseSlot::TinyLeft, CornerDir::Up) => PoseSlot::TinyTop,
+            (PoseSlot::TinyLeft, CornerDir::Down) => PoseSlot::TinyBottom,
+            (PoseSlot::TinyLeft, CornerDir::Left) => {
                 return self.try_hop_monitor_tiny(&surface, CornerDir::Left);
             }
             // From TinyRight.
             (PoseSlot::TinyRight, CornerDir::Left) => PoseSlot::Tiny,
-            (PoseSlot::TinyRight, CornerDir::Up)   => PoseSlot::TinyTop,
+            (PoseSlot::TinyRight, CornerDir::Up) => PoseSlot::TinyTop,
             (PoseSlot::TinyRight, CornerDir::Down) => PoseSlot::TinyBottom,
             (PoseSlot::TinyRight, CornerDir::Right) => {
                 return self.try_hop_monitor_tiny(&surface, CornerDir::Right);
@@ -268,14 +281,20 @@ impl Lantern {
     /// arrow press reads as a smooth walk across the seam.
     fn try_hop_monitor_tiny(&mut self, surface: &WlSurface, dir: CornerDir) -> bool {
         let landing = match dir {
-            CornerDir::Up    => PoseSlot::TinyBottom,
-            CornerDir::Down  => PoseSlot::TinyTop,
-            CornerDir::Left  => PoseSlot::TinyRight,
+            CornerDir::Up => PoseSlot::TinyBottom,
+            CornerDir::Down => PoseSlot::TinyTop,
+            CornerDir::Left => PoseSlot::TinyRight,
             CornerDir::Right => PoseSlot::TinyLeft,
         };
-        let Some(window) = self.find_mapped_window(surface) else { return false };
-        let Some(cur_out) = self.output_for_window(&window) else { return false };
-        let Some(next_out) = self.output_in_direction(&cur_out, dir) else { return false };
+        let Some(window) = self.find_mapped_window(surface) else {
+            return false;
+        };
+        let Some(cur_out) = self.output_for_window(&window) else {
+            return false;
+        };
+        let Some(next_out) = self.output_in_direction(&cur_out, dir) else {
+            return false;
+        };
         self.apply_pose_on_output(surface, landing, &next_out)
     }
 
@@ -287,12 +306,18 @@ impl Lantern {
     fn try_hop_monitor_half(&mut self, surface: &WlSurface, dir: CornerDir) -> bool {
         let target_slot = match dir {
             CornerDir::Right => PoseSlot::Left,
-            CornerDir::Left  => PoseSlot::Right,
+            CornerDir::Left => PoseSlot::Right,
             _ => return false,
         };
-        let Some(window) = self.find_mapped_window(surface) else { return false };
-        let Some(cur_out) = self.output_for_window(&window) else { return false };
-        let Some(next_out) = self.output_in_direction(&cur_out, dir) else { return false };
+        let Some(window) = self.find_mapped_window(surface) else {
+            return false;
+        };
+        let Some(cur_out) = self.output_for_window(&window) else {
+            return false;
+        };
+        let Some(next_out) = self.output_in_direction(&cur_out, dir) else {
+            return false;
+        };
         self.apply_pose_on_output(surface, target_slot, &next_out)
     }
 
@@ -305,20 +330,26 @@ impl Lantern {
 
         let mut best: Option<(Output, i32)> = None;
         for o in self.workspaces.outputs_iter() {
-            if o == current { continue; }
-            let Some(geo) = self.workspaces.output_geometry(o) else { continue };
+            if o == current {
+                continue;
+            }
+            let Some(geo) = self.workspaces.output_geometry(o) else {
+                continue;
+            };
             let oc_x = geo.loc.x + geo.size.w / 2;
             let oc_y = geo.loc.y + geo.size.h / 2;
             let in_dir = match dir {
                 CornerDir::Right => oc_x > cur_cx,
-                CornerDir::Left  => oc_x < cur_cx,
-                CornerDir::Down  => oc_y > cur_cy,
-                CornerDir::Up    => oc_y < cur_cy,
+                CornerDir::Left => oc_x < cur_cx,
+                CornerDir::Down => oc_y > cur_cy,
+                CornerDir::Up => oc_y < cur_cy,
             };
-            if !in_dir { continue; }
+            if !in_dir {
+                continue;
+            }
             let dist = match dir {
                 CornerDir::Right | CornerDir::Left => (oc_x - cur_cx).abs(),
-                CornerDir::Up    | CornerDir::Down => (oc_y - cur_cy).abs(),
+                CornerDir::Up | CornerDir::Down => (oc_y - cur_cy).abs(),
             };
             if best.as_ref().map_or(true, |(_, d)| dist < *d) {
                 best = Some((o.clone(), dist));
@@ -332,23 +363,24 @@ impl Lantern {
     /// column stays put (no wrap). No-op if the focused window isn't
     /// corner-posed.
     pub fn move_corner_focused(&mut self, dir: CornerDir) -> bool {
-        let Some(surface) = self.focused_window().and_then(|w| w.get_wl_surface())
-            else { return false };
+        let Some(surface) = self.focused_window().and_then(|w| w.get_wl_surface()) else {
+            return false;
+        };
         let cur = match self.posed_windows.get(&surface) {
             Some(slot) if slot.is_corner() => *slot,
             _ => return false,
         };
         let next = match (cur, dir) {
             // Horizontal flips
-            (PoseSlot::TopRight,    CornerDir::Left)  => PoseSlot::TopLeft,
-            (PoseSlot::BottomRight, CornerDir::Left)  => PoseSlot::BottomLeft,
-            (PoseSlot::TopLeft,     CornerDir::Right) => PoseSlot::TopRight,
-            (PoseSlot::BottomLeft,  CornerDir::Right) => PoseSlot::BottomRight,
+            (PoseSlot::TopRight, CornerDir::Left) => PoseSlot::TopLeft,
+            (PoseSlot::BottomRight, CornerDir::Left) => PoseSlot::BottomLeft,
+            (PoseSlot::TopLeft, CornerDir::Right) => PoseSlot::TopRight,
+            (PoseSlot::BottomLeft, CornerDir::Right) => PoseSlot::BottomRight,
             // Vertical flips
-            (PoseSlot::BottomLeft,  CornerDir::Up)    => PoseSlot::TopLeft,
-            (PoseSlot::BottomRight, CornerDir::Up)    => PoseSlot::TopRight,
-            (PoseSlot::TopLeft,     CornerDir::Down)  => PoseSlot::BottomLeft,
-            (PoseSlot::TopRight,    CornerDir::Down)  => PoseSlot::BottomRight,
+            (PoseSlot::BottomLeft, CornerDir::Up) => PoseSlot::TopLeft,
+            (PoseSlot::BottomRight, CornerDir::Up) => PoseSlot::TopRight,
+            (PoseSlot::TopLeft, CornerDir::Down) => PoseSlot::BottomLeft,
+            (PoseSlot::TopRight, CornerDir::Down) => PoseSlot::BottomRight,
             // Already at edge → no-op
             _ => return false,
         };
@@ -375,7 +407,9 @@ impl Lantern {
         let work_y = geo.loc.y + top;
         let work_w = geo.size.w - left_off - right_off;
         let work_h = geo.size.h - top - bot;
-        if work_w <= 0 || work_h <= 0 { return None; }
+        if work_w <= 0 || work_h <= 0 {
+            return None;
+        }
 
         // Middle rung = `size_medium_pct` of the work area, centered, at
         // the same monitor-aspect rectangle as `default_initial_size_from_pct`.
@@ -412,7 +446,9 @@ impl Lantern {
         let work_y = geo.loc.y + top + outer;
         let work_w = geo.size.w - left_off - right_off - outer * 2;
         let work_h = geo.size.h - top - bot - outer * 2;
-        if work_w <= 0 || work_h <= 0 { return None; }
+        if work_w <= 0 || work_h <= 0 {
+            return None;
+        }
 
         match slot {
             PoseSlot::Middle => unreachable!(),
@@ -420,14 +456,19 @@ impl Lantern {
             PoseSlot::Left | PoseSlot::Right => {
                 // 20px gap between halves (half on either side of center).
                 let middle = outer / 2;
-                if work_w <= middle { return None; }
+                if work_w <= middle {
+                    return None;
+                }
                 let half_w = (work_w - middle) / 2;
                 let (x, w) = match slot {
                     PoseSlot::Left => (work_x, half_w),
                     PoseSlot::Right => (work_x + half_w + middle, work_w - half_w - middle),
                     _ => unreachable!(),
                 };
-                Some(Rectangle::new(Point::from((x, work_y)), Size::from((w, work_h))))
+                Some(Rectangle::new(
+                    Point::from((x, work_y)),
+                    Size::from((w, work_h)),
+                ))
             }
 
             PoseSlot::Tiny
@@ -443,14 +484,14 @@ impl Lantern {
                 let w = (((work_w as f32) * pct).round() as i32).max(1).min(work_w);
                 let h = (((work_h as f32) * pct).round() as i32).max(1).min(work_h);
                 let x = match slot {
-                    PoseSlot::TinyLeft  => work_x,
+                    PoseSlot::TinyLeft => work_x,
                     PoseSlot::TinyRight => work_x + work_w - w,
-                    _                   => work_x + (work_w - w) / 2,
+                    _ => work_x + (work_w - w) / 2,
                 };
                 let y = match slot {
-                    PoseSlot::TinyTop    => work_y,
+                    PoseSlot::TinyTop => work_y,
                     PoseSlot::TinyBottom => work_y + work_h - h,
-                    _                    => work_y + (work_h - h) / 2,
+                    _ => work_y + (work_h - h) / 2,
                 };
                 Some(Rectangle::new(Point::from((x, y)), Size::from((w, h))))
             }
@@ -479,7 +520,9 @@ impl Lantern {
     }
 
     fn apply_pose(&mut self, surface: &WlSurface, slot: PoseSlot) -> bool {
-        let Some(window) = self.find_mapped_window(surface) else { return false };
+        let Some(window) = self.find_mapped_window(surface) else {
+            return false;
+        };
         let output = self
             .output_for_window(&window)
             .or_else(|| self.workspaces.outputs_iter().next().cloned());
@@ -496,8 +539,12 @@ impl Lantern {
         slot: PoseSlot,
         output: &Output,
     ) -> bool {
-        let Some(window) = self.find_mapped_window(surface) else { return false };
-        let Some(target) = self.pose_rect(output, slot) else { return false };
+        let Some(window) = self.find_mapped_window(surface) else {
+            return false;
+        };
+        let Some(target) = self.pose_rect(output, slot) else {
+            return false;
+        };
 
         // Drop any persistent state silently so subsequent ladder steps
         // treat this as a normal window at its current rect.
@@ -505,9 +552,11 @@ impl Lantern {
         self.solo_tiled_windows.retain(|e| e.surface != *surface);
         self.snapped_windows.retain(|e| e.surface != *surface);
 
-        let cur_loc = self.workspaces.element_location(&window).unwrap_or(target.loc);
-        let current_rect: Rectangle<i32, Logical> =
-            Rectangle::new(cur_loc, window.geometry().size);
+        let cur_loc = self
+            .workspaces
+            .element_location(&window)
+            .unwrap_or(target.loc);
+        let current_rect: Rectangle<i32, Logical> = Rectangle::new(cur_loc, window.geometry().size);
         let anim_start = self
             .window_state_anim
             .current_rect(surface)

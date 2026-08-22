@@ -45,7 +45,9 @@ fn apply_inner(display: &str) -> Result<(), Box<dyn std::error::Error>> {
     let size = std::env::var("XCURSOR_SIZE")
         .ok()
         .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or_else(|| crate::input::read_input_setting_f64("cursor_size", 24.0).round() as u32);
+        .unwrap_or_else(|| {
+            crate::input::read_input_setting_f64("cursor_size", 24.0).round() as u32
+        });
 
     set_resource_manager(&conn, root, &theme, size)?;
     if let Err(err) = set_root_cursor(&conn, root, size) {
@@ -66,7 +68,8 @@ fn set_resource_manager(
     theme: &str,
     size: u32,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let value = format!("Xcursor.theme:\t{theme}\nXcursor.size:\t{size}\nXcursor.theme_core:\ttrue\n");
+    let value =
+        format!("Xcursor.theme:\t{theme}\nXcursor.size:\t{size}\nXcursor.theme_core:\ttrue\n");
     conn.change_property8(
         xproto::PropMode::REPLACE,
         root,
@@ -149,8 +152,11 @@ fn set_root_cursor(
         img.xhot.min(img.width.saturating_sub(1)) as u16,
         img.yhot.min(img.height.saturating_sub(1)) as u16,
     )?;
-    conn.change_window_attributes(root, &xproto::ChangeWindowAttributesAux::new().cursor(cursor))?
-        .check()?;
+    conn.change_window_attributes(
+        root,
+        &xproto::ChangeWindowAttributesAux::new().cursor(cursor),
+    )?
+    .check()?;
 
     // Free the scaffolding; the cursor itself must outlive this connection.
     conn.render_free_picture(picture)?;

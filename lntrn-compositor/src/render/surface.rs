@@ -3,6 +3,8 @@
 
 use std::time::{Duration, Instant};
 
+use smithay::desktop::utils::send_frames_surface_tree;
+use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::{
     backend::{
         drm::compositor::FrameFlags,
@@ -19,15 +21,13 @@ use smithay::{
     },
     utils::{Logical, Physical, Point, Rectangle, Scale, Size, Transform},
 };
-use smithay::desktop::utils::send_frames_surface_tree;
-use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use tracing::{trace, warn};
 
 use crate::layer_position::layer_surface_position;
 use crate::shaders::{
-    HOT_CORNER_GLOW_COLOR, HOT_CORNER_GLOW_SIGMA, HOT_CORNER_GLOW_SIZE,
-    TOP_CENTER_GLOW_COLOR, TOP_CENTER_GLOW_HEIGHT, TOP_CENTER_GLOW_LINE_HALF,
-    TOP_CENTER_GLOW_SIGMA, TOP_CENTER_GLOW_WIDTH,
+    HOT_CORNER_GLOW_COLOR, HOT_CORNER_GLOW_SIGMA, HOT_CORNER_GLOW_SIZE, TOP_CENTER_GLOW_COLOR,
+    TOP_CENTER_GLOW_HEIGHT, TOP_CENTER_GLOW_LINE_HALF, TOP_CENTER_GLOW_SIGMA,
+    TOP_CENTER_GLOW_WIDTH,
 };
 use crate::udev::{UdevOutputId, BG_COLOR};
 use crate::Lantern;
@@ -186,7 +186,11 @@ pub fn render_surface(
     // Tick animations and handle finished close animations (before borrowing udev)
     let finished_closes = state.animations.tick();
     for surface in &finished_closes {
-        if state.closing_windows.iter().any(|cw| cw.surface == *surface) {
+        if state
+            .closing_windows
+            .iter()
+            .any(|cw| cw.surface == *surface)
+        {
             // Zombie window (client-initiated close) — clean up
             state.finish_zombie_close(surface);
         } else {
@@ -224,13 +228,8 @@ pub fn render_surface(
         .get_pointer()
         .map(|ptr| ptr.current_location())
         .unwrap_or_default();
-    let output_pos = state
-        .space
-        .output_geometry(&output)
-        .unwrap_or_default();
-    let scale = output
-        .current_scale()
-        .fractional_scale();
+    let output_pos = state.space.output_geometry(&output).unwrap_or_default();
+    let scale = output.current_scale().fractional_scale();
     let cursor_pos: Point<f64, Physical> = (
         (pointer_location.x - output_pos.loc.x as f64) * scale,
         (pointer_location.y - output_pos.loc.y as f64) * scale,
@@ -255,9 +254,8 @@ pub fn render_surface(
     state.cc_thumbs.poll();
     let focus_at_points = state.cc_thumbs.take_focus_at();
     for (px, py) in focus_at_points {
-        let pos = smithay::utils::Point::<f64, smithay::utils::Logical>::from(
-            (px as f64, py as f64),
-        );
+        let pos =
+            smithay::utils::Point::<f64, smithay::utils::Logical>::from((px as f64, py as f64));
         let target = state.visible_element_under(pos).map(|(w, _)| w.clone());
         if let Some(window) = target {
             let serial = smithay::utils::SERIAL_COUNTER.next_serial();
@@ -286,9 +284,12 @@ pub fn render_surface(
         .iter()
         .enumerate()
         .filter_map(|(i, slot)| {
-            state.find_mapped_window(&slot.surface)
+            state
+                .find_mapped_window(&slot.surface)
                 .or_else(|| {
-                    state.minimized_windows.iter()
+                    state
+                        .minimized_windows
+                        .iter()
                         .find(|m| m.surface == slot.surface)
                         .map(|m| m.window.clone())
                 })
@@ -303,7 +304,9 @@ pub fn render_surface(
     // is Copy and `MemoryRenderBuffer` is cheap-Clone (refcounted), so this
     // is just a few clones, gated on the switcher being visible.
     let switcher_backdrop = if switcher_visible {
-        state.alt_tab_switcher.backdrop_element(output_pos.size, scale)
+        state
+            .alt_tab_switcher
+            .backdrop_element(output_pos.size, scale)
     } else {
         None
     };
@@ -313,7 +316,9 @@ pub fn render_surface(
         Vec::new()
     };
     let switcher_close = if switcher_visible {
-        state.alt_tab_switcher.close_button_element(output_pos.size, scale)
+        state
+            .alt_tab_switcher
+            .close_button_element(output_pos.size, scale)
     } else {
         None
     };
@@ -326,8 +331,10 @@ pub fn render_surface(
             .clamp(32.0, 256.0) as u32;
         state.switcher_icons.resize(icon_phys);
         let cards = state.alt_tab_switcher.card_layouts(output_pos.size);
-        let mut bufs: Vec<(usize, smithay::backend::renderer::element::memory::MemoryRenderBuffer)> =
-            Vec::with_capacity(cards.len());
+        let mut bufs: Vec<(
+            usize,
+            smithay::backend::renderer::element::memory::MemoryRenderBuffer,
+        )> = Vec::with_capacity(cards.len());
         for c in &cards {
             if let Some(app_id) = state.alt_tab_switcher.app_id_at(c.entry_index) {
                 let app_id = app_id.to_string();
@@ -343,25 +350,38 @@ pub fn render_surface(
 
     // ── Hover preview pre-computation ────────────────────────────────
     state.hover_preview.poll();
-    let pointer_pos = state.seat.get_pointer()
+    let pointer_pos = state
+        .seat
+        .get_pointer()
         .map(|p| p.current_location())
         .unwrap_or_default();
-    state.hover_preview.tick(pointer_pos.x, pointer_pos.y, output_pos.size);
+    state
+        .hover_preview
+        .tick(pointer_pos.x, pointer_pos.y, output_pos.size);
     let hover_active = state.hover_preview.is_active() && !switcher_visible;
-    let hover_slots_and_windows: Vec<(crate::hover_preview::PreviewSlot, Window)> = if hover_active {
+    let hover_slots_and_windows: Vec<(crate::hover_preview::PreviewSlot, Window)> = if hover_active
+    {
         let toplevel_ids = state.foreign_toplevel_state.surface_app_ids();
         let surfaces = state.hover_preview.find_surfaces(&toplevel_ids);
-        let windows: Vec<(WlSurface, Window)> = surfaces.iter().filter_map(|surf| {
-            let win = state.find_mapped_window(surf)
-                .or_else(|| state.minimized_windows.iter()
-                    .find(|m| m.surface == *surf)
-                    .map(|m| m.window.clone()));
-            win.map(|w| (surf.clone(), w))
-        }).collect();
+        let windows: Vec<(WlSurface, Window)> = surfaces
+            .iter()
+            .filter_map(|surf| {
+                let win = state.find_mapped_window(surf).or_else(|| {
+                    state
+                        .minimized_windows
+                        .iter()
+                        .find(|m| m.surface == *surf)
+                        .map(|m| m.window.clone())
+                });
+                win.map(|w| (surf.clone(), w))
+            })
+            .collect();
         state.hover_preview.set_window_count(windows.len());
         let surfs: Vec<WlSurface> = windows.iter().map(|(s, _)| s.clone()).collect();
         let slots = state.hover_preview.thumbnail_slots(&surfs, output_pos.size);
-        slots.into_iter().zip(windows.into_iter().map(|(_, w)| w))
+        slots
+            .into_iter()
+            .zip(windows.into_iter().map(|(_, w)| w))
             .map(|(slot, win)| (slot, win))
             .collect()
     } else {
@@ -401,15 +421,13 @@ pub fn render_surface(
                         })
                         .or_else(|| toplevels.iter().find(|(_, a, _)| a == &slot.app_id))
                         .map(|(s, _, _)| s.clone())?;
-                    let win = state
-                        .find_mapped_window(&surf)
-                        .or_else(|| {
-                            state
-                                .minimized_windows
-                                .iter()
-                                .find(|m| m.surface == surf)
-                                .map(|m| m.window.clone())
-                        })?;
+                    let win = state.find_mapped_window(&surf).or_else(|| {
+                        state
+                            .minimized_windows
+                            .iter()
+                            .find(|m| m.surface == surf)
+                            .map(|m| m.window.clone())
+                    })?;
                     Some((slot.clone(), win))
                 })
                 .collect()
@@ -459,7 +477,8 @@ pub fn render_surface(
             }
         }
         if let Some(ref scratch_surface) = state.scratchpad_surface {
-            if let Some(scratch_win) = state.space
+            if let Some(scratch_win) = state
+                .space
                 .elements()
                 .find(|w| {
                     crate::window_ext::WindowExt::get_wl_surface(*w).as_ref()
@@ -556,7 +575,9 @@ pub fn render_surface(
             continue;
         }
 
-        let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(window) else { continue };
+        let Some(surface) = crate::window_ext::WindowExt::get_wl_surface(window) else {
+            continue;
+        };
 
         // Space only contains active-workspace windows (unmap/remap on switch).
         // Apply slide offset if a transition is running on this output.
@@ -564,7 +585,9 @@ pub fn render_surface(
         if let Some((win_output, win_ws)) = state.workspaces.window_workspace_ref(&surface) {
             if win_output == output_name_str.as_str() {
                 if let Some(t) = state.workspace_anim.get(&output_name_str) {
-                    if let Some(off) = t.offset_for(win_ws, output_geo.size.w as f64, ws_transition_now) {
+                    if let Some(off) =
+                        t.offset_for(win_ws, output_geo.size.w as f64, ws_transition_now)
+                    {
                         ws_slide_offset = off;
                     }
                 }
@@ -597,9 +620,12 @@ pub fn render_surface(
         // out to the buffer size). window.geometry() is the honest content rect.
         let surface_render_size = if window.x11_surface().is_some() {
             crate::window_ext::WindowExt::get_wl_surface(window)
-                .and_then(|s| smithay::backend::renderer::utils::with_renderer_surface_state(
-                    &s, |rss| rss.surface_size(),
-                ).flatten())
+                .and_then(|s| {
+                    smithay::backend::renderer::utils::with_renderer_surface_state(&s, |rss| {
+                        rss.surface_size()
+                    })
+                    .flatten()
+                })
                 .filter(|sz| sz.w > 0 && sz.h > 0)
         } else {
             None
@@ -619,44 +645,81 @@ pub fn render_surface(
         // this chain, a slow client like Firefox would post-anim collapse
         // back to its previously-acked size for a beat — looking like a
         // "resize after the slide" pop.
-        let state_target_rect = state.maximized_windows.iter()
-            .find(|e| e.surface == surface).map(|e| e.target)
-            .or_else(|| state.fullscreen_windows.iter()
-                .find(|e| e.surface == surface).map(|e| e.target))
-            .or_else(|| state.snapped_windows.iter()
-                .find(|e| e.surface == surface).map(|e| e.target))
-            .or_else(|| state.solo_tiled_windows.iter()
-                .find(|e| e.surface == surface).map(|e| e.target));
+        let state_target_rect = state
+            .maximized_windows
+            .iter()
+            .find(|e| e.surface == surface)
+            .map(|e| e.target)
+            .or_else(|| {
+                state
+                    .fullscreen_windows
+                    .iter()
+                    .find(|e| e.surface == surface)
+                    .map(|e| e.target)
+            })
+            .or_else(|| {
+                state
+                    .snapped_windows
+                    .iter()
+                    .find(|e| e.surface == surface)
+                    .map(|e| e.target)
+            })
+            .or_else(|| {
+                state
+                    .solo_tiled_windows
+                    .iter()
+                    .find(|e| e.surface == surface)
+                    .map(|e| e.target)
+            });
 
         // Effective rect: where the (un-zoomed, pre-open/close) visible
         // geometry should appear on screen. (x, y, w, h) in logical coords.
-        let (eff_x, eff_y, eff_w, eff_h, minimize_alpha) =
-            if let Some(p) = &minimize_params {
-                // MinimizeParams was historically authored assuming a center
-                // pivot on win_size; translate that back to an explicit visual
-                // rect here so the new math doesn't need to know.
-                let vw = win_size.w as f64 * p.scale.0;
-                let vh = win_size.h as f64 * p.scale.1;
-                let vx = p.render_loc.x + (win_size.w as f64 - vw) / 2.0;
-                let vy = p.render_loc.y + (win_size.h as f64 - vh) / 2.0;
-                (vx, vy, vw, vh, p.alpha)
-            } else if let Some(rect) = state_anim_rect {
-                (rect.loc.x as f64, rect.loc.y as f64,
-                 rect.size.w as f64, rect.size.h as f64, 1.0)
-            } else if let Some(rect) = held_target_rect {
-                // Smooth-resize bridge: anim done, client redraw at the
-                // new size pending. Pin the rect at target so the next
-                // frame's render is already in the final spot — the
-                // client commit will then collapse combined_scale to 1.0.
-                (rect.loc.x as f64, rect.loc.y as f64,
-                 rect.size.w as f64, rect.size.h as f64, 1.0)
-            } else if let Some(rect) = state_target_rect {
-                (rect.loc.x as f64, rect.loc.y as f64,
-                 rect.size.w as f64, rect.size.h as f64, 1.0)
-            } else {
-                (window_loc.x as f64, window_loc.y as f64,
-                 win_size.w as f64, win_size.h as f64, 1.0)
-            };
+        let (eff_x, eff_y, eff_w, eff_h, minimize_alpha) = if let Some(p) = &minimize_params {
+            // MinimizeParams was historically authored assuming a center
+            // pivot on win_size; translate that back to an explicit visual
+            // rect here so the new math doesn't need to know.
+            let vw = win_size.w as f64 * p.scale.0;
+            let vh = win_size.h as f64 * p.scale.1;
+            let vx = p.render_loc.x + (win_size.w as f64 - vw) / 2.0;
+            let vy = p.render_loc.y + (win_size.h as f64 - vh) / 2.0;
+            (vx, vy, vw, vh, p.alpha)
+        } else if let Some(rect) = state_anim_rect {
+            (
+                rect.loc.x as f64,
+                rect.loc.y as f64,
+                rect.size.w as f64,
+                rect.size.h as f64,
+                1.0,
+            )
+        } else if let Some(rect) = held_target_rect {
+            // Smooth-resize bridge: anim done, client redraw at the
+            // new size pending. Pin the rect at target so the next
+            // frame's render is already in the final spot — the
+            // client commit will then collapse combined_scale to 1.0.
+            (
+                rect.loc.x as f64,
+                rect.loc.y as f64,
+                rect.size.w as f64,
+                rect.size.h as f64,
+                1.0,
+            )
+        } else if let Some(rect) = state_target_rect {
+            (
+                rect.loc.x as f64,
+                rect.loc.y as f64,
+                rect.size.w as f64,
+                rect.size.h as f64,
+                1.0,
+            )
+        } else {
+            (
+                window_loc.x as f64,
+                window_loc.y as f64,
+                win_size.w as f64,
+                win_size.h as f64,
+                1.0,
+            )
+        };
 
         let is_fullscreen = fullscreen_surfaces.iter().any(|e| e.surface == surface);
         let win_app_id = crate::window_ext::WindowExt::get_app_id(window);
@@ -717,8 +780,16 @@ pub fn render_surface(
         // size. Independent of the buffer-acked size jumping mid-animation:
         // when the buffer swaps, render_scale recomputes to keep final size
         // pinned (no teleport).
-        let combined_scale_x = if win_size.w > 0 { final_w / win_size.w as f64 } else { 1.0 };
-        let combined_scale_y = if win_size.h > 0 { final_h / win_size.h as f64 } else { 1.0 };
+        let combined_scale_x = if win_size.w > 0 {
+            final_w / win_size.w as f64
+        } else {
+            1.0
+        };
+        let combined_scale_y = if win_size.h > 0 {
+            final_h / win_size.h as f64
+        } else {
+            1.0
+        };
 
         // Surface tree origin in physical coords. The geometry sits at
         // geo.loc within the surface tree, so phys_loc = final_top_left -
@@ -728,7 +799,8 @@ pub fn render_surface(
         let phys_loc: Point<i32, Physical> = (
             (phys_loc_log_x * output_scale).round() as i32,
             (phys_loc_log_y * output_scale).round() as i32,
-        ).into();
+        )
+            .into();
 
         // Surface tree is always rendered at a UNIFORM `output_scale` —
         // Smithay doesn't anisotropically stretch a Wayland surface via
@@ -737,10 +809,7 @@ pub fn render_surface(
         // `combined_scale`. That gives us a true smooth-resize animation
         // for both the pre-resize snapshot AND the live surface.
         let render_scale = smithay::utils::Scale::from(output_scale);
-        let combined_scale = smithay::utils::Scale::from((
-            combined_scale_x,
-            combined_scale_y,
-        ));
+        let combined_scale = smithay::utils::Scale::from((combined_scale_x, combined_scale_y));
 
         // Final on-screen visible size = the animation's interpolated
         // rect. Both the snapshot AND the live surface get scaled into
@@ -755,7 +824,9 @@ pub fn render_surface(
 
         // Determine corner rounding based on window state
         let is_maximized = state.maximized_windows.iter().any(|m| m.surface == surface);
-        let snap_zone = state.snapped_windows.iter()
+        let snap_zone = state
+            .snapped_windows
+            .iter()
             .find(|s| s.surface == surface)
             .map(|s| s.zone);
         let corners = if is_maximized {
@@ -775,10 +846,7 @@ pub fn render_surface(
             crate::ssd::corner_radius()
         };
 
-        let win_log_loc: Point<i32, Logical> = Point::from((
-            rel_x as i32,
-            rel_y as i32,
-        ));
+        let win_log_loc: Point<i32, Logical> = Point::from((rel_x as i32, rel_y as i32));
 
         // Z-order (front-to-back): corner masks → SSD overlay → window → shadow
         // Elements pushed first = higher z (drawn on top).
@@ -792,11 +860,17 @@ pub fn render_surface(
                 let visible_phys_loc: Point<i32, Physical> = (
                     (rel_x * output_scale).round() as i32,
                     (rel_y * output_scale).round() as i32,
-                ).into();
+                )
+                    .into();
                 let (solid_elems, shader_elems) = crate::ssd::render_decoration(
-                    ssd_state, visible_phys_loc, win_log_loc,
-                    effective_size, output_scale, ssd_icon_shader.as_ref(),
-                    ssd_header_shader.as_ref(), corners,
+                    ssd_state,
+                    visible_phys_loc,
+                    win_log_loc,
+                    effective_size,
+                    output_scale,
+                    ssd_icon_shader.as_ref(),
+                    ssd_header_shader.as_ref(),
+                    corners,
                     win_corner_r_logical,
                 );
                 for elem in shader_elems {
@@ -810,7 +884,9 @@ pub fn render_surface(
 
         // Capture window snapshot for close animation (clean render at native scale).
         // Skip during open animation to avoid interference and wasted work.
-        let is_opening = state.animations.get(&surface)
+        let is_opening = state
+            .animations
+            .get(&surface)
             .map(|a| a.kind == crate::animation::AnimationKind::Open)
             .unwrap_or(false);
         // Throttle snapshot to ~10Hz: used as the close-animation fallback
@@ -829,10 +905,14 @@ pub fn render_surface(
         // animation if the client dies mid-resize). Smooth-resize path
         // doesn't read this snapshot during rendering — it's only kept
         // updated as a close-anim fallback.
-        if !is_fullscreen && !is_opening && !resize_animating
+        if !is_fullscreen
+            && !is_opening
+            && !resize_animating
             && state.wallpaper_frame_counter % 6 == 0
         {
-            if let Some(snap) = capture_window_snapshot(renderer, window, win_geo.size, output_scale) {
+            if let Some(snap) =
+                capture_window_snapshot(renderer, window, win_geo.size, output_scale)
+            {
                 state.window_snapshots.insert(surface.clone(), snap);
             }
         }
@@ -852,9 +932,16 @@ pub fn render_surface(
         // Out of animation, `progress` defaults to 1 (no crossfade),
         // `combined_scale` is 1.0 (rescale is a no-op), and the snapshot
         // branch is skipped — identical fast path to before.
-        let target = if is_fullscreen { &mut fullscreen_elements } else { &mut window_elements };
+        let target = if is_fullscreen {
+            &mut fullscreen_elements
+        } else {
+            &mut window_elements
+        };
         let progress = if resize_animating {
-            state.window_state_anim.eased_progress(&surface).unwrap_or(1.0)
+            state
+                .window_state_anim
+                .eased_progress(&surface)
+                .unwrap_or(1.0)
         } else {
             1.0
         };
@@ -880,10 +967,8 @@ pub fn render_surface(
                     (rel_x * output_scale).round(),
                     (rel_y * output_scale).round(),
                 ));
-                let dst_size = Size::<i32, Logical>::from((
-                    effective_size.w.max(1),
-                    effective_size.h.max(1),
-                ));
+                let dst_size =
+                    Size::<i32, Logical>::from((effective_size.w.max(1), effective_size.h.max(1)));
                 // Explicit src spans the full texture in *logical*
                 // coords — without this, sampling outside [0,1] UVs
                 // wraps and tiles the snapshot mid grow-animation.
@@ -920,13 +1005,14 @@ pub fn render_surface(
         // the SDF mask would be degenerate and tiny transient surfaces (Proton
         // bootstrap splashes etc.) can otherwise trigger GL_INVALID_VALUE when
         // their buffer resizes underneath the element.
-        let too_small_for_rounding = win_phys_w_raw < corner_r * 2.0 + 1.0
-            || win_phys_h_raw < corner_r * 2.0 + 1.0;
+        let too_small_for_rounding =
+            win_phys_w_raw < corner_r * 2.0 + 1.0 || win_phys_h_raw < corner_r * 2.0 + 1.0;
         // Skip surface rounding when an SSD bar is present (bar+surface rounding
         // mismatch produces a notch) or when the window is tiled (client CSD
         // headers don't expect compositor clipping; clients receive set_tiled
         // and can flatten their own corners).
-        let needs_rounding = !is_fullscreen && !is_maximized
+        let needs_rounding = !is_fullscreen
+            && !is_maximized
             && snap_zone.is_none()
             && !too_small_for_rounding
             && !has_ssd
@@ -937,7 +1023,9 @@ pub fn render_surface(
         // 1.0 at rest so this is a no-op outside animations.
         let rescale = |elem: WaylandSurfaceRenderElement<GlesRenderer>| {
             smithay::backend::renderer::element::utils::RescaleRenderElement::from_element(
-                elem, phys_loc, combined_scale,
+                elem,
+                phys_loc,
+                combined_scale,
             )
         };
         if needs_rounding {
@@ -949,7 +1037,10 @@ pub fn render_surface(
             target.extend(win_render_elements.into_iter().map(|e| {
                 CustomRenderElements::RoundedSurface(
                     crate::rounded_element::RoundedSurfaceElement::new(
-                        rescale(e), shader.clone(), [win_phys_w, win_phys_h], corner_r,
+                        rescale(e),
+                        shader.clone(),
+                        [win_phys_w, win_phys_h],
+                        corner_r,
                     ),
                 )
             }));
@@ -968,16 +1059,17 @@ pub fn render_surface(
         // simply cover the blur — no visual diff, only a small render cost,
         // and `blur_exclude` is the escape hatch.
         if !is_fullscreen && !blur_excluded && state.system_bg_opacity < 0.99 {
-            let ssd_bar = if has_ssd { crate::ssd::SsdManager::bar_height() } else { 0 };
+            let ssd_bar = if has_ssd {
+                crate::ssd::SsdManager::bar_height()
+            } else {
+                0
+            };
             let log_rect = Rectangle::<i32, Logical>::new(
                 Point::from((
                     rel_x.round() as i32,
                     (rel_y - ssd_bar as f64).round() as i32,
                 )),
-                Size::from((
-                    effective_size.w,
-                    effective_size.h + ssd_bar,
-                )),
+                Size::from((effective_size.w, effective_size.h + ssd_bar)),
             );
             // Backdrop fades with the window. base_alpha is the user's
             // resting transparency preference — that's already what makes
@@ -1004,7 +1096,11 @@ pub fn render_surface(
                 // glow; when disabled, ALL get the default dark shadow.
                 let shadow_expand = 44i32;
                 let corner_r = win_corner_r_logical;
-                let ssd_bar = if has_ssd { crate::ssd::SsdManager::bar_height() } else { 0 };
+                let ssd_bar = if has_ssd {
+                    crate::ssd::SsdManager::bar_height()
+                } else {
+                    0
+                };
                 let win_x = rel_x.round() as i32;
                 let win_y = rel_y.round() as i32 - ssd_bar;
                 let win_w = effective_size.w;
@@ -1046,7 +1142,11 @@ pub fn render_surface(
             if border_width > 0 {
                 if let Some(ref shader) = border_shader {
                     let corner_r = win_corner_r_logical;
-                    let ssd_bar = if has_ssd { crate::ssd::SsdManager::bar_height() } else { 0 };
+                    let ssd_bar = if has_ssd {
+                        crate::ssd::SsdManager::bar_height()
+                    } else {
+                        0
+                    };
                     let win_x = rel_x.round() as i32;
                     let win_y = rel_y.round() as i32 - ssd_bar;
                     let win_w = effective_size.w;
@@ -1113,7 +1213,11 @@ pub fn render_surface(
             };
 
             // SSD bar offset
-            let ssd_bar = if cw.had_ssd { crate::ssd::SsdManager::bar_height() } else { 0 };
+            let ssd_bar = if cw.had_ssd {
+                crate::ssd::SsdManager::bar_height()
+            } else {
+                0
+            };
 
             // Compute the final visible rect. With `slide` set, follow the
             // anisotropic shrink/slide trajectory (same as minimize). Without
@@ -1144,7 +1248,9 @@ pub fn render_surface(
 
             let dst_w_log = dst_w.round() as i32;
             let dst_h_log = dst_h.round() as i32;
-            if dst_w_log <= 0 || dst_h_log <= 0 { continue; }
+            if dst_w_log <= 0 || dst_h_log <= 0 {
+                continue;
+            }
 
             let loc = Point::<f64, Physical>::from((phys_x as f64, phys_y as f64));
             let dst_size = Size::from((dst_w_log, dst_h_log));
@@ -1170,7 +1276,11 @@ pub fn render_surface(
             let corner_r_phys = (cw.chrome_corner_r * output_scale as f32)
                 .min(dst_phys_w / 2.0)
                 .min(dst_phys_h / 2.0);
-            match udev.backdrop_shader.as_ref().filter(|_| cw.content_rounded && corner_r_phys > 0.5) {
+            match udev
+                .backdrop_shader
+                .as_ref()
+                .filter(|_| cw.content_rounded && corner_r_phys > 0.5)
+            {
                 Some(shader) => {
                     let rounded = crate::rounded_element::RoundedBackdropElement::new(
                         tex_elem,
@@ -1222,7 +1332,9 @@ pub fn render_surface(
 
             // Shadow behind the zombie. Mirrors the live path's focus-glow
             // selection so the glow doesn't snap to a dark shadow at death.
-            if cw.fullscreen { continue; }
+            if cw.fullscreen {
+                continue;
+            }
             if let Some(ref shader) = shadow_shader {
                 let shadow_expand = 40i32;
                 let corner_r = cw.chrome_corner_r;
@@ -1259,15 +1371,16 @@ pub fn render_surface(
     let t_post_loop = Instant::now();
 
     // Build combined elements front-to-back: cursor, switcher overlay, top layers, windows, bottom layers, wallpaper.
-    let mut elements: Vec<CustomRenderElements> =
-        Vec::with_capacity(window_elements.len() + 16);
+    let mut elements: Vec<CustomRenderElements> = Vec::with_capacity(window_elements.len() + 16);
 
     // Cursor: either compositor-drawn xcursor or client surface cursor
     if let Some(cursor_elem) = state.cursor.render_element(renderer, cursor_pos) {
         elements.push(CustomRenderElements::Memory(cursor_elem));
-    } else if let smithay::input::pointer::CursorImageStatus::Surface(ref surface) = state.cursor.status {
-        use smithay::wayland::compositor::with_states;
+    } else if let smithay::input::pointer::CursorImageStatus::Surface(ref surface) =
+        state.cursor.status
+    {
         use smithay::input::pointer::CursorImageSurfaceData;
+        use smithay::wayland::compositor::with_states;
         // Smithay stores hotspot under `Mutex<CursorImageAttributes>`
         // (aliased as `CursorImageSurfaceData`) — querying the bare
         // `CursorImageAttributes` type returns None and silently falls
@@ -1284,7 +1397,8 @@ pub fn render_surface(
         let surface_pos: Point<i32, Physical> = (
             (cursor_pos.x - hotspot.x as f64 * scale) as i32,
             (cursor_pos.y - hotspot.y as f64 * scale) as i32,
-        ).into();
+        )
+            .into();
         let cursor_surface_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
             render_elements_from_surface_tree(
                 renderer,
@@ -1294,19 +1408,23 @@ pub fn render_surface(
                 1.0,
                 Kind::Cursor,
             );
-        elements.extend(cursor_surface_elements.into_iter().map(CustomRenderElements::Surface));
+        elements.extend(
+            cursor_surface_elements
+                .into_iter()
+                .map(CustomRenderElements::Surface),
+        );
     }
 
     // Click ripple: under the cursor, above switcher/windows. Tick + reschedule
     // happen earlier (before the udev borrow); here we just collect elements.
     if click_anim_active {
         let cursor_size_px = state.cursor.cursor_size();
-        let origin: Point<f64, Logical> =
-            (output_pos.loc.x as f64, output_pos.loc.y as f64).into();
-        let ring_elements = state
-            .cursor
-            .click_anim
-            .render_elements(renderer, cursor_size_px, origin, scale);
+        let origin: Point<f64, Logical> = (output_pos.loc.x as f64, output_pos.loc.y as f64).into();
+        let ring_elements =
+            state
+                .cursor
+                .click_anim
+                .render_elements(renderer, cursor_size_px, origin, scale);
         elements.extend(ring_elements.into_iter().map(CustomRenderElements::Memory));
     }
 
@@ -1317,11 +1435,16 @@ pub fn render_surface(
     // (front-to-back vec ordering: later = further back).
     if state.cursor.loading_anim.is_active() {
         let cursor_size_px = state.cursor.cursor_size();
-        let spinner_elements = state
-            .cursor
-            .loading_anim
-            .render_elements(renderer, cursor_pos, cursor_size_px, scale);
-        elements.extend(spinner_elements.into_iter().map(CustomRenderElements::Memory));
+        let spinner_elements =
+            state
+                .cursor
+                .loading_anim
+                .render_elements(renderer, cursor_pos, cursor_size_px, scale);
+        elements.extend(
+            spinner_elements
+                .into_iter()
+                .map(CustomRenderElements::Memory),
+        );
     }
 
     // Hot corner glow feedback (above windows, below cursor)
@@ -1356,54 +1479,59 @@ pub fn render_surface(
             // Suppress unused-var warning when only this branch is taken.
             let _ = glow_shader;
         } else {
-        let (glow_w, glow_h, corner_uniform, pos_x, pos_y, color, sigma) = match corner {
-            ScreenCorner::TopLeft => (
-                HOT_CORNER_GLOW_SIZE, HOT_CORNER_GLOW_SIZE,
-                [0.0f32, 0.0],
-                output_pos.loc.x,
-                output_pos.loc.y,
-                HOT_CORNER_GLOW_COLOR, HOT_CORNER_GLOW_SIGMA,
-            ),
-            ScreenCorner::TopRight => (
-                HOT_CORNER_GLOW_SIZE, HOT_CORNER_GLOW_SIZE,
-                [1.0, 0.0],
-                output_pos.loc.x + output_pos.size.w - HOT_CORNER_GLOW_SIZE,
-                output_pos.loc.y,
-                HOT_CORNER_GLOW_COLOR, HOT_CORNER_GLOW_SIGMA,
-            ),
-            ScreenCorner::BottomLeft => (
-                HOT_CORNER_GLOW_SIZE, HOT_CORNER_GLOW_SIZE,
-                [0.0, 1.0],
-                output_pos.loc.x,
-                output_pos.loc.y + output_pos.size.h - HOT_CORNER_GLOW_SIZE,
-                HOT_CORNER_GLOW_COLOR, HOT_CORNER_GLOW_SIGMA,
-            ),
-            ScreenCorner::BottomRight => (
-                HOT_CORNER_GLOW_SIZE, HOT_CORNER_GLOW_SIZE,
-                [1.0, 1.0],
-                output_pos.loc.x + output_pos.size.w - HOT_CORNER_GLOW_SIZE,
-                output_pos.loc.y + output_pos.size.h - HOT_CORNER_GLOW_SIZE,
-                HOT_CORNER_GLOW_COLOR, HOT_CORNER_GLOW_SIGMA,
-            ),
-            ScreenCorner::TopCenter => unreachable!("handled above"),
-        };
-        let glow_area = Rectangle::new(
-            (pos_x, pos_y).into(),
-            (glow_w, glow_h).into(),
-        );
-        let glow_elem = PixelShaderElement::new(
-            glow_shader.clone(),
-            glow_area,
-            None, // opaque_regions
-            1.0,  // alpha
-            vec![
-                Uniform::new("corner", corner_uniform),
-                Uniform::new("glow_color", color),
-                Uniform::new("sigma", sigma),
-            ],
-            Kind::Unspecified,
-        );
-        elements.push(CustomRenderElements::Shader(glow_elem));
+            let (glow_w, glow_h, corner_uniform, pos_x, pos_y, color, sigma) = match corner {
+                ScreenCorner::TopLeft => (
+                    HOT_CORNER_GLOW_SIZE,
+                    HOT_CORNER_GLOW_SIZE,
+                    [0.0f32, 0.0],
+                    output_pos.loc.x,
+                    output_pos.loc.y,
+                    HOT_CORNER_GLOW_COLOR,
+                    HOT_CORNER_GLOW_SIGMA,
+                ),
+                ScreenCorner::TopRight => (
+                    HOT_CORNER_GLOW_SIZE,
+                    HOT_CORNER_GLOW_SIZE,
+                    [1.0, 0.0],
+                    output_pos.loc.x + output_pos.size.w - HOT_CORNER_GLOW_SIZE,
+                    output_pos.loc.y,
+                    HOT_CORNER_GLOW_COLOR,
+                    HOT_CORNER_GLOW_SIGMA,
+                ),
+                ScreenCorner::BottomLeft => (
+                    HOT_CORNER_GLOW_SIZE,
+                    HOT_CORNER_GLOW_SIZE,
+                    [0.0, 1.0],
+                    output_pos.loc.x,
+                    output_pos.loc.y + output_pos.size.h - HOT_CORNER_GLOW_SIZE,
+                    HOT_CORNER_GLOW_COLOR,
+                    HOT_CORNER_GLOW_SIGMA,
+                ),
+                ScreenCorner::BottomRight => (
+                    HOT_CORNER_GLOW_SIZE,
+                    HOT_CORNER_GLOW_SIZE,
+                    [1.0, 1.0],
+                    output_pos.loc.x + output_pos.size.w - HOT_CORNER_GLOW_SIZE,
+                    output_pos.loc.y + output_pos.size.h - HOT_CORNER_GLOW_SIZE,
+                    HOT_CORNER_GLOW_COLOR,
+                    HOT_CORNER_GLOW_SIGMA,
+                ),
+                ScreenCorner::TopCenter => unreachable!("handled above"),
+            };
+            let glow_area = Rectangle::new((pos_x, pos_y).into(), (glow_w, glow_h).into());
+            let glow_elem = PixelShaderElement::new(
+                glow_shader.clone(),
+                glow_area,
+                None, // opaque_regions
+                1.0,  // alpha
+                vec![
+                    Uniform::new("corner", corner_uniform),
+                    Uniform::new("glow_color", color),
+                    Uniform::new("sigma", sigma),
+                ],
+                Kind::Unspecified,
+            );
+            elements.push(CustomRenderElements::Shader(glow_elem));
         }
     }
 
@@ -1425,7 +1553,8 @@ pub fn render_surface(
                 let glyph_pos: Point<f64, Physical> = (
                     (loc.x + inset) as f64 * output_scale,
                     (loc.y + inset) as f64 * output_scale,
-                ).into();
+                )
+                    .into();
                 let glyph_dst = Size::<i32, Logical>::from((sz - 2 * inset, sz - 2 * inset));
                 if let Ok(x_elem) =
                     smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement::from_buffer(
@@ -1446,14 +1575,15 @@ pub fn render_surface(
 
         // ── 2) App-icon badges (above preview, bottom-left of each card) ──
         for (entry_index, buf) in &switcher_icon_bufs {
-            let Some(card) = switcher_cards.iter().find(|c| c.entry_index == *entry_index) else {
+            let Some(card) = switcher_cards
+                .iter()
+                .find(|c| c.entry_index == *entry_index)
+            else {
                 continue;
             };
             let (loc, sz) = card.icon_rect();
-            let pos: Point<f64, Physical> = (
-                loc.x as f64 * output_scale,
-                loc.y as f64 * output_scale,
-            ).into();
+            let pos: Point<f64, Physical> =
+                (loc.x as f64 * output_scale, loc.y as f64 * output_scale).into();
             if let Ok(icon) =
                 smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement::from_buffer(
                     renderer,
@@ -1548,16 +1678,18 @@ pub fn render_surface(
             let content_phys: Point<i32, Physical> = (
                 ((slot.position.x + offset_x) as f64 * output_scale).round() as i32,
                 ((slot.position.y + offset_y) as f64 * output_scale).round() as i32,
-            ).into();
+            )
+                .into();
 
             let geo_loc = win_geo.loc;
             let base_phys: Point<i32, Physical> = (
                 content_phys.x - (geo_loc.x as f64 * output_scale).round() as i32,
                 content_phys.y - (geo_loc.y as f64 * output_scale).round() as i32,
-            ).into();
+            )
+                .into();
 
-            let full_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
-                window.render_elements(
+            let full_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> = window
+                .render_elements(
                     renderer,
                     base_phys,
                     smithay::utils::Scale::from(output_scale),
@@ -1641,21 +1773,18 @@ pub fn render_surface(
                 let content_phys: Point<i32, Physical> = (
                     ((slot.position.x + offset_x) as f64 * output_scale).round() as i32,
                     ((slot.position.y + offset_y) as f64 * output_scale).round() as i32,
-                ).into();
+                )
+                    .into();
 
                 let geo_loc = win_geo.loc;
                 let base_phys: Point<i32, Physical> = (
                     content_phys.x - (geo_loc.x as f64 * output_scale).round() as i32,
                     content_phys.y - (geo_loc.y as f64 * output_scale).round() as i32,
-                ).into();
+                )
+                    .into();
 
-                let full_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> =
-                    hover_window.render_elements(
-                        renderer,
-                        base_phys,
-                        Scale::from(output_scale),
-                        1.0,
-                    );
+                let full_elements: Vec<WaylandSurfaceRenderElement<GlesRenderer>> = hover_window
+                    .render_elements(renderer, base_phys, Scale::from(output_scale), 1.0);
 
                 for elem in full_elements {
                     let rescaled = RescaleRenderElement::from_element(
@@ -1687,20 +1816,27 @@ pub fn render_surface(
             .collect();
         if !close_buttons.is_empty() {
             let first_size = close_buttons[0].0.rect.size;
-            state.cc_thumbs.close_bg_idle.resize((first_size.w, first_size.h));
-            state.cc_thumbs.close_bg_hover.resize((first_size.w, first_size.h));
+            state
+                .cc_thumbs
+                .close_bg_idle
+                .resize((first_size.w, first_size.h));
+            state
+                .cc_thumbs
+                .close_bg_hover
+                .resize((first_size.w, first_size.h));
             // Glyph displays at ~58% of the bg size so it has a little
             // breathing room around it.
             let glyph_inset = (first_size.w as f32 * 0.21).round() as i32;
 
             for (close, hovered) in &close_buttons {
-                let phys = |x: i32, y: i32| -> smithay::utils::Point<i32, smithay::utils::Physical> {
-                    (
-                        (x as f64 * output_scale).round() as i32,
-                        (y as f64 * output_scale).round() as i32,
-                    )
-                        .into()
-                };
+                let phys =
+                    |x: i32, y: i32| -> smithay::utils::Point<i32, smithay::utils::Physical> {
+                        (
+                            (x as f64 * output_scale).round() as i32,
+                            (y as f64 * output_scale).round() as i32,
+                        )
+                            .into()
+                    };
                 let scale = smithay::utils::Scale::from(output_scale);
                 let kind = smithay::backend::renderer::element::Kind::Unspecified;
                 let bg_buf = if *hovered {
@@ -1784,7 +1920,6 @@ pub fn render_surface(
                 elements.push(CustomRenderElements::Rescaled(rescaled));
             }
         }
-
     }
 
     // Fullscreen windows render above layer surfaces (e.g. above the bar).
@@ -1800,7 +1935,7 @@ pub fn render_surface(
     let mut nocapture_indices: Vec<usize> = Vec::new();
     {
         use smithay::wayland::compositor::with_states;
-        use smithay::wayland::shell::wlr_layer::{LayerSurfaceCachedState, Layer};
+        use smithay::wayland::shell::wlr_layer::{Layer, LayerSurfaceCachedState};
         for ls in &state.layer_surfaces {
             if !ls.alive() {
                 continue;
@@ -1816,7 +1951,10 @@ pub fn render_surface(
                 }
             }
             let cached = with_states(ls.wl_surface(), |states| {
-                *states.cached_state.get::<LayerSurfaceCachedState>().current()
+                *states
+                    .cached_state
+                    .get::<LayerSurfaceCachedState>()
+                    .current()
             });
             let is_top = cached.layer == Layer::Top || cached.layer == Layer::Overlay;
             let is_bottom = cached.layer == Layer::Background || cached.layer == Layer::Bottom;
@@ -1833,7 +1971,11 @@ pub fn render_surface(
                     1.0,
                     Kind::Unspecified,
                 );
-            let target = if is_top { &mut elements } else { &mut bottom_layer_elements };
+            let target = if is_top {
+                &mut elements
+            } else {
+                &mut bottom_layer_elements
+            };
             let no_capture = state
                 .layer_surface_namespaces
                 .get(ls.wl_surface())
@@ -1841,7 +1983,11 @@ pub fn render_surface(
             if is_top && no_capture {
                 nocapture_indices.extend(target.len()..target.len() + surface_elements.len());
             }
-            target.extend(surface_elements.into_iter().map(CustomRenderElements::Surface));
+            target.extend(
+                surface_elements
+                    .into_iter()
+                    .map(CustomRenderElements::Surface),
+            );
         }
     }
 
@@ -1895,13 +2041,27 @@ pub fn render_surface(
         state.blur_tint = crate::read_config_f32("blur_tint", 0.15);
         state.blur_darken = crate::read_config_f32("blur_darken", 0.0);
         state.focus_glow = crate::read_config("window_manager", "focus_glow", "true") == "true";
-        state.focus_glow_color = crate::parse_glow_color(&crate::read_config("window_manager", "focus_glow_color", "#4A9EFF"));
-        state.border_color = crate::parse_glow_color(&crate::read_config("window_manager", "border_color", "#4A9EFF"));
-        state.blur_tint_color = crate::parse_glow_color(&crate::read_config("windows", "blur_tint_color", "#4A9EFF"));
-        state.focus_glow_intensity = crate::read_config("window_manager", "focus_glow_intensity", "0.2")
-            .parse::<f32>().unwrap_or(0.2).clamp(0.0, 0.6);
+        state.focus_glow_color = crate::parse_glow_color(&crate::read_config(
+            "window_manager",
+            "focus_glow_color",
+            "#4A9EFF",
+        ));
+        state.border_color = crate::parse_glow_color(&crate::read_config(
+            "window_manager",
+            "border_color",
+            "#4A9EFF",
+        ));
+        state.blur_tint_color =
+            crate::parse_glow_color(&crate::read_config("windows", "blur_tint_color", "#4A9EFF"));
+        state.focus_glow_intensity =
+            crate::read_config("window_manager", "focus_glow_intensity", "0.2")
+                .parse::<f32>()
+                .unwrap_or(0.2)
+                .clamp(0.0, 0.6);
         state.border_width = crate::read_config("window_manager", "border_width", "0")
-            .parse::<u32>().unwrap_or(0).clamp(0, 10);
+            .parse::<u32>()
+            .unwrap_or(0)
+            .clamp(0, 10);
     }
 
     let t_after_config = Instant::now();
@@ -1922,13 +2082,28 @@ pub fn render_surface(
         {
             let blur_tint = state.blur_tint;
             let blur_darken = state.blur_darken;
-            let passes = if blur_intensity < 0.3 { 2usize }
-                else if blur_intensity < 0.6 { 3 }
-                else if blur_intensity < 0.8 { 4 }
-                else { 5 };
+            let passes = if blur_intensity < 0.3 {
+                2usize
+            } else if blur_intensity < 0.6 {
+                3
+            } else if blur_intensity < 0.8 {
+                4
+            } else {
+                5
+            };
 
-            let blur_key = UdevOutputId { device_id: node, crtc };
-            if crate::blur::ensure_textures(renderer, output_phys, passes, blur_backdrops.len(), &mut udev.blur_states, blur_key) {
+            let blur_key = UdevOutputId {
+                device_id: node,
+                crtc,
+            };
+            if crate::blur::ensure_textures(
+                renderer,
+                output_phys,
+                passes,
+                blur_backdrops.len(),
+                &mut udev.blur_states,
+                blur_key,
+            ) {
                 // Per-window blur: each transparent window blurs everything
                 // STRICTLY BEHIND it — wallpaper + bottom layers + the tail of
                 // window_elements past its own range (higher index = further
@@ -1937,7 +2112,12 @@ pub fn render_surface(
                 // into its backdrop. This is why each window needs its own
                 // result texture: their blur sources differ.
                 let mut wp_elements: Vec<CustomRenderElements> = Vec::new();
-                if let Some(wp_elem) = state.wallpaper.render_element_for_output(renderer, &output.name(), output_pos.size, scale) {
+                if let Some(wp_elem) = state.wallpaper.render_element_for_output(
+                    renderer,
+                    &output.name(),
+                    output_pos.size,
+                    scale,
+                ) {
                     wp_elements.push(CustomRenderElements::Memory(wp_elem));
                 }
 
@@ -1968,8 +2148,8 @@ pub fn render_surface(
                 // windows behind it show up in geometry, so they invalidate
                 // the fingerprint automatically.
                 let fingerprint = {
-                    use std::hash::{Hash, Hasher};
                     use smithay::backend::renderer::element::Element;
+                    use std::hash::{Hash, Hasher};
                     let mut h = std::collections::hash_map::DefaultHasher::new();
                     let scale_pt: smithay::utils::Scale<f64> = (output_scale, output_scale).into();
                     let fp_groups: [&[CustomRenderElements]; 3] =
@@ -1978,8 +2158,11 @@ pub fn render_surface(
                         for elem in group.iter() {
                             elem.id().hash(&mut h);
                             // CommitCounter doesn't impl Hash; extract usize via distance.
-                            let cv = elem.current_commit()
-                                .distance(Some(smithay::backend::renderer::utils::CommitCounter::default()))
+                            let cv = elem
+                                .current_commit()
+                                .distance(Some(
+                                    smithay::backend::renderer::utils::CommitCounter::default(),
+                                ))
                                 .unwrap_or(0);
                             cv.hash(&mut h);
                             let g = elem.geometry(scale_pt);
@@ -2010,9 +2193,17 @@ pub fn render_surface(
                         let groups: [&[CustomRenderElements]; 3] =
                             [&wp_elements, &bottom_layer_elements, behind];
                         let r = crate::blur::render_and_blur(
-                            renderer, blur_state, &groups, BG_COLOR.into(),
-                            output_phys, output_scale, down_shader, up_shader,
-                            tint_rgba, blur_darken, i,
+                            renderer,
+                            blur_state,
+                            &groups,
+                            BG_COLOR.into(),
+                            output_phys,
+                            output_scale,
+                            down_shader,
+                            up_shader,
+                            tint_rgba,
+                            blur_darken,
+                            i,
                         );
                         if let Err(e) = r {
                             tracing::warn!("blur: render_and_blur failed: {:?}", e);
@@ -2031,37 +2222,42 @@ pub fn render_surface(
                         use smithay::backend::renderer::Renderer as _;
                         renderer.context_id()
                     };
-                    let output_logical = Size::<i32, Logical>::from((
-                        output_geo.size.w, output_geo.size.h,
-                    ));
+                    let output_logical =
+                        Size::<i32, Logical>::from((output_geo.size.w, output_geo.size.h));
                     let blur_tex_w = (output_phys.w / 2).max(1) as f32;
                     let blur_tex_h = (output_phys.h / 2).max(1) as f32;
 
                     // Insert backdrops back-to-front (rev) so each insert at
                     // `idx` doesn't shift the lower indices still to be used.
                     // Result index `i` matches the per-window blur above.
-                    for (i, (_start, idx, log_rect, alpha, radius_logical)) in blur_backdrops.iter().enumerate().rev() {
+                    for (i, (_start, idx, log_rect, alpha, radius_logical)) in
+                        blur_backdrops.iter().enumerate().rev()
+                    {
                         let corner_r = radius_logical * output_scale as f32;
                         let backdrop = crate::blur::create_backdrop(
-                            blur_state, ctx_id.clone(), *log_rect,
-                            output_logical, output_scale, *alpha, i,
+                            blur_state,
+                            ctx_id.clone(),
+                            *log_rect,
+                            output_logical,
+                            output_scale,
+                            *alpha,
+                            i,
                         );
                         // Wrap in rounded backdrop with SDF corner masking
                         if let Some(ref shader) = udev.backdrop_shader {
                             let phys_w = (log_rect.size.w as f64 * output_scale).round() as f32;
                             let phys_h = (log_rect.size.h as f64 * output_scale).round() as f32;
                             let rounded = crate::rounded_element::RoundedBackdropElement::new(
-                                backdrop, shader.clone(),
-                                [phys_w, phys_h], corner_r,
+                                backdrop,
+                                shader.clone(),
+                                [phys_w, phys_h],
+                                corner_r,
                                 [blur_tex_w, blur_tex_h],
                             );
-                            window_elements.insert(
-                                *idx, CustomRenderElements::RoundedBackdrop(rounded),
-                            );
+                            window_elements
+                                .insert(*idx, CustomRenderElements::RoundedBackdrop(rounded));
                         } else {
-                            window_elements.insert(
-                                *idx, CustomRenderElements::Backdrop(backdrop),
-                            );
+                            window_elements.insert(*idx, CustomRenderElements::Backdrop(backdrop));
                         }
                     }
                 }
@@ -2097,8 +2293,7 @@ pub fn render_surface(
         // Confirm the lock once every output has presented a locked frame.
         // Disjoint field borrows only (state.udev stays mutably borrowed via
         // `renderer`), so this can't be a &mut self method.
-        let output_names: Vec<String> =
-            state.workspaces.outputs_iter().map(|o| o.name()).collect();
+        let output_names: Vec<String> = state.workspaces.outputs_iter().map(|o| o.name()).collect();
         if let Some(data) = state.session_lock.as_mut() {
             if data.pending_locker.is_some() {
                 data.presented.insert(out_name);
@@ -2117,7 +2312,12 @@ pub fn render_surface(
         elements.extend(window_elements);
         elements.extend(bottom_layer_elements);
 
-        if let Some(wallpaper_elem) = state.wallpaper.render_element_for_output(renderer, &output.name(), output_pos.size, scale) {
+        if let Some(wallpaper_elem) = state.wallpaper.render_element_for_output(
+            renderer,
+            &output.name(),
+            output_pos.size,
+            scale,
+        ) {
             elements.push(CustomRenderElements::Memory(wallpaper_elem));
         }
     }
@@ -2154,12 +2354,9 @@ pub fn render_surface(
     }
 
     let t_render = Instant::now();
-    let result = surface.drm_output.render_frame(
-        renderer,
-        &elements,
-        BG_COLOR,
-        frame_flags,
-    );
+    let result = surface
+        .drm_output
+        .render_frame(renderer, &elements, BG_COLOR, frame_flags);
     let render_elapsed = t_render.elapsed();
 
     let (rendered, frame_is_empty) = match result {
@@ -2169,7 +2366,6 @@ pub fn render_surface(
             return;
         }
     };
-
 
     // Deliver the PREVIOUS frame's async screencopy readback first — the
     // GPU has had a full frame interval to finish it, so mapping the PBO
@@ -2255,8 +2451,7 @@ pub fn render_surface(
     // borrow above has ended by here — `arm_vblank_watchdog(state)` below took
     // `&mut state` already in the original code.)
     if queued {
-        let feedback =
-            collect_presentation_feedback(&state.space, &state.layer_surfaces, &output);
+        let feedback = collect_presentation_feedback(&state.space, &state.layer_surfaces, &output);
         if let Some(udev) = state.udev.as_mut() {
             if let Some(s) = udev
                 .backends
@@ -2304,13 +2499,9 @@ pub fn render_surface(
             }
             for ls in &state.layer_surfaces {
                 if ls.alive() {
-                    send_frames_surface_tree(
-                        ls.wl_surface(),
-                        &output,
-                        now,
-                        throttle,
-                        |_, _| Some(output.clone()),
-                    );
+                    send_frames_surface_tree(ls.wl_surface(), &output, now, throttle, |_, _| {
+                        Some(output.clone())
+                    });
                 }
             }
             if let Some(data) = state.session_lock.as_ref() {
@@ -2333,7 +2524,8 @@ pub fn render_surface(
 
     // Keep rendering while animations are active
     // Also keep rendering while switcher is silently waiting for hold threshold
-    let switcher_pending = state.alt_tab_switcher.is_active() && !state.alt_tab_switcher.is_visible();
+    let switcher_pending =
+        state.alt_tab_switcher.is_active() && !state.alt_tab_switcher.is_visible();
     let needs_anim_redraw = state.animations.has_active()
         || state.workspace_anim.is_active()
         || state.window_state_anim.has_active()
@@ -2369,9 +2561,9 @@ pub fn render_surface(
             total_ms = total_elapsed.as_secs_f64() * 1000.0,
             prelude_ms,
             elements_ms = elements_elapsed.as_secs_f64() * 1000.0,
-            chrome_ms,    // cursor + switcher + layer surfaces
-            config_ms,    // wallpaper reload + config reread
-            blur_ms,      // blur pipeline + element list assembly
+            chrome_ms, // cursor + switcher + layer surfaces
+            config_ms, // wallpaper reload + config reread
+            blur_ms,   // blur pipeline + element list assembly
             render_ms = render_elapsed.as_secs_f64() * 1000.0,
             "Slow render detected"
         );

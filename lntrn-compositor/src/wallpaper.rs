@@ -4,7 +4,13 @@ use image::{imageops::FilterType, DynamicImage, GenericImageView};
 use smithay::{
     backend::{
         allocator::Fourcc,
-        renderer::{element::{memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement}, Kind}, gles::GlesRenderer},
+        renderer::{
+            element::{
+                memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement},
+                Kind,
+            },
+            gles::GlesRenderer,
+        },
     },
     utils::{Logical, Physical, Point, Rectangle, Size},
 };
@@ -47,13 +53,20 @@ impl WallpaperState {
         let new_path = read_wallpaper_setting();
         let new_per_paths: Vec<(String, String)> = crate::read_monitor_configs()
             .into_iter()
-            .filter_map(|cfg| cfg.wallpaper.filter(|w| !w.is_empty()).map(|w| (cfg.name, w)))
+            .filter_map(|cfg| {
+                cfg.wallpaper
+                    .filter(|w| !w.is_empty())
+                    .map(|w| (cfg.name, w))
+            })
             .collect();
 
         let global_changed = new_path != self.current_path;
         let per_changed = new_per_paths.len() != self.per_output.len()
             || new_per_paths.iter().any(|(name, path)| {
-                self.per_output.get(name).map(|(_, p)| p != path).unwrap_or(true)
+                self.per_output
+                    .get(name)
+                    .map(|(_, p)| p != path)
+                    .unwrap_or(true)
             });
 
         if global_changed || per_changed {
@@ -114,8 +127,15 @@ impl WallpaperState {
             let (src_w, src_h) = source.dimensions();
             tracing::info!(
                 "[wallpaper] resize {}x{} -> {}x{} phys for {}",
-                src_w, src_h, key.1, key.2,
-                if output_name.is_empty() { "default" } else { output_name }
+                src_w,
+                src_h,
+                key.1,
+                key.2,
+                if output_name.is_empty() {
+                    "default"
+                } else {
+                    output_name
+                }
             );
             let resized_img = resize_to_fill(source, key.1 as u32, key.2 as u32);
             let resized = resized_img.to_rgba8();
@@ -148,7 +168,10 @@ fn load_wallpaper_image(path: &str) -> Option<DynamicImage> {
             }
             Err(e) => {
                 tracing::info!("[wallpaper] failed to load '{}': {e}, using default", path);
-                image::load_from_memory(include_bytes!("../../wallpapers/Lantern-DE_Wallpaper.jpeg")).ok()
+                image::load_from_memory(include_bytes!(
+                    "../../wallpapers/Lantern-DE_Wallpaper.jpeg"
+                ))
+                .ok()
             }
         }
     }
@@ -168,7 +191,9 @@ fn resize_to_fill(image: &DynamicImage, width: u32, height: u32) -> DynamicImage
 /// Read the global wallpaper path from the Lantern config.
 fn read_wallpaper_setting() -> String {
     let contents = crate::cached_lantern_toml();
-    if contents.is_empty() { return String::new(); }
+    if contents.is_empty() {
+        return String::new();
+    }
     let mut in_appearance = false;
     for line in contents.lines() {
         let trimmed = line.trim();

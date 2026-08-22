@@ -15,7 +15,10 @@ use std::time::Instant;
 use crate::state::Lantern;
 use crate::window_management::ArrowDir;
 
-use super::spawn::{fire_audio_osd, fire_brightness_osd, spawn_detached, spawn_detached_args, spawn_detached_args_logged, AudioRepeat};
+use super::spawn::{
+    fire_audio_osd, fire_brightness_osd, spawn_detached, spawn_detached_args,
+    spawn_detached_args_logged, AudioRepeat,
+};
 
 /// Max time Super may be held and still count as a "tap" that opens the
 /// Command Center. Anything longer is a hold (e.g. holding Super to drag a
@@ -108,13 +111,11 @@ impl Lantern {
                     if data.layer_held && event.state() == KeyState::Pressed {
                         // Match the unshifted keysym so the map fires whether
                         // or not Shift is held with the layer.
-                        let base = keysym
-                            .raw_syms()
-                            .first()
-                            .map(|s| s.raw())
-                            .unwrap_or(raw);
+                        let base = keysym.raw_syms().first().map(|s| s.raw()).unwrap_or(raw);
                         let held = crate::input::layer::held_mods(_modifiers);
-                        if let Some(target) = data.layer.lookup(base, held)
+                        if let Some(target) = data
+                            .layer
+                            .lookup(base, held)
                             .or_else(|| data.layer.lookup(raw, held))
                         {
                             let kc = smithay::input::keyboard::Keycode::new(target);
@@ -203,7 +204,9 @@ impl Lantern {
                 if event.state() == KeyState::Pressed
                     && _modifiers.alt
                     && (keysym.raw_syms().contains(&Keysym::from(xkb::KEY_Tab))
-                        || keysym.raw_syms().contains(&Keysym::from(xkb::KEY_ISO_Left_Tab)))
+                        || keysym
+                            .raw_syms()
+                            .contains(&Keysym::from(xkb::KEY_ISO_Left_Tab)))
                 {
                     if _modifiers.shift {
                         data.focus_prev_window(serial);
@@ -217,9 +220,7 @@ impl Lantern {
                 // selection (GNOME spotlight feel). Intercepted only when
                 // the switcher owns the keyboard, so arrows pass through
                 // normally otherwise.
-                if event.state() == KeyState::Pressed
-                    && data.alt_tab_switcher.is_active()
-                {
+                if event.state() == KeyState::Pressed && data.alt_tab_switcher.is_active() {
                     match keysym.modified_sym().raw() {
                         xkb::KEY_Right | xkb::KEY_Down => {
                             data.focus_next_window(serial);
@@ -272,19 +273,18 @@ impl Lantern {
                 // --- Workspace keybinds ---
                 // Use raw_syms() so Shift-modified digits (!, @, #, ...) still match.
                 if event.state() == KeyState::Pressed {
-                    let ws_id: Option<u32> = keysym.raw_syms().iter()
-                        .find_map(|s| match s.raw() {
-                            xkb::KEY_1 => Some(1),
-                            xkb::KEY_2 => Some(2),
-                            xkb::KEY_3 => Some(3),
-                            xkb::KEY_4 => Some(4),
-                            xkb::KEY_5 => Some(5),
-                            xkb::KEY_6 => Some(6),
-                            xkb::KEY_7 => Some(7),
-                            xkb::KEY_8 => Some(8),
-                            xkb::KEY_9 => Some(9),
-                            _ => None,
-                        });
+                    let ws_id: Option<u32> = keysym.raw_syms().iter().find_map(|s| match s.raw() {
+                        xkb::KEY_1 => Some(1),
+                        xkb::KEY_2 => Some(2),
+                        xkb::KEY_3 => Some(3),
+                        xkb::KEY_4 => Some(4),
+                        xkb::KEY_5 => Some(5),
+                        xkb::KEY_6 => Some(6),
+                        xkb::KEY_7 => Some(7),
+                        xkb::KEY_8 => Some(8),
+                        xkb::KEY_9 => Some(9),
+                        _ => None,
+                    });
                     if let Some(id) = ws_id {
                         if _modifiers.logo {
                             if _modifiers.shift {
@@ -304,7 +304,10 @@ impl Lantern {
                 //   Left : previous workspace (no wrap)
                 //   Right: next workspace (creates one if at right edge, cap 9)
                 if event.state() == KeyState::Pressed
-                    && _modifiers.logo && _modifiers.alt && !_modifiers.shift && !_modifiers.ctrl
+                    && _modifiers.logo
+                    && _modifiers.alt
+                    && !_modifiers.shift
+                    && !_modifiers.ctrl
                 {
                     let raw = keysym.modified_sym().raw();
                     match raw {
@@ -339,7 +342,10 @@ impl Lantern {
                 // Up/Down scale aspect-locked through the `[windows] size_*_pct`
                 // stages; Left/Right cycle 4:3 ↔ 3:2 ↔ 16:9 keeping the height.
                 if event.state() == KeyState::Pressed
-                    && _modifiers.logo && !_modifiers.shift && !_modifiers.ctrl && !_modifiers.alt
+                    && _modifiers.logo
+                    && !_modifiers.shift
+                    && !_modifiers.ctrl
+                    && !_modifiers.alt
                 {
                     let is_shape_key = match keysym.modified_sym().raw() {
                         xkb::KEY_Up => {
@@ -374,7 +380,10 @@ impl Lantern {
                 // it NEVER resizes (size = Super+Up/Down, aspect =
                 // Super+Left/Right).
                 if event.state() == KeyState::Pressed
-                    && _modifiers.logo && _modifiers.shift && !_modifiers.ctrl && !_modifiers.alt
+                    && _modifiers.logo
+                    && _modifiers.shift
+                    && !_modifiers.ctrl
+                    && !_modifiers.alt
                 {
                     if let Some(arrow) = arrow_dir_from_keysym(keysym.modified_sym().raw()) {
                         data.snap_focused_dir(arrow);
@@ -393,16 +402,18 @@ impl Lantern {
                 // - Super+F11 deliberately falls through so apps can bind it
                 //   (lntrn-terminal uses it for chrome-hide / "rice mode").
                 if event.state() == KeyState::Pressed {
-                    let is_f11 = !_modifiers.logo
-                        && keysym.modified_sym().raw() == xkb::KEY_F11;
+                    let is_f11 = !_modifiers.logo && keysym.modified_sym().raw() == xkb::KEY_F11;
                     let is_super_f = _modifiers.logo && keysym.modified_sym().raw() == xkb::KEY_f;
 
                     if is_f11 || is_super_f {
-                        let is_wine = data.focused_window()
-                            .and_then(|w| w.x11_surface().map(|x| {
-                                let class = x.class().to_lowercase();
-                                class.ends_with(".exe") || class.contains("wine")
-                            }))
+                        let is_wine = data
+                            .focused_window()
+                            .and_then(|w| {
+                                w.x11_surface().map(|x| {
+                                    let class = x.class().to_lowercase();
+                                    class.ends_with(".exe") || class.contains("wine")
+                                })
+                            })
                             .unwrap_or(false);
 
                         if is_wine {
@@ -476,7 +487,9 @@ impl Lantern {
                             }
                         } else {
                             // Key released — stop repeat
-                            if data.audio_repeat.as_ref()
+                            if data
+                                .audio_repeat
+                                .as_ref()
                                 .map_or(false, |r| r.key_code == event.key_code())
                             {
                                 data.audio_repeat = None;
@@ -565,11 +578,7 @@ impl Lantern {
                     && keysym.modified_sym().raw() == xkb::KEY_backslash
                 {
                     tracing::info!("Super+Backslash pressed, toggling session");
-                    spawn_detached_args(
-                        "lntrn-session-toggle",
-                        &[],
-                        &data.socket_name,
-                    );
+                    spawn_detached_args("lntrn-session-toggle", &[], &data.socket_name);
                     return FilterResult::Intercept(());
                 }
 
@@ -625,7 +634,9 @@ impl Lantern {
     /// edits from System Settings take effect without a compositor restart.
     fn reload_layer_if_changed(&mut self) {
         let path = crate::lantern_config_path();
-        let mtime = std::fs::metadata(&path).ok().and_then(|m| m.modified().ok());
+        let mtime = std::fs::metadata(&path)
+            .ok()
+            .and_then(|m| m.modified().ok());
         if self.layer_config_mtime != mtime {
             self.layer_config_mtime = mtime;
             self.layer = crate::input::layer::LanternLayer::load();

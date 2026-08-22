@@ -60,7 +60,10 @@ struct ChromaticityU16 {
 /// CIE chromaticity → the infoframe's 16-bit 0.00002-unit encoding (0xC350 = 1.0).
 fn chroma_u16(c: Chromaticity) -> ChromaticityU16 {
     let enc = |v: f32| (v.clamp(0.0, 1.0) * 50000.0).round() as u16;
-    ChromaticityU16 { x: enc(c.x), y: enc(c.y) }
+    ChromaticityU16 {
+        x: enc(c.x),
+        y: enc(c.y),
+    }
 }
 
 impl HdrOutputMetadata {
@@ -86,10 +89,7 @@ impl HdrOutputMetadata {
     fn as_bytes(&self) -> &[u8] {
         // Safe: #[repr(C)] POD with no padding-sensitive reads; we only read it.
         unsafe {
-            std::slice::from_raw_parts(
-                self as *const _ as *const u8,
-                std::mem::size_of::<Self>(),
-            )
+            std::slice::from_raw_parts(self as *const _ as *const u8, std::mem::size_of::<Self>())
         }
     }
 }
@@ -190,7 +190,11 @@ pub fn set_hdr_metadata(
 
     // Colorspace enum.
     if let Some(prop) = handles.colorspace {
-        let val = if enable { handles.colorspace_bt2020 } else { handles.colorspace_default };
+        let val = if enable {
+            handles.colorspace_bt2020
+        } else {
+            handles.colorspace_default
+        };
         if let Some(v) = val {
             if let Err(e) = surface.set_property(conn, prop, v) {
                 warn!("HDR: set Colorspace failed: {e}");

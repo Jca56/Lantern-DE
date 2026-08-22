@@ -69,9 +69,15 @@ impl Lantern {
     /// re-anchors vertically to whichever of top / centre / bottom it's
     /// nearest, so its rough vertical position is preserved. `grow` = taller.
     pub(crate) fn axis_resize_height(&mut self, grow: bool) -> bool {
-        let Some(window) = self.focused_window() else { return false };
-        let Some(surface) = window.get_wl_surface() else { return false };
-        let Some(region) = self.edge_op_region(&window, &surface) else { return false };
+        let Some(window) = self.focused_window() else {
+            return false;
+        };
+        let Some(surface) = window.get_wl_surface() else {
+            return false;
+        };
+        let Some(region) = self.edge_op_region(&window, &surface) else {
+            return false;
+        };
 
         let (loc, size) = self.op_start_rect(&window, &surface, region.loc);
         let gap = crate::SINGLE_WINDOW_OUTER_GAP;
@@ -98,9 +104,15 @@ impl Lantern {
     /// window stays flush to its pinned edge — `wider` (Super+Right) grows it,
     /// `!wider` (Super+Left) shrinks it.
     pub(crate) fn axis_resize_width(&mut self, wider: bool, pin: EdgePin) -> bool {
-        let Some(window) = self.focused_window() else { return false };
-        let Some(surface) = window.get_wl_surface() else { return false };
-        let Some(region) = self.edge_op_region(&window, &surface) else { return false };
+        let Some(window) = self.focused_window() else {
+            return false;
+        };
+        let Some(surface) = window.get_wl_surface() else {
+            return false;
+        };
+        let Some(region) = self.edge_op_region(&window, &surface) else {
+            return false;
+        };
 
         let (loc, size) = self.op_start_rect(&window, &surface, region.loc);
         let gap = crate::SINGLE_WINDOW_OUTER_GAP;

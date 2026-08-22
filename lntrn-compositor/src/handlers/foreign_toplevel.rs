@@ -32,21 +32,13 @@ impl ForeignToplevelEntry {
     fn send_state_to(&self, handle: &ZwlrForeignToplevelHandleV1) {
         handle.title(self.title.clone());
         handle.app_id(self.app_id.clone());
-        let bytes: Vec<u8> = self
-            .states
-            .iter()
-            .flat_map(|s| s.to_ne_bytes())
-            .collect();
+        let bytes: Vec<u8> = self.states.iter().flat_map(|s| s.to_ne_bytes()).collect();
         handle.state(bytes);
         handle.done();
     }
 
     fn broadcast_done(&self) {
-        let bytes: Vec<u8> = self
-            .states
-            .iter()
-            .flat_map(|s| s.to_ne_bytes())
-            .collect();
+        let bytes: Vec<u8> = self.states.iter().flat_map(|s| s.to_ne_bytes()).collect();
         for weak in &self.instances {
             if let Ok(h) = weak.upgrade() {
                 h.title(self.title.clone());
@@ -344,7 +336,8 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, WlSurface, Lantern> for Lantern {
                 // queue the close event without acting until something
                 // else nudges them — manifesting as "X did nothing until
                 // I unminimized the window first".
-                let window = state.find_mapped_window(surface)
+                let window = state
+                    .find_mapped_window(surface)
                     .or_else(|| state.restore_minimized_by_surface(surface));
                 if let Some(window) = window {
                     crate::window_ext::WindowExt::request_close(&window);
@@ -356,7 +349,9 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, WlSurface, Lantern> for Lantern {
                 state.maximize_request_surface(surface);
             }
             zwlr_foreign_toplevel_handle_v1::Request::UnsetFullscreen => {
-                tracing::info!("Foreign toplevel: unset_fullscreen requested (treating as unmaximize)");
+                tracing::info!(
+                    "Foreign toplevel: unset_fullscreen requested (treating as unmaximize)"
+                );
                 state.unmaximize_request_surface(surface);
             }
             zwlr_foreign_toplevel_handle_v1::Request::SetRectangle { .. } => {

@@ -31,8 +31,7 @@ use smithay::{
     },
     wayland::selection::{
         data_device::{
-            request_data_device_client_selection, set_data_device_selection,
-            SelectionRequestError,
+            request_data_device_client_selection, set_data_device_selection, SelectionRequestError,
         },
         SelectionSource, SelectionTarget,
     },
@@ -249,7 +248,8 @@ pub fn image_cache_path(id: u64) -> std::path::PathBuf {
 /// Install the calloop ping source that drives [`recheck_clipboard`] from
 /// `ClientData::disconnected`. Call once at compositor startup.
 pub fn install_recheck_source(state: &mut Lantern) -> io::Result<()> {
-    let (ping, source) = make_ping().map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+    let (ping, source) =
+        make_ping().map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
     state
         .loop_handle
         .insert_source(source, |_, _, state: &mut Lantern| {
@@ -330,23 +330,33 @@ pub fn capture_selection(state: &mut Lantern, source: &SelectionSource) {
     };
     state.clipboard_manager.pending.insert(
         id,
-        PendingEntry { entry, mimes_remaining: wanted.len() },
+        PendingEntry {
+            entry,
+            mimes_remaining: wanted.len(),
+        },
     );
 
     let timer = Timer::from_duration(Duration::ZERO);
-    let _ = state.loop_handle.insert_source(timer, move |_, _, state: &mut Lantern| {
-        start_pending_reads(state, id, &wanted);
-        TimeoutAction::Drop
-    });
+    let _ = state
+        .loop_handle
+        .insert_source(timer, move |_, _, state: &mut Lantern| {
+            start_pending_reads(state, id, &wanted);
+            TimeoutAction::Drop
+        });
 }
 
 fn start_pending_reads(state: &mut Lantern, id: u64, mimes: &[String]) {
     let seat = state.seat.clone();
-    eprintln!("[clipboard] start_pending_reads id={} mimes={:?}", id, mimes);
+    eprintln!(
+        "[clipboard] start_pending_reads id={} mimes={:?}",
+        id, mimes
+    );
 
     let mut started = 0usize;
     for mime in mimes {
-        let Some((read_fd, write_fd)) = make_pipe() else { continue };
+        let Some((read_fd, write_fd)) = make_pipe() else {
+            continue;
+        };
         set_nonblocking(&read_fd);
 
         match request_data_device_client_selection(&seat, mime.clone(), write_fd) {
@@ -365,9 +375,7 @@ fn start_pending_reads(state: &mut Lantern, id: u64, mimes: &[String]) {
                 let raw = fd.as_raw_fd();
                 let mut chunk = [0u8; 8192];
                 loop {
-                    let n = unsafe {
-                        libc::read(raw, chunk.as_mut_ptr() as *mut _, chunk.len())
-                    };
+                    let n = unsafe { libc::read(raw, chunk.as_mut_ptr() as *mut _, chunk.len()) };
                     if n > 0 {
                         if buf.len() + (n as usize) > MAX_BYTES_PER_MIME {
                             complete_mime(state, id, &mime_for_cb, Vec::new());
@@ -410,7 +418,12 @@ fn start_pending_reads(state: &mut Lantern, id: u64, mimes: &[String]) {
 }
 
 fn complete_mime(state: &mut Lantern, id: u64, mime: &str, bytes: Vec<u8>) {
-    eprintln!("[clipboard] complete_mime id={} mime={} bytes={}", id, mime, bytes.len());
+    eprintln!(
+        "[clipboard] complete_mime id={} mime={} bytes={}",
+        id,
+        mime,
+        bytes.len()
+    );
     if let Some(p) = state.clipboard_manager.pending.get_mut(&id) {
         if !bytes.is_empty() {
             p.entry.mime_data.insert(mime.to_string(), bytes);
@@ -430,7 +443,9 @@ fn finalize_if_ready(state: &mut Lantern, id: u64) {
     if !ready {
         return;
     }
-    let Some(p) = state.clipboard_manager.pending.remove(&id) else { return };
+    let Some(p) = state.clipboard_manager.pending.remove(&id) else {
+        return;
+    };
     let mut entry = p.entry;
     if entry.mime_data.is_empty() {
         eprintln!("[clipboard] entry id={} discarded (no data)", entry.id);

@@ -8,7 +8,6 @@
 /// per-output PBO (no stall: the GPU copies in the background) and the
 /// pixels are mapped + delivered to clients at the START of the output's
 /// next render pass, a full frame interval later.
-
 use std::collections::HashMap;
 
 use smithay::backend::allocator::Fourcc;
@@ -72,8 +71,12 @@ pub fn deliver_inflight(
     output: &Output,
     slots: &mut HashMap<String, ScreencopyPbo>,
 ) {
-    let Some(slot) = slots.get_mut(&output.name()) else { return };
-    let Some((pending, kind, phys_w, phys_h)) = slot.inflight.take() else { return };
+    let Some(slot) = slots.get_mut(&output.name()) else {
+        return;
+    };
+    let Some((pending, kind, phys_w, phys_h)) = slot.inflight.take() else {
+        return;
+    };
 
     match kind {
         InflightKind::RawPbo => {
@@ -82,12 +85,8 @@ pub fn deliver_inflight(
             let mut pending_opt = Some(pending);
             let result = renderer.with_context(|gl| unsafe {
                 gl.BindBuffer(ffi::PIXEL_PACK_BUFFER, pbo);
-                let ptr = gl.MapBufferRange(
-                    ffi::PIXEL_PACK_BUFFER,
-                    0,
-                    len as isize,
-                    ffi::MAP_READ_BIT,
-                );
+                let ptr =
+                    gl.MapBufferRange(ffi::PIXEL_PACK_BUFFER, 0, len as isize, ffi::MAP_READ_BIT);
                 if ptr.is_null() {
                     fail_all(pending_opt.take().unwrap());
                 } else {
@@ -133,9 +132,11 @@ pub fn start_screencopy_readback(
     let (phys_w, phys_h) = (mode.size.w as usize, mode.size.h as usize);
     let len = phys_w * phys_h * 4;
 
-    let slot = slots
-        .entry(output.name())
-        .or_insert(ScreencopyPbo { pbo: 0, capacity: 0, inflight: None });
+    let slot = slots.entry(output.name()).or_insert(ScreencopyPbo {
+        pbo: 0,
+        capacity: 0,
+        inflight: None,
+    });
     let (cur_pbo, cur_capacity) = (slot.pbo, slot.capacity);
 
     let result = renderer.with_context(|gl| unsafe {
@@ -245,7 +246,10 @@ pub fn start_screencopy_filtered<E>(
     // Single persistent buffer → age 1 (its content is last call's frame),
     // except right after (re)creation when the content is undefined.
     let age = if needs_new { 0 } else { 1 };
-    if let Err(e) = oc.tracker.render_output(renderer, &mut fb, age, elements, BG_COLOR) {
+    if let Err(e) = oc
+        .tracker
+        .render_output(renderer, &mut fb, age, elements, BG_COLOR)
+    {
         warn!("Screencopy offscreen render failed: {:?}", e);
         fail_all(pending);
         return;
@@ -265,9 +269,11 @@ pub fn start_screencopy_filtered<E>(
     };
     drop(fb);
 
-    let slot = slots
-        .entry(output.name())
-        .or_insert(ScreencopyPbo { pbo: 0, capacity: 0, inflight: None });
+    let slot = slots.entry(output.name()).or_insert(ScreencopyPbo {
+        pbo: 0,
+        capacity: 0,
+        inflight: None,
+    });
     slot.inflight = Some((
         pending,
         InflightKind::Mapping(mapping),
@@ -299,7 +305,9 @@ fn deliver_pixels(pending: Vec<PendingScreencopy>, pixels: &[u8], phys_w: usize,
             },
         );
 
-        capture.frame.flags(zwlr_screencopy_frame_v1::Flags::empty());
+        capture
+            .frame
+            .flags(zwlr_screencopy_frame_v1::Flags::empty());
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default();

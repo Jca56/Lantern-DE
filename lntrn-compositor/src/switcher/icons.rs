@@ -15,10 +15,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use smithay::backend::{
-    allocator::Fourcc,
-    renderer::element::memory::MemoryRenderBuffer,
-};
+use smithay::backend::{allocator::Fourcc, renderer::element::memory::MemoryRenderBuffer};
 
 /// app_id → resolved icon buffer (None = no icon found, cached as a
 /// negative result so we don't re-scan the disk every frame).
@@ -30,7 +27,10 @@ pub struct SwitcherIconCache {
 
 impl SwitcherIconCache {
     pub fn new(size: u32) -> Self {
-        Self { map: HashMap::new(), size }
+        Self {
+            map: HashMap::new(),
+            size,
+        }
     }
 
     /// Look up (loading + caching on first miss) the icon buffer for an
@@ -182,7 +182,9 @@ fn icon_dirs() -> Vec<String> {
         "/var/lib/flatpak/exports/share/icons".to_string(),
         format!("{home}/.local/share/flatpak/exports/share/icons"),
     ] {
-        for size in ["scalable", "512x512", "256x256", "128x128", "64x64", "48x48"] {
+        for size in [
+            "scalable", "512x512", "256x256", "128x128", "64x64", "48x48",
+        ] {
             dirs.push(format!("{base}/hicolor/{size}/apps"));
         }
     }
@@ -229,8 +231,8 @@ fn rasterize_svg(data: &[u8], size: u32) -> Option<Vec<u8>> {
     let off_y = (size as f32 - rendered_h) / 2.0;
 
     let mut pixmap = resvg::tiny_skia::Pixmap::new(size, size)?;
-    let transform = resvg::tiny_skia::Transform::from_translate(off_x, off_y)
-        .post_scale(scale, scale);
+    let transform =
+        resvg::tiny_skia::Transform::from_translate(off_x, off_y).post_scale(scale, scale);
     resvg::render(&tree, transform, &mut pixmap.as_mut());
 
     let mut rgba = pixmap.take();

@@ -1,5 +1,4 @@
 /// On-demand XWayland spawning and lifecycle management.
-
 use smithay::reexports::wayland_server::Client;
 use smithay::xwayland::{X11Wm, XWayland, XWaylandClientData, XWaylandEvent};
 
@@ -14,6 +13,9 @@ pub struct XWaylandState {
     /// The XWayland Wayland client, kept so we can re-apply its scale override
     /// when the primary output's scale changes mid-session.
     pub client: Option<Client>,
+    /// Lazily-opened side connection for ICCCM `WM_STATE` writes (see
+    /// `x11_wm_state.rs` for why Smithay's `set_mapped` can't be used).
+    pub wm_state_writer: Option<crate::x11_wm_state::X11WmStateWriter>,
 }
 
 impl XWaylandState {
@@ -22,6 +24,39 @@ impl XWaylandState {
             wm: None,
             display_number: None,
             client: None,
+            wm_state_writer: None,
+        }
+    }
+}
+
+impl Lantern {
+    /// Write `WM_STATE` Iconic/Normal on an X11 window WITHOUT touching its
+    /// frame mapping. Connects on first use; a failed write drops the
+    /// connection so the next call reconnects (XWayland restarts, etc.).
+    pub fn x11_set_iconic(&mut self, x11: &smithay::xwayland::X11Surface, iconic: bool) {
+        let class = x11.class();
+        if self.xwayland_state.wm_state_writer.is_none() {
+            let Some(display_number) = self.xwayland_state.display_number else {
+                tracing::warn!(class, "x11_set_iconic: XWayland display unknown");
+                return;
+            };
+            match crate::x11_wm_state::X11WmStateWriter::connect(display_number) {
+                Ok(writer) => self.xwayland_state.wm_state_writer = Some(writer),
+                Err(err) => {
+                    tracing::warn!(class, "x11_set_iconic: connect to :{display_number} failed: {err}");
+                    return;
+                }
+            }
+        }
+        let Some(writer) = self.xwayland_state.wm_state_writer.as_ref() else {
+            return;
+        };
+        match writer.set_iconic(x11.window_id(), iconic) {
+            Ok(()) => tracing::info!(class, iconic, "X11 WM_STATE written"),
+            Err(err) => {
+                tracing::warn!(class, iconic, "X11 WM_STATE write failed: {err}");
+                self.xwayland_state.wm_state_writer = None;
+            }
         }
     }
 }
@@ -68,7 +103,7 @@ pub fn start_xwayland(state: &mut Lantern) {
         &dh,
         None::<u32>, // auto-pick display number
         xwayland_env,
-        true,  // open abstract socket (Linux)
+        true, // open abstract socket (Linux)
         std::process::Stdio::null(),
         std::process::Stdio::null(),
         |_user_data| {},
@@ -220,7 +255,9 @@ fn set_xwayland_native_scale(state: &Lantern, client: &Client) {
 /// physical mode list; already-running games keep their current mode until they
 /// re-query (typically on the next fullscreen toggle).
 pub fn refresh_xwayland_scale(state: &mut Lantern) {
-    let Some(client) = state.xwayland_state.client.clone() else { return };
+    let Some(client) = state.xwayland_state.client.clone() else {
+        return;
+    };
     set_xwayland_native_scale(state, &client);
 }
 
@@ -249,7 +286,9 @@ fn set_randr_primary(state: &mut Lantern) {
         tracing::warn!("set_randr_primary: no outputs available");
         return;
     };
-    let Some(xwm) = state.xwayland_state.wm.as_mut() else { return };
+    let Some(xwm) = state.xwayland_state.wm.as_mut() else {
+        return;
+    };
     match xwm.set_randr_primary_output(Some(&output)) {
         Ok(()) => tracing::info!(name = output.name(), "XRandR primary output set"),
         Err(err) => tracing::warn!("set_randr_primary_output failed: {err}"),

@@ -41,11 +41,7 @@ fn x11_root_offset(workspaces: &Lantern) -> Point<i32, Logical> {
     Point::from((-min_x, -min_y))
 }
 
-fn sync_x11_position(
-    workspaces: &Lantern,
-    window: &Window,
-    location: Point<i32, Logical>,
-) {
+fn sync_x11_position(workspaces: &Lantern, window: &Window, location: Point<i32, Logical>) {
     if let Some(x11) = window.x11_surface() {
         if x11.is_override_redirect() {
             // OR windows position themselves; configure() would error.
@@ -116,16 +112,17 @@ impl OutputWorkspaces {
 
     /// Build a fresh OutputWorkspaces, mapping every passed-in output into
     /// the initial Workspace 1's Space at its supplied global position.
-    pub fn new_with_outputs(
-        outputs: &HashMap<String, (Output, Point<i32, Logical>)>,
-    ) -> Self {
+    pub fn new_with_outputs(outputs: &HashMap<String, (Output, Point<i32, Logical>)>) -> Self {
         let mut workspaces = BTreeMap::new();
         let mut ws1 = Workspace::new(1);
         for (output, loc) in outputs.values() {
             ws1.space.map_output(output, *loc);
         }
         workspaces.insert(1, ws1);
-        Self { active: 1, workspaces }
+        Self {
+            active: 1,
+            workspaces,
+        }
     }
 
     pub fn ensure(&mut self, id: u32) -> &mut Workspace {
@@ -149,11 +146,15 @@ impl OutputWorkspaces {
     }
 
     pub fn active_workspace(&self) -> &Workspace {
-        self.workspaces.get(&self.active).expect("active WS must exist")
+        self.workspaces
+            .get(&self.active)
+            .expect("active WS must exist")
     }
 
     pub fn active_workspace_mut(&mut self) -> &mut Workspace {
-        self.workspaces.get_mut(&self.active).expect("active WS must exist")
+        self.workspaces
+            .get_mut(&self.active)
+            .expect("active WS must exist")
     }
 
     /// IDs with windows, plus WS 1 and the active ID (always shown in bar).
@@ -234,8 +235,15 @@ impl PerOutputWorkspaces {
         let primary = configs.iter().find(|m| m.primary).map(|m| m.name.clone());
         let config_order: Vec<String> = configs.into_iter().map(|m| m.name).collect();
         let sort_key = |name: &String| -> (u8, usize) {
-            let primary_rank = if primary.as_deref() == Some(name.as_str()) { 0 } else { 1 };
-            let config_pos = config_order.iter().position(|c| c == name).unwrap_or(usize::MAX);
+            let primary_rank = if primary.as_deref() == Some(name.as_str()) {
+                0
+            } else {
+                1
+            };
+            let config_pos = config_order
+                .iter()
+                .position(|c| c == name)
+                .unwrap_or(usize::MAX);
             (primary_rank, config_pos)
         };
         self.output_order.sort_by_key(|n| sort_key(n));
@@ -256,7 +264,8 @@ impl PerOutputWorkspaces {
     pub fn register_output(&mut self, output: Output, loc: Point<i32, Logical>) {
         let name = output.name();
         let is_new = !self.known_outputs.contains_key(&name);
-        self.known_outputs.insert(name.clone(), (output.clone(), loc));
+        self.known_outputs
+            .insert(name.clone(), (output.clone(), loc));
         if is_new {
             self.output_order.push(name.clone());
             self.resort_outputs();
@@ -313,10 +322,7 @@ impl PerOutputWorkspaces {
     /// Geometry (location + size) of an output in global logical coords.
     /// Replaces `space.output_geometry(&output)`. Returns None if the
     /// output isn't registered.
-    pub fn output_geometry(
-        &self,
-        output: &Output,
-    ) -> Option<Rectangle<i32, Logical>> {
+    pub fn output_geometry(&self, output: &Output) -> Option<Rectangle<i32, Logical>> {
         // Prefer a per-workspace Space (handles output transforms uniformly).
         for ow in self.per_output.values() {
             for ws in ow.workspaces.values() {
@@ -334,7 +340,10 @@ impl PerOutputWorkspaces {
         let scale = output.current_scale().fractional_scale();
         let logical_w = (mode.size.w as f64 / scale).round() as i32;
         let logical_h = (mode.size.h as f64 / scale).round() as i32;
-        Some(Rectangle::new(loc, smithay::utils::Size::from((logical_w, logical_h))))
+        Some(Rectangle::new(
+            loc,
+            smithay::utils::Size::from((logical_w, logical_h)),
+        ))
     }
 
     /// The workspace Space the index says owns this window, if any. Fast
@@ -350,11 +359,11 @@ impl PerOutputWorkspaces {
 
     /// Find a Window's location across every per-workspace Space.
     /// Replaces `space.element_location(&window)` for normal windows.
-    pub fn element_location(
-        &self,
-        window: &Window,
-    ) -> Option<Point<i32, Logical>> {
-        if let Some(loc) = self.indexed_space(window).and_then(|s| s.element_location(window)) {
+    pub fn element_location(&self, window: &Window) -> Option<Point<i32, Logical>> {
+        if let Some(loc) = self
+            .indexed_space(window)
+            .and_then(|s| s.element_location(window))
+        {
             return Some(loc);
         }
         for ow in self.per_output.values() {
@@ -369,11 +378,11 @@ impl PerOutputWorkspaces {
 
     /// Find a Window's bounding box across every per-workspace Space.
     /// Replaces `space.element_bbox(&window)` for normal windows.
-    pub fn element_bbox(
-        &self,
-        window: &Window,
-    ) -> Option<Rectangle<i32, Logical>> {
-        if let Some(bbox) = self.indexed_space(window).and_then(|s| s.element_bbox(window)) {
+    pub fn element_bbox(&self, window: &Window) -> Option<Rectangle<i32, Logical>> {
+        if let Some(bbox) = self
+            .indexed_space(window)
+            .and_then(|s| s.element_bbox(window))
+        {
             return Some(bbox);
         }
         for ow in self.per_output.values() {
@@ -387,7 +396,10 @@ impl PerOutputWorkspaces {
     }
 
     pub fn active_id(&self, output_name: &str) -> u32 {
-        self.per_output.get(output_name).map(|ow| ow.active).unwrap_or(1)
+        self.per_output
+            .get(output_name)
+            .map(|ow| ow.active)
+            .unwrap_or(1)
     }
 
     pub fn outputs(&self) -> impl Iterator<Item = &String> {
@@ -486,7 +498,8 @@ impl PerOutputWorkspaces {
         if !ws.windows.contains(&surface) {
             ws.windows.push(surface.clone());
         }
-        self.surface_index.insert(surface, (output_name.to_string(), active));
+        self.surface_index
+            .insert(surface, (output_name.to_string(), active));
     }
 
     /// Detach a surface from a specific workspace's bookkeeping (windows,
@@ -512,7 +525,8 @@ impl PerOutputWorkspaces {
                 ws.windows.push(surface.clone());
             }
         }
-        self.surface_index.insert(surface.clone(), (output_name.to_string(), ws_id));
+        self.surface_index
+            .insert(surface.clone(), (output_name.to_string(), ws_id));
     }
 
     /// Remove surface from all workspaces. Destroys empty non-primary WS.
@@ -537,7 +551,9 @@ impl PerOutputWorkspaces {
 
     /// Mark this surface most-recently-focused on its workspace.
     pub fn touch_focus(&mut self, surface: &WlSurface) {
-        let Some((output_name, id)) = self.window_workspace(surface) else { return };
+        let Some((output_name, id)) = self.window_workspace(surface) else {
+            return;
+        };
         if let Some(ow) = self.per_output.get_mut(&output_name) {
             if let Some(ws) = ow.workspaces.get_mut(&id) {
                 ws.mru.retain(|s| s != surface);
@@ -551,12 +567,16 @@ impl PerOutputWorkspaces {
     /// Switch an output to a workspace. Creates it if needed.
     /// Returns (old_id, new_id), or None for invalid target.
     pub fn switch(&mut self, output_name: &str, target_id: u32) -> Option<(u32, u32)> {
-        if target_id == 0 { return None; }
+        if target_id == 0 {
+            return None;
+        }
         self.ensure_output(output_name);
         let known = &self.known_outputs;
         let ow = self.per_output.get_mut(output_name).unwrap();
         let old = ow.active;
-        if old == target_id { return Some((old, old)); }
+        if old == target_id {
+            return Some((old, old));
+        }
         ow.ensure_with_outputs(target_id, known);
         ow.active = target_id;
 
@@ -578,8 +598,12 @@ impl PerOutputWorkspaces {
         target_output: &str,
         target_id: u32,
     ) -> bool {
-        let Some((src_output, src_id)) = self.window_workspace(surface) else { return false };
-        if src_output == target_output && src_id == target_id { return false; }
+        let Some((src_output, src_id)) = self.window_workspace(surface) else {
+            return false;
+        };
+        if src_output == target_output && src_id == target_id {
+            return false;
+        }
 
         {
             let ow = self.per_output.get_mut(&src_output).unwrap();
@@ -630,7 +654,9 @@ impl PerOutputWorkspaces {
 
     /// True if a surface is on the active workspace of its output (i.e., visible).
     pub fn is_on_active(&self, surface: &WlSurface) -> bool {
-        let Some((output, id)) = self.window_workspace_ref(surface) else { return false };
+        let Some((output, id)) = self.window_workspace_ref(surface) else {
+            return false;
+        };
         self.per_output
             .get(output)
             .map(|ow| ow.active == id)
@@ -640,9 +666,13 @@ impl PerOutputWorkspaces {
     /// Next populated workspace ID in a direction (1 = forward, -1 = back).
     /// Wraps around. Falls back to active_id if only one WS exists.
     pub fn neighbor_id(&self, output_name: &str, direction: i32) -> u32 {
-        let Some(ow) = self.per_output.get(output_name) else { return 1 };
+        let Some(ow) = self.per_output.get(output_name) else {
+            return 1;
+        };
         let ids = ow.populated_ids();
-        if ids.len() <= 1 { return ow.active; }
+        if ids.len() <= 1 {
+            return ow.active;
+        }
         let idx = ids.iter().position(|id| *id == ow.active).unwrap_or(0);
         let n = ids.len() as i32;
         let next = ((idx as i32 + direction).rem_euclid(n)) as usize;
@@ -658,15 +688,17 @@ impl PerOutputWorkspaces {
         let ids = ow.populated_ids();
         let idx = ids.iter().position(|id| *id == ow.active)?;
         let next = idx as i32 + direction;
-        if next < 0 || next >= ids.len() as i32 { return None; }
+        if next < 0 || next >= ids.len() as i32 {
+            return None;
+        }
         Some(ids[next as usize])
     }
 }
 
 // ── Lantern integration ─────────────────────────────────────────────────
 
-use smithay::utils::SERIAL_COUNTER;
 use crate::state::Lantern;
+use smithay::utils::SERIAL_COUNTER;
 
 impl Lantern {
     /// Find the topmost window under a point on the active workspace of
@@ -693,7 +725,6 @@ impl Lantern {
             .map(|(w, l)| (w.clone(), l))
     }
 
-
     /// Output name the user is currently interacting with.
     /// Preference: pointer's output → focused window's output → first output.
     pub fn focused_output_name(&self) -> Option<String> {
@@ -713,7 +744,9 @@ impl Lantern {
 
     /// Switch the focused output to a workspace, updating focus from MRU.
     pub fn switch_to_workspace(&mut self, target_id: u32) {
-        let Some(output_name) = self.focused_output_name() else { return };
+        let Some(output_name) = self.focused_output_name() else {
+            return;
+        };
         self.switch_workspace_on(&output_name, target_id);
     }
 
@@ -723,8 +756,12 @@ impl Lantern {
     /// unmap/remap dance, no `unmapped_windows` stash — and crucially, no
     /// way for a window to ghost across workspaces.
     pub fn switch_workspace_on(&mut self, output_name: &str, target_id: u32) {
-        let Some((old, new)) = self.workspaces.switch(output_name, target_id) else { return };
-        if old == new { return; }
+        let Some((old, new)) = self.workspaces.switch(output_name, target_id) else {
+            return;
+        };
+        if old == new {
+            return;
+        }
         tracing::info!(output = %output_name, old, new, "workspace switch");
 
         self.workspace_anim.start(output_name, old, new);
@@ -734,7 +771,12 @@ impl Lantern {
             .workspaces
             .output_workspaces(output_name)
             .and_then(|ow| ow.workspaces.get(&new))
-            .and_then(|ws| ws.mru.first().cloned().or_else(|| ws.windows.last().cloned()));
+            .and_then(|ws| {
+                ws.mru
+                    .first()
+                    .cloned()
+                    .or_else(|| ws.windows.last().cloned())
+            });
 
         let serial = SERIAL_COUNTER.next_serial();
         if let Some(surface) = focus_target {
@@ -750,16 +792,29 @@ impl Lantern {
 
     /// Move focused window to another workspace on the same output. Stay on current.
     pub fn move_focused_to_workspace(&mut self, target_id: u32) {
-        if target_id == 0 { return; }
-        let Some(output_name) = self.focused_output_name() else { return };
-        let Some(focused) = self.focused_surface.clone() else { return };
+        if target_id == 0 {
+            return;
+        }
+        let Some(output_name) = self.focused_output_name() else {
+            return;
+        };
+        let Some(focused) = self.focused_surface.clone() else {
+            return;
+        };
 
-        let Some((src_out, src_id)) = self.workspaces.window_workspace(&focused)
-            else { return };
-        if src_out == output_name && src_id == target_id { return; }
+        let Some((src_out, src_id)) = self.workspaces.window_workspace(&focused) else {
+            return;
+        };
+        if src_out == output_name && src_id == target_id {
+            return;
+        }
 
-        let Some(window) = self.find_window_anywhere(&focused) else { return };
-        let cur_loc = self.window_location(&window).unwrap_or_else(|| Point::from((0, 0)));
+        let Some(window) = self.find_window_anywhere(&focused) else {
+            return;
+        };
+        let cur_loc = self
+            .window_location(&window)
+            .unwrap_or_else(|| Point::from((0, 0)));
         let cur_size = window.geometry().size;
         let current_rect = Rectangle::new(cur_loc, cur_size);
 
@@ -779,23 +834,21 @@ impl Lantern {
         } else {
             cur_loc.x - cur_size.w - 100
         };
-        let slide_off = Rectangle::new(
-            Point::from((slide_off_x, cur_loc.y)),
-            cur_size,
-        );
+        let slide_off = Rectangle::new(Point::from((slide_off_x, cur_loc.y)), cur_size);
 
         // Cancel any prior pending move for this surface (rapid retargeting).
-        self.pending_workspace_moves.retain(|m| m.surface != focused);
+        self.pending_workspace_moves
+            .retain(|m| m.surface != focused);
 
-        let complete_at = std::time::Instant::now()
-            + crate::window_state_anim::state_duration();
-        self.pending_workspace_moves.push(crate::state::PendingWorkspaceMove {
-            surface: focused.clone(),
-            target_output: output_name.clone(),
-            target_workspace_id: target_id,
-            final_pos: cur_loc,
-            complete_at,
-        });
+        let complete_at = std::time::Instant::now() + crate::window_state_anim::state_duration();
+        self.pending_workspace_moves
+            .push(crate::state::PendingWorkspaceMove {
+                surface: focused.clone(),
+                target_output: output_name.clone(),
+                target_workspace_id: target_id,
+                final_pos: cur_loc,
+                complete_at,
+            });
 
         let anim_start = self
             .window_state_anim
@@ -809,12 +862,12 @@ impl Lantern {
         // surface we're sliding away (it's still tracking-wise on the
         // source workspace until the slide completes).
         let serial = SERIAL_COUNTER.next_serial();
-        let next_focus: Option<Window> = self
-            .workspaces
-            .output_workspaces(&src_out)
-            .and_then(|ow| {
+        let next_focus: Option<Window> =
+            self.workspaces.output_workspaces(&src_out).and_then(|ow| {
                 let ws = ow.workspaces.get(&src_id)?;
-                ws.mru.iter().filter(|s| **s != focused)
+                ws.mru
+                    .iter()
+                    .filter(|s| **s != focused)
                     .chain(ws.windows.iter().rev().filter(|s| **s != focused))
                     .find_map(|s| self.find_mapped_window(s))
             });
@@ -830,7 +883,9 @@ impl Lantern {
     /// elapsed. Called from the render tick so the swap happens at most
     /// one frame after the slide finishes.
     pub fn process_pending_workspace_moves(&mut self) {
-        if self.pending_workspace_moves.is_empty() { return; }
+        if self.pending_workspace_moves.is_empty() {
+            return;
+        }
         let now = std::time::Instant::now();
         let mut ready: Vec<crate::state::PendingWorkspaceMove> = Vec::new();
         self.pending_workspace_moves.retain(|m| {
@@ -847,17 +902,19 @@ impl Lantern {
                 true
             }
         });
-        if ready.is_empty() { return; }
+        if ready.is_empty() {
+            return;
+        }
 
         for m in ready {
             let pre_src = self.workspaces.window_workspace(&m.surface);
             let window = self.find_window_anywhere(&m.surface);
-            let moved = self.workspaces.move_window(
-                &m.surface,
-                &m.target_output,
-                m.target_workspace_id,
-            );
-            if !moved { continue; }
+            let moved =
+                self.workspaces
+                    .move_window(&m.surface, &m.target_output, m.target_workspace_id);
+            if !moved {
+                continue;
+            }
             if let (Some((src_out, src_id)), Some(window)) = (pre_src, window) {
                 if let Some(src_space) = self.workspace_space_mut(&src_out, src_id) {
                     src_space.unmap_elem(&window);
@@ -879,7 +936,9 @@ impl Lantern {
 
     /// Switch to the next/previous populated workspace.
     pub fn switch_workspace_neighbor(&mut self, direction: i32) {
-        let Some(output_name) = self.focused_output_name() else { return };
+        let Some(output_name) = self.focused_output_name() else {
+            return;
+        };
         let target = self.workspaces.neighbor_id(&output_name, direction);
         self.switch_to_workspace(target);
     }
@@ -887,9 +946,12 @@ impl Lantern {
     /// Navigate Super+Left/Right: visit only existing workspaces, never wrap,
     /// never auto-create. No-op at the edges.
     pub fn switch_workspace_neighbor_no_wrap(&mut self, direction: i32) {
-        let Some(output_name) = self.focused_output_name() else { return };
-        let Some(target) = self.workspaces.neighbor_id_no_wrap(&output_name, direction)
-            else { return };
+        let Some(output_name) = self.focused_output_name() else {
+            return;
+        };
+        let Some(target) = self.workspaces.neighbor_id_no_wrap(&output_name, direction) else {
+            return;
+        };
         self.switch_to_workspace(target);
     }
 
@@ -899,7 +961,9 @@ impl Lantern {
     /// Empty source workspaces are auto-destroyed on leave, so this never
     /// orphans empties (handled in `PerOutputWorkspaces::switch`).
     pub fn switch_workspace_right_or_create(&mut self) {
-        let Some(output_name) = self.focused_output_name() else { return };
+        let Some(output_name) = self.focused_output_name() else {
+            return;
+        };
         if let Some(target) = self.workspaces.neighbor_id_no_wrap(&output_name, 1) {
             self.switch_to_workspace(target);
             return;
@@ -909,13 +973,17 @@ impl Lantern {
             .output_workspaces(&output_name)
             .map(|ow| ow.populated_ids().into_iter().max().unwrap_or(1))
             .unwrap_or(1);
-        if max_id >= 9 { return; }
+        if max_id >= 9 {
+            return;
+        }
         self.switch_to_workspace(max_id + 1);
     }
 
     /// Broadcast current workspace state on every output to connected IPC clients.
     pub fn broadcast_workspace_state(&mut self) {
-        if !self.workspace_ipc.has_clients() { return; }
+        if !self.workspace_ipc.has_clients() {
+            return;
+        }
         let output_names: Vec<String> = self.space.outputs().map(|o| o.name()).collect();
         // Also ensure any output our state tracks but isn't currently in space is broadcast
         let extra: Vec<String> = self
@@ -946,10 +1014,13 @@ impl Lantern {
                 }
                 crate::workspace_ipc::IpcCommand::Move { output, target } => {
                     // Move current window on that output to target ws
-                    let Some(focused) = self.focused_surface.clone() else { continue };
+                    let Some(focused) = self.focused_surface.clone() else {
+                        continue;
+                    };
                     let pre_src = self.workspaces.window_workspace(&focused);
                     let window = self.find_window_anywhere(&focused);
-                    let pre_loc = window.as_ref()
+                    let pre_loc = window
+                        .as_ref()
                         .and_then(|w| self.window_location(w))
                         .unwrap_or_else(|| Point::from((0, 0)));
                     let moved = self.workspaces.move_window(&focused, &output, target);
@@ -1024,10 +1095,7 @@ impl Lantern {
     }
 
     /// Mutable variant of `space_for_surface`.
-    pub fn space_for_surface_mut(
-        &mut self,
-        surface: &WlSurface,
-    ) -> Option<&mut Space<Window>> {
+    pub fn space_for_surface_mut(&mut self, surface: &WlSurface) -> Option<&mut Space<Window>> {
         let (output_name, ws_id) = self.workspaces.window_workspace(surface)?;
         self.workspace_space_mut(&output_name, ws_id)
     }
@@ -1037,18 +1105,19 @@ impl Lantern {
     pub fn find_window_anywhere(&self, surface: &WlSurface) -> Option<Window> {
         // Index fast path: the owning workspace is known, search only its Space.
         if let Some((out, id)) = self.workspaces.window_workspace_ref(surface) {
-            if let Some(w) = self
-                .workspace_space(out, id)
-                .and_then(|space| {
-                    space.elements().find(|w| w.get_wl_surface().as_ref() == Some(surface))
-                })
-            {
+            if let Some(w) = self.workspace_space(out, id).and_then(|space| {
+                space
+                    .elements()
+                    .find(|w| w.get_wl_surface().as_ref() == Some(surface))
+            }) {
                 return Some(w.clone());
             }
         }
         for (_out, ow) in self.workspaces.iter() {
             for ws in ow.workspaces.values() {
-                if let Some(w) = ws.space.elements()
+                if let Some(w) = ws
+                    .space
+                    .elements()
                     .find(|w| w.get_wl_surface().as_ref() == Some(surface))
                 {
                     return Some(w.clone());
@@ -1115,7 +1184,9 @@ impl Lantern {
     pub fn find_window_visible(&self, surface: &WlSurface) -> Option<Window> {
         for (_out, ow) in self.workspaces.iter() {
             if let Some(ws) = ow.workspaces.get(&ow.active) {
-                if let Some(w) = ws.space.elements()
+                if let Some(w) = ws
+                    .space
+                    .elements()
                     .find(|w| w.get_wl_surface().as_ref() == Some(surface))
                 {
                     return Some(w.clone());
@@ -1262,7 +1333,9 @@ impl Lantern {
         activate: bool,
     ) {
         let surface = WindowExt::get_wl_surface(&window);
-        let mut ws_loc = surface.as_ref().and_then(|s| self.workspaces.window_workspace(s));
+        let mut ws_loc = surface
+            .as_ref()
+            .and_then(|s| self.workspaces.window_workspace(s));
 
         // Output handoff: which output does the window now sit on? Use the
         // window's center so a halfway-across drag commits at the seam, not
@@ -1285,7 +1358,8 @@ impl Lantern {
                     self.workspaces.detach_window(s, &cur_output, cur_ws);
 
                     self.workspaces.ensure_output(&new_output);
-                    let new_ws_id = self.workspaces
+                    let new_ws_id = self
+                        .workspaces
                         .output_workspaces(&new_output)
                         .map(|ow| ow.active)
                         .unwrap_or(1);

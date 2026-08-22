@@ -102,7 +102,11 @@ pub fn compute(
     // Width of a card footprint at index `i` within the visible range
     // depends on whether it's the selected card (full) or a side card.
     let footprint_w = |real_index: usize| -> f32 {
-        if real_index == selected { CARD_W as f32 } else { CARD_W as f32 * SIDE_SCALE }
+        if real_index == selected {
+            CARD_W as f32
+        } else {
+            CARD_W as f32 * SIDE_SCALE
+        }
     };
 
     // X-offset (left edge) of each visible card's footprint, laid out in a
@@ -123,8 +127,12 @@ pub fn compute(
     };
 
     // Translate so the (animated) selected center lands on output center.
-    let sel_vis = selected.saturating_sub(scroll).min(visible_count.saturating_sub(1));
-    let prev_vis = prev_selected.saturating_sub(scroll).min(visible_count.saturating_sub(1));
+    let sel_vis = selected
+        .saturating_sub(scroll)
+        .min(visible_count.saturating_sub(1));
+    let prev_vis = prev_selected
+        .saturating_sub(scroll)
+        .min(visible_count.saturating_sub(1));
     let target_center = slot_center(sel_vis);
     let from_center = slot_center(prev_vis);
     // NOTE: `slide` is a spring value that intentionally overshoots past

@@ -2,7 +2,6 @@
 ///
 /// Integrated style: semi-transparent header overlay on the window's top region,
 /// rounded corners via corner-mask shader elements, no gold accent line.
-
 use smithay::{
     backend::renderer::{
         element::solid::{SolidColorBuffer, SolidColorRenderElement},
@@ -68,10 +67,20 @@ pub struct RoundedCorners {
 
 impl RoundedCorners {
     pub fn all() -> Self {
-        Self { tl: true, tr: true, bl: true, br: true }
+        Self {
+            tl: true,
+            tr: true,
+            bl: true,
+            br: true,
+        }
     }
     pub fn none() -> Self {
-        Self { tl: false, tr: false, bl: false, br: false }
+        Self {
+            tl: false,
+            tr: false,
+            bl: false,
+            br: false,
+        }
     }
 
     /// Snapped windows always sit inside tiling gaps (outer + inner), so every
@@ -111,7 +120,10 @@ pub struct SsdManager {
 
 impl SsdManager {
     pub fn new() -> Self {
-        Self { windows: HashMap::new(), hover_scratch: Vec::new() }
+        Self {
+            windows: HashMap::new(),
+            hover_scratch: Vec::new(),
+        }
     }
 
     pub fn add(&mut self, surface: WlSurface) {
@@ -133,7 +145,6 @@ impl SsdManager {
     pub fn bar_height() -> i32 {
         bar_height_px()
     }
-
 }
 
 // ── Geometry helpers ────────────────────────────────────────────────────────
@@ -152,12 +163,18 @@ pub fn titlebar_rect(
 pub fn button_rects(
     win_loc: Point<i32, Logical>,
     win_size: Size<i32, Logical>,
-) -> (Rectangle<i32, Logical>, Rectangle<i32, Logical>, Rectangle<i32, Logical>) {
+) -> (
+    Rectangle<i32, Logical>,
+    Rectangle<i32, Logical>,
+    Rectangle<i32, Logical>,
+) {
     let bar = titlebar_rect(win_loc, win_size);
-    let mk = |idx: i32| Rectangle::new(
-        Point::from((bar.loc.x + bar.size.w - BTN_W * (idx + 1), bar.loc.y)),
-        Size::from((BTN_W, bar_height_px())),
-    );
+    let mk = |idx: i32| {
+        Rectangle::new(
+            Point::from((bar.loc.x + bar.size.w - BTN_W * (idx + 1), bar.loc.y)),
+            Size::from((BTN_W, bar_height_px())),
+        )
+    };
     (mk(0), mk(1), mk(2))
 }
 
@@ -256,13 +273,20 @@ pub fn render_decoration(
             // Close hover uses header shader so it respects the rounded top-right corner
             if let Some(shader) = header_shader {
                 let btn_x = bar_lx + bar_w - BTN_W;
-                let hover_r = if corners.tr { radius_logical * scale as f32 } else { 0.0 };
+                let hover_r = if corners.tr {
+                    radius_logical * scale as f32
+                } else {
+                    0.0
+                };
                 let hover_area = Rectangle::<i32, Logical>::new(
                     Point::from((btn_x, bar_ly)),
                     Size::from((BTN_W, bar_h)),
                 );
                 shaders.push(PixelShaderElement::new(
-                    shader.clone(), hover_area, None, 1.0,
+                    shader.clone(),
+                    hover_area,
+                    None,
+                    1.0,
                     vec![
                         Uniform::new("corner_radius", hover_r),
                         Uniform::new("bar_color", [0.91f32, 0.18, 0.18, 0.70]),
@@ -273,7 +297,11 @@ pub fn render_decoration(
         } else {
             state.btn_hover_buf.resize((BTN_W, bar_h));
             solids.push(SolidColorRenderElement::from_buffer(
-                &state.btn_hover_buf, p(bar_w - BTN_W * (idx + 1), 0), scale, 1.0, kind,
+                &state.btn_hover_buf,
+                p(bar_w - BTN_W * (idx + 1), 0),
+                scale,
+                1.0,
+                kind,
             ));
         }
     }
@@ -286,7 +314,11 @@ pub fn render_decoration(
 
         for (idx, icon_type) in [(0, 0.0f32), (1, 1.0f32), (2, 2.0f32)] {
             let btn_x = bar_w - BTN_W * (idx + 1);
-            let color = if idx == 0 && is_close_hovered { icon_white } else { icon_rest };
+            let color = if idx == 0 && is_close_hovered {
+                icon_white
+            } else {
+                icon_rest
+            };
 
             let screen_area: Rectangle<i32, Logical> = Rectangle::new(
                 Point::from((bar_lx + btn_x, bar_ly)),
@@ -331,18 +363,17 @@ pub fn render_corner_masks(
     let mut masks = Vec::with_capacity(4);
 
     let corner_cases: [(bool, i32, i32, f32, f32); 4] = [
-        (corners.tl, x,         y,         0.0, 0.0), // top-left
-        (corners.tr, x + w - r, y,         1.0, 0.0), // top-right
-        (corners.bl, x,         y + h - r, 0.0, 1.0), // bottom-left
+        (corners.tl, x, y, 0.0, 0.0),                 // top-left
+        (corners.tr, x + w - r, y, 1.0, 0.0),         // top-right
+        (corners.bl, x, y + h - r, 0.0, 1.0),         // bottom-left
         (corners.br, x + w - r, y + h - r, 1.0, 1.0), // bottom-right
     ];
 
     for (enabled, cx, cy, corner_x, corner_y) in corner_cases {
-        if !enabled { continue; }
-        let area = Rectangle::<i32, Logical>::new(
-            Point::from((cx, cy)),
-            Size::from((r, r)),
-        );
+        if !enabled {
+            continue;
+        }
+        let area = Rectangle::<i32, Logical>::new(Point::from((cx, cy)), Size::from((r, r)));
         masks.push(PixelShaderElement::new(
             corner_shader.clone(),
             area,

@@ -96,8 +96,7 @@ impl Lantern {
         } else {
             crate::read_monitor_configs()
         };
-        let config_pos =
-            |name: &str| configs.iter().find(|c| c.name == name).map(|c| (c.x, c.y));
+        let config_pos = |name: &str| configs.iter().find(|c| c.name == name).map(|c| (c.x, c.y));
 
         let mut changes = Vec::new();
         // Right edge of the previous output in the chain; None = leftmost
