@@ -97,7 +97,10 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             icon_zoom: 0.5,
-            window_width: 1500.0,
+            // Wide enough for 4 grid columns at max icon zoom (1.0): sidebar 240
+            // + pad 8 + 4 × (320 item + 8 pad) = 1560, plus 20px breathing room
+            // so float rounding at fractional scales never drops to 3 columns.
+            window_width: 1580.0,
             window_height: 1000.0,
             show_hidden: false,
             sort_by: "name".into(),

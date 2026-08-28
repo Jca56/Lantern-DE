@@ -326,11 +326,16 @@ pub fn run(
             .clone()
             .ok_or_else(|| anyhow!("xdg_wm_base not available"))?;
 
+        // Startup size always comes from the built-in defaults, not the
+        // persisted value — Fox deliberately never remembers in-session
+        // resizes (see save path), and reading the file here would make a
+        // changed default lag one launch behind.
+        let default_size = Settings::default();
         if state.width == 0 {
-            state.width = settings.window_width as u32;
+            state.width = default_size.window_width as u32;
         }
         if state.height == 0 {
-            state.height = settings.window_height as u32;
+            state.height = default_size.window_height as u32;
         }
 
         let xdg_surface = wm_base.get_xdg_surface(&surface, &qh, ());
@@ -568,7 +573,7 @@ pub fn run(
         .to_string();
     }
     // Intentionally do NOT persist the window size — Fox always opens at the
-    // default 1500x1000 (settings.rs) regardless of any in-session resize.
+    // default size (settings.rs) regardless of any in-session resize.
     // Overwrite with defaults so stale values in the on-disk config get wiped.
     let defaults = Settings::default();
     settings.window_width = defaults.window_width;
