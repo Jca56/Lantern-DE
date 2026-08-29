@@ -35,6 +35,21 @@ const IFACE_KNOWN: &str = "net.connman.iwd.KnownNetwork";
 const IFACE_AGENT_MGR: &str = "net.connman.iwd.AgentManager";
 const AGENT_PATH: &str = "/lntrn/wifi_agent";
 
+/// Every call to iwd goes through here so the message carries D-Bus's
+/// `NoAutoStart` flag. Without it, dbus-daemon spawns a fresh iwd the moment
+/// the OpenRC-managed one goes away (we poll every second), which left
+/// `rc-service iwd restart` reporting "crashed" next to a healthy orphan that
+/// never re-read /etc/iwd/main.conf. Daemon absent → fast error instead.
+fn iwd_call<B, R>(conn: &Connection, path: &str, iface: &str, method: &str, body: &B) -> zbus::Result<R>
+where
+    B: serde::Serialize + zbus::zvariant::DynamicType,
+    R: for<'d> zbus::zvariant::DynamicDeserialize<'d>,
+{
+    zbus::blocking::Proxy::new(conn, IWD_BUS, path, iface)?
+        .call_with_flags(method, zbus::proxy::MethodFlags::NoAutoStart.into(), body)?
+        .ok_or_else(|| zbus::Error::Failure("iwd: no reply".into()))
+}
+
 /// Cheap availability probe: open the system bus and check the well-known
 /// iwd name is owned. False on any error — caller will fall back to NM.
 pub(super) fn is_available() -> bool {
@@ -175,13 +190,8 @@ pub(super) fn handle_cmd(cmd: WifiCmd, tx: &mpsc::Sender<WifiEvent>) {
                         // Fire-and-forget; iwd refuses if a scan is already
                         // in progress, which is fine — the next periodic
                         // poll picks up whatever it produced.
-                        let _ = conn.call_method(
-                            Some(IWD_BUS),
-                            &station_path,
-                            Some(IFACE_STATION),
-                            "Scan",
-                            &(),
-                        );
+                        let _: zbus::Result<()> =
+                            iwd_call(&conn, station_path.as_str(), IFACE_STATION, "Scan", &());
                     }
                 }
             }
@@ -203,13 +213,7 @@ pub(super) fn handle_cmd(cmd: WifiCmd, tx: &mpsc::Sender<WifiEvent>) {
             // `uuid` is the KnownNetwork object path we stuffed in during
             // scan_networks. Call Forget on it.
             if let Ok(conn) = Connection::system() {
-                let _ = conn.call_method(
-                    Some(IWD_BUS),
-                    uuid.as_str(),
-                    Some(IFACE_KNOWN),
-                    "Forget",
-                    &(),
-                );
+                let _: zbus::Result<()> = iwd_call(&conn, uuid.as_str(), IFACE_KNOWN, "Forget", &());
             }
         }
         WifiCmd::ActivateProfile { name } => {
@@ -257,13 +261,8 @@ fn connect_by_ssid(ssid: &str, password: Option<&str>, tx: &mpsc::Sender<WifiEve
         _ => None,
     };
 
-    let result = conn.call_method(
-        Some(IWD_BUS),
-        network_path.as_str(),
-        Some(IFACE_NETWORK),
-        "Connect",
-        &(),
-    );
+    let result: zbus::Result<()> =
+        iwd_call(&conn, network_path.as_str(), IFACE_NETWORK, "Connect", &());
 
     if let Some(h) = agent_handle {
         h.unregister(&conn);
@@ -283,10 +282,10 @@ struct AgentHandle;
 
 impl AgentHandle {
     fn unregister(self, conn: &Connection) {
-        let _ = conn.call_method(
-            Some(IWD_BUS),
+        let _: zbus::Result<()> = iwd_call(
+            conn,
             "/net/connman/iwd",
-            Some(IFACE_AGENT_MGR),
+            IFACE_AGENT_MGR,
             "UnregisterAgent",
             &(zbus::zvariant::ObjectPath::try_from(AGENT_PATH).unwrap(),),
         );
@@ -303,10 +302,10 @@ fn register_agent(conn: &Connection, passphrase: String) -> Result<AgentHandle, 
     conn.object_server()
         .at(AGENT_PATH, agent)
         .map_err(|e| e.to_string())?;
-    conn.call_method(
-        Some(IWD_BUS),
+    iwd_call::<_, ()>(
+        conn,
         "/net/connman/iwd",
-        Some(IFACE_AGENT_MGR),
+        IFACE_AGENT_MGR,
         "RegisterAgent",
         &(zbus::zvariant::ObjectPath::try_from(AGENT_PATH).map_err(|e| e.to_string())?,),
     )
@@ -344,16 +343,7 @@ impl PassphraseAgent {
 type ObjectMap = HashMap<OwnedObjectPath, HashMap<String, HashMap<String, OwnedValue>>>;
 
 fn managed_objects(conn: &Connection) -> Option<ObjectMap> {
-    let reply = conn
-        .call_method(
-            Some(IWD_BUS),
-            "/",
-            Some("org.freedesktop.DBus.ObjectManager"),
-            "GetManagedObjects",
-            &(),
-        )
-        .ok()?;
-    reply.body().deserialize().ok()
+    iwd_call(conn, "/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects", &()).ok()
 }
 
 fn find_station(objects: &ObjectMap) -> Option<(OwnedObjectPath, &HashMap<String, OwnedValue>)> {
@@ -392,16 +382,8 @@ struct DiagSnapshot {
 }
 
 fn fetch_diagnostics(conn: &Connection, station: &OwnedObjectPath) -> Option<DiagSnapshot> {
-    let reply = conn
-        .call_method(
-            Some(IWD_BUS),
-            station.as_str(),
-            Some(IFACE_STATION_DIAG),
-            "GetDiagnostics",
-            &(),
-        )
-        .ok()?;
-    let dict: HashMap<String, OwnedValue> = reply.body().deserialize().ok()?;
+    let dict: HashMap<String, OwnedValue> =
+        iwd_call(conn, station.as_str(), IFACE_STATION_DIAG, "GetDiagnostics", &()).ok()?;
     Some(DiagSnapshot {
         bssid: string_prop(&dict, "ConnectedBss"),
         frequency_mhz: dict
@@ -489,20 +471,7 @@ fn apply_diagnostics(net: &mut Network, diag: DiagSnapshot) {
 }
 
 fn ordered_networks(conn: &Connection, station: &OwnedObjectPath) -> Vec<(OwnedObjectPath, i16)> {
-    let reply = match conn.call_method(
-        Some(IWD_BUS),
-        station.as_str(),
-        Some(IFACE_STATION),
-        "GetOrderedNetworks",
-        &(),
-    ) {
-        Ok(r) => r,
-        Err(_) => return Vec::new(),
-    };
-    reply
-        .body()
-        .deserialize::<Vec<(OwnedObjectPath, i16)>>()
-        .unwrap_or_default()
+    iwd_call(conn, station.as_str(), IFACE_STATION, "GetOrderedNetworks", &()).unwrap_or_default()
 }
 
 fn name_has_owner(conn: &Connection, name: &str) -> bool {
