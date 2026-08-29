@@ -13,6 +13,13 @@ pub struct CanvasEntry {
 }
 
 pub fn canvases_dir() -> PathBuf {
+    // `LNTRN_CANVAS_DIR` overrides the default — handy for testing against a
+    // scratch folder without touching real saves.
+    if let Some(dir) = std::env::var_os("LNTRN_CANVAS_DIR") {
+        if !dir.is_empty() {
+            return PathBuf::from(dir);
+        }
+    }
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     PathBuf::from(home).join(".lantern/canvases")
 }

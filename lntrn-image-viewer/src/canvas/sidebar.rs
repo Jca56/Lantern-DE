@@ -1,21 +1,32 @@
 //! Sidebar file browser state: directory listing, thumbnail cache, scroll,
-//! and click-vs-drag-out tracking. Drawing lives in `render_canvas.rs`.
+//! panel width, and click-vs-drag-out tracking. Geometry lives in
+//! `sidebar_layout.rs`, drawing in `render_sidebar.rs`.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use lntrn_render::{GpuContext, GpuTexture, Rect, TexturePass};
+use lntrn_render::{GpuContext, GpuTexture, TexturePass};
 use lntrn_ui::gpu::SmoothScroll;
 
 use super::thumbs::ThumbPool;
 
 /// Logical px (multiply by scale `s`).
 pub const COLLAPSED_W: f32 = 36.0;
-pub const HEADER_H: f32 = 48.0;
-pub const ROW_H: f32 = 64.0;
-/// Max GPU-resident thumbnails before a directory change clears the cache.
-const THUMB_RAM_CAP: usize = 256;
+pub const HEADER_H: f32 = 52.0;
+pub const DEFAULT_W: f32 = 380.0;
+pub const MIN_W: f32 = 220.0;
+/// The sidebar can't be dragged wider than this fraction of the window.
+pub const MAX_W_FRAC: f32 = 0.6;
+/// Target tile side for the thumbnail grid; columns are derived from it.
+pub const DEFAULT_TILE: f32 = 170.0;
+pub const MIN_TILE: f32 = 100.0;
+pub const MAX_TILE: f32 = 420.0;
+/// Ctrl+wheel step for the tile target.
+const TILE_STEP: f32 = 20.0;
+/// Max GPU-resident thumbnails before a directory change clears the cache
+/// (each is up to THUMB_SIZE² × 4 bytes).
+const THUMB_RAM_CAP: usize = 160;
 
 pub struct SidebarEntry {
     pub name: String,
@@ -25,15 +36,24 @@ pub struct SidebarEntry {
 
 pub struct SidebarState {
     pub current_dir: PathBuf,
+    /// Dirs first, then images — `sidebar_layout` relies on that ordering.
     pub entries: Vec<SidebarEntry>,
     pub scroll: SmoothScroll,
     pub collapsed: bool,
+    /// Expanded width in logical px.
+    pub width: f32,
+    /// True while the right edge is being dragged.
+    pub resizing: bool,
+    /// Show filenames under image tiles.
+    pub show_names: bool,
+    /// Desired tile side in logical px (grid picks the nearest column count).
+    pub tile_target: f32,
     loaded: bool,
     pool: Option<ThumbPool>,
     thumbs: HashMap<String, GpuTexture>,
     pending: HashSet<String>,
     failed: HashSet<String>,
-    /// (entry index, press screen x, press screen y) — pending click or drag-out.
+    /// (slot index, press screen x, press screen y) — pending click or drag-out.
     pub pressed: Option<(usize, f32, f32)>,
     pub last_click: Option<(usize, Instant)>,
 }
@@ -52,6 +72,10 @@ impl SidebarState {
             entries: Vec::new(),
             scroll: SmoothScroll::new(),
             collapsed: false,
+            width: DEFAULT_W,
+            resizing: false,
+            show_names: false,
+            tile_target: DEFAULT_TILE,
             loaded: false,
             pool: None,
             thumbs: HashMap::new(),
@@ -98,11 +122,23 @@ impl SidebarState {
         if self.collapsed {
             COLLAPSED_W * s
         } else {
-            crate::SIDEBAR_W * s
+            self.width * s
         }
     }
 
-    /// Queue thumbnail generation for a visible row (no-op if cached/known).
+    /// Set the expanded width (logical px), clamped to sane bounds for the
+    /// current window width.
+    pub fn set_width(&mut self, logical_w: f32, window_logical_w: f32) {
+        let max = (window_logical_w * MAX_W_FRAC).max(MIN_W);
+        self.width = logical_w.clamp(MIN_W, max);
+    }
+
+    /// Nudge the tile target by `steps` (positive = bigger).
+    pub fn adjust_tile(&mut self, steps: f32) {
+        self.tile_target = (self.tile_target + steps * TILE_STEP).clamp(MIN_TILE, MAX_TILE);
+    }
+
+    /// Queue thumbnail generation for a visible tile (no-op if cached/known).
     pub fn request_thumb(&mut self, path: &Path) {
         let key = path.to_string_lossy().into_owned();
         if self.thumbs.contains_key(&key)
@@ -143,39 +179,6 @@ impl SidebarState {
     pub fn has_pending(&self) -> bool {
         !self.pending.is_empty()
     }
-}
-
-/// Sidebar panel rect (below title bar, above status bar).
-pub fn sidebar_rect(sb: &SidebarState, hf: f32, s: f32) -> Rect {
-    let title_h = crate::TITLE_H * s;
-    let status_h = crate::STATUS_H * s;
-    Rect::new(
-        0.0,
-        title_h,
-        sb.phys_width(s),
-        (hf - title_h - status_h).max(1.0),
-    )
-}
-
-/// The scrollable file-rows area (sidebar minus its header).
-pub fn rows_viewport(sb: &SidebarState, hf: f32, s: f32) -> Rect {
-    let r = sidebar_rect(sb, hf, s);
-    let header = HEADER_H * s;
-    Rect::new(r.x, r.y + header, r.w, (r.h - header).max(1.0))
-}
-
-/// Rows: parent ".." row (when not at /) + entries.
-pub fn row_count(sb: &SidebarState) -> usize {
-    let parent = if sb.current_dir.parent().is_some() {
-        1
-    } else {
-        0
-    };
-    parent + sb.entries.len()
-}
-
-pub fn content_height(sb: &SidebarState, s: f32) -> f32 {
-    row_count(sb) as f32 * ROW_H * s
 }
 
 /// List a directory for the sidebar: visible dirs + supported images,

@@ -16,7 +16,7 @@ pub struct CanvasDoc {
     pub items: Vec<CanvasItem>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub struct CanvasItem {
     /// Absolute path to the source image. The file is referenced, not copied.
     pub path: String,

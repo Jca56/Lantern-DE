@@ -1,4 +1,5 @@
-//! Canvas editor state: selection, drag/resize state machine, view transform.
+//! Canvas editor state: selection, drag/resize state machine, view transform,
+//! and the undo/redo history.
 //!
 //! Coordinate spaces:
 //! - *screen*: physical pixels (cursor already multiplied by fractional scale `s`)
@@ -11,6 +12,8 @@ use std::path::PathBuf;
 use lntrn_render::Rect;
 
 use super::doc::{CanvasDoc, CanvasItem};
+use super::history::{History, Snapshot};
+use super::snap::{guides_for, SnapGuides, SnapTargets};
 
 /// Minimum item size in canvas units — keeps a resize from collapsing an
 /// image into an unclickable sliver.
@@ -41,6 +44,28 @@ impl ResizeHandle {
                 | ResizeHandle::TopRight
                 | ResizeHandle::BottomLeft
                 | ResizeHandle::BottomRight
+        )
+    }
+
+    pub fn moves_left(self) -> bool {
+        matches!(self, ResizeHandle::TopLeft | ResizeHandle::Left | ResizeHandle::BottomLeft)
+    }
+
+    pub fn moves_right(self) -> bool {
+        matches!(
+            self,
+            ResizeHandle::TopRight | ResizeHandle::Right | ResizeHandle::BottomRight
+        )
+    }
+
+    pub fn moves_top(self) -> bool {
+        matches!(self, ResizeHandle::TopLeft | ResizeHandle::Top | ResizeHandle::TopRight)
+    }
+
+    pub fn moves_bottom(self) -> bool {
+        matches!(
+            self,
+            ResizeHandle::BottomLeft | ResizeHandle::Bottom | ResizeHandle::BottomRight
         )
     }
 }
@@ -90,6 +115,12 @@ pub struct CanvasEditor {
     pub dialog: Option<DialogKind>,
     pub name_buf: String,
     pub name_cursor: usize,
+    pub history: History,
+    /// Alignment guides for the in-flight drag (cleared on release).
+    pub guides: SnapGuides,
+    /// Items as of the last save/load — undo/redo compares against this to
+    /// decide whether the document is still dirty.
+    saved_items: Vec<CanvasItem>,
 }
 
 impl CanvasEditor {
@@ -98,6 +129,7 @@ impl CanvasEditor {
     }
 
     pub fn from_doc(doc: CanvasDoc, save_path: Option<PathBuf>) -> Self {
+        let saved_items = doc.items.clone();
         Self {
             doc,
             dirty: false,
@@ -107,6 +139,9 @@ impl CanvasEditor {
             dialog: None,
             name_buf: String::new(),
             name_cursor: 0,
+            history: History::new(),
+            guides: SnapGuides::default(),
+            saved_items,
         }
     }
 
@@ -118,6 +153,60 @@ impl CanvasEditor {
         };
         let dot = if self.dirty { " •" } else { "" };
         format!("{name}{dot} — Lantern Canvas")
+    }
+
+    // ── History ─────────────────────────────────────────────────────────
+
+    pub fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            items: self.doc.items.clone(),
+            selected: self.selected,
+        }
+    }
+
+    /// Record the current state as an undo step. Call *before* a discrete edit.
+    pub fn record(&mut self) {
+        let snap = self.snapshot();
+        self.history.push(snap);
+    }
+
+    /// Start a drag gesture; `end_gesture` turns it into one undo step if
+    /// anything moved.
+    pub fn begin_gesture(&mut self) {
+        let snap = self.snapshot();
+        self.history.begin_gesture(snap);
+    }
+
+    pub fn end_gesture(&mut self) {
+        self.history.end_gesture(&self.doc.items);
+    }
+
+    pub fn undo(&mut self) {
+        let current = self.snapshot();
+        if let Some(snap) = self.history.undo(current) {
+            self.apply_snapshot(snap);
+        }
+    }
+
+    pub fn redo(&mut self) {
+        let current = self.snapshot();
+        if let Some(snap) = self.history.redo(current) {
+            self.apply_snapshot(snap);
+        }
+    }
+
+    fn apply_snapshot(&mut self, snap: Snapshot) {
+        self.doc.items = snap.items;
+        self.selected = snap.selected.filter(|&i| i < self.doc.items.len());
+        self.drag = DragMode::Idle;
+        self.guides.clear();
+        self.dirty = self.doc.items != self.saved_items;
+    }
+
+    /// The document just hit disk — this state is the new clean baseline.
+    pub fn mark_saved(&mut self) {
+        self.saved_items = self.doc.items.clone();
+        self.dirty = false;
     }
 
     // ── Transforms ──────────────────────────────────────────────────────
@@ -219,6 +308,8 @@ impl CanvasEditor {
     /// Add an image centered at a canvas point. Natural size is capped to
     /// `max_w/max_h` (canvas units) so a 6000px photo doesn't swallow the
     /// whole view on import — handles can always grow it back.
+    /// Callers `record()` first so multi-file drops are one undo step.
+    #[allow(clippy::too_many_arguments)]
     pub fn add_item(
         &mut self,
         path: PathBuf,
@@ -246,8 +337,10 @@ impl CanvasEditor {
     }
 
     pub fn delete_selected(&mut self) {
-        if let Some(i) = self.selected.take() {
+        if let Some(i) = self.selected {
             if i < self.doc.items.len() {
+                self.record();
+                self.selected = None;
                 self.doc.items.remove(i);
                 self.dirty = true;
             }
@@ -255,7 +348,11 @@ impl CanvasEditor {
     }
 
     /// Apply a resize drag: cursor at canvas (ccx, ccy), against the original
-    /// item geometry captured at press time.
+    /// item geometry captured at press time. With `snap` (targets + threshold
+    /// in canvas units) the moving edge(s) snap to other items' edges; for
+    /// aspect-locked corners the snapped axis drives the scale. Returns guides
+    /// for every edge that landed on a target.
+    #[allow(clippy::too_many_arguments)]
     pub fn apply_resize(
         &mut self,
         idx: usize,
@@ -265,42 +362,77 @@ impl CanvasEditor {
         ccy: f32,
         grab_cx: f32,
         grab_cy: f32,
-    ) {
+        snap: Option<(&SnapTargets, f32)>,
+    ) -> SnapGuides {
         use ResizeHandle::*;
         let Some(item) = self.doc.items.get_mut(idx) else {
-            return;
+            return SnapGuides::default();
         };
-        let dx = ccx - grab_cx;
-        let dy = ccy - grab_cy;
+        let mut dx = ccx - grab_cx;
+        let mut dy = ccy - grab_cy;
+
+        // Where the moving edges would land unsnapped → nudge to a target.
+        let (mut snap_dx, mut snap_dy) = (None, None);
+        if let Some((targets, thr)) = snap {
+            if handle.moves_left() {
+                snap_dx = targets.nearest_x(&[orig.x + dx], thr);
+            } else if handle.moves_right() {
+                snap_dx = targets.nearest_x(&[orig.x + orig.w + dx], thr);
+            }
+            if handle.moves_top() {
+                snap_dy = targets.nearest_y(&[orig.y + dy], thr);
+            } else if handle.moves_bottom() {
+                snap_dy = targets.nearest_y(&[orig.y + orig.h + dy], thr);
+            }
+        }
 
         if handle.is_corner() {
-            // Aspect-preserving: dominant axis wins, opposite corner anchored.
-            let sx = match handle {
-                TopRight | BottomRight => (orig.w + dx) / orig.w,
-                _ => (orig.w - dx) / orig.w,
+            // Aspect-preserving: a snapped axis drives; otherwise whichever
+            // axis moved most. The opposite corner stays anchored.
+            let kx = |dx: f32| {
+                if handle.moves_right() {
+                    (orig.w + dx) / orig.w
+                } else {
+                    (orig.w - dx) / orig.w
+                }
             };
-            let sy = match handle {
-                BottomLeft | BottomRight => (orig.h + dy) / orig.h,
-                _ => (orig.h - dy) / orig.h,
+            let ky = |dy: f32| {
+                if handle.moves_bottom() {
+                    (orig.h + dy) / orig.h
+                } else {
+                    (orig.h - dy) / orig.h
+                }
             };
-            let mut k = if (sx - 1.0).abs() >= (sy - 1.0).abs() {
-                sx
-            } else {
-                sy
+            let mut k = match (snap_dx, snap_dy) {
+                (Some(ax), Some(ay)) if ax.abs() <= ay.abs() => kx(dx + ax),
+                (_, Some(ay)) => ky(dy + ay),
+                (Some(ax), None) => kx(dx + ax),
+                (None, None) => {
+                    let (a, b) = (kx(dx), ky(dy));
+                    if (a - 1.0).abs() >= (b - 1.0).abs() {
+                        a
+                    } else {
+                        b
+                    }
+                }
             };
             k = k.max(MIN_ITEM / orig.w.min(orig.h));
             item.w = orig.w * k;
             item.h = orig.h * k;
-            item.x = match handle {
-                TopRight | BottomRight => orig.x,
-                _ => orig.x + orig.w - item.w,
+            item.x = if handle.moves_right() {
+                orig.x
+            } else {
+                orig.x + orig.w - item.w
             };
-            item.y = match handle {
-                BottomLeft | BottomRight => orig.y,
-                _ => orig.y + orig.h - item.h,
+            item.y = if handle.moves_bottom() {
+                orig.y
+            } else {
+                orig.y + orig.h - item.h
             };
         } else {
             // Edge stretch: single axis, opposite edge anchored.
+            dx += snap_dx.unwrap_or(0.0);
+            dy += snap_dy.unwrap_or(0.0);
             match handle {
                 Right => item.w = (orig.w + dx).max(MIN_ITEM),
                 Left => {
@@ -316,6 +448,25 @@ impl CanvasEditor {
             }
         }
         self.dirty = true;
+
+        // Guides only for the edges that actually moved.
+        let Some((targets, _)) = snap else {
+            return SnapGuides::default();
+        };
+        let item = &self.doc.items[idx];
+        let mut px = Vec::with_capacity(1);
+        let mut py = Vec::with_capacity(1);
+        if handle.moves_left() {
+            px.push(item.x);
+        } else if handle.moves_right() {
+            px.push(item.x + item.w);
+        }
+        if handle.moves_top() {
+            py.push(item.y);
+        } else if handle.moves_bottom() {
+            py.push(item.y + item.h);
+        }
+        guides_for(targets, item.x, item.y, item.w, item.h, &px, &py)
     }
 
     // ── Z-order ─────────────────────────────────────────────────────────
@@ -323,6 +474,7 @@ impl CanvasEditor {
     pub fn bring_to_front(&mut self) {
         if let Some(i) = self.selected {
             if i + 1 < self.doc.items.len() {
+                self.record();
                 let item = self.doc.items.remove(i);
                 self.doc.items.push(item);
                 self.selected = Some(self.doc.items.len() - 1);
@@ -334,6 +486,7 @@ impl CanvasEditor {
     pub fn send_to_back(&mut self) {
         if let Some(i) = self.selected {
             if i > 0 {
+                self.record();
                 let item = self.doc.items.remove(i);
                 self.doc.items.insert(0, item);
                 self.selected = Some(0);
@@ -345,6 +498,7 @@ impl CanvasEditor {
     pub fn raise(&mut self) {
         if let Some(i) = self.selected {
             if i + 1 < self.doc.items.len() {
+                self.record();
                 self.doc.items.swap(i, i + 1);
                 self.selected = Some(i + 1);
                 self.dirty = true;
@@ -355,6 +509,7 @@ impl CanvasEditor {
     pub fn lower(&mut self) {
         if let Some(i) = self.selected {
             if i > 0 {
+                self.record();
                 self.doc.items.swap(i, i - 1);
                 self.selected = Some(i - 1);
                 self.dirty = true;

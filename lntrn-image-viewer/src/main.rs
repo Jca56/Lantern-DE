@@ -3,7 +3,9 @@ mod canvas;
 mod dnd;
 mod render;
 mod render_canvas;
+mod render_dialog;
 mod render_launcher;
+mod render_sidebar;
 mod wayland;
 mod wayland_dispatch;
 
@@ -37,7 +39,11 @@ pub const ZONE_SIDEBAR_TOGGLE: u32 = 30;
 pub const ZONE_CANVAS_AREA: u32 = 32;
 pub const ZONE_CANVAS_SAVE: u32 = 33;
 pub const ZONE_SEL_DELETE: u32 = 34;
+pub const ZONE_CANVAS_UNDO: u32 = 35;
 pub const ZONE_SIDEBAR_SCROLLBAR: u32 = 36;
+pub const ZONE_SIDEBAR_RESIZE: u32 = 37;
+pub const ZONE_SIDEBAR_NAMES: u32 = 38;
+pub const ZONE_CANVAS_REDO: u32 = 39;
 // Dialog buttons (order matches each dialog's button list)
 pub const ZONE_DIALOG_BTN0: u32 = 40;
 pub const ZONE_DIALOG_BTN1: u32 = 41;
@@ -53,8 +59,6 @@ pub const TITLE_H: f32 = 36.0;
 pub const STATUS_H: f32 = 40.0;
 /// Width of the window edge band that triggers a resize.
 pub const RESIZE_BORDER: f32 = 10.0;
-/// Canvas-mode sidebar width (expanded).
-pub const SIDEBAR_W: f32 = 240.0;
 
 // ── Shared types ────────────────────────────────────────────────────────────
 

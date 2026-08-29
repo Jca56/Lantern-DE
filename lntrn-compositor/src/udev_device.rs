@@ -422,10 +422,25 @@ pub(crate) fn connector_connected(
     // Check monitor config for explicit position, otherwise auto-layout horizontally
     let monitor_configs = crate::read_monitor_configs();
     let (x, y) = if let Some(cfg) = monitor_configs.iter().find(|c| c.name == output_name) {
-        info!(
-            "Using configured position for {}: ({}, {})",
-            output_name, cfg.x, cfg.y
+        // Positions are normalized (layout top-left → (0, 0)); say so when
+        // the file's raw arrangement had a different origin so the log and
+        // lantern.toml can be reconciled at a glance.
+        let raw = crate::read_monitor_configs_raw();
+        let origin = crate::output_layout::layout_origin(
+            raw.iter().filter(|c| c.enabled).map(|c| (c.x, c.y)),
         );
+        if origin == (0, 0) {
+            info!(
+                "Using configured position for {}: ({}, {})",
+                output_name, cfg.x, cfg.y
+            );
+        } else {
+            info!(
+                "Using configured position for {}: ({}, {}) — layout origin ({}, {}) in \
+                 lantern.toml normalized to (0, 0) so XWayland/Wine see no dead zone",
+                output_name, cfg.x, cfg.y, origin.0, origin.1
+            );
+        }
         (cfg.x, cfg.y)
     } else {
         let auto_x = state.space.outputs().fold(0, |acc, o| {

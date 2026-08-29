@@ -23,7 +23,7 @@ use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_ba
 
 use crate::app::App;
 use crate::canvas::editor::{CanvasEditor, DialogKind, DragMode};
-use crate::canvas::input::{self as canvas_input, CanvasAction};
+use crate::canvas::input::{self as canvas_input, CanvasAction, CursorHint};
 use crate::canvas::persist;
 use crate::canvas::sidebar::SidebarState;
 use crate::canvas::tex_cache::CanvasTexCache;
@@ -94,6 +94,7 @@ pub(crate) struct State {
     // Keyboard
     pub(crate) ctrl: bool,
     pub(crate) shift: bool,
+    pub(crate) alt: bool,
     pub(crate) key_pressed: Option<u32>,
     // Drag-and-drop receive (Dispatch impls live in dnd.rs)
     pub(crate) data_device_manager: Option<wl_data_device_manager::WlDataDeviceManager>,
@@ -143,6 +144,7 @@ impl State {
             enter_serial: 0,
             ctrl: false,
             shift: false,
+            alt: false,
             key_pressed: None,
             data_device_manager: None,
             dnd_mimes: Vec::new(),
@@ -442,7 +444,17 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
                     }
                 }
                 AppMode::Canvas => {
-                    canvas_input::on_scroll(&mut editor, &mut sidebar, delta, cx, cy, wf, hf, s);
+                    canvas_input::on_scroll(
+                        &mut editor,
+                        &mut sidebar,
+                        delta,
+                        state.ctrl,
+                        cx,
+                        cy,
+                        wf,
+                        hf,
+                        s,
+                    );
                 }
                 AppMode::Launcher => {
                     render_launcher::apply_scroll(&mut launcher, delta * s * 4.0, wf, hf, s);
@@ -611,7 +623,17 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
             app.last_pan_y = cy;
         }
         if mode == AppMode::Canvas && state.pointer_in_surface {
-            canvas_input::on_motion(&mut editor, &mut sidebar, &input, cx, cy, wf, hf, s);
+            canvas_input::on_motion(
+                &mut editor,
+                &mut sidebar,
+                &input,
+                cx,
+                cy,
+                wf,
+                hf,
+                s,
+                !state.alt,
+            );
         }
 
         // ── Left/middle release ─────────────────────────────────────────
@@ -649,9 +671,17 @@ pub fn run(initial_path: Option<String>) -> Result<()> {
         // edge band — not just while an interactive resize is in progress.
         if state.pointer_in_surface {
             let border = crate::RESIZE_BORDER * s;
-            let desired = match edge_resize(cx, cy, wf, hf, border) {
-                Some(edge) => resize_edge_to_cursor_shape(edge),
-                None => wp_cursor_shape_device_v1::Shape::Default,
+            let in_canvas = mode == AppMode::Canvas;
+            let desired = if in_canvas && sidebar.resizing {
+                wp_cursor_shape_device_v1::Shape::ColResize
+            } else {
+                match edge_resize(cx, cy, wf, hf, border) {
+                    Some(edge) => resize_edge_to_cursor_shape(edge),
+                    None if in_canvas => canvas_cursor_shape(canvas_input::cursor_hint(
+                        &editor, &sidebar, cx, cy, wf, hf, s,
+                    )),
+                    None => wp_cursor_shape_device_v1::Shape::Default,
+                }
             };
             if state.current_cursor_shape != Some(desired) {
                 if let Some(dev) = &state.cursor_shape_device {
@@ -748,6 +778,24 @@ fn edge_resize(cx: f32, cy: f32, w: f32, h: f32, border: f32) -> Option<xdg_topl
 }
 
 /// Map a resize edge to the matching directional cursor shape.
+/// Canvas-mode pointer shapes: sidebar grip, item grab, and handle resizes.
+fn canvas_cursor_shape(hint: CursorHint) -> wp_cursor_shape_device_v1::Shape {
+    use crate::canvas::editor::ResizeHandle as H;
+    use wp_cursor_shape_device_v1::Shape;
+    match hint {
+        CursorHint::Default => Shape::Default,
+        CursorHint::ColResize => Shape::ColResize,
+        CursorHint::Grab => Shape::Grab,
+        CursorHint::Grabbing => Shape::Grabbing,
+        CursorHint::Resize(h) => match h {
+            H::TopLeft | H::BottomRight => Shape::NwseResize,
+            H::TopRight | H::BottomLeft => Shape::NeswResize,
+            H::Top | H::Bottom => Shape::NsResize,
+            H::Left | H::Right => Shape::EwResize,
+        },
+    }
+}
+
 fn resize_edge_to_cursor_shape(edge: xdg_toplevel::ResizeEdge) -> wp_cursor_shape_device_v1::Shape {
     use wp_cursor_shape_device_v1::Shape;
     match edge {

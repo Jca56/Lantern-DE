@@ -533,7 +533,35 @@ impl Dispatch<ZwlrOutputConfigurationV1, Mutex<PendingConfig>, Lantern> for Lant
                 let changes = state.output_management_state.resolve_config(&pending);
                 drop(pending);
 
-                if let Some(changes) = changes {
+                if let Some(mut changes) = changes {
+                    // Keep the layout invariant (top-left of the enabled
+                    // heads at (0, 0)) no matter what arrangement the
+                    // client sends — see `output_layout`.
+                    let origin = {
+                        let live = |name: &str| {
+                            state
+                                .workspaces
+                                .outputs_iter()
+                                .find(|o| o.name() == name)
+                                .and_then(|o| state.workspaces.output_geometry(o))
+                                .map(|g| (g.loc.x, g.loc.y))
+                                .or_else(|| {
+                                    state
+                                        .disabled_outputs
+                                        .get(name)
+                                        .map(|d| (d.loc.x, d.loc.y))
+                                })
+                        };
+                        crate::output_layout::normalize_output_changes(&mut changes, live)
+                    };
+                    if origin != (0, 0) {
+                        tracing::info!(
+                            "output-mgmt Apply: layout translated by ({}, {}) so the \
+                             leftmost/topmost head sits at (0, 0)",
+                            -origin.0,
+                            -origin.1
+                        );
+                    }
                     let n = changes.len();
                     // apply_output_config syncs heads + broadcasts done.
                     let ok = crate::udev_device::apply_output_config(state, changes);

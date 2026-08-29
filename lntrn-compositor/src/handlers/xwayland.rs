@@ -246,10 +246,31 @@ impl XwmHandler for Lantern {
         // compositor-managed state (maximized or fullscreen).
         if let Some(wl_surface) = window.wl_surface() {
             if self.is_maximized(&wl_surface) || self.is_fullscreen(&wl_surface) {
-                tracing::debug!(
+                let cur = window.geometry();
+                tracing::info!(
                     class = window.class(),
-                    "Ignoring X11 configure request: window is in managed state"
+                    req_x = ?x,
+                    req_y = ?y,
+                    req_w = ?w,
+                    req_h = ?h,
+                    cur_x = cur.loc.x,
+                    cur_y = cur.loc.y,
+                    cur_w = cur.size.w,
+                    cur_h = cur.size.h,
+                    "Refusing X11 configure request (managed state); acking current geometry"
                 );
+                // ICCCM 4.1.5: a ConfigureRequest the WM does not honor MUST
+                // still be answered with a synthetic ConfigureNotify carrying
+                // the unchanged geometry. Wine arms a serial on every request
+                // it sends and refuses to sync the Win32 window (SC_RESTORE
+                // after an iconify, size/position) until that answer arrives.
+                // Dropping the request silently wedged Proton games after
+                // Alt+Tab: the X window was visible again but the Win32 side
+                // stayed minimized → black / flickering game. `configure(None)`
+                // re-asserts the current frame geometry and sends the notify.
+                if let Err(e) = window.configure(None::<Rectangle<i32, Logical>>) {
+                    tracing::warn!(class = window.class(), "configure ack failed: {e}");
+                }
                 return;
             }
         }

@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 
-pub const THUMB_SIZE: u32 = 192;
+pub const THUMB_SIZE: u32 = 320;
 
 /// Decode guards: oversized sources fail cleanly instead of ballooning RAM.
 const MAX_DECODE_DIM: u32 = 16_384;
@@ -98,6 +98,8 @@ fn cache_file(path: &Path) -> PathBuf {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     path.hash(&mut h);
+    // Size is part of the key so bumping THUMB_SIZE regenerates old caches.
+    THUMB_SIZE.hash(&mut h);
     if let Ok(md) = std::fs::metadata(path) {
         md.len().hash(&mut h);
         if let Ok(m) = md.modified() {

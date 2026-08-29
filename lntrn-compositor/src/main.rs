@@ -23,6 +23,7 @@ mod input;
 mod keyboard_focus;
 mod layer_position;
 mod minimize_anim;
+mod output_layout;
 mod output_toggle;
 mod power;
 mod rect_anim;
@@ -451,8 +452,18 @@ pub(crate) fn read_window_rules() -> Vec<WindowRule> {
     rules
 }
 
-/// Read all `[[monitors]]` entries from lantern.toml.
+/// Read all `[[monitors]]` entries from lantern.toml, translated so the
+/// layout's top-left corner is (0, 0) — see `output_layout`. Every consumer
+/// (output placement, gaming mode, config reload) sees the same normalized
+/// positions; the verbatim parse is `read_monitor_configs_raw`.
 pub(crate) fn read_monitor_configs() -> Vec<MonitorConfig> {
+    let mut monitors = read_monitor_configs_raw();
+    output_layout::normalize_monitor_configs(&mut monitors);
+    monitors
+}
+
+/// Parse `[[monitors]]` verbatim — positions exactly as written in the file.
+pub(crate) fn read_monitor_configs_raw() -> Vec<MonitorConfig> {
     let contents = cached_lantern_toml();
     if contents.is_empty() {
         return Vec::new();
