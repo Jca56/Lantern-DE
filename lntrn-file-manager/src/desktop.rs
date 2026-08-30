@@ -294,6 +294,7 @@ fn mime_from_extension(ext: &str) -> String {
         // Text
         "txt" | "log" | "cfg" | "conf" | "ini" => "text/plain",
         "lnote" => "application/x-lnote",
+        "lantern" => "application/x-lantern",
         "md" | "markdown" => "text/markdown",
         "html" | "htm" => "text/html",
         "css" => "text/css",
